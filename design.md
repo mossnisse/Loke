@@ -8,7 +8,7 @@ A code block is surrounded by braces (`{}`) and creates a scope for the variable
 
 ## Statements
 
-Statements are terminated by a semicolon (`;`) unless their outermost form ends in a declaration or statement block. `if`, `for`, `foreach`, `switch`, `when`, a bare block, a `defer` of any of them, procedure definitions, record definitions, procedure groups, and brace-bodied operator definitions are therefore terminated by their closing `}`. A semicolon is still required after an expression even when that expression happens to end in a composite literal such as `Point{1, 2}`: literal braces are values, not declaration or statement blocks.
+Statements are terminated by a semicolon (`;`) unless their outermost form ends in a declaration or statement block. `if`, `for`, `foreach`, `switch`, `when`, `context`, a bare block, a `defer` of any of them, procedure definitions, record definitions, procedure groups, and brace-bodied operator definitions are therefore terminated by their closing `}`. A semicolon is still required after an expression even when that expression happens to end in a composite literal such as `Point{1, 2}`: literal braces are values, not declaration or statement blocks.
 
 A lone `;` is an empty statement and is permitted at file scope too, so a redundant semicolon after a brace-bodied form is accepted as a separate empty statement:
 
@@ -270,7 +270,7 @@ This is deliberately coarse. A procedure taking two slices and returning one is 
 
 These are real holes, they are intentional, and no diagnostic will catch them:
 
-- **Borrows stored in memory.** Putting a slice in a struct field, a global, a container, or a captured context escapes the analysis entirely. Once a borrow is stored, its validity is yours to maintain.
+- **Borrows stored in memory.** Putting a slice in a struct field, a global, a container, or a service object escapes the analysis entirely. Once a borrow is stored, its validity is yours to maintain. Package-context bindings themselves accept only the declared service-handle types and do not provide a general-purpose place to store arbitrary values.
 - **Borrows across procedure boundaries beyond the coarse rule above.** If a procedure stores a borrowed parameter somewhere that outlives the call, nothing detects it.
 - **Anything reached through a raw pointer.** `^T` arithmetic, `[^]T` multi-pointers, `unsafe.raw_data`, and the rest of the `unsafe` package are outside the model by construction.
 - **Threads.** Borrow liveness is analysed per procedure body; sending a borrow to another thread is not tracked. Use `shared(T)` or an owned copy.
@@ -435,6 +435,8 @@ A different import name can be used over the default package name:
 import "core:fmt";
 import foo "core:fmt"; // reference a package by a different name
 ```
+
+An import name also identifies that package in a scoped [context override](#package-effective-context), as in `context (foo.logger = test_logger) { ... }`. Aliases of the same imported package identify the same package context; an alias does not create a second package instance.
 
 Every source file must contain its package declaration. Package versions are selected by the build system or package manager and are not part of import syntax in this language version. Possible versioned imports are recorded under [Open questions](#package-and-import-versioning).
 
@@ -1007,7 +1009,7 @@ fmt.println(multiply(137, 432));
 
 #### Parameter semantics and ABI lowering
 
-By default, procedures use the `loke` calling convention. It uses the platform C ABI as a base, adds a pointer to the current context as an implicit argument, and defines its own deterministic classification of parameters and results. Every caller and callee compiled for the same target ABI must use the same classification; indirect passing is not a choice they may make independently at each call.
+By default, procedures use the `loke` calling convention. It uses the platform C ABI as a base, adds a read-only pointer to the current ambient context as an implicit argument, and defines its own deterministic classification of parameters and results. The callee resolves the package-effective view described under [Package-effective context](#package-effective-context) from that pointer. Every caller and callee compiled for the same target ABI must use the same classification; indirect passing is not a choice they may make independently at each call.
 
 The source-level parameter mode is decided before ABI lowering:
 
@@ -1026,7 +1028,7 @@ After applying those rules, the ABI may transport a parameter in registers, in a
 ```text
 source:   inspect(value)
 lowered:  temporary = argument representation
-          inspect_lowered(&temporary, context)
+          inspect_lowered(&temporary, immutable_ambient_context)
 ```
 
 The temporary remains valid until the call completes. It is not source-level pointer syntax, cannot be retained by the callee, and does not grant permission to modify the caller's variable. Taking `&value` inside the procedure behaves as taking the address of a callee-local binding, not the address of the caller's variable. An optimizer may reuse the caller's storage only when it proves that the difference is completely unobservable under these rules.
@@ -3153,7 +3155,7 @@ fmt.println(a()); // 100
 
 Loke supports the following calling conventions:
 
-- loke - default convention used for a Loke procedure. It passes an implicit context pointer and uses the target-specific parameter classification described under [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering). Hidden-pointer transport does not change ownership, mutability, address identity, or lifetime.
+- loke - default convention used for a Loke procedure. It passes an implicit read-only ambient-context pointer and uses the target-specific parameter classification described under [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering). The pointer transports scoped package policy; it does not give the callee permission to replace that policy. Hidden-pointer transport does not change ownership, mutability, address identity, or lifetime.
 - contextless - This is the same as `loke` but without the implicit context pointer.
 - stdcall or std – This is the stdcall convention as specified by Microsoft.
 - cdecl or c – This is the default calling convention generated of a procedure in C.
@@ -3169,7 +3171,7 @@ proc "contextless" (s: []int)
 
 Procedure types are compatible only when calling convention, parameter and result types, parameter modes, variadic shape, and type-level parameter effects match. In particular, `@(allocator_reset)` is part of the parameter's procedure type: a reset-capable procedure cannot be stored in a procedure value whose type hides that effect. Declaration-only attributes such as visibility and deprecation do not participate in type compatibility.
 
-When binding to C libraries you’ll often end up using proc "c" and also set the current context. For this you’ll need to explicitly set the context.
+Code entered through a C or contextless procedure has no incoming ambient context. It installs one for the calls that need it with a scoped `context (using value) { ... }` statement; see [Installing a context](#installing-a-context).
 
 ## typeid type
 
@@ -3495,42 +3497,67 @@ Configuration values are immutable constants. File selection, generated sources,
 
 # Memory and the context system
 
-## Implicit context system
+## Package-effective context
 
-In each scope, there is an implicit value named context. This context variable is local to each scope and is implicitly passed by pointer to any procedure call in that scope (if the procedure has the loke calling convention).
+The context system lets the caller choose cross-cutting services used by a package—allocators, temporary storage, logging, tracing, clocks, and similar runtime policy—without requiring the package author to expose the same parameters on every procedure.
 
-The main purpose of the implicit context system is for the ability to intercept third-party code and libraries and modify their functionality. One such case is modifying how a library allocates something or logs something. In C, this was usually achieved with the library defining macros which could be overridden so that the user could define what they wanted. However, not many libraries supported this in many languages by default which meant intercepting third-party code to see what it does and to change how it does it was not possible.
+Every procedure using the `loke` calling convention receives an ambient context implicitly. Inside the procedure, the predeclared name `context` is the **immutable effective view for the procedure's declaring package**. Its fields may be read and the services they refer to may be invoked, but the binding and its fields cannot be assigned, moved, mutably borrowed, or addressed:
 
 ```odin
-main :: proc() {
-	c := context; // copy the current scope's context
-
-	context.user_index = 456;
-	{
-		context.allocator = my_custom_allocator();
-		context.user_index = 123;
-		supertramp(); // the `context` for this scope is implicitly passed to `supertramp`
-	}
-
-	// `context` value is local to the scope it is in
-	assert(context.user_index == 456);
-}
-
-supertramp :: proc() {
-	c := context; // this `context` is the same as the parent procedure that it was called from
-	// From this example, context.user_index == 123
-	// A context.allocator is assigned to the return value of `my_custom_allocator()`
-
-	// The memory management procedure uses the `context.allocator` by default unless explicitly specified otherwise
-	ptr, allocation_error := new(int);
-	if (allocation_error != nil) { return; }
-	free(ptr);
+load :: proc(path: string) -> Image {
+	context.allocator = another_allocator; // ERROR: package context is immutable
+	context.logger.info("loading ", path); // OK: invoke a service through its handle
+	pixels: [dynamic]u8 via context.allocator;
+	...
 }
 ```
 
-By default, the context value has default values for its parameters which is decided in the package runtime. These defaults are compiler specific.
+Immutability is shallow. An allocator may update its arena, a logger may write output, and the allocation-error state may be updated through their handles. What cannot change during a package procedure's invocation is which allocator, logger, or other service that invocation sees. Service interfaces usable through context therefore operate through immutable handles and do not require `inout` access to the context field.
 
-To see what the implicit context value contains, please see the definition of the Context struct in package runtime.
+### Scoped context derivation
+
+A `context` statement constructs derived routing for imported packages called by its body. It never modifies the incoming context or the current package's effective view. Every entry has the form `package.field = value`, where `package` is an import name. A package cannot target itself, so the package author cannot replace the policy chosen by its caller:
+
+```odin
+main :: proc() {
+	context (
+		image.allocator = image_arena,
+		image.logger    = application_logger,
+	) {
+		image.load("background.png");
+
+		context (image.allocator = thumbnail_arena) {
+			image.load("thumbnail.png");
+		}
+
+		image.load("foreground.png"); // uses `image_arena` again
+	}
+}
+```
+
+Override expressions are evaluated once, from left to right, in the incoming context before the derived routing becomes active. Each supplied service value is borrowed immutably for the body; a temporary's lifetime is extended through the body, and a bound source cannot be moved or dropped while the derived context is active. The current procedure continues to see its unchanged `context`; an override is observed when control enters the targeted package. The derived routing lasts for the dynamic extent of the body, including all synchronous `loke` calls it makes, and disappears on every kind of exit. It is stack-scoped and cannot be returned, stored globally, captured, or retained by foreign code.
+
+The statement is available only inside a procedure. “Package-effective” describes which package an override targets, not file-scope mutable configuration. Runtime policy is selected at an execution boundary such as `main`, a request handler, a test, or a plugin entry point.
+
+Package names in overrides use ordinary import-name resolution. The compiler and linker give every package a canonical identity; two aliases of the same package select the same context entry. A package alias in a context header is a compile-time selector, not a runtime value.
+
+### Package resolution and inheritance
+
+When a call enters package `P`, each field of `P`'s effective view is chosen in this order:
+
+1. The nearest active package-qualified override for `P` and that field.
+2. The calling procedure's current effective value for that field.
+3. The runtime default when there is no calling `loke` procedure.
+
+Resolution is field-wise: overriding `image.logger` does not also replace `image.allocator`. Same-package calls normally forward the already effective view. An indirect procedure value still resolves correctly because the callee's declaring package is part of the compiled procedure, not stored in a closure.
+
+Inheritance makes policy follow a library through dependencies. If `image` calls `png`, which calls `zlib`, all three see the allocator selected for `image` unless an active override targets `png` or `zlib` more specifically. As the consumer of `png`, `image` may derive routing for `png` before a call, but it cannot replace the effective `image` context of the invocation already executing.
+
+Package context is for ambient capabilities, not persistent package state or every configuration option. A decoder that needs a durable thread count, format policy, cache, or retained logger stores those in an explicit value. A resource that must use its creation-time allocator already records that allocator as part of its ownership metadata; ambient context is consulted when an operation begins and is not captured automatically.
+
+Work that may outlive the context statement—detached threads, queued tasks, and retained callbacks—does not inherit its stack descriptor by pointer. `context_snapshot()` materializes the current immutable ambient context as an owned `Context` value. A thread or task API that propagates context takes such a value by move and installs it around the entry procedure; an API that does not document this starts from the runtime defaults. Snapshotting clones the service handles using their ordinary value semantics, follows the active allocator's failure policy if the descriptor needs storage, and does not make their underlying state thread-safe. `try_context_snapshot()` is the explicitly fallible form.
+
+The runtime supplies the root defaults. The compiler-known `Context` interface contains at least `allocator`, `temp_allocator`, `logger`, and the allocation-error state required below; the concrete handles and implementation live in the runtime and core libraries.
 
 ## Allocators
 
@@ -3545,7 +3572,7 @@ bytes.reserve(4096);
 
 The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Use the `manual` declaration modifier to opt out of automatic cleanup.
 
-All allocations are preferably done through allocators. The core library takes advantage of allocators through the implicit context system. The following call:
+All allocations are preferably done through allocators. The core library takes advantage of the effective package context. The following call:
 
 ```odin
 ptr, err := new(int);
@@ -3559,7 +3586,7 @@ ptr, err := new(int, context.allocator);
 
 The allocator from the context is implicitly assigned as a default parameter to the built-in procedure new.
 
-The implicit context stores two different forms of allocators: context.allocator and context.temp_allocator. Both can be reassigned to any kind of allocator. However, these allocators are to be treated slightly differently.
+The effective package context exposes two allocator roles: `context.allocator` and `context.temp_allocator`. A caller may replace either role for a package with a scoped context override; code inside that package cannot reassign them. The roles are treated slightly differently.
 
 - context.allocator is for “general” allocations, for the subsystem it is used within.
 - context.temp_allocator is for temporary and short lived allocations, which are to be freed once per cycle/frame/etc.
@@ -3568,7 +3595,7 @@ By default, `context.allocator` is an OS heap allocator and `context.temp_alloca
 
 Allocator values have a region identity in addition to their allocation procedures and failure policy. Copying an allocator value preserves that identity, and every allocation records it. This is what lets the compiler recognize that two local allocator values refer to the same region. When static provenance cannot prove two allocator values distinct, the lifetime check conservatively treats their regions as possibly identical. Across a procedure call the identity is propagated through a parameter marked `@(allocator_reset)`; a Loke procedure that resets an allocator received as a parameter must mark that parameter, and the compiler verifies the promise transitively. The attribute is part of procedure-type compatibility, so indirect calls preserve the same effect.
 
-Resetting a region is intentionally explicit. There is no zero-argument `free_all`; code must name the allocator being reset. A procedure may reset a region it created locally, because no caller-owned value can belong to it. It may not hide a reset of a global, implicit-context, or other pre-existing allocator: such an allocator is taken through an `@(allocator_reset)` parameter instead.
+Resetting a region is intentionally explicit. There is no zero-argument `free_all`; code must name the allocator being reset. A procedure may reset a region it created locally, because no caller-owned value can belong to it. It may not hide a reset of a global, ambient-context, or other pre-existing allocator: such an allocator is taken through an `@(allocator_reset)` parameter instead.
 
 ```odin
 release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
@@ -3648,13 +3675,13 @@ To see more uses of allocators and allocation-related procedures, please see pac
 
 Managed values allocate implicitly. A dynamic array grows on `append`, a string is built by concatenation, and an assignment clones its source. None of these have a place to return an error, so the language needs one answer for what happens when the allocator cannot satisfy them.
 
-Each allocator carries a **failure policy**, part of the allocator value and therefore selectable per subsystem through the context:
+Each allocator carries a **failure policy**, part of the allocator value and therefore selectable per package or subsystem through a context override:
 
 | Policy | Behaviour on failure |
 | --- | --- |
 | `.Panic` | Raise a runtime panic reporting the requested size and the allocator. The default. |
 | `.Trap` | Abort the process immediately without unwinding. For freestanding and embedded targets. |
-| `.Error` | Fail the operation and set the context's allocation-error flag. Existing destinations remain unchanged; value-producing operations yield zero. |
+| `.Error` | Fail the operation and set the effective context's interior allocation-error state. Existing destinations remain unchanged; value-producing operations yield zero. |
 
 `.Panic` is the default because the alternative — silently continuing with a truncated container — is the failure mode that produces corrupted output rather than a stopped program. Programs that cannot accept a panic set the policy explicitly.
 
@@ -3679,17 +3706,16 @@ For more information regarding memory allocation strategies in general, please s
 
 Tracking and arena allocators are ordinary `core:mem` implementations. Their setup, diagnostics, and callbacks are library documentation rather than language rules.
 
-## Explicit context Definition
+## Installing a context
 
-Procedures which do not use the `loke` calling convention must explicitly assign the context if something within the body requires it.
+Procedures that do not use the `loke` calling convention have no incoming ambient context, and the predeclared `context` view is unavailable outside an installing block. They install a complete `Context` value for a lexical body with the `using` form of the context statement. The installed value is immutable once the body begins.
 
 ```odin
 explicit_context_definition :: proc "c" () {
-	// Try commenting the following statement out below
-	context = runtime.default_context();
-
-	fmt.println("\n#explicit context definition");
-	dummy_procedure();
+	context (using runtime.default_context()) {
+		fmt.println("\n#explicit context definition");
+		dummy_procedure();
+	}
 }
 
 dummy_procedure :: proc() {
@@ -3701,11 +3727,14 @@ Here is another example of setting an error callback for vendor:glfw:
 
 ```odin
 error_callback :: proc "c" (code: i32, desc: cstring_view) {
-	context = runtime.default_context(); // set the current context
-	fmt.println(desc, code); // fmt.* calls use the loke calling convention
+	context (using runtime.default_context()) {
+		fmt.println(desc, code); // fmt.* calls use the loke calling convention
+	}
 }
 glfw.SetErrorCallback(error_callback);
 ```
+
+`context (using base, package.field = value, ...)` may also add imported-package overrides to the installed base. `using` is permitted only where no incoming ambient context exists; ordinary `loke` procedures derive routing from their immutable incoming context instead. A context statement without `using` is an error where no incoming ambient context exists.
 
 # Concurrency and the memory model
 
@@ -3718,6 +3747,8 @@ Two accesses conflict when they touch overlapping bytes and at least one is a wr
 The `core:sync` package provides `Atomic(T)` for booleans, integer types, enums with supported integer backing types, and pointers. Its operations are backed by compiler intrinsics and accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` ordering where meaningful. Relaxed operations are atomic but create no inter-thread ordering. Acquire and release create the happens-before edge described above. Sequentially consistent operations additionally participate in one total order. Unsupported type, operation, or ordering combinations are compile-time errors; the implementation may use a lock when the target lacks a lock-free instruction.
 
 Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There is deliberately no implicit `Send` or `Sync` trait in this language version.
+
+The hidden ambient-context pointer is not captured by a new thread or retained task. Context propagation is explicit through an owned value produced by `context_snapshot()`, as specified under [Package-effective context](#package-effective-context), and transferring that snapshot does not add thread-safety to the allocator, logger, or other service handles it contains.
 
 ## Shared ownership
 
@@ -4453,7 +4484,7 @@ void bar(const T*)
 
 Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while a managed owner or borrow from that region is live.
 
-A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals or the implicit context are not permitted.
+A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals or the ambient package context are not permitted.
 
 ### Statement and block attributes
 
@@ -4641,7 +4672,7 @@ The language is strongly and distinctly typed by default. Built-in implicit conv
 
 # Library types assumed by this specification
 
-Several types are used in normative text above but are supplied by the library. They are listed here so that an implementer knows what the core library owes the language. `Atomic(T)` is the one type in this table backed directly by compiler intrinsics; the others use ordinary language facilities.
+Several types are used in normative text above but are supplied by the library. They are listed here so that an implementer knows what the core library owes the language. `Atomic(T)` is backed directly by compiler intrinsics, while `Context` has compiler-known access and propagation rules; the remaining types use ordinary language facilities.
 
 | Type | Used by | Status |
 | --- | --- | --- |
@@ -4650,6 +4681,7 @@ Several types are used in normative text above but are supplied by the library. 
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |
 | `Little_Endian(T)`, `Big_Endian(T)` | [basic types](#basic-types) | Distinct storage wrappers supplied by binary-format libraries. |
 | `Allocator_Error`, `Allocator` | [allocators](#allocators), fallible operations | `core:mem` / `base:runtime`. |
+| `Context`, `Logger` | [package-effective context](#package-effective-context) | Runtime context descriptor and a service handle supplied by `base:runtime` / `core:log`; their bindings are immutable while installed, although the services have interior state. |
 | `Source_Code_Location` | `#caller_location`, `#location` | `base:runtime`. |
 | `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | flag sets and [enum iteration](#iterating-an-enumeration) | Generic library containers. Hardware register layouts use integer masks and explicit accessors in version 1. |
 | `Complex(T)`, `Quaternion(T)` | [library numeric types](#library-numeric-types) | Deliberately not primitive. |

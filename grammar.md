@@ -355,6 +355,7 @@ Statement = Block
           | Foreach_Statement
           | Switch_Statement
           | When_Statement
+          | Context_Statement
           | Defer_Statement
           | Return_Statement
           | Branch_Statement
@@ -410,6 +411,29 @@ deferred syntax may not contain `return`, `or_return`, or another `defer`.
 `break`, `continue`, and `fallthrough` may target only a loop or switch wholly
 inside that deferred statement. Nested procedure literals are checked as
 independent procedures.
+
+## Scoped context
+
+```
+Context_Statement = Attributes? "context" "(" Context_Header ")" Block
+
+Context_Header = "using" Expression ("," Context_Override)* ","?
+               | Context_Override ("," Context_Override)* ","?
+
+Context_Override = Identifier "." Identifier "=" Expression
+```
+
+The `using` form installs a complete `Context` value and is required when a
+foreign or contextless procedure has no incoming ambient context; it is not
+permitted in an ordinary `loke` procedure. Without `using`, the statement
+derives routing from the incoming context. In an override,
+`package.field` uses an import name as a compile-time package selector; an
+override may not target the current package. Override expressions are evaluated
+in source order before the body becomes active. The current procedure continues
+to see its unchanged effective view; the derived routing is observed when the
+target package is called. The predeclared
+`context` expression inside a procedure is an immutable package-effective view;
+assigning, moving, mutably borrowing, or taking its address is a semantic error.
 
 ## Switch
 
@@ -518,6 +542,9 @@ The productions above use the following deterministic parsing rules:
   expression is parenthesised.
 - In a concept requirement, an opening `(` begins `Bindings`; an expression that
   itself begins with parentheses uses a second pair.
+- At statement position, `context (` begins `Context_Statement`; the predeclared
+  context view is not callable. `context.field` remains an ordinary primary
+  expression followed by a selector.
 - A bare identifier in a generic argument, or in parentheses by itself, is stored
   as an unresolved name. Name resolution classifies it as a type, constant, or
   value. Syntactically distinctive type forms such as `^T`, `[]T`, and `proc()`
