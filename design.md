@@ -8,7 +8,17 @@ A code block is surrounded by braces (`{}`) and creates a scope for the variable
 
 ## Statements
 
-Statements are terminated by a semicolon (`;`).
+Statements are terminated by a semicolon (`;`) unless their outermost form ends in a declaration or statement block. `if`, `for`, `foreach`, `switch`, `when`, a bare block, a `defer` of any of them, procedure definitions, record definitions, procedure groups, and brace-bodied operator definitions are therefore terminated by their closing `}`. A semicolon is still required after an expression even when that expression happens to end in a composite literal such as `Point{1, 2}`: literal braces are values, not declaration or statement blocks.
+
+A lone `;` is an empty statement and is permitted at file scope too, so a redundant semicolon after a brace-bodied form is accepted as a separate empty statement:
+
+```odin
+Foo :: struct {}
+Bar :: struct {};   // the trailing `;` is a separate empty declaration
+x :: Point{1, 2};   // a composite-literal expression still needs `;`
+```
+
+Newlines are never significant: there is no automatic semicolon insertion.
 
 ## Control-flow headers
 
@@ -267,6 +277,8 @@ These are real holes, they are intentional, and no diagnostic will catch them:
 - **Foreign code.** A borrow passed to a C function may be retained by that function. The `foreign` boundary is a trust boundary.
 
 If you need a view whose lifetime you cannot prove locally, take an owned copy with `clone`, or use `shared(T)`.
+
+Allocator-wide invalidation is the one effect that is propagated across an ordinary procedure boundary. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may release every allocation belonging to the allocator region passed for that parameter. The effect is part of the procedure type and is substituted at the call site, so a wrapper around `free_all` cannot hide the invalidation from the caller. This remains a local check: the caller compares the effect with the managed owners and borrows live at that call.
 
 ## Debug-mode detection
 
@@ -717,6 +729,15 @@ case foo():
 
 `foo()` does not get called if `i == 0`. If all the case values are constants, the compiler may optimize the switch statement into a jump table (like C).
 
+A switch header of the form `switch (name in expression)` is always a [type switch](#type-switch-statement), never a value switch whose subject is the boolean `name in expression`. The membership meaning needs a second pair of parentheses:
+
+```odin
+switch (x in set) { }     // type switch: `x` binds the variant of `set`
+switch ((x in set)) { }   // value switch on the boolean `x in set`
+```
+
+The two readings are otherwise indistinguishable at the header, and the type switch is by far the more common one.
+
 `switch` always has a subject. Boolean condition chains use `if`, `else if`, and `else`; there is no implicit `switch (true)` form. This keeps every value switch structurally identical and prevents two control-flow constructs from expressing the same condition-chain syntax.
 
 A switch statement can also use the same ranges accepted by `foreach`:
@@ -785,6 +806,10 @@ case bool: fmt.println("bool");
 ## defer statement
 
 A defer statement defers the execution of a statement until the end of the scope it is in. It is registered when execution reaches the `defer` statement and participates in the unified LIFO scope-exit ordering described under [Managed values and storage](#managed-values-and-storage).
+
+Deferred code may not transfer control out of the deferred statement. A `return` or `or_return` anywhere in the deferred statement is an error. A `break`, `continue`, or `fallthrough` is legal only when its target loop or switch is wholly inside the deferred statement; it cannot target a construct surrounding the original `defer`. A deferred statement also may not contain another `defer`. Procedure literals nested in the deferred syntax are checked as independent procedures and are not subject to these restrictions merely because their declarations occur there.
+
+These restrictions make cleanup compositional: once scope exit begins, a deferred action runs to completion and cannot replace the return, break, or continue that caused the exit, nor register more work in the scope whose defer stack is already being drained.
 
 The following will print 4 then 234:
 
@@ -868,6 +893,8 @@ The when statement is almost identical to the if statement but with some differe
 - The compiler checks only the branch belonging to the first true condition.
 - An initial statement is not allowed in a `when` statement.
 - `when` statements are allowed at file scope.
+
+The contents of a `when` branch match its location. Inside a procedure, a selected branch contains ordinary statements. At file scope, it contains top-level items, so it may conditionally provide imports, foreign declarations, `impl` or `extend` blocks, and declarations, but not executable expression statements. In either location the braces used by `when` do not introduce a scope; the selected contents behave as if they had appeared directly at the surrounding location.
 
 Example:
 
@@ -1939,7 +1966,9 @@ When conversion vectors are identical, the following tie-breakers apply in order
 1. A fixed-arity candidate beats a variadic candidate.
 2. A candidate requiring fewer omitted default arguments wins.
 3. A non-parametric candidate beats a parametric candidate.
-4. Between parametric candidates, a structural specialization beats an unspecialized parameter. Otherwise candidate A is more specific than B when A's constraints imply B's constraints and the reverse implication does not hold. If neither direction can be proven, the call is ambiguous.
+4. Between parametric candidates, a structural specialization beats an unspecialized parameter. Otherwise candidate A is more specific than B when A's normalized constraint set syntactically entails B's and the reverse does not hold. If neither direction holds, the call is ambiguous.
+
+Constraint entailment is deliberately a small, portable algorithm rather than theorem proving. Constraints are normalized as an unordered conjunction. Concept composition is expanded transitively, redundant identical atoms are removed, and bound names are alpha-renamed. After that normalization, A entails B only when every atom in B occurs identically in A. Algebraic implications such as `N > 3` implying `N > 2`, or two differently written expressions computing the same boolean, are not used for overload selection. Implementations may diagnose or optimize with stronger reasoning, but stronger reasoning must not change which programs compile or which overload is selected.
 
 Parametric instantiation is therefore not itself a worse argument conversion: an exact generic match beats a concrete overload that requires conversion unless the tie-breakers are reached with identical conversion vectors. Compiler-generated structural equality and comparison are fallbacks; a viable explicit overload for the aggregate suppresses the generated operation. This does not affect the rule above that primitive built-in operations cannot be shadowed.
 
@@ -2191,13 +2220,15 @@ sum :: proc(values: []$T) -> T
 A concept body is a semicolon-terminated list of requirements. A requirement may be preceded by a **binding list**, which introduces names standing for values of the given types:
 
 ```
-requirement := bindings? expression "->" type ";"   // expression form
-             | bindings? expression ";"             // validity form
-             | "const" identifier ":" type ";"      // associated constant form
+Requirement = Bindings? Expression "->" Type ";"               // expression form
+            | Bindings? Expression ";"                         // validity form
+            | "const" Identifier "." Identifier ":" Type ";" // associated constant form
 
-bindings    := "(" identifier {"," identifier} ":" type
-                   {"," identifier {"," identifier} ":" type} ")"
+Bindings    = "(" Binding_Group ("," Binding_Group)* ")"
+Binding_Group = Identifier ("," Identifier)* ":" Type
 ```
+
+A requirement that begins with `(` is always a binding list. A requirement whose own expression must start with a parenthesis needs a second pair.
 
 Inside a requirement, a type name always means the type. Values come only from the binding list. This is the whole disambiguation rule: `T` never silently switches between meaning the type and meaning a value of it, so `T(0)` is unambiguously construction while `(a, b: T) a + b` is unambiguously addition of two values.
 
@@ -2205,7 +2236,7 @@ Inside a requirement, a type name always means the type. Values come only from t
 
 **Validity form** — `expr;` requires only that the expression compiles, with no constraint on its result type.
 
-**Associated constant form** — `const NAME: Type;` requires a constant of that name and type in the type's `impl` block.
+**Associated constant form** — `const Owner.NAME: Type;` requires `NAME` to be a constant of the given type in `Owner`'s `impl` block. `Owner` must name one of the concept's type parameters. Naming the owner keeps concepts with several type parameters unambiguous.
 
 Method and operator requirements are written as ordinary calls on bound values. Lifecycle requirements name the hook:
 
@@ -2214,7 +2245,7 @@ Container :: concept($T: typeid, $Element: typeid) {
 	(c: T)          len(c) -> int;
 	(c: T, i: int)  c[i] -> Element;
 	(c: T)          iter(c);
-	const ZERO: Element;
+	const T.ZERO: Element;
 }
 
 Cloneable :: concept($T: typeid) {
@@ -3136,7 +3167,7 @@ A procedure type with a different calling convention can be declared like the fo
 proc "c" (n: i32, data: rawptr)
 proc "contextless" (s: []int)
 
-Procedure types are only compatible with the procedures that have the same calling convention and parameter types.
+Procedure types are compatible only when calling convention, parameter and result types, parameter modes, variadic shape, and type-level parameter effects match. In particular, `@(allocator_reset)` is part of the parameter's procedure type: a reset-capable procedure cannot be stored in a procedure value whose type hides that effect. Declaration-only attributes such as visibility and deprecation do not participate in type compatibility.
 
 When binding to C libraries you’ll often end up using proc "c" and also set the current context. For this you’ll need to explicitly set the context.
 
@@ -3533,7 +3564,21 @@ The implicit context stores two different forms of allocators: context.allocator
 - context.allocator is for “general” allocations, for the subsystem it is used within.
 - context.temp_allocator is for temporary and short lived allocations, which are to be freed once per cycle/frame/etc.
 
-By default, `context.allocator` is an OS heap allocator and `context.temp_allocator` is a scratch allocator backed by a growing arena. `free_all(context.temp_allocator)` clears that arena. The compiler rejects `free_all` while a live managed value or borrow still refers to storage from that allocator.
+By default, `context.allocator` is an OS heap allocator and `context.temp_allocator` is a scratch allocator backed by a growing arena. `free_all(context.temp_allocator)` clears that arena. The compiler rejects `free_all`, or any call carrying the same allocator-reset effect, while a live managed value or borrow still refers to storage from that allocator.
+
+Allocator values have a region identity in addition to their allocation procedures and failure policy. Copying an allocator value preserves that identity, and every allocation records it. This is what lets the compiler recognize that two local allocator values refer to the same region. When static provenance cannot prove two allocator values distinct, the lifetime check conservatively treats their regions as possibly identical. Across a procedure call the identity is propagated through a parameter marked `@(allocator_reset)`; a Loke procedure that resets an allocator received as a parameter must mark that parameter, and the compiler verifies the promise transitively. The attribute is part of procedure-type compatibility, so indirect calls preserve the same effect.
+
+Resetting a region is intentionally explicit. There is no zero-argument `free_all`; code must name the allocator being reset. A procedure may reset a region it created locally, because no caller-owned value can belong to it. It may not hide a reset of a global, implicit-context, or other pre-existing allocator: such an allocator is taken through an `@(allocator_reset)` parameter instead.
+
+```odin
+release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+scratch := [dynamic]u8 via context.temp_allocator;
+view := scratch[:];
+release_scratch(context.temp_allocator); // ERROR while `scratch` or `view` is live
+```
 
 The following low-level procedures are built in and are also available in package `mem` with enforced allocator errors. Normal managed strings, arrays, and maps do not need them.
 
@@ -3583,10 +3628,9 @@ if (err != nil) { panic("integer allocation failed"); }
 free(ptr);
 ```
 
-- free_all - frees all the memory of the context’s allocator (or given allocator). Note: not all allocators support this procedure.
+- `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. Not all allocators support this procedure. The explicit argument and effect annotation make the invalidation visible through wrappers and indirect calls.
 
 ```odin
-free_all();
 free_all(context.temp_allocator);
 free_all(my_allocator);
 ```
@@ -3706,12 +3750,12 @@ A default foreign parameter is passed by value. `p: inout T` lowers to `T *`, wh
 
 These rules define representation, not lifetime. A pointer, `cstring_view`, or `inout` argument is borrowed only for the call as far as the compiler can see. Foreign code that retains it crosses the trust boundary described under [What is not checked](#what-is-not-checked); the programmer must keep the storage alive and synchronize access. Returning a pointer likewise transfers no ownership unless the binding wraps it in an explicitly documented Loke resource type.
 
-foreign import kernel32 "system:kernel32.lib"
+foreign import kernel32 "system:kernel32.lib";
 
 This foreign import declaration will create a “foreign import name” which can then be used to associate entities within a foreign block.
 
 ```odin
-foreign import kernel32 "system:kernel32.lib"
+foreign import kernel32 "system:kernel32.lib";
 foreign kernel32 {
 	ExitProcess :: proc "stdcall" (exit_code: u32) ---;
 }
@@ -3722,7 +3766,7 @@ The compiler can also automatically build and link imported assembly files. Depe
 For examples, see base/runtime/entry_*.asm.
 
 ```odin
-foreign import lowlevel "lowlevel.asm"
+foreign import lowlevel "lowlevel.asm";
 foreign lowlevel {
     __get_flags :: proc "c" () -> u64 ---;
 }
@@ -3825,6 +3869,8 @@ ptr := my_new(int);
 ### Data types using explicit parametric polymorphism (parapoly)
 
 Structures and unions may have polymorphic parameters and the syntax for doing so is similar to procedure call syntax. Parapoly struct:
+
+Arguments whose parameter type is `typeid` are types; arguments to any other parameter are compile-time constant expressions. Bare names are resolved after parsing, so both `Buffer(Element, Count)` and `Buffer(u8, 4096)` use the same argument syntax. A value argument is not restricted to an identifier.
 
 ```odin
 Table_Slot :: struct($Key, $Value: typeid) {
@@ -4050,6 +4096,14 @@ Attributes modify declarations, parameters, statements, blocks, or type literals
 ```
 
 Optimization and code-generation annotations such as `@(compiler.no_alias)` and `@(compiler.must_tail)` are [extension attributes](#extension-attributes), not base-language ones.
+
+### Procedure Parameters
+
+```odin
+    @(allocator_reset) – `Allocator` parameters whose region may be reset
+    @(by_ptr) – foreign declarations only
+    @(c_vararg) – final variadic parameter of a foreign declaration
+```
 
 ### Variable declaration attributes
 
@@ -4395,6 +4449,12 @@ to represent
 
 void bar(const T*)
 
+#### `@(allocator_reset)`
+
+Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while a managed owner or borrow from that region is live.
+
+A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals or the implicit context are not permitted.
+
 ### Statement and block attributes
 
 #### `@(bounds_check=<boolean>)`
@@ -4650,6 +4710,6 @@ The current version deliberately keeps immutable `string` safe to copy and drop 
 
 ## A formal grammar
 
-This document specifies the language in prose and examples. There is no token list and no production rules, so parser conflicts are found by writing a parser rather than by reading the specification.
+The token list and production rules now live in [grammar.md](grammar.md), which also records the parses this document had left open: `switch (a in b)` as a type switch, `stack` and `manual` as contextual keywords, `mut` as a reserved word, `via` taking a unary operand, and the semicolon rule above.
 
-The constructs most likely to hide a conflict: declaration modifiers in type position (`x: stack Matrix4`, `b: [dynamic]u8 via alloc`), mutable slice types (`[]mut T`) versus slice literals (`[]T{...}`), an unparenthesised `x if c else y` inside a control-flow header, `operator(+) proc`, and `proc "c" ()`. Writing the grammar is the next structural task on this document.
+What remains open is validation. The grammar is written to be parsed top-down with a small fixed lookahead, but that claim has not been checked against an implementation, and a real parser is what will find the conflicts a hand-written grammar hides.

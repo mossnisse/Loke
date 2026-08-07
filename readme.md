@@ -6,4 +6,4 @@ It aims at making it easier to handle memory allocations and complex datatypes a
 
 Loke should be able to use compiled C libraries (C ABI) and have some compatibility C datatypes
 
-The language specification is in [design.md](design.md). Its main sections define the implementable rules for the current language version. Possible later changes that are deliberately still open are collected at the end under "Open questions".
+The language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Its main sections define the implementable rules for the current language version. Possible later changes that are deliberately still open are collected at the end under "Open questions".
