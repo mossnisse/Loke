@@ -4,6 +4,10 @@ It aims to add more high level language functionality and more possibilities for
 
 It aims at making it easier to handle memory allocations and complex datatypes as strings and dynamic arrays, not making the language 100% memory safe as Rust.
 
-Loke should be able to use compiled C libraries (C ABI) and have some compatibility C datatypes
+Loke should be able to use compiled C libraries (C ABI) and have some compatibility C datatypes to make that work.
 
-The language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Its main sections define the implementable rules for the current language version. Possible later changes that are deliberately still open are collected at the end under "Open questions".
+Procedures and that are called and packages that are improted should not change how the code works for the caller or importer in any unexpected ways. The opposite may be true. Having an parameter with an pointer to data that is manipulated is an nessary evil and is allowed.
+
+Stuff like hidden allocations are allowed but procedures returning values that has to be manually hanndled should be clearly vissible that it is needed.
+
+The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).

@@ -8,7 +8,7 @@ A code block is surrounded by braces (`{}`) and creates a scope for the variable
 
 ## Statements
 
-Statements are terminated by a semicolon (`;`) unless their outermost form ends in a declaration or statement block. `if`, `for`, `foreach`, `switch`, `when`, `context`, a bare block, a `defer` of any of them, procedure definitions, record definitions, procedure groups, and brace-bodied operator definitions are therefore terminated by their closing `}`. A semicolon is still required after an expression even when that expression happens to end in a composite literal such as `Point{1, 2}`: literal braces are values, not declaration or statement blocks.
+Statements are terminated by a semicolon (`;`) unless their outermost form ends in a declaration or statement block. `if`, `for`, `foreach`, `switch`, `when`, a bare block, a `defer` of any of them, procedure definitions, record definitions, interface definitions, procedure groups, and brace-bodied operator definitions are therefore terminated by their closing `}`. The same applies to the top-level `impl`, `extend`, and `foreign` blocks. A semicolon is still required after an expression even when that expression happens to end in a composite literal such as `Point{1, 2}`: literal braces are values, not declaration or statement blocks.
 
 A lone `;` is an empty statement and is permitted at file scope too, so a redundant semicolon after a brace-bodied form is accepted as a separate empty statement:
 
@@ -32,11 +32,9 @@ switch (value) { }
 when (LOKE_DEBUG) { }
 ```
 
-This differs from Odin, which leaves the parentheses off. The uniform rule keeps the header visually separate from the body brace and removes the ambiguity Odin resolves with a special parsing rule for composite literals in condition position.
-
 # Identifiers
 
-Identifiers are case-sensitive and match `[A-Za-z_][A-Za-z0-9_]*`. The single identifier `_` is the discard identifier and does not introduce a binding. Unicode remains valid in comments and literals, but identifiers containing non-ASCII characters are rejected. Whether a later language version should admit Unicode identifiers is recorded under [Open questions](#identifier-character-set).
+Identifiers are case-sensitive and match `[A-Za-z_][A-Za-z0-9_]*`. The single identifier `_` is the discard identifier and does not introduce a binding. Unicode remains valid in comments and literals, but identifiers containing non-ASCII characters are rejected.
 
 # Variable declarations
 
@@ -74,11 +72,9 @@ This is called **managed lexical storage**. It provides stack-variable behavior 
 
 ### Values that outlive every scope
 
-A managed value declared at file scope or with [`@(static)`](#static) is **never dropped automatically.** Its storage lives for the duration of the process and is reclaimed by the operating system at exit.
+A managed value declared at file scope or with [`static`](#storage-modifiers) is **never dropped automatically.** Its storage lives for the duration of the process and is reclaimed by the operating system at exit.
 
-This is not an oversight. The alternative is a program-exit destruction order across packages, threads, and initialization dependencies, which is the one part of automatic cleanup that reliably produces use-after-free at shutdown rather than preventing it. A file-scope value has no scope to exit and no single well-defined moment at which no other thread can still reach it, so the language declines to invent one.
-
-The consequences are worth stating plainly. Such a value is reported as still-reachable by a leak checker, which is correct — it is reachable. Anything whose release is externally observable — flushing a file, closing a socket, releasing a lock held in shared memory — must not rely on being a global managed value; use [`@(fini)`](#fini), an explicit `drop` at the end of `main`, or a scope inside `main` that owns the value. A `@(static)` local behaves identically: it is initialized on first reach and dropped never.
+Such a value is reported as still-reachable by a leak checker. Anything whose release is externally observable — flushing a file, closing a socket, or releasing a lock held in shared memory — must use [`@(fini)`](#fini), an explicit `drop` at the end of `main`, or a scope inside `main` that owns the value. A `static` local behaves identically and is never dropped automatically.
 
 ```odin
 cache: map[string]int;             // released by the OS at exit, no drop runs
@@ -89,30 +85,61 @@ main :: proc() {
 }
 ```
 
-Automatic cleanup participates in the same ordering as `defer`. Completing initialization of a managed local registers an implicit `defer drop(value)` at that point, including when an allocation failure under the `.Error` policy initializes it to zero. User-written defers and implicit cleanups execute together in reverse registration order. A defer that refers to an already initialized managed local therefore runs before that local is dropped. On `return`, result expressions are evaluated and moved into result storage before scope-exit actions begin; defers cannot change the already-prepared result. A managed value is always moved into result storage, never cloned, so returning one costs nothing beyond the move. See [Named results](#named-results) for how this applies to named result variables.
+Automatic cleanup participates in the same ordering as `defer`. Completing initialization of a managed local registers an implicit `defer drop(value)` at that point. User-written defers and implicit cleanups execute together in reverse registration order. A defer that refers to an already initialized managed local therefore runs before that local is dropped. On `return`, result expressions are evaluated and moved into result storage before scope-exit actions begin; defers cannot change the already-prepared result. A managed value is always moved into result storage, never cloned, so returning one costs nothing beyond the move. See [Named results](#named-results) for how this applies to named result variables.
 
-Storage placement and ownership are separate concepts. Two modifiers control them:
+### Storage modifiers
+
+Storage duration and ownership are separate concepts, and a declaration answers them in two independent slots written after its `:`.
+
+**Duration** — where the variable lives and for how long. The three are mutually exclusive, and omitting all of them gives ordinary lexical storage.
 
 - `stack` requires a fixed-size value to live in the current stack frame. This is a guarantee, not a hint: it lets embedded and real-time code state that a declaration must not touch the allocator, and the compiler rejects the declaration if it cannot honour it.
-- `manual` disables automatic cleanup for an owning value. It is intended for arenas, foreign ownership, custom containers, and low-level allocator code.
+- `static` gives the variable one instance with process lifetime, keeping its value across calls, exactly like a static local in C.
+- `thread_local` is `static` with one instance per thread.
+
+**Ownership** — `manual` disables automatic cleanup for an owning value. It is intended for arenas, foreign ownership, custom containers, and low-level allocator code. It combines with any duration.
+
+```odin
+small:   stack Matrix4;            // guaranteed no allocation
+counter: static int;               // keeps its value across calls
+current: thread_local ^Task;       // one per thread
+buffer:  manual [dynamic]u8;       // released explicitly
+scratch: stack manual [64]u8;      // this frame, cleanup is mine
+
+large: [1_000_000]f64;             // compiler may place this large local on the heap
+```
+
+A modifier may also be written where the type is inferred:
+
+```odin
+counter: static = 0;
+raw: manual := make([dynamic]int);
+```
 
 Without `stack`, the compiler chooses placement. It may place a large fixed-size local on the heap when that avoids an impractical stack frame. This choice never changes program meaning, address identity, or lexical cleanup — only whether the program fits. Code that needs an explicitly allocated stable object uses `new`; a second placement-forcing modifier is unnecessary.
 
-`stack` and `manual` are declaration modifiers, not type constructors. They do not participate in type identity: `manual [dynamic]int` and `[dynamic]int` are the same type, differing only in who releases the value. This is why ownership can be transferred between them with `move` rather than a conversion.
+File-scope, `static`, and `thread_local` declarations are **constant-initialized**. Their initializer must be a compile-time constant and may not perform a runtime call or allocation; omitting it uses the type's zero value. File-scope and `static` storage is ready before `@(init)` procedures run. Each thread's `thread_local` storage is ready before that thread begins executing Loke code. Runtime initialization belongs in an `@(init)` procedure, an explicit `once` value from `core:sync`, or ordinary caller-owned state. This removes hidden initialization guards, recursion during initialization, and a special concurrency rule from the language.
+
+**These are declaration modifiers, not type constructors.** They do not participate in type identity: `manual [dynamic]int` and `[dynamic]int` are the same type, differing only in who releases the value. Ownership can be transferred between them with `move` without a conversion.
+
+They are also not [attributes](#attributes), even though they attach to the same declarations. An attribute carries information about a declaration for a tool — its symbol name, its visibility, whether it is exported. A storage modifier changes what the program does: how long the variable exists, whether its address is stable, whether cleanup runs at scope exit, and whether a borrow of it may outlive the procedure. That belongs in the declaration, next to the type it qualifies.
+
+`static` and `thread_local` interact with the rest of the language in three ways worth stating:
+
+- Neither registers automatic cleanup, per [Values that outlive every scope](#values-that-outlive-every-scope) above.
+- A `static` has a stable address for the whole process, and a `thread_local` instance has one for the lifetime of its thread. Unlike a borrow of an ordinary local, either borrow may be returned to its caller. Sending a `thread_local` borrow to another thread or retaining it after the originating thread exits is outside the local borrow analysis and is invalid.
+- A managed file-scope, `static`, or `thread_local` owner initially binds the program's build-selected default allocator. `via` is not permitted on these declarations because their initialization may not evaluate a runtime allocator expression. Code that needs another allocator constructs an owner explicitly during `@(init)` or thread startup and moves it into the persistent variable.
 
 ```odin
-small: stack Matrix4;         // guaranteed no allocation
-large: [1_000_000]f64;        // compiler may place this large local on the heap
-buffer: manual [dynamic]u8;
 allocation_error: Allocator_Error;
 buffer, allocation_error = make([dynamic]u8, allocator=my_allocator);
 if (allocation_error != nil) { panic("buffer allocation failed"); }
 
-// A manual owner must be released explicitly.
-delete(buffer);
+// A manual owner must be dropped explicitly.
+drop(buffer);
 ```
 
-`drop(value)` may be used to release a managed value before the end of its scope. It runs the value's cleanup, resets the variable to its zero value, and marks the variable dead so that scope exit does not release it a second time.
+`drop(value)` is the one explicit cleanup operation for an owning value. It runs the value's cleanup, resets the variable to its zero value, and marks the variable dead. Scope exit performs the same operation automatically for managed owners and does nothing for manual owners.
 
 Liveness for cleanup is tracked per variable. Where control flow makes it statically undecidable — a `drop` or `move` on only one branch — the compiler inserts a hidden boolean drop flag for that variable and cleanup tests it. Assigning to a dead variable revives it. Cleanup is therefore never driven by comparing a value against its zero state. A `drop` hook is called exactly once per completed initialization, and the type's zero value must be the inert state described under [Zero values](#zero-values).
 
@@ -166,7 +193,7 @@ assert(len(a) == 0);
 
 The compiler may replace a copy with a move when it can prove that the source value is no longer used. This optimization never changes observable behavior. A shallow alias of an owning mutable value is not provided; shared ownership must use an explicit library type such as `shared(T)`.
 
-If a clone cannot allocate, the assignment fails according to the allocator's failure policy described under [Allocation failure](#allocation-failure). The destination keeps its previous value; a failed assignment never leaves a half-copied value.
+If a clone cannot allocate, assignment invokes the destination allocator's failure policy described under [Allocation failure](#allocation-failure). The destination keeps its previous value; a failed assignment never leaves a half-copied value.
 
 # Borrows and lifetimes
 
@@ -191,9 +218,11 @@ An owning temporary created while evaluating an expression lives until the end o
 
 ## The one rule
 
-> While an immutable or interior borrow of an owner is live, that owner may not be moved, dropped, or reallocated. An exclusive mutable borrow of the owner variable created by `inout` may mutate or reallocate the owner through that borrow itself, but the owner cannot be accessed through a competing name until the mutable borrow's last use.
+> While an immutable or interior borrow of an owner is live, that owner may not be moved, dropped, or **invalidated**. An exclusive mutable borrow of the owner variable created by `inout` may mutate or invalidate the owner through that borrow itself, but the owner cannot be accessed through a competing name until the mutable borrow's last use.
 
-An owner is *reallocated* by any operation that may change where its backing storage lives or how long it is: `append`, `resize`, `reserve`, `shrink`, `clear`, `remove`, map insertion, and any user operation taking `inout self` that is not marked [`@(no_reallocate)`](#no_reallocate). Reallocation through the unique `inout` path is allowed because that path updates the caller's owner header; existing element or slice borrows still prevent the call.
+An owner is *invalidated* by any operation that may change where its backing storage lives, how long it is, or which elements it still contains: `append`, `resize`, `reserve`, `shrink`, `clear`, `remove`, map insertion, and any user operation taking `inout self`. Invalidation through the unique `inout` path is allowed because that path updates the caller's owner header; existing element or slice borrows still prevent the call.
+
+Reallocation is the common cause but not the only one. `clear` keeps the same allocation and capacity, and `remove` may too, yet both make the elements a live view describes no longer the elements the owner has. Treating every user `inout` operation as invalidating is conservative, but keeps effects out of procedure annotations and makes the rule visible from the parameter mode alone.
 
 A borrow is **live** from the point it is created to the point of its last use, within the procedure body that created it. This is a use-based extent, not a scope-based one: a borrow that is never used again stops constraining its owner immediately.
 
@@ -242,9 +271,10 @@ sort_in_place(inout numbers);   // ERROR: `numbers` is borrowed by `view`
 fmt.println(view[0]);
 
 // 5. Releasing an allocator whose storage is still borrowed.
-scratch := [dynamic]u8 via context.temp_allocator;
+arena := mem.Arena();
+scratch := [dynamic]u8 via arena.allocator();
 view := scratch[:];
-free_all(context.temp_allocator);  // ERROR
+free_all(arena.allocator());       // ERROR
 fmt.println(view[0]);
 ```
 
@@ -264,13 +294,13 @@ bad := first_half([dynamic]int{1, 2, 3, 4}[:]);
 
 The default parameter binding itself is a callee-local read-only value. Taking `&parameter` borrows that local binding and such a pointer cannot be returned. The rule above concerns storage reached through a borrowed argument, such as the elements described by a slice or dynamic-array header. An `inout` parameter instead aliases the caller's variable, so a borrow explicitly returned from it is attributed to that caller variable.
 
-This is deliberately coarse. A procedure taking two slices and returning one is treated as returning a borrow of both. At the call site, a returned borrow is rejected if any attributed argument is a temporary whose lifetime ends with the call's complete expression. The imprecision costs an occasional unnecessary copy; it buys a model with no lifetime annotations anywhere in the language.
+When a procedure accepts multiple borrowed arguments, a returned borrow is attributed to all of them. At the call site, the result is rejected if any attributed argument is a temporary whose lifetime ends with the call's complete expression.
 
 ## What is not checked
 
 These are real holes, they are intentional, and no diagnostic will catch them:
 
-- **Borrows stored in memory.** Putting a slice in a struct field, a global, a container, or a service object escapes the analysis entirely. Once a borrow is stored, its validity is yours to maintain. Package-context bindings themselves accept only the declared service-handle types and do not provide a general-purpose place to store arbitrary values.
+- **Borrows stored in memory.** Putting a slice in a struct field, a global, a container, or a service object escapes the analysis entirely. Once a borrow is stored, its validity is yours to maintain.
 - **Borrows across procedure boundaries beyond the coarse rule above.** If a procedure stores a borrowed parameter somewhere that outlives the call, nothing detects it.
 - **Anything reached through a raw pointer.** `^T` arithmetic, `[^]T` multi-pointers, `unsafe.raw_data`, and the rest of the `unsafe` package are outside the model by construction.
 - **Threads.** Borrow liveness is analysed per procedure body; sending a borrow to another thread is not tracked. Use `shared(T)` or an owned copy.
@@ -295,17 +325,15 @@ import "core:unsafe"
 
 view := unsafe.cstring_view(ptr);   // no owner is known for `ptr`
 bytes := unsafe.as_bytes(some_string);
-
-// Reinterpret a union payload without the tag check. Undefined behaviour if
-// `value` does not currently hold an `int`.
-n := unsafe.assume_variant(value, int);
 ```
 
 Everything in `unsafe` is a promise by the programmer that a lifetime holds which the compiler cannot see. A project that wants to forbid this can lint on the import; the language does not, because foreign interop and allocator implementations need it.
 
 ## Relationship to `manual`
 
-A `manual` owner is exempt from the reallocation and drop checks, since the whole point of `manual` is that the programmer is tracking lifetime themselves. Borrows of a `manual` owner are still ordinary borrows and still cannot be returned from the procedure that created the owner — that check depends only on scope, not on ownership mode.
+A `manual` owner participates in the same borrow, move, reallocation, and liveness checks as a managed owner. The modifier suppresses only automatic cleanup at scope exit; it is not an `unsafe` escape from the borrow rules. A live borrow therefore prevents `drop`, move, and reallocation regardless of whether cleanup is automatic.
+
+`drop` consumes either a managed or manual owner, resets the variable to its zero value, and marks the variable dead until it is assigned again. Dropping a definitely dead variable is a compile-time error. This tracking concerns the owner variable and its checked borrows; aliases manufactured through raw pointers or `core:unsafe` remain the programmer's responsibility.
 
 # Literals
 
@@ -385,6 +413,44 @@ y : int : 123;
 z :: y + 7; // constant computations are possible
 ```
 
+## Materialization
+
+A constant is a value, not a variable, and an ordinary use of one is substituted at the point of use with no storage involved. Some uses need storage anyway:
+
+- indexing by a non-constant index
+- a slice expression
+
+**A constant used in either of those ways is materialized into read-only storage.** All uses of that constant share one backing object. A constant that is never used in one of those ways occupies no space in the program.
+
+```odin
+NUMBERS :: [?]int{7, 42, 628};
+
+main :: proc() {
+	index := read_index();
+	n := NUMBERS[index];        // materialized: the index is not constant
+	m := NUMBERS[0];            // not materialized: folds to 7
+	all := NUMBERS[:];          // materialized: `[]int` over static storage
+}
+```
+
+Materialized storage is read-only. Assigning through it is rejected and a slice of it is `[]T`, never `[]mut T`. Taking the address of a constant or of any place within its materialized storage is a compile-time error: pointers carry no read-only capability, so permitting `&C` or `&C[i]` would allow an ordinary `^T` parameter to write into read-only storage. Low-level code that deliberately needs a foreign pointer obtains a read-only slice first and uses `unsafe.raw_data`, making the capability loss explicit.
+
+Because the storage is static, a borrow of a materialized constant outlives every scope, exactly like [a slice over a string literal](#slices). It may be returned, stored in a global, or sent to another thread.
+
+This is why the language needs no separate read-only-data declaration. A table you want in the binary's read-only section, indexed at runtime, *is* a constant, and saying so is the whole declaration:
+
+```odin
+NAMES :: [?]string{"north", "east", "south", "west"};
+
+heading :: proc(category: int) -> string {
+	return NAMES[category];
+}
+```
+
+Placing a constant in a *particular* linker section is a toolchain concern and uses an [extension attribute](#extension-attributes) such as `@(link.section=".rodata.hot")`.
+
+A constant's value is still required to be computable at compile time, so a constant can never hold a managed owner, a pointer to non-static storage, or anything else whose lifecycle would need to run. Materialization therefore never has to consider cleanup: it emits bytes.
+
 # Comments
 
 Comments can be anywhere outside of a string or character literal. Single line comments begin with //:
@@ -411,6 +477,21 @@ Multi-line comments begin with /* and end with */. Multi-line comments can be al
 
 Loke programs consist of packages. Loke source files use the `.loke` extension. A package is a directory of source files, all of which have the same package declaration at the top. Execution starts in the package’s main procedure.
 
+## Program entry and exit
+
+An executable is built from a package named `main` containing exactly one procedure named `main`. Its signature is `main :: proc()`: no parameters, no results, the `loke` calling convention. Command-line arguments are read from `os.args`, and the exit status is set with `os.exit(code)` or defaults to 0 when `main` returns normally.
+
+`main` takes no arguments and returns nothing because both would be a second, weaker spelling of something the program already has. An `argv` parameter cannot describe the platform's real argument encoding on every target, and a returned status would compete with `os.exit` while running before `@(fini)` procedures — leaving two exit paths with different cleanup.
+
+The full startup and shutdown order is:
+
+1. Runtime initialization, including the build-selected allocator and logging providers.
+2. `@(init)` procedures, in the deterministic order given under [`@(init)`](#init).
+3. `main`.
+4. `@(fini)` procedures, using the same deterministic ordering relation as `@(init)` but reversed.
+
+`os.exit` runs `@(fini)` procedures and then terminates. Managed values at file scope are [never dropped](#values-that-outlive-every-scope) at any point in this sequence.
+
 ## Import statement
 
 The following program imports the fmt and os packages from the core library collection.
@@ -436,9 +517,15 @@ import "core:fmt";
 import foo "core:fmt"; // reference a package by a different name
 ```
 
-An import name also identifies that package in a scoped [context override](#package-effective-context), as in `context (foo.logger = test_logger) { ... }`. Aliases of the same imported package identify the same package context; an alias does not create a second package instance.
+An import name is a lexical alias and nothing more. Two names for the same package refer to the same declarations, and an alias never creates a second instance of a package or of anything it owns.
 
-Every source file must contain its package declaration. Package versions are selected by the build system or package manager and are not part of import syntax in this language version. Possible versioned imports are recorded under [Open questions](#package-and-import-versioning).
+Every source file must contain its package declaration. Package versions are selected by the build system or package manager and are not part of import syntax.
+
+### Import cycles
+
+Import cycles between packages are rejected. The import graph must be a directed acyclic graph, and the compiler reports the cycle as a path of import statements.
+
+This is largely a consequence of a rule that already exists rather than an independent restriction: [`@(init)`](#init) ordering is defined as a topological sort of the import graph, and a cycle has no such sort. Declarations *within* a package may refer to each other freely and in any order, and a genuine mutual dependency is expressed by merging the packages or extracting the shared declarations into a third package that both import.
 
 ## Exported names
 
@@ -622,10 +709,12 @@ foreach (character in str) {
 You can iterate mutable arrays and slices by-reference with the address operator. For slices, the expression must have type `[]mut T`; `[]T` supports by-value iteration only:
 
 ```odin
+mutable_slice := []mut int{1, 4, 9};
+
 foreach (&value in some_array) {
 	value = something;
 }
-foreach (&value in some_slice) {
+foreach (&value in mutable_slice) {
 	value = something;
 }
 foreach (&value in some_dynamic_array) {
@@ -666,10 +755,6 @@ foreach (x in reverse(array)) {
 ```
 
 Loop unrolling is an optimizer decision or a namespaced compiler-extension attribute. It does not change language semantics and has no base-language directive.
-
-### Design notes
-
-Using separate `for` and `foreach` keywords makes the repetition mechanism visible before the header is read. It also lets `in` retain its ordinary membership meaning in a `for` condition instead of requiring a contextual parsing rule.
 
 ## if statement
 
@@ -762,7 +847,7 @@ case 20..<30:
 }
 ```
 
-### Partial switch
+### Exhaustive switch
 
 With enum values:
 
@@ -780,12 +865,13 @@ case .A: fmt.println("A");
 case .B: fmt.println("B");
 case .C: fmt.println("C");
 case .D: fmt.println("D");
-case:    fmt.println("?");
 }
 
-@(partial) switch (f) {
+// An empty default explicitly acknowledges the variants not handled here.
+switch (f) {
 case .A: fmt.println("A");
 case .D: fmt.println("D");
+case:
 }
 ```
 
@@ -800,10 +886,16 @@ case bool: fmt.println("bool");
 case:
 }
 
-@(partial) switch (_ in f) {
+switch (_ in f) {
 case bool: fmt.println("bool");
+case: // intentionally ignore `int` and nil
 }
 ```
+
+A switch over an enum must either list every member or include `case:`. A type
+switch over a union must either cover every variant and nil, or include `case:`.
+The default may be empty; writing it is the explicit acknowledgement that the
+remaining cases are intentionally ignored.
 
 ## defer statement
 
@@ -884,8 +976,6 @@ foo :: proc() -> (n: int) {
 }
 ```
 
-Note: Loke’s defer differs from Go’s defer, which is function-exit and relies on a closure stack system. Whether `defer` earns its place in the final language is tracked under [Open questions](#retaining-defer); its semantics while present are defined above.
-
 ## when statement
 
 The when statement is almost identical to the if statement but with some differences:
@@ -935,8 +1025,6 @@ for (cond) {
 ```
 
 There are no statement labels or multi-level breaks. Code that must leave several nested constructs can return from the procedure or move that control flow into a separate procedure.
-
-The case this costs most is the one in the example above: a `switch` inside a loop, where `break` inside a case leaves the switch and there is no way to spell "leave the loop". This is a real and common shape, and the answer is deliberately not a label. Rewrite the case as an `if` chain, set a flag the loop condition tests, or — usually best — lift the loop body into a procedure that returns whether to continue. A construct that exists only to escape two levels of nesting is a reliable sign the body wants to be its own procedure.
 
 ### continue statement
 
@@ -1009,7 +1097,7 @@ fmt.println(multiply(137, 432));
 
 #### Parameter semantics and ABI lowering
 
-By default, procedures use the `loke` calling convention. It uses the platform C ABI as a base, adds a read-only pointer to the current ambient context as an implicit argument, and defines its own deterministic classification of parameters and results. The callee resolves the package-effective view described under [Package-effective context](#package-effective-context) from that pointer. Every caller and callee compiled for the same target ABI must use the same classification; indirect passing is not a choice they may make independently at each call.
+By default, procedures use the `loke` calling convention. It uses the platform C ABI as a base and defines its own deterministic classification of parameters and results. It adds no implicit environment or service argument. Every caller and callee compiled for the same target ABI must use the same classification; indirect passing is not a choice they may make independently at each call.
 
 The source-level parameter mode is decided before ABI lowering:
 
@@ -1028,7 +1116,7 @@ After applying those rules, the ABI may transport a parameter in registers, in a
 ```text
 source:   inspect(value)
 lowered:  temporary = argument representation
-          inspect_lowered(&temporary, immutable_ambient_context)
+          inspect_lowered(&temporary)
 ```
 
 The temporary remains valid until the call completes. It is not source-level pointer syntax, cannot be retained by the callee, and does not grant permission to modify the caller's variable. Taking `&value` inside the procedure behaves as taking the address of a callee-local binding, not the address of the caller's variable. An optimizer may reuse the caller's storage only when it proves that the difference is completely unobservable under these rules.
@@ -1185,13 +1273,35 @@ window1, err1 := create_window("Title1");
 window2, err2 := create_window(title="Title1", width=640, height=360);
 ```
 
-Default values are assigned at the start of the procedure call and can be overwritten. They may also be assigned to named results.
+An input parameter's default is an ordinary expression, not necessarily a
+compile-time-known value. The expression is evaluated once for each call that
+omits that argument; it is not evaluated when the caller supplies the
+argument. Names in the expression are resolved in the lexical scope of the
+procedure declaration.
 
-Note: These default values must be compile time known values, such as a constant value or nil (if the type supports it).
+Allocator-taking procedures conventionally default to the program provider. The
+provider implementation is selected once by the final build, while its returned
+`Allocator` remains an ordinary runtime value:
+
+```odin
+read_file :: proc(
+	path: string,
+	allocator := mem.default_allocator(),
+) -> ([]byte, Error) {...}
+
+data, err := files.read_file("data.bin");
+scratch_data, scratch_err := files.read_file("scratch.bin", allocator=scratch);
+```
+
+The compiler-provided `#caller_location` expression is also valid as a
+default and denotes the source location of the call. Named result initializers
+use similar syntax, but initialize result variables on procedure entry rather
+than supplying omitted arguments; those result variables may subsequently be
+assigned by the procedure body.
 
 ### Explicit procedure overloading
 
-Unlike other languages, Loke provides the ability to explicitly overload procedures:
+Procedure overloads are declared explicitly as named procedure groups:
 
 ```odin
 bool_to_string :: proc(b: bool) -> string {...};
@@ -1200,21 +1310,9 @@ int_to_string  :: proc(i: int)  -> string {...};
 to_string :: proc{bool_to_string, int_to_string};
 ```
 
-### Rationale behind explicit overloading
-
-Named procedure groups make overload sets visible and give every implementation an ordinary name that can be called directly. Methods and operators use the same overload-resolution rules, but their call syntax selects from the visible group automatically.
-
-The language does not reject an abstraction merely because it can be used badly. Operator overloading, implicit conversions, extension methods, and custom lifecycle hooks can all make unfamiliar code harder to read, but they also make well-designed domain types dramatically clearer. The goal is to make good programs possible, trust the programmer, and provide tools that reveal what the compiler selected.
-
-Ambiguity is still a compile-time error because a program must have deterministic meaning. This is a name-resolution rule, not a judgment about whether an abstraction is tasteful.
-
-Explicit overloading has many advantages:
-
-- Explicitness of what is overloaded
-- Able to refer to the specific procedure if needed
-- Clear which scope the entity name belongs to
-- Ability to specialize parametric polymorphic procedures if necessary, which have the same parameter but different bounds (see where clauses)
-- A direct named form for debugging or disambiguating method and operator calls
+Each member retains its ordinary name and may be called directly. A call through
+the group uses the overload-resolution rules defined below. An unresolved tie is
+a compile-time error.
 
 ```odin
 foo :: proc{
@@ -1233,7 +1331,10 @@ bool
 
 `bool` is the ordinary logical type, and the only one. It is one byte, matching C's `_Bool`.
 
-There are no sized boolean types. A boolean-looking typedef in a C header is an integer, and it binds as the integer it is: Win32 `BOOL` and Xlib `Bool` are `i32`, and OLE's `VARIANT_BOOL` is an `i16` whose true value is `-1`. A binding converts at its boundary, which is where the encoding is documented and where the `VARIANT_BOOL` case has to be handled by hand regardless.
+There are no sized boolean types. A boolean-like foreign typedef binds as its
+integer representation: Win32 `BOOL` and Xlib `Bool` are `i32`, and OLE's
+`VARIANT_BOOL` is an `i16` whose true value is `-1`. A wrapper converts that
+representation to `bool` at the foreign boundary.
 
 ```odin
 foreign user32 {
@@ -1252,6 +1353,7 @@ A dedicated `b32` would remove the `!= 0` from one family of C booleans while le
 int  i8 i16 i32 i64 i128
 uint u8 u16 u32 u64 u128 uintptr
 
+byte // predeclared alias for `u8`, not a distinct type
 ```
 
 f16 f32 f64 // floating point numbers
@@ -1291,7 +1393,7 @@ The zero value is:
 - `false` for `bool`
 - `""`, the empty string, for `string`
 - an empty, immediately usable value with no backing allocation for `[dynamic]T` and `map[K]V`. `len` and `cap` are 0, and appending or inserting is legal without any prior construction
-- `nil` for pointer, multi-pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, union, `any_view`, `shared(T)`, and `weak(T)` types. A nil slice or view has length 0 and points to no storage; a nil union holds no variant, except for a [`@(no_nil)`](#no_nil) union, whose zero value is the zero value of its first variant
+- `nil` for pointer, multi-pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, union, `any_view`, `shared(T)`, and `weak(T)` types. A nil slice or view has length 0 and points to no storage; a nil union holds no variant
 
 Aggregate zero values are formed recursively from their fields. A type with a custom `drop` hook has an additional invariant: its zero value must be an inert, valid state on which `drop` performs no external action. This is required because an omitted initializer still completes an initialization and therefore registers cleanup. A resource whose machine representation uses zero for a live handle must carry a separate validity field, translate the handle representation, or disallow direct representation as an owning value.
 
@@ -1317,14 +1419,16 @@ u := u32(f);
 
 Unlike C, assignments between values of a different type require an explicit conversion.
 
-# Transmute operator
+# transmute procedure
 
-The transmute operator is a bit cast conversion between two types of the same size. Both the source and destination must have a **trivial lifecycle**: they have no custom `clone` or `drop`, contain no managed owner, and are recursively bitwise-copyable. This prevents a bit cast from duplicating an owning representation or manufacturing a value whose cleanup invariant was never established.
+`transmute(T, value)` is a bit cast conversion between two types of the same size. Both the source and destination must have a **trivial lifecycle**: they have no custom `clone` or `drop`, contain no managed owner, and are recursively bitwise-copyable. This prevents a bit cast from duplicating an owning representation or manufacturing a value whose cleanup invariant was never established.
 
 ```odin
 f := f32(123);
-u := transmute(u32)f;
+u := transmute(u32, f);
 ```
+
+It is an ordinary compile-time built-in procedure, not an operator: `transmute` is a predeclared identifier rather than a keyword, its first argument is a type in the same way `size_of(T)` and `new(T)` take one, and it binds like any other call. Nothing about a bit cast needs its own syntax — the earlier `transmute(T)value` spelling bought a reserved word and a unary binding rule for a form that already looked like a call.
 
 This is akin to doing the following pointer cast manipulations:
 
@@ -1333,7 +1437,7 @@ f := f32(123);
 u := (^u32)(&f)^;
 ```
 
-However, transmute does not require taking the address of the value in question, which may not be possible for many expressions. `transmute` cannot reinterpret a managed or resource-owning value. Low-level code may inspect or manipulate such representations through raw storage in `core:unsafe`, but it is then responsible for establishing exactly one initialized owner; the language provides no safe bit-cast shortcut around lifecycle hooks.
+However, `transmute` does not require taking the address of the value in question, which may not be possible for many expressions. `transmute` cannot reinterpret a managed or resource-owning value. Low-level code may inspect or manipulate such representations through raw storage in `core:unsafe`, but it is then responsible for establishing exactly one initialized owner; the language provides no safe bit-cast shortcut around lifecycle hooks.
 
 # Untyped types
 
@@ -1356,32 +1460,50 @@ There are a few built-in constants and values which have different uses:
 false // untyped boolean constant equivalent to the expression 0!=0
 true  // untyped boolean constant equivalent to the expression 0==0
 nil   // untyped nil value used for certain values
----   // untyped undefined value used to explicitly not initialize a variable
+---   // marker used to explicitly leave a typed variable uninitialized
 ```
 
---- is useful if you want to explicitly not initialize a variable with any default value:
+`---` is useful when measured low-level code wants to omit initialization that it will immediately overwrite. It is an initializer marker rather than a general expression, so the variable's type must be written explicitly:
 
 ```odin
 x: int; // initialized with its zero value
 y: int = ---; // uses uninitialized memory
 ```
 
-This is the default behaviour in C, whilst the default behaviour here is to zero the memory.
+This is an explicit unsafe optimization, not the default behaviour. It is permitted only for types with a trivial lifecycle. Evaluating a value, field, or element whose bytes have not been initialized since the declaration is undefined behaviour. Taking its address or selecting a place in order to write it is allowed; every part later read must first have been written. The compiler may assume that no uninitialized value is ever read.
+
+Types containing managed owners or custom `clone` or `drop` hooks cannot use `---`, because merely leaving their ownership representation uninitialized would make scope-exit cleanup invalid. Ordinary declarations remain zero-initialized.
 
 Note: --- is not a contract in that all memory is uninitialized, but that it may be. For example, as a side-effect of an implementation detail, padding in a struct must be zeroed to permit trivial bitwise memory comparison.
 
 # Built-in procedures
-
-For the full list of builtin-procedures, see the documentation for package builtin.
 
 There are two kinds of built-in procedures:
 
 - Compiler defined
 - Core library defined
 
+For the full list, see the documentation for package `builtin`. The compiler-defined ones used by normative text in this document are:
+
+| Procedure | Result |
+| --- | --- |
+| `len(value)`, `cap(value)` | Element or byte count, and capacity. Constant when the operand is constant |
+| `size_of(T)`, `align_of(T)` | Size and alignment in bytes; compile-time constants. Accept a type or an expression |
+| `offset_of(T, field)` | Byte offset of a field; a compile-time constant |
+| `type_of(expr)` | The static type of an expression, usable where a type is expected |
+| `typeid_of(T)` | The [`typeid`](#typeid-type) for a type |
+| `type_info_of(id)` | `^runtime.Type_Info` for a `typeid` |
+| `assert(condition, message := "")` | Runtime check; panics when false. Removed by `-no-assert` |
+| `panic(message)` | Raises a runtime panic at the call site |
+| `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
+| `transmute(T, value)` | Bit cast between two same-sized types with a [trivial lifecycle](#transmute-procedure) |
+| `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
+
+`assert` and `panic` are runtime operations. [`#assert`](#assertboolean) is the compile-time check; `#assert(false, message)` is the compile-time unconditional-failure form. A compile-time check that silently degraded to a runtime one would be a defect, so the `#` spelling remains distinct.
+
 # string type
 
-`string` is an immutable, owning UTF-8 value. It behaves like a simple local variable: it can be assigned, returned, and stored without requiring `make`, `delete`, or `defer`.
+`string` is an immutable, owning UTF-8 value. It behaves like a simple local variable: it can be assigned, returned, and stored without requiring explicit construction, cleanup, or `defer`.
 
 ```odin
 first := "hello";
@@ -1391,7 +1513,10 @@ message := first + " world";
 
 A string literal uses static storage. A string created at runtime owns a managed backing buffer. Implementations may use reference counting, small-string optimization, interning, or another representation, but these choices do not change language semantics. Because strings are immutable, sharing their backing storage is never observable as mutable aliasing.
 
-One constraint on that freedom is normative: **if an implementation shares backing storage between two string values, copying and dropping those values must be safe when they are used from different threads.** A refcounted representation therefore needs an atomic count. This is a real per-copy cost, and it is stated here rather than left implementation-defined, because a program that copies a string into another thread must not have to know which representation it was compiled against. Code that cannot pay it can pass `[]u8` or `string_view`, neither of which is an owner. Possible later refinements are recorded under [Concurrency refinements](#concurrency-refinements).
+If an implementation shares backing storage between string values, copying and
+dropping those values must be safe across threads. A reference-counted
+representation must therefore use an atomic count. Code that does not want
+shared ownership can pass `[]u8` or `string_view`, neither of which is an owner.
 
 `string` always contains valid UTF-8. Arbitrary binary data uses `[]u8` or `[dynamic]u8`. Converting arbitrary bytes to a string validates the input and returns an error if it is not valid UTF-8.
 
@@ -1480,7 +1605,7 @@ Safe conversions return managed values or explicitly borrowed views. They never 
 
 `string_view` is an immutable, validated UTF-8 borrow represented by a pointer and a byte length. It has the same byte, rune, and iteration operations as `string`, but it has no allocator and does not own or terminate its storage. A `string_view` derived from a slice is a borrow of that slice's owner and cannot outlive it. Creating one from a pointer whose owner the compiler cannot identify requires `unsafe.string_view`.
 
-A conversion that validates input has **optional-ok semantics**: it produces `(value, ok: bool)`. On invalid input, `value` is the zero value and `ok` is false. It can be handled with the comma-ok form or with `or_else`; postfix `?` is not a conversion or error-propagation operator.
+A conversion that validates input has [optional-ok semantics](#optional-ok-results): it produces `(value, ok: bool)`. On invalid input, `value` is the zero value and `ok` is false. It can be handled with the comma-ok form or with `or_else`; postfix `?` is not a conversion or error-propagation operator.
 
 ```odin
 text, ok := string(bytes);
@@ -1498,7 +1623,11 @@ Legend:
 - stream = get individual values from the string, without allocation
 - st = the input string
 
-There is no general `const` qualifier in the language. Slice capability is expressed directly by its type: `[]T` is read-only and `[]mut T` permits mutation of elements. A view obtained from a `string` is therefore `[]u8`; it cannot be converted to `[]mut u8`.
+There is no general `const` qualifier in the language, and nothing else stands in for one. Slice capability is expressed directly by its type: `[]T` is read-only and `[]mut T` permits mutation of elements. A view obtained from a `string` is therefore `[]u8`; it cannot be converted to `[]mut u8`. The other read-only storage in a program — a [materialized constant](#materialization) — is read-only because of how it was declared, not because a qualifier was applied to it.
+
+**Pointers carry no such capability: there is no `^const T`.** The asymmetry is deliberate, and it is worth stating what it costs. Read-only access to a *sequence* is spelled `[]T`. Read-only access to a *single value* is spelled by an ordinary `value: T` parameter, which is already an immutable borrow for a managed owner and never copies its allocation; `inout T` is what opts into mutation. Between them these cover every case where the compiler could have checked the promise anyway, because both are procedure-local and the [borrow rules](#borrows-and-lifetimes) apply to them in full.
+
+What remains uncovered is a `^T` stored in a struct field or passed through `rawptr`, and there a read-only qualifier would have been decoration rather than a check: borrows stored in memory are outside the analysis by construction, so `^const T` would document an intention the compiler could not enforce and would then have to be propagated through every signature that touches one. A pointer in Loke means an address whose validity and access discipline the programmer is asserting. Code that wants a checked read-only view of one element passes `[]T` of length one or restructures to take the value.
 
 ## From string to X
 
@@ -1617,7 +1746,7 @@ The equality operators == and != apply to operands that are comparable. The orde
 - Union values are comparable if all their variants are comparable or a visible comparison overload is provided.
 - Array values are comparable if values of the element type are comparable.
 - typeid is comparable.
-- Simd vectors are comparable.
+- `Simd(T, N)` vectors are comparable.
 
 ## Logical operators
 
@@ -1652,9 +1781,9 @@ Like many other languages, eager arithmetic and bitwise operations have a shorth
 
 For an operand x of type T, the address operation &x generates a pointer of ^T to x. The operand must be addressable, meaning that either a variable, pointer indirection, or mutable-slice/dynamic-array indexing operator; or a visible [`operator([])` returning `inout T`](#indexing-and-slicing); or a field selector of an addressable non-packed struct operand; or an array index operation of an addressable array; or a type assertion of an addressable union; or a compound literal value. An `any_view`, an element reached through `[]T`, and an individual field of an `@(packed)` struct are not addressable.
 
-There is exactly one operand form for which `&` is not single-valued. `&m[key]` on a built-in map has [optional-ok semantics](#maps), producing `(^T, bool)`, because the key may be absent and `&` never inserts. This is a property of built-in map indexing, not a general rule about `&`; every other addressable operand yields one pointer.
+There is exactly one operand form for which `&` is not single-valued. `&m[key]` on a built-in map has [optional-ok semantics](#optional-ok-results), producing `(^T, bool)`, because the key may be absent and `&` never inserts. This is a property of built-in map indexing, not a general rule about `&`; every other addressable operand yields one pointer.
 
-For an operand x of pointer type ^T, the pointer indirection x^ denotes the variable of type T pointed to by x. If x is an invalid address, such as nil, an attempt to evaluate x^ will result in platform specific behaviour - on most platforms this will be a segmentation fault.
+For an operand x of pointer type ^T, the pointer indirection x^ denotes the variable of type T pointed to by x. Explicit `x^` and implicit dereferences such as `x.field` test for nil and raise a runtime panic before accessing memory. This is a language guarantee; an implementation may use a hardware fault only when it preserves the same observable panic behaviour. Dereferencing a non-nil address that is dangling, misaligned, or otherwise invalid is undefined behaviour. Such an address can arise only through an unchecked lifetime hole, raw-pointer manipulation, or foreign code.
 
 ```odin
 &x;
@@ -1714,7 +1843,7 @@ for (contains(y, x)) {} // condition-only loop
 
 Except for the explicitly lazy operators `&&`, `||`, `or_else`, and the conditional expressions, expression evaluation is deterministic:
 
-- A call evaluates its receiver, if any, and then its supplied arguments from left to right. Default arguments are evaluated afterward in parameter order.
+- A call evaluates its receiver, if any, and then its supplied arguments from left to right. It then evaluates omitted default arguments once, in parameter order. Each default uses the lexical scope of its procedure declaration.
 - A binary expression evaluates its left operand and then its right operand. An operator overload receives those already evaluated values and does not change their order.
 - Array, struct, union, map, and container literal elements are evaluated in source order. A named struct literal still uses source order rather than field declaration order.
 - A simple or multiple assignment evaluates all right-hand expressions from left to right before evaluating destination place expressions from left to right. Writes then occur from left to right, but only after every value and destination has been prepared. If a required clone fails, no destination is written. This makes swaps well-defined and prevents a failed later clone from partially updating an earlier destination; side effects already performed while evaluating an earlier right-hand expression, including an explicit `move`, are not rolled back.
@@ -1741,6 +1870,15 @@ Precedence    Operator
 ```
 
 Binary operators of the same precedence associate from left to right. For instance x / y * z is the same as (x / y) * z.
+
+**Level 1 is the exception: it associates from right to left.** This is what makes both of its forms chain the way they read:
+
+```odin
+a if c1 else b if c2 else d   // a if c1 else (b if c2 else d)
+x or_else y or_else z         // x or_else (y or_else z)
+```
+
+The conditional groups as an else-if chain rather than inside out. `or_else` needs the same grouping to type-check at all: its left operand must be an [optional-ok expression](#optional-ok-results) and its result is an ordinary value, so under left association the outer `or_else` would receive an already-resolved value on its left and no chain of fallbacks could be written.
 
 The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, type assertion `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().(T) or_else c` is `(a.b().(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
 
@@ -1783,6 +1921,8 @@ For unsigned integers, the operations +, -, *, and << are computed modulo 2n, wh
 
 For signed integers, the operations +, -, *, /, and << may legally overflow and the resulting value exists and is deterministically defined by the signed integer representation. Overflow does not cause a runtime panic. A compiler may not optimize code under the assumption that overflow does not occur. For instance, x < x+1 may not be assumed to be always true.
 
+This costs real optimization, and on the most common type. Undefined signed overflow is what lets a C compiler widen a 32-bit induction variable to a 64-bit register without a check, prove a loop terminates, and strength-reduce the resulting address arithmetic. Defining overflow gives that up on exactly the loops a systems language cares about — and `int` is the recommended default type, so it gives it up by default. The trade is the same one made for [shift counts](#integer-operators): a rule that does not change meaning under optimization is worth more than the code it costs, because the alternative is a program whose correctness depends on a flag. Code in a measured hot loop that wants the wider assumption states it — by using an explicitly sized unsigned type, hoisting the bound, or narrowing the index range — rather than inheriting it silently from every arithmetic expression in the program.
+
 ## Floating-point operators
 
 For floating-point types:
@@ -1790,17 +1930,15 @@ For floating-point types:
 - +x is the same as x
 - -x is the negation of x
 
-Floating-point division by zero follows IEEE-754 and does not panic: a non-zero dividend produces `+Inf` or `-Inf` according to the signs of the operands, and `0.0/0.0` produces a NaN. This is deliberately unlike integer division by zero, which panics — a float division has an in-band representation for the result and an integer division does not. Default exception handling is non-stop; a program that wants trapping behaviour installs it through the target's floating-point environment rather than through the language.
+Floating-point division by zero follows IEEE-754 and does not panic: a non-zero dividend produces `+Inf` or `-Inf` according to the signs of the operands, and `0.0/0.0` produces a NaN. Integer division by zero panics. Default floating-point exception handling is non-stop; a program that wants trapping behaviour installs it through the target's floating-point environment.
 
 An implementation may combine multiple floating-point operations into a single fused operation, and produce a result that differs from the value obtained by executing and rounding the instructions individually.
 
 # User-defined abstractions
 
-## Design principle
+## General rules
 
 Users must be able to create types that are as convenient to use as built-in types. A vector should support arithmetic, a matrix should support indexing, a range should support iteration, and a resource-owning type should participate in automatic cleanup.
-
-The language trusts programmers to choose abstractions that fit their domain. Operator overloading can be abused, just as procedures, macros, inheritance, generics, and pointer arithmetic can be abused. Preventing all questionable uses would also prevent many clear and useful programs. Readability is supported through lexical scoping, normal named forms, compiler diagnostics, documentation tools, and code review rather than through a blanket ban.
 
 User-defined syntax does not change parsing rules. Operators retain their built-in precedence, associativity, and operand evaluation order. An overload supplies behavior for an existing operation; it cannot invent new punctuation or rewrite surrounding syntax.
 
@@ -1852,9 +1990,60 @@ extend vendor.Vector2 {
 }
 ```
 
-There is no orphan rule requiring either the type or the operation to come from the current package. Extension declarations participate only when their declaring name is visible through normal lexical scope and imports. If two equally good extensions are visible, the use is ambiguous and the programmer must call one by its qualified procedure name.
+An extension participates in method and operator lookup only inside the package that declares the `extend` block. Importing that package exposes the extension's named procedures through ordinary qualification, but does not add its methods or operators to implicit lookup. An otherwise unused import therefore cannot change or make ambiguous an existing expression.
+
+Code that wants method syntax for a foreign extension declares a small local forwarding extension. This is an explicit opt-in at the point where the additional behavior becomes part of lookup, and ordinary ambiguity diagnostics apply within that package. No orphan or global coherence rule is needed.
 
 Field lookup takes priority over method-call sugar. Inherent and extension methods otherwise use normal overload resolution. Methods can be collected into explicit procedure groups just like free procedures.
+
+### Receiver forms
+
+`self` may be written in four ways, and no other form of receiver exists:
+
+| Receiver | Meaning |
+| --- | --- |
+| `self` | Immutable borrow of the value |
+| `self: inout Type` | Exclusive mutable borrow of the caller's variable |
+| `self: move Type` | Consumes the receiver |
+| `self: ^Type` | Ordinary pointer parameter, with no method-call sugar |
+
+The first three are reached through `value.method()`, and the call site supplies the `inout` or `move` marker implicitly, as described under [Parameter semantics](#parameter-semantics-and-abi-lowering). A `^Type` receiver is not a receiver mode at all — it is a normal first parameter that happens to be named `self`, so it must be called as `Type.method(pointer)` and exists only for code that genuinely manipulates an address, such as an intrusive data structure. Mutating methods use `inout self`; pointer receivers are not the way to spell mutation.
+
+### Generic types
+
+An `impl` or `extend` block may name a generic type by writing its shape, binding the parameters with `$` exactly as a [specialized](#specialization) procedure parameter does. The bound names are in scope throughout the block:
+
+```odin
+Table :: struct($Key, $Value: typeid) {
+	count:     int,
+	allocator: mem.Allocator,
+	slots:     []mut Table_Slot(Key, Value),
+}
+
+impl Table($Key, $Value) {
+	len :: proc(self) -> int {
+		return self.count;
+	}
+
+	find :: proc(self, key: Key) -> (Value, bool) {
+		...
+	}
+
+	insert :: proc(self: inout Table(Key, Value), key: Key, value: Value) {
+		...
+	}
+}
+
+table: Table(string, int);
+table.insert("a", 1);
+value, ok := table.find("a");
+```
+
+Where the receiver's type is written out rather than inferred — `inout` and `move` receivers, and every non-receiver mention — the bound names are used without `$`, because `$` marks a binding site and these are uses.
+
+A block may also be written for one specialization, `impl Table(string, int) { ... }`, in which case its methods apply only to that instantiation. When both are visible, the more specialized block wins by tie-breaker 4 of [overload resolution](#operator-lookup-and-overload-resolution). Constraints use a `where` clause on the individual procedure, not on the block.
+
+This is what lets a generic container satisfy an [interface](#interfaces-and-generic-operators): requirements such as `(v: T) v.clone() -> T` are written in method syntax, so a generic type with no way to declare methods could never satisfy one.
 
 ## Operator declarations
 
@@ -1907,7 +2096,7 @@ add :: operator(+) proc{
 The following operations may be overloaded:
 
 | Category | Operators |
-| --- | --- |
+|-  --| --- |
 | Unary | `+`, `-`, `!`, `~` |
 | Arithmetic | `+`, `-`, `*`, `/`, `%` |
 | Bitwise and shifts | `|`, `~`, `&`, `&~`, `<<`, `>>` |
@@ -1928,13 +2117,13 @@ impl Big_Int {
 
 Assignment (`=`), declaration (`:=`), member access (`.`), address-of, pointer dereference, `move`, and `drop` are not ordinary overloadable operators. They are tied to storage and lifetime rules; user-defined value behavior is provided by the lifecycle hooks described below.
 
-`&&`, `||`, `or_else`, and the conditional expression control whether an operand is evaluated. They are not ordinary eager procedure calls and are not overloadable until the language has a general model for lazy parameters. This preserves their evaluation contract rather than restricting domain-specific abstractions.
+`&&`, `||`, `or_else`, and the conditional expression control whether an operand is evaluated and are not overloadable.
 
 ## Operator lookup and overload resolution
 
-Operator lookup considers built-in operations, inherent implementations, and visible extension implementations. Operators may be defined for any operand types, including types from other packages and built-in types. No special restriction requires a locally declared operand.
+Operator lookup considers built-in operations, inherent implementations, and extension implementations declared in the current package. Operators may be defined for any operand types, including types from other packages and built-in types. Imported extension packages remain available through their qualified named procedures but do not alter operator lookup.
 
-Lexical scope is considered before type ranking, so a local or explicitly imported operator set can shadow an outer one for the types it covers.
+Lexical scope is considered before type ranking, so a local operator set can shadow an outer one for the types it covers.
 
 **Built-in operations cannot be shadowed.** If every operand of an expression is a built-in type *and a built-in operation is defined for that operator on those operands*, the built-in operation always wins, regardless of what is in scope. `a + b` on two `int`s means integer addition in every file of every program.
 
@@ -1942,7 +2131,7 @@ The qualification matters. Where the language defines no built-in operation — 
 
 A `distinct` type is not a built-in type for the purpose of this rule, even when its underlying type is. `Meters :: distinct f64` is a user type and its operators are ordinary overloads. (Note that `distinct` types *are* grouped with built-ins in stage 1 of [Resolving `T(...)`](#resolving-t), for the different reason given there.)
 
-This is a deliberate limit on an otherwise permissive feature. The argument for operator overloading is that a domain type should read like a built-in one; that argument does not extend to making the built-in types themselves read differently depending on which imports happen to be above the cursor. Redefining arithmetic on primitives is the one use that cannot be made locally reviewable, because the reader cannot tell from the expression that anything unusual is in play. Domain behavior on primitives should use a `distinct` type, which is cheap and makes the intent visible at the declaration:
+Domain-specific behavior over a primitive representation uses a `distinct` type:
 
 ```odin
 Meters :: distinct f64;
@@ -1959,7 +2148,9 @@ Candidates are ranked using the same algorithm as named procedure overloads. Can
 0. Exact type and parameter-mode match.
 1. Borrow, dereference, or mutable-to-read-only capability adjustment that does not create a value.
 2. Built-in lossless conversion.
-3. One user-declared implicit conversion.
+3. A user [`@(implicit)`](#implicit-conversion-from-constants) conversion. Reachable only for an argument that is an untyped constant, so it applies to at most one step and cannot chain.
+
+Rank 3 sits below rank 2 so that a constant always prefers a built-in destination: given `foo :: proc{foo_f64, foo_complex}`, the call `foo(2.0)` selects `foo_f64` at rank 2 rather than converting into `Complex_F64` at rank 3.
 
 The ranks form a vector; they are not added and argument order does not break ties. Candidate A is better than candidate B when A is no worse for every argument and strictly better for at least one. Crossed vectors such as `(0, 2)` and `(2, 0)` are intentionally ambiguous.
 
@@ -1970,7 +2161,7 @@ When conversion vectors are identical, the following tie-breakers apply in order
 3. A non-parametric candidate beats a parametric candidate.
 4. Between parametric candidates, a structural specialization beats an unspecialized parameter. Otherwise candidate A is more specific than B when A's normalized constraint set syntactically entails B's and the reverse does not hold. If neither direction holds, the call is ambiguous.
 
-Constraint entailment is deliberately a small, portable algorithm rather than theorem proving. Constraints are normalized as an unordered conjunction. Concept composition is expanded transitively, redundant identical atoms are removed, and bound names are alpha-renamed. After that normalization, A entails B only when every atom in B occurs identically in A. Algebraic implications such as `N > 3` implying `N > 2`, or two differently written expressions computing the same boolean, are not used for overload selection. Implementations may diagnose or optimize with stronger reasoning, but stronger reasoning must not change which programs compile or which overload is selected.
+Constraint entailment uses a portable syntactic algorithm. Constraints are normalized as an unordered conjunction. Interface composition is expanded transitively, redundant identical atoms are removed, and bound names are alpha-renamed. After that normalization, A entails B only when every atom in B occurs identically in A. Algebraic implications such as `N > 3` implying `N > 2`, or two differently written expressions computing the same boolean, are not used for overload selection. Implementations may diagnose or optimize with stronger reasoning, but stronger reasoning must not change which programs compile or which overload is selected.
 
 Parametric instantiation is therefore not itself a worse argument conversion: an exact generic match beats a concrete overload that requires conversion unless the tie-breakers are reached with identical conversion vectors. Compiler-generated structural equality and comparison are fallbacks; a viable explicit overload for the aggregate suppresses the generated operation. This does not affect the rule above that primitive built-in operations cannot be shadowed.
 
@@ -2051,7 +2242,7 @@ Bounds checking remains the responsibility of the overload. Libraries may provid
 
 ## Iteration protocol
 
-Iteration uses ordinary methods rather than a special privileged container representation. A value is iterable when `iter(value)` returns an iterator with a compatible `next` method. `next` has [optional-ok semantics](#string-type-conversions): it returns `(T, bool)`, and a false `bool` ends the loop with the first result unobserved.
+Iteration uses ordinary methods rather than a special privileged container representation. A value is iterable when `iter(value)` returns an iterator with a compatible `next` method. The built-in containers, ranges, and [enum types](#iterating-an-enumeration) are lowered directly by the compiler and do not participate in the protocol. `next` has [optional-ok semantics](#optional-ok-results): it returns `(T, bool)`, and a false `bool` ends the loop with the first result unobserved.
 
 ```odin
 Countdown :: struct {
@@ -2105,9 +2296,9 @@ foreach (entry in table) {
 
 ### By-reference iteration
 
-`foreach (&value in collection)` uses `next_ref`, which returns `(inout T, bool)`. The first result is a borrowed result mode, not an ordinary storable type. It may be consumed only by the loop lowering or immediately bound to an `inout` local; it cannot be stored, returned further, placed in a container, or selected after the accompanying `bool` has been discarded. When the boolean is false, the first result is not initialized and must not be observed.
+By-reference `foreach` is a built-in-container facility in version 1. Mutable fixed arrays, mutable slices, dynamic arrays, and map values support `foreach (&value in collection)` directly. The user iteration protocol has only value-producing `next`; there is no `next_ref` protocol method or general storable `inout` local.
 
-The borrow is attributed to the iterator's receiver and is live for exactly one loop iteration. This restriction stops by-reference iteration from depending on the unchecked "borrows stored in memory" hole. A protocol that returned a borrow wrapped inside an ordinary union or record would fall outside the analysis entirely and is therefore not accepted as `next_ref`. `next` and `next_ref` share one result shape — a value and a `bool` — so the two differ only in whether the value is borrowed.
+A user collection that needs mutable traversal exposes a mutable slice, an indexed `inout` operation, or an ordinary method that performs the traversal. This keeps borrowed result modes limited to immediate place operations such as indexing and avoids adding lifetime rules solely for one iterator protocol.
 
 ## Construction and conversions
 
@@ -2130,36 +2321,68 @@ a := Vector2(1, 2);
 b := Vector2(5);
 ```
 
-A procedure marked `@(conversion)` participates in explicit `Target(value)` conversion. Adding `@(implicit)` also permits it during overload resolution, assignment, return, and argument passing:
+Explicit user-defined conversion uses the same `init` mechanism as construction. A one-argument `init` overload on the target type participates in `Target(value)`:
 
 ```odin
 Meters :: distinct f64;
 Kilometers :: distinct f64;
 
-impl Meters {
-	@(conversion)
-	to_kilometers :: proc(value: Meters) -> Kilometers {
+impl Kilometers {
+	from_meters :: proc(value: Meters) -> Kilometers {
 		return Kilometers(f64(value) / 1000.0);
 	}
+
+	init :: proc{from_meters};
 }
 
 distance_m := Meters(1500);
 distance_k := Kilometers(distance_m); // explicit user conversion
 ```
 
+### Implicit conversion from constants
+
+Adding `@(implicit)` to a one-argument `init` overload lets it also be applied without being written — but **only when the argument is an untyped constant.** A runtime value of the same type always requires the explicit form.
+
+The parameter type must be a built-in numeric, boolean, rune, or string type, so that there is an untyped constant kind that can reach it. The constant converts to that parameter type by the ordinary [untyped-constant rule](#untyped-types), which already rejects anything not representable without precision loss, and the procedure is then called normally.
+
+```odin
+impl Complex_F64 {
+	init_components :: proc(real, imaginary: f64) -> Complex_F64 {
+		return {real, imaginary};
+	}
+
+	@(implicit)
+	from_scalar :: proc(value: f64) -> Complex_F64 {
+		return {value, 0};
+	}
+
+	init :: proc{init_components, from_scalar};
+}
+
+z := Complex_F64(1, 2);
+w := z*z + 2.0;              // OK: `2.0` is an untyped float constant
+
+scale: f64 = read_scale();
+bad := z + scale;            // ERROR: no operator `+` for (Complex_F64, f64)
+good := z + Complex_F64(scale);
+```
+
+This is the whole job the feature exists for. [Library numeric types](#library-numeric-types) need literals to enter them — `z*z + 2.0` should mean what it looks like — and that is a property of *literals*, not of `f64`. Restricting the rule to constants keeps the useful case and gives up a general implicit-conversion facility, which is the right trade three times over:
+
+- **Nothing is hidden at runtime.** Every conversion of a runtime value is written in the source, so a reader never has to know which conversions are in scope to see where a value changes type.
+- **Chains cannot form.** An untyped constant is not a user type, so a constant can take at most one user conversion and there is no need for a rule capping conversion depth or an argument that lookup terminates.
+- **Narrowing is already handled.** Precision loss is caught by the constant-representability rule at compile time, so the language does not need to permit lossy implicit conversions and then advise implementations to warn about them.
+
 ### Resolving `T(...)`
 
-The form `T(...)` has three possible meanings — a built-in conversion, an `init` construction, and a user `@(conversion)` — so the language fixes one resolution order for all of them:
+The form `T(...)` has two possible meanings — a built-in conversion or an `init` overload — so the language fixes one resolution order:
 
 1. **Built-in conversion.** If `T` is a built-in or `distinct` type and exactly one argument is given whose type has a built-in conversion to `T`, that conversion is used. This case is decided first and cannot be overridden, for the same reason built-in operators cannot be shadowed: `int(x)` must not change meaning based on imports.
 2. **`init` overloads.** Otherwise, visible `init` overloads for `T` are considered using ordinary overload resolution, including the zero-argument and multi-argument forms.
-3. **User conversions.** Otherwise, visible procedures marked `@(conversion)` whose return type is `T` are considered. Conversion lookup examines the source type, target type, and visible extensions.
 
 Resolution stops at the first stage that produces a match. Within a stage, equal-ranked matches are ambiguous rather than being selected by declaration order, and the diagnostic must list the candidates from that stage only.
 
-A consequence worth stating plainly: a single-argument `init` on a `distinct` type over a built-in cannot be reached through `T(x)` when `x` is of the underlying type, because stage 1 claims it. Call it by name, or give it a distinguishing parameter. This is the cost of keeping casts unambiguous, and it is the intended trade.
-
-Programmers may mark narrowing or expensive conversions as implicit if that is appropriate for their domain. The compiler may warn, and projects may elevate that warning to an error, but the language permits it. At most one user-defined implicit conversion is applied to each argument during a single overload resolution step; longer conversion chains must be written explicitly so lookup remains finite and deterministic.
+A consequence worth stating plainly: a single-argument `init` on a `distinct` type over a built-in cannot be reached through `T(x)` when `x` is of the underlying type, because stage 1 claims it. Call it by name, or give it a distinguishing parameter. This is the cost of keeping casts unambiguous, and it is the intended trade. `@(implicit)` only grants an additional constant-only path to an `init` overload; it does not affect explicit `T(x)` resolution.
 
 ## Lifecycle hooks and resource types
 
@@ -2183,7 +2406,7 @@ impl File {
 }
 ```
 
-`Name :: ---;` disables a compiler-generated operation, making `File` move-only. No signature is written, because the signature of a lifecycle hook is fixed by the type. The spelling reuses the existing [undefined value](#built-in-constants-values-and-procedures) rather than the built-in procedure `delete`, which releases a `manual` owner and is an ordinary name that could otherwise be aliased here by accident. `move(value)` remains a compiler primitive: it transfers the representation and resets the source to its zero state. `drop(value)` invokes the user hook when present and then resets the value. Fields are dropped in reverse declaration order after the containing type's drop hook returns.
+`Name :: ---;` disables a compiler-generated operation, making `File` move-only. No signature is written, because the signature of a lifecycle hook is fixed by the type. The spelling reuses the existing [uninitialized-storage marker](#built-in-constants-values-and-procedures) as a declaration marker. `move(value)` remains a compiler primitive: it transfers the representation and resets the source to its zero state. `drop(value)` invokes the user hook when present and then resets the value. Fields are dropped in reverse declaration order after the containing type's drop hook returns.
 
 A `drop` hook is called **exactly once per completed initialization**. Whether a variable still owns its value is tracked by the compiler, with a hidden drop flag where control flow requires one, as described under [Managed values and storage](#managed-values-and-storage) — it is never inferred by comparing the value against its zero state. The hook must nevertheless accept the type's inert zero value, because default initialization is a completed initialization. In the `File` example, `valid` distinguishes a default value from an acquired POSIX file descriptor whose numeric handle may legitimately be zero. The hidden drop flag separately prevents a value that has already been moved or dropped from being cleaned up again.
 
@@ -2195,14 +2418,14 @@ drop(destination);
 destination = move(temporary);
 ```
 
-An explicit `try_clone` may return an allocation error. Ordinary assignment uses `clone` and follows the active allocator's failure policy described under [Allocation failure](#allocation-failure).
+An explicit `try_clone` may return an allocation error. Ordinary assignment uses `clone` and follows the destination's bound allocator policy described under [Allocation failure](#allocation-failure).
 
-## Concepts and generic operators
+## Interfaces and generic operators
 
-A `concept` names a compile-time structural requirement. A type satisfies a concept when every requirement in its body holds; no separate `implements` declaration is required.
+An `interface` names a set of compile-time structural requirements. A type satisfies an interface implicitly when every requirement in its body holds; no separate `implements` declaration is required. Interfaces constrain generic code and do not hold runtime values.
 
 ```odin
-Additive :: concept($T: typeid) {
+Additive :: interface($T: typeid) {
 	T(0) -> T;
 	(a, b: T) a + b -> T;
 }
@@ -2217,9 +2440,9 @@ sum :: proc(values: []$T) -> T
 }
 ```
 
-### Concept bodies
+### Interface bodies
 
-A concept body is a semicolon-terminated list of requirements. A requirement may be preceded by a **binding list**, which introduces names standing for values of the given types:
+An interface body is a semicolon-terminated list of requirements. A requirement may be preceded by a **binding list**, which introduces names standing for values of the given types:
 
 ```
 Requirement = Bindings? Expression "->" Type ";"               // expression form
@@ -2234,57 +2457,60 @@ A requirement that begins with `(` is always a binding list. A requirement whose
 
 Inside a requirement, a type name always means the type. Values come only from the binding list. This is the whole disambiguation rule: `T` never silently switches between meaning the type and meaning a value of it, so `T(0)` is unambiguously construction while `(a, b: T) a + b` is unambiguously addition of two values.
 
-**Expression form** — `expr -> Type;` requires that `expr` compiles for the concept's parameters and bindings, and that its result is convertible to `Type`.
+**Expression form** — `expr -> Type;` requires that `expr` compiles for the interface's parameters and bindings, and that its result is convertible to `Type`.
 
 **Validity form** — `expr;` requires only that the expression compiles, with no constraint on its result type.
 
-**Associated constant form** — `const Owner.NAME: Type;` requires `NAME` to be a constant of the given type in `Owner`'s `impl` block. `Owner` must name one of the concept's type parameters. Naming the owner keeps concepts with several type parameters unambiguous.
+**Associated constant form** — `const Owner.NAME: Type;` requires `NAME` to be a constant of the given type in `Owner`'s `impl` block. `Owner` must name one of the interface's type parameters. Naming the owner keeps interfaces with several type parameters unambiguous.
 
 Method and operator requirements are written as ordinary calls on bound values. Lifecycle requirements name the hook:
 
 ```odin
-Container :: concept($T: typeid, $Element: typeid) {
+Container :: interface($T: typeid, $Element: typeid) {
 	(c: T)          len(c) -> int;
 	(c: T, i: int)  c[i] -> Element;
 	(c: T)          iter(c);
 	const T.ZERO: Element;
 }
 
-Cloneable :: concept($T: typeid) {
+Cloneable :: interface($T: typeid) {
 	(v: T) v.clone() -> T;
 }
 ```
 
-Concepts compose by naming one another, and a concept used as a value in `where` is a compile-time boolean:
+Interfaces compose by naming one another, and an interface application used in `where` is a compile-time boolean:
 
 ```odin
-Ordered :: concept($T: typeid) {
+Ordered :: interface($T: typeid) {
 	Equatable(T);
 	(a, b: T) a < b -> bool;
 }
 ```
 
-A bound name is a value of that type for checking purposes only; the compiler never constructs one, so a concept may name a type that has no reachable constructor.
+A bound name is a value of that type for checking purposes only; the compiler never constructs one, so an interface may name a type that has no reachable constructor.
 
-Requirement checking is non-recursive at the point of use: the compiler checks that each listed requirement holds for the concrete arguments, and does not attempt to prove requirements about types that do not yet exist. A `where` clause constrains static polymorphism only; concepts do not denote runtime types in version 1.
+Requirement checking is non-recursive at the point of use: the compiler checks that each listed requirement holds for the concrete arguments, and does not attempt to prove requirements about types that do not yet exist. An interface application such as `Ordered(T)` is a compile-time predicate. Interfaces do not denote runtime types in version 1 and cannot be used as variable, field, parameter, or result types.
 
-A failed requirement must be reported as the specific line of the concept body that did not hold, together with the concrete type that failed it. A concept that reports only "constraint not satisfied" is a defect in the implementation.
+A failed requirement must be reported as the specific line of the interface body that did not hold, together with the concrete type that failed it. An interface diagnostic that reports only "constraint not satisfied" is a defect in the implementation.
 
-Standard library concepts should remain small and composable, for example `Equatable`, `Ordered`, `Hashable`, `Iterable(T)`, `Cloneable`, `Formattable`, `Numeric`, and `Integral`. The last two replace what other languages express with type-predicate intrinsics: `Numeric(T)` requires `T(0)`, `T(1)`, the four arithmetic operators, and `Ordered(T)`, and is satisfied by the built-in numeric types and by any user type that supplies the same operations. Maps require compatible `==` and `hash` operations for their key type. The compiler checks that both operations exist but trusts the programmer to preserve the semantic rule that equal values produce equal hashes.
+Standard library interfaces should remain small and composable, for example `Equatable`, `Ordered`, `Hashable`, `Iterable(T)`, `Cloneable`, `Formattable`, `Numeric`, and `Integral`. The last two replace what other languages express with type-predicate intrinsics: `Numeric(T)` requires `T(0)`, `T(1)`, the four arithmetic operators, and `Ordered(T)`, and is satisfied by the built-in numeric types and by any user type that supplies the same operations. Maps require compatible `==` and `hash` operations for their key type. The compiler checks that both operations exist but trusts the programmer to preserve the semantic rule that equal values produce equal hashes.
 
-### Choosing between concepts, `where`, and specialization
+### Choosing between interfaces, `where`, and specialization
 
-Three mechanisms can constrain a polymorphic parameter, and they overlap. The intended division of labour:
+Three mechanisms can constrain a generic parameter, and they overlap. The intended division of labour:
 
-- **`concept`** — requirements about what a type *can do*: operators, methods, lifecycle hooks, associated constants. This is the default and should carry anything a caller would think of as an interface.
-- **[`where` clauses](#where-clauses)** — predicates over *values*, such as `N > 2` or `len(x) > 1`. A `where` clause of the form `where intrinsics.type_is_numeric(E)` is better written as a concept, and the standard library should not add new type-predicate intrinsics for constraints a concept can express.
+- **`interface`** — requirements about what a type *can do*: operators, methods, lifecycle hooks, and associated constants.
+- **[`where` clauses](#where-clauses)** — predicates over *values*, such as `N > 2` or `len(x) > 1`. A `where` clause of the form `where intrinsics.type_is_numeric(E)` is better written as an interface, and the standard library should not add new type-predicate intrinsics for constraints an interface can express.
 - **[Specialization](#specialization)** — structural shape, written directly in the parameter type as in `values: []$E` or `table: ^Table($Key, $Value)`, where the point is to *destructure* the type and bind its parts rather than to test it.
 
-All three remain in the language: they answer different questions, and collapsing them would cost more in expressiveness than the overlap costs in learning. But a constraint that could be written any of the three ways should be written as a concept, because only a concept produces the per-requirement diagnostic described above.
+All three remain in the language: they answer different questions, and collapsing them would cost more in expressiveness than the overlap costs in learning. But a constraint that could be written any of the three ways should be written as an interface, because only an interface produces the per-requirement diagnostic described above.
 
 ## Runtime polymorphism
 
-Concepts constrain static polymorphism only. Version 1 has no trait-object or interface type. Closed heterogeneous sets use unions; open runtime behavior uses ordinary procedure tables, `any_view` plus explicit type checks, or a library-defined record of callbacks. This avoids committing the language to vtable layout, dyn-safety, erased ownership, and dispatch rules before a substantial library has validated them.
+Interfaces constrain static generic code only. There are no interface values,
+trait objects, or implicit dynamic dispatch. Closed heterogeneous sets use
+unions; open runtime behavior uses ordinary procedure tables, `any_view` plus
+explicit type checks, or a library-defined record of callbacks.
 
 ## Standard customization procedures
 
@@ -2299,13 +2525,31 @@ Not every customization needs punctuation. The standard library recognizes ordin
 | `compare(left, right)` | Three-way ordering when useful |
 | `iter(value)` | Forward iteration |
 | `iter_reverse(value)` | Reverse iteration |
-| `clone(value, via allocator)` | Explicit independent copy |
+| `clone(value, allocator := mem.default_allocator())` | Explicit independent copy |
 
-These procedures use normal overload groups and can also be called through method syntax when they have a receiver. Libraries are free to define additional protocols without compiler support.
+These procedures use normal overload groups. Each is written as a free call — `len(x)`, `hash(key, seed)`, `clone(value)` — and that spelling is canonical and always available.
+
+**Method syntax is not a second spelling for every procedure.** `x.f()` resolves only to a procedure declared with a `self` receiver in an `impl` or `extend` block for `x`'s type, or to a built-in container operation such as `append`, `remove`, `reserve`, or `sort`. There is no uniform-call rule that rewrites `f(x)` as `x.f()`, so an ordinary free procedure never gains a method spelling by accident, and a reader who sees `x.f()` knows a declaration for `f` exists that named `x`'s type.
+
+A type may of course declare one of the procedures above as a method, and many should:
+
+```odin
+impl Ring_Buffer {
+	len :: proc(self) -> int { return self.count; }
+}
+
+buffer: Ring_Buffer;
+n := len(buffer);        // always valid: the overload group
+m := buffer.len();       // also valid: `Ring_Buffer` declared it with `self`
+```
+
+The asymmetry with the built-in containers — `len(x)` but `x.append(v)` — is deliberate. `len` and `cap` are queries that generic code calls on a type parameter, where a free call keeps the interface requirement (`(c: T) len(c) -> int`) readable and uniform across built-in and user types. The mutators are operations on a specific receiver and read better in the position that names it. Libraries are free to define additional protocols without compiler support.
 
 ## Library numeric types
 
-Complex numbers and quaternions are standard-library abstractions rather than base-language types. They use the same structs, methods, operators, conversions, concepts, and formatting hooks available to every program. This is an intentional test of the abstraction model: a user-defined numeric type should not need compiler privileges to feel natural.
+Complex numbers and quaternions are standard-library abstractions rather than
+base-language types. They use ordinary structs, methods, operators,
+conversions, interfaces, and formatting hooks.
 
 For example, a library can define a complex type entirely in ordinary code:
 
@@ -2315,7 +2559,7 @@ Complex_F64 :: struct {
 }
 
 impl Complex_F64 {
-	init :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
+	init_components :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
 		return {real, imaginary};
 	}
 
@@ -2330,20 +2574,21 @@ impl Complex_F64 {
 		};
 	}
 
-	@(conversion)
 	@(implicit)
 	from_scalar :: proc(value: f64) -> Complex_F64 {
 		return {value, 0};
 	}
+
+	init :: proc{init_components, from_scalar};
 }
 
 z := Complex_F64(1, 2);
-w := z*z + 2.0;
+w := z*z + 2.0;               // `2.0` is a constant, so `from_scalar` applies
 ```
 
-The standard library may offer generic `Complex(T)` and `Quaternion(T)` families and concepts for their supported scalar types, but these declarations have no special relationship with the compiler. Scalar promotion is provided by visible `@(implicit)` conversions. Equality, arithmetic, conjugation, norms, parsing, and formatting are ordinary overloads or procedures. Matrix support for these scalar domains is likewise a library abstraction rather than a built-in matrix rule.
+The standard library may offer generic `Complex(T)` and `Quaternion(T)` families and interfaces for their supported scalar types, but these declarations have no special relationship with the compiler. Promotion of a scalar *constant* is provided by an `@(implicit)` one-argument `init` overload; promotion of a scalar *variable* is written explicitly, as `Complex_F64(x)`. Equality, arithmetic, conjugation, norms, parsing, and formatting are ordinary overloads or procedures. Matrix support for these scalar domains is likewise a library abstraction rather than a built-in matrix rule.
 
-The same facilities must be sufficient for third-party fixed-point, decimal, rational, dual, interval, unit-aware, and domain-specific numeric types, and for the geometric vector, matrix, and swizzle types built on top of [`#simd`](#simd-vectors). Standard-library implementations should be readable examples, not compiler intrinsics disguised as library code.
+The same facilities must be sufficient for third-party fixed-point, decimal, rational, dual, interval, unit-aware, and domain-specific numeric types, and for the geometric vector, matrix, and swizzle types built on top of [`Simd(T, N)`](#simd-vectors). Standard-library implementations should be readable examples, not compiler intrinsics disguised as library code.
 
 # Advanced types
 
@@ -2365,7 +2610,7 @@ My_Int :: distinct int;
 #assert(My_Int != int);
 ```
 
-A distinct type may define its own methods, operators, constructors, conversions, concepts, formatting, and lifecycle hooks. It does not inherit the underlying type's user-defined overloads unless they are explicitly re-exported or delegated.
+A distinct type may define its own methods, operators, constructors, conversions, interfaces, formatting, and lifecycle hooks. It does not inherit the underlying type's user-defined overloads unless they are explicitly re-exported or delegated.
 
 Aggregate types (struct, enum, union) will always be distinct even when named.
 
@@ -2413,7 +2658,7 @@ The comma form `a[i, j]` is reserved for a user-defined [`operator([])`](#indexi
 
 `[][]T` is a slice of slices and `[dynamic][dynamic]T` is a dynamic array of independently managed dynamic arrays; their inner containers may have different lengths and, for dynamic arrays, separate allocations. They are potentially jagged, and only nested *fixed* arrays have the single contiguous layout described above.
 
-The base language assigns no mathematical meaning to arrays. Fixed arrays support storage, indexing, iteration, slicing, and structural equality, but not arithmetic or scalar broadcasting. Vector arithmetic, swizzling, matrix operations, and other numerical interpretations belong in libraries implemented with generic structs or distinct types, concepts, and operators. A rectangular dynamically sized container should likewise be a library type containing one flat `[dynamic]T`, its dimensions, and an `operator([])` for multi-index access — which is precisely what the comma form exists to spell.
+The base language assigns no mathematical meaning to arrays. Fixed arrays support storage, indexing, iteration, slicing, and structural equality, but not arithmetic or scalar broadcasting. Vector arithmetic, swizzling, matrix operations, and other numerical interpretations belong in libraries implemented with generic structs or distinct types, interfaces, and operators. A rectangular dynamically sized container should likewise be a library type containing one flat `[dynamic]T`, its dimensions, and an `operator([])` for multi-index access — which is precisely what the comma form exists to spell.
 
 A fixed-array length can be inferred from its literal with a question mark (`?`):
 
@@ -2442,36 +2687,33 @@ x: [5]int;
 #assert(len(x) == 5);
 ```
 
-Array access is bounds checked by default, both at compile time for constant indices and at runtime otherwise. The `bounds_check` attribute changes this for a statement or block:
+Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a multi-pointer:
 
 ```odin
-@(bounds_check=false) {
-	x[n] = 123; // n could be in or out of range of valid indices
-}
+p := unsafe.raw_data(&x);
+p[n] = 123; // unchecked; the programmer proves that n is valid
 ```
 
-Unchecked access should be limited to small blocks where the bounds argument is locally evident.
+There is no source attribute or build flag that silently changes ordinary indexing semantics. The explicit conversion should be limited to small scopes where the bounds argument is locally evident.
 
 ## SIMD vectors
 
-`#simd[N]T` is a fixed-width vector of `N` lanes of `T`. `N` must be a compile-time constant power of two, and `T` must be a built-in integer, floating-point, or boolean type.
+`Simd(T, N)` is a predeclared generic type representing a fixed-width vector of `N` lanes of `T`. `N` must be a compile-time constant power of two, and `T` must be a built-in integer, floating-point, or boolean type.
 
-This is the one numeric abstraction the base language provides rather than delegating to a library, and the exception is narrow and deliberate. Complex numbers, quaternions, and matrices are [library types](#library-numeric-types) because ordinary structs and operator overloads reproduce them exactly. Lane-parallel arithmetic is different: its whole purpose is to lower to a target vector instruction, and no arrangement of structs and overloads expresses "these operations happen in one instruction" to the backend. A library `Vector4` built from a struct is a promise the compiler is free to break; `#simd[4]f32` is not.
-
-Arithmetic and bitwise operators apply **lane-wise** and produce a vector of the same shape. A scalar `T` implicitly converts to `#simd[N]T` by splatting into every lane, so mixed scalar-vector expressions work without a written conversion:
+Arithmetic and bitwise operators apply **lane-wise** and produce a vector of the same shape. A scalar `T` implicitly converts to `Simd(T, N)` by splatting into every lane, so mixed scalar-vector expressions work without a written conversion:
 
 ```odin
-a: #simd[4]f32 = {1, 2, 3, 4};
+a: Simd(f32, 4) = {1, 2, 3, 4};
 b := a * 2;              // {2, 4, 6, 8}: the scalar is splatted
 c := a + b;              // lane-wise
 lane := c[1];            // constant index yields f32
 ```
 
-Comparison operators are **whole-vector**, not lane-wise: `==` and `!=` on two vectors yield a single `bool`, matching what [comparability](#comparison-operators) means everywhere else in the language and keeping `#simd` usable with `Equatable`, maps, and generic code. Per-lane predicates and the masks they produce are `core:simd` procedures such as `simd.lanes_eq`, which return a boolean vector. Ordering operators are not defined on vectors.
+Comparison operators are **whole-vector**, not lane-wise: `==` and `!=` on two vectors yield a single `bool`, matching what [comparability](#comparison-operators) means everywhere else in the language and keeping `Simd` usable with `Equatable`, maps, and generic code. Per-lane predicates and the masks they produce are `core:simd` procedures such as `simd.lanes_eq`, which return a boolean vector. Ordering operators are not defined on vectors.
 
 Indexing requires a constant index and is bounds-checked at compile time. A lane is not addressable — `&v[0]` is rejected — because a vector value may live entirely in a register. Code that needs element addresses goes through `unsafe.raw_data(&v)`, which yields `[^]T` over the vector's storage.
 
-Size and alignment are target-defined; `size_of(#simd[N]T)` is at least `N*size_of(T)` and may be larger. A `#simd` type is [foreign-ABI-safe](#foreign-abi-safe-types) only on a target whose ABI defines a vector class for that shape, on the same terms as `f16` and the 128-bit integers.
+Size and alignment are target-defined; `size_of(Simd(T, N))` is at least `N*size_of(T)` and may be larger. A `Simd(T, N)` type is [foreign-ABI-safe](#foreign-abi-safe-types) only on a target whose ABI defines a vector class for that shape, on the same terms as `f16` and the 128-bit integers.
 
 ## Slices
 
@@ -2523,11 +2765,18 @@ A slice literal is like an array literal without the length. This is an array li
 
 [3]int{1, 6, 3}
 
-This is a slice literal which creates the same array as above, and then creates a mutable slice that references it:
+This is a slice literal which creates the same array as above, and then creates a read-only slice that references it:
 
 []int{1, 6, 3}
 
-The literal syntax retains `[]T{...}` to avoid a second literal spelling; its inferred result type is `[]mut T`. An explicit `[]T` destination weakens it to a read-only slice.
+**A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred against the spelling, so a reader can tell from the literal alone whether its elements can be written. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice.
+
+```odin
+readable := []int{1, 6, 3};        // []int
+writable := []mut int{1, 6, 3};    // []mut int
+writable[0] = 99;
+readable[0] = 99;                  // ERROR: elements of `[]int` are read-only
+```
 
 The backing array of a slice literal is a hidden fixed-array owner in the surrounding lexical scope, so the slice remains valid until that scope exits. At file scope it has static lifetime. Returning a slice literal from a procedure is rejected because its hidden owner is local, just as returning a slice of a named local array is rejected.
 
@@ -2570,14 +2819,14 @@ if (s == nil) {
 A mutable slice can be sorted in ascending order as follows. The library procedures accept `[]mut T`; passing a read-only `[]T` is a compile-time error:
 
 ```odin
-s := []int{1, 6, 3, 5 ,7, 3, 0};
+s := []mut int{1, 6, 3, 5 ,7, 3, 0};
 slice.sort(s);
 ```
 
 or in descending order
 
 ```odin
-r := []int{1, 6, 3, 5 ,7, 3, 0};
+r := []mut int{1, 6, 3, 5 ,7, 3, 0};
 slice.reverse_sort(r);
 ```
 
@@ -2600,11 +2849,23 @@ z := move(x); // allocation transfer; x becomes empty
 
 The allocator used by a managed dynamic array is stored with its allocation so automatic cleanup always uses the correct allocator. A declaration may select another allocator without becoming manual, using the `via` modifier. `via` is a declaration modifier and not a form of `using`; it selects storage, it does not bring names into scope.
 
+**`via` appears on declarations only.** A procedure that needs an allocator takes an ordinary parameter for it, conventionally named `allocator` and defaulted to `mem.default_allocator()`, and callers supply it like any other argument. The two are not competing spellings of one feature: `via` answers a question a call cannot, namely which allocator an owner is bound to for its whole lifetime including the cleanup that runs after the declaring statement is long past, while a parameter is an ordinary value that the [runtime default](#default-values) rules already handle.
+
 ```odin
-temporary: [dynamic]u8 via context.temp_allocator;
+temporary: [dynamic]u8 via scratch_allocator;
 ```
 
-Copy initialization uses the allocator active at the declaration. Assignment into an existing array preserves the destination's allocator policy. `move` transfers both the allocation and its allocator. `clone(via allocator)` is available when a specific allocator is required.
+**A managed owner binds its allocator at its declaration, not at its first allocation.** A zero-valued container has no backing storage yet, but it already records which allocator it will use, taken from `via` if present and from `mem.default_allocator()` otherwise. This is what makes a zero value "immediately usable" mean something definite: the first `append` far from the declaration allocates from the allocator the declaration chose.
+
+```odin
+numbers: [dynamic]int;                            // binds the program default here
+scratch: [dynamic]int via arena.allocator();      // binds this arena here
+
+fill(inout numbers);                              // continues using the bound default
+fill(inout scratch);                              // continues using the bound arena
+```
+
+Copy initialization likewise uses the allocator active at the declaration. Assignment into an existing array preserves the destination's allocator policy. `move` transfers both the allocation and its allocator. `clone(value, allocator)` is available when a specific allocator is required.
 
 A slice of a dynamic array is a borrowed view. While that view is live, operations that may reallocate the owner are rejected:
 
@@ -2634,28 +2895,34 @@ The `try_` prefix is a library-wide convention with one meaning: *report the fai
 
 ### Inject / Assign to a dynamic array
 
-`insert` adds an element and shifts later elements upwards. Its index must be in `0..=len(x)`. Ordinary indexed assignment never changes the length.
+`insert` adds an element and shifts later elements upwards. Its index must be in `0..=len(x)`.
 
-`set_grow` is the explicit operation for assigning beyond the current end. It grows the array and zero-initializes any skipped elements. Keeping this behavior separate prevents a misspelled index from silently resizing an array.
+**Ordinary indexed assignment never changes the length.** `x[i] = v` for `i >= len(x)` is an out-of-range index and traps like any other, so a misspelled or off-by-one index cannot silently resize an array into zero-filled padding that no later read can distinguish from real data. Assigning past the end is written as the two operations it is:
 
 ```odin
 x: [dynamic]int;
 x.reserve(16);
 x.insert(0, 10);
-x.set_grow(3, 10); // grows to length 4
+
+x.resize(4);                        // [10, 0, 0, 0]
+x[3] = 10;
 fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 10] 4 16
+
 x[3] = 20;
-x.set_grow(4, 30);
-fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30] 5, 16
+x.append(30);
+fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30] 5 16
+
 x.append(40, 50, 60);
 fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30, 40, 50, 60] 8 16
 ```
+
+`resize` already grows and zero-fills, and `append` already extends by one, so a dedicated grow-and-assign operation would be a third spelling of a composition of those two — carrying its own name, `try_` variant, and bounds contract to save one line in code that is rare by design.
 
 ### Removing from a dynamic array
 
 Removing from a dynamic array can be done in several ways using the built-in procedures:
 
-- `pop` removes and returns the last element with [optional-ok semantics](#string-type-conversions), as `(T, bool)`; on an empty array the value is zero and `ok` is false.
+- `pop` removes and returns the last element with [optional-ok semantics](#optional-ok-results), as `(T, bool)`; on an empty array the value is zero and `ok` is false.
 - `remove_unordered` removes and returns an element in O(1) by moving the last element into its location.
 - `remove` removes and returns an element while preserving order.
 
@@ -2691,25 +2958,29 @@ c.resize(6);            // len(c) == 6; new elements are zero
 c.reserve(32);          // capacity is at least 32
 
 // with an explicit allocator:
-temporary: [dynamic]int via context.temp_allocator;
+scratch := mem.Scratch();
+temporary: [dynamic]int via scratch.allocator();
 temporary.reserve(64);
 ```
 
-`drop` releases a managed value early and resets it to its zero value. Normal code can simply let scope cleanup perform the same operation.
+`drop` releases an owner and resets it to its zero value. Normal managed code can simply let scope cleanup perform the same operation.
 
 ```odin
 drop(b);
 assert(len(b) == 0);
 ```
 
-Low-level code may opt out with `manual` and use `make` and `delete`. A `manual` value cannot be implicitly assigned to a managed owner, because that would silently move a lifetime the programmer had taken responsibility for. The transfer must be written with `move`, which is the same primitive used everywhere else ownership changes hands:
+Low-level code may opt out of scope-exit cleanup with `manual` and use the explicitly fallible `make` constructor. `make` returns an ordinary owning value; the destination declaration determines whether cleanup is automatic. Moving an existing manual owner into a managed variable still requires `move`, for the same reason every ownership transfer does:
 
 ```odin
 raw: manual [dynamic]int;
 allocation_error: Allocator_Error;
 raw, allocation_error = make([dynamic]int, 0, 64, my_allocator);
 if (allocation_error != nil) { panic("array allocation failed"); }
-owned := move(raw); // `owned` is managed; `raw` becomes empty and needs no `delete`
+owned := move(raw); // `owned` is managed; `raw` becomes empty and needs no `drop`
+
+managed, managed_error := make([dynamic]int, 0, 64, my_allocator);
+// `managed` is cleaned up automatically because its declaration is not manual.
 ```
 
 ### Clearing a dynamic array
@@ -2814,7 +3085,9 @@ case .C:
 
 ### Iterating an Enumeration
 
-Enums can be iterated directly. This supports tasks such as printing every member or populating a library-defined `Enum_Array(Enum, T)`.
+An enum *type* can be iterated directly, yielding its declared members in declaration order. This supports tasks such as printing every member or populating a library-defined `Enum_Array(Enum, T)`.
+
+This is a compiler special case, not an instance of the [iteration protocol](#iteration-protocol). The protocol is defined over values via `iter(value)`, and a type is not a value: there is no `impl` on a `typeid` in which an `iter` overload for `Direction` could be declared. The compiler recognizes an enum type in the iterable position of a `foreach` header and lowers it directly. It is the only type accepted there; `foreach (x in int)` and `foreach (x in Some_Struct)` are errors.
 
 ```odin
 Direction :: enum{North, East, South, West};
@@ -2857,7 +3130,8 @@ p: ^int; // ^ on the left
 x := p^; // ^ on the right
 ```
 
-Note: Unlike C, Loke has no pointer arithmetic. If you need a form of pointer arithmetic, please use the ptr_offset and ptr_sub procedures in the "core:mem" package.
+Pointer arithmetic is not an operator. `core:mem.ptr_offset` and
+`core:mem.ptr_sub` provide explicit address calculations.
 
 ## Structs
 
@@ -2882,7 +3156,7 @@ p.x = 1335;
 fmt.println(v);
 ```
 
-We could write p^.x, however, it is nice to not have to explicitly dereference the pointer. This is very useful when refactoring code to use a pointer rather than a value, and vice versa.
+For a pointer to a struct, `p.field` is equivalent to `p^.field`.
 
 ### Struct literals
 
@@ -2931,7 +3205,6 @@ Foo :: struct {
 Structs can be annotated with different memory layout and alignment requirements:
 
 struct @(align=4)  {...} // require four-byte alignment
-struct @(raw_union) {...} // all fields share offset zero, like a C union
 struct @(packed)    {...} // remove padding between fields
 
 These use the same attribute syntax as declarations and statements. Minimum/maximum field-alignment variants, bitwise-equality assertions, and all-or-none literal checking are not separate language features. Foreign layout uses the target ABI rules, equality optimizations require compiler proof, and validated construction uses an `init` procedure.
@@ -2977,19 +3250,16 @@ s1 := v.(string);
 s2, ok := v.(string);
 ```
 
-A type assertion is single-valued where the asserted type is the only expected result, and it panics if the union does not currently hold that variant. In a comma-ok destination or as the left operand of `or_else` it instead has [optional-ok semantics](#string-type-conversions), producing `(T, bool)` and never panicking.
+A type assertion is single-valued where the asserted type is the only expected result, and it panics if the union does not currently hold that variant. In a comma-ok destination or as the left operand of `or_else` it instead has [optional-ok semantics](#optional-ok-results), producing `(T, bool)` and never panicking.
 
 The asserted type is always written. There is no form that infers it from context: a union has several variants by construction, so the type is the part of the expression carrying the information, and eliding it would save a few characters at the cost of making the reader resolve an inference to know what the code does.
 
 ### Type assertions are always checked
 
-There is no attribute or build flag that removes the tag check from `v.(T)`. This is unlike [`@(bounds_check)`](#bounds_checkboolean), and the asymmetry is deliberate.
-
-An unchecked assertion is not a bounds check with a different name. Reading past the end of an array yields a wrong value; reinterpreting a union payload as the wrong variant can **manufacture an owning value out of unrelated bits** — a `[dynamic]T` header assembled from the bytes of an `f64` — which the [managed-lifetime rules](#managed-values-and-storage) will then faithfully `drop`, calling the allocator on a pointer that was never an allocation. [`transmute`](#transmute-operator) is restricted to trivial-lifecycle types for exactly this reason, and an unchecked assertion would be a way around that restriction rather than a performance switch.
-
-The cost being avoided is also smaller than it looks. A type assertion loads a tag, compares it to a constant, and takes a perfectly predicted branch — and it appears at dispatch points, where the indirect branch on that same tag dominates, not inside the vectorizable inner loops where a bounds check genuinely blocks unrolling and SIMD. The two checks resemble each other only in syntax.
-
-Code that has measured a reason to skip the check uses `unsafe.assume_variant`, which is per-call-site rather than per-scope, cannot silently capture code added later inside an annotated procedure, and is greppable through the [import list](#the-unsafe-package).
+There is no attribute, build flag, or `core:unsafe` operation that removes the
+tag check from `v.(T)`. Code that already knows the active variant still uses
+the ordinary assertion; the optimizer may remove the check when that fact is
+provable.
 
 ### Type switch statement
 
@@ -3014,18 +3284,9 @@ case:
 }
 ```
 
-### Union attributes
+### Union alignment
 
-Applying `@(no_nil)` to a union type states it does not have a nil value. Such a union must have at least two variants and the first variant is its default type:
-
-```odin
-Value :: union @(no_nil) {bool, string};
-v: Value;
-_, ok := v.(bool);
-assert(ok);
-```
-
-Unions also have the `align` attribute, like structures:
+Unions have the `align` attribute, like structures:
 
 union @(align=4) {...} // align to 4 bytes
 
@@ -3033,7 +3294,7 @@ union @(align=4) {...} // align to 4 bytes
 
 A map maps keys to values. Its zero value is empty and immediately usable. Like a dynamic array, a map is managed by default and releases its backing storage automatically.
 
-Any type can be a map key when it provides compatible `==` and `hash(value, seed)` overloads. Built-in key types provide these automatically; user-defined key types satisfy the same structural `Equatable` and `Hashable` concepts.
+Any type can be a map key when it provides compatible `==` and `hash(value, seed)` overloads. Built-in key types provide these automatically; user-defined key types satisfy the same structural `Equatable` and `Hashable` interfaces.
 
 ```odin
 m: map[string]int;
@@ -3102,9 +3363,11 @@ m["Chloe"].x = 0;    // allowed: assigns the field of the stored value
 m["Dana"].x = 7;     // inserts a zero `Test` for "Dana", then assigns `.x`
 ```
 
-The two forms differ in what they do about a missing key, and the difference is deliberate:
+The two forms differ when the key is missing:
 
 - **`m[key]` as an assignment target inserts.** If the key is absent, the zero value of the element type is inserted first and the resulting slot is the location. This is the same behaviour `m[key] = elem` already has, extended to field and index chains so that the two do not disagree. It applies to the target of an assignment or compound assignment and to an argument passed as `inout`. Insertion may reallocate the map, so the index is a mutable borrow of `m` for the duration of the statement.
+
+  This is the opposite of the choice made for [dynamic arrays](#inject--assign-to-a-dynamic-array), where `x[i] = v` past the end traps instead of growing. The two containers differ in what a wrong subscript costs. A dynamic-array index is positional and dense: a misspelled or off-by-one index is a plausible mistake, and silently growing turns it into zero-filled padding that no later read can distinguish from real data. A map key is the caller's own value in the caller's own key space, `m[key] = elem` is already defined as insert-or-update, and a map has no notion of a gap to fill. Refusing to insert for `m[key].field = v` alone would make the field chain disagree with the plain assignment directly above it without preventing any mistake.
 - **`&m[key]` never inserts.** `&` is a [place position](#indexing-and-slicing) for selecting the mutable indexing operation, but it is not one of the creating forms above: taking the address of an entry is a lookup, and a lookup that silently grew the map would make `&m[key]` unusable for asking whether a key is present. It therefore has optional-ok semantics, yielding a pointer to the existing slot and a `bool`:
 
 ```odin
@@ -3113,8 +3376,6 @@ if (ok) {
 	value^ = { 2, 2 };
 }
 ```
-
-Odin prohibits `m[key].field = value` for implementation reasons. Loke allows it, because a user type with an `inout` [`operator([])`](#indexing-and-slicing) can express exactly this, and a built-in container being less capable than a type a user could write contradicts the [design principle](#design-principle) that the two should be equally convenient.
 
 ### Map Container Calls
 
@@ -3153,25 +3414,21 @@ fmt.println(a()); // 100
 
 ### Calling conventions
 
-Loke supports the following calling conventions:
+Loke supports the following calling-convention names:
 
-- loke - default convention used for a Loke procedure. It passes an implicit read-only ambient-context pointer and uses the target-specific parameter classification described under [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering). The pointer transports scoped package policy; it does not give the callee permission to replace that policy. Hidden-pointer transport does not change ownership, mutability, address identity, or lifetime.
-- contextless - This is the same as `loke` but without the implicit context pointer.
-- stdcall or std – This is the stdcall convention as specified by Microsoft.
-- cdecl or c – This is the default calling convention generated of a procedure in C.
+- `loke` — the default convention for a Loke procedure, using the target-specific parameter classification described under [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering). It passes only the arguments required by the source-level procedure type and ABI lowering; there is no implicit environment pointer.
+- `c` — the target C ABI's default calling convention.
+- `stdcall` — the Microsoft stdcall convention on targets that support it.
 
 Compiler- or target-specific conventions use namespaced extension strings rather than portable aliases. The portable set is deliberately limited to conventions with a stable cross-toolchain meaning.
 
-The default calling convention is `loke`, unless a declaration is within a foreign block, where it is `cdecl`.
+The default calling convention is `loke`, unless a declaration is within a foreign block, where it is `c`.
 
 A procedure type with a different calling convention can be declared like the following:
 
 proc "c" (n: i32, data: rawptr)
-proc "contextless" (s: []int)
 
 Procedure types are compatible only when calling convention, parameter and result types, parameter modes, variadic shape, and type-level parameter effects match. In particular, `@(allocator_reset)` is part of the parameter's procedure type: a reset-capable procedure cannot be stored in a procedure value whose type hides that effect. Declaration-only attributes such as visibility and deprecation do not participate in type compatibility.
-
-Code entered through a C or contextless procedure has no incoming ambient context. It installs one for the calls that need it with a scoped `context (using value) { ... }` statement; see [Installing a context](#installing-a-context).
 
 ## typeid type
 
@@ -3202,6 +3459,14 @@ main :: proc() {
 
 It may be a local variable or parameter, but it cannot be a result type, global, struct or union field, container element, or captured/stored value. The ordinary local borrow checker ensures a local `any_view` does not outlive or overlap an invalidating operation on its source. A temporary converted for a call remains valid through that complete call expression.
 
+**A variadic `..any_view` parameter is the one exception to the container rule.** This is what `fmt.println(a, b, c)` and every other formatting API is built on: the caller's arguments are converted to `any_view` and passed as a `[]any_view` whose backing storage the caller materializes for the duration of the call.
+
+```odin
+println :: proc(args: ..any_view) { ... }
+```
+
+The exception is narrow and does not reintroduce escape. The slice and its elements are borrows of the caller's argument temporaries, live for exactly that complete call expression; the callee may read, index, iterate, and forward the slice to another `..any_view` parameter, but it may not store the slice or any element of it anywhere that outlives the call. A `[]any_view` cannot be produced any other way — there is no `any_view` array, dynamic array, or slice-of-`any_view` local — so this is a calling form rather than a general container type. The [`@(c_vararg)`](#c_vararg) attribute is a separate thing: there the notation is signature-only and the compiler passes the original concrete arguments under the C default argument promotions.
+
 Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime type assertions and type switches.
 
 ```odin
@@ -3209,9 +3474,8 @@ print_value :: proc(value: any_view) { ... }
 print_value(42); // the temporary lives through the call
 ```
 
-**There is no owning counterpart.** Type erasure in this language version is call-scoped only: a procedure may inspect an erased value, but it cannot keep one.
-
-An owning `any` would need an allocation model, a stable payload address, borrow provenance across moves, an allocator recorded per payload, an allocation-failure story, and a rule rejecting `stack any` — a substantial mechanism whose purpose is storing values of arbitrary unrelated types. That is [runtime polymorphism](#runtime-polymorphism), which version 1 deliberately does not have. Shipping erased *ownership* while deferring `dyn` would be committing to the harder half of the same feature.
+There is no owning counterpart. Type erasure is call-scoped: a procedure may
+inspect an erased value but cannot retain one.
 
 Code that needs to retain a value of one of several types uses a union. Code that needs open runtime behaviour uses a procedure table or a library-defined record of callbacks. Code that needs to retain something genuinely arbitrary owns it concretely and passes an `any_view` at the point of use.
 
@@ -3258,18 +3522,18 @@ a = unsafe.raw_data(b[:]);
 fmt.println(a, a[1], b); // 0x7FFCBE9FE688 20 [10, 20, 30]
 ```
 
-The current language name is *multi-pointer*. Alternative terminology is recorded under [Open questions](#multi-pointer-terminology).
+The language name for `[^]T` is *multi-pointer*.
 
 ## unsafe.raw_data procedure
 
-`unsafe.raw_data` is a core-library procedure which returns the underlying data of a built-in data type as a Multi-Pointer. It is deliberately in `core:unsafe`: a multi-pointer carries neither a length nor a read-only capability, and its lifetime is no longer checked after conversion.
+`unsafe.raw_data` is a `core:unsafe` procedure that returns the underlying data of a built-in data type as a multi-pointer. A multi-pointer carries neither a length nor a read-only capability, and its lifetime is no longer checked after conversion.
 
 ```odin
 unsafe.raw_data([]$E)              -> [^]E;    // read-only slices; capability is discarded
 unsafe.raw_data([]mut $E)          -> [^]E;    // mutable slices
 unsafe.raw_data([dynamic]$E)       -> [^]E;    // dynamic arrays
 unsafe.raw_data(^[$N]$E)           -> [^]E;    // fixed arrays
-unsafe.raw_data(^#simd[$N]$E)      -> [^]E;    // SIMD vectors
+unsafe.raw_data(^Simd($E, $N))     -> [^]E;    // SIMD vectors
 unsafe.raw_data(string)            -> [^]byte;
 ```
 
@@ -3304,9 +3568,15 @@ Promoted names are only member-lookup shorthand. An explicitly declared field on
 
 # Error handling
 
+## Optional-ok results
+
+The common absence protocol is a value followed by a `bool` named `ok`: `(T, bool)`, or more generally `(A, B, ..., bool)`. `ok` is `true` when the preceding results are present. Built-in producers return the zero values of those results when `ok` is false; `or_else` and iteration do not observe the failed values. User procedures using this shape should follow the same convention.
+
+An **optional-ok expression** is a built-in producer with that logical result shape or a procedure call whose final result is `bool`. A comma-ok destination receives every result. `or_else` consumes the final `bool` and either yields the preceding results or evaluates its fallback. The term describes this shared status protocol; it does not invent a universal plain single-value behavior. For example, a missing map lookup yields zero in its documented single-value form, while a failed single-value union assertion panics.
+
 ## or_else expression
 
-or_else is an infix binary operator that allows the user to define default values for certain expressions with optional-ok semantics.
+`or_else` is an infix binary operator that supplies fallback values for an [optional-ok expression](#optional-ok-results).
 
 ```odin
 m: map[string]int;
@@ -3322,7 +3592,7 @@ i = m["hellope"] or_else 123;
 assert(i == 123);
 ```
 
-or_else can be used with type assertions too, as they have optional-ok semantics.
+`or_else` can be used with type assertions too, as they have optional-ok semantics.
 
 ```odin
 v: union{int, f64};
@@ -3495,84 +3765,115 @@ when (FOO) {
 
 Configuration values are immutable constants. File selection, generated sources, test discovery, lint configuration, instrumentation policy, and language-feature policy are expressed in the build system rather than through source-file tags.
 
-# Memory and the context system
+# Memory and program services
 
-## Package-effective context
+## Build-selected providers
 
-The context system lets the caller choose cross-cutting services used by a package—allocators, temporary storage, logging, tracing, clocks, and similar runtime policy—without requiring the package author to expose the same parameters on every procedure.
+The final program selects exactly one **default allocator provider** and one
+**logging provider** as part of its build. A package import cannot replace either
+provider, and importing the same package from two places never creates configured
+copies of that package. Provider selection belongs to the final build graph rather
+than to source-level package identity.
 
-Every procedure using the `loke` calling convention receives an ambient context implicitly. Inside the procedure, the predeclared name `context` is the **immutable effective view for the procedure's declaring package**. Its fields may be read and the services they refer to may be invoked, but the binding and its fields cannot be assigned, moved, mutably borrowed, or addressed:
+If the build does not select a provider, the standard runtime supplies the system
+heap allocator and the standard logger. The selected implementations are fixed for
+the resulting executable or library and may be devirtualized by the compiler.
+Their state is still runtime state: an allocator has a region and callbacks, and a
+logger may own buffers or synchronization. The provider must arrange any required
+initialization before `@(init)` procedures run and remains available until all
+`@(fini)` procedures finish.
+
+`mem.default_allocator()` returns the allocator handle supplied by the selected
+allocator provider. It is an ordinary runtime call or load, not a compile-time
+allocator value. A managed owner without `via`, and an allocation procedure whose
+allocator argument is omitted, binds that handle when the owner or operation is
+initialized. Once bound, later calls continue to use the recorded allocator.
+
+The `core:log` procedures route to the selected logging provider. The build may
+also select a minimum compiled log level, allowing lower-level calls to be removed
+entirely. A package that needs a different sink, captured test output, or
+request-specific fields takes an ordinary `Logger` parameter or retains one in a
+state object; there is no scoped or package-local override of the program logger.
+
+Only provider *implementation* is selected at build time. Per-request allocators,
+scratch arenas, log fields, trace spans, clocks used for simulation, deadlines,
+cancellation, random-number state, and similar values have runtime identity and
+are passed explicitly.
+
+## Explicit runtime environments
+
+Related runtime services may be grouped in an ordinary application-defined
+record. The record is not compiler-known and procedures name it only when they
+actually need it:
 
 ```odin
-load :: proc(path: string) -> Image {
-	context.allocator = another_allocator; // ERROR: package context is immutable
-	context.logger.info("loading ", path); // OK: invoke a service through its handle
-	pixels: [dynamic]u8 via context.allocator;
+Request_Env :: struct {
+	scratch:   mem.Scratch,
+	logger:    Logger,
+	span:      Trace_Span,
+	deadline:  Time,
+}
+
+handle :: proc(env: inout Request_Env, request: Request) -> Response {
 	...
 }
 ```
 
-Immutability is shallow. An allocator may update its arena, a logger may write output, and the allocation-error state may be updated through their handles. What cannot change during a package procedure's invocation is which allocator, logger, or other service that invocation sees. Service interfaces usable through context therefore operate through immutable handles and do not require `inout` access to the context field.
+Long-lived subsystems normally retain stable dependencies such as an allocator,
+logger, or clock in their own record. Short-lived state stays in a request or task
+environment and is moved explicitly when work is transferred to another thread.
+Nothing is inherited merely because one procedure called another.
 
-### Scoped context derivation
-
-A `context` statement constructs derived routing for imported packages called by its body. It never modifies the incoming context or the current package's effective view. Every entry has the form `package.field = value`, where `package` is an import name. A package cannot target itself, so the package author cannot replace the policy chosen by its caller:
+Loke has no closures, but a hidden program-wide environment pointer is not a
+substitute for lexical capture: it would supply the caller's state at invocation
+rather than the state chosen when a procedure value was created. Immediate
+callbacks instead take typed state explicitly:
 
 ```odin
-main :: proc() {
-	context (
-		image.allocator = image_arena,
-		image.logger    = application_logger,
-	) {
-		image.load("background.png");
-
-		context (image.allocator = thumbnail_arena) {
-			image.load("thumbnail.png");
-		}
-
-		image.load("foreground.png"); // uses `image_arena` again
+visit_all :: proc(
+	items: []Item,
+	state: inout $S,
+	visit: proc(state: inout S, item: Item),
+) {
+	foreach (item in items) {
+		visit(inout state, item);
 	}
 }
 ```
 
-Override expressions are evaluated once, from left to right, in the incoming context before the derived routing becomes active. Each supplied service value is borrowed immutably for the body; a temporary's lifetime is extended through the body, and a bound source cannot be moved or dropped while the derived context is active. The current procedure continues to see its unchanged `context`; an override is observed when control enters the targeted package. The derived routing lasts for the dynamic extent of the body, including all synchronous `loke` calls it makes, and disappears on every kind of exit. It is stack-scoped and cannot be returned, stored globally, captured, or retained by foreign code.
+A retained callback stores its state beside its procedure in an ordinary generic
+record:
 
-The statement is available only inside a procedure. “Package-effective” describes which package an override targets, not file-scope mutable configuration. Runtime policy is selected at an execution boundary such as `main`, a request handler, a test, or a plugin entry point.
+```odin
+Handler :: struct($S: typeid) {
+	state: S,
+	invoke: proc(state: inout S, event: Event),
+}
 
-Package names in overrides use ordinary import-name resolution. The compiler and linker give every package a canonical identity; two aliases of the same package select the same context entry. A package alias in a context header is a compile-time selector, not a runtime value.
+dispatch :: proc(handler: inout Handler($S), event: Event) {
+	handler.invoke(inout handler.state, event);
+}
+```
 
-### Package resolution and inheritance
-
-When a call enters package `P`, each field of `P`'s effective view is chosen in this order:
-
-1. The nearest active package-qualified override for `P` and that field.
-2. The calling procedure's current effective value for that field.
-3. The runtime default when there is no calling `loke` procedure.
-
-Resolution is field-wise: overriding `image.logger` does not also replace `image.allocator`. Same-package calls normally forward the already effective view. An indirect procedure value still resolves correctly because the callee's declaring package is part of the compiled procedure, not stored in a closure.
-
-Inheritance makes policy follow a library through dependencies. If `image` calls `png`, which calls `zlib`, all three see the allocator selected for `image` unless an active override targets `png` or `zlib` more specifically. As the consumer of `png`, `image` may derive routing for `png` before a call, but it cannot replace the effective `image` context of the invocation already executing.
-
-Package context is for ambient capabilities, not persistent package state or every configuration option. A decoder that needs a durable thread count, format policy, cache, or retained logger stores those in an explicit value. A resource that must use its creation-time allocator already records that allocator as part of its ownership metadata; ambient context is consulted when an operation begins and is not captured automatically.
-
-Work that may outlive the context statement—detached threads, queued tasks, and retained callbacks—does not inherit its stack descriptor by pointer. `context_snapshot()` materializes the current immutable ambient context as an owned `Context` value. A thread or task API that propagates context takes such a value by move and installs it around the entry procedure; an API that does not document this starts from the runtime defaults. Snapshotting clones the service handles using their ordinary value semantics, follows the active allocator's failure policy if the descriptor needs storage, and does not make their underlying state thread-safe. `try_context_snapshot()` is the explicitly fallible form.
-
-The runtime supplies the root defaults. The compiler-known `Context` interface contains at least `allocator`, `temp_allocator`, `logger`, and the allocation-error state required below; the concrete handles and implementation live in the runtime and core libraries.
+This keeps ownership and borrowing visible and leaves ordinary procedure values
+as one code pointer. Foreign APIs use their documented `rawptr` user-data field
+when they require erased callback state; that remains an unsafe interop boundary.
 
 ## Allocators
 
 The language uses deterministic managed memory for ordinary owning values and retains explicit allocators for systems programming. Managed values are not garbage-collected: the compiler inserts cleanup at the end of their lexical lifetime.
 
-Dynamic arrays, maps, runtime strings, and other managed containers remember the allocator responsible for their backing storage. By default they use `context.allocator`; a declaration can select another allocator with `via`.
+Dynamic arrays, maps, runtime strings, and other managed containers remember the allocator responsible for their backing storage. By default they bind `mem.default_allocator()`; a declaration can select another allocator with `via`.
 
 ```odin
-bytes: [dynamic]u8 via context.temp_allocator;
+scratch := mem.Scratch();
+bytes: [dynamic]u8 via scratch.allocator();
 bytes.reserve(4096);
 ```
 
 The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Use the `manual` declaration modifier to opt out of automatic cleanup.
 
-All allocations are preferably done through allocators. The core library takes advantage of the effective package context. The following call:
+All allocations are preferably done through allocators. The following call:
 
 ```odin
 ptr, err := new(int);
@@ -3581,35 +3882,37 @@ ptr, err := new(int);
 is equivalent to this:
 
 ```odin
-ptr, err := new(int, context.allocator);
+ptr, err := new(int, mem.default_allocator());
 ```
 
-The allocator from the context is implicitly assigned as a default parameter to the built-in procedure new.
+The allocator is obtained by the ordinary runtime default expression
+`allocator := mem.default_allocator()` only when the caller omits the allocator
+argument. The final build fixes which provider implements that procedure.
 
-The effective package context exposes two allocator roles: `context.allocator` and `context.temp_allocator`. A caller may replace either role for a package with a scoped context override; code inside that package cannot reassign them. The roles are treated slightly differently.
-
-- context.allocator is for “general” allocations, for the subsystem it is used within.
-- context.temp_allocator is for temporary and short lived allocations, which are to be freed once per cycle/frame/etc.
-
-By default, `context.allocator` is an OS heap allocator and `context.temp_allocator` is a scratch allocator backed by a growing arena. `free_all(context.temp_allocator)` clears that arena. The compiler rejects `free_all`, or any call carrying the same allocator-reset effect, while a live managed value or borrow still refers to storage from that allocator.
+There is no ambient temporary allocator. Temporary storage has a reset boundary
+and runtime identity, so code creates a `mem.Scratch` or `mem.Arena` owner and
+passes its allocator explicitly. The compiler rejects `free_all`, or any call
+carrying the same allocator-reset effect, while a live managed value or borrow
+still refers to storage from that allocator.
 
 Allocator values have a region identity in addition to their allocation procedures and failure policy. Copying an allocator value preserves that identity, and every allocation records it. This is what lets the compiler recognize that two local allocator values refer to the same region. When static provenance cannot prove two allocator values distinct, the lifetime check conservatively treats their regions as possibly identical. Across a procedure call the identity is propagated through a parameter marked `@(allocator_reset)`; a Loke procedure that resets an allocator received as a parameter must mark that parameter, and the compiler verifies the promise transitively. The attribute is part of procedure-type compatibility, so indirect calls preserve the same effect.
 
-Resetting a region is intentionally explicit. There is no zero-argument `free_all`; code must name the allocator being reset. A procedure may reset a region it created locally, because no caller-owned value can belong to it. It may not hide a reset of a global, ambient-context, or other pre-existing allocator: such an allocator is taken through an `@(allocator_reset)` parameter instead.
+Resetting a region is intentionally explicit. There is no zero-argument `free_all`; code must name the allocator being reset. A procedure may reset a region it created locally, because no caller-owned value can belong to it. It may not hide a reset of a global or other pre-existing allocator: such an allocator is taken through an `@(allocator_reset)` parameter instead.
 
 ```odin
 release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
 	free_all(allocator);
 }
 
-scratch := [dynamic]u8 via context.temp_allocator;
+arena := mem.Arena();
+scratch := [dynamic]u8 via arena.allocator();
 view := scratch[:];
-release_scratch(context.temp_allocator); // ERROR while `scratch` or `view` is live
+release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
 ```
 
 The following low-level procedures are built in and are also available in package `mem` with enforced allocator errors. Normal managed strings, arrays, and maps do not need them.
 
-- `new(T, allocator=context.allocator) -> (^T, Allocator_Error)` allocates a zero-initialized value of the type given. The pointer result is nil on failure.
+- `new(T, allocator=mem.default_allocator()) -> (^T, Allocator_Error)` allocates a zero-initialized value of the type given. The pointer result is nil on failure.
 
 ```odin
 ptr, err := new(int);
@@ -3618,7 +3921,7 @@ ptr^ = 123;
 x: int = ptr^;
 ```
 
-- `new_clone(value, allocator=context.allocator) -> (^T, Allocator_Error)` allocates a clone of the value passed to it. The pointer result is nil on failure.
+- `new_clone(value, allocator=mem.default_allocator()) -> (^T, Allocator_Error)` allocates a clone of the value passed to it. The pointer result is nil on failure.
 
 ```odin
 x: int = 123;
@@ -3629,7 +3932,7 @@ if (err != nil) { panic("clone allocation failed"); }
 assert(ptr^ == 123);
 ```
 
-- `make(Container, ..., allocator=context.allocator) -> (Container, Allocator_Error)` creates manually owned backing storage for a dynamic array or map. On failure the container is zero. The result must initialize a `manual` owner, or be transferred to a managed owner with `move`. Slices are borrows and cannot be manual owners.
+- `make(Container, ..., allocator=mem.default_allocator()) -> (Container, Allocator_Error)` is an explicitly fallible constructor for a dynamic array or map with selected backing storage. On failure the container is zero. The result is an ordinary owning value: assigning it to a managed declaration enables automatic cleanup, while assigning it to a `manual` declaration requires an explicit `drop`. Slices are borrows and cannot be owners.
 
 ```odin
 dynamic_array_zero_length: manual [dynamic]int;
@@ -3637,13 +3940,15 @@ dynamic_array_with_length: manual [dynamic]int;
 dynamic_array_with_length_and_capacity: manual [dynamic]int;
 made_map: manual map[string]int;
 made_map_with_reservation: manual map[string]int;
-err0, err1, err2, err3, err4: Allocator_Error;
+managed_array: [dynamic]int;
+err0, err1, err2, err3, err4, err5: Allocator_Error;
 
 dynamic_array_zero_length, err0 = make([dynamic]int);
 dynamic_array_with_length, err1 = make([dynamic]int, 32);
 dynamic_array_with_length_and_capacity, err2 = make([dynamic]int, 16, 64);
 made_map, err3 = make(map[string]int);
 made_map_with_reservation, err4 = make(map[string]int, 64);
+managed_array, err5 = make([dynamic]int, 32);
 // Each error must be handled or explicitly discarded.
 ```
 
@@ -3658,38 +3963,36 @@ free(ptr);
 - `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. Not all allocators support this procedure. The explicit argument and effect annotation make the invalidation visible through wrappers and indirect calls.
 
 ```odin
-free_all(context.temp_allocator);
 free_all(my_allocator);
 ```
 
-- delete - releases a `manual` owner created by `make`. Calling `delete` on a managed value is an error; use `drop` for early managed cleanup.
+- `drop` releases either a managed or manual owner. It consumes the owner, resets the variable to zero, and marks it dead until reassignment. Scope exit invokes it automatically only for managed owners; calling it explicitly on a definitely dead variable is an error.
 
 ```odin
-delete(manual_dynamic_array);
-delete(manual_map);
+drop(manual_dynamic_array);
+drop(manual_map);
 ```
 
 To see more uses of allocators and allocation-related procedures, please see package mem in the core library.
 
 ## Allocation failure
 
-Managed values allocate implicitly. A dynamic array grows on `append`, a string is built by concatenation, and an assignment clones its source. None of these have a place to return an error, so the language needs one answer for what happens when the allocator cannot satisfy them.
+Managed values allocate implicitly. A dynamic array grows on `append`, a string is built by concatenation, and an assignment clones its source. None of these have a place to return an error, so an implicit allocation failure never continues as if it had produced a value.
 
-Each allocator carries a **failure policy**, part of the allocator value and therefore selectable per package or subsystem through a context override:
+Each allocator carries one of two **failure policies**:
 
 | Policy | Behaviour on failure |
 | --- | --- |
 | `.Panic` | Raise a runtime panic reporting the requested size and the allocator. The default. |
 | `.Trap` | Abort the process immediately without unwinding. For freestanding and embedded targets. |
-| `.Error` | Fail the operation and set the effective context's interior allocation-error state. Existing destinations remain unchanged; value-producing operations yield zero. |
 
-`.Panic` is the default because the alternative — silently continuing with a truncated container — is the failure mode that produces corrupted output rather than a stopped program. Programs that cannot accept a panic set the policy explicitly.
+The policy is part of the allocator value and follows an explicitly supplied
+allocator into a subsystem. `.Panic` may unwind according to the runtime's panic
+rules; `.Trap` does not. In either case a partially constructed temporary is
+cleaned up when unwinding permits it, and an existing assignment destination is
+not modified before all required allocation and cloning succeeds.
 
-Under `.Error`, a failed mutation is a no-op: an `append` does not extend and assignment to an existing destination leaves that destination unchanged. A failed value-producing operation has no existing destination to preserve, so it produces the zero value of its result type. Thus a failed declaration initializes its variable to zero, a failed concatenation evaluates to an empty string, and a failed clone used as a return value returns the zero value. Any partial temporary state is cleaned up before execution continues.
-
-The allocation-error flag is sticky: the first failure remains recorded until `mem.last_allocation_error()` reads and clears it. Successful allocations do not clear an earlier failure. This policy gives every expression a defined value while allowing code such as a server shedding load to inspect the error at a chosen boundary; code that must distinguish failure at one exact operation should use the explicit fallible forms below.
-
-Where failure must be handled at a specific call site rather than by policy, use the explicit forms, which return an error regardless of the active policy:
+Code that must recover from allocation failure uses an explicitly fallible form:
 
 ```odin
 copy, err := source.try_clone();
@@ -3700,41 +4003,17 @@ if (err != nil) {
 err := numbers.try_append(value);
 ```
 
-The allocating manual primitives `make`, `new`, and `new_clone` always return `Allocator_Error` and ignore the allocator failure policy, since they already have somewhere to report failure. Deallocation operations such as `free` and `delete` return no status; passing them the wrong allocation or allocator is a programmer error detected by debugging allocators when available.
+The explicitly fallible primitives `make`, `new`, and `new_clone`, and the
+`try_` forms of implicitly allocating operations, always return an error and do
+not invoke the allocator failure policy. There is no sticky allocation-error
+flag or implicit error side channel. Deallocation operations such as `free` and
+`drop` return no status. An owner records the allocator needed by `drop`; passing
+`free` the wrong allocation or allocator is a programmer error detected by
+debugging allocators when available.
 
 For more information regarding memory allocation strategies in general, please see Ginger Bill’s Memory Allocation Strategy series.
 
 Tracking and arena allocators are ordinary `core:mem` implementations. Their setup, diagnostics, and callbacks are library documentation rather than language rules.
-
-## Installing a context
-
-Procedures that do not use the `loke` calling convention have no incoming ambient context, and the predeclared `context` view is unavailable outside an installing block. They install a complete `Context` value for a lexical body with the `using` form of the context statement. The installed value is immutable once the body begins.
-
-```odin
-explicit_context_definition :: proc "c" () {
-	context (using runtime.default_context()) {
-		fmt.println("\n#explicit context definition");
-		dummy_procedure();
-	}
-}
-
-dummy_procedure :: proc() {
-	fmt.println("dummy_procedure");
-}
-```
-
-Here is another example of setting an error callback for vendor:glfw:
-
-```odin
-error_callback :: proc "c" (code: i32, desc: cstring_view) {
-	context (using runtime.default_context()) {
-		fmt.println(desc, code); // fmt.* calls use the loke calling convention
-	}
-}
-glfw.SetErrorCallback(error_callback);
-```
-
-`context (using base, package.field = value, ...)` may also add imported-package overrides to the installed base. `using` is permitted only where no incoming ambient context exists; ordinary `loke` procedures derive routing from their immutable incoming context instead. A context statement without `using` is an error where no incoming ambient context exists.
 
 # Concurrency and the memory model
 
@@ -3746,13 +4025,16 @@ Two accesses conflict when they touch overlapping bytes and at least one is a wr
 
 The `core:sync` package provides `Atomic(T)` for booleans, integer types, enums with supported integer backing types, and pointers. Its operations are backed by compiler intrinsics and accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` ordering where meaningful. Relaxed operations are atomic but create no inter-thread ordering. Acquire and release create the happens-before edge described above. Sequentially consistent operations additionally participate in one total order. Unsupported type, operation, or ordering combinations are compile-time errors; the implementation may use a lock when the target lacks a lock-free instruction.
 
-Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There is deliberately no implicit `Send` or `Sync` trait in this language version.
+Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There are no implicit `Send` or `Sync` interfaces.
 
-The hidden ambient-context pointer is not captured by a new thread or retained task. Context propagation is explicit through an owned value produced by `context_snapshot()`, as specified under [Package-effective context](#package-effective-context), and transferring that snapshot does not add thread-safety to the allocator, logger, or other service handles it contains.
+Threads and retained tasks receive only the arguments explicitly moved or copied
+into them. A request environment, logger, clock, scratch owner, or other service
+handle is transferred like any other value, and transferring a handle does not
+make its underlying state thread-safe.
 
 ## Shared ownership
 
-`shared(T)` is an explicit library owner for one stable, heap-allocated `T` payload and an atomic strong-reference count. Its zero value is nil. `shared(value)` clones and allocates; `shared(move(value))` transfers the value into the allocation. Assignment invokes its custom `clone` hook and increments the strong count rather than cloning `T`; `move` transfers one handle; `drop` decrements the count with release ordering, performs an acquire fence when it observes the final reference, and then drops the payload exactly once. Construction uses the active allocator or one selected with `via`, follows its failure policy, and has an explicit `try_shared` form for local error handling.
+`shared(T)` is an explicit library owner for one stable, heap-allocated `T` payload and an atomic strong-reference count. Its zero value is nil. `shared(value)` clones and allocates; `shared(move(value))` transfers the value into the allocation. Assignment invokes its custom `clone` hook and increments the strong count rather than cloning `T`; `move` transfers one handle; `drop` decrements the count with release ordering, performs an acquire fence when it observes the final reference, and then drops the payload exactly once. Construction uses `mem.default_allocator()`, or one supplied through its ordinary `allocator` parameter, follows that allocator's failure policy, and has an explicit `try_shared` form for local error handling. A `shared(T)` variable may also be declared `via` an allocator like any other managed owner.
 
 The atomic reference count makes copying and dropping handles safe across threads. It does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` whose lifetime is attributed to that handle; callers must use a mutex, atomics within `T`, immutability, or another protocol before conflicting access. The borrow may not outlive the handle used to obtain it, but the compiler does not correlate aliases obtained from different shared handles.
 
@@ -3772,10 +4054,12 @@ A procedure using a foreign calling convention, a variable declared in a foreign
 - `rawptr`, `^T`, and `[^]T`, lowered as C pointers; the pointed-to type need not be foreign-ABI-safe because the foreign function receives only an address;
 - procedure pointers whose declared calling convention and complete signature match the foreign declaration;
 - enums with an explicit foreign-ABI-safe integer backing type;
-- plain structs and `struct @(raw_union)` records with a trivial lifecycle whose fields are recursively foreign-ABI-safe. Their field order, padding, alignment, and by-value argument classification follow the target C ABI for the equivalent C record. A fixed array is permitted as a record field and has the equivalent C array layout;
+- plain structs with a trivial lifecycle whose fields are recursively foreign-ABI-safe. Their field order, padding, alignment, and by-value argument classification follow the target C ABI for the equivalent C record. A fixed array is permitted as a record field and has the equivalent C array layout;
 - `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership.
 
-Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_view`, concepts, and records with custom lifecycle hooks are not foreign-ABI-safe. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
+Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_view`, and records with custom lifecycle hooks are not foreign-ABI-safe. Interfaces are compile-time declarations and do not denote ABI values. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
+
+The base language has no overlapping-record or C-union type. Portable bindings pass a C union as `rawptr` and expose typed wrapper accessors. A binding generator may use a target-specific extension for a union passed by value, but that representation is not portable Loke source.
 
 A default foreign parameter is passed by value. `p: inout T` lowers to `T *`, while `@(by_ptr) p: T` lowers to `T const *`. Foreign parameters cannot use the `move` mode: a C call does not implicitly acquire Loke cleanup responsibility. Exported Loke procedures follow the same restrictions and must declare the foreign calling convention expected by their callers.
 
@@ -3823,12 +4107,12 @@ foreign lib {
 }
 ```
 
-Foreign procedure declarations have the cdecl/c calling convention by default unless specified otherwise. Due to foreign procedures not having a body declared within this code, you need to append the --- symbol to the end to distinguish it as a procedure literal without a body and not a procedure type.
+Foreign procedure declarations have the `c` calling convention by default unless specified otherwise. Because a foreign procedure has no Loke body, its declaration ends with `---` to distinguish it from a procedure type.
 
 The attributes system can be used to change specific properties of entities declared within a block:
 
 ```odin
-@(default_calling_convention = "std")
+@(default_calling_convention = "stdcall")
 foreign kernel32 {
 	@(link_name="GetLastError") get_last_error :: proc() -> i32 ---;
 }
@@ -3842,39 +4126,19 @@ Available attributes for foreign blocks:
 - public - Exports all entities declared within the block. Bindings usually want this, or `@(public)` on the package declaration.
 - require_results - All procedures declared within this foreign block must have their return values used.
 
-## Using a vendor library
+# Generics
 
-As described in the Foreign System we often want to use existing C libraries. Loke's foreign declarations closely follow Odin, so many maintained bindings under `vendor:` can be ported mechanically. A port normally updates visibility to `@(public)`, converts layout and parameter annotations to attributes, and replaces owning C-string assumptions with `cstring_view` or `C_String`.
+Generics let a procedure or data type bind compile-time type or value parameters and use them throughout its definition.
 
-Bindings preserve the original library's symbol spelling and expose a more idiomatic wrapper separately when desired. End-to-end vendor examples belong with the binding, not in the language specification.
+The `$` prefix always marks the declaration or inference of a generic parameter. It is required wherever such a parameter is introduced and is not written when the bound name is subsequently used.
 
-# Parametric polymorphism
+## Explicit generic parameters
 
-Parametric polymorphism, commonly referred to as “generics”, allow the user to create a procedure or data that can be written generically so it can handle values in the same manner.
+An explicit generic parameter is supplied by the caller. A parameter of type `typeid` receives a type; other parameter types receive compile-time constant values.
 
-Note: the nickname “parapoly” is usually used for this, following Odin.
+### Procedures with explicit generic parameters
 
-## Explicit parametric polymorphism
-
-Explicit parametric polymorphism means that the types of the parameters of a proc or of the data fields of a struct (when intended to potentially be used with multiple possible types) must be explicitly provided. This is similar to how C++ allows the use of templates to fill out the body of a procedure or data structure with the types that are given at compile-time as input to the template parameters, but here explicit parametric polymorphism is safer and cleaner to work with.
-
-### Procedures using explicit parametric polymorphism (parapoly)
-
-As a reminder, all parameters passed into a function are immutable in the sense that they can’t have their value changed using = directly. A useful idiom is var := var, which expresses a variable shadowing itself. When used at the top of a procedure the compiler understands the use case of enabling local modification of the otherwise immutable parameter variable, and won’t complain about the shadowing when you compile with -vet.
-
-```odin
-sin_tau :: proc(angle_in_cycles: f64) -> f64 {
-    angle_in_cycles := angle_in_cycles;   // Allows `angle_in_cycles` to have its value changed
-    
-    TAU :: 2 * math.PI;
-    angle_in_cycles *= TAU;
-    return math.sin(angle_in_cycles);
-}
-assert(math.abs(sin_tau(0.25) - 1) <= 0.001);   // sin_tau(0.25) is approximately 1
-assert(math.abs(sin_tau(0.75) - -1) <= 0.001);  // sin_tau(0.75) is approximately -1
-```
-
-However, to specify that a parameter must be a compile-time constant, which is not the same thing as an immutable parameter, and may sometimes be necessary (e.g. for parapoly) or desirable (e.g. to enforce compile-time computation), the parameter’s name must be prefixed with a dollar sign $. The following example takes two compile-time constant parameters and then uses them to initialize an array of known length:
+To specify that a procedure parameter is supplied at compile time rather than merely immutable at runtime, prefix its declared name with `$`. The following example takes two compile-time constant parameters and uses them to initialize an array of known length:
 
 ```odin
 make_f32_array :: proc($N: int, $val: f32) -> (res: [N]f32) {
@@ -3891,15 +4155,17 @@ Types can also be explicitly passed by specifying that the typeid parameter is c
 
 ```odin
 my_new :: proc($T: typeid) -> ^T {
-	return (^T)(alloc(size_of(T), align_of(T)));
+	ptr, err := new(T);
+	if (err != nil) { panic("allocation failed"); }
+	return ptr;
 }
 
 ptr := my_new(int);
 ```
 
-### Data types using explicit parametric polymorphism (parapoly)
+### Generic data types
 
-Structures and unions may have polymorphic parameters and the syntax for doing so is similar to procedure call syntax. Parapoly struct:
+Structures and unions declare generic parameters using the same parameter-list shape as procedures. Generic struct:
 
 Arguments whose parameter type is `typeid` are types; arguments to any other parameter are compile-time constant expressions. Bare names are resolved after parsing, so both `Buffer(Element, Count)` and `Buffer(u8, 4096)` use the same argument syntax. A value argument is not restricted to an identifier.
 
@@ -3913,25 +4179,23 @@ Table_Slot :: struct($Key, $Value: typeid) {
 slot: Table_Slot(string, int);
 ```
 
-Parapoly union:
+Generic union:
 
 ```odin
 Error :: enum {Foo0, Foo1, Foo2};
-Param_Union :: union($T: typeid) @(no_nil) {T, Error};
+Param_Union :: union($T: typeid) {T, Error};
 r: Param_Union(int);
 r = 123;
 r = Error.Foo0;
 ```
 
-The $ prefix is optional for record data types as all parameters must be “constant”.
+Record and union generic parameters always require `$`, just like compile-time procedure parameters. This keeps every binding site visually explicit even though all record and union parameters are necessarily compile-time values.
 
-## Implicit parametric polymorphism
+## Inferred generic parameters
 
-Implicit implies that the type of a parameter is inferred from its input. In this case, the dollar sign $ can be placed on the type.
+An inferred generic parameter is bound from the type or shape of a runtime argument. In this case `$` appears at the binding position inside the parameter type.
 
-Note: the name “polymorphic name” is usually used for this, following Odin.
-
-### Procedures using implicit parametric polymorphism (parapoly)
+### Procedures with inferred generic parameters
 
 ```odin
 foo :: proc($N: $I, $T: typeid) -> (res: [N]T) {
@@ -3999,27 +4263,17 @@ swapped :: proc(pair: [2]$E) -> [2]E {
 }
 ```
 
-The cost of this is that a signature naming a generic record must state its arity: `^Table($Key, $Value)` breaks if `Table` later gains a third parameter. So does every construction site, so the signature failing alongside them is the honest outcome rather than a regression.
-
 ## where clauses
 
-A bound on polymorphic parameters to a procedure or record can be expressed using a where clause immediately before the opening `{`, rather than at the type’s or constant’s first mention. Additionally, where clauses can apply bounds to arbitrary types, rather than just polymorphic type parameters.
+A bound on generic parameters to a procedure or record can be expressed using a `where` clause immediately before the opening `{`. Every bound is a compile-time boolean expression evaluated while the declaration is instantiated.
 
 The clause is part of the same declaration as the signature it constrains. No semicolon separates them; the declaration is terminated by its body, exactly as it would be without the clause. Multiple bounds are separated by commas and all must hold.
 
+A bound may reference generic type and value parameters in scope from the declaration or an enclosing generic `impl`, plus constants, types, interface applications, and compile-time built-ins. It may not depend on a runtime parameter, local variable, mutable global, or runtime procedure call. A declaration with no generic parameters in scope therefore cannot have a `where` clause. Runtime preconditions are ordinary `if` and `assert` statements in the procedure body.
+
 Some cases that a where clause may be useful:
 
-- Sanity checks for parameters:
-
-```odin
-simple_sanity_check :: proc(x: [2]int)
-	where len(x) > 1,
-	      type_of(x) == [2]int {
-	fmt.println(x);
-}
-```
-
-- Parameter polymorphism checks for procedures. The bound here is about what `E` *can do*, so it is written as a [concept](#concepts-and-generic-operators) rather than as a type predicate:
+- Generic parameter checks for procedures. The bound here is about what `E` *can do*, so it is written as an [interface](#interfaces-and-generic-operators) rather than as a type predicate:
 
 ```odin
 // A fixed array has no `.x`/`.y` swizzle selectors; index it.
@@ -4075,7 +4329,7 @@ assert(ok_x == true);
 assert(ok_y == false);
 ```
 
-- Restrictions on parametric polymorphic parameters for record types. Note the division of labour: `Integral(T)` is a capability requirement and is a concept, while `N > 2` is a predicate over a value and is what a `where` clause is for:
+- Restrictions on generic parameters for record types. Note the division of labour: `Integral(T)` is a capability requirement and is an interface, while `N > 2` is a predicate over a value and is what a `where` clause is for:
 
 ```odin
 Foo :: struct($T: typeid, $N: int)
@@ -4115,13 +4369,11 @@ Attributes modify declarations, parameters, statements, blocks, or type literals
 ### Procedure Declarations
 
 ```odin
-    @(conversion)
     @(deprecated=<string>)
-    @(export=<boolean?>)
+    @(export)
     @(fini)
     @(init)
     @(implicit)
-    @(no_reallocate)
     @(link_name=<string>)
     @(require_results)
 ```
@@ -4139,14 +4391,13 @@ Optimization and code-generation annotations such as `@(compiler.no_alias)` and 
 ### Variable declaration attributes
 
 ```odin
-    @(export=<boolean?>)
+    @(export)
     @(link_name=<string>)
     @(private=<string>?) – globals only
     @(public) – globals only
-    @(rodata)
-    @(static) – locals variable declarations only
-    @(thread_local=<string?>)
 ```
+
+Every one of these concerns linkage or visibility: which symbol a declaration produces and who may name it. Storage duration and ownership are not attributes; they are [storage modifiers](#storage-modifiers) written in the declaration itself. Read-only data is not an attribute either; it is what a [constant](#constant-declarations) already is.
 
 ### Constant Value Declarations
 
@@ -4164,24 +4415,18 @@ Optimization and code-generation annotations such as `@(compiler.no_alias)` and 
 
 ## Attribute reference
 
-### `@(conversion)`
-
-Marks a one-parameter procedure as an explicit conversion to its return type. The procedure becomes a candidate for `Target(value)` when it is visible through the source type, target type, an extension, or ordinary lexical scope.
-
 ### `@(implicit)`
 
-Allows a `@(conversion)` procedure to participate in implicit conversion and overload resolution. At most one user-defined implicit conversion is applied to each argument in a single resolution step. The compiler may warn about expensive or narrowing implicit conversions, but they remain legal.
+Allows a one-argument overload belonging to its target type's `init` group to be applied without being written, **only where the argument is an untyped constant**. Its parameter type must be a built-in numeric, boolean, rune, or string type. A runtime value always requires the explicit `Target(value)` form. See [Implicit conversion from constants](#implicit-conversion-from-constants).
 
-### `@(no_reallocate)`
-
-Marks a procedure with an `inout` parameter as preserving the address, capacity, and lifetime of storage reachable through that parameter. The compiler verifies the promise for a Loke procedure by rejecting moves, drops, reallocating container operations, and calls without the same guarantee on the relevant storage. A foreign declaration carrying the attribute is a programmer promise. The attribute does not make mutation compatible with an overlapping immutable borrow; it only prevents the call from being treated as a possible storage invalidation.
+`@(implicit)` on a procedure that is not a one-argument `init` overload is an error.
 
 ### `@(default_calling_convention=<string>)`
 
 This attribute can be attached to a foreign block to specify the default calling convention for all procedures in the block. Example:
 
 ```odin
-@(default_calling_convention = "std")
+@(default_calling_convention = "stdcall")
 foreign kernel32 {
 	@(link_name="LoadLibraryA") load_library_a  :: proc(c_str: ^u8) -> Hmodule ---;
 }
@@ -4198,17 +4443,26 @@ foo :: proc() {
 }
 ```
 
-### `@(export=<boolean?>)`
+### `@(export)`
 
-Exports a variable or procedure symbol, useful for producing DLLs.
+Emits a variable or procedure symbol into the object file so that a C consumer or a DLL can link against it. This is distinct from [`@(public)`](#public), which controls whether other Loke packages may name the declaration; the two are independent and a declaration may need both.
+
+It takes no argument. A boolean parameter would only be useful for opting out of an enclosing export default, and no construct establishes one — a foreign block or package clause can carry `@(public)`, never `@(export)`. Conditional export is written with `when` around the declaration.
 
 ### `@(init)`
 
-This attribute may be applied to any procedure that neither takes any parameters nor returns any values. All suitable procedures marked in this way by @(init) will then be called at the start of the program before main is called. The exact order in which all such intialization functions are called is deterministic and hence reliable. The order is determined by a topological sort of the import graph and then in alphabetical file order within the package and then top down within the file.
+This attribute may be applied to any procedure that neither takes parameters nor returns values. All such procedures are called before `main` in one total, deterministic order:
+
+1. A dependency package runs before every package that imports it.
+2. When several packages are ready, the package with the lexicographically smaller canonical import path runs first. Comparison is by UTF-8 bytes.
+3. Within a package, files are ordered by their normalized package-relative path, using `/` as the separator and the same UTF-8 byte comparison.
+4. Within a file, procedures run in source order.
+
+The build system assigns each resolved package one canonical import path before this ordering is computed, so aliases and host filesystem enumeration never affect initialization order.
 
 ### `@(fini)`
 
-Like @(init) but run at after the main procedure finishes.
+Like `@(init)`, but run after `main` finishes. The set of `@(fini)` procedures is ordered by the same package, file, and source-position rules and then run in reverse; a `@(fini)` procedure does not need a corresponding `@(init)` procedure.
 
 ### `@(link_name=<string>)`
 
@@ -4282,38 +4536,13 @@ main :: proc() {
 }
 ```
 
-### `@(rodata)`
+### Storage duration and ownership
 
-A global or static variable with the @(rodata) attribute will live in the read-only data block of the program. This means that the value cannot be changed.
-
-In most cases, using a constant is a better idea. One example where @(rodata) is useful is this case:
-
-The declared type must be a read-only `[]int`, not the `[]mut int` a [slice literal](#slice-literals) infers on its own; a mutable slice into read-only storage is rejected.
-
-```odin
-@(rodata)
-numbers: []int = {
-	7,
-	42,
-	628,
-}
-
-main :: proc() {
-	index := 1;
-	n := numbers[index];
-	fmt.println(n);
-}
-```
-
-If you instead used a constant numbers array (`NUMBERS :: []int {}`), then it would not be possible to index `numbers` using a variable, because constants only exist at compile time.
-
-### `@(static)`
-
-This attribute can be applied to a variable to have it keep its state even when going out of scope. This is the same behavior as a static local variable in C.
+These are deliberately *not* attributes. `stack`, `static`, `thread_local`, and `manual` are [storage modifiers](#storage-modifiers) written in the declaration, because they change what the program does rather than describing it for a tool:
 
 ```odin
 test :: proc() -> int {
-    @(static) foo := 0;
+    foo: static = 0;
     foo += 1;
     return foo;
 }
@@ -4325,17 +4554,11 @@ main :: proc() {
 }
 ```
 
-### `@(thread_local=<string?>)`
-
-Can be applied to a variable at file scope
-
-```odin
-@(thread_local) foo: int
-```
-
 ## Extension attributes
 
-Target integration, linker sections and linkage strength, instrumentation, sanitizers, testing, debugger views, and optimization controls are not part of the base language. Tools may provide namespaced attributes such as `@(compiler.cold)`, `@(compiler.force_inline)`, `@(link.section=".text.hot")`, `@(objc.class="NSView")`, or `@(test.case)`. An unknown namespace is an error unless the corresponding toolchain extension is enabled.
+Target integration, linker sections and linkage strength, instrumentation, sanitizers, testing, debugger views, and optimization controls are not part of the base language. Tools may provide namespaced attributes such as `@(compiler.cold)`, `@(compiler.force_inline)`, `@(link.section=".text.hot")`, `@(link.tls_model="initial-exec")`, `@(objc.class="NSView")`, or `@(test.case)`. An unknown namespace is an error unless the corresponding toolchain extension is enabled.
+
+The TLS model of a `thread_local` variable belongs here rather than on the modifier. Which model a target supports, and whether choosing one is even meaningful, is a property of the toolchain and the link; a program that drops the annotation keeps its meaning and may only get slower.
 
 Two annotations that a systems language often makes portable live here instead, because both are instructions to the backend and neither changes what a program means:
 
@@ -4344,11 +4567,11 @@ Two annotations that a systems language often makes portable live here instead, 
 
 A program that drops both keeps its meaning; it may get slower or overflow a stack it previously did not, which is exactly the boundary this namespace marks.
 
-Portable source must not depend on extension attributes for parsing, type identity, ownership, lifetime, or ordinary control-flow semantics. An extension that deliberately changes one of those properties must document itself as a language extension rather than as a portable attribute.
+Portable source must not depend on extension attributes for parsing, type identity, ownership, lifetime, or ordinary control-flow semantics. An extension that changes one of those properties is a language extension rather than a portable attribute.
 
-## Layout, control, and ABI attributes
+## Layout and ABI attributes
 
-Layout, control-flow, parameter, and checking annotations use the same `@(...)` syntax as declaration attributes. Loke has no separate category of hash-prefixed directives. Every `#name` form in the language is a compile-time value, a compile-time procedure, or a type constructor — never an annotation. The complete set is `#assert`, `#panic`, `#config`, `#location`, `#caller_location`, and the type constructor [`#simd[N]T`](#simd-vectors).
+Layout and ABI annotations use the same `@(...)` syntax as declaration attributes. Loke has no separate category of hash-prefixed directives. Every `#name` form in the language is a compile-time value or compile-time procedure — never an annotation. The complete set is `#assert`, `#config`, `#location`, and `#caller_location`. SIMD uses the ordinary predeclared generic type [`Simd(T, N)`](#simd-vectors).
 
 ### Record layout attributes
 
@@ -4362,12 +4585,6 @@ Accessing a field in a packed struct is lowered as an unaligned load or store, o
 
 struct @(packed) {x: u8, y: i32, z: u16, w: u8}
 
-#### `@(raw_union)`
-
-This tag can be applied to a struct. Struct’s fields will share the same memory space which serves the same functionality as unions in C language. Useful when writing bindings especially.
-
-struct @(raw_union) {u: u32, i: i32, f: f32}
-
 #### `@(align=N)`
 
 This attribute can be applied to a struct or union. It specifies that the value is aligned to `N` bytes. Fields remain in source order.
@@ -4379,55 +4596,6 @@ Foo :: struct @(align=4) {
 Bar :: union @(align=4) {
     i32,
     u8,
-}
-```
-
-#### `@(no_nil)`
-
-This tag can be applied to a union to not allow nil values.
-
-```odin
-A :: union {int, bool};
-B :: union @(no_nil) {int, bool};
-
-// Possible states of A:
-{} // nil
-{int}
-{bool}
-
-// Possible states of B:
-{int} // default state
-{bool}
-```
-
-### Control-flow attributes
-
-#### `@(partial)`
-
-By default all cases of an enum or union have to be covered in a switch statement. `@(partial)` allows a switch that intentionally handles only selected cases:
-
-```odin
-Foo :: enum {
-    A,
-    B,
-    C,
-}
-
-test :: proc() {
-    bar := Foo.A;
-
-    // All cases required, removing any would result in an error
-    switch (bar) {
-    case .A:
-    case .B:
-    case .C:
-    }
-
-    // Partially state wanted cases
-    @(partial) switch (bar) {
-    case .A:
-    case .B:
-    }
 }
 ```
 
@@ -4468,7 +4636,7 @@ foreign foo {
 
 #### `@(by_ptr)`
 
-Used only on a foreign declaration to match an ABI that represents a const-reference parameter as a pointer. This is an explicit foreign-interface adapter, not a performance annotation for ordinary Loke parameters. The parameter is passed according to the foreign ABI while remaining read-only in Loke source.
+Used only on a foreign declaration to match an ABI that represents a const-reference parameter as a pointer. This is an explicit foreign-ABI adapter, not a performance annotation for ordinary Loke parameters. The parameter is passed according to the foreign ABI while remaining read-only in Loke source.
 
 ```odin
 foreign foo {
@@ -4484,43 +4652,17 @@ void bar(const T*)
 
 Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while a managed owner or borrow from that region is live.
 
-A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals or the ambient package context are not permitted.
-
-### Statement and block attributes
-
-#### `@(bounds_check=<boolean>)`
-
-The `bounds_check` attribute controls built-in bounds checking for a statement, block, or procedure:
-
-```odin
-@(bounds_check=false)
-proc_without_bounds_check :: proc() {
-    @(bounds_check=true) {
-        @(bounds_check=false) fmt.println(os.args[1]);
-    }
-}
-```
-
-By default, the compiler has bounds checking enabled program-wide where applicable, and it may be turned off by passing the -no-bounds-check build flag.
-
-`bounds_check` is the only check this attribute family controls. There is deliberately no companion for type assertions; see [Type assertions are always checked](#type-assertions-are-always-checked).
+A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals are not permitted.
 
 # Compile-time built-ins
 
 ## `#assert(<boolean>)`
 
-Unlike assert, #assert runs at compile-time. #assert breaks compilation if the given bool expression is false, and thus #assert is useful for catching bugs before they ever even reach run-time. It also has no run-time cost.
+Unlike `assert`, `#assert` runs at compile time. It accepts an optional constant message string and breaks compilation if the condition is false. It has no runtime cost.
 
 ```odin
 #assert(SOME_CONST_CONDITION);
-```
-
-## `#panic(<string>)`
-
-Panic runs at compile-time. It is functionally equivalent to an #assert with a false condition, but #panic has an error message string parameter.
-
-```odin
-#panic(message);
+#assert(N > 0, "N must be positive");
 ```
 
 ## `#config(<identifier>, default)`
@@ -4630,7 +4772,7 @@ defer {
 
 ### Optional results
 
-A procedure that may not produce a value returns `(T, bool)` — the same optional-ok shape used by map indexing, validating conversions, type assertions, `pop`, and the [iteration protocol](#iteration-protocol). There is no `Option`, `Maybe`, or `Result` type in the language or the core library, because multiple return values already express this and a wrapper type would give the same idea a second spelling that every API then has to choose between.
+A procedure that may not produce a value returns `(T, bool)` — the same [optional-ok shape](#optional-ok-results) used by map indexing, validating conversions, type assertions, `pop`, and the [iteration protocol](#iteration-protocol). There is no `Option`, `Maybe`, or `Result` type in the language or the core library, because multiple return values already express this and a wrapper type would give the same idea a second spelling that every API then has to choose between.
 
 ```odin
 halve :: proc(n: int) -> (int, bool) {
@@ -4654,25 +4796,25 @@ The convention is that the `bool` comes last and is named `ok`, and that the val
 
 ### Implicit Type Conversions
 
-The language is strongly and distinctly typed by default. Built-in implicit conversions are limited, but users may add visible `@(implicit)` conversion procedures for domain types. Overload resolution applies at most one user-defined implicit conversion to each argument.
+The language is strongly and distinctly typed by default. Built-in implicit conversions are limited, and the only user-defined ones apply to untyped constants. A runtime value never changes type without the change appearing in the source.
 
 - ^T -> rawptr
 - [^]T -> rawptr
 - [^]T <-> ^T
 - Concrete values to `any_view` when an `any_view` parameter or local destination is expected; the result is a checked non-escaping borrow
 - Any of its variants to the union
-- T -> #simd[N]T
+- T -> Simd(T, N)
 - distinct proc <-> proc (same base types)
 - Untyped integers -> built-in numeric types that can represent them without truncation
 - Untyped floats -> built-in numeric types that can represent them without truncation
 - Untyped booleans -> `bool`
 - Untyped rune -> all rune types
 - Untyped strings -> `string`, `string_view`, or `cstring_view` when the destination supplies the required lifetime
-- User-defined `@(implicit)` conversions whose procedures are visible in the current scope; this is how literals enter library numeric types
+- Untyped constants into a user type through a visible [`@(implicit)`](#implicit-conversion-from-constants) conversion; this is how literals enter library numeric types, and it is the only user-defined implicit conversion
 
 # Library types assumed by this specification
 
-Several types are used in normative text above but are supplied by the library. They are listed here so that an implementer knows what the core library owes the language. `Atomic(T)` is backed directly by compiler intrinsics, while `Context` has compiler-known access and propagation rules; the remaining types use ordinary language facilities.
+Several types are used in normative text above but are supplied by the library. They are listed here so that an implementer knows what the core library owes the language. `Atomic(T)` is backed directly by compiler intrinsics; the remaining types use ordinary language facilities.
 
 | Type | Used by | Status |
 | --- | --- | --- |
@@ -4680,8 +4822,9 @@ Several types are used in normative text above but are supplied by the library. 
 | `C_String` | [C string views](#c-string-views) | Owned zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |
 | `Little_Endian(T)`, `Big_Endian(T)` | [basic types](#basic-types) | Distinct storage wrappers supplied by binary-format libraries. |
-| `Allocator_Error`, `Allocator` | [allocators](#allocators), fallible operations | `core:mem` / `base:runtime`. |
-| `Context`, `Logger` | [package-effective context](#package-effective-context) | Runtime context descriptor and a service handle supplied by `base:runtime` / `core:log`; their bindings are immutable while installed, although the services have interior state. |
+| `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | [allocators](#allocators), fallible operations | `core:mem` / `base:runtime`. The final build selects the provider behind `mem.default_allocator()`. |
+| `Logger` | [build-selected providers](#build-selected-providers) | Ordinary service handle supplied by `core:log`; the final build selects the backend used by the package-level logging procedures. |
+| `Trace_Span`, `Time` | [explicit runtime environments](#explicit-runtime-environments) | Representative runtime handles supplied by tracing and time libraries; they have no compiler-known propagation. |
 | `Source_Code_Location` | `#caller_location`, `#location` | `base:runtime`. |
 | `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | flag sets and [enum iteration](#iterating-an-enumeration) | Generic library containers. Hardware register layouts use integer masks and explicit accessors in version 1. |
 | `Complex(T)`, `Quaternion(T)` | [library numeric types](#library-numeric-types) | Deliberately not primitive. |
@@ -4689,59 +4832,3 @@ Several types are used in normative text above but are supplied by the library. 
 | `Atomic(T)` | [concurrency and the memory model](#concurrency-and-the-memory-model) | `core:sync` wrapper over compiler atomic intrinsics. |
 
 The public APIs and layouts of these types belong to their packages; only the behavior required by the linked normative sections is part of the language contract.
-
-# Open questions
-
-Decisions that are deliberately not yet made. Each one is recorded here rather than left implicit in normative prose. Earlier sections define the rule implementations must follow for the current language version; these questions concern possible later changes.
-
-## Identifier character set
-
-Should identifiers remain ASCII-only or adopt a normalized subset of Unicode identifiers? The current version accepts ASCII identifiers only. Unicode would improve native-language naming, but normalization, confusable characters, font support, and input ergonomics require a precise security policy before the rule can expand.
-
-## Shadowing
-
-Should inner scopes be allowed to shadow outer local variables? The current version rejects it except for the explicit parameter-copy idiom. Allowing shadowing is familiar and sometimes concise, while rejecting it prevents accidental reuse and makes references easier to follow.
-
-## Package and import versioning
-
-Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
-
-## Retaining defer
-
-Does scope-based `defer` provide enough clarity and utility to remain in the final language? Its current semantics are fully defined, including its ordering with automatic cleanup. The remaining question is whether explicit resource types and managed cleanup make most uses unnecessary.
-
-## Multi-pointer terminology
-
-Is *multi-pointer* the clearest name for `[^]T`, or would *bounded-form pointer*, *C pointer*, or another term better communicate its unchecked indexing and foreign-memory role? The syntax and semantics are independent of the eventual name.
-
-## Pure procedures
-
-Should there be a form of procedure, distinct from `proc`, that is guaranteed by the compiler to be free of side effects?
-
-The appeal is compile-time evaluation, safe reordering, and clearer contracts on `concept` requirements such as `hash` and `compare`. The cost is a second procedure kind, an effect system to police it, and the usual problem that a genuinely useful purity rule has to permit local mutation and allocation, at which point it stops being simple. Not required by anything in this document.
-
-## Tuples
-
-Should multiple return values be a real tuple type rather than a special form?
-
-Today `a, b := swap(1, 2)` is a language rule that applies to return values and nothing else. A first-class tuple would unify multiple returns, multiple declaration, and pattern matching under one construct, and would let a tuple be stored, passed, and named. The counter-argument is that Odin's approach works, costs nothing, and never tempts anyone to return a tuple where a struct with named fields would document the code better.
-
-## Future runtime polymorphism
-
-Should a later version add concept-based trait objects or leave runtime dispatch to procedure tables and libraries? Version 1 deliberately omits `dyn`. A future proposal must be validated by a real UI, codec, or plugin library and specify vtable layout, erased ownership, binary methods, unsized results, and interaction with `any_view` before becoming normative. Owning type erasure was removed from version 1 for the same reason and would arrive with it, not before it.
-
-## Borrow checking across procedure boundaries
-
-The rule in [Borrows and lifetimes](#borrows-and-lifetimes) treats a returned borrow as derived from every borrowed argument whose storage is reachable through a parameter. It rejects results attributed to temporary arguments before they can escape, so it is sound but coarse and can force copies in code that does not need them. Whether that imprecision is acceptable in practice can only be answered by writing a real library against it.
-
-## Concurrency refinements
-
-The current [memory model](#concurrency-and-the-memory-model) defines data races, atomics, transfer between threads, and `shared(T)`. Experience with a real concurrent runtime should determine whether later versions need compiler-checked `Send` or `Sync` concepts, additional atomic orderings, or a thread-affine owning type for code that wants non-atomic reference counts.
-
-The current version deliberately keeps immutable `string` safe to copy and drop across threads, which requires atomic lifetime management whenever backing storage is shared. A future thread-affine string would be a distinct type rather than a silent weakening of that guarantee.
-
-## A formal grammar
-
-The token list and production rules now live in [grammar.md](grammar.md), which also records the parses this document had left open: `switch (a in b)` as a type switch, `stack` and `manual` as contextual keywords, `mut` as a reserved word, `via` taking a unary operand, and the semicolon rule above.
-
-What remains open is validation. The grammar is written to be parsed top-down with a small fixed lookahead, but that claim has not been checked against an implementation, and a real parser is what will find the conflicts a hand-written grammar hides.
