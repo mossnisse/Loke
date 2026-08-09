@@ -64,11 +64,12 @@ a type's data and its behavior are declared apart.
 ## Thread-affine strings
 
 `string` is an owning value that may share backing storage, and the current
-version requires copies to be safe to drop from any thread, which forces an
-atomic reference count on any sharing implementation. This is the most expensive
-rule in the language per line of ordinary code: every string copy is a potential
-atomic increment, and a freestanding target without atomics is left with
-copy-always as the only conforming strategy.
+version requires atomic handle accounting in any sharing implementation. This is
+the most expensive rule in the language per line of ordinary code: every string
+copy is a potential atomic increment, and a freestanding target without atomics
+is left with copy-always as the only conforming strategy. Atomic accounting does
+not make an arbitrary allocator thread-safe; transferring the string still
+asserts that its bound allocator may deallocate on the receiving thread.
 
 A thread-affine string with a non-atomic count would be a distinct type rather
 than a silent weakening of the guarantee. Deciding whether it is needed requires
@@ -80,6 +81,54 @@ whether `string` is usable unchanged on embedded targets.
     should we add stuff like compile time procedures and structs?
     The compile time untyped types are ergonomic but a little bit wierd and irregular.
     How does compile time in zig and jai work?
+
+## Recoverable panics
+
+Version 1 makes a panic unrecoverable: unwinding runs `defer`s and managed
+`drop`s for cleanup, but there is no `recover`, `try`, or catch construct that
+lets Loke code observe or resume from one. The [panic semantics](design.md#panics-and-unwinding)
+are otherwise fully defined, including the two build-selected strategies and the
+rule that `@(fini)` does not run on this path.
+
+The open question is whether a later version should add a bounded recovery
+mechanism — a per-thread catch at a task or request boundary, say — without
+reintroducing general exceptions. The appeal is server code that wants to fail
+one request rather than the process; the cost is a second control-flow path that
+every `drop` hook and `defer` would have to be correct under, and the temptation
+to use it as ordinary error handling in place of [`or_return`](design.md#or_return-operator).
+Not required by anything in this document.
+
+## Simplifying overload priority
+
+[Overload resolution](design.md#operator-lookup-and-overload-resolution) currently
+lets constraints participate in *ordering*, not only in whether a candidate is
+viable. Tie-breaker 4 keeps structural specialization (`Table(string, int)` beats
+`Table($K, $V)`) but then falls back to **constraint entailment**: between two
+candidates of identical shape, the one whose normalized constraint set syntactically
+entails the other's is more specific and wins. That entailment step carries the most
+machinery of any single resolution rule — normalize as a conjunction, expand interface
+composition transitively, alpha-rename bound names, test atom-subset — plus the caveat
+that stronger reasoning must not change which overload is selected.
+
+The proposal is to delete constraint entailment. Tie-breaker 4 would keep only its
+structural half; two viable candidates that are structurally equal and differ only in
+constraint strength would be an **ambiguity error**, resolved by naming the procedure
+or by internal `when` dispatch. The mental model then collapses to: `interface` and
+`where` decide *whether* a candidate is viable, and only structure decides *which*
+viable candidate wins. Two things are unaffected — non-overlapping `where` filters in a
+group (only one candidate is ever viable) and structural specialization — so the only
+behavioral change is that auto-selecting a strictly-more-constrained overload of the
+same shape (Rust-style specialization) becomes an explicit call.
+
+The cost is an expressiveness loss for library authors who want a general
+implementation plus an automatically-selected refinement. The benefit is a smaller,
+more predictable priority order that fits the language's existing preference for
+diagnosing ambiguity over resolving it implicitly. This is separate from the
+[import-determinism](design.md#operator-lookup-and-overload-resolution) property, which
+holds regardless; entailment operates on constraints fixed at each candidate's
+declaration, so it is not itself an import hole. The question is comprehensibility
+versus one advanced generic pattern, and it can only be settled by writing real generic
+libraries against both rules.
 
 # Differences from Odin and design motivations
 
@@ -132,6 +181,51 @@ semantics.
 Splitting duration from ownership also made `stack manual Foo` expressible, which
 a single modifier slot could not say.
 
+### Value-semantic assignment
+
+Odin assignment of a `[dynamic]T` or `map` copies only the header, so two
+variables alias one mutable backing allocation and one of them frees it. Loke
+makes `b := a` a deep copy for mutable owners: an owning value behaves like a
+simple one, and the silent shared-backing alias — the classic source of
+double-free and mutation-at-a-distance bugs — is never produced implicitly.
+Immutable `string` may share backing storage because mutation cannot expose the
+alias. Shared mutable ownership is opted into with a pointer or `shared(T)`.
+
+The obvious objection is that the language spells `move`, `inout`, and `clone`
+explicitly for visibility, yet leaves the potentially expensive copy unspelled.
+The resolution is that the accident, not the semantics, is the problem, so the
+fix targets the accident. Forbidding assignment or requiring `.clone()` on every
+copy (the Rust answer) would defeat the goal of making owning values as simple as
+integers, and copy-on-write would trade a visible copy for an unpredictable
+mutation-time allocation and an atomic refcount — against a systems language's
+need for predictable cost. Instead a large or allocating copy is reported by the
+[copy-cost diagnostic](design.md#copy-cost-diagnostics), covering binding and
+assignment sites. Ownership transfer remains explicitly written as `move`; the
+compiler does not silently remove a fallible clone or change the allocator bound
+to the destination merely because the source happens to be dead. Default deep
+copy, explicit move, and a warning on expensive copies keep both semantics and
+cost visible.
+
+### Panics run cleanup, not shutdown
+
+Odin's managed model has no destructors, so a crash has nothing to unwind. Loke
+adds managed `drop` and lifecycle hooks, which forces a decision Odin never had
+to make: what runs when a program panics. The [answer](design.md#panics-and-unwinding)
+is that a panic under the unwinding strategy runs exactly the cleanup attached to
+live owners and `defer`s as it unwinds the faulting thread — so `defer os.close(f)`
+and a resource's `drop` are reliable when they are on that thread's stack — and
+nothing else. In particular
+`@(fini)` does not run: it is orderly-shutdown code, and running end-of-program
+hooks in a program whose invariants are already known broken tends to compound
+the fault. An owner in `main` is cleaned only when `main` is on the panicking
+thread's stack; a worker panic does not unwind other threads.
+
+Two strategies exist because the machinery is not free: hosted builds default to
+`unwind` for the cleanup, while freestanding and embedded builds default to
+`abort`, which runs no cleanup and needs no unwind tables. Because a panic cannot
+be caught either way, the choice never changes which programs are valid, only what
+observable cleanup happens on the way down.
+
 ### Methods, interfaces, and operator overloading
 
 Methods and `impl`/`extend` blocks let libraries attach behavior to records and
@@ -144,12 +238,28 @@ Interfaces describe compile-time capabilities used by generic code. The name
 `interface` replaced the earlier draft's `concept` because it describes a
 concrete programming-language role more directly.
 
+Generic bodies and their interface requirements use definition-site lookup, so
+a caller-local extension cannot change an existing instantiation. The built-in
+map is stricter still: equality and hashing for a user key must be inherent to
+the key type. Without that restriction, two packages could operate on the same
+map using different hash policies and invalidate its contents.
+
 Operator overloading, indexing, iteration, conversions, and lifecycle hooks let
 library types be as convenient as built-in types.
 
 Built-in operations on built-in types cannot be shadowed. Domain-specific
 behavior over a primitive representation uses a `distinct` type, keeping the
 changed meaning visible at its declaration.
+
+A `distinct` type inherits none of its underlying type's operators — `Meters ::
+distinct f64` starts with no arithmetic at all — which is what stops a unit type
+from silently behaving like its representation. The cost is per-operator
+boilerplate for numeric newtypes, so `delegate` re-exports a chosen set of the
+underlying operators in one line. It is deliberately a list rather than blanket
+inheritance: `Meters` delegates `+` and `-` but not `*`, because two lengths add
+to a length but do not multiply to one. Selective delegation keeps the newtype
+convenient without reintroducing the wrong-dimensioned operations that
+distinctness exists to forbid.
 
 ### Build-selected services and explicit runtime state
 
@@ -182,6 +292,18 @@ callbacks with explicit generic state provide the useful mechanism using
 ordinary language facilities while keeping procedure values thin.
 
 ## Removed or narrowed features
+
+### Generics are not ABI surface
+
+Generics are resolved before ABI lowering, so a generic procedure or type has no
+representation of its own and is excluded from every binary interface: it cannot
+be exported, given a foreign calling convention, placed in a `foreign` block, or
+held in a procedure value. Only concrete instantiations reach the ABI, and
+exposing generic functionality to C means instantiating it and wrapping the
+result in a foreign-ABI-safe procedure. Saying so explicitly keeps the choice
+between monomorphization and dictionary passing an implementation detail with no
+observable consequence, and keeps the foreign boundary defined over concrete
+types only.
 
 ### Statement labels and multi-level breaks
 
@@ -300,10 +422,11 @@ same place rules. Assignment through a missing key inserts a zero value first;
 
 ### String ownership and concurrency
 
-`string` is an immutable owning value. Implementations may share backing
-storage, but copies must remain safe to drop from different threads. A shared
-reference count is therefore atomic. Code that does not want shared ownership
-uses a byte slice or `string_view`.
+`string` is an immutable owning value. Implementations may share backing storage,
+so a shared reference count is atomic. The allocator that eventually frees the
+storage must separately support the thread on which the last drop occurs; as for
+other owner lifecycles, version 1 leaves that transfer check to the programmer.
+Code that does not want shared ownership uses a byte slice or `string_view`.
 
 ### Allocation failure
 

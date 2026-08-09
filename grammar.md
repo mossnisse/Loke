@@ -64,6 +64,7 @@ Contextual keywords, reserved only in the positions given:
 | `self` | the first parameter name of a procedure declared in an `impl` or `extend` block |
 | `const` | at the start of an associated-constant requirement in an `interface` body |
 | `using` | before a promoted struct field |
+| `delegate` | at the start of an operator-delegation declaration in an `impl` or `extend` body |
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords; they may be
 shadowed by a declaration like any other name. So are the built-in procedures,
@@ -179,8 +180,10 @@ Foreign_Block = Attributes? "foreign" Identifier "{" Foreign_Decl* "}"
 Foreign_Decl  = Attributes? Identifier ":" ( ":" Proc_Literal | Type ) ";"
               | ";"
 
-Impl_Block    = Attributes? "impl"   Type "{" (Declaration | ";")* "}"
-Extend_Block  = Attributes? "extend" Type "{" (Declaration | ";")* "}"
+Impl_Block    = Attributes? "impl"   Type "{" Impl_Member* "}"
+Extend_Block  = Attributes? "extend" Type "{" Impl_Member* "}"
+Impl_Member   = Declaration | Delegate_Decl | ";"
+Delegate_Decl = "delegate" "(" Operator_Symbol ("," Operator_Symbol)* ","? ")" ";"
 ```
 
 A procedure declared in a foreign block has no body and ends its signature with
@@ -245,6 +248,8 @@ requires `;`, including when its expression ends in a composite literal.
 
 `via` selects the allocator for a managed value and takes a unary expression, so
 `b: [dynamic]u8 via arena.allocator() = ...;` parses without backtracking.
+It is semantically rejected for `string`, `shared(T)`, and non-owning types,
+whose allocation rules do not bind a destination allocator at declaration.
 
 # Types
 
@@ -353,11 +358,13 @@ Operator_Symbol = "+" | "-" | "*" | "/" | "%"
 Signature    = "(" Parameter_List? ")" ("->" Results)?
 
 Parameter_List = Parameter ("," Parameter)* ","?
-Parameter    = Attributes? Parameter_Names (":" Parameter_Type ("=" Expression)?)?
+Parameter    = Attributes? Parameter_Names
+             | Attributes? Parameter_Names ":" Type ("=" Expression)?
+             | Attributes? Parameter_Names ":" Parameter_Mode Type
+             | Attributes? Parameter_Names ":" ".." Type
              | Attributes? Parameter_Names ":" "=" Expression
 Parameter_Names = Parameter_Name ("," Parameter_Name)*
 Parameter_Name  = "$"? (Identifier | "_")
-Parameter_Type  = Parameter_Mode? ".."? Type
 Parameter_Mode  = "inout" | "move"
 
 Results      = Result_Type
@@ -369,11 +376,11 @@ Result_Type  = "inout"? Type
 
 A parameter with no type is legal only for the receiver `self`, whose type is
 inferred from the enclosing `impl` or `extend` block. `..T` is a variadic
-parameter. An input-parameter initializer is an omitted-argument default and
-accepts an ordinary runtime `Expression`; it is not restricted to a constant
-initializer. The expression is evaluated only when the caller omits that
-argument, as specified in `design.md`. The `---` body marks a foreign
-declaration.
+parameter. Variadic parameters cannot use `inout` or `move`. An ordinary value
+parameter initializer is an omitted-argument default and accepts an ordinary
+runtime `Expression`; `inout`, `move`, and variadic parameters cannot have
+defaults. The expression is evaluated only when the caller omits that argument,
+as specified in `design.md`. The `---` body marks a foreign declaration.
 
 # Statements
 
@@ -534,10 +541,11 @@ Element      = (Element_Key "=")? Expression
 Element_Key  = Identifier | Expression                 // field name, index, or index range
 
 Argument_List = Argument ("," Argument)* ","?
-Argument      = Identifier "=" Argument_Value          // named argument
+Argument      = Identifier "=" Named_Argument_Value    // named argument
               | "inout" Expression                     // mutable-borrow argument
               | ".." Expression                        // variadic spread
               | Argument_Value
+Named_Argument_Value = "inout" Expression | Argument_Value
 Argument_Value= Expression | Type                       // runtime value or compile-time type
 ```
 
@@ -578,6 +586,9 @@ The productions above use the following deterministic parsing rules:
 - After the first `:` of a declaration, `stack`, `static`, `thread_local`, and
   `manual` are storage modifiers only when followed by another modifier, by a
   type-start token, or by `=`. Otherwise they are ordinary type names.
+- At the start of an `impl` or `extend` member, `delegate` is the contextual
+  keyword only when followed by `(`; otherwise it remains an ordinary identifier
+  that may begin a declaration.
 - `via` in a declaration consumes one unary expression. A larger allocator
   expression is parenthesised.
 - In an interface requirement, an opening `(` begins `Bindings`; an expression that

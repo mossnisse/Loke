@@ -68,7 +68,7 @@ numbers.append(16);
 // `numbers` and `message` are released automatically at the end of the scope.
 ```
 
-This is called **managed lexical storage**. It provides stack-variable behavior without requiring the complete value to fit on the stack. Cleanup occurs on normal scope exit, `return`, `break`, and `continue`.
+This is called **managed lexical storage**. It provides stack-variable behavior without requiring the complete value to fit on the stack. Cleanup occurs on normal scope exit, `return`, `break`, and `continue`, and — under the unwinding [panic strategy](#panics-and-unwinding) — while a panic unwinds the stack.
 
 ### Values that outlive every scope
 
@@ -128,7 +128,7 @@ They are also not [attributes](#attributes), even though they attach to the same
 
 - Neither registers automatic cleanup, per [Values that outlive every scope](#values-that-outlive-every-scope) above.
 - A `static` has a stable address for the whole process, and a `thread_local` instance has one for the lifetime of its thread. Unlike a borrow of an ordinary local, either borrow may be returned to its caller. Sending a `thread_local` borrow to another thread or retaining it after the originating thread exits is outside the local borrow analysis and is invalid.
-- A managed file-scope, `static`, or `thread_local` owner initially binds the program's build-selected default allocator. `via` is not permitted on these declarations because their initialization may not evaluate a runtime allocator expression. Code that needs another allocator constructs an owner explicitly during `@(init)` or thread startup and moves it into the persistent variable.
+- An allocator-bindable file-scope, `static`, or `thread_local` owner initially binds the program's build-selected default allocator. `via` is not permitted on these declarations because their initialization may not evaluate a runtime allocator expression. Types such as `string` and `shared(T)` instead retain the allocator of the allocation moved into them. Code that needs another allocator constructs an owner explicitly during `@(init)` or thread startup and moves it into the persistent variable.
 
 ```odin
 allocation_error: Allocator_Error;
@@ -191,9 +191,11 @@ c := move(a); // transfers the allocation
 assert(len(a) == 0);
 ```
 
-The compiler may replace a copy with a move when it can prove that the source value is no longer used. This optimization never changes observable behavior. A shallow alias of an owning mutable value is not provided; shared ownership must use an explicit library type such as `shared(T)`.
+The compiler may replace a copy with a move only when the type has a trivial lifecycle and the replacement cannot change allocator selection, invoke or suppress user code, or remove a possible failure. In particular, assignment of a dynamic array, map, runtime string, `shared(T)`, or a type with a custom `clone` is not silently changed into a move merely because the source is dead. Code that wants to transfer an owning value without cloning writes `move(value)`. A shallow alias of an owning mutable value is not provided; shared ownership must use an explicit library type such as `shared(T)`.
 
-If a clone cannot allocate, assignment invokes the destination allocator's failure policy described under [Allocation failure](#allocation-failure). The destination keeps its previous value; a failed assignment never leaves a half-copied value.
+The deep copy for a mutable owner is deliberate: it makes the value behave like a simple one, and the alternative — copying only a container's header and silently sharing its mutable backing storage — is the aliasing bug this rule exists to prevent. Immutable `string` is the stated exception and may share immutable backing storage. Small inline values remain cheap to copy; a large or allocating copy is reported by the [copy-cost diagnostic](#copy-cost-diagnostics), whose advice is to write `move` when ownership should transfer or to use a pointer or `shared(T)` when sharing is intended. Copy cost is therefore visible to tooling rather than changed by an optimization with different allocation or lifecycle behaviour.
+
+If an assignment clone allocates, it uses the destination allocator and invokes that allocator's failure policy described under [Allocation failure](#allocation-failure). A non-allocating logical clone that shares immutable or reference-counted storage, as permitted for `string` and `shared(T)`, retains the allocator recorded by that shared allocation. Those types therefore select their allocator at construction and cannot use `via`. The destination keeps its previous value when cloning fails; a failed assignment never leaves a half-copied value.
 
 # Borrows and lifetimes
 
@@ -201,14 +203,16 @@ Loke is not memory safe in the sense that Rust is, and does not try to be. It ch
 
 ## What a borrow is
 
-A **borrow** is a non-owning view of storage that some other value owns. Borrows arise through these language forms and through library view types declared to carry the same provenance:
+A **borrow** is a non-owning view of storage that some other value owns. Borrows arise through these language forms and through the compiler-recognized core view types listed below:
 
 - a slice expression over an owner: `numbers[:]`, `numbers[1:4]`
 - a procedure argument: storage reached through a default parameter is borrowed immutably, while an `inout` parameter borrows the caller's variable mutably
 - the address-of operator applied to an owner or one of its elements: `&numbers[0]`
 - an iterator obtained from a collection, and the `&value` form of a `foreach` loop
 - a user-defined `operator([])` returning `inout T`, or `operator([:])`
-- construction of a view such as `string_view` or `any_view` from owned storage
+- construction of `string_view`, `cstring_view`, or `any_view` from owned storage
+
+An ordinary user record containing a pointer and length is not a checked borrow carrier. Version 1 has no user-defined provenance annotation: third-party APIs that want checked lifetime behaviour return a slice, use `operator([:])`, or keep the view within a callback whose call cannot retain it. A future provenance facility may generalize this rule, but an implementation must not infer borrow semantics merely from a record's fields or name.
 
 A borrow is not a value you can own. It has no cleanup, it is never dropped, and assigning it copies the view rather than the storage.
 
@@ -308,7 +312,7 @@ These are real holes, they are intentional, and no diagnostic will catch them:
 
 If you need a view whose lifetime you cannot prove locally, take an owned copy with `clone`, or use `shared(T)`.
 
-Allocator-wide invalidation is the one effect that is propagated across an ordinary procedure boundary. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may release every allocation belonging to the allocator region passed for that parameter. The effect is part of the procedure type and is substituted at the call site, so a wrapper around `free_all` cannot hide the invalidation from the caller. This remains a local check: the caller compares the effect with the managed owners and borrows live at that call.
+Allocator-wide invalidation is the one effect that is propagated across an ordinary procedure boundary. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may release every allocation belonging to the allocator region passed for that parameter. The effect is part of the procedure type and is substituted at the call site, so a wrapper around `free_all` cannot hide the invalidation from the caller. This remains a local check: the caller compares the effect with the owning values, managed or manual, and borrows live at that call.
 
 ## Debug-mode detection
 
@@ -331,7 +335,7 @@ Everything in `unsafe` is a promise by the programmer that a lifetime holds whic
 
 ## Relationship to `manual`
 
-A `manual` owner participates in the same borrow, move, reallocation, and liveness checks as a managed owner. The modifier suppresses only automatic cleanup at scope exit; it is not an `unsafe` escape from the borrow rules. A live borrow therefore prevents `drop`, move, and reallocation regardless of whether cleanup is automatic.
+A `manual` owner participates in the same borrow, move, reallocation, region-lifetime, and liveness checks as a managed owner. The modifier suppresses only automatic cleanup at scope exit; it is not an `unsafe` escape from the borrow rules. A live borrow therefore prevents `drop`, move, and reallocation regardless of whether cleanup is automatic, and a live manual owner prevents its allocator region from being reset just as a managed owner does.
 
 `drop` consumes either a managed or manual owner, resets the variable to its zero value, and marks the variable dead until it is assigned again. Dropping a definitely dead variable is a compile-time error. This tracking concerns the owner variable and its checked borrows; aliases manufactured through raw pointers or `core:unsafe` remain the programmer's responsibility.
 
@@ -490,7 +494,7 @@ The full startup and shutdown order is:
 3. `main`.
 4. `@(fini)` procedures, using the same deterministic ordering relation as `@(init)` but reversed.
 
-`os.exit` runs `@(fini)` procedures and then terminates. Managed values at file scope are [never dropped](#values-that-outlive-every-scope) at any point in this sequence.
+`os.exit` runs `@(fini)` procedures and then terminates. Managed values at file scope are [never dropped](#values-that-outlive-every-scope) at any point in this sequence. A [panic](#panics-and-unwinding) does not follow this sequence: under the unwinding strategy it runs local scope cleanup as it unwinds, but it does not run `@(fini)`.
 
 ## Import statement
 
@@ -1123,20 +1127,20 @@ The temporary remains valid until the call completes. It is not source-level poi
 
 This lowering is an implementation detail of the `loke` calling convention. A foreign procedure follows its declared foreign ABI instead, including that ABI's rules for passing aggregates.
 
-#### Large-parameter diagnostics
+#### Copy-cost diagnostics
 
-Parameter size is never a type error. A large type also does not by itself require a warning: hidden-pointer lowering may already avoid moving the representation, and replacing a value parameter with a pointer would change its aliasing, lifetime, nil, and mutation semantics.
+Size is never a type error. A large type also does not by itself require a warning: hidden-pointer lowering may already avoid moving a parameter's representation, and replacing a value with a pointer would change its aliasing, lifetime, nil, and mutation semantics.
 
-An implementation should instead provide a configurable performance warning for an expensive copy or `clone` that remains necessary at a call site. The diagnostic should report the operation and approximate cost rather than merely the type's size:
+An implementation should instead provide a configurable performance warning for an expensive copy or `clone` that remains necessary at a **copy site**. A copy site is any point where a value is actually duplicated rather than moved or borrowed: a trivial aggregate copied into a `value: T` parameter, a variable bound with `x := big_owner`, or an [assignment](#assignment-statements) `x = big_owner` that clones its source. A managed owner passed to an ordinary `value: T` parameter remains a borrow as specified above and is not a copy site. The diagnostic should report the operation and approximate cost rather than merely the type's size:
 
 ```text
-warning: this call copies 8192 bytes into parameter `value`
+warning: this binding copies 8192 bytes from `source`
 note: the copy could not be elided
-help: use `move(value)` if the callee should take ownership
-help: use a slice, view, or typed pointer only if aliasing is intended
+help: use `move(source)` if `source` is no longer needed
+help: take a pointer or `shared(T)` if the two names should share one value
 ```
 
-The threshold is target-specific and is not part of the language semantics. The warning should be more prominent when the copy occurs in a loop or when a non-trivial `clone` may allocate. It must not recommend `inout` solely as an optimization, because `inout` grants mutation rights and changes which aliases are legal.
+The threshold is target-specific and is not part of the language semantics. The warning should be more prominent when the copy occurs in a loop or when a non-trivial `clone` may allocate. It must not recommend `inout` solely as an optimization, because `inout` grants mutation rights and changes which aliases are legal. Because the check is a diagnostic and not a rule, an editor may equally surface it as an inline copy marker at the site through the same [show-desugaring](#operator-lookup-and-overload-resolution) mechanism, making the cost visible without spelling it in the grammar.
 
 ```odin
 sum :: proc(values: [dynamic]int) -> int {
@@ -1156,12 +1160,13 @@ sort_in_place :: proc(values: inout [dynamic]int) {
 	values.sort();
 }
 
-store_for_later :: proc(values: move [dynamic]int) {
-	stored_values = move(values);
+process_owned :: proc(values: move [dynamic]int) {
+	values.sort();
+	consume(values);
 }
 
 sort_in_place(inout numbers);
-store_for_later(move(numbers));
+process_owned(move(numbers));
 ```
 
 **Both non-default modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and an argument to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs. This is what makes a call readable without consulting the callee's signature: a reader can see at the call which arguments may be modified and which are being given away.
@@ -1257,6 +1262,8 @@ Mixing named and positional arguments is allowed. This is often useful when a pr
 
 Positional arguments are not allowed after named arguments.
 
+An `inout` argument may also be named, with the mode remaining visible after the `=`: `update(target=inout value)`. A named `move` argument uses the ordinary expression form, `store(value=move(source))`.
+
 ```odin
 foo :: proc(value: int, name: string, x: bool, y: f32, z := 0) { };
 foo(134, "hellope", x=true, y=4.5);
@@ -1278,6 +1285,8 @@ compile-time-known value. The expression is evaluated once for each call that
 omits that argument; it is not evaluated when the caller supplies the
 argument. Names in the expression are resolved in the lexical scope of the
 procedure declaration.
+
+Only ordinary value parameters may have defaults. An `inout` parameter needs a caller-owned place, a `move` parameter must show the ownership transfer at the call site, and a variadic parameter is supplied by its argument sequence; defaults on any of those three forms are therefore rejected.
 
 Allocator-taking procedures conventionally default to the program provider. The
 provider implementation is selected once by the final build, while its returned
@@ -1494,7 +1503,7 @@ For the full list, see the documentation for package `builtin`. The compiler-def
 | `typeid_of(T)` | The [`typeid`](#typeid-type) for a type |
 | `type_info_of(id)` | `^runtime.Type_Info` for a `typeid` |
 | `assert(condition, message := "")` | Runtime check; panics when false. Removed by `-no-assert` |
-| `panic(message)` | Raises a runtime panic at the call site |
+| `panic(message)` | Raises an unrecoverable runtime [panic](#panics-and-unwinding) at the call site |
 | `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `transmute(T, value)` | Bit cast between two same-sized types with a [trivial lifecycle](#transmute-procedure) |
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
@@ -1513,10 +1522,13 @@ message := first + " world";
 
 A string literal uses static storage. A string created at runtime owns a managed backing buffer. Implementations may use reference counting, small-string optimization, interning, or another representation, but these choices do not change language semantics. Because strings are immutable, sharing their backing storage is never observable as mutable aliasing.
 
-If an implementation shares backing storage between string values, copying and
-dropping those values must be safe across threads. A reference-counted
-representation must therefore use an atomic count. Code that does not want
-shared ownership can pass `[]u8` or `string_view`, neither of which is an owner.
+If an implementation shares backing storage between string values, its reference
+count must be atomic so concurrent handle accounting cannot corrupt the storage.
+The last drop also deallocates through the string's bound allocator. As with
+other owners, transferring such a string between threads is valid only when that
+allocator permits deallocation on either thread; the compiler does not prove
+this property in version 1. Code that does not want shared ownership can pass
+`[]u8` or `string_view`, neither of which is an owner.
 
 `string` always contains valid UTF-8. Arbitrary binary data uses `[]u8` or `[dynamic]u8`. Converting arbitrary bytes to a string validates the input and returns an error if it is not valid UTF-8.
 
@@ -1747,6 +1759,7 @@ The equality operators == and != apply to operands that are comparable. The orde
 - Array values are comparable if values of the element type are comparable.
 - typeid is comparable.
 - `Simd(T, N)` vectors are comparable.
+- Slices, dynamic arrays, and maps are **not** comparable and may be tested only against `nil`. This makes a fixed array comparable element-wise while a slice of that same array is not — a deliberate asymmetry, because slice equality would have to choose between comparing identities and comparing contents, and neither is the obvious default. Compare contents with a library procedure such as `slice.equal`.
 
 ## Logical operators
 
@@ -1992,7 +2005,9 @@ extend vendor.Vector2 {
 
 An extension participates in method and operator lookup only inside the package that declares the `extend` block. Importing that package exposes the extension's named procedures through ordinary qualification, but does not add its methods or operators to implicit lookup. An otherwise unused import therefore cannot change or make ambiguous an existing expression.
 
-Code that wants method syntax for a foreign extension declares a small local forwarding extension. This is an explicit opt-in at the point where the additional behavior becomes part of lookup, and ordinary ambiguity diagnostics apply within that package. No orphan or global coherence rule is needed.
+Code that wants method syntax for a foreign extension declares a small local forwarding extension. This is an explicit opt-in at the point where the additional behavior becomes part of lookup, and ordinary ambiguity diagnostics apply within that package. Ordinary expression lookup needs no global orphan rule; cross-package protocols whose correctness depends on one stable operation, such as map hashing, state their stricter coherence rule separately.
+
+Generic declarations use **definition-site lookup**. Substituting concrete generic arguments may reveal inherent operations of those concrete types, but it does not add extensions from the caller's package to the candidate set used by the generic body or its interface requirements. An interface application written outside a generic declaration uses the lexical package containing that application. Consequently the same generic instantiation has the same meaning in every caller, and a caller-local extension cannot make a requirement appear satisfied when the generic body could not call the corresponding operation.
 
 Field lookup takes priority over method-call sugar. Inherent and extension methods otherwise use normal overload resolution. Methods can be collected into explicit procedure groups just like free procedures.
 
@@ -2388,6 +2403,8 @@ A consequence worth stating plainly: a single-argument `init` on a `distinct` ty
 
 User-defined records receive field-wise `clone`, `move`, and `drop` behavior by default. An `impl` block may replace `clone` or `drop` for a type that owns a resource.
 
+The lifecycle signatures are fixed. `drop` is `proc(self: inout T)`. `clone` is `proc(self, allocator: Allocator = mem.default_allocator()) -> T`; a custom implementation must allocate all cloned backing storage from the supplied allocator, and compiler-generated field-wise cloning passes that allocator recursively to every owning field. An explicit `value.clone()` therefore uses the program default, while `value.clone(allocator)` selects one. Assignment and copy initialization do not use the default: the compiler supplies the allocator already bound to the destination declaration. A non-allocating clone accepts and ignores the allocator.
+
 ```odin
 File :: struct {
 	handle: os.Handle,
@@ -2418,7 +2435,7 @@ drop(destination);
 destination = move(temporary);
 ```
 
-An explicit `try_clone` may return an allocation error. Ordinary assignment uses `clone` and follows the destination's bound allocator policy described under [Allocation failure](#allocation-failure).
+An explicit `try_clone(allocator=mem.default_allocator())` has the same cloning semantics but returns `(T, Allocator_Error)` instead of invoking an allocator failure policy. Ordinary assignment uses `clone` with the destination's bound allocator and follows that allocator's failure policy described under [Allocation failure](#allocation-failure).
 
 ## Interfaces and generic operators
 
@@ -2493,7 +2510,7 @@ Requirement checking is non-recursive at the point of use: the compiler checks t
 
 A failed requirement must be reported as the specific line of the interface body that did not hold, together with the concrete type that failed it. An interface diagnostic that reports only "constraint not satisfied" is a defect in the implementation.
 
-Standard library interfaces should remain small and composable, for example `Equatable`, `Ordered`, `Hashable`, `Iterable(T)`, `Cloneable`, `Formattable`, `Numeric`, and `Integral`. The last two replace what other languages express with type-predicate intrinsics: `Numeric(T)` requires `T(0)`, `T(1)`, the four arithmetic operators, and `Ordered(T)`, and is satisfied by the built-in numeric types and by any user type that supplies the same operations. Maps require compatible `==` and `hash` operations for their key type. The compiler checks that both operations exist but trusts the programmer to preserve the semantic rule that equal values produce equal hashes.
+Standard library interfaces should remain small and composable, for example `Equatable`, `Ordered`, `Hashable`, `Iterable(T)`, `Cloneable`, `Formattable`, `Numeric`, and `Integral`. The last two replace what other languages express with type-predicate intrinsics: `Numeric(T)` requires `T(0)`, `T(1)`, the four arithmetic operators, and `Ordered(T)`, and is satisfied by the built-in numeric types and by any user type that supplies the same operations. The built-in map applies the stricter coherence rule in [Maps](#maps): its key operations must be built-in or inherent, even though an ordinary local `Hashable(T)` interface application may also see extensions from its own lexical package.
 
 ### Choosing between interfaces, `where`, and specialization
 
@@ -2610,7 +2627,7 @@ My_Int :: distinct int;
 #assert(My_Int != int);
 ```
 
-A distinct type may define its own methods, operators, constructors, conversions, interfaces, formatting, and lifecycle hooks. It does not inherit the underlying type's user-defined overloads unless they are explicitly re-exported or delegated.
+A distinct type may define its own methods, operators, constructors, conversions, interfaces, formatting, and lifecycle hooks. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form below.
 
 Aggregate types (struct, enum, union) will always be distinct even when named.
 
@@ -2618,6 +2635,40 @@ Aggregate types (struct, enum, union) will always be distinct even when named.
 Foo :: struct {};
 #assert(Foo != struct{});
 ```
+
+### Delegating operators
+
+A single forwarding overload is one line — unwrap to the underlying type, apply its operator, wrap the result back:
+
+```odin
+Meters :: distinct f64;
+
+impl Meters {
+    add :: operator(+) proc(a, b: Meters) -> Meters { return Meters(f64(a) + f64(b)); }
+}
+```
+
+but a numeric newtype needs that same line for `-`, `==`, `<`, and every other operator it wants — the boilerplate `distinct` is otherwise accused of. `delegate` generates those forwarding overloads from a list of operator symbols. It parses its operands as operator symbols exactly as [`operator(...)`](#operator-declarations) does, and appears in an `impl` or `extend` block for a distinct type:
+
+```odin
+Meters :: distinct f64;
+
+impl Meters {
+    delegate(+, -, ==, !=, <, <=, >, >=);
+}
+
+a := Meters(3);
+b := Meters(4);
+c := a + b;      // Meters(7): generated (a, b: Meters) -> Meters
+a += b;          // += follows from + by the compound-assignment fallback
+ok := a < b;     // bool: a comparison result is not wrapped
+```
+
+For each listed symbol, `delegate` generates the overloads of that operator found for the underlying type at the delegation declaration's lexical package, with the distinct type substituted for the underlying type in every operand and result position. The selected underlying operations are fixed when the declaration is checked; extensions in a caller's package cannot later change what delegation means. Each generated overload unwraps its distinct operands to the underlying type, applies the underlying operator, and wraps a result *of the underlying type* back into the distinct type. A result of any other type — the `bool` from a comparison, or the `f32` from a dot product — is carried through unchanged. Compound-assignment forms follow from their binary operators through the existing [fallback rule](#operator-declarations), so delegating `+` also gives `+=`.
+
+Delegation is selective by design, and the list is where the distinction earns its keep. `Meters` delegates `+` and `-` but not `*` or `/`: two lengths add to a length but do not multiply to one, so `Meters * Meters` is an area — a different type — and forwarding it would silently produce a wrong-dimensioned `Meters`. A mixed-operand operator such as `Meters * f64 -> Meters` is not a homogeneous delegation either and is written by hand. Listing a symbol the underlying type does not define is an error, and delegating an operator already declared explicitly in the same block is a redeclaration, diagnosed like any other.
+
+`delegate` has no meaning for a type that is not `distinct`, because there is no underlying representation to forward to. Non-operator behavior — a method, or a `hash`, `compare`, or `format` overload — is re-exported the same way a single operator is: an ordinary one-line procedure that unwraps, calls, and where relevant wraps. Those are rarer and need no bulk form.
 
 ## Fixed arrays
 
@@ -2855,7 +2906,7 @@ The allocator used by a managed dynamic array is stored with its allocation so a
 temporary: [dynamic]u8 via scratch_allocator;
 ```
 
-**A managed owner binds its allocator at its declaration, not at its first allocation.** A zero-valued container has no backing storage yet, but it already records which allocator it will use, taken from `via` if present and from `mem.default_allocator()` otherwise. This is what makes a zero value "immediately usable" mean something definite: the first `append` far from the declaration allocates from the allocator the declaration chose.
+**A managed dynamic array binds its allocator at its declaration, not at its first allocation.** A zero-valued array has no backing storage yet, but it already records which allocator it will use, taken from `via` if present and from `mem.default_allocator()` otherwise. This is what makes a zero value "immediately usable" mean something definite: the first `append` far from the declaration allocates from the allocator the declaration chose.
 
 ```odin
 numbers: [dynamic]int;                            // binds the program default here
@@ -3294,7 +3345,7 @@ union @(align=4) {...} // align to 4 bytes
 
 A map maps keys to values. Its zero value is empty and immediately usable. Like a dynamic array, a map is managed by default and releases its backing storage automatically.
 
-Any type can be a map key when it provides compatible `==` and `hash(value, seed)` overloads. Built-in key types provide these automatically; user-defined key types satisfy the same structural `Equatable` and `Hashable` interfaces.
+Any type can be a map key when it provides compatible, **coherent** `==` and `hash(value, seed)` operations. Built-in key types provide these automatically. For a user-defined key, both operations must be inherent implementations belonging to the key type; caller-local extensions do not qualify. This ensures that a `map[K]V` passed between packages continues to use one equality and hashing policy. Code that needs a different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type whose hasher and equality policy are explicit type or value parameters. The compiler trusts the programmer to preserve the semantic rule that equal values produce equal hashes.
 
 ```odin
 m: map[string]int;
@@ -3718,6 +3769,40 @@ foo_3 :: proc() -> (ok: bool) {
 }
 ```
 
+# Panics and unwinding
+
+A **panic** is an unrecoverable runtime fault. It is raised by `panic(message)`, by a failed `assert`, by dereferencing a nil pointer, by integer division or remainder by zero, by an out-of-range built-in index, by a failed checked type assertion `v.(T)`, and by an allocator whose failure policy is [`.Panic`](#allocation-failure). Version 1 has no `recover`, `try`, or catch construct: a panic cannot be observed or resumed by Loke code. Under the `unwind` strategy, a panic runs cleanup registered on the panicking thread before the program stops. The `abort` strategy makes no cleanup guarantee.
+
+## Panic strategy
+
+The final build selects one of two **panic strategies** for the whole program, in the same way it selects the [allocator and logging providers](#build-selected-providers):
+
+- **`unwind`** — the default on hosted targets. A panic unwinds the panicking thread's call stack frame by frame. At each frame it runs that frame's pending scope-exit actions — user `defer`s and the implicit `drop` of every live managed owner — in the one reverse-registration order defined under [Managed values and storage](#managed-values-and-storage), exactly as a `return` leaving that frame would. When the unwind leaves the outermost frame of the thread, the program terminates with a failure status.
+- **`abort`** — the default on freestanding and embedded targets, and selectable on any target. A panic runs no cleanup and terminates the program immediately at the point of the fault.
+
+An allocator whose failure policy is [`.Trap`](#allocation-failure) forces `abort` behaviour for the failure it reports, regardless of the program's panic strategy. `.Panic` follows the program strategy. This is the whole meaning of the statement that `.Panic` may unwind while `.Trap` does not.
+
+Both strategies are sound; they trade cleanup for size and simplicity. Because a panic cannot be caught either way, the strategy never changes which programs are valid, only what observable cleanup happens on the way down. Portable code therefore must not rely on a `drop` or `defer` running after a panic unless it is built with the `unwind` strategy; code that needs crash-time cleanup on a freestanding target performs it explicitly.
+
+## What the unwind runs, and what it does not
+
+Under the `unwind` strategy:
+
+- Scope-exit cleanup runs for every **fully initialized** managed owner and every registered `defer` in each unwound frame, newest first. A value whose initialization had not completed when the panic was raised — including a half-constructed temporary in the faulting expression — is cleaned up only as far as its construction reached, using the same drop-flag tracking that governs ordinary [conditional cleanup](#managed-values-and-storage).
+- If `main` is on the panicking thread's stack, the unwind passes through it like any other frame, so a managed owner declared as a local in `main` is dropped. This is not a program-wide guarantee: a panic raised by another thread does not unwind the thread running `main`.
+- File-scope, `static`, and `thread_local` values are **not** dropped, on this path as on every other; see [Values that outlive every scope](#values-that-outlive-every-scope).
+- `@(fini)` procedures do **not** run. They are part of the orderly [shutdown sequence](#program-entry-and-exit) that a panic replaces: running end-of-program hooks after a logic error, in a program whose invariants are already known to be broken, tends to compound the fault rather than help. Only cleanup attached to a live owner or `defer` — code that names exactly the resource it releases — runs during a panic.
+
+The restrictions on a deferred statement apply equally to cleanup reached by an unwind: it may not `return`, `break`, or `continue` out of the frame being unwound, because that frame is already leaving.
+
+## Panic during unwinding
+
+If a `drop` hook or a deferred statement raises a panic while a panic is already unwinding the stack, the program aborts immediately, exactly as under the `abort` strategy. There is no attempt to unwind two panics at once and no defined order for their remaining cleanups. A cleanup path that can fail must handle that failure itself rather than panicking; this is why a `drop` hook is expected to be infallible and to absorb or ignore secondary errors from the resource it releases.
+
+## Threads
+
+A panic unwinds only the stack of the thread that raised it and then terminates the whole program; there is no per-thread recovery that turns one thread's panic into another thread's error. Other threads are not given an opportunity to unwind, so their local `drop`s and `defer`s do not run, and no surviving Loke code is guaranteed an opportunity to release their resources. A program that requires coordinated shutdown reports worker failures through ordinary error values, joins the workers, and performs cleanup without panicking. Resources that must survive abrupt process termination require an external protocol or operating-system guarantee.
+
 # Conditional compilation
 
 Conditional source selection uses `when`. Selecting files, generating source, discovering tests, and applying project-wide lint or feature policy are build-system responsibilities rather than additional language mechanisms. The reference commands are `loke build`, `loke run`, `loke check`, and `loke test`.
@@ -3863,7 +3948,9 @@ when they require erased callback state; that remains an unsafe interop boundary
 
 The language uses deterministic managed memory for ordinary owning values and retains explicit allocators for systems programming. Managed values are not garbage-collected: the compiler inserts cleanup at the end of their lexical lifetime.
 
-Dynamic arrays, maps, runtime strings, and other managed containers remember the allocator responsible for their backing storage. By default they bind `mem.default_allocator()`; a declaration can select another allocator with `via`.
+Dynamic arrays, maps, runtime strings, and other managed containers remember the allocator responsible for their backing storage. Mutable containers and user-defined managed types whose lifecycle clone honors a destination allocator bind `mem.default_allocator()` by default and may select another allocator with `via`.
+
+Immutable `string` and `shared(T)` are different because assignment may retain an existing shared allocation rather than create destination-owned backing storage. They select an allocator in the operation that creates that allocation: string-producing procedures accept a conventional `allocator` argument when selection is needed, and `shared` has the constructor argument described below. Applying `via` to either type is a compile-time error.
 
 ```odin
 scratch := mem.Scratch();
@@ -3892,10 +3979,25 @@ argument. The final build fixes which provider implements that procedure.
 There is no ambient temporary allocator. Temporary storage has a reset boundary
 and runtime identity, so code creates a `mem.Scratch` or `mem.Arena` owner and
 passes its allocator explicitly. The compiler rejects `free_all`, or any call
-carrying the same allocator-reset effect, while a live managed value or borrow
-still refers to storage from that allocator.
+carrying the same allocator-reset effect, while a live owning value (managed or
+manual) or borrow still refers to storage from that allocator.
 
 Allocator values have a region identity in addition to their allocation procedures and failure policy. Copying an allocator value preserves that identity, and every allocation records it. This is what lets the compiler recognize that two local allocator values refer to the same region. When static provenance cannot prove two allocator values distinct, the lifetime check conservatively treats their regions as possibly identical. Across a procedure call the identity is propagated through a parameter marked `@(allocator_reset)`; a Loke procedure that resets an allocator received as a parameter must mark that parameter, and the compiler verifies the promise transitively. The attribute is part of procedure-type compatibility, so indirect calls preserve the same effect.
+
+An owning value also carries compile-time **region-lifetime provenance**. This provenance is not part of its source type or ABI, but the region that supplies its backing storage must outlive the value. An owner backed by a region created in the current procedure may not be returned, assigned to `static`, `thread_local`, or file-scope storage, placed in an escaping aggregate or container, or otherwise retained past that region. Moving the owner does not erase this dependency.
+
+Procedure checking is conservatively polymorphic over the provenance of an owning parameter. A procedure may use such a parameter locally or return it, in which case the result keeps the parameter's provenance, but it may not retain it in longer-lived storage. Likewise, an owning result constructed with an allocator parameter is attributed to that allocator argument at the call site. A procedure that wants to retain arbitrary input instead clones it into storage whose allocator has the required lifetime. These rules require no written lifetime parameter, but diagnostics must identify the allocator region, the escaping owner, and the shorter-lived region root.
+
+For example, returning `bytes` below is rejected because moving the array into result storage would leave it live while scope cleanup destroys its allocator region:
+
+```odin
+bad_buffer :: proc() -> [dynamic]u8 {
+	arena := mem.Arena();
+	bytes: [dynamic]u8 via arena.allocator();
+	bytes.append(1, 2, 3);
+	return bytes; // ERROR: `bytes` cannot outlive `arena`
+}
+```
 
 Resetting a region is intentionally explicit. There is no zero-argument `free_all`; code must name the allocator being reset. A procedure may reset a region it created locally, because no caller-owned value can belong to it. It may not hide a reset of a global or other pre-existing allocator: such an allocator is taken through an `@(allocator_reset)` parameter instead.
 
@@ -3987,10 +4089,12 @@ Each allocator carries one of two **failure policies**:
 | `.Trap` | Abort the process immediately without unwinding. For freestanding and embedded targets. |
 
 The policy is part of the allocator value and follows an explicitly supplied
-allocator into a subsystem. `.Panic` may unwind according to the runtime's panic
-rules; `.Trap` does not. In either case a partially constructed temporary is
-cleaned up when unwinding permits it, and an existing assignment destination is
-not modified before all required allocation and cloning succeeds.
+allocator into a subsystem. `.Panic` raises an ordinary [panic](#panics-and-unwinding)
+and therefore follows the program's panic strategy, unwinding or not accordingly;
+`.Trap` aborts immediately without unwinding whatever that strategy is. In either
+case a partially constructed temporary is cleaned up when unwinding permits it, and
+an existing assignment destination is not modified before all required allocation
+and cloning succeeds.
 
 Code that must recover from allocation failure uses an explicitly fallible form:
 
@@ -4025,7 +4129,7 @@ Two accesses conflict when they touch overlapping bytes and at least one is a wr
 
 The `core:sync` package provides `Atomic(T)` for booleans, integer types, enums with supported integer backing types, and pointers. Its operations are backed by compiler intrinsics and accept `.Relaxed`, `.Acquire`, `.Release`, `.Acquire_Release`, or `.Sequentially_Consistent` ordering where meaningful. Relaxed operations are atomic but create no inter-thread ordering. Acquire and release create the happens-before edge described above. Sequentially consistent operations additionally participate in one total order. Unsupported type, operation, or ordering combinations are compile-time errors; the implementation may use a lock when the target lacks a lock-free instruction.
 
-Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There are no implicit `Send` or `Sync` interfaces.
+Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread, except for types such as immutable `string` and `shared(T)` whose documented clone operation shares thread-safe handle state. The compiler does not prove that a custom `drop`, a foreign resource, or an allocator may run on the receiving thread; transferring an owner asserts that its entire lifecycle is valid there. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There are no implicit `Send` or `Sync` interfaces.
 
 Threads and retained tasks receive only the arguments explicitly moved or copied
 into them. A request environment, logger, clock, scratch owner, or other service
@@ -4034,13 +4138,15 @@ make its underlying state thread-safe.
 
 ## Shared ownership
 
-`shared(T)` is an explicit library owner for one stable, heap-allocated `T` payload and an atomic strong-reference count. Its zero value is nil. `shared(value)` clones and allocates; `shared(move(value))` transfers the value into the allocation. Assignment invokes its custom `clone` hook and increments the strong count rather than cloning `T`; `move` transfers one handle; `drop` decrements the count with release ordering, performs an acquire fence when it observes the final reference, and then drops the payload exactly once. Construction uses `mem.default_allocator()`, or one supplied through its ordinary `allocator` parameter, follows that allocator's failure policy, and has an explicit `try_shared` form for local error handling. A `shared(T)` variable may also be declared `via` an allocator like any other managed owner.
+`shared(T)` is an explicit library owner for one stable, heap-allocated `T` payload and an atomic strong-reference count. Its zero value is nil. `shared(value)` clones and allocates; `shared(move(value))` transfers the value into the allocation. Assignment invokes its custom `clone` hook and increments the strong count rather than cloning `T`; `move` transfers one handle; `drop` decrements the count with release ordering, performs an acquire fence when it observes the final reference, and then drops the payload exactly once. Construction uses `mem.default_allocator()`, or one supplied through its ordinary `allocator` parameter, follows that allocator's failure policy, and has an explicit `try_shared` form for local error handling. The allocator belongs to the control block created by the constructor, so `via` is not permitted on a `shared(T)` declaration; use `shared(value, allocator=...)` or `try_shared` to select it.
 
-The atomic reference count makes copying and dropping handles safe across threads. It does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` whose lifetime is attributed to that handle; callers must use a mutex, atomics within `T`, immutability, or another protocol before conflicting access. The borrow may not outlive the handle used to obtain it, but the compiler does not correlate aliases obtained from different shared handles.
+The atomic reference count makes concurrent handle accounting race-free; it does not by itself make every `shared(T)` safe to destroy on every thread. The thread that releases the final strong handle runs `T.drop` and deallocates through the control block's allocator. Moving or copying handles between threads is valid only when that destructor and allocator may be invoked on any participating thread; without `Send` or `Sync` checking, this is a programmer obligation. A thread-affine resource keeps its final owning handle on the required thread or uses a library owner that schedules destruction there.
+
+Atomic handle accounting also does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` whose lifetime is attributed to that handle; callers must use a mutex, atomics within `T`, immutability, or another protocol before conflicting access. The borrow may not outlive the handle used to obtain it, but the compiler does not correlate aliases obtained from different shared handles.
 
 Strong-reference cycles are permitted and leak until explicitly broken. `weak(T)` is the non-owning companion: it keeps the control block but not the payload alive, and `upgrade` returns `(shared(T), bool)`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
 
-Immutable `string` implementations that share backing storage use the same thread-safe lifetime principle: their reference-count operations, when present, are atomic, while the bytes themselves never change. This requirement does not make mutable containers safe for concurrent access.
+Immutable `string` implementations that share backing storage use the same atomic handle-accounting principle: their reference-count operations, when present, are atomic, while the bytes themselves never change. The allocator-lifecycle obligation above still applies, and this requirement does not make mutable containers safe for concurrent access.
 
 # Foreign system
 
@@ -4057,7 +4163,7 @@ A procedure using a foreign calling convention, a variable declared in a foreign
 - plain structs with a trivial lifecycle whose fields are recursively foreign-ABI-safe. Their field order, padding, alignment, and by-value argument classification follow the target C ABI for the equivalent C record. A fixed array is permitted as a record field and has the equivalent C array layout;
 - `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership.
 
-Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_view`, and records with custom lifecycle hooks are not foreign-ABI-safe. Interfaces are compile-time declarations and do not denote ABI values. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
+Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_view`, and records with custom lifecycle hooks are not foreign-ABI-safe. Interfaces are compile-time declarations and do not denote ABI values, and a [generic](#generics) procedure or type is likewise not ABI surface — only a concrete instantiation, wrapped in a procedure with a foreign calling convention, can cross the boundary. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
 
 The base language has no overlapping-record or C-union type. Portable bindings pass a C union as `rawptr` and expose typed wrapper accessors. A binding generator may use a target-specific extension for a union passed by value, but that representation is not portable Loke source.
 
@@ -4131,6 +4237,8 @@ Available attributes for foreign blocks:
 Generics let a procedure or data type bind compile-time type or value parameters and use them throughout its definition.
 
 The `$` prefix always marks the declaration or inference of a generic parameter. It is required wherever such a parameter is introduced and is not written when the bound name is subsequently used.
+
+Generics are entirely a compile-time construct and are **not part of any ABI**. A generic procedure or data type is resolved to concrete types and values before ABI lowering, so it has no representation of its own until it is instantiated: it cannot be `@(export)`ed, given a foreign [calling convention](#calling-conventions), declared in a `foreign` block, or held in a procedure value. Each concrete instantiation is an ordinary procedure or type that follows the normal ABI rules, and code that must expose generic functionality across the foreign boundary instantiates it and wraps the result in a concrete, [foreign-ABI-safe](#foreign-abi-safe-types) procedure. Whether two instantiations share code or are emitted separately is an implementation detail with no observable ABI consequence.
 
 ## Explicit generic parameters
 
@@ -4650,7 +4758,7 @@ void bar(const T*)
 
 #### `@(allocator_reset)`
 
-Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while a managed owner or borrow from that region is live.
+Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while an owning value (managed or manual) or borrow from that region is live.
 
 A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals are not permitted.
 
@@ -4814,10 +4922,11 @@ The language is strongly and distinctly typed by default. Built-in implicit conv
 
 # Library types assumed by this specification
 
-Several types are used in normative text above but are supplied by the library. They are listed here so that an implementer knows what the core library owes the language. `Atomic(T)` is backed directly by compiler intrinsics; the remaining types use ordinary language facilities.
+Several types and a few core procedures are used in normative text above but are supplied by the library. They are listed here so that an implementer knows what the core library owes the language. `Atomic(T)` is backed directly by compiler intrinsics; the remaining entries use ordinary language facilities.
 
 | Type | Used by | Status |
 | --- | --- | --- |
+| `os.args`, `os.exit`, `os.open`, `os.close`, `os.Handle` | [program entry and exit](#program-entry-and-exit), the [`defer`](#defer-statement) example | `core:os`. The program model reads command-line arguments from `os.args` and sets the exit status with `os.exit`; file handles are ordinary library resources with no compiler-known behavior. |
 | `String_Builder` | [string type](#string-type) | Built from `[dynamic]u8`. |
 | `C_String` | [C string views](#c-string-views) | Owned zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |
