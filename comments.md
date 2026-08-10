@@ -26,7 +26,13 @@ Is *multi-pointer* the clearest name for `[^]T`, or would *bounded-form pointer*
 
 Should there be a form of procedure, distinct from `proc`, that is guaranteed by the compiler to be free of side effects?
 
-The appeal is compile-time evaluation, safe reordering, and clearer contracts on `interface` requirements such as `hash` and `compare`. The cost is a second procedure kind, an effect system to police it, and the usual problem that a genuinely useful purity rule has to permit local mutation and allocation, at which point it stops being simple. Not required by anything in this document.
+Compile-time evaluation no longer requires a second procedure kind: an ordinary
+procedure is evaluated contextually when its executed path is admissible. A
+separate purity contract could still permit safe runtime reordering, parallel
+reactive evaluation, and clearer contracts on operations such as `hash` and
+`compare`. The cost remains an effect system, especially once useful pure code
+is allowed local mutation and result allocation. It is not required by the
+current compile-time or interface design.
 
 ## Tuples
 
@@ -34,9 +40,25 @@ Should multiple return values be a real tuple type rather than a special form?
 
 Today `a, b := swap(1, 2)` is a language rule that applies to return values and nothing else. A first-class tuple would unify multiple returns, multiple declarations, and pattern matching under one construct, and would let a tuple be stored, passed, and named. The counter-argument is that Odin's approach works, costs nothing, and never tempts anyone to return a tuple where a struct with named fields would document the code better.
 
-## Future runtime polymorphism
+## Owning runtime polymorphism
 
-Should a later version allow `dyn Interface` runtime values or leave runtime dispatch to procedure tables and libraries? Version 1 deliberately omits `dyn`. A future proposal must be validated by a real UI, codec, or plugin library and specify vtable layout, erased ownership, binary methods, unsized results, and interaction with `any_view` before becoming normative. Owning type erasure was removed from version 1 for the same reason and would arrive with it, not before it.
+Borrowed `dyn Interface` views are now defined. Should a later version add an
+owning erased value, and if so should it be a language type such as `box(dyn I)`
+or a library owner built over an exposed witness primitive?
+
+The proposal must specify allocator identity, alignment, fallible construction,
+move, clone, drop, thread-affine destruction, and whether inline small-object
+storage changes representation. Borrowed `dyn` intentionally settles none of
+those questions and never allocates.
+
+Note that the witness is currently a mechanism with no user-visible spelling: the
+compiler builds one for each `(Interface, Concrete, arguments...)` tuple reached
+by a `dyn` conversion, and nothing materializes it as a value. An earlier draft
+exposed `witness_of` and a compiler-defined `Witness(...)` type for exactly this
+future owner, which meant fixing a layout, a zero value, an invalid-witness panic
+rule, and a normative slot-flattening order for a consumer that did not exist.
+Whichever way the question above is answered, the primitive comes back with the
+owner that needs it.
 
 ## Borrow checking across procedure boundaries
 
@@ -77,10 +99,19 @@ measuring a real implementation; it is recorded here because the cost is
 structural rather than an implementation detail, and because the answer affects
 whether `string` is usable unchanged on embedded targets.
 
-## More powerfull compile time feutures
-    should we add stuff like compile time procedures and structs?
-    The compile time untyped types are ergonomic but a little bit wierd and irregular.
-    How does compile time in zig and jai work?
+## Compile-time code generation
+
+The current language evaluates ordinary procedures at compile time, treats
+types as typed compile-time values, exposes typed reflection descriptors, and
+supports statement-level static `foreach`. It deliberately does not expose
+tokens or syntax trees, generate identifiers, inject declarations, or expand a
+static loop at file scope.
+
+Experience with serialization, GUI, RPC, and binding libraries should determine
+whether typed reflection and expansion are sufficient. If declaration
+generation is eventually required, it should preserve lexical name resolution,
+hygiene, incremental compilation, and readable diagnostics rather than exposing
+an untyped token macro system by default.
 
 ## Recoverable panics
 
@@ -98,37 +129,28 @@ every `drop` hook and `defer` would have to be correct under, and the temptation
 to use it as ordinary error handling in place of [`or_return`](design.md#or_return-operator).
 Not required by anything in this document.
 
-## Simplifying overload priority
+## exponent operator
 
-[Overload resolution](design.md#operator-lookup-and-overload-resolution) currently
-lets constraints participate in *ordering*, not only in whether a candidate is
-viable. Tie-breaker 4 keeps structural specialization (`Table(string, int)` beats
-`Table($K, $V)`) but then falls back to **constraint entailment**: between two
-candidates of identical shape, the one whose normalized constraint set syntactically
-entails the other's is more specific and wins. That entailment step carries the most
-machinery of any single resolution rule — normalize as a conjunction, expand interface
-composition transitively, alpha-rename bound names, test atom-subset — plus the caveat
-that stronger reasoning must not change which overload is selected.
+ ** for pow(a,b)? ^ are used for pointers.
 
-The proposal is to delete constraint entailment. Tie-breaker 4 would keep only its
-structural half; two viable candidates that are structurally equal and differ only in
-constraint strength would be an **ambiguity error**, resolved by naming the procedure
-or by internal `when` dispatch. The mental model then collapses to: `interface` and
-`where` decide *whether* a candidate is viable, and only structure decides *which*
-viable candidate wins. Two things are unaffected — non-overlapping `where` filters in a
-group (only one candidate is ever viable) and structural specialization — so the only
-behavioral change is that auto-selecting a strictly-more-constrained overload of the
-same shape (Rust-style specialization) becomes an explicit call.
+## intrinsics and inline assembly
 
-The cost is an expressiveness loss for library authors who want a general
-implementation plus an automatically-selected refinement. The benefit is a smaller,
-more predictable priority order that fits the language's existing preference for
-diagnosing ambiguity over resolving it implicitly. This is separate from the
-[import-determinism](design.md#operator-lookup-and-overload-resolution) property, which
-holds regardless; entailment operates on constraints fixed at each candidate's
-declaration, so it is not itself an import hole. The question is comprehensibility
-versus one advanced generic pattern, and it can only be settled by writing real generic
-libraries against both rules.
+## Compile time
+
+file handling?
+fail load, can the programmer easily see what is going to run at compile time
+
+## abstraction over SOA
+
+## LLM optimization
+
+token optimization, can the syntax be made to be token efficient?
+LLM readability and writability, how does that differ from humans? LLM's are trained on human data but works differently.
+Encapsulation and abstractions must still be important so they can work on an part of the code.
+
+## garbage collection
+
+add an garbage collected allocator as an alternative?
 
 # Differences from Odin and design motivations
 
@@ -155,31 +177,47 @@ possible without making unsafe behavior the default.
 
 Strings, dynamic arrays, maps, and user resource types are owning values with
 automatic scope cleanup. `manual` suppresses only that automatic cleanup, while
-`stack`, `static`, and `thread_local` control duration; none creates a second
-type.
+`static` and `thread_local` control duration; none creates a second type.
 
-File-scope, `static`, and `thread_local` managed values are not automatically
-dropped. A global destruction order across packages and threads would make
-shutdown depend on initialization order and on whether other threads can still
-reach a value. Externally observable cleanup therefore uses `@(fini)` or an
-explicit owner in `main`.
+File-scope and `static` managed values are not automatically dropped. A global
+destruction order across packages would make shutdown depend on initialization
+order and on whether other threads can still reach a value. Externally
+observable process cleanup therefore uses `@(fini)` or an explicit owner in
+`main`. A managed `thread_local` does have a natural local endpoint and is
+dropped on normal thread return, in reverse initialization order; aborting
+termination makes no such guarantee.
 
 ### Storage modifiers instead of storage attributes
 
 Odin spells static-duration locals `@(static)` and thread locals
-`@(thread_local)`. Loke writes both in the declaration alongside `stack` and
-`manual`, because they answer the same question those do — where does this
-variable live, for how long, and who releases it — and because the answer changes
-what the program does rather than describing it for a tool.
+`@(thread_local)`. Loke writes both in the declaration alongside `manual`,
+because they answer the same question it does — where does this variable live,
+for how long, and who releases it.
 
-The dividing line is what survives dropping the annotation. Remove `@(link_name)`
-or `@(export)` and the program still means what it meant; remove `static` and a
-counter resets on every call, cleanup starts running at scope exit, and a borrow
-that used to be returnable no longer is. Attributes are metadata; these are
-semantics.
+The dividing line is not metadata versus meaning: `@(packed)` and
+`@(allocator_reset)` are attributes and both are load-bearing. It is that these
+three answer a question about the declared storage itself, which is what the
+declaration is for. Remove `@(link_name)` or `@(export)` and the program still
+means what it meant; remove `static` and a counter resets on every call, cleanup
+starts running at scope exit, and a borrow that used to be returnable no longer
+is.
 
-Splitting duration from ownership also made `stack manual Foo` expressible, which
-a single modifier slot could not say.
+Splitting duration from ownership keeps `static manual Foo` expressible, which a
+single modifier slot could not say.
+
+### No `stack` modifier, and no heap-promoted locals
+
+An earlier draft let the compiler place a large fixed-size local on the heap when
+the frame would otherwise be impractical, and added a `stack` duration modifier
+so that embedded and real-time code could forbid it per declaration.
+
+Both are gone. A local with lexical duration lives in its frame, full stop; a
+declaration too large for the stack overflows it, as in C. The promotion rule was
+a silent allocation — and a silent allocation-failure path — behind a declaration
+that reads as free, and `stack` existed only to buy back the property the
+declaration started with. Deleting the pair removes a modifier, a placement rule,
+and a guarantee, and puts the cost of eight megabytes of local back in the
+declaration that asks for it.
 
 ### Value-semantic assignment
 
@@ -234,9 +272,13 @@ An extension affects implicit lookup only in its declaring package; importers
 use its named procedures through qualification unless they add a local
 forwarding extension. This keeps an unrelated import from changing an existing
 expression.
-Interfaces describe compile-time capabilities used by generic code. The name
-`interface` replaced the earlier draft's `concept` because it describes a
-concrete programming-language role more directly.
+Interfaces describe capabilities used by generic code. Named `slot`
+requirements additionally let the compiler reify the same proof as a witness
+table for explicit `dyn` values. Free-form expression requirements remain
+static-only, so adding runtime dispatch does not weaken the concise structural
+constraints used by numeric and container algorithms. The name `interface`
+replaced the earlier draft's `concept` because it now describes both roles
+directly.
 
 Generic bodies and their interface requirements use definition-site lookup, so
 a caller-local extension cannot change an existing instantiation. The built-in
@@ -246,6 +288,21 @@ map using different hash policies and invalidate its contents.
 
 Operator overloading, indexing, iteration, conversions, and lifecycle hooks let
 library types be as convenient as built-in types.
+
+### One language at compile time
+
+`$`, `::`, `when`, and static `foreach` have separate jobs. `$` introduces a
+specialization input or pattern, `::` binds a computed constant, `when` selects
+which source is present, and `foreach ($item in values)` expands heterogeneous
+typed code. Keeping those meanings separate avoids a general sigil that can
+silently move arbitrary runtime work into compilation.
+
+Ordinary procedures are interpreted when a constant context requires their
+result. Their values retain ordinary Loke types; only `type` and the opaque
+reflection descriptors are compile-time-only. This gives libraries loops,
+local mutation, type computation, and reflection without a parallel untyped
+macro language. File and environment access remain in an explicit build program
+rather than becoming ambient compiler effects.
 
 Built-in operations on built-in types cannot be shadowed. Domain-specific
 behavior over a primitive representation uses a `distinct` type, keeping the
@@ -305,12 +362,74 @@ between monomorphization and dictionary passing an implementation detail with no
 observable consequence, and keeps the foreign boundary defined over concrete
 types only.
 
+### Constraint entailment in overload resolution
+
+An earlier draft let [tie-breaker 4](design.md#operator-lookup-and-overload-resolution)
+order two structurally identical candidates by constraint strength: the one whose
+normalized constraint set syntactically entailed the other's won. Constraints now
+decide only whether a candidate is *viable*; structure alone decides which viable
+candidate wins, and a tie is an ambiguity error.
+
+Entailment carried the most machinery of any single rule in the language — normalize
+as an unordered conjunction, expand interface composition transitively, alpha-rename
+bound names, test atom-subset — plus the caveat that an implementation reasoning more
+strongly must not thereby change which overload is selected. It bought one pattern:
+Rust-style automatic selection of a strictly-more-constrained refinement. Making that
+refinement an explicit call is consistent with how the language treats every other
+ambiguity, and it means a reader never has to perform a subset test to know which
+procedure runs.
+
 ### Statement labels and multi-level breaks
 
 Labels made structured control flow read like a hidden `goto`. The common
 multi-level exit cases can use a returned helper procedure, a loop condition,
 or an `if` chain. Loke therefore keeps `break` and `continue` limited to the
 innermost applicable construct.
+
+### File-private visibility
+
+`@(private="file")` is gone; `@(private)` now takes no argument and names package
+visibility explicitly, which is only load-bearing inside a file whose package
+clause carries `@(public)`. A package is the encapsulation boundary, and one
+level of hiding *inside* that boundary cost an attribute value, a package-clause
+form, a mutual-exclusion rule against `@(public)`, and a rule for opting back out
+of a file-wide private default. A file that wants its own boundary wants to be a
+package.
+
+### `fallthrough`
+
+Multi-value case lists cover what most C fallthrough chains are written for, and
+a case that must run another case's body calls a shared procedure. Keeping a
+keyword to reintroduce the C behaviour that Loke's `switch` exists to remove was
+not worth the reserved word, the statement, and the extra clause in the `defer`
+restrictions.
+
+### Named-result initializers
+
+`-> (color := "blue")` is gone; a named result starts at its zero value and is
+assigned in the body. It resembled a parameter default but fired on a different
+condition — every entry, rather than every call that omits an argument — and two
+similar spellings with different trigger conditions is a poor use of syntax.
+
+### Reflection beyond fields and enum values
+
+Compile-time reflection is `fields_of` and `enum_values_of` with two descriptor
+types. An earlier draft also had `procedures_of`, `parameters_of`,
+`requirements_of`, and `attributes_of`, with three further descriptors and a rule
+about which extension members `procedures_of` observes. Field and enum shape is
+what serialization, bindings, and GUI generation walk; the rest was a guess at
+what an RPC or documentation generator might want. Adding a descriptor later is
+additive.
+
+### Associated interface members use expressions
+
+`const T.NAME: Type;` is gone. `T.NAME -> Type;` is an ordinary expression
+requirement that says the same thing, since `T.NAME` already names its owner
+unambiguously. The dedicated form bought only the additional demand that the
+member be a compile-time constant, which value requirements did not need. An
+associated type uses the same mechanism as `T.Element -> type;`; because its
+result is itself a type, that selected member is necessarily compile-time known.
+No second member-declaration grammar is needed.
 
 ### Headless switch
 
@@ -338,14 +457,18 @@ can express their behavior. SIMD vectors remain built in because their
 semantics include lowering to target vector operations, which an ordinary
 record cannot guarantee.
 
-### Owning type erasure and runtime interface values
+### Owning type erasure
 
-`any_view` is deliberately borrowed and call-scoped. An owning `any` would need
-stable payload allocation, allocator provenance, erased clone/drop behavior,
-borrow rules across moves, and an allocation-failure contract. Those are also
-the hard parts of runtime interface values. Version 1 uses unions for closed
-sets and procedure tables for open runtime behavior instead of committing to a
-vtable and erased-ownership model before real libraries validate one.
+`any_view` remains borrowed and call-scoped, while `dyn Interface` is a more
+capable borrowed view carrying a coherent interface witness. Neither owns the
+erased payload. An owning `any` or `dyn` would need stable payload allocation,
+allocator provenance, alignment, erased clone/drop behavior, borrow rules across
+moves, thread-affine destruction, and an allocation-failure contract.
+
+Keeping ownership out of the initial design lets generic and dynamic dispatch
+interoperate without silently allocating. Closed owning sets use unions;
+libraries that need open ownership can first validate an explicit owner record
+around raw storage and their own callback record.
 
 ### General user-defined implicit conversions
 
@@ -413,12 +536,50 @@ ordinary callable name, the overload set is visible, and ambiguity is diagnosed
 instead of being resolved by declaration order. Methods and operators use the
 same resolution rules.
 
+### `+` concatenates strings at runtime
+
+Odin's `+` on strings works only between constants; runtime concatenation is
+`strings.concat` with an explicit allocator. Loke lets `+` concatenate at runtime
+too, allocating from `mem.default_allocator()`.
+
+The argument against was that it hides an allocation behind an operator. But the
+language already hides allocations behind `append`, map insertion, and plain
+assignment, and it has a [copy-cost diagnostic](design.md#copy-cost-diagnostics)
+for exactly this — so `+` is not the place the rule would first be broken, and
+refusing it only makes the common two-or-three-piece message the awkward case.
+The quadratic loop is the real hazard, and it is answered by reporting it rather
+than by removing the operator: `String_Builder` remains the way to accumulate,
+and the way to choose an allocator.
+
+### No enum arithmetic or bitwise operators
+
+An earlier draft allowed `+`, `-`, and the bitwise operators on enums, inherited
+from treating them as thin wrappers over integers. Enum members may have holes,
+so the result of `Foo.A + Foo.B` need not be a member of `Foo`, and the language
+has `Bit_Set(Enum)` for flag sets. Enums remain comparable and ordered, and
+converting to the backing integer type is one call.
+
+### `in` is a comparison, not an additive operator
+
+Odin places `in` at the comparison precedence level and Loke had moved it to the
+additive one. That silently regrouped `x in values + extra` as
+`(x in values) + extra`. `in` produces a `bool`, so it belongs with `==` and `<`.
+
 ### Map element mutation
 
 Odin prohibits `m[key].field = value`. Loke permits it because indexing a user
 type can already return an `inout` place, and built-in maps should follow the
 same place rules. Assignment through a missing key inserts a zero value first;
-`&m[key]` remains a non-inserting lookup with optional-ok results.
+`m.find(key)` is the non-inserting lookup, with optional-ok results.
+
+### `string` borrows as `string_view`
+
+`string` converts implicitly to `string_view`. Without it the two types compete
+for every signature that reads text: an API taking `string` cannot accept a
+substring without allocating one, and an API taking `string_view` makes every
+caller holding a `string` write a conversion. The conversion is a borrow, costs
+nothing, and needs no validation, so the division is simply that `string_view`
+reads and `string` owns. It is one-way; going back allocates, via `.clone()`.
 
 ### String ownership and concurrency
 

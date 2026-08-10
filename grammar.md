@@ -49,20 +49,21 @@ referenced.
 Reserved in every position:
 
 ```
-break      case       continue   defer      distinct   interface  dynamic
-else       enum       extend     fallthrough for       foreach    foreign
-if         impl       import     in         inout      map        move
-mut        operator   or_else    or_return  package    proc       return
-struct     switch     union      via        when       where
+break       case       continue   defer      distinct   dyn        dynamic
+else        enum       extend     for        foreach   foreign
+if          impl       import     in         inout      interface  map
+move        mut        operator   or_else    or_return  package    proc
+return      struct     switch     type       union      via        when
+where
 ```
 
 Contextual keywords, reserved only in the positions given:
 
 | Word | Position |
 | --- | --- |
-| `stack`, `static`, `thread_local`, `manual` | in the storage-modifier position of a declaration, after its `:` |
-| `self` | the first parameter name of a procedure declared in an `impl` or `extend` block |
-| `const` | at the start of an associated-constant requirement in an `interface` body |
+| `static`, `thread_local`, `manual` | in the storage-modifier position of a declaration, after its `:` |
+| `self` | the first parameter name of a procedure declared in an `impl` or `extend` block, or of an interface `slot` |
+| `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` or `extend` body |
 
@@ -206,7 +207,7 @@ Variable_Initializer = Expression | "---"
 Declared_Type = Storage_Modifiers Type ("via" Unary_Expression)?
 
 Storage_Modifiers = Duration_Modifier? "manual"?
-Duration_Modifier = "stack" | "static" | "thread_local"
+Duration_Modifier = "static" | "thread_local"
 
 Constant_Initializer = Braced_Constant_Value
                      | Semicolon_Constant_Value ";"
@@ -228,15 +229,18 @@ uninitialized-storage marker as in `x: T = ---;`; it is not an expression and
 therefore cannot be used with inferred `x := ...` syntax. The second
 `Variable_Decl` alternative is the `x := e` spelling, and it accepts storage
 modifiers with the type still inferred, as in `x: static = 0;` or
-`raw: manual := make([dynamic]int);`. `Storage_Modifiers` is nullable, so both
+`raw: manual := [dynamic]int{1, 2, 3};`. `Storage_Modifiers` is nullable, so both
 alternatives cover the unmodified forms and the two are distinguished by whether
 a `Type` follows.
 
 The two modifier groups are independent: `Duration_Modifier` answers where a
-variable lives and for how long, `manual` answers who releases it. `x: stack
-manual Foo;` is therefore a fixed-size owner guaranteed to sit in the current
-frame whose cleanup the compiler does not insert. The duration modifiers are
-mutually exclusive.
+variable lives and for how long, `manual` answers who releases it. `x: static
+manual Foo;` is therefore a process-lifetime owner whose cleanup the compiler
+does not insert. The duration modifiers are mutually exclusive.
+
+A managed `thread_local` owner is dropped on normal thread return; a manual one
+is not. File-scope and `static` owners are never dropped automatically. Panic or
+process termination does not run TLS cleanup, as specified in `design.md`.
 
 File-scope, `static`, and `thread_local` declarations require constant
 initializers and may not use `via`; omitted initializers use the zero value.
@@ -249,7 +253,10 @@ requires `;`, including when its expression ends in a composite literal.
 `via` selects the allocator for a managed value and takes a unary expression, so
 `b: [dynamic]u8 via arena.allocator() = ...;` parses without backtracking.
 It is semantically rejected for `string`, `shared(T)`, and non-owning types,
-whose allocation rules do not bind a destination allocator at declaration.
+whose allocation rules do not accept a destination allocation policy. A mutable
+owner without `via` keeps an allocator-unbound constant zero representation and
+loads the build-selected default only when an operation first needs storage;
+an explicit `via` expression is evaluated and recorded at the declaration.
 
 # Types
 
@@ -262,9 +269,11 @@ Type = "^" Type                                          // pointer
      | "[" Expression "]" Type                           // fixed array
      | "map" "[" Type "]" Type
      | "distinct" Type
+     | "dyn" Type_Name Type_Arguments?                  // borrowed dynamic interface
+     | "type"                                           // compile-time-only type of types
      | Proc_Type
      | Type_Definition
-     | "$" Identifier (":" Type)?                        // generic binding
+     | "$" Identifier (":" Type)?                        // specialization binding
      | Type_Name Type_Arguments?
 
 Type_Name      = Identifier ("." Identifier)?            // optionally package-qualified
@@ -284,6 +293,17 @@ a `Type`. A value parameter accepts any constant expression, so `Matrix(f32, 4)`
 is valid when the second record parameter has type `int`. A bare identifier in a
 generic argument is parsed as an unresolved name and classified as a type or
 value during name resolution.
+
+The single selector in `Type_Name` is classified during name resolution too. It
+is either a package-qualified type such as `interfaces.Sequence` or an associated
+type such as `S.Element` made available by an active interface constraint.
+Associated-type selectors do not chain in version 1.
+
+In `dyn Interface(arguments...)`, `Type_Name` must resolve to a dyn-compatible
+interface. Its first generic parameter is the erased subject and is omitted from
+`arguments`; all remaining interface parameters are supplied there. The explicit
+conversion syntax uses the existing parenthesised-type expression,
+`(dyn Interface)(&value)`.
 
 ## Records
 
@@ -308,10 +328,14 @@ Where_Clause    = "where" Expression ("," Expression)*
 ```
 
 Every expression in a `Where_Clause` must be a compile-time boolean. It may
-reference generic parameters, constants, types, interfaces, and compile-time
-built-ins, but not runtime values or calls. A `Where_Clause` with no generic
+reference generic parameters, constants, types, interfaces, compile-time
+built-ins, and ordinary procedures that can be evaluated at compile time, but
+not runtime values or runtime-only calls. A `Where_Clause` with no generic
 parameters in its declaration or enclosing generic `impl` is therefore a
 semantic error.
+
+A `Where_Clause` expression may not have a `Composite_Literal` at its top level;
+see [Resolved ambiguities](#resolved-ambiguities).
 
 A field named `_` is an unnamed padding field. A field type may itself be a
 `Struct_Type`, which is how anonymous nested records are written.
@@ -321,17 +345,28 @@ A field named `_` is an unnamed padding field. A field type may itself be a
 ```
 Interface_Definition = "interface" Generic_Parameters "{" Requirement* "}"
 
-Requirement  = Bindings? Expression ("->" Type)? ";"
-             | "const" Identifier "." Identifier ":" Type ";"
+Requirement  = Bindings? Expression ("->" Requirement_Result)? ";"
+             | "slot" Identifier ":" Proc_Type ";"
 
-Bindings     = "(" Binding_Group ("," Binding_Group)* ")"
-Binding_Group= Identifier ("," Identifier)* ":" Type
+Requirement_Result = "inout"? Type
+Bindings           = "(" Binding_Group ("," Binding_Group)* ")"
+Binding_Group      = Identifier ("," Identifier)* ":" "inout"? Type
 ```
 
 A requirement beginning with `(` always starts a binding list; wrap the
 expression in a second pair of parentheses if a requirement must begin with a
-parenthesised expression. In `const T.NAME: U;`, `T` must name one of the
-interface's type parameters; the requirement asks for `NAME` in `T`'s `impl`.
+parenthesised expression. An associated constant is an ordinary expression
+requirement, written `T.NAME -> U;`; when `U` is `type`, the selected member is
+an associated type usable by later requirements. An `inout` binding denotes a hypothetical
+exclusive mutable place for requirement checking. An `-> inout T` result
+requires the expression to denote an assignable place of exactly type `T`; it
+does not introduce a general first-class reference type. `move` bindings are not
+part of requirement lists.
+
+`slot` is contextual only in this position. Its procedure type cannot introduce
+new generic parameters, and its first parameter must be the receiver `self` in
+one of the method-call receiver forms; dyn compatibility imposes the additional
+semantic rules in `design.md`.
 
 # Procedures
 
@@ -369,18 +404,23 @@ Parameter_Mode  = "inout" | "move"
 
 Results      = Result_Type
              | "(" Result_Item ("," Result_Item)* ","? ")"
-Result_Item  = Identifier_List ":" (Result_Type ("=" Expression)? | "=" Expression)
+Result_Item  = Identifier_List ":" Result_Type
              | Result_Type
 Result_Type  = "inout"? Type
 ```
 
 A parameter with no type is legal only for the receiver `self`, whose type is
-inferred from the enclosing `impl` or `extend` block. `..T` is a variadic
+inferred from the enclosing `impl` or `extend` block or from the subject
+parameter of an interface `slot`. `..T` is a variadic
 parameter. Variadic parameters cannot use `inout` or `move`. An ordinary value
 parameter initializer is an omitted-argument default and accepts an ordinary
 runtime `Expression`; `inout`, `move`, and variadic parameters cannot have
 defaults. The expression is evaluated only when the caller omits that argument,
-as specified in `design.md`. The `---` body marks a foreign declaration.
+as specified in `design.md`. It may reference the receiver and parameters
+declared to its left, but not itself or parameters to its right. Defaults belong
+to named declarations; a call through a procedure value supplies every
+parameter. A named result has no initializer form; it starts at
+its zero value. The `---` body marks a foreign declaration.
 
 # Statements
 
@@ -430,7 +470,7 @@ For_Header     = (Init_Statement | ";") Expression? ";" Simple_Statement?
                | Expression
 
 Foreach_Statement = "foreach" "(" Binding ("," Binding)? "in" Expression ")" Block
-Binding        = "&"? (Identifier | "_")
+Binding         = "$"? "&"? (Identifier | "_")
 
 When_Statement = Attributes? "when" "(" Expression ")" Block
                  ("else" (When_Statement | Block))?
@@ -441,12 +481,19 @@ Return_Statement = "return" Return_Value_List? ";"
 Return_Value_List= Return_Value ("," Return_Value)*
 Return_Value   = "inout"? Expression
 
-Branch_Statement = ("break" | "continue" | "fallthrough") ";"
+Branch_Statement = ("break" | "continue") ";"
 ```
 
 `for (;;)` is the three-part header with every part empty. `for (cond)` is the
 condition-only form. `break` and `continue` take no operand and there are no
 labels.
+
+A `foreach` whose bindings carry `$` is a **static expansion**: it requires a
+compile-time iterable and expands its block once per element. The two forms share
+one production so that a mixed header parses and can be diagnosed. The semantic
+restrictions are that every binding in a header must agree on `$`, that a `$`
+binding may not also carry `&`, and that `break` and `continue` cannot target an
+expansion.
 
 `Init_Statement` is what makes `for (i := 0; ...)`, `if (x := foo(); ...)`, and
 `switch (arch := LOKE_ARCH; arch)` legal: an initial statement may be a variable
@@ -459,7 +506,7 @@ is an ordinary expression.
 
 The unrestricted `Statement` in `Defer_Statement` is narrowed semantically:
 deferred syntax may not contain `return`, `or_return`, or another `defer`.
-`break`, `continue`, and `fallthrough` may target only a loop or switch wholly
+`break` and `continue` may target only a loop or switch wholly
 inside that deferred statement. Nested procedure literals are checked as
 independent procedures.
 
@@ -484,17 +531,23 @@ Type_Case    = "case" (Type ("," Type)*)? ":" Statement*
 # Expressions
 
 Levels are numbered as in [Operator precedence](design.md#operator-precedence);
-level 1 binds loosest. Levels 2 through 7 associate left to right. Level 1
+level 1 binds loosest. Levels 3 through 7 associate left to right. Level 1
 associates **right**, so that `a if c else b if d else e` groups as
-`a if c else (b if d else e)`, matching the else-if chain it reads as.
+`a if c else (b if d else e)`, matching the else-if chain it reads as. Level 2 is
+**non-associative**: a range takes exactly two endpoints, so `a ..< b ..< c` is a
+syntax error rather than a nested range.
+
+`in` sits at level 5 with the comparisons because it produces a `bool`. At the
+additive level `x in values + extra` would have grouped as
+`(x in values) + extra`.
 
 ```
 Expression   = Level_2 (("or_else" Expression) | ("if" Level_2 "else" Expression))?  // 1
-Level_2      = Level_3 (("..=" | "..<") Level_3)*                               // 2
+Level_2      = Level_3 (("..=" | "..<") Level_3)?                               // 2
 Level_3      = Level_4 ("||" Level_4)*                                          // 3
 Level_4      = Level_5 ("&&" Level_5)*                                          // 4
-Level_5      = Level_6 (("==" | "!=" | "<" | ">" | "<=" | ">=") Level_6)*        // 5
-Level_6      = Level_7 (("+" | "-" | "|" | "~" | "in") Level_7)*                 // 6
+Level_5      = Level_6 (("==" | "!=" | "<" | ">" | "<=" | ">=" | "in") Level_6)* // 5
+Level_6      = Level_7 (("+" | "-" | "|" | "~") Level_7)*                       // 6
 Level_7      = Unary_Expression
                (("*" | "/" | "%" | "&" | "&~" | "<<" | ">>") Unary_Expression)*  // 7
 
@@ -538,7 +591,7 @@ Composite_Type    = Type_Name Type_Arguments?
 
 Element_List = Element ("," Element)* ","?
 Element      = (Element_Key "=")? Expression
-Element_Key  = Identifier | Expression                 // field name, index, or index range
+Element_Key  = Expression                              // field name, index, or index range
 
 Argument_List = Argument ("," Argument)* ","?
 Argument      = Identifier "=" Named_Argument_Value    // named argument
@@ -553,8 +606,13 @@ Where `Expression` and `Type` overlap, the parser records one unresolved
 argument form and name resolution classifies it using the selected parameter.
 Syntactically distinctive types such as `^T`, `[]T`, and `[dynamic]T` are
 accepted directly as arguments. A type argument is legal only where the callee
-expects a compile-time `typeid` parameter or is a compiler-defined built-in that
-expects a type.
+expects a compile-time `type` parameter or is a compiler-defined built-in that
+expects a type. An interface declaration is accepted as an argument only by
+compiler-defined reflection operations.
+
+An `Element_Key` is an ordinary expression; which kind of key it is depends on
+the literal's type, so a bare identifier is a field name in a record literal and
+an ordinary value expression everywhere else.
 
 A `Composite_Literal` with no `Composite_Type` takes its type from context. It
 may not begin an expression statement, because `{` at statement position starts
@@ -566,6 +624,11 @@ groups as `a or_else (b or_else c)`, so each `or_else` receives an
 [optional-ok](design.md#optional-ok-results) left operand and an ordinary
 fallback. Under left association the outer operator would have received an
 already-resolved value on its left and could not have type-checked.
+
+The left operand of `or_else` must have at least one payload result followed by
+`bool`; a single-result `bool` call is not eligible. For multiple payloads, the
+fallback expression must itself produce the same number of results, as specified
+in the normative design.
 
 `move(x)` is a primary form rather than a call because `move` is a keyword — it
 is also a [parameter mode](#procedures), so it has to be reserved anyway.
@@ -583,16 +646,27 @@ The productions above use the following deterministic parsing rules:
   that opens it is followed by `:`, and a `Simple_Statement` otherwise. Deciding
   this means scanning a name list, which is the same bounded scan `Declaration`
   already performs at statement position.
-- After the first `:` of a declaration, `stack`, `static`, `thread_local`, and
-  `manual` are storage modifiers only when followed by another modifier, by a
-  type-start token, or by `=`. Otherwise they are ordinary type names.
+- After the first `:` of a declaration, `static`, `thread_local`, and `manual`
+  are storage modifiers only when followed by another modifier, by a type-start
+  token, or by `=`. Otherwise they are ordinary type names.
 - At the start of an `impl` or `extend` member, `delegate` is the contextual
   keyword only when followed by `(`; otherwise it remains an ordinary identifier
   that may begin a declaration.
 - `via` in a declaration consumes one unary expression. A larger allocator
   expression is parenthesised.
+- A `Where_Clause` is followed immediately by the declaration's `{`, so an
+  expression in the clause may not have a `Composite_Literal` at its top level.
+  In `where Additive(T) {`, the brace opens the body; `Additive(T)` is a call or
+  interface application and never the type of a literal `Additive(T){...}`. A
+  bound that needs a composite literal parenthesises it. This is the only place
+  in the grammar where an expression abuts a body brace without an enclosing
+  pair of parentheses, which is why every `Control-flow header` is
+  parenthesised.
 - In an interface requirement, an opening `(` begins `Bindings`; an expression that
   itself begins with parentheses uses a second pair.
+- At the start of an interface requirement, `slot` is the contextual keyword
+  only when followed by an identifier, `:`, and `proc`; otherwise it is an
+  ordinary identifier beginning an expression requirement.
 - A bare identifier in a generic argument, or in parentheses by itself, is stored
   as an unresolved name. Name resolution classifies it as a type, constant, or
   value. Syntactically distinctive type forms such as `^T`, `[]T`, and `proc()`
