@@ -5,6 +5,12 @@
 //   tests/err/*.loke + .expected   compile, assert exact diagnostic count plus
 //                                  code/message substrings and @line:column spans
 //   tests/trap/*.loke              compile, run, expect a non-zero exit
+//   tests/syntax_err/*.loke        the same, for parser diagnostics, and assert
+//     with .expected               the file's trailing sentinel survived recovery
+//
+// The valid-syntax corpus in tests/syntax/ is checked in-process instead, by
+// src/syntax_corpus_test.odin — it asserts on spans and token streams, which are
+// not visible from stdout.
 //
 // Run with:  odin build src -out:lokec.exe  &&  odin test tests
 package tests
@@ -114,8 +120,21 @@ programs_trap :: proc(t: ^testing.T) {
 
 @(test)
 diagnostics_reported :: proc(t: ^testing.T) {
-	cases, _ := filepath.glob("tests/err/*.loke")
-	testing.expect(t, len(cases) > 0, "no diagnostic cases found")
+	check_diagnostics(t, "tests/err/*.loke", "-emit-ll", "")
+}
+
+// Syntax errors are reported by the parser, so these run in `-dump-ast` mode:
+// the dump is printed before the diagnostics are, which is what lets the test
+// assert the file's trailing sentinel survived recovery.
+@(test)
+syntax_errors_recover :: proc(t: ^testing.T) {
+	check_diagnostics(t, "tests/syntax_err/*.loke", "-dump-ast", `(const names=["sentinel"]`)
+}
+
+@(private)
+check_diagnostics :: proc(t: ^testing.T, pattern: string, mode: string, sentinel: string) {
+	cases, _ := filepath.glob(pattern)
+	testing.expectf(t, len(cases) > 0, "no cases found for %s", pattern)
 
 	for path in cases {
 		expected, has_expected := os.read_entire_file(expected_path(path))
@@ -123,14 +142,22 @@ diagnostics_reported :: proc(t: ^testing.T) {
 			continue
 		}
 
-		state, _, stderr, err := os2.process_exec(
-			os2.Process_Desc{command = []string{LOKEC, path, "-emit-ll"}},
+		state, stdout, stderr, err := os2.process_exec(
+			os2.Process_Desc{command = []string{LOKEC, path, mode}},
 			context.allocator,
 		)
 		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, LOKEC) {
 			continue
 		}
 		testing.expectf(t, state.exit_code == 1, "%s: expected exit 1, got %d", path, state.exit_code)
+		if sentinel != "" {
+			testing.expectf(
+				t,
+				strings.contains(string(stdout), sentinel),
+				"%s: recovery did not reach the trailing sentinel",
+				path,
+			)
+		}
 
 		output := string(stderr)
 		expected_errors := 0

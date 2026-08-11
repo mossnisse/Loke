@@ -1,0 +1,35 @@
+(file package="main"
+  (const names=["Braced"]
+    (struct (field ["x"] (ident "int")))
+  )
+  (const names=["Then_Empty_Item"]
+    (struct)
+  )
+  (const names=["Interface_Body"]
+    (interface (generic ["Self"] (type)))
+  )
+  (const names=["Definition"]
+    (proc (proc-type)
+      (block
+      )
+    )
+  )
+  (const names=["Group"]
+    (proc-group ["Definition"])
+  )
+  (const names=["Operator"]
+    (operator "+" (proc (proc-type (param ["a"] (ident "int")) (result (ident "int")))
+      (block
+      )
+    ))
+  )
+  (const names=["Semicolon"]
+    (binary Plus (int "1") (int "2"))
+  )
+  (const names=["Composite"]
+    (composite (ident "Point") (int "1"))
+  )
+  (const names=["Bodiless"]
+    (proc (proc-type) ---)
+  )
+)

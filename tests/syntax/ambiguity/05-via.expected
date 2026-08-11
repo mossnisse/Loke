@@ -1,0 +1,7 @@
+(file package="main"
+  (var names=["call"] type=(slice (ident "int")) via=(call (selector (ident "arena") "allocator")))
+  (var names=["address"] type=(slice (ident "int")) via=(unary Amp (ident "pool")))
+  (var names=["bounded"] type=(slice (ident "int")) via=(ident "base")
+    (ident "other")
+  )
+)

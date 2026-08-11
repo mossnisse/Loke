@@ -1,0 +1,12 @@
+(file package="main"
+  (impl (ident "Point")
+    (delegate "+" "-")
+    (const names=["delegate"]
+      (proc (proc-type (param ["self"] _))
+        (block
+        )
+      )
+    )
+    (var names=["delegate"] type=(ident "int"))
+  )
+)

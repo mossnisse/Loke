@@ -1,0 +1,56 @@
+// Covers: Type, Type_Name, Type_Arguments, Generic_Argument, Proc_Type,
+// Calling_Convention, Signature, Parameter_List, Parameter, Parameter_Names,
+// Parameter_Name, Parameter_Mode, Results, Result_Item, Result_Type.
+package main;
+
+// Every type constructor, in a position that takes a type.
+pointer: ^int;
+pointer_to_pointer: ^^int;
+multi_pointer: [^]u8;
+slice: []int;
+mutable_slice: []mut int;
+dynamic_array: [dynamic]int;
+fixed_array: [4]int;
+computed_array: [N * 2]int;
+nested_array: [2][3]f32;
+dictionary: map[string]int;
+map_of_slices: map[string][]int;
+new_type: distinct int;
+borrowed: dyn Sequence;
+borrowed_generic: dyn Sequence(int);
+qualified: geometry.Point;
+applied: Table(string, int);
+applied_value: Matrix(f32, 4);
+applied_pattern: ^Table($Key, $Value);
+compound: map[string][]mut Table(int);
+
+// `type` and specialization bindings appear as parameter types.
+generic_value :: proc($T: type, $N: int, value: T) -> T { }
+constrained :: proc(a: $T: Additive) -> $T { }
+
+// Proc types, with and without a calling convention.
+callback: proc(a: int) -> int;
+c_callback: proc "c" (a: ^u8) -> i32;
+stdcall_callback: proc "stdcall" ();
+no_results: proc(a: int);
+
+// Signatures: every parameter and result form.
+parameters :: proc(
+	a: int,
+	b, c: int,
+	_: int,
+	$T: type,
+	target: inout Buffer,
+	owned: move Handle,
+	defaulted: int = 1,
+	inferred: = 1,
+	values: ..int,
+) -> (ok: bool, count: int) { }
+
+single_result :: proc() -> int { }
+borrowed_result :: proc() -> inout Buffer { }
+named_results :: proc() -> (a: int, b: int) { }
+mixed_results :: proc() -> (ok: bool, int) { }
+trailing_comma :: proc(a: int,) { }
+
+main :: proc() { }

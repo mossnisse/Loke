@@ -1,0 +1,12 @@
+// Rule 6: the type switch is decided after the optional init statement, by
+// `(Ident | "_") "in"`. Membership in a value switch needs a second pair.
+package main;
+
+main :: proc() {
+	switch (x) { case 1: }
+	switch (v in figure) { case int: }
+	switch (init(); v in figure) { case int: }
+	switch (init(); x) { case 1: }
+	switch ((x in set)) { case true: }
+	switch (_ in figure) { case int: }
+}

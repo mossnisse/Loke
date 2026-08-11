@@ -1,0 +1,14 @@
+(file package="main"
+  (const names=["Record"]
+    (struct (generic ["T"] (type)) (where (call (ident "Sized") (ident "T"))) (field ["x"] (ident "T")))
+  )
+  (const names=["Procedure"]
+    (proc (proc-type (param ["$T"] (type))) (where (call (ident "Sized") (ident "T"))) (where (call (ident "Additive") (ident "T")))
+      (block
+      )
+    )
+  )
+  (const names=["Nested"]
+    (struct (generic ["T"] (type)) (where (call (ident "is_default") (ident "T") (composite (ident "Point") (int "0") (int "0")))) (field ["x"] (ident "T")))
+  )
+)

@@ -19,23 +19,36 @@ Emitter :: struct {
 	c:    ^Compiler,
 	b:    strings.Builder,
 	next: int, // temporary and unique-name counter
+	// Backend names are an emitter concern. Semantic symbols remain reusable by
+	// MIR, interpreters, and multiple backend invocations.
+	names: map[Symbol_Id]string,
 }
 
-emit :: proc(c: ^Compiler, f: ^File, opts: Options) -> int {
+emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int {
+	pkg := package_of(c, package_id)
+	if pkg == nil {
+		errorf(c, no_span(), "L0404", "cannot emit an unknown package")
+		return 2
+	}
 	e := Emitter {
-		c = c,
+		c     = c,
+		names = make(map[Symbol_Id]string),
 	}
 	strings.builder_init(&e.b)
 
 	emit_preamble(&e)
-	for item in f.items {
-		if d, ok := item.(^Decl); ok && d.body == nil {
-			emit_global(&e, d)
+	for file in pkg.files {
+		for item in file.items {
+			if d, ok := item.(^Decl); ok && decl_proc(d) == nil {
+				emit_global(&e, d)
+			}
 		}
 	}
-	for item in f.items {
-		if d, ok := item.(^Decl); ok && d.body != nil {
-			emit_proc(&e, d)
+	for file in pkg.files {
+		for item in file.items {
+			if d, ok := item.(^Decl); ok && decl_proc(d) != nil {
+				emit_proc(&e, d)
+			}
 		}
 	}
 	emit_entry(&e)
@@ -74,16 +87,18 @@ emit_preamble :: proc(e: ^Emitter) {
 // outlive every scope"), so folding has already produced the value.
 @(private = "file")
 emit_global :: proc(e: ^Emitter, d: ^Decl) {
-	for sym, i in d.symbols {
+	for symbol_id, i in d.symbols {
+		sym := symbol_of(e.c, symbol_id)
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		sym.llvm_name = llvm_global_name(sym.name)
+		name := llvm_global_name(identifier_text(e.c, sym.name))
+		e.names[symbol_id] = name
 		value := i64(0)
 		if i < len(d.values) && d.values[i] != nil && is_const_expr(d.values[i]) {
 			value = const_value_of(d.values[i])
 		}
-		fmt.sbprintfln(&e.b, "%s = global i64 %d", sym.llvm_name, value)
+		fmt.sbprintfln(&e.b, "%s = global i64 %d", name, value)
 	}
 	fmt.sbprintln(&e.b, "")
 }
@@ -92,13 +107,13 @@ emit_global :: proc(e: ^Emitter, d: ^Decl) {
 emit_proc :: proc(e: ^Emitter, d: ^Decl) {
 	// `{` is a format directive to core:fmt, so the brace is printed separately.
 	name := llvm_proc_name(d.names[0].text)
-	if len(d.symbols) > 0 && d.symbols[0] != nil {
-		d.symbols[0].llvm_name = name
+	if len(d.symbols) > 0 && d.symbols[0] != INVALID_SYMBOL {
+		e.names[d.symbols[0]] = name
 	}
 	fmt.sbprintf(&e.b, "define void %s()", name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
-	emit_block(e, d.body)
+	emit_block(e, decl_proc(d).body)
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
@@ -121,37 +136,46 @@ emit_block :: proc(e: ^Emitter, b: ^Block) {
 		return
 	}
 	for stmt in b.stmts {
-		switch s in stmt {
+		#partial switch s in stmt {
 		case ^Stmt_Error:
 		case ^Decl:
 			emit_local_decl(e, s)
 		case ^Stmt_Expr:
-			emit_expr(e, s.expr)
+			for expr in s.exprs {
+				emit_expr(e, expr)
+			}
 		case ^Stmt_Return:
 			fmt.sbprintln(&e.b, "  ret void")
 			// Anything after a terminator needs a fresh label to stay valid IR.
 			fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
 		case ^Block:
 			emit_block(e, s)
+		case:
+			// The checker's L0350 arm gates every statement missing here, so this
+			// is a hole in that gate — and skipping it would emit a program that
+			// silently does less than the source says.
+			panic("a statement the checker did not gate reached the backend")
 		}
 	}
 }
 
 @(private = "file")
 emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
-	for sym, i in d.symbols {
+	for symbol_id, i in d.symbols {
+		sym := symbol_of(e.c, symbol_id)
 		// Constants are folded at every use, so they need no storage.
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		sym.llvm_name = fmt.aprintf("%%%s.%d", sym.name, next_id(e))
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", sym.llvm_name)
+		name := fmt.aprintf("%%%s.%d", identifier_text(e.c, sym.name), next_id(e))
+		e.names[symbol_id] = name
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", name)
 
 		value := "0"
 		if i < len(d.values) && d.values[i] != nil {
 			value = emit_expr(e, d.values[i])
 		}
-		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", value, sym.llvm_name)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", value, name)
 	}
 }
 
@@ -176,15 +200,19 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return fmt.aprintf("%d", const_value_of(expr))
 	}
 
-	switch v in expr {
+	#partial switch v in expr {
 	case ^Expr_Error:
 		return "0"
-	case ^Expr_Int:
-		return fmt.aprintf("%d", v.value)
+	case ^Expr_Literal:
+		return fmt.aprintf("%d", v.const_value.integer)
 
 	case ^Expr_Ident:
 		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", out, v.symbol.llvm_name)
+		name, ok := e.names[v.symbol]
+		if !ok {
+			panic("resolved value has no backend storage")
+		}
+		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", out, name)
 		return out
 
 	case ^Expr_Unary:
@@ -226,8 +254,9 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 
 	case ^Expr_Call:
 		callee := v.callee.(^Expr_Ident)
-		if callee.symbol != nil && callee.symbol.kind == .Builtin {
-			arg := emit_expr(e, v.args[0])
+		symbol := symbol_of(e.c, callee.symbol)
+		if symbol != nil && symbol.kind == .Builtin {
+			arg := emit_expr(e, v.args[0].value)
 			out := temp(e)
 			fmt.sbprintfln(
 				&e.b,
@@ -240,7 +269,9 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		fmt.sbprintfln(&e.b, "  call void %s()", llvm_proc_name(callee.name))
 		return "0"
 	}
-	return "0"
+	// Same gate as `emit_block`: returning `0` here would compile silently and
+	// produce the wrong answer.
+	panic("an expression the checker did not gate reached the backend")
 }
 
 // Division and remainder need two guards. Zero takes M0's explicit failure

@@ -1,0 +1,9 @@
+// Rule 7: `delegate` is contextual, and only at the start of an impl member
+// followed by `(`.
+package main;
+
+impl Point {
+	delegate(+, -);
+	delegate :: proc(self) { }
+	delegate: int;
+}

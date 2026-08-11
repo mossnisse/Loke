@@ -1,0 +1,14 @@
+// An error inside a nested block is contained: the outer block keeps parsing.
+package main;
+
+main :: proc() {
+	{
+		{
+			a := ;
+		}
+		b := 1;
+	}
+	c := 2;
+}
+
+sentinel :: proc() { }

@@ -1,0 +1,13 @@
+// Rule 12: `Name(args)` is one node either way; name resolution classifies it.
+// Syntactically distinctive types are still types immediately.
+package main;
+
+applied: Table(string, int);
+value_argument: Matrix(f32, 4);
+pattern: ^Table($Key, $Value);
+
+main :: proc() {
+	call := f(a, b);
+	literal := Table(string, int){};
+	distinctive := f([]int, ^u8, [dynamic]Point);
+}

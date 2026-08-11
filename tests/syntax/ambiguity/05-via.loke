@@ -1,0 +1,6 @@
+// Rule 5: `via` takes exactly one unary expression, so it ends before the `=`.
+package main;
+
+call: []int via arena.allocator();
+address: []int via &pool;
+bounded: []int via base = other;

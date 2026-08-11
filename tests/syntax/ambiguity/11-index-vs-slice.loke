@@ -1,0 +1,12 @@
+// Rule 11: after `[`, a `:` makes it a slice, a `,` a multi-index, and `]` a
+// single index.
+package main;
+
+main :: proc() {
+	a := s[i];
+	b := s[i, j];
+	c := s[:];
+	d := s[lo:];
+	e := s[:hi];
+	g := s[lo:hi];
+}

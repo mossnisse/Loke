@@ -1,0 +1,9 @@
+// Rule 8: `slot` is contextual, and only at the start of a requirement followed
+// by `Ident`, `:`, `proc`.
+package main;
+
+Iface :: interface($Self: type) {
+	slot next: proc(self: Self) -> int;
+	slot -> int;
+	slot.count -> int;
+}

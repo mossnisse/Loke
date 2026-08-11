@@ -1,0 +1,13 @@
+// Malformed control-flow headers. The body still parses and the following
+// statement survives.
+package main;
+
+main :: proc() {
+	if ready { }
+	for (i := 0 i < 10; i += 1) { }
+	foreach (value items) { }
+	switch value { case 1: }
+	f();
+}
+
+sentinel :: proc() { }

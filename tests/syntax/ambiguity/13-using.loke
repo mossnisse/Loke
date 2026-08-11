@@ -1,0 +1,9 @@
+// Rule 13: `using` is contextual at the start of a struct field, and `self` is
+// an ordinary identifier everywhere.
+package main;
+
+Record :: struct {
+	using base: Base,
+	using: int,
+	self: int,
+}

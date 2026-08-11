@@ -1,0 +1,12 @@
+L0245
+@6:5
+expected `(` to open the `if` header
+L0209
+@7:14
+expected `;` after the declaration
+L0247
+@8:17
+expected `in` and the iterable
+L0245
+@9:9
+expected `(` to open the `switch` header

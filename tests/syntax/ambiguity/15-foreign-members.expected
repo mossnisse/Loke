@@ -1,0 +1,11 @@
+(file package="main"
+  (foreign "lib"
+    (const names=["init"]
+      (proc (proc-type "c") ---)
+    )
+    (var names=["count"] type=(ident "int"))
+    (const names=["Handle"]
+      (struct (field ["id"] (ident "int")))
+    )
+  )
+)

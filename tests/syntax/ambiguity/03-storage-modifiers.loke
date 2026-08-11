@@ -1,0 +1,10 @@
+// Rule 3: `static`, `thread_local` and `manual` are ordinary identifiers, and
+// are modifiers only before another modifier, a type, or `=`.
+package main;
+
+modified: static int = 0;
+inferred: static = 0;
+two: static manual int;
+both_inferred: thread_local manual = 0;
+type_name: static;
+other_type_name: manual;

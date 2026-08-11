@@ -1,0 +1,20 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (const names=["c"]
+          (int "1")
+        )
+        (var names=["v"]
+          (int "1")
+        )
+        (const names=["tc"] type=(ident "int")
+          (int "1")
+        )
+        (var names=["tv"] type=(ident "int")
+          (int "1")
+        )
+      )
+    )
+  )
+)

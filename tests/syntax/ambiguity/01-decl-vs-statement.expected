@@ -1,0 +1,15 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["x"] type=(ident "int")
+          (int "1")
+        )
+        (var names=["y","z"] type=(ident "int"))
+        (call (ident "f") (ident "a"))
+        (assign Assign (lhs (ident "y") (ident "z")) (rhs (ident "z") (ident "y")))
+        (var names=["w"] @[cold] type=(ident "int"))
+      )
+    )
+  )
+)

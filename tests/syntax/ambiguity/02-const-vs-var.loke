@@ -1,0 +1,10 @@
+// Rule 2: after the first `:`, a second `:` makes it a constant. `::` and `:=`
+// are token pairs, so the decision is one token of lookahead.
+package main;
+
+main :: proc() {
+	c :: 1;
+	v := 1;
+	tc: int : 1;
+	tv: int = 1;
+}

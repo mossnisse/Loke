@@ -1,0 +1,15 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (block
+          (call (ident "f"))
+        )
+        (var names=["x"]
+          (composite (ident "Point") (int "1"))
+        )
+        (call (ident "g") (composite (ident "Point") (int "2")))
+      )
+    )
+  )
+)

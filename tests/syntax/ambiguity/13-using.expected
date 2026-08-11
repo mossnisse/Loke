@@ -1,0 +1,5 @@
+(file package="main"
+  (const names=["Record"]
+    (struct (field using ["base"] (ident "Base")) (field ["using"] (ident "int")) (field ["self"] (ident "int")))
+  )
+)

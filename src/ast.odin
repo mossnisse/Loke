@@ -1,63 +1,157 @@
 // AST (compiler-plan B4). Every node carries a Span; the checker annotates
 // these same nodes in place, which is the "typed AST" of decision A1.
+//
+// Types and expressions share one node domain. The grammar refuses to separate
+// them — `Generic_Argument = Type | Expression`, `Argument_Value = Expression |
+// Type`, `Primary = "(" Type ")"` — and `Matrix(f32, 4)` and `f(a, b)` are the
+// same token stream. Type positions go through `parse_type`, a restricted entry
+// point into this one domain, so `x: 1 + 2;` is still a parse error. What syntax
+// genuinely cannot decide is left for name resolution in M2.
 package lokec
 
 import "core:mem"
 
-// The whole M0 type system. B7's interned table arrives with M2.
-Type :: enum {
-	Invalid,
-	Void,
-	Untyped_Int,
-	Int,
-}
-
-type_name :: proc(t: Type) -> string {
-	switch t {
-	case .Invalid:
-		return "<invalid>"
-	case .Void:
-		return "()"
-	case .Untyped_Int:
-		return "untyped int"
-	case .Int:
-		return "int"
-	}
-	return "<invalid>"
-}
-
 Expr_Base :: struct {
-	span:        Span,
-	type:        Type,
-	const_value: i64,
-	is_const:    bool,
+	span:          Span,
+	type:          Type_Id,
+	denoted_type:  Type_Id, // non-zero when this expression denotes a type
+	const_value:   Const_Value,
+	is_const:      bool,
+	resolution:    Resolution,
+	value_category: Value_Category,
+	// Set at construction when this node or any child is an error node, so
+	// recovery never has to re-walk a subtree to find out.
+	has_error:   bool,
+}
+
+// Literals keep their spelling. Deciding whether `9223372036854775808` fits an
+// `int` is a semantic question, so the checker asks it (grammar.md has no
+// representability rule).
+Literal_Kind :: enum {
+	Int,
+	Float,
+	String,
+	Raw_String,
+	Rune,
 }
 
 Expr :: union {
 	^Expr_Error,
+	^Expr_Literal,
 	^Expr_Ident,
-	^Expr_Int,
+	^Expr_Selector,
+	^Expr_Type_Assert,
+	^Expr_Index,
+	^Expr_Slice,
+	^Expr_Call,
+	^Expr_Postfix,
 	^Expr_Unary,
 	^Expr_Binary,
-	^Expr_Call,
+	^Expr_Range,
+	^Expr_Or_Else,
+	^Expr_Cond,
+	^Expr_Move,
+	^Expr_Hash,
+	^Expr_Composite,
+	^Expr_Proc,
+	^Expr_Proc_Group,
+	^Expr_Operator,
+
+	// Type forms. Named types are `Expr_Ident` / `Expr_Selector`, and a generic
+	// application is an `Expr_Call` — that is the whole point of one domain.
+	^Type_Pointer,
+	^Type_Multi_Pointer,
+	^Type_Slice,
+	^Type_Dynamic_Array,
+	^Type_Array,
+	^Type_Map,
+	^Type_Distinct,
+	^Type_Dyn,
+	^Type_Type,
+	^Type_Poly,
+	^Type_Proc,
+	^Type_Record,
+	^Type_Enum,
+	^Type_Interface,
 }
 
-// Error nodes are retained in the tree instead of being represented by nil.
-// Later parser recovery can therefore preserve surrounding syntax and AST
-// dumps remain useful even for malformed files.
+// Error nodes are retained in the tree instead of being represented by nil, so
+// recovery preserves surrounding syntax and AST dumps stay useful for malformed
+// files.
 Expr_Error :: struct {
 	using base: Expr_Base,
+}
+
+Expr_Literal :: struct {
+	using base: Expr_Base,
+	kind:       Literal_Kind,
+	text:       string, // the spelling, source-backed
 }
 
 Expr_Ident :: struct {
 	using base: Expr_Base,
 	name:       string,
-	symbol:     ^Symbol,
+	name_id:    Identifier_Id,
+	symbol:     Symbol_Id,
 }
 
-Expr_Int :: struct {
+// `a.b`, and the implicit-selector primary `.Member` when `operand` is nil.
+Expr_Selector :: struct {
 	using base: Expr_Base,
-	value:      i64,
+	operand:    Expr,
+	name:       Name,
+}
+
+// `x.(T)`
+Expr_Type_Assert :: struct {
+	using base: Expr_Base,
+	operand:    Expr,
+	target:     Expr,
+}
+
+// `x[a]`, and the user-defined comma form `x[a, b]`.
+Expr_Index :: struct {
+	using base: Expr_Base,
+	operand:    Expr,
+	indices:    []Expr,
+}
+
+// `x[lo:hi]`; either endpoint may be nil.
+Expr_Slice :: struct {
+	using base: Expr_Base,
+	operand:    Expr,
+	lo:         Expr,
+	hi:         Expr,
+}
+
+Argument_Mode :: enum {
+	Value,
+	Inout,
+	Spread,
+}
+
+// `Argument`. An empty `name.text` is a positional argument.
+Argument :: struct {
+	span:  Span,
+	name:  Name,
+	mode:  Argument_Mode,
+	value: Expr,
+}
+
+// A call, a conversion, or a generic application — syntax cannot tell them
+// apart, and M2's name resolution does not need it to.
+Expr_Call :: struct {
+	using base: Expr_Base,
+	callee:     Expr,
+	args:       []Argument,
+}
+
+// The suffixes that take no operand: `^` and `or_return`.
+Expr_Postfix :: struct {
+	using base: Expr_Base,
+	op:         Token_Kind,
+	op_span:    Span,
+	operand:    Expr,
 }
 
 Expr_Unary :: struct {
@@ -75,75 +169,533 @@ Expr_Binary :: struct {
 	rhs:        Expr,
 }
 
-Expr_Call :: struct {
+// `a ..= b` and `a ..< b`. Kept apart from Expr_Binary so a phase that only
+// understands arithmetic cannot silently treat a range as one.
+Expr_Range :: struct {
 	using base: Expr_Base,
-	callee:     Expr,
-	args:       []Expr,
+	op:         Token_Kind,
+	op_span:    Span,
+	lo:         Expr,
+	hi:         Expr,
+}
+
+Expr_Or_Else :: struct {
+	using base: Expr_Base,
+	value:      Expr,
+	fallback:   Expr,
+}
+
+// `then if cond else otherwise`, in source order.
+Expr_Cond :: struct {
+	using base: Expr_Base,
+	then:       Expr,
+	cond:       Expr,
+	otherwise:  Expr,
+}
+
+Expr_Move :: struct {
+	using base: Expr_Base,
+	value:      Expr,
+}
+
+// `#assert`, `#config`, `#location`, `#caller_location`. Arguments arrive
+// through the ordinary call suffix.
+Expr_Hash :: struct {
+	using base: Expr_Base,
+	name:       string,
+}
+
+// `Element`. A nil `key` is an unkeyed element.
+Element :: struct {
+	span:  Span,
+	key:   Expr,
+	value: Expr,
+}
+
+// `T{...}`, or `{...}` taking its type from context when `type` is nil.
+Expr_Composite :: struct {
+	using base: Expr_Base,
+	type_expr:  Expr,
+	elements:   []Element,
+}
+
+Type_Pointer :: struct {
+	using base: Expr_Base,
+	elem:       Expr,
+}
+
+Type_Multi_Pointer :: struct {
+	using base: Expr_Base,
+	elem:       Expr,
+}
+
+// `[]T` is read-only, `[]mut T` has mutable elements.
+Type_Slice :: struct {
+	using base: Expr_Base,
+	mutable:    bool,
+	elem:       Expr,
+}
+
+Type_Dynamic_Array :: struct {
+	using base: Expr_Base,
+	elem:       Expr,
+}
+
+// `[N]T`, and `[?]T` where `inferred` is set and `length` is nil.
+Type_Array :: struct {
+	using base: Expr_Base,
+	length:     Expr,
+	inferred:   bool,
+	elem:       Expr,
+}
+
+Type_Map :: struct {
+	using base: Expr_Base,
+	key:        Expr,
+	value:      Expr,
+}
+
+Type_Distinct :: struct {
+	using base: Expr_Base,
+	elem:       Expr,
+}
+
+// `dyn Interface(args...)`; `interface_expr` carries the name and its arguments.
+Type_Dyn :: struct {
+	using base:     Expr_Base,
+	interface_expr: Expr,
+}
+
+// The `type` keyword: the compile-time-only type of types.
+Type_Type :: struct {
+	using base: Expr_Base,
+}
+
+// `$T` and `$T: Constraint`.
+Type_Poly :: struct {
+	using base: Expr_Base,
+	name:       Name,
+	constraint: Expr,
+}
+
+Param_Mode :: enum {
+	Value,
+	Inout,
+	Move,
+	Variadic,
+}
+
+// `"$"? (Identifier | "_")`
+Param_Name :: struct {
+	name:    Name,
+	is_poly: bool,
+}
+
+// A parameter with no type is the receiver `self`, whose type comes from the
+// enclosing `impl`/`extend` block or interface `slot`.
+Parameter :: struct {
+	span:       Span,
+	attributes: []Attribute,
+	names:   []Param_Name,
+	mode:    Param_Mode,
+	type:    Expr,
+	default: Expr,
+	symbols: []Symbol_Id,
+}
+
+// `Result_Item`. An unnamed result has no `names`.
+Result :: struct {
+	span:     Span,
+	names:    []Name,
+	is_inout: bool,
+	type:     Expr,
+	symbols:  []Symbol_Id,
+}
+
+// `Proc_Type`: a signature with no body.
+Type_Proc :: struct {
+	using base: Expr_Base,
+	convention: string, // the calling-convention literal's spelling, or ""
+	params:     []Parameter,
+	results:    []Result,
+}
+
+// `Proc_Literal`: a signature plus a block, or `---` for a bodiless
+// declaration.
+Expr_Proc :: struct {
+	using base:    Expr_Base,
+	signature:     ^Type_Proc,
+	where_clauses: []Expr,
+	body:          ^Block,
+	bodiless:      bool,
+}
+
+// `proc { a, b }`
+Expr_Proc_Group :: struct {
+	using base: Expr_Base,
+	names:      []Name,
+}
+
+// `operator(+) proc ...`. The symbol is canonical text because `[]=` and `[:]`
+// are several tokens.
+Expr_Operator :: struct {
+	using base:  Expr_Base,
+	symbol:      string,
+	symbol_span: Span,
+	value:       Expr,
+}
+
+// `Generic_Parameter`: one or more `$Name`s sharing a type.
+Generic_Param :: struct {
+	span:  Span,
+	names: []Name,
+	type:  Expr,
+	symbols: []Symbol_Id,
+}
+
+// `Field`. A field named `_` is padding; `using` promotes it.
+Field :: struct {
+	span:       Span,
+	attributes: []Attribute,
+	is_using:   bool,
+	names:    []Name,
+	type:     Expr,
+	tag:      string, // the tag literal's spelling, or ""
+	symbols:  []Symbol_Id,
+}
+
+Enum_Field :: struct {
+	span:  Span,
+	name:  Name,
+	value: Expr,
+	symbol: Symbol_Id,
+}
+
+// `Binding_Group` inside an interface requirement's `Bindings`.
+Binding_Group :: struct {
+	span:     Span,
+	names:    []Name,
+	is_inout: bool,
+	type:     Expr,
+	symbols:  []Symbol_Id,
+}
+
+Requirement_Kind :: enum {
+	Expression,
+	Slot,
+}
+
+// Either `bindings? expression ("->" result)? ";"` or `slot name: proc(...);`.
+Requirement :: struct {
+	span:         Span,
+	kind:         Requirement_Kind,
+	bindings:     []Binding_Group,
+	expr:         Expr,
+	result_inout: bool,
+	result:       Expr,
+	name:         Name, // the slot's name
+	slot_type:    Expr,
+}
+
+Record_Kind :: enum {
+	Struct,
+	Union,
+}
+
+// `struct` and `union` differ only in their body, so one node carries both:
+// `fields` for a struct, `variants` for a union.
+Type_Record :: struct {
+	using base:     Expr_Base,
+	kind:           Record_Kind,
+	generic_params: []Generic_Param,
+	attributes:     []Attribute,
+	where_clauses:  []Expr,
+	fields:         []Field,
+	variants:       []Expr,
+}
+
+Type_Enum :: struct {
+	using base: Expr_Base,
+	backing:    Expr, // nil when the backing type is omitted
+	fields:     []Enum_Field,
+}
+
+Type_Interface :: struct {
+	using base:     Expr_Base,
+	generic_params: []Generic_Param,
+	requirements:   []Requirement,
+}
+
+// Every variant embeds Expr_Base first, so one switch serves every accessor.
+// Odin's exhaustiveness check makes adding a node kind a compile error until
+// this is updated, which is the point.
+expr_base :: proc(e: Expr) -> ^Expr_Base {
+	switch v in e {
+	case ^Expr_Error:
+		return &v.base
+	case ^Expr_Literal:
+		return &v.base
+	case ^Expr_Ident:
+		return &v.base
+	case ^Expr_Selector:
+		return &v.base
+	case ^Expr_Type_Assert:
+		return &v.base
+	case ^Expr_Index:
+		return &v.base
+	case ^Expr_Slice:
+		return &v.base
+	case ^Expr_Call:
+		return &v.base
+	case ^Expr_Postfix:
+		return &v.base
+	case ^Expr_Unary:
+		return &v.base
+	case ^Expr_Binary:
+		return &v.base
+	case ^Expr_Range:
+		return &v.base
+	case ^Expr_Or_Else:
+		return &v.base
+	case ^Expr_Cond:
+		return &v.base
+	case ^Expr_Move:
+		return &v.base
+	case ^Expr_Hash:
+		return &v.base
+	case ^Expr_Composite:
+		return &v.base
+	case ^Expr_Proc:
+		return &v.base
+	case ^Expr_Proc_Group:
+		return &v.base
+	case ^Expr_Operator:
+		return &v.base
+	case ^Type_Pointer:
+		return &v.base
+	case ^Type_Multi_Pointer:
+		return &v.base
+	case ^Type_Slice:
+		return &v.base
+	case ^Type_Dynamic_Array:
+		return &v.base
+	case ^Type_Array:
+		return &v.base
+	case ^Type_Map:
+		return &v.base
+	case ^Type_Distinct:
+		return &v.base
+	case ^Type_Dyn:
+		return &v.base
+	case ^Type_Type:
+		return &v.base
+	case ^Type_Poly:
+		return &v.base
+	case ^Type_Proc:
+		return &v.base
+	case ^Type_Record:
+		return &v.base
+	case ^Type_Enum:
+		return &v.base
+	case ^Type_Interface:
+		return &v.base
+	}
+	return nil
 }
 
 expr_span :: proc(e: Expr) -> Span {
-	switch v in e {
-	case ^Expr_Error:
-		return v.span
-	case ^Expr_Ident:
-		return v.span
-	case ^Expr_Int:
-		return v.span
-	case ^Expr_Unary:
-		return v.span
-	case ^Expr_Binary:
-		return v.span
-	case ^Expr_Call:
-		return v.span
-	}
-	return no_span()
+	base := expr_base(e)
+	return base == nil ? no_span() : base.span
 }
 
 expr_has_error :: proc(e: Expr) -> bool {
-	#partial switch v in e {
-	case ^Expr_Error:
-		return true
-	case ^Expr_Unary:
-		return expr_has_error(v.operand)
-	case ^Expr_Binary:
-		return expr_has_error(v.lhs) || expr_has_error(v.rhs)
-	case ^Expr_Call:
-		if expr_has_error(v.callee) {
-			return true
-		}
-		for arg in v.args {
-			if expr_has_error(arg) {
-				return true
-			}
-		}
-	}
-	return false
+	base := expr_base(e)
+	return base != nil && base.has_error
+}
+
+// Statements, declarations and top-level items share a base. All three can
+// carry attributes; which attribute is valid where is a semantic rule, not a
+// grammatical one (grammar.md "Attributes").
+Node_Base :: struct {
+	span:       Span,
+	has_error:  bool,
+	attributes: []Attribute,
+}
+
+// `Attribute`. The qualified form is an extension attribute, as in
+// `@(compiler.no_alias)`.
+Attribute :: struct {
+	span:  Span,
+	path:  []Name,
+	value: Expr, // nil unless the attribute was written `name = value`
 }
 
 Stmt :: union {
 	^Decl,
 	^Stmt_Error,
 	^Stmt_Expr,
+	^Stmt_Assign,
+	^Stmt_If,
+	^Stmt_For,
+	^Stmt_Foreach,
+	^Stmt_When,
+	^Stmt_Switch,
+	^Stmt_Defer,
 	^Stmt_Return,
+	^Stmt_Branch,
 	^Block,
 }
 
 Stmt_Error :: struct {
-	span: Span,
+	using base: Node_Base,
 }
 
 Block :: struct {
-	span:  Span,
-	stmts: []Stmt,
+	using base: Node_Base,
+	stmts:      []Stmt,
 }
 
+// `Simple_Statement`'s expression-list form.
 Stmt_Expr :: struct {
-	span: Span,
-	expr: Expr,
+	using base: Node_Base,
+	exprs:      []Expr,
+}
+
+// `a, b = c, d`, and the compound form `a += b`.
+Stmt_Assign :: struct {
+	using base: Node_Base,
+	op:         Token_Kind,
+	op_span:    Span,
+	lhs:        []Expr,
+	rhs:        []Expr,
+}
+
+Stmt_If :: struct {
+	using base: Node_Base,
+	init:       Stmt, // the optional `Init_Statement`
+	cond:       Expr,
+	then:       ^Block,
+	otherwise:  Stmt, // `^Stmt_If` for `else if`, `^Block` for `else`
+}
+
+Stmt_For :: struct {
+	using base:     Node_Base,
+	init:           Stmt,
+	cond:           Expr,
+	post:           Stmt,
+	body:           ^Block,
+	condition_only: bool, // the `for (cond)` header
+}
+
+// `"$"? "&"? (Identifier | "_")`. A `$` binding is a static expansion.
+Foreach_Binding :: struct {
+	name:      Name,
+	is_static: bool,
+	is_ref:    bool,
+	symbol:    Symbol_Id,
+}
+
+Stmt_Foreach :: struct {
+	using base: Node_Base,
+	bindings:   []Foreach_Binding,
+	iterable:   Expr,
+	body:       ^Block,
+}
+
+Stmt_When :: struct {
+	using base: Node_Base,
+	cond:       Expr,
+	then:       ^Block,
+	otherwise:  Stmt,
+}
+
+Switch_Kind :: enum {
+	Value,
+	Type,
+}
+
+// `Value_Case` and `Type_Case` are one shape once types and expressions share a
+// node domain: a list, or none for the default case.
+Switch_Case :: struct {
+	span:   Span,
+	values: []Expr,
+	stmts:  []Stmt,
+}
+
+Stmt_Switch :: struct {
+	using base: Node_Base,
+	kind:       Switch_Kind,
+	init:       Stmt,
+	binding:    Name, // the type switch's `Binding_Name`
+	binding_symbol: Symbol_Id,
+	subject:    Expr,
+	cases:      []Switch_Case,
+}
+
+Stmt_Defer :: struct {
+	using base: Node_Base,
+	stmt:       Stmt,
+}
+
+// `"inout"? Expression`
+Return_Value :: struct {
+	span:     Span,
+	is_inout: bool,
+	expr:     Expr,
 }
 
 Stmt_Return :: struct {
-	span: Span,
+	using base: Node_Base,
+	values:     []Return_Value,
+}
+
+Stmt_Branch :: struct {
+	using base: Node_Base,
+	kind:       Token_Kind, // `.Break` or `.Continue`
+}
+
+// The statement mirror of `expr_base`: every variant embeds `Node_Base` first,
+// so one switch serves every accessor.
+stmt_base :: proc(s: Stmt) -> ^Node_Base {
+	switch v in s {
+	case ^Decl:
+		return &v.base
+	case ^Stmt_Error:
+		return &v.base
+	case ^Stmt_Expr:
+		return &v.base
+	case ^Stmt_Assign:
+		return &v.base
+	case ^Stmt_If:
+		return &v.base
+	case ^Stmt_For:
+		return &v.base
+	case ^Stmt_Foreach:
+		return &v.base
+	case ^Stmt_When:
+		return &v.base
+	case ^Stmt_Switch:
+		return &v.base
+	case ^Stmt_Defer:
+		return &v.base
+	case ^Stmt_Return:
+		return &v.base
+	case ^Stmt_Branch:
+		return &v.base
+	case ^Block:
+		return &v.base
+	}
+	return nil
+}
+
+stmt_span :: proc(s: Stmt) -> Span {
+	base := stmt_base(s)
+	return base == nil ? no_span() : base.span
+}
+
+stmt_has_error :: proc(s: Stmt) -> bool {
+	base := stmt_base(s)
+	return base != nil && base.has_error
 }
 
 Decl_Kind :: enum {
@@ -160,72 +712,146 @@ Check_State :: enum {
 Name :: struct {
 	text: string,
 	span: Span,
+	id:   Identifier_Id,
 }
 
-
-// Syntactic types are deliberately separate from the semantic `Type` above.
-// M1 grows this union to cover the complete grammar; M2 resolves it to an
-// interned semantic type. Keeping the two domains distinct prevents parser
-// structure from becoming coupled to type checking.
-Type_Syntax :: union {
-	^Type_Error,
-	^Type_Name,
-}
-
-Type_Error :: struct {
-	span: Span,
-}
-
-Type_Name :: struct {
-	span: Span,
-	name: string,
-}
-
-type_syntax_span :: proc(t: Type_Syntax) -> Span {
-	switch v in t {
-	case ^Type_Error:
-		return v.span
-	case ^Type_Name:
-		return v.span
-	}
-	return no_span()
+Duration :: enum {
+	None,
+	Static,
+	Thread_Local,
 }
 
 // One declaration, covering `x: int;`, `x: int = e;`, `x := e;` and
-// `x: int : e;`. A constant whose value is a procedure definition carries it in
-// `body` instead of `values`.
+// `x: int : e;`. A `nil` entry in `values` is the uninitialised-storage marker
+// `---`; an omitted initialiser leaves `values` empty instead.
 Decl :: struct {
-	span:      Span,
-	kind:      Decl_Kind,
-	names:     []Name,
-	declared_type: Type_Syntax, // nil when the type is inferred
-	values:    []Expr,
-	body:      ^Block, // set for `name :: proc() { ... }`
-	symbols:   []^Symbol,
-	top_level: bool,
-	check_state: Check_State,
+	using base:    Node_Base,
+	kind:          Decl_Kind,
+	names:         []Name,
+	duration:      Duration,
+	manual:        bool,
+	declared_type: Expr, // nil when the type is inferred
+	via:           Expr, // the `via` allocator expression, or nil
+	values:        []Expr,
+	symbols:       []Symbol_Id,
+	top_level:     bool,
+	check_state:   Check_State,
 }
 
-// Top-level syntax has its own union. M1 can add imports, foreign blocks,
-// impl/extend blocks, and top-level when nodes here without turning Decl into a
-// catch-all record.
+// The `name :: proc() { ... }` shape: a constant whose one value is a procedure
+// literal. There is no second representation for a procedure — a `proc` in
+// expression position builds the same node.
+decl_proc :: proc(d: ^Decl) -> ^Expr_Proc {
+	if d.kind != .Const || len(d.values) != 1 {
+		return nil
+	}
+	literal, ok := d.values[0].(^Expr_Proc)
+	if !ok {
+		return nil
+	}
+	return literal
+}
+
+// Top-level syntax has its own union so `Decl` never becomes a catch-all.
 Item :: union {
 	^Decl,
 	^Item_Error,
+	^Item_Import,
+	^Item_Foreign_Import,
+	^Item_Foreign_Block,
+	^Item_Impl,
+	^Item_Delegate,
+	^Item_When,
+	^Item_Block,
 }
 
 Item_Error :: struct {
-	span: Span,
+	using base: Node_Base,
+}
+
+// `import "core:fmt";` and the aliased `import f "core:fmt";`
+Item_Import :: struct {
+	using base: Node_Base,
+	alias:      Name,   // empty when no local name was written
+	path:       string, // the string literal's spelling
+}
+
+// `foreign import raylib "raylib.lib";`
+Item_Foreign_Import :: struct {
+	using base: Node_Base,
+	name:       Name,
+	path:       string,
+}
+
+// `foreign raylib { ... }`. Members are declarations, per grammar.md's
+// `Foreign_Decl`, and end where a constant of the same shape would.
+Item_Foreign_Block :: struct {
+	using base: Node_Base,
+	library:    Name,
+	members:    []Item,
+}
+
+Impl_Kind :: enum {
+	Impl,
+	Extend,
+}
+
+// `impl T { ... }` and `extend T { ... }`: one node, since they differ only in
+// the keyword.
+Item_Impl :: struct {
+	using base: Node_Base,
+	kind:       Impl_Kind,
+	type:       Expr,
+	members:    []Item,
+}
+
+// `delegate(+, -);` inside an `impl` or `extend` body.
+Item_Delegate :: struct {
+	using base: Node_Base,
+	symbols:    []string,
+}
+
+// File-scope `when`, whose branches are blocks of top-level items.
+Item_When :: struct {
+	using base: Node_Base,
+	cond:       Expr,
+	then:       ^Item_Block,
+	otherwise:  Item, // `^Item_When` for `else when`, `^Item_Block` for `else`
+}
+
+// `Top_Level_Block`
+Item_Block :: struct {
+	using base: Node_Base,
+	items:      []Item,
+}
+
+item_base :: proc(item: Item) -> ^Node_Base {
+	switch v in item {
+	case ^Decl:
+		return &v.base
+	case ^Item_Error:
+		return &v.base
+	case ^Item_Import:
+		return &v.base
+	case ^Item_Foreign_Import:
+		return &v.base
+	case ^Item_Foreign_Block:
+		return &v.base
+	case ^Item_Impl:
+		return &v.base
+	case ^Item_Delegate:
+		return &v.base
+	case ^Item_When:
+		return &v.base
+	case ^Item_Block:
+		return &v.base
+	}
+	return nil
 }
 
 item_span :: proc(item: Item) -> Span {
-	switch v in item {
-	case ^Decl:
-		return v.span
-	case ^Item_Error:
-		return v.span
-	}
-	return no_span()
+	base := item_base(item)
+	return base == nil ? no_span() : base.span
 }
 
 File :: struct {
@@ -233,6 +859,7 @@ File :: struct {
 	// manager owns source text separately, so source-backed names remain valid.
 	arena:        mem.Dynamic_Arena,
 	file:         u32,
+	attributes:   []Attribute, // on the package clause
 	package_name: string,
 	package_span: Span,
 	items:        []Item,

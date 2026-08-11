@@ -1,0 +1,63 @@
+// Covers: Declaration, Variable_Decl, Constant_Decl, Identifier_List,
+// Variable_Initializer_List, Variable_Initializer, Declared_Type,
+// Storage_Modifiers, Duration_Modifier, Constant_Initializer,
+// Braced_Constant_Value, Semicolon_Constant_Value.
+package main;
+
+// Variables: the `x: T` spelling, with and without an initializer.
+typed: int;
+typed_init: int = 0;
+inferred := 0;
+several, more: int;
+several_init, more_init: int = 1, 2;
+list_inferred, list_more := 1, 2;
+discarded, _: int = 1, 2;
+uninitialized: [4]int = ---;
+
+// Storage modifiers take the place of the type, or precede it.
+duration: static int = 0;
+thread: thread_local int = 0;
+heap: manual []int;
+both: static manual int = 0;
+duration_inferred: static = 0;
+manual_inferred: manual = [dynamic]int{1, 2, 3};
+both_inferred: thread_local manual = 0;
+
+// `static` is a type name where no modifier can follow it.
+plain_type: static;
+plain_field: manual;
+
+// `via` names the allocator, and takes exactly one unary expression.
+buffered: [dynamic]u8 via arena.allocator();
+buffered_init: manual []int via arena.allocator() = a;
+via_unary: manual []int via &pool;
+
+// Constants: braced bodies end at their `}`, everything else needs a `;`.
+Answer :: 42;
+Typed_Answer : int : 42;
+Name :: "loke";
+Computed :: 1 << 4 | 3;
+Alias :: Point;
+Applied :: Table(string, int);
+Disabled :: ---;
+Empty :: struct { }
+Body :: proc() { }
+Bodiless :: proc() ---;
+Group :: proc { Body, Bodiless }
+Op :: operator(+) proc(a: Point, b: Point) -> Point { }
+Op_Group :: operator(-) proc { Body }
+Op_Bodiless :: operator(*) proc(a: Point) -> Point ---;
+Trailing_Literal :: Point{1, 2};
+
+// A `;` after a brace-bodied constant is a separate empty item, not part of it.
+Separate :: struct { };
+
+main :: proc() {
+	local: int = 0;
+	local_const :: 1;
+	local_inferred := 0;
+	local_uninit: int = ---;
+	local_static: static int = 0;
+	local_type :: struct { x: int }
+	local_proc :: proc() { }
+}

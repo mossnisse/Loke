@@ -1,0 +1,5 @@
+(file package="main"
+  (const names=["Iface"]
+    (interface (generic ["Self"] (type)) (req (binding ["s"] (ident "Self")) (call (selector (ident "s") "len")) (-> (ident "int"))) (req (binding ["a","b"] (ident "Self")) (binary Eq_Eq (ident "a") (ident "b"))) (req (call (selector (binary Plus (ident "a") (ident "b")) "c")) (-> (ident "int"))))
+  )
+)

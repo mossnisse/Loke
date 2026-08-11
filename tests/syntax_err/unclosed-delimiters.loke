@@ -1,0 +1,10 @@
+// Unclosed delimiters. Recovery never eats the enclosing `}`.
+package main;
+
+main :: proc() {
+	a := f(1, 2;
+	b := items[0;
+	c := Point{1, 2;
+}
+
+sentinel :: proc() { }

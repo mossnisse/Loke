@@ -1,0 +1,14 @@
+(file package="main"
+  (var names=["modified"] static type=(ident "int")
+    (int "0")
+  )
+  (var names=["inferred"] static
+    (int "0")
+  )
+  (var names=["two"] static manual type=(ident "int"))
+  (var names=["both_inferred"] thread_local manual
+    (int "0")
+  )
+  (var names=["type_name"] type=(ident "static"))
+  (var names=["other_type_name"] type=(ident "manual"))
+)

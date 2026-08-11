@@ -1,0 +1,16 @@
+// Missing terminators. Each declaration is retained and the next one still
+// parses.
+package main;
+
+a := 1
+b := 2;
+
+Const :: 3
+
+main :: proc() {
+	x := 1
+	f();
+	return
+}
+
+sentinel :: proc() { }

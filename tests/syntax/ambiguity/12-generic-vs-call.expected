@@ -1,0 +1,20 @@
+(file package="main"
+  (var names=["applied"] type=(call (ident "Table") (ident "string") (ident "int")))
+  (var names=["value_argument"] type=(call (ident "Matrix") (ident "f32") (int "4")))
+  (var names=["pattern"] type=(ptr (call (ident "Table") (poly "Key") (poly "Value"))))
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["call"]
+          (call (ident "f") (ident "a") (ident "b"))
+        )
+        (var names=["literal"]
+          (composite (call (ident "Table") (ident "string") (ident "int")))
+        )
+        (var names=["distinctive"]
+          (call (ident "f") (slice (ident "int")) (ptr (ident "u8")) (dyn-array (ident "Point")))
+        )
+      )
+    )
+  )
+)

@@ -1,0 +1,12 @@
+// Rule 1: optional attributes, then `Ident ("," Ident)* ":"` is a declaration.
+// Anything else at statement position is a simple statement.
+package main;
+
+main :: proc() {
+	x: int = 1;
+	y, z: int;
+	f(a);
+	y, z = z, y;
+	@(cold)
+	w: int;
+}

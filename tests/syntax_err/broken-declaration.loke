@@ -1,0 +1,14 @@
+// Declarations missing a name, a type or a value.
+package main;
+
+: int = 1;
+missing_value := ;
+missing_type: = ;
+Const_No_Value :: ;
+
+main :: proc() {
+	local := ;
+	f();
+}
+
+sentinel :: proc() { }

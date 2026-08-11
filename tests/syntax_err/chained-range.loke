@@ -1,0 +1,11 @@
+// Range operators do not chain: the second one is a diagnostic, not a nested
+// range.
+package main;
+
+main :: proc() {
+	a := 1 ..= 2 ..= 3;
+	b := 1 ..< 2 ..< 3;
+	c := 1 ..= 2;
+}
+
+sentinel :: proc() { }

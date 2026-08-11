@@ -1,0 +1,88 @@
+// Covers: Expression, Level_2..Level_7, Unary_Expression, Postfix_Expression,
+// Suffix, Index_Or_Slice, Primary_Expression, Composite_Literal, Composite_Type,
+// Element_List,
+// Element, Element_Key, Argument_List, Argument, Named_Argument_Value,
+// Argument_Value, Int_Literal, Float_Literal, Rune_Literal, String_Literal,
+// Raw_String_Literal, Hash_Name.
+package main;
+
+main :: proc() {
+	// Level 1: `or_else` and the conditional, both right-associative.
+	e1 := a or_else b or_else c;
+	e2 := a if b else c if d else e;
+	e3 := a if b else c or_else d;
+
+	// Level 2: ranges, which do not chain.
+	e4 := 1 ..= 2;
+	e5 := lo ..< hi;
+
+	// Levels 3-7, tightest last.
+	e6 := a || b && c == d < e | f ~ g & h << i + j * k;
+	e7 := (a || b) && (c | d) == (e &~ f);
+
+	// Unary, which stacks.
+	e8 := -+!~&a;
+
+	// Every suffix, composed.
+	e9 := p^;
+	e10 := p.field.inner;
+	e11 := p.(int);
+	e12 := f();
+	e13 := f(a)(b)(c);
+	e14 := m[key];
+	e15 := m[row, column];
+	e16 := s[:];
+	e17 := s[a:];
+	e18 := s[:b];
+	e19 := s[a:b];
+	e20 := may_fail() or_return;
+	e21 := p^.field.(Shape)[1][2:3](x) or_return;
+
+	// Primary expressions.
+	e22 := 42;
+	e23 := 1_000_000;
+	e24 := 0b1010;
+	e25 := 0o755;
+	e26 := 0xdead_beef;
+	e27 := 1.5;
+	e28 := 1.5e-3;
+	e29 := 6E9;
+	e30 := 'c';
+	e31 := 'é';
+	e32 := "text\n\t\x41\U0001f600";
+	e33 := `a raw \ string`;
+	e34 := .Member;
+	e35 := move(owned);
+	e36 := #assert(a == b);
+	e37 := #config(NAME, 0);
+	e38 := #location;
+	e39 := #caller_location;
+	e40 := (a + b);
+	e41 := (^u32)(&f);
+	e42 := proc(a: int) -> int { return a; };
+
+	// Composite literals: every composite type, keyed and positional elements.
+	c1 := Point{1, 2};
+	c2 := Point{x = 1, y = 2};
+	c3 := geometry.Point{};
+	c4 := Table(string, int){};
+	c5 := []int{1, 2, 3};
+	c6 := []mut u8{0};
+	c7 := [?]int{1, 2};
+	c8 := [dynamic]int{1};
+	c9 := [4]int{0 = 1, 1 ..= 3 = 0};
+	c10 := map[string]int{"a" = 1};
+	c11 := Outer{inner = Inner{1}, list = []int{2, 3}};
+	c12 := Point{1, 2,};
+
+	// Arguments: positional, named, `inout`, spread, and a type argument.
+	a1 := f(a, b);
+	a2 := f(name = a);
+	a3 := f(inout buffer);
+	a4 := f(name = inout buffer);
+	a5 := f(..values);
+	a6 := f(a, name = b, inout c, ..d,);
+	a7 := new(Point);
+	a8 := make([]int, 4);
+	a9 := cast(^u8, p);
+}

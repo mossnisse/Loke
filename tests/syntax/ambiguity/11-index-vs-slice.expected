@@ -1,0 +1,26 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["a"]
+          (index (ident "s") (ident "i"))
+        )
+        (var names=["b"]
+          (index (ident "s") (ident "i") (ident "j"))
+        )
+        (var names=["c"]
+          (slice-of (ident "s") _ _)
+        )
+        (var names=["d"]
+          (slice-of (ident "s") (ident "lo") _)
+        )
+        (var names=["e"]
+          (slice-of (ident "s") _ (ident "hi"))
+        )
+        (var names=["g"]
+          (slice-of (ident "s") (ident "lo") (ident "hi"))
+        )
+      )
+    )
+  )
+)

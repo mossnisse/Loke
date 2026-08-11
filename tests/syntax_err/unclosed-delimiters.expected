@@ -1,0 +1,9 @@
+L0217
+@5:13
+expected `)` to close the argument list
+L0226
+@6:14
+expected `]` to close the index
+L0227
+@7:17
+expected `}` to close the composite literal

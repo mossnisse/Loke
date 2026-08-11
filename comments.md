@@ -2,14 +2,6 @@
 
 Decisions that are deliberately not yet made are recorded here rather than left implicit in normative prose. [`design.md`](design.md) defines the rules implementations must follow for the current language version; these questions concern possible later changes.
 
-## Identifier character set
-
-Should identifiers remain ASCII-only or adopt a normalized subset of Unicode identifiers? The current version accepts ASCII identifiers only. Unicode would improve native-language naming, but normalization, confusable characters, font support, and input ergonomics require a precise security policy before the rule can expand.
-
-## Shadowing
-
-Should inner scopes be allowed to shadow outer local variables? The current version rejects it except for the explicit parameter-copy idiom. Allowing shadowing is familiar and sometimes concise, while rejecting it prevents accidental reuse and makes references easier to follow.
-
 ## Package and import versioning
 
 Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
@@ -558,6 +550,19 @@ from treating them as thin wrappers over integers. Enum members may have holes,
 so the result of `Foo.A + Foo.B` need not be a member of `Foo`, and the language
 has `Bit_Set(Enum)` for flag sets. Enums remain comparable and ordered, and
 converting to the backing integer type is one call.
+
+### Defined signed overflow
+
+Signed `+`, `-`, `*`, and `<<` are defined to wrap two's-complement, and a
+compiler may not assume signed overflow cannot happen. This costs the
+optimizations undefined overflow buys — widening a 32-bit induction variable to
+a 64-bit register, proving a loop terminates, strength-reducing address
+arithmetic — on exactly the loops a systems language cares about, and `int` is
+the recommended default type, so it costs them by default. It is the same trade
+made for shift counts: a rule whose meaning does not change under optimization is
+worth more than the code it costs, because the alternative is a program whose
+correctness depends on a compiler flag. Code in a measured hot loop that wants
+the wider assumption states it explicitly rather than inheriting it silently.
 
 ### `in` is a comparison, not an additive operator
 

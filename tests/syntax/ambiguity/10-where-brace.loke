@@ -1,0 +1,7 @@
+// Rule 10: a `where` expression has no composite literal at its top level, so
+// the following `{` is the body. Inside a call it is a composite literal again.
+package main;
+
+Record :: struct($T: type) where Sized(T) { x: T }
+Procedure :: proc($T: type) where Sized(T), Additive(T) { }
+Nested :: struct($T: type) where is_default(T, Point{0, 0}) { x: T }

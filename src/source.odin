@@ -6,6 +6,7 @@
 package lokec
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -56,17 +57,33 @@ Diagnostic :: struct {
 // is an Odin keyword.
 //
 // Source buffers and diagnostics use the process allocator. Parsed syntax is
-// owned separately by each File's arena; long-lived identifier/type interning
-// arrives with the package and type-system work.
+// owned separately by each File's arena; identifiers, types, symbols, scopes,
+// and packages use the compilation-lifetime semantic arena below.
 Compiler :: struct {
 	sources:     [dynamic]Source,
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,
+
+	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
+	semantic_initialized: bool,
+	semantic_arena:       mem.Dynamic_Arena,
+	semantic_allocator:   mem.Allocator,
+	identifier_names:     [dynamic]string,
+	identifier_by_name:   map[string]Identifier_Id,
+	types:                [dynamic]Type_Info,
+	type_by_shape:        map[Type_Key]Type_Id,
+	symbols:              [dynamic]Symbol,
+	packages:             [dynamic]Package,
 }
+
+// The old public name remains as a compatibility alias while callers migrate
+// to the more accurate compilation vocabulary.
+Compilation :: Compiler
 
 // Loads a file and registers it. Reports and returns false on failure, so the
 // caller never has to invent its own error text.
 load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
+	init_semantic_stores(c)
 	data, read_ok := os.read_entire_file(path)
 	if !read_ok {
 		errorf(c, no_span(), "L0001", "cannot read file `%s`", path)
@@ -159,6 +176,19 @@ error_labelf :: proc(
 	c.diagnostics[len(c.diagnostics) - 1].label = label
 }
 
+// Attaches a secondary location to the most recently emitted diagnostic.
+// Keeping the Span makes cross-file duplicate/cycle diagnostics durable.
+add_notef :: proc(c: ^Compiler, span: Span, format: string, args: ..any) {
+	if len(c.diagnostics) == 0 {
+		return
+	}
+	diagnostic := &c.diagnostics[len(c.diagnostics) - 1]
+	notes := make([dynamic]Note, len(diagnostic.notes), len(diagnostic.notes) + 1)
+	copy(notes[:], diagnostic.notes)
+	append(&notes, Note{span = span, message = fmt.aprintf(format, ..args)})
+	diagnostic.notes = notes[:]
+}
+
 // Renders every accumulated diagnostic to stderr, in source order per file.
 report :: proc(c: ^Compiler) {
 	for &d in c.diagnostics {
@@ -202,7 +232,13 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 	}
 
 	for note in d.notes {
-		fmt.eprintf("  = note: %s\n", note.message)
+		if note.span.file != NO_FILE && int(note.span.file) < len(c.sources) {
+			src := &c.sources[note.span.file]
+			line, col := line_col(src, note.span.lo)
+			fmt.eprintf("  = note: %s:%d:%d: %s\n", src.path, line, col, note.message)
+		} else {
+			fmt.eprintf("  = note: %s\n", note.message)
+		}
 	}
 	fmt.eprintln()
 }

@@ -229,9 +229,11 @@ uninitialized-storage marker as in `x: T = ---;`; it is not an expression and
 therefore cannot be used with inferred `x := ...` syntax. The second
 `Variable_Decl` alternative is the `x := e` spelling, and it accepts storage
 modifiers with the type still inferred, as in `x: static = 0;` or
-`raw: manual := [dynamic]int{1, 2, 3};`. `Storage_Modifiers` is nullable, so both
+`raw: manual = [dynamic]int{1, 2, 3};`. `Storage_Modifiers` is nullable, so both
 alternatives cover the unmodified forms and the two are distinguished by whether
-a `Type` follows.
+a `Type` follows. A modifier takes the place of the type, so it is followed by
+the single `=` of this alternative and never by the `:` `=` pair: `x := e` is
+this alternative with no modifiers, and `x: manual = e` is it with one.
 
 The two modifier groups are independent: `Duration_Modifier` answers where a
 variable lives and for how long, `manual` answers who releases it. `x: static
@@ -353,9 +355,10 @@ Bindings           = "(" Binding_Group ("," Binding_Group)* ")"
 Binding_Group      = Identifier ("," Identifier)* ":" "inout"? Type
 ```
 
-A requirement beginning with `(` always starts a binding list; wrap the
-expression in a second pair of parentheses if a requirement must begin with a
-parenthesised expression. An associated constant is an ordinary expression
+A requirement beginning with `(` starts a binding list when an `Identifier` and
+then `,` or `:` follow the parenthesis, and neither can appear that early in an
+expression. Wrap the expression in a second pair of parentheses if a requirement
+must begin with a parenthesised expression, as in `((a + b).c()) -> T;`. An associated constant is an ordinary expression
 requirement, written `T.NAME -> U;`; when `U` is `type`, the selected member is
 an associated type usable by later requirements. An `inout` binding denotes a hypothetical
 exclusive mutable place for requirement checking. An `-> inout T` result

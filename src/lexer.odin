@@ -154,17 +154,6 @@ token_text :: proc(c: ^Compiler, file: u32, t: Token) -> string {
 	return c.sources[file].text[t.lo:t.hi]
 }
 
-// Human-readable name for a token kind, for "expected X, found Y" messages.
-token_display :: proc(c: ^Compiler, file: u32, t: Token) -> string {
-	#partial switch t.kind {
-	case .EOF:
-		return "end of file"
-	case .Ident:
-		return token_text(c, file, t)
-	}
-	return token_text(c, file, t)
-}
-
 @(private = "file")
 at_end :: proc(l: ^Lexer) -> bool {
 	return int(l.pos) >= len(l.src)
@@ -192,6 +181,18 @@ is_digit :: proc(ch: u8) -> bool {return ch >= '0' && ch <= '9'}
 @(private = "file")
 is_hex :: proc(ch: u8) -> bool {
 	return is_digit(ch) || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')
+}
+
+// Only ever called on a character `is_hex` accepted.
+@(private = "file")
+hex_value :: proc(ch: u8) -> u32 {
+	switch {
+	case ch <= '9':
+		return u32(ch - '0')
+	case ch <= 'F':
+		return u32(ch - 'A' + 10)
+	}
+	return u32(ch - 'a' + 10)
 }
 
 @(private = "file")
@@ -409,11 +410,13 @@ number :: proc(l: ^Lexer) -> Token {
 			}
 			l.pos += 1
 		}
-		if digits == 0 {
+		// With a tail still to come (`0o8`, `0xzz`) `number_end` gives the better
+		// message; L0110 is for a prefix with nothing after it at all.
+		if digits == 0 && !is_ident_part(peek(l)) {
 			errorf(l.c, span_from(l, lo), "L0110", "expected digits after `0%c`", base)
 			return Token{kind = .Error, lo = lo, hi = l.pos}
 		}
-		return Token{kind = .Int, lo = lo, hi = l.pos}
+		return number_end(l, lo, .Int)
 	}
 
 	for !at_end(l) && (is_digit(peek(l)) || peek(l) == '_') {
@@ -435,16 +438,35 @@ number :: proc(l: ^Lexer) -> Token {
 		if peek(l, 1) == '+' || peek(l, 1) == '-' {
 			offset = 2
 		}
-		if is_digit(peek(l, offset)) {
-			kind = .Float
+		if !is_digit(peek(l, offset)) {
 			l.pos += offset
-			for !at_end(l) && is_digit(peek(l)) {
-				l.pos += 1
-			}
+			errorf(l.c, span_from(l, lo), "L0112", "an exponent needs at least one digit")
+			return Token{kind = .Error, lo = lo, hi = l.pos}
+		}
+		kind = .Float
+		l.pos += offset
+		for !at_end(l) && is_digit(peek(l)) {
+			l.pos += 1
 		}
 	}
 
-	return Token{kind = kind, lo = lo, hi = l.pos}
+	return number_end(l, lo, kind)
+}
+
+// A number never abuts a name: `0b12`, `123abc` and `1_000u` are typos, not two
+// tokens. Consuming the tail keeps the parser from tripping over a stray
+// identifier a line later.
+@(private = "file")
+number_end :: proc(l: ^Lexer, lo: u32, kind: Token_Kind) -> Token {
+	if at_end(l) || !is_ident_part(peek(l)) {
+		return Token{kind = kind, lo = lo, hi = l.pos}
+	}
+	bad := l.pos
+	for !at_end(l) && is_ident_part(peek(l)) {
+		l.pos += 1
+	}
+	errorf(l.c, span_from(l, lo), "L0113", "unexpected `%s` in a number", l.src[bad:l.pos])
+	return Token{kind = .Error, lo = lo, hi = l.pos}
 }
 
 // Validates one escape sequence, `l.pos` sitting on the backslash.
@@ -464,6 +486,7 @@ escape :: proc(l: ^Lexer) -> bool {
 	case 'x', 'u', 'U':
 		count := 2 if ch == 'x' else (4 if ch == 'u' else 8)
 		l.pos += 1
+		value: u32 = 0
 		for i := 0; i < count; i += 1 {
 			if !is_hex(peek(l)) {
 				errorf(
@@ -476,7 +499,20 @@ escape :: proc(l: ^Lexer) -> bool {
 				)
 				return false
 			}
+			value = value * 16 + hex_value(peek(l))
 			l.pos += 1
+		}
+		// `\x` is a raw byte; `\u` and `\U` name a character, and the surrogate
+		// range has no character in it.
+		if ch != 'x' && (value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) {
+			errorf(
+				l.c,
+				span_from(l, lo),
+				"L0114",
+				"`%s` is not a Unicode character",
+				l.src[lo:l.pos],
+			)
+			return false
 		}
 		return true
 	case '0' ..= '7':

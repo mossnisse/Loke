@@ -1,0 +1,13 @@
+// Rule 4: a type definition, interface, proc definition, proc group or
+// brace-bodied operator ends at its `}`; everything else needs a `;`.
+package main;
+
+Braced :: struct { x: int }
+Then_Empty_Item :: struct { };
+Interface_Body :: interface($Self: type) { }
+Definition :: proc() { }
+Group :: proc { Definition }
+Operator :: operator(+) proc(a: int) -> int { }
+Semicolon :: 1 + 2;
+Composite :: Point{1};
+Bodiless :: proc() ---;

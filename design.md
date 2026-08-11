@@ -197,7 +197,7 @@ a = [dynamic]int{7, 8}; // a full assignment revives `a`
 
 The compiler may replace a copy with a move only when the type has a trivial lifecycle and the replacement cannot change allocator selection, invoke or suppress user code, or remove a possible failure. In particular, assignment of a dynamic array, map, runtime string, `shared(T)`, or a type with a custom `try_clone` is not silently changed into a move merely because the assignment is the source's last use. Code that wants to transfer an owning value without cloning writes `move(value)`. A shallow alias of an owning mutable value is not provided; shared ownership must use an explicit library type such as `shared(T)`.
 
-The deep copy for a mutable owner is deliberate: it makes the value behave like a simple one, and the alternative — copying only a container's header and silently sharing its mutable backing storage — is the aliasing bug this rule exists to prevent. Immutable `string` is the stated exception and may share immutable backing storage. Small inline values remain cheap to copy; a large or allocating copy is reported by the [copy-cost diagnostic](#copy-cost-diagnostics), whose advice is to write `move` when ownership should transfer or to use a pointer or `shared(T)` when sharing is intended. Copy cost is therefore visible to tooling rather than changed by an optimization with different allocation or lifecycle behaviour.
+Assignment of a mutable owner deep-copies rather than copying only a container's header and sharing its mutable backing storage; the owning value then behaves like a simple one. Immutable `string` is the exception and may share immutable backing storage. Small inline values remain cheap to copy; a large or allocating copy is reported by the [copy-cost diagnostic](#copy-cost-diagnostics), whose advice is to write `move` when ownership should transfer or to use a pointer or `shared(T)` when sharing is intended. Copy cost is therefore visible to tooling rather than changed by an optimization with different allocation or lifecycle behaviour.
 
 If assignment cloning needs storage, `try_clone` uses the allocator currently carried by the live destination. A dead or allocator-unbound destination first resolves its declaration allocation policy, loading `mem.default_allocator()` lazily when no `via` policy was written. If cloning fails, the compiler invokes that allocator's failure policy described under [Allocation failure](#allocation-failure) and leaves a previously live destination unchanged. A non-allocating logical clone that shares immutable or reference-counted storage, as permitted for `string` and `shared(T)`, retains the allocator recorded by that shared allocation. Those types therefore select their allocator at construction and cannot use `via`.
 
@@ -889,9 +889,8 @@ descriptor or index.
 
 `break` and `continue` cannot target a static expansion. Ordinary runtime loops
 inside its body may use them normally. Static `foreach` is a statement inside a
-procedure; it does not synthesize identifiers or declarations at file scope.
-This deliberately provides typed code expansion without exposing tokens or an
-abstract syntax tree to compile-time code.
+procedure; it does not synthesize identifiers or declarations at file scope,
+and does not expose tokens or an abstract syntax tree to compile-time code.
 
 ### Reverse iteration
 
@@ -954,7 +953,7 @@ case .Unknown:
 
 Switch is like the one in C or C++, except that only the selected case runs. This means that a break statement is not needed at the end of each case. Another important difference is that the case values need not be integers nor constants.
 
-**There is no `fallthrough`.** A case that should also run for other values lists them, `case 0, 1, 2:`, which is what most C fallthrough chains are written for. A case that must run another case's body calls a shared procedure. A keyword whose whole job is to reintroduce the C default that this switch exists to remove is not worth the statement, the reserved word, or its interaction with the [`defer`](#defer-statement) restrictions.
+**There is no `fallthrough`.** A case that should also run for other values lists them, `case 0, 1, 2:`. A case that must run another case's body calls a shared procedure.
 
 Switch cases are evaluated from top to bottom, stopping when a case succeeds. For example:
 
@@ -1288,7 +1287,7 @@ sum :: proc(values: [dynamic]int) -> int {
 }
 ```
 
-**The asymmetry this creates is worth stating outright.** `sum(values)` borrows, while `local := values` in the same procedure clones. Both are unmarked, and they are one character apart. That is the price of two rules the language wants independently: an owning value behaves like a simple one under [assignment](#assignment-statements), and passing one to a procedure is free. Neither is negotiable on its own, and no third rule reconciles them — so the copy site is made *visible* rather than made impossible, which is what the diagnostic above is for. When two names should refer to one value, take a pointer or `shared(T)`; when the source is finished, write `move`.
+`sum(values)` borrows, while `local := values` in the same procedure clones; both are unmarked and one character apart. A large or allocating copy at such a site is reported by the copy-cost diagnostic, not forbidden. When two names must refer to one value, take a pointer or `shared(T)`; when the source is finished, write `move`.
 
 Use `inout` for a mutable borrow and `move` when a procedure must take ownership:
 
@@ -1308,7 +1307,7 @@ process_owned(move(numbers));
 
 **Both non-default modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and an argument to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs. This is what makes a call readable without consulting the callee's signature: a reader can see at the call which arguments may be modified and which are being given away.
 
-The two are spelled differently because they are different kinds of thing. `move(x)` is an [expression](#assignment-statements) that produces a value, writes the inert representation to `x`, and marks `x` dead; it is equally usable in an assignment or a `return`. `inout x` is not an expression and produces no value; it selects a parameter mode and may appear only in an argument position, in an [`operator([])` result](#indexing-and-slicing), and where a mutable receiver is passed. Method-call syntax supplies the marker implicitly for its receiver: `numbers.sort()` calls an `inout self` method without the caller writing `inout`, because the receiver's mutability is already visible in the mutating verb. See [Borrows and lifetimes](#borrows-and-lifetimes) for the complete rule and for the cases it deliberately does not cover.
+`move(x)` is an [expression](#assignment-statements) that produces a value, writes the inert representation to `x`, and marks `x` dead; it is equally usable in an assignment or a `return`. `inout x` is not an expression and produces no value; it selects a parameter mode and may appear only in an argument position, in an [`operator([])` result](#indexing-and-slicing), and where a mutable receiver is passed. Method-call syntax supplies the marker implicitly for its receiver: `numbers.sort()` calls an `inout self` method without the caller writing `inout`. See [Borrows and lifetimes](#borrows-and-lifetimes) for the complete rule and the cases it does not cover.
 
 ### Shadowing Parameters
 
@@ -1385,8 +1384,6 @@ conditionally_blue :: proc(red: bool) -> (color: string) {
     return;
 }
 ```
-
-An earlier draft allowed `-> (color := "blue")`. It saved one statement, and cost a grammar alternative in the result list plus a rule distinguishing it from a parameter default, which it resembles but does not behave like: a parameter default fires only when the caller omits an argument, while a result initializer runs on every entry. Two similar spellings with different trigger conditions is the wrong thing to spend syntax on.
 
 ### Named arguments
 
@@ -1596,7 +1593,7 @@ f := f32(123);
 u := transmute(u32, f);
 ```
 
-It is an ordinary compile-time built-in procedure, not an operator: `transmute` is a predeclared identifier rather than a keyword, its first argument is a type in the same way `size_of(T)` and `new(T)` take one, and it binds like any other call. Nothing about a bit cast needs its own syntax — the earlier `transmute(T)value` spelling bought a reserved word and a unary binding rule for a form that already looked like a call.
+It is an ordinary compile-time built-in procedure, not an operator: `transmute` is a predeclared identifier rather than a keyword, its first argument is a type in the same way `size_of(T)` and `new(T)` take one, and it binds like any other call.
 
 This is akin to doing the following pointer cast manipulations:
 
@@ -1815,9 +1812,9 @@ Legend:
 
 There is no general `const` qualifier in the language, and nothing else stands in for one. Slice capability is expressed directly by its type: `[]T` is read-only and `[]mut T` permits mutation of elements. A view obtained from a `string` is therefore `[]u8`; it cannot be converted to `[]mut u8`. The other read-only storage in a program — a [materialized constant](#materialization) — is read-only because of how it was declared, not because a qualifier was applied to it.
 
-**Pointers carry no such capability: there is no `^const T`.** The asymmetry is deliberate, and it is worth stating what it costs. Read-only access to a *sequence* is spelled `[]T`. Read-only access to a *single value* is spelled by an ordinary `value: T` parameter, which is already an immutable borrow for a managed owner and never copies its allocation; `inout T` is what opts into mutation. Between them these cover every case where the compiler could have checked the promise anyway, because both are procedure-local and the [borrow rules](#borrows-and-lifetimes) apply to them in full.
+**Pointers carry no such capability: there is no `^const T`.** Read-only access to a *sequence* is spelled `[]T`. Read-only access to a *single value* is an ordinary `value: T` parameter, which is already an immutable borrow for a managed owner and never copies its allocation; `inout T` opts into mutation. Both are procedure-local, so the [borrow rules](#borrows-and-lifetimes) apply to them in full.
 
-What remains uncovered is a `^T` stored in a struct field or passed through `rawptr`, and there a read-only qualifier would have been decoration rather than a check: borrows stored in memory are outside the analysis by construction, so `^const T` would document an intention the compiler could not enforce and would then have to be propagated through every signature that touches one. A pointer in Loke means an address whose validity and access discipline the programmer is asserting. Code that wants a checked read-only view of one element passes `[]T` of length one or restructures to take the value.
+A `^T` stored in a struct field or passed through `rawptr` is outside the borrow analysis by construction; a pointer in Loke is an address whose validity and access discipline the programmer asserts. Code that wants a checked read-only view of one element passes a `[]T` of length one or restructures to take the value.
 
 ## From string to X
 
@@ -1943,7 +1940,7 @@ The equality operators == and != apply to operands that are comparable. The orde
 - Array values are comparable if values of the element type are comparable.
 - typeid is comparable.
 - `Simd(T, N)` vectors are comparable.
-- Slices, dynamic arrays, maps, and `dyn Interface` views are **not** comparable and may be tested only against `nil`. This makes a fixed array comparable element-wise while a slice of that same array is not — a deliberate asymmetry, because slice equality would have to choose between comparing identities and comparing contents, and neither is the obvious default. Dynamic interface equality would additionally have to invent semantics across different concrete types. Compare contents or behavior with an explicit library procedure.
+- Slices, dynamic arrays, maps, and `dyn Interface` views are **not** comparable and may be tested only against `nil`. A fixed array is therefore comparable element-wise while a slice of that same array is not. Compare contents or behavior with an explicit library procedure.
 
 ## Logical operators
 
@@ -2118,9 +2115,7 @@ This differs from C, where such a shift count is undefined behaviour. Defining i
 
 For unsigned integers, the operations +, -, *, and << are computed modulo 2n, where n is the bit width of the unsigned integer’s type. In a sense, these unsigned integer operations discard the high bits upon overflow, and programs may rely on “wrap around”.
 
-Every signed integer uses two’s-complement representation. For a signed type of width `n`, `+`, `-`, `*`, and `<<` compute the mathematical result modulo `2^n` and interpret the resulting bit pattern as that two’s-complement type. Division is truncated toward zero except that `MIN / -1` produces `MIN`; its remainder is zero. These results exist and are deterministic on every target, and overflow does not panic. A compiler may not optimize code under the assumption that signed overflow does not occur. For instance, `x < x+1` may not be assumed to be always true.
-
-This costs real optimization, and on the most common type. Undefined signed overflow is what lets a C compiler widen a 32-bit induction variable to a 64-bit register without a check, prove a loop terminates, and strength-reduce the resulting address arithmetic. Defining overflow gives that up on exactly the loops a systems language cares about — and `int` is the recommended default type, so it gives it up by default. The trade is the same one made for [shift counts](#integer-operators): a rule that does not change meaning under optimization is worth more than the code it costs, because the alternative is a program whose correctness depends on a flag. Code in a measured hot loop that wants the wider assumption states it — by using an explicitly sized unsigned type, hoisting the bound, or narrowing the index range — rather than inheriting it silently from every arithmetic expression in the program.
+Every signed integer uses two’s-complement representation. For a signed type of width `n`, `+`, `-`, `*`, and `<<` compute the mathematical result modulo `2^n` and interpret the resulting bit pattern as that two’s-complement type. Division is truncated toward zero except that `MIN / -1` produces `MIN`; its remainder is zero. These results exist and are deterministic on every target, and overflow does not panic. A compiler may not optimize code under the assumption that signed overflow does not occur. For instance, `x < x+1` may not be assumed to be always true. Code in a measured hot loop that wants a no-overflow assumption states it explicitly — an explicitly sized unsigned type, a hoisted bound, or a narrowed index range — rather than inheriting it from every arithmetic expression.
 
 ## Floating-point operators
 
@@ -2603,7 +2598,7 @@ The form `T(...)` has two possible meanings — a built-in conversion or an `ini
 
 Resolution stops at the first stage that produces a match. Within a stage, equal-ranked matches are ambiguous rather than being selected by declaration order, and the diagnostic must list the candidates from that stage only.
 
-A consequence worth stating plainly: a single-argument `init` on a `distinct` type over a built-in cannot be reached through `T(x)` when `x` is of the underlying type, because stage 1 claims it. Call it by name, or give it a distinguishing parameter. This is the cost of keeping casts unambiguous, and it is the intended trade. `@(implicit)` only grants an additional constant-only path to an `init` overload; it does not affect explicit `T(x)` resolution.
+A single-argument `init` on a `distinct` type over a built-in cannot be reached through `T(x)` when `x` is of the underlying type, because stage 1 claims it; call it by name, or give it a distinguishing parameter. `@(implicit)` only grants an additional constant-only path to an `init` overload; it does not affect explicit `T(x)` resolution.
 
 ## Lifecycle hooks and resource types
 
@@ -2717,8 +2712,6 @@ impl Byte_Source {
 
 Associated types need no separate declaration grammar because types are already compile-time values and an `impl` already admits constants. For a generic `T`, a selector such as `T.Element` is valid only when the active constraints require that member and make it unambiguous. Requirement order is irrelevant: associated members required directly or through a composed interface are available throughout the interface body and a constrained generic declaration. Two requirements for the same selector refer to the same member and must agree on its type.
 
-A dedicated `const T.NAME: Type;` form existed in an earlier draft, but `T.NAME` already names its owner unambiguously, so the form bought only the extra demand that the member be a compile-time constant — which no value requirement in practice needed, and which the expression form leaves open to a constant or a zero-argument query. Removing it also removed the `const` contextual keyword.
-
 **Named slot form** — `slot name: proc(...);` declares a method requirement. Its
 first parameter must be the receiver name `self` in one of the three
 [receiver modes](#receiver-forms): immutable `self` (written with or without its
@@ -2750,7 +2743,7 @@ A failed requirement must be reported as the specific line of the interface body
 
 ### Standard interface catalogue
 
-Version 1 deliberately has a small catalogue. These are ordinary declarations exported by `base:interfaces`, not compiler predicates; outside that package they are written with the imported package qualifier, such as `interfaces.Sequence(S)`. The compiler makes built-in operations and associated members visible to the same structural checks used for user types.
+Version 1 has a small catalogue. These are ordinary declarations exported by `base:interfaces`, not compiler predicates; outside that package they are written with the imported package qualifier, such as `interfaces.Sequence(S)`. The compiler makes built-in operations and associated members visible to the same structural checks used for user types.
 
 ```odin
 Equatable :: interface($T: type) {
@@ -2949,7 +2942,7 @@ Calling a slot on nil panics. Dynamic interface values are
 comparable only with `nil`; two data pointers or witnesses are not implicitly an
 application-level equality operation.
 
-Dynamic interfaces deliberately do not support type assertions or type switches
+Dynamic interfaces do not support type assertions or type switches
 in version 1. The view does not own a value, so a downcast would have to return a
 borrowed reference; returning `^Concrete` would incorrectly grant write access
 when the interface carries only an immutable borrow, and the language has no
@@ -3019,7 +3012,7 @@ n := len(buffer);        // always valid: the overload group
 m := buffer.len();       // also valid: `Ring_Buffer` declared it with `self`
 ```
 
-The asymmetry with the built-in containers — `len(x)` but `x.append(v)` — is deliberate. `len` and `cap` are queries that generic code calls on a type parameter, where a free call keeps the interface requirement (`(c: T) len(c) -> int`) readable and uniform across built-in and user types. The mutators are operations on a specific receiver and read better in the position that names it. Libraries are free to define additional protocols without compiler support.
+With the built-in containers, `len(x)` and `cap(x)` are free calls — the queries generic code calls on a type parameter, with the interface requirement `(c: T) len(c) -> int` — while mutators such as `x.append(v)` are receiver methods. Libraries may define additional protocols without compiler support.
 
 ## Library numeric types
 
@@ -3520,7 +3513,7 @@ fmt.println(len(x)); // 0
 
 ### Resize / Reserve with a dynamic array
 
-Often enough we also want to resize or reserve a specific amount for a dynamic array. It’s important to understand the difference between the two operations.
+A dynamic array can be resized or reserved to a specific element count. The two operations differ:
 
 - resize will try to resize memory of a passed dynamic array to the requested element count (setting the len, and possibly cap).
 - reserve will try to reserve memory of a passed dynamic array to the requested element count (setting the cap).
@@ -3952,7 +3945,7 @@ Loke supports the following calling-convention names:
 - `c` — the target C ABI's default calling convention.
 - `stdcall` — the Microsoft stdcall convention on targets that support it.
 
-Compiler- or target-specific conventions use namespaced extension strings rather than portable aliases. The portable set is deliberately limited to conventions with a stable cross-toolchain meaning.
+Compiler- or target-specific conventions use namespaced extension strings rather than portable aliases. The portable set is limited to conventions with a stable cross-toolchain meaning.
 
 The default calling convention is `loke`, unless a declaration is within a foreign block, where it is `c`.
 
@@ -4042,15 +4035,8 @@ compile-time `type` value. A `meta.Field` also carries its declared
 Both preserve source declaration order, after conditional `when` selection.
 Reflection observes only declarations visible at the reflection site.
 
-**This is deliberately the minimum.** An earlier draft added `procedures_of`,
-`parameters_of`, `requirements_of`, and `attributes_of`, with three more
-descriptor types and a rule about which extension members `procedures_of` may
-observe. None of them had a named consumer: field and enum shape is what
-serialization, binding, and GUI generation actually walk. Reflecting over
-procedures, interface requirements, and attributes is what an RPC or
-documentation generator would want, and those should arrive with a real library
-that says what it needs rather than as a guess about what one might. Adding a
-descriptor later is additive; removing one is not.
+Reflection is limited to these two descriptors. Adding a further descriptor in a
+later version is a backward-compatible change; removing one is not.
 
 A `meta.Field` bound by static expansion provides compiler-defined operations
 whose result follows that particular field's type:
@@ -4072,7 +4058,7 @@ normal visibility, packed-field, borrow, copy, and mutation rules still apply;
 
 Reflection values may be inspected, compared for identity, passed to `$`
 parameters, and iterated by static `foreach`. They cannot be materialized into
-runtime storage. Runtime tools instead use the deliberately less powerful
+runtime storage. Runtime tools instead use the less powerful
 `runtime.Type_Info` reached through `type_info_of`.
 
 ## any_view type
@@ -5241,7 +5227,7 @@ main :: proc() {
 
 ### Storage duration and ownership
 
-These are deliberately *not* attributes. `static`, `thread_local`, and `manual` are [storage modifiers](#storage-modifiers) written in the declaration, because they answer where a variable's storage lives, for how long, and who releases it — questions about the declared type itself:
+`static`, `thread_local`, and `manual` are not attributes but [storage modifiers](#storage-modifiers) written in the declaration; they control where a variable's storage lives, for how long, and who releases it:
 
 ```odin
 test :: proc() -> int {

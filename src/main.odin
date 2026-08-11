@@ -8,7 +8,11 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M0)
+USAGE :: `lokec - the Loke compiler (milestone M1)
+
+All of the language's syntax lexes and parses, so -parse-only and -dump-ast
+accept any valid program. Building an executable still covers only the M0
+subset; anything beyond it is reported as L0350.
 
 usage:
     lokec <file.loke> [options]
@@ -31,21 +35,28 @@ Options :: struct {
 }
 
 main :: proc() {
+	os.exit(run())
+}
+
+@(private = "file")
+run :: proc() -> int {
 	opts, args_ok := parse_args(os.args[1:])
 	if !args_ok {
 		fmt.eprint(USAGE)
-		os.exit(2)
+		return 2
 	}
 
-	c: Compiler
+	c: Compilation
+	defer destroy_compilation(&c)
 	file, loaded := load_source(&c, opts.input)
 	if !loaded {
 		report(&c)
-		os.exit(1)
+		return 1
 	}
 
 	tokens := lex(&c, file)
 	ast := parse(&c, file, tokens)
+	defer destroy_ast(&ast)
 
 	if opts.dump_ast {
 		fmt.print(ast_dump(&ast))
@@ -53,25 +64,24 @@ main :: proc() {
 
 	if c.error_count > 0 {
 		report(&c)
-		destroy_ast(&ast)
-		os.exit(1)
+		return 1
 	}
 	if opts.parse_only || opts.dump_ast {
-		destroy_ast(&ast)
-		os.exit(0)
+		return 0
 	}
 
-	check(&c, &ast)
+	package_id := new_package(&c, ast.package_name, filepath.dir(opts.input))
+	add_package_file(&c, package_id, &ast)
+	check_package(&c, package_id)
+	validate_executable(&c, package_id)
 	if c.error_count > 0 {
 		report(&c)
-		destroy_ast(&ast)
-		os.exit(1)
+		return 1
 	}
 
-	code := emit(&c, &ast, opts)
+	code := emit_package(&c, package_id, opts)
 	report(&c) // warnings may have been produced with no error
-	destroy_ast(&ast)
-	os.exit(code)
+	return code
 }
 
 @(private = "file")

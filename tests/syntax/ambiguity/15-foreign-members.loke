@@ -1,0 +1,9 @@
+// Rule 15: foreign members follow the constant rule, so a brace-bodied member
+// ends at its `}` rather than needing grammar.md's unconditional `;`.
+package main;
+
+foreign lib {
+	init :: proc "c" () ---;
+	count: int;
+	Handle :: struct { id: int }
+}

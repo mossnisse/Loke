@@ -1,0 +1,9 @@
+// Rule 9: a leading `(` opens a binding list only with `Ident` and then `,` or
+// `:` behind it; a parenthesised expression needs a second pair.
+package main;
+
+Iface :: interface($Self: type) {
+	(s: Self) s.len() -> int;
+	(a, b: Self) a == b;
+	((a + b).c()) -> int;
+}

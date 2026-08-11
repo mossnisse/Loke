@@ -1,0 +1,115 @@
+// Covers: Block, Statement, Simple_Statement, Init_Statement, Assignment,
+// Compound_Operator, Expression_List, If_Statement, For_Statement, For_Header,
+// Foreach_Statement, Binding, When_Statement, Defer_Statement,
+// Return_Statement, Return_Value_List, Return_Value, Branch_Statement,
+// Switch_Statement, Value_Switch, Value_Case, Type_Switch, Type_Case,
+// Binding_Name.
+package main;
+
+main :: proc() {
+	// Blocks nest, and `{` at statement position is always a block.
+	{
+		{ }
+	}
+
+	// Simple statements: expression lists and both assignment forms.
+	f();
+	f(), g();
+	x = 1;
+	a, b = b, a;
+	m[key] = value;
+	p^.field = 0;
+	x += 1;
+	x -= 1;
+	x *= 2;
+	x /= 2;
+	x %= 2;
+	x |= mask;
+	x ~= mask;
+	x &= mask;
+	x &~= mask;
+	x <<= 1;
+	x >>= 1;
+
+	// Declarations are statements too.
+	local := 0;
+	Local_Const :: 1;
+
+	// `if`, with and without an init statement, and every `else` form.
+	if (ready) { }
+	if (ready) { } else { }
+	if (ready) { } else if (other) { } else { }
+	if (v := next(); v < 0) { }
+	if (step(); ready) { }
+
+	// `for`: the three-clause header and its degenerate forms.
+	for (i := 0; i < 10; i += 1) { }
+	for (;;) { }
+	for (running) { }
+	for (; running;) { }
+	for (i := 0; ; i += 1) { }
+	for (step(); running; i += 1) { }
+
+	// `foreach`: one or two bindings, `&` and `$` and `_`.
+	foreach (value in items) { }
+	foreach (value, index in items) { }
+	foreach (&value in items) { }
+	foreach (&value, index in items) { }
+	foreach (_, index in items) { }
+	foreach ($member in fields_of(T)) { }
+
+	// `when` is a statement as well as a top-level item.
+	when (DEBUG) { }
+	when (DEBUG) { } else when (RELEASE) { } else { }
+
+	// `defer` takes any statement.
+	defer close(handle);
+	defer { close(handle); }
+	defer if (owned) { free(p); }
+
+	// A value switch, with an init statement and a default case.
+	switch (value) {
+	case 1:
+	case 2, 3:
+		f();
+	case 4 ..= 9, 10 ..< 20:
+		f();
+		g();
+	case:
+	}
+	switch (v := classify(); v) {
+	case 1:
+	}
+
+	// A type switch: the `name in expr` header, decided after the init statement.
+	switch (shape in figure) {
+	case Circle:
+	case ^Square, []Triangle:
+		f();
+	case:
+	}
+	switch (f := lookup(); _ in f) {
+	case int:
+	}
+
+	// Membership in a value switch needs the second pair of parentheses.
+	switch ((x in set)) {
+	case true:
+	}
+
+	// Branches, inside a loop so they mean something.
+	for (;;) {
+		if (done) { break; }
+		continue;
+	}
+
+	return;
+}
+
+with_results :: proc() -> (a: int, b: int) {
+	return 1, 2;
+}
+
+with_borrow :: proc(target: inout Buffer) -> inout Buffer {
+	return inout target;
+}

@@ -1,0 +1,12 @@
+// Malformed lists, and a constant declaration bound to more than one name.
+package main;
+
+A, B :: 1;
+
+main :: proc() {
+	a := f(1, , 2);
+	b := Point{1, , 2};
+	c, := 1;
+}
+
+sentinel :: proc() { }

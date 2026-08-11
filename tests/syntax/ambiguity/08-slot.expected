@@ -1,0 +1,5 @@
+(file package="main"
+  (const names=["Iface"]
+    (interface (generic ["Self"] (type)) (slot "next" (proc-type (param ["self"] (ident "Self")) (result (ident "int")))) (req (ident "slot") (-> (ident "int"))) (req (selector (ident "slot") "count") (-> (ident "int"))))
+  )
+)

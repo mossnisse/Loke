@@ -1,0 +1,107 @@
+// Covers: Type_Definition, Struct_Type, Field_List, Field, Field_Tag,
+// Enum_Type, Enum_Field_List, Enum_Field, Union_Type, Union_Variants,
+// Generic_Parameters, Generic_Parameter, Generic_Name, Where_Clause,
+// Interface_Definition, Requirement, Requirement_Result, Bindings,
+// Binding_Group, Proc_Header, Proc_Literal, Proc_Definition, Proc_Declaration,
+// Proc_Group, Operator_Decl, Operator_Definition, Operator_Declaration,
+// Operator_Symbol.
+package main;
+
+Empty_Struct :: struct { }
+
+Point :: struct {
+	x, y: int,
+}
+
+Tagged :: struct {
+	@(align = 8)
+	id: int `json:"id"`,
+	name: string "tag",
+	using base: Base,
+	_: [4]u8,
+	nested: struct { a: int },
+	trailing: int,
+}
+
+Generic_Struct :: struct($K, $V: type) {
+	key: K,
+	value: V,
+}
+
+Constrained_Struct :: struct($T: type) where Additive(T), Sized(T) {
+	value: T,
+}
+
+Attributed_Struct :: struct @(packed) { x: int }
+
+Empty_Enum :: enum { }
+Bare_Enum :: enum { Red, Green, Blue }
+Typed_Enum :: enum u8 { Red = 1, Green, Blue = 4, }
+
+Empty_Union :: union { }
+Value_Union :: union { int, string, ^Point }
+Generic_Union :: union($T: type) @(shared_nil) where Sized(T) { T, Error, }
+
+Sequence :: interface($Self: type) {
+	// An expression requirement, with and without a binding list and a result.
+	Self.LENGTH -> int;
+	Self.Item -> type;
+	(s: Self) s.count() -> int;
+	(s: inout Self, i: int) s[i] -> inout Self.Item;
+	(a, b: Self) a == b;
+	((a)) ;
+	slot next: proc(self: Self) -> Self.Item;
+	slot reset: proc(self: inout Self);
+}
+
+Additive :: interface($T: type) {
+	(a, b: T) a + b -> T;
+}
+
+// Procedures: every header and body form.
+plain :: proc() { }
+conventioned :: proc "c" () { }
+bodiless :: proc() ---;
+conventioned_bodiless :: proc "stdcall" (handle: ^u8) -> i32 ---;
+constrained :: proc($T: type, value: T) -> T where Additive(T) { }
+group :: proc { plain, conventioned }
+group_trailing :: proc { plain, }
+
+// Operators: definition, group and declaration, over the whole symbol set.
+add :: operator(+) proc(a: Point, b: Point) -> Point { }
+sub :: operator(-) proc(a: Point, b: Point) -> Point { }
+mul :: operator(*) proc(a: Point, b: int) -> Point { }
+div :: operator(/) proc(a: Point, b: int) -> Point { }
+rem :: operator(%) proc(a: Point, b: int) -> Point { }
+bit_or :: operator(|) proc(a: Set, b: Set) -> Set { }
+bit_xor :: operator(~) proc(a: Set, b: Set) -> Set { }
+bit_and :: operator(&) proc(a: Set, b: Set) -> Set { }
+bit_andnot :: operator(&~) proc(a: Set, b: Set) -> Set { }
+shift_left :: operator(<<) proc(a: Set, b: int) -> Set { }
+shift_right :: operator(>>) proc(a: Set, b: int) -> Set { }
+equal :: operator(==) proc(a: Point, b: Point) -> bool { }
+not_equal :: operator(!=) proc(a: Point, b: Point) -> bool { }
+less :: operator(<) proc(a: Point, b: Point) -> bool { }
+less_equal :: operator(<=) proc(a: Point, b: Point) -> bool { }
+greater :: operator(>) proc(a: Point, b: Point) -> bool { }
+greater_equal :: operator(>=) proc(a: Point, b: Point) -> bool { }
+truthy :: operator(!) proc(a: Point) -> bool { }
+contains :: operator(in) proc(a: int, b: Set) -> bool { }
+add_assign :: operator(+=) proc(a: inout Point, b: Point) { }
+sub_assign :: operator(-=) proc(a: inout Point, b: Point) { }
+mul_assign :: operator(*=) proc(a: inout Point, b: int) { }
+div_assign :: operator(/=) proc(a: inout Point, b: int) { }
+rem_assign :: operator(%=) proc(a: inout Point, b: int) { }
+or_assign :: operator(|=) proc(a: inout Set, b: Set) { }
+xor_assign :: operator(~=) proc(a: inout Set, b: Set) { }
+and_assign :: operator(&=) proc(a: inout Set, b: Set) { }
+andnot_assign :: operator(&~=) proc(a: inout Set, b: Set) { }
+shl_assign :: operator(<<=) proc(a: inout Set, b: int) { }
+shr_assign :: operator(>>=) proc(a: inout Set, b: int) { }
+index :: operator([]) proc(a: Table, key: string) -> int { }
+index_set :: operator([]=) proc(a: inout Table, key: string, value: int) { }
+index_slice :: operator([:]) proc(a: Table, lo: int, hi: int) -> Table { }
+operator_group :: operator(+) proc { add }
+operator_bodiless :: operator(-) proc(a: Point) -> Point ---;
+
+main :: proc() { }

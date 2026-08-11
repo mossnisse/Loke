@@ -1,0 +1,82 @@
+// Covers: Source_File, Package_Clause, Top_Level_Item, Top_Level_When,
+// Top_Level_Block, Import_Decl, Foreign_Import_Decl, Foreign_Block,
+// Foreign_Decl, Impl_Block, Extend_Block, Impl_Member, Delegate_Decl,
+// Attributes, Attribute_Group, Attribute, Attribute_Value.
+@(compiler.no_alias, version = 2)
+@(private)
+package main;
+
+import "core:fmt";
+import strings "core:strings";
+@(private)
+import _ "core:mem";
+
+foreign import raylib "raylib.lib";
+@(private)
+foreign import c_math "m.lib";
+
+foreign raylib {
+	@(link_name = "InitWindow")
+	init_window :: proc "c" (width: int, height: int) ---;
+	close_window :: proc "c" () ---;
+	frame_count: int;
+	@(link_name = "screen")
+	screen_buffer: ^u8;
+}
+
+impl Point {
+	@(inline)
+	length :: proc(self) -> int { }
+	ORIGIN :: Point{0, 0};
+	delegate(+, -, ==);
+	delegate([], []=, [:],);
+	// `delegate` is contextual: only immediately before `(`.
+	delegate :: proc(self) { }
+	;
+}
+
+impl Table(string, int) {
+	get :: proc(self, key: string) -> int { }
+}
+
+extend []int {
+	sum :: proc(self) -> int { }
+}
+
+extend geometry.Point {
+	scaled :: proc(self, by: int) -> geometry.Point { }
+}
+
+when (LOKE_OS == "windows") {
+	handle: int = 0;
+	import "core:sys/windows";
+	foreign import kernel "kernel32.lib";
+} else when (LOKE_OS == "linux") {
+	@(private)
+	handle: int = 1;
+	when (ARCH == "arm64") {
+		wide: bool = true;
+	}
+} else {
+	handle: int = 2;
+}
+
+@(export, link_name = "counter")
+counter: int = 0;
+
+main :: proc() {
+	@(cold)
+	{
+		f();
+	}
+	@(unlikely)
+	x := 1;
+	@(hot)
+	when (DEBUG) { }
+	@(fallthrough)
+	switch (x) {
+	case 1:
+	}
+	@(no_inline)
+	y = 2;
+}

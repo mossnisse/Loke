@@ -1,0 +1,6 @@
+package main;
+
+main :: proc() {
+	x := 1 == 2;
+	print_int(x);
+}

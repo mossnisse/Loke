@@ -1,0 +1,11 @@
+// Rule 14: `{` at statement position is a block; a typeless composite literal
+// cannot start an expression statement.
+package main;
+
+main :: proc() {
+	{
+		f();
+	}
+	x := Point{1};
+	g(Point{2});
+}

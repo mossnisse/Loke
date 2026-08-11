@@ -1,0 +1,40 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (switch value
+          (subject (ident "x"))
+          (case (int "1")
+          )
+        )
+        (switch type "v"
+          (subject (ident "figure"))
+          (case (ident "int")
+          )
+        )
+        (switch type "v"
+          (call (ident "init"))
+          (subject (ident "figure"))
+          (case (ident "int")
+          )
+        )
+        (switch value
+          (call (ident "init"))
+          (subject (ident "x"))
+          (case (int "1")
+          )
+        )
+        (switch value
+          (subject (binary In (ident "x") (ident "set")))
+          (case (ident "true")
+          )
+        )
+        (switch type "_"
+          (subject (ident "figure"))
+          (case (ident "int")
+          )
+        )
+      )
+    )
+  )
+)
