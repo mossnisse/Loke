@@ -1,0 +1,5 @@
+package main;
+
+helper :: proc() {
+	print_int(1);
+}

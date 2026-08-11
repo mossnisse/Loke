@@ -1,0 +1,11 @@
+package main;
+
+main :: proc() {
+	outer := 1;
+	{
+		inner := outer + 1;
+		print_int(inner);
+	}
+	print_int(outer);
+	return;
+}

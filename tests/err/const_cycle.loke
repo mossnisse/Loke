@@ -1,0 +1,8 @@
+package main;
+
+LEFT :: RIGHT;
+RIGHT :: LEFT;
+
+main :: proc() {
+	print_int(LEFT);
+}

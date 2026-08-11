@@ -1,0 +1,5 @@
+package main;
+
+main :: proc() {
+	print_int(missing);
+}

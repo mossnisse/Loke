@@ -1,0 +1,7 @@
+package main;
+
+main :: proc() {
+	value := 1;
+	count := 2;
+	print_int(value << count);
+}

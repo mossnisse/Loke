@@ -1,0 +1,8 @@
+package main;
+
+counter: int = 41;
+
+main :: proc() {
+	print_int(counter);
+	print_int(counter + 1);
+}

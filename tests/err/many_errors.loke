@@ -1,0 +1,7 @@
+package main;
+
+main :: proc() {
+	print_int(a);
+	print_int(b);
+	print_int(c);
+}

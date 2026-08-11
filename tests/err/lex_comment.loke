@@ -1,0 +1,6 @@
+package main;
+
+/* outer /* inner */
+main :: proc() {
+	print_int(1);
+}

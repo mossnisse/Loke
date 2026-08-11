@@ -1,0 +1,7 @@
+lokec.exe
+tests/tmp/
+*.ll
+*.exe
+*.pdb
+*.obj
+*.ilk

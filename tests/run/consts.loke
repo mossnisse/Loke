@@ -1,0 +1,9 @@
+package main;
+
+WIDTH :: 8;
+HEIGHT : int : 5;
+
+main :: proc() {
+	area := WIDTH * HEIGHT;
+	print_int(area);
+}

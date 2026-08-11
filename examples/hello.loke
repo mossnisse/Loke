@@ -1,0 +1,7 @@
+package main;
+
+main :: proc() {
+	x := 40;
+	y: int = x + 2;
+	print_int(y);
+}

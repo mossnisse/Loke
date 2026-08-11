@@ -11,3 +11,21 @@ Procedures and that are called and packages that are improted should not change 
 Stuff like hidden allocations are allowed but procedures returning values that has to be manually hanndled should be clearly vissible that it is needed.
 
 The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
+
+## The compiler
+
+`lokec` is written in Odin and lives in [src/](src). The build is decomposed in
+[compiler-plan.md](compiler-plan.md); the current milestone is M0, planned in
+[m0-plan.md](m0-plan.md).
+
+Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
+`LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.
+
+```
+odin build src -out:lokec.exe
+lokec.exe examples/hello.loke -o hello.exe && hello.exe
+lokec.exe examples/hello.loke -parse-only
+lokec.exe examples/hello.loke -dump-ast
+odin test src -define:ODIN_TEST_TRACK_MEMORY=false
+odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
+```

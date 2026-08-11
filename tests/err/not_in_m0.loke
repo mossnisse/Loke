@@ -1,0 +1,7 @@
+package main;
+
+Point :: struct { x: int, y: int }
+
+main :: proc() {
+	print_int(1);
+}

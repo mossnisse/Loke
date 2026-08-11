@@ -1,0 +1,8 @@
+package main;
+
+ANSWER :: BASE + 1;
+BASE :: 41;
+
+main :: proc() {
+	print_int(ANSWER);
+}

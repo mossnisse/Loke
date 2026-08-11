@@ -1,0 +1,6 @@
+package main;
+
+main :: proc() {
+	zero := 0;
+	print_int(1 / zero);
+}

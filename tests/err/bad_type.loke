@@ -1,0 +1,6 @@
+package main;
+
+main :: proc() {
+	x: f64 = 1;
+	print_int(x);
+}

@@ -1,0 +1,28 @@
+package main;
+
+MINIMUM :: -9223372036854775807 - 1;
+WRAPPED_QUOTIENT :: MINIMUM / -1;
+WRAPPED_REMAINDER :: MINIMUM % -1;
+
+main :: proc() {
+	left := 15;
+	right := 3;
+	print_int(left &~ right);
+
+	dividend := 20;
+	divisor := 3;
+	print_int(dividend / divisor);
+	print_int(dividend % divisor);
+
+	minimum := -9223372036854775807 - 1;
+	negative_one := -1;
+	print_int(minimum / negative_one);
+	print_int(minimum % negative_one);
+	print_int(WRAPPED_QUOTIENT);
+	print_int(WRAPPED_REMAINDER);
+
+	one := 1;
+	negative := -8;
+	print_int(one << 64);
+	print_int(negative >> 64);
+}
