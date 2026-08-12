@@ -1,0 +1,57 @@
+package main;
+
+// Every M2 scalar type declares, initialises, and prints. `byte` is another
+// name for `u8`, not a second type.
+Alias :: u32;
+
+MAX_U128 :: 340282366920938463463374607431768211455;
+MIN_I128 :: -170141183460469231731687303715884105728;
+
+main :: proc() {
+	a: i8 = -128;
+	b: i16 = -32768;
+	c: i32 = -2147483648;
+	d: i64 = -9223372036854775808;
+	e: i128 = MIN_I128;
+	print_int(int(a));
+	print_int(int(b));
+	print_int(int(c));
+	print_int(int(d));
+	print_int(1 if e == MIN_I128 else 0);
+
+	f: u8 = 255;
+	g: u16 = 65535;
+	h: u32 = 4294967295;
+	i: u64 = 18446744073709551615;
+	j: u128 = MAX_U128;
+	print_int(int(f));
+	print_int(int(g));
+	print_int(int(h));
+	print_int(1 if i == 18446744073709551615 else 0);
+	print_int(1 if j == MAX_U128 else 0);
+
+	k: int = 1;
+	l: uint = 2;
+	m: uintptr = 3;
+	print_int(k + int(l) + int(m));
+
+	n: byte = 7;
+	o: u8 = n;
+	print_int(int(o));
+
+	p: Alias = 9;
+	print_int(int(p));
+
+	q: rune = 'A';
+	print_int(int(q));
+
+	r: bool = true;
+	print_int(1 if r else 0);
+
+	s: rawptr = nil;
+	print_int(1 if s == nil else 0);
+
+	// An untyped float constant materialises as an integer when it is exact.
+	exact_float: int = 1.0;
+	print_int(exact_float);
+}

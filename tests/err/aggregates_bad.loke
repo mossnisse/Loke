@@ -1,0 +1,24 @@
+package main;
+
+Point :: struct { x: int, y: int }
+Colour :: enum { Red, Green }
+
+SIZE :: 4;
+
+main :: proc() {
+	p := Point{1, 2};
+	print_int(p.z);
+	print_int(Point{1, 2, 3}.x);
+	print_int(Point{x = 1, x = 2}.x);
+	print_int(Point{y = 1, 2}.x);
+
+	xs := [SIZE]int{1, 2, 3, 4};
+	print_int(xs[4]);
+	print_int(xs[-1]);
+
+	c := .Green;
+	print_int(int(c));
+
+	n := 1;
+	print_int(n.x);
+}

@@ -1,0 +1,107 @@
+package main;
+
+Colour :: enum u8 { Red, Green = 10, Blue }
+
+Point :: struct { x: int, y: int }
+
+Line :: struct { a: Point, b: Point, colour: Colour }
+
+// A pointer edge breaks the containment cycle, so this has a finite size.
+Node :: struct { value: int, next: ^Node }
+
+Meters :: distinct int;
+
+ORIGIN :: Point{0, 0};
+UNIT :: Line{a = Point{1, 2}, b = Point{3, 4}, colour = .Blue};
+TABLE :: [3]int{7, 8, 9};
+
+global_line: Line = UNIT;
+global_table: [3]int = TABLE;
+
+main :: proc() {
+	// Enum members, explicit and implicit values, ordering and equality.
+	print_int(int(Colour.Red));
+	print_int(int(Colour.Green));
+	print_int(int(Colour.Blue));
+	print_int(1 if Colour.Green < Colour.Blue else 0);
+	c: Colour = .Green;
+	print_int(1 if c == Colour.Green else 0);
+
+	// Constant field selection and constant indexing.
+	print_int(UNIT.b.y);
+	print_int(TABLE[2]);
+	print_int(global_line.a.x);
+	print_int(global_table[1]);
+	narrow_index: u8 = 2;
+	print_int(global_table[narrow_index]);
+
+	// Nested and named literals, and source-order elements.
+	l := Line{a = Point{5, 6}, colour = .Red, b = Point{7, 8}};
+	print_int(l.a.y + l.b.x);
+	print_int(int(l.colour));
+
+	// A field with no element written keeps its zero value.
+	partial := Line{a = Point{1, 1}};
+	print_int(partial.b.x + partial.b.y + int(partial.colour));
+
+	// Structural equality, recursive through nested structs and arrays.
+	p := Line{a = Point{5, 6}, b = Point{7, 8}, colour = .Red};
+	print_int(1 if l == p else 0);
+	p.b.y = 0;
+	print_int(1 if l == p else 0);
+	print_int(1 if l != p else 0);
+
+	// `[?]T` takes its length from the literal.
+	inferred := [?]int{1, 2, 3, 4, 5};
+	print_int(inferred[4]);
+
+	rows := [2][2]int{[2]int{1, 2}, [2]int{3, 4}};
+	same := [2][2]int{[2]int{1, 2}, [2]int{3, 4}};
+	print_int(1 if rows == same else 0);
+	print_int(rows[1][0]);
+
+	// Runtime indexing and mutation through a place.
+	xs: [4]int;
+	for (i := 0; i < 4; i += 1) {
+		xs[i] = i * i;
+	}
+	total := 0;
+	for (i := 0; i < 4; i += 1) {
+		total += xs[i];
+	}
+	print_int(total);
+
+	// Pointers: address-of, dereference, and field access through one hop.
+	q := Point{11, 12};
+	r := &q;
+	print_int(r.x);
+	r^ = Point{13, 14};
+	print_int(q.y);
+	print_int((r^).x);
+
+	// A value parameter is addressable even though it is immutable.
+	print_int(addressed(21));
+
+	// Pointer-recursive data.
+	tail := Node{value = 2, next = nil};
+	head := Node{value = 1, next = &tail};
+	print_int(head.next.value);
+	print_int(1 if tail.next == nil else 0);
+
+	// A distinct type has a fresh identity and converts explicitly.
+	m: Meters = Meters(100);
+	print_int(int(m));
+	print_int(1 if m == Meters(100) else 0);
+
+	// A composite literal is addressable temporary storage.
+	print_int(sum_point(&Point{30, 12}));
+}
+
+addressed :: proc(value: int) -> int {
+	p := &value;
+	return p^ + 1;
+}
+
+sum_point :: proc(p: ^Point) -> int {
+	return p.x + p.y;
+}

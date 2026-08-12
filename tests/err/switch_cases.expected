@@ -1,0 +1,9 @@
+L0366
+@6:2
+does not cover Green, Blue
+L0367
+@16:7
+this value is already covered by an earlier case
+L0366
+@24:2
+a switch over `int` needs a default case

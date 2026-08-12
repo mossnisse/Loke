@@ -1,7 +1,8 @@
 package main;
 
-Point :: struct { x: int, y: int }
+Alias :: u32;
 
 main :: proc() {
+	t: type = Alias;
 	print_int(1);
 }

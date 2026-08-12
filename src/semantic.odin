@@ -4,7 +4,9 @@
 package lokec
 
 import "base:runtime"
+import "core:fmt"
 import "core:mem"
+import "core:strings"
 
 Identifier_Id :: distinct u32
 Symbol_Id     :: distinct u32
@@ -16,20 +18,61 @@ INVALID_SYMBOL     :: Symbol_Id(0)
 INVALID_TYPE       :: Type_Id(0)
 INVALID_PACKAGE    :: Package_Id(0)
 
-TYPE_VOID        :: Type_Id(1)
-TYPE_UNTYPED_INT :: Type_Id(2)
-TYPE_INT         :: Type_Id(3)
-TYPE_TYPE        :: Type_Id(4)
+// The predeclared types, in the order `init_semantic_stores` appends them.
+// Every one of these is a distinct identity: `int` is not `i64` and `rune` is
+// not `i32`, so an assignment between them needs a written conversion.
+TYPE_VOID     :: Type_Id(1)
+TYPE_BOOL     :: Type_Id(2)
+TYPE_I8       :: Type_Id(3)
+TYPE_I16      :: Type_Id(4)
+TYPE_I32      :: Type_Id(5)
+TYPE_I64      :: Type_Id(6)
+TYPE_I128     :: Type_Id(7)
+TYPE_U8       :: Type_Id(8)
+TYPE_U16      :: Type_Id(9)
+TYPE_U32      :: Type_Id(10)
+TYPE_U64      :: Type_Id(11)
+TYPE_U128     :: Type_Id(12)
+TYPE_INT      :: Type_Id(13)
+TYPE_UINT     :: Type_Id(14)
+TYPE_UINTPTR  :: Type_Id(15)
+TYPE_F16      :: Type_Id(16)
+TYPE_F32      :: Type_Id(17)
+TYPE_F64      :: Type_Id(18)
+TYPE_RUNE     :: Type_Id(19)
+TYPE_RAWPTR   :: Type_Id(20)
+TYPE_TYPE     :: Type_Id(21)
+
+// Deferred to M5/M6, but predeclared: a program that names one gets `L0350`
+// rather than "unknown type", which would be a lie.
+TYPE_STRING   :: Type_Id(22)
+TYPE_TYPEID   :: Type_Id(23)
+TYPE_ANY_VIEW :: Type_Id(24)
+
+TYPE_UNTYPED_INT   :: Type_Id(25)
+TYPE_UNTYPED_FLOAT :: Type_Id(26)
+TYPE_UNTYPED_BOOL  :: Type_Id(27)
+TYPE_UNTYPED_RUNE  :: Type_Id(28)
+TYPE_UNTYPED_NIL   :: Type_Id(29)
+
+FIRST_DYNAMIC_TYPE :: Type_Id(30)
 
 Type_Kind :: enum {
 	Invalid,
 	Void,
-	Untyped_Int,
 	Bool,
 	Int,
 	Float,
-	String,
 	Rune,
+	Raw_Pointer,
+	Untyped_Int,
+	Untyped_Float,
+	Untyped_Bool,
+	Untyped_Rune,
+	Untyped_Nil,
+	String,
+	Typeid,
+	Any_View,
 	Pointer,
 	Multi_Pointer,
 	Slice,
@@ -53,12 +96,29 @@ Type_Info :: struct {
 	element:    Type_Id,
 	key:        Type_Id,
 	count:      u64,
+	// Scalar shape. `bits` is the width in bits of an integer, float, rune or
+	// enum backing; `signed` distinguishes `i32` from `u32`.
+	bits:       u16,
+	signed:     bool,
 	mutable:    bool,
+	// Struct fields and enum members, in declaration order. Each symbol carries
+	// its own type, index, and (for an enum member) discriminant.
+	fields:     []Symbol_Id,
 	parameters: []Type_Id,
 	param_modes: []Param_Mode,
 	results:    []Type_Id,
 	result_inout: []bool,
 	convention: string,
+	// Set once the finite-size check has visited this nominal type, so a cycle
+	// is reported at one place instead of once per reference.
+	size_state: Size_State,
+}
+
+Size_State :: enum {
+	Unchecked,
+	Checking,
+	Finite,
+	Cyclic,
 }
 
 Type_Key :: struct {
@@ -66,6 +126,20 @@ Type_Key :: struct {
 	element: Type_Id,
 	key:     Type_Id,
 	count:   u64,
+}
+
+// The one target M2 compiles for. Checker and emitter read the same widths, so
+// `int` cannot mean 64 bits in one and 32 in the other.
+Target_Info :: struct {
+	triple:       string,
+	pointer_bits: u16,
+	int_bits:     u16,
+}
+
+WINDOWS_X64 :: Target_Info {
+	triple       = "x86_64-pc-windows-msvc",
+	pointer_bits = 64,
+	int_bits     = 64,
 }
 
 Const_Kind :: enum {
@@ -77,20 +151,144 @@ Const_Kind :: enum {
 	Rune,
 	Nil,
 	Type,
+	Aggregate,
 }
 
-// Text is source/compilation backed. M2 can replace integer/float payloads
-// with arbitrary-precision values without changing AST or symbol identity.
+// Struct and array constants. Held behind a pointer so `Const_Value` stays a
+// fixed-size value type that an AST node can embed.
+Const_Aggregate :: struct {
+	type:     Type_Id,
+	elements: []Const_Value,
+}
+
+// Text is source/compilation backed; `integer` is arena-owned and immutable
+// after publication (see `src/bigint.odin`).
 Const_Value :: struct {
 	kind:       Const_Kind,
-	integer:    i64,
+	integer:    Big_Int, // Integer and Rune
 	float:      f64,
+	float_bits: u16,     // the semantic width a Float was last rounded to
+	boolean:    bool,
 	text:       string,
 	type_value: Type_Id,
+	aggregate:  ^Const_Aggregate,
 }
 
-integer_const :: proc(value: i64) -> Const_Value {
+integer_const :: proc(c: ^Compiler, value: Big_Int) -> Const_Value {
 	return Const_Value{kind = .Integer, integer = value}
+}
+
+int_const :: proc(c: ^Compiler, value: i64) -> Const_Value {
+	return Const_Value{kind = .Integer, integer = bi_from_i64(c, value)}
+}
+
+rune_const :: proc(c: ^Compiler, value: Big_Int) -> Const_Value {
+	return Const_Value{kind = .Rune, integer = value}
+}
+
+bool_const :: proc(value: bool) -> Const_Value {
+	return Const_Value{kind = .Boolean, boolean = value}
+}
+
+float_const :: proc(value: f64, bits: u16) -> Const_Value {
+	return Const_Value{kind = .Float, float = round_float(value, bits), float_bits = bits}
+}
+
+nil_const :: proc() -> Const_Value {
+	return Const_Value{kind = .Nil}
+}
+
+type_const :: proc(type: Type_Id) -> Const_Value {
+	return Const_Value{kind = .Type, type_value = type}
+}
+
+// A typed float operation rounds to its own width after every step: folding an
+// `f32` expression entirely in `f64` and rounding once at the end can disagree
+// with what the same expression computes at runtime.
+round_float :: proc(value: f64, bits: u16) -> f64 {
+	switch bits {
+	case 16:
+		return f16_bits_to_f64(f64_to_f16_bits(value))
+	case 32:
+		return f64(f32(value))
+	}
+	return value
+}
+
+// IEEE-754 binary16, rounding to nearest with ties to even.
+//
+// Odin's own `f16(x)` conversion rounds halfway cases away from zero — it turns
+// 2049 into 2050 where the hardware `fadd half` LLVM emits produces 2048. Every
+// folded `f16` constant would then disagree with the same expression evaluated
+// at runtime, so the conversion is done here instead.
+f64_to_f16_bits :: proc(value: f64) -> u16 {
+	pattern := transmute(u64)value
+	sign := u16((pattern >> 48) & 0x8000)
+	exponent := int((pattern >> 52) & 0x7ff)
+	mantissa := pattern & 0x000f_ffff_ffff_ffff
+
+	if exponent == 0x7ff {
+		return mantissa != 0 ? sign | 0x7e00 : sign | 0x7c00 // NaN, or infinity
+	}
+	if exponent == 0 {
+		return sign // zero, or an f64 subnormal, which is far below f16's range
+	}
+
+	unbiased := exponent - 1023
+	if unbiased > 15 {
+		return sign | 0x7c00 // beyond f16's largest finite value
+	}
+	significand := mantissa | (u64(1) << 52) // 53 bits, implicit bit included
+	target_exponent := unbiased + 15
+	shift := 42 // 52 explicit bits down to f16's 10
+	if target_exponent <= 0 {
+		// An f16 subnormal: the implicit bit moves into the stored mantissa.
+		shift = 43 - target_exponent
+		if shift > 63 {
+			return sign
+		}
+		target_exponent = 0
+	}
+
+	dropped := significand & ((u64(1) << u64(shift)) - 1)
+	result := significand >> u64(shift)
+	halfway := u64(1) << u64(shift - 1)
+	if dropped > halfway || (dropped == halfway && (result & 1) != 0) {
+		result += 1
+	}
+	if target_exponent == 0 {
+		// Rounding may have carried a subnormal up to the smallest normal, whose
+		// encoding is the next value in sequence; no special case is needed.
+		return sign | u16(result)
+	}
+	if result >= (u64(1) << 11) {
+		result >>= 1
+		target_exponent += 1
+		if target_exponent >= 31 {
+			return sign | 0x7c00
+		}
+	}
+	return sign | u16(u64(target_exponent) << 10) | u16(result & 0x3ff)
+}
+
+f16_bits_to_f64 :: proc(bits: u16) -> f64 {
+	sign := u64(bits & 0x8000) << 48
+	exponent := int((bits >> 10) & 0x1f)
+	mantissa := u64(bits & 0x3ff)
+
+	switch {
+	case exponent == 0x1f:
+		pattern := sign | 0x7ff0_0000_0000_0000 | (mantissa != 0 ? u64(0x0008_0000_0000_0000) : 0)
+		return transmute(f64)pattern
+	case exponent == 0 && mantissa == 0:
+		return transmute(f64)sign
+	case exponent == 0:
+		// Subnormal: `mantissa * 2^-24`, exact in f64 both times.
+		magnitude := f64(mantissa) / 16777216.0
+		return sign != 0 ? -magnitude : magnitude
+	}
+	pattern := sign | (u64(exponent - 15 + 1023) << 52) | (mantissa << 42)
+	return transmute(f64)pattern
 }
 
 Resolution_Kind :: enum {
@@ -114,6 +312,19 @@ Value_Category :: enum {
 	Value,
 	Place,
 	Type,
+}
+
+// Why a readable place cannot be assigned to. A value parameter is addressable
+// but immutable; a composite literal is addressable temporary storage; neither
+// fact follows from the other, so the checker records both plus this reason
+// (m2-plan decision "Place model").
+Immutable_Reason :: enum {
+	None,
+	Constant,
+	Value_Parameter,
+	Temporary,
+	Discard,
+	Not_A_Place,
 }
 
 Resolution :: struct {
@@ -146,9 +357,23 @@ Symbol :: struct {
 	params:      []Type_Id,
 	results:     []Type_Id,
 	proc_type:   Type_Id,
+	// Flattened one entry per parameter name, so `proc(a, b: int)` has two of
+	// each. Defaults are the declaration's syntax, evaluated at the call site.
+	param_symbols:  []Symbol_Id,
+	param_defaults: []Expr,
+	result_symbols: []Symbol_Id,
 	members:     []Symbol_Id,
 	decl:        ^Decl,
 	pkg:         Package_Id,
+	// Field or enum-member position in its owning type; parameter position in
+	// its signature.
+	index:       u32,
+	mode:        Param_Mode,
+	// The declaring procedure literal, for the capture check in step 6.
+	owner_proc:  rawptr,
+	// A value parameter is immutable storage; an `inout` parameter is a mutable
+	// alias. Both are addressable.
+	immutable:   bool,
 }
 
 Scope_Kind :: enum {
@@ -162,6 +387,9 @@ Scope :: struct {
 	parent: ^Scope,
 	names:  map[Identifier_Id]Symbol_Id,
 	kind:   Scope_Kind,
+	// The procedure literal this scope belongs to, or nil at package/universe
+	// level. Used to detect a capture across a procedure-literal boundary.
+	owner_proc: rawptr,
 }
 
 Operator_Set :: struct {
@@ -182,6 +410,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		return
 	}
 	c.semantic_initialized = true
+	c.target = WINDOWS_X64
 	// This arena backs maps — the identifier and type indices, every scope's
 	// names, a package's operators. Odin's map asserts its allocation is
 	// cache-line aligned, and `Dynamic_Arena` ignores the alignment an
@@ -205,13 +434,41 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.packages = make([dynamic]Package, 0, 8, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
+	pointer_bits := c.target.pointer_bits
+	int_bits := c.target.int_bits
 	append(&c.types,
 		Type_Info{kind = .Invalid},
 		Type_Info{kind = .Void},
-		Type_Info{kind = .Untyped_Int},
-		Type_Info{kind = .Int},
+		Type_Info{kind = .Bool, bits = 8},
+		Type_Info{kind = .Int, bits = 8, signed = true},
+		Type_Info{kind = .Int, bits = 16, signed = true},
+		Type_Info{kind = .Int, bits = 32, signed = true},
+		Type_Info{kind = .Int, bits = 64, signed = true},
+		Type_Info{kind = .Int, bits = 128, signed = true},
+		Type_Info{kind = .Int, bits = 8},
+		Type_Info{kind = .Int, bits = 16},
+		Type_Info{kind = .Int, bits = 32},
+		Type_Info{kind = .Int, bits = 64},
+		Type_Info{kind = .Int, bits = 128},
+		Type_Info{kind = .Int, bits = int_bits, signed = true},
+		Type_Info{kind = .Int, bits = int_bits},
+		Type_Info{kind = .Int, bits = pointer_bits},
+		Type_Info{kind = .Float, bits = 16},
+		Type_Info{kind = .Float, bits = 32},
+		Type_Info{kind = .Float, bits = 64},
+		Type_Info{kind = .Rune, bits = 32, signed = true},
+		Type_Info{kind = .Raw_Pointer, bits = pointer_bits},
 		Type_Info{kind = .Type},
+		Type_Info{kind = .String},
+		Type_Info{kind = .Typeid},
+		Type_Info{kind = .Any_View},
+		Type_Info{kind = .Untyped_Int},
+		Type_Info{kind = .Untyped_Float},
+		Type_Info{kind = .Untyped_Bool},
+		Type_Info{kind = .Untyped_Rune},
+		Type_Info{kind = .Untyped_Nil},
 	)
+	assert(Type_Id(len(c.types)) == FIRST_DYNAMIC_TYPE, "predeclared type table is out of step with its IDs")
 	append(&c.symbols, Symbol{})
 	append(&c.packages, Package{})
 }
@@ -289,6 +546,7 @@ intern_proc_type :: proc(
 	copy(inout_copy, result_inout)
 	return new_type(c, Type_Info {
 		kind          = .Proc,
+		bits          = c.target.pointer_bits,
 		parameters    = parameter_copy,
 		param_modes   = mode_copy,
 		results       = result_copy,
@@ -328,6 +586,22 @@ intern_type :: proc(c: ^Compiler, key: Type_Key, value: Type_Info) -> Type_Id {
 	return id
 }
 
+pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+	return intern_type(
+		c,
+		Type_Key{kind = .Pointer, element = element},
+		Type_Info{kind = .Pointer, element = element, bits = c.target.pointer_bits},
+	)
+}
+
+array_of :: proc(c: ^Compiler, element: Type_Id, count: u64) -> Type_Id {
+	return intern_type(
+		c,
+		Type_Key{kind = .Array, element = element, count = count},
+		Type_Info{kind = .Array, element = element, count = count},
+	)
+}
+
 type_of :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
 	index := int(id)
 	if index < 0 || index >= len(c.types) {
@@ -336,23 +610,355 @@ type_of :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
 	return &c.types[index]
 }
 
+type_kind :: proc(c: ^Compiler, id: Type_Id) -> Type_Kind {
+	info := type_of(c, id)
+	return info == nil ? .Invalid : info.kind
+}
+
+// The number of value bits in a scalar type. An enum reports its backing width.
+type_bits :: proc(c: ^Compiler, id: Type_Id) -> int {
+	info := type_of(c, id)
+	if info == nil {
+		return 0
+	}
+	if info.kind == .Enum || info.kind == .Distinct {
+		return type_bits(c, info.element)
+	}
+	return int(info.bits)
+}
+
+type_signed :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	info := type_of(c, id)
+	if info == nil {
+		return false
+	}
+	if info.kind == .Enum || info.kind == .Distinct {
+		return type_signed(c, info.element)
+	}
+	return info.signed
+}
+
+// A distinct type is a fresh identity but keeps the *shape* of what it wraps,
+// which is what layout, folding, and lowering need.
+type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
+	current := id
+	for i := 0; i < 64; i += 1 {
+		info := type_of(c, current)
+		if info == nil || info.kind != .Distinct || info.element == INVALID_TYPE {
+			return current
+		}
+		current = info.element
+	}
+	return current
+}
+
+type_is_untyped :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, id) {
+	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
+		return true
+	}
+	return false
+}
+
+type_is_integer :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Int, .Untyped_Int:
+		return true
+	}
+	return false
+}
+
+type_is_rune :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Rune, .Untyped_Rune:
+		return true
+	}
+	return false
+}
+
+type_is_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Float, .Untyped_Float:
+		return true
+	}
+	return false
+}
+
+type_is_boolean :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Bool, .Untyped_Bool:
+		return true
+	}
+	return false
+}
+
+type_is_enum :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	return type_kind(c, type_underlying(c, id)) == .Enum
+}
+
+type_is_pointer :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Pointer, .Raw_Pointer, .Proc:
+		return true
+	}
+	return false
+}
+
+// Integer-like for the purposes of arithmetic: an enum is deliberately absent
+// (design.md "Arithmetic operators").
+type_is_numeric :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	return type_is_integer(c, id) || type_is_float(c, id) || type_is_rune(c, id)
+}
+
+type_is_scalar :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
+		return true
+	}
+	return false
+}
+
+type_is_aggregate :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Struct, .Array:
+		return true
+	}
+	return false
+}
+
+// design.md "Comparison operators". Aggregates are comparable when every leaf
+// is; that recursion is what the backend then generates.
+type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
+		return true
+	case .Array:
+		return type_is_comparable(c, info.element)
+	case .Struct:
+		for field in info.fields {
+			symbol := symbol_of(c, field)
+			if symbol == nil || !type_is_comparable(c, symbol.type) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	#partial switch type_kind(c, type_underlying(c, id)) {
+	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune:
+		return true
+	}
+	return false
+}
+
+// The type an untyped value takes when nothing else selects one
+// (design.md "Untyped types").
+default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
+	#partial switch type_kind(c, id) {
+	case .Untyped_Int:
+		return TYPE_INT
+	case .Untyped_Float:
+		return TYPE_F64
+	case .Untyped_Bool:
+		return TYPE_BOOL
+	case .Untyped_Rune:
+		return TYPE_RUNE
+	case .Untyped_Nil:
+		return INVALID_TYPE // `x := nil` has no type to infer
+	}
+	return id
+}
+
+// Does M2 compile a value of this type at all? Composite deferred syntax still
+// resolves to a real `Type_Id`, so this walks rather than looking for absence
+// (m2-plan decision "Deferred types").
+type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	return type_is_supported_depth(c, id, 0)
+}
+
+@(private = "file")
+type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
+	if depth > 32 {
+		return true // a recursive nominal type; its own declaration is checked once
+	}
+	info := type_of(c, id)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Invalid:
+		return false
+	case .Void, .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Type,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
+		return true
+	case .String, .Typeid, .Any_View, .Multi_Pointer, .Slice, .Dynamic_Array,
+	     .Map, .Union, .Interface, .Dyn:
+		return false
+	case .Pointer, .Array, .Distinct:
+		return type_is_supported_depth(c, info.element, depth + 1)
+	case .Enum:
+		return true
+	case .Struct:
+		for field in info.fields {
+			symbol := symbol_of(c, field)
+			if symbol == nil || !type_is_supported_depth(c, symbol.type, depth + 1) {
+				return false
+			}
+		}
+		return true
+	case .Proc:
+		for parameter in info.parameters {
+			if !type_is_supported_depth(c, parameter, depth + 1) {
+				return false
+			}
+		}
+		for result in info.results {
+			if !type_is_supported_depth(c, result, depth + 1) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
 type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 	switch id {
 	case INVALID_TYPE:
 		return "<invalid>"
 	case TYPE_VOID:
 		return "()"
-	case TYPE_UNTYPED_INT:
-		return "untyped int"
+	case TYPE_BOOL:
+		return "bool"
+	case TYPE_I8:
+		return "i8"
+	case TYPE_I16:
+		return "i16"
+	case TYPE_I32:
+		return "i32"
+	case TYPE_I64:
+		return "i64"
+	case TYPE_I128:
+		return "i128"
+	case TYPE_U8:
+		return "u8"
+	case TYPE_U16:
+		return "u16"
+	case TYPE_U32:
+		return "u32"
+	case TYPE_U64:
+		return "u64"
+	case TYPE_U128:
+		return "u128"
 	case TYPE_INT:
 		return "int"
+	case TYPE_UINT:
+		return "uint"
+	case TYPE_UINTPTR:
+		return "uintptr"
+	case TYPE_F16:
+		return "f16"
+	case TYPE_F32:
+		return "f32"
+	case TYPE_F64:
+		return "f64"
+	case TYPE_RUNE:
+		return "rune"
+	case TYPE_RAWPTR:
+		return "rawptr"
 	case TYPE_TYPE:
 		return "type"
+	case TYPE_STRING:
+		return "string"
+	case TYPE_TYPEID:
+		return "typeid"
+	case TYPE_ANY_VIEW:
+		return "any_view"
+	case TYPE_UNTYPED_INT:
+		return "untyped int"
+	case TYPE_UNTYPED_FLOAT:
+		return "untyped float"
+	case TYPE_UNTYPED_BOOL:
+		return "untyped bool"
+	case TYPE_UNTYPED_RUNE:
+		return "untyped rune"
+	case TYPE_UNTYPED_NIL:
+		return "untyped nil"
 	}
-	if info := type_of(c, id); info != nil && info.name != INVALID_IDENTIFIER {
+	info := type_of(c, id)
+	if info == nil {
+		return "<invalid>"
+	}
+	if info.name != INVALID_IDENTIFIER {
 		return identifier_text(c, info.name)
 	}
+	#partial switch info.kind {
+	case .Pointer:
+		return fmt.aprintf("^%s", type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Multi_Pointer:
+		return fmt.aprintf("[^]%s", type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Array:
+		return fmt.aprintf("[%d]%s", info.count, type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Slice:
+		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Dynamic_Array:
+		return fmt.aprintf("[dynamic]%s", type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Map:
+		return fmt.aprintf("map[%s]%s", type_name(c, info.key), type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Distinct:
+		return fmt.aprintf("distinct %s", type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Struct:
+		return "struct"
+	case .Enum:
+		return "enum"
+	case .Union:
+		return "union"
+	case .Interface:
+		return "interface"
+	case .Proc:
+		return proc_type_name(c, info)
+	}
 	return "<type>"
+}
+
+@(private = "file")
+proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
+	b := strings.builder_make(c.semantic_allocator)
+	strings.write_string(&b, "proc(")
+	for parameter, index in info.parameters {
+		if index > 0 {
+			strings.write_string(&b, ", ")
+		}
+		if index < len(info.param_modes) && info.param_modes[index] == .Inout {
+			strings.write_string(&b, "inout ")
+		}
+		strings.write_string(&b, type_name(c, parameter))
+	}
+	strings.write_string(&b, ")")
+	if len(info.results) == 1 {
+		strings.write_string(&b, " -> ")
+		strings.write_string(&b, type_name(c, info.results[0]))
+	} else if len(info.results) > 1 {
+		strings.write_string(&b, " -> (")
+		for result, index in info.results {
+			if index > 0 {
+				strings.write_string(&b, ", ")
+			}
+			strings.write_string(&b, type_name(c, result))
+		}
+		strings.write_string(&b, ")")
+	}
+	return strings.to_string(b)
 }
 
 new_scope :: proc(c: ^Compiler, parent: ^Scope, kind: Scope_Kind) -> ^Scope {
@@ -361,6 +967,7 @@ new_scope :: proc(c: ^Compiler, parent: ^Scope, kind: Scope_Kind) -> ^Scope {
 	scope.parent = parent
 	scope.kind = kind
 	scope.names = make(map[Identifier_Id]Symbol_Id, c.semantic_allocator)
+	scope.owner_proc = parent == nil ? nil : parent.owner_proc
 	return scope
 }
 

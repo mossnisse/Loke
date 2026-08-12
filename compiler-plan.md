@@ -100,14 +100,15 @@ generic args left for name resolution).
 Group files by directory into packages (one package per dir, matching package
 clause), discover imports to a fixed point, build the import DAG, **reject
 cycles** with the import path (design §Import cycles), and topologically order it
-for `@(init)`. This is staged orchestration rather than a one-shot phase:
+for dependency processing. This is staged orchestration rather than a one-shot
+phase:
 unconditional imports extend the graph first; once their packages are available,
 the header-level parts of B6/B8/B10 resolve each file-scope `when` condition and
 activate only the selected top-level items. Newly activated imports extend the
 graph, and the process repeats until no edge is added. A `when` condition cannot
 bootstrap itself from an import inside one of its own branches.
 - **In:** root-package ASTs + target/config constants. **Out:** selected ASTs,
-  finalized package DAG, resolved import edges, deterministic init order.
+  finalized package DAG, resolved import edges, deterministic dependency order.
 - **Loke-specific:** `core:`/`foreign import` resolution; conditional imports in
   file-scope `when`; cycle diagnostics as paths of active import statements.
 
@@ -182,7 +183,7 @@ materialize constants used by non-constant indexing or slicing.
 - **Loke-specific:** default deep-copy for mutable owners (design §Value-semantic
   assignment), immutable `string` may share backing (atomic count), file-scope &
   `static` owners never auto-dropped, `thread_local` dropped on normal return only,
-  `@(fini)` excluded from panic path.
+  and `os.exit` bypasses lexical cleanup.
 
 #### B12. Borrow & lifetime checker
 Mostly procedure-local dataflow over the same CFG view. Enforce "the one rule"
@@ -262,10 +263,10 @@ as each milestone starts.
 |---|------|----------------|
 | **M0** | **Vertical slice.** Driver + source mgr + diagnostics skeleton + lexer + parser for a tiny subset (`main`, int vars, arithmetic, a builtin print) + trivial type check + **a running Windows exe via the LLVM textual path** ([A5](#a-big-decisions) — least code to a first exe). | `main :: proc(){ ... }` compiles and prints. The whole spine and the backend seam exist. |
 | **M1** | **Full front end.** Complete lexer + parser for *all* of grammar.md with error recovery + a parser/lexer test corpus. | Every grammar construct parses; malformed inputs give good, recovering diagnostics. |
-| **M2** | **Static core semantics.** Name resolution + type system + type checking + overloads/operators for the non-generic, non-managed subset (basics, structs/enums/unions, control flow, procs). Constant folding. | Non-generic programs type-check and run through the M0 backend. |
-| **M3** | **Compile-time engine** ([B10](#b10-compile-time-evaluation-engine)). Constants, file- and procedure-scope `when`, conditional-import discovery, array lengths, enum values, `#assert`/`#config`/`#location`. | Compile-time `proc` evaluation works; discarded `when` branches are not semantically checked, the conditional package graph reaches a stable DAG, and sandbox violations are diagnosed. |
-| **M4** | **Generics & erased views.** `$`/inference, interfaces + `where`, monomorphization, `static foreach`, reflection, `any_view`, `dyn` witnesses. | Generic + interface programs compile and run; `any_view` and `dyn` obey their representation, dispatch, and borrow/escape rules. |
-| **M5** | **Managed memory.** Ownership/move/deep-copy, drop insertion, `defer` ordering, lifecycle hooks, materialization; then borrow and allocator-region checking ([B11](#b11-ownership-move--lifecycle-analysis)/[B12](#b12-borrow--lifetime-checker)). | Owning values, `defer`, `move`, borrows, region-backed owners, and `@(allocator_reset)` behave per spec; invalid escapes/resets and copy costs are diagnosed. |
+| **M2** | **Static core semantics.** Universe/name resolution, built-in type checking and constant folding, plus typed LLVM widening for the non-generic, non-managed core: numeric/Boolean/rune scalars, raw and typed pointers, fixed arrays, structs, enums, distinct and procedure types; assignment, control flow, `defer`, procedures, and procedure values. User-defined operators and unions remain gated. | Programs in the precisely bounded [M2 subset](m2-plan.md#scope) type-check, fold, compile, and run through the textual-LLVM path; deferred outer constructs still produce one non-cascading gate diagnostic. |
+| **M3** | **Compile-time engine** ([B10](#b10-compile-time-evaluation-engine)). Replace M2's hand-written fold dispatch with the typed interpreter; add compile-time procedures, file- and procedure-scope `when`, conditional-import discovery, array lengths/enum values requiring procedure evaluation, and `#assert`/`#config`/`#location`. | Compile-time `proc` evaluation works; discarded `when` branches are not semantically checked, the conditional package graph reaches a stable DAG, and sandbox violations are diagnosed. |
+| **M4** | **User abstractions, generics & erased views.** `impl`/`extend`, procedure groups, user operators/conversions and their conversion-vector ranking; unions, assertions and type switches; runtime/static `foreach` and the iteration protocol; `$`/inference, interfaces + `where`, monomorphization, reflection, `any_view`, and `dyn` witnesses. | User-defined operators and iteration work with concrete and generic types; generic/interface programs compile and run; unions, `any_view`, and `dyn` obey their representation, dispatch, and borrow/escape rules. |
+| **M5** | **Managed memory.** Ownership/move/deep-copy, drop insertion, lifecycle hooks, materialization, and integration of implicit drops with M2's existing `defer` cleanup stack; then borrow and allocator-region checking ([B11](#b11-ownership-move--lifecycle-analysis)/[B12](#b12-borrow--lifetime-checker)). | Owning values, `move`, borrows, region-backed owners, and `@(allocator_reset)` behave per spec; drops and existing defers share the required LIFO order; invalid escapes/resets and copy costs are diagnosed. |
 | **M6** | **MIR + runtime.** Full lowering ([B13](#b13-lowering-to-mir)) + the seed runtime ([B14](#b14-runtime--core-library)): strings, dynamic arrays, maps, panic/unwind. | Real programs using the managed stdlib run correctly. |
 | **M7** | **Release + interop.** LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. | Optimized release builds; C libraries link and call. |
 | **M8** | **Later.** Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
@@ -276,7 +277,10 @@ intentional staged exception: B5 invokes the header-level parts of name/type
 checking and the M3 evaluator until conditional imports stabilize. M5 follows M4
 because drop/move/borrow/region analysis operates on fully resolved,
 monomorphized types. M6 turns those analysis results into durable MIR only once
-everything above is resolved.
+everything above is resolved. User-defined operator resolution lands in M4
+beside named overloads and generics because all three share candidate formation,
+conversion vectors, and the same tie-breakers; M2 implements only the fixed
+built-in operator table.
 
 ---
 

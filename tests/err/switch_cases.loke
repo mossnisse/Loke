@@ -1,0 +1,34 @@
+package main;
+
+Colour :: enum { Red, Green, Blue }
+
+partial :: proc(c: Colour) {
+	switch (c) {
+	case .Red:
+		print_int(1);
+	}
+}
+
+duplicated :: proc(n: int) {
+	switch (n) {
+	case 1:
+		print_int(1);
+	case 1:
+		print_int(2);
+	case:
+		print_int(3);
+	}
+}
+
+open :: proc(n: int) {
+	switch (n) {
+	case 1:
+		print_int(1);
+	}
+}
+
+main :: proc() {
+	partial(Colour.Red);
+	duplicated(1);
+	open(1);
+}

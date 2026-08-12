@@ -1,0 +1,57 @@
+package main;
+
+// design.md "Assignment statements": every right side is evaluated, then every
+// destination, then the writes. A swap therefore needs no temporary.
+side_effect :: proc(value: int) -> int {
+	print_int(value);
+	return value;
+}
+
+index :: proc() -> int {
+	print_int(99);
+	return 1;
+}
+
+main :: proc() {
+	a := 1;
+	b := 2;
+	a, b = b, a;
+	print_int(a);
+	print_int(b);
+
+	// `_` is a destination that binds nothing.
+	c, _ := 3, 4;
+	print_int(c);
+	_ = side_effect(5);
+
+	// Right sides run left to right, before any write.
+	x := 0;
+	y := 0;
+	x, y = side_effect(6), side_effect(7);
+	print_int(x + y);
+
+	// A compound assignment evaluates its destination once.
+	xs := [2]int{10, 20};
+	xs[index()] += 5;
+	print_int(xs[0]);
+	print_int(xs[1]);
+
+	n := 8;
+	n += 1;
+	n -= 2;
+	n *= 3;
+	n /= 2;
+	n %= 7;
+	n <<= 2;
+	n >>= 1;
+	n |= 8;
+	n &= 12;
+	n ~= 5;
+	n &~= 1;
+	print_int(n);
+
+	// `---` leaves storage uninitialised, then it is written.
+	u: int = ---;
+	u = 42;
+	print_int(u);
+}

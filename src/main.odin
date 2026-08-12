@@ -8,11 +8,19 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M1)
+USAGE :: `lokec - the Loke compiler (milestone M2)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
-accept any valid program. Building an executable still covers only the M0
-subset; anything beyond it is reported as L0350.
+accept any valid program.
+
+Building an executable covers the static core: every scalar type, struct, enum,
+fixed array, pointer, distinct type, procedure type and type alias; every
+built-in operator and conversion; assignment, if, for, switch, break, continue,
+defer and return; and procedures with value and inout parameters, defaults,
+named arguments, multiple results and procedure values.
+
+Generics, interfaces, unions, string, slices, maps, impl/extend, foreach,
+import and compile-time procedures parse and report L0350.
 
 usage:
     lokec <file.loke> [options]

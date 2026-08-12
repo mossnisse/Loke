@@ -1,0 +1,15 @@
+L0358
+@8:2
+a value parameter is immutable and cannot be an assignment destination
+L0358
+@13:2
+a constant cannot be an assignment destination
+L0359
+@14:2
+this expression cannot be an assignment destination
+L0359
+@15:2
+a temporary value cannot be an assignment destination
+L0357
+@16:7
+`&` needs an addressable operand

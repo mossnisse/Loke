@@ -1,0 +1,18 @@
+package main;
+
+Point :: struct { x: int, y: int }
+
+CONSTANT :: 5;
+
+immutable :: proc(value: int) {
+	value = 1;
+	print_int(value);
+}
+
+main :: proc() {
+	CONSTANT = 6;
+	1 + 2 = 3;
+	Point{1, 2} = Point{3, 4};
+	p := &(1 + 2);
+	immutable(p^);
+}

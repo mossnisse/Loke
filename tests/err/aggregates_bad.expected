@@ -1,0 +1,24 @@
+L0363
+@10:12
+`Point` has no field `z`
+L0376
+@11:24
+`Point` has 2 fields
+L0376
+@12:25
+field `x` is set twice
+L0372
+@13:25
+a positional element cannot follow a named one
+L0361
+@16:15
+index 4 is out of range for `[4]int`
+L0361
+@17:15
+index -1 is out of range for `[4]int`
+L0385
+@19:7
+needs an expected enum type here
+L0363
+@23:12
+`int` has no field `x`

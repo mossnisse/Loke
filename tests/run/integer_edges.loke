@@ -1,8 +1,10 @@
 package main;
 
-MINIMUM :: -9223372036854775807 - 1;
-WRAPPED_QUOTIENT :: MINIMUM / -1;
-WRAPPED_REMAINDER :: MINIMUM % -1;
+// `MIN / -1` wraps for a *typed* operand: design.md fixes that rule per width.
+// Untyped folding stays exact, so these constants are written with their type.
+MINIMUM : int : -9223372036854775807 - 1;
+WRAPPED_QUOTIENT : int : MINIMUM / -1;
+WRAPPED_REMAINDER : int : MINIMUM % -1;
 
 main :: proc() {
 	left := 15;

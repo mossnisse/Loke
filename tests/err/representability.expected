@@ -1,0 +1,12 @@
+L0352
+@4:10
+256 is not representable by `u8`
+L0352
+@5:10
+-129 is not representable by `i8`
+L0352
+@6:11
+-1 is not representable by `u16`
+L0352
+@7:12
+1114112000000 is not representable by `rune`

@@ -1,0 +1,15 @@
+L0368
+@4:2
+`break` is only valid inside a loop or a switch
+L0368
+@5:2
+`continue` is only valid inside a loop
+L0369
+@9:2
+a deferred statement cannot `return`
+L0369
+@11:3
+a deferred statement cannot leave the construct it is registered in
+L0369
+@14:3
+a deferred statement cannot contain another `defer`

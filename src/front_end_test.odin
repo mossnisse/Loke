@@ -130,9 +130,9 @@ main :: proc() { }`
 	add_package_file(&c, pkg_id, &f)
 	check_package(&c, pkg_id)
 
-	// The M1 executable gate still reports the type declaration as unsupported;
-	// the semantic foundation must nevertheless remain complete and stable.
-	testing.expectf(t, c.error_count == 1 && c.diagnostics[0].code == "L0350", "expected only the M1 backend gate")
+	// M2 compiles a pointer-recursive struct, so this now checks clean; the
+	// semantic foundation underneath it is the same one M1 established.
+	testing.expectf(t, c.error_count == 0, "expected no diagnostics, got %d", c.error_count)
 	node_decl := f.items[0].(^Decl)
 	node_symbol := symbol_of(&c, node_decl.symbols[0])
 	record := node_decl.values[0].(^Type_Record)

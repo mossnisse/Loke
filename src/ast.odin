@@ -19,6 +19,16 @@ Expr_Base :: struct {
 	is_const:      bool,
 	resolution:    Resolution,
 	value_category: Value_Category,
+	// Independent place facts (m2-plan decision "Place model"). A value
+	// parameter is addressable and not assignable; a composite literal is
+	// addressable temporary storage; `_` is neither. One bit cannot say that.
+	addressable:  bool,
+	assignable:   bool,
+	immutable:    Immutable_Reason,
+	// A call to a procedure with several results. `type` stays the
+	// exactly-one-value type, so nothing that expects one value silently reads
+	// the first of many.
+	result_types: []Type_Id,
 	// Set at construction when this node or any child is an error node, so
 	// recovery never has to re-walk a subtree to find out.
 	has_error:   bool,
@@ -144,6 +154,9 @@ Expr_Call :: struct {
 	using base: Expr_Base,
 	callee:     Expr,
 	args:       []Argument,
+	// Arguments in parameter order after names and defaults are resolved. This
+	// is what the backend evaluates; `args` stays the written syntax.
+	bound:      []Expr,
 }
 
 // The suffixes that take no operand: `^` and `or_return`.
@@ -328,6 +341,11 @@ Expr_Proc :: struct {
 	where_clauses: []Expr,
 	body:          ^Block,
 	bodiless:      bool,
+	// The procedure this literal becomes. A nested literal is hoisted to its own
+	// module function under this symbol.
+	symbol:        Symbol_Id,
+	// Cleanup slots this body needs, allocated in the entry block.
+	defer_count:   int,
 }
 
 // `proc { a, b }`
@@ -635,6 +653,9 @@ Stmt_Switch :: struct {
 Stmt_Defer :: struct {
 	using base: Node_Base,
 	stmt:       Stmt,
+	// Position of this registration's flag in the enclosing procedure's entry
+	// block, assigned while checking the body.
+	slot:       int,
 }
 
 // `"inout"? Expression`

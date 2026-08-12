@@ -188,8 +188,8 @@ codegen to this one file is what makes it replaceable then.
 - Preamble: `target triple = "x86_64-pc-windows-msvc"`, `declare i32 @printf(ptr, ...)`,
   and a private `c"%lld\0A\00"` format constant.
 - Loke `main` emits as `@loke_main`; emit a C `define i32 @main()` wrapper that
-  calls it and returns 0. The wrapper is where `@(init)`/`@(fini)` and runtime
-  startup hang later, so the shape is right from day one.
+  calls it and returns 0. The wrapper is where internal runtime startup belongs,
+  so the shape is right from day one.
 - **Every local is an `alloca` plus load/store.** No SSA construction, no phi
   nodes — LLVM's `mem2reg` does that. This is the single largest laziness win in
   M0; do not hand-roll it.

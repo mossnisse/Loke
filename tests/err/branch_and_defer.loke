@@ -1,0 +1,22 @@
+package main;
+
+stray :: proc() {
+	break;
+	continue;
+}
+
+escaping :: proc() -> int {
+	defer return 1;
+	for (i := 0; i < 2; i += 1) {
+		defer break;
+	}
+	defer {
+		defer print_int(1);
+	}
+	return 0;
+}
+
+main :: proc() {
+	stray();
+	print_int(escaping());
+}

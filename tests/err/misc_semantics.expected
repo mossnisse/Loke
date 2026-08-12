@@ -1,0 +1,15 @@
+L0352
+@3:27
+300 is not representable by `u8`
+L0304
+@3:35
+`B` is already a member of this enum
+L0384
+@5:10
+an array length must be a non-negative constant
+L0308
+@8:2
+2 names but 1 initialiser
+L0319
+@9:9
+division by zero

@@ -1,0 +1,160 @@
+package main;
+
+Colour :: enum { Red, Green, Blue }
+
+main :: proc() {
+	// `if` with an init statement scoped across both branches.
+	if (n := 3; n > 2) {
+		print_int(n);
+	} else {
+		print_int(-n);
+	}
+
+	// else-if chains.
+	classify(0);
+	classify(5);
+	classify(50);
+
+	// All three `for` headers.
+	sum := 0;
+	for (i := 1; i <= 4; i += 1) {
+		sum += i;
+	}
+	print_int(sum);
+
+	j := 0;
+	for (j < 3) {
+		j += 1;
+	}
+	print_int(j);
+
+	k := 0;
+	for (;;) {
+		k += 1;
+		if (k == 5) { break; }
+	}
+	print_int(k);
+
+	// Nested loops: `break` and `continue` target the innermost construct.
+	total := 0;
+	for (a := 0; a < 3; a += 1) {
+		for (b := 0; b < 3; b += 1) {
+			if (b == 1) { continue; }
+			if (b == 2) { break; }
+			total += 1;
+		}
+	}
+	print_int(total);
+
+	// A value switch over an enum, exhaustive with no default.
+	describe(Colour.Red);
+	describe(Colour.Green);
+	describe(Colour.Blue);
+
+	// Ranges, multiple values per case, and a default. Non-constant cases are
+	// tested in source order.
+	bucket(0);
+	bucket(4);
+	bucket(7);
+	bucket(11);
+	bucket(99);
+
+	// `break` inside a switch leaves the switch, not the loop around it.
+	count := 0;
+	for (i := 0; i < 4; i += 1) {
+		switch (i) {
+		case 1:
+			break;
+		case:
+			count += 1;
+		}
+	}
+	print_int(count);
+
+	// Deferred statements run in reverse registration order at every exit.
+	print_int(scoped());
+	conditional(0);
+	conditional(1);
+	loop_defers();
+
+	// Checking unreachable statements must not make a completed return path
+	// appear to fall through.
+	print_int(return_before_unreachable());
+}
+
+classify :: proc(n: int) {
+	if (n == 0) {
+		print_int(100);
+	} else if (n < 10) {
+		print_int(200);
+	} else {
+		print_int(300);
+	}
+}
+
+describe :: proc(c: Colour) {
+	switch (c) {
+	case .Red:
+		print_int(1);
+	case .Green:
+		print_int(2);
+	case .Blue:
+		print_int(3);
+	}
+}
+
+// The default is written first, and still runs only when nothing matched.
+bucket :: proc(n: int) {
+	switch (n) {
+	case:
+		print_int(40);
+	case 0, 1, 2:
+		print_int(10);
+	case 3 ..= 5:
+		print_int(20);
+	case 6 ..< 10:
+		print_int(30);
+	}
+}
+
+// A defer runs on the way out of its own scope, after the result has moved to
+// the result temporary.
+scoped :: proc() -> int {
+	value := 1;
+	defer value = 99;
+	return value;
+}
+
+// A registration that is never reached does not run.
+conditional :: proc(n: int) {
+	defer print_int(1);
+	if (n == 0) {
+		return;
+	}
+	defer print_int(2);
+	print_int(3);
+}
+
+// Storage is reused across iterations, so each activation resets its flag.
+loop_defers :: proc() {
+	for (i := 0; i < 3; i += 1) {
+		defer print_int(i);
+		if (i == 1) { continue; }
+		print_int(i + 10);
+	}
+	// A switch case is a scope of its own, and resets its own flags too.
+	for (i := 0; i < 3; i += 1) {
+		switch (i) {
+		case 0:
+			defer print_int(100);
+			print_int(0);
+		case:
+			print_int(i);
+		}
+	}
+}
+
+return_before_unreachable :: proc() -> int {
+	return 77;
+	print_int(999);
+}

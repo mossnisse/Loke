@@ -1,6 +1,11 @@
 package main;
 
 main :: proc() {
-	x := 1 == 2;
-	print_int(x);
+	// A type switch is still deferred; the gate names the outer statement and
+	// does not descend into it.
+	x := 1;
+	switch (t in x) {
+	case int:
+		print_int(0);
+	}
 }

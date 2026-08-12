@@ -110,8 +110,7 @@ an untyped token macro system by default.
 Version 1 makes a panic unrecoverable: unwinding runs `defer`s and managed
 `drop`s for cleanup, but there is no `recover`, `try`, or catch construct that
 lets Loke code observe or resume from one. The [panic semantics](design.md#panics-and-unwinding)
-are otherwise fully defined, including the two build-selected strategies and the
-rule that `@(fini)` does not run on this path.
+are otherwise fully defined, including the two build-selected strategies.
 
 The open question is whether a later version should add a bounded recovery
 mechanism — a per-thread catch at a task or request boundary, say — without
@@ -144,6 +143,17 @@ Encapsulation and abstractions must still be important so they can work on an pa
 
 add an garbage collected allocator as an alternative?
 
+## memory managment
+
+Could the compiler move a large fixed-size local variables to the heap? Does it need to be made to an "Owning value"?
+When marking variables as dead or alive can we get away without zero values and stop undefined behaviour at compile time?
+Can the dead or alive realy be don at compile time, doing it in runtime don't that add an byte for each varibale?
+Should all non pointer and slice variables be owners and pointers and slices to manages variables be borows, pointers to unmanaged variable could be either?
+
+## defaykt allocator
+
+I think the default allocator and logger should be choosen in the source code in the main package, is that an good idea and what effect does that have? So must be befor the import statements
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
@@ -174,10 +184,10 @@ automatic scope cleanup. `manual` suppresses only that automatic cleanup, while
 File-scope and `static` managed values are not automatically dropped. A global
 destruction order across packages would make shutdown depend on initialization
 order and on whether other threads can still reach a value. Externally
-observable process cleanup therefore uses `@(fini)` or an explicit owner in
-`main`. A managed `thread_local` does have a natural local endpoint and is
-dropped on normal thread return, in reverse initialization order; aborting
-termination makes no such guarantee.
+observable process cleanup therefore uses an explicit owner, `defer`, or
+`drop` in `main`. A managed `thread_local` does have a natural local endpoint
+and is dropped on normal thread return, in reverse initialization order;
+aborting termination makes no such guarantee.
 
 ### Storage modifiers instead of storage attributes
 
@@ -236,7 +246,7 @@ to the destination merely because the source happens to be dead. Default deep
 copy, explicit move, and a warning on expensive copies keep both semantics and
 cost visible.
 
-### Panics run cleanup, not shutdown
+### Panics run lexical cleanup
 
 Odin's managed model has no destructors, so a crash has nothing to unwind. Loke
 adds managed `drop` and lifecycle hooks, which forces a decision Odin never had
@@ -244,11 +254,9 @@ to make: what runs when a program panics. The [answer](design.md#panics-and-unwi
 is that a panic under the unwinding strategy runs exactly the cleanup attached to
 live owners and `defer`s as it unwinds the faulting thread — so `defer os.close(f)`
 and a resource's `drop` are reliable when they are on that thread's stack — and
-nothing else. In particular
-`@(fini)` does not run: it is orderly-shutdown code, and running end-of-program
-hooks in a program whose invariants are already known broken tends to compound
-the fault. An owner in `main` is cleaned only when `main` is on the panicking
-thread's stack; a worker panic does not unwind other threads.
+nothing else. Loke has no automatic package shutdown hooks. An owner in `main`
+is cleaned only when `main` is on the panicking thread's stack; a worker panic
+does not unwind other threads.
 
 Two strategies exist because the machinery is not free: hosted builds default to
 `unwind` for the cleanup, while freestanding and embedded builds default to

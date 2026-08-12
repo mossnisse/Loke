@@ -1,0 +1,7 @@
+package main;
+
+main :: proc() {
+	outer := 5;
+	f := proc(a: int) -> int { return a + outer; };
+	print_int(f(1));
+}

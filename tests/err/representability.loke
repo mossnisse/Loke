@@ -1,0 +1,9 @@
+package main;
+
+main :: proc() {
+	a: u8 = 256;
+	b: i8 = -129;
+	c: u16 = -1;
+	d: rune = 1114112000000;
+	print_int(int(a) + int(b) + int(c) + int(d));
+}

@@ -1,0 +1,19 @@
+icmp eq i64 %t
+call void @llvm.trap()
+div.special
+div.normal
+sdiv i64
+icmp uge i64
+select i1
+ashr i32
+sc.rhs
+phi i1
+bounds
+icmp eq ptr
+nil.deref
+extractvalue %struct.Point
+store i1 false, ptr %defer
+store i1 true, ptr %defer
+defer.run
+nil.call
+call i64 %t

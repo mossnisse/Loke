@@ -34,6 +34,11 @@ Parser :: struct {
 	// Set for the top level of a `where` expression, where the next `{` opens
 	// the declaration's body rather than a composite literal.
 	no_composite:   bool,
+	// Set for a constant's value, where a written type *is* the value:
+	// `My_Int :: int` and `Meters :: distinct int` are type aliases
+	// (design.md "Advanced types"). One `parse_postfix` consumes it, so it does
+	// not leak into the operands of a larger expression.
+	type_value:     bool,
 	// Panic mode: set when a construct is abandoned, cleared at the next
 	// statement or item. Stops one failure from reporting once per stack frame.
 	suppress:       bool,
@@ -942,6 +947,12 @@ parse_constant_value :: proc(p: ^Parser) -> Expr {
 		advance(p)
 		return nil
 	}
+	// A written type *is* the value here: `My_Int :: int` and
+	// `Meters :: distinct int` are type aliases (design.md "Advanced types").
+	// The first `parse_postfix` consumes the flag, so it neither leaks into the
+	// operands of a larger expression nor past this declaration.
+	p.type_value = true
+	defer p.type_value = false
 	return parse_expr(p)
 }
 
@@ -1708,7 +1719,8 @@ parse_unary :: proc(p: ^Parser) -> Expr {
 @(private = "file")
 parse_postfix :: proc(p: ^Parser) -> Expr {
 	lo := current(p).lo
-	started_as_type := starts_type(current(p).kind)
+	started_as_type := starts_type(current(p).kind) && !p.type_value
+	p.type_value = false
 	e := parse_primary(p)
 	direct_type_is_expression := false
 	if _, ok := e.(^Expr_Proc); ok {
@@ -2552,7 +2564,16 @@ parse_results :: proc(p: ^Parser) -> ([]Result, bool) {
 
 	results := make([dynamic]Result, 0, 0, p.allocator)
 	if !at(p, .Lparen) {
-		append(&results, parse_result_item(p))
+		// grammar.md: `Results = Result_Type | "(" Result_Item ... ")"`. Only the
+		// parenthesised form takes names, so the bare form must not scan for one:
+		// in `proc(...) -> int, a: int` the `, a: int` belongs to the enclosing
+		// parameter list, not to this result.
+		start := current(p)
+		item: Result
+		item.is_inout = allow(p, .Inout)
+		item.type = parse_type(p)
+		item.span = span_to_here(p, start)
+		append(&results, item)
 		return results[:], true
 	}
 

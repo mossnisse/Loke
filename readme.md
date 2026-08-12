@@ -15,13 +15,32 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M1, planned in
-[m1-plan.md](m1-plan.md), after M0 in [m0-plan.md](m0-plan.md).
+[compiler-plan.md](compiler-plan.md); the current milestone is M2, planned in
+[m2-plan.md](m2-plan.md), after M1 in [m1-plan.md](m1-plan.md) and M0 in
+[m0-plan.md](m0-plan.md).
 
-M1 completes the front end: every construct in [grammar.md](grammar.md) lexes and
-parses, so `-parse-only` and `-dump-ast` accept any valid program. Compiling to an
-executable still covers the M0 subset — integer arithmetic, declarations,
-constants, blocks, `main`, `print_int` — and reports `L0350` for the rest.
+M1 completed the front end: every construct in [grammar.md](grammar.md) lexes and
+parses, so `-parse-only` and `-dump-ast` accept any valid program.
+
+M2 compiles the static, non-generic, non-managed core of the language to a
+Windows executable:
+
+- every scalar type — `bool`, `i8`–`i128`, `u8`–`u128`, `int`, `uint`,
+  `uintptr`, `byte`, `f16`/`f32`/`f64`, `rune`, `rawptr` — with exact
+  arbitrary-precision constant folding, so `u128`'s maximum and `i128`'s minimum
+  are ordinary constants;
+- `struct`, `enum`, `[N]T`, `^T`, `distinct`, procedure types, and type aliases,
+  including aggregate constants and recursive structural equality;
+- every built-in operator, conversions `T(v)`, `x if c else y`, indexing, field
+  selection, `&`/`^`, and composite literals;
+- assignment in all its forms, `if`/`for`/`switch`, `break`, `continue`,
+  `defer`, and `return`;
+- procedures with value and `inout` parameters, defaults, named arguments,
+  multiple and named results, recursion, and procedure values.
+
+Everything else — generics, interfaces, `union`, `string`, slices, maps,
+`impl`/`extend`, `foreach`, `import`, and compile-time procedures — parses and
+reports one `L0350` at the enclosing construct.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.

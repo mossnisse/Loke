@@ -1,0 +1,13 @@
+package main;
+
+// Several deferred field types, one diagnostic: the gate is per declaration,
+// not per field.
+Record :: struct {
+	name:  string,
+	other: string,
+	tag:   any_view,
+}
+
+main :: proc() {
+	print_int(1);
+}

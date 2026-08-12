@@ -1,0 +1,13 @@
+package main;
+
+main :: proc() {
+	a: i32 = 1;
+	b: i64 = 2;
+	print_int(int(a + b));
+
+	c := true;
+	print_int(int(c));
+
+	d: int = true;
+	print_int(d);
+}

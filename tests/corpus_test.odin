@@ -1,7 +1,9 @@
-// The whole M0 test harness (compiler-plan E). Two corpora, one shelling out to
-// the built compiler:
+// The whole executable test harness (compiler-plan E). Four corpora shelling out
+// to the built compiler, plus the parser's own:
 //
 //   tests/run/*.loke + .expected   compile, run, compare stdout
+//   tests/ll/*.loke  + .expected   compile with -emit-ll, assert the generated
+//                                  IR still contains each listed shape
 //   tests/err/*.loke + .expected   compile, assert exact diagnostic count plus
 //                                  code/message substrings and @line:column spans
 //   tests/trap/*.loke              compile, run, expect a non-zero exit
@@ -115,6 +117,49 @@ programs_trap :: proc(t: ^testing.T) {
 		)
 		testing.expectf(t, run_err == nil, "%s: cannot run the produced exe", path)
 		testing.expectf(t, run_state.exit_code != 0, "%s: expected a runtime failure", path)
+	}
+}
+
+// The generated IR is not compared whole — that would break on every temporary
+// renumbering. Each case lists the instruction shapes that must survive:
+// the integer guards, the short-circuit phi, the bounds and nil checks, the
+// defer flags, recursive aggregate equality, and the indirect call.
+@(test)
+generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	cases, _ := filepath.glob("tests/ll/*.loke")
+	testing.expect(t, len(cases) > 0, "no IR cases found")
+
+	for path in cases {
+		expected, has_expected := os.read_entire_file(expected_path(path))
+		if !testing.expectf(t, has_expected, "%s: missing .expected file", path) {
+			continue
+		}
+
+		exe := fmt.tprintf("%s/%s.exe", TMP, filepath.stem(path))
+		state, _, stderr, err := os2.process_exec(
+			os2.Process_Desc{command = []string{LOKEC, path, "-o", exe, "-emit-ll"}},
+			context.allocator,
+		)
+		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, LOKEC) {
+			continue
+		}
+		if !testing.expectf(t, state.exit_code == 0, "%s: compile failed\n%s", path, string(stderr)) {
+			continue
+		}
+
+		ll_path := fmt.tprintf("%s/%s.ll", TMP, filepath.stem(path))
+		ir, read_ok := os.read_entire_file(ll_path)
+		if !testing.expectf(t, read_ok, "%s: no IR at %s", path, ll_path) {
+			continue
+		}
+		for raw_line in strings.split_lines(normalise(string(expected))) {
+			line := strings.trim_space(raw_line)
+			if line == "" {
+				continue
+			}
+			testing.expectf(t, strings.contains(string(ir), line), "%s: IR does not contain %q", path, line)
+		}
 	}
 }
 

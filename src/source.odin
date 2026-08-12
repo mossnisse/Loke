@@ -64,6 +64,14 @@ Compiler :: struct {
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,
 
+	// Procedure literals lifted out of expression position, in the order they
+	// were checked. The backend emits one module function for each.
+	hoisted_procs: [dynamic]^Expr_Proc,
+
+	// The widths `int`, `uint`, `uintptr` and every pointer take. Checker and
+	// emitter read this one record so they cannot disagree.
+	target:      Target_Info,
+
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       mem.Dynamic_Arena,

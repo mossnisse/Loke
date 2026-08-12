@@ -1,0 +1,43 @@
+package main;
+
+// A typed float operation rounds to its own width after every step, so the
+// folded constant and the runtime computation agree. `A` folds in f32; `B`
+// computes the same expression at runtime.
+A :: 16777216;
+
+main :: proc() {
+	// f32 has 24 significand bits: 2^24 + 1 rounds back to 2^24.
+	folded: f32 = 16777216.0 + 1.0;
+	runtime_lhs: f32 = 16777216.0;
+	runtime_rhs: f32 = 1.0;
+	computed := runtime_lhs + runtime_rhs;
+	print_int(1 if folded == computed else 0);
+	print_int(int(computed));
+
+	// f16 has 11 significand bits: 2049 rounds to 2048.
+	half_folded: f16 = 2048.0 + 1.0;
+	half_lhs: f16 = 2048.0;
+	half_rhs: f16 = 1.0;
+	half_computed := half_lhs + half_rhs;
+	print_int(1 if half_folded == half_computed else 0);
+	print_int(int(half_computed));
+
+	// f64 keeps the value f32 lost.
+	wide: f64 = 16777216.0 + 1.0;
+	print_int(int(wide));
+
+	// Ordering, negation, and division follow IEEE-754; dividing by zero does
+	// not panic (design.md "Floating-point operators").
+	x: f64 = 1.0;
+	zero: f64 = 0.0;
+	infinity := x / zero;
+	print_int(1 if infinity > 1.0e300 else 0);
+	nan := zero / zero;
+	print_int(1 if nan == nan else 0);
+	print_int(1 if nan != nan else 0);
+
+	print_int(int(-2.5));
+	print_int(int(2.75 * 4.0));
+	print_int(int(f32(7) / f32(2)));
+	print_int(int(f64(7) / f64(2) * 2.0));
+}

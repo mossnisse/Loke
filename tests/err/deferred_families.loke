@@ -1,0 +1,27 @@
+package main;
+
+// One `L0350` per deferred outer construct, and no descent into it.
+Variant :: union { int, bool }
+
+Container :: struct { items: []int }
+
+Trait :: interface($Self: type) { }
+
+Generic :: struct($T: type) { value: T }
+
+group :: proc{ helper }
+
+helper :: proc() { }
+
+main :: proc() {
+	xs: [dynamic]int;
+	table: map[int]int;
+	text := "hello";
+	foreach (item in xs) {
+		print_int(item);
+	}
+	when (true) {
+		print_int(1);
+	}
+	print_int(1);
+}

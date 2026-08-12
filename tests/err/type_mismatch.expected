@@ -1,0 +1,9 @@
+L0354
+@6:18
+mismatched operand types `i32` and `i64`
+L0373
+@9:16
+`bool` cannot be converted to `int`
+L0310
+@11:11
+this constant is not a value of `int`

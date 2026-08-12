@@ -1,0 +1,62 @@
+package main;
+
+// Wrapping arithmetic, signed and unsigned operators, and the two defined
+// exceptional cases: an oversized shift and `MIN / -1`. Untyped folding stays
+// exact, so only a typed operation wraps.
+main :: proc() {
+	// Wrapping, per width (design.md "Integer overflow").
+	a: u8 = 255;
+	a += 1;
+	print_int(int(a));
+
+	b: i8 = 127;
+	b += 1;
+	print_int(int(b));
+
+	c: u16 = 0;
+	c -= 1;
+	print_int(int(c));
+
+	d: i64 = -9223372036854775808;
+	e: i64 = -1;
+	print_int(int(d / e));
+	print_int(int(d % e));
+
+	// Unsigned division and comparison use the unsigned opcodes: `f` is far
+	// beyond i64's range, so a signed compare would call it negative.
+	f: u64 = 18446744073709551615;
+	g: u64 = 2;
+	print_int(1 if f / g == 9223372036854775807 else 0);
+	print_int(1 if f > g else 0);
+
+	h: i64 = -1;
+	print_int(1 if h > 2 else 0);
+
+	// Oversized shifts, runtime count, signed and unsigned.
+	count: uint = 40;
+	i: i32 = -1;
+	j: u32 = 4294967295;
+	print_int(int(i >> count));
+	print_int(int(j >> count));
+	print_int(int(i << count));
+	print_int(-1 >> 40);
+
+	// Remainder keeps the sign of the dividend, constant and at runtime.
+	print_int(-7 / 2);
+	print_int(-7 % 2);
+	print_int(7 / -2);
+	print_int(7 % -2);
+
+	k := -7;
+	l := 2;
+	print_int(k / l);
+	print_int(k % l);
+
+	// Bitwise, including and-not and complement.
+	print_int(0b1111 &~ 0b0101);
+	print_int(~0);
+	m := 15;
+	n := 5;
+	print_int(m &~ n);
+	print_int(~m);
+}

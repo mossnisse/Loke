@@ -1,7 +1,12 @@
 package main;
 
+// design.md: a shift count has an unsigned integer type, or is an untyped
+// constant a typed unsigned integer could represent. The compound form is held
+// to the same rule as the binary one.
 main :: proc() {
 	value := 1;
 	count := 2;
 	print_int(value << count);
+	value <<= count;
+	print_int(value >> -1);
 }

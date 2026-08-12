@@ -1,0 +1,11 @@
+package main;
+
+pair :: proc() -> (int, int) {
+	return 1, 2;
+}
+
+main :: proc() {
+	print_int(pair());
+	a := pair();
+	print_int(a);
+}

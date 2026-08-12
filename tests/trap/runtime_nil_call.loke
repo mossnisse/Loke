@@ -1,0 +1,6 @@
+package main;
+
+main :: proc() {
+	f: proc(a: int) -> int = nil;
+	print_int(f(1));
+}

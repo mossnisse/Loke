@@ -1,0 +1,11 @@
+package main;
+
+falls_out :: proc(n: int) -> int {
+	if (n > 0) {
+		return 1;
+	}
+}
+
+main :: proc() {
+	print_int(falls_out(1));
+}
