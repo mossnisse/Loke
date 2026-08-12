@@ -1,5 +1,8 @@
 package lokec
 
+import "base:runtime"
+import "core:fmt"
+import "core:mem"
 import "core:strings"
 import "core:testing"
 
@@ -1040,4 +1043,38 @@ sentinel :: proc() { }
 	if ok && testing.expect(t, len(sentinel.names) == 1, "the sentinel declaration has no name") {
 		testing.expectf(t, sentinel.names[0].text == "sentinel", "recovered %s instead of sentinel", sentinel.names[0].text)
 	}
+}
+
+// The semantic arena backs maps, and Odin's map panics unless its allocation is
+// cache-line aligned. `Dynamic_Arena` ignores per-allocation alignment, so this
+// only holds while the arena itself is initialised aligned — and when it did not
+// hold, whether it crashed was decided by the heap address of the arena block,
+// which made the whole compiler fail on roughly half its runs. Assert the
+// property directly: a run that happens to get lucky must still fail here.
+@(test)
+semantic_arena_is_map_aligned :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+
+	// Odd sizes, so a bump allocator that is not rounding to the cache line is
+	// off the boundary by the second allocation rather than by luck.
+	for size in ([?]int{1, 17, 63, 65, 200}) {
+		block, err := mem.alloc_bytes(size, allocator = c.semantic_allocator)
+		testing.expectf(t, err == nil, "semantic arena refused %d bytes: %v", size, err)
+		testing.expectf(
+			t,
+			uintptr(raw_data(block)) % runtime.MAP_CACHE_LINE_SIZE == 0,
+			"a %d-byte allocation came back %d-aligned; maps on this arena will crash",
+			size,
+			uintptr(raw_data(block)) % runtime.MAP_CACHE_LINE_SIZE,
+		)
+	}
+
+	// The maps themselves: growth is what reallocates, so push past the initial
+	// capacity rather than trusting a single insert.
+	for i in 0 ..< 256 {
+		intern_identifier(&c, fmt.tprintf("name%d", i))
+	}
+	testing.expect(t, len(c.identifier_names) == 257, "identifier interning lost entries")
 }

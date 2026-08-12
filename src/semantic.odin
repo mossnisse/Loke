@@ -3,6 +3,7 @@
 // reallocating arrays or backend-specific state.
 package lokec
 
+import "base:runtime"
 import "core:mem"
 
 Identifier_Id :: distinct u32
@@ -181,7 +182,20 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		return
 	}
 	c.semantic_initialized = true
-	mem.dynamic_arena_init(&c.semantic_arena)
+	// This arena backs maps — the identifier and type indices, every scope's
+	// names, a package's operators. Odin's map asserts its allocation is
+	// cache-line aligned, and `Dynamic_Arena` ignores the alignment an
+	// individual allocation asks for: it bump-allocates at `arena.alignment`,
+	// which defaults to 8. Whether a map landed on a 64-byte boundary was then
+	// decided by the heap address of the arena block, so the same binary on the
+	// same input crashed on roughly half its runs. Aligning the arena itself
+	// makes every allocation out of it 64-aligned, so the maps stay arena-owned
+	// and one `destroy_compilation` still frees the lot.
+	//
+	// The per-file syntax arena in `File` holds no maps and stays at the default
+	// alignment; that is where the node allocations are, and padding them all to
+	// 64 bytes would be pure waste.
+	mem.dynamic_arena_init(&c.semantic_arena, alignment = runtime.MAP_CACHE_LINE_SIZE)
 	c.semantic_allocator = mem.dynamic_arena_allocator(&c.semantic_arena)
 	c.identifier_names = make([dynamic]string, 0, 64, c.semantic_allocator)
 	c.identifier_by_name = make(map[string]Identifier_Id, c.semantic_allocator)
