@@ -146,11 +146,8 @@ add an garbage collected allocator as an alternative?
 ## memory managment
 
 Could the compiler move a large fixed-size local variables to the heap? Does it need to be made to an "Owning value"?
-When marking variables as dead or alive can we get away without zero values and stop undefined behaviour at compile time?
-Can the dead or alive realy be don at compile time, doing it in runtime don't that add an byte for each varibale?
-Should all non pointer and slice variables be owners and pointers and slices to manages variables be borows, pointers to unmanaged variable could be either?
 
-## defaykt allocator
+## default allocator
 
 I think the default allocator and logger should be choosen in the source code in the main package, is that an good idea and what effect does that have? So must be befor the import statements
 

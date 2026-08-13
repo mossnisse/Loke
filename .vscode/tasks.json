@@ -1,0 +1,32 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build Loke compiler",
+      "type": "shell",
+      "command": "odin",
+      "args": ["build", "src", "-out:lokec.exe"],
+      "group": "build",
+      "problemMatcher": []
+    },
+    {
+      "label": "Compile current Loke file",
+      "type": "shell",
+      "command": "${workspaceFolder}\\lokec.exe",
+      "args": [
+        "${file}",
+        "-o",
+        "${workspaceFolder}\\program.exe"
+      ],
+      "dependsOn": "Build Loke compiler",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run current Loke file",
+      "type": "shell",
+      "command": "${workspaceFolder}\\program.exe",
+      "dependsOn": "Compile current Loke file",
+      "problemMatcher": []
+    }
+  ]
+}
