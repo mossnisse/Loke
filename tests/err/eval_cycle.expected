@@ -1,0 +1,4 @@
+L0344
+@6:6
+`self` cannot be called at compile time: its body is still being checked
+an array length is required at compile time

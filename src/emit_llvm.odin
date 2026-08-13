@@ -13,6 +13,7 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import os2 "core:os/os2"
+import "core:strconv"
 import "core:strings"
 
 @(private = "file")
@@ -71,35 +72,16 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 
 	emit_preamble(&e)
 	emit_struct_definitions(&e)
-	// Every procedure is named before any body is emitted: a body may take the
-	// address of a procedure declared later in the file, and a hoisted literal
-	// is always emitted after the body that mentions it.
-	for file in pkg.files {
-		for item in file.items {
-			if d, ok := item.(^Decl); ok && decl_proc(d) != nil && len(d.symbols) > 0 {
-				e.names[d.symbols[0]] = llvm_proc_name(d.names[0].text)
-			}
-		}
+
+	// One module, in deterministic dependency order. Every procedure in every
+	// package is named before any body is emitted: a cross-package call, a
+	// procedure value, and a hoisted literal all need final names first.
+	order := package_order(c)
+	for id in order {
+		name_package_symbols(&e, package_of(c, id))
 	}
-	for literal, index in c.hoisted_procs {
-		e.names[literal.symbol] = llvm_proc_name(fmt.aprintf("lambda.%d", index))
-	}
-	for file in pkg.files {
-		for item in file.items {
-			if d, ok := item.(^Decl); ok && decl_proc(d) == nil {
-				emit_global(&e, d)
-			}
-		}
-	}
-	for file in pkg.files {
-		for item in file.items {
-			if d, ok := item.(^Decl); ok && decl_proc(d) != nil {
-				emit_proc(&e, d.names[0].text, d.symbols[0], decl_proc(d))
-			}
-		}
-	}
-	for literal, index in c.hoisted_procs {
-		emit_proc(&e, fmt.aprintf("lambda.%d", index), literal.symbol, literal)
+	for id in order {
+		emit_package_items(&e, package_of(c, id))
 	}
 	emit_entry(&e)
 
@@ -120,6 +102,47 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 }
 
 @(private = "file")
+name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
+	if pkg == nil {
+		return
+	}
+	for file in pkg.files {
+		for item in file.active_items {
+			if d, ok := item.(^Decl); ok && decl_proc(d) != nil && len(d.symbols) > 0 {
+				e.names[d.symbols[0]] = llvm_proc_name(pkg, d.names[0].text)
+			}
+		}
+	}
+	for literal, index in pkg.hoisted_procs {
+		e.names[literal.symbol] = llvm_proc_name(pkg, fmt.aprintf("lambda.%d", index))
+	}
+}
+
+@(private = "file")
+emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
+	if pkg == nil {
+		return
+	}
+	for file in pkg.files {
+		for item in file.active_items {
+			if d, ok := item.(^Decl); ok && decl_proc(d) == nil {
+				emit_global(e, pkg, d)
+			}
+		}
+	}
+	for file in pkg.files {
+		for item in file.active_items {
+			if d, ok := item.(^Decl); ok && decl_proc(d) != nil {
+				emit_proc(e, d.symbols[0], decl_proc(d))
+			}
+		}
+	}
+	for literal in pkg.hoisted_procs {
+		emit_proc(e, literal.symbol, literal)
+	}
+}
+
+@(private = "file")
 emit_preamble :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, e.c.target.triple)
 	fmt.sbprintln(&e.b, "")
@@ -132,6 +155,150 @@ emit_preamble :: proc(e: ^Emitter) {
 	// hardware exception.
 	fmt.sbprintln(&e.b, "declare void @llvm.trap()")
 	fmt.sbprintln(&e.b, "")
+}
+
+// ------------------------------------------------------- layout agreement --
+
+// One number the checker claims and LLVM can be made to compute.
+@(private = "file")
+Layout_Probe :: struct {
+	description: string,
+	llvm:        string, // a constant expression that evaluates to the number
+	expected:    u64,
+}
+
+// `-check-layout`: builds a module that prints LLVM's own size, alignment, and
+// field offsets for every type in the compilation, runs it, and compares the
+// results with the checker's cached layout.
+//
+// Executing LLVM-derived values tests the actual target backend rather than a
+// second copy of the checker's formula (m3-plan decision "Layout agreement").
+check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
+	e := Emitter {
+		c            = c,
+		names        = make(map[Symbol_Id]string),
+		struct_names = make(map[Type_Id]string),
+		cleanups     = make([dynamic]Cleanup_Scope),
+		param_values = make(map[Symbol_Id]string),
+	}
+	strings.builder_init(&e.b)
+	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
+	fmt.sbprintln(&e.b, `@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"`)
+	fmt.sbprintln(&e.b, "declare i32 @printf(ptr, ...)")
+	emit_struct_definitions(&e)
+
+	probes := make([dynamic]Layout_Probe)
+	for index in 0 ..< len(c.types) {
+		type := Type_Id(index)
+		if !layout_probeable(c, type) {
+			continue
+		}
+		llvm := llvm_type(&e, type)
+		name := type_name(c, type)
+		append(&probes, Layout_Probe {
+			description = fmt.aprintf("size_of(%s)", name),
+			llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 1) to i64)", llvm),
+			expected    = type_size(c, type),
+		})
+		// The offset of the second member of `{ i8, T }` is T's alignment: LLVM
+		// has no `alignof`, but it does have to place that member.
+		append(&probes, Layout_Probe {
+			description = fmt.aprintf("align_of(%s)", name),
+			// `{` is a format directive to core:fmt, so this one is concatenated.
+			llvm        = strings.concatenate(
+				{"ptrtoint (ptr getelementptr ({ i8, ", llvm, " }, ptr null, i64 0, i32 1) to i64)"},
+			),
+			expected    = type_align(c, type),
+		})
+		info := type_of(c, type)
+		if info.kind != .Struct {
+			continue
+		}
+		for field, position in info.fields {
+			symbol := symbol_of(c, field)
+			if symbol == nil {
+				continue
+			}
+			append(&probes, Layout_Probe {
+				description = fmt.aprintf("offset_of(%s, %s)", name, identifier_text(c, symbol.name)),
+				llvm        = fmt.aprintf("ptrtoint (ptr getelementptr (%s, ptr null, i64 0, i32 %d) to i64)", llvm, position),
+				expected    = type_field_offset(c, type, position),
+			})
+		}
+	}
+
+	fmt.sbprintln(&e.b, "define i32 @main() {")
+	fmt.sbprintln(&e.b, "entry:")
+	for probe in probes {
+		fmt.sbprintfln(&e.b, "  call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)", probe.llvm)
+	}
+	fmt.sbprintln(&e.b, "  ret i32 0")
+	fmt.sbprintln(&e.b, "}")
+
+	ll_path := replace_ext(opts.output, ".layout.ll")
+	if !os.write_entire_file(ll_path, transmute([]u8)strings.to_string(e.b)) {
+		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
+		return 2
+	}
+	defer if !opts.keep_temps {
+		os.remove(ll_path)
+	}
+	if code := link(c, ll_path, opts.output); code != 0 {
+		return code
+	}
+	defer if !opts.keep_temps {
+		os.remove(opts.output)
+	}
+
+	state, stdout, _, err := os2.process_exec(
+		os2.Process_Desc{command = []string{opts.output}},
+		context.allocator,
+	)
+	if err != nil || state.exit_code != 0 {
+		errorf(c, no_span(), "L0405", "cannot run the layout probe")
+		return 2
+	}
+	lines := strings.split_lines(strings.trim_space(strings.replace_all(string(stdout), "\r\n", "\n") or_else ""))
+	if len(lines) != len(probes) {
+		errorf(c, no_span(), "L0405", "the layout probe produced %d values, expected %d", len(lines), len(probes))
+		return 2
+	}
+	disagreements := 0
+	for probe, index in probes {
+		actual, parsed := strconv.parse_u64(strings.trim_space(lines[index]))
+		if !parsed || actual != probe.expected {
+			errorf(
+				c,
+				no_span(),
+				"L0405",
+				"%s: the checker says %d, LLVM says %s",
+				probe.description,
+				probe.expected,
+				lines[index],
+			)
+			disagreements += 1
+		}
+	}
+	if disagreements > 0 {
+		return 1
+	}
+	fmt.printfln("%d layout facts agree with LLVM", len(probes))
+	return 0
+}
+
+// A type whose layout LLVM can be asked about at all: it must lower to a real
+// LLVM type and hold a runtime value.
+@(private = "file")
+layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := type_of(c, type)
+	if info == nil || !type_is_supported(c, type) {
+		return false
+	}
+	#partial switch info.kind {
+	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct, .Distinct:
+		return true
+	}
+	return false
 }
 
 // ------------------------------------------------------------ LLVM types --
@@ -274,13 +441,13 @@ llvm_result_type :: proc(e: ^Emitter, results: []Type_Id) -> string {
 // File-scope variables need constant initialisers (design.md "Values that
 // outlive every scope"), so folding has already produced the value.
 @(private = "file")
-emit_global :: proc(e: ^Emitter, d: ^Decl) {
+emit_global :: proc(e: ^Emitter, pkg: ^Package, d: ^Decl) {
 	for symbol_id, i in d.symbols {
 		sym := symbol_of(e.c, symbol_id)
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		name := llvm_global_name(identifier_text(e.c, sym.name))
+		name := llvm_global_name(pkg, identifier_text(e.c, sym.name))
 		e.names[symbol_id] = name
 		value := ""
 		if i < len(d.values) && d.values[i] != nil && is_const_expr(d.values[i]) {
@@ -373,13 +540,17 @@ llvm_float :: proc(value: f64, bits: u16) -> string {
 // ------------------------------------------------------------ procedures --
 
 @(private = "file")
-emit_proc :: proc(e: ^Emitter, name: string, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
+emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	symbol := symbol_of(e.c, symbol_id)
 	if symbol == nil || literal == nil || literal.body == nil {
 		return
 	}
-	llvm_name := e.names[symbol_id] or_else llvm_proc_name(name)
-	e.names[symbol_id] = llvm_name
+	llvm_name, named := e.names[symbol_id]
+	if !named {
+		// Every declared and hoisted procedure is named before any body is
+		// emitted, so arriving here would mean emitting one nothing can call.
+		panic("a procedure reached emission without a mangled name")
+	}
 
 	e.result_types = symbol.results
 	e.result_slots = make([]string, len(symbol.results))
@@ -462,7 +633,7 @@ symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mo
 emit_entry :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "define i32 @main() {")
 	fmt.sbprintln(&e.b, "entry:")
-	fmt.sbprintfln(&e.b, "  call void %s()", llvm_proc_name("main"))
+	fmt.sbprintfln(&e.b, "  call void %s()", e.names[entry_symbol(e.c)] or_else "@loke.p.main")
 	fmt.sbprintln(&e.b, "  ret i32 0")
 	fmt.sbprintln(&e.b, "}")
 }
@@ -545,9 +716,23 @@ push_scope_stmts :: proc(e: ^Emitter, stmts: []Stmt) {
 	// Reset the flag of every defer written directly in this scope: the storage
 	// is reused across loop iterations, so a stale `true` would run a
 	// registration that never happened this time round.
+	reset_defer_flags(e, stmts)
+}
+
+// A `defer` written inside a selected `when` belongs to the surrounding scope,
+// so its flag is reset with that scope's own.
+@(private = "file")
+reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 	for stmt in stmts {
-		if d, ok := stmt.(^Stmt_Defer); ok && d.slot < len(e.defer_flags) {
-			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", e.defer_flags[d.slot])
+		#partial switch s in stmt {
+		case ^Stmt_Defer:
+			if s.slot < len(e.defer_flags) {
+				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", e.defer_flags[s.slot])
+			}
+		case ^Stmt_When:
+			if selected := when_selected_block(s); selected != nil {
+				reset_defer_flags(e, selected.stmts)
+			}
 		}
 	}
 }
@@ -621,6 +806,13 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 
 	case ^Stmt_Expr:
 		for expr in s.exprs {
+			// `#assert` is checked and answered at compile time and has no runtime
+			// cost, so there is nothing here to emit.
+			if call, is_call := expr.(^Expr_Call); is_call {
+				if _, is_hash := call.callee.(^Expr_Hash); is_hash {
+					continue
+				}
+			}
 			emit_expr(e, expr)
 		}
 
@@ -657,7 +849,13 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 	case ^Block:
 		emit_scoped_block(e, s)
 
-	case ^Stmt_Foreach, ^Stmt_When:
+	case ^Stmt_When:
+		// Structural selection: the branch the checker chose is emitted in place,
+		// with no scope of its own, so its declarations and `defer`s belong to
+		// the surrounding block exactly as written.
+		emit_block_statements(e, when_selected_block(s))
+
+	case ^Stmt_Foreach:
 		// The checker's L0350 arm gates every statement missing here, so this is
 		// a hole in that gate — and skipping it would emit a program that
 		// silently does less than the source says.
@@ -1175,10 +1373,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		}
 		symbol := symbol_of(e.c, v.symbol)
 		if symbol != nil && symbol.kind == .Proc {
-			if name, ok := e.names[v.symbol]; ok {
-				return name
-			}
-			return llvm_proc_name(identifier_text(e.c, symbol.name))
+			return e.names[v.symbol] or_else "null"
 		}
 		out := temp(e)
 		address, ok := e.names[v.symbol]
@@ -1189,6 +1384,10 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Selector, ^Expr_Index, ^Expr_Postfix:
+		// `pkg.f` as a value is the procedure itself, not storage holding one.
+		if symbol := symbol_of(e.c, base.resolution.symbol); symbol != nil && symbol.kind == .Proc {
+			return e.names[base.resolution.symbol] or_else "null"
+		}
 		address := emit_address(e, expr)
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, base.type), address)
@@ -1645,10 +1844,30 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	}
 	symbol := symbol_of(e.c, v.resolution.symbol)
 	if symbol != nil && symbol.kind == .Builtin {
-		arg := emit_expr(e, v.bound[0])
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)", out, arg)
-		return "0"
+		switch symbol.builtin {
+		case .Print_Int:
+			arg := emit_expr(e, v.bound[0])
+			out := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)", out, arg)
+			return "0"
+		case .Assert:
+			// The runtime half of a phase-neutral built-in: the message is
+			// compile-time-only until the seed runtime lands (M6), so a failed
+			// assertion takes the same trap seam as every other defined runtime
+			// failure.
+			cond := emit_expr(e, v.bound[0])
+			failed := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, cond)
+			trap_if(e, failed, "assert.failed")
+			return "0"
+		case .Panic:
+			emit_trap(e)
+			return "0"
+		case .None, .Size_Of, .Align_Of, .Offset_Of, .Len:
+			// These fold to a constant in every reachable case; arriving here
+			// would mean emitting `print_int` for a layout query.
+			panic("a built-in the checker did not fold reached the backend")
+		}
 	}
 	results := emit_multi_call(e, v)
 	return len(results) == 0 ? "0" : results[0]
@@ -1662,7 +1881,7 @@ emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 
 	callee := ""
 	if symbol != nil && symbol.kind == .Proc {
-		callee = e.names[v.resolution.symbol] or_else llvm_proc_name(identifier_text(e.c, symbol.name))
+		callee = e.names[v.resolution.symbol] or_else "null"
 	} else {
 		callee = emit_expr(e, v.callee)
 		// A procedure value may be nil; the call takes the same trap seam every
@@ -1770,14 +1989,46 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 
 // ------------------------------------------------------------------ naming --
 
+// Every user symbol carries its package's logical key, so two packages with the
+// same declared name and the same source-level symbols still emit distinct
+// working symbols (m3-plan decision "Symbol mangling"). The root package's key
+// is empty, which is what keeps its entry procedure at a fixed name.
 @(private = "file")
-llvm_global_name :: proc(name: string) -> string {
-	return fmt.aprintf("@loke.g.%s", name)
+llvm_global_name :: proc(pkg: ^Package, name: string) -> string {
+	return fmt.aprintf("@loke.g.%s%s", mangled_key(pkg), name)
 }
 
 @(private = "file")
-llvm_proc_name :: proc(name: string) -> string {
-	return fmt.aprintf("@loke.p.%s", name)
+llvm_proc_name :: proc(pkg: ^Package, name: string) -> string {
+	return fmt.aprintf("@loke.p.%s%s", mangled_key(pkg), name)
+}
+
+// Encode every UTF-8 byte as two hex digits. A substitution such as `/` -> `.`
+// is not injective (`a-b`, `a.b`, and `a/b` would collide), while fixed-width
+// hex keeps distinct logical package identities distinct and LLVM-safe.
+@(private = "file")
+mangled_key :: proc(pkg: ^Package) -> string {
+	if pkg == nil || pkg.key == "" {
+		return ""
+	}
+	hex := "0123456789abcdef"
+	out := make([]u8, len(pkg.key) * 2 + 1)
+	for i in 0 ..< len(pkg.key) {
+		ch := pkg.key[i]
+		out[i * 2] = hex[ch >> 4]
+		out[i * 2 + 1] = hex[ch & 0x0f]
+	}
+	out[len(out) - 1] = '.'
+	return string(out)
+}
+
+@(private = "file")
+entry_symbol :: proc(c: ^Compiler) -> Symbol_Id {
+	pkg := package_of(c, c.root_package)
+	if pkg == nil || pkg.scope == nil {
+		return INVALID_SYMBOL
+	}
+	return lookup_symbol(pkg.scope, intern_identifier(c, "main"))
 }
 
 @(private = "file")

@@ -1,0 +1,11 @@
+package main;
+
+// The override says a string; the default is an integer, so the two disagree
+// about what this name means.
+BUDGET :: #config(BUDGET, 5);
+NARROW :: #config(NARROW, u8(1));
+
+main :: proc() {
+	print_int(BUDGET + int(NARROW));
+	print_int(#config(1, 2));
+}

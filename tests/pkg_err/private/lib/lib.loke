@@ -1,0 +1,6 @@
+package lib;
+
+secret :: 1;
+
+@(public)
+exported :: proc() -> int { return secret; }

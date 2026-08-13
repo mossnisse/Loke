@@ -1,0 +1,24 @@
+@(public)
+package geom;
+
+import "../util";
+
+Point :: struct { x: int, y: int }
+
+area :: proc(p: Point) -> int {
+	return p.x * p.y;
+}
+
+seed_used :: proc() -> int {
+	return util.SEED;
+}
+
+// A procedure literal with the same source-level shape as `util`'s.
+apply :: proc(p: Point) -> int {
+	f := proc(n: int) -> int { return n * 10; };
+	return f(p.x);
+}
+
+// Opting one declaration out of the file-wide `@(public)`.
+@(private)
+hidden :: proc() -> int { return 0; }

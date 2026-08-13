@@ -1,0 +1,5 @@
+L0341
+@9:6
+`counter` is a mutable variable and cannot be read at compile time
+a constant initialiser is required at compile time
+in `read_global`, called here

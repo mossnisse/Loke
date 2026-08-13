@@ -1,0 +1,12 @@
+L0389
+@6:7
+a `when` condition must be `bool`, found `untyped int`
+L0341
+@11:7
+`runtime_flag` is a mutable variable and cannot be read at compile time
+L0389
+@16:7
+`MISSING` is not declared, so this `when` condition cannot be answered
+L0389
+@21:8
+a `when` condition must be `bool`, found `untyped string`

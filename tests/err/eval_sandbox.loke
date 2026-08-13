@@ -1,0 +1,13 @@
+package main;
+
+counter: int = 3;
+
+read_global :: proc() -> int {
+	return counter;
+}
+
+N :: read_global();
+
+main :: proc() {
+	print_int(N);
+}

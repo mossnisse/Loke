@@ -1,0 +1,4 @@
+package early;
+
+@(public)
+VALUE :: 1;

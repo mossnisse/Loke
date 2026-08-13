@@ -620,11 +620,17 @@ Stmt_Foreach :: struct {
 	body:       ^Block,
 }
 
+// Structural source selection, not a constant `if`: only the selected branch is
+// declared, checked, and emitted, and it introduces no scope of its own
+// (m3-plan decision "Selected source representation").
 Stmt_When :: struct {
 	using base: Node_Base,
 	cond:       Expr,
 	then:       ^Block,
 	otherwise:  Stmt,
+	// Semantic result, written by the checker and read by the backend.
+	resolved:   bool,
+	selected:   ^Block, // nil when no branch was taken
 }
 
 Switch_Kind :: enum {
@@ -756,6 +762,10 @@ Decl :: struct {
 	values:        []Expr,
 	symbols:       []Symbol_Id,
 	top_level:     bool,
+	// Signature resolution and body checking have separate readiness states: the
+	// compile-time evaluator may need a procedure's body before the phase that
+	// would ordinarily check it (m3-plan decision "Evaluation readiness").
+	sig_state:     Check_State,
 	check_state:   Check_State,
 }
 
@@ -795,6 +805,9 @@ Item_Import :: struct {
 	using base: Node_Base,
 	alias:      Name,   // empty when no local name was written
 	path:       string, // the string literal's spelling
+	// Discovery is monotonic, but selected `when` branches may insert imports
+	// anywhere in the active view. Track this item rather than a list prefix.
+	bound:      bool,
 }
 
 // `foreign import raylib "raylib.lib";`
@@ -833,11 +846,16 @@ Item_Delegate :: struct {
 }
 
 // File-scope `when`, whose branches are blocks of top-level items.
+//
+// Activation is monotonic: once `resolved` is set the choice never changes, and
+// only the taken branch contributes to `File.active_items`.
 Item_When :: struct {
 	using base: Node_Base,
 	cond:       Expr,
 	then:       ^Item_Block,
 	otherwise:  Item, // `^Item_When` for `else when`, `^Item_Block` for `else`
+	resolved:   bool,
+	taken:      bool, // this node's own condition was true
 }
 
 // `Top_Level_Block`
@@ -884,6 +902,11 @@ File :: struct {
 	package_name: string,
 	package_span: Span,
 	items:        []Item,
+	// The compilation-owned selected view: `items` with every selected `when`
+	// branch and every `Item_Block` flattened in place, in original source order.
+	// Every semantic consumer iterates this, never `items` (m3-plan decision
+	// "Selected source representation"). `-dump-ast` still prints `items`.
+	active_items: []Item,
 }
 
 destroy_ast :: proc(f: ^File) {

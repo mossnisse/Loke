@@ -1,0 +1,7 @@
+L0337
+@4:7
+this `when` condition needs `helper`, which only its own branch imports
+imported here, inside the branch this condition selects
+L0389
+@10:7
+`NEVER_DECLARED` is not declared, so this `when` condition cannot be answered

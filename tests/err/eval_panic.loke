@@ -1,0 +1,21 @@
+package main;
+
+positive :: proc(n: int) -> int {
+	assert(n > 0, "positive() needs a positive argument");
+	return n;
+}
+
+checked :: proc(n: int) -> int {
+	if (n < 1) {
+		panic("checked() was given nothing to check");
+	}
+	return n;
+}
+
+A :: positive(-1);
+B :: checked(0);
+
+main :: proc() {
+	print_int(A);
+	print_int(B);
+}

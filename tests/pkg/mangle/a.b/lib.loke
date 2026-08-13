@@ -1,0 +1,4 @@
+package dot;
+
+@(public)
+value :: proc() -> int { return 2; }

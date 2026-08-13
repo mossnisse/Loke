@@ -1,3 +1,4 @@
-L0325
+L0341
 @4:16
-file-scope initializer must be a compile-time constant
+`source` is a mutable variable and cannot be read at compile time
+a file-scope initializer is required at compile time

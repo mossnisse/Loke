@@ -1,0 +1,5 @@
+package geom;
+
+// A second file in the same package, without the file-wide default.
+@(public)
+ORIGIN :: 5;

@@ -1,0 +1,16 @@
+package main;
+
+// Self-bootstrap: the condition needs the very package its own branch imports.
+when (helper.ENABLED) {
+	import "helper";
+	MODE :: 1;
+}
+
+// Nothing anywhere supplies this name.
+when (NEVER_DECLARED) {
+	OTHER :: 2;
+}
+
+main :: proc() {
+	print_int(0);
+}

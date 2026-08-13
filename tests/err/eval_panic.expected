@@ -1,0 +1,7 @@
+L0343
+compile-time assertion failed: positive() needs a positive argument
+@15:6
+L0343
+compile-time panic: checked() was given nothing to check
+@16:6
+in `checked`, called here

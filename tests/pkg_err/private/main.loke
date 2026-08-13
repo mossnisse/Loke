@@ -1,0 +1,9 @@
+package main;
+
+import "lib";
+
+main :: proc() {
+	print_int(lib.secret);
+	print_int(lib.missing_entirely);
+	print_int(lib.exported());
+}

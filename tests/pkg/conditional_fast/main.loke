@@ -1,0 +1,31 @@
+package main;
+
+// The `-define:FAST=true` selection of `tests/pkg/conditional`; keep the two
+// trees in step.
+
+FAST :: #config(FAST, false);
+
+// A conditional import: the selected branch extends the package graph, and the
+// discovery fixed point picks it up on the next round.
+when (FAST) {
+	import "fast";
+	BACKEND :: 1;
+} else {
+	import "slow";
+	BACKEND :: 2;
+}
+
+// This condition depends on a declaration the branch above supplied.
+when (BACKEND == 1) {
+	LABEL :: 100;
+} else {
+	LABEL :: 200;
+}
+
+main :: proc() {
+	print_int(BACKEND);
+	print_int(LABEL);
+	print_int(chosen());
+	// An unconditional body naming a declaration a selected branch introduced.
+	print_int(BACKEND + LABEL);
+}

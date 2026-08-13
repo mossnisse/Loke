@@ -1,0 +1,6 @@
+package a;
+
+import "../b";
+
+@(public)
+value :: proc() -> int { return b.value(); }

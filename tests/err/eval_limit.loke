@@ -1,0 +1,15 @@
+package main;
+
+spin :: proc() -> int {
+	x := 0;
+	for (;;) {
+		x += 1;
+	}
+	return x;
+}
+
+N :: spin();
+
+main :: proc() {
+	print_int(N);
+}

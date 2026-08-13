@@ -1,0 +1,47 @@
+package main;
+
+DEBUG :: #config(DEBUG, false);
+
+when (DEBUG) {
+	LEVEL :: 2;
+	extra :: proc() -> int { return 100; }
+} else {
+	LEVEL :: 1;
+	extra :: proc() -> int { return 200; }
+}
+
+// A condition that needs a declaration the selected branch above supplied.
+when (LEVEL > 1) {
+	NAME :: 11;
+} else when (LEVEL == 1) {
+	NAME :: 22;
+} else {
+	NAME :: 33;
+	this_is_never_checked: [no_such_type]qqq;
+}
+
+main :: proc() {
+	print_int(LEVEL);
+	print_int(NAME);
+	print_int(extra());
+
+	// Procedure-scope `when`: no new scope, and it contributes flow and defer.
+	total := 0;
+	when (DEBUG) {
+		total += 1;
+		defer print_int(900);
+	} else {
+		total += 2;
+		defer print_int(901);
+	}
+	print_int(total);
+	print_int(describe());
+}
+
+describe :: proc() -> int {
+	when (DEBUG) {
+		return 1;
+	} else {
+		return 2;
+	}
+}

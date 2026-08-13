@@ -10,6 +10,9 @@ package lokec
 Checker :: struct {
 	c:     ^Compiler,
 	file:  u32,
+	// The file being checked. Its package-clause attributes decide the default
+	// visibility of the declarations in it.
+	file_node: ^File,
 	scope: ^Scope,
 	pkg:   Package_Id,
 
@@ -41,66 +44,84 @@ Flow_Info :: struct {
 @(private = "file")
 FLOWS :: Flow_Info{can_fall_through = true}
 
-check :: proc(c: ^Compiler, f: ^File) {
-	pkg_id := new_package(c, f.package_name, c.sources[f.file].path)
-	add_package_file(c, pkg_id, f)
-	check_package(c, pkg_id)
-	validate_executable(c, pkg_id)
-}
-
-// Package checking is deliberately separate from executable validation: M3
-// imports libraries whose package name is not `main` and which have no entry
-// procedure. Each phase consumes stable IDs produced by the previous one.
-check_package :: proc(c: ^Compiler, package_id: Package_Id) {
-	pkg := package_of(c, package_id)
+// Scope, declarations, nominal shells, and import aliases, for whatever is
+// active so far. Every step guards against repeating itself, so a later
+// discovery round only does what a newly selected branch added
+// (m3-plan decision "Package phase model").
+prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
+	pkg := package_of(k.c, package_id)
 	if pkg == nil {
 		return
 	}
-	if len(pkg.files) > 1 {
-		first := pkg.files[0]
-		for file in pkg.files[1:] {
-			if file.package_name != first.package_name {
-				errorf(c, file.package_span, "L0300", "package `%s` does not match `%s`", file.package_name, first.package_name)
-				add_notef(c, first.package_span, "the package was established here")
-			}
-		}
+	if pkg.scope == nil {
+		pkg.scope = new_scope(k.c, build_universe(k.c), .Package)
 	}
-	k := Checker {
-		c   = c,
-		pkg = package_id,
-	}
-	c.hoisted_procs = make([dynamic]^Expr_Proc, 0, 4, c.semantic_allocator)
+	k.pkg = package_id
+	k.scope = pkg.scope
 
-	k.scope = new_scope(c, build_universe(c), .Package)
-	pkg.scope = k.scope
-
-	// Phase 1: collect package declarations from every file, order-independent.
 	for file in pkg.files {
-		k.file = file.file
-		for item in file.items {
+		k.file, k.file_node = file.file, file
+		for item in file.active_items {
 			if d, ok := item.(^Decl); ok {
-				declare_all(&k, d, top_level = true)
+				declare_all(k, d, top_level = true)
 			}
 		}
 	}
-
-	// Phase 2a: create every nominal shell before resolving a single field.
 	for file in pkg.files {
-		k.file = file.file
-		for item in file.items {
+		k.file, k.file_node = file.file, file
+		for item in file.active_items {
 			if d, ok := item.(^Decl); ok {
-				create_nominal_type_shell(&k, d)
+				create_nominal_type_shell(k, d)
 			}
 		}
 	}
+	bind_import_aliases(k, pkg)
+}
+
+// design.md: an import name is a lexical alias and nothing more. Two names for
+// one package refer to the same declarations and never create a second
+// instance, which is why the alias symbol only carries a `Package_Id`.
+@(private = "file")
+bind_import_aliases :: proc(k: ^Checker, pkg: ^Package) {
+	for edge in pkg.imports {
+		if edge.target == INVALID_PACKAGE || edge.alias == "" {
+			continue
+		}
+		name := intern_identifier(k.c, edge.alias)
+		if existing, bound := pkg.scope.names[name]; bound {
+			symbol := symbol_of(k.c, existing)
+			if symbol != nil && symbol.kind == .Package_Alias && symbol.pkg == edge.target {
+				continue // the same package under the same name, from another file
+			}
+			errorf(k.c, edge.span, "L0331", "`%s` is already declared in this package", edge.alias)
+			continue
+		}
+		pkg.scope.names[name] = new_symbol(k.c, Symbol {
+			name = name,
+			span = edge.span,
+			kind = .Package_Alias,
+			type = TYPE_VOID,
+			pkg  = edge.target,
+		})
+	}
+}
+
+// Signatures, finite size, and bodies, over the settled selected view. This
+// runs only once the whole program's selection and import graph are stable.
+check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
+	pkg := package_of(k.c, package_id)
+	if pkg == nil || pkg.scope == nil {
+		return
+	}
+	k.pkg = package_id
 
 	// Phase 2b: resolve fields and callable signatures. Recursive types and
 	// mutually recursive procedures now already have stable identities.
 	for file in pkg.files {
-		k.file = file.file
-		for item in file.items {
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		for item in file.active_items {
 			if d, ok := item.(^Decl); ok {
-				resolve_declaration_signature(&k, d)
+				resolve_declaration_signature(k, d)
 			}
 		}
 	}
@@ -109,25 +130,24 @@ check_package :: proc(c: ^Compiler, package_id: Package_Id) {
 	// size, and LLVM cannot be asked to lay one out. Pointer edges break the
 	// cycle, so this runs on the resolved graph and before any emission.
 	for file in pkg.files {
-		k.file = file.file
-		for item in file.items {
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		for item in file.active_items {
 			if d, ok := item.(^Decl); ok {
-				check_declaration_size(&k, d)
+				check_declaration_size(k, d)
 			}
 		}
 	}
 
 	// Phase 3: type checking and constant folding consume the binding IDs.
 	for file in pkg.files {
-		k.file = file.file
-		k.scope = pkg.scope
-		for item in file.items {
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
-				check_decl(&k, v)
-			case ^Item_Error:
+				check_decl(k, v)
+			case ^Item_Import, ^Item_Error:
 			case:
-				unsupported_construct(&k, item_span(item))
+				unsupported_construct(k, item_span(item))
 			}
 		}
 	}
@@ -139,8 +159,8 @@ create_nominal_type_shell :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	symbol := symbol_of(k.c, d.symbols[0])
-	if symbol == nil {
-		return
+	if symbol == nil || symbol.kind == .Type {
+		return // already given its shell in an earlier round
 	}
 	kind := Type_Kind.Invalid
 	#partial switch value in d.values[0] {
@@ -217,10 +237,11 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 		}
 
 		sym := Symbol {
-			name = name_id,
-			span = name.span,
-			decl = d,
-			pkg  = k.pkg,
+			name   = name_id,
+			span   = name.span,
+			decl   = d,
+			pkg    = k.pkg,
+			public = top_level && declaration_is_public(k, d),
 		}
 		switch {
 		case decl_proc(d) != nil:
@@ -238,10 +259,43 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 	d.symbols = symbols[:]
 }
 
+// design.md "Exported names": package-private by default. `@(public)` exports
+// one declaration; `@(public)` on the package clause makes the file's
+// declarations public by default, and `@(private)` opts one back out.
+@(private = "file")
+declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
+	own_public := has_attribute(d.attributes, "public")
+	own_private := has_attribute(d.attributes, "private")
+	if own_public && own_private {
+		errorf(k.c, d.span, "L0332", "this declaration is both `@(public)` and `@(private)`")
+		return false
+	}
+	if own_public {
+		return true
+	}
+	if own_private {
+		return false
+	}
+	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
+}
+
+has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
+	for attribute in attributes {
+		if len(attribute.path) == 1 && attribute.path[0].text == name {
+			return true
+		}
+	}
+	return false
+}
+
 // ---------------------------------------------------------- signatures --
 
-@(private = "file")
 resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
+	if d.sig_state != .Unchecked {
+		return // resolved, or already on the stack below this call
+	}
+	d.sig_state = .Checking
+	defer d.sig_state = .Checked
 	if literal := decl_proc(d); literal != nil {
 		if len(d.symbols) > 0 && d.symbols[0] != INVALID_SYMBOL {
 			literal.symbol = d.symbols[0]
@@ -329,20 +383,22 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 		discriminant := next
 		if field.value != nil {
 			if check_single_expr(k, field.value, backing) != INVALID_TYPE {
-				base := expr_base(field.value)
-				if !base.is_const || (base.const_value.kind != .Integer && base.const_value.kind != .Rune) {
+				folded, evaluated := require_const(k, field.value, "an enum member's value", "L0380")
+				if !evaluated {
+					// `require_const` has already said why.
+				} else if folded.kind != .Integer && folded.kind != .Rune {
 					errorf(k.c, expr_span(field.value), "L0380", "an enum member's value must be a constant integer")
-				} else if !bi_fits(k.c, base.const_value.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
+				} else if !bi_fits(k.c, folded.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
 					errorf(
 						k.c,
 						expr_span(field.value),
 						"L0352",
 						"%s is not representable by `%s`",
-						bi_text(k.c, base.const_value.integer),
+						bi_text(k.c, folded.integer),
 						type_name(k.c, backing),
 					)
 				} else {
-					discriminant = base.const_value.integer
+					discriminant = folded.integer
 				}
 			}
 		}
@@ -553,7 +609,6 @@ size_cycle_path :: proc(k: ^Checker, path: []Type_Id) -> string {
 	return text
 }
 
-@(private = "file")
 concat :: proc(c: ^Compiler, a, b: string) -> string {
 	out := make([]u8, len(a) + len(b), c.semantic_allocator)
 	copy(out, a)
@@ -592,6 +647,18 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				value.resolution = Resolution{kind = .Type, symbol = symbol_id}
 				value.value_category = .Type
 				return value.denoted_type
+			}
+		}
+		return INVALID_TYPE
+
+	case ^Expr_Selector:
+		// A qualified type name, `pkg.Point`. Anything else selects out of a
+		// value and is not a type, so this stays silent for it.
+		if ident, is_ident := value.operand.(^Expr_Ident); is_ident {
+			alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
+			if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
+				check_package_selector(k, value, ident, alias)
+				return value.value_category == .Type ? value.denoted_type : INVALID_TYPE
 			}
 		}
 		return INVALID_TYPE
@@ -649,12 +716,15 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if check_single_expr(k, value.length, TYPE_INT) == INVALID_TYPE {
 			return INVALID_TYPE
 		}
-		length_base := expr_base(value.length)
-		if !length_base.is_const || length_base.const_value.kind != .Integer {
+		folded, evaluated := require_const(k, value.length, "an array length", "L0384")
+		if !evaluated {
+			return INVALID_TYPE
+		}
+		if folded.kind != .Integer {
 			errorf(k.c, expr_span(value.length), "L0384", "an array length must be a constant integer")
 			return INVALID_TYPE
 		}
-		length, fits := bi_to_i64(k.c, length_base.const_value.integer)
+		length, fits := bi_to_i64(k.c, folded.integer)
 		if !fits || length < 0 {
 			errorf(k.c, expr_span(value.length), "L0384", "an array length must be a non-negative constant")
 			return INVALID_TYPE
@@ -765,9 +835,13 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 	if d.declared_type == nil {
 		return INVALID_TYPE // inferred
 	}
+	reported := k.c.error_count
 	resolved := resolve_type_syntax(k, d.declared_type)
 	if resolved != INVALID_TYPE {
 		return resolved
+	}
+	if k.c.error_count > reported {
+		return INVALID_TYPE // resolution already said what is wrong with this type
 	}
 	if syntax, ok := d.declared_type.(^Expr_Ident); ok {
 		errorf(k.c, syntax.span, "L0306", "unknown type `%s`", syntax.name)
@@ -820,6 +894,9 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 
 	declared := resolve_type_name(k, d)
+	if declared == INVALID_TYPE && d.declared_type != nil {
+		return // the written type did not resolve, and said so
+	}
 	if declared != INVALID_TYPE && !gate_type(k, declared, d.span) {
 		return
 	}
@@ -919,27 +996,19 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			}
 		}
 
-		if d.top_level && d.kind == .Var && !is_const_expr(value) {
-			errorf(
-				k.c,
-				expr_span(value),
-				"L0325",
-				"a file-scope initializer must be a compile-time constant",
-			)
+		// Every compile-time-required context goes through one funnel, so a
+		// constant initialiser may call a procedure and still get the same
+		// diagnostics as a folded one (m3-plan decision "Constant entry point").
+		if d.top_level && d.kind == .Var {
+			require_const(k, value, "a file-scope initializer", "L0325")
 		}
 
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 			symbol.type = final
 			if d.kind == .Const {
-				if !is_const_expr(value) {
-					errorf(
-						k.c,
-						expr_span(value),
-						"L0311",
-						"a constant initialiser must be a compile-time constant",
-					)
-				} else {
-					symbol.const_value = expr_base(value).const_value
+				folded, evaluated := require_const(k, value, "a constant initialiser", "L0311")
+				if evaluated {
+					symbol.const_value = folded
 					// A type-valued constant is an alias, and names a type.
 					if symbol.const_value.kind == .Type {
 						symbol.type = TYPE_TYPE
@@ -1119,13 +1188,19 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		return FLOWS
 
 	case ^Stmt_Expr:
+		flow := FLOWS
 		for expr in s.exprs {
 			if _, is_call := expr.(^Expr_Call); !is_call && expr != nil {
 				errorf(k.c, expr_span(expr), "L0313", "this expression statement has no effect")
 			}
 			check_expr(k, expr)
+			// `panic` never returns, in either phase, so nothing after it in this
+			// block is reachable.
+			if is_builtin_call(k.c, expr, .Panic) {
+				flow.can_fall_through = false
+			}
 		}
-		return FLOWS
+		return flow
 
 	case ^Stmt_Assign:
 		check_assign(k, s)
@@ -1152,12 +1227,54 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	case ^Block:
 		return check_scoped_block(k, s)
 
-	case ^Stmt_Foreach, ^Stmt_When:
+	case ^Stmt_When:
+		return check_when_stmt(k, s)
+
+	case ^Stmt_Foreach:
 		unsupported_construct(k, stmt_span(stmt))
 		return FLOWS
 	}
 	unsupported_construct(k, stmt_span(stmt))
 	return FLOWS
+}
+
+// A procedure-scope `when` introduces no scope and has no initialiser: the
+// selected branch's statements behave exactly as if written in its place, which
+// includes declaring into the surrounding scope and contributing its own flow
+// and defer slots.
+@(private = "file")
+check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
+	if s.resolved {
+		return FLOWS // already selected and checked
+	}
+	s.resolved = true
+	value, ok := check_when_condition(k, s.cond)
+	if !ok {
+		return FLOWS
+	}
+	if value {
+		s.selected = s.then
+		return check_block(k, s.then)
+	}
+	#partial switch otherwise in s.otherwise {
+	case ^Stmt_When:
+		flow := check_when_stmt(k, otherwise)
+		s.selected = when_selected_block(otherwise)
+		return flow
+	case ^Block:
+		s.selected = otherwise
+		return check_block(k, otherwise)
+	}
+	return FLOWS
+}
+
+is_builtin_call :: proc(c: ^Compiler, e: Expr, kind: Builtin_Kind) -> bool {
+	call, is_call := e.(^Expr_Call)
+	if !is_call {
+		return false
+	}
+	symbol := symbol_of(c, call.resolution.symbol)
+	return symbol != nil && symbol.kind == .Builtin && symbol.builtin == kind
 }
 
 // design.md "Assignment statements": every right side is evaluated, then every
@@ -1372,7 +1489,6 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 	}
 }
 
-@(private = "file")
 check_condition :: proc(k: ^Checker, cond: Expr) {
 	if cond == nil {
 		return

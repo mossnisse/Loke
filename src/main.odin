@@ -8,7 +8,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M2)
+USAGE :: `lokec - the Loke compiler (milestone M3)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -19,11 +19,23 @@ built-in operator and conversion; assignment, if, for, switch, break, continue,
 defer and return; and procedures with value and inout parameters, defaults,
 named arguments, multiple results and procedure values.
 
-Generics, interfaces, unions, string, slices, maps, impl/extend, foreach,
-import and compile-time procedures parse and report L0350.
+M3 adds the compile-time engine and packages: an ordinary procedure may be
+evaluated to supply a constant, an array length or an enum value; assert and
+panic work in either phase; size_of, align_of, offset_of and len fold to int;
+compile-time strings, #assert and #config are available; when selects source at
+file and procedure scope; and a directory is a package, with imports, an acyclic
+import graph, and @(public) visibility.
+
+Evaluation is bounded at 1000000 steps, 256 frames and 64 MiB of scratch memory.
+
+Generics, interfaces, unions, runtime string, slices, maps, impl/extend,
+foreach, and #location/#caller_location parse and report one diagnostic.
+
+An input is a .loke file or a directory; a directory compiles every .loke file
+directly in it as one package.
 
 usage:
-    lokec <file.loke> [options]
+    lokec <file.loke | directory> [options]
 
 options:
     -o <path>     output executable (default: input name with .exe)
@@ -31,6 +43,12 @@ options:
     -keep-temps   keep the generated .ll after linking
     -parse-only   stop after lexing and parsing
     -dump-ast     print a deterministic syntax tree and stop after parsing
+    -check-layout compare every folded size/alignment/offset with LLVM's own
+    -collection name=path
+                  register an import-path prefix; there is no built-in core:
+    -define:NAME=VALUE
+                  set a project-wide #config value: true, false, an integer,
+                  or a string
 `
 
 Options :: struct {
@@ -40,6 +58,11 @@ Options :: struct {
 	keep_temps: bool,
 	parse_only: bool,
 	dump_ast:   bool,
+	check_layout: bool,
+	// `-define:NAME=VALUE`, in the order written, so a duplicate can name both.
+	defines:    [dynamic]string,
+	// `-collection name=path`, repeatable.
+	collections: [dynamic]string,
 }
 
 main :: proc() {
@@ -56,35 +79,49 @@ run :: proc() -> int {
 
 	c: Compilation
 	defer destroy_compilation(&c)
-	file, loaded := load_source(&c, opts.input)
-	if !loaded {
+	// Configuration is project-wide and immutable, and must be in place before
+	// the first condition is evaluated (m3-plan decision "Configuration").
+	if !seed_defines(&c, opts.defines[:]) {
+		report(&c)
+		return 1
+	}
+	if !register_collections(&c, opts.collections[:]) {
 		report(&c)
 		return 1
 	}
 
-	tokens := lex(&c, file)
-	ast := parse(&c, file, tokens)
-	defer destroy_ast(&ast)
-
-	if opts.dump_ast {
-		fmt.print(ast_dump(&ast))
-	}
-
-	if c.error_count > 0 {
-		report(&c)
-		return 1
-	}
+	// The parse-only modes stop before discovery, so they still describe exactly
+	// one file's syntax.
 	if opts.parse_only || opts.dump_ast {
+		file, loaded := load_source(&c, opts.input)
+		if !loaded {
+			report(&c)
+			return 1
+		}
+		tokens := lex(&c, file)
+		ast := parse(&c, file, tokens)
+		defer destroy_ast(&ast)
+		if opts.dump_ast {
+			fmt.print(ast_dump(&ast))
+		}
+		if c.error_count > 0 {
+			report(&c)
+			return 1
+		}
 		return 0
 	}
 
-	package_id := new_package(&c, ast.package_name, filepath.dir(opts.input))
-	add_package_file(&c, package_id, &ast)
-	check_package(&c, package_id)
-	validate_executable(&c, package_id)
+	package_id, compiled := compile_program(&c, opts.input)
+	if compiled {
+		validate_executable(&c, package_id)
+	}
 	if c.error_count > 0 {
 		report(&c)
 		return 1
+	}
+
+	if opts.check_layout {
+		return check_layout_agreement(&c, opts)
 	}
 
 	code := emit_package(&c, package_id, opts)
@@ -112,6 +149,19 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			opts.parse_only = true
 		case arg == "-dump-ast":
 			opts.dump_ast = true
+		case arg == "-check-layout":
+			opts.check_layout = true
+		case arg == "-collection":
+			i += 1
+			if i >= len(args) {
+				fmt.eprintln("error: -collection needs name=path")
+				return opts, false
+			}
+			append(&opts.collections, args[i])
+		case strings.has_prefix(arg, "-collection:"):
+			append(&opts.collections, arg[len("-collection:"):])
+		case strings.has_prefix(arg, "-define:"):
+			append(&opts.defines, arg[len("-define:"):])
 		case strings.has_prefix(arg, "-"):
 			fmt.eprintfln("error: unknown option `%s`", arg)
 			return opts, false
@@ -127,8 +177,81 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		return opts, false
 	}
 	if opts.output == "" {
-		stem := strings.trim_suffix(opts.input, filepath.ext(opts.input))
+		// A directory input takes its own name; a file input drops its extension.
+		stem := strings.trim_suffix(strings.trim_suffix(opts.input, "/"), filepath.ext(opts.input))
 		opts.output = strings.concatenate({stem, ".exe"})
 	}
 	return opts, true
+}
+
+// `-define:NAME=VALUE`. The value is a boolean, an integer, or — failing both —
+// a string, which is what `#config` then requires its default to match.
+@(private = "file")
+seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
+	init_semantic_stores(c)
+	c.defines = make(map[string]Const_Value, len(defines), c.semantic_allocator)
+	for entry in defines {
+		split := strings.index_byte(entry, '=')
+		if split <= 0 {
+			errorf(c, no_span(), "L0388", "`-define:%s` needs the form NAME=VALUE", entry)
+			continue
+		}
+		name := entry[:split]
+		text := entry[split + 1:]
+		if !is_config_name(name) {
+			errorf(c, no_span(), "L0388", "`%s` is not a valid configuration name", name)
+			continue
+		}
+		if _, duplicate := c.defines[name]; duplicate {
+			errorf(c, no_span(), "L0388", "`%s` is defined more than once", name)
+			continue
+		}
+		switch text {
+		case "true":
+			c.defines[name] = bool_const(true)
+		case "false":
+			c.defines[name] = bool_const(false)
+		case:
+			if value, ok := bi_parse_int_literal(c, text); ok {
+				c.defines[name] = integer_const(c, value)
+			} else {
+				c.defines[name] = Const_Value{kind = .String, text = text}
+			}
+		}
+	}
+	return c.error_count == 0
+}
+
+@(private = "file")
+is_config_name :: proc(name: string) -> bool {
+	for i in 0 ..< len(name) {
+		ch := name[i]
+		letter := (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || ch == '_'
+		if !letter && !(i > 0 && ch >= '0' && ch <= '9') {
+			return false
+		}
+	}
+	return len(name) > 0
+}
+
+// `-collection name=path`. There is no implicit `core:` root: a prefix resolves
+// only when the driver was given one.
+@(private = "file")
+register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
+	init_semantic_stores(c)
+	c.collections = make(map[string]string, len(entries), c.semantic_allocator)
+	for entry in entries {
+		split := strings.index_byte(entry, '=')
+		if split <= 0 {
+			errorf(c, no_span(), "L0333", "`-collection %s` needs the form name=path", entry)
+			continue
+		}
+		name := entry[:split]
+		if _, duplicate := c.collections[name]; duplicate {
+			errorf(c, no_span(), "L0333", "collection `%s` is registered more than once", name)
+			continue
+		}
+		c.collections[name] = strings.clone(entry[split + 1:], c.semantic_allocator)
+	}
+	return c.error_count == 0
 }

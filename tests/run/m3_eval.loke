@@ -1,0 +1,65 @@
+package main;
+
+// A struct field's array length and an enum member's value are both resolved
+// while signatures are built, long before phase 3 would check these bodies.
+// The evaluator asks for them on demand instead (m3-plan "Evaluation
+// readiness"), which is why both procedures are declared *after* their uses.
+Table :: struct { cells: [sum_to(4)]int }
+
+Level :: enum { Low = fib(5), Mid, High }
+
+SIZE :: fib(7);
+
+// Locals, mutation, a loop, `defer`, and an `inout` parameter, all at compile
+// time and all at run time from the same body.
+sum_to :: proc(n: int) -> int {
+	total := 0;
+	scale := 1;
+	defer scale = 0; // registered, runs on the way out, cannot change the result
+	for (i := 1; i <= n; i += 1) {
+		total += i * scale;
+	}
+	return total;
+}
+
+fib :: proc(n: int) -> int {
+	if (n < 2) { return n; }
+	return fib(n - 1) + fib(n - 2);
+}
+
+// Aggregate mutation through an `inout` alias, and a default argument that
+// names the parameter to its left.
+bump :: proc(t: inout Table, at: int, by: int = 2) {
+	t.cells[at] += by;
+}
+
+built :: proc() -> Table {
+	t: Table;
+	bump(inout t, 0, 5);
+	bump(inout t, 1);
+	return t;
+}
+
+FIRST :: built().cells[0];
+SECOND :: built().cells[1];
+
+main :: proc() {
+	print_int(SIZE);
+	print_int(FIRST);
+	print_int(SECOND);
+	print_int(int(Level.Low));
+	print_int(int(Level.High));
+
+	// The same procedures are ordinary runtime procedures.
+	print_int(sum_to(4));
+	print_int(fib(7));
+
+	t: Table;
+	bump(inout t, 3, 9);
+	print_int(t.cells[3]);
+
+	// A true `assert` costs nothing at run time and is not a compile-time
+	// failure either.
+	assert(SIZE == 13);
+	print_int(1);
+}

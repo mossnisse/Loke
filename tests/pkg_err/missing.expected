@@ -1,0 +1,6 @@
+L0327
+@3:1
+cannot find package `nowhere`
+L0329
+@4:1
+no collection is registered for `core:fmt`

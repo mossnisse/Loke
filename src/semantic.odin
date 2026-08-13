@@ -6,6 +6,7 @@ package lokec
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:mem/virtual"
 import "core:strings"
 
 Identifier_Id :: distinct u32
@@ -54,8 +55,12 @@ TYPE_UNTYPED_FLOAT :: Type_Id(26)
 TYPE_UNTYPED_BOOL  :: Type_Id(27)
 TYPE_UNTYPED_RUNE  :: Type_Id(28)
 TYPE_UNTYPED_NIL   :: Type_Id(29)
+// A compile-time string. It may be concatenated, compared, measured, and used
+// as a configuration value or diagnostic message, but it has no runtime
+// representation until M6 (m3-plan decision "Strings").
+TYPE_UNTYPED_STRING :: Type_Id(30)
 
-FIRST_DYNAMIC_TYPE :: Type_Id(30)
+FIRST_DYNAMIC_TYPE :: Type_Id(31)
 
 Type_Kind :: enum {
 	Invalid,
@@ -70,6 +75,7 @@ Type_Kind :: enum {
 	Untyped_Bool,
 	Untyped_Rune,
 	Untyped_Nil,
+	Untyped_String,
 	String,
 	Typeid,
 	Any_View,
@@ -112,6 +118,12 @@ Type_Info :: struct {
 	// Set once the finite-size check has visited this nominal type, so a cycle
 	// is reported at one place instead of once per reference.
 	size_state: Size_State,
+	// Cached natural layout (`src/layout.odin`). `offsets` has one entry per
+	// struct field, in declaration order.
+	layout_state: Size_State,
+	size:         u64,
+	align:        u64,
+	offsets:      []u64,
 }
 
 Size_State :: enum {
@@ -134,12 +146,17 @@ Target_Info :: struct {
 	triple:       string,
 	pointer_bits: u16,
 	int_bits:     u16,
+	// The widest alignment a scalar takes. On x86-64 a 128-bit integer is
+	// 16-aligned and nothing is wider, which is what LLVM's own data layout for
+	// this triple says.
+	max_align:    u16,
 }
 
 WINDOWS_X64 :: Target_Info {
 	triple       = "x86_64-pc-windows-msvc",
 	pointer_bits = 64,
 	int_bits     = 64,
+	max_align    = 16,
 }
 
 Const_Kind :: enum {
@@ -348,10 +365,28 @@ Symbol_Kind :: enum {
 	Builtin,
 }
 
+// Which built-in a `Symbol_Kind.Builtin` symbol is. One shared `Builtin` kind
+// with no identity would make every built-in call emit `print_int`
+// (m3-plan decision "Phase-neutral `assert`/`panic`").
+Builtin_Kind :: enum {
+	None,
+	Print_Int,
+	Assert,
+	Panic,
+	Size_Of,
+	Align_Of,
+	Offset_Of,
+	Len,
+}
+
 Symbol :: struct {
 	name:        Identifier_Id,
 	span:        Span,
 	kind:        Symbol_Kind,
+	builtin:     Builtin_Kind,
+	// design.md "Exported names": package-private by default; `@(public)` on the
+	// declaration, or on the package clause, exports it.
+	public:      bool,
 	type:        Type_Id,
 	const_value: Const_Value,
 	params:      []Type_Id,
@@ -364,6 +399,10 @@ Symbol :: struct {
 	result_symbols: []Symbol_Id,
 	members:     []Symbol_Id,
 	decl:        ^Decl,
+	// Expression-position procedures have no declaration wrapper. Keeping their
+	// syntax here lets the compile-time evaluator execute the same hoisted body
+	// that the backend emits.
+	proc_literal: ^Expr_Proc,
 	pkg:         Package_Id,
 	// Field or enum-member position in its owning type; parameter position in
 	// its signature.
@@ -396,13 +435,35 @@ Operator_Set :: struct {
 	candidates: [dynamic]Symbol_Id,
 }
 
+// One resolved `import` edge, with the statement that wrote it: a cycle is
+// reported as an ordered path of those spans, not as a set of package names.
+Package_Import :: struct {
+	target: Package_Id,
+	span:   Span,
+	alias:  string,
+}
+
 Package :: struct {
 	id:             Package_Id,
 	name:           Identifier_Id,
 	canonical_path: string,
+	// The logical canonical import identity — root-relative, or
+	// `collection:relative/path` — which is what every user symbol is mangled
+	// with. Never an alias and never a host absolute path, so a build is
+	// reproducible and two same-named packages cannot collide
+	// (m3-plan decision "Symbol mangling"). The root package's key is "".
+	key:            string,
 	files:          [dynamic]^File,
 	scope:          ^Scope,
 	operators:      map[string]^Operator_Set,
+	imports:        [dynamic]Package_Import,
+	// Procedure literals lifted out of expression position, owned by the package
+	// that declared them: a compiler-global list would be discarded by the next
+	// package checked (m3-plan decision "Package-owned backend state").
+	hoisted_procs:  [dynamic]^Expr_Proc,
+	// Which discovery work this package has already had. Monotonic, so a later
+	// round only does what a newly selected branch added.
+	collected:      bool,
 }
 
 init_semantic_stores :: proc(c: ^Compiler) {
@@ -411,21 +472,20 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	}
 	c.semantic_initialized = true
 	c.target = WINDOWS_X64
-	// This arena backs maps — the identifier and type indices, every scope's
-	// names, a package's operators. Odin's map asserts its allocation is
-	// cache-line aligned, and `Dynamic_Arena` ignores the alignment an
-	// individual allocation asks for: it bump-allocates at `arena.alignment`,
-	// which defaults to 8. Whether a map landed on a 64-byte boundary was then
-	// decided by the heap address of the arena block, so the same binary on the
-	// same input crashed on roughly half its runs. Aligning the arena itself
-	// makes every allocation out of it 64-aligned, so the maps stay arena-owned
-	// and one `destroy_compilation` still frees the lot.
+	// A growing virtual arena, not `mem.Dynamic_Arena`. The latter rejects any
+	// single allocation larger than its block size — 64 KiB by default — with
+	// `.Invalid_Argument`, and both `append` and `make` swallow that: the symbol
+	// store crossing the threshold kept its old length while `new_symbol` handed
+	// out IDs for elements that were never stored. This arena serves an
+	// allocation of any size, honours the cache-line alignment Odin's maps
+	// assert on, and one `destroy_compilation` still frees the lot.
 	//
-	// The per-file syntax arena in `File` holds no maps and stays at the default
-	// alignment; that is where the node allocations are, and padding them all to
-	// 64 bytes would be pure waste.
-	mem.dynamic_arena_init(&c.semantic_arena, alignment = runtime.MAP_CACHE_LINE_SIZE)
-	c.semantic_allocator = mem.dynamic_arena_allocator(&c.semantic_arena)
+	// The per-file syntax arena in `File` is only ever asked for small nodes and
+	// holds no maps, so it stays as it is.
+	if err := virtual.arena_init_growing(&c.semantic_arena); err != nil {
+		panic("cannot reserve the compilation's semantic arena")
+	}
+	c.semantic_allocator = virtual.arena_allocator(&c.semantic_arena)
 	c.identifier_names = make([dynamic]string, 0, 64, c.semantic_allocator)
 	c.identifier_by_name = make(map[string]Identifier_Id, c.semantic_allocator)
 	c.types = make([dynamic]Type_Info, 0, 64, c.semantic_allocator)
@@ -467,6 +527,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		Type_Info{kind = .Untyped_Bool},
 		Type_Info{kind = .Untyped_Rune},
 		Type_Info{kind = .Untyped_Nil},
+		Type_Info{kind = .Untyped_String},
 	)
 	assert(Type_Id(len(c.types)) == FIRST_DYNAMIC_TYPE, "predeclared type table is out of step with its IDs")
 	append(&c.symbols, Symbol{})
@@ -654,7 +715,8 @@ type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 type_is_untyped :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch type_kind(c, id) {
-	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
+	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
 		return true
 	}
 	return false
@@ -737,7 +799,8 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
 		return true
 	case .Array:
 		return type_is_comparable(c, info.element)
@@ -755,7 +818,8 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 
 type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch type_kind(c, type_underlying(c, id)) {
-	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune:
+	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune,
+	     .Untyped_String:
 		return true
 	}
 	return false
@@ -775,6 +839,9 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 		return TYPE_RUNE
 	case .Untyped_Nil:
 		return INVALID_TYPE // `x := nil` has no type to infer
+	case .Untyped_String:
+		// Named so the gate reports one L0350; M6 gives `string` a runtime shape.
+		return TYPE_STRING
 	}
 	return id
 }
@@ -799,7 +866,8 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	case .Invalid:
 		return false
 	case .Void, .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Type,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
 		return true
 	case .String, .Typeid, .Any_View, .Multi_Pointer, .Slice, .Dynamic_Array,
 	     .Map, .Union, .Interface, .Dyn:
@@ -894,6 +962,8 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 		return "untyped rune"
 	case TYPE_UNTYPED_NIL:
 		return "untyped nil"
+	case TYPE_UNTYPED_STRING:
+		return "untyped string"
 	}
 	info := type_of(c, id)
 	if info == nil {
@@ -989,15 +1059,18 @@ lookup_symbol_with_scope :: proc(scope: ^Scope, name: Identifier_Id) -> (Symbol_
 	return INVALID_SYMBOL, nil
 }
 
-new_package :: proc(c: ^Compiler, name, canonical_path: string) -> Package_Id {
+new_package :: proc(c: ^Compiler, name, canonical_path: string, key := "") -> Package_Id {
 	init_semantic_stores(c)
 	id := Package_Id(len(c.packages))
 	pkg := Package {
 		id             = id,
 		name           = intern_identifier(c, name),
 		canonical_path = canonical_path,
+		key            = key,
 		files          = make([dynamic]^File, 0, 4, c.semantic_allocator),
 		operators      = make(map[string]^Operator_Set, c.semantic_allocator),
+		imports        = make([dynamic]Package_Import, 0, 4, c.semantic_allocator),
+		hoisted_procs  = make([dynamic]^Expr_Proc, 0, 4, c.semantic_allocator),
 	}
 	append(&c.packages, pkg)
 	return id
@@ -1022,7 +1095,7 @@ add_package_file :: proc(c: ^Compiler, package_id: Package_Id, file: ^File) -> b
 
 destroy_compilation :: proc(c: ^Compiler) {
 	if c.semantic_initialized {
-		mem.dynamic_arena_destroy(&c.semantic_arena)
+		virtual.arena_destroy(&c.semantic_arena)
 		c.semantic_initialized = false
 	}
 }

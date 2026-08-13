@@ -1,0 +1,4 @@
+L0342
+@11:6
+compile-time evaluation exceeded 1000000 steps
+in `spin`, called here

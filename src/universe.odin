@@ -77,11 +77,38 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	print_modes[0] = .Value
 	define(c, universe, PRINT_BUILTIN, Symbol {
 		kind          = .Builtin,
+		builtin       = .Print_Int,
 		type          = TYPE_VOID,
 		params        = print_params,
 		param_symbols = make([]Symbol_Id, 1, c.semantic_allocator),
 		proc_type     = intern_proc_type(c, print_params, print_modes, nil, nil, ""),
 	})
+
+	// `assert` and `panic` are ordinary calls whose phase is chosen by execution:
+	// the evaluator diagnoses them, and a runtime occurrence takes the trap seam
+	// (m3-plan decision "Phase-neutral `assert`/`panic`"). Their arity is checked
+	// by `check_builtin_call`, so the interned type carries no parameters.
+	no_args := intern_proc_type(c, nil, nil, nil, nil, "")
+	define(c, universe, "assert", Symbol{kind = .Builtin, builtin = .Assert, type = TYPE_VOID, proc_type = no_args})
+	define(c, universe, "panic",  Symbol{kind = .Builtin, builtin = .Panic,  type = TYPE_VOID, proc_type = no_args})
+
+	// The layout and length queries. Their operands are inspected, not evaluated
+	// (m3-plan decision "Unevaluated layout operands"), so `check_builtin_call`
+	// binds them itself rather than through the ordinary argument path.
+	layout := []struct{name: string, kind: Builtin_Kind} {
+		{"size_of", .Size_Of},
+		{"align_of", .Align_Of},
+		{"offset_of", .Offset_Of},
+		{"len", .Len},
+	}
+	for entry in layout {
+		define(c, universe, entry.name, Symbol {
+			kind      = .Builtin,
+			builtin   = entry.kind,
+			type      = TYPE_INT,
+			proc_type = no_args,
+		})
+	}
 
 	return universe
 }

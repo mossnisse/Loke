@@ -1,0 +1,27 @@
+package main;
+
+// Untyped compile-time strings: joined, compared, and measured, but never
+// stored in a runtime binding (m3-plan decision "Strings").
+GREETING :: "hello";
+NAME :: "loke";
+FULL :: GREETING + ", " + NAME;
+ESCAPED :: "tab:\there\x21\n";
+
+// Configuration is project-wide and immutable, and a default fixes both the
+// result's type and what an override may say.
+MODE :: #config(MODE, "debug");
+LIMIT :: #config(LIMIT, 10);
+VERBOSE :: #config(VERBOSE, false);
+
+main :: proc() {
+	#assert(len(FULL) == 11, "the greeting changed shape");
+	#assert(FULL == "hello, loke");
+	#assert(GREETING < NAME);
+	#assert(len(ESCAPED) == 11);
+
+	print_int(len(FULL));
+	print_int(len(ESCAPED));
+	print_int(LIMIT);
+	print_int(1 if VERBOSE else 0);
+	print_int(len(MODE));
+}

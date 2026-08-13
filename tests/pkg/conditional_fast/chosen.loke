@@ -1,0 +1,7 @@
+package main;
+
+when (FAST) {
+	chosen :: proc() -> int { return fast.speed(); }
+} else {
+	chosen :: proc() -> int { return slow.speed(); }
+}

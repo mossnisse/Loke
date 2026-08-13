@@ -1,0 +1,4 @@
+package slow;
+
+@(public)
+speed :: proc() -> int { return 3; }

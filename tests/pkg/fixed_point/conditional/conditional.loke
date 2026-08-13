@@ -1,0 +1,9 @@
+package conditional;
+
+LOCAL :: true;
+
+// Conditions in imported packages must resolve in this package's scope.
+when (LOCAL) {
+	@(public)
+	VALUE :: 2;
+}

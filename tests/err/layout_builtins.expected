@@ -1,0 +1,12 @@
+L0386
+@7:12
+`len` needs a fixed array, found `int`
+L0363
+@8:29
+`Point` has no field `z`
+L0322
+@9:12
+`size_of` takes 1 argument, found 0
+L0386
+@10:29
+`offset_of` needs a field name

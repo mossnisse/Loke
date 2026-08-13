@@ -1,0 +1,12 @@
+package main;
+
+// The body cannot be typed while it is being typed, so the length it needs has
+// no answer.
+self :: proc() -> int {
+	t: [self()]int;
+	return 1;
+}
+
+main :: proc() {
+	print_int(self());
+}

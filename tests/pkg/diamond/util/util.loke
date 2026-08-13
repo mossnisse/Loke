@@ -1,0 +1,10 @@
+package util;
+
+@(public)
+SEED :: 7;
+
+@(public)
+double :: proc(n: int) -> int {
+	f := proc(n: int) -> int { return n * 2; };
+	return f(n);
+}

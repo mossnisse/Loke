@@ -1,0 +1,37 @@
+package main;
+
+// Every interesting M2 shape, so `-check-layout` has something to disagree
+// about: empty and nested structs, arrays of aggregates, pointers, enums with
+// several backings, `f16`, and 128-bit integers.
+Empty :: struct {}
+
+Pair :: struct { a: i8, b: i64 }
+
+Mixed :: struct { flag: bool, half: f16, wide: i128, code: rune }
+
+Nested :: struct { head: Pair, tail: [3]Mixed, link: ^Nested, hole: Empty }
+
+Cells :: struct { grid: [2][3]i32, count: u16 }
+
+Small :: enum u8 { A, B, C }
+
+Wide :: enum i64 { X = 1000, Y, Z }
+
+Handle :: distinct ^Pair;
+
+Callback :: proc(a: int) -> int;
+
+main :: proc() {
+	// Named uses, so nothing above is dropped before the probe runs.
+	p: Pair;
+	m: Mixed;
+	n: Nested;
+	c: Cells;
+	s: Small;
+	w: Wide;
+	h: Handle;
+	f: Callback;
+	e: Empty;
+	print_int(size_of(Pair) + align_of(Mixed) + offset_of(Nested, tail) + len(c.grid));
+	print_int(size_of(p) + size_of(m) + size_of(n) + size_of(s) + size_of(w) + size_of(h) + size_of(f) + size_of(e));
+}

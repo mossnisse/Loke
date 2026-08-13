@@ -1,0 +1,13 @@
+@(public)
+package lib;
+
+EXPORTED :: 1;
+
+Visible :: struct { n: int }
+
+also_exported :: proc() -> int { return 2; }
+
+@(private)
+not_exported :: 99;
+
+internal :: proc() -> int { return not_exported; }

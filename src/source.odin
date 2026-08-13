@@ -7,6 +7,7 @@ package lokec
 
 import "core:fmt"
 import "core:mem"
+import "core:mem/virtual"
 import "core:os"
 import "core:slice"
 import "core:strings"
@@ -64,17 +65,29 @@ Compiler :: struct {
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,
 
-	// Procedure literals lifted out of expression position, in the order they
-	// were checked. The backend emits one module function for each.
-	hoisted_procs: [dynamic]^Expr_Proc,
 
 	// The widths `int`, `uint`, `uintptr` and every pointer take. Checker and
 	// emitter read this one record so they cannot disagree.
 	target:      Target_Info,
 
+	// Project-wide `-define:NAME=VALUE` configuration, seeded before package
+	// discovery so the first file-scope `when` round already sees it and every
+	// package agrees on what a name means (m3-plan decision "Configuration").
+	defines:     map[string]Const_Value,
+
+	// Package discovery (`src/packages.odin`). `package_by_dir` is keyed by the
+	// canonical directory, so an alias never creates a second instance of a
+	// package.
+	collections:    map[string]string,
+	package_by_dir: map[string]Package_Id,
+	root_dir:       string,
+	root_package:   Package_Id,
+	// Every parsed file, so one `destroy_compilation` frees the lot.
+	parsed_files:   [dynamic]^File,
+
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
-	semantic_arena:       mem.Dynamic_Arena,
+	semantic_arena:       virtual.Arena,
 	semantic_allocator:   mem.Allocator,
 	identifier_names:     [dynamic]string,
 	identifier_by_name:   map[string]Identifier_Id,

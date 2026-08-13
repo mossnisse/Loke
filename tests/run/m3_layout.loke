@@ -1,0 +1,29 @@
+package main;
+
+Point :: struct { x: i32, y: i64 }
+
+// A constant with the same name as a field: `offset_of` resolves a member, not
+// a lexical value (m3-plan "Unevaluated layout operands").
+y :: 999;
+
+// If a `size_of` operand were ever evaluated, this would be a compile-time
+// panic rather than a size.
+side_effect :: proc() -> int {
+	panic();
+	return 1;
+}
+
+main :: proc() {
+	print_int(size_of(Point));
+	print_int(align_of(Point));
+	print_int(offset_of(Point, y));
+	print_int(size_of(i128));
+	print_int(align_of(f16));
+
+	// A dead local is a legal unevaluated operand: the query inspects its type.
+	dead: [4]Point;
+	print_int(size_of(dead));
+	print_int(len(dead));
+
+	print_int(size_of(side_effect()));
+}

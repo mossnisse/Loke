@@ -19,6 +19,15 @@ main_body :: proc(f: ^File) -> ^Block {
 	return nil
 }
 
+// The single-package half of `compile_program`, for a package these tests have
+// loaded by hand. None of them uses `when`, so no discovery round is needed.
+check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
+	k := Checker{c = c}
+	rebuild_active_items(c, package_of(c, pkg_id))
+	prepare_package(&k, pkg_id)
+	check_package_bodies(&k, pkg_id)
+}
+
 test_compiler :: proc(text: string) -> Compiler {
 	c: Compiler
 	starts := make([dynamic]u32)
@@ -61,7 +70,7 @@ main :: proc() {
 	defer destroy_ast(&f)
 	pkg_id := new_package(&c, f.package_name, "<test>")
 	add_package_file(&c, pkg_id, &f)
-	check_package(&c, pkg_id)
+	check_one_package(&c, pkg_id)
 	validate_executable(&c, pkg_id)
 	if !testing.expectf(t, c.error_count == 0, "semantic phases produced %d diagnostics", c.error_count) {
 		return
@@ -104,7 +113,7 @@ N :: 7;`
 	pkg_id := new_package(&c, "main", "<test-package>")
 	add_package_file(&c, pkg_id, &first)
 	add_package_file(&c, pkg_id, &second)
-	check_package(&c, pkg_id)
+	check_one_package(&c, pkg_id)
 	validate_executable(&c, pkg_id)
 	if !testing.expectf(t, c.error_count == 0, "multi-file package produced %d diagnostics", c.error_count) {
 		return
@@ -128,7 +137,7 @@ main :: proc() { }`
 	defer destroy_ast(&f)
 	pkg_id := new_package(&c, "main", "<test>")
 	add_package_file(&c, pkg_id, &f)
-	check_package(&c, pkg_id)
+	check_one_package(&c, pkg_id)
 
 	// M2 compiles a pointer-recursive struct, so this now checks clean; the
 	// semantic foundation underneath it is the same one M1 established.
@@ -154,7 +163,7 @@ helper :: proc() { }`
 	defer destroy_ast(&f)
 	pkg_id := new_package(&c, "utility", "<test>")
 	add_package_file(&c, pkg_id, &f)
-	check_package(&c, pkg_id)
+	check_one_package(&c, pkg_id)
 	testing.expectf(t, c.error_count == 0, "library package was treated as an executable")
 	validate_executable(&c, pkg_id)
 	testing.expectf(t, c.error_count == 2, "executable validation did not enforce package name and entry point")
@@ -1045,22 +1054,25 @@ sentinel :: proc() { }
 	}
 }
 
-// The semantic arena backs maps, and Odin's map panics unless its allocation is
-// cache-line aligned. `Dynamic_Arena` ignores per-allocation alignment, so this
-// only holds while the arena itself is initialised aligned — and when it did not
-// hold, whether it crashed was decided by the heap address of the arena block,
-// which made the whole compiler fail on roughly half its runs. Assert the
-// property directly: a run that happens to get lucky must still fail here.
+// Two properties the semantic arena must have, both of which a previous
+// allocator broke silently.
+//
+// Odin's map panics unless its allocation is cache-line aligned, so the arena
+// has to honour the alignment an allocation asks for. And it has to serve an
+// allocation of *any* size: `mem.Dynamic_Arena` refused anything larger than
+// its 64 KiB block with `.Invalid_Argument`, which `append` and `make` swallow —
+// the symbol store crossing that threshold silently kept its old length while
+// `new_symbol` went on handing out IDs for elements that were never stored.
 @(test)
-semantic_arena_is_map_aligned :: proc(t: ^testing.T) {
+semantic_arena_serves_maps_and_large_blocks :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)
 	init_semantic_stores(&c)
 
-	// Odd sizes, so a bump allocator that is not rounding to the cache line is
-	// off the boundary by the second allocation rather than by luck.
+	// Odd sizes, so a bump allocator that is not rounding is off the boundary by
+	// the second allocation rather than by luck.
 	for size in ([?]int{1, 17, 63, 65, 200}) {
-		block, err := mem.alloc_bytes(size, allocator = c.semantic_allocator)
+		block, err := mem.alloc_bytes(size, runtime.MAP_CACHE_LINE_SIZE, c.semantic_allocator)
 		testing.expectf(t, err == nil, "semantic arena refused %d bytes: %v", size, err)
 		testing.expectf(
 			t,
@@ -1071,10 +1083,21 @@ semantic_arena_is_map_aligned :: proc(t: ^testing.T) {
 		)
 	}
 
-	// The maps themselves: growth is what reallocates, so push past the initial
-	// capacity rather than trusting a single insert.
-	for i in 0 ..< 256 {
+	// Well past any block size an arena is likely to be configured with.
+	for size in ([?]int{64 * 1024, 1 << 20, 8 << 20}) {
+		block, err := mem.alloc_bytes(size, allocator = c.semantic_allocator)
+		testing.expectf(t, err == nil, "semantic arena refused a %d-byte block: %v", size, err)
+		testing.expectf(t, len(block) == size, "semantic arena returned %d of %d bytes", len(block), size)
+	}
+
+	// The stores themselves: growth is what reallocates, so push well past the
+	// initial capacity rather than trusting a single insert.
+	for i in 0 ..< 4096 {
 		intern_identifier(&c, fmt.tprintf("name%d", i))
 	}
-	testing.expect(t, len(c.identifier_names) == 257, "identifier interning lost entries")
+	testing.expect(t, len(c.identifier_names) == 4097, "identifier interning lost entries")
+	for i in 0 ..< 4096 {
+		id := new_symbol(&c, Symbol{name = intern_identifier(&c, fmt.tprintf("sym%d", i))})
+		testing.expectf(t, symbol_of(&c, id) != nil, "symbol %d was given an ID it was never stored under", i)
+	}
 }

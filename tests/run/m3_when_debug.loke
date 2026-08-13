@@ -1,0 +1,25 @@
+package main;
+
+// The other selection of `m3_when.loke`, driven by `m3_when_debug.flags`. Only
+// the selected branch is declared, checked, and emitted, so the branch not
+// taken here is free to be nonsense.
+DEBUG :: #config(DEBUG, false);
+
+when (DEBUG) {
+	LEVEL :: 2;
+} else {
+	LEVEL :: 1;
+	this_is_never_checked: [no_such_length]no_such_type;
+}
+
+main :: proc() {
+	total := 0;
+	when (DEBUG) {
+		total += LEVEL;
+		defer print_int(900);
+	} else {
+		total += 100;
+		defer print_int(901);
+	}
+	print_int(total);
+}

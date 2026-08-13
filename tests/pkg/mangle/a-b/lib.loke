@@ -1,0 +1,4 @@
+package dash;
+
+@(public)
+value :: proc() -> int { return 1; }

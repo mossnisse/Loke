@@ -1,0 +1,8 @@
+package main;
+
+import "nowhere";
+import "core:fmt";
+
+main :: proc() {
+	print_int(1);
+}

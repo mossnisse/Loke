@@ -1,0 +1,10 @@
+L0350
+@8:2
+L0387
+@11:2
+static assertion failed: the budget shrank
+L0387
+@12:2
+L0390
+@14:16
+needs the runtime source-location type, which arrives in M6

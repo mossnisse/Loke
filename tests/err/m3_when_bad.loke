@@ -1,0 +1,24 @@
+package main;
+
+runtime_flag: int = 1;
+
+// Not a boolean.
+when (7) {
+	A :: 1;
+}
+
+// Boolean, but not a compile-time constant.
+when (runtime_flag == 1) {
+	B :: 2;
+}
+
+// Waiting on a name no branch can supply.
+when (MISSING) {
+	C :: 3;
+}
+
+main :: proc() {
+	when ("no") {
+		print_int(1);
+	}
+}

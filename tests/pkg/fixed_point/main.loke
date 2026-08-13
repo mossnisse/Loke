@@ -1,0 +1,21 @@
+package main;
+
+READY :: true;
+
+// This import appears before an already-active import only after selection.
+when (READY) {
+	import "early";
+}
+
+import "conditional";
+
+// The dependency's selected declaration is collected on the next round.
+when (conditional.VALUE == 2) {
+	SELECTED :: 3;
+}
+
+main :: proc() {
+	print_int(early.VALUE);
+	print_int(conditional.VALUE);
+	print_int(SELECTED);
+}

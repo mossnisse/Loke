@@ -20,8 +20,5 @@ main :: proc() {
 	foreach (item in xs) {
 		print_int(item);
 	}
-	when (true) {
-		print_int(1);
-	}
 	print_int(1);
 }

@@ -1,0 +1,23 @@
+package main;
+
+pair :: proc() -> (int, int) {
+	return 20, 22;
+}
+
+call_pair :: proc(f: proc() -> (int, int)) -> int {
+	a, b := f();
+	return a + b;
+}
+
+compute :: proc() -> int {
+	// This aggregate is larger than the old scratch arena's single block.
+	values: [10_000]int;
+	f := proc(n: int) -> int { return n * 2; };
+	return f(call_pair(pair));
+}
+
+VALUE :: compute();
+
+main :: proc() {
+	print_int(VALUE);
+}

@@ -1,0 +1,11 @@
+package main;
+
+import "lib";
+
+main :: proc() {
+	print_int(lib.EXPORTED);
+	print_int(lib.also_exported());
+	v: lib.Visible;
+	v.n = 3;
+	print_int(v.n);
+}

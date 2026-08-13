@@ -1,0 +1,10 @@
+package main;
+
+// These paths used to collapse to the same LLVM package prefix.
+import dash "a-b";
+import dot "a.b";
+
+main :: proc() {
+	print_int(dash.value());
+	print_int(dot.value());
+}

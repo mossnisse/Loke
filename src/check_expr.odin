@@ -62,8 +62,14 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	case ^Expr_Proc:
 		check_proc_literal(k, v)
 
+	case ^Expr_Hash:
+		// A `#name` outside a call. `#location` and `#caller_location` are the
+		// only ones that mean anything here, and both wait for M6.
+		errorf(k.c, v.span, "L0390", "`%s` needs the runtime source-location type, which arrives in M6", v.name)
+		v.type = INVALID_TYPE
+
 	case ^Expr_Type_Assert, ^Expr_Slice, ^Expr_Range, ^Expr_Or_Else, ^Expr_Move,
-	     ^Expr_Hash, ^Expr_Proc_Group, ^Expr_Operator,
+	     ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
@@ -192,9 +198,94 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 		v.const_value = rune_const(k.c, bi_from_i64(k.c, i64(value)))
 
 	case .String, .Raw_String:
-		unsupported_construct(k, v.span)
-		v.type = INVALID_TYPE
+		text, ok := decode_string_literal(k.c, v.text, v.kind == .Raw_String)
+		if !ok {
+			errorf(k.c, v.span, "L0351", "`%s` is not a valid string literal", v.text)
+			v.type = INVALID_TYPE
+			return
+		}
+		// Compile-time only: `TYPE_STRING` stays gated, so this value can be
+		// concatenated, compared, measured, and used as a message or a
+		// configuration value, but never stored (m3-plan decision "Strings").
+		v.type = TYPE_UNTYPED_STRING
+		v.is_const = true
+		v.const_value = Const_Value{kind = .String, text = text}
 	}
+}
+
+// The lexer has already validated the spelling; a raw string has no escapes at
+// all and a quoted one reuses the rune decoder for each of its own.
+decode_string_literal :: proc(c: ^Compiler, text: string, raw: bool) -> (string, bool) {
+	if len(text) < 2 {
+		return "", false
+	}
+	body := text[1:len(text) - 1]
+	if raw {
+		return body, true
+	}
+	out := strings.builder_make(c.semantic_allocator)
+	for i := 0; i < len(body); {
+		if body[i] != '\\' {
+			strings.write_byte(&out, body[i])
+			i += 1
+			continue
+		}
+		width := escape_width(body[i:])
+		if width == 0 {
+			return "", false
+		}
+		value, ok := decode_rune_literal(concat_quoted(c, body[i:i + width]))
+		if !ok {
+			return "", false
+		}
+		// `\xNN` is one byte; every other escape names a code point.
+		if width >= 2 && body[i + 1] == 'x' {
+			strings.write_byte(&out, u8(value))
+		} else {
+			strings.write_rune(&out, value)
+		}
+		i += width
+	}
+	return strings.to_string(out), true
+}
+
+// How many bytes of `\...` this escape spans.
+@(private = "file")
+escape_width :: proc(s: string) -> int {
+	if len(s) < 2 {
+		return 0
+	}
+	digits :: proc(s: string, count: int, base: int) -> int {
+		if len(s) < 2 + count {
+			return 0
+		}
+		for i in 2 ..< 2 + count {
+			if _, ok := strconv.parse_u64_of_base(s[i:i + 1], base); !ok {
+				return 0
+			}
+		}
+		return 2 + count
+	}
+	switch s[1] {
+	case 'x':
+		return digits(s, 2, 16)
+	case 'u':
+		return digits(s, 4, 16)
+	case 'U':
+		return digits(s, 8, 16)
+	case '0' ..= '7':
+		return digits(s, 2, 8) // `\NNN`, three octal digits including this one
+	}
+	return 2
+}
+
+@(private = "file")
+concat_quoted :: proc(c: ^Compiler, body: string) -> string {
+	out := make([]u8, len(body) + 2, c.semantic_allocator)
+	out[0] = '\''
+	copy(out[1:], body)
+	out[len(out) - 1] = '\''
+	return string(out)
 }
 
 // The lexer has already validated the spelling, so this only has to decode it.
@@ -291,7 +382,10 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		}
 	}
 
-	if sym.kind == .Const && sym.decl != nil {
+	// A constant, or a file-scope variable a `when` condition or an earlier
+	// declaration reached before the ordinary phase order would: both are
+	// checked on demand so a forward reference sees a real type.
+	if sym.decl != nil && (sym.kind == .Const || (sym.kind == .Var && sym.decl.top_level)) {
 		switch sym.decl.check_state {
 		case .Unchecked:
 			check_decl(k, sym.decl)
@@ -304,6 +398,19 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		}
 	}
 
+	annotate_symbol_use(k, &v.base, symbol_id, v.name)
+}
+
+// Writes what a resolved symbol means onto the node that named it. Shared by a
+// plain identifier and by `package.name`, so a qualified use cannot drift from
+// an unqualified one.
+@(private = "file")
+annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, name: string) {
+	sym := symbol_of(k.c, symbol_id)
+	if sym == nil {
+		v.type = INVALID_TYPE
+		return
+	}
 	switch sym.kind {
 	case .Type:
 		v.resolution = Resolution{kind = .Type, symbol = symbol_id}
@@ -316,13 +423,20 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 	case .Proc:
 		// A named procedure is a value with its interned procedure type; a call
 		// obtains its results from the type, not from a single result field.
+		// A signature the current phase has not reached yet is resolved on
+		// demand, so an enum value or array length may call a procedure declared
+		// later in the file.
+		if sym.proc_type == INVALID_TYPE && sym.decl != nil {
+			resolve_declaration_signature(k, sym.decl)
+			sym = symbol_of(k.c, symbol_id)
+		}
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value
 		v.type = sym.proc_type
 
 	case .Builtin:
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
-		errorf(k.c, v.span, "L0316", "`%s` is a built-in procedure and must be called", v.name)
+		errorf(k.c, v.span, "L0316", "`%s` is a built-in procedure and must be called", name)
 		v.type = INVALID_TYPE
 
 	case .Const, .Enum_Member:
@@ -345,7 +459,11 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		v.resolution = Resolution{kind = .Field, symbol = symbol_id}
 		v.type = sym.type
 
-	case .Proc_Group, .Package_Alias, .Invalid:
+	case .Package_Alias:
+		errorf(k.c, v.span, "L0334", "`%s` names a package; write `%s.name` to use one of its declarations", name, name)
+		v.type = INVALID_TYPE
+
+	case .Proc_Group, .Invalid:
 		unsupported_construct(k, v.span)
 		v.type = INVALID_TYPE
 	}
@@ -378,6 +496,17 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		v.const_value = sym.const_value
 		v.immutable = .Constant
 		return
+	}
+
+	// Package resolution comes before enum, type, and value field selection: a
+	// package alias is not a value, so checking the operand as one would reject
+	// it first (m3-plan decision "Import symbols").
+	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
+		alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
+		if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
+			check_package_selector(k, v, ident, alias)
+			return
+		}
 	}
 
 	operand := check_single_expr(k, v.operand)
@@ -451,6 +580,47 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			v.immutable = .Constant
 		}
 	}
+}
+
+// `alias.name`. Only the target package's own scope is searched — never its
+// parents — and only a `@(public)` declaration is visible from outside.
+check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Ident, alias: Symbol_Id) {
+	alias_symbol := symbol_of(k.c, alias)
+	ident.symbol = alias
+	ident.resolution = Resolution{kind = .Package, symbol = alias}
+	ident.type = TYPE_VOID
+
+	target := package_of(k.c, alias_symbol.pkg)
+	if target == nil || target.scope == nil {
+		v.type = INVALID_TYPE
+		return
+	}
+	name := intern_identifier(k.c, v.name.text)
+	symbol_id, found := target.scope.names[name]
+	if !found {
+		errorf(k.c, v.span, "L0335", "package `%s` has no declaration `%s`", ident.name, v.name.text)
+		v.type = INVALID_TYPE
+		return
+	}
+	symbol := symbol_of(k.c, symbol_id)
+	if symbol == nil || !symbol.public {
+		errorf(k.c, v.span, "L0336", "`%s` is not public in package `%s`", v.name.text, ident.name)
+		if symbol != nil {
+			add_notef(k.c, symbol.span, "declared here; add `@(public)` to export it")
+		}
+		v.type = INVALID_TYPE
+		return
+	}
+	// A cross-package constant or global may be reached before its own package's
+	// phase 3; check it on demand so the use sees a real value.
+	if symbol.decl != nil && symbol.decl.check_state == .Unchecked &&
+	   (symbol.kind == .Const || symbol.kind == .Var) {
+		outer_scope, outer_pkg, outer_file := k.scope, k.pkg, k.file_node
+		k.scope, k.pkg, k.file_node = target.scope, target.id, nil
+		check_decl(k, symbol.decl)
+		k.scope, k.pkg, k.file_node = outer_scope, outer_pkg, outer_file
+	}
+	annotate_symbol_use(k, &v.base, symbol_id, v.name.text)
 }
 
 // ---------------------------------------------------------------- indexing --
@@ -691,7 +861,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	if !left.is_const || !right.is_const {
 		return
 	}
-	folded, ok := fold_arithmetic(k, v.op, v.op_span, left.const_value, right.const_value, operand_type)
+	folded, ok := fold_arithmetic(k.c, v.op, v.op_span, left.const_value, right.const_value, operand_type)
 	if !ok {
 		v.type = INVALID_TYPE
 		return
@@ -846,7 +1016,7 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
 	if left.is_const && right.is_const {
-		result, ok := fold_comparison(k, v.op, left.const_value, right.const_value)
+		result, ok := fold_comparison(k.c, v.op, left.const_value, right.const_value)
 		if ok {
 			v.type = TYPE_UNTYPED_BOOL
 			v.is_const = true
@@ -923,7 +1093,9 @@ operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
 		return false
 	}
 	#partial switch op {
-	case .Plus, .Minus, .Star, .Slash:
+	case .Plus:
+		return type_is_numeric(c, type) || type_kind(c, type) == .Untyped_String
+	case .Minus, .Star, .Slash:
 		return type_is_numeric(c, type)
 	case .Percent:
 		return type_is_integer(c, type) || type_is_rune(c, type)
@@ -976,6 +1148,13 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	v.value_category = .Value
 
+	// `#assert(...)` and `#config(...)` arrive through the ordinary call suffix,
+	// and their callee is not a value at all.
+	if hash, is_hash := v.callee.(^Expr_Hash); is_hash {
+		check_hash_call(k, v, hash)
+		return
+	}
+
 	// A built-in is not a value, so it is recognised before the callee is
 	// checked as one.
 	if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
@@ -1006,10 +1185,11 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 
 	// Only a directly named procedure may use defaults or named arguments; a
 	// call through a procedure value supplies every parameter positionally.
+	// `pkg.f` names one just as plainly as `f` does.
 	declaration := INVALID_SYMBOL
-	if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
-		if sym := symbol_of(k.c, ident.symbol); sym != nil && sym.kind == .Proc {
-			declaration = ident.symbol
+	if named := callee_base.resolution.symbol; callee_base.resolution.kind == .Value {
+		if sym := symbol_of(k.c, named); sym != nil && sym.kind == .Proc {
+			declaration = named
 		}
 	}
 	v.resolution = Resolution{kind = .Call, symbol = declaration, chosen_overload = declaration}
@@ -1038,6 +1218,23 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	ident.type = sym.proc_type
 	v.resolution = Resolution{kind = .Call, symbol = symbol_id, chosen_overload = symbol_id}
 
+	// Exhaustive on purpose: a built-in with no arm here would fall through to
+	// the ordinary parameter path and be emitted as `print_int`.
+	switch sym.builtin {
+	case .Assert, .Panic:
+		check_assert_or_panic(k, v, ident, sym.builtin)
+		return
+	case .Size_Of, .Align_Of, .Offset_Of, .Len:
+		check_layout_builtin(k, v, ident, sym.builtin)
+		return
+	case .Print_Int:
+		// Checked against its declared parameters, just below.
+	case .None:
+		unsupported_construct(k, v.span)
+		v.type = INVALID_TYPE
+		return
+	}
+
 	if len(v.args) != len(sym.params) {
 		errorf(
 			k.c,
@@ -1063,6 +1260,300 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	}
 	v.bound = bound
 	v.type = sym.type
+}
+
+// `assert(condition[, message])` and `panic([message])`. Both produce no value
+// and both are legal in either phase, so neither is folded here: the evaluator
+// diagnoses the compile-time occurrence and the backend lowers the runtime one
+// to the trap seam.
+@(private = "file")
+check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	v.type = TYPE_VOID
+	first := kind == .Assert ? 1 : 0
+	if len(v.args) < first || len(v.args) > first + 1 {
+		errorf(
+			k.c,
+			v.span,
+			"L0322",
+			"`%s` takes %s, found %d",
+			ident.name,
+			kind == .Assert ? "a condition and an optional message" : "an optional message",
+			len(v.args),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
+	for arg, index in v.args {
+		if arg.name.text != "" || arg.mode != .Value {
+			unsupported_construct(k, arg.span)
+			continue
+		}
+		bound[index] = arg.value
+		if kind == .Assert && index == 0 {
+			check_condition(k, arg.value)
+			continue
+		}
+		check_message_arg(k, arg.value)
+	}
+	v.bound = bound
+}
+
+// `#assert(condition[, message])` and `#config(NAME, default)`. Both are
+// compile-time-only forms, so each produces its answer here and nothing is left
+// for the backend.
+@(private = "file")
+check_hash_call :: proc(k: ^Checker, v: ^Expr_Call, hash: ^Expr_Hash) {
+	hash.type = TYPE_VOID
+	switch hash.name {
+	case "#assert":
+		v.type = TYPE_VOID
+		v.value_category = .Value
+		if len(v.args) < 1 || len(v.args) > 2 {
+			errorf(k.c, v.span, "L0387", "`#assert` takes a condition and an optional message")
+			v.type = INVALID_TYPE
+			return
+		}
+		check_condition(k, v.args[0].value)
+		message := ""
+		if len(v.args) == 2 {
+			check_message_arg(k, v.args[1].value)
+			if base := expr_base(v.args[1].value); base != nil && base.const_value.kind == .String {
+				message = concat(k.c, ": ", base.const_value.text)
+			}
+		}
+		folded, evaluated := require_const(k, v.args[0].value, "a `#assert` condition", "L0387")
+		if !evaluated {
+			v.type = INVALID_TYPE
+			return
+		}
+		if folded.kind == .Boolean && !folded.boolean {
+			errorf(k.c, v.span, "L0387", "static assertion failed%s", message)
+		}
+
+	case "#config":
+		check_config(k, v)
+
+	case:
+		// `#location` and `#caller_location` need a runtime `string` and
+		// `runtime.Source_Code_Location`, which arrive with the seed runtime.
+		errorf(k.c, v.span, "L0390", "`%s` needs the runtime source-location type, which arrives in M6", hash.name)
+		v.type = INVALID_TYPE
+	}
+}
+
+// `#config(NAME, default)`: the name is a token, not a lexical value, and the
+// default fixes both the result's type and what an override may say.
+@(private = "file")
+check_config :: proc(k: ^Checker, v: ^Expr_Call) {
+	v.value_category = .Value
+	if len(v.args) != 2 {
+		errorf(k.c, v.span, "L0388", "`#config` takes a name and a default value")
+		v.type = INVALID_TYPE
+		return
+	}
+	name, is_ident := v.args[0].value.(^Expr_Ident)
+	if !is_ident {
+		errorf(k.c, expr_span(v.args[0].value), "L0388", "`#config` needs a name")
+		v.type = INVALID_TYPE
+		return
+	}
+	if check_single_expr(k, v.args[1].value) == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	fallback, evaluated := require_const(k, v.args[1].value, "a `#config` default", "L0388")
+	if !evaluated {
+		v.type = INVALID_TYPE
+		return
+	}
+	#partial switch fallback.kind {
+	case .Boolean, .Integer, .String:
+	case:
+		errorf(k.c, expr_span(v.args[1].value), "L0388", "a `#config` default must be a boolean, an integer, or a string")
+		v.type = INVALID_TYPE
+		return
+	}
+
+	v.type = expr_base(v.args[1].value).type
+	v.is_const = true
+	v.const_value = fallback
+	override, defined := k.c.defines[name.name]
+	if !defined {
+		return
+	}
+	if override.kind != fallback.kind {
+		errorf(
+			k.c,
+			v.span,
+			"L0388",
+			"`-define:%s=` gives %s, but this `#config` defaults to %s",
+			name.name,
+			const_kind_name(override.kind),
+			const_kind_name(fallback.kind),
+		)
+		return
+	}
+	if fallback.kind == .Integer && !type_is_untyped(k.c, v.type) {
+		if !bi_fits(k.c, override.integer, type_bits(k.c, v.type), type_signed(k.c, v.type)) {
+			errorf(
+				k.c,
+				v.span,
+				"L0388",
+				"`-define:%s=%s` is not representable by `%s`",
+				name.name,
+				bi_text(k.c, override.integer),
+				type_name(k.c, v.type),
+			)
+			return
+		}
+	}
+	v.const_value = override
+}
+
+const_kind_name :: proc(kind: Const_Kind) -> string {
+	#partial switch kind {
+	case .Boolean:
+		return "a boolean"
+	case .Integer:
+		return "an integer"
+	case .String:
+		return "a string"
+	}
+	return "a value"
+}
+
+// `size_of`, `align_of`, `offset_of`, and `len`. Every one of these inspects
+// static type or declaration information, so nothing here is evaluated: the
+// operand is resolved and type-checked, never read, and never required to be
+// live (m3-plan decision "Unevaluated layout operands").
+@(private = "file")
+check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	v.type = TYPE_INT
+	arity := kind == .Offset_Of ? 2 : 1
+	if len(v.args) != arity {
+		errorf(
+			k.c,
+			v.span,
+			"L0322",
+			"`%s` takes %d argument%s, found %d",
+			ident.name,
+			arity,
+			arity == 1 ? "" : "s",
+			len(v.args),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	for arg in v.args {
+		if arg.name.text != "" || arg.mode != .Value {
+			unsupported_construct(k, arg.span)
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	// The call is folded, so nothing here reaches the backend; binding the
+	// operand would only invite it to be emitted.
+	v.bound = nil
+
+	operand := layout_operand_type(k, v.args[0].value, kind)
+	if operand == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	// A compile-time string has a length but no runtime type to gate, so it is
+	// answered before the type is inspected.
+	if kind == .Len && operand == TYPE_UNTYPED_STRING {
+		base := expr_base(v.args[0].value)
+		if !base.is_const || base.const_value.kind != .String {
+			errorf(k.c, v.span, "L0386", "`len` needs a compile-time string here")
+			v.type = INVALID_TYPE
+			return
+		}
+		v.is_const = true
+		v.const_value = int_const(k.c, i64(len(base.const_value.text)))
+		return
+	}
+	if !gate_type(k, operand, expr_span(v.args[0].value)) {
+		v.type = INVALID_TYPE
+		return
+	}
+
+	result := u64(0)
+	switch kind {
+	case .Size_Of:
+		result = type_size(k.c, operand)
+	case .Align_Of:
+		result = type_align(k.c, operand)
+	case .Len:
+		info := type_of(k.c, type_underlying(k.c, operand))
+		if info == nil || info.kind != .Array {
+			errorf(k.c, v.span, "L0386", "`len` needs a fixed array, found `%s`", type_name(k.c, operand))
+			v.type = INVALID_TYPE
+			return
+		}
+		result = info.count
+	case .Offset_Of:
+		// The second operand is a member name, not a lexical value expression:
+		// resolving it as one would find an unrelated variable of the same name.
+		name, is_ident := v.args[1].value.(^Expr_Ident)
+		if !is_ident {
+			errorf(k.c, expr_span(v.args[1].value), "L0386", "`offset_of` needs a field name")
+			v.type = INVALID_TYPE
+			return
+		}
+		field := struct_field(k.c, operand, intern_identifier(k.c, name.name))
+		if field == INVALID_SYMBOL {
+			errorf(k.c, name.span, "L0363", "`%s` has no field `%s`", type_name(k.c, operand), name.name)
+			v.type = INVALID_TYPE
+			return
+		}
+		symbol := symbol_of(k.c, field)
+		name.symbol = field
+		name.resolution = Resolution{kind = .Field, symbol = field}
+		result = type_field_offset(k.c, operand, int(symbol.index))
+	case .None, .Print_Int, .Assert, .Panic:
+		return
+	}
+	v.is_const = true
+	v.const_value = int_const(k.c, i64(result))
+}
+
+// The type a layout operand denotes: a written type, or the type of an
+// expression that is checked exactly once and never evaluated. `len` keeps an
+// untyped string as itself, because the length is in the value.
+@(private = "file")
+layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id {
+	if e == nil {
+		return INVALID_TYPE
+	}
+	if denoted := resolve_type_syntax(k, e); denoted != INVALID_TYPE {
+		return denoted
+	}
+	if check_single_expr(k, e) == INVALID_TYPE {
+		return INVALID_TYPE
+	}
+	base := expr_base(e)
+	if base.value_category == .Type {
+		return base.denoted_type
+	}
+	if kind == .Len && base.type == TYPE_UNTYPED_STRING {
+		return TYPE_UNTYPED_STRING
+	}
+	return base.type
+}
+
+// design.md: an `assert`/`panic` message is a compile-time string in M3; M6
+// turns it into a runtime panic message.
+@(private = "file")
+check_message_arg :: proc(k: ^Checker, e: Expr) {
+	if check_single_expr(k, e) == INVALID_TYPE {
+		return
+	}
+	base := expr_base(e)
+	if !base.is_const || base.const_value.kind != .String {
+		errorf(k.c, expr_span(e), "L0345", "this message must be a compile-time string")
+	}
 }
 
 // Binds written arguments to parameters, then fills the omitted ones from the
@@ -1265,8 +1756,11 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 		v.type = INVALID_TYPE
 		return
 	}
+	symbol.proc_literal = v
 	v.type = symbol.proc_type
-	append(&k.c.hoisted_procs, v)
+	if pkg := package_of(k.c, k.pkg); pkg != nil {
+		append(&pkg.hoisted_procs, v)
+	}
 	check_proc_body(k, v)
 }
 
@@ -1608,6 +2102,10 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return value, true
 		}
+	case .Untyped_String, .String:
+		if value.kind == .String {
+			return value, true
+		}
 	case .Bool:
 		if value.kind == .Boolean {
 			return value, true
@@ -1678,6 +2176,9 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		}
 		return false
 	}
+	if from == TYPE_UNTYPED_STRING {
+		return type_kind(c, type_underlying(c, to)) == .String
+	}
 	if type_is_untyped(c, from) {
 		#partial switch type_kind(c, type_underlying(c, to)) {
 		case .Int, .Float, .Rune, .Bool, .Enum:
@@ -1728,155 +2229,8 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	return false
 }
 
-// ---------------------------------------------------------------- folding --
-
-@(private = "file")
-fold_arithmetic :: proc(
-	k: ^Checker,
-	op: Token_Kind,
-	op_span: Span,
-	a, b: Const_Value,
-	type: Type_Id,
-) -> (Const_Value, bool) {
-	if a.kind == .Float || b.kind == .Float {
-		bits := u16(type_bits(k.c, type))
-		if type_is_untyped(k.c, type) {
-			bits = 64
-		}
-		x, y := a.float, b.float
-		result: f64
-		#partial switch op {
-		case .Plus:
-			result = x + y
-		case .Minus:
-			result = x - y
-		case .Star:
-			result = x * y
-		case .Slash:
-			// design.md "Floating-point operators": IEEE-754, and no panic.
-			result = x / y
-		case:
-			errorf(k.c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(k.c, type))
-			return Const_Value{}, false
-		}
-		return float_const(result, bits), true
-	}
-
-	if (op == .Slash || op == .Percent) && bi_is_zero(b.integer) {
-		errorf(k.c, op_span, "L0319", "division by zero")
-		return Const_Value{}, false
-	}
-
-	x, y := a.integer, b.integer
-	result: Big_Int
-	#partial switch op {
-	case .Plus:
-		result = bi_add(k.c, x, y)
-	case .Minus:
-		result = bi_sub(k.c, x, y)
-	case .Star:
-		result = bi_mul(k.c, x, y)
-	case .Slash:
-		result = bi_quo(k.c, x, y)
-	case .Percent:
-		result = bi_rem(k.c, x, y)
-	case .Amp:
-		result = bi_and(k.c, x, y)
-	case .Pipe:
-		result = bi_or(k.c, x, y)
-	case .Tilde:
-		result = bi_xor(k.c, x, y)
-	case .Amp_Tilde:
-		result = bi_and_not(k.c, x, y)
-	case:
-		errorf(k.c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(k.c, type))
-		return Const_Value{}, false
-	}
-	return Const_Value{kind = a.kind, integer = wrap_to_type(k.c, result, type)}, true
-}
-
-// A typed integer operation is computed exactly and then projected modulo its
-// own width, which is what makes folding agree with the wrapping arithmetic the
-// backend emits (design.md "Integer overflow"). An untyped operation keeps its
-// exact value.
-wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id) -> Big_Int {
-	if type_is_untyped(c, type) {
-		return value
-	}
-	bits := type_bits(c, type)
-	if bits <= 0 {
-		return value
-	}
-	return bi_wrap(c, value, bits, type_signed(c, type))
-}
-
-@(private = "file")
-fold_comparison :: proc(k: ^Checker, op: Token_Kind, a, b: Const_Value) -> (bool, bool) {
-	order := 0
-	switch {
-	case a.kind == .Float || b.kind == .Float:
-		x := a.kind == .Float ? a.float : bi_to_f64(k.c, a.integer)
-		y := b.kind == .Float ? b.float : bi_to_f64(k.c, b.integer)
-		// NaN compares false against everything, including itself.
-		if x != x || y != y {
-			return op == .Not_Eq, true
-		}
-		order = x < y ? -1 : (x > y ? 1 : 0)
-	case a.kind == .Integer || a.kind == .Rune:
-		if b.kind != .Integer && b.kind != .Rune {
-			return false, false
-		}
-		order = bi_cmp(k.c, a.integer, b.integer)
-	case a.kind == .Boolean:
-		if b.kind != .Boolean {
-			return false, false
-		}
-		if op != .Eq_Eq && op != .Not_Eq {
-			return false, false
-		}
-		return (a.boolean == b.boolean) == (op == .Eq_Eq), true
-	case a.kind == .Nil && b.kind == .Nil:
-		return op == .Eq_Eq, true
-	case a.kind == .Aggregate && b.kind == .Aggregate:
-		if op != .Eq_Eq && op != .Not_Eq {
-			return false, false
-		}
-		equal := aggregate_equal(k, a.aggregate, b.aggregate)
-		return equal == (op == .Eq_Eq), true
-	case:
-		return false, false
-	}
-
-	#partial switch op {
-	case .Eq_Eq:
-		return order == 0, true
-	case .Not_Eq:
-		return order != 0, true
-	case .Lt:
-		return order < 0, true
-	case .Lt_Eq:
-		return order <= 0, true
-	case .Gt:
-		return order > 0, true
-	case .Gt_Eq:
-		return order >= 0, true
-	}
-	return false, false
-}
-
-@(private = "file")
-aggregate_equal :: proc(k: ^Checker, a, b: ^Const_Aggregate) -> bool {
-	if a == nil || b == nil || len(a.elements) != len(b.elements) {
-		return false
-	}
-	for element, index in a.elements {
-		equal, ok := fold_comparison(k, .Eq_Eq, element, b.elements[index])
-		if !ok || !equal {
-			return false
-		}
-	}
-	return true
-}
+// Value-level folding lives in `const_ops.odin`, so the interpreter in
+// `eval.odin` runs the same operator table rather than a second copy.
 
 // ------------------------------------------------------------- diagnostics --
 

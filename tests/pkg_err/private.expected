@@ -1,0 +1,7 @@
+L0336
+@6:12
+`secret` is not public in package `lib`
+add `@(public)` to export it
+L0335
+@7:12
+package `lib` has no declaration `missing_entirely`

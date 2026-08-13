@@ -1,0 +1,9 @@
+L0388
+@5:11
+gives a string, but this `#config` defaults to an integer
+L0388
+@6:11
+`-define:NARROW=999` is not representable by `u8`
+L0388
+@10:20
+`#config` needs a name

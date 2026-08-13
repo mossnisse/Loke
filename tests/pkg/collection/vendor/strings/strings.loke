@@ -1,0 +1,4 @@
+package strings;
+
+@(public)
+width :: proc() -> int { return 80; }
