@@ -191,6 +191,10 @@ Expr_Call :: struct {
 	// A slot call through a `dyn` value: its index in the witness.
 	dyn_slot:      int,
 	is_dyn_call:   bool,
+	// `new(T)` / `new_clone(value)`: the allocated element type. The backend
+	// needs its size, and the checker records it so the pointee is not
+	// re-derived from the result type (m5a-plan step 3).
+	alloc_type:    Type_Id,
 }
 
 // The suffixes that take no operand: `^` and `or_return`.

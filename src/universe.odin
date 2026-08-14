@@ -48,6 +48,12 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		// runtime construction and storage wait with `string`.
 		{"string", TYPE_STRING},
 		{"string_view", TYPE_STRING_VIEW},
+		// design.md "Allocators": these live in `core:mem` / `base:runtime`, which
+		// M6 makes nameable. Until then the compiler owns them, because the fixed
+		// lifecycle signatures and the catalogue's `Cloneable` both spell them
+		// unqualified (m5a-plan step 3).
+		{"Allocator", TYPE_ALLOCATOR},
+		{"Allocator_Error", TYPE_ALLOCATOR_ERROR},
 	}
 	for entry in types {
 		define(c, universe, entry.name, Symbol{kind = .Type, type = entry.id})
@@ -137,6 +143,36 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// for built-in iterables and finds a user type's own `iter` member, so the
 	// free call in the `Iterable` requirement resolves for both.
 	define(c, universe, "iter", Symbol{kind = .Builtin, builtin = .Iter, type = TYPE_VOID, proc_type = no_args})
+
+	// design.md "Allocators": the explicitly fallible primitives. Their operand
+	// types and arity are checked by `check_builtin_call`, so the interned type
+	// carries none. `free_all` is registered and type-checked here but gated
+	// before lowering until M5b's region analysis exists.
+	allocation := []struct{name: string, kind: Builtin_Kind} {
+		{"new", .New},
+		{"new_clone", .New_Clone},
+		{"free", .Free},
+		{"free_all", .Free_All},
+	}
+	for entry in allocation {
+		define(c, universe, entry.name, Symbol {
+			kind      = .Builtin,
+			builtin   = entry.kind,
+			type      = TYPE_VOID,
+			proc_type = no_args,
+		})
+	}
+
+	// design.md: `Allocator` is obtained by the ordinary runtime default
+	// expression `mem.default_allocator()`. `core:mem` is not nameable until M6,
+	// so M5a exposes the same value under a compiler-owned name that the
+	// generated default argument also uses.
+	define(c, universe, "default_allocator", Symbol {
+		kind      = .Builtin,
+		builtin   = .Default_Allocator,
+		type      = TYPE_ALLOCATOR,
+		proc_type = no_args,
+	})
 
 	// design.md: `hash(value, seed: uint) -> uint` over the built-in types the
 	// standard catalogue promises satisfy `Hashable`. Its operand types are

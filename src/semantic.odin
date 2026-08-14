@@ -66,7 +66,21 @@ TYPE_UNTYPED_STRING :: Type_Id(30)
 // runtime construction, storage, and operations wait for M6.
 TYPE_STRING_VIEW :: Type_Id(31)
 
-FIRST_DYNAMIC_TYPE :: Type_Id(32)
+// design.md "Allocators" and "Allocation failure". These belong to `core:mem` /
+// `base:runtime`, which are not nameable until M6, so M5a owns them here: the
+// catalogue's `Cloneable` and the fixed lifecycle signatures both spell them
+// unqualified, and a compiler-owned identity is what lets that source compile
+// against real types (m5a-plan decision "Allocator representation").
+//
+// `Allocator` is a one-word nominal handle. Its M5a value always denotes the
+// single default CRT provider; per-expression region identity is semantic
+// metadata that M5b adds, not part of the type or the ABI.
+TYPE_ALLOCATOR :: Type_Id(32)
+// A nil-comparable error code. Nil is success, so `err != nil` is the whole
+// interface an explicitly fallible operation needs.
+TYPE_ALLOCATOR_ERROR :: Type_Id(33)
+
+FIRST_DYNAMIC_TYPE :: Type_Id(34)
 
 Type_Kind :: enum {
 	Invalid,
@@ -89,6 +103,10 @@ Type_Kind :: enum {
 	Pointer,
 	Multi_Pointer,
 	Slice,
+	// design.md "Allocators": a nominal runtime handle, and a nil-comparable
+	// error code. Both are compiler-owned until `core:mem` is nameable in M6.
+	Allocator,
+	Allocator_Error,
 	Dynamic_Array,
 	Array,
 	Map,
@@ -433,6 +451,18 @@ Builtin_Kind :: enum {
 	// `Iterable` requirement, so it has to resolve for a built-in and for a user
 	// type's own `impl` member alike.
 	Iter,
+	// design.md "Allocators" and "Allocation failure". The explicitly fallible
+	// primitives always return an error and never invoke a failure policy;
+	// `free` returns no status. `free_all` is registered and type-checked in M5a
+	// but gated before lowering, because a region reset cannot be admitted until
+	// M5b proves no live dependant belongs to the region.
+	New,
+	New_Clone,
+	Free,
+	Free_All,
+	// The default provider handle. Spelled `mem.default_allocator()` in
+	// design.md; the compiler supplies it until `core:mem` is nameable in M6.
+	Default_Allocator,
 }
 
 Symbol :: struct {
@@ -509,6 +539,12 @@ Symbol :: struct {
 	// A value parameter is immutable storage; an `inout` parameter is a mutable
 	// alias. Both are addressable.
 	immutable:   bool,
+	// design.md "Allocators": this binding was initialised directly by `new` or
+	// `new_clone`, so it carries a fresh allocation base and may be passed to
+	// `free`. M5a's narrow stand-in for root provenance — M5b replaces it with
+	// propagation across pointer copies and derived views, plus alias
+	// invalidation (m5a-plan decision "Minimal allocation-root fact").
+	allocation_root: bool,
 }
 
 Scope_Kind :: enum {
@@ -614,6 +650,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
 	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
+	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits
@@ -651,6 +688,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		Type_Info{kind = .Untyped_Nil},
 		Type_Info{kind = .Untyped_String},
 		Type_Info{kind = .String_View, bits = 2 * pointer_bits},
+		Type_Info{kind = .Allocator, bits = pointer_bits},
+		Type_Info{kind = .Allocator_Error, bits = int_bits},
 	)
 	assert(Type_Id(len(c.types)) == FIRST_DYNAMIC_TYPE, "predeclared type table is out of step with its IDs")
 	append(&c.symbols, Symbol{})
@@ -933,6 +972,11 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
 		return true
+	// design.md "Allocation failure": recovery is written `if (err != nil)`, so
+	// the error code is nil-comparable. An `Allocator` handle is comparable for
+	// the same reason a pointer is.
+	case .Allocator, .Allocator_Error:
+		return true
 	// design.md: two `type` values support `==` and `!=` during compilation, and
 	// `typeid` is an ordinary runtime scalar. Neither has an ordering.
 	case .Type, .Typeid:
@@ -1028,6 +1072,8 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	case .Typeid:
 		return true
 	case .Any_View, .Dyn:
+		return true
+	case .Allocator, .Allocator_Error:
 		return true
 	case .String, .String_View, .Multi_Pointer, .Dynamic_Array,
 	     .Map, .Interface:

@@ -1,0 +1,18 @@
+L0488
+@7:2
+`drop` has a fixed signature for `R`: `proc(self: inout T)`
+L0487
+@9:2
+`clone` is generated from `try_clone` and cannot be written
+L0488
+@15:2
+`try_clone` has a fixed signature for `S`
+L0493
+@28:7
+M5a frees only a binding initialised directly by `new` or `new_clone`
+L0491
+@33:25
+disables `try_clone`, so it cannot be cloned into a new allocation
+L0492
+@37:2
+`free_all` is not lowered until M5b

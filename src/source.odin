@@ -137,6 +137,9 @@ Compiler :: struct {
 	materialized:       map[Symbol_Id]^Materialized,
 	materialized_order: [dynamic]^Materialized,
 
+	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
+	lifecycles: map[Type_Id]^Lifecycle,
+
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,

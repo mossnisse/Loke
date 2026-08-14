@@ -1219,9 +1219,14 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		mark_optional_ok(d.values[0])
 		check_expr(k, d.values[0])
 		if base := expr_base(d.values[0]); base != nil && len(base.result_types) == len(d.names) {
+			// `p, err := new(T)`: the first name receives the allocation base, so it
+			// is the one `free` may be given (m5a-plan decision "Minimal
+			// allocation-root fact").
+			root := d.kind == .Var && initializer_is_allocation_root(k, d.values[0])
 			for symbol_id, index in d.symbols {
 				if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 					symbol.type = base.result_types[index]
+					symbol.allocation_root = root && index == 0
 				}
 			}
 			return
@@ -1245,8 +1250,13 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		symbol_id := i < len(d.symbols) ? d.symbols[i] : INVALID_SYMBOL
 
 		// `---` is uninitialised storage, not a zero value, and needs a written
-		// type to have any shape at all.
+		// type to have any shape at all. The one exception is a disabled lifecycle
+		// hook: design.md says "No signature is written, because the signature of
+		// a lifecycle hook is fixed by the type."
 		if value == nil {
+			if disabled_lifecycle_hook(k, d, i) {
+				continue
+			}
 			if declared == INVALID_TYPE {
 				errorf(k.c, d.span, "L0381", "`---` needs an explicitly written type")
 			} else if d.kind == .Const {
@@ -1307,6 +1317,11 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 			symbol.type = final
+			// design.md "Allocators": the pointer `new` returns has release
+			// responsibility, so the binding that receives it directly is what
+			// `free` may be given (m5a-plan decision "Minimal allocation-root
+			// fact").
+			symbol.allocation_root = d.kind == .Var && initializer_is_allocation_root(k, value)
 			if d.kind == .Const {
 				folded, evaluated := require_const(k, value, "a constant initialiser", "L0311")
 				if evaluated {

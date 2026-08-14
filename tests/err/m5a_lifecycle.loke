@@ -1,0 +1,40 @@
+package main;
+
+R :: struct { x: int }
+
+impl R {
+	// Every hook has a signature fixed by the type.
+	drop :: proc(self) { }
+	// `clone` is generated from `try_clone` and is never written.
+	clone :: proc(self, allocator: Allocator) -> R { return self; }
+}
+
+S :: struct { y: int }
+
+impl S {
+	try_clone :: proc(self) -> S { return self; }
+}
+
+Move_Only :: struct { z: int }
+
+impl Move_Only {
+	try_clone :: ---;
+}
+
+main :: proc() {
+	// M5a frees only a binding initialised directly by `new`/`new_clone`.
+	p, err := new(int);
+	alias := p;
+	free(alias);
+	free(p);
+
+	// A move-only value has no copy entry point to allocate through.
+	m := Move_Only{1};
+	bad, berr := new_clone(m);
+
+	// A region reset needs M5b's region analysis.
+	a := default_allocator();
+	free_all(a);
+
+	print_int(1);
+}

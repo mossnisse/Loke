@@ -1954,6 +1954,18 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Iter:
 		check_iter_builtin(k, v, ident)
 		return
+	case .New, .New_Clone, .Free, .Free_All:
+		check_allocation_builtin(k, v, ident, sym.builtin)
+		return
+	case .Default_Allocator:
+		if len(v.args) != 0 {
+			errorf(k.c, v.span, "L0490", "`default_allocator` takes no arguments")
+			v.type = INVALID_TYPE
+			return
+		}
+		v.bound = nil
+		v.type = TYPE_ALLOCATOR
+		return
 	case .Print_Int:
 		// Checked against its declared parameters, just below.
 	case .None:
@@ -2252,7 +2264,8 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .None, .Print_Int, .Assert, .Panic, .Hash, .Iter,
+	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator,
+	     .None, .Print_Int, .Assert, .Panic, .Hash, .Iter,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		return
 	}
@@ -2282,6 +2295,175 @@ layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id
 		return TYPE_UNTYPED_STRING
 	}
 	return base.type
+}
+
+// design.md "Allocators" and "Allocation failure". `new` and `new_clone` are
+// explicitly fallible and always return their error rather than invoking a
+// failure policy; `free` returns no status.
+//
+//   new(T)             -> (^T, Allocator_Error)
+//   new(T, allocator)  -> (^T, Allocator_Error)
+//   new_clone(value)   -> (^T, Allocator_Error)
+//   free(pointer)
+//   free_all(allocator)
+//
+// An omitted allocator argument is the default provider, which the compiler
+// supplies until `core:mem` is nameable in M6.
+@(private = "file")
+check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+	arity_low, arity_high := 1, 2
+	if kind == .Free || kind == .Free_All {
+		arity_high = 1
+	}
+	if len(v.args) < arity_low || len(v.args) > arity_high {
+		errorf(
+			k.c,
+			v.span,
+			"L0490",
+			"`%s` takes %s",
+			ident.name,
+			arity_high == 1 ? "one argument" : "an operand and an optional allocator",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	for arg in v.args {
+		if arg.name.text != "" || arg.mode != .Value {
+			unsupported_construct(k, arg.span)
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+
+	bound := make([dynamic]Expr, 0, 2, k.c.semantic_allocator)
+	switch kind {
+	case .New:
+		// The operand is a type, inspected rather than evaluated, exactly as the
+		// layout built-ins treat theirs.
+		element := layout_operand_type(k, v.args[0].value, kind)
+		if element == INVALID_TYPE || !gate_type(k, element, expr_span(v.args[0].value)) {
+			v.type = INVALID_TYPE
+			return
+		}
+		if type_is_compile_time_only(k.c, element) {
+			errorf(k.c, expr_span(v.args[0].value), "L0490", "`new` needs a runtime type, found `%s`", type_name(k.c, element))
+			v.type = INVALID_TYPE
+			return
+		}
+		v.alloc_type = element
+		set_allocation_results(k, v, pointer_to(k.c, element))
+
+	case .New_Clone:
+		value := check_single_expr(k, v.args[0].value)
+		if value == INVALID_TYPE || !gate_type(k, value, expr_span(v.args[0].value)) {
+			v.type = INVALID_TYPE
+			return
+		}
+		append(&bound, v.args[0].value)
+		v.alloc_type = value
+		// The result shape is settled before the copyability complaint, so a
+		// `p, err := new_clone(x)` destructuring still knows its arity and the
+		// failure is reported once.
+		set_allocation_results(k, v, pointer_to(k.c, value))
+		if type_clone_disabled(k, value) {
+			errorf(
+				k.c,
+				expr_span(v.args[0].value),
+				"L0491",
+				"`%s` disables `try_clone`, so it cannot be cloned into a new allocation",
+				type_name(k.c, value),
+			)
+		}
+
+	case .Free:
+		pointer := check_single_expr(k, v.args[0].value)
+		if pointer == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		if !check_free_operand(k, v.args[0].value, pointer) {
+			v.type = INVALID_TYPE
+			return
+		}
+		append(&bound, v.args[0].value)
+		v.type = TYPE_VOID
+
+	case .Free_All:
+		allocator := check_single_expr(k, v.args[0].value, TYPE_ALLOCATOR)
+		if allocator != INVALID_TYPE && type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+			errorf(k.c, expr_span(v.args[0].value), "L0490", "`free_all` names the allocator being reset, found `%s`", type_name(k.c, allocator))
+		}
+		// design.md: "The compiler rejects `free_all`, or any call carrying the
+		// same allocator-reset effect, while a live owning value (managed or
+		// manual) or borrow still refers to storage from that allocator." That
+		// liveness proof is M5b's region analysis, so the call is registered and
+		// type-checked here and gated before lowering.
+		errorf(
+			k.c,
+			v.span,
+			"L0492",
+			"`free_all` is not lowered until M5b: a region reset needs the region analysis that proves no live owner or borrow depends on it",
+		)
+		v.type = INVALID_TYPE
+		return
+
+	case .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len,
+	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator:
+		return
+	}
+
+	// The allocator argument, written or supplied. Keeping it bound means the
+	// backend never has to re-derive which provider a call selected.
+	if len(v.args) == 2 {
+		allocator := check_single_expr(k, v.args[1].value, TYPE_ALLOCATOR)
+		if allocator != INVALID_TYPE && type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+			errorf(
+				k.c,
+				expr_span(v.args[1].value),
+				"L0490",
+				"an allocator argument is an `Allocator`, found `%s`",
+				type_name(k.c, allocator),
+			)
+			v.type = INVALID_TYPE
+			return
+		}
+		append(&bound, v.args[1].value)
+	}
+	v.bound = bound[:]
+}
+
+@(private = "file")
+set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
+	results := make([]Type_Id, 2, k.c.semantic_allocator)
+	results[0] = pointer
+	results[1] = TYPE_ALLOCATOR_ERROR
+	v.result_types = results
+	v.type = pointer
+	v.value_category = .Value
+}
+
+// design.md: "passing `free` the wrong allocation or allocator is a programmer
+// error". M5a narrows that to what it can prove without root provenance: the
+// operand must be a binding whose initialiser is a direct `new`/`new_clone`
+// result. M5b replaces this with propagated allocation identity across pointer
+// copies, and adds the liveness half (m5a-plan step 3).
+@(private = "file")
+check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id) -> bool {
+	if type_kind(k.c, type_underlying(k.c, pointer)) != .Pointer {
+		errorf(k.c, expr_span(e), "L0493", "`free` takes an allocation pointer, found `%s`", type_name(k.c, pointer))
+		return false
+	}
+	ident, is_ident := e.(^Expr_Ident)
+	if !is_ident || !symbol_is_allocation_root(k, ident.symbol) {
+		errorf(
+			k.c,
+			expr_span(e),
+			"L0493",
+			"M5a frees only a binding initialised directly by `new` or `new_clone`; propagating an allocation root through pointer copies and derived views is M5b",
+		)
+		return false
+	}
+	return true
 }
 
 // design.md: an `assert`/`panic` message is a compile-time string in M3; M6
@@ -2866,7 +3048,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		return float_const(0, info.bits), true
 	case .Enum:
 		return int_const(c, 0), true
-	case .Pointer, .Raw_Pointer, .Proc, .Union:
+	case .Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error:
 		return nil_const(), true
 	case .Array:
 		elements := make([]Const_Value, info.count, c.semantic_allocator)
@@ -3089,7 +3271,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		case .Integer, .Rune:
 			return float_const(bi_to_f64(c, value.integer), info.bits), true
 		}
-	case .Pointer, .Raw_Pointer, .Proc:
+	case .Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
@@ -3126,9 +3308,10 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch type_kind(c, type_underlying(c, to)) {
-		case .Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice:
+		case .Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice,
+		     .Allocator, .Allocator_Error:
 			// The zero value of every erased view is nil, and so is a slice's
-			// (design.md "Nil slices").
+			// (design.md "Nil slices"). A nil `Allocator_Error` is success.
 			return true
 		}
 		return false

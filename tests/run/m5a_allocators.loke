@@ -1,0 +1,76 @@
+package main;
+
+// design.md "Allocators" and "Allocation failure" (m5a-plan step 3): the
+// explicitly fallible primitives always return their error and never invoke a
+// failure policy, and `free` returns no status.
+
+Handle :: struct {
+	id:    int,
+	valid: bool,
+}
+
+impl Handle {
+	// A move-only resource: `try_clone :: ---` disables both copy entry points.
+	try_clone :: ---;
+
+	drop :: proc(self: inout Handle) {
+		if (self.valid) {
+			self.valid = false;
+		}
+	}
+}
+
+Counter :: struct {
+	count: int,
+}
+
+impl Counter {
+	// The canonical fallible hook, written with the fixed signature. The
+	// allocator default is supplied by the compiler until `core:mem` is nameable
+	// in M6.
+	try_clone :: proc(self, allocator: Allocator) -> (Counter, Allocator_Error) {
+		return Counter{self.count + 1}, nil;
+	}
+}
+
+main :: proc() {
+	// `new` zero-initialises and reports failure explicitly.
+	p, err := new(int);
+	if (err != nil) {
+		print_int(-1);
+		return;
+	}
+	print_int(p^);
+	p^ = 42;
+	print_int(p^);
+	free(p);
+
+	// `new_clone` copies its operand into the fresh allocation.
+	q, qerr := new_clone(7);
+	if (qerr == nil) {
+		print_int(q^);
+		free(q);
+	}
+
+	// An explicit allocator argument selects the same default provider in M5a.
+	a := default_allocator();
+	r, rerr := new(Counter, a);
+	if (rerr == nil) {
+		print_int(r^.count);
+		free(r);
+	}
+
+	// A custom `try_clone` is an ordinary call returning its error.
+	one := Counter{5};
+	two, cerr := one.try_clone(a);
+	if (cerr == nil) {
+		print_int(two.count);
+	}
+
+	// A `drop` hook is an ordinary member until step 4 inserts implicit calls.
+	h := Handle{1, true};
+	h.drop();
+	if (!h.valid) {
+		print_int(1);
+	}
+}

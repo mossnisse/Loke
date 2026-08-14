@@ -324,7 +324,8 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.is_const = true
 		v.const_value = value
 
-	case .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Hash, .Type_Of, .Iter:
+	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator,
+	     .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Hash, .Type_Of, .Iter:
 		unreachable()
 	}
 }

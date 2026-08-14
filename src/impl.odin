@@ -264,6 +264,9 @@ check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
 		if sym == nil {
 			continue
 		}
+		// design.md "Lifecycle hooks and resource types": the signatures are fixed
+		// by the type, so they are checked where they are written.
+		validate_lifecycle_hook(k, item, d, sym, symbol_id)
 		// design.md "Construction and conversions": an `init` overload constructs
 		// the type, so it takes no receiver and produces exactly that type.
 		if sym.name == init_name {

@@ -90,6 +90,7 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 		emit_package_items(&e, package_of(c, id))
 	}
 	emit_synth_procs(&e)
+	emit_crt_reset_thunk(&e)
 	emit_witnesses(&e)
 	emit_entry(&e)
 
@@ -227,6 +228,32 @@ emit_preamble :: proc(e: ^Emitter) {
 	// one explicit seam instead of inheriting LLVM poison or a target-specific
 	// hardware exception.
 	fmt.sbprintln(&e.b, "declare void @llvm.trap()")
+	// design.md "Allocators": M5a has one provider, the C runtime. `calloc` is
+	// what makes `new` zero-initialised without a second memset. M6 replaces this
+	// with a real provider table behind `mem.default_allocator()`.
+	fmt.sbprintln(&e.b, "declare ptr @calloc(i64, i64)")
+	fmt.sbprintln(&e.b, "declare ptr @malloc(i64)")
+	fmt.sbprintln(&e.b, "declare void @free(ptr)")
+	// The one provider handle an M5a `Allocator` value denotes. Its single slot is
+	// the region-reset entry, which traps: this provider has no reset support, a
+	// different thing from M5b's "unsafe while the region has live dependants".
+	fmt.sbprintfln(&e.b, "%s = private unnamed_addr constant [1 x ptr] [ ptr %s ]", CRT_ALLOCATOR_GLOBAL, CRT_RESET_THUNK)
+	fmt.sbprintln(&e.b, "")
+}
+
+// The default CRT provider handle, and its trapping reset entry.
+CRT_ALLOCATOR_GLOBAL :: "@.crt_allocator"
+CRT_RESET_THUNK :: "@.crt_allocator.reset"
+
+@(private = "file")
+emit_crt_reset_thunk :: proc(e: ^Emitter) {
+	// `{` is a format directive to core:fmt, so the brace is printed separately.
+	fmt.sbprintf(&e.b, "define private void %s()", CRT_RESET_THUNK)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	emit_trap(e)
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
 }
 
@@ -369,7 +396,7 @@ layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct,
-	     .Distinct, .Union, .Slice:
+	     .Distinct, .Union, .Slice, .Allocator, .Allocator_Error:
 		return true
 	}
 	return false
@@ -502,7 +529,7 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		// in M2 observes a bool's storage size; switch to i8-in-memory when the
 		// foreign ABI lands in M7.
 		return "i1"
-	case .Int, .Enum:
+	case .Int, .Enum, .Allocator_Error:
 		return fmt.aprintf("i%d", type_bits(e.c, under))
 	case .Typeid:
 		// design.md: an ordinary runtime scalar holding one concrete type's unique
@@ -518,7 +545,8 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 			return "float"
 		}
 		return "double"
-	case .Pointer, .Raw_Pointer, .Proc:
+	case .Pointer, .Raw_Pointer, .Proc, .Allocator:
+		// An `Allocator` is a one-word handle on the single default provider.
 		return "ptr"
 	case .Array:
 		return fmt.aprintf("[%d x %s]", info.count, llvm_type(e, info.element))
@@ -733,8 +761,11 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		return bi_text(e.c, bi_wrap(e.c, value.integer, bits, signed))
 	case .Float:
 		return llvm_float(value.float, info.bits)
-	case .Pointer, .Raw_Pointer, .Proc:
+	case .Pointer, .Raw_Pointer, .Proc, .Allocator:
 		return "null"
+	case .Allocator_Error:
+		// Nil is success, and success is zero.
+		return value.kind == .Nil ? "0" : bi_text(e.c, value.integer)
 	case .Union:
 		// The only constant of a union or an erased view is its zero value; every
 		// other one is built at run time.
@@ -2597,6 +2628,17 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 				out, llvm_type(e, expr_base(v.bound[0]).type), slice, SLICE_LEN,
 			)
 			return out
+		case .Default_Allocator:
+			// One provider in M5a, so the handle is the provider global itself.
+			return CRT_ALLOCATOR_GLOBAL
+		case .New, .New_Clone:
+			return emit_allocation(e, v, symbol.builtin)
+		case .Free:
+			emit_free(e, v)
+			return "0"
+		case .Free_All:
+			// The checker gates every call with its M5b diagnostic.
+			panic("`free_all` reached the backend, but M5a gates every call")
 		case .None, .Size_Of, .Align_Of, .Offset_Of,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here
@@ -2756,6 +2798,9 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 	case ^Expr_Call:
 		// A conversion and a built-in are calls in syntax only, and each has its
 		// own lowering; `emit_call` is what knows the difference.
+		if kind := call_builtin_kind(e, v); kind == .New || kind == .New_Clone {
+			return emit_allocation_pair(e, v, kind)
+		}
 		if len(v.result_types) > 1 {
 			return emit_multi_call(e, v)
 		}
@@ -2774,6 +2819,71 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 	single := make([]string, 1)
 	single[0] = emit_expr(e, expr)
 	return single
+}
+
+@(private = "file")
+call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
+	if v.resolution.kind == .Conversion || v.reflect != .None {
+		return .None
+	}
+	sym := symbol_of(e.c, v.resolution.symbol)
+	return sym != nil && sym.kind == .Builtin ? sym.builtin : Builtin_Kind.None
+}
+
+// design.md "Allocation failure": `new` and `new_clone` "always return an error
+// and do not invoke the allocator failure policy". So there is no branch on
+// failure here — the caller receives a null pointer and a non-nil error and
+// decides.
+//
+// ponytail: one CRT provider, so the allocator operand is evaluated for its
+// effects and the call goes straight to `calloc`/`malloc`. M6's provider table
+// dispatches on the handle instead.
+@(private = "file")
+emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
+	size := type_size(e.c, v.alloc_type)
+	pointer := temp(e)
+	if kind == .New {
+		// design.md: `new` zero-initialises, which is what `calloc` already does.
+		fmt.sbprintfln(&e.b, "  %s = call ptr @calloc(i64 1, i64 %d)", pointer, size)
+	} else {
+		fmt.sbprintfln(&e.b, "  %s = call ptr @malloc(i64 %d)", pointer, size)
+	}
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, pointer)
+
+	if kind == .New_Clone {
+		// A failed allocation has nothing to clone into, so the copy is guarded.
+		// Nothing is partially built on that path, which is what makes the
+		// "destroy a partially cloned allocation" obligation trivially met for the
+		// trivially-copyable types M5a step 3 admits here.
+		store_label, done_label := new_label(e, "newclone.store"), new_label(e, "newclone.done")
+		fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", failed, done_label, store_label)
+		place_label(e, store_label)
+		store(e, v.alloc_type, emit_expr(e, v.bound[0]), pointer)
+		branch(e, done_label)
+		place_label(e, done_label)
+		e.terminated = false
+	}
+
+	error := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 1, i64 0", error, failed)
+	out := make([]string, 2)
+	out[0], out[1] = pointer, error
+	return out
+}
+
+@(private = "file")
+emit_allocation :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
+	return emit_allocation_pair(e, v, kind)[0]
+}
+
+// design.md: "Deallocation operations such as `free` and `drop` return no
+// status." The checker has already restricted the operand to a binding holding a
+// fresh allocation base.
+@(private = "file")
+emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
+	pointer := emit_expr(e, v.bound[0])
+	fmt.sbprintfln(&e.b, "  call void @free(ptr %s)", pointer)
 }
 
 // design.md "Type assertions are always checked": a single-value assertion traps
