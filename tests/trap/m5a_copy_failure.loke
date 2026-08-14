@@ -1,0 +1,38 @@
+package main;
+
+// design.md "Assignment statements": "If cloning fails, the compiler invokes
+// that allocator's failure policy ... and leaves a previously live destination
+// unchanged." M5a's fixed fallback is a non-unwinding trap, taken before the
+// destination is touched (m5a-plan step 4).
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+
+Failing :: struct { id: int }
+
+impl Failing {
+	try_clone :: proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
+		p, err := new(Huge, allocator);
+		if (err != nil) {
+			return Failing{0}, err;
+		}
+		free(p);
+		return Failing{self.id}, nil;
+	}
+
+	drop :: proc(self: inout Failing) { self.id = 0; }
+}
+
+main :: proc() {
+	source := Failing{1};
+	// The explicit entry point hands the error back, so this much runs.
+	_, error := source.try_clone();
+	if (error == nil) {
+		print_int(0);
+		return;
+	}
+	print_int(1);
+
+	// An implicit copy has no error to hand back, so it traps.
+	destination := source;
+	print_int(destination.id);
+}

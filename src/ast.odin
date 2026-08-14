@@ -634,6 +634,12 @@ Stmt_Assign :: struct {
 	op_span:    Span,
 	lhs:        []Expr,
 	rhs:        []Expr,
+	// design.md "Assignment statements": assigning a managed owner deep-copies,
+	// and the destination's previous value is dropped once the clone succeeded.
+	// One entry per right side, and the destination's liveness at this statement,
+	// filled by `src/lifecycle.odin` (m5a-plan step 4).
+	rhs_clones:       []bool,
+	destination_live: []Liveness,
 	// A user compound assignment: either a direct `+=` overload, or the binary
 	// `+` overload the fallback rule reaches. INVALID_SYMBOL for a built-in one.
 	operator:        Symbol_Id,
@@ -851,6 +857,9 @@ Decl :: struct {
 	via:           Expr, // the `via` allocator expression, or nil
 	values:        []Expr,
 	symbols:       []Symbol_Id,
+	// One entry per initialiser: whether it copies a managed place someone else
+	// owns, rather than transferring a value it already owns.
+	value_clones:  []bool,
 	top_level:     bool,
 	// Signature resolution and body checking have separate readiness states: the
 	// compile-time evaluator may need a procedure's body before the phase that

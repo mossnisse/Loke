@@ -1049,8 +1049,8 @@ reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", e.defer_flags[s.slot])
 			}
 		case ^Decl:
-			// A managed local's implicit drop reuses the same storage across loop
-			// iterations, so its flag needs the same reset a written `defer` gets.
+			// A managed local's hidden flag reuses the same storage across loop
+			// iterations, so it needs the same reset a written `defer` gets.
 			for symbol_id in s.symbols {
 				if flag := drop_flag_of(e, symbol_id); flag != "" {
 					fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
@@ -1237,7 +1237,11 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 			continue // `---`: storage without an initial value
 		}
 		if i < len(d.values) && d.values[i] != nil {
-			store(e, sym.type, emit_expr(e, d.values[i]), slot)
+			value := emit_expr(e, d.values[i])
+			if i < len(d.value_clones) && d.value_clones[i] {
+				value = emit_clone_value(e, sym.type, value)
+			}
+			store(e, sym.type, value, slot)
 			register_implicit_drop(e, symbol_id)
 			continue
 		}
@@ -1255,12 +1259,17 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 @(private = "file")
 register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	sym := symbol_of(e.c, symbol_id)
-	if sym == nil || !sym.drop_at_exit || len(e.cleanups) == 0 {
+	if sym == nil {
 		return
 	}
+	// The flag says "this place holds a value", which an assignment's drop reads
+	// as well as cleanup, so it is set whenever one exists.
 	flag := drop_flag_of(e, symbol_id)
 	if flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+	}
+	if !sym.drop_at_exit || len(e.cleanups) == 0 {
+		return
 	}
 	append(
 		&e.cleanups[len(e.cleanups) - 1].entries,
@@ -1273,7 +1282,7 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 @(private = "file")
 drop_flag_of :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 	sym := symbol_of(e.c, symbol_id)
-	if sym == nil || !sym.drop_at_exit || !sym.drop_conditional || sym.cleanup_slot >= len(e.defer_flags) {
+	if sym == nil || !sym.drop_conditional || sym.cleanup_slot >= len(e.defer_flags) {
 		return ""
 	}
 	return e.defer_flags[sym.cleanup_slot]
@@ -1361,6 +1370,11 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		types = make([]Type_Id, len(s.rhs))
 		for value, index in s.rhs {
 			values[index] = emit_expr(e, value)
+			// design.md: the clone happens before the destination is touched, so a
+			// failure leaves a previously live destination unchanged.
+			if index < len(s.rhs_clones) && s.rhs_clones[index] {
+				values[index] = emit_clone_value(e, expr_base(s.lhs[index]).type, values[index])
+			}
 			types[index] = expr_base(value).type
 		}
 	}
@@ -1376,7 +1390,45 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		if addresses[index] == "" || index >= len(values) {
 			continue
 		}
+		emit_replace_place(e, s, index, addresses[index])
 		store(e, expr_base(target).type, values[index], addresses[index])
+	}
+}
+
+// design.md "Assignment statements": the assignment `drop(destination)` between
+// a successful clone and the write. The destination's state decides whether it
+// happens at all — a definitely dead one holds nothing, and a conditional one
+// asks its hidden flag.
+@(private = "file")
+emit_replace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string) {
+	target := s.lhs[index]
+	type := expr_base(target).type
+	if !type_is_managed(e.c, type) {
+		return
+	}
+	state := index < len(s.destination_live) ? s.destination_live[index] : Liveness.Live
+	if state == .Dead {
+		return
+	}
+	flag := ""
+	if ident, is_ident := target.(^Expr_Ident); is_ident {
+		flag = drop_flag_of(e, ident.symbol)
+	}
+	if state == .Live || flag == "" {
+		emit_drop_place(e, type, address)
+	} else {
+		live := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", live, flag)
+		run, skip := new_label(e, "replace.drop"), new_label(e, "replace.done")
+		branch_if(e, live, run, skip)
+		place_label(e, run)
+		emit_drop_place(e, type, address)
+		branch(e, skip)
+		place_label(e, skip)
+	}
+	// The place holds a value again from here.
+	if ident, is_ident := target.(^Expr_Ident); is_ident && flag != "" {
+		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
 	}
 }
 
@@ -1773,7 +1825,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 				values[index] = emit_expr(e, value.expr)
 			}
 			if value.clone_on_return && index < len(e.result_types) {
-				values[index] = emit_return_clone(e, e.result_types[index], values[index])
+				values[index] = emit_clone_value(e, e.result_types[index], values[index])
 			}
 		}
 		for value, index in values {
@@ -1803,15 +1855,20 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 	emit_epilogue(e)
 }
 
-// design.md: returning a borrowed managed owner by value "performs a logical
-// clone, because the callee owns nothing it could move out". `clone` is the
-// policy-following entry point, so a failure takes M5a's fixed trap fallback
-// rather than being reported here.
+// design.md: an implicit copy — a binding, an assignment, or the return of a
+// borrowed managed owner — goes through `clone`, the policy-following entry
+// point. It calls `try_clone` once and applies the allocator's failure policy,
+// which in M5a is the fixed trap, so a failure never reaches a half-written
+// destination.
+//
+// ponytail: one provider, so the allocator is the CRT handle rather than the one
+// the destination carries. M6 threads the destination's allocator and its `via`
+// policy through here (m5a-plan "Failure fallback").
 @(private = "file")
-emit_return_clone :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
+emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	hook := type_hook(e.c, type, "clone")
 	if hook == INVALID_SYMBOL {
-		panic("a borrowed managed return reached the backend without a `clone` member")
+		panic("an implicit copy reached the backend without a `clone` member")
 	}
 	out := temp(e)
 	fmt.sbprintfln(

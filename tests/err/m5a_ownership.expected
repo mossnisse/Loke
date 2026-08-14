@@ -13,6 +13,12 @@ cannot be applied to file-scope storage
 L0501
 @65:17
 is a `move` parameter, so this argument is written `move(...)`
+L0503
+@69:7
+so this binding cannot copy it; write `move(...)` to transfer ownership instead
+L0503
+@70:6
+so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0500
 @44:12
 `a` has already been moved or dropped here
@@ -20,5 +26,5 @@ L0500
 @48:2
 `c` has already been moved or dropped here
 L0500
-@72:12
+@77:12
 `d` is only live on some paths that reach here

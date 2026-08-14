@@ -18,16 +18,22 @@ Block_Id :: distinct int
 
 Flow_Event_Kind :: enum {
 	Init,
+	// A full assignment: like `Init`, but the destination's state *before* it is
+	// what decides whether the previous value has to be dropped, so the event
+	// carries the node that answer is written back to.
+	Assign,
 	Kill,
 	Use,
 	Cleanup,
 }
 
 Flow_Event :: struct {
-	kind: Flow_Event_Kind,
-	slot: int,
-	span: Span,
-	name: string,
+	kind:   Flow_Event_Kind,
+	slot:   int,
+	span:   Span,
+	name:   string,
+	assign: ^Stmt_Assign,
+	target: int,
 }
 
 Flow_Block :: struct {
@@ -48,10 +54,13 @@ Tracked_Local :: struct {
 	// rather than at a declaration inside the body.
 	live_on_entry: bool,
 	// Filled while reporting: whether this local ever reaches a cleanup point,
-	// and in which states.
-	seen_cleanup: bool,
-	live_exit:    bool,
-	dead_exit:    bool,
+	// and in which states. `conditional_assign` records the other place a hidden
+	// flag can be needed — an assignment whose destination is live on one path
+	// and dead on another.
+	seen_cleanup:       bool,
+	live_exit:          bool,
+	dead_exit:          bool,
+	conditional_assign: bool,
 }
 
 Flow_Graph :: struct {
@@ -283,8 +292,11 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		return
 	}
 	for value in d.values {
-		walk_flow_expr(graph, value)
+		if value != nil {
+			walk_flow_expr(graph, value)
+		}
 	}
+	classify_declaration_copies(graph.k, d)
 	for id in d.symbols {
 		sym := symbol_of(graph.k.c, id)
 		if sym == nil || sym.kind != .Var || !type_is_managed(graph.k.c, sym.type) {
@@ -315,12 +327,20 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	for value in s.rhs {
 		walk_flow_expr(graph, value)
 	}
-	for target in s.lhs {
+	classify_assignment_copies(graph.k, s)
+	for target, index in s.lhs {
 		// A full assignment to the variable itself revives it; a write through a
 		// field or element needs the root live, which is an ordinary use.
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
 			if slot, tracked := slot_of(graph, ident.symbol); tracked {
-				emit(graph, Flow_Event{kind = .Init, slot = slot, span = expr_span(target), name = ident.name})
+				emit(graph, Flow_Event {
+					kind   = .Assign,
+					slot   = slot,
+					span   = expr_span(target),
+					name   = ident.name,
+					assign = s,
+					target = index,
+				})
 				continue
 			}
 		}

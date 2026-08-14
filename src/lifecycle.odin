@@ -157,7 +157,7 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 	if value.is_inout || !type_is_managed(k.c, result) {
 		return
 	}
-	root := place_root_symbol(k, value.expr)
+	root := place_root_symbol(k.c, value.expr)
 	sym := symbol_of(k.c, root)
 	if sym == nil {
 		return // a temporary: already owned, nothing to clone
@@ -189,17 +189,108 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 
 // The variable a place expression is rooted in, or INVALID_SYMBOL for a
 // temporary. Field and element selection do not change the root.
-@(private = "file")
-place_root_symbol :: proc(k: ^Checker, e: Expr) -> Symbol_Id {
+place_root_symbol :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 	#partial switch v in e {
 	case ^Expr_Ident:
 		return v.symbol
 	case ^Expr_Selector:
-		return place_root_symbol(k, v.operand)
+		return place_root_symbol(c, v.operand)
 	case ^Expr_Index:
-		return place_root_symbol(k, v.operand)
+		return place_root_symbol(c, v.operand)
 	}
 	return INVALID_SYMBOL
+}
+
+// -------------------------------------------------------------- copy sites --
+
+// design.md "Assignment statements": "Assignment has value semantics.
+// Assignment of a mutable owning value creates an independent value. It does not
+// create a hidden alias to the same allocation."
+//
+// So the question at a binding or an assignment is only whether the source
+// already owns what it produces. A call result, a literal, a conversion, and
+// `move(x)` all hand over something owned and transfer it; a place names storage
+// someone else still owns, and consuming it is a copy.
+expression_is_borrowed_place :: proc(c: ^Compiler, e: Expr) -> bool {
+	if _, is_move := e.(^Expr_Move); is_move {
+		return false
+	}
+	return place_root_symbol(c, e) != INVALID_SYMBOL
+}
+
+// design.md: "The compiler does not silently move a dynamic array, map, runtime
+// string, `shared(T)`, or type with a custom `try_clone`. This rule also applies
+// at the last use of the source."
+@(private = "file")
+classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> bool {
+	if value == nil || !type_is_managed(k.c, type) || !expression_is_borrowed_place(k.c, value) {
+		return false
+	}
+	if type_clone_disabled(k.c, type) {
+		errorf(
+			k.c,
+			expr_span(value),
+			"L0503",
+			"`%s` disables `try_clone`, so this %s cannot copy it; write `move(...)` to transfer ownership instead",
+			type_name(k.c, type),
+			site,
+		)
+		return false
+	}
+	contribute_lifecycle_members(k, type)
+	return true
+}
+
+classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
+	if d.kind == .Const || d.top_level || len(d.values) != len(d.symbols) {
+		return // one call filling several names hands over results it already owns
+	}
+	clones: []bool
+	for value, index in d.values {
+		sym := symbol_of(k.c, d.symbols[index])
+		if sym == nil || sym.kind != .Var {
+			continue
+		}
+		if !classify_copy(k, value, sym.type, "binding") {
+			continue
+		}
+		if clones == nil {
+			clones = make([]bool, len(d.values), k.c.semantic_allocator)
+		}
+		clones[index] = true
+	}
+	d.value_clones = clones
+}
+
+classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
+	if s.op != .Assign {
+		return // a compound assignment reads and writes one place, and copies nothing
+	}
+	// The destination state is recorded per target whether or not the source is a
+	// copy: a transfer still replaces a value that has to be dropped first.
+	if s.destination_live == nil && len(s.lhs) > 0 {
+		s.destination_live = make([]Liveness, len(s.lhs), k.c.semantic_allocator)
+		for index in 0 ..< len(s.lhs) {
+			// A place the analysis does not track is a field or element of a live
+			// aggregate, so its previous value is there to be dropped.
+			s.destination_live[index] = .Live
+		}
+	}
+	if len(s.rhs) != len(s.lhs) {
+		return
+	}
+	clones: []bool
+	for value, index in s.rhs {
+		base := expr_base(s.lhs[index])
+		if base == nil || !classify_copy(k, value, base.type, "assignment") {
+			continue
+		}
+		if clones == nil {
+			clones = make([]bool, len(s.rhs), k.c.semantic_allocator)
+		}
+		clones[index] = true
+	}
+	s.rhs_clones = clones
 }
 
 // ------------------------------------------------------------- liveness --
@@ -306,7 +397,7 @@ states_equal :: proc(a, b: []Liveness) -> bool {
 run_events :: proc(graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness) {
 	for event in block.events {
 		#partial switch event.kind {
-		case .Init:
+		case .Init, .Assign:
 			state[event.slot] = .Live
 		case .Kill:
 			state[event.slot] = .Dead
@@ -321,6 +412,16 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 		local := &graph.tracked[event.slot]
 		switch event.kind {
 		case .Init:
+			state[event.slot] = .Live
+		case .Assign:
+			// design.md: assignment drops the destination's previous value, so what
+			// the emitter needs here is the state on the way in, not on the way out.
+			if event.assign != nil && event.target < len(event.assign.destination_live) {
+				event.assign.destination_live[event.target] = state[event.slot]
+			}
+			if state[event.slot] == .Conditional {
+				local.conditional_assign = true
+			}
 			state[event.slot] = .Live
 		case .Kill:
 			if state[event.slot] != .Live {
@@ -377,13 +478,18 @@ report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness) {
 assign_cleanup_slots :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	for local in graph.tracked {
 		sym := symbol_of(k.c, local.symbol)
-		if sym == nil || !local.seen_cleanup || !local.live_exit {
-			continue // never reaches a cleanup point live: nothing to drop
+		if sym == nil {
+			continue
 		}
-		sym.drop_at_exit = true
-		sym.drop_conditional = local.dead_exit
+		// Reaching a cleanup point live is what gives a local an implicit drop.
+		sym.drop_at_exit = local.seen_cleanup && local.live_exit
+		// A hidden flag exists only where a lowering has to tell the runtime paths
+		// apart: cleanup points that disagree, or an assignment whose destination
+		// is live on one path and dead on another (design.md "Managed values and
+		// storage": "No flag is required for every variable").
+		sym.drop_conditional = (sym.drop_at_exit && local.dead_exit) || local.conditional_assign
 		if !sym.drop_conditional {
-			continue // definite at every exit: no runtime state to keep
+			continue
 		}
 		sym.cleanup_slot = k.defer_slots
 		k.defer_slots += 1

@@ -120,6 +120,49 @@ returning :: proc() {
 	print_int(moved.id);
 }
 
+// design.md "Assignment statements": "Assignment has value semantics ... It does
+// not create a hidden alias to the same allocation." A place names storage
+// someone else still owns, so consuming it copies; a temporary transfers.
+Counted :: struct { id: int }
+
+impl Counted {
+	// A custom hook makes the copy observable: a clone adds 100, a bitwise copy
+	// would not.
+	try_clone :: proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
+		return Counted{self.id + 100}, nil;
+	}
+
+	drop :: proc(self: inout Counted) {
+		if (self.id != 0) {
+			print_int(self.id);
+		}
+	}
+}
+
+copies :: proc() {
+	print_int(9000);
+	source := Counted{1};
+	binding := source;
+	print_int(binding.id);
+
+	// The destination's previous value is dropped once the clone succeeded.
+	destination := Counted{2};
+	destination = source;
+	print_int(destination.id);
+}
+
+// A destination one path dropped and the other did not: the replacement asks
+// the hidden flag rather than dropping unconditionally.
+replaced :: proc(flag: bool) {
+	print_int(9500);
+	x := Counted{3};
+	if (flag) {
+		drop(x);
+	}
+	x = Counted{4};
+	print_int(x.id);
+}
+
 main :: proc() {
 	scope_exit();
 	explicit();
@@ -131,4 +174,7 @@ main :: proc() {
 	looping();
 	transferred();
 	returning();
+	copies();
+	replaced(true);
+	replaced(false);
 }

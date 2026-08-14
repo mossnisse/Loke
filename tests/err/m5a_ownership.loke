@@ -64,6 +64,11 @@ main :: proc() {
 	e := Res{9};
 	print_int(take(e));
 
+	// A move-only type has no copy entry point for a binding or an assignment.
+	f := Only{10};
+	g := f;
+	g = f;
+
 	// Conditionally live: one path dropped it, the other did not.
 	d := Res{8};
 	if (b.id == 0) {
