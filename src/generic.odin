@@ -443,9 +443,13 @@ generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gene
 	for binding in bindings {
 		strings.write_string(&b, ".")
 		if binding.arg.is_type {
-			strings.write_string(&b, llvm_safe(type_name(c, binding.arg.type)))
+			escaped := llvm_safe(type_name(c, binding.arg.type))
+			strings.write_string(&b, escaped)
+			delete(escaped)
 		} else {
-			strings.write_string(&b, llvm_safe(const_key_text(c, binding.arg.value)))
+			escaped := llvm_safe(const_key_text(c, binding.arg.value))
+			strings.write_string(&b, escaped)
+			delete(escaped)
 		}
 	}
 	return strings.to_string(b)
@@ -815,6 +819,9 @@ instantiate_generic :: proc(
 			}
 			return nil, false
 		}
+		if !existing.signature_ok && report {
+			report_rejected_instance(k, template, existing, span)
+		}
 		return existing, existing.signature_ok
 	}
 
@@ -823,11 +830,10 @@ instantiate_generic :: proc(
 		// Once the ceiling is reached the program is not going to compile, and
 		// letting the traversal continue would report the same runaway thousands
 		// of times over.
-		if k.c.instantiation_limit_hit {
-			return nil, false
-		}
-		k.c.instantiation_limit_hit = true
-		if report {
+		// A silent overload probe must not consume the one diagnostic or poison a
+		// later direct request for the same instance.
+		if report && !k.c.instantiation_limit_hit {
+			k.c.instantiation_limit_hit = true
 			errorf(
 				k.c,
 				span,
@@ -849,6 +855,11 @@ instantiate_generic :: proc(
 	instance.provisional = true
 	instance.span = span
 	k.c.instances[key] = instance
+	// Reserve the unique cache entry before resolving its signature. Signature
+	// resolution can recursively instantiate other declarations; reserving here
+	// keeps nested work from crossing the global ceiling while unwinding. A
+	// rejected entry remains negatively cached, so repeated probes do not consume
+	// another slot.
 	k.c.instantiation_count += 1
 
 	name := generic_instance_name(k.c, template.symbol, bindings)
@@ -866,16 +877,41 @@ instantiate_generic :: proc(
 		instance.signature_ok = instantiate_procedure_signature(k, template, instance, name, report)
 	case .None:
 	}
-	if instance.symbol != INVALID_SYMBOL {
+	if instance.signature_ok && instance.symbol != INVALID_SYMBOL {
 		k.c.instance_by_symbol[instance.symbol] = instance
 	}
-	// A failed instance is not cached. The first attempt is usually a silent
-	// viability probe, and the diagnostic the caller wants afterwards can only be
-	// produced by running the same bounds again with `report` set.
-	if !instance.signature_ok {
-		delete_key(&k.c.instances, key)
-	}
+	// Failed bounds are negative cache entries. Reusing them avoids cloning a
+	// declaration and allocating semantic artifacts on every overload probe;
+	// `report_rejected_instance` can still replay the bound diagnostically.
 	return instance, instance.signature_ok
+}
+
+@(private = "file")
+report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance, span: Span) {
+	if instance == nil || instance.decl == nil {
+		return
+	}
+	name := generic_instance_name(k.c, template.symbol, instance.bindings)
+	saved := k.scope
+	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
+	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
+	saved_literal, saved_generic := k.proc_literal, k.generic_depth
+	defer leave_instance(k, saved, saved_pkg, saved_lookup, saved_impl, saved_file, saved_node, saved_literal, saved_generic)
+	enter_instance(k, template, instance.scope)
+
+	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
+	defer pop(&k.c.instantiation_stack)
+	#partial switch template.kind {
+	case .Record:
+		if record, ok := instance.decl.values[0].(^Type_Record); ok {
+			check_where_clauses(k, record.where_clauses, span, name, report = true)
+		}
+	case .Procedure:
+		if literal := decl_proc_literal(instance.decl); literal != nil {
+			check_where_clauses(k, literal.where_clauses, span, name, report = true)
+		}
+	case .None:
+	}
 }
 
 @(private = "file")
@@ -994,8 +1030,6 @@ instantiate_record_body :: proc(
 	}
 	instance.symbol = symbol_id
 	instance.type = type
-	append(&template.instances, instance)
-
 	saved := k.scope
 	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
 	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
@@ -1024,6 +1058,7 @@ instantiate_record_body :: proc(
 	// design.md writes out — is an ordinary cache hit rather than recursion.
 	instance.provisional = false
 	instance.signature_ok = true
+	append(&template.instances, instance)
 	install_generic_impls(k, template, instance)
 	return true
 }
@@ -1255,12 +1290,12 @@ check_where_clauses :: proc(k: ^Checker, clauses: []Expr, span: Span, what: stri
 		folded, evaluated := require_const(k, clause, "a `where` bound", "L0435")
 		failed := type == INVALID_TYPE || !evaluated || folded.kind != .Boolean
 		if !failed && folded.boolean {
-			resize(&k.c.diagnostics, mark)
+			truncate_diagnostics(k.c, mark)
 			k.c.error_count = errors
 			continue
 		}
 		if !report {
-			resize(&k.c.diagnostics, mark)
+			truncate_diagnostics(k.c, mark)
 			k.c.error_count = errors
 			return false
 		}
@@ -1271,7 +1306,7 @@ check_where_clauses :: proc(k: ^Checker, clauses: []Expr, span: Span, what: stri
 			note_instantiation_stack(k)
 			return false
 		}
-		resize(&k.c.diagnostics, mark)
+		truncate_diagnostics(k.c, mark)
 		k.c.error_count = errors
 		// design.md: an interface bound must name the requirement that failed and
 		// the concrete type that failed it, never a bare "constraint not
@@ -1410,7 +1445,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 			mark := len(k.c.diagnostics)
 			errors := k.c.error_count
 			resolved := resolve_type_syntax(k, written)
-			resize(&k.c.diagnostics, mark)
+			truncate_diagnostics(k.c, mark)
 			k.c.error_count = errors
 			if resolved != bound.type {
 				return
@@ -1423,7 +1458,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		if check_single_expr(k, written, bound.value_type) != INVALID_TYPE {
 			folded, evaluated = require_const(k, written, "a generic argument", "L0432")
 		}
-		resize(&k.c.diagnostics, mark)
+		truncate_diagnostics(k.c, mark)
 		k.c.error_count = errors
 		if !evaluated {
 			return

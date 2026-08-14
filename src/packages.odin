@@ -143,6 +143,7 @@ parse_file :: proc(c: ^Compiler, path: string) -> (^File, bool) {
 		return nil, false
 	}
 	tokens := lex(c, index)
+	defer delete(tokens)
 	file := new(File)
 	file^ = parse(c, index, tokens)
 	append(&c.parsed_files, file)

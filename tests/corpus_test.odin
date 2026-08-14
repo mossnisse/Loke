@@ -32,25 +32,58 @@ import os2 "core:os/os2"
 import "core:path/filepath"
 import "core:strings"
 import "core:testing"
+import "core:time"
 
-LOKEC :: "lokec.exe"
+LOKEC_DEFAULT :: "lokec.exe"
 TMP :: "tests/tmp"
+
+@(private)
+compiler_path :: proc() -> string {
+	if configured := os.get_env("LOKEC", context.temp_allocator); configured != "" {
+		return configured
+	}
+	return LOKEC_DEFAULT
+}
+
+// The corpus shells out, so a forgotten build must fail visibly instead of
+// validating an unrelated stale executable. An explicitly supplied `LOKEC`
+// path is trusted because CI may place its build outside this source tree.
+@(test)
+compiler_binary_is_current :: proc(t: ^testing.T) {
+	if os.get_env("LOKEC", context.temp_allocator) != "" {
+		return
+	}
+	compiler := compiler_path()
+	compiler_info, compiler_err := os.stat(compiler, context.temp_allocator)
+	if !testing.expectf(t, compiler_err == nil, "cannot stat %s; build it or set LOKEC=<path>", compiler) {
+		return
+	}
+	sources, _ := filepath.glob("src/*.odin", context.temp_allocator)
+	compiler_time := time.time_to_unix_nano(compiler_info.modification_time)
+	for source in sources {
+		info, err := os.stat(source, context.temp_allocator)
+		if err == nil && time.time_to_unix_nano(info.modification_time) > compiler_time {
+			testing.expectf(t, false, "%s is older than %s; rebuild it or set LOKEC=<path>", compiler, source)
+			return
+		}
+	}
+}
 
 @(test)
 front_end_modes :: proc(t: ^testing.T) {
 	parse_state, parse_stdout, parse_stderr, parse_err := os2.process_exec(
-		os2.Process_Desc{command = []string{LOKEC, "examples/hello.loke", "-parse-only"}},
+		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-parse-only"}},
 		context.allocator,
 	)
-	testing.expectf(t, parse_err == nil, "cannot run %s in parse-only mode", LOKEC)
+	testing.expectf(t, parse_err == nil, "cannot run %s in parse-only mode", compiler_path())
 	testing.expectf(t, parse_state.exit_code == 0, "parse-only failed:\n%s", string(parse_stderr))
 	testing.expectf(t, len(parse_stdout) == 0, "parse-only unexpectedly wrote output: %s", string(parse_stdout))
 
 	dump_state, dump_stdout, dump_stderr, dump_err := os2.process_exec(
-		os2.Process_Desc{command = []string{LOKEC, "examples/hello.loke", "-dump-ast"}},
+		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-dump-ast"}},
 		context.allocator,
 	)
-	testing.expectf(t, dump_err == nil, "cannot run %s in AST-dump mode", LOKEC)
+	testing.expectf(t, dump_err == nil, "cannot run %s in AST-dump mode", compiler_path())
 	testing.expectf(t, dump_state.exit_code == 0, "AST dump failed:\n%s", string(dump_stderr))
 	testing.expectf(
 		t,
@@ -79,10 +112,10 @@ programs_trap :: proc(t: ^testing.T) {
 	for path in cases {
 		exe := fmt.tprintf("%s/trap-%s.exe", TMP, filepath.stem(path))
 		state, _, stderr, err := os2.process_exec(
-			os2.Process_Desc{command = []string{LOKEC, path, "-o", exe}},
+			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe}},
 			context.allocator,
 		)
-		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, LOKEC) {
+		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 			continue
 		}
 		if !testing.expectf(t, state.exit_code == 0, "%s: compile failed\n%s", path, string(stderr)) {
@@ -116,10 +149,10 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 
 		exe := fmt.tprintf("%s/%s.exe", TMP, filepath.stem(path))
 		state, _, stderr, err := os2.process_exec(
-			os2.Process_Desc{command = []string{LOKEC, path, "-o", exe, "-emit-ll"}},
+			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe, "-emit-ll"}},
 			context.allocator,
 		)
-		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, LOKEC) {
+		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 			continue
 		}
 		if !testing.expectf(t, state.exit_code == 0, "%s: compile failed\n%s", path, string(stderr)) {
@@ -154,10 +187,10 @@ layout_agrees_with_llvm :: proc(t: ^testing.T) {
 	for path in cases {
 		exe := fmt.tprintf("%s/layout-%s.exe", TMP, filepath.stem(path))
 		state, stdout, stderr, err := os2.process_exec(
-			os2.Process_Desc{command = []string{LOKEC, path, "-o", exe, "-check-layout"}},
+			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe, "-check-layout"}},
 			context.allocator,
 		)
-		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, LOKEC) {
+		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 			continue
 		}
 		testing.expectf(
@@ -241,12 +274,12 @@ run_one_program :: proc(t: ^testing.T, path, expected_file, exe: string) {
 	}
 
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, LOKEC, path, "-o", exe)
+	append(&command, compiler_path(), path, "-o", exe)
 	for flag in extra_flags(path) {
 		append(&command, flag)
 	}
 	state, _, stderr, err := os2.process_exec(os2.Process_Desc{command = command[:]}, context.allocator)
-	if !testing.expectf(t, err == nil, "%s: cannot run %s", path, LOKEC) {
+	if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 		return
 	}
 	if !testing.expectf(t, state.exit_code == 0, "%s: compile failed\n%s", path, string(stderr)) {
@@ -279,7 +312,7 @@ check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, mode, sent
 	}
 
 	command := make([dynamic]string, context.temp_allocator)
-	append(&command, LOKEC, path, mode)
+	append(&command, compiler_path(), path, mode)
 	for flag in extra_flags(path) {
 		append(&command, flag)
 	}
@@ -287,7 +320,7 @@ check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, mode, sent
 		os2.Process_Desc{command = command[:]},
 		context.allocator,
 	)
-	if !testing.expectf(t, err == nil, "%s: cannot run %s", path, LOKEC) {
+	if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
 		return
 	}
 	testing.expectf(t, state.exit_code == 1, "%s: expected exit 1, got %d", path, state.exit_code)

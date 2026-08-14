@@ -1064,6 +1064,66 @@ sentinel :: proc() { }
 // the symbol store crossing that threshold silently kept its old length while
 // `new_symbol` went on handing out IDs for elements that were never stored.
 @(test)
+rejected_generic_candidates_are_negative_cached :: proc(t: ^testing.T) {
+	text := `package main;
+large :: proc(values: [$N]int) -> int where N > 5 { return N; }
+small :: proc(values: [2]int) -> int { return 2; }
+choose :: proc{large, small};
+main :: proc() {
+	print_int(choose([2]int{}));
+	print_int(choose([2]int{}));
+	print_int(choose([6]int{1, 2, 3, 4, 5, 6}));
+}`
+	c := test_compiler(text)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	pkg_id := new_package(&c, "main", "<test>")
+	add_package_file(&c, pkg_id, &f)
+	check_one_package(&c, pkg_id)
+	validate_executable(&c, pkg_id)
+
+	testing.expectf(t, c.error_count == 0, "negative generic cache produced %d diagnostics", c.error_count)
+	testing.expectf(
+		t,
+		c.instantiation_count == 2,
+		"one rejected and one selected unique entry should consume the budget, found %d",
+		c.instantiation_count,
+	)
+	testing.expectf(t, len(c.instances) == 2, "expected one rejected and one successful cache entry, found %d", len(c.instances))
+}
+
+@(test)
+compilation_destruction_releases_owned_front_end_state :: proc(t: ^testing.T) {
+	c: Compiler
+	source, loaded := load_source(&c, "examples/hello.loke")
+	if !testing.expect(t, loaded, "could not load the lifecycle fixture") {
+		destroy_compilation(&c)
+		return
+	}
+	tokens := lex(&c, source)
+	file := new(File)
+	file^ = parse(&c, source, tokens)
+	delete(tokens)
+	append(&c.parsed_files, file)
+	errorf(&c, file.package_span, "L9999", "owned diagnostic")
+	add_notef(&c, file.package_span, "owned note")
+	testing.expect(t, len(c.parsed_files) == 1, "parsed file was not registered with the compilation")
+	testing.expect(t, len(c.sources) == 1, "source buffer was not registered with the compilation")
+	testing.expect(t, len(c.diagnostics) == 1, "diagnostic was not registered with the compilation")
+
+	destroy_compilation(&c)
+	testing.expect(t, !c.semantic_initialized, "semantic arena remained initialized")
+	testing.expect(t, len(c.parsed_files) == 0, "parsed-file ownership survived destruction")
+	testing.expect(t, len(c.sources) == 0, "source ownership survived destruction")
+	testing.expect(t, len(c.diagnostics) == 0, "diagnostic ownership survived destruction")
+	// Destruction is intentionally idempotent for early-return paths in callers.
+	destroy_compilation(&c)
+}
+
+@(test)
 semantic_arena_serves_maps_and_large_blocks :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)

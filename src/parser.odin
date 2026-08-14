@@ -228,16 +228,19 @@ fmt_found :: proc(p: ^Parser, t: Token) -> string {
 	if t.kind == .EOF {
 		return "end of file"
 	}
-	return concat("found `", text_of(p, t), "`")
+	// `error_labelf` clones the label into diagnostic-owned storage. Build this
+	// transient spelling in the temporary arena so there is no second owner to
+	// release after the call.
+	return concat_temp("found `", text_of(p, t), "`")
 }
 
 @(private = "file")
-concat :: proc(parts: ..string) -> string {
+concat_temp :: proc(parts: ..string) -> string {
 	total := 0
 	for s in parts {
 		total += len(s)
 	}
-	buf := make([]u8, total)
+	buf := make([]u8, total, context.temp_allocator)
 	i := 0
 	for s in parts {
 		copy(buf[i:], s)
@@ -2070,7 +2073,7 @@ parse_argument_value :: proc(p: ^Parser) -> Expr {
 	p.last = last
 	p.suppress = suppress
 	p.depth_reported = depth_reported
-	resize(&p.c.diagnostics, diagnostic_count)
+	truncate_diagnostics(p.c, diagnostic_count)
 	p.c.error_count = error_count
 	return parse_expr(p)
 }

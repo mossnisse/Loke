@@ -37,7 +37,7 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	subject := resolve_type_syntax(k, item.type)
 	if subject == INVALID_TYPE {
 		if quiet {
-			resize(&k.c.diagnostics, mark)
+			truncate_diagnostics(k.c, mark)
 			k.c.error_count = errors
 			return
 		}

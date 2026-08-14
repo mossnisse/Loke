@@ -32,6 +32,10 @@ no_span :: proc() -> Span {
 Source :: struct {
 	path:        string,
 	text:        string,
+	// Non-empty only when `load_source` allocated the text. Tests may register
+	// string literals directly; keeping the owned bytes separate makes the
+	// compilation destructor correct for both cases.
+	owned_text:  []u8,
 	line_starts: []u32, // byte offset of the first character of each line
 }
 
@@ -51,7 +55,7 @@ Diagnostic :: struct {
 	span:     Span,
 	message:  string,
 	label:    string, // short text printed after the caret; may be empty
-	notes:    []Note,
+	notes:    [dynamic]Note,
 }
 
 // Compiler-wide state. Named `Compiler` rather than `Context` because `context`
@@ -85,9 +89,9 @@ Compiler :: struct {
 	// Every parsed file, so one `destroy_compilation` frees the lot.
 	parsed_files:   [dynamic]^File,
 
-	// Generics (`src/generic.odin`). `instances` is the monomorphization cache
-	// keyed by (declaration symbol, canonical argument vector); the stack and the
-	// count enforce the documented instantiation ceiling.
+	// Generics (`src/generic.odin`). `instances` is the positive and negative
+	// specialization cache keyed by (declaration symbol, canonical argument
+	// vector); the stack and unique-entry count enforce the documented ceiling.
 	generic_templates:     map[Symbol_Id]^Generic_Template,
 	generic_impls:         map[Symbol_Id][dynamic]^Generic_Impl,
 	instances:             map[string]^Instance,
@@ -156,6 +160,7 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 	// grammar.md: a source file is UTF-8 *without* a BOM.
 	if strings.has_prefix(text, "\xef\xbb\xbf") {
 		errorf(c, no_span(), "L0002", "`%s` starts with a UTF-8 byte order mark", path)
+		delete(data)
 		return 0, false
 	}
 
@@ -168,7 +173,7 @@ load_source :: proc(c: ^Compiler, path: string) -> (index: u32, ok: bool) {
 	}
 
 	index = u32(len(c.sources))
-	append(&c.sources, Source{path = path, text = text, line_starts = starts[:]})
+	append(&c.sources, Source{path = path, text = text, owned_text = data, line_starts = starts[:]})
 	if valid, bad_offset := valid_utf8(text); !valid {
 		errorf(
 			c,
@@ -235,7 +240,9 @@ error_labelf :: proc(
 	args: ..any,
 ) {
 	errorf(c, span, code, format, ..args)
-	c.diagnostics[len(c.diagnostics) - 1].label = label
+	// Labels arrive as either source-backed text or temporary formatted strings.
+	// Clone them so every diagnostic component has one uniform owner.
+	c.diagnostics[len(c.diagnostics) - 1].label = strings.clone(label)
 }
 
 // Attaches a secondary location to the most recently emitted diagnostic.
@@ -245,10 +252,30 @@ add_notef :: proc(c: ^Compiler, span: Span, format: string, args: ..any) {
 		return
 	}
 	diagnostic := &c.diagnostics[len(c.diagnostics) - 1]
-	notes := make([dynamic]Note, len(diagnostic.notes), len(diagnostic.notes) + 1)
-	copy(notes[:], diagnostic.notes)
-	append(&notes, Note{span = span, message = fmt.aprintf(format, ..args)})
-	diagnostic.notes = notes[:]
+	append(&diagnostic.notes, Note{span = span, message = fmt.aprintf(format, ..args)})
+}
+
+// Frees diagnostics removed by a speculative parse/check as well as those
+// retained until the end of the compilation. Resizing a dynamic array alone
+// would lose the owned strings and note arrays beyond the new length.
+destroy_diagnostic :: proc(d: ^Diagnostic) {
+	delete(d.message)
+	if d.label != "" {
+		delete(d.label)
+	}
+	for &note in d.notes {
+		delete(note.message)
+	}
+	delete(d.notes)
+	d^ = {}
+}
+
+truncate_diagnostics :: proc(c: ^Compiler, length: int) {
+	wanted := clamp(length, 0, len(c.diagnostics))
+	for index := wanted; index < len(c.diagnostics); index += 1 {
+		destroy_diagnostic(&c.diagnostics[index])
+	}
+	resize(&c.diagnostics, wanted)
 }
 
 // Renders every accumulated diagnostic to stderr, in source order per file.

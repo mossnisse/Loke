@@ -115,6 +115,7 @@ run :: proc() -> int {
 			return 1
 		}
 		tokens := lex(&c, file)
+		defer delete(tokens)
 		ast := parse(&c, file, tokens)
 		defer destroy_ast(&ast)
 		if opts.dump_ast {

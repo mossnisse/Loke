@@ -18,6 +18,7 @@
 package lokec
 
 import "core:fmt"
+import "core:strings"
 
 // A flattened slot, remembering which interface declared it: composition keeps
 // each slot's own coherent lookup package.
@@ -429,9 +430,9 @@ check_one_requirement :: proc(
 	// it becomes the reason rather than being thrown away for a generic phrase.
 	reason := "this expression does not compile for these arguments"
 	if mark < len(k.c.diagnostics) {
-		reason = k.c.diagnostics[mark].message
+		reason = strings.clone(k.c.diagnostics[mark].message, k.c.semantic_allocator)
 	}
-	resize(&k.c.diagnostics, mark)
+	truncate_diagnostics(k.c, mark)
 	k.c.error_count = errors
 	if type == INVALID_TYPE || captured {
 		return Requirement_Failure{span = requirement.span, reason = reason}, false

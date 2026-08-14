@@ -1250,8 +1250,31 @@ add_package_file :: proc(c: ^Compiler, package_id: Package_Id, file: ^File) -> b
 }
 
 destroy_compilation :: proc(c: ^Compiler) {
+	// Production parsing gives the compilation ownership of both the file
+	// object and its syntax arena. Hand-built tests keep `parsed_files` empty and
+	// continue to own their stack-local ASTs themselves.
+	for file in c.parsed_files {
+		if file != nil {
+			destroy_ast(file)
+			free(file)
+		}
+	}
+	delete(c.parsed_files)
+
+	for &diagnostic in c.diagnostics {
+		destroy_diagnostic(&diagnostic)
+	}
+	delete(c.diagnostics)
+	for &source in c.sources {
+		delete(source.line_starts)
+		if source.owned_text != nil {
+			delete(source.owned_text)
+		}
+	}
+	delete(c.sources)
+
 	if c.semantic_initialized {
 		virtual.arena_destroy(&c.semantic_arena)
-		c.semantic_initialized = false
 	}
+	c^ = {}
 }
