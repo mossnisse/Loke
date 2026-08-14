@@ -83,6 +83,14 @@ main :: proc() {
 	drop(h);
 	j := exchange(inout h, Res{15});
 
+	// Static-duration storage is always live, and is initialised before any code
+	// runs.
+	k: static Res;
+	l: thread_local Res;
+	drop(k);
+	m := move(l);
+	n: static int = borrow(Res{16});
+
 	// Conditionally live: one path dropped it, the other did not.
 	d := Res{8};
 	if (b.id == 0) {

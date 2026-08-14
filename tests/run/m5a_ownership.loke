@@ -187,6 +187,33 @@ exchanged :: proc() {
 	print_int(current.id);
 }
 
+// design.md "Storage modifiers": "`manual` disables automatic cleanup", so
+// scope exit leaves it alone and an explicit `drop` is what releases it.
+manual_owner :: proc() {
+	print_int(9700);
+	automatic := make_res(19);
+	held: manual Res = make_res(20);
+	released: manual Res = make_res(21);
+	drop(released);
+}
+
+// "`static` creates one instance for the life of the process. The value remains
+// available between calls."
+counted :: proc() -> int {
+	counter: static int = 0;
+	counter = counter + 1;
+	return counter;
+}
+
+// "At normal thread return, the runtime drops each live managed `thread_local`
+// value in reverse initialization order." M5a creates no threads, so that is
+// after `main` returns.
+session :: proc() {
+	current: thread_local Res;
+	current = make_res(22);
+	print_int(current.id);
+}
+
 main :: proc() {
 	scope_exit();
 	explicit();
@@ -203,4 +230,8 @@ main :: proc() {
 	replaced(false);
 	discarded();
 	exchanged();
+	manual_owner();
+	print_int(counted());
+	print_int(counted());
+	session();
 }

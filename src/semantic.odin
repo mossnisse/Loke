@@ -573,6 +573,16 @@ Symbol :: struct {
 	drop_at_exit:     bool,
 	drop_conditional: bool,
 	cleanup_slot:     int,
+	// design.md "Storage modifiers": "`manual` disables automatic cleanup. Use it
+	// for arenas, foreign ownership, custom containers, and low-level allocator
+	// code." The value is still tracked — an explicit `drop` and use-after-drop
+	// both need its liveness — it simply has no scope-exit obligation.
+	manual:           bool,
+	// design.md "Storage modifiers": `static` exists for the life of the process
+	// and `thread_local` for the life of its thread. Either one makes a *local*
+	// declaration name storage outside the frame, so the backend gives it a
+	// global rather than an `alloca` (m5a-plan step 4).
+	duration:         Duration,
 }
 
 Scope_Kind :: enum {

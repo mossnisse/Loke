@@ -78,8 +78,20 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		)
 		return false
 	}
-	if sym.decl != nil && sym.decl.top_level {
-		errorf(k.c, expr_span(e), "L0498", "`%s` cannot be applied to file-scope storage, which is always live", form)
+	// design.md: "A binding with static storage duration is always live after
+	// this initialization. `move` and explicit `drop` are forbidden on it and on
+	// a subplace rooted in it; otherwise one procedure could make the binding dead
+	// while another procedure accessed it."
+	if (sym.decl != nil && sym.decl.top_level) || sym.duration != .None {
+		errorf(
+			k.c,
+			expr_span(e),
+			"L0498",
+			"`%s` cannot be applied to %s, which is always live",
+			form,
+			sym.duration == .Thread_Local ? "`thread_local` storage" :
+				sym.duration == .Static ? "`static` storage" : "file-scope storage",
+		)
 		add_notef(k.c, sym.span, "declared here; `exchange` replaces a static-duration value instead")
 		return false
 	}
@@ -346,6 +358,33 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		clones[index] = true
 	}
 	s.rhs_clones = clones
+}
+
+// --------------------------------------------------------- storage duration --
+
+// design.md "Storage modifiers": "File-scope, `static`, and `thread_local`
+// declarations use constant initialization. The initializer must be a
+// compile-time constant. If there is no initializer, the declaration uses the
+// zero value." A local with either duration also needs module-level storage,
+// which is what this records.
+record_static_local :: proc(k: ^Checker, d: ^Decl) {
+	for symbol_id, index in d.symbols {
+		sym := symbol_of(k.c, symbol_id)
+		if sym == nil || sym.kind != .Var {
+			continue
+		}
+		if index < len(d.values) && d.values[index] != nil && !is_const_expr(d.values[index]) {
+			errorf(
+				k.c,
+				expr_span(d.values[index]),
+				"L0506",
+				"a `%s` declaration is initialised once, before any code runs, so its initialiser must be a compile-time constant",
+				d.duration == .Static ? "static" : "thread_local",
+			)
+			continue
+		}
+		append(&k.c.static_locals, symbol_id)
+	}
 }
 
 // ------------------------------------------------------------- liveness --

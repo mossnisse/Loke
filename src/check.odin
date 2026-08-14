@@ -1135,6 +1135,13 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 	d.check_state = .Checking
 	check_decl_inner(k, d)
 	d.check_state = .Checked
+	// Static-duration locals need module-level storage, and their initialisers
+	// have to be constant. Both are settled here rather than inside, because
+	// `check_decl_inner` returns from several places and every one of them still
+	// declared the storage (m5a-plan step 4). `check_state` makes this run once.
+	if d.duration != .None && !d.top_level && d.kind == .Var {
+		record_static_local(k, d)
+	}
 }
 
 @(private = "file")
@@ -1169,11 +1176,17 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			return
 		}
 	}
-	// `static`, `thread_local`, `manual`, and `via` stay gated at the enclosing
-	// declaration (m2-plan step 3).
-	if d.duration != .None || d.manual || d.via != nil {
+	// `via` stays gated at the enclosing declaration: a written allocator policy
+	// needs a provider to select, which arrives with `core:mem` in M6.
+	if d.via != nil {
 		unsupported_construct(k, d.span)
 		return
+	}
+	for symbol_id in d.symbols {
+		if sym := symbol_of(k.c, symbol_id); sym != nil {
+			sym.manual = d.manual
+			sym.duration = d.duration
+		}
 	}
 	if len(d.symbols) == 1 {
 		if symbol := symbol_of(k.c, d.symbols[0]); symbol != nil && symbol.kind == .Proc_Group {

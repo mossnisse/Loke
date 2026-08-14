@@ -314,12 +314,21 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		if !type_is_managed(graph.k.c, sym.type) && !sym.allocation_root {
 			continue
 		}
+		// design.md: static-duration storage "is always live after this
+		// initialization" and "The compiler does not automatically drop these
+		// values", so there is no state to follow and no scope-exit obligation.
+		if sym.duration != .None {
+			continue
+		}
 		// ponytail: `manual` disables automatic cleanup, but it is still gated at
 		// the declaration, so there is nothing here to exempt yet.
+		// design.md: "Scope exit automatically drops a live managed lexical owner.
+		// It does not clean up a manual lexical owner." A `manual` owner is still
+		// followed, so `drop(x)` and use-after-drop both work on it.
 		append(&graph.tracked, Tracked_Local {
 			symbol       = id,
 			scope        = len(graph.scopes),
-			owns_cleanup = type_is_managed(graph.k.c, sym.type),
+			owns_cleanup = type_is_managed(graph.k.c, sym.type) && !sym.manual,
 		})
 		graph.by_symbol[id] = len(graph.tracked) - 1
 		append(&graph.in_scope, len(graph.tracked) - 1)

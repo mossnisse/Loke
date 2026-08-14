@@ -96,6 +96,9 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 		name_package_symbols(&e, package_of(c, id))
 	}
 	name_synth_procs(&e)
+	// Module-level storage first: a body that names a `static` local needs its
+	// global to exist before the body is emitted.
+	emit_static_locals(&e)
 	for id in order {
 		emit_package_items(&e, package_of(c, id))
 	}
@@ -721,9 +724,62 @@ emit_result_is_inout :: proc(e: ^Emitter, index: int) -> bool {
 
 // ---------------------------------------------------------------- globals --
 
+// design.md "Storage modifiers": a `static` local "creates one instance for the
+// life of the process" and a `thread_local` one "for each thread", so neither
+// lives in the frame. The checker recorded them in declaration order, which is
+// also the order design.md gives thread-local teardown.
+@(private = "file")
+emit_static_locals :: proc(e: ^Emitter) {
+	for symbol_id, index in e.c.static_locals {
+		sym := symbol_of(e.c, symbol_id)
+		if sym == nil || sym.kind != .Var {
+			continue
+		}
+		name := fmt.aprintf("@loke.s.%d.%s", index, llvm_safe(identifier_text(e.c, sym.name)))
+		e.names[symbol_id] = name
+		value := "zeroinitializer"
+		if zero, ok := zero_const(e.c, sym.type); ok {
+			value = llvm_const(e, zero, sym.type)
+		}
+		if sym.decl != nil {
+			for initialiser, position in sym.decl.values {
+				if position < len(sym.decl.symbols) && sym.decl.symbols[position] == symbol_id &&
+				   initialiser != nil && is_const_expr(initialiser) {
+					value = llvm_const(e, const_value_of(initialiser), sym.type)
+				}
+			}
+		}
+		qualifier := sym.duration == .Thread_Local ? "thread_local " : ""
+		fmt.sbprintfln(&e.b, "%s = %sglobal %s %s", name, qualifier, llvm_type(e, sym.type), value)
+	}
+	if len(e.c.static_locals) > 0 {
+		fmt.sbprintln(&e.b, "")
+	}
+}
+
+// design.md: "At normal thread return, the runtime drops each live managed
+// `thread_local` value in reverse initialization order."
+//
+// ponytail: M5a creates no threads, so the main thread is every thread and this
+// runs once, after `main` returns. M6's runtime thread entry and exit is what
+// makes it general (m5a-plan "Panic and TLS").
+@(private = "file")
+emit_thread_local_teardown :: proc(e: ^Emitter) {
+	for index := len(e.c.static_locals) - 1; index >= 0; index -= 1 {
+		symbol_id := e.c.static_locals[index]
+		sym := symbol_of(e.c, symbol_id)
+		if sym == nil || sym.duration != .Thread_Local || sym.manual {
+			continue // the runtime does not drop a manual TLS owner
+		}
+		if !type_is_managed(e.c, sym.type) {
+			continue
+		}
+		emit_drop_place(e, sym.type, e.names[symbol_id])
+	}
+}
+
 // File-scope variables need constant initialisers (design.md "Values that
 // outlive every scope"), so folding has already produced the value.
-@(private = "file")
 emit_global :: proc(e: ^Emitter, pkg: ^Package, d: ^Decl) {
 	for symbol_id, i in d.symbols {
 		sym := symbol_of(e.c, symbol_id)
@@ -953,6 +1009,7 @@ emit_entry :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "define i32 @main() {")
 	fmt.sbprintln(&e.b, "entry:")
 	fmt.sbprintfln(&e.b, "  call void %s()", e.names[entry_symbol(e.c)] or_else "@loke.p.main")
+	emit_thread_local_teardown(e)
 	fmt.sbprintln(&e.b, "  ret i32 0")
 	fmt.sbprintln(&e.b, "}")
 }
@@ -1231,6 +1288,11 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 		sym := symbol_of(e.c, symbol_id)
 		// Constants are folded at every use, so they need no storage.
 		if sym == nil || sym.kind != .Var {
+			continue
+		}
+		// Static-duration storage was emitted at module level and initialised
+		// before any code ran, so reaching the declaration writes nothing.
+		if sym.duration != .None {
 			continue
 		}
 		slot := declare_local(e, symbol_id)

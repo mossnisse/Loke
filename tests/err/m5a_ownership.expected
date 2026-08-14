@@ -9,7 +9,7 @@ L0497
 names a variable; move the owner out of the aggregate first
 L0498
 @59:7
-cannot be applied to file-scope storage
+cannot be applied to file-scope storage, which is always live
 L0501
 @65:17
 is a `move` parameter, so this argument is written `move(...)`
@@ -19,6 +19,15 @@ copies a managed element, which M5a does not clean up per iteration
 L0505
 @82:16
 `exchange` replaces the destination, so it is written `exchange(inout place, replacement)`
+L0498
+@90:7
+cannot be applied to `static` storage, which is always live
+L0498
+@91:12
+cannot be applied to `thread_local` storage, which is always live
+L0506
+@92:18
+initialised once, before any code runs, so its initialiser must be a compile-time constant
 L0503
 @69:7
 so this binding cannot copy it; write `move(...)` to transfer ownership instead
@@ -35,5 +44,5 @@ L0500
 @84:7
 `h` cannot be exchanged here: it has already been moved, dropped, or released
 L0500
-@91:12
+@99:12
 `d` cannot be used here: it is live on only some of the paths that reach this point

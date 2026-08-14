@@ -139,6 +139,11 @@ Compiler :: struct {
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
+	// Static-duration locals, in declaration order. They need module-level
+	// storage, which cannot be written inside a function body, so the checker
+	// records them and `emit_globals` walks the list (m5a-plan step 4).
+	static_locals: [dynamic]Symbol_Id,
+
 	// The `default_allocator` builtin, and the one call expression the compiler
 	// installs as the omitted allocator argument of every lifecycle hook. M6
 	// replaces it with the design's written `= mem.default_allocator()`.
