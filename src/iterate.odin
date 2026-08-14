@@ -41,6 +41,10 @@ Synth_Kind :: enum {
 	Range_Next,
 	Array_Iter,
 	Array_Next,
+	// A slice iterates through the same `{ data, index }` shape as an array; only
+	// the bound differs, because a slice carries its length rather than having it
+	// baked into the type.
+	Slice_Next,
 	// design.md: "`dyn I` itself satisfies `I` by compiler-provided forwarding
 	// slots." Each one calls through the view's own witness.
 	Dyn_Forward,
@@ -149,6 +153,12 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		element = info.element
 		iterator = array_iterator_type(k.c, under)
 		iter_kind, next_kind = .Array_Iter, .Array_Next
+	case info.kind == .Slice:
+		// The iterator holds the slice by value, so `iter` is the array one
+		// verbatim: `{ data, 0 }`. Only `next`'s bound is different.
+		element = info.element
+		iterator = array_iterator_type(k.c, under)
+		iter_kind, next_kind = .Array_Iter, .Slice_Next
 	case:
 		return
 	}
@@ -360,6 +370,9 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		s.kind = .Array
 		s.element_type = info.element
 		s.count = info.count
+	case info.kind == .Slice:
+		s.kind = .Slice
+		s.element_type = info.element
 	case info.is_range:
 		s.kind = .Stored_Range
 		s.element_type = info.element
@@ -367,7 +380,22 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		return check_protocol_foreach(k, s, subject)
 	}
 
-	if s.bindings[0].is_ref && !expr_base(s.iterable).assignable {
+	// design.md "Slices": "Element assignment and iteration by reference require
+	// `[]mut T`." The capability is the slice's own, not whether the variable
+	// holding it can be rebound.
+	if s.kind == .Slice {
+		if s.bindings[0].is_ref && !info.mutable {
+			errorf(
+				k.c,
+				s.bindings[0].name.span,
+				"L0480",
+				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s`",
+				type_name(k.c, subject),
+				type_name(k.c, info.element),
+			)
+			return FLOWS
+		}
+	} else if s.bindings[0].is_ref && !expr_base(s.iterable).assignable {
 		report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
 		return FLOWS
 	}

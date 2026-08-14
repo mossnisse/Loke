@@ -1,0 +1,10 @@
+package main;
+
+// A reversed slice range traps rather than producing a negative length.
+main :: proc() {
+	data := [4]int{1, 2, 3, 4};
+	high := 1;
+	low := 3;
+	view := data[low:high];
+	print_int(len(view));
+}

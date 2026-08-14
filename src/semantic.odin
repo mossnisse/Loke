@@ -380,6 +380,10 @@ Immutable_Reason :: enum {
 	Temporary,
 	Discard,
 	Not_A_Place,
+	// A place in read-only storage: an element of a `[]T`, or anything inside a
+	// materialised constant. It is a real place — it has an address the backend
+	// can read — but no operation may write it or hand out a `^T` to it.
+	Read_Only,
 }
 
 Resolution :: struct {
@@ -608,6 +612,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)
 	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
+	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
+	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits
@@ -762,6 +768,14 @@ intern_type :: proc(c: ^Compiler, key: Type_Key, value: Type_Info) -> Type_Id {
 	id := new_type(c, value)
 	c.type_by_shape[key] = id
 	return id
+}
+
+// An interned type by shape, without creating one. The backend uses this where
+// making a type mid-emission would grow the store it is walking.
+lookup_type :: proc(c: ^Compiler, key: Type_Key) -> (Type_Id, bool) {
+	init_semantic_stores(c)
+	id, ok := c.type_by_shape[key]
+	return id, ok
 }
 
 pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
@@ -933,8 +947,9 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 			}
 		}
 		return true
-	case .Dyn:
-		// design.md: dynamic interface values are comparable only with `nil`.
+	case .Dyn, .Slice:
+		// design.md: dynamic interface values and slices are comparable only with
+		// `nil`; `check_binary` is what holds them to that.
 		return true
 	case .Union:
 		// Comparable against nil always, and against another value of the same
@@ -1014,9 +1029,13 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 		return true
 	case .Any_View, .Dyn:
 		return true
-	case .String, .String_View, .Multi_Pointer, .Slice, .Dynamic_Array,
+	case .String, .String_View, .Multi_Pointer, .Dynamic_Array,
 	     .Map, .Interface:
 		return false
+	case .Slice:
+		// A slice is a supported runtime carrier from M5a; its borrow provenance
+		// is M5b's, not a reason to reject the value (m5a-plan step 2).
+		return type_is_supported_depth(c, info.element, depth + 1)
 	case .Union:
 		for variant in info.variants {
 			if !type_is_supported_depth(c, variant, depth + 1) {

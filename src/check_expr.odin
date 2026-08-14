@@ -604,6 +604,12 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// Field lookup already won over method sugar, so an inaccessible field is
+	// reported as itself rather than falling through to a same-named method.
+	if !require_visible_field(k, v.span, operand, field, "L0471", "used") {
+		v.type = INVALID_TYPE
+		return
+	}
 	sym := symbol_of(k.c, field)
 	v.resolution = Resolution{kind = .Field, symbol = field}
 	v.type = sym.type
@@ -746,16 +752,24 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	}
 	info := type_of(k.c, base_type)
 	// Built-in indexing first; a user `operator([])` supplies what it does not.
-	if info == nil || info.kind != .Array || len(v.indices) != 1 {
+	indexable := info != nil && (info.kind == .Array || info.kind == .Slice)
+	if !indexable || len(v.indices) != 1 {
 		if check_user_index(k, v, operand, place) {
 			return
 		}
-		if info != nil && info.kind == .Array {
+		if indexable {
 			unsupported_construct(k, v.span)
 		} else {
 			errorf(k.c, v.span, "L0362", "`%s` cannot be indexed", type_name(k.c, operand))
 		}
 		v.type = INVALID_TYPE
+		return
+	}
+
+	// A slice's length is a runtime value, so nothing here folds and the bound is
+	// checked at run time against the length word.
+	if info.kind == .Slice {
+		check_slice_index(k, v, info, operand)
 		return
 	}
 
@@ -779,6 +793,16 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	}
 
 	index_base := expr_base(v.indices[0])
+	// design.md "Materialization": a constant indexed by a non-constant index
+	// needs storage, and that storage is read-only. A constant index still folds
+	// below and asks for none.
+	if operand_base.is_const && (index_base == nil || !index_base.is_const) {
+		if request_materialization(k, v.operand) {
+			v.addressable = false
+			v.assignable = false
+			v.immutable = .Read_Only
+		}
+	}
 	if index_base != nil && index_base.is_const && index_base.const_value.kind == .Integer {
 		index_value, ok := bi_to_i64(k.c, index_base.const_value.integer)
 		if !ok || index_value < 0 || u64(index_value) >= info.count {
@@ -802,6 +826,28 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 			}
 		}
 	}
+}
+
+// `s[i]` over a slice. The element is a place in the *root's* storage, so its
+// capability comes from the slice's, not from whether the slice variable itself
+// is assignable: rebinding `s` and writing `s[0]` are different rights.
+@(private = "file")
+check_slice_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, operand: Type_Id) {
+	index_type := check_single_expr(k, v.indices[0], TYPE_INT)
+	if index_type != INVALID_TYPE {
+		materialize(k, v.indices[0], TYPE_INT)
+		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
+			errorf(k.c, expr_span(v.indices[0]), "L0362", "an index must be an integer, found `%s`", type_name(k.c, index_type))
+		}
+	}
+	v.type = info.element
+	v.value_category = .Place
+	// design.md: "Element assignment and iteration by reference require
+	// `[]mut T`." A `[]T` element is a readable place and nothing more, so no
+	// `^T` can be taken to it either.
+	v.addressable = info.mutable
+	v.assignable = info.mutable
+	v.immutable = info.mutable ? .None : .Read_Only
 }
 
 // design.md "Indexing and slicing": in a place position the `inout` overload is
@@ -862,6 +908,11 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// A built-in carrier slices without consulting user operators; `operator([:])`
+	// exists for user types (design.md "Slices").
+	if check_builtin_slice(k, v, operand) {
+		return
+	}
 	slicers := operator_candidates_for_receiver(k, "[:]", operand)
 	if len(slicers) == 0 {
 		unsupported_construct(k, v.span)
@@ -889,6 +940,78 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	v.bound = bound
 	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
 	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+}
+
+// Slicing a built-in sequence: a fixed array or another slice. Returns false
+// when the operand is neither, leaving the user `operator([:])` path to run.
+//
+// design.md "Slices": "Slicing a mutable, addressable array or dynamic array
+// produces `[]mut T`; slicing an immutable parameter, a string, or an existing
+// `[]T` produces `[]T`." Endpoints may be omitted; the low bound defaults to 0
+// and the high bound to the base's length.
+@(private = "file")
+check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bool {
+	info := type_of(k.c, type_underlying(k.c, operand))
+	if info == nil {
+		return false
+	}
+	element := INVALID_TYPE
+	mutable := false
+	materialized := false
+	base := expr_base(v.operand)
+	#partial switch info.kind {
+	case .Array:
+		element = info.element
+		// A constant array has no storage until it is materialised, and that
+		// storage is read-only, so a slice of it is always `[]T` and needs no
+		// addressable root of its own.
+		materialized = base.is_const && request_materialization(k, v.operand)
+		mutable = !materialized && base.addressable && base.immutable == .None
+	case .Slice:
+		element = info.element
+		mutable = info.mutable
+	case:
+		return false
+	}
+
+	ok := true
+	if v.lo != nil && !check_slice_endpoint(k, v.lo) {
+		ok = false
+	}
+	if v.hi != nil && !check_slice_endpoint(k, v.hi) {
+		ok = false
+	}
+	// A fixed array must be addressable to be sliced: the slice needs its root
+	// address, and a temporary's would not outlive the expression. A materialised
+	// constant has static storage instead, so it is exempt.
+	if info.kind == .Array && !materialized && !base.addressable {
+		errorf(k.c, v.span, "L0477", "`%s` has no storage to slice; bind it to a variable first", type_name(k.c, operand))
+		ok = false
+	}
+	if !ok {
+		v.type = INVALID_TYPE
+		return true
+	}
+	v.type = slice_of(k.c, element, mutable)
+	v.value_category = .Value
+	v.immutable = .Temporary
+	return true
+}
+
+@(private = "file")
+check_slice_endpoint :: proc(k: ^Checker, e: Expr) -> bool {
+	type := check_single_expr(k, e, TYPE_INT)
+	if type == INVALID_TYPE {
+		return false
+	}
+	if type_is_untyped(k.c, type) {
+		return materialize(k, e, TYPE_INT)
+	}
+	if !type_is_integer(k.c, type) {
+		errorf(k.c, expr_span(e), "L0477", "a slice bound must be an integer, found `%s`", type_name(k.c, type))
+		return false
+	}
+	return true
 }
 
 // The overloads a place or value position may use. In a value position the
@@ -1148,6 +1271,11 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
+	// Asked before unification, because materialising an untyped nil against the
+	// other side is exactly what would hide which operand was written as `nil`.
+	nil_only := is_comparison && (type_is_slice(k.c, lhs) || type_is_slice(k.c, rhs))
+	against_nil := lhs == TYPE_UNTYPED_NIL || rhs == TYPE_UNTYPED_NIL
+
 	operand_type, unified := unify_operands(k, v.lhs, v.rhs, v.op_span)
 	if !unified {
 		v.type = INVALID_TYPE
@@ -1155,6 +1283,21 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	if is_comparison {
+		// design.md "Nil slices": "Slices can be compared against nil and nothing
+		// else." Two slices may share a root, overlap, or view the same bytes at
+		// different lengths, so element-wise equality would not mean what `==`
+		// means anywhere else.
+		if nil_only && !against_nil {
+			errorf(
+				k.c,
+				v.op_span,
+				"L0476",
+				"`%s` compares against `nil` and nothing else",
+				type_name(k.c, type_is_slice(k.c, lhs) ? lhs : rhs),
+			)
+			v.type = INVALID_TYPE
+			return
+		}
 		check_comparison(k, v, operand_type)
 		return
 	}
@@ -2045,6 +2188,15 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = INVALID_TYPE
 		return
 	}
+	// design.md "Slices": "Its length is a runtime value." So this one does not
+	// fold — it reads the slice's second word.
+	if kind == .Len && type_is_slice(k.c, operand) {
+		bound := make([]Expr, 1, k.c.semantic_allocator)
+		bound[0] = v.args[0].value
+		v.bound = bound
+		v.type = TYPE_INT
+		return
+	}
 	// A compile-time string has a length but no runtime type to gate, so it is
 	// answered before the type is inspected.
 	if kind == .Len && operand == TYPE_UNTYPED_STRING {
@@ -2089,6 +2241,10 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		field := struct_field(k.c, operand, intern_identifier(k.c, name.name))
 		if field == INVALID_SYMBOL {
 			errorf(k.c, name.span, "L0363", "`%s` has no field `%s`", type_name(k.c, operand), name.name)
+			v.type = INVALID_TYPE
+			return
+		}
+		if !require_visible_field(k, name.span, operand, field, "L0472", "measured with `offset_of`") {
 			v.type = INVALID_TYPE
 			return
 		}
@@ -2513,10 +2669,51 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		check_struct_literal(k, v, target, info)
 	case .Array:
 		check_array_literal(k, v, target, info)
+	case .Slice:
+		check_slice_literal(k, v, target, info)
 	case:
 		errorf(k.c, v.span, "L0376", "`%s` cannot be built from a composite literal", type_name(k.c, target))
 		v.type = INVALID_TYPE
 	}
+}
+
+// design.md "Slice literals": "A slice literal has the type it is written with."
+// `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability
+// is never inferred against the spelling. The elements go into a hidden
+// fixed-array owner in the surrounding lexical scope, which is what the slice
+// then views.
+@(private = "file")
+check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
+	// Written without a type — `x: []int = {1, 2}` — would have to infer the
+	// capability from the destination, which is exactly what the design forbids.
+	if v.type_expr == nil {
+		// `{` is a directive to core:fmt, so the braces are not spelled in the
+		// format string.
+		errorf(k.c, v.span, "L0479", "a slice literal must be written with its type, as in `%s`", concat(k.c, type_name(k.c, target), "{ ... }"))
+		v.type = INVALID_TYPE
+		return
+	}
+	v.backing = array_of(k.c, info.element, u64(len(v.elements)))
+	ok := true
+	for element in v.elements {
+		if element.key != nil {
+			errorf(k.c, element.span, "L0479", "a slice literal has no keyed elements")
+			ok = false
+			continue
+		}
+		if !check_value_expr(k, element.value, info.element, "initialise") {
+			ok = false
+		}
+	}
+	if !ok {
+		v.type = INVALID_TYPE
+		return
+	}
+	// The literal denotes the slice, not the root: it is a borrow of storage the
+	// backend owns, so it is not itself an addressable place.
+	v.addressable = false
+	v.assignable = false
+	v.immutable = .Temporary
 }
 
 @(private = "file")
@@ -2542,6 +2739,10 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 				ok = false
 				continue
 			}
+			if !require_visible_field(k, element.span, target, field, "L0473", "initialised") {
+				ok = false
+				continue
+			}
 			symbol := symbol_of(k.c, field)
 			if seen[symbol.index] {
 				errorf(k.c, element.span, "L0376", "field `%s` is set twice", key.name)
@@ -2562,6 +2763,14 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 		}
 		if index >= count {
 			errorf(k.c, element.span, "L0376", "`%s` has %d field%s", type_name(k.c, target), count, count == 1 ? "" : "s")
+			ok = false
+			continue
+		}
+		// design.md: "Positional aggregate construction does not bypass this rule:
+		// an initializer that supplies an inaccessible field is rejected." Omitted
+		// trailing fields still zero-fill, so this rejects supplying one, not
+		// declaring one.
+		if !require_visible_field(k, element.span, target, info.fields[index], "L0474", "initialised positionally") {
 			ok = false
 			continue
 		}
@@ -2672,8 +2881,12 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		aggregate.type = type
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
-	case .Struct, .Any_View, .Dyn:
-		// The zero value of an erased view is nil: a null pointer pair.
+	case .Struct, .Any_View, .Dyn, .Slice:
+		// The zero value of an erased view is nil: a null pointer pair. A nil slice
+		// is the same shape — a null pointer and a zero length (design.md "Nil
+		// slices").
+		ensure_slice_fields(c, under)
+		info = type_of(c, under)
 		elements := make([]Const_Value, len(info.fields), c.semantic_allocator)
 		for field, index in info.fields {
 			symbol := symbol_of(c, field)
@@ -2880,10 +3093,12 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
-	case .Union, .Dyn, .Any_View:
+	case .Union, .Dyn, .Any_View, .Slice:
 		// The only union constant is its zero value; a variant value becomes one
 		// at run time, where the tag can be written. An erased view is the same:
-		// its zero value is nil and every other one is built at run time.
+		// its zero value is nil and every other one is built at run time. A slice
+		// constant is likewise only ever the nil one — a live slice needs a root
+		// address, which exists only at run time.
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
@@ -2911,11 +3126,17 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch type_kind(c, type_underlying(c, to)) {
-		case .Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View:
-			// The zero value of every erased view is nil.
+		case .Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice:
+			// The zero value of every erased view is nil, and so is a slice's
+			// (design.md "Nil slices").
 			return true
 		}
 		return false
+	}
+	// design.md: "A mutable slice implicitly weakens to a read-only slice. A
+	// read-only slice never converts to a mutable slice."
+	if slice_weakens_to(c, from, to) {
+		return true
 	}
 	// design.md "Unions": a union is assignable from any variant it can hold.
 	if type_kind(c, to) == .Union && union_holds(c, to, from) {

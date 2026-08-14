@@ -1,0 +1,32 @@
+package models;
+
+// A package-default file: `Point` is exported, but a field is visible to an
+// importer only where it says so.
+@(public)
+Point :: struct {
+	@(public)
+	x: int,
+	@(public)
+	y: int,
+	// No attribute, so package visibility — the file default, not file-private.
+	scratch: int,
+}
+
+// The declaring package may read, write, measure, and construct every field,
+// through both literal forms.
+@(public)
+build :: proc(x: int, y: int) -> Point {
+	positional := Point{x, y, 0};
+	named := Point{x = x, y = y, scratch = 0};
+	named.scratch = positional.scratch + offset_of(Point, scratch);
+	return Point{x = named.x, y = named.y, scratch = named.scratch};
+}
+
+@(public)
+visible_here :: proc() -> int {
+	total := 0;
+	foreach ($field in fields_of(Point)) {
+		total += 1;
+	}
+	return total;
+}

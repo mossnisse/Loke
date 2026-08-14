@@ -1,0 +1,46 @@
+package main;
+
+TABLE :: [3]int{1, 2, 3};
+
+main :: proc() {
+	data := [3]int{1, 2, 3};
+	readable: []int = data[:];
+	mutable: []mut int = data[:];
+
+	// design.md: elements of a `[]T` are read-only.
+	readable[0] = 9;
+
+	// A read-only slice never converts to a mutable one, either way it is written.
+	back: []mut int = readable;
+	converted := ([]mut int)(readable);
+
+	// Slices compare against nil and nothing else.
+	other: []int = data[:];
+	if (readable == other) {
+		print_int(1);
+	}
+
+	// By-reference iteration needs `[]mut T`.
+	foreach (&value in readable) {
+		value += 1;
+	}
+
+	// Materialised storage is read-only, and no pointer may be taken into it.
+	index := runtime_index();
+	slot := &TABLE[index];
+	whole := &TABLE;
+	view := TABLE[:];
+	view[0] = 4;
+
+	// A slice literal is written with its type, never inferred from the
+	// destination.
+	inferred: []int = {1, 2};
+
+	print_int(len(mutable));
+	print_int(len(converted));
+	print_int(len(back));
+}
+
+runtime_index :: proc() -> int {
+	return 1;
+}

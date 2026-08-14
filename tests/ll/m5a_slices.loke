@@ -1,0 +1,35 @@
+package main;
+
+// The shapes m5a-plan step 2 requires to stay auditable: one two-word slice
+// type shared by both capabilities, a hidden literal root, bounds checks, one
+// materialised global shared by every runtime use, and no global at all for a
+// constant used only at constant indices.
+
+SHARED :: [3]int{7, 42, 628};
+FOLDED :: [2]int{1, 2};
+
+main :: proc() {
+	data := [4]int{1, 2, 3, 4};
+
+	// Two capabilities, one representation.
+	writable: []mut int = data[:];
+	readable: []int = writable;
+	print_int(len(readable));
+	print_int(writable[0]);
+
+	// A hidden fixed-array root in the surrounding scope.
+	literal := []int{5, 6};
+	print_int(literal[1]);
+
+	// One object for both the runtime index and the slice.
+	index := runtime_index();
+	print_int(SHARED[index]);
+	print_int(SHARED[:][2]);
+
+	// Constant indices fold, so `FOLDED` needs no storage.
+	print_int(FOLDED[0] + FOLDED[1]);
+}
+
+runtime_index :: proc() -> int {
+	return 1;
+}

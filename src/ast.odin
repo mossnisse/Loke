@@ -267,6 +267,10 @@ Expr_Composite :: struct {
 	using base: Expr_Base,
 	type_expr:  Expr,
 	elements:   []Element,
+	// A slice literal's hidden fixed-array root (design.md "Slice literals"). The
+	// literal's own `type` is the slice; this is the `[N]T` the backend gives
+	// storage and then slices. INVALID_TYPE for every other literal.
+	backing:    Type_Id,
 }
 
 Type_Pointer :: struct {
@@ -669,6 +673,7 @@ Foreach_Kind :: enum {
 	Range,
 	Stored_Range,
 	Array,
+	Slice,
 	Protocol,
 }
 

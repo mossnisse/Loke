@@ -840,8 +840,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if element == INVALID_TYPE {
 			return INVALID_TYPE
 		}
-		mutable := value.mutable ? u64(1) : u64(0)
-		value.denoted_type = intern_type(k.c, Type_Key{kind = .Slice, element = element, count = mutable}, Type_Info{kind = .Slice, element = element, mutable = value.mutable})
+		value.denoted_type = slice_of(k.c, element, value.mutable)
 		value.resolution.kind = .Type
 		return value.denoted_type
 
@@ -1927,6 +1926,8 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 		errorf(k.c, base.span, "L0359", "a temporary value cannot be %s", what)
 	case .Discard:
 		errorf(k.c, base.span, "L0359", "`_` cannot be %s", what)
+	case .Read_Only:
+		errorf(k.c, base.span, "L0478", "this is read-only storage and cannot be %s", what)
 	case .None, .Not_A_Place:
 		errorf(k.c, base.span, "L0359", "this expression cannot be %s", what)
 	}

@@ -1,9 +1,9 @@
 package main;
 
 // One `L0350` per deferred outer construct, and no descent into it. Every
-// family M4b leaves for a later milestone keeps exactly one entry here.
-Container :: struct { items: []int }
-
+// family M5a leaves for a later milestone keeps exactly one entry here. Slices
+// are no longer among them: M5a implements their value and capability behavior,
+// and only their borrow provenance waits for M5b.
 Walker :: struct { cursor: [^]int }
 
 Viewer :: struct { text: string_view }

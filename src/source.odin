@@ -130,6 +130,13 @@ Compiler :: struct {
 	witnesses:     map[string]^Witness,
 	witness_order: [dynamic]^Witness,
 
+	// Materialised constants (`src/materialize.odin`). One read-only global per
+	// constant that runtime indexing or slicing needs storage for, keyed by the
+	// resolved constant symbol — which M4b's declaration cloning already makes
+	// distinct per generic instance.
+	materialized:       map[Symbol_Id]^Materialized,
+	materialized_order: [dynamic]^Materialized,
+
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,

@@ -1,0 +1,8 @@
+= type { ptr, i64 }
+@.const.SHARED.0 = private unnamed_addr constant [3 x i64] [ i64 7, i64 42, i64 628 ]
+alloca [2 x i64]
+slice.bounds.
+bounds.
+getelementptr inbounds [3 x i64], ptr @.const.SHARED.0, i64 0,
+getelementptr inbounds i64, ptr @.const.SHARED.0, i64 0
+insertvalue

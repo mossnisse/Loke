@@ -18,6 +18,13 @@ Mixed :: struct {
 	shown: int,
 }
 
+// An importer cannot supply `hidden` itself, so the declaring package is what
+// builds a whole `Mixed` (design.md "Exported names").
+@(public)
+make_mixed :: proc(hidden: int, shown: int) -> Mixed {
+	return Mixed{hidden, shown};
+}
+
 @(public)
 count_here :: proc() -> int {
 	total := 0;

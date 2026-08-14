@@ -118,7 +118,7 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 	elements := make([dynamic]Const_Value, 0, len(info.fields), k.c.semantic_allocator)
 	for member in info.fields {
 		sym := symbol_of(k.c, member)
-		if sym == nil || !reflection_member_is_visible(k, sym) {
+		if sym == nil || !member_is_visible(k, sym) {
 			continue
 		}
 		values := make([]Const_Value, 4, k.c.semantic_allocator)
@@ -143,7 +143,7 @@ enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id,
 	elements := make([dynamic]Const_Value, 0, len(info.fields), k.c.semantic_allocator)
 	for member in info.fields {
 		sym := symbol_of(k.c, member)
-		if sym == nil || !reflection_member_is_visible(k, sym) {
+		if sym == nil || !member_is_visible(k, sym) {
 			continue
 		}
 		values := make([]Const_Value, 3, k.c.semantic_allocator)
@@ -166,18 +166,6 @@ aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) ->
 	aggregate.type = type
 	aggregate.elements = elements
 	return Const_Value{kind = .Aggregate, type_value = type, aggregate = aggregate}
-}
-
-// design.md: "Reflection observes only declarations visible at the reflection
-// site." A generic clone reflects at its definition package, which is already
-// what `lookup_package` reports inside an instance.
-//
-// ponytail: struct fields have no per-field visibility keyword yet, so this is
-// the package/`@(public)` rule the rest of the language uses. Tighten it here
-// when field-level visibility exists.
-@(private = "file")
-reflection_member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
-	return sym.pkg == lookup_package(k) || sym.public
 }
 
 @(private = "file")

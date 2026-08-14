@@ -1,0 +1,30 @@
+package main;
+
+import "./models";
+
+// Reflection must expose exactly the fields ordinary access permits at the same
+// lookup package (m5a-plan step 1).
+visible_there :: proc() -> int {
+	total := 0;
+	foreach ($field in fields_of(models.Point)) {
+		total += 1;
+	}
+	return total;
+}
+
+main :: proc() {
+	built := models.build(3, 4);
+
+	// Public fields: read, write, measure, and both literal forms.
+	print_int(built.x + built.y);
+	built.x = 10;
+	print_int(built.x);
+	print_int(offset_of(models.Point, x));
+
+	positional := models.Point{1, 2};   // `scratch` is omitted, so it zero-fills
+	named := models.Point{x = 1, y = 2};
+	print_int(positional.x + named.y);
+
+	print_int(models.visible_here());
+	print_int(visible_there());
+}

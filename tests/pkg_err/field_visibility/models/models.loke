@@ -1,0 +1,20 @@
+@(public)
+package models;
+
+// The file's `@(public)` default exports these; `secret` opts back out, so an
+// importer may not read, write, measure, or initialise it.
+Account :: struct {
+	id: int,
+	@(private)
+	secret: int,
+}
+
+// Everything the declaring package itself may do with the same field, so the
+// success side of the rule is exercised from one place.
+@(public)
+make_account :: proc(id: int, secret: int) -> Account {
+	whole := Account{id, secret};
+	named := Account{id = id, secret = secret};
+	whole.secret = named.secret + offset_of(Account, secret);
+	return whole;
+}

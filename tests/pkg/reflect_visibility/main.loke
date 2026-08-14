@@ -15,7 +15,7 @@ main :: proc() {
 	// `@(private)` one is not.
 	print_int(models.count_here());
 	print_int(count_there());
-	mixed := models.Mixed{10, 20};
+	mixed := models.make_mixed(10, 20);
 	foreach ($field in fields_of(models.Mixed)) {
 		print_int(field.get(&mixed));
 	}

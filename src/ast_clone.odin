@@ -325,6 +325,8 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n := new_clone(c, Expr_Composite, &v.base)
 		n.type_expr = clone_expr(c, v.type_expr)
 		n.elements = clone_elements(c, v.elements)
+		// Re-derived when the clone is checked at its own substitution.
+		n.backing = INVALID_TYPE
 		return n
 
 	case ^Expr_Proc:

@@ -75,6 +75,8 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 
 	emit_preamble(&e)
 	emit_struct_definitions(&e)
+	// Registered during checking, so every use already knows its name.
+	emit_materialized_constants(&e)
 
 	// One module, in deterministic dependency order. Every procedure in every
 	// package is named before any body is emitted: a cross-package call, a
@@ -367,7 +369,7 @@ layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct,
-	     .Distinct, .Union:
+	     .Distinct, .Union, .Slice:
 		return true
 	}
 	return false
@@ -407,7 +409,14 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 		fmt.sbprintfln(&e.b, "%s = type %s", struct_name(e, type), union_storage_definition(e, type))
 		return
 	}
-	if info.kind != .Struct && info.kind != .Any_View && info.kind != .Dyn {
+	if info.kind == .Slice {
+		// Only the read-only variant is defined; `[]mut T` shares its name.
+		if !type_is_supported(e.c, type) || slice_abi_type(e.c, type) != type {
+			return
+		}
+		ensure_slice_fields(e.c, type)
+		info = type_of(e.c, type)
+	} else if info.kind != .Struct && info.kind != .Any_View && info.kind != .Dyn {
 		return
 	}
 	emitted[type] = true
@@ -449,7 +458,10 @@ struct_dependency :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 }
 
 @(private = "file")
-struct_name :: proc(e: ^Emitter, type: Type_Id) -> string {
+struct_name :: proc(e: ^Emitter, raw: Type_Id) -> string {
+	// Both slice capabilities share one backend type, so `[]mut T` weakening to
+	// `[]T` is the no-op the design says it is.
+	type := slice_abi_type(e.c, raw)
 	if name, ok := e.struct_names[type]; ok {
 		return name
 	}
@@ -510,8 +522,8 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		return "ptr"
 	case .Array:
 		return fmt.aprintf("[%d x %s]", info.count, llvm_type(e, info.element))
-	case .Struct, .Union, .Any_View, .Dyn:
-		// A two-word erased view is an ordinary aggregate to the backend.
+	case .Struct, .Union, .Any_View, .Dyn, .Slice:
+		// A two-word erased view or slice is an ordinary aggregate to the backend.
 		return struct_name(e, under)
 	}
 	return "i64"
@@ -742,7 +754,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		}
 		strings.write_string(&b, " ]")
 		return strings.to_string(b)
-	case .Struct, .Any_View, .Dyn:
+	case .Struct, .Any_View, .Dyn, .Slice:
 		if value.kind == .Nil {
 			return "zeroinitializer"
 		}
@@ -1670,6 +1682,11 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 // is what makes `&Point{1, 2}` work.
 @(private = "file")
 emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
+	// design.md "Materialization": every runtime use of one constant shares one
+	// read-only object, so the address is the global the checker registered.
+	if entry := materialization_of(e.c, expr); entry != nil {
+		return entry.name
+	}
 	#partial switch v in expr {
 	case ^Expr_Ident:
 		if name, ok := e.names[v.symbol]; ok {
@@ -1698,6 +1715,11 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		if v.resolution.kind == .User_Operator {
 			return emit_operator_call(e, v.resolution.symbol, v.bound)
 		}
+		// A slice element lives in the root, reached through the data word, and its
+		// bound is the runtime length rather than a static count.
+		if type_is_slice(e.c, expr_base(v.operand).type) {
+			return emit_slice_element_address(e, v)
+		}
 		base_type, base_address := emit_base_address(e, v.operand)
 		info := type_of(e.c, type_underlying(e.c, base_type))
 		index := emit_expr(e, v.indices[0])
@@ -1724,6 +1746,33 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 	return slot
 }
 
+// `s[i]`: the element's address inside the slice's root, bounds-checked against
+// the runtime length word.
+@(private = "file")
+emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
+	operand_type := expr_base(v.operand).type
+	slice := emit_expr(e, v.operand)
+	llvm := llvm_type(e, operand_type)
+	data, length := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, llvm, slice, SLICE_DATA)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, llvm, slice, SLICE_LEN)
+
+	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
+	// Unsigned, so a negative index is caught by the same comparison as an
+	// oversized one.
+	out_of_range := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
+	trap_if(e, out_of_range, "bounds")
+
+	out := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		out, llvm_type(e, slice_element(e.c, operand_type)), data, index,
+	)
+	return out
+}
+
 // `p.x` and `p[i]` accept one pointer hop, in which case the pointer value
 // itself is the base address.
 @(private = "file")
@@ -1743,6 +1792,64 @@ emit_nil_check :: proc(e: ^Emitter, pointer: string) {
 	is_nil := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, pointer)
 	trap_if(e, is_nil, "nil.deref")
+}
+
+// A built-in slice expression: `base[lo:hi]` over a fixed array or another
+// slice. The base and both bounds are each evaluated once, in written order,
+// then checked as `0 <= lo <= hi <= len` before any address is formed.
+@(private = "file")
+emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
+	operand_type := expr_base(v.operand).type
+	info := type_of(e.c, type_underlying(e.c, operand_type))
+	element := info.element
+
+	data, length := "", ""
+	if info.kind == .Slice {
+		value := emit_expr(e, v.operand)
+		llvm := llvm_type(e, operand_type)
+		data, length = temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, llvm, value, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, llvm, value, SLICE_LEN)
+	} else {
+		data = emit_address(e, v.operand)
+		length = fmt.aprintf("%d", info.count)
+	}
+
+	low := "0"
+	if v.lo != nil {
+		low = widen_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
+	}
+	high := length
+	if v.hi != nil {
+		high = widen_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
+	}
+
+	// One trap seam for the whole range, so a reversed or oversized pair cannot
+	// produce a slice with a negative or out-of-root length.
+	reversed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
+	past_end := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past_end, high, length)
+	bad := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, reversed, past_end)
+	trap_if(e, bad, "slice.bounds")
+
+	// The result's data pointer is the low bound's address in the root, so
+	// reslicing composes without a second base.
+	start := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		start, llvm_type(e, element), data, low,
+	)
+	count := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
+
+	result := llvm_type(e, v.type)
+	first, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, result, start, SLICE_DATA)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, result, first, count, SLICE_LEN)
+	return out
 }
 
 @(private = "file")
@@ -1826,7 +1933,10 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Slice:
-		return emit_operator_call(e, v.resolution.symbol, v.bound)
+		if v.resolution.kind == .User_Operator {
+			return emit_operator_call(e, v.resolution.symbol, v.bound)
+		}
+		return emit_builtin_slice(e, v)
 
 	case ^Expr_Postfix:
 		if v.op == .Or_Return {
@@ -1875,6 +1985,9 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return emit_multi_value(e, expr)[0]
 
 	case ^Expr_Composite:
+		if v.backing != INVALID_TYPE {
+			return emit_slice_literal(e, v)
+		}
 		slot := emit_address(e, expr)
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, v.type), slot)
@@ -1898,6 +2011,38 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	// Same gate as `emit_stmt`: returning `0` here would compile silently and
 	// produce the wrong answer.
 	panic("an expression the checker did not gate reached the backend")
+}
+
+// design.md "Slice literals": "The backing array of a slice literal is a hidden
+// fixed-array owner in the surrounding lexical scope, so the slice remains valid
+// until that scope exits." The hidden root is filled, then viewed whole.
+//
+// ponytail: the root is an ordinary `alloca` at its use, exactly like a
+// composite literal's temporary storage. A literal inside a loop therefore
+// allocates per iteration; hoist to the entry block if a real program shows
+// stack growth.
+@(private = "file")
+emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite) -> string {
+	backing := v.backing
+	info := type_of(e.c, backing)
+	root := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", root, llvm_type(e, backing))
+
+	for element, index in v.elements {
+		slot := temp(e)
+		fmt.sbprintfln(
+			&e.b,
+			"  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
+			slot, llvm_type(e, backing), root, index,
+		)
+		store(e, info.element, emit_expr(e, element.value), slot)
+	}
+
+	result := llvm_type(e, v.type)
+	first, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, result, root, SLICE_DATA)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %d, %d", out, result, first, len(v.elements), SLICE_LEN)
+	return out
 }
 
 @(private = "file")
@@ -2220,6 +2365,16 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		operand := info.kind == .Dyn ? "ptr" : "i64"
 		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", out, operand, left, right)
 		return out
+	case .Slice:
+		// The checker admits only `slice == nil`, and a nil slice is the one with a
+		// null data pointer, so the first word decides it.
+		llvm := llvm_type(e, under)
+		left, right := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", left, llvm, lhs, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", right, llvm, rhs, SLICE_DATA)
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, %s", out, left, right)
+		return out
 	case .Array:
 		result := "true"
 		for index in 0 ..< int(info.count) {
@@ -2248,7 +2403,7 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 @(private = "file")
 type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch type_kind(c, type_underlying(c, type)) {
-	case .Dyn, .Any_View:
+	case .Dyn, .Any_View, .Slice:
 		return true
 	}
 	return false
@@ -2431,7 +2586,18 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			// The checker rewrote the call to name the chosen `iter` overload, so
 			// this arm is only reachable if that failed.
 			panic("an `iter` call reached the backend without a chosen overload")
-		case .None, .Size_Of, .Align_Of, .Offset_Of, .Len,
+		case .Len:
+			// Only a slice reaches here; every other `len` folded. The length is
+			// the second word.
+			slice := emit_expr(e, v.bound[0])
+			out := temp(e)
+			fmt.sbprintfln(
+				&e.b,
+				"  %s = extractvalue %s %s, %d",
+				out, llvm_type(e, expr_base(v.bound[0]).type), slice, SLICE_LEN,
+			)
+			return out
+		case .None, .Size_Of, .Align_Of, .Offset_Of,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here
 			// would mean emitting `print_int` for a layout query.
@@ -3161,6 +3327,20 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 		limit = fmt.aprintf("%d", s.count)
 
+	case .Slice:
+		// The slice is evaluated once; the loop then walks its root through the
+		// data word, so `&value` reaches the root rather than a copy.
+		slice_type := llvm_type(e, expr_base(s.iterable).type)
+		value := emit_expr(e, s.iterable)
+		array_slot = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", array_slot, slice_type, value, SLICE_DATA)
+		length := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, slice_type, value, SLICE_LEN)
+		counter_type = "i64"
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+		limit = length
+
 	case .Unresolved, .Static, .Protocol:
 		panic("a `foreach` the checker did not resolve reached the backend")
 	}
@@ -3186,7 +3366,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	current := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", current, counter_type, cursor)
 	test := temp(e)
-	if s.kind == .Array {
+	if s.kind == .Array || s.kind == .Slice {
 		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
 	} else {
 		// `..<` stops before the high endpoint and `..=` includes it; a stored
@@ -3207,7 +3387,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	fmt.sbprintfln(&e.b, "%s:", post)
 	e.terminated = false
-	if s.kind != .Array {
+	if s.kind != .Array && s.kind != .Slice {
 		// An inclusive range whose high endpoint is the integer maximum cannot
 		// represent high+1. Finish directly after yielding high instead.
 		at_high, finished := temp(e), temp(e)
@@ -3242,7 +3422,7 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 	if value == INVALID_SYMBOL {
 		return // the discard binding names nothing
 	}
-	if s.kind != .Array {
+	if s.kind != .Array && s.kind != .Slice {
 		slot := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, current, slot)
@@ -3250,11 +3430,21 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 		return
 	}
 	address := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %s",
-		address, s.count, element, array_slot, current,
-	)
+	if s.kind == .Slice {
+		// `array_slot` is the slice's data pointer, so the element index walks it
+		// directly rather than indexing into an inline array.
+		fmt.sbprintfln(
+			&e.b,
+			"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+			address, element, array_slot, current,
+		)
+	} else {
+		fmt.sbprintfln(
+			&e.b,
+			"  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %s",
+			address, s.count, element, array_slot, current,
+		)
+	}
 	if s.bindings[0].is_ref {
 		// `&value` is the element itself, so the binding is its address and a
 		// store through it reaches the array.
@@ -3369,6 +3559,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_range_next(e, symbol, name)
 		case .Array_Next:
 			emit_synth_array_next(e, symbol, name)
+		case .Slice_Next:
+			emit_synth_slice_next(e, symbol, name)
 		case .Dyn_Forward:
 			emit_dyn_forwarding_slot(e, symbol, name)
 		case .None:
@@ -3481,6 +3673,51 @@ emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	data_ptr, slot, value := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", data_ptr, iterator, ITER_ARRAY_DATA)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %s", slot, data_type, data_ptr, index)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element, slot)
+	stepped := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", stepped, index_ptr)
+	first, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, value)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, out)
+
+	fmt.sbprintfln(&e.b, "%s:", stop_label)
+	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// The slice half of `next`. Same `{ data, index }` iterator as an array's; the
+// bound is the slice's own length word and the element address goes through its
+// data pointer rather than into an inline array.
+@(private = "file")
+emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	element := llvm_type(e, symbol.results[0])
+	iterator := llvm_type(e, symbol.params[0])
+	iterator_info := type_of(e.c, symbol.params[0])
+	slice_type := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
+	slice_llvm := llvm_type(e, slice_type)
+
+	pair_type := optional_pair_type(element)
+	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	index_ptr, index := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", index_ptr, iterator, ITER_ARRAY_INDEX)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", index, index_ptr)
+	slice_ptr, slice_value, length := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", slice_ptr, iterator, ITER_ARRAY_DATA)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", slice_value, slice_llvm, slice_ptr)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, slice_llvm, slice_value, SLICE_LEN)
+	live := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", live, index, length)
+	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
+	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
+
+	fmt.sbprintfln(&e.b, "%s:", yield_label)
+	data, slot, value := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, slice_llvm, slice_value, SLICE_DATA)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", slot, element, data, index)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element, slot)
 	stepped := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
@@ -3630,6 +3867,24 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", out[index], result_type, call, index)
 	}
 	return out
+}
+
+// One private immutable global per materialised constant, in registration order
+// (design.md "Materialization"). A constant used only at constant indices never
+// registered one and so occupies no space in the program.
+@(private = "file")
+emit_materialized_constants :: proc(e: ^Emitter) {
+	if len(e.c.materialized_order) == 0 {
+		return
+	}
+	for entry in e.c.materialized_order {
+		fmt.sbprintfln(
+			&e.b,
+			"%s = private unnamed_addr constant %s %s",
+			entry.name, llvm_type(e, entry.type), llvm_const(e, entry.value, entry.type),
+		)
+	}
+	fmt.sbprintln(&e.b, "")
 }
 
 // One private immutable global per `(Interface, Concrete, arguments)`, holding a

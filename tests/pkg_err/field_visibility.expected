@@ -1,0 +1,15 @@
+L0471
+@9:12
+field `secret` of `Account` is not public, so it cannot be used here
+declared here; add `@(public)` to export it
+L0471
+@10:2
+L0472
+@11:38
+is not public, so it cannot be measured with `offset_of` here
+L0473
+@15:34
+is not public, so it cannot be initialised here
+L0474
+@16:34
+is not public, so it cannot be initialised positionally here

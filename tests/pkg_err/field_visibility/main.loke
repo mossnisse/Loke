@@ -1,0 +1,23 @@
+package main;
+
+import "./models";
+
+main :: proc() {
+	account := models.make_account(1, 2);
+
+	// Reading, writing, and measuring a package-private field from an importer.
+	print_int(account.secret);
+	account.secret = 3;
+	print_int(offset_of(models.Account, secret));
+
+	// Neither literal form is a back door; the named and positional cases must
+	// agree (design.md "Exported names").
+	named := models.Account{id = 1, secret = 2};
+	positional := models.Account{1, 2};
+
+	// A public field beside a private one still works, and omitting the
+	// inaccessible field zero-fills rather than failing.
+	fine := models.Account{id = 1};
+	print_int(fine.id);
+	print_int(named.id + positional.id);
+}

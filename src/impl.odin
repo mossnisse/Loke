@@ -364,8 +364,36 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	return out[:]
 }
 
+// The one symbol-visibility predicate (design.md "Exported names"). Methods,
+// operators, associated members, struct fields, and reflection all ask this, so
+// no path can expose a declaration another path would hide. The observer is the
+// lookup package rather than the package being compiled, which is what lets a
+// generic body instantiated elsewhere still see its own definition site.
 member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	return sym != nil && (sym.pkg == lookup_package(k) || sym.public)
+}
+
+// design.md "Exported names": "Code in the declaring package may read, write,
+// and initialize package-visible fields; importing packages may do so only for
+// public fields." Ordinary selection, `offset_of`, and both aggregate literal
+// forms route through here so they agree with each other and with reflection
+// (m5a-plan step 1).
+require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: Symbol_Id, code: string, action: string) -> bool {
+	sym := symbol_of(k.c, field)
+	if member_is_visible(k, sym) {
+		return true
+	}
+	errorf(
+		k.c,
+		span,
+		code,
+		"field `%s` of `%s` is not public, so it cannot be %s here",
+		identifier_text(k.c, sym.name),
+		type_name(k.c, subject),
+		action,
+	)
+	add_notef(k.c, sym.span, "declared here; add `@(public)` to export it")
+	return false
 }
 
 @(private = "file")

@@ -1012,12 +1012,9 @@ fields. Positional aggregate construction does not bypass this rule: an
 initializer that supplies an inaccessible field is rejected. The file-level
 default chooses a field's visibility but does not create file-private access.
 
-The compiler stages this rule across milestones. M4b applies field visibility
-when forming reflection descriptors but temporarily retains M4a's unrestricted
-ordinary field access and aggregate construction. M5 removes that compatibility
-exception and enforces the same rule for field reads, writes, and construction.
-The exception is an implementation transition, not a third visibility level or
-the intended language semantics.
+One predicate answers this question for reflection descriptors, field reads and
+writes, `offset_of`, and both aggregate literal forms, so no path can reach a
+field another path hides.
 
 ### Authoring a package
 

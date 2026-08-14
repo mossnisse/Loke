@@ -89,7 +89,12 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		offsets[0] = 0
 		offsets[1] = shape.tag_offset
 
-	case .Struct, .Any_View, .Dyn:
+	case .Struct, .Any_View, .Dyn, .Slice:
+		// A slice's two words are ordinary fields, so it lays out here rather than
+		// carrying a second hand-written shape (m5a-plan decision "Slice
+		// representation").
+		ensure_slice_fields(c, type)
+		info = type_of(c, type)
 		offsets = make([]u64, len(info.fields), c.semantic_allocator)
 		cursor := u64(0)
 		for field, index in info.fields {

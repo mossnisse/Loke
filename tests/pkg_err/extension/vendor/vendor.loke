@@ -1,10 +1,18 @@
 package vendor;
 
+// A public type is only usable from outside if its fields are exported too
+// (design.md "Exported names"); this case is about member lookup, not fields.
 @(public)
-Vector2 :: struct { x, y: i32 }
+Vector2 :: struct {
+	@(public)
+	x, y: i32,
+}
 
 @(public)
-Other :: struct { value: i32 }
+Other :: struct {
+	@(public)
+	value: i32,
+}
 
 impl Vector2 {
 	@(public)

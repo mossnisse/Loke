@@ -1,0 +1,96 @@
+package main;
+
+// design.md "Slices" and "Materialization" (m5a-plan step 2).
+
+NUMBERS :: [3]int{7, 42, 628};
+
+sum :: proc(values: []int) -> int {
+	total := 0;
+	foreach (value in values) {
+		total += value;
+	}
+	return total;
+}
+
+// A read-only parameter accepts a mutable argument by weakening.
+first :: proc(values: []int) -> int {
+	return values[0];
+}
+
+fill :: proc(values: []mut int, with: int) {
+	foreach (&value in values) {
+		value = with;
+	}
+}
+
+main :: proc() {
+	// Nil is the zero slice, and compares against nil.
+	empty: []int = nil;
+	print_int(len(empty));
+	if (empty == nil) {
+		print_int(1);
+	}
+
+	fib := [6]int{0, 1, 1, 2, 3, 5};
+
+	// Whole, open, and closed forms.
+	print_int(len(fib[:]));
+	print_int(len(fib[2:]));
+	print_int(len(fib[:2]));
+	print_int(len(fib[1:4]));
+
+	// The shorthand forms agree.
+	print_int(fib[0:6][3]);
+	print_int(fib[:][3]);
+
+	// Reslicing composes, and the offsets compound.
+	tail := fib[2:];
+	inner := tail[1:3];
+	print_int(len(inner));
+	print_int(inner[0]);
+	print_int(inner[1]);
+
+	// `a[offset:][:length]` is the documented chunk form.
+	chunk := fib[1:][:2];
+	print_int(len(chunk));
+	print_int(chunk[0]);
+
+	// Slicing a mutable addressable array gives `[]mut T`, which weakens.
+	writable := fib[0:3];
+	writable[0] = 100;
+	print_int(fib[0]);
+	print_int(first(writable));
+	print_int(sum(writable));
+
+	fill(fib[3:], 9);
+	print_int(fib[3] + fib[4] + fib[5]);
+
+	// Literals keep the capability they are written with.
+	readable := []int{1, 6, 3};
+	print_int(len(readable));
+	print_int(readable[1]);
+	mutable := []mut int{1, 6, 3};
+	mutable[0] = 99;
+	print_int(mutable[0]);
+	weakened: []int = []mut int{4, 5};
+	print_int(weakened[1]);
+
+	// Index binding.
+	foreach (value, index in readable) {
+		print_int(value * 10 + index);
+	}
+
+	// Materialization: a constant index folds and asks for no storage; a runtime
+	// index and a slice share one read-only object.
+	print_int(NUMBERS[0]);
+	index := runtime_index();
+	print_int(NUMBERS[index]);
+	table := NUMBERS[:];
+	print_int(len(table));
+	print_int(table[2]);
+	print_int(sum(table));
+}
+
+runtime_index :: proc() -> int {
+	return 1;
+}
