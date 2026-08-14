@@ -6,6 +6,7 @@ package lokec
 import "core:fmt"
 import "core:os"
 import "core:path/filepath"
+import "core:strconv"
 import "core:strings"
 
 USAGE :: `lokec - the Loke compiler (milestone M4b)
@@ -65,6 +66,9 @@ options:
     -define:NAME=VALUE
                   set a project-wide #config value: true, false, an integer,
                   or a string
+    -copy-cost=N  warn at a copy site duplicating N or more inline bytes, or
+                  whose lifecycle clone may allocate (default 512; "off"
+                  disables it)
 `
 
 Options :: struct {
@@ -79,6 +83,9 @@ Options :: struct {
 	defines:    [dynamic]string,
 	// `-collection name=path`, repeatable.
 	collections: [dynamic]string,
+	// `-copy-cost=N` in bytes, or disabled.
+	copy_cost:         u64,
+	copy_cost_enabled: bool,
 }
 
 main :: proc() {
@@ -95,6 +102,7 @@ run :: proc() -> int {
 
 	c: Compilation
 	defer destroy_compilation(&c)
+	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
 	// Configuration is project-wide and immutable, and must be in place before
 	// the first condition is evaluated (m3-plan decision "Configuration").
 	if !seed_defines(&c, opts.defines[:]) {
@@ -153,6 +161,7 @@ run :: proc() -> int {
 
 @(private = "file")
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
+	opts.copy_cost, opts.copy_cost_enabled = 512, true
 	for i := 0; i < len(args); i += 1 {
 		arg := args[i]
 		switch {
@@ -184,6 +193,18 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			append(&opts.collections, arg[len("-collection:"):])
 		case strings.has_prefix(arg, "-define:"):
 			append(&opts.defines, arg[len("-define:"):])
+		case strings.has_prefix(arg, "-copy-cost="):
+			text := arg[len("-copy-cost="):]
+			if text == "off" {
+				opts.copy_cost_enabled = false
+				continue
+			}
+			value, parsed := strconv.parse_u64(text)
+			if !parsed {
+				fmt.eprintln("error: -copy-cost needs a byte count or `off`")
+				return opts, false
+			}
+			opts.copy_cost, opts.copy_cost_enabled = value, true
 		case strings.has_prefix(arg, "-"):
 			fmt.eprintfln("error: unknown option `%s`", arg)
 			return opts, false

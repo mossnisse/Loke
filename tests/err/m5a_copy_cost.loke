@@ -1,0 +1,79 @@
+package main;
+
+// design.md "Copy-cost diagnostics" (m5a-plan step 5). "A copy site is a point
+// that duplicates a value instead of moving or borrowing it": a trivial
+// aggregate copied into a `value: T` parameter, a binding, an assignment, and
+// the return of a borrowed managed owner by value.
+//
+// Compiled with `-copy-cost=1`, so every real copy site reports and the ones
+// that are not copy sites still stay quiet. At the default threshold only the
+// two allocating clones report, because a clone is expensive whatever its inline
+// size while 16 bytes is not.
+//
+// design.md also asks that an ABI hidden-pointer transport not be mistaken for a
+// semantic copy. M5a has no such transport — an aggregate argument travels as an
+// LLVM value — so there is nothing here to distinguish it from yet; the
+// receiver/aggregate ABI arrives with M7.
+
+Pair :: struct { a: int, b: int }
+
+Res :: struct { id: int }
+
+impl Res {
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		return Res{self.id}, nil;
+	}
+
+	drop :: proc(self: inout Res) { self.id = 0; }
+}
+
+Only :: struct { id: int }
+
+impl Only {
+	try_clone :: ---;
+	drop :: proc(self: inout Only) { self.id = 0; }
+}
+
+// A trivial aggregate parameter is a copy site.
+inspect :: proc(value: Pair) -> int { return value.a; }
+
+// A managed one is a borrow, and is not.
+borrows :: proc(value: Res) -> int { return value.id; }
+
+// A scalar is not an aggregate, so its size is never the point.
+counts :: proc(value: int) -> int { return value; }
+
+// Returning a borrowed managed owner clones.
+give_back :: proc(value: Res) -> Res { return value; }
+
+// design.md: "returning a borrowed value whose clone operation is disabled is a
+// compile-time error." Size stays out of type correctness; this does not.
+refuse :: proc(value: Only) -> Only { return value; }
+
+main :: proc() {
+	pair := Pair{1, 2};
+	res := Res{3};
+	count := 4;
+
+	// A copy site: a place duplicated into a trivial aggregate parameter.
+	print_int(inspect(pair));
+	// Not copy sites: a managed borrow, a scalar, and a temporary.
+	print_int(borrows(res));
+	print_int(counts(count));
+	print_int(inspect(Pair{5, 6}));
+
+	// A binding and an assignment from a place.
+	copied := pair;
+	cloned := res;
+	copied = pair;
+
+	// A temporary transfers rather than duplicating.
+	fresh := Pair{7, 8};
+
+	print_int(give_back(res).id);
+
+	// The cost is more prominent inside a loop.
+	for (i := 0; i < 2; i += 1) {
+		looped := pair;
+	}
+}

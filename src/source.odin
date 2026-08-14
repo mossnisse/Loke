@@ -139,6 +139,13 @@ Compiler :: struct {
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
+	// design.md "Copy-cost diagnostics": "The threshold is target-specific and is
+	// not part of the language semantics", so it is an option rather than a rule.
+	// A copy site reports when it duplicates at least this many inline bytes, or
+	// whenever its lifecycle clone may allocate.
+	copy_cost_threshold: u64,
+	copy_cost_enabled:   bool,
+
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker
 	// records them and `emit_globals` walks the list (m5a-plan step 4).
@@ -248,6 +255,21 @@ errorf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..a
 		},
 	)
 	c.error_count += 1
+}
+
+// A diagnostic that does not fail the compilation. design.md keeps size out of
+// type correctness — "Size is never a type error" — so the copy-cost report is a
+// warning and leaves `error_count` alone.
+warnf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..any) {
+	append(
+		&c.diagnostics,
+		Diagnostic {
+			severity = .Warning,
+			code = code,
+			span = span,
+			message = fmt.aprintf(format, ..args),
+		},
+	)
 }
 
 // Same as `errorf` but with a short label printed under the caret.

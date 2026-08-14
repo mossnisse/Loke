@@ -86,6 +86,9 @@ Flow_Graph :: struct {
 	// the slots above its marker and then forgets them.
 	in_scope: [dynamic]int,
 	scopes:   [dynamic]int,
+	// How many loops enclose the statement being walked, so the copy-cost report
+	// can say that a copy runs on every iteration.
+	loop_depth: int,
 	// Where an abrupt exit lands, and how far down `in_scope` it unwinds.
 	break_block:    Block_Id,
 	continue_block: Block_Id,
@@ -263,6 +266,12 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt) {
 			// `move` parameter "transfers that owned value into result storage
 			// without cloning", so the source is dead afterwards and scope exit
 			// must not drop it.
+			if value.clone_on_return {
+				report_copy_cost(
+					graph.k, .Return, expr_span(value.expr), value.expr,
+					expr_base(value.expr).type, graph.loop_depth > 0,
+				)
+			}
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident && !value.clone_on_return {
 				if slot, tracked := slot_of(graph, ident.symbol); tracked {
 					emit(graph, Flow_Event{kind = .Kill, slot = slot, span = ident.span, name = ident.name})
@@ -305,7 +314,7 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 			walk_flow_expr(graph, value)
 		}
 	}
-	classify_declaration_copies(graph.k, d)
+	classify_declaration_copies(graph.k, d, graph.loop_depth > 0)
 	for id in d.symbols {
 		sym := symbol_of(graph.k.c, id)
 		if sym == nil || sym.kind != .Var {
@@ -352,7 +361,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	for value in s.rhs {
 		walk_flow_expr(graph, value)
 	}
-	classify_assignment_copies(graph.k, s)
+	classify_assignment_copies(graph.k, s, graph.loop_depth > 0)
 	for target, index in s.lhs {
 		// A full assignment to the variable itself revives it; a write through a
 		// field or element needs the root live, which is an ordinary use.
@@ -444,7 +453,9 @@ walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_
 	outer_break_depth, outer_continue_depth := graph.break_depth, graph.continue_depth
 	graph.break_block, graph.continue_block = done, head
 	graph.break_depth, graph.continue_depth = len(graph.in_scope), len(graph.in_scope)
+	graph.loop_depth += 1
 	walk_flow_block(graph, body)
+	graph.loop_depth -= 1
 	graph.break_block, graph.continue_block = outer_break, outer_continue
 	graph.break_depth, graph.continue_depth = outer_break_depth, outer_continue_depth
 }
@@ -567,6 +578,40 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) {
 	}
 }
 
+// design.md: "a trivial aggregate copied into a `value: T` parameter" is a copy
+// site, while "An ordinary `value: T` parameter borrows a managed owner and is
+// not a copy site." Passing a temporary hands over a value nothing else holds,
+// so only a place duplicates anything.
+@(private = "file")
+report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call, consumed: int) {
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	if sym == nil {
+		return
+	}
+	info := type_of(graph.k.c, sym.proc_type)
+	if info == nil {
+		return
+	}
+	for argument, index in v.bound {
+		if argument == nil || index == consumed || index >= len(info.parameters) {
+			continue
+		}
+		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+		if mode != .Value {
+			continue
+		}
+		type := info.parameters[index]
+		// A managed parameter is a borrow for the duration of the call.
+		if type_is_managed(graph.k.c, type) || !type_is_aggregate(graph.k.c, type) {
+			continue
+		}
+		if !expression_is_borrowed_place(graph.k.c, argument) {
+			continue
+		}
+		report_copy_cost(graph.k, .Argument, expr_span(argument), argument, type, graph.loop_depth > 0)
+	}
+}
+
 @(private = "file")
 walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	// `drop(x)` reads the value, runs its hook, and kills the binding. Its
@@ -626,6 +671,7 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 			}
 		}
 	}
+	report_argument_copies(graph, v, consumed)
 	for argument, index in v.bound {
 		if argument != nil && index != consumed {
 			walk_flow_expr(graph, argument)

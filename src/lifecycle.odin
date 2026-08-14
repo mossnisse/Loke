@@ -17,6 +17,8 @@
 // keeps "no source or ABI rule requires a flag" true for the ordinary local.
 package lokec
 
+import "core:fmt"
+
 // ------------------------------------------------------ the special forms --
 
 // design.md "Assignment statements": "`move(value)` transfers ownership without
@@ -308,7 +310,7 @@ classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> 
 	return true
 }
 
-classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
+classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 	if d.kind == .Const || d.top_level || len(d.values) != len(d.symbols) {
 		return // one call filling several names hands over results it already owns
 	}
@@ -317,6 +319,9 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
 		sym := symbol_of(k.c, d.symbols[index])
 		if sym == nil || sym.kind != .Var {
 			continue
+		}
+		if value != nil && expression_is_borrowed_place(k.c, value) {
+			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, in_loop)
 		}
 		if !classify_copy(k, value, sym.type, "binding") {
 			continue
@@ -329,7 +334,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl) {
 	d.value_clones = clones
 }
 
-classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
+classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := false) {
 	if s.op != .Assign {
 		return // a compound assignment reads and writes one place, and copies nothing
 	}
@@ -349,7 +354,13 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	clones: []bool
 	for value, index in s.rhs {
 		base := expr_base(s.lhs[index])
-		if base == nil || !classify_copy(k, value, base.type, "assignment") {
+		if base == nil {
+			continue
+		}
+		if expression_is_borrowed_place(k.c, value) {
+			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop)
+		}
+		if !classify_copy(k, value, base.type, "assignment") {
 			continue
 		}
 		if clones == nil {
@@ -385,6 +396,88 @@ record_static_local :: proc(k: ^Checker, d: ^Decl) {
 		}
 		append(&k.c.static_locals, symbol_id)
 	}
+}
+
+// ------------------------------------------------------- copy-cost report --
+
+// design.md "Copy-cost diagnostics": "A **copy site** is a point that duplicates
+// a value instead of moving or borrowing it", and the four of them are a trivial
+// aggregate copied into a `value: T` parameter, a binding, an assignment, and the
+// return of a borrowed managed owner by value.
+//
+// Size is never a type error, so this is a warning and the threshold is an
+// option. What it must not do is warn merely because a type is large: an
+// ordinary `value: T` parameter *borrows* a managed owner, and a hidden-pointer
+// ABI may move nothing at all, so neither is a copy site.
+Copy_Site :: enum {
+	Argument,
+	Binding,
+	Assignment,
+	Return,
+}
+
+@(private = "file")
+copy_site_text :: proc(site: Copy_Site) -> string {
+	switch site {
+	case .Argument:   return "argument"
+	case .Binding:    return "binding"
+	case .Assignment: return "assignment"
+	case .Return:     return "return"
+	}
+	return "copy"
+}
+
+// Whether a copy of `type` is worth reporting, and why. A clone that may
+// allocate is expensive whatever its inline size, which is the case design.md
+// asks to be made more prominent.
+@(private = "file")
+copy_is_expensive :: proc(c: ^Compiler, type: Type_Id) -> (bool, bool) {
+	allocates := type_is_managed(c, type) && type_clone_is_fallible(c, type)
+	if !c.copy_cost_enabled {
+		return false, allocates
+	}
+	return allocates || type_size(c, type) >= c.copy_cost_threshold, allocates
+}
+
+report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr, type: Type_Id, in_loop: bool) {
+	expensive, allocates := copy_is_expensive(k.c, type)
+	if !expensive {
+		return
+	}
+	name := ""
+	if root := symbol_of(k.c, place_root_symbol(k.c, source)); root != nil {
+		name = identifier_text(k.c, root.name)
+	}
+	source_text := name == "" ? fmt.aprintf("a `%s`", type_name(k.c, type), allocator = k.c.semantic_allocator) :
+		fmt.aprintf("`%s`", name, allocator = k.c.semantic_allocator)
+	// A clone is not a fixed-size copy: reporting only its inline bytes would
+	// understate it, since the allocation it makes is the expensive half.
+	if allocates {
+		warnf(k.c, span, "L0507", "this %s clones %s", copy_site_text(site), source_text)
+		add_notef(
+			k.c,
+			no_span(),
+			"`%s` has a lifecycle clone, which may allocate; its inline representation is %d bytes",
+			type_name(k.c, type),
+			type_size(k.c, type),
+		)
+	} else {
+		warnf(
+			k.c, span, "L0507",
+			"this %s copies %d bytes from %s",
+			copy_site_text(site), type_size(k.c, type), source_text,
+		)
+	}
+	if in_loop {
+		add_notef(k.c, no_span(), "this runs on every iteration of the enclosing loop")
+	}
+	// design.md: the advice is transfer or sharing. It "must not recommend
+	// `inout` solely as an optimization, because `inout` grants mutation rights
+	// and changes which aliases are legal".
+	if name != "" && site != .Return {
+		add_notef(k.c, no_span(), "write `move(%s)` if `%s` is no longer needed", name, name)
+	}
+	add_notef(k.c, no_span(), "take a pointer or `shared(T)` if the two names should share one value")
 }
 
 // ------------------------------------------------------------- liveness --
