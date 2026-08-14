@@ -33,6 +33,10 @@ Expr_Base :: struct {
 	// union `type` now names. INVALID_TYPE when no wrap happens; the emitter
 	// evaluates the node at this type and then writes payload and tag.
 	union_from:  Type_Id,
+	// The concrete type this expression produces before it is erased into the
+	// `any_view` that `type` now names. The emitter evaluates the node at this
+	// type, takes its address, and pairs it with the frozen `typeid`.
+	erased_from: Type_Id,
 	// Set at construction when this node or any child is an error node, so
 	// recovery never has to re-walk a subtree to find out.
 	has_error:   bool,
@@ -160,6 +164,15 @@ Argument :: struct {
 	value: Expr,
 }
 
+// The compiler-defined operations a `meta.Field` descriptor supplies. Their
+// result type follows the descriptor constant, so they are recognised at the
+// call rather than found by method lookup.
+Reflect_Op :: enum {
+	None,
+	Field_Get,
+	Field_Pointer,
+}
+
 // A call, a conversion, or a generic application — syntax cannot tell them
 // apart, and M2's name resolution does not need it to.
 Expr_Call :: struct {
@@ -169,6 +182,15 @@ Expr_Call :: struct {
 	// Arguments in parameter order after names and defaults are resolved. This
 	// is what the backend evaluates; `args` stays the written syntax.
 	bound:      []Expr,
+	// `field.get(value)` / `field.pointer(value)`, with the struct field the
+	// descriptor selected.
+	reflect:       Reflect_Op,
+	reflect_field: Symbol_Id,
+	// The witness a `(dyn I)(&value)` conversion selected, or nil.
+	dyn_witness:   ^Witness,
+	// A slot call through a `dyn` value: its index in the witness.
+	dyn_slot:      int,
+	is_dyn_call:   bool,
 }
 
 // The suffixes that take no operand: `^` and `or_return`.
@@ -361,6 +383,9 @@ Expr_Proc :: struct {
 	symbol:        Symbol_Id,
 	// Cleanup slots this body needs, allocated in the entry block.
 	defer_count:   int,
+	// A cloned generic instantiation. Its `$` parameters were consumed at
+	// instantiation time and are not part of the instance's runtime signature.
+	generic_instance: bool,
 }
 
 // `proc { a, b }`
@@ -636,11 +661,34 @@ Foreach_Binding :: struct {
 	symbol:    Symbol_Id,
 }
 
+// How the checker resolved a `foreach`. A range and a fixed array lower
+// directly to an index loop; a user type goes through `iter`/`next`.
+Foreach_Kind :: enum {
+	Unresolved,
+	Static,
+	Range,
+	Stored_Range,
+	Array,
+	Protocol,
+}
+
 Stmt_Foreach :: struct {
 	using base: Node_Base,
 	bindings:   []Foreach_Binding,
 	iterable:   Expr,
 	body:       ^Block,
+	// Semantic result, written by the checker and read by the backend.
+	kind:          Foreach_Kind,
+	element_type:  Type_Id,
+	count:         u64,       // a fixed array's length
+	iterator_type: Type_Id,   // the protocol path's opaque iterator
+	iter_symbol:   Symbol_Id,
+	next_symbol:   Symbol_Id,
+	// A static expansion's checked copies, one per element, in iterable order.
+	// This is expansion rather than a loop, so the backend emits them in
+	// sequence and `body` is never emitted (design.md "Static `foreach`
+	// expansion").
+	expansion:  []^Block,
 }
 
 // Structural source selection, not a constant `if`: only the selected branch is

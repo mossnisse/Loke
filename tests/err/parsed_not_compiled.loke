@@ -1,10 +1,10 @@
 package main;
 
 main :: proc() {
-	// `foreach` is still deferred; the gate names the outer statement and does
-	// not descend into it.
-	x: [3]int;
-	foreach (value in x) {
+	// A deferred type gates once at the declaration that names it, and the gate
+	// does not descend into the statements that use it.
+	table: map[int]int;
+	foreach (value in table) {
 		print_int(value);
 	}
 }

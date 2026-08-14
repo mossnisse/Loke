@@ -1004,6 +1004,21 @@ my_other_variable: int;
 
 **Loke has two visibility levels: package and public.** It has no file-private visibility. The package is the encapsulation boundary. Put code in a separate package when it needs a separate visibility boundary.
 
+Struct fields use the same two levels. A field inherits the default selected by
+the package declaration in its source file and may override that default with
+`@(public)` or `@(private)`. Code in the declaring package may read, write, and
+initialize package-visible fields; importing packages may do so only for public
+fields. Positional aggregate construction does not bypass this rule: an
+initializer that supplies an inaccessible field is rejected. The file-level
+default chooses a field's visibility but does not create file-private access.
+
+The compiler stages this rule across milestones. M4b applies field visibility
+when forming reflection descriptors but temporarily retains M4a's unrestricted
+ordinary field access and aggregate construction. M5 removes that compatibility
+exception and enforces the same rule for field reads, writes, and construction.
+The exception is an implementation transition, not a third visibility level or
+the intended language semantics.
+
 ### Authoring a package
 
 A package directory contains only one package. Each source file in that directory must have the same package name, for example `package main;`.
@@ -4457,7 +4472,11 @@ compile-time `type` value. A `meta.Field` also carries its declared
 [field tag](#struct-field-tags), which is what serialization libraries read.
 
 Both preserve source declaration order, after conditional `when` selection.
-Reflection observes only declarations visible at the reflection site.
+Reflection observes only declarations visible from its lookup package. Thus
+`fields_of(T)` contains every selected field when the lookup package declares
+`T`, but only public fields when reflecting from another package. In a generic
+body the reflection lookup package is the generic declaration's definition
+package, so an instantiation has the same reflected shape in every caller.
 
 Reflection is limited to these two descriptors. Adding a further descriptor in a
 later version is a backward-compatible change; removing one is not.
@@ -5562,8 +5581,8 @@ Optimization and code-generation annotations such as `@(compiler.no_alias)` and 
 ```odin
     @(export)
     @(link_name=<string>)
-    @(private) – globals only
-    @(public) – globals only
+    @(private) – globals and struct fields
+    @(public) – globals and struct fields
 ```
 
 These attributes specify linkage or visibility. They specify the symbol that a declaration produces or the code that can use the declaration. Storage duration and ownership use [storage modifiers](#storage-modifiers), not attributes. A [constant](#constant-declarations) specifies read-only data.
@@ -5636,7 +5655,9 @@ foo :: proc "c" () -> int {
 
 ### `@(private)`
 
-Names package visibility, which is already the default. It takes no argument, and there is no file-private visibility to narrow to.
+Names package visibility, which is already the default. It applies to top-level
+declarations and struct fields, takes no argument, and does not create
+file-private visibility.
 
 It is load-bearing only in a file whose package declaration carries [`@(public)`](#public), where it excludes one declaration from the file-wide export:
 
@@ -5650,7 +5671,8 @@ scratch_buffer: [64]u8;   // not part of the package API
 
 ### `@(public)`
 
-This attribute exports a top-level declaration from its package. Without it, only code in the same package can use the declaration.
+This attribute exports a top-level declaration or struct field from its package.
+Without it, only code in the same package can use the declaration or field.
 
 ```odin
 @(public)

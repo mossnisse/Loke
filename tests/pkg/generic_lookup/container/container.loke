@@ -1,0 +1,36 @@
+@(public)
+package container;
+
+Pair :: struct($T: type) {
+	first:  T,
+	second: T,
+}
+
+impl Pair($T) {
+	// `blend` and `self.label()` are both resolved at this definition site, so
+	// `combine` and `describe` mean the same thing in every caller.
+	combine :: proc(self) -> T {
+		return blend(self.first, self.second);
+	}
+
+	describe :: proc(self) -> int {
+		return self.label();
+	}
+
+	label :: proc(self) -> int { return 0; }
+}
+
+// A block written for one specialization wins over the unspecialized one for
+// the instance it names, and leaves every other instance to that one.
+impl Pair(int) {
+	label :: proc(self) -> int { return 1; }
+}
+
+blend_i32 :: proc(a, b: i32) -> i32 { return a * 10 + b; }
+blend_int :: proc(a, b: int) -> int { return a + b; }
+blend :: proc{blend_i32, blend_int};
+
+@(public)
+make_pair :: proc($T: type, a, b: T) -> Pair(T) {
+	return Pair(T){a, b};
+}

@@ -1,0 +1,5 @@
+@(public)
+package shapes;
+
+Widget :: struct { size: int }
+Gadget :: struct { size: int }

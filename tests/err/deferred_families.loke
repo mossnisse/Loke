@@ -1,18 +1,17 @@
 package main;
 
 // One `L0350` per deferred outer construct, and no descent into it. Every
-// family M4a leaves for a later milestone keeps exactly one entry here.
+// family M4b leaves for a later milestone keeps exactly one entry here.
 Container :: struct { items: []int }
 
-Trait :: interface($Self: type) { }
-
-Generic :: struct($T: type) { value: T }
-
-Erased :: struct { view: dyn Trait }
-
-Reflected :: struct { id: typeid }
-
 Walker :: struct { cursor: [^]int }
+
+Viewer :: struct { text: string_view }
+
+// An interface is not deferred: it is deliberately compile-time metadata, so it
+// has its own diagnostic rather than a milestone gate.
+Trait :: interface($Self: type) { }
+stored: Trait;
 
 main :: proc() {
 	xs: [dynamic]int;

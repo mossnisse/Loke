@@ -18,7 +18,7 @@ L0425
 `f64` is not a variant of `Value`
 L0426
 @40:15
-a type switch needs a union, found `int`
+a type switch needs a union or an `any_view`, found `int`
 L0427
 @45:2
 this type switch over `Value` does not cover bool

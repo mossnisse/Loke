@@ -1,0 +1,14 @@
+@(public)
+package draw;
+
+import "../shapes";
+
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+@(public)
+measure :: proc(target: dyn Sized) -> int { return target.size(); }
+
+@(public)
+erase :: proc(value: ^shapes.Circle) -> int { return measure((dyn Sized)(value)); }

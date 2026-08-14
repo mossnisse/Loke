@@ -5,7 +5,7 @@ package main;
 Record :: struct {
 	name:  string,
 	other: string,
-	tag:   any_view,
+	tag:   []u8,
 }
 
 main :: proc() {

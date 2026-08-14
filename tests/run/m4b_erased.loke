@@ -1,0 +1,128 @@
+package main;
+
+Canvas :: struct { marks: int }
+
+Drawable :: interface($Self: type) {
+	slot draw: proc(self, canvas: inout Canvas) ;
+	slot size: proc(self) -> int;
+}
+
+Tagged :: interface($Self: type, $Tag: type) {
+	slot tag: proc(self) -> int;
+}
+
+Valued :: interface($Self: type, $Value: type) {
+	slot value: proc(self) -> Value;
+}
+
+Int_Valued :: interface($Self: type) {
+	Valued(Self, int);
+}
+
+Bumpable :: interface($Self: type) {
+	slot bump: proc(self: inout Self) ;
+}
+
+Circle :: struct { radius: int }
+Square :: struct { side: int }
+
+impl Circle {
+	draw :: proc(self, canvas: inout Canvas) { canvas.marks += self.radius; }
+	size :: proc(self) -> int { return self.radius; }
+}
+
+impl Square {
+	draw :: proc(self, canvas: inout Canvas) { canvas.marks += self.side * 4; }
+	size :: proc(self) -> int { return self.side; }
+}
+
+Token :: struct { number: int }
+impl Token {
+	tag :: proc(self) -> int { return self.number; }
+	value :: proc(self) -> int { return self.number; }
+}
+
+Counter :: struct { value: int }
+impl Counter {
+	bump :: proc(self: inout Counter) { self.value += 1; }
+}
+
+describe :: proc(value: any_view) -> int {
+	switch (v in value) {
+	case int:
+		return v;
+	case bool:
+		if (v) { return 1; }
+		return 0;
+	case Circle:
+		return v.radius;
+	case:
+		return -1;
+	}
+}
+
+paint :: proc(target: dyn Drawable, canvas: inout Canvas) -> int {
+	target.draw(inout canvas);
+	return target.size();
+}
+
+main :: proc() {
+	print_int(describe(7));
+	print_int(describe(true));
+	print_int(describe(Circle{5}));
+	print_int(describe(1.5));
+
+	// A temporary converted for a call stays valid through the call.
+	view: any_view = 42;
+	n, ok := view.(int);
+	print_int(n);
+	print_int(view.(int));
+
+	c := Circle{3};
+	s := Square{2};
+	canvas: Canvas = {0};
+	print_int(paint((dyn Drawable)(&c), inout canvas));
+	print_int(paint((dyn Drawable)(&s), inout canvas));
+	print_int(canvas.marks);
+	more();
+}
+
+// design.md: `dyn I` itself satisfies `I` by compiler-provided forwarding slots,
+// which is the bridge between static and runtime polymorphism.
+paint_static :: proc(value: $T, canvas: inout Canvas) -> int where Drawable(T) {
+	value.draw(inout canvas);
+	return value.size();
+}
+
+more :: proc() {
+	c := Circle{4};
+	canvas: Canvas = {0};
+	// A concrete type: a specialized direct call.
+	print_int(paint_static(c, inout canvas));
+	// A `dyn` value: witness dispatch through the forwarding slots.
+	view := (dyn Drawable)(&c);
+	print_int(paint_static(view, inout canvas));
+	print_int(canvas.marks);
+
+	// The zero value of every `dyn` type is nil, and it compares with nil.
+	empty: dyn Drawable = nil;
+	if (empty == nil) { print_int(1); } else { print_int(0); }
+	copied := view;
+	print_int(copied.size());
+
+	// Distinct non-subject applications get distinct witness globals.
+	token := Token{9};
+	print_int(((dyn Tagged(int))(&token)).tag());
+	print_int(((dyn Tagged(bool))(&token)).tag());
+	// Composed applications substitute their written argument vector.
+	print_int(((dyn Int_Valued)(&token)).value());
+
+	// An inout dyn slot works directly and when `dyn I` itself is erased as I,
+	// which exercises the compiler-provided forwarding procedure's pointer ABI.
+	counter := Counter{0};
+	mutable := (dyn Bumpable)(&counter);
+	mutable.bump();
+	nested := (dyn Bumpable)(&mutable);
+	nested.bump();
+	print_int(counter.value);
+}

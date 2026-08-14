@@ -1,0 +1,22 @@
+package main;
+
+import "./models";
+
+count_there :: proc() -> int {
+	total := 0;
+	foreach ($field in fields_of(models.Record)) {
+		total += 1;
+	}
+	return total;
+}
+
+main :: proc() {
+	// Inside the declaring package every field is visible; from here the
+	// `@(private)` one is not.
+	print_int(models.count_here());
+	print_int(count_there());
+	mixed := models.Mixed{10, 20};
+	foreach ($field in fields_of(models.Mixed)) {
+		print_int(field.get(&mixed));
+	}
+}

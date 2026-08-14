@@ -1,0 +1,74 @@
+package main;
+
+Additive :: interface($T: type) {
+	T(0) -> T;
+	(a, b: T) a + b -> T;
+}
+
+Equatable :: interface($T: type) {
+	(a, b: T) a == b -> bool;
+}
+
+Ordered :: interface($T: type) {
+	Equatable(T);
+	(a, b: T) a < b -> bool;
+}
+
+Source :: interface($T: type) {
+	T.Element -> type;
+	(value: T) value.read() -> T.Element;
+}
+
+Byte_Source :: struct { current_byte: u8 }
+
+impl Byte_Source {
+	Element :: u8;
+	read :: proc(self) -> u8 { return self.current_byte; }
+}
+
+Named :: interface($T: type) {
+	slot describe: proc(self) -> int;
+}
+
+impl Byte_Source {
+	describe :: proc(self) -> int { return 7; }
+}
+
+Flag :: struct { on: bool }
+
+sum3 :: proc(a, b, c: $T) -> T where Additive(T) {
+	return a + b + c;
+}
+
+main :: proc() {
+	#assert(Additive(int));
+	#assert(Additive(f64));
+	#assert(!Additive(bool));
+	#assert(Ordered(int));
+	#assert(!Ordered(Flag));
+	#assert(Source(Byte_Source));
+	#assert(!Source(Flag));
+	#assert(Named(Byte_Source));
+	#assert(!Named(Flag));
+	print_int(sum3(1, 2, 3));
+	check_more();
+}
+
+// Requirement order is irrelevant: an associated member required later in the
+// body is available to an earlier requirement.
+Reversed :: interface($T: type) {
+	(value: T) value.read() -> T.Element;
+	T.Element -> type;
+}
+
+// A slot is callable through method syntax inside constrained generic code.
+describe_twice :: proc(value: $T) -> int where Named(T) {
+	return value.describe() + value.describe();
+}
+
+check_more :: proc() {
+	#assert(Reversed(Byte_Source));
+	#assert(!Reversed(Flag));
+	b: Byte_Source = {3};
+	print_int(describe_twice(b));
+}

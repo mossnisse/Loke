@@ -15,10 +15,10 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M4a, planned in
-[m4a-plan.md](m4a-plan.md), after M3 in [m3-plan.md](m3-plan.md), M2 in
-[m2-plan.md](m2-plan.md), M1 in [m1-plan.md](m1-plan.md) and M0 in
-[m0-plan.md](m0-plan.md). [m4b-plan.md](m4b-plan.md) is the other half of M4.
+[compiler-plan.md](compiler-plan.md); the current milestone is M4b, planned in
+[m4b-plan.md](m4b-plan.md), after M4a in [m4a-plan.md](m4a-plan.md), M3 in
+[m3-plan.md](m3-plan.md), M2 in [m2-plan.md](m2-plan.md), M1 in
+[m1-plan.md](m1-plan.md) and M0 in [m0-plan.md](m0-plan.md).
 
 M1 completed the front end: every construct in [grammar.md](grammar.md) lexes and
 parses, so `-parse-only` and `-dump-ast` accept any valid program.
@@ -91,9 +91,37 @@ M4a makes user-defined types as capable as built-in ones at concrete types:
   reporting, and the error protocol — optional-ok results, `or_else`, and
   `or_return` with its named-result and definite-initialization rules.
 
-Everything else — generics, interfaces, runtime `string`, slices, maps,
-`foreach`, `typeid`, `any_view`, and `#location`/`#caller_location` — parses and
-reports one diagnostic at the enclosing construct.
+M4b makes those abstractions generic and erasable, completing M4:
+
+- `$` type and value parameters, inference, structural specialization
+  (`[]$E`, `[$N]E`, `^Table($K, $V)`), generic records, unions, and `impl`/
+  `extend` blocks, and `where` clauses evaluated per instantiation. Every
+  distinct argument vector is monomorphized into its own instance with its own
+  emitted symbol; a runaway recursive instantiation is a diagnostic carrying its
+  instantiation stack;
+- `interface` declarations with expression, validity, and `slot` requirements,
+  composition, and associated types. An application such as `Additive(int)` is a
+  compile-time boolean, and a failure names the requirement line and the concrete
+  type that failed it. A named slot is matched only by an inherent method or an
+  extension from the interface's own package, so a caller-local `extend` cannot
+  make a requirement appear satisfied;
+- the unmanaged standard interface catalogue as ordinary Loke source in
+  [base/interfaces](base/interfaces), reached with `-collection base=base`.
+  `Cloneable` waits for M5's allocator and lifecycle types;
+- compile-time reflection: `fields_of`, `enum_values_of`, `field.get`,
+  `field.pointer`, `type_of`, `typeid_of`, and static `foreach` expansion, which
+  type-checks one copy of its body per element;
+- `foreach` over integer ranges, fixed arrays, and user types through the
+  `iter`/`next` protocol, with first-class `Range(T)` values that keep their
+  half-open or closed kind after being stored or passed;
+- erased views: `typeid` as a deterministic runtime identity, `any_view` with
+  its position rules, assertions, and type switch, and `dyn Interface` with
+  witness dispatch, dyn-compatibility diagnostics, and forwarding slots that let
+  `dyn I` satisfy `I`.
+
+Everything else — runtime `string` and `string_view`, slices, dynamic arrays,
+maps, multi-pointers, and `#location`/`#caller_location` — parses and reports one
+diagnostic at the enclosing construct.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.
@@ -103,6 +131,7 @@ odin build src -out:lokec.exe
 lokec.exe examples/hello.loke -o hello.exe && hello.exe
 lokec.exe tests/pkg/diamond -o diamond.exe          # a directory is one package
 lokec.exe app -collection core=vendor/core -define:DEBUG=true
+lokec.exe tests/pkg/catalogue -collection base=base       # the interface catalogue
 lokec.exe examples/hello.loke -parse-only
 lokec.exe examples/hello.loke -dump-ast
 lokec.exe tests/layout/types.loke -check-layout

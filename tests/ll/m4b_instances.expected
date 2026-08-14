@@ -1,0 +1,6 @@
+%struct.Table.int.i32
+%struct.Table.i32.int
+define i32 @loke.p.lookup.int.i32(ptr %arg0, i64 %arg1)
+define i64 @loke.p.lookup.i32.int(ptr %arg0, i32 %arg1)
+define [2 x i64] @loke.p.swapped.int([2 x i64] %arg0)
+define i64 @loke.p.anything.int(ptr %arg0)

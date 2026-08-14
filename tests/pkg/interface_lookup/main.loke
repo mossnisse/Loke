@@ -1,0 +1,19 @@
+package main;
+
+import "./shapes";
+import "./iface";
+
+// The same extension at a call site cannot make the requirement appear
+// satisfied (m4b-plan decision "Requirement checking and lookup").
+extend shapes.Gadget {
+	describe :: proc(self) -> int { return self.size * 3; }
+}
+
+main :: proc() {
+	#assert(iface.Named(shapes.Widget));
+	#assert(!iface.Named(shapes.Gadget));
+
+	// The caller's own extension is still an ordinary method here.
+	g: shapes.Gadget = {5};
+	print_int(g.describe());
+}

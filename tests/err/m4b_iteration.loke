@@ -1,0 +1,64 @@
+package main;
+
+Countdown :: struct { start: int }
+Countdown_Iterator :: struct { current: int }
+
+impl Countdown {
+	Element  :: int;
+	Iterator :: Countdown_Iterator;
+	iter :: proc(self) -> Countdown_Iterator { return {self.start}; }
+
+	// An ordinary callable overload. Bare `foreach` never selects it.
+	iter_reverse :: proc(self) -> Countdown_Iterator { return {1}; }
+}
+
+impl Countdown_Iterator {
+	next :: proc(self: inout Countdown_Iterator) -> (int, bool) {
+		if (self.current <= 0) { return 0, false; }
+		value := self.current;
+		self.current -= 1;
+		return value, true;
+	}
+}
+
+Opaque :: struct { value: int }
+
+Broken_Iter :: struct { }
+Broken_Iter_State :: struct { }
+impl Broken_Iter {
+	Element :: int;
+	Iterator :: Broken_Iter_State;
+	iter :: proc() -> Broken_Iter_State { return {}; }
+}
+impl Broken_Iter_State {
+	next :: proc(self: inout Broken_Iter_State) -> (int, bool) { return 0, false; }
+}
+
+Broken_Next :: struct { }
+Broken_Next_State :: struct { }
+impl Broken_Next {
+	Element :: int;
+	Iterator :: Broken_Next_State;
+	iter :: proc(self) -> Broken_Next_State { return {}; }
+}
+impl Broken_Next_State {
+	next :: proc(self: Broken_Next_State) -> (int, bool) { return 0, false; }
+}
+
+main :: proc() {
+	// By-reference iteration is a built-in-container facility.
+	foreach (&v in Countdown{3}) { print_int(v); }
+	// A type with no protocol members at all.
+	o: Opaque = {1};
+	foreach (v in o) { print_int(v); }
+	// A range produces values, so it has no place to borrow.
+	foreach (&v in 0 ..< 3) { print_int(v); }
+	// The index binding is a counter.
+	xs := [3]int{1, 2, 3};
+	foreach (v, &i in xs) { print_int(v); }
+	// A range needs integer or rune endpoints.
+	foreach (v in 1.5 ..< 3.5) { print_int(int(v)); }
+	// Protocol shapes are rejected by the checker rather than reaching lowering.
+	foreach (v in Broken_Iter{}) { print_int(v); }
+	foreach (v in Broken_Next{}) { print_int(v); }
+}

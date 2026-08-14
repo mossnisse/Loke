@@ -1,0 +1,29 @@
+package main;
+
+Point :: struct { x: int, y: int }
+Colour :: enum { Red }
+
+main :: proc() {
+	// A descriptor cannot be materialised into runtime storage.
+	stored := fields_of(Point)[0];
+	all := fields_of(Point);
+	t := type_of(1);
+
+	// `break` cannot target a static expansion.
+	foreach ($field in fields_of(Point)) {
+		break;
+	}
+	// Mixing a runtime and a compile-time binding.
+	foreach ($field, index in fields_of(Point)) { }
+	// A static binding is immutable and cannot use `&`.
+	foreach ($&field in fields_of(Point)) { }
+	// The iterable must be compile-time known.
+	n := 3;
+	foreach ($x in n) { }
+	// Wrong descriptor for the value.
+	foreach ($field in fields_of(Colour)) { }
+	c: Colour = .Red;
+	foreach ($field in fields_of(Point)) {
+		print_int(field.get(&c));
+	}
+}

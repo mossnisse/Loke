@@ -1,0 +1,11 @@
+package main;
+
+import "./shapes";
+import "./draw";
+import "./other";
+
+main :: proc() {
+	c := shapes.Circle{5};
+	print_int(draw.erase(&c));
+	print_int(other.erase(&c));
+}

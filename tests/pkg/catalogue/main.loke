@@ -1,0 +1,48 @@
+package main;
+
+// The unmanaged subset of the standard catalogue, reached through
+// `-collection base=base` because M4b adds no implicit `base:` root.
+import "base:interfaces";
+
+Meters :: distinct f64;
+
+impl Meters {
+	init :: proc(v: f64) -> Meters { return Meters(v); }
+	add :: operator(+) proc(a, b: Meters) -> Meters { return Meters(f64(a) + f64(b)); }
+	sub :: operator(-) proc(a, b: Meters) -> Meters { return Meters(f64(a) - f64(b)); }
+	mul :: operator(*) proc(a, b: Meters) -> Meters { return Meters(f64(a) * f64(b)); }
+	div :: operator(/) proc(a, b: Meters) -> Meters { return Meters(f64(a) / f64(b)); }
+	eq  :: operator(==) proc(a, b: Meters) -> bool { return f64(a) == f64(b); }
+	lt  :: operator(<) proc(a, b: Meters) -> bool { return f64(a) < f64(b); }
+}
+
+Opaque :: struct { value: int }
+
+total :: proc(a, b: $T) -> T where interfaces.Numeric(T) {
+	return a + b;
+}
+
+main :: proc() {
+	#assert(interfaces.Equatable(int));
+	#assert(interfaces.Ordered(int));
+	#assert(interfaces.Ordered(f64));
+	#assert(interfaces.Hashable(int));
+	#assert(interfaces.Hashable(rune));
+	#assert(interfaces.Numeric(int));
+	#assert(interfaces.Numeric(f64));
+	#assert(interfaces.Integral(int));
+
+	#assert(!interfaces.Integral(f64));
+	#assert(!interfaces.Equatable(Opaque));
+	#assert(!interfaces.Numeric(bool));
+
+	// A user `distinct` type satisfies the same catalogue entries through its
+	// own operators.
+	#assert(interfaces.Equatable(Meters));
+	#assert(interfaces.Ordered(Meters));
+	#assert(interfaces.Numeric(Meters));
+	#assert(!interfaces.Integral(Meters));
+
+	print_int(total(2, 3));
+	print_int(int(f64(total(Meters(1.5), Meters(2.5)))));
+}

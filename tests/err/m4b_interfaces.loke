@@ -1,0 +1,31 @@
+package main;
+
+Additive :: interface($T: type) {
+	T(0) -> T;
+	(a, b: T) a + b -> T;
+}
+
+Named :: interface($T: type) {
+	slot describe: proc(self) -> int;
+	slot describe: proc(self) -> bool;
+}
+
+Bad :: interface() { }
+
+Flag :: struct { on: bool }
+
+// An interface is compile-time metadata, not a runtime type.
+stored: Additive;
+
+sum3 :: proc(a, b, c: $T) -> T where Additive(T) { return a + b + c; }
+
+Boxed :: struct($T: type) where Additive(T) { value: T }
+
+main :: proc() {
+	f: Flag = {true};
+	print_int(sum3(f, f, f));
+	b: Boxed(Flag) = {};
+	#assert(Additive(int, f64));
+	// A record or union needs its own coherent equality and hash pair.
+	print_int(int(hash(f, uint(0))));
+}

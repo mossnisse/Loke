@@ -38,11 +38,16 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		// `byte` is a predeclared alias for `u8`, not a distinct type
 		// (design.md "Basic types").
 		{"byte", TYPE_U8},
-		// Named, and deferred: `type_is_supported` rejects them, so a use is
-		// one `L0350` rather than "unknown type".
-		{"string", TYPE_STRING},
+		// Real runtime types since M4b: a `typeid` is an identity scalar and an
+		// `any_view` is a two-word borrowed view.
 		{"typeid", TYPE_TYPEID},
 		{"any_view", TYPE_ANY_VIEW},
+		// Named, and deferred to M6: `type_is_supported` rejects them, so a use is
+		// one `L0350` rather than "unknown type". `string_view` has an identity in
+		// M4b because a reflection descriptor's name and tag are `string_view`s;
+		// runtime construction and storage wait with `string`.
+		{"string", TYPE_STRING},
+		{"string_view", TYPE_STRING_VIEW},
 	}
 	for entry in types {
 		define(c, universe, entry.name, Symbol{kind = .Type, type = entry.id})
@@ -109,6 +114,39 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 			proc_type = no_args,
 		})
 	}
+
+	// design.md "`type` and `typeid`" and "Compile-time reflection". Their
+	// operands are inspected rather than evaluated, so `check_builtin_call` binds
+	// them itself.
+	reflection := []struct{name: string, kind: Builtin_Kind} {
+		{"type_of", .Type_Of},
+		{"typeid_of", .Typeid_Of},
+		{"fields_of", .Fields_Of},
+		{"enum_values_of", .Enum_Values_Of},
+	}
+	for entry in reflection {
+		define(c, universe, entry.name, Symbol {
+			kind      = .Builtin,
+			builtin   = entry.kind,
+			type      = TYPE_TYPE,
+			proc_type = no_args,
+		})
+	}
+
+	// design.md "Iteration protocol": the compiler contributes an `iter` overload
+	// for built-in iterables and finds a user type's own `iter` member, so the
+	// free call in the `Iterable` requirement resolves for both.
+	define(c, universe, "iter", Symbol{kind = .Builtin, builtin = .Iter, type = TYPE_VOID, proc_type = no_args})
+
+	// design.md: `hash(value, seed: uint) -> uint` over the built-in types the
+	// standard catalogue promises satisfy `Hashable`. Its operand types are
+	// checked by `check_builtin_call`, so the interned type carries none.
+	define(c, universe, "hash", Symbol {
+		kind      = .Builtin,
+		builtin   = .Hash,
+		type      = TYPE_UINT,
+		proc_type = no_args,
+	})
 
 	return universe
 }

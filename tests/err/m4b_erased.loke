@@ -1,0 +1,71 @@
+package main;
+
+Canvas :: struct { marks: int }
+
+Drawable :: interface($Self: type) {
+	slot draw: proc(self, canvas: inout Canvas);
+}
+
+// Not dyn-compatible: a free expression requirement, a consuming receiver, and
+// a slot that returns the subject.
+Static_Only :: interface($Self: type) {
+	(a, b: Self) a == b -> bool;
+}
+
+Consuming :: interface($Self: type) {
+	slot take: proc(self: move Self) -> int;
+}
+
+Returning :: interface($Self: type) {
+	slot twin: proc(self) -> Self;
+}
+
+Circle :: struct { radius: int }
+Opaque :: struct { value: int }
+
+impl Circle {
+	draw :: proc(self, canvas: inout Canvas) { canvas.marks += self.radius; }
+}
+
+// `any_view` may only be a local or a parameter.
+Holder :: struct { view: any_view }
+global_view: any_view;
+Alias :: any_view;
+
+produce :: proc() -> any_view { return 1; }
+nested :: proc(views: [3]any_view) -> int { return 0; }
+
+main :: proc() {
+	// An alias cannot bypass the position restriction.
+	stored: [2]Alias;
+
+	c := Circle{1};
+	// A concrete type that supplies no slot.
+	o: Opaque = {1};
+	bad := (dyn Drawable)(&o);
+	// Not a pointer.
+	worse := (dyn Drawable)(c);
+
+	// Interfaces that cannot be erased.
+	s: dyn Static_Only;
+	m: dyn Consuming;
+	r: dyn Returning;
+
+	// A dynamic interface has no type assertion and no type switch.
+	view := (dyn Drawable)(&c);
+	// An interface has no slot by that name, and an `any_view` holds concrete
+	// types only.
+	view.paint(inout canvas);
+	erased: any_view = 1;
+	switch (t in erased) {
+	case Drawable:
+		print_int(1);
+	case:
+		print_int(0);
+	}
+	x := view.(Circle);
+	switch (t in view) {
+	case Circle:
+		print_int(1);
+	}
+}

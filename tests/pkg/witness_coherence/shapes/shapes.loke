@@ -1,0 +1,9 @@
+@(public)
+package shapes;
+
+Circle :: struct { radius: int }
+
+impl Circle {
+	@(public)
+	size :: proc(self) -> int { return self.radius; }
+}

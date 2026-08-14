@@ -1,0 +1,102 @@
+package main;
+
+import "base:interfaces";
+
+// One program using a generic container, an interface bound, reflection,
+// iteration, and a `dyn` call.
+
+Stack :: struct($T: type, $N: int) where N > 0 {
+	items: [N]T,
+	count: int,
+}
+
+impl Stack($T, $N) {
+	Element  :: T;
+	Iterator :: Stack_Iterator(T, N);
+
+	push :: proc(self: inout Stack(T, N), value: T) {
+		self.items[self.count] = value;
+		self.count += 1;
+	}
+
+	total :: proc(self) -> T where interfaces.Numeric(T) {
+		sum := T(0);
+		foreach (v, i in self.items) {
+			if (i < self.count) { sum = sum + v; }
+		}
+		return sum;
+	}
+
+	iter :: proc(self) -> Stack_Iterator(T, N) {
+		return {self.items, self.count, 0};
+	}
+}
+
+Stack_Iterator :: struct($T: type, $N: int) {
+	items: [N]T,
+	count: int,
+	index: int,
+}
+
+impl Stack_Iterator($T, $N) {
+	next :: proc(self: inout Stack_Iterator(T, N)) -> (T, bool) {
+		if (self.index >= self.count) {
+			return T(0), false;
+		}
+		value := self.items[self.index];
+		self.index += 1;
+		return value, true;
+	}
+}
+
+Report :: interface($Self: type) {
+	slot lines: proc(self) -> int;
+}
+
+Summary :: struct {
+	title:  int `json:"title"`,
+	weight: int,
+}
+
+impl Summary {
+	lines :: proc(self) -> int { return self.title + self.weight; }
+}
+
+field_count :: proc($T: type) -> int {
+	total := 0;
+	foreach ($field in fields_of(T)) {
+		total += 1;
+	}
+	return total;
+}
+
+main :: proc() {
+	// A generic container instantiated twice.
+	ints: Stack(int, 4) = {};
+	ints.push(2);
+	ints.push(3);
+	print_int(ints.total());
+
+	runes: Stack(i32, 2) = {};
+	runes.push(7);
+	print_int(int(runes.total()));
+
+	// The container satisfies the standard `Iterable` interface.
+	#assert(interfaces.Iterable(Stack(int, 4)));
+	seen := 0;
+	foreach (v in ints) { seen = seen + v; }
+	print_int(seen);
+
+	// Reflection, statically expanded.
+	print_int(field_count(Summary));
+
+	// One erased call site.
+	s := Summary{1, 4};
+	view := (dyn Report)(&s);
+	print_int(view.lines());
+
+	// A written range and a stored one.
+	sum := 0;
+	foreach (i in 1 ..= 3) { sum += i; }
+	print_int(sum);
+}

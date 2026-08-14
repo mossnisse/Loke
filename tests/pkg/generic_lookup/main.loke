@@ -1,0 +1,30 @@
+package main;
+
+import "./container";
+
+// Neither a caller-local `blend` nor a caller-local extension may change what an
+// existing instantiation means (m4b-plan decision "Definition-site lookup").
+blend :: proc(a, b: int) -> int { return 999; }
+
+extend container.Pair(int) {
+	@(public)
+	label :: proc(self) -> int { return 42; }
+}
+
+main :: proc() {
+	a := container.make_pair(int, 2, 3);
+	b := container.make_pair(i32, 2, 3);
+
+	// Two instantiations of one template, each with its own annotations.
+	print_int(a.combine());        // definition-site `blend_int`: 2 + 3
+	print_int(int(b.combine()));   // definition-site `blend_i32`: 2*10 + 3
+
+	// `describe` selected `label` at its own definition site: the specialized
+	// block for `Pair(int)`, the generic one for `Pair(i32)`, and never the
+	// extension declared here.
+	print_int(a.describe());
+	print_int(b.describe());
+
+	// The caller's own extension is reachable by its ordinary spelling.
+	print_int(label(a));
+}

@@ -131,6 +131,14 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (boo
 		return (a.boolean == b.boolean) == (op == .Eq_Eq), true
 	case a.kind == .Nil && b.kind == .Nil:
 		return op == .Eq_Eq, true
+	// design.md: two `type` values compare during compilation, and equality means
+	// the same Loke type identity after aliases are resolved. A symbolic `typeid`
+	// constant carries the same identity, so both fold here.
+	case a.kind == .Type && b.kind == .Type:
+		if op != .Eq_Eq && op != .Not_Eq {
+			return false, false
+		}
+		return (a.type_value == b.type_value) == (op == .Eq_Eq), true
 	case a.kind == .Aggregate && b.kind == .Aggregate:
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false

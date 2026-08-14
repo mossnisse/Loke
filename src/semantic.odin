@@ -44,8 +44,9 @@ TYPE_RUNE     :: Type_Id(19)
 TYPE_RAWPTR   :: Type_Id(20)
 TYPE_TYPE     :: Type_Id(21)
 
-// Deferred to M5/M6, but predeclared: a program that names one gets `L0350`
-// rather than "unknown type", which would be a lie.
+// `string` is deferred to M6 but predeclared, so a program that names it gets
+// `L0350` rather than "unknown type", which would be a lie. `typeid` and
+// `any_view` became real runtime types in M4b.
 TYPE_STRING   :: Type_Id(22)
 TYPE_TYPEID   :: Type_Id(23)
 TYPE_ANY_VIEW :: Type_Id(24)
@@ -60,7 +61,12 @@ TYPE_UNTYPED_NIL   :: Type_Id(29)
 // representation until M6 (m3-plan decision "Strings").
 TYPE_UNTYPED_STRING :: Type_Id(30)
 
-FIRST_DYNAMIC_TYPE :: Type_Id(31)
+// A borrowed view over UTF-8 text. M4b gives it an identity and constant values,
+// because a reflection descriptor's name and tag are `string_view`s; ordinary
+// runtime construction, storage, and operations wait for M6.
+TYPE_STRING_VIEW :: Type_Id(31)
+
+FIRST_DYNAMIC_TYPE :: Type_Id(32)
 
 Type_Kind :: enum {
 	Invalid,
@@ -77,6 +83,7 @@ Type_Kind :: enum {
 	Untyped_Nil,
 	Untyped_String,
 	String,
+	String_View,
 	Typeid,
 	Any_View,
 	Pointer,
@@ -129,6 +136,26 @@ Type_Info :: struct {
 	// Set once the finite-size check has visited this nominal type, so a cycle
 	// is reported at one place instead of once per reference.
 	size_state: Size_State,
+	// A monomorphized instance of a generic record: the template it came from,
+	// and the argument vector that produced it. Structural specialization matches
+	// against these (m4b-plan step 1).
+	instance_of:   Symbol_Id,
+	instance_args: []Generic_Arg,
+	// The backend spelling of an instance, kept apart from `name`, which is the
+	// readable `Table(int, i32)` diagnostics use.
+	mangled:       string,
+	// A `dyn Interface(args...)` type: the interface it erases behind, and the
+	// non-subject arguments of the application.
+	dyn_interface: Symbol_Id,
+	dyn_args:      []Generic_Arg,
+	// A compiler-owned `Range(T)` value: low endpoint, high endpoint, and the
+	// closed/half-open flag, so `..<` and `..=` survive being stored or passed
+	// (m4b-plan decision "Runtime range representation").
+	is_range:      bool,
+	// A compiler-owned reflection descriptor. Its values are ordinary constant
+	// aggregates, and this is the marker that forbids materializing one into
+	// runtime storage (design.md "Compile-time reflection").
+	descriptor:    bool,
 	// Cached natural layout (`src/layout.odin`). `offsets` has one entry per
 	// struct field, in declaration order.
 	layout_state: Size_State,
@@ -388,6 +415,20 @@ Builtin_Kind :: enum {
 	Align_Of,
 	Offset_Of,
 	Len,
+	// design.md "Standard interface catalogue": the built-ins promised to satisfy
+	// `Hashable` need an operation to satisfy it *with*, so the compiler
+	// contributes one rather than the catalogue hard-coding a predicate.
+	Hash,
+	// Compile-time reflection (design.md "`type` and `typeid`", "Compile-time
+	// reflection").
+	Type_Of,
+	Typeid_Of,
+	Fields_Of,
+	Enum_Values_Of,
+	// design.md "Iteration protocol": `iter(value)` is a free call in the
+	// `Iterable` requirement, so it has to resolve for a built-in and for a user
+	// type's own `impl` member alike.
+	Iter,
 }
 
 Symbol :: struct {
@@ -422,6 +463,16 @@ Symbol :: struct {
 	lookup_pkg:  Package_Id,
 	// The `impl`/`extend` subject this member belongs to, or INVALID_TYPE.
 	owner_type:  Type_Id,
+	// Generics (m4b-plan step 1). `generic` marks a template, which has no
+	// signature and no runtime representation until it is instantiated;
+	// `instance_of` names the template an instance came from. `def_scope` is the
+	// declaration's own lexical scope, which is what definition-site lookup hangs
+	// an instantiation off instead of the caller's.
+	generic:       bool,
+	instance_of:   Symbol_Id,
+	def_scope:     ^Scope,
+	def_file:      u32,
+	def_file_node: ^File,
 	// A first parameter named `self` whose type is the owner. `^T` is not a
 	// receiver, so it leaves this false and gets no method-call sugar.
 	has_receiver: bool,
@@ -442,6 +493,9 @@ Symbol :: struct {
 	// Signature resolution already reported why this procedure has no usable
 	// type, so the gate must not report a second time for the same mistake.
 	signature_error: bool,
+	// A procedure the compiler contributes: it has a real symbol and signature,
+	// and the backend writes its body (`src/iterate.odin`).
+	synth:       Synth_Kind,
 	// Field or enum-member position in its owning type; parameter position in
 	// its signature.
 	index:       u32,
@@ -503,6 +557,10 @@ Package :: struct {
 	// that declared them: a compiler-global list would be discarded by the next
 	// package checked (m3-plan decision "Package-owned backend state").
 	hoisted_procs:  [dynamic]^Expr_Proc,
+	// Generic instances defined by this package, in deterministic instantiation
+	// order. Named and emitted after the package's own items, so a cross-package
+	// generic call still has a final name before any body is written.
+	instances:      [dynamic]Instance_Decl,
 	// Which discovery work this package has already had. Monotonic, so a later
 	// round only does what a newly selected branch added.
 	collected:      bool,
@@ -534,6 +592,22 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.type_by_shape = make(map[Type_Key]Type_Id, c.semantic_allocator)
 	c.symbols = make([dynamic]Symbol, 0, 128, c.semantic_allocator)
 	c.packages = make([dynamic]Package, 0, 8, c.semantic_allocator)
+	c.generic_templates = make(map[Symbol_Id]^Generic_Template, c.semantic_allocator)
+	c.generic_impls = make(map[Symbol_Id][dynamic]^Generic_Impl, c.semantic_allocator)
+	c.instances = make(map[string]^Instance, c.semantic_allocator)
+	c.instance_by_symbol = make(map[Symbol_Id]^Instance, c.semantic_allocator)
+	c.instantiation_stack = make([dynamic]Instantiation_Frame, 0, 8, c.semantic_allocator)
+	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
+	c.interfaces = make(map[Symbol_Id]^Interface_Info, c.semantic_allocator)
+	c.typeid_requested = make(map[Type_Id]bool, c.semantic_allocator)
+	c.typeid_order = make([dynamic]Type_Id, 0, 8, c.semantic_allocator)
+	c.typeid_values = make(map[Type_Id]u64, c.semantic_allocator)
+	c.range_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
+	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
+	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
+	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
+	c.witnesses = make(map[string]^Witness, c.semantic_allocator)
+	c.witness_order = make([dynamic]^Witness, 0, 4, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits
@@ -562,7 +636,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		Type_Info{kind = .Raw_Pointer, bits = pointer_bits},
 		Type_Info{kind = .Type},
 		Type_Info{kind = .String},
-		Type_Info{kind = .Typeid},
+		Type_Info{kind = .Typeid, bits = 64},
 		Type_Info{kind = .Any_View},
 		Type_Info{kind = .Untyped_Int},
 		Type_Info{kind = .Untyped_Float},
@@ -570,6 +644,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		Type_Info{kind = .Untyped_Rune},
 		Type_Info{kind = .Untyped_Nil},
 		Type_Info{kind = .Untyped_String},
+		Type_Info{kind = .String_View, bits = 2 * pointer_bits},
 	)
 	assert(Type_Id(len(c.types)) == FIRST_DYNAMIC_TYPE, "predeclared type table is out of step with its IDs")
 	append(&c.symbols, Symbol{})
@@ -844,6 +919,10 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
 		return true
+	// design.md: two `type` values support `==` and `!=` during compilation, and
+	// `typeid` is an ordinary runtime scalar. Neither has an ordering.
+	case .Type, .Typeid:
+		return true
 	case .Array:
 		return type_is_comparable(c, info.element)
 	case .Struct:
@@ -853,6 +932,9 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 				return false
 			}
 		}
+		return true
+	case .Dyn:
+		// design.md: dynamic interface values are comparable only with `nil`.
 		return true
 	case .Union:
 		// Comparable against nil always, and against another value of the same
@@ -897,9 +979,14 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return id
 }
 
-// Does M2 compile a value of this type at all? Composite deferred syntax still
-// resolves to a real `Type_Id`, so this walks rather than looking for absence
-// (m2-plan decision "Deferred types").
+// Does this milestone compile a value of this type at all? Composite deferred
+// syntax still resolves to a real `Type_Id`, so this walks rather than looking
+// for absence (m2-plan decision "Deferred types").
+//
+// What is still deferred after M4b, each with exactly one `tests/err` fixture:
+// `string` and `string_view` (M6), multi-pointers, slices, dynamic arrays and
+// maps (M5/M6), and `interface` as a runtime type — which is not deferred but
+// deliberately compile-time metadata, so `gate_type` gives it its own L0441.
 type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_is_supported_depth(c, id, 0)
 }
@@ -913,6 +1000,9 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	if info == nil {
 		return false
 	}
+	if info.descriptor {
+		return false // a descriptor exists only during compilation
+	}
 	#partial switch info.kind {
 	case .Invalid:
 		return false
@@ -920,8 +1010,12 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
 		return true
-	case .String, .Typeid, .Any_View, .Multi_Pointer, .Slice, .Dynamic_Array,
-	     .Map, .Interface, .Dyn:
+	case .Typeid:
+		return true
+	case .Any_View, .Dyn:
+		return true
+	case .String, .String_View, .Multi_Pointer, .Slice, .Dynamic_Array,
+	     .Map, .Interface:
 		return false
 	case .Union:
 		for variant in info.variants {
@@ -1010,6 +1104,8 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 		return "typeid"
 	case TYPE_ANY_VIEW:
 		return "any_view"
+	case TYPE_STRING_VIEW:
+		return "string_view"
 	case TYPE_UNTYPED_INT:
 		return "untyped int"
 	case TYPE_UNTYPED_FLOAT:
@@ -1130,6 +1226,7 @@ new_package :: proc(c: ^Compiler, name, canonical_path: string, key := "") -> Pa
 		operators      = make(map[string]^Operator_Set, c.semantic_allocator),
 		imports        = make([dynamic]Package_Import, 0, 4, c.semantic_allocator),
 		hoisted_procs  = make([dynamic]^Expr_Proc, 0, 4, c.semantic_allocator),
+		instances      = make([dynamic]Instance_Decl, 0, 4, c.semantic_allocator),
 	}
 	append(&c.packages, pkg)
 	return id

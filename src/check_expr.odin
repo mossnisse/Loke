@@ -82,7 +82,10 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		errorf(k.c, v.span, "L0390", "`%s` needs the runtime source-location type, which arrives in M6", v.name)
 		v.type = INVALID_TYPE
 
-	case ^Expr_Range, ^Expr_Move,
+	case ^Expr_Range:
+		check_range(k, v)
+
+	case ^Expr_Move,
 	     ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
@@ -425,6 +428,19 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = INVALID_TYPE
 		return
 	}
+	// design.md "Generics": a generic declaration has no runtime representation
+	// before instantiation, so it is neither a value nor a type on its own.
+	if sym.generic {
+		errorf(
+			k.c,
+			v.span,
+			"L0431",
+			"`%s` is generic and needs its arguments; an uninstantiated generic is not a value",
+			name,
+		)
+		v.type = INVALID_TYPE
+		return
+	}
 	switch sym.kind {
 	case .Type:
 		v.resolution = Resolution{kind = .Type, symbol = symbol_id}
@@ -621,13 +637,15 @@ select_associated_member :: proc(k: ^Checker, v: ^Expr_Selector, subject: Type_I
 		return false
 	}
 	// A member's own signature or value may be needed before the phase that
-	// would ordinarily reach it, and both need the block's subject in scope.
+	// would ordinarily reach it, and both need the block's subject *and its own
+	// declaration scope*: inside an instantiated block that scope is what binds
+	// the block's generic arguments.
 	outer := k.impl_type
 	k.impl_type = subject
 	defer k.impl_type = outer
 	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Const && sym.decl != nil {
 		if sym.decl.check_state == .Unchecked {
-			check_decl(k, sym.decl)
+			check_member_decl_in_place(k, member, subject)
 		}
 	}
 	annotate_symbol_use(k, &v.base, member, v.name.text)
@@ -1463,6 +1481,53 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		check_group_call(k, v, group, expected)
 		return
 	}
+	// Nor is a generic procedure: `$T` has no type until the call's own arguments
+	// bind it, so it is never checked as a value.
+	if template := callee_generic_procedure(k, v.callee); template != INVALID_SYMBOL {
+		check_group_call(k, v, template, expected)
+		return
+	}
+	// An interface application is a compile-time boolean, not a conversion.
+	if info := interface_info_for(k, named_callee_symbol(k, v.callee)); info != nil {
+		check_interface_application(k, v, info)
+		return
+	}
+	// A generic record application denotes a type wherever it appears, which is
+	// what makes `Iterator :: Stack_Iterator(T, N);` an associated type.
+	if generic_template_of_callee(k, v.callee, .Record) != nil {
+		denoted := resolve_type_syntax(k, v)
+		if denoted == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		v.type = TYPE_TYPE
+		v.value_category = .Type
+		v.is_const = true
+		v.const_value = type_const(denoted)
+		return
+	}
+	// A slot called through a `dyn` view: an indirect call through the witness,
+	// not an ordinary method lookup on a concrete type.
+	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
+		if operand := dyn_operand_type(k, sel.operand); operand != INVALID_TYPE {
+			if check_dyn_slot_call(k, v, sel, operand) {
+				return
+			}
+			errorf(k.c, v.span, "L0467", "`%s` has no slot `%s`", type_name(k.c, operand), sel.name.text)
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	// `field.get(value)` / `field.pointer(value)`: compiler-defined operations on
+	// a descriptor constant, whose result type follows that descriptor. Only a
+	// name bound to one qualifies, which is what a `$field` binding is, so no
+	// other callee is checked twice looking for it.
+	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && callee_is_descriptor(k, sel.operand) {
+		check_single_expr(k, sel.operand)
+		if check_descriptor_operation(k, v, sel) {
+			return
+		}
+	}
 
 	outer_callee := k.in_callee
 	k.in_callee = true
@@ -1484,6 +1549,12 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 	if callee_base.value_category == .Type {
+		// `(dyn Drawable)(&circle)`: an ordinary explicit conversion, but one that
+		// checks satisfaction and requests a witness rather than reinterpreting.
+		if type_is_dyn(k.c, callee_base.denoted_type) {
+			check_dyn_conversion(k, v, callee_base.denoted_type)
+			return
+		}
 		check_conversion(k, v, callee_base.denoted_type)
 		return
 	}
@@ -1554,6 +1625,41 @@ callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 		}
 	}
 	return INVALID_SYMBOL
+}
+
+// The `dyn` type of a call's receiver, or INVALID_TYPE. Checked before the
+// operand is used as anything else, so a slot call never falls through to
+// ordinary method lookup.
+@(private = "file")
+dyn_operand_type :: proc(k: ^Checker, operand: Expr) -> Type_Id {
+	ident, is_ident := operand.(^Expr_Ident)
+	if !is_ident {
+		return INVALID_TYPE
+	}
+	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	if sym == nil || !type_is_dyn(k.c, sym.type) {
+		return INVALID_TYPE
+	}
+	check_single_expr(k, operand)
+	return sym.type
+}
+
+// Does this operand name a reflection descriptor constant?
+@(private = "file")
+callee_is_descriptor :: proc(k: ^Checker, operand: Expr) -> bool {
+	ident, is_ident := operand.(^Expr_Ident)
+	if !is_ident {
+		return false
+	}
+	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	return sym != nil && sym.kind == .Const && type_is_descriptor(k.c, sym.type)
+}
+
+// The generic procedure template a callee names, or INVALID_SYMBOL.
+@(private = "file")
+callee_generic_procedure :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
+	template := generic_template_of_callee(k, callee, .Procedure)
+	return template == nil ? INVALID_SYMBOL : template.symbol
 }
 
 // `Type.group(...)` and `pkg.Type.group(...)`: an associated group named through
@@ -1632,13 +1738,17 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 @(private = "file")
 check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected: Type_Id) {
 	sym := symbol_of(k.c, group)
+	// A generic procedure is one candidate rather than several, but it still has
+	// to be inferred and substituted before it can be ranked, so it takes the
+	// same path.
+	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
 	description := concat(k.c, "`", concat(k.c, identifier_text(k.c, sym.name), "`"))
 	args, args_ok := collect_call_arguments(k, v.args)
 	if !args_ok {
 		v.type = INVALID_TYPE
 		return
 	}
-	cand, resolved := resolve_overload(k, v.span, description, sym.members, args, expected)
+	cand, resolved := resolve_overload(k, v.span, description, members, args, expected)
 	if !resolved {
 		v.type = INVALID_TYPE
 		return
@@ -1691,6 +1801,15 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		return
 	case .Size_Of, .Align_Of, .Offset_Of, .Len:
 		check_layout_builtin(k, v, ident, sym.builtin)
+		return
+	case .Hash:
+		check_hash_builtin(k, v, ident)
+		return
+	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
+		check_reflection_builtin(k, v, ident, sym.builtin)
+		return
+	case .Iter:
+		check_iter_builtin(k, v, ident)
 		return
 	case .Print_Int:
 		// Checked against its declared parameters, just below.
@@ -1977,7 +2096,8 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .None, .Print_Int, .Assert, .Panic:
+	case .None, .Print_Int, .Assert, .Panic, .Hash, .Iter,
+	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		return
 	}
 	v.is_const = true
@@ -2552,7 +2672,8 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		aggregate.type = type
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
-	case .Struct:
+	case .Struct, .Any_View, .Dyn:
+		// The zero value of an erased view is nil: a null pointer pair.
 		elements := make([]Const_Value, len(info.fields), c.semantic_allocator)
 		for field, index in info.fields {
 			symbol := symbol_of(c, field)
@@ -2601,6 +2722,23 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 				return true
 			}
 		}
+	}
+	// design.md "any_view type": the conversion is implicit at an `any_view`
+	// destination. The concrete type is kept so the backend knows what to take
+	// the address of and which `typeid` to pair with it.
+	if target == TYPE_ANY_VIEW && base.type != TYPE_ANY_VIEW {
+		if !any_view_accepts(k.c, base.type) {
+			return false
+		}
+		concrete := any_view_source_type(k.c, base.type)
+		if type_is_untyped(k.c, base.type) && !materialize(k, e, concrete) {
+			return false
+		}
+		ensure_any_view_fields(k.c)
+		request_typeid(k.c, concrete)
+		base.erased_from = concrete
+		base.type = TYPE_ANY_VIEW
+		return true
 	}
 	if !type_is_untyped(k.c, base.type) {
 		return true
@@ -2742,9 +2880,10 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
-	case .Union:
+	case .Union, .Dyn, .Any_View:
 		// The only union constant is its zero value; a variant value becomes one
-		// at run time, where the tag can be written.
+		// at run time, where the tag can be written. An erased view is the same:
+		// its zero value is nil and every other one is built at run time.
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
@@ -2772,7 +2911,8 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch type_kind(c, type_underlying(c, to)) {
-		case .Pointer, .Raw_Pointer, .Proc, .Union:
+		case .Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View:
+			// The zero value of every erased view is nil.
 			return true
 		}
 		return false
@@ -2794,6 +2934,11 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	// Any pointer converts to `rawptr` without a written conversion; the reverse
 	// needs one.
 	if to == TYPE_RAWPTR && type_kind(c, type_underlying(c, from)) == .Pointer {
+		return true
+	}
+	// design.md: conversion from a concrete value to `any_view` is implicit when
+	// an `any_view` destination is expected, and never allocates.
+	if to == TYPE_ANY_VIEW && any_view_accepts(c, from) {
 		return true
 	}
 	return false

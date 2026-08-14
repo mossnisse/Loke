@@ -1,0 +1,27 @@
+L0438
+@22:1
+has no ABI until it is instantiated
+L0437
+@27:28
+`$E` is not bound here
+L0433
+L0432
+@30:24
+L0434
+@31:5
+does not satisfy the bound `N > 1`
+while instantiating `Limited(int, 1)`
+L0436
+@8:34
+exceeds the compiler's generic instantiation limit
+L0434
+@33:12
+does not satisfy the bound `N > 5`
+L0431
+@35:12
+is generic and needs its arguments
+L0392
+@36:12
+L0435
+@13:46
+a `where` bound must be a compile-time boolean

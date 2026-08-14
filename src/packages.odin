@@ -59,6 +59,10 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	// supplied.
 	for id in package_order(c) {
 		check_package_bodies(&k, id)
+		// Methods of a generic instantiation are checked once their requesting
+		// package is finished, so a method body may itself use the instance that
+		// its own signature created.
+		check_pending_impl_instances(&k)
 	}
 	return root, c.error_count == 0
 }

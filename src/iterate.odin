@@ -1,0 +1,553 @@
+// Runtime `foreach` and the iteration protocol (m4b-plan step 4).
+//
+// design.md requires built-ins to *satisfy* the same static `Iterable` interface
+// a user type does, not to be implemented through it. So there are two paths and
+// they must agree:
+//
+//   - `foreach` over an integer range or a fixed array lowers directly to an
+//     index loop. No iterator object is built.
+//   - the compiler still contributes associated `Element`/`Iterator` members, an
+//     `iter` overload, and an opaque iterator with `next`, so a value passed
+//     through a generic parameter constrained by `Iterable` works without
+//     relying on the syntax lowering.
+//
+// A range is a real runtime value, not just syntax: `..<` and `..=` must survive
+// being stored in a variable or passed to a generic procedure, which a
+// syntax-only lowering loses. `Range(T)` is a compiler-owned struct carrying its
+// low endpoint, high endpoint, and closed flag, so it reuses the existing
+// layout, constant, parameter-passing, and emission paths rather than adding a
+// second aggregate model.
+package lokec
+
+import "core:fmt"
+
+RANGE_LOW :: 0
+RANGE_HIGH :: 1
+RANGE_CLOSED :: 2
+
+ITER_RANGE_CURRENT :: 0
+ITER_RANGE_HIGH :: 1
+ITER_RANGE_CLOSED :: 2
+
+ITER_ARRAY_DATA :: 0
+ITER_ARRAY_INDEX :: 1
+
+// A procedure the compiler contributes rather than the user writing it. It has
+// a real symbol and a real emitted body; the backend knows how to write each
+// shape (the same seam `delegate` uses for its forwarding overloads).
+Synth_Kind :: enum {
+	None,
+	Range_Iter,
+	Range_Next,
+	Array_Iter,
+	Array_Next,
+	// design.md: "`dyn I` itself satisfies `I` by compiler-provided forwarding
+	// slots." Each one calls through the view's own witness.
+	Dyn_Forward,
+}
+
+// ---------------------------------------------------------- range values --
+
+range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+	if existing, found := c.range_types[element]; found {
+		return existing
+	}
+	name := intern_identifier(c, fmt.aprintf("Range(%s)", type_name(c, element), allocator = c.semantic_allocator))
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_range = true})
+	fields := make([]Symbol_Id, 3, c.semantic_allocator)
+	fields[RANGE_LOW] = new_field_symbol(c, "low", element, RANGE_LOW)
+	fields[RANGE_HIGH] = new_field_symbol(c, "high", element, RANGE_HIGH)
+	fields[RANGE_CLOSED] = new_field_symbol(c, "closed", TYPE_BOOL, RANGE_CLOSED)
+	if info := type_of(c, type); info != nil {
+		info.fields = fields
+		info.mangled = fmt.aprintf("Range.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator)
+	}
+	c.range_types[element] = type
+	return type
+}
+
+type_is_range :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	info := type_of(c, type_underlying(c, id))
+	return info != nil && info.is_range
+}
+
+@(private = "file")
+new_field_symbol :: proc(c: ^Compiler, name: string, type: Type_Id, index: int) -> Symbol_Id {
+	return new_symbol(c, Symbol {
+		name   = intern_identifier(c, name),
+		span   = no_span(),
+		kind   = .Field,
+		type   = type,
+		index  = u32(index),
+		public = true,
+	})
+}
+
+// ------------------------------------------------------- iterator types --
+
+@(private = "file")
+range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
+	if existing, found := c.iterator_types[range]; found {
+		return existing
+	}
+	element := type_of(c, range).element
+	name := intern_identifier(c, fmt.aprintf("Range_Iterator(%s)", type_name(c, element), allocator = c.semantic_allocator))
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
+	fields := make([]Symbol_Id, 3, c.semantic_allocator)
+	fields[ITER_RANGE_CURRENT] = new_field_symbol(c, "current", element, ITER_RANGE_CURRENT)
+	fields[ITER_RANGE_HIGH] = new_field_symbol(c, "high", element, ITER_RANGE_HIGH)
+	fields[ITER_RANGE_CLOSED] = new_field_symbol(c, "closed", TYPE_BOOL, ITER_RANGE_CLOSED)
+	if info := type_of(c, type); info != nil {
+		info.fields = fields
+		info.mangled = fmt.aprintf("Range_Iterator.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator)
+	}
+	c.iterator_types[range] = type
+	return type
+}
+
+@(private = "file")
+array_iterator_type :: proc(c: ^Compiler, array: Type_Id) -> Type_Id {
+	if existing, found := c.iterator_types[array]; found {
+		return existing
+	}
+	element := type_of(c, array).element
+	name := intern_identifier(c, fmt.aprintf("Array_Iterator(%s)", type_name(c, array), allocator = c.semantic_allocator))
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[ITER_ARRAY_DATA] = new_field_symbol(c, "data", array, ITER_ARRAY_DATA)
+	fields[ITER_ARRAY_INDEX] = new_field_symbol(c, "index", TYPE_INT, ITER_ARRAY_INDEX)
+	if info := type_of(c, type); info != nil {
+		info.fields = fields
+		info.mangled = fmt.aprintf("Array_Iterator.%s", llvm_safe(type_name(c, array)), allocator = c.semantic_allocator)
+	}
+	c.iterator_types[array] = type
+	return type
+}
+
+// --------------------------------------------- compiler-contributed members --
+
+// Installs `Element`, `Iterator`, and the iterator's `next` on a built-in
+// iterable, so interface checking and generic code see exactly what a user type
+// declares by hand. Idempotent: the type table is interned, so this runs once
+// per type.
+ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
+	under := type_underlying(k.c, type)
+	info := type_of(k.c, under)
+	if info == nil || len(info.members) > 0 {
+		return
+	}
+	iterator := INVALID_TYPE
+	element := INVALID_TYPE
+	iter_kind := Synth_Kind.None
+	next_kind := Synth_Kind.None
+	switch {
+	case info.is_range:
+		element = info.element
+		iterator = range_iterator_type(k.c, under)
+		iter_kind, next_kind = .Range_Iter, .Range_Next
+	case info.kind == .Array:
+		element = info.element
+		iterator = array_iterator_type(k.c, under)
+		iter_kind, next_kind = .Array_Iter, .Array_Next
+	case:
+		return
+	}
+
+	members := make([]Symbol_Id, 3, k.c.semantic_allocator)
+	members[0] = new_associated_type(k.c, "Element", element, under)
+	members[1] = new_associated_type(k.c, "Iterator", iterator, under)
+	members[2] = synth_proc(k.c, "iter", iter_kind, under, []Type_Id{under}, []Param_Mode{.Value}, []Type_Id{iterator})
+	if info = type_of(k.c, under); info != nil {
+		info.members = members
+	}
+
+	// `next(self: inout Iterator) -> (Element, bool)` — the optional-ok shape the
+	// protocol requires, on the opaque iterator.
+	next_members := make([]Symbol_Id, 1, k.c.semantic_allocator)
+	next := synth_proc(
+		k.c, "next", next_kind, iterator,
+		[]Type_Id{iterator}, []Param_Mode{.Inout}, []Type_Id{element, TYPE_BOOL},
+	)
+	if sym := symbol_of(k.c, next); sym != nil {
+		sym.has_receiver = true
+		sym.receiver = .Inout
+	}
+	next_members[0] = next
+	if iterator_info := type_of(k.c, iterator); iterator_info != nil {
+		iterator_info.members = next_members
+	}
+}
+
+@(private = "file")
+new_associated_type :: proc(c: ^Compiler, name: string, value, owner: Type_Id) -> Symbol_Id {
+	return new_symbol(c, Symbol {
+		name        = intern_identifier(c, name),
+		span        = no_span(),
+		kind        = .Const,
+		type        = TYPE_TYPE,
+		const_value = type_const(value),
+		owner_type  = owner,
+		public      = true,
+	})
+}
+
+@(private = "file")
+synth_proc :: proc(
+	c: ^Compiler,
+	name: string,
+	kind: Synth_Kind,
+	owner: Type_Id,
+	params: []Type_Id,
+	modes: []Param_Mode,
+	results: []Type_Id,
+) -> Symbol_Id {
+	param_copy := make([]Type_Id, len(params), c.semantic_allocator)
+	result_copy := make([]Type_Id, len(results), c.semantic_allocator)
+	copy(param_copy, params)
+	copy(result_copy, results)
+	id := new_symbol(c, Symbol {
+		name          = intern_identifier(c, name),
+		span          = no_span(),
+		kind          = .Proc,
+		public        = true,
+		owner_type    = owner,
+		params        = param_copy,
+		results       = result_copy,
+		param_symbols = make([]Symbol_Id, len(params), c.semantic_allocator),
+		param_defaults = make([]Expr, len(params), c.semantic_allocator),
+		result_symbols = make([]Symbol_Id, len(results), c.semantic_allocator),
+		proc_type     = intern_proc_type(c, param_copy, modes, result_copy, make([]bool, len(results), c.semantic_allocator), ""),
+		synth         = kind,
+	})
+	append(&c.synth_procs, id)
+	return id
+}
+
+// ---------------------------------------------------------- the `iter` call --
+
+// design.md: "The compiler contributes ... an `iter` overload". A user type
+// declares `iter` as an ordinary `impl` member, and this is what makes the free
+// call in the `Iterable` requirement — and in generic code — find it.
+check_iter_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	if len(v.args) != 1 {
+		errorf(k.c, v.span, "L0322", "`iter` takes 1 argument, found %d", len(v.args))
+		v.type = INVALID_TYPE
+		return
+	}
+	subject := check_single_expr(k, v.args[0].value)
+	if subject == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	ensure_iteration_members(k, subject)
+	chosen := iteration_member(k, subject, "iter")
+	sym := symbol_of(k.c, chosen)
+	iterator := associated_type_of(k, subject, "Iterator")
+	if iterator == INVALID_TYPE || !iteration_proc_matches(k, sym, subject, .Value, []Type_Id{iterator}) {
+		errorf(
+			k.c,
+			expr_span(v.args[0].value),
+			"L0456",
+			"`%s` is not iterable: it needs associated `Element` and `Iterator` members and an `iter` procedure",
+			type_name(k.c, subject),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = v.args[0].value
+	v.bound = bound
+	// Rewrite the callee to name the selected procedure, so every later phase —
+	// the backend included — sees an ordinary direct call.
+	annotate_chosen_callee(k, v, chosen)
+	v.resolution = Resolution{kind = .Call, symbol = chosen, chosen_overload = chosen}
+	v.type = sym.results[0]
+}
+
+@(private = "file")
+iteration_proc_matches :: proc(
+	k: ^Checker,
+	sym: ^Symbol,
+	parameter: Type_Id,
+	mode: Param_Mode,
+	results: []Type_Id,
+) -> bool {
+	if sym == nil || sym.kind != .Proc || len(sym.params) != 1 || sym.params[0] != parameter ||
+	   len(sym.results) != len(results) {
+		return false
+	}
+	info := type_of(k.c, sym.proc_type)
+	if info == nil || info.convention != "" || len(info.param_modes) != 1 || info.param_modes[0] != mode {
+		return false
+	}
+	for result, index in results {
+		if sym.results[index] != result ||
+		   (index < len(info.result_inout) && info.result_inout[index]) {
+			return false
+		}
+	}
+	return true
+}
+
+// One named member of an iterable, looked up without the extension table: the
+// protocol is inherent.
+iteration_member :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
+	ensure_iteration_members(k, type)
+	info := type_of(k.c, type_underlying(k.c, type))
+	if info == nil {
+		return INVALID_SYMBOL
+	}
+	return member_named_in(k.c, info.members, intern_identifier(k.c, name))
+}
+
+// The associated type a member names, or INVALID_TYPE.
+associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id {
+	member := iteration_member(k, type, name)
+	sym := symbol_of(k.c, member)
+	if sym == nil {
+		return INVALID_TYPE
+	}
+	if sym.kind == .Type {
+		return sym.type
+	}
+	if sym.kind == .Const {
+		if sym.decl != nil && sym.decl.check_state == .Unchecked {
+			check_member_decl_in_place(k, member, type)
+			sym = symbol_of(k.c, member)
+		}
+		if sym.const_value.kind == .Type {
+			return sym.const_value.type_value
+		}
+	}
+	return INVALID_TYPE
+}
+
+// -------------------------------------------------------- runtime foreach --
+
+check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
+	if len(s.bindings) == 0 || len(s.bindings) > 2 {
+		errorf(k.c, s.span, "L0456", "a `foreach` binds one or two names")
+		return FLOWS
+	}
+	if len(s.bindings) == 2 && s.bindings[1].is_ref {
+		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
+		return FLOWS
+	}
+
+	outer := k.scope
+	k.scope = new_scope(k.c, outer, .Local)
+	defer k.scope = outer
+
+	// A written range keeps its endpoints: the direct lowering never builds a
+	// `Range(T)` value for it.
+	if written, is_range := s.iterable.(^Expr_Range); is_range {
+		return check_range_foreach(k, s, written)
+	}
+
+	subject := check_single_expr(k, s.iterable)
+	if subject == INVALID_TYPE {
+		return FLOWS
+	}
+	under := type_underlying(k.c, subject)
+	info := type_of(k.c, under)
+	if info == nil {
+		return FLOWS
+	}
+
+	switch {
+	case info.kind == .Array:
+		s.kind = .Array
+		s.element_type = info.element
+		s.count = info.count
+	case info.is_range:
+		s.kind = .Stored_Range
+		s.element_type = info.element
+	case:
+		return check_protocol_foreach(k, s, subject)
+	}
+
+	if s.bindings[0].is_ref && !expr_base(s.iterable).assignable {
+		report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
+		return FLOWS
+	}
+	if s.kind == .Stored_Range && s.bindings[0].is_ref {
+		errorf(k.c, s.bindings[0].name.span, "L0457", "a range produces values, so it cannot be iterated by reference")
+		return FLOWS
+	}
+	return check_foreach_body(k, s, s.element_type)
+}
+
+@(private = "file")
+check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range) -> Flow_Info {
+	element := check_single_expr(k, written)
+	if element == INVALID_TYPE {
+		return FLOWS
+	}
+	if s.bindings[0].is_ref {
+		errorf(k.c, s.bindings[0].name.span, "L0457", "a range produces values, so it cannot be iterated by reference")
+		return FLOWS
+	}
+	s.kind = .Range
+	s.element_type = type_of(k.c, type_underlying(k.c, element)).element
+	return check_foreach_body(k, s, s.element_type)
+}
+
+// design.md "Iteration protocol": associated `Element` and `Iterator`,
+// `iter(value)`, and `next(self: inout Iterator) -> (Element, bool)`.
+@(private = "file")
+check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
+	if s.bindings[0].is_ref {
+		// design.md "By-reference iteration": by-reference `foreach` is a
+		// built-in-container facility, and the protocol has only value-producing
+		// `next`.
+		errorf(
+			k.c,
+			s.bindings[0].name.span,
+			"L0457",
+			"`%s` cannot be iterated by reference; expose a mutable slice or an indexed `inout` operation instead",
+			type_name(k.c, subject),
+		)
+		return FLOWS
+	}
+	element := associated_type_of(k, subject, "Element")
+	iterator := associated_type_of(k, subject, "Iterator")
+	iter := iteration_member(k, subject, "iter")
+	iter_sym := symbol_of(k.c, iter)
+	if element == INVALID_TYPE || iterator == INVALID_TYPE ||
+	   !iteration_proc_matches(k, iter_sym, subject, .Value, []Type_Id{iterator}) {
+		errorf(
+			k.c,
+			expr_span(s.iterable),
+			"L0456",
+			"`%s` is not iterable: it needs associated `Element` and `Iterator` members and an `iter` procedure",
+			type_name(k.c, subject),
+		)
+		return FLOWS
+	}
+	// Bare `foreach` never selects `iter_reverse`: only `iter` is consulted here,
+	// and a user `iter_reverse` stays an ordinary callable overload.
+	next := iteration_member(k, iterator, "next")
+	next_sym := symbol_of(k.c, next)
+	if !iteration_proc_matches(k, next_sym, iterator, .Inout, []Type_Id{element, TYPE_BOOL}) {
+		errorf(
+			k.c,
+			expr_span(s.iterable),
+			"L0456",
+			"`%s` needs `next :: proc(self: inout %s) -> (%s, bool)`",
+			type_name(k.c, iterator),
+			type_name(k.c, iterator),
+			type_name(k.c, element),
+		)
+		return FLOWS
+	}
+
+	s.kind = .Protocol
+	s.element_type = element
+	s.iterator_type = iterator
+	s.iter_symbol = iter
+	s.next_symbol = next
+	return check_foreach_body(k, s, element)
+}
+
+@(private = "file")
+check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> Flow_Info {
+	if !gate_type(k, element, expr_span(s.iterable)) {
+		return FLOWS
+	}
+	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], element, s.bindings[0].is_ref)
+	if len(s.bindings) == 2 {
+		s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], TYPE_INT, false)
+	}
+
+	incoming := clone_result_assignments(k.c, k.assigned_results)
+	k.loop_depth += 1
+	body := check_scoped_block(k, s.body)
+	k.loop_depth -= 1
+	// A `foreach` may execute zero times, so nothing the body assigns is
+	// guaranteed on the way out.
+	k.assigned_results = incoming
+	return Flow_Info{can_fall_through = true, returns = body.returns}
+}
+
+@(private = "file")
+bind_loop_name :: proc(k: ^Checker, binding: Foreach_Binding, type: Type_Id, mutable: bool) -> Symbol_Id {
+	if binding.name.text == "_" || binding.name.text == "" {
+		return INVALID_SYMBOL
+	}
+	id := binding.name.id
+	if id == INVALID_IDENTIFIER {
+		id = intern_identifier(k.c, binding.name.text)
+	}
+	symbol := new_symbol(k.c, Symbol {
+		name      = id,
+		span      = binding.name.span,
+		kind      = .Var,
+		type      = type,
+		pkg       = k.pkg,
+		// By default each iterated value is a copy, and assignment to the copy
+		// does not modify the source; `&value` makes the binding the element.
+		immutable = !mutable,
+	})
+	k.scope.names[id] = symbol
+	return symbol
+}
+
+// ------------------------------------------------------- range expressions --
+
+// `a ..< b` and `a ..= b` as a value. design.md gives no comparison or
+// arithmetic operations on a range, so this only builds one.
+check_range :: proc(k: ^Checker, v: ^Expr_Range) {
+	v.value_category = .Value
+	low := check_single_expr(k, v.lo)
+	high := check_single_expr(k, v.hi)
+	if low == INVALID_TYPE || high == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	element, unified := unify_range_endpoints(k, v, low, high)
+	if !unified {
+		v.type = INVALID_TYPE
+		return
+	}
+	if !type_is_integer(k.c, element) && !type_is_rune(k.c, element) {
+		errorf(
+			k.c,
+			v.op_span,
+			"L0458",
+			"a range needs integer or rune endpoints, found `%s`",
+			type_name(k.c, element),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	v.type = range_type(k.c, element)
+	ensure_iteration_members(k, v.type)
+}
+
+@(private = "file")
+unify_range_endpoints :: proc(k: ^Checker, v: ^Expr_Range, low, high: Type_Id) -> (Type_Id, bool) {
+	if low == high {
+		return type_is_untyped(k.c, low) ? default_type(k.c, low) : low, true
+	}
+	// One untyped endpoint takes the other's concrete type, as an arithmetic
+	// operand would.
+	switch {
+	case type_is_untyped(k.c, low) && type_is_untyped(k.c, high):
+		merged := default_type(k.c, low)
+		return merged, materialize(k, v.lo, merged) && materialize(k, v.hi, merged)
+	case type_is_untyped(k.c, low):
+		return high, materialize(k, v.lo, high)
+	case type_is_untyped(k.c, high):
+		return low, materialize(k, v.hi, low)
+	}
+	errorf(
+		k.c,
+		v.op_span,
+		"L0458",
+		"a range's endpoints must have the same type, found `%s` and `%s`",
+		type_name(k.c, low),
+		type_name(k.c, high),
+	)
+	return INVALID_TYPE, false
+}

@@ -1045,6 +1045,27 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 	case .Panic:
 		eval_fail(ev, v.span, "L0343", "compile-time panic%s", eval_message(ev, v, 0))
 		return Eval_Value{}, false
+
+	case .Hash:
+		// The compile-time half of the compiler-contributed `hash`: the same two
+		// steps the backend emits, so a folded hash and a runtime one agree.
+		value, value_ok := eval_expr(ev, v.bound[0])
+		seed, seed_ok := eval_expr(ev, v.bound[1])
+		if !value_ok || !seed_ok {
+			return Eval_Value{}, false
+		}
+		frozen_value, froze_value := freeze(ev, value)
+		frozen_seed, froze_seed := freeze(ev, seed)
+		if !froze_value || !froze_seed {
+			return Eval_Value{}, false
+		}
+		start, _ := bi_to_u64(ev.k.c, bi_wrap(ev.k.c, frozen_seed.integer, 64, false))
+		mixed := hash_const(ev.k.c, frozen_value, expr_base(v.bound[0]).type, start)
+		return Eval_Value {
+			kind    = .Integer,
+			type    = TYPE_UINT,
+			integer = bi_from_u64(ev.k.c, mixed),
+		}, true
 	}
 	eval_fail(
 		ev,

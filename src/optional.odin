@@ -25,6 +25,25 @@ check_type_assert :: proc(k: ^Checker, v: ^Expr_Type_Assert) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// design.md: a dynamic interface is a borrowed view and supports no type
+	// assertion; add a slot for required behavior, or pass an `any_view`.
+	if type_is_dyn(k.c, operand) {
+		errorf(
+			k.c,
+			v.span,
+			"L0466",
+			"`%s` is a borrowed view and has no type assertion; add a slot for the behavior, or pass an `any_view`",
+			type_name(k.c, operand),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	// design.md "any_view type": it supports runtime type assertions and type
+	// switches. One construct, two result shapes, exactly as for a union.
+	if operand == TYPE_ANY_VIEW {
+		check_any_view_assert(k, v)
+		return
+	}
 	if !type_is_union(k.c, operand) {
 		errorf(
 			k.c,
@@ -311,12 +330,25 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if subject == INVALID_TYPE {
 		return Flow_Info{can_fall_through = true}
 	}
-	if !type_is_union(k.c, subject) {
+	// design.md: a dynamic interface is a borrowed view and supports no type
+	// switch in version 1.
+	if type_is_dyn(k.c, subject) {
+		errorf(
+			k.c,
+			expr_span(s.subject),
+			"L0466",
+			"`%s` is a borrowed view and has no type switch; add a slot for the behavior, or switch on an `any_view`",
+			type_name(k.c, subject),
+		)
+		return Flow_Info{can_fall_through = true}
+	}
+	erased := subject == TYPE_ANY_VIEW
+	if !erased && !type_is_union(k.c, subject) {
 		errorf(
 			k.c,
 			expr_span(s.subject),
 			"L0426",
-			"a type switch needs a union, found `%s`",
+			"a type switch needs a union or an `any_view`, found `%s`",
 			type_name(k.c, subject),
 		)
 		return Flow_Info{can_fall_through = true}
@@ -341,6 +373,27 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		}
 		for value in entry.values {
 			variant := resolve_type_syntax(k, value)
+			// An `any_view` case names any concrete type the view could hold; a
+			// union case names one of its variants.
+			if erased {
+				if variant == INVALID_TYPE || !any_view_accepts(k.c, variant) {
+					errorf(
+						k.c,
+						expr_span(value),
+						"L0465",
+						"`%s` is not a concrete type an `any_view` can hold",
+						variant == INVALID_TYPE ? "this case" : type_name(k.c, variant),
+					)
+					continue
+				}
+				request_typeid(k.c, variant)
+				if covered[variant] {
+					errorf(k.c, expr_span(value), "L0367", "`%s` is already covered by an earlier case", type_name(k.c, variant))
+					continue
+				}
+				covered[variant] = true
+				continue
+			}
 			if variant == INVALID_TYPE || !union_holds(k.c, subject, variant) {
 				errorf(
 					k.c,
@@ -397,7 +450,12 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 
 	if !has_default {
-		report_uncovered_variants(k, s, subject, covered)
+		if erased {
+			// An `any_view` erases an open set, so no case list can be exhaustive.
+			errorf(k.c, s.span, "L0465", "a type switch over `any_view` needs a default case")
+		} else {
+			report_uncovered_variants(k, s, subject, covered)
+		}
 		joined = have_join ? intersect_result_assignments(k.c, joined, incoming) : incoming
 		have_join = true
 	}

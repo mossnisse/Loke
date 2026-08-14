@@ -1,0 +1,30 @@
+package main;
+
+Pair :: struct($T: type) {
+	first:  T,
+	second: T,
+}
+
+impl Pair($T) {
+	sum :: proc(self) -> T {
+		return self.first + self.second;
+	}
+}
+
+identity :: proc($T: type, value: T) -> T {
+	return value;
+}
+
+first_of :: proc(values: [$N]$E) -> E {
+	return values[0];
+}
+
+main :: proc() {
+	a: Pair(int) = {2, 3};
+	b: Pair(f64) = {1.5, 2.5};
+	print_int(a.sum());
+	print_int(int(b.sum()));
+	print_int(identity(int, 7));
+	xs := [3]int{9, 8, 7};
+	print_int(first_of(xs));
+}

@@ -1,0 +1,38 @@
+package main;
+
+// One diagnostic per generic mistake, and none from an overload nothing selects.
+Limited :: struct($T: type, $N: int) where N > 1 {
+	items: [N]T,
+}
+
+Recur :: struct($N: int) { next: Recur(N + 1) }
+
+only_big :: proc(x: [$N]int) -> int where N > 5 { return N; }
+
+// A `where` bound must be a compile-time boolean.
+not_boolean :: proc(x: [$N]int) -> int where N { return N; }
+
+// Never selected below, so its body is never checked and never diagnosed.
+bad_body :: proc(v: $T) -> int { return v.no_such_field; }
+good_body :: proc(v: int) -> int { return 1; }
+either :: proc{bad_body, good_body};
+
+plain :: proc(x: int) -> int where x > 0 { return x; }
+
+@(export)
+exported :: proc($T: type) -> int { return 0; }
+
+// `$E` is a binding site in a parameter type; a result type is a use, and this
+// one has nothing to use.
+unbound :: proc(x: int) -> $E { return x; }
+
+main :: proc() {
+	bad_arg: Limited(int, "two") = {};
+	l: Limited(int, 1) = {};
+	r: Recur(0) = {};
+	print_int(only_big([2]int{1, 2}));
+	print_int(either(3));
+	print_int(Limited);
+	print_int(only_big([6]int{1, 2, 3, 4, 5, 6}, 7));
+	print_int(not_boolean([2]int{1, 2}));
+}

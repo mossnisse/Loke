@@ -1,0 +1,32 @@
+package main;
+
+// Unrelated M4b failures in one file: every one is reported, and none of them
+// stops the checker from reaching the next.
+
+Boxed :: struct($T: type) { value: T }
+
+Named :: interface($Self: type) {
+	slot tag: proc(self) -> int;
+}
+
+Thing :: struct { value: int }
+
+only_arrays :: proc(x: [$N]int) -> int where N > 1 { return N; }
+
+main :: proc() {
+	// A generic name is not a value.
+	print_int(Boxed);
+	// A bound no argument satisfies.
+	print_int(only_arrays([1]int{1}));
+	// A concrete type with no slot cannot be erased.
+	t: Thing = {1};
+	view := (dyn Named)(&t);
+	// `any_view` cannot be stored inside another type.
+	pair: [2]any_view;
+	// A descriptor cannot be materialised.
+	descriptor := fields_of(Thing)[0];
+	// A static expansion is not a loop.
+	foreach ($field in fields_of(Thing)) { continue; }
+	// A range needs integer endpoints.
+	foreach (v in true ..< false) { print_int(1); }
+}

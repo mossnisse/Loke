@@ -1,8 +1,8 @@
 %union.Error.
 = type { i32, i8, [3 x i8] }
-define i32 @loke.p.5665632e646f75626c65
+define i32 @loke.p.Vec.double
 define %struct.Vec
-@loke.p.5665632e616464
+@loke.p.Vec.add
 getelementptr inbounds %union.Error.
 extractvalue %union.Error.
 select i1

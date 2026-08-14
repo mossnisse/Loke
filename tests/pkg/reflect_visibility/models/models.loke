@@ -1,0 +1,28 @@
+@(public)
+package models;
+
+// The file's `@(public)` default makes these fields visible to an importer's
+// reflection; `secret` opts back out.
+Record :: struct {
+	id:   int,
+	name: int `json:"name"`,
+	@(private)
+	secret: int,
+}
+
+// Filtering the first field must not renumber the visible field's physical
+// descriptor index.
+Mixed :: struct {
+	@(private)
+	hidden: int,
+	shown: int,
+}
+
+@(public)
+count_here :: proc() -> int {
+	total := 0;
+	foreach ($field in fields_of(Record)) {
+		total += 1;
+	}
+	return total;
+}

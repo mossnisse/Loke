@@ -1,0 +1,15 @@
+@(public)
+package other;
+
+import "../shapes";
+import "../draw";
+
+// A caller-local extension with the same slot name must not change what this
+// package's witness for `Circle` does: witness keys are compilation-global, so
+// their lookup policy is too.
+extend shapes.Circle {
+	size :: proc(self) -> int { return 999; }
+}
+
+@(public)
+erase :: proc(value: ^shapes.Circle) -> int { return draw.measure((dyn draw.Sized)(value)); }

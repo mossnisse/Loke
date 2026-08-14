@@ -1,0 +1,7 @@
+package main;
+
+main :: proc() {
+	// A failed single-value assertion against an `any_view` traps.
+	view: any_view = 7;
+	if (view.(bool)) { print_int(1); } else { print_int(0); }
+}

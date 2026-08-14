@@ -1,0 +1,26 @@
+L0453
+@8:2
+exists only during compilation
+L0453
+@9:2
+L0378
+@10:2
+`type` is compile-time only
+L0455
+@14:3
+cannot target a static expansion
+L0454
+@17:19
+both bindings carry `$`
+L0454
+@19:13
+a static binding is immutable and cannot use `&`
+L0341
+@22:17
+L0451
+@24:31
+needs a struct type
+L0452
+@27:23
+this descriptor does not describe `Colour`
+L0452

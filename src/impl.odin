@@ -22,6 +22,16 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	// During discovery the subject's own package may not be loaded yet, so a
 	// failure is pending rather than wrong: it is reported only once no round can
 	// supply anything more.
+	// A block written against a generic type — `impl Table($K, $V)` or the
+	// specialized `impl Table(string, int)` — is kept until an instantiation
+	// exists to install it on, rather than resolving a subject that has none yet.
+	if call, is_call := item.type.(^Expr_Call); is_call {
+		if template := generic_template_of_callee(k, call.callee, .Record); template != nil {
+			register_generic_impl(k, item, template.symbol, call.args)
+			return
+		}
+	}
+
 	mark := len(k.c.diagnostics)
 	errors := k.c.error_count
 	subject := resolve_type_syntax(k, item.type)
@@ -122,6 +132,9 @@ declare_impl_member :: proc(
 			decl       = d,
 			pkg        = k.pkg,
 			lookup_pkg = k.pkg,
+			def_scope     = k.scope,
+			def_file      = k.file,
+			def_file_node = k.file_node,
 			owner_type = item.subject,
 			public     = declaration_is_public(k, d),
 			implicit   = has_attribute(d.attributes, "implicit"),
@@ -335,6 +348,10 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 // inherent members, plus the extensions the lookup package declares. Groups are
 // expanded, so the overload engine sees one flat candidate set.
 member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+	// A built-in iterable's associated members and `iter` are contributed on
+	// demand, so interface checking and generic code see exactly what a user type
+	// declares by hand (design.md "Iteration protocol").
+	ensure_iteration_members(k, type)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := type_of(k.c, type); info != nil {
 		expand_visible_members(k, info.members, name, &out)
@@ -375,6 +392,7 @@ expand_visible_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifi
 // One named member, without expanding a group: what an associated constant, an
 // associated type, or a directly named procedure resolves to.
 find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	ensure_iteration_members(k, type)
 	if info := type_of(k.c, type); info != nil {
 		if found := visible_member_named(k, info.members, name); found != INVALID_SYMBOL {
 			return found
@@ -474,5 +492,43 @@ wrap_implicit_conversion :: proc(k: ^Checker, value: Expr, overload: Symbol_Id) 
 // procedure under. Two impl blocks cannot give one type the same member name, so
 // this is unique within a package.
 qualified_member_name :: proc(c: ^Compiler, sym: ^Symbol) -> string {
-	return fmt.aprintf("%s.%s", type_name(c, sym.owner_type), identifier_text(c, sym.name))
+	owner := type_name(c, sym.owner_type)
+	// An instantiation carries its own backend spelling, so a member of
+	// `Pair(int)` is emitted under `Pair.int.member` rather than through escapes.
+	if info := type_of(c, sym.owner_type); info != nil && info.mangled != "" {
+		owner = info.mangled
+	}
+	return fmt.aprintf("%s.%s", owner, identifier_text(c, sym.name))
+}
+
+// An `impl` member reached on demand — an associated type asked for by an
+// interface requirement, say — is checked in its *own* declaration scope. Inside
+// an instantiated block that scope binds the block's generic arguments, which is
+// what makes `Iterator :: Stack_Iterator(T, N)` resolve wherever it is asked
+// for.
+check_member_decl_in_place :: proc(k: ^Checker, member: Symbol_Id, subject: Type_Id) {
+	sym := symbol_of(k.c, member)
+	if sym == nil || sym.decl == nil {
+		return
+	}
+	saved_scope, saved_impl := k.scope, k.impl_type
+	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
+	saved_file, saved_node := k.file, k.file_node
+	defer {
+		k.scope, k.impl_type = saved_scope, saved_impl
+		k.pkg, k.lookup_pkg = saved_pkg, saved_lookup
+		k.file, k.file_node = saved_file, saved_node
+	}
+	if sym.def_scope != nil {
+		k.scope = sym.def_scope
+	}
+	if sym.def_file_node != nil {
+		k.file, k.file_node = sym.def_file, sym.def_file_node
+	}
+	if sym.pkg != INVALID_PACKAGE {
+		k.pkg = sym.pkg
+		k.lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg
+	}
+	k.impl_type = subject
+	check_decl(k, sym.decl)
 }

@@ -1,0 +1,14 @@
+@(public)
+package iface;
+
+import "../shapes";
+
+// A named slot is matched by an inherent method or by an extension declared in
+// the package that declares the slot's owning interface — this one.
+Named :: interface($T: type) {
+	slot describe: proc(self) -> int;
+}
+
+extend shapes.Widget {
+	describe :: proc(self) -> int { return self.size * 2; }
+}

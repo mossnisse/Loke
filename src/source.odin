@@ -85,6 +85,47 @@ Compiler :: struct {
 	// Every parsed file, so one `destroy_compilation` frees the lot.
 	parsed_files:   [dynamic]^File,
 
+	// Generics (`src/generic.odin`). `instances` is the monomorphization cache
+	// keyed by (declaration symbol, canonical argument vector); the stack and the
+	// count enforce the documented instantiation ceiling.
+	generic_templates:     map[Symbol_Id]^Generic_Template,
+	generic_impls:         map[Symbol_Id][dynamic]^Generic_Impl,
+	instances:             map[string]^Instance,
+	instance_by_symbol:    map[Symbol_Id]^Instance,
+	instantiation_stack:   [dynamic]Instantiation_Frame,
+	instantiation_count:   int,
+	instantiation_limit_hit: bool,
+	// The diagnostic that already carries the instantiation stack, so unwinding
+	// a deep instantiation does not attach it once per level.
+	last_noted_diagnostic: int,
+	pending_impl_instances: [dynamic]Pending_Impl,
+
+	// Interface declarations (`src/interface.odin`), keyed by their symbol.
+	interfaces:            map[Symbol_Id]^Interface_Info,
+
+	// Compile-time reflection (`src/reflect.odin`). The descriptor types are
+	// created on first use; `typeid` identity is symbolic during checking and
+	// numeric only after `freeze_typeids`.
+	meta_field_type:      Type_Id,
+	meta_enum_value_type: Type_Id,
+	typeid_requested:     map[Type_Id]bool,
+	typeid_order:         [dynamic]Type_Id,
+	typeid_values:        map[Type_Id]u64,
+	typeid_frozen:        bool,
+
+	// Iteration (`src/iterate.odin`). Range and iterator types are interned per
+	// element type, and the contributed procedures are emitted once for the whole
+	// compilation rather than per package.
+	range_types:    map[Type_Id]Type_Id,
+	iterator_types: map[Type_Id]Type_Id,
+	synth_procs:    [dynamic]Symbol_Id,
+
+	// Erased views (`src/erased.odin`). A witness is compilation-global, so it is
+	// keyed and emitted once for the whole program.
+	dyn_types:     map[string]Type_Id,
+	witnesses:     map[string]^Witness,
+	witness_order: [dynamic]^Witness,
+
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,

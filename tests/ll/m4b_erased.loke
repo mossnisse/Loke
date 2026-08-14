@@ -1,0 +1,30 @@
+package main;
+
+Canvas :: struct { marks: int }
+
+Drawable :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+Circle :: struct { radius: int }
+Square :: struct { side: int }
+
+impl Circle { size :: proc(self) -> int { return self.radius; } }
+impl Square { size :: proc(self) -> int { return self.side; } }
+
+through_view :: proc(target: dyn Drawable) -> int { return target.size(); }
+
+statically :: proc(value: $T) -> int where Drawable(T) { return value.size(); }
+
+main :: proc() {
+	c := Circle{3};
+	s := Square{2};
+	// One call site, two concrete types, one indirect call.
+	print_int(through_view((dyn Drawable)(&c)));
+	print_int(through_view((dyn Drawable)(&s)));
+	// The equivalent generic call is direct.
+	print_int(statically(c));
+	// An `any_view` made from a temporary has storage for the complete call.
+	view: any_view = 42;
+	print_int(view.(int));
+}

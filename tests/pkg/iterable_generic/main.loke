@@ -1,0 +1,61 @@
+package main;
+
+import "base:interfaces";
+
+Countdown :: struct { start: int }
+Countdown_Iterator :: struct { current: int }
+
+impl Countdown {
+	Element  :: int;
+	Iterator :: Countdown_Iterator;
+	iter :: proc(self) -> Countdown_Iterator { return {self.start}; }
+}
+
+impl Countdown_Iterator {
+	next :: proc(self: inout Countdown_Iterator) -> (int, bool) {
+		if (self.current <= 0) { return 0, false; }
+		value := self.current;
+		self.current -= 1;
+		return value, true;
+	}
+}
+
+// The associated output makes a generic loop's element type available without
+// another inferred generic parameter.
+first :: proc(source: $S) -> (S.Element, bool)
+	where interfaces.Iterable(S) {
+	iterator := iter(source);
+	return iterator.next();
+}
+
+sum_all :: proc(source: $S) -> int
+	where interfaces.Iterable(S) {
+	total := 0;
+	foreach (v in source) {
+		total += v;
+	}
+	return total;
+}
+
+main :: proc() {
+	#assert(interfaces.Iterable([3]int));
+	#assert(interfaces.Iterable(Countdown));
+	#assert(!interfaces.Iterable(int));
+
+	xs := [3]int{1, 2, 3};
+	a, a_ok := first(xs);
+	print_int(a);
+
+	half := 1 ..< 4;
+	closed := 1 ..= 4;
+	b, b_ok := first(half);
+	print_int(b);
+
+	c, c_ok := first(Countdown{5});
+	print_int(c);
+
+	print_int(sum_all(xs));
+	print_int(sum_all(half));
+	print_int(sum_all(closed));
+	print_int(sum_all(Countdown{3}));
+}

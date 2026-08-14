@@ -61,7 +61,7 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 	case .Bool:
 		size, alignment = 1, 1
 
-	case .Int, .Float, .Rune, .Enum:
+	case .Int, .Float, .Rune, .Enum, .Typeid:
 		// A scalar is aligned to its own width, up to the target's ceiling: on
 		// x86-64 that is what makes `i128` 16-aligned and nothing wider exist.
 		size = u64(type_bits(c, type) + 7) / 8
@@ -89,7 +89,7 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		offsets[0] = 0
 		offsets[1] = shape.tag_offset
 
-	case .Struct:
+	case .Struct, .Any_View, .Dyn:
 		offsets = make([]u64, len(info.fields), c.semantic_allocator)
 		cursor := u64(0)
 		for field, index in info.fields {

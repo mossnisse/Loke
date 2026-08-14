@@ -28,6 +28,13 @@ Checker :: struct {
 	// overload returning `inout T` is required before ordinary ranking. The flag
 	// is consumed by the node it is set for and never inherited by its operands.
 	place_position: bool,
+	// How many generic instantiations enclose the code being checked. A `where`
+	// clause needs generic parameters in scope, which is either a template being
+	// instantiated or a declaration inside one.
+	generic_depth:  int,
+	// How deep interface requirement checking is, so an interface that composes
+	// itself is a diagnostic rather than a spin.
+	interface_depth: int,
 
 	// The procedure being checked. `proc_literal` also identifies the frame a
 	// name may come from, which is what makes the capture check possible.
@@ -61,7 +68,6 @@ Flow_Info :: struct {
 	continues:        bool,
 }
 
-@(private = "file")
 FLOWS :: Flow_Info{can_fall_through = true}
 
 // Scope, declarations, nominal shells, and import aliases, for whatever is
@@ -279,6 +285,12 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 			decl   = d,
 			pkg    = k.pkg,
 			public = top_level && declaration_is_public(k, d),
+			// design.md: the same instantiation means the same thing in every
+			// caller, so a clone resolves names against the declaration's own
+			// lexical scope, not the scope that asked for it.
+			def_scope     = k.scope,
+			def_file      = k.file,
+			def_file_node = k.file_node,
 		}
 		switch {
 		case decl_proc_literal(d) != nil:
@@ -315,6 +327,19 @@ declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
 	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
 }
 
+// The same visibility rule declarations use, applied to a struct field: own
+// `@(public)` wins, own `@(private)` opts out, otherwise the file's default.
+@(private = "file")
+field_is_public :: proc(k: ^Checker, attributes: []Attribute) -> bool {
+	if has_attribute(attributes, "public") {
+		return true
+	}
+	if has_attribute(attributes, "private") {
+		return false
+	}
+	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
+}
+
 has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
 	for attribute in attributes {
 		if len(attribute.path) == 1 && attribute.path[0].text == name {
@@ -332,6 +357,15 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	}
 	d.sig_state = .Checking
 	defer d.sig_state = .Checked
+	// A template has no signature of its own: `$T` names nothing until an
+	// instantiation binds it. Registration is all this phase does for one.
+	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL {
+		if declaration_generic_kind(d) != .None {
+			generic_template_for(k, d.symbols[0])
+			reject_uninstantiated_generic(k, d)
+			return
+		}
+	}
 	if literal := decl_proc(d); literal != nil {
 		if len(d.symbols) > 0 && d.symbols[0] != INVALID_SYMBOL {
 			literal.symbol = d.symbols[0]
@@ -363,6 +397,8 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		if info := type_of(k.c, symbol.type); info != nil {
 			info.element = underlying
 		}
+	case ^Type_Interface:
+		check_interface_declaration(k, d.symbols[0])
 	}
 }
 
@@ -371,11 +407,17 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	for &field in value.fields {
 		field_type := resolve_type_syntax(k, field.type)
 		bindings := make([dynamic]Symbol_Id, 0, len(field.names), k.c.semantic_allocator)
+		// design.md "Compile-time reflection": reflection observes only
+		// declarations visible at the reflection site, so a field carries the same
+		// visibility default as any other declaration in its file.
+		public := field_is_public(k, field.attributes)
+		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
 			binding := new_binding_symbol(k, name, .Field)
 			if bound := symbol_of(k.c, binding); bound != nil {
 				bound.type = field_type
 				bound.index = u32(len(members))
+				bound.public = public
 			}
 			append(&bindings, binding)
 			if binding != INVALID_SYMBOL {
@@ -495,6 +537,11 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				errorf(k.c, parameter.span, "L0408", "a parameter needs a type; only the receiver `self` may omit one")
 			}
 		}
+		// A parameter may *be* an `any_view`, but never hold one nested inside
+		// another type.
+		if parameter_type != INVALID_TYPE && type_mentions_any_view(k.c, parameter_type, allow_top = true) {
+			reject_any_view_position(k, parameter_type, parameter.span, "stored inside another type")
+		}
 		// `proc(self, allocator: Allocator)` is the receiver followed by one typed
 		// parameter, not two parameters of the written type: grammar.md's name list
 		// would swallow `self`, and only an untyped `self` is the receiver form.
@@ -507,6 +554,13 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 
 		bindings := make([dynamic]Symbol_Id, 0, len(parameter.names), k.c.semantic_allocator)
 		for parameter_name, name_index in parameter.names {
+			// A `$` parameter is a compile-time input: the instantiation consumed
+			// its argument and bound the name as a constant, so the instance's
+			// runtime signature does not carry it.
+			if parameter_name.is_poly && literal.generic_instance {
+				append(&bindings, INVALID_SYMBOL)
+				continue
+			}
 			name_type := parameter_type
 			mode := parameter.mode
 			default := parameter.default
@@ -550,6 +604,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		if result.type != nil && result_type == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, result.type)
 		}
+		reject_any_view_position(k, result_type, result.span, "a result type")
 		bindings := make([dynamic]Symbol_Id, 0, len(result.names), k.c.semantic_allocator)
 		if len(result.names) == 0 {
 			append(&results, result_type)
@@ -628,7 +683,6 @@ check_declaration_size :: proc(k: ^Checker, d: ^Decl) {
 // A layout-independent dependency walk: a value edge into a struct, array, or
 // distinct type continues the path, and a pointer edge ends it. Only the
 // containment cycle matters here — offsets and alignment stay deferred.
-@(private = "file")
 check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynamic]Type_Id) -> bool {
 	info := type_of(k.c, type)
 	if info == nil {
@@ -721,6 +775,12 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Expr_Ident:
 		symbol_id := lookup_symbol(k.scope, identifier_of(k.c, value))
+		// A template names no type on its own. Staying silent here keeps
+		// `resolve_type_syntax` usable as a probe; `report_unresolved_type` says
+		// what is missing at the positions that require a type.
+		if symbol_is_generic(k, symbol_id) {
+			return INVALID_TYPE
+		}
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil && symbol.kind == .Type {
 			value.symbol = symbol_id
 			value.denoted_type = symbol.type
@@ -805,6 +865,17 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			return INVALID_TYPE
 		}
 		if value.denoted_type != INVALID_TYPE {
+			return value.denoted_type
+		}
+		// `[$N]E` inside an instance: the length is a bound generic constant, not
+		// an expression to check.
+		if poly, is_poly := value.length.(^Type_Poly); is_poly {
+			count, bound := poly_array_length(k, poly)
+			if !bound {
+				return INVALID_TYPE
+			}
+			value.denoted_type = array_of(k.c, element, count)
+			value.resolution.kind = .Type
 			return value.denoted_type
 		}
 		if check_single_expr(k, value.length, TYPE_INT) == INVALID_TYPE {
@@ -893,10 +964,49 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		value.resolution.kind = .Type
 		return value.denoted_type
 
+	case ^Type_Dyn:
+		// `dyn Interface(args...)`: the subject parameter is deliberately omitted,
+		// so this validates the declaration, the non-subject arguments, and dyn
+		// compatibility, and never attempts satisfaction.
+		if value.denoted_type != INVALID_TYPE {
+			return value.denoted_type
+		}
+		value.denoted_type = resolve_dyn_type(k, value)
+		value.resolution.kind = .Type
+		return value.denoted_type
+
 	case ^Type_Type:
 		value.denoted_type = TYPE_TYPE
 		value.resolution.kind = .Type
 		return TYPE_TYPE
+
+	case ^Type_Poly:
+		// `$E` in a written type is a binding site during inference and a use
+		// afterwards: inside an instance the name is bound in the instance scope,
+		// so the clone's own syntax resolves to the argument with no rewriting.
+		name := value.name.id
+		if name == INVALID_IDENTIFIER {
+			name = intern_identifier(k.c, value.name.text)
+		}
+		bound := lookup_symbol(k.scope, name)
+		if sym := symbol_of(k.c, bound); sym != nil && sym.kind == .Type {
+			value.denoted_type = sym.type
+			value.resolution = Resolution{kind = .Type, symbol = bound}
+			value.value_category = .Type
+			return sym.type
+		}
+		return INVALID_TYPE
+
+	case ^Expr_Call:
+		// `Table(string, int)`: a generic application in type position.
+		template := generic_template_of_callee(k, value.callee, .Record)
+		if template == nil {
+			return INVALID_TYPE
+		}
+		if value.denoted_type != INVALID_TYPE {
+			return value.denoted_type
+		}
+		return instantiate_record_application(k, value, template, report = true)
 	}
 	return INVALID_TYPE
 }
@@ -915,11 +1025,8 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 	if sym == nil {
 		return INVALID_TYPE
 	}
-	outer := k.impl_type
-	k.impl_type = subject
-	defer k.impl_type = outer
 	if sym.kind == .Const && sym.decl != nil && sym.decl.check_state == .Unchecked {
-		check_decl(k, sym.decl)
+		check_member_decl_in_place(k, member, subject)
 		sym = symbol_of(k.c, member)
 	}
 	denoted := INVALID_TYPE
@@ -956,6 +1063,19 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
+	// design.md: an interface declaration is compile-time metadata and cannot be
+	// a variable, field, parameter, or result type. `dyn I` is the erased type.
+	if type_is_interface(k.c, type) {
+		errorf(
+			k.c,
+			span,
+			"L0441",
+			"`%s` is an interface, which is compile-time metadata; write `dyn %s` for a runtime value",
+			type_name(k.c, type),
+			type_name(k.c, type),
+		)
+		return false
+	}
 	if !type_is_supported(k.c, type) {
 		unsupported_construct(k, span)
 		return false
@@ -989,7 +1109,15 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 @(private = "file")
 report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	if ident, is_ident := syntax.(^Expr_Ident); is_ident {
+		if symbol_is_generic(k, lookup_symbol(k.scope, identifier_of(k.c, ident))) {
+			errorf(k.c, ident.span, "L0431", "`%s` is generic and needs its arguments, as in `%s(...)`", ident.name, ident.name)
+			return
+		}
 		errorf(k.c, ident.span, "L0306", "unknown type `%s`", ident.name)
+		return
+	}
+	if poly, is_poly := syntax.(^Type_Poly); is_poly {
+		errorf(k.c, poly.span, "L0437", "`$%s` is not bound here", poly.name.text)
 		return
 	}
 	unsupported_construct(k, expr_span(syntax))
@@ -1012,6 +1140,11 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 
 @(private = "file")
 check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
+	// A template's body belongs to its instances; there is nothing concrete here
+	// to check, and no symbol for the backend to emit.
+	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL && symbol_is_generic(k, d.symbols[0]) {
+		return
+	}
 	if literal := decl_proc_literal(d); literal != nil {
 		check_proc(k, d, literal)
 		return
@@ -1024,6 +1157,13 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 	if len(d.symbols) == 1 {
 		if symbol := symbol_of(k.c, d.symbols[0]); symbol != nil && symbol.kind == .Type {
+			// An interface declaration is compile-time metadata, so the gate that
+			// keeps one out of runtime storage does not apply to the declaration
+			// itself.
+			if type_is_interface(k.c, symbol.type) {
+				check_interface_declaration(k, d.symbols[0])
+				return
+			}
 			// A nominal type declaration: fields and members are already
 			// resolved, so only the gate remains.
 			gate_type(k, symbol.type, d.span)
@@ -1049,10 +1189,16 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	if declared != INVALID_TYPE && !gate_type(k, declared, d.span) {
 		return
 	}
-	// `type` is compile-time only: it may name an alias constant, never runtime
-	// storage.
-	if declared == TYPE_TYPE && d.kind != .Const {
-		errorf(k.c, d.span, "L0378", "`type` is compile-time only and cannot be stored in a variable")
+	// A local may hold an `any_view`; a global cannot, and no position may hold
+	// one nested inside another type.
+	if declared != INVALID_TYPE && type_mentions_any_view(k.c, declared, allow_top = !d.top_level) {
+		reject_any_view_position(k, declared, d.span, d.top_level ? "a global" : "stored inside another type")
+		return
+	}
+	// `type` and a reflection descriptor are compile-time only: either may name a
+	// constant, never runtime storage.
+	if declared != INVALID_TYPE && type_is_compile_time_only(k.c, declared) && d.kind != .Const {
+		report_compile_time_only(k, declared, d.span)
 		return
 	}
 
@@ -1139,6 +1285,10 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 				continue
 			}
 			materialize(k, value, final)
+			if type_is_compile_time_only(k.c, final) && d.kind != .Const {
+				report_compile_time_only(k, final, d.span)
+				continue
+			}
 			if !gate_type(k, final, d.span) {
 				continue
 			}
@@ -1209,13 +1359,32 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 		errorf(k.c, d.span, "L0312", "a procedure declaration binds exactly one name")
 	}
 	signature := literal.signature
-	if literal.bodiless || len(literal.where_clauses) > 0 || signature == nil || signature.convention != "" {
+	if literal.bodiless || signature == nil || signature.convention != "" {
 		unsupported_construct(k, literal.span)
+		return
+	}
+	// design.md "where clauses": a bound is a compile-time predicate over an
+	// instantiation, so a declaration with no generic parameters in scope cannot
+	// have one. An instance's own bounds were evaluated when it was created.
+	if len(literal.where_clauses) > 0 && !literal.generic_instance && k.generic_depth == 0 {
+		errorf(
+			k.c,
+			expr_span(literal.where_clauses[0]),
+			"L0433",
+			"a `where` clause needs a generic parameter in scope; use `if` or `assert` for a runtime precondition",
+		)
 		return
 	}
 	symbol := symbol_of(k.c, literal.symbol)
 	if symbol == nil {
 		return
+	}
+	if k.generic_depth > 0 && !literal.generic_instance {
+		// A method of an instantiated block: its bounds close over the block's
+		// arguments, which are bound in the scope this body is checked in.
+		if !check_where_clauses(k, literal.where_clauses, literal.span, identifier_text(k.c, symbol.name), true) {
+			return
+		}
 	}
 	if symbol.signature_error {
 		return // resolving the signature already said what is wrong with it
@@ -1331,7 +1500,6 @@ check_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 	return flow
 }
 
-@(private = "file")
 check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
@@ -1395,8 +1563,14 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		return check_when_stmt(k, s)
 
 	case ^Stmt_Foreach:
-		unsupported_construct(k, stmt_span(stmt))
-		return FLOWS
+		// A `$` binding makes this a compile-time expansion. Runtime iteration
+		// arrives with the iteration protocol in M4b step 4.
+		for binding in s.bindings {
+			if binding.is_static {
+				return check_static_foreach(k, s)
+			}
+		}
+		return check_runtime_foreach(k, s)
 	}
 	unsupported_construct(k, stmt_span(stmt))
 	return FLOWS
@@ -2016,7 +2190,7 @@ check_case_value :: proc(
 		return // an ordered dynamic case, compared in source order
 	}
 	for previous in seen {
-		equal, ok := const_equal(k, previous, base.const_value)
+		equal, ok := const_equal(k.c, previous, base.const_value)
 		if ok && equal {
 			errorf(k.c, expr_span(value), "L0367", "this value is already covered by an earlier case")
 			return
@@ -2081,18 +2255,21 @@ enum_member_by_value :: proc(c: ^Compiler, type: Type_Id, value: Const_Value) ->
 	return INVALID_SYMBOL
 }
 
-@(private = "file")
-const_equal :: proc(k: ^Checker, a, b: Const_Value) -> (bool, bool) {
+const_equal :: proc(c: ^Compiler, a, b: Const_Value) -> (bool, bool) {
 	if a.kind != b.kind {
 		return false, false
 	}
 	#partial switch a.kind {
 	case .Integer, .Rune:
-		return bi_cmp(k.c, a.integer, b.integer) == 0, true
+		return bi_cmp(c, a.integer, b.integer) == 0, true
 	case .Boolean:
 		return a.boolean == b.boolean, true
 	case .Float:
 		return a.float == b.float, true
+	case .String:
+		return a.text == b.text, true
+	case .Type:
+		return a.type_value == b.type_value, true
 	case .Nil:
 		return true, true
 	}

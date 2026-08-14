@@ -2337,7 +2337,15 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 		return n
 	}
 
-	length := parse_expr(p)
+	// `[$N]E` binds the length as a generic parameter. `$Name` is a `Type` in
+	// grammar.md, not an expression, so the array length position accepts it
+	// directly rather than through the expression grammar.
+	length: Expr
+	if at(p, .Dollar) {
+		length = parse_type(p)
+	} else {
+		length = parse_expr(p)
+	}
 	closed := true
 	if _, ok := expect(p, .Rbracket, "L0231", "`]` after the array length"); !ok {
 		closed = false

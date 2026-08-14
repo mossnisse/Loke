@@ -1,0 +1,12 @@
+package main;
+
+main :: proc() {
+	// A written range lowers to an index loop with no iterator object.
+	foreach (i in 0 ..< 3) { print_int(i); }
+	// A stored range carries its closed flag at run time.
+	closed := 0 ..= 2;
+	foreach (i in closed) { print_int(i); }
+	// A fixed array indexes in place; `&value` names the element itself.
+	xs := [3]int{1, 2, 3};
+	foreach (&v in xs) { v = v + 1; }
+}

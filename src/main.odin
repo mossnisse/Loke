@@ -8,7 +8,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M4a)
+USAGE :: `lokec - the Loke compiler (milestone M4b)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -33,9 +33,18 @@ and @(implicit) from untyped constants; user operators, indexing, slicing and
 delegate on distinct types; and unions with type assertions, type switches,
 or_else and or_return.
 
-Evaluation is bounded at 1000000 steps, 256 frames and 64 MiB of scratch memory.
+M4b makes those abstractions generic and erasable: $ type and value parameters,
+inference, structural specialization, generic records and impl blocks, where
+clauses, and monomorphization; interface declarations with slot, expression and
+validity requirements, composition and associated types; compile-time reflection
+with fields_of, enum_values_of, type_of, typeid_of and static foreach; runtime
+foreach over ranges, fixed arrays and the iter/next protocol; and the erased
+views typeid, any_view and dyn Interface with witness dispatch.
 
-Generics, interfaces, runtime string, slices, maps, foreach, typeid, any_view,
+Evaluation is bounded at 1000000 steps, 256 frames and 64 MiB of scratch memory.
+Generic instantiation is bounded at 64 deep and 4096 instances.
+
+Runtime string and string_view, slices, dynamic arrays, maps, multi-pointers,
 and #location/#caller_location parse and report one diagnostic.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
@@ -126,6 +135,11 @@ run :: proc() -> int {
 		report(&c)
 		return 1
 	}
+
+	// Every requested concrete type gets its deterministic `typeid` before any
+	// body is emitted, so traversal order cannot change an observable ID
+	// (m4b-plan decision "`typeid`").
+	freeze_typeids(&c)
 
 	if opts.check_layout {
 		return check_layout_agreement(&c, opts)

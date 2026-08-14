@@ -1,0 +1,13 @@
+package main;
+
+Canvas :: struct { marks: int }
+
+Drawable :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+main :: proc() {
+	// design.md: calling a slot on nil panics.
+	empty: dyn Drawable = nil;
+	print_int(empty.size());
+}

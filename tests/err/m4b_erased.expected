@@ -1,0 +1,41 @@
+L0462
+@31:20
+cannot be a record field
+L0462
+@35:22
+cannot be a result type
+L0462
+@32:1
+cannot be a global
+L0462
+@36:16
+L0462
+@40:2
+stored inside another type
+L0444
+@45:9
+does not satisfy `Drawable(Opaque)`
+L0464
+@47:26
+a `dyn` conversion takes `^Concrete`
+L0463
+@50:5
+every runtime operation must be a named `slot`
+L0463
+@51:5
+consumes its receiver
+L0463
+@52:5
+returns the subject
+L0467
+@58:2
+has no slot `paint`
+L0465
+@61:7
+is not a concrete type an `any_view` can hold
+L0466
+@66:7
+has no type assertion
+L0466
+@67:15
+has no type switch

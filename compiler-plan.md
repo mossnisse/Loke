@@ -119,9 +119,11 @@ resolve names in bodies. Scope rules, discard `_`, shadowable predeclared
 (design open-question defaults to reject). Classify the parser's unclassified
 generic/argument nodes as type / const / value.
 - **In:** ordered packages. **Out:** every identifier bound to a symbol; each node classified.
-- **Loke-specific:** package-vs-public visibility (exactly two levels), `impl`/`extend`
-  method lookup registration (no UFCS — `x.f()` binds only to a `self` receiver
-  or a built-in), definition-site lookup for generic bodies.
+- **Loke-specific:** package-vs-public visibility (exactly two levels), including
+  uniform checks for struct-field reads, writes, aggregate construction, and
+  reflection; `impl`/`extend` method lookup registration (no UFCS — `x.f()`
+  binds only to a `self` receiver or a built-in); definition-site lookup for
+  generic bodies.
 
 #### B7. Type system core
 Type representation + interning: basic types, `distinct`, structs/enums/unions,
@@ -266,8 +268,8 @@ as each milestone starts.
 | **M2** | **Static core semantics.** Universe/name resolution, built-in type checking and constant folding, plus typed LLVM widening for the non-generic, non-managed core: numeric/Boolean/rune scalars, raw and typed pointers, fixed arrays, structs, enums, distinct and procedure types; assignment, control flow, `defer`, procedures, and procedure values. User-defined operators and unions remain gated. | Programs in the precisely bounded [M2 subset](m2-plan.md#scope) type-check, fold, compile, and run through the textual-LLVM path; deferred outer constructs still produce one non-cascading gate diagnostic. |
 | **M3** | **Compile-time engine and packages** ([B5](#b5-package-loading--import-graph)/[B10](#b10-compile-time-evaluation-engine)). Retain the checker's contextual leaf/operator folding as the shared value core and add the typed interpreter for procedure evaluation; add file- and procedure-scope `when`, staged conditional imports, multi-file packages, untyped compile-time strings, `#assert`/`#config` with `-define`, phase-neutral `assert`/`panic`, and natural-layout `size_of`/`align_of`/`offset_of`/`len`. Collection prefixes resolve through `-collection name=path`, with no implicit `core:` root. `#location`/`#caller_location` move to M6 with runtime `string` and `Source_Code_Location`; packed/foreign layout remains M7. | Compile-time `proc` evaluation works from every required M3 context; discarded `when` branches are neither checked nor emitted; the conditional package graph reaches a stable DAG; multi-package code emits collision-free symbols; layout agrees with executed LLVM-derived values (`-check-layout`); and sandbox/limit failures are diagnosed with the compile-time stack. |
 | **M4a** | **User abstractions** ([B8](#b8-type-checking--overload-resolution)), planned in [m4a-plan.md](m4a-plan.md). One overload-resolution engine — viability, conversion-rank vectors, tie-breakers — shared by procedure groups, `impl`/`extend` methods, user operators, `delegate`, indexing, and `init` conversions including `@(implicit)`; unions with assertions, type switches, `or_else`, and `or_return`. Concrete types only: nothing here instantiates a declaration. | User operators, methods, and `init` conversion work at concrete types; an ambiguous call lists every maximal candidate with its vector and failing tie-breaker; an `extend` block changes lookup only in its own package; unions round-trip, assertions trap or yield comma-ok by position, and `or_return` propagates through named results with `defer` in order. |
-| **M4b** | **Generics, interfaces & erased views** ([B9](#b9-generics-interfaces--specialization)), planned in [m4b-plan.md](m4b-plan.md). Declaration cloning, `$`/inference, specialization, `where`, and monomorphization; interfaces with per-requirement diagnostics and the unmanaged portion of the catalogue as ordinary Loke source; reflection and static `foreach`; `foreach` over ranges, fixed arrays, and the user iteration protocol; `typeid`, `any_view`, and `dyn` witnesses. Managed types remain absent, so `Cloneable`, iteration over slices/maps/strings, `..any_view`, and lifecycle hooks stay with the milestone that introduces their dependencies. | A generic container instantiated twice yields independent instances with distinct symbols; a failed interface bound names the requirement line and the concrete type; a caller-local `extend` cannot reach into an instantiation; static expansion type-checks a different field type per copy without exposing inaccessible fields; `any_view` and `dyn` obey their representation and dispatch rules, with borrow/escape checking deferred to M5 and the boundary stated. |
-| **M5** | **Managed memory.** Ownership/move/deep-copy, drop insertion, lifecycle hooks, materialization, the allocator semantic types needed to check those hooks, and the lifecycle-dependent `Cloneable` catalogue entry; integration of implicit drops with M2's existing `defer` cleanup stack; then borrow and allocator-region checking ([B11](#b11-ownership-move--lifecycle-analysis)/[B12](#b12-borrow--lifetime-checker)), including the `any_view`, `dyn`, `inout`-result and `[:]`-result views M4 leaves unchecked. The allocator's linked runtime implementation remains M6 work. | Owning values, `move`, borrows, region-backed owners, and `@(allocator_reset)` behave per spec; drops and existing defers share the required LIFO order; invalid escapes/resets and copy costs are diagnosed; the standard `Cloneable` declaration compiles against real semantic allocator and lifecycle types rather than placeholders. |
+| **M4b** | **Generics, interfaces & erased views** ([B9](#b9-generics-interfaces--specialization)), planned in [m4b-plan.md](m4b-plan.md). Declaration cloning, `$`/inference, specialization, `where`, and monomorphization; interfaces with per-requirement diagnostics and the unmanaged portion of the catalogue as ordinary Loke source; reflection and static `foreach`; `foreach` over ranges, fixed arrays, and the user iteration protocol; `typeid`, `any_view`, and `dyn` witnesses. Reflection filters struct fields by package/public visibility at its lookup package. Ordinary field access and construction temporarily retain M4a behavior and remain unfiltered until M5. Managed types remain absent, so `Cloneable`, iteration over slices/maps/strings, `..any_view`, and lifecycle hooks stay with the milestone that introduces their dependencies. | A generic container instantiated twice yields independent instances with distinct symbols; a failed interface bound names the requirement line and the concrete type; a caller-local `extend` cannot reach into an instantiation; cross-package reflection omits package-visible fields and static expansion type-checks a different field type per visible copy; `any_view` and `dyn` obey their representation and dispatch rules, with borrow/escape checking deferred to M5 and the boundary stated. |
+| **M5** | **Managed memory and uniform field visibility.** Enforce the package/public rule already used by M4b reflection for ordinary struct-field reads, writes, and aggregate construction, removing the M4a compatibility exception. Add ownership/move/deep-copy, drop insertion, lifecycle hooks, materialization, the allocator semantic types needed to check those hooks, and the lifecycle-dependent `Cloneable` catalogue entry; integrate implicit drops with M2's existing `defer` cleanup stack; then add borrow and allocator-region checking ([B11](#b11-ownership-move--lifecycle-analysis)/[B12](#b12-borrow--lifetime-checker)), including the `any_view`, `dyn`, `inout`-result and `[:]`-result views M4 leaves unchecked. The allocator's linked runtime implementation remains M6 work. | Cross-package reads, writes, and aggregate initializers cannot access package-visible fields, while same-package operations and public fields continue to work; reflection and ordinary access agree. Owning values, `move`, borrows, region-backed owners, and `@(allocator_reset)` behave per spec; drops and existing defers share the required LIFO order; invalid escapes/resets and copy costs are diagnosed; the standard `Cloneable` declaration compiles against real semantic allocator and lifecycle types rather than placeholders. |
 | **M6** | **MIR + runtime.** Full lowering ([B13](#b13-lowering-to-mir)) + the seed runtime ([B14](#b14-runtime--core-library)): strings, dynamic arrays, maps, panic/unwind. Iteration over those types, `..any_view` variadics, the type-info table behind `type_info_of`, and `base:meta`/`base:interfaces` as nameable packages land here, on the M4 protocols. | Real programs using the managed stdlib run correctly. |
 | **M7** | **Release + interop.** LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. | Optimized release builds; C libraries link and call. |
 | **M8** | **Later.** Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
@@ -289,6 +291,36 @@ tables and `delegate`, and `src/union.odin` plus `src/optional.odin` the tagged
 representation and the error protocol. Diagnostics `L0391`–`L0396`,
 `L0406`–`L0413`, `L0416`–`L0421`, and `L0422`–`L0430` are live; the narrowings
 taken along the way are recorded in [m4a-plan.md](m4a-plan.md).
+
+M4b is implemented: `src/ast_clone.odin` supplies the declaration cloning both
+generics and static `foreach` need, `src/generic.odin` the templates, inference,
+structural specialization, `where` clauses and the monomorphization cache,
+`src/interface.odin` requirement checking with its per-requirement lookup
+contexts, `src/hash.odin` the compiler-contributed `hash` the standard
+`Hashable` entry is satisfied through, `src/reflect.odin` the descriptors and the
+symbolic-to-numeric `typeid` freeze, `src/expand.odin` static expansion,
+`src/iterate.odin` `Range(T)` and the iteration protocol, and `src/erased.odin`
+`any_view`, `dyn`, and witnesses. The unmanaged catalogue is ordinary Loke source
+in `base/interfaces/`. Diagnostics `L0431`–`L0438` (generics), `L0441`–`L0445`
+(interfaces), `L0451`–`L0455` (reflection and static expansion), `L0456`–`L0458`
+(iteration), and `L0462`–`L0467` (erased views) are live; the narrowings taken
+along the way are recorded in [m4b-plan.md](m4b-plan.md).
+
+M4b also introduces field visibility metadata and consults it when
+`fields_of` forms descriptors at a reflection lookup package. Ordinary reads,
+writes, and aggregate construction intentionally remain unfiltered for M4a
+corpus compatibility. M5 must make those operations use the same package/public
+check; `@(private)` denotes package visibility throughout and is not a
+reflection-only hiding mechanism.
+
+Two narrowings are worth stating here because they differ from the plan's
+letter. An instance is cloned once rather than as a separate signature instance
+and body instance: an unselected candidate's body is still never checked, so the
+observable contract holds with half the machinery. And tie-breaker 4 between a
+generic `impl Table($K, $V)` and a specialized `impl Table(string, int)` is
+applied when the blocks are installed on an instance rather than in the
+candidate engine, because monomorphization makes both blocks resolve to the same
+concrete type before any call is ranked.
 
 M4 splits at the one seam where its work stops being mutually dependent: nothing
 in M4a instantiates a declaration, and everything in M4b needs M4a's methods and

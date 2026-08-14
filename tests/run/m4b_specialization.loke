@@ -1,0 +1,41 @@
+package main;
+
+// where splits a procedure group
+big :: proc(x: [$N]int) -> int
+	where N > 2 {
+	return 1;
+}
+
+small :: proc(x: [$N]int) -> int
+	where 0 < N,
+	      N <= 2 {
+	return 0;
+}
+
+size :: proc{big, small};
+
+// tie-breaker 4: a structural specialization beats an unspecialized parameter
+Box :: struct($T: type) { value: T }
+
+describe :: proc(b: $T) -> int { return 0; }
+describe_box :: proc(b: Box($E)) -> int { return 1; }
+describe_group :: proc{describe, describe_box};
+
+// a where clause on a record
+Limited :: struct($T: type, $N: int) where N > 1 {
+	items: [N]T,
+}
+
+main :: proc() {
+	x := [3]int{1, 2, 3};
+	y := [2]int{4, 9};
+	print_int(size(x));
+	print_int(size(y));
+
+	b: Box(int) = {5};
+	print_int(describe_group(b));
+	print_int(describe_group(7));
+
+	l: Limited(int, 3) = {[3]int{1,2,3}};
+	print_int(l.items[2]);
+}

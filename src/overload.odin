@@ -48,10 +48,24 @@ Candidate :: struct {
 	filled: []bool,
 	// The `@(implicit)` `init` overload a rank-4 argument goes through.
 	via:    []Symbol_Id,
+	// The arguments this candidate actually ranked. A generic candidate ranks the
+	// runtime subset: its `$` arguments were consumed at instantiation time.
+	args:   []Arg_Info,
 
 	omitted:    int,
 	variadic:   bool,
 	parametric: bool,
+	// Tie-breaker 4: how much structure the written parameter patterns pin down.
+	specificity: int,
+	// The instantiation this candidate stands for, promoted to a checked body
+	// only if it is the one selected.
+	instance:   ^Instance,
+	// What a candidate rejected by its own bounds would have instantiated, so the
+	// no-match diagnostic can re-run the bound and name the requirement that
+	// failed instead of saying only that one did.
+	template:   ^Generic_Template,
+	bindings:   []Generic_Binding,
+	scope:      ^Scope,
 	viable:     bool,
 	reason:     string,
 }
@@ -235,8 +249,14 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 // carries the reason, which is what the no-match diagnostic prints.
 @(private = "file")
 build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> Candidate {
+	// A generic member is inferred and substituted before it can be ranked at
+	// all: `$T` has no type to compare an argument against.
+	if template := generic_template_for(k, symbol_id); template != nil && template.kind == .Procedure {
+		return build_generic_candidate(k, template, args)
+	}
 	cand := Candidate {
 		symbol = symbol_id,
+		args   = args,
 		ranks  = make([]int, len(args), k.c.semantic_allocator),
 		slots  = make([]int, len(args), k.c.semantic_allocator),
 		via    = make([]Symbol_Id, len(args), k.c.semantic_allocator),
@@ -339,6 +359,39 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 	return cand
 }
 
+// A generic member: infer its arguments, create or reuse the instance, evaluate
+// its bounds silently, and rank the written arguments against the *substituted*
+// signature. The instance's body is not checked here — an overload that is never
+// selected must not produce diagnostics from a body nothing calls.
+@(private = "file")
+build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: []Arg_Info) -> Candidate {
+	inference := infer_generic_arguments(k, template, args)
+	if !inference.ok {
+		return Candidate{symbol = template.symbol, args = args, reason = inference.reason}
+	}
+	// Bounds are a viability filter and never a preference: a failed one removes
+	// the candidate with a captured reason, silently.
+	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, no_span(), report = false)
+	if !made {
+		return Candidate {
+			symbol   = template.symbol,
+			args     = args,
+			reason   = "its `where` bounds are not satisfied by these arguments",
+			template = template,
+			bindings = inference.bindings,
+			scope    = inference.scope,
+		}
+	}
+	cand := build_candidate(k, instance.symbol, inference.runtime_args)
+	cand.parametric = true
+	cand.specificity = template.specificity
+	cand.instance = instance
+	if !cand.viable && cand.reason == "" {
+		cand.reason = "it does not apply to these arguments"
+	}
+	return cand
+}
+
 // ------------------------------------------------------------------ ordering --
 
 // -1 when `a` is better, 1 when `b` is, 0 when the vectors are identical, and 2
@@ -389,8 +442,12 @@ tie_break :: proc(a, b: ^Candidate) -> (int, int) {
 	if a.parametric != b.parametric {
 		return a.parametric ? 1 : -1, 2
 	}
-	// Tie-breaker 4 needs structural specialization, which arrives with M4b's
-	// instantiated declarations. Until then no two candidates differ here.
+	// design.md tie-breaker 4: between parametric candidates a structural
+	// specialization beats an unspecialized parameter. Neither more specialized
+	// than the other stays ambiguous.
+	if a.specificity != b.specificity {
+		return a.specificity > b.specificity ? -1 : 1, 3
+	}
 	return 0, 4
 }
 
@@ -470,7 +527,10 @@ resolve_overload :: proc(
 		}
 	}
 	if len(maximal) == 1 {
-		return all[maximal[0]], true
+		chosen := all[maximal[0]]
+		// Only the selected instance is promoted to a checked, emitted body.
+		promote_generic_instance(k, chosen.instance)
+		return chosen, true
 	}
 	if report {
 		report_ambiguity(k, span, description, all[:], maximal[:])
@@ -508,6 +568,14 @@ candidate_result_fits :: proc(k: ^Checker, symbol_id: Symbol_Id, expected: Type_
 
 @(private = "file")
 report_no_match :: proc(k: ^Checker, span: Span, description: string, all: []Candidate) {
+	// design.md requires an interface bound to name the requirement that failed.
+	// With one candidate there is no ambiguity about which bound to blame, so the
+	// bound reports itself and stands alone; a plural set keeps the summary and
+	// says which candidates their bounds rejected.
+	if len(all) == 1 && all[0].template != nil {
+		instantiate_generic(k, all[0].template, all[0].bindings, all[0].scope, span, report = true)
+		return
+	}
 	errorf(k.c, span, "L0392", "no overload of %s applies to these arguments", description)
 	for cand in all {
 		sym := symbol_of(k.c, cand.symbol)
@@ -590,10 +658,16 @@ vector_text :: proc(c: ^Compiler, ranks: []int) -> string {
 // Writes the chosen candidate onto the call node: the parameter-order argument
 // list the backend evaluates, with every untyped constant materialised at its
 // parameter's type and every rank-4 argument wrapped in its conversion.
-bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, args: []Arg_Info) -> bool {
+bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: []Arg_Info) -> bool {
 	sym := symbol_of(k.c, cand.symbol)
 	if sym == nil {
 		return false
+	}
+	// A generic candidate ranked the runtime subset of the written arguments, so
+	// binding follows what the candidate itself saw.
+	args := cand.args
+	if args == nil {
+		args = written
 	}
 	count := len(sym.params)
 	bound := make([]Expr, count, k.c.semantic_allocator)

@@ -1,0 +1,21 @@
+L0457
+@50:12
+cannot be iterated by reference
+L0456
+@53:16
+is not iterable
+L0457
+@55:12
+a range produces values
+L0457
+@58:15
+the index binding is a counter
+L0458
+@60:20
+a range needs integer or rune endpoints
+L0456
+@62:16
+is not iterable
+L0456
+@63:16
+needs `next
