@@ -1467,6 +1467,10 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	}
 
 	flow := check_block(k, literal.body)
+	// design.md "Managed values and storage": ownership is dataflow over the
+	// finished body, so it runs once every node has its type and every `defer`
+	// has its slot. Implicit drops take the slots that follow (m5a-plan step 4).
+	analyze_ownership(k, literal)
 	literal.defer_count = k.defer_slots
 	if len(symbol.results) > 0 && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")

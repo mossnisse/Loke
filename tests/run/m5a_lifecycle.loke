@@ -95,4 +95,9 @@ main :: proc() {
 	if (group_error != nil) {
 		print_int(-2);
 	}
+
+	// Falling out of `main` drops every managed local still live, in reverse
+	// registration order (m5a-plan step 4): the inert `failed`, then `single`,
+	// then `ok`'s two elements in reverse. `held` and `spare` are allocation
+	// roots, which are manual and never dropped automatically.
 }

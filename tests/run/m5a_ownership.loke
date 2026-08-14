@@ -1,0 +1,90 @@
+package main;
+
+// Implicit drops, `move`, and explicit `drop` (m5a-plan step 4).
+//
+// design.md "Managed values and storage": "Cleanup uses the same order as
+// `defer`. A managed local declaration places an implicit conditional
+// `defer drop(value)` at the declaration point ... Implicit drops and explicit
+// deferred statements run in reverse registration order."
+//
+// Each procedure prints its own marker first, so the interleaving below is the
+// observable order rather than a claim about it.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) {
+		if (self.id != 0) {
+			print_int(self.id);
+		}
+	}
+}
+
+make_res :: proc(id: int) -> Res {
+	return Res{id};
+}
+
+// Two locals, cleaned up in reverse registration order.
+scope_exit :: proc() {
+	print_int(1000);
+	a := make_res(1);
+	b := make_res(2);
+}
+
+// An explicit `drop` marks the variable dead, so scope exit does not run a
+// second one.
+explicit :: proc() {
+	print_int(2000);
+	a := make_res(3);
+	drop(a);
+}
+
+// `move` transfers the representation and leaves the source dead.
+moved :: proc() {
+	print_int(3000);
+	a := make_res(4);
+	b := move(a);
+}
+
+// One reverse order for both kinds: `b` was registered after the `defer`, which
+// was registered after `a`. With the argument true, `b` is already dead by the
+// time its slot runs, which is what the hidden flag records.
+interleaved :: proc(flag: bool) {
+	print_int(4000);
+	a := make_res(5);
+	defer print_int(99);
+	b := make_res(6);
+	if (flag) {
+		drop(b);
+	}
+}
+
+// A `return` cleans up every scope it leaves, innermost first.
+early :: proc(flag: bool) {
+	print_int(5000);
+	a := make_res(7);
+	if (flag) {
+		b := make_res(8);
+		return;
+	}
+	c := make_res(9);
+}
+
+// Each iteration drops its own local before the next one runs.
+looping :: proc() {
+	print_int(6000);
+	for (i := 0; i < 2; i += 1) {
+		x := make_res(10 + i);
+	}
+}
+
+main :: proc() {
+	scope_exit();
+	explicit();
+	moved();
+	interleaved(true);
+	interleaved(false);
+	early(true);
+	early(false);
+	looping();
+}

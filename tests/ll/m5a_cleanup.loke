@@ -1,0 +1,33 @@
+package main;
+
+// Cleanup lowering (m5a-plan step 4). The hidden `i1` exists only where the CFG
+// left a slot conditional: `definite` drops both locals unconditionally with no
+// flag at all, while `conditional` keeps one for the local a branch may drop.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { self.id = 0; }
+}
+
+make_res :: proc(id: int) -> Res {
+	return Res{id};
+}
+
+definite :: proc() {
+	a := make_res(1);
+	b := make_res(2);
+}
+
+conditional :: proc(flag: bool) {
+	a := make_res(3);
+	b := make_res(4);
+	if (flag) {
+		drop(b);
+	}
+}
+
+main :: proc() {
+	definite();
+	conditional(true);
+}

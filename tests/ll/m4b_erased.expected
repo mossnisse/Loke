@@ -1,5 +1,5 @@
-@loke.w.i49.c38 = private unnamed_addr constant [1 x ptr] [ ptr @loke.w.i49.c38.thunk.0 ]
-@loke.w.i49.c39 = private unnamed_addr constant [1 x ptr] [ ptr @loke.w.i49.c39.thunk.0 ]
-define private i64 @loke.w.i49.c38.thunk.0(ptr %arg0)
+@loke.w.i50.c38 = private unnamed_addr constant [1 x ptr] [ ptr @loke.w.i50.c38.thunk.0 ]
+@loke.w.i50.c39 = private unnamed_addr constant [1 x ptr] [ ptr @loke.w.i50.c39.thunk.0 ]
+define private i64 @loke.w.i50.c38.thunk.0(ptr %arg0)
 define i64 @loke.p.statically.Circle
 %struct.any_view.

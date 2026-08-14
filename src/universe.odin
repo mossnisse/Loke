@@ -177,6 +177,13 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// so an omitted allocator and a written `default_allocator()` are one call.
 	c.default_allocator_symbol = universe.names[intern_identifier(c, "default_allocator")]
 
+	// design.md "Storage modifiers": `drop(value)` "explicitly cleans up a
+	// definitely live lexical owning variable ... It is a compiler special form,
+	// not an ordinary procedure", and "a declaration can shadow it and make the
+	// special form unavailable in that scope" — which an ordinary universe symbol
+	// already gives it.
+	define(c, universe, "drop", Symbol{kind = .Builtin, builtin = .Drop, type = TYPE_VOID, proc_type = no_args})
+
 	// design.md: `hash(value, seed: uint) -> uint` over the built-in types the
 	// standard catalogue promises satisfy `Hashable`. Its operand types are
 	// checked by `check_builtin_call`, so the interned type carries none.

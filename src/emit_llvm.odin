@@ -17,9 +17,19 @@ import "core:strconv"
 import "core:strings"
 
 @(private = "file")
+// One registered cleanup action. design.md gives explicit `defer` and the
+// implicit drop of a managed local one reverse registration order, so they share
+// one entry and one stack rather than the second mechanism a parallel list would
+// be (m5a-plan decision "Drop/defer ordering").
+//
+// `flag` is empty when the CFG proved the slot reached unconditionally: no
+// source or ABI rule requires a flag, so a definite state does not get one.
 Deferred :: struct {
 	flag: string,
-	stmt: Stmt,
+	// A written `defer`, or nil for an implicit drop of `place`.
+	stmt:  Stmt,
+	place: string,
+	type:  Type_Id,
 }
 
 @(private = "file")
@@ -1027,6 +1037,14 @@ reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 			if s.slot < len(e.defer_flags) {
 				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", e.defer_flags[s.slot])
 			}
+		case ^Decl:
+			// A managed local's implicit drop reuses the same storage across loop
+			// iterations, so its flag needs the same reset a written `defer` gets.
+			for symbol_id in s.symbols {
+				if flag := drop_flag_of(e, symbol_id); flag != "" {
+					fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
+				}
+			}
 		case ^Stmt_When:
 			if selected := when_selected_block(s); selected != nil {
 				reset_defer_flags(e, selected.stmts)
@@ -1054,6 +1072,10 @@ run_cleanups :: proc(e: ^Emitter, down_to: int) {
 		entries := e.cleanups[depth].entries
 		for index := len(entries) - 1; index >= 0; index -= 1 {
 			entry := entries[index]
+			if entry.flag == "" {
+				run_one_cleanup(e, entry)
+				continue
+			}
 			flag := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", flag, entry.flag)
 			run := new_label(e, "defer.run")
@@ -1061,12 +1083,21 @@ run_cleanups :: proc(e: ^Emitter, down_to: int) {
 			branch_if(e, flag, run, skip)
 			fmt.sbprintfln(&e.b, "%s:", run)
 			e.terminated = false
-			emit_stmt(e, entry.stmt)
+			run_one_cleanup(e, entry)
 			branch(e, skip)
 			fmt.sbprintfln(&e.b, "%s:", skip)
 			e.terminated = false
 		}
 	}
+}
+
+@(private = "file")
+run_one_cleanup :: proc(e: ^Emitter, entry: Deferred) {
+	if entry.stmt != nil {
+		emit_stmt(e, entry.stmt)
+		return
+	}
+	emit_drop_place(e, entry.type, entry.place)
 }
 
 // -------------------------------------------------------------- statements --
@@ -1178,6 +1209,7 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 				slot := declare_local(e, symbol_id)
 				if slot != "" {
 					store(e, base.result_types[index], results[index], slot)
+					register_implicit_drop(e, symbol_id)
 				}
 			}
 			return
@@ -1195,13 +1227,90 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 		}
 		if i < len(d.values) && d.values[i] != nil {
 			store(e, sym.type, emit_expr(e, d.values[i]), slot)
+			register_implicit_drop(e, symbol_id)
 			continue
 		}
 		zero, ok := zero_const(e.c, sym.type)
 		if ok {
 			store(e, sym.type, llvm_const(e, zero, sym.type), slot)
 		}
+		register_implicit_drop(e, symbol_id)
 	}
+}
+
+// design.md: "A managed local declaration places an implicit conditional
+// `defer drop(value)` at the declaration point." Registration is what fixes its
+// position in the one reverse order every exit replays.
+@(private = "file")
+register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
+	sym := symbol_of(e.c, symbol_id)
+	if sym == nil || !sym.drop_at_exit || len(e.cleanups) == 0 {
+		return
+	}
+	flag := drop_flag_of(e, symbol_id)
+	if flag != "" {
+		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+	}
+	append(
+		&e.cleanups[len(e.cleanups) - 1].entries,
+		Deferred{flag = flag, place = e.names[symbol_id], type = sym.type},
+	)
+}
+
+// The hidden `i1` of a conditionally live local, or "" when the CFG left its
+// state definite at every cleanup point.
+@(private = "file")
+drop_flag_of :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
+	sym := symbol_of(e.c, symbol_id)
+	if sym == nil || !sym.drop_at_exit || !sym.drop_conditional || sym.cleanup_slot >= len(e.defer_flags) {
+		return ""
+	}
+	return e.defer_flags[sym.cleanup_slot]
+}
+
+// `move(x)` and `drop(x)` both leave the source dead: the inert zero
+// representation is written, and a conditional slot records that its cleanup
+// must not run again.
+@(private = "file")
+kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
+	sym := symbol_of(e.c, symbol_id)
+	if sym == nil {
+		return
+	}
+	if zero, ok := zero_const(e.c, sym.type); ok {
+		store(e, sym.type, llvm_const(e, zero, sym.type), e.names[symbol_id])
+	}
+	if flag := drop_flag_of(e, symbol_id); flag != "" {
+		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
+	}
+}
+
+// design.md "Storage modifiers": `drop(value)` "runs the cleanup operation,
+// writes the inert zero representation, and marks the variable dead".
+@(private = "file")
+emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
+	ident, is_ident := v.bound[0].(^Expr_Ident)
+	if !is_ident {
+		panic("`drop` reached the backend without a named operand")
+	}
+	sym := symbol_of(e.c, ident.symbol)
+	if sym == nil {
+		return
+	}
+	emit_drop_place(e, sym.type, e.names[ident.symbol])
+	kill_place(e, ident.symbol)
+}
+
+// design.md "Assignment statements": `move` "transfers the representation,
+// writes the inert zero representation to a lexical source, and marks that
+// source dead".
+@(private = "file")
+emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
+	value := emit_expr(e, v.value)
+	if ident, is_ident := v.value.(^Expr_Ident); is_ident {
+		kill_place(e, ident.symbol)
+	}
+	return value
 }
 
 @(private = "file")
@@ -2033,8 +2142,10 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	case ^Expr_Range:
 		return emit_range_value(e, v)
 
-	case ^Expr_Move,
-	     ^Expr_Hash, ^Expr_Proc_Group, ^Expr_Operator,
+	case ^Expr_Move:
+		return emit_move(e, v)
+
+	case ^Expr_Hash, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
@@ -2633,6 +2744,9 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return CRT_ALLOCATOR_GLOBAL
 		case .New, .New_Clone:
 			return emit_allocation(e, v, symbol.builtin)
+		case .Drop:
+			emit_explicit_drop(e, v)
+			return "0"
 		case .Free:
 			emit_free(e, v)
 			return "0"

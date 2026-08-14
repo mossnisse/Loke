@@ -1,0 +1,53 @@
+package main;
+
+// Ownership diagnostics (m5a-plan step 4). design.md "Managed values and
+// storage": "A use that requires a value is valid only in the definitely-live
+// state."
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { self.id = 0; }
+}
+
+Pair :: struct { first: Res, second: Res }
+
+global: Res;
+
+borrow :: proc(value: Res) -> int {
+	// A value parameter is an immutable borrow, not an owner this body may
+	// consume.
+	drop(value);
+	return value.id;
+}
+
+main :: proc() {
+	a := Res{1};
+	b := move(a);
+	// `a` is dead until a full assignment revives it.
+	print_int(a.id);
+
+	c := Res{2};
+	drop(c);
+	drop(c);
+
+	// A full assignment revives a dead binding.
+	c = Res{3};
+	print_int(c.id);
+
+	// `drop` operates on a storage location, not a field or an element.
+	p := Pair{Res{4}, Res{5}};
+	drop(p.first);
+
+	// Static-duration storage is always live.
+	drop(global);
+
+	print_int(borrow(b));
+
+	// Conditionally live: one path dropped it, the other did not.
+	d := Res{8};
+	if (b.id == 0) {
+		drop(d);
+	}
+	print_int(d.id);
+}

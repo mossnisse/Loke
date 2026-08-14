@@ -1,0 +1,8 @@
+call void @loke.p.Res.drop(ptr %b.11)
+call void @loke.p.Res.drop(ptr %a.9)
+%defer0.14 = alloca i1
+store i1 false, ptr %defer0.14
+store i1 true, ptr %defer0.14
+store %struct.Res.36 { i64 0 }, ptr %b.17
+br i1 %t23, label %defer.run.24, label %defer.skip.25
+call void @loke.p.Res.drop(ptr %a.15)

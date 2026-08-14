@@ -85,8 +85,10 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	case ^Expr_Range:
 		check_range(k, v)
 
-	case ^Expr_Move,
-	     ^Expr_Proc_Group, ^Expr_Operator,
+	case ^Expr_Move:
+		check_move(k, v)
+
+	case ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
@@ -1957,6 +1959,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .New, .New_Clone, .Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
 		return
+	case .Drop:
+		check_drop_builtin(k, v, ident)
+		return
 	case .Default_Allocator:
 		if len(v.args) != 0 {
 			errorf(k.c, v.span, "L0490", "`default_allocator` takes no arguments")
@@ -2264,7 +2269,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator,
+	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator, .Drop,
 	     .None, .Print_Int, .Assert, .Panic, .Hash, .Iter,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		return
@@ -2411,7 +2416,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 
 	case .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len,
-	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator:
+	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop:
 		return
 	}
 

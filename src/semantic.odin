@@ -474,6 +474,10 @@ Builtin_Kind :: enum {
 	// The default provider handle. Spelled `mem.default_allocator()` in
 	// design.md; the compiler supplies it until `core:mem` is nameable in M6.
 	Default_Allocator,
+	// design.md "Storage modifiers": "`drop` is a predeclared identifier, not a
+	// keyword" — a compiler special form over a storage location, which is why it
+	// is a built-in rather than an ordinary procedure (m5a-plan step 4).
+	Drop,
 }
 
 Symbol :: struct {
@@ -556,6 +560,15 @@ Symbol :: struct {
 	// propagation across pointer copies and derived views, plus alias
 	// invalidation (m5a-plan decision "Minimal allocation-root fact").
 	allocation_root: bool,
+	// design.md "Managed values and storage": "A managed local declaration places
+	// an implicit conditional `defer drop(value)` at the declaration point."
+	// `src/lifecycle.odin` decides both from the CFG: whether scope exit drops
+	// this local at all, and whether the state it exits in is the same on every
+	// path. A definite state needs no runtime flag (m5a-plan decision
+	// "Conditional liveness").
+	drop_at_exit:     bool,
+	drop_conditional: bool,
+	cleanup_slot:     int,
 }
 
 Scope_Kind :: enum {
