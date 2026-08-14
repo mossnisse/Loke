@@ -918,6 +918,17 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		e.defer_flags[index] = flag
 	}
 
+	// design.md "Parameter semantics": a `move` parameter transfers ownership to
+	// the callee, so the callee drops it. Its scope sits outside the body's,
+	// which makes its cleanup the outermost one every exit replays.
+	push_scope_stmts(e, nil)
+	for parameter, index in symbol.params {
+		_ = parameter
+		if index < len(symbol.param_symbols) {
+			register_implicit_drop(e, symbol.param_symbols[index])
+		}
+	}
+
 	emit_scoped_block(e, literal.body)
 	if !e.terminated {
 		emit_return_values(e, nil)
@@ -1761,6 +1772,9 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 			} else {
 				values[index] = emit_expr(e, value.expr)
 			}
+			if value.clone_on_return && index < len(e.result_types) {
+				values[index] = emit_return_clone(e, e.result_types[index], values[index])
+			}
 		}
 		for value, index in values {
 			if index >= len(e.result_slots) {
@@ -1772,8 +1786,39 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 				store(e, e.result_types[index], value, e.result_slots[index])
 			}
 		}
+		// The result is in result storage before cleanup runs, so a transferred
+		// local can be marked dead here without the epilogue dropping what was
+		// just handed back (design.md "Managed values and storage").
+		for value in s.values {
+			if value.clone_on_return {
+				continue
+			}
+			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
+				if sym := symbol_of(e.c, ident.symbol); sym != nil && type_is_managed(e.c, sym.type) {
+					kill_place(e, ident.symbol)
+				}
+			}
+		}
 	}
 	emit_epilogue(e)
+}
+
+// design.md: returning a borrowed managed owner by value "performs a logical
+// clone, because the callee owns nothing it could move out". `clone` is the
+// policy-following entry point, so a failure takes M5a's fixed trap fallback
+// rather than being reported here.
+@(private = "file")
+emit_return_clone :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
+	hook := type_hook(e.c, type, "clone")
+	if hook == INVALID_SYMBOL {
+		panic("a borrowed managed return reached the backend without a `clone` member")
+	}
+	out := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
+		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, CRT_ALLOCATOR_GLOBAL,
+	)
+	return out
 }
 
 @(private = "file")
@@ -3265,6 +3310,14 @@ emit_bound_call :: proc(
 			operands[index] = emit_address(e, argument)
 		} else {
 			operands[index] = emit_expr(e, argument)
+		}
+		// design.md: method-call syntax supplies the receiver's `move` marker
+		// implicitly, so the source is read and then killed here rather than by an
+		// `Expr_Move` the caller wrote.
+		if index == 0 && symbol != nil && symbol.receiver == .Move {
+			if ident, is_ident := argument.(^Expr_Ident); is_ident {
+				kill_place(e, ident.symbol)
+			}
 		}
 		if symbol != nil && index < len(symbol.param_symbols) && symbol.param_symbols[index] != INVALID_SYMBOL {
 			e.param_values[symbol.param_symbols[index]] = operands[index]

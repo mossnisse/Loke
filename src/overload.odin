@@ -699,6 +699,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 		}
 	}
 	v.bound = bound
+	require_argument_ownership(k, v, cand.symbol)
 	return ok
 }
 

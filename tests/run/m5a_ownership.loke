@@ -78,6 +78,48 @@ looping :: proc() {
 	}
 }
 
+// design.md: a `move` parameter transfers ownership from caller to callee, so
+// the callee drops it and the caller's source is dead. A `move self` receiver
+// gets its marker from method-call syntax.
+consuming :: proc(value: move Res) -> int {
+	return value.id;
+}
+
+impl Res {
+	consume :: proc(self: move Res) -> int {
+		return self.id;
+	}
+}
+
+transferred :: proc() {
+	print_int(7000);
+	a := make_res(12);
+	print_int(consuming(move(a)));
+	b := make_res(13);
+	print_int(b.consume());
+}
+
+// A borrowed managed parameter owns nothing it could move out, so returning it
+// by value clones; the caller's own value stays live.
+returns_borrow :: proc(value: Res) -> Res {
+	return value;
+}
+
+// A managed local transfers into result storage instead, so scope exit does not
+// drop what was just handed back.
+returns_local :: proc() -> Res {
+	local := make_res(15);
+	return local;
+}
+
+returning :: proc() {
+	print_int(8000);
+	source := make_res(14);
+	copy := returns_borrow(source);
+	moved := returns_local();
+	print_int(moved.id);
+}
+
 main :: proc() {
 	scope_exit();
 	explicit();
@@ -87,4 +129,6 @@ main :: proc() {
 	early(true);
 	early(false);
 	looping();
+	transferred();
+	returning();
 }

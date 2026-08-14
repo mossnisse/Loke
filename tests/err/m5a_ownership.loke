@@ -14,6 +14,22 @@ Pair :: struct { first: Res, second: Res }
 
 global: Res;
 
+Only :: struct { id: int }
+
+impl Only {
+	try_clone :: ---;
+	drop :: proc(self: inout Only) { self.id = 0; }
+}
+
+take :: proc(value: move Res) -> int {
+	return value.id;
+}
+
+// A borrowed managed owner is returned by cloning, and this one has no clone.
+give_back :: proc(value: Only) -> Only {
+	return value;
+}
+
 borrow :: proc(value: Res) -> int {
 	// A value parameter is an immutable borrow, not an owner this body may
 	// consume.
@@ -43,6 +59,10 @@ main :: proc() {
 	drop(global);
 
 	print_int(borrow(b));
+
+	// A `move` parameter needs its marker at the call site.
+	e := Res{9};
+	print_int(take(e));
 
 	// Conditionally live: one path dropped it, the other did not.
 	d := Res{8};

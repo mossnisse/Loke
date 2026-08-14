@@ -44,6 +44,9 @@ Flow_Block :: struct {
 Tracked_Local :: struct {
 	symbol: Symbol_Id,
 	scope:  int,
+	// A `move` parameter arrives owned, so it is live before the first statement
+	// rather than at a declaration inside the body.
+	live_on_entry: bool,
 	// Filled while reporting: whether this local ever reaches a cleanup point,
 	// and in which states.
 	seen_cleanup: bool,
@@ -90,9 +93,13 @@ build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc) -> ^Flow_Graph {
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
-	// The body block is the outermost scope, so falling out of it is already one
-	// of the cleanup points `walk_flow_block` emits.
+	// design.md: a `move` parameter transfers ownership from caller to callee, so
+	// the callee drops it like any owned local. It lives in a scope outside the
+	// body's, which is what makes its cleanup the outermost one.
+	enter_flow_scope(graph)
+	track_move_parameters(graph, literal)
 	walk_flow_block(graph, literal.body)
+	leave_flow_scope(graph)
 
 	return len(graph.tracked) == 0 ? nil : graph
 }
@@ -138,6 +145,27 @@ walk_flow_block :: proc(graph: ^Flow_Graph, b: ^Block) {
 	enter_flow_scope(graph)
 	walk_flow_stmts(graph, b.stmts)
 	leave_flow_scope(graph)
+}
+
+@(private = "file")
+track_move_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
+	if literal.signature == nil {
+		return
+	}
+	for parameter in literal.signature.params {
+		if parameter.mode != .Move {
+			continue
+		}
+		for id in parameter.symbols {
+			sym := symbol_of(graph.k.c, id)
+			if sym == nil || !type_is_managed(graph.k.c, sym.type) {
+				continue
+			}
+			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true})
+			graph.by_symbol[id] = len(graph.tracked) - 1
+			append(&graph.in_scope, len(graph.tracked) - 1)
+		}
+	}
 }
 
 @(private = "file")
@@ -213,6 +241,16 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt) {
 
 	case ^Stmt_Return:
 		for value in s.values {
+			// design.md: returning a managed local, named result, temporary, or
+			// `move` parameter "transfers that owned value into result storage
+			// without cloning", so the source is dead afterwards and scope exit
+			// must not drop it.
+			if ident, is_ident := value.expr.(^Expr_Ident); is_ident && !value.clone_on_return {
+				if slot, tracked := slot_of(graph, ident.symbol); tracked {
+					emit(graph, Flow_Event{kind = .Kill, slot = slot, span = ident.span, name = ident.name})
+					continue
+				}
+			}
 			walk_flow_expr(graph, value.expr)
 		}
 		emit_cleanups(graph, 0)
@@ -500,8 +538,20 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		return
 	}
 	walk_flow_expr(graph, v.callee)
-	for argument in v.bound {
-		if argument != nil {
+	// design.md: "Method-call syntax supplies an `inout` or `move` marker
+	// implicitly for its receiver", so a `move self` call kills the caller's
+	// source with no written marker.
+	consumed := -1
+	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym != nil && sym.receiver == .Move && len(v.bound) > 0 {
+		if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+			if slot, tracked := slot_of(graph, ident.symbol); tracked {
+				emit(graph, Flow_Event{kind = .Kill, slot = slot, span = v.span, name = ident.name})
+				consumed = 0
+			}
+		}
+	}
+	for argument, index in v.bound {
+		if argument != nil && index != consumed {
 			walk_flow_expr(graph, argument)
 		}
 	}

@@ -101,6 +101,107 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 	return true
 }
 
+
+// ------------------------------------------------- ownership at the call --
+
+// design.md "Parameter semantics": "Both non-default modes are required at the
+// call site, not just at the declaration ... an argument to a `move` parameter
+// must be written `move(expr)`. Omitting the marker is an error naming the
+// parameter and the mode it needs." Method-call syntax supplies the marker for
+// its own receiver, which is the one documented exception.
+require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symbol_Id) {
+	sym := symbol_of(k.c, declaration)
+	if sym == nil {
+		return
+	}
+	info := type_of(k.c, sym.proc_type)
+	if info == nil {
+		return
+	}
+	first := 0
+	if sym.has_receiver {
+		first = 1 // the receiver's marker is implicit in method-call syntax
+	}
+	for slot in first ..< len(v.bound) {
+		if slot >= len(info.param_modes) || info.param_modes[slot] != .Move {
+			continue
+		}
+		argument := v.bound[slot]
+		if argument == nil {
+			continue
+		}
+		if _, is_move := argument.(^Expr_Move); is_move {
+			continue
+		}
+		name := "this parameter"
+		if slot < len(sym.param_symbols) {
+			if parameter := symbol_of(k.c, sym.param_symbols[slot]); parameter != nil {
+				name = identifier_text(k.c, parameter.name)
+			}
+		}
+		errorf(
+			k.c,
+			expr_span(argument),
+			"L0501",
+			"`%s` is a `move` parameter, so this argument is written `move(...)`",
+			name,
+		)
+	}
+}
+
+// design.md: "Returning such a borrowed managed parameter by value performs a
+// logical clone, because the callee owns nothing it could move out. ... In
+// contrast, returning a managed local, named result, temporary, or `move`
+// parameter transfers that owned value into result storage without cloning."
+classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id) {
+	if value.is_inout || !type_is_managed(k.c, result) {
+		return
+	}
+	root := place_root_symbol(k, value.expr)
+	sym := symbol_of(k.c, root)
+	if sym == nil {
+		return // a temporary: already owned, nothing to clone
+	}
+	// An owned source transfers. Everything else the callee can name is borrowed.
+	if sym.kind == .Var && sym.decl != nil && !sym.decl.top_level {
+		return
+	}
+	if sym.kind == .Result {
+		return
+	}
+	if sym.kind == .Parameter && sym.mode == .Move {
+		return
+	}
+	if type_clone_disabled(k.c, result) {
+		errorf(
+			k.c,
+			expr_span(value.expr),
+			"L0502",
+			"`%s` disables `try_clone`, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
+			type_name(k.c, result),
+		)
+		return
+	}
+	value.clone_on_return = true
+	// The generated entry point has to exist by emission.
+	contribute_lifecycle_members(k, result)
+}
+
+// The variable a place expression is rooted in, or INVALID_SYMBOL for a
+// temporary. Field and element selection do not change the root.
+@(private = "file")
+place_root_symbol :: proc(k: ^Checker, e: Expr) -> Symbol_Id {
+	#partial switch v in e {
+	case ^Expr_Ident:
+		return v.symbol
+	case ^Expr_Selector:
+		return place_root_symbol(k, v.operand)
+	case ^Expr_Index:
+		return place_root_symbol(k, v.operand)
+	}
+	return INVALID_SYMBOL
+}
+
 // ------------------------------------------------------------- liveness --
 
 // Where a local sits at one program point. The join of two different states is
@@ -148,10 +249,10 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		for block, index in graph.blocks {
 			state := make([]Liveness, tracked, context.temp_allocator)
 			if index == 0 {
-				// A parameter is a borrow, and a local is dead until its
-				// declaration completes, so every tracked slot starts dead.
+				// An ordinary parameter is a borrow and a local is dead until its
+				// declaration completes; a `move` parameter arrives owned.
 				for slot in 0 ..< tracked {
-					state[slot] = .Dead
+					state[slot] = graph.tracked[slot].live_on_entry ? .Live : .Dead
 				}
 			} else {
 				first := true

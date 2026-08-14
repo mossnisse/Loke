@@ -754,6 +754,11 @@ Return_Value :: struct {
 	span:     Span,
 	is_inout: bool,
 	expr:     Expr,
+	// design.md "Parameter semantics": "Returning such a borrowed managed
+	// parameter by value performs a logical clone, because the callee owns
+	// nothing it could move out." Returning an owned local, named result,
+	// temporary, or `move` parameter transfers instead (m5a-plan step 4).
+	clone_on_return: bool,
 }
 
 Stmt_Return :: struct {

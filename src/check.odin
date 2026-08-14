@@ -2372,10 +2372,11 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		)
 		return terminated
 	}
-	for value, index in s.values {
+	for &value, index in s.values {
 		if !check_value_expr(k, value.expr, k.result_types[index], "return") {
 			continue
 		}
+		classify_return_value(k, &value, k.result_types[index])
 		// An `inout` result hands back a place, so what is returned must be one.
 		// Borrow, escape, and exclusivity checking for it arrive with M5 (B12).
 		if index < len(k.result_inout) && k.result_inout[index] {

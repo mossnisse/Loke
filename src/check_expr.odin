@@ -2639,6 +2639,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	}
 
 	v.bound = bound
+	require_argument_ownership(k, v, declaration)
 	return ok
 }
 
