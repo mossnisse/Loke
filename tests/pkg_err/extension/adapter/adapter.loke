@@ -9,6 +9,11 @@ extend vendor.Vector2 {
 
 	@(private)
 	init :: proc(x: i32) -> vendor.Vector2 { return {x, x}; }
+
+	// design.md "Lifecycle hooks and resource types": a hook replaces behavior
+	// the compiler generates for the type, so it belongs with the type's own
+	// package and `extend` cannot add one.
+	drop :: proc(self: inout vendor.Vector2) { }
 }
 
 extend vendor.Other {

@@ -1,0 +1,36 @@
+package main;
+
+// The generated copy entry points (m5a-plan step 3). A record no part of which
+// reaches a custom hook cannot fail, so its `try_clone` is the copy its
+// representation already is — no call, no branch, no cleanup.
+
+Plain :: struct { x: int, y: int }
+
+Res :: struct { id: int }
+
+impl Res {
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		return Res{self.id}, nil;
+	}
+
+	drop :: proc(self: inout Res) { self.id = 0; }
+}
+
+Group :: struct {
+	first:  Res,
+	second: Res,
+}
+
+main :: proc() {
+	p := Plain{1, 2};
+	q := p.clone();
+	print_int(q.x);
+
+	g := Group{Res{1}, Res{2}};
+	c, error := g.try_clone();
+	if (error == nil) {
+		print_int(c.second.id);
+	}
+	d := g.clone();
+	print_int(d.first.id);
+}

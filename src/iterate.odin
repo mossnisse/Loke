@@ -45,6 +45,11 @@ Synth_Kind :: enum {
 	// the bound differs, because a slice carries its length rather than having it
 	// baked into the type.
 	Slice_Next,
+	// design.md "Lifecycle hooks and resource types": a record that writes no
+	// `try_clone` still has one, and `clone` is always generated from it
+	// (m5a-plan step 3).
+	Try_Clone,
+	Clone,
 	// design.md: "`dyn I` itself satisfies `I` by compiler-provided forwarding
 	// slots." Each one calls through the view's own witness.
 	Dyn_Forward,
@@ -132,14 +137,15 @@ array_iterator_type :: proc(c: ^Compiler, array: Type_Id) -> Type_Id {
 
 // Installs `Element`, `Iterator`, and the iterator's `next` on a built-in
 // iterable, so interface checking and generic code see exactly what a user type
-// declares by hand. Idempotent: the type table is interned, so this runs once
-// per type.
+// declares by hand. Idempotent through its own contribution flag: the lifecycle
+// hooks append to the same table, so a member count cannot be the guard.
 ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	under := type_underlying(k.c, type)
 	info := type_of(k.c, under)
-	if info == nil || len(info.members) > 0 {
+	if info == nil || .Iteration in info.contributed {
 		return
 	}
+	info.contributed += {.Iteration}
 	iterator := INVALID_TYPE
 	element := INVALID_TYPE
 	iter_kind := Synth_Kind.None
@@ -167,9 +173,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	members[0] = new_associated_type(k.c, "Element", element, under)
 	members[1] = new_associated_type(k.c, "Iterator", iterator, under)
 	members[2] = synth_proc(k.c, "iter", iter_kind, under, []Type_Id{under}, []Param_Mode{.Value}, []Type_Id{iterator})
-	if info = type_of(k.c, under); info != nil {
-		info.members = members
-	}
+	add_members(k.c, under, members)
 
 	// `next(self: inout Iterator) -> (Element, bool)` — the optional-ok shape the
 	// protocol requires, on the opaque iterator.
@@ -183,9 +187,24 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		sym.receiver = .Inout
 	}
 	next_members[0] = next
-	if iterator_info := type_of(k.c, iterator); iterator_info != nil {
-		iterator_info.members = next_members
+	add_members(k.c, iterator, next_members)
+}
+
+// Appends a contributed member set. The type store may have grown while the
+// symbols were made, so the info pointer is taken fresh here.
+add_members :: proc(c: ^Compiler, type: Type_Id, added: []Symbol_Id) {
+	info := type_of(c, type)
+	if info == nil || len(added) == 0 {
+		return
 	}
+	if len(info.members) == 0 {
+		info.members = added
+		return
+	}
+	merged := make([]Symbol_Id, len(info.members) + len(added), c.semantic_allocator)
+	copy(merged, info.members)
+	copy(merged[len(info.members):], added)
+	info.members = merged
 }
 
 @(private = "file")
@@ -201,7 +220,6 @@ new_associated_type :: proc(c: ^Compiler, name: string, value, owner: Type_Id) -
 	})
 }
 
-@(private = "file")
 synth_proc :: proc(
 	c: ^Compiler,
 	name: string,

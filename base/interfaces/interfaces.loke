@@ -5,13 +5,6 @@
 // the same structural checks a user type goes through — `hash` for the built-in
 // `Hashable` types, and the iteration members for ranges and fixed arrays.
 //
-// M5 handoff: `Cloneable` is deliberately absent. Its one requirement is
-//
-//     slot try_clone: proc(self, allocator: Allocator) -> (T, Allocator_Error);
-//
-// and both `Allocator` and `Allocator_Error` arrive with M5's allocator and
-// lifecycle types. Adding it here with placeholder types would make the
-// catalogue lie about what satisfies it.
 @(public)
 package interfaces;
 
@@ -47,6 +40,13 @@ Integral :: interface($T: type) {
 	(a, b: T) a &~ b -> T;
 	(a: T, shift: uint) a << shift -> T;
 	(a: T, shift: uint) a >> shift -> T;
+}
+
+// A record satisfies this through whichever `try_clone` it answers to: the one
+// its `impl` block writes, or the field-wise one the compiler generates.
+// `try_clone :: ---` removes the member, so a move-only type fails it.
+Cloneable :: interface($T: type) {
+	slot try_clone: proc(self, allocator: Allocator) -> (T, Allocator_Error);
 }
 
 Iterator :: interface($Self, $Element: type) {

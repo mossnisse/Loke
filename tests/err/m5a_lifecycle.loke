@@ -15,6 +15,16 @@ impl S {
 	try_clone :: proc(self) -> S { return self; }
 }
 
+T :: struct { w: int }
+
+impl T {
+	// The allocator default is supplied by the compiler until `core:mem` is
+	// nameable in M6, so a written one is rejected.
+	try_clone :: proc(self, allocator: Allocator = default_allocator()) -> (T, Allocator_Error) {
+		return self, nil;
+	}
+}
+
 Move_Only :: struct { z: int }
 
 impl Move_Only {

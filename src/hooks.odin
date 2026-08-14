@@ -35,9 +35,9 @@ Lifecycle :: struct {
 }
 
 // design.md: "`drop` is `proc(self: inout T)`."
-lifecycle_of :: proc(k: ^Checker, type: Type_Id) -> ^Lifecycle {
-	under := type_underlying(k.c, type)
-	if existing, found := k.c.lifecycles[under]; found {
+lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
+	under := type_underlying(c, type)
+	if existing, found := c.lifecycles[under]; found {
 		if existing.state != .Checking {
 			return existing
 		}
@@ -46,35 +46,37 @@ lifecycle_of :: proc(k: ^Checker, type: Type_Id) -> ^Lifecycle {
 		// rejected if it were a real by-value cycle.
 		return existing
 	}
-	entry := new(Lifecycle, k.c.semantic_allocator)
+	entry := new(Lifecycle, c.semantic_allocator)
 	entry.custom_drop = INVALID_SYMBOL
 	entry.custom_try_clone = INVALID_SYMBOL
 	entry.state = .Checking
-	k.c.lifecycles[under] = entry
+	c.lifecycles[under] = entry
 
-	info := type_of(k.c, under)
+	info := type_of(c, under)
 	if info != nil {
-		collect_hooks(k, under, info, entry)
+		collect_hooks(c, under, info, entry)
 		entry.managed =
 			entry.custom_drop != INVALID_SYMBOL ||
 			entry.custom_try_clone != INVALID_SYMBOL ||
 			entry.clone_disabled ||
-			has_managed_part(k, under, info)
+			has_managed_part(c, under, info)
 	}
 	entry.state = .Finite
 	return entry
 }
 
 @(private = "file")
-collect_hooks :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info, entry: ^Lifecycle) {
+collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lifecycle) {
 	// Inherent members only: a lifecycle hook belongs with the type's own
 	// package, so an `extend` block never contributes one.
 	for member in info.members {
-		sym := symbol_of(k.c, member)
-		if sym == nil {
+		sym := symbol_of(c, member)
+		// A generated hook is not a custom one: reading one back would make the
+		// type look customised the moment its own members were contributed.
+		if sym == nil || sym.synth != .None {
 			continue
 		}
-		switch identifier_text(k.c, sym.name) {
+		switch identifier_text(c, sym.name) {
 		case "drop":
 			entry.custom_drop = member
 		case "try_clone":
@@ -90,20 +92,20 @@ collect_hooks :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info, entry: ^Life
 // design.md: "Fixed arrays inherit their element lifecycle." A struct is managed
 // when any field is.
 @(private = "file")
-has_managed_part :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) -> bool {
+has_managed_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
 	#partial switch info.kind {
 	case .Array:
-		return type_is_managed(k, info.element)
+		return type_is_managed(c, info.element)
 	case .Struct:
 		for field in info.fields {
-			sym := symbol_of(k.c, field)
-			if sym != nil && type_is_managed(k, sym.type) {
+			sym := symbol_of(c, field)
+			if sym != nil && type_is_managed(c, sym.type) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if type_is_managed(k, variant) {
+			if type_is_managed(c, variant) {
 				return true
 			}
 		}
@@ -111,41 +113,204 @@ has_managed_part :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) -> bool {
 	return false
 }
 
-type_is_managed :: proc(k: ^Checker, type: Type_Id) -> bool {
+type_is_managed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	return lifecycle_of(k, type).managed
+	return lifecycle_of(c, type).managed
 }
 
 // design.md: a move-only type — `try_clone :: ---` — has neither copy entry
 // point, so assignment, copy initialization, and a borrowed-parameter return all
 // have to say so rather than silently producing a shallow copy.
-type_clone_disabled :: proc(k: ^Checker, type: Type_Id) -> bool {
+type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	if lifecycle_of(k, type).clone_disabled {
+	if lifecycle_of(c, type).clone_disabled {
 		return true
 	}
 	// A record containing a move-only part is itself move-only: the generated
 	// field-wise clone would have no hook to call for that field.
-	info := type_of(k.c, type_underlying(k.c, type))
+	info := type_of(c, type_underlying(c, type))
 	if info == nil {
 		return false
 	}
 	#partial switch info.kind {
 	case .Array:
-		return type_clone_disabled(k, info.element)
+		return type_clone_disabled(c, info.element)
 	case .Struct:
 		for field in info.fields {
-			sym := symbol_of(k.c, field)
-			if sym != nil && type_clone_disabled(k, sym.type) {
+			sym := symbol_of(c, field)
+			if sym != nil && type_clone_disabled(c, sym.type) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+// ------------------------------------------------- generated copy members --
+
+// design.md: "User-defined records receive field-wise `try_clone`, `clone`,
+// `move`, and `drop` behavior by default", and "`clone` is generated from
+// `try_clone`; user code does not replace it independently." Both copy entry
+// points are therefore real members with real emitted bodies, so `value.clone()`,
+// generic code, and the catalogue's `Cloneable` find them exactly where a
+// hand-written hook would be (m5a-plan step 3).
+//
+// The contribution is keyed on the name being looked up rather than running for
+// every member query. `lifecycle_of` caches its answer, so asking before the
+// subject's own `impl` block is declared would both freeze the wrong
+// classification and install a generated hook beside the custom one.
+ensure_lifecycle_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
+	switch identifier_text(k.c, name) {
+	case "try_clone", "clone":
+	case:
+		return
+	}
+	contribute_lifecycle_members(k, type)
+}
+
+// The recursion behind that. A generated body calls `try_clone` on every part
+// whose own clone can fail, so those parts need their hook installed too — a
+// fixed array's included, which is why this is not restricted to records even
+// though only a record receives the `clone` entry point.
+// Keyed on the underlying type, exactly as `lifecycle_of` is: a `distinct` name
+// shares its underlying record's lifecycle, and `type_hook` resolves through the
+// same step, so both halves agree on where one type's hooks live.
+contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
+	type := type_underlying(k.c, written)
+	info := type_of(k.c, type)
+	if info == nil || info.descriptor || .Lifecycle in info.contributed {
+		return
+	}
+	#partial switch info.kind {
+	case .Struct, .Array:
+	case:
+		// A built-in's copy is its representation, so it needs no hook.
+		return
+	}
+	info.contributed += {.Lifecycle}
+
+	entry := lifecycle_of(k.c, type)
+	// `try_clone :: ---` disables both entry points, and a record holding a
+	// move-only part has no hook to call for it.
+	if entry.clone_disabled || type_clone_disabled(k.c, type) {
+		return
+	}
+	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+	if entry.custom_try_clone == INVALID_SYMBOL {
+		append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
+	}
+	// design.md: `clone` is generated for a user record. A fixed array is reached
+	// only as a part of one, and is not itself a record.
+	if info.kind == .Struct {
+		append(&members, generated_hook(k, type, "clone", .Clone, false))
+	}
+	add_members(k.c, type, members[:])
+
+	for index in 0 ..< clone_part_count(k.c, type) {
+		part := clone_part(k.c, type, index)
+		if type_clone_is_fallible(k.c, part) {
+			contribute_lifecycle_members(k, part)
+		}
+	}
+}
+
+// The parts a generated field-wise clone visits, in declaration order: a
+// record's fields, or a fixed array's elements. `clone_part_count` and
+// `clone_part` are the one pair every walk uses, so a struct and an array are
+// never indexed by two different conventions.
+clone_part_count :: proc(c: ^Compiler, type: Type_Id) -> int {
+	info := type_of(c, type_underlying(c, type))
+	if info == nil {
+		return 0
+	}
+	#partial switch info.kind {
+	case .Array:
+		return int(info.count)
+	case .Struct:
+		return len(info.fields)
+	}
+	return 0
+}
+
+clone_part :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
+	info := type_of(c, type_underlying(c, type))
+	if info == nil {
+		return INVALID_TYPE
+	}
+	if info.kind == .Array {
+		return info.element
+	}
+	if index < 0 || index >= len(info.fields) {
+		return INVALID_TYPE
+	}
+	sym := symbol_of(c, info.fields[index])
+	return sym == nil ? INVALID_TYPE : sym.type
+}
+
+// Can cloning this type actually fail? Only a custom `try_clone` returns a real
+// error; a generated one is fallible exactly when some part of it reaches one.
+// This is what keeps a generated body a plain copy for the ordinary case
+// instead of a chain of error branches that can never be taken.
+type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if type == INVALID_TYPE {
+		return false
+	}
+	if lifecycle_of(c, type).custom_try_clone != INVALID_SYMBOL {
+		return true
+	}
+	// A fixed array inherits its element's, so one part answers for every index.
+	for index in 0 ..< clone_part_count(c, type) {
+		if type_clone_is_fallible(c, clone_part(c, type, index)) {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kind, fallible: bool) -> Symbol_Id {
+	results := fallible ? []Type_Id{type, TYPE_ALLOCATOR_ERROR} : []Type_Id{type}
+	id := synth_proc(
+		k.c, name, kind, type,
+		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Value, .Value}, results,
+	)
+	if sym := symbol_of(k.c, id); sym != nil {
+		sym.has_receiver = true
+		sym.receiver = .Value
+		sym.param_defaults[1] = default_allocator_arg(k.c)
+	}
+	return id
+}
+
+// The call expression the compiler supplies for an omitted hook allocator. One
+// shared node, exactly as a written default argument is shared by every call
+// site that omits it.
+default_allocator_arg :: proc(c: ^Compiler) -> Expr {
+	if c.default_allocator_arg != nil {
+		return c.default_allocator_arg
+	}
+	sym := c.default_allocator_symbol
+	callee := new(Expr_Ident, c.semantic_allocator)
+	callee.span = no_span()
+	callee.name = "default_allocator"
+	callee.name_id = intern_identifier(c, "default_allocator")
+	callee.symbol = sym
+	callee.type = TYPE_ALLOCATOR
+	callee.resolution = Resolution{kind = .Value, symbol = sym}
+	callee.value_category = .Value
+
+	call := new(Expr_Call, c.semantic_allocator)
+	call.span = no_span()
+	call.callee = callee
+	call.type = TYPE_ALLOCATOR
+	call.value_category = .Value
+	call.resolution = Resolution{kind = .Call, symbol = sym, chosen_overload = sym}
+	c.default_allocator_arg = call
+	return call
 }
 
 // ------------------------------------------------------- allocation roots --
@@ -285,12 +450,16 @@ require_hook_shape :: proc(
 	}
 	// M5a narrowing: the design's default argument names `mem.default_allocator()`,
 	// which is not spellable until M6, so the compiler supplies it instead.
-	if name == "try_clone" && len(sym.param_defaults) > 1 && sym.param_defaults[1] != nil {
-		errorf(
-			k.c,
-			expr_span(sym.param_defaults[1]),
-			"L0489",
-			"a lifecycle hook takes no written default; the compiler supplies the allocator until `core:mem` is nameable in M6",
-		)
+	if name == "try_clone" && len(sym.param_defaults) > 1 {
+		if sym.param_defaults[1] != nil {
+			errorf(
+				k.c,
+				expr_span(sym.param_defaults[1]),
+				"L0489",
+				"a lifecycle hook takes no written default; the compiler supplies the allocator until `core:mem` is nameable in M6",
+			)
+			return
+		}
+		sym.param_defaults[1] = default_allocator_arg(k.c)
 	}
 }

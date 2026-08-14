@@ -105,9 +105,11 @@ M4b makes those abstractions generic and erasable, completing M4:
   type that failed it. A named slot is matched only by an inherent method or an
   extension from the interface's own package, so a caller-local `extend` cannot
   make a requirement appear satisfied;
-- the unmanaged standard interface catalogue as ordinary Loke source in
-  [base/interfaces](base/interfaces), reached with `-collection base=base`.
-  `Cloneable` waits for M5's allocator and lifecycle types;
+- the standard interface catalogue as ordinary Loke source in
+  [base/interfaces](base/interfaces), reached with `-collection base=base`,
+  `Cloneable` included: a record satisfies it through the `try_clone` its `impl`
+  block writes or the field-wise one the compiler generates, and
+  `try_clone :: ---` fails it;
 - compile-time reflection: `fields_of`, `enum_values_of`, `field.get`,
   `field.pointer`, `type_of`, `typeid_of`, and static `foreach` expansion, which
   type-checks one copy of its body per element;

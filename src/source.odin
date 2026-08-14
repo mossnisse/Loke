@@ -139,6 +139,11 @@ Compiler :: struct {
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
+	// The `default_allocator` builtin, and the one call expression the compiler
+	// installs as the omitted allocator argument of every lifecycle hook. M6
+	// replaces it with the design's written `= mem.default_allocator()`.
+	default_allocator_symbol: Symbol_Id,
+	default_allocator_arg:    Expr,
 
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,

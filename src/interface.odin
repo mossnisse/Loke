@@ -557,6 +557,7 @@ check_slot_requirement :: proc(
 @(private = "file")
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
 	ensure_iteration_members(k, subject)
+	ensure_lifecycle_members(k, type_underlying(k.c, subject), name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := type_of(k.c, type_underlying(k.c, subject)); info != nil {
 		collect_slot_members(k, info.members, name, &out)

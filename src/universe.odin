@@ -173,6 +173,9 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		type      = TYPE_ALLOCATOR,
 		proc_type = no_args,
 	})
+	// The generated default argument of a lifecycle hook names this same symbol,
+	// so an omitted allocator and a written `default_allocator()` are one call.
+	c.default_allocator_symbol = universe.names[intern_identifier(c, "default_allocator")]
 
 	// design.md: `hash(value, seed: uint) -> uint` over the built-in types the
 	// standard catalogue promises satisfy `Hashable`. Its operand types are

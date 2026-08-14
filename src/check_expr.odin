@@ -2361,11 +2361,14 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		}
 		append(&bound, v.args[0].value)
 		v.alloc_type = value
+		// design.md: `new_clone` "creates a new allocation root containing a clone
+		// of the value", so the operand's own copy hook has to exist by emission.
+		contribute_lifecycle_members(k, value)
 		// The result shape is settled before the copyability complaint, so a
 		// `p, err := new_clone(x)` destructuring still knows its arity and the
 		// failure is reported once.
 		set_allocation_results(k, v, pointer_to(k.c, value))
-		if type_clone_disabled(k, value) {
+		if type_clone_disabled(k.c, value) {
 			errorf(
 				k.c,
 				expr_span(v.args[0].value),

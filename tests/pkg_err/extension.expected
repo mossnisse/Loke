@@ -1,6 +1,9 @@
 L0407
 @7:6
 belongs with the package that declares `Vector2`
+L0486
+@16:2
+`extend` cannot add `drop`
 L0363
 @14:16
 has no field or member `doubled`

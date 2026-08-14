@@ -355,6 +355,9 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	// demand, so interface checking and generic code see exactly what a user type
 	// declares by hand (design.md "Iteration protocol").
 	ensure_iteration_members(k, type)
+	// The generated `try_clone`/`clone` are contributed the same way, so a record
+	// without a hand-written hook still has both copy entry points.
+	ensure_lifecycle_members(k, type, name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := type_of(k.c, type); info != nil {
 		expand_visible_members(k, info.members, name, &out)
@@ -424,6 +427,7 @@ expand_visible_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifi
 // associated type, or a directly named procedure resolves to.
 find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	ensure_iteration_members(k, type)
+	ensure_lifecycle_members(k, type, name)
 	if info := type_of(k.c, type); info != nil {
 		if found := visible_member_named(k, info.members, name); found != INVALID_SYMBOL {
 			return found

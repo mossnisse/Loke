@@ -120,6 +120,12 @@ Type_Kind :: enum {
 	Type,
 }
 
+// A member set the compiler installs on a type rather than the user writing it.
+Contribution :: enum u8 {
+	Iteration,
+	Lifecycle,
+}
+
 Type_Info :: struct {
 	kind:       Type_Kind,
 	name:       Identifier_Id,
@@ -146,6 +152,11 @@ Type_Info :: struct {
 	// associated types. `extend` never writes here — its members are package-scoped
 	// and live in `Package.extensions` (m4a-plan decision "Method storage").
 	members:    []Symbol_Id,
+	// Which compiler-contributed member sets are already installed. More than one
+	// contributor appends here — iteration for a range, array, or slice, and the
+	// lifecycle hooks for a record — so "already has members" cannot be the
+	// idempotence guard: whichever ran first would suppress the other.
+	contributed: bit_set[Contribution],
 	parameters: []Type_Id,
 	param_modes: []Param_Mode,
 	results:    []Type_Id,

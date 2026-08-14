@@ -1,0 +1,98 @@
+package main;
+
+// design.md "Lifecycle hooks and resource types" (m5a-plan step 3): a record
+// receives field-wise `try_clone` and a `clone` generated from it, a custom
+// hook replaces the fallible half, and a failed field-wise clone destroys the
+// partially built temporary before returning zero plus the error.
+
+// Too large for any allocator to satisfy, which is how a fixture reaches the
+// failure path of an explicitly fallible operation.
+Huge :: struct { pad: [4611686018427387904]u8 }
+
+Plain :: struct {
+	x: int,
+	y: int,
+}
+
+Res :: struct { id: int }
+
+impl Res {
+	// A non-allocating hook accepts and ignores the allocator, and returns a nil
+	// error.
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		return Res{self.id + 100}, nil;
+	}
+
+	// The observable half of cleanup: an implicit drop is a step 4 site, but the
+	// partial-clone cleanup below already has to run this exactly once per part
+	// it managed to build.
+	drop :: proc(self: inout Res) {
+		print_int(self.id);
+		self.id = 0;
+	}
+}
+
+Failing :: struct { id: int }
+
+impl Failing {
+	try_clone :: proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
+		p, err := new(Huge, allocator);
+		if (err != nil) {
+			return Failing{0}, err;
+		}
+		free(p);
+		return Failing{self.id}, nil;
+	}
+}
+
+Group :: struct {
+	items: [2]Res,
+	tail:  Failing,
+}
+
+main :: proc() {
+	// A record no part of which reaches a custom hook clones by copying its
+	// representation, and the generated `clone` is reached with no allocator
+	// written: the compiler supplies the default until `core:mem` is nameable.
+	p := Plain{1, 2};
+	q := p.clone();
+	print_int(q.x + q.y);
+
+	// An explicit allocator selects the same default provider in M5a.
+	a := default_allocator();
+	r := p.clone(a);
+	print_int(r.y);
+
+	// The generated `try_clone` is field-wise: the custom hook of `Res` runs for
+	// every element, so each id gains 100.
+	ok := Group{[2]Res{Res{11}, Res{22}}, Failing{0}};
+	single, single_error := ok.items[0].try_clone();
+	if (single_error == nil) {
+		print_int(single.id);
+	}
+
+	// `tail` fails, so the two elements already cloned into the temporary are
+	// dropped in reverse part order — 122 then 111 — and the result is the inert
+	// zero paired with the error.
+	failed, error := ok.try_clone();
+	if (error != nil) {
+		print_int(-1);
+	}
+	print_int(failed.items[0].id);
+	print_int(failed.tail.id);
+
+	// design.md: `new_clone` "creates a new allocation root containing a clone of
+	// the value", so it fills the allocation through the same hook.
+	held, allocation_error := new_clone(Res{5});
+	if (allocation_error == nil) {
+		print_int(held^.id);
+		free(held);
+	}
+
+	// And destroys the allocation it could not publish into: the two elements
+	// already cloned are dropped, then the block is released.
+	spare, group_error := new_clone(ok);
+	if (group_error != nil) {
+		print_int(-2);
+	}
+}

@@ -7,12 +7,15 @@ L0487
 L0488
 @15:2
 `try_clone` has a fixed signature for `S`
+L0489
+@23:49
+a lifecycle hook takes no written default
 L0493
-@28:7
+@38:7
 M5a frees only a binding initialised directly by `new` or `new_clone`
 L0491
-@33:25
+@43:25
 disables `try_clone`, so it cannot be cloned into a new allocation
 L0492
-@37:2
+@47:2
 `free_all` is not lowered until M5b

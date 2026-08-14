@@ -2840,6 +2840,12 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 // dispatches on the handle instead.
 @(private = "file")
 emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
+	// design.md: `new_clone` "creates a new allocation root containing a clone of
+	// the value", so a record whose clone can fail goes through its hook rather
+	// than through a shallow store of the representation.
+	if kind == .New_Clone && type_clone_is_fallible(e.c, v.alloc_type) {
+		return emit_new_clone_hook(e, v)
+	}
 	size := type_size(e.c, v.alloc_type)
 	pointer := temp(e)
 	if kind == .New {
@@ -2853,9 +2859,8 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 
 	if kind == .New_Clone {
 		// A failed allocation has nothing to clone into, so the copy is guarded.
-		// Nothing is partially built on that path, which is what makes the
-		// "destroy a partially cloned allocation" obligation trivially met for the
-		// trivially-copyable types M5a step 3 admits here.
+		// Nothing is partially built on that path: this arm only runs for a value
+		// whose clone is the copy its representation already is.
 		store_label, done_label := new_label(e, "newclone.store"), new_label(e, "newclone.done")
 		fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", failed, done_label, store_label)
 		place_label(e, store_label)
@@ -2869,6 +2874,69 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 1, i64 0", error, failed)
 	out := make([]string, 2)
 	out[0], out[1] = pointer, error
+	return out
+}
+
+// The clone-through-a-hook half of `new_clone`, and the only path with a
+// partially cloned allocation to destroy: the hook already cleaned its own
+// temporary, so what is left is the block it was going to be published into.
+// The result travels through storage rather than phi nodes, so the three exits
+// do not need their predecessor labels tracked.
+@(private = "file")
+emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	value_type := llvm_type(e, v.alloc_type)
+	value := emit_expr(e, v.bound[0])
+	allocator := len(v.bound) > 1 ? emit_expr(e, v.bound[1]) : CRT_ALLOCATOR_GLOBAL
+
+	pointer_slot, error_slot := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca ptr", pointer_slot)
+	fmt.sbprintfln(&e.b, "  %s = alloca i64", error_slot)
+	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", pointer_slot)
+	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
+
+	pointer := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call ptr @malloc(i64 %d)", pointer, type_size(e.c, v.alloc_type))
+	no_memory := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, pointer)
+	clone_label := new_label(e, "newclone.clone")
+	done_label := new_label(e, "newclone.done")
+	branch_if(e, no_memory, done_label, clone_label)
+
+	place_label(e, clone_label)
+	hook := type_hook(e.c, v.alloc_type, "try_clone")
+	if hook == INVALID_SYMBOL {
+		panic("a fallible `new_clone` reached the backend without a `try_clone` member")
+	}
+	pair := clone_pair_type(value_type)
+	returned := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
+		returned, pair, e.names[hook], value_type, value, allocator,
+	)
+	cloned, error, failed := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
+	release_label, publish_label := new_label(e, "newclone.release"), new_label(e, "newclone.publish")
+	branch_if(e, failed, release_label, publish_label)
+
+	place_label(e, release_label)
+	fmt.sbprintfln(&e.b, "  call void @free(ptr %s)", pointer)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", error, error_slot)
+	branch(e, done_label)
+
+	place_label(e, publish_label)
+	store(e, v.alloc_type, cloned, pointer)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", pointer, pointer_slot)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", error_slot)
+	branch(e, done_label)
+
+	place_label(e, done_label)
+	e.terminated = false
+	out := make([]string, 2)
+	out[0], out[1] = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", out[0], pointer_slot)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", out[1], error_slot)
 	return out
 }
 
@@ -3671,6 +3739,10 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_array_next(e, symbol, name)
 		case .Slice_Next:
 			emit_synth_slice_next(e, symbol, name)
+		case .Try_Clone:
+			emit_synth_try_clone(e, symbol, name)
+		case .Clone:
+			emit_synth_clone(e, symbol, name)
 		case .Dyn_Forward:
 			emit_dyn_forwarding_slot(e, symbol, name)
 		case .None:
@@ -3840,6 +3912,208 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
 	fmt.sbprintln(&e.b, "}")
+}
+
+// ------------------------------------------------------- lifecycle bodies --
+
+// `{ T, i64 }`, the `(T, Allocator_Error)` result pair. Built rather than
+// formatted, because `{` is a directive to core:fmt.
+@(private = "file")
+clone_pair_type :: proc(value: string) -> string {
+	b := strings.builder_make()
+	strings.write_string(&b, "{ ")
+	strings.write_string(&b, value)
+	strings.write_string(&b, ", i64 }")
+	return strings.to_string(b)
+}
+
+// design.md: "Compiler-generated field-wise cloning calls `try_clone`
+// recursively for every owning field, destroys a partially completed temporary
+// on failure, and returns zero plus the error."
+//
+// A type no part of which reaches a custom hook cannot fail, so its generated
+// body is the copy the representation already is. The branchy shape below exists
+// only where a real hook can return an error.
+@(private = "file")
+emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	subject := symbol.params[0]
+	value_type := llvm_type(e, subject)
+	pair := clone_pair_type(value_type)
+	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, value_type)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	e.terminated = false
+
+	if !type_clone_is_fallible(e.c, subject) {
+		first, out := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %%arg0, 0", first, pair, value_type)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, 1", out, pair, first)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, out)
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+
+	// Both sides are addressed rather than kept in registers: a failure path has
+	// to drop what the destination already holds, and a drop hook takes a place.
+	self, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", self, value_type)
+	fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", out, value_type)
+	// design.md: "every hook must handle the inert zero value", and a cleanup that
+	// runs before a part is written must see that zero rather than garbage.
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, out)
+
+	for index in 0 ..< clone_part_count(e.c, subject) {
+		part := clone_part(e.c, subject, index)
+		source := element_address(e, subject, self, index)
+		destination := element_address(e, subject, out, index)
+		if !type_clone_is_fallible(e.c, part) {
+			loaded := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, llvm_type(e, part), source)
+			store(e, part, loaded, destination)
+			continue
+		}
+		cloned, error := emit_part_clone(e, part, source)
+		failed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
+		unwind, ok := new_label(e, "clone.unwind"), new_label(e, "clone.ok")
+		branch_if(e, failed, unwind, ok)
+
+		// The partially built temporary, cleaned in reverse part order. Everything
+		// past `index` is still the inert zero this block never wrote.
+		place_label(e, unwind)
+		for done := index - 1; done >= 0; done -= 1 {
+			emit_drop_place(e, clone_part(e.c, subject, done), element_address(e, subject, out, done))
+		}
+		zeroed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s zeroinitializer, i64 %s, 1", zeroed, pair, error)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, zeroed)
+		e.terminated = true
+		// Only a successful part is published, so a hook that breaks its contract
+		// and hands back a live value beside an error cannot leave one in the
+		// temporary that cleanup would never reach.
+		place_label(e, ok)
+		store(e, part, cloned, destination)
+	}
+
+	built, first, result := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", built, value_type, out)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, value_type, built)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, 1", result, pair, first)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair, result)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// The address of part `index`, which is a struct field or an array element.
+@(private = "file")
+element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -> string {
+	info := type_of(e.c, type_underlying(e.c, owner))
+	out := temp(e)
+	if info != nil && info.kind == .Array {
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %d",
+			out, llvm_type(e, owner), base, index,
+		)
+		return out
+	}
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		out, llvm_type(e, owner), base, index,
+	)
+	return out
+}
+
+// Clones one part through its own `try_clone` — custom or generated, both real
+// members. Returns the cloned value and the error word; the caller publishes the
+// value only on the success path.
+@(private = "file")
+emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string) {
+	hook := type_hook(e.c, part, "try_clone")
+	if hook == INVALID_SYMBOL {
+		// `type_clone_is_fallible` said this part reaches a custom hook, so the
+		// contribution pass owed it one.
+		panic("a fallible clone part reached the backend without a `try_clone` member")
+	}
+	part_type := llvm_type(e, part)
+	pair := clone_pair_type(part_type)
+	loaded, returned := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, part_type, source)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s %s(%s %s, ptr %%arg1)",
+		returned, pair, e.names[hook], part_type, loaded,
+	)
+	cloned, error := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	return cloned, error
+}
+
+// design.md: "`clone` ... calls `try_clone` once and, on failure, invokes the
+// supplied allocator's failure policy."
+//
+// ponytail: M5a's fixed fallback is a non-unwinding trap; M6's allocator-selected
+// `.Panic`/`.Trap` dispatch replaces the trap block, not the shape.
+@(private = "file")
+emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	subject := symbol.params[0]
+	value_type := llvm_type(e, subject)
+	pair := clone_pair_type(value_type)
+	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", value_type, name, value_type)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	e.terminated = false
+
+	hook := type_hook(e.c, subject, "try_clone")
+	if hook == INVALID_SYMBOL {
+		panic("a generated `clone` reached the backend without a `try_clone` member")
+	}
+	returned := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s %s(%s %%arg0, ptr %%arg1)",
+		returned, pair, e.names[hook], value_type,
+	)
+	cloned, error, failed := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
+	trap_if(e, failed, "clone.failed")
+	fmt.sbprintfln(&e.b, "  ret %s %s", value_type, cloned)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// The `try_clone` or `drop` a type answers to: a written one when the `impl`
+// block has it, and the contributed one otherwise.
+type_hook :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
+	info := type_of(c, type_underlying(c, type))
+	if info == nil {
+		return INVALID_SYMBOL
+	}
+	return member_named_in(c, info.members, intern_identifier(c, name))
+}
+
+// design.md: "`drop(value)` invokes the user hook when present" and "Fields are
+// dropped in reverse declaration order after the containing type's drop hook
+// returns." Used by partial-clone cleanup now; step 4's scope-exit cleanup is
+// the same walk from a different caller.
+emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
+	if !type_is_managed(e.c, type) {
+		return
+	}
+	if hook := custom_drop_of(e.c, type); hook != INVALID_SYMBOL {
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", e.names[hook], address)
+	}
+	for index := clone_part_count(e.c, type) - 1; index >= 0; index -= 1 {
+		part := clone_part(e.c, type, index)
+		if !type_is_managed(e.c, part) {
+			continue
+		}
+		emit_drop_place(e, part, element_address(e, type, address, index))
+	}
+}
+
+@(private = "file")
+custom_drop_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+	return lifecycle_of(c, type).custom_drop
 }
 
 // ============================================================ erased views ==

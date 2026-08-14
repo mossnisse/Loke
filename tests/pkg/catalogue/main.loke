@@ -18,6 +18,25 @@ impl Meters {
 
 Opaque :: struct { value: int }
 
+// design.md "Lifecycle hooks and resource types": a record receives its copy
+// hooks by default, an `impl` block may replace `try_clone`, and
+// `try_clone :: ---` removes both entry points.
+Counted :: struct { n: int }
+
+impl Counted {
+	try_clone :: proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
+		return Counted{self.n}, nil;
+	}
+}
+
+Move_Only :: struct { handle: int }
+
+impl Move_Only {
+	try_clone :: ---;
+}
+
+Holds_Move_Only :: struct { inner: Move_Only }
+
 total :: proc(a, b: $T) -> T where interfaces.Numeric(T) {
 	return a + b;
 }
@@ -31,6 +50,13 @@ main :: proc() {
 	#assert(interfaces.Numeric(int));
 	#assert(interfaces.Numeric(f64));
 	#assert(interfaces.Integral(int));
+
+	// `Cloneable` is satisfied through whichever `try_clone` the record answers
+	// to, generated or written, and not at all once it is disabled.
+	#assert(interfaces.Cloneable(Opaque));
+	#assert(interfaces.Cloneable(Counted));
+	#assert(!interfaces.Cloneable(Move_Only));
+	#assert(!interfaces.Cloneable(Holds_Move_Only));
 
 	#assert(!interfaces.Integral(f64));
 	#assert(!interfaces.Equatable(Opaque));
