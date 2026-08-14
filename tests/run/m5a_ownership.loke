@@ -163,6 +163,14 @@ replaced :: proc(flag: bool) {
 	print_int(x.id);
 }
 
+// design.md: an owning temporary nothing binds is still a completed
+// initialization, so it is cleaned up exactly once rather than leaked.
+discarded :: proc() {
+	print_int(9800);
+	make_res(16);
+	print_int(9801);
+}
+
 main :: proc() {
 	scope_exit();
 	explicit();
@@ -177,4 +185,5 @@ main :: proc() {
 	copies();
 	replaced(true);
 	replaced(false);
+	discarded();
 }

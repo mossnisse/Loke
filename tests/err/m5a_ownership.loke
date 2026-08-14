@@ -69,6 +69,13 @@ main :: proc() {
 	g := f;
 	g = f;
 
+	// A by-value `foreach` over a managed element has no per-iteration cleanup
+	// site in M5a.
+	table := [2]Res{Res{11}, Res{12}};
+	foreach (item in table) {
+		print_int(item.id);
+	}
+
 	// Conditionally live: one path dropped it, the other did not.
 	d := Res{8};
 	if (b.id == 0) {

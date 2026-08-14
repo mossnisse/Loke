@@ -1153,7 +1153,8 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 					continue
 				}
 			}
-			emit_expr(e, expr)
+			value := emit_expr(e, expr)
+			emit_discarded_temporary(e, expr, value)
 		}
 
 	case ^Stmt_Assign:
@@ -1319,6 +1320,30 @@ emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 	}
 	emit_drop_place(e, sym.type, e.names[ident.symbol])
 	kill_place(e, ident.symbol)
+}
+
+// design.md: an owning temporary nothing binds is still a completed
+// initialization, so it is cleaned up exactly once.
+//
+// ponytail: dropped at its full-expression boundary rather than registered in
+// the surrounding scope's reverse order. Nothing can name it, so the only
+// observable difference is ordering against other cleanups — and registering it
+// would drop one value per emitted statement rather than one per loop iteration.
+@(private = "file")
+emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
+	base := expr_base(expr)
+	if base == nil || !type_is_managed(e.c, base.type) {
+		return
+	}
+	// A place names storage someone else owns; only an owned temporary is ours
+	// to clean up.
+	if expression_is_borrowed_place(e.c, expr) {
+		return
+	}
+	slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, base.type))
+	store(e, base.type, value, slot)
+	emit_drop_place(e, base.type, slot)
 }
 
 // design.md "Assignment statements": `move` "transfers the representation,

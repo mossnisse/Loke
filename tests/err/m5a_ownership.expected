@@ -19,6 +19,9 @@ so this binding cannot copy it; write `move(...)` to transfer ownership instead
 L0503
 @70:6
 so this assignment cannot copy it; write `move(...)` to transfer ownership instead
+L0504
+@75:11
+copies a managed element, which M5a does not clean up per iteration
 L0500
 @44:12
 `a` cannot be used here: it has already been moved, dropped, or released
@@ -26,5 +29,5 @@ L0500
 @48:2
 `c` cannot be dropped here: it has already been moved, dropped, or released
 L0500
-@77:12
+@84:12
 `d` cannot be used here: it is live on only some of the paths

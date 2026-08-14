@@ -501,6 +501,20 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> F
 	if !gate_type(k, element, expr_span(s.iterable)) {
 		return FLOWS
 	}
+	// design.md: "By default each iterated value is a copy." A managed element
+	// would therefore need a per-iteration clone and a per-iteration drop, which
+	// is loop-body cleanup the M5a CFG does not place yet.
+	if !s.bindings[0].is_ref && type_is_managed(k.c, element) {
+		errorf(
+			k.c,
+			s.bindings[0].name.span,
+			"L0504",
+			"a by-value `foreach` over `%s` copies a managed element, which M5a does not clean up per iteration; iterate `&value` over a `[]mut %s`, or index the sequence",
+			type_name(k.c, element),
+			type_name(k.c, element),
+		)
+		return FLOWS
+	}
 	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], element, s.bindings[0].is_ref)
 	if len(s.bindings) == 2 {
 		s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], TYPE_INT, false)
