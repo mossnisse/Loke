@@ -9,7 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M4b)
+USAGE :: `lokec - the Loke compiler (milestone M5a)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -42,11 +42,23 @@ with fields_of, enum_values_of, type_of, typeid_of and static foreach; runtime
 foreach over ranges, fixed arrays and the iter/next protocol; and the erased
 views typeid, any_view and dyn Interface with witness dispatch.
 
+M5a adds managed values: one package/public rule for reflection, field reads and
+writes, offset_of and aggregate construction alike; slices with both
+capabilities, literals, reslicing, bounds and iteration, and one read-only
+materialization per constant a runtime index or slice needs storage for; fixed
+try_clone and drop hooks with generated recursive clones; ownership dataflow that
+drops every managed local exactly once on fallthrough, return, break and
+continue, in one reverse order with defer; move, exchange, manual, static and
+thread_local; Allocator and Allocator_Error with new, new_clone and free over the
+C runtime; and copy-cost warnings at the four copy sites.
+
 Evaluation is bounded at 1000000 steps, 256 frames and 64 MiB of scratch memory.
 Generic instantiation is bounded at 64 deep and 4096 instances.
 
-Runtime string and string_view, slices, dynamic arrays, maps, multi-pointers,
-and #location/#caller_location parse and report one diagnostic.
+Runtime string and string_view, dynamic arrays, maps, multi-pointers, via
+allocator policies, and #location/#caller_location parse and report one
+diagnostic. Borrow provenance is M5b: a slice may still outlive the root it
+views, free accepts only a direct fresh-result binding, and free_all is gated.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
 directly in it as one package.

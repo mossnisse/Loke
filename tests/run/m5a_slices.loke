@@ -94,3 +94,12 @@ main :: proc() {
 runtime_index :: proc() -> int {
 	return 1;
 }
+
+// The M5b boundary, recorded rather than checked (m5a-plan decision "Slice
+// boundary"). M5a implements every value, layout, bounds, and capability rule
+// for a slice and records its borrowed root only as an annotation. What M5b
+// adds is the provenance half: a slice must not outlive the root it views, and
+// invalidating that root must invalidate the slice. Until then, returning a
+// slice of a local array, or reassigning a root while a slice of it is live,
+// compiles and is the documented gap — every case below keeps its root alive
+// for longer than the slice that views it.

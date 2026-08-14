@@ -1,0 +1,85 @@
+package main;
+
+// The M5a integration case (m5a-plan step 6): a slice, a materialised constant
+// table, a custom lifecycle, a `move` parameter, a conditional initialisation,
+// an explicit `defer`, and cleanup on return, all in one program.
+
+TABLE :: [4]int{10, 20, 30, 40};
+
+Handle :: struct {
+	id:    int,
+	valid: bool,
+}
+
+impl Handle {
+	// A resource whose clone is observable and whose drop reports once.
+	try_clone :: proc(self, allocator: Allocator) -> (Handle, Allocator_Error) {
+		return Handle{self.id + 1000, self.valid}, nil;
+	}
+
+	drop :: proc(self: inout Handle) {
+		if (self.valid) {
+			print_int(self.id);
+			self.valid = false;
+		}
+	}
+}
+
+open_handle :: proc(id: int) -> Handle {
+	return Handle{id, true};
+}
+
+// A `move` parameter is owned by the callee, so it is dropped here.
+consume :: proc(handle: move Handle) -> int {
+	return handle.id;
+}
+
+// Runtime indexing forces the constant table into one shared read-only global.
+lookup :: proc(index: int) -> int {
+	return TABLE[index];
+}
+
+// A slice over a local root, summed through `len` and runtime indexing.
+total :: proc(values: []int) -> int {
+	sum := 0;
+	for (i := 0; i < len(values); i += 1) {
+		sum += values[i];
+	}
+	return sum;
+}
+
+// Conditional initialisation: only one path leaves a live owner at the exit the
+// `return` takes, so the cleanup asks a hidden flag.
+maybe :: proc(want: bool) -> int {
+	defer print_int(9);
+	held := open_handle(1);
+	if (!want) {
+		drop(held);
+		return 0;
+	}
+	spare := open_handle(2);
+	return spare.id;
+}
+
+main :: proc() {
+	// A slice of a local array, and the materialised constant table.
+	numbers := [4]int{1, 2, 3, 4};
+	view := numbers[:];
+	print_int(total(view));
+	print_int(total(view[1:3]));
+	print_int(lookup(2));
+	print_int(lookup(0) + TABLE[3]);
+
+	// A custom lifecycle: an implicit copy clones, and both owners drop.
+	original := open_handle(5);
+	copy := original;
+	print_int(copy.id);
+
+	// A `move` parameter kills the caller's source and drops in the callee.
+	given := open_handle(7);
+	print_int(consume(move(given)));
+
+	// Conditional initialisation on both paths.
+	print_int(maybe(true));
+	print_int(maybe(false));
+}

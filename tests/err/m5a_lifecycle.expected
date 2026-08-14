@@ -16,8 +16,17 @@ M5a frees only a binding initialised directly by `new` or `new_clone`
 L0491
 @43:25
 disables `try_clone`, so it cannot be cloned into a new allocation
+L0490
+@55:13
+`new` takes an operand and an optional allocator
+L0490
+@56:12
+`default_allocator` takes no arguments
+L0496
+@57:2
+`drop` takes one argument, the variable being cleaned up
 L0492
-@56:2
+@61:2
 `free_all` is not lowered until M5b
 L0500
 @49:2

@@ -1,0 +1,12 @@
+declare ptr @calloc(i64, i64)
+declare ptr @malloc(i64)
+declare void @free(ptr)
+@.crt_allocator = private unnamed_addr constant [1 x ptr] [ ptr @.crt_allocator.reset ]
+call ptr @calloc(i64 1, i64 8)
+call ptr @malloc(i64 8)
+call void @free(ptr
+newclone.store.
+newclone.clone.
+newclone.release.
+newclone.publish.
+call { %struct.Res.36, i64 } @loke.p.Res.try_clone(%struct.Res.36 { i64 2 }, ptr @.crt_allocator)

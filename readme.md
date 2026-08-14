@@ -15,8 +15,9 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M4b, planned in
-[m4b-plan.md](m4b-plan.md), after M4a in [m4a-plan.md](m4a-plan.md), M3 in
+[compiler-plan.md](compiler-plan.md); the current milestone is M5a, planned in
+[m5a-plan.md](m5a-plan.md), after M4b in [m4b-plan.md](m4b-plan.md), M4a in
+[m4a-plan.md](m4a-plan.md), M3 in
 [m3-plan.md](m3-plan.md), M2 in [m2-plan.md](m2-plan.md), M1 in
 [m1-plan.md](m1-plan.md) and M0 in [m0-plan.md](m0-plan.md).
 
@@ -120,6 +121,40 @@ M4b makes those abstractions generic and erasable, completing M4:
   its position rules, assertions, and type switch, and `dyn Interface` with
   witness dispatch, dyn-compatibility diagnostics, and forwarding slots that let
   `dyn I` satisfy `I`.
+
+M5a adds managed values — visibility, slices, and lifecycle:
+
+- one package/public rule for reflection, ordinary field reads and writes,
+  `offset_of`, and both named and positional aggregate construction, so no path
+  can expose a field another path hides;
+- slices, `[]T` and `[]mut T`, as a two-word borrowed view: literals with hidden
+  backing storage, slicing and reslicing arrays and slices, nil, bounds,
+  `len`, `foreach` including by reference over `[]mut T`, and the sequence and
+  iteration members that let generic code accept one. A constant a runtime index
+  or slice needs storage for materializes once into a shared read-only global,
+  while a constant index still folds;
+- lifecycle hooks: a record customizes `drop`, customizes or disables
+  `try_clone`, and receives a generated recursive field-wise `try_clone` that
+  cleans up a partially built temporary in reverse order, plus a `clone`
+  generated from it;
+- ownership as dataflow over a per-procedure control-flow view. Every managed
+  local drops exactly once on fallthrough, `return`, `break`, and `continue`,
+  interleaved with explicit `defer` in one reverse registration order; `move`,
+  `drop`, and `exchange` are compiler special forms over a storage location;
+  binding and assignment copy by cloning and drop what they replace; a `move`
+  parameter or receiver transfers, and returning a borrowed managed owner
+  clones. A hidden flag is emitted only where the analysis left a value
+  conditionally live;
+- storage modifiers: `manual` ownership, and `static` and `thread_local`
+  duration with constant initialization, module-level storage, and thread-local
+  teardown at normal return;
+- `Allocator` and `Allocator_Error` as compiler-owned types, with `new`,
+  `new_clone`, and `free` over the C runtime and explicit failure reporting;
+- copy-cost warnings at the four copy sites, configurable with `-copy-cost=N`,
+  which stay silent for a managed parameter borrow, a scalar, and a temporary.
+
+Borrow provenance is M5b's: a slice may still outlive the root it views, `free`
+accepts only a direct fresh-result binding, and `free_all` is gated.
 
 Everything else — runtime `string` and `string_view`, slices, dynamic arrays,
 maps, multi-pointers, and `#location`/`#caller_location` — parses and reports one

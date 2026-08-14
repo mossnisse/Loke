@@ -1,0 +1,39 @@
+package main;
+
+// CRT allocation lowering (m5a-plan step 6). M5a has one provider, so `new`
+// zero-initialises through `calloc`, `new_clone` fills a `malloc` through the
+// operand's own clone hook, and `free` releases. The provider handle is a
+// global whose single slot is a reset entry that traps: "this allocator cannot
+// reset" is already distinct from M5b's "reset is unsafe here".
+
+Res :: struct { id: int }
+
+impl Res {
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		return Res{self.id}, nil;
+	}
+
+	drop :: proc(self: inout Res) { self.id = 0; }
+}
+
+main :: proc() {
+	p, err := new(int);
+	if (err == nil) {
+		p^ = 1;
+		free(p);
+	}
+
+	// A trivially copyable operand stores its representation.
+	q, qerr := new_clone(7);
+	if (qerr == nil) {
+		free(q);
+	}
+
+	// A record whose clone can fail goes through the hook, and the allocation it
+	// cannot publish into is released.
+	r, rerr := new_clone(Res{2});
+	if (rerr == nil) {
+		free(r);
+	}
+	print_int(0);
+}

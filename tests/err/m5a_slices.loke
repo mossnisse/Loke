@@ -2,6 +2,8 @@ package main;
 
 TABLE :: [3]int{1, 2, 3};
 
+make_array :: proc() -> [3]int { return [3]int{4, 5, 6}; }
+
 main :: proc() {
 	data := [3]int{1, 2, 3};
 	readable: []int = data[:];
@@ -24,6 +26,11 @@ main :: proc() {
 	foreach (&value in readable) {
 		value += 1;
 	}
+
+	// A value with no storage cannot be sliced, and a bound is an integer.
+	tail := make_array()[1:];
+	flag := true;
+	bad := data[flag:];
 
 	// Materialised storage is read-only, and no pointer may be taken into it.
 	index := runtime_index();

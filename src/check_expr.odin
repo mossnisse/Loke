@@ -2367,6 +2367,16 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			v.type = INVALID_TYPE
 			return
 		}
+		// An untyped constant operand has no representation to allocate for, so it
+		// takes its default type first. Without this the allocation is sized from
+		// the untyped type and comes out zero.
+		if type_is_untyped(k.c, value) {
+			value = default_type(k.c, value)
+			if value == INVALID_TYPE || !materialize(k, v.args[0].value, value) {
+				v.type = INVALID_TYPE
+				return
+			}
+		}
 		append(&bound, v.args[0].value)
 		v.alloc_type = value
 		// design.md: `new_clone` "creates a new allocation root containing a clone

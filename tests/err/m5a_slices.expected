@@ -1,24 +1,30 @@
 L0478
-@11:2
+@13:2
 this is read-only storage and cannot be an assignment destination
 L0310
-@14:20
+@16:20
 cannot initialise `[]mut int` with `[]int`
 L0373
-@15:27
+@17:27
 `[]int` cannot be converted to `[]mut int`
 L0476
-@19:15
+@21:15
 compares against `nil` and nothing else
 L0480
-@24:12
+@26:12
 yields read-only elements, so it cannot be iterated by reference
+L0477
+@31:10
+has no storage to slice; bind it to a variable first
+L0477
+@33:14
+a slice bound must be an integer, found `bool`
 L0357
-@30:10
+@37:10
 L0357
-@31:11
+@38:11
 L0478
-@33:2
+@40:2
 L0479
-@37:20
+@44:20
 a slice literal must be written with its type, as in `[]int{ ... }`

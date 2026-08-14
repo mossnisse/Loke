@@ -13,6 +13,13 @@ Viewer :: struct { text: string_view }
 Trait :: interface($Self: type) { }
 stored: Trait;
 
+// A written allocator policy needs a provider to select, which arrives with
+// `core:mem` in M6. `manual`, `static`, and `thread_local` are no longer here:
+// M5a implements all three (m5a-plan step 4).
+pooled: manual int via allocator_of();
+
+allocator_of :: proc() -> Allocator { return default_allocator(); }
+
 main :: proc() {
 	xs: [dynamic]int;
 	table: map[int]int;
