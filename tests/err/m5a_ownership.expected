@@ -21,10 +21,10 @@ L0503
 so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0500
 @44:12
-`a` has already been moved or dropped here
+`a` cannot be used here: it has already been moved, dropped, or released
 L0500
 @48:2
-`c` has already been moved or dropped here
+`c` cannot be dropped here: it has already been moved, dropped, or released
 L0500
 @77:12
-`d` is only live on some paths that reach here
+`d` cannot be used here: it is live on only some of the paths

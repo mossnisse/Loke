@@ -451,13 +451,15 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 
 @(private = "file")
 report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness) {
+	action := event.verb == "" ? "used" : event.verb
 	if state == .Dead {
 		errorf(
 			k.c,
 			event.span,
 			"L0500",
-			"`%s` has already been moved or dropped here",
+			"`%s` cannot be %s here: it has already been moved, dropped, or released",
 			event.name,
+			action,
 		)
 		return
 	}
@@ -465,8 +467,9 @@ report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness) {
 		k.c,
 		event.span,
 		"L0500",
-		"`%s` is only live on some paths that reach here; a use needs it live on all of them",
+		"`%s` cannot be %s here: it is live on only some of the paths that reach this point",
 		event.name,
+		action,
 	)
 }
 
@@ -481,8 +484,9 @@ assign_cleanup_slots :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		if sym == nil {
 			continue
 		}
-		// Reaching a cleanup point live is what gives a local an implicit drop.
-		sym.drop_at_exit = local.seen_cleanup && local.live_exit
+		// Reaching a cleanup point live is what gives a local an implicit drop. An
+		// allocation root reaches the same points but owns no cleanup.
+		sym.drop_at_exit = local.owns_cleanup && local.seen_cleanup && local.live_exit
 		// A hidden flag exists only where a lowering has to tell the runtime paths
 		// apart: cleanup points that disagree, or an assignment whose destination
 		// is live on one path and dead on another (design.md "Managed values and

@@ -17,5 +17,11 @@ L0491
 @43:25
 disables `try_clone`, so it cannot be cloned into a new allocation
 L0492
-@47:2
+@56:2
 `free_all` is not lowered until M5b
+L0500
+@49:2
+`q` cannot be released here: it has already been moved, dropped, or released
+L0500
+@52:2
+`r` cannot be released here: it has already been moved, dropped, or released

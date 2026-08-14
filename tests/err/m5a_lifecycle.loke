@@ -42,6 +42,15 @@ main :: proc() {
 	m := Move_Only{1};
 	bad, berr := new_clone(m);
 
+	// The allocation-root fact is consumed by `free`, so the binding is dead
+	// afterwards, and a moved-from one is dead at its source.
+	q, qerr := new(int);
+	free(q);
+	free(q);
+	r, rerr := new(int);
+	moved := move(r);
+	free(r);
+
 	// A region reset needs M5b's region analysis.
 	a := default_allocator();
 	free_all(a);

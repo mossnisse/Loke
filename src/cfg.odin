@@ -34,6 +34,10 @@ Flow_Event :: struct {
 	name:   string,
 	assign: ^Stmt_Assign,
 	target: int,
+	// The operation being attempted at this event, so a diagnostic can name what
+	// the reader wrote. Which earlier operation consumed the binding is not
+	// tracked: the states are a lattice, not a history.
+	verb:   string,
 }
 
 Flow_Block :: struct {
@@ -45,11 +49,16 @@ Flow_Block :: struct {
 	visited:     bool,
 }
 
-// One local the analysis follows. Only a managed lexical local is tracked: an
-// unmanaged one has no cleanup obligation and no operation that can kill it.
+// One local the analysis follows. Two kinds qualify: a managed local, which has
+// a cleanup obligation, and an allocation root from `new`/`new_clone`, which has
+// none — design.md makes the pointer `new` returns manual, so it is followed
+// only so that `free` can require it definitely live and consume it.
 Tracked_Local :: struct {
 	symbol: Symbol_Id,
 	scope:  int,
+	// Whether scope exit is responsible for this slot. False for an allocation
+	// root: it is released explicitly or not at all.
+	owns_cleanup: bool,
 	// A `move` parameter arrives owned, so it is live before the first statement
 	// rather than at a declaration inside the body.
 	live_on_entry: bool,
@@ -170,7 +179,7 @@ track_move_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			if sym == nil || !type_is_managed(graph.k.c, sym.type) {
 				continue
 			}
-			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true})
+			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true, owns_cleanup = true})
 			graph.by_symbol[id] = len(graph.tracked) - 1
 			append(&graph.in_scope, len(graph.tracked) - 1)
 		}
@@ -299,12 +308,19 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 	classify_declaration_copies(graph.k, d)
 	for id in d.symbols {
 		sym := symbol_of(graph.k.c, id)
-		if sym == nil || sym.kind != .Var || !type_is_managed(graph.k.c, sym.type) {
+		if sym == nil || sym.kind != .Var {
+			continue
+		}
+		if !type_is_managed(graph.k.c, sym.type) && !sym.allocation_root {
 			continue
 		}
 		// ponytail: `manual` disables automatic cleanup, but it is still gated at
 		// the declaration, so there is nothing here to exempt yet.
-		append(&graph.tracked, Tracked_Local{symbol = id, scope = len(graph.scopes)})
+		append(&graph.tracked, Tracked_Local {
+			symbol       = id,
+			scope        = len(graph.scopes),
+			owns_cleanup = type_is_managed(graph.k.c, sym.type),
+		})
 		graph.by_symbol[id] = len(graph.tracked) - 1
 		append(&graph.in_scope, len(graph.tracked) - 1)
 		// design.md: the implicit action is placed "at the declaration point",
@@ -474,7 +490,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) {
 		// source to be live, and two events would report one mistake twice.
 		if ident, is_ident := v.value.(^Expr_Ident); is_ident {
 			if slot, tracked := slot_of(graph, ident.symbol); tracked {
-				emit(graph, Flow_Event{kind = .Kill, slot = slot, span = v.span, name = ident.name})
+				emit(graph, Flow_Event{kind = .Kill, slot = slot, span = v.span, name = ident.name, verb = "moved"})
 				return
 			}
 		}
@@ -546,16 +562,28 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) {
 walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	// `drop(x)` reads the value, runs its hook, and kills the binding. Its
 	// operand is in `bound` rather than `args` by the time this runs.
-	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin && sym.builtin == .Drop {
-		if len(v.bound) == 1 {
-			if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
-				if slot, tracked := slot_of(graph, ident.symbol); tracked {
-					emit(graph, Flow_Event{kind = .Kill, slot = slot, span = v.span, name = ident.name})
-					return
+	// design.md: `free` "ends the allocation root designated by a checked base
+	// pointer ... It consumes the operand binding". Step 3 checked the operand's
+	// form; requiring it definitely live is the half that needed this graph.
+	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
+		#partial switch sym.builtin {
+		case .Drop, .Free:
+			if len(v.bound) == 1 {
+				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+					if slot, tracked := slot_of(graph, ident.symbol); tracked {
+						emit(graph, Flow_Event {
+							kind = .Kill,
+							slot = slot,
+							span = v.span,
+							name = ident.name,
+							verb = sym.builtin == .Free ? "released" : "dropped",
+						})
+						return
+					}
 				}
 			}
+			return
 		}
-		return
 	}
 	walk_flow_expr(graph, v.callee)
 	// design.md: "Method-call syntax supplies an `inout` or `move` marker
