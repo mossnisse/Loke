@@ -1,0 +1,21 @@
+@(public)
+package adapter;
+
+import "../vendor";
+
+// An extension is visible for method lookup only inside this package.
+extend vendor.Vector2 {
+	doubled :: proc(self) -> i32 { return (self.x + self.y) * 2; }
+
+	@(private)
+	init :: proc(x: i32) -> vendor.Vector2 { return {x, x}; }
+}
+
+extend vendor.Other {
+	@(private)
+	init :: proc(x: i32) -> vendor.Other { return {x}; }
+}
+
+use_here :: proc(v: vendor.Vector2) -> i32 {
+	return v.doubled();
+}

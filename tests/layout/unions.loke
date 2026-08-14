@@ -1,0 +1,40 @@
+package main;
+
+// Every union shape the checker has to agree with LLVM about: a narrow payload,
+// an `i64` payload, an `i128` payload, and an explicitly aligned one — each on
+// its own, nested in a struct, and as a fixed-array element.
+
+Small :: union { bool, i32 }
+Wide :: union { i64, [3]i32 }
+Widest :: union { i128, f64 }
+Aligned :: union @(align=8) { bool, i16 }
+
+Hold_Small :: struct { flag: bool, value: Small }
+Hold_Wide :: struct { flag: bool, value: Wide }
+Hold_Widest :: struct { flag: bool, value: Widest }
+Hold_Aligned :: struct { flag: bool, value: Aligned }
+
+Small_Array :: [4]Small;
+Wide_Array :: [3]Wide;
+Widest_Array :: [2]Widest;
+Aligned_Array :: [5]Aligned;
+
+Nested :: struct { inner: Hold_Wide, tail: [2]Small }
+
+main :: proc() {
+	a: Small;
+	b: Wide;
+	c: Widest;
+	d: Aligned;
+	e: Hold_Small;
+	f: Hold_Wide;
+	g: Hold_Widest;
+	h: Hold_Aligned;
+	i: Small_Array;
+	j: Wide_Array;
+	k: Widest_Array;
+	l: Aligned_Array;
+	m: Nested;
+	print_int(int(size_of(Small)) + int(size_of(Wide)) + int(size_of(Widest)));
+	print_int(int(size_of(Aligned)) + int(size_of(Nested)));
+}

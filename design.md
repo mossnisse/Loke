@@ -2574,7 +2574,11 @@ extend vendor.Vector2 {
 }
 ```
 
-An extension participates in method and operator lookup only inside the package that declares the `extend` block. Importing that package exposes the extension's named procedures through ordinary qualification, but does not add its methods or operators to implicit lookup. An otherwise unused import therefore cannot change or make ambiguous an existing expression.
+An extension participates in method and operator lookup only inside the package that declares the `extend` block. Its members follow the ordinary declaration-visibility rules: they are package-private by default, inherit a file-level `@(public)` default, and may opt in or out with `@(public)` or `@(private)`.
+
+Inside the extension's package, `v.to_string()` and `vendor.Vector2.to_string(v)` name the extension procedure. A public extension procedure is additionally exported under its own package, so an importer may call `format.to_string(v)`. Importing `format` does not make either `v.to_string()` or `vendor.Vector2.to_string(v)` valid in the importing package and does not add the extension's operators to implicit lookup. An otherwise unused import therefore cannot change or make ambiguous an existing expression.
+
+The package-qualified export occupies the ordinary package namespace. Two public extension procedures in one package therefore need distinct names. A package that wants one overloaded export gives private extension procedures distinct names and assembles public wrapper procedures into an explicit procedure group. Private members of different subject types do not collide. An inherent `impl` member is not given such a package-level alias: outside its package it is reached through its public owning type, as in `vendor.Vector2.length_squared(v)`, rather than as `vendor.length_squared(v)`.
 
 Code that wants method syntax for a foreign extension declares a small local forwarding extension. This is an explicit opt-in at the point where the additional behavior becomes part of lookup, and ordinary ambiguity diagnostics apply within that package. Ordinary expression lookup needs no global orphan rule; cross-package protocols whose correctness depends on one stable operation, such as map hashing, state their stricter coherence rule separately.
 
@@ -2741,13 +2745,28 @@ Candidates are ranked using the same algorithm as named procedure overloads. Can
 
 0. Exact type and parameter-mode match.
 1. Borrow, dereference, or mutable-to-read-only capability adjustment that does not create a value.
-2. Built-in implicit conversion, including contextual conversion of a compatible
-   untyped constant.
-3. A user [`@(implicit)`](#implicit-conversion-from-constants) conversion. Reachable only for an argument that is an untyped constant, so it applies to at most one step and cannot chain.
+2. Contextual conversion of a compatible untyped constant that preserves its
+   kind: an integer constant to an integer type, a floating constant to a
+   floating type, a boolean constant to `bool`, a rune constant to a rune type,
+   or a string constant to the built-in string type.
+3. Any other built-in implicit conversion, including conversion of an untyped
+   integer constant to a floating type.
+4. A user [`@(implicit)`](#implicit-conversion-from-constants) conversion. Reachable only for an argument that is an untyped constant, so it applies to at most one step and cannot chain.
 
-Rank 3 sits below rank 2 so that a constant always prefers a compatible built-in destination: given `foo :: proc{foo_f64, foo_complex}`, the call `foo(2.0)` selects `foo_f64` at rank 2 rather than converting into `Complex_F64` at rank 3. An integer overload is not a candidate for `2.0`, because an untyped floating constant does not convert implicitly to an integer type.
+This distinction preserves the domain expressed by a literal without making its
+fallback default type an overload preference. Given integer and floating
+overloads, `foo(7)` selects the integer overload. Given `i8` and `int` overloads,
+both conversions preserve integer kind and the call remains ambiguous. Likewise,
+`f32` and `f64` overloads remain ambiguous for `foo(7.0)`; the default types used
+when no context selects a type do not participate in overload ranking.
 
-The ranks form a vector; they are not added and argument order does not break ties. Candidate A is better than candidate B when A is no worse for every argument and strictly better for at least one. Crossed vectors such as `(0, 2)` and `(2, 0)` are intentionally ambiguous.
+Rank 4 sits below every built-in conversion so that a constant always prefers a
+compatible built-in destination: given `foo :: proc{foo_f64, foo_complex}`, the
+call `foo(2.0)` selects `foo_f64` at rank 2 rather than converting into
+`Complex_F64` at rank 4. An integer overload is not a candidate for `2.0`, because
+an untyped floating constant does not convert implicitly to an integer type.
+
+The ranks form a vector; they are not added and argument order does not break ties. Candidate A is better than candidate B when A is no worse for every argument and strictly better for at least one. Crossed vectors such as `(0, 3)` and `(3, 0)` are intentionally ambiguous.
 
 When conversion vectors are identical, the following tie-breakers apply in order:
 
@@ -2991,7 +3010,7 @@ This is the whole job the feature exists for. [Library numeric types](#library-n
 
 The form `T(...)` has two possible meanings — a built-in conversion or an `init` overload — so the language fixes one resolution order:
 
-1. **Built-in conversion.** If `T` is a built-in or `distinct` type and exactly one argument is given whose type has a built-in conversion to `T`, that conversion is used. This case is decided first and cannot be overridden, for the same reason built-in operators cannot be shadowed: `int(x)` must not change meaning based on imports.
+1. **Built-in conversion.** If exactly one argument is given, this stage applies when either `T` is a built-in or `distinct` type and the argument has a built-in conversion to `T`, or the argument is a `distinct` value being explicitly unwrapped to its underlying type. The latter rule applies even when that underlying type is an aggregate, so `Vec(distinct_vec)` unwraps without requiring a `Vec.init` overload. This case is decided first and cannot be overridden, for the same reason built-in operators cannot be shadowed: `int(x)` must not change meaning based on imports.
 2. **`init` overloads.** Otherwise, visible `init` overloads for `T` are considered using ordinary overload resolution, including the zero-argument and multi-argument forms.
 
 Resolution stops at the first stage that produces a match. Within a stage, equal-ranked matches are ambiguous rather than being selected by declaration order, and the diagnostic must list the candidates from that stage only.

@@ -15,9 +15,10 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M3, planned in
-[m3-plan.md](m3-plan.md), after M2 in [m2-plan.md](m2-plan.md), M1 in
-[m1-plan.md](m1-plan.md) and M0 in [m0-plan.md](m0-plan.md).
+[compiler-plan.md](compiler-plan.md); the current milestone is M4a, planned in
+[m4a-plan.md](m4a-plan.md), after M3 in [m3-plan.md](m3-plan.md), M2 in
+[m2-plan.md](m2-plan.md), M1 in [m1-plan.md](m1-plan.md) and M0 in
+[m0-plan.md](m0-plan.md). [m4b-plan.md](m4b-plan.md) is the other half of M4.
 
 M1 completed the front end: every construct in [grammar.md](grammar.md) lexes and
 parses, so `-parse-only` and `-dump-ast` accept any valid program.
@@ -67,8 +68,31 @@ generating runtime code. Reading a mutable file-scope variable, calling
 An import path prefix resolves only through `-collection name=path`; there is no
 implicit `core:` root and no core library yet.
 
-Everything else — generics, interfaces, `union`, runtime `string`, slices, maps,
-`impl`/`extend`, `foreach`, and `#location`/`#caller_location` — parses and
+M4a makes user-defined types as capable as built-in ones at concrete types:
+
+- one overload-resolution engine — viability filtering, per-argument conversion
+  ranks, vector partial ordering, and the four tie-breakers — shared by named
+  procedure groups, methods, operators, `init`, and indexing. An ambiguity lists
+  every maximal candidate, its conversion vector, and the tie-breaker where
+  selection failed;
+- `proc{...}` groups, `impl` and `extend` blocks, the three receiver forms,
+  associated constants and types, `Type.member` access, and field lookup taking
+  priority over method-call sugar. An `extend` block changes lookup only inside
+  its own package;
+- `init` overloads with the two-stage `T(...)` resolution — a built-in or
+  `distinct` conversion first, `init` overloads otherwise — and `@(implicit)`
+  one-argument conversions reachable only from an untyped constant;
+- `operator(sym)` declarations and groups, the `!=` and compound-assignment
+  fallbacks, `operator([])`/`([]=)`/`([:])` with place-position selection, and
+  `delegate(...)` on `distinct` types. A built-in operation on built-in operands
+  cannot be shadowed: `int + int` keeps its meaning in every file;
+- `union` with a tagged representation, `@(align=N)`, a nil zero value, `v.(T)`
+  in both its trapping and comma-ok phases, the type switch with exhaustiveness
+  reporting, and the error protocol — optional-ok results, `or_else`, and
+  `or_return` with its named-result and definite-initialization rules.
+
+Everything else — generics, interfaces, runtime `string`, slices, maps,
+`foreach`, `typeid`, `any_view`, and `#location`/`#caller_location` — parses and
 reports one diagnostic at the enclosing construct.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through

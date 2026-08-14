@@ -1,0 +1,136 @@
+package main;
+
+Value :: union { bool, i32, f64 }
+Error_Code :: enum { Something_Bad, Something_Worse }
+Error :: union { Error_Code }
+Pointer_Error :: union { ^i32 }
+
+// The natural layout, and the same variants under a written alignment.
+Narrow :: union { bool, i16 }
+Wide_Aligned :: union @(align=8) { bool, i16 }
+Holder :: struct { flag: bool, value: Wide_Aligned }
+
+failure_marker: i32 = 99;
+
+caller_1 :: proc() -> Error { return nil; }
+caller_2 :: proc() -> (int, Error) { return 123, nil; }
+failing :: proc() -> (int, Error) { return 7, Error_Code.Something_Bad; }
+
+good :: proc() -> (n: int, err: Error) {
+	defer print_int(900);
+	n = 0;
+	x := caller_2() or_return;
+	caller_1() or_return;
+	n = x + 1;
+	return;
+}
+
+bad :: proc() -> (n: int, err: Error) {
+	defer print_int(901);
+	n = 5;
+	x := failing() or_return;
+	n = x + 1000;
+	return;
+}
+
+ok_status :: proc() -> (n: int, ok: bool) { return 3, true; }
+
+pointer_status :: proc(fail: bool) -> (int, ^i32) {
+	if (fail) { return 0, &failure_marker; }
+	return 8, nil;
+}
+
+propagate_pointer :: proc(fail: bool) -> (n: int, err: Pointer_Error) {
+	n = 6;
+	x := pointer_status(fail) or_return;
+	n = x;
+	return;
+}
+
+branch_result :: proc(flag: bool) -> (n: int, err: Error) {
+	if (flag) { n = 10; } else { n = 20; }
+	caller_1() or_return;
+	return;
+}
+
+status_user :: proc() -> (ok: bool) {
+	ok = false;
+	x := ok_status() or_return;
+	if (x < 5) { ok = true; }
+	return;
+}
+
+describe :: proc(v: Value) -> int {
+	switch (t in v) {
+	case i32:
+		return int(t) + 100;
+	case bool, f64:
+		// A multiple-type case keeps the binding at the union type.
+		return 1 if t == nil else 200;
+	case:
+		return 300;
+	}
+	return -1;
+}
+
+main :: proc() {
+	// The zero value of a union is nil.
+	v: Value;
+	print_int(1 if v == nil else 0);
+
+	// Every variant round-trips.
+	v = i32(7);
+	print_int(int(v.(i32)));
+	v = true;
+	print_int(1 if v.(bool) else 0);
+	v = 2.5;
+	print_int(int(v.(f64)));
+
+	// Nil comparison and variant equality.
+	a: Value = i32(7);
+	b: Value = i32(7);
+	c: Value = true;
+	print_int(1 if a == b else 0);
+	print_int(1 if a == c else 0);
+	print_int(1 if a != c else 0);
+	print_int(1 if a == nil else 0);
+
+	// The comma-ok form never traps.
+	m, ok := a.(f64);
+	print_int(1 if ok else 0);
+	print_int(int(m));
+
+	print_int(describe(a));
+	print_int(describe(c));
+	print_int(describe(v));
+	empty: Value;
+	print_int(describe(empty));
+
+	// The error protocol.
+	n1, e1 := good();
+	print_int(n1);
+	print_int(1 if e1 == nil else 0);
+	n2, e2 := bad();
+	print_int(n2);
+	print_int(1 if e2 == nil else 0);
+	print_int(1 if status_user() else 0);
+	pn, pe := propagate_pointer(true);
+	print_int(pn);
+	print_int(1 if pe != nil else 0);
+	bn, be := branch_result(false);
+	print_int(bn);
+	print_int(1 if be == nil else 0);
+
+	// `or_else` supplies a fallback without evaluating it on success.
+	print_int(int(a.(i32) or_else i32(123)));
+	print_int(int(a.(f64) or_else 4.0));
+
+	// `@(align=N)` raises the payload's alignment, which `tests/layout` can only
+	// confirm agrees with LLVM — the values themselves belong here.
+	print_int(size_of(Narrow));
+	print_int(align_of(Narrow));
+	print_int(size_of(Wide_Aligned));
+	print_int(align_of(Wide_Aligned));
+	print_int(size_of(Holder));
+	print_int(offset_of(Holder, value));
+}

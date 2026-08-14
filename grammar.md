@@ -414,7 +414,14 @@ Result_Type  = "inout"? Type
 
 A parameter with no type is legal only for the receiver `self`, whose type is
 inferred from the enclosing `impl` or `extend` block or from the subject
-parameter of an interface `slot`. `..T` is a variadic
+parameter of an interface `slot`. `Parameter_Names` would otherwise swallow that
+receiver: in `proc(self, allocator: Allocator)` the first name is the receiver
+and the written type belongs to the names after it, so a leading `self` inside an
+`impl`, `extend`, or `slot` ends its name list. The receiver keeps the immutable
+borrow mode of the untyped form whatever `Parameter_Mode` the rest of the group
+writes, and an omitted-argument default written for the group belongs to those
+parameters rather than to `self`. A receiver that wants another mode writes its
+own type, as `self: inout Type`. `..T` is a variadic
 parameter. Variadic parameters cannot use `inout` or `move`. An ordinary value
 parameter initializer is an omitted-argument default and accepts an ordinary
 runtime `Expression`; `inout`, `move`, and variadic parameters cannot have

@@ -1,0 +1,15 @@
+package vendor;
+
+@(public)
+Vector2 :: struct { x, y: i32 }
+
+@(public)
+Other :: struct { value: i32 }
+
+impl Vector2 {
+	@(public)
+	sum :: proc(self) -> i32 { return self.x + self.y; }
+
+	private_sum :: proc(self) -> i32 { return self.x + self.y; }
+	private_add :: operator(+) proc(a, b: Vector2) -> Vector2 { return {a.x + b.x, a.y + b.y}; }
+}

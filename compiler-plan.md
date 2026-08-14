@@ -265,9 +265,10 @@ as each milestone starts.
 | **M1** | **Full front end.** Complete lexer + parser for *all* of grammar.md with error recovery + a parser/lexer test corpus. | Every grammar construct parses; malformed inputs give good, recovering diagnostics. |
 | **M2** | **Static core semantics.** Universe/name resolution, built-in type checking and constant folding, plus typed LLVM widening for the non-generic, non-managed core: numeric/Boolean/rune scalars, raw and typed pointers, fixed arrays, structs, enums, distinct and procedure types; assignment, control flow, `defer`, procedures, and procedure values. User-defined operators and unions remain gated. | Programs in the precisely bounded [M2 subset](m2-plan.md#scope) type-check, fold, compile, and run through the textual-LLVM path; deferred outer constructs still produce one non-cascading gate diagnostic. |
 | **M3** | **Compile-time engine and packages** ([B5](#b5-package-loading--import-graph)/[B10](#b10-compile-time-evaluation-engine)). Retain the checker's contextual leaf/operator folding as the shared value core and add the typed interpreter for procedure evaluation; add file- and procedure-scope `when`, staged conditional imports, multi-file packages, untyped compile-time strings, `#assert`/`#config` with `-define`, phase-neutral `assert`/`panic`, and natural-layout `size_of`/`align_of`/`offset_of`/`len`. Collection prefixes resolve through `-collection name=path`, with no implicit `core:` root. `#location`/`#caller_location` move to M6 with runtime `string` and `Source_Code_Location`; packed/foreign layout remains M7. | Compile-time `proc` evaluation works from every required M3 context; discarded `when` branches are neither checked nor emitted; the conditional package graph reaches a stable DAG; multi-package code emits collision-free symbols; layout agrees with executed LLVM-derived values (`-check-layout`); and sandbox/limit failures are diagnosed with the compile-time stack. |
-| **M4** | **User abstractions, generics & erased views.** `impl`/`extend`, procedure groups, user operators/conversions and their conversion-vector ranking; unions, assertions and type switches; runtime/static `foreach` and the iteration protocol; `$`/inference, interfaces + `where`, monomorphization, reflection, `any_view`, and `dyn` witnesses. | User-defined operators and iteration work with concrete and generic types; generic/interface programs compile and run; unions, `any_view`, and `dyn` obey their representation, dispatch, and borrow/escape rules. |
-| **M5** | **Managed memory.** Ownership/move/deep-copy, drop insertion, lifecycle hooks, materialization, and integration of implicit drops with M2's existing `defer` cleanup stack; then borrow and allocator-region checking ([B11](#b11-ownership-move--lifecycle-analysis)/[B12](#b12-borrow--lifetime-checker)). | Owning values, `move`, borrows, region-backed owners, and `@(allocator_reset)` behave per spec; drops and existing defers share the required LIFO order; invalid escapes/resets and copy costs are diagnosed. |
-| **M6** | **MIR + runtime.** Full lowering ([B13](#b13-lowering-to-mir)) + the seed runtime ([B14](#b14-runtime--core-library)): strings, dynamic arrays, maps, panic/unwind. | Real programs using the managed stdlib run correctly. |
+| **M4a** | **User abstractions** ([B8](#b8-type-checking--overload-resolution)), planned in [m4a-plan.md](m4a-plan.md). One overload-resolution engine — viability, conversion-rank vectors, tie-breakers — shared by procedure groups, `impl`/`extend` methods, user operators, `delegate`, indexing, and `init` conversions including `@(implicit)`; unions with assertions, type switches, `or_else`, and `or_return`. Concrete types only: nothing here instantiates a declaration. | User operators, methods, and `init` conversion work at concrete types; an ambiguous call lists every maximal candidate with its vector and failing tie-breaker; an `extend` block changes lookup only in its own package; unions round-trip, assertions trap or yield comma-ok by position, and `or_return` propagates through named results with `defer` in order. |
+| **M4b** | **Generics, interfaces & erased views** ([B9](#b9-generics-interfaces--specialization)), planned in [m4b-plan.md](m4b-plan.md). Declaration cloning, `$`/inference, specialization, `where`, and monomorphization; interfaces with per-requirement diagnostics and the unmanaged portion of the catalogue as ordinary Loke source; reflection and static `foreach`; `foreach` over ranges, fixed arrays, and the user iteration protocol; `typeid`, `any_view`, and `dyn` witnesses. Managed types remain absent, so `Cloneable`, iteration over slices/maps/strings, `..any_view`, and lifecycle hooks stay with the milestone that introduces their dependencies. | A generic container instantiated twice yields independent instances with distinct symbols; a failed interface bound names the requirement line and the concrete type; a caller-local `extend` cannot reach into an instantiation; static expansion type-checks a different field type per copy without exposing inaccessible fields; `any_view` and `dyn` obey their representation and dispatch rules, with borrow/escape checking deferred to M5 and the boundary stated. |
+| **M5** | **Managed memory.** Ownership/move/deep-copy, drop insertion, lifecycle hooks, materialization, the allocator semantic types needed to check those hooks, and the lifecycle-dependent `Cloneable` catalogue entry; integration of implicit drops with M2's existing `defer` cleanup stack; then borrow and allocator-region checking ([B11](#b11-ownership-move--lifecycle-analysis)/[B12](#b12-borrow--lifetime-checker)), including the `any_view`, `dyn`, `inout`-result and `[:]`-result views M4 leaves unchecked. The allocator's linked runtime implementation remains M6 work. | Owning values, `move`, borrows, region-backed owners, and `@(allocator_reset)` behave per spec; drops and existing defers share the required LIFO order; invalid escapes/resets and copy costs are diagnosed; the standard `Cloneable` declaration compiles against real semantic allocator and lifecycle types rather than placeholders. |
+| **M6** | **MIR + runtime.** Full lowering ([B13](#b13-lowering-to-mir)) + the seed runtime ([B14](#b14-runtime--core-library)): strings, dynamic arrays, maps, panic/unwind. Iteration over those types, `..any_view` variadics, the type-info table behind `type_info_of`, and `base:meta`/`base:interfaces` as nameable packages land here, on the M4 protocols. | Real programs using the managed stdlib run correctly. |
 | **M7** | **Release + interop.** LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. | Optimized release builds; C libraries link and call. |
 | **M8** | **Later.** Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
 
@@ -277,10 +278,26 @@ intentional staged exception: B5 invokes the header-level parts of name/type
 checking and the M3 evaluator until conditional imports stabilize. M5 follows M4
 because drop/move/borrow/region analysis operates on fully resolved,
 monomorphized types. M6 turns those analysis results into durable MIR only once
-everything above is resolved. User-defined operator resolution lands in M4
-beside named overloads and generics because all three share candidate formation,
-conversion vectors, and the same tie-breakers; M2 implements only the fixed
-built-in operator table.
+everything above is resolved. User-defined operator resolution lands in M4a
+beside named overloads because both share candidate formation, conversion
+vectors, and the same tie-breakers; M2 implements only the fixed built-in
+operator table.
+
+M4a is implemented: `src/overload.odin` owns the one candidate engine,
+`src/impl.odin` the method and `init` tables, `src/operators.odin` the operator
+tables and `delegate`, and `src/union.odin` plus `src/optional.odin` the tagged
+representation and the error protocol. Diagnostics `L0391`–`L0396`,
+`L0406`–`L0413`, `L0416`–`L0421`, and `L0422`–`L0430` are live; the narrowings
+taken along the way are recorded in [m4a-plan.md](m4a-plan.md).
+
+M4 splits at the one seam where its work stops being mutually dependent: nothing
+in M4a instantiates a declaration, and everything in M4b needs M4a's methods and
+overload engine. M4a fixes the engine's contract — viability filters, structure
+orders, constraints never rank — and leaves a viability hook that M4b fills with
+`where` clauses and interface applications, so the second half never reopens the
+first. The seam is why generics and static `foreach` stay together in M4b: types
+are annotated onto the AST (A1), so a second instantiation cannot reuse the
+first's nodes, and both features need the same declaration-cloning facility.
 
 ---
 

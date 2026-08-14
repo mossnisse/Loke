@@ -1,0 +1,39 @@
+package main;
+
+take_int :: proc(i: int) -> int { return i; }
+take_f32 :: proc(f: f32) -> int { return int(f); }
+take_i8 :: proc(i: i8) -> int { return int(i); }
+take_i16 :: proc(i: i16) -> int { return int(i); }
+take_two :: proc(a: int, b: int) -> int { return a + b; }
+
+CONSTANT :: 7;
+
+// A crossed conversion vector: `^int` is exact for one parameter and converts to
+// `rawptr` for the other, so neither candidate is better for every argument.
+cross_a :: proc(a: rawptr, b: ^int) -> int { return 1; }
+cross_b :: proc(a: ^int, b: rawptr) -> int { return 2; }
+crossed :: proc{cross_a, cross_b};
+
+numbers :: proc{take_int, take_f32};
+integer_widths :: proc{take_i8, take_i16};
+malformed :: proc{take_int, take_int};
+unknown_member :: proc{no_such_procedure};
+not_a_procedure :: proc{CONSTANT};
+
+main :: proc() {
+	// Both conversions preserve integer kind, and no tie-breaker distinguishes
+	// the destination widths.
+	print_int(integer_widths(1));
+
+	// Crossed vectors are ambiguous by design.
+	value := 1;
+	pointer := &value;
+	print_int(crossed(pointer, pointer));
+
+	// Nothing in the group takes these arguments.
+	print_int(numbers(true, false));
+
+	// A group is not a value.
+	f := numbers;
+	print_int(take_two(1, 2));
+}

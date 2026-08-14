@@ -1,0 +1,25 @@
+package main;
+
+show_bool :: proc(b: bool) -> int { return 1 if b else 0; }
+show_int  :: proc(i: int)  -> int { return i; }
+show_f32  :: proc(f: f32)  -> int { return int(f) + 100; }
+
+show :: proc{show_bool, show_int, show_f32};
+
+pad :: proc(i: int, by: int = 5) -> int { return i + by; }
+pad3 :: proc(i: int, j: int, k: int) -> int { return i * j * k; }
+padded :: proc{pad, pad3};
+
+main :: proc() {
+	print_int(show(true));
+	// An integer constant prefers an integer destination to a floating one.
+	print_int(show(7));
+	print_int(show(int(7)));
+	print_int(show(2.5));
+	x: f32 = 3.0;
+	print_int(show(x));
+	print_int(padded(3));
+	print_int(padded(3, 4));
+	print_int(padded(2, 3, 4));
+	print_int(padded(by = 40, i = 2));
+}

@@ -1,0 +1,14 @@
+package main;
+
+import "./vendor";
+import "./adapter";
+
+main :: proc() {
+	v := vendor.Vector2{3, 4};
+	// The inherent method is visible everywhere.
+	print_int(int(v.sum()));
+	print_int(int(vendor.Vector2.sum(v)));
+	// The extension is not, but its named procedure is.
+	print_int(int(adapter.use_here(v)));
+	print_int(int(adapter.doubled(v)));
+}

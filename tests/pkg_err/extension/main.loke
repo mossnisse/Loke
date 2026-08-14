@@ -1,0 +1,25 @@
+package main;
+
+import "./vendor";
+import "./adapter";
+
+// `impl` belongs with the type's own package.
+impl vendor.Vector2 {
+	tripled :: proc(self) -> i32 { return self.x * 3; }
+}
+
+main :: proc() {
+	v := vendor.Vector2{3, 4};
+	// The `extend` block in `adapter` does not reach implicit lookup here.
+	print_int(int(v.doubled()));
+	print_int(int(vendor.Vector2.doubled(v)));
+	// Private inherent members do not leak through a public type.
+	print_int(int(v.private_sum()));
+	print_int(int(vendor.Vector2.private_sum(v)));
+	// Inherent members have no package-level alias, and private extensions do
+	// not consume a package-level name.
+	print_int(int(vendor.sum(v)));
+	print_int(int(adapter.init(1).x));
+	// Private inherent operators follow the same visibility rule as methods.
+	print_int(int((v + v).x));
+}

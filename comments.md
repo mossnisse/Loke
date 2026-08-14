@@ -265,10 +265,10 @@ observable cleanup happens on the way down.
 
 Methods and `impl`/`extend` blocks let libraries attach behavior to records and
 other types without embedding procedure declarations in every type definition.
-An extension affects implicit lookup only in its declaring package; importers
-use its named procedures through qualification unless they add a local
-forwarding extension. This keeps an unrelated import from changing an existing
-expression.
+An extension affects implicit lookup only in its declaring package. A public
+extension procedure is an ordinary export of that package, so importers call it
+as `adapter.procedure(value)` unless they add a local forwarding extension. This
+keeps an unrelated import from changing an existing expression.
 Interfaces describe capabilities used by generic code. Named `slot`
 requirements additionally let the compiler reify the same proof as a witness
 table for explicit `dyn` values. Free-form expression requirements remain

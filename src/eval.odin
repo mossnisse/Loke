@@ -529,6 +529,14 @@ eval_ident :: proc(ev: ^Evaluator, v: ^Expr_Ident) -> (Eval_Value, bool) {
 
 @(private = "file")
 eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
+	// A user operator is an ordinary call, but its operands are user values the
+	// evaluator has no representation for yet. Reporting is the honest answer;
+	// applying the built-in table would compute something the program does not
+	// mean.
+	if v.resolution.kind == .User_Operator {
+		eval_fail(ev, v.op_span, "L0341", "a user operator has no compile-time meaning yet")
+		return Eval_Value{}, false
+	}
 	if v.op == .Amp {
 		slot, ok := eval_place(ev, v.operand)
 		if !ok {
@@ -567,6 +575,10 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
 
 @(private = "file")
 eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
+	if v.resolution.kind == .User_Operator {
+		eval_fail(ev, v.op_span, "L0341", "a user operator has no compile-time meaning yet")
+		return Eval_Value{}, false
+	}
 	#partial switch v.op {
 	case .And_And, .Or_Or:
 		left, ok := eval_expr(ev, v.lhs)
@@ -1249,6 +1261,10 @@ eval_call_results :: proc(ev: ^Evaluator, call: ^Expr_Call) -> ([]Eval_Value, bo
 
 @(private = "file")
 eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
+	if s.operator != INVALID_SYMBOL || s.place_setter != INVALID_SYMBOL {
+		eval_fail(ev, s.op_span, "L0341", "a user operator has no compile-time meaning yet")
+		return .Fail
+	}
 	if s.op != .Assign {
 		return eval_compound_assign(ev, s)
 	}

@@ -15,13 +15,33 @@ Checker :: struct {
 	file_node: ^File,
 	scope: ^Scope,
 	pkg:   Package_Id,
+	// The package whose method, operator, and extension tables the declaration
+	// being checked may use. Usually `pkg`; `delegate` freezes its own.
+	lookup_pkg: Package_Id,
+	// The `impl`/`extend` subject whose block is being checked, which is what an
+	// untyped `self` receiver takes its type from.
+	impl_type:  Type_Id,
+	// Set while the callee of a call is being checked, so a method selector knows
+	// it is about to be called rather than used as a value.
+	in_callee:  bool,
+	// design.md "Indexing and slicing": in a place position an `operator([])`
+	// overload returning `inout T` is required before ordinary ranking. The flag
+	// is consumed by the node it is set for and never inherited by its operands.
+	place_position: bool,
 
 	// The procedure being checked. `proc_literal` also identifies the frame a
 	// name may come from, which is what makes the capture check possible.
 	proc_literal:   ^Expr_Proc,
 	result_types:   []Type_Id,
 	result_symbols: []Symbol_Id,
+	// Which results were declared `inout`: such a result returns a place, so its
+	// `return inout e` needs an addressable operand.
+	result_inout:   []bool,
 	named_results:  bool,
+
+	// Named results already written, for `or_return`'s definite-initialization
+	// requirement.
+	assigned_results: map[Symbol_Id]bool,
 
 	// Lexical targets for `break`, `continue`, and `defer` restrictions.
 	loop_depth:   int,
@@ -57,6 +77,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 		pkg.scope = new_scope(k.c, build_universe(k.c), .Package)
 	}
 	k.pkg = package_id
+	k.lookup_pkg = package_id
 	k.scope = pkg.scope
 
 	for file in pkg.files {
@@ -75,7 +96,17 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 			}
 		}
 	}
+	// Aliases first: an `extend vendor.Vector2` block names its subject through
+	// one, so the alias has to exist before the block can resolve it.
 	bind_import_aliases(k, pkg)
+	for file in pkg.files {
+		k.file, k.file_node = file.file, file
+		for item in file.active_items {
+			if impl, ok := item.(^Item_Impl); ok {
+				declare_impl_block(k, impl)
+			}
+		}
+	}
 }
 
 // design.md: an import name is a lexical alias and nothing more. Two names for
@@ -114,14 +145,18 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 		return
 	}
 	k.pkg = package_id
+	k.lookup_pkg = package_id
 
 	// Phase 2b: resolve fields and callable signatures. Recursive types and
 	// mutually recursive procedures now already have stable identities.
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
-			if d, ok := item.(^Decl); ok {
-				resolve_declaration_signature(k, d)
+			#partial switch v in item {
+			case ^Decl:
+				resolve_declaration_signature(k, v)
+			case ^Item_Impl:
+				resolve_impl_signatures(k, v)
 			}
 		}
 	}
@@ -145,6 +180,8 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 			#partial switch v in item {
 			case ^Decl:
 				check_decl(k, v)
+			case ^Item_Impl:
+				check_impl_block(k, v)
 			case ^Item_Import, ^Item_Error:
 			case:
 				unsupported_construct(k, item_span(item))
@@ -244,7 +281,7 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 			public = top_level && declaration_is_public(k, d),
 		}
 		switch {
-		case decl_proc(d) != nil:
+		case decl_proc_literal(d) != nil:
 			sym.kind = .Proc
 			sym.type = TYPE_VOID
 		case d.kind == .Const:
@@ -262,7 +299,6 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 // design.md "Exported names": package-private by default. `@(public)` exports
 // one declaration; `@(public)` on the package clause makes the file's
 // declarations public by default, and `@(private)` opts one back out.
-@(private = "file")
 declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
 	own_public := has_attribute(d.attributes, "public")
 	own_private := has_attribute(d.attributes, "private")
@@ -312,21 +348,16 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	case ^Type_Record:
 		if value.kind == .Struct {
 			resolve_struct_fields(k, symbol.type, value)
+		} else {
+			resolve_union_variants(k, symbol.type, value)
 		}
 	case ^Type_Enum:
 		resolve_enum_members(k, symbol.type, value)
 	case ^Expr_Proc_Group:
 		symbol.kind = .Proc_Group
+		resolve_group_members(k, d.symbols[0], value)
 	case ^Expr_Operator:
-		symbol.kind = .Proc
-		pkg := package_of(k.c, k.pkg)
-		set, found := pkg.operators[value.symbol]
-		if !found {
-			set = new(Operator_Set, k.c.semantic_allocator)
-			set.candidates = make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-			pkg.operators[value.symbol] = set
-		}
-		append(&set.candidates, d.symbols[0])
+		resolve_operator_declaration(k, d, value)
 	case ^Type_Distinct:
 		underlying := resolve_type_syntax(k, value.elem)
 		if info := type_of(k.c, symbol.type); info != nil {
@@ -438,30 +469,74 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.kind = .Proc
 	symbol.type = TYPE_VOID
 
+	reported := k.c.error_count
 	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)
 	modes := make([dynamic]Param_Mode, 0, 4, k.c.semantic_allocator)
 	param_symbols := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	defaults := make([dynamic]Expr, 0, 4, k.c.semantic_allocator)
 
-	for &parameter in literal.signature.params {
+	// design.md "Receiver forms", set below by whichever name is the receiver, so
+	// the rule is decided once rather than re-derived from the syntax afterwards.
+	has_receiver := false
+	receiver_mode := Param_Mode.Value
+
+	for &parameter, position in literal.signature.params {
+		before := k.c.error_count
 		parameter_type := resolve_type_syntax(k, parameter.type)
+		if parameter.type != nil && parameter_type == INVALID_TYPE && k.c.error_count == before {
+			report_unresolved_type(k, parameter.type)
+		}
+		if parameter.type == nil {
+			// design.md "Receiver forms": a parameter with no type is the receiver
+			// `self`, whose type comes from the enclosing `impl`/`extend` block.
+			if position == 0 && k.impl_type != INVALID_TYPE {
+				parameter_type = k.impl_type
+			} else {
+				errorf(k.c, parameter.span, "L0408", "a parameter needs a type; only the receiver `self` may omit one")
+			}
+		}
+		// `proc(self, allocator: Allocator)` is the receiver followed by one typed
+		// parameter, not two parameters of the written type: grammar.md's name list
+		// would swallow `self`, and only an untyped `self` is the receiver form.
+		// The receiver keeps its own immutable-borrow mode whatever the group wrote.
+		split := position == 0 &&
+			k.impl_type != INVALID_TYPE &&
+			parameter.type != nil &&
+			len(parameter.names) > 1 &&
+			parameter.names[0].name.text == "self"
+
 		bindings := make([dynamic]Symbol_Id, 0, len(parameter.names), k.c.semantic_allocator)
-		for parameter_name in parameter.names {
+		for parameter_name, name_index in parameter.names {
+			name_type := parameter_type
+			mode := parameter.mode
+			default := parameter.default
+			if split && name_index == 0 {
+				// The receiver is supplied by the call syntax, so a default written
+				// for the group belongs to the parameters, not to `self`.
+				name_type, mode, default = k.impl_type, .Value, nil
+			}
 			binding := new_binding_symbol(k, parameter_name.name, .Parameter)
 			if bound := symbol_of(k.c, binding); bound != nil {
-				bound.type = parameter_type
+				bound.type = name_type
 				bound.index = u32(len(params))
-				bound.mode = parameter.mode
+				bound.mode = mode
 				// A value parameter is immutable addressable storage; an `inout`
 				// parameter is a mutable alias (design.md "Parameter semantics").
-				bound.immutable = parameter.mode == .Value
+				bound.immutable = mode == .Value
 				bound.owner_proc = literal
 			}
+			if position == 0 && name_index == 0 &&
+			   k.impl_type != INVALID_TYPE &&
+			   parameter_name.name.text == "self" &&
+			   name_type == k.impl_type {
+				has_receiver = true
+				receiver_mode = mode
+			}
 			append(&bindings, binding)
-			append(&params, parameter_type)
-			append(&modes, parameter.mode)
+			append(&params, name_type)
+			append(&modes, mode)
 			append(&param_symbols, binding)
-			append(&defaults, parameter.default)
+			append(&defaults, default)
 		}
 		parameter.symbols = bindings[:]
 	}
@@ -470,7 +545,11 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	result_inout := make([dynamic]bool, 0, 2, k.c.semantic_allocator)
 	result_symbols := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
 	for &result in literal.signature.results {
+		before := k.c.error_count
 		result_type := resolve_type_syntax(k, result.type)
+		if result.type != nil && result_type == INVALID_TYPE && k.c.error_count == before {
+			report_unresolved_type(k, result.type)
+		}
 		bindings := make([dynamic]Symbol_Id, 0, len(result.names), k.c.semantic_allocator)
 		if len(result.names) == 0 {
 			append(&results, result_type)
@@ -502,6 +581,12 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.param_defaults = defaults[:]
 	symbol.result_symbols = result_symbols[:]
 	symbol.proc_type = proc_type
+	symbol.signature_error = k.c.error_count > reported
+	// design.md "Receiver forms": three modes and no others, and a first
+	// parameter typed `^T` is deliberately not one of them — it keeps the name
+	// but gets no method-call sugar, because `^T` is not the subject type.
+	symbol.has_receiver = has_receiver
+	symbol.receiver = receiver_mode
 	literal.type = proc_type
 	literal.symbol = symbol_id
 }
@@ -563,7 +648,7 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 	}
 
 	#partial switch info.kind {
-	case .Struct, .Array, .Distinct:
+	case .Struct, .Array, .Distinct, .Union:
 	case:
 		info.size_state = .Finite
 		return true
@@ -588,6 +673,14 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 	case .Array, .Distinct:
 		if info.element != INVALID_TYPE {
 			ok = check_finite_size(k, info.element, span, path)
+		}
+	case .Union:
+		// A union holds one variant at a time, but by value: a variant that
+		// contains the union again has no finite size either.
+		for variant in info.variants {
+			if !check_finite_size(k, variant, span, path) {
+				ok = false
+			}
 		}
 	}
 	// The pointer to the info may have been invalidated by types created while
@@ -661,7 +754,8 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				return value.value_category == .Type ? value.denoted_type : INVALID_TYPE
 			}
 		}
-		return INVALID_TYPE
+		// An associated type, `Countdown.Iterator`.
+		return resolve_associated_type(k, value)
 
 	case ^Type_Pointer:
 		element := resolve_type_syntax(k, value.elem)
@@ -753,12 +847,14 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return value.denoted_type
 
 	case ^Type_Record:
-		if value.kind != .Struct {
-			return INVALID_TYPE
-		}
 		if value.denoted_type == INVALID_TYPE {
-			value.denoted_type = new_type(k.c, Type_Info{kind = .Struct})
-			resolve_struct_fields(k, value.denoted_type, value)
+			if value.kind == .Struct {
+				value.denoted_type = new_type(k.c, Type_Info{kind = .Struct})
+				resolve_struct_fields(k, value.denoted_type, value)
+			} else {
+				value.denoted_type = new_type(k.c, Type_Info{kind = .Union})
+				resolve_union_variants(k, value.denoted_type, value)
+			}
 		}
 		value.resolution.kind = .Type
 		return value.denoted_type
@@ -805,6 +901,43 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 	return INVALID_TYPE
 }
 
+// `Type.Member` where the member is an associated type. Silent when the operand
+// is not a type or the member is not one, so an ordinary value selection is
+// still free to mean what it means.
+@(private = "file")
+resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
+	subject := resolve_type_syntax(k, value.operand)
+	if subject == INVALID_TYPE {
+		return INVALID_TYPE
+	}
+	member := find_member(k, subject, intern_identifier(k.c, value.name.text))
+	sym := symbol_of(k.c, member)
+	if sym == nil {
+		return INVALID_TYPE
+	}
+	outer := k.impl_type
+	k.impl_type = subject
+	defer k.impl_type = outer
+	if sym.kind == .Const && sym.decl != nil && sym.decl.check_state == .Unchecked {
+		check_decl(k, sym.decl)
+		sym = symbol_of(k.c, member)
+	}
+	denoted := INVALID_TYPE
+	switch {
+	case sym.kind == .Type:
+		denoted = sym.type
+	case sym.kind == .Const && sym.const_value.kind == .Type:
+		denoted = sym.const_value.type_value
+	}
+	if denoted == INVALID_TYPE {
+		return INVALID_TYPE
+	}
+	value.denoted_type = denoted
+	value.resolution = Resolution{kind = .Type, symbol = member}
+	value.value_category = .Type
+	return denoted
+}
+
 // M1 parses the whole grammar; this checker compiles the M2 subset. Reporting
 // from the dispatch's default arm — and not descending — is what keeps it to one
 // diagnostic per outer construct with no cascade.
@@ -843,12 +976,23 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 	if k.c.error_count > reported {
 		return INVALID_TYPE // resolution already said what is wrong with this type
 	}
-	if syntax, ok := d.declared_type.(^Expr_Ident); ok {
-		errorf(k.c, syntax.span, "L0306", "unknown type `%s`", syntax.name)
-		return INVALID_TYPE
-	}
-	unsupported_construct(k, expr_span(d.declared_type))
+	report_unresolved_type(k, d.declared_type)
 	return INVALID_TYPE
+}
+
+// Says why a written type did not resolve, once resolution has stayed silent
+// about it. `resolve_type_syntax` is also used as a probe — `associated_group`
+// asks it whether a callee names a type at all — so it reports nothing of its
+// own, and every position that requires a type says so here instead. Without
+// this the enclosing construct is gated as unimplemented, which names the wrong
+// problem and points at a milestone that will never fix it.
+@(private = "file")
+report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
+	if ident, is_ident := syntax.(^Expr_Ident); is_ident {
+		errorf(k.c, ident.span, "L0306", "unknown type `%s`", ident.name)
+		return
+	}
+	unsupported_construct(k, expr_span(syntax))
 }
 
 // ------------------------------------------------------- declarations --
@@ -868,9 +1012,15 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 
 @(private = "file")
 check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
-	if literal := decl_proc(d); literal != nil {
+	if literal := decl_proc_literal(d); literal != nil {
 		check_proc(k, d, literal)
 		return
+	}
+	// An operator group's members are checked as their own declarations.
+	if len(d.values) == 1 {
+		if _, is_operator := d.values[0].(^Expr_Operator); is_operator {
+			return
+		}
 	}
 	if len(d.symbols) == 1 {
 		if symbol := symbol_of(k.c, d.symbols[0]); symbol != nil && symbol.kind == .Type {
@@ -888,8 +1038,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 	if len(d.symbols) == 1 {
 		if symbol := symbol_of(k.c, d.symbols[0]); symbol != nil && symbol.kind == .Proc_Group {
-			unsupported_construct(k, d.span)
-			return
+			return // members were resolved with the signature; a group holds no value
 		}
 	}
 
@@ -922,16 +1071,15 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	// `a, b := f()`: one call filling several names, checked before arity so the
 	// single call is not mistaken for a missing initialiser.
 	if len(d.values) == 1 && len(d.names) > 1 && d.values[0] != nil {
-		if call, is_call := d.values[0].(^Expr_Call); is_call {
-			check_expr(k, call)
-			if len(call.result_types) == len(d.names) {
-				for symbol_id, index in d.symbols {
-					if symbol := symbol_of(k.c, symbol_id); symbol != nil {
-						symbol.type = call.result_types[index]
-					}
+		mark_optional_ok(d.values[0])
+		check_expr(k, d.values[0])
+		if base := expr_base(d.values[0]); base != nil && len(base.result_types) == len(d.names) {
+			for symbol_id, index in d.symbols {
+				if symbol := symbol_of(k.c, symbol_id); symbol != nil {
+					symbol.type = base.result_types[index]
 				}
-				return
 			}
+			return
 		}
 	}
 
@@ -1000,7 +1148,12 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		// constant initialiser may call a procedure and still get the same
 		// diagnostics as a folded one (m3-plan decision "Constant entry point").
 		if d.top_level && d.kind == .Var {
-			require_const(k, value, "a file-scope initializer", "L0325")
+			folded, evaluated := require_const(k, value, "a file-scope initializer", "L0325")
+			// A union's tag is written by code, and a file-scope initialiser has
+			// none: without this the global would silently start at nil.
+			if evaluated && const_holds_live_union(k.c, folded, final) {
+				errorf(k.c, expr_span(value), "L0424", "a file-scope union starts at nil; assign the variant in `main`")
+			}
 		}
 
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil {
@@ -1064,6 +1217,9 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	if symbol == nil {
 		return
 	}
+	if symbol.signature_error {
+		return // resolving the signature already said what is wrong with it
+	}
 	if !gate_type(k, symbol.proc_type, literal.span) {
 		return
 	}
@@ -1081,6 +1237,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	outer_proc := k.proc_literal
 	outer_results := k.result_types
 	outer_result_symbols := k.result_symbols
+	outer_result_inout := k.result_inout
 	outer_named := k.named_results
 	outer_loop, outer_switch, outer_defer := k.loop_depth, k.switch_depth, k.in_defer
 	defer {
@@ -1088,6 +1245,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 		k.proc_literal = outer_proc
 		k.result_types = outer_results
 		k.result_symbols = outer_result_symbols
+		k.result_inout = outer_result_inout
 		k.named_results = outer_named
 		k.loop_depth, k.switch_depth, k.in_defer = outer_loop, outer_switch, outer_defer
 	}
@@ -1097,6 +1255,13 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	k.proc_literal = literal
 	k.result_types = symbol.results
 	k.result_symbols = symbol.result_symbols
+	k.result_inout = nil
+	if info := type_of(k.c, symbol.proc_type); info != nil {
+		k.result_inout = info.result_inout
+	}
+	outer_assigned := k.assigned_results
+	k.assigned_results = make(map[Symbol_Id]bool, 4, k.c.semantic_allocator)
+	defer k.assigned_results = outer_assigned
 	k.loop_depth, k.switch_depth, k.in_defer = 0, 0, false
 	outer_slots := k.defer_slots
 	k.defer_slots = 0
@@ -1174,7 +1339,6 @@ check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 	return check_block(k, b)
 }
 
-@(private = "file")
 check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	switch s in stmt {
 	case ^Stmt_Error:
@@ -1190,7 +1354,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	case ^Stmt_Expr:
 		flow := FLOWS
 		for expr in s.exprs {
-			if _, is_call := expr.(^Expr_Call); !is_call && expr != nil {
+			if expr != nil && !expression_statement_has_effect(expr) {
 				errorf(k.c, expr_span(expr), "L0313", "this expression statement has no effect")
 			}
 			check_expr(k, expr)
@@ -1268,6 +1432,19 @@ check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
 	return FLOWS
 }
 
+// A call, or a single-valued `or_return` over one — which design.md says "may
+// only be used as a statement".
+@(private = "file")
+expression_statement_has_effect :: proc(e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Call:
+		return true
+	case ^Expr_Postfix:
+		return v.op == .Or_Return && expression_statement_has_effect(v.operand)
+	}
+	return false
+}
+
 is_builtin_call :: proc(c: ^Compiler, e: Expr, kind: Builtin_Kind) -> bool {
 	call, is_call := e.(^Expr_Call)
 	if !is_call {
@@ -1287,16 +1464,18 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		return
 	}
 
-	// `a, b = f()`: one call filling several destinations.
+	// `a, b = f()` and `a, ok = v.(T)`: one expression filling several
+	// destinations. The comma-ok shape is what puts an assertion in its
+	// optional-ok phase, so the marking happens before the operand is checked.
 	if len(s.rhs) == 1 && len(s.lhs) > 1 {
-		if call, is_call := s.rhs[0].(^Expr_Call); is_call {
-			check_expr(k, call)
-			if len(call.result_types) == len(s.lhs) {
-				for target, index in s.lhs {
-					check_assign_target(k, target, call.result_types[index])
-				}
-				return
+		mark_optional_ok(s.rhs[0])
+		check_expr(k, s.rhs[0])
+		if base := expr_base(s.rhs[0]); base != nil && len(base.result_types) == len(s.lhs) {
+			for target, index in s.lhs {
+				check_assign_target(k, target, base.result_types[index])
+				note_result_assigned(k, target)
 			}
+			return
 		}
 	}
 	if len(s.lhs) != len(s.rhs) {
@@ -1324,13 +1503,73 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			}
 			continue
 		}
+		// `grid[x, y] = v` on a container with no location to hand out.
+		if indexed, is_index := target.(^Expr_Index); is_index {
+			if check_place_setter(k, s, indexed, s.rhs[index]) {
+				continue
+			}
+		}
 		type := check_assign_target(k, target, INVALID_TYPE)
 		if type == INVALID_TYPE {
 			check_expr(k, s.rhs[index])
 			continue
 		}
 		check_value_expr(k, s.rhs[index], type, "assign")
+		note_result_assigned(k, target)
 	}
+}
+
+// design.md: `operator([]=)` is for containers that have no location to hand
+// out. It is reached only when no `operator([])` returning `inout` exists, so a
+// type that can supply an address still gets an ordinary store.
+@(private = "file")
+check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, value: Expr) -> bool {
+	operand := check_single_expr(k, target.operand)
+	if operand == INVALID_TYPE {
+		return false
+	}
+	operands := []Type_Id{operand}
+	setters := operator_candidates_for_receiver(k, "[]=", operand)
+	if len(setters) == 0 {
+		return false
+	}
+	for candidate in operator_candidates_for_receiver(k, "[]", operand) {
+		if operator_result_is_place(k, candidate) {
+			return false // it can hand out a location, so an ordinary store applies
+		}
+	}
+	args, ok := index_and_value_arguments(k, target, value)
+	if !ok {
+		return true
+	}
+	chosen, bound := resolve_operator(k, s.op_span, "[]=", operands, args, among = setters)
+	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+		return true
+	}
+	s.place_setter = chosen
+	s.setter_bound = bound
+	return true
+}
+
+@(private = "file")
+index_and_value_arguments :: proc(k: ^Checker, target: ^Expr_Index, value: Expr) -> ([]Arg_Info, bool) {
+	args := make([]Arg_Info, len(target.indices) + 2, k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, target.operand)
+	args[0].is_receiver = true
+	ok := true
+	for index, position in target.indices {
+		if check_single_expr(k, index) == INVALID_TYPE {
+			ok = false
+			continue
+		}
+		args[position + 1] = arg_from_expr(k, index)
+	}
+	if check_single_expr(k, value) == INVALID_TYPE {
+		ok = false
+	} else {
+		args[len(args) - 1] = arg_from_expr(k, value)
+	}
+	return args, ok
 }
 
 @(private = "file")
@@ -1348,6 +1587,13 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	if op == .EOF {
 		unsupported_construct(k, s.op_span)
 		return
+	}
+	// The built-in compound operation wins where it is defined; otherwise a
+	// direct `+=` overload, and failing that the binary `+` fallback.
+	if !operand_is_builtin(k, type) || !compound_applies(k.c, op, type) {
+		if check_user_compound(k, s, op, type) {
+			return
+		}
 	}
 	if op == .Shl || op == .Shr {
 		if !check_shift_count(k, s.rhs[0]) {
@@ -1368,6 +1614,98 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	}
 }
 
+// design.md: "A compound assignment falls back to the corresponding binary
+// operator followed by ordinary assignment. A direct compound overload can avoid
+// a temporary or allocation."
+@(private = "file")
+check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: Type_Id) -> bool {
+	rhs_type := check_single_expr(k, s.rhs[0])
+	if rhs_type == INVALID_TYPE {
+		return true // already reported; re-checking it would report a second time
+	}
+	operands := []Type_Id{type, rhs_type}
+
+	compound := compound_symbol(s.op)
+	direct_args := make([]Arg_Info, 2, k.c.semantic_allocator)
+	direct_args[0] = arg_from_expr(k, s.lhs[0], .Inout)
+	direct_args[1] = arg_from_expr(k, s.rhs[0])
+	if operator_viable(k, compound, operands, direct_args) {
+		chosen, bound := resolve_operator(k, s.op_span, compound, operands, direct_args)
+		if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+			return true
+		}
+		s.lhs[0], s.rhs[0] = bound[0], bound[1]
+		s.operator, s.operator_direct = chosen, true
+		return true
+	}
+
+	binary := operator_text(op)
+	args := make([]Arg_Info, 2, k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, s.lhs[0])
+	args[1] = arg_from_expr(k, s.rhs[0])
+	if !operator_viable(k, binary, operands, args) {
+		if operator_exists(k, compound, operands) {
+			resolve_operator(k, s.op_span, compound, operands, direct_args)
+			return true
+		}
+		if operator_exists(k, binary, operands) {
+			resolve_operator(k, s.op_span, binary, operands, args, type)
+			return true
+		}
+		return false
+	}
+	chosen, bound := resolve_operator(k, s.op_span, binary, operands, args, type)
+	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+		return true
+	}
+	result := symbol_of(k.c, chosen)
+	if len(result.results) != 1 || !assignable(k.c, result.results[0], type) && result.results[0] != type {
+		errorf(
+			k.c,
+			s.op_span,
+			"L0417",
+			"`%s` produces `%s`, which cannot be assigned back to `%s`",
+			binary,
+			len(result.results) == 1 ? type_name(k.c, result.results[0]) : "no value",
+			type_name(k.c, type),
+		)
+		return true
+	}
+	s.lhs[0], s.rhs[0] = bound[0], bound[1]
+	s.operator, s.operator_direct = chosen, false
+	return true
+}
+
+// `+=` and friends as canonical operator text.
+@(private = "file")
+compound_symbol :: proc(op: Token_Kind) -> string {
+	#partial switch op {
+	case .Plus_Eq:
+		return "+="
+	case .Minus_Eq:
+		return "-="
+	case .Star_Eq:
+		return "*="
+	case .Slash_Eq:
+		return "/="
+	case .Percent_Eq:
+		return "%="
+	case .Pipe_Eq:
+		return "|="
+	case .Tilde_Eq:
+		return "~="
+	case .Amp_Eq:
+		return "&="
+	case .Amp_Tilde_Eq:
+		return "&~="
+	case .Shl_Eq:
+		return "<<="
+	case .Shr_Eq:
+		return ">>="
+	}
+	return ""
+}
+
 // The destination half of an assignment. A `_` on the left is a discard, which
 // is a legal destination with no storage.
 @(private = "file")
@@ -1378,7 +1716,11 @@ check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id) -> Type_Id
 		ident.value_category = .Invalid
 		return from == INVALID_TYPE ? TYPE_VOID : from
 	}
+	// An assignment destination is a place position, which is what selects an
+	// `inout` indexing overload before ordinary ranking.
+	k.place_position = true
 	type := check_single_expr(k, target)
+	k.place_position = false
 	if type == INVALID_TYPE {
 		return INVALID_TYPE
 	}
@@ -1471,8 +1813,13 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 	}
 	check_condition(k, s.cond)
 
+	incoming := clone_result_assignments(k.c, k.assigned_results)
 	then_flow := check_scoped_block(k, s.then)
+	then_assigned := clone_result_assignments(k.c, k.assigned_results)
 	if s.otherwise == nil {
+		// The condition may be false, so only assignments already live on entry
+		// remain definite after an if without an else.
+		k.assigned_results = incoming
 		return Flow_Info {
 			can_fall_through = true,
 			returns          = then_flow.returns,
@@ -1480,7 +1827,19 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 			continues        = then_flow.continues,
 		}
 	}
+	k.assigned_results = clone_result_assignments(k.c, incoming)
 	else_flow := check_stmt(k, s.otherwise)
+	else_assigned := clone_result_assignments(k.c, k.assigned_results)
+	switch {
+	case then_flow.can_fall_through && else_flow.can_fall_through:
+		k.assigned_results = intersect_result_assignments(k.c, then_assigned, else_assigned)
+	case then_flow.can_fall_through:
+		k.assigned_results = then_assigned
+	case else_flow.can_fall_through:
+		k.assigned_results = else_assigned
+	case:
+		k.assigned_results = incoming
+	}
 	return Flow_Info {
 		can_fall_through = then_flow.can_fall_through || else_flow.can_fall_through,
 		returns          = then_flow.returns || else_flow.returns,
@@ -1513,13 +1872,17 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 		check_stmt(k, s.init)
 	}
 	check_condition(k, s.cond)
-	if s.post != nil {
-		check_stmt(k, s.post)
-	}
+	incoming := clone_result_assignments(k.c, k.assigned_results)
 
 	k.loop_depth += 1
 	body := check_scoped_block(k, s.body)
+	if s.post != nil {
+		check_stmt(k, s.post)
+	}
 	k.loop_depth -= 1
+	// A conditional loop may execute zero times. A loop that exits through break
+	// likewise has no single body assignment guaranteed on every exit path.
+	k.assigned_results = incoming
 
 	// `for (;;)` without a `break` never falls out of the loop.
 	infinite := s.cond == nil
@@ -1532,8 +1895,7 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 @(private = "file")
 check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if s.kind == .Type {
-		unsupported_construct(k, s.span)
-		return FLOWS
+		return check_type_switch(k, s)
 	}
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
@@ -1560,8 +1922,12 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	has_default := false
 	flow := Flow_Info{}
 	any_case_falls := false
+	incoming := clone_result_assignments(k.c, k.assigned_results)
+	joined := make(map[Symbol_Id]bool, 0, k.c.semantic_allocator)
+	have_join := false
 
 	for &entry in s.cases {
+		k.assigned_results = clone_result_assignments(k.c, incoming)
 		if len(entry.values) == 0 {
 			if has_default {
 				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
@@ -1580,11 +1946,32 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		flow.returns ||= case_flow.returns
 		flow.continues ||= case_flow.continues
 		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
+		if case_flow.can_fall_through || case_flow.breaks {
+			state := clone_result_assignments(k.c, k.assigned_results)
+			joined = have_join ? intersect_result_assignments(k.c, joined, state) : state
+			have_join = true
+		}
 	}
 
 	if !has_default {
 		check_exhaustive(k, s, subject, covered)
+		exhaustive := type_is_enum(k.c, subject)
+		if exhaustive {
+			if info := type_of(k.c, type_underlying(k.c, subject)); info != nil {
+				for member in info.fields {
+					if !covered[u32(member)] {
+						exhaustive = false
+						break
+					}
+				}
+			}
+		}
+		if !exhaustive {
+			joined = have_join ? intersect_result_assignments(k.c, joined, incoming) : incoming
+			have_join = true
+		}
 	}
+	k.assigned_results = have_join ? joined : incoming
 	return Flow_Info {
 		can_fall_through = !has_default || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,
@@ -1592,7 +1979,6 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 }
 
-@(private = "file")
 check_case_body :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	flow := FLOWS
 	for stmt in stmts {
@@ -1790,7 +2176,16 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		return terminated
 	}
 	for value, index in s.values {
-		check_value_expr(k, value.expr, k.result_types[index], "return")
+		if !check_value_expr(k, value.expr, k.result_types[index], "return") {
+			continue
+		}
+		// An `inout` result hands back a place, so what is returned must be one.
+		// Borrow, escape, and exclusivity checking for it arrive with M5 (B12).
+		if index < len(k.result_inout) && k.result_inout[index] {
+			if base := expr_base(value.expr); base == nil || !base.addressable {
+				errorf(k.c, expr_span(value.expr), "L0418", "an `inout` result must return a place")
+			}
+		}
 	}
 	return terminated
 }

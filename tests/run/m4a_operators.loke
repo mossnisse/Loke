@@ -1,0 +1,175 @@
+package main;
+
+Vec :: struct { x, y: i32 }
+
+impl Vec {
+	add :: operator(+) proc(a, b: Vec) -> Vec { return {a.x + b.x, a.y + b.y}; }
+	negate :: operator(-) proc(v: Vec) -> Vec { return {-v.x, -v.y}; }
+	equal :: operator(==) proc(a, b: Vec) -> bool { return a.x == b.x && a.y == b.y; }
+	less :: operator(<) proc(a, b: Vec) -> bool { return a.x < b.x; }
+}
+
+// Unrelated direct operators must not suppress the `!=` and compound fallbacks
+// used by `Vec` below.
+Noise :: struct { value: i32 }
+
+impl Noise {
+	not_equal :: operator(!=) proc(a, b: Noise) -> bool { return a.value != b.value; }
+	add_assign :: operator(+=) proc(a: inout Noise, b: Noise) { a.value = a.value + b.value; }
+}
+
+Grid :: struct { cells: [9]i32 }
+
+impl Grid {
+	index :: operator([]) proc(self: Grid, x, y: int) -> i32 {
+		return self.cells[y*3 + x];
+	}
+	index_mut :: operator([]) proc(self: inout Grid, x, y: int) -> inout i32 {
+		return inout self.cells[y*3 + x];
+	}
+	span :: operator([:]) proc(self: Grid, lo, hi: int) -> i32 {
+		return self.cells[lo] + self.cells[hi];
+	}
+}
+
+// No `inout` overload exists, so there is no slot whose address could be given.
+Sparse :: struct { total: i32 }
+
+impl Sparse {
+	get :: operator([]) proc(self: Sparse, key: int) -> i32 { return self.total + i32(key); }
+	set :: operator([]=) proc(self: inout Sparse, key: int, value: i32) {
+		self.total = self.total + value + i32(key);
+	}
+}
+
+Meters :: distinct f64;
+
+impl Meters {
+	delegate(+, -, ==, !=, <, <=, >, >=);
+}
+
+// Delegating over an underlying type whose operations are user overloads rather
+// than built-in ones. Each generated overload keeps the underlying signature
+// with the distinct type substituted, so a non-homogeneous `[]` forwards its
+// index parameter unchanged and its `inout` overload still hands out a place.
+Cell :: struct { count: i32 }
+
+impl Cell {
+	add :: operator(+) proc(a, b: Cell) -> Cell { return {a.count + b.count}; }
+	same :: operator(==) proc(a, b: Cell) -> bool { return a.count == b.count; }
+	bump :: operator(+=) proc(self: inout Cell, by: i32) { self.count = self.count + by; }
+	read :: operator([]) proc(self: Cell, index: int) -> i32 { return self.count + i32(index); }
+	write :: operator([]) proc(self: inout Cell, index: int) -> inout i32 { return inout self.count; }
+}
+
+Tally :: distinct Cell;
+
+impl Tally {
+	delegate(+, ==, +=, []);
+	count_of :: proc(self) -> i32 { return self.count; }
+}
+
+Complex :: struct { real, imaginary: f64 }
+
+impl Complex {
+	@(implicit)
+	from_scalar :: proc(value: f64) -> Complex { return {value, 0}; }
+	init :: proc{from_scalar};
+	add :: operator(+) proc(a, b: Complex) -> Complex {
+		return {a.real + b.real, a.imaginary + b.imaginary};
+	}
+}
+
+Scalar :: struct { value: i32 }
+
+impl Scalar {
+	@(implicit)
+	from_i32 :: proc(value: i32) -> Scalar { return {value}; }
+	@(implicit)
+	from_f32 :: proc(value: f32) -> Scalar { return {i32(value) + 100}; }
+	init :: proc{from_i32, from_f32};
+}
+
+scalar_value :: proc(value: Scalar) -> i32 { return value.value; }
+
+// These qualified names used to collide after punctuation was replaced by `_`.
+_int :: struct { value: i32 }
+
+impl _int {
+	read :: proc(self) -> i32 { return self.value; }
+}
+
+extend ^int {
+	read :: proc(self) -> int { return self^; }
+}
+
+main :: proc() {
+	a := Vec{1, 2};
+	b := Vec{3, 4};
+	c := a + b;
+	print_int(int(c.x));
+	print_int(int(c.y));
+	d := -c;
+	print_int(int(d.x));
+	print_int(1 if a == b else 0);
+	// `!=` falls back to `!(a == b)`.
+	print_int(1 if a != b else 0);
+	print_int(1 if a < b else 0);
+	// `+=` follows from `+` by the compound-assignment fallback.
+	a += b;
+	print_int(int(a.x));
+	// `int + int` still means integer addition with a user `+` in scope.
+	print_int(2 + 3);
+	// The named form is always available.
+	print_int(int(Vec.add(a, b).x));
+
+	g: Grid;
+	g[1, 2] = 7;
+	print_int(int(g[1, 2]));
+	p := &g[0, 0];
+	p^ = 5;
+	print_int(int(g[0, 0]));
+	print_int(int(g[0:7]));
+
+	s: Sparse;
+	s[3] = 4;
+	print_int(int(s.total));
+	print_int(int(s[1]));
+
+	m := Meters(3.0);
+	n := Meters(4.0);
+	print_int(int(f64(m + n)));
+	m += n;
+	print_int(int(f64(m)));
+	print_int(1 if m < n else 0);
+	print_int(1 if m != n else 0);
+
+	// Delegation to a user overload, including the `!=` fallback over the
+	// delegated `==` and a compound form whose parameter is not the subject.
+	t := Tally{1};
+	u := Tally{2};
+	print_int(int((t + u).count_of()));
+	print_int(1 if t == u else 0);
+	print_int(1 if t != u else 0);
+	t += 5;
+	print_int(int(t.count_of()));
+	print_int(int(t[2]));
+	t[0] = 9;
+	print_int(int(t.count_of()));
+	// A distinct value unwraps through stage 1 even when its base is a struct.
+	unwrapped := Cell(t);
+	print_int(int(unwrapped.count));
+
+	// `z + 2.0` reaches the constant-only `init` conversion.
+	z := Complex(3.0);
+	print_int(int((z + 2.0).real));
+
+	// The implicit init group uses ordinary overload ranking.
+	print_int(int(scalar_value(7)));
+	print_int(int(scalar_value(2.5)));
+
+	qualified := _int{31};
+	pointee := 32;
+	print_int(int(qualified.read()));
+	print_int(int((&pointee).read()));
+}

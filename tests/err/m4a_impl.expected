@@ -1,0 +1,48 @@
+L0406
+@29:2
+an `impl` member is a constant, a procedure, or an associated type
+L0409
+@32:2
+`Complex` already has a member `length`
+L0408
+@40:15
+a parameter needs a type; only the receiver `self` may omit one
+L0306
+@83:25
+unknown type `Element`
+L0411
+@11:2
+an `init` overload takes no receiver and returns `Complex`
+L0413
+@22:2
+`@(implicit)` needs a one-argument `init` overload whose parameter is a built-in numeric, boolean, rune, or string type
+L0413
+@26:2
+`@(implicit)` needs a one-argument `init` overload whose parameter is a built-in numeric, boolean, rune, or string type
+L0424
+@37:17
+a file-scope union starts at nil; assign the variant in `main`
+L0310
+@49:26
+cannot pass `Complex` with `f64`
+L0363
+@53:2
+`Complex` has no field or member `bump`
+L0358
+@55:2
+a constant cannot be the receiver of a mutating method
+L0408
+@57:7
+`length` is a method and must be called
+L0410
+@59:7
+`Point` has no `init` overload to construct it
+L0408
+@61:7
+`Complex` has no member `magnitude`
+L0391
+@62:27
+implicit `init` for `Ambiguous` is ambiguous here
+candidate `from_i8` with conversion vector (2)
+candidate `from_i16` with conversion vector (2)
+selection failed at tie-breaker 4

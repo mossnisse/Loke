@@ -1,0 +1,18 @@
+L0416
+@17:22
+`operator(==)` produces `bool`
+L0391
+@23:12
+`integer_widths` is ambiguous here
+L0408
+@26:7
+`length` is a method and must be called
+L0425
+@29:12
+`f64` is not a variant of `Value`
+L0427
+@31:2
+this type switch over `Value` does not cover bool
+L0410
+@36:7
+`Vec` has no `init` overload to construct it

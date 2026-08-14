@@ -29,6 +29,10 @@ Expr_Base :: struct {
 	// exactly-one-value type, so nothing that expects one value silently reads
 	// the first of many.
 	result_types: []Type_Id,
+	// The variant type this expression produces before it is wrapped into the
+	// union `type` now names. INVALID_TYPE when no wrap happens; the emitter
+	// evaluates the node at this type and then writes payload and tag.
+	union_from:  Type_Id,
 	// Set at construction when this node or any child is an error node, so
 	// recovery never has to re-walk a subtree to find out.
 	has_error:   bool,
@@ -112,11 +116,14 @@ Expr_Selector :: struct {
 	name:       Name,
 }
 
-// `x.(T)`
+// `x.(T)`. One construct with two result shapes chosen by context: a
+// single-value position traps on a mismatch, while a comma-ok destination or an
+// `or_else` left operand yields `(T, bool)` and never traps.
 Expr_Type_Assert :: struct {
 	using base: Expr_Base,
 	operand:    Expr,
 	target:     Expr,
+	optional:   bool,
 }
 
 // `x[a]`, and the user-defined comma form `x[a, b]`.
@@ -124,6 +131,9 @@ Expr_Index :: struct {
 	using base: Expr_Base,
 	operand:    Expr,
 	indices:    []Expr,
+	// A user `operator([])`: the arguments in parameter order, receiver first.
+	// The resolution names the overload; an `inout` result makes this a place.
+	bound:      []Expr,
 }
 
 // `x[lo:hi]`; either endpoint may be nil.
@@ -132,6 +142,8 @@ Expr_Slice :: struct {
 	operand:    Expr,
 	lo:         Expr,
 	hi:         Expr,
+	// A user `operator([:])`: receiver, low, and high in parameter order.
+	bound:      []Expr,
 }
 
 Argument_Mode :: enum {
@@ -180,6 +192,9 @@ Expr_Binary :: struct {
 	op_span:    Span,
 	lhs:        Expr,
 	rhs:        Expr,
+	// `a != b` reached through the `!(a == b)` fallback: the resolution names the
+	// `==` overload and the result is negated (design.md "Operator declarations").
+	negated:    bool,
 }
 
 // `a ..= b` and `a ..< b`. Kept apart from Expr_Binary so a phase that only
@@ -586,6 +601,14 @@ Stmt_Assign :: struct {
 	op_span:    Span,
 	lhs:        []Expr,
 	rhs:        []Expr,
+	// A user compound assignment: either a direct `+=` overload, or the binary
+	// `+` overload the fallback rule reaches. INVALID_SYMBOL for a built-in one.
+	operator:        Symbol_Id,
+	operator_direct: bool,
+	// `grid[x, y] = v` reaching `operator([]=)`, with the receiver, indices and
+	// value already bound in parameter order.
+	place_setter:    Symbol_Id,
+	setter_bound:    []Expr,
 }
 
 Stmt_If :: struct {
@@ -644,6 +667,11 @@ Switch_Case :: struct {
 	span:   Span,
 	values: []Expr,
 	stmts:  []Stmt,
+	// A type switch binds one name per case: at the variant's type for a
+	// single-type case, and at the union's type for a multiple-type or default
+	// case, where the active variant is not known.
+	binding_symbol: Symbol_Id,
+	binding_type:   Type_Id,
 }
 
 Stmt_Switch :: struct {
@@ -783,6 +811,24 @@ decl_proc :: proc(d: ^Decl) -> ^Expr_Proc {
 	return literal
 }
 
+// The procedure body a declaration binds, looking through `operator(sym)`. An
+// operator implementation is an ordinary named procedure, so everything that
+// names, checks, or emits one wants this rather than `decl_proc`.
+decl_proc_literal :: proc(d: ^Decl) -> ^Expr_Proc {
+	if literal := decl_proc(d); literal != nil {
+		return literal
+	}
+	if d.kind != .Const || len(d.values) != 1 {
+		return nil
+	}
+	if operator, is_operator := d.values[0].(^Expr_Operator); is_operator {
+		if literal, is_proc := operator.value.(^Expr_Proc); is_proc {
+			return literal
+		}
+	}
+	return nil
+}
+
 // Top-level syntax has its own union so `Decl` never becomes a catch-all.
 Item :: union {
 	^Decl,
@@ -837,6 +883,11 @@ Item_Impl :: struct {
 	kind:       Impl_Kind,
 	type:       Expr,
 	members:    []Item,
+	// The resolved subject, and whether member symbols have been created. The
+	// discovery fixed point re-prepares a package each round, so this is what
+	// keeps a second round from installing the same members twice.
+	subject:    Type_Id,
+	declared:   bool,
 }
 
 // `delegate(+, -);` inside an `impl` or `extend` body.

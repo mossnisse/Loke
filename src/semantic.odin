@@ -110,6 +110,17 @@ Type_Info :: struct {
 	// Struct fields and enum members, in declaration order. Each symbol carries
 	// its own type, index, and (for an enum member) discriminant.
 	fields:     []Symbol_Id,
+	// A union's variants, in declaration order. Variant 0 is the first written
+	// one; tag 0 is nil (m4a-plan decision "Union representation").
+	variants:   []Type_Id,
+	// A validated `union @(align=N)`, or 0. Kept apart from `align`, which the
+	// layout pass overwrites with the computed result: `union_layout` is asked
+	// again by the emitter after that, and both must get the same answer.
+	written_align: u64,
+	// Inherent members written by `impl`: methods, associated constants, and
+	// associated types. `extend` never writes here — its members are package-scoped
+	// and live in `Package.extensions` (m4a-plan decision "Method storage").
+	members:    []Symbol_Id,
 	parameters: []Type_Id,
 	param_modes: []Param_Mode,
 	results:    []Type_Id,
@@ -404,6 +415,33 @@ Symbol :: struct {
 	// that the backend emits.
 	proc_literal: ^Expr_Proc,
 	pkg:         Package_Id,
+	// The package whose method, operator, and extension tables this declaration's
+	// body may use, which is not always the package being checked: `delegate`
+	// freezes it at its declaration, and M4b's instantiations look up at their
+	// definition site (m4a-plan decision "Lookup package").
+	lookup_pkg:  Package_Id,
+	// The `impl`/`extend` subject this member belongs to, or INVALID_TYPE.
+	owner_type:  Type_Id,
+	// A first parameter named `self` whose type is the owner. `^T` is not a
+	// receiver, so it leaves this false and gets no method-call sugar.
+	has_receiver: bool,
+	receiver:     Param_Mode,
+	// `@(implicit)` on a one-argument `init` overload: reachable from an untyped
+	// constant without being written.
+	implicit:     bool,
+	// The canonical text of `operator(sym)`, or "" for an ordinary procedure.
+	// `[]=` and `[:]` are several tokens, so this is text rather than a token.
+	operator:     string,
+	// A forwarding overload `delegate(...)` generated. It has no body: the
+	// backend applies the underlying type's operation to the unwrapped operands.
+	// `delegate_target` is the underlying type's own overload when there is one,
+	// and INVALID_SYMBOL when the underlying operation is the built-in.
+	delegated:           bool,
+	delegate_underlying: Type_Id,
+	delegate_target:     Symbol_Id,
+	// Signature resolution already reported why this procedure has no usable
+	// type, so the gate must not report a second time for the same mistake.
+	signature_error: bool,
 	// Field or enum-member position in its owning type; parameter position in
 	// its signature.
 	index:       u32,
@@ -455,6 +493,10 @@ Package :: struct {
 	key:            string,
 	files:          [dynamic]^File,
 	scope:          ^Scope,
+	// `extend` members, keyed by subject type. Package-scoped by design: an
+	// unused import must not change or make ambiguous an existing expression, so
+	// this is never merged into the type itself.
+	extensions:     map[Type_Id][]Symbol_Id,
 	operators:      map[string]^Operator_Set,
 	imports:        [dynamic]Package_Import,
 	// Procedure literals lifted out of expression position, owned by the package
@@ -812,6 +854,15 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 			}
 		}
 		return true
+	case .Union:
+		// Comparable against nil always, and against another value of the same
+		// union when every variant is itself comparable.
+		for variant in info.variants {
+			if !type_is_comparable(c, variant) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
@@ -870,8 +921,15 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	     .Untyped_String:
 		return true
 	case .String, .Typeid, .Any_View, .Multi_Pointer, .Slice, .Dynamic_Array,
-	     .Map, .Union, .Interface, .Dyn:
+	     .Map, .Interface, .Dyn:
 		return false
+	case .Union:
+		for variant in info.variants {
+			if !type_is_supported_depth(c, variant, depth + 1) {
+				return false
+			}
+		}
+		return len(info.variants) > 0
 	case .Pointer, .Array, .Distinct:
 		return type_is_supported_depth(c, info.element, depth + 1)
 	case .Enum:
@@ -1068,6 +1126,7 @@ new_package :: proc(c: ^Compiler, name, canonical_path: string, key := "") -> Pa
 		canonical_path = canonical_path,
 		key            = key,
 		files          = make([dynamic]^File, 0, 4, c.semantic_allocator),
+		extensions     = make(map[Type_Id][]Symbol_Id, c.semantic_allocator),
 		operators      = make(map[string]^Operator_Set, c.semantic_allocator),
 		imports        = make([dynamic]Package_Import, 0, 4, c.semantic_allocator),
 		hoisted_procs  = make([dynamic]^Expr_Proc, 0, 4, c.semantic_allocator),

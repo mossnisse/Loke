@@ -1,0 +1,24 @@
+L0407
+@7:6
+belongs with the package that declares `Vector2`
+L0363
+@14:16
+has no field or member `doubled`
+L0408
+@15:16
+has no member `doubled`
+L0363
+@17:16
+has no field or member `private_sum`
+L0408
+@18:16
+has no member `private_sum`
+L0335
+@21:16
+package `vendor` has no declaration `sum`
+L0335
+@22:16
+package `adapter` has no declaration `init`
+L0318
+@24:19
+`+` does not apply to `Vector2` and `Vector2`

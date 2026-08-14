@@ -1,0 +1,30 @@
+L0422
+@4:30
+`i32` is already a variant of this union
+L0423
+@5:22
+`@(align=3)` must be a power of two between 1 and 16
+L0429
+@13:14
+`or_return` needs every result of this procedure to be named
+L0430
+@21:14
+`n` is not initialised yet, and `or_return` returns its current value
+L0430
+@29:14
+`n` is not initialised yet, and `or_return` returns its current value
+L0425
+@37:10
+`f64` is not a variant of `Value`
+L0426
+@40:15
+a type switch needs a union, found `int`
+L0427
+@45:2
+this type switch over `Value` does not cover bool
+L0428
+@50:7
+`or_else` needs an optional-ok expression on its left
+L0429
+@52:20
+`or_return` needs a `bool` or nil-comparable final result, found `int`

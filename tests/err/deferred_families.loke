@@ -1,24 +1,22 @@
 package main;
 
-// One `L0350` per deferred outer construct, and no descent into it.
-Variant :: union { int, bool }
-
+// One `L0350` per deferred outer construct, and no descent into it. Every
+// family M4a leaves for a later milestone keeps exactly one entry here.
 Container :: struct { items: []int }
 
 Trait :: interface($Self: type) { }
 
 Generic :: struct($T: type) { value: T }
 
-group :: proc{ helper }
+Erased :: struct { view: dyn Trait }
 
-helper :: proc() { }
+Reflected :: struct { id: typeid }
+
+Walker :: struct { cursor: [^]int }
 
 main :: proc() {
 	xs: [dynamic]int;
 	table: map[int]int;
 	text := "hello";
-	foreach (item in xs) {
-		print_int(item);
-	}
 	print_int(1);
 }

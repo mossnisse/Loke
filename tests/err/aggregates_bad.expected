@@ -1,6 +1,6 @@
 L0363
 @10:12
-`Point` has no field `z`
+`Point` has no field or member `z`
 L0376
 @11:24
 `Point` has 2 fields
@@ -21,4 +21,4 @@ L0385
 needs an expected enum type here
 L0363
 @23:12
-`int` has no field `x`
+`int` has no field or member `x`

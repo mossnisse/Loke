@@ -1,0 +1,446 @@
+// Type assertions, the type switch, and the optional-ok error protocol
+// (m4a-plan step 4).
+//
+// design.md gives `v.(T)` one construct with two result shapes chosen by
+// context: a single-value position traps on a mismatch, a comma-ok destination
+// or an `or_else` left operand yields `(T, bool)` and never traps. The flag is
+// set by whoever owns the destination, before the node is checked.
+package lokec
+
+// ----------------------------------------------------------- assertions --
+
+// A comma-ok destination is what puts a type assertion in its optional-ok
+// phase. Called before the operand is checked, because the phase decides the
+// node's own result shape.
+mark_optional_ok :: proc(e: Expr) {
+	if assertion, is_assert := e.(^Expr_Type_Assert); is_assert {
+		assertion.optional = true
+	}
+}
+
+check_type_assert :: proc(k: ^Checker, v: ^Expr_Type_Assert) {
+	v.value_category = .Value
+	operand := check_single_expr(k, v.operand)
+	if operand == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	if !type_is_union(k.c, operand) {
+		errorf(
+			k.c,
+			v.span,
+			"L0425",
+			"`%s` is not a union, so it has no variant to assert",
+			type_name(k.c, operand),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	// design.md: a type assertion must name the asserted type; the compiler does
+	// not infer it from context.
+	target := resolve_type_syntax(k, v.target)
+	if target == INVALID_TYPE {
+		errorf(k.c, expr_span(v.target), "L0425", "a type assertion names the asserted type")
+		v.type = INVALID_TYPE
+		return
+	}
+	if !union_holds(k.c, operand, target) {
+		errorf(
+			k.c,
+			expr_span(v.target),
+			"L0425",
+			"`%s` is not a variant of `%s`",
+			type_name(k.c, target),
+			type_name(k.c, operand),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	v.type = target
+	if v.optional {
+		results := make([]Type_Id, 2, k.c.semantic_allocator)
+		results[0], results[1] = target, TYPE_BOOL
+		v.result_types = results
+	}
+}
+
+// ---------------------------------------------------------- optional-ok --
+
+// design.md "Optional-ok results": an expression with at least two logical
+// results whose final result is `bool`. A procedure returning only `bool` is a
+// status expression, not an optional-ok one.
+optional_ok_payloads :: proc(k: ^Checker, e: Expr) -> ([]Type_Id, bool) {
+	base := expr_base(e)
+	if base == nil || len(base.result_types) < 2 {
+		return nil, false
+	}
+	last := base.result_types[len(base.result_types) - 1]
+	if !type_is_boolean(k.c, last) {
+		return nil, false
+	}
+	return base.result_types[:len(base.result_types) - 1], true
+}
+
+// design.md "or_else expression": the fallback produces exactly the payload
+// results and is evaluated only when `ok` is false.
+check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
+	v.value_category = .Value
+	mark_optional_ok(v.value)
+	if check_expr(k, v.value, expected) == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	payloads, is_optional := optional_ok_payloads(k, v.value)
+	if !is_optional {
+		errorf(k.c, expr_span(v.value), "L0428", "`or_else` needs an optional-ok expression on its left")
+		v.type = INVALID_TYPE
+		return
+	}
+
+	if len(payloads) == 1 {
+		if !check_value_expr(k, v.fallback, payloads[0], "supply") {
+			v.type = INVALID_TYPE
+			return
+		}
+		v.type = payloads[0]
+		return
+	}
+	// Loke has no tuple literal, so a multiple-payload fallback is a call.
+	if check_expr(k, v.fallback) == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	fallback := expr_base(v.fallback)
+	if len(fallback.result_types) != len(payloads) {
+		errorf(
+			k.c,
+			expr_span(v.fallback),
+			"L0428",
+			"this fallback produces %d value%s, but %d are wanted",
+			max(len(fallback.result_types), 1),
+			len(fallback.result_types) == 1 ? "" : "s",
+			len(payloads),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	for payload, index in payloads {
+		if !assignable(k.c, fallback.result_types[index], payload) {
+			errorf(
+				k.c,
+				expr_span(v.fallback),
+				"L0428",
+				"cannot supply `%s` with `%s`",
+				type_name(k.c, payload),
+				type_name(k.c, fallback.result_types[index]),
+			)
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	v.type = payloads[0]
+	v.result_types = payloads
+}
+
+// ----------------------------------------------------------- or_return --
+
+// design.md "or_return operator": the operand is evaluated once; on success the
+// final status is removed and the preceding values are yielded; on failure
+// control returns from the innermost enclosing procedure.
+check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
+	v.value_category = .Value
+	if k.proc_literal == nil {
+		errorf(k.c, v.op_span, "L0429", "`or_return` is only valid inside a procedure")
+		v.type = INVALID_TYPE
+		return
+	}
+	if k.in_defer {
+		errorf(k.c, v.op_span, "L0429", "`or_return` cannot appear inside a deferred statement")
+		v.type = INVALID_TYPE
+		return
+	}
+	if check_expr(k, v.operand) == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	base := expr_base(v.operand)
+	results := base.result_types
+	if len(results) == 0 {
+		single := make([]Type_Id, 1, k.c.semantic_allocator)
+		single[0] = base.type
+		results = single
+	}
+	status := results[len(results) - 1]
+	// The status is successful when it is `true` for `bool`, or `nil` for a
+	// nil-comparable type. No other truthiness rules apply.
+	if !type_is_boolean(k.c, status) && !status_is_nil_comparable(k, status) {
+		errorf(
+			k.c,
+			v.op_span,
+			"L0429",
+			"`or_return` needs a `bool` or nil-comparable final result, found `%s`",
+			type_name(k.c, status),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	if !check_or_return_target(k, v, status) {
+		v.type = INVALID_TYPE
+		return
+	}
+
+	payloads := results[:len(results) - 1]
+	switch len(payloads) {
+	case 0:
+		v.type = TYPE_VOID
+	case 1:
+		v.type = payloads[0]
+	case:
+		v.type = payloads[0]
+		v.result_types = payloads
+	}
+}
+
+@(private = "file")
+status_is_nil_comparable :: proc(k: ^Checker, status: Type_Id) -> bool {
+	#partial switch type_kind(k.c, type_underlying(k.c, status)) {
+	case .Union, .Pointer, .Raw_Pointer, .Proc:
+		return true
+	}
+	return false
+}
+
+// The enclosing procedure's side of the contract, including the
+// definite-initialization requirement on earlier named results.
+@(private = "file")
+check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, status: Type_Id) -> bool {
+	if len(k.result_types) == 0 {
+		errorf(k.c, v.op_span, "L0429", "`or_return` needs a result to propagate the status into")
+		return false
+	}
+	last := len(k.result_types) - 1
+	if !assignable(k.c, status, k.result_types[last]) && status != k.result_types[last] {
+		errorf(
+			k.c,
+			v.op_span,
+			"L0429",
+			"the failed status `%s` cannot be returned as `%s`",
+			type_name(k.c, status),
+			type_name(k.c, k.result_types[last]),
+		)
+		return false
+	}
+	if len(k.result_types) == 1 {
+		return true
+	}
+	// With several results a bare `return` is performed, so every result must be
+	// named and every earlier one must already carry a value.
+	for symbol_id, index in k.result_symbols {
+		if symbol_id == INVALID_SYMBOL {
+			errorf(k.c, v.op_span, "L0429", "`or_return` needs every result of this procedure to be named")
+			return false
+		}
+		if index == last {
+			continue
+		}
+		if !k.assigned_results[symbol_id] {
+			errorf(
+				k.c,
+				v.op_span,
+				"L0430",
+				"`%s` is not initialised yet, and `or_return` returns its current value",
+				identifier_text(k.c, symbol_of(k.c, symbol_id).name),
+			)
+			return false
+		}
+	}
+	return true
+}
+
+// Records that a named result has been written. Branching statements clone this
+// state and intersect the paths that reach their join.
+note_result_assigned :: proc(k: ^Checker, target: Expr) {
+	ident, is_ident := target.(^Expr_Ident)
+	if !is_ident || ident.symbol == INVALID_SYMBOL {
+		return
+	}
+	if symbol := symbol_of(k.c, ident.symbol); symbol != nil && symbol.kind == .Result {
+		if k.assigned_results == nil {
+			k.assigned_results = make(map[Symbol_Id]bool, 4, k.c.semantic_allocator)
+		}
+		k.assigned_results[ident.symbol] = true
+	}
+}
+
+clone_result_assignments :: proc(c: ^Compiler, source: map[Symbol_Id]bool) -> map[Symbol_Id]bool {
+	out := make(map[Symbol_Id]bool, len(source), c.semantic_allocator)
+	for symbol, assigned in source {
+		if assigned {
+			out[symbol] = true
+		}
+	}
+	return out
+}
+
+intersect_result_assignments :: proc(
+	c: ^Compiler,
+	left, right: map[Symbol_Id]bool,
+) -> map[Symbol_Id]bool {
+	out := make(map[Symbol_Id]bool, min(len(left), len(right)), c.semantic_allocator)
+	for symbol, assigned in left {
+		if assigned && right[symbol] {
+			out[symbol] = true
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------- type switch --
+
+// design.md "Type switch statement": the cases are types, and for a union the
+// only case types allowed are its own variants.
+check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
+	outer := k.scope
+	k.scope = new_scope(k.c, outer, .Local)
+	defer k.scope = outer
+
+	if s.init != nil {
+		check_stmt(k, s.init)
+	}
+	subject := check_single_expr(k, s.subject)
+	if subject == INVALID_TYPE {
+		return Flow_Info{can_fall_through = true}
+	}
+	if !type_is_union(k.c, subject) {
+		errorf(
+			k.c,
+			expr_span(s.subject),
+			"L0426",
+			"a type switch needs a union, found `%s`",
+			type_name(k.c, subject),
+		)
+		return Flow_Info{can_fall_through = true}
+	}
+
+	covered := make(map[Type_Id]bool, 8, context.temp_allocator)
+	has_default := false
+	flow := Flow_Info{}
+	any_case_falls := false
+	incoming := clone_result_assignments(k.c, k.assigned_results)
+	joined := make(map[Symbol_Id]bool, 0, k.c.semantic_allocator)
+	have_join := false
+
+	for &entry in s.cases {
+		k.assigned_results = clone_result_assignments(k.c, incoming)
+		binding_type := subject
+		if len(entry.values) == 0 {
+			if has_default {
+				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
+			}
+			has_default = true
+		}
+		for value in entry.values {
+			variant := resolve_type_syntax(k, value)
+			if variant == INVALID_TYPE || !union_holds(k.c, subject, variant) {
+				errorf(
+					k.c,
+					expr_span(value),
+					"L0426",
+					"`%s` is not a variant of `%s`",
+					variant == INVALID_TYPE ? "this case" : type_name(k.c, variant),
+					type_name(k.c, subject),
+				)
+				continue
+			}
+			if covered[variant] {
+				errorf(k.c, expr_span(value), "L0367", "`%s` is already covered by an earlier case", type_name(k.c, variant))
+				continue
+			}
+			covered[variant] = true
+		}
+		// A case naming several types cannot know which one is active, so the
+		// binding keeps the union type.
+		if len(entry.values) == 1 {
+			if variant := expr_base(entry.values[0]).denoted_type; variant != INVALID_TYPE {
+				binding_type = variant
+			}
+		}
+		entry.binding_type = binding_type
+
+		case_scope := k.scope
+		k.scope = new_scope(k.c, case_scope, .Local)
+		if s.binding.text != "" && s.binding.text != "_" {
+			name := intern_identifier(k.c, s.binding.text)
+			entry.binding_symbol = new_symbol(k.c, Symbol {
+				name       = name,
+				span       = s.binding.span,
+				kind       = .Var,
+				type       = binding_type,
+				pkg        = k.pkg,
+				owner_proc = k.proc_literal,
+			})
+			k.scope.names[name] = entry.binding_symbol
+		}
+		k.switch_depth += 1
+		case_flow := check_case_body(k, entry.stmts)
+		k.switch_depth -= 1
+		k.scope = case_scope
+
+		flow.returns ||= case_flow.returns
+		flow.continues ||= case_flow.continues
+		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
+		if case_flow.can_fall_through || case_flow.breaks {
+			state := clone_result_assignments(k.c, k.assigned_results)
+			joined = have_join ? intersect_result_assignments(k.c, joined, state) : state
+			have_join = true
+		}
+	}
+
+	if !has_default {
+		report_uncovered_variants(k, s, subject, covered)
+		joined = have_join ? intersect_result_assignments(k.c, joined, incoming) : incoming
+		have_join = true
+	}
+	k.assigned_results = have_join ? joined : incoming
+	return Flow_Info {
+		can_fall_through = !has_default || any_case_falls || len(s.cases) == 0,
+		returns          = flow.returns,
+		continues        = flow.continues,
+	}
+}
+
+@(private = "file")
+report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: map[Type_Id]bool) {
+	info := type_of(k.c, subject)
+	if info == nil {
+		return
+	}
+	missing := ""
+	count := 0
+	for variant in info.variants {
+		if covered[variant] {
+			continue
+		}
+		count += 1
+		if count <= 3 {
+			if missing != "" {
+				missing = concat(k.c, missing, ", ")
+			}
+			missing = concat(k.c, missing, type_name(k.c, variant))
+		}
+	}
+	if count == 0 {
+		return
+	}
+	if count > 3 {
+		missing = concat(k.c, missing, ", ...")
+	}
+	errorf(
+		k.c,
+		s.span,
+		"L0427",
+		"this type switch over `%s` does not cover %s",
+		type_name(k.c, subject),
+		missing,
+	)
+}

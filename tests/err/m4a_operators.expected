@@ -1,0 +1,30 @@
+L0416
+@8:23
+`operator(+)` takes 1 or 2 parameters, found 3
+L0416
+@10:26
+`operator(==)` produces `bool`
+L0416
+@12:25
+`operator(+=)` takes its destination as `inout`
+L0420
+@29:2
+`delegate` needs a `distinct` type
+L0420
+@36:2
+`%` is not defined for `f64`
+L0418
+@16:81
+an `inout` result must return a place
+L0417
+@42:4
+`-` produces `Flag`, which cannot be assigned back to `Vec`
+L0419
+@46:8
+has no `operator([])` returning `inout`, so this is not a place
+L0421
+@48:7
+a user `operator([:])` needs both endpoints written
+L0315
+@51:7
+unknown name `nope`

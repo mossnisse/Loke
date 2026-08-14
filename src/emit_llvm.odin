@@ -44,6 +44,9 @@ Emitter :: struct {
 	// Current procedure.
 	result_types: []Type_Id,
 	result_slots: []string,
+	// Which results were declared `inout`. Such a result is returned as the
+	// address of a place, which is what makes `grid[i] = v` an ordinary store.
+	result_inout: []bool,
 	defer_flags:  []string,
 	cleanups:     [dynamic]Cleanup_Scope,
 	break_label:    string,
@@ -108,8 +111,24 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 	}
 	for file in pkg.files {
 		for item in file.active_items {
-			if d, ok := item.(^Decl); ok && decl_proc(d) != nil && len(d.symbols) > 0 {
-				e.names[d.symbols[0]] = llvm_proc_name(pkg, d.names[0].text)
+			#partial switch v in item {
+			case ^Decl:
+				if decl_proc_literal(v) != nil && len(v.symbols) > 0 {
+					e.names[v.symbols[0]] = llvm_proc_name(pkg, v.names[0].text)
+				}
+			case ^Item_Impl:
+				// A method is an ordinary procedure under a type-qualified name.
+				for member in v.members {
+					d, is_decl := member.(^Decl)
+					if !is_decl || decl_proc_literal(d) == nil || len(d.symbols) == 0 {
+						continue
+					}
+					sym := symbol_of(e.c, d.symbols[0])
+					if sym == nil {
+						continue
+					}
+					e.names[d.symbols[0]] = llvm_proc_name(pkg, llvm_safe(qualified_member_name(e.c, sym)))
+				}
 			}
 		}
 	}
@@ -125,15 +144,28 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 	}
 	for file in pkg.files {
 		for item in file.active_items {
-			if d, ok := item.(^Decl); ok && decl_proc(d) == nil {
+			if d, ok := item.(^Decl); ok && decl_proc_literal(d) == nil {
 				emit_global(e, pkg, d)
 			}
 		}
 	}
 	for file in pkg.files {
 		for item in file.active_items {
-			if d, ok := item.(^Decl); ok && decl_proc(d) != nil {
-				emit_proc(e, d.symbols[0], decl_proc(d))
+			#partial switch v in item {
+			case ^Decl:
+				if literal := decl_proc_literal(v); literal != nil {
+					emit_proc(e, v.symbols[0], literal)
+				}
+			case ^Item_Impl:
+				for member in v.members {
+					d, is_decl := member.(^Decl)
+					if !is_decl || len(d.symbols) == 0 {
+						continue
+					}
+					if literal := decl_proc_literal(d); literal != nil {
+						emit_proc(e, d.symbols[0], literal)
+					}
+				}
 			}
 		}
 	}
@@ -295,7 +327,8 @@ layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	#partial switch info.kind {
-	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct, .Distinct:
+	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct,
+	     .Distinct, .Union:
 		return true
 	}
 	return false
@@ -318,7 +351,18 @@ emit_struct_definitions :: proc(e: ^Emitter) {
 @(private = "file")
 define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 	info := type_of(e.c, type)
-	if info == nil || info.kind != .Struct || emitted[type] {
+	if info == nil || emitted[type] {
+		return
+	}
+	if info.kind == .Union {
+		if !type_is_supported(e.c, type) {
+			return
+		}
+		emitted[type] = true
+		fmt.sbprintfln(&e.b, "%s = type %s", struct_name(e, type), union_storage_definition(e, type))
+		return
+	}
+	if info.kind != .Struct {
 		return
 	}
 	emitted[type] = true
@@ -365,11 +409,12 @@ struct_name :: proc(e: ^Emitter, type: Type_Id) -> string {
 		return name
 	}
 	info := type_of(e.c, type)
+	prefix := info != nil && info.kind == .Union ? "union" : "struct"
 	name := ""
 	if info != nil && info.name != INVALID_IDENTIFIER {
-		name = fmt.aprintf("%%struct.%s.%d", identifier_text(e.c, info.name), int(type))
+		name = fmt.aprintf("%%%s.%s.%d", prefix, identifier_text(e.c, info.name), int(type))
 	} else {
-		name = fmt.aprintf("%%struct.anon.%d", int(type))
+		name = fmt.aprintf("%%%s.anon.%d", prefix, int(type))
 	}
 	e.struct_names[type] = name
 	return name
@@ -407,33 +452,162 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		return "ptr"
 	case .Array:
 		return fmt.aprintf("[%d x %s]", info.count, llvm_type(e, info.element))
-	case .Struct:
+	case .Struct, .Union:
 		return struct_name(e, under)
 	}
 	return "i64"
+}
+
+// The union storage type, built so LLVM's own layout matches the checker's
+// cached facts: an alignment-carrying payload head, explicit payload padding,
+// the tag, and tail padding. A bare `[N x i8]` payload would be byte-aligned,
+// which is wrong wherever a union is allocated directly, nested in a struct, or
+// used as an array element.
+@(private = "file")
+union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
+	shape := union_layout(e.c, type)
+	b := strings.builder_make()
+	strings.write_string(&b, "{ ")
+	fmt.sbprintf(&b, "i%d", shape.align * 8)
+	if pad := shape.payload_size - shape.align; pad > 0 {
+		fmt.sbprintf(&b, ", [%d x i8]", pad)
+	}
+	if gap := shape.tag_offset - shape.payload_size; gap > 0 {
+		fmt.sbprintf(&b, ", [%d x i8]", gap)
+	}
+	fmt.sbprintf(&b, ", i%d", shape.tag_bytes * 8)
+	if tail := shape.size - shape.tag_offset - shape.tag_bytes; tail > 0 {
+		fmt.sbprintf(&b, ", [%d x i8]", tail)
+	}
+	strings.write_string(&b, " }")
+	return strings.to_string(b)
+}
+
+// A variant value becoming a union value: zero the storage, write the payload
+// through a typed pointer, then write the tag.
+@(private = "file")
+emit_union_value :: proc(e: ^Emitter, union_type, variant: Type_Id, value: string) -> string {
+	slot := emit_union_slot(e, union_type, variant, value)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, union_type), slot)
+	return out
+}
+
+@(private = "file")
+emit_union_slot :: proc(e: ^Emitter, union_type, variant: Type_Id, value: string) -> string {
+	llvm := llvm_type(e, union_type)
+	slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm)
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, slot)
+	payload := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0", payload, llvm, slot)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, variant), value, payload)
+	emit_union_store_tag(e, union_type, slot, union_variant_tag(e.c, union_type, variant))
+	return slot
+}
+
+@(private = "file")
+emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag: int) {
+	llvm := llvm_type(e, union_type)
+	shape := union_layout(e.c, union_type)
+	address := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		address, llvm, slot, union_tag_member(e, union_type),
+	)
+	fmt.sbprintfln(&e.b, "  store i%d %d, ptr %s", shape.tag_bytes * 8, tag, address)
+}
+
+// The tag of a union *value*, which is what every assertion and type switch
+// tests.
+@(private = "file")
+emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
+	out := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = extractvalue %s %s, %d",
+		out, llvm_type(e, union_type), value, union_tag_member(e, union_type),
+	)
+	return out
+}
+
+// Spills a union value so its payload can be read at a variant's own type.
+@(private = "file")
+emit_union_spill :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
+	llvm := llvm_type(e, union_type)
+	slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, value, slot)
+	return slot
+}
+
+@(private = "file")
+emit_union_payload :: proc(e: ^Emitter, union_type, variant: Type_Id, slot: string) -> string {
+	payload := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0",
+		payload, llvm_type(e, union_type), slot,
+	)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, variant), payload)
+	return out
+}
+
+// Which member of that storage type holds the tag.
+@(private = "file")
+union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
+	shape := union_layout(e.c, type)
+	index := 1
+	if shape.payload_size > shape.align {
+		index += 1
+	}
+	if shape.tag_offset > shape.payload_size {
+		index += 1
+	}
+	return index
 }
 
 // The internal convention for several results: one anonymous literal struct,
 // used consistently by caller and callee. This is not the frozen Loke or C ABI
 // (m2-plan shortcut table); M7 replaces it.
 @(private = "file")
-llvm_result_type :: proc(e: ^Emitter, results: []Type_Id) -> string {
+llvm_result_type :: proc(e: ^Emitter, results: []Type_Id, inout: []bool = nil) -> string {
+	// An `inout` result is a place, so it travels as its address.
+	slot :: proc(e: ^Emitter, results: []Type_Id, inout: []bool, index: int) -> string {
+		if index < len(inout) && inout[index] {
+			return "ptr"
+		}
+		return llvm_type(e, results[index])
+	}
 	switch len(results) {
 	case 0:
 		return "void"
 	case 1:
-		return llvm_type(e, results[0])
+		return slot(e, results, inout, 0)
 	}
 	b := strings.builder_make()
 	strings.write_string(&b, "{ ")
-	for result, index in results {
+	for _, index in results {
 		if index > 0 {
 			strings.write_string(&b, ", ")
 		}
-		strings.write_string(&b, llvm_type(e, result))
+		strings.write_string(&b, slot(e, results, inout, index))
 	}
 	strings.write_string(&b, " }")
 	return strings.to_string(b)
+}
+
+@(private = "file")
+result_inout_of :: proc(e: ^Emitter, proc_type: Type_Id) -> []bool {
+	info := type_of(e.c, proc_type)
+	return info == nil ? nil : info.result_inout
+}
+
+@(private = "file")
+emit_result_is_inout :: proc(e: ^Emitter, index: int) -> bool {
+	return index < len(e.result_inout) && e.result_inout[index]
 }
 
 // ---------------------------------------------------------------- globals --
@@ -486,6 +660,10 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		return llvm_float(value.float, info.bits)
 	case .Pointer, .Raw_Pointer, .Proc:
 		return "null"
+	case .Union:
+		// The only union constant is its zero value; every other one is built at
+		// run time, where the tag can be written.
+		return "zeroinitializer"
 	case .Array:
 		b := strings.builder_make()
 		strings.write_string(&b, "[")
@@ -553,11 +731,12 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	}
 
 	e.result_types = symbol.results
+	e.result_inout = result_inout_of(e, symbol.proc_type)
 	e.result_slots = make([]string, len(symbol.results))
 	e.terminated = false
 	clear(&e.cleanups)
 
-	fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.results), llvm_name)
+	fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.results, e.result_inout), llvm_name)
 	for parameter, index in symbol.params {
 		if index > 0 {
 			fmt.sbprint(&e.b, ", ")
@@ -589,6 +768,16 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	// Named results start at their zero value (design.md "Named results").
 	for result, index in symbol.results {
 		slot := fmt.aprintf("%%r%d.%d", index, next_id(e))
+		if emit_result_is_inout(e, index) {
+			// The slot holds the address of the place being handed back.
+			fmt.sbprintfln(&e.b, "  %s = alloca ptr", slot)
+			fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", slot)
+			e.result_slots[index] = slot
+			if index < len(symbol.result_symbols) && symbol.result_symbols[index] != INVALID_SYMBOL {
+				e.names[symbol.result_symbols[index]] = slot
+			}
+			continue
+		}
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, result))
 		zero, ok := zero_const(e.c, result)
 		if ok {
@@ -826,7 +1015,11 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 		emit_for(e, s)
 
 	case ^Stmt_Switch:
-		emit_switch(e, s)
+		if s.kind == .Type {
+			emit_type_switch(e, s)
+		} else {
+			emit_switch(e, s)
+		}
 
 	case ^Stmt_Defer:
 		if s.slot < len(e.defer_flags) && len(e.cleanups) > 0 {
@@ -867,12 +1060,12 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 	// A call filling several names evaluates once.
 	if len(d.values) == 1 && len(d.symbols) > 1 {
-		if call, ok := d.values[0].(^Expr_Call); ok && len(call.result_types) == len(d.symbols) {
-			results := emit_multi_call(e, call)
+		if base := expr_base(d.values[0]); base != nil && len(base.result_types) == len(d.symbols) {
+			results := emit_multi_value(e, d.values[0])
 			for symbol_id, index in d.symbols {
 				slot := declare_local(e, symbol_id)
 				if slot != "" {
-					store(e, call.result_types[index], results[index], slot)
+					store(e, base.result_types[index], results[index], slot)
 				}
 			}
 			return
@@ -920,13 +1113,17 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		emit_compound_assign(e, s)
 		return
 	}
+	// `operator([]=)`: a container with no location to hand out.
+	if s.place_setter != INVALID_SYMBOL {
+		emit_operator_call(e, s.place_setter, s.setter_bound)
+		return
+	}
 
 	values: []string
 	types: []Type_Id
 	if len(s.rhs) == 1 && len(s.lhs) > 1 {
-		call := s.rhs[0].(^Expr_Call)
-		values = emit_multi_call(e, call)
-		types = call.result_types
+		values = emit_multi_value(e, s.rhs[0])
+		types = expr_base(s.rhs[0]).result_types
 	} else {
 		values = make([]string, len(s.rhs))
 		types = make([]Type_Id, len(s.rhs))
@@ -955,6 +1152,19 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 @(private = "file")
 emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	target := s.lhs[0]
+	if s.operator != INVALID_SYMBOL {
+		operands := [2]Expr{target, s.rhs[0]}
+		if s.operator_direct {
+			// A direct `+=` overload writes through its `inout` destination.
+			emit_operator_call(e, s.operator, operands[:])
+			return
+		}
+		// The fallback: the binary operator, then an ordinary assignment.
+		address := emit_address(e, target)
+		value := emit_operator_call(e, s.operator, operands[:])
+		store(e, expr_base(target).type, value, address)
+		return
+	}
 	type := expr_base(target).type
 	address := emit_address(e, target)
 	current := temp(e)
@@ -1162,6 +1372,112 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	pop_scope(e)
 }
 
+// A type switch dispatches on the tag. Each case binds its own name: at the
+// variant's type where one is known, and at the union's type where a case names
+// several types or is the default.
+@(private = "file")
+emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
+	outer_break, outer_break_depth := e.break_label, e.break_depth
+	defer {
+		e.break_label = outer_break
+		e.break_depth = outer_break_depth
+	}
+
+	e.break_depth = len(e.cleanups)
+	push_scope(e, nil)
+	if s.init != nil {
+		emit_stmt(e, s.init)
+	}
+	union_type := expr_base(s.subject).type
+	shape := union_layout(e.c, union_type)
+	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+	value := emit_expr(e, s.subject)
+	slot := emit_union_spill(e, union_type, value)
+	tag := emit_union_tag(e, union_type, value)
+
+	done := new_label(e, "typeswitch.done")
+	e.break_label = done
+
+	bodies := make([]string, len(s.cases))
+	tests := make([]string, len(s.cases))
+	for index in 0 ..< len(s.cases) {
+		bodies[index] = new_label(e, "typecase.body")
+		tests[index] = new_label(e, "typecase.test")
+	}
+	default_index := -1
+	order := make([dynamic]int)
+	defer delete(order)
+	for entry, index in s.cases {
+		if len(entry.values) == 0 {
+			default_index = index
+		} else {
+			append(&order, index)
+		}
+	}
+	fallback := default_index >= 0 ? bodies[default_index] : done
+
+	branch(e, len(order) > 0 ? tests[order[0]] : fallback)
+	for case_index, position in order {
+		fmt.sbprintfln(&e.b, "%s:", tests[case_index])
+		e.terminated = false
+		next := position + 1 < len(order) ? tests[order[position + 1]] : fallback
+		matched := ""
+		for variant_expr in s.cases[case_index].values {
+			variant := expr_base(variant_expr).denoted_type
+			test := temp(e)
+			fmt.sbprintfln(
+				&e.b,
+				"  %s = icmp eq %s %s, %d",
+				test, tag_llvm, tag, union_variant_tag(e.c, union_type, variant),
+			)
+			if matched == "" {
+				matched = test
+			} else {
+				combined := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", combined, matched, test)
+				matched = combined
+			}
+		}
+		branch_if(e, matched, bodies[case_index], next)
+	}
+
+	for entry, index in s.cases {
+		fmt.sbprintfln(&e.b, "%s:", bodies[index])
+		e.terminated = false
+		push_scope_stmts(e, entry.stmts)
+		emit_type_case_binding(e, entry, union_type, value, slot)
+		for stmt in entry.stmts {
+			if e.terminated {
+				fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
+				e.terminated = false
+			}
+			emit_stmt(e, stmt)
+		}
+		pop_scope(e)
+		branch(e, done)
+	}
+
+	fmt.sbprintfln(&e.b, "%s:", done)
+	e.terminated = false
+	pop_scope(e)
+}
+
+@(private = "file")
+emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type_Id, value, slot: string) {
+	if entry.binding_symbol == INVALID_SYMBOL {
+		return
+	}
+	binding := fmt.aprintf("%%bind.%d", next_id(e))
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", binding, llvm_type(e, entry.binding_type))
+	e.names[entry.binding_symbol] = binding
+	if entry.binding_type == union_type {
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, union_type), value, binding)
+		return
+	}
+	payload := emit_union_payload(e, union_type, entry.binding_type, slot)
+	store(e, entry.binding_type, payload, binding)
+}
+
 @(private = "file")
 emit_case_test :: proc(e: ^Emitter, subject: string, subject_type: Type_Id, value: Expr) -> string {
 	if range, is_range := value.(^Expr_Range); is_range {
@@ -1185,8 +1501,8 @@ emit_case_test :: proc(e: ^Emitter, subject: string, subject_type: Type_Id, valu
 emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 	if s != nil && len(s.values) > 0 {
 		if len(s.values) == 1 && len(e.result_types) > 1 {
-			if call, ok := s.values[0].expr.(^Expr_Call); ok && len(call.result_types) == len(e.result_types) {
-				results := emit_multi_call(e, call)
+			if base := expr_base(s.values[0].expr); base != nil && len(base.result_types) == len(e.result_types) {
+				results := emit_multi_value(e, s.values[0].expr)
 				for value, index in results {
 					store(e, e.result_types[index], value, e.result_slots[index])
 				}
@@ -1196,10 +1512,20 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 		}
 		values := make([]string, len(s.values))
 		for value, index in s.values {
-			values[index] = emit_expr(e, value.expr)
+			// An `inout` result hands back the place itself, not a copy of it.
+			if emit_result_is_inout(e, index) {
+				values[index] = emit_address(e, value.expr)
+			} else {
+				values[index] = emit_expr(e, value.expr)
+			}
 		}
 		for value, index in values {
-			if index < len(e.result_slots) {
+			if index >= len(e.result_slots) {
+				continue
+			}
+			if emit_result_is_inout(e, index) {
+				fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", value, e.result_slots[index])
+			} else {
 				store(e, e.result_types[index], value, e.result_slots[index])
 			}
 		}
@@ -1210,24 +1536,27 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 @(private = "file")
 emit_epilogue :: proc(e: ^Emitter) {
 	run_cleanups(e, 0)
+	slot_type :: proc(e: ^Emitter, index: int) -> string {
+		return emit_result_is_inout(e, index) ? "ptr" : llvm_type(e, e.result_types[index])
+	}
 	switch len(e.result_types) {
 	case 0:
 		fmt.sbprintln(&e.b, "  ret void")
 	case 1:
 		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, e.result_types[0]), e.result_slots[0])
-		fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, e.result_types[0]), value)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, slot_type(e, 0), e.result_slots[0])
+		fmt.sbprintfln(&e.b, "  ret %s %s", slot_type(e, 0), value)
 	case:
 		aggregate := "undef"
-		result_type := llvm_result_type(e, e.result_types)
-		for type, index in e.result_types {
+		result_type := llvm_result_type(e, e.result_types, e.result_inout)
+		for _, index in e.result_types {
 			value := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, type), e.result_slots[index])
+			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, slot_type(e, index), e.result_slots[index])
 			next := temp(e)
 			fmt.sbprintfln(
 				&e.b,
 				"  %s = insertvalue %s %s, %s %s, %d",
-				next, result_type, aggregate, llvm_type(e, type), value, index,
+				next, result_type, aggregate, slot_type(e, index), value, index,
 			)
 			aggregate = next
 		}
@@ -1274,6 +1603,10 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Index:
+		// An `operator([])` returning `inout T` hands back the address itself.
+		if v.resolution.kind == .User_Operator {
+			return emit_operator_call(e, v.resolution.symbol, v.bound)
+		}
 		base_type, base_address := emit_base_address(e, v.operand)
 		info := type_of(e.c, type_underlying(e.c, base_type))
 		index := emit_expr(e, v.indices[0])
@@ -1356,6 +1689,15 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return "0"
 	}
 	base := expr_base(expr)
+	// A variant value becoming a union value. The node is evaluated at the type
+	// it actually produces, then payload and tag are written.
+	if from := base.union_from; from != INVALID_TYPE {
+		target := base.type
+		base.union_from, base.type = INVALID_TYPE, from
+		inner := emit_expr(e, expr)
+		base.union_from, base.type = from, target
+		return emit_union_value(e, target, from, inner)
+	}
 	if base.is_const && base.const_value.kind != .Invalid {
 		return llvm_const(e, base.const_value, base.type)
 	}
@@ -1383,7 +1725,31 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, v.type), address)
 		return out
 
-	case ^Expr_Selector, ^Expr_Index, ^Expr_Postfix:
+	case ^Expr_Slice:
+		return emit_operator_call(e, v.resolution.symbol, v.bound)
+
+	case ^Expr_Postfix:
+		if v.op == .Or_Return {
+			results := emit_multi_value(e, expr)
+			return len(results) == 0 ? "0" : results[0]
+		}
+		address := emit_address(e, expr)
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, base.type), address)
+		return out
+
+	case ^Expr_Selector, ^Expr_Index:
+		// A user `operator([])`. A value overload produces the element; an `inout`
+		// overload produces its address, which is then read through.
+		if index, is_index := expr.(^Expr_Index); is_index && base.resolution.kind == .User_Operator {
+			result := emit_operator_call(e, index.resolution.symbol, index.bound)
+			if base.value_category != .Place {
+				return result
+			}
+			out := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, base.type), result)
+			return out
+		}
 		// `pkg.f` as a value is the procedure itself, not storage holding one.
 		if symbol := symbol_of(e.c, base.resolution.symbol); symbol != nil && symbol.kind == .Proc {
 			return e.names[base.resolution.symbol] or_else "null"
@@ -1405,6 +1771,9 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	case ^Expr_Call:
 		return emit_call(e, v)
 
+	case ^Expr_Type_Assert, ^Expr_Or_Else:
+		return emit_multi_value(e, expr)[0]
+
 	case ^Expr_Composite:
 		slot := emit_address(e, expr)
 		out := temp(e)
@@ -1417,7 +1786,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		}
 		return "null"
 
-	case ^Expr_Type_Assert, ^Expr_Slice, ^Expr_Range, ^Expr_Or_Else, ^Expr_Move,
+	case ^Expr_Range, ^Expr_Move,
 	     ^Expr_Hash, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
@@ -1466,6 +1835,10 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary) -> string {
 	if v.op == .Amp {
 		return emit_address(e, v.operand)
 	}
+	if v.resolution.kind == .User_Operator {
+		operands := [1]Expr{v.operand}
+		return emit_operator_call(e, v.resolution.symbol, operands[:])
+	}
 	operand := emit_expr(e, v.operand)
 	type := v.type
 	llvm := llvm_type(e, type)
@@ -1489,6 +1862,17 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary) -> string {
 
 @(private = "file")
 emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
+	if v.resolution.kind == .User_Operator {
+		operands := [2]Expr{v.lhs, v.rhs}
+		result := emit_operator_call(e, v.resolution.symbol, operands[:])
+		if !v.negated {
+			return result
+		}
+		// The `!=` fallback: `!(a == b)`.
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, result)
+		return out
+	}
 	#partial switch v.op {
 	case .And_And, .Or_Or:
 		return emit_short_circuit(e, v)
@@ -1652,7 +2036,7 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 
 @(private = "file")
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
-	if type_is_aggregate(e.c, type) {
+	if type_is_aggregate(e.c, type) || type_is_union(e.c, type) {
 		equal := emit_equal(e, type, lhs, rhs)
 		if op == .Eq_Eq {
 			return equal
@@ -1719,6 +2103,8 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		return "true"
 	}
 	#partial switch info.kind {
+	case .Union:
+		return emit_union_equal(e, under, lhs, rhs)
 	case .Array:
 		result := "true"
 		for index in 0 ..< int(info.count) {
@@ -1740,6 +2126,46 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		return result
 	}
 	return emit_compare(e, .Eq_Eq, type, lhs, rhs)
+}
+
+// Two unions are equal when their tags match and, for a non-nil tag, the active
+// variant's payloads match.
+//
+// ponytail: every variant's comparison is computed and then selected, rather
+// than branching per tag. Each payload load is inside the union's own storage,
+// so reading one at the wrong variant's type is harmless — only the selected
+// comparison is ever used. Switch to a block-per-variant chain if a union ever
+// holds a variant whose comparison is expensive.
+@(private = "file")
+emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> string {
+	info := type_of(e.c, union_type)
+	shape := union_layout(e.c, union_type)
+	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+
+	left_tag := emit_union_tag(e, union_type, lhs)
+	right_tag := emit_union_tag(e, union_type, rhs)
+	same_tag := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", same_tag, tag_llvm, left_tag, right_tag)
+
+	left_slot := emit_union_spill(e, union_type, lhs)
+	right_slot := emit_union_spill(e, union_type, rhs)
+
+	// Nil equals nil, so the chain starts from `true` and each variant overrides
+	// it when its own tag is active.
+	payloads := "true"
+	for variant, index in info.variants {
+		left := emit_union_payload(e, union_type, variant, left_slot)
+		right := emit_union_payload(e, union_type, variant, right_slot)
+		equal := emit_equal(e, variant, left, right)
+		active := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, left_tag, index + 1)
+		next := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", next, active, equal, payloads)
+		payloads = next
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, same_tag, payloads)
+	return out
 }
 
 @(private = "file")
@@ -1873,6 +2299,222 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	return len(results) == 0 ? "0" : results[0]
 }
 
+// An operator, index, or slice call. Operator lookup has already chosen one
+// named procedure, so this is an ordinary direct call — except for a `delegate`
+// overload, which has no body and applies the underlying type's operation to the
+// unwrapped operands instead.
+@(private = "file")
+emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr) -> string {
+	symbol := symbol_of(e.c, symbol_id)
+	if symbol == nil {
+		return "0"
+	}
+	if symbol.delegated {
+		return emit_delegated(e, symbol, bound)
+	}
+	info := type_of(e.c, symbol.proc_type)
+	results := emit_bound_call(e, symbol_id, e.names[symbol_id] or_else "null", info, bound)
+	return len(results) == 0 ? "0" : results[0]
+}
+
+// A `distinct` newtype's forwarding overload: unwrap, apply the underlying
+// operation, and let the wrap back into the distinct type be the no-op it is —
+// the two share a representation.
+@(private = "file")
+emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
+	// The underlying type's own overload takes the operands as they stand: a
+	// distinct type and what it wraps lower to one LLVM type, so unwrapping is
+	// the no-op the representation already makes it.
+	if symbol.delegate_target != INVALID_SYMBOL {
+		return emit_operator_call(e, symbol.delegate_target, bound)
+	}
+	op := operator_token(symbol.operator)
+	underlying := symbol.delegate_underlying
+	if len(bound) == 1 {
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, emit_expr(e, bound[0]))
+		return out
+	}
+	lhs := emit_expr(e, bound[0])
+	rhs := emit_expr(e, bound[1])
+	#partial switch op {
+	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+		return emit_compare(e, op, underlying, lhs, rhs)
+	}
+	return emit_binary_op(e, op, underlying, underlying, lhs, rhs)
+}
+
+// Every result of an expression that produces several: a call, a comma-ok type
+// assertion, an `or_else`, or an `or_return`.
+@(private = "file")
+emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
+	#partial switch v in expr {
+	case ^Expr_Call:
+		// A conversion and a built-in are calls in syntax only, and each has its
+		// own lowering; `emit_call` is what knows the difference.
+		if len(v.result_types) > 1 {
+			return emit_multi_call(e, v)
+		}
+		single := make([]string, 1)
+		single[0] = emit_expr(e, expr)
+		return single
+	case ^Expr_Type_Assert:
+		return emit_type_assert(e, v)
+	case ^Expr_Or_Else:
+		return emit_or_else(e, v)
+	case ^Expr_Postfix:
+		if v.op == .Or_Return {
+			return emit_or_return(e, v)
+		}
+	}
+	single := make([]string, 1)
+	single[0] = emit_expr(e, expr)
+	return single
+}
+
+// design.md "Type assertions are always checked": a single-value assertion traps
+// on a mismatch, and the comma-ok form yields a zeroed payload with `false`.
+@(private = "file")
+emit_type_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
+	union_type := expr_base(v.operand).type
+	shape := union_layout(e.c, union_type)
+	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+	value := emit_expr(e, v.operand)
+	slot := emit_union_spill(e, union_type, value)
+	tag := emit_union_tag(e, union_type, value)
+
+	matched := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = icmp eq %s %s, %d",
+		matched, tag_llvm, tag, union_variant_tag(e.c, union_type, v.type),
+	)
+	if !v.optional {
+		failed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
+		trap_if(e, failed, "assert.variant")
+		out := make([]string, 1)
+		out[0] = emit_union_payload(e, union_type, v.type, slot)
+		return out
+	}
+	// The zeroed payload is selected by address, so no aggregate has to be
+	// selected and nothing out of bounds is ever read.
+	llvm := llvm_type(e, v.type)
+	zero_slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", zero_slot, llvm)
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, zero_slot)
+	payload := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0",
+		payload, llvm_type(e, union_type), slot,
+	)
+	chosen := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", chosen, matched, payload, zero_slot)
+	loaded := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, llvm, chosen)
+
+	out := make([]string, 2)
+	out[0], out[1] = loaded, matched
+	return out
+}
+
+// design.md "or_else expression": the fallback is evaluated only when `ok` is
+// false, which is why it lives in its own block.
+@(private = "file")
+emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
+	values := emit_multi_value(e, v.value)
+	ok := values[len(values) - 1]
+	payloads := values[:len(values) - 1]
+
+	entry := new_label(e, "orelse.entry")
+	fallback_label := new_label(e, "orelse.fallback")
+	done := new_label(e, "orelse.done")
+	branch(e, entry)
+	fmt.sbprintfln(&e.b, "%s:", entry)
+	e.terminated = false
+	branch_if(e, ok, done, fallback_label)
+
+	fmt.sbprintfln(&e.b, "%s:", fallback_label)
+	e.terminated = false
+	fallback := emit_multi_value(e, v.fallback)
+	fallback_exit := new_label(e, "orelse.fallback.exit")
+	branch(e, fallback_exit)
+	fmt.sbprintfln(&e.b, "%s:", fallback_exit)
+	e.terminated = false
+	branch(e, done)
+
+	fmt.sbprintfln(&e.b, "%s:", done)
+	e.terminated = false
+	out := make([]string, len(payloads))
+	types := expr_base(v.value).result_types
+	for index in 0 ..< len(payloads) {
+		joined := temp(e)
+		fmt.sbprintfln(
+			&e.b,
+			"  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
+			joined, llvm_type(e, types[index]), payloads[index], entry, fallback[index], fallback_exit,
+		)
+		out[index] = joined
+	}
+	return out
+}
+
+// design.md "or_return operator": on failure the status is assigned to the final
+// result and control leaves through the ordinary epilogue, so `defer` ordering
+// stays in one implementation.
+@(private = "file")
+emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
+	values := emit_multi_value(e, v.operand)
+	operand := expr_base(v.operand)
+	status_type := operand.type
+	if len(operand.result_types) > 0 {
+		status_type = operand.result_types[len(operand.result_types) - 1]
+	}
+	status := values[len(values) - 1]
+	failed := emit_status_failed(e, status_type, status)
+
+	fail_label := new_label(e, "orreturn.fail")
+	ok_label := new_label(e, "orreturn.ok")
+	branch_if(e, failed, fail_label, ok_label)
+
+	fmt.sbprintfln(&e.b, "%s:", fail_label)
+	e.terminated = false
+	last := len(e.result_slots) - 1
+	if last >= 0 {
+		target := e.result_types[last]
+		if target != status_type && type_is_union(e.c, target) && union_holds(e.c, target, status_type) {
+			status = emit_union_value(e, target, status_type, status)
+		}
+		store(e, target, status, e.result_slots[last])
+	}
+	emit_epilogue(e)
+
+	fmt.sbprintfln(&e.b, "%s:", ok_label)
+	e.terminated = false
+	return values[:len(values) - 1]
+}
+
+// The status is successful when it is `true` for `bool`, or `nil` for a
+// nil-comparable type. No other truthiness rules apply.
+@(private = "file")
+emit_status_failed :: proc(e: ^Emitter, status_type: Type_Id, status: string) -> string {
+	out := temp(e)
+	if type_is_union(e.c, status_type) {
+		shape := union_layout(e.c, status_type)
+		tag := emit_union_tag(e, status_type, status)
+		result := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i%d %s, 0", result, shape.tag_bytes * 8, tag)
+		return result
+	}
+	if type_is_boolean(e.c, status_type) {
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, status)
+		return out
+	}
+	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", out, status)
+	return out
+}
+
 // Emits the call and returns one operand per result.
 @(private = "file")
 emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
@@ -1891,6 +2533,23 @@ emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		trap_if(e, is_nil, "nil.call")
 	}
 
+	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound)
+}
+
+// The shared call sequence: bind the operands left to right, emit the call, and
+// hand back one operand per result.
+@(private = "file")
+emit_bound_call :: proc(
+	e: ^Emitter,
+	symbol_id: Symbol_Id,
+	callee: string,
+	callee_type: ^Type_Info,
+	bound: []Expr,
+) -> []string {
+	symbol := symbol_of(e.c, symbol_id)
+	if callee_type == nil {
+		return nil
+	}
 	// Arguments are bound left to right. A default that names a parameter to its
 	// left reads the value bound a moment ago, which is why this map exists.
 	outer_params := e.param_values
@@ -1900,8 +2559,8 @@ emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		e.param_values = outer_params
 	}
 
-	operands := make([]string, len(v.bound))
-	for argument, index in v.bound {
+	operands := make([]string, len(bound))
+	for argument, index in bound {
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
 		if mode == .Inout {
 			operands[index] = emit_address(e, argument)
@@ -1913,7 +2572,7 @@ emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		}
 	}
 
-	result_type := llvm_result_type(e, callee_type.results)
+	result_type := llvm_result_type(e, callee_type.results, callee_type.result_inout)
 	call := ""
 	if len(callee_type.results) > 0 {
 		call = temp(e)
@@ -2001,6 +2660,20 @@ llvm_global_name :: proc(pkg: ^Package, name: string) -> string {
 @(private = "file")
 llvm_proc_name :: proc(pkg: ^Package, name: string) -> string {
 	return fmt.aprintf("@loke.p.%s%s", mangled_key(pkg), name)
+}
+
+// A type-qualified member name may mention punctuation LLVM would need quoting.
+// Fixed-width hex keeps every byte sequence distinct and LLVM-safe.
+@(private = "file")
+llvm_safe :: proc(name: string) -> string {
+	hex := "0123456789abcdef"
+	out := make([]u8, len(name) * 2)
+	for i in 0 ..< len(name) {
+		ch := name[i]
+		out[i * 2] = hex[ch >> 4]
+		out[i * 2 + 1] = hex[ch & 0x0f]
+	}
+	return string(out)
 }
 
 // Encode every UTF-8 byte as two hex digits. A substitution such as `/` -> `.`

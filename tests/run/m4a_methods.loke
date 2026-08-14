@@ -1,0 +1,79 @@
+package main;
+
+Vector2 :: struct { x, y: i32 }
+
+impl Vector2 {
+	zero :: Vector2{0, 0};
+	Element :: i32;
+
+	length_squared :: proc(self) -> i32 {
+		return self.x*self.x + self.y*self.y;
+	}
+
+	scale :: proc(self: inout Vector2, factor: i32) {
+		self.x *= factor;
+		self.y *= factor;
+	}
+
+	consume :: proc(self: move Vector2) -> i32 { return self.x; }
+
+	// The receiver followed by typed parameters: `self` is the receiver, not a
+	// name sharing the group's written type. It keeps its immutable-borrow mode
+	// whatever the group wrote, and a default written for the group belongs to
+	// the parameters rather than to `self`.
+	dot :: proc(self, other: Vector2) -> i32 { return self.x*other.x + self.y*other.y; }
+	shifted :: proc(self, by: i32 = 10) -> i32 { return self.x + by; }
+
+	init_components :: proc(x, y: i32) -> Vector2 { return {x, y}; }
+	init_splat :: proc(value: i32) -> Vector2 { return {value, value}; }
+	init :: proc{init_components, init_splat};
+}
+
+Complex :: struct { real, imaginary: f64 }
+
+impl Complex {
+	init_components :: proc(real, imaginary: f64) -> Complex { return {real, imaginary}; }
+
+	@(implicit)
+	from_scalar :: proc(value: f64) -> Complex { return {value, 0}; }
+
+	init :: proc{init_components, from_scalar};
+
+	// A first parameter typed `^T` is not a receiver: no method sugar.
+	bump :: proc(self: ^Complex) { self.real = self.real + 1.0; }
+}
+
+magnitude2 :: proc(z: Complex) -> f64 { return z.real*z.real + z.imaginary*z.imaginary; }
+
+main :: proc() {
+	v := Vector2{3, 4};
+	print_int(int(v.length_squared()));
+	// Method-call syntax is uniform procedure-call syntax.
+	print_int(int(Vector2.length_squared(v)));
+	print_int(int(v.dot(Vector2{2, 1})));
+	print_int(int(v.shifted()));
+	print_int(int(v.shifted(1)));
+	print_int(int(Vector2.dot(v, v)));
+	v.scale(2);
+	print_int(int(v.x));
+	print_int(int(v.consume()));
+
+	origin := Vector2.zero;
+	print_int(int(origin.x));
+	e: Vector2.Element = 9;
+	print_int(int(e));
+
+	a := Vector2(1, 2);
+	print_int(int(a.y));
+	b := Vector2(5);
+	print_int(int(b.x) + int(b.y));
+
+	z := Complex(3.0, 4.0);
+	print_int(int(magnitude2(z)));
+	// `2.0` is an untyped float constant, so `@(implicit)` applies.
+	print_int(int(magnitude2(2.0)));
+	scale: f64 = 5.0;
+	print_int(int(magnitude2(Complex(scale))));
+	Complex.bump(&z);
+	print_int(int(z.real));
+}

@@ -80,6 +80,15 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		alignment = type_align(c, info.element)
 		size = element * info.count
 
+	case .Union:
+		// One model, shared with the emitter: a payload region carrying the widest
+		// variant's alignment, then the tag, then tail padding.
+		shape := union_layout(c, type)
+		size, alignment = shape.size, shape.align
+		offsets = make([]u64, 2, c.semantic_allocator)
+		offsets[0] = 0
+		offsets[1] = shape.tag_offset
+
 	case .Struct:
 		offsets = make([]u64, len(info.fields), c.semantic_allocator)
 		cursor := u64(0)

@@ -1,0 +1,39 @@
+package main;
+
+Vec :: struct { x: i32 }
+Error :: union { i32 }
+
+impl Vec {
+	double :: proc(self) -> i32 { return self.x * 2; }
+	add :: operator(+) proc(a, b: Vec) -> Vec { return {a.x + b.x}; }
+}
+
+step :: proc() -> (int, Error) { return 1, nil; }
+
+propagate :: proc() -> (n: int, err: Error) {
+	defer print_int(0);
+	n = 0;
+	x := step() or_return;
+	n = x;
+	return;
+}
+
+main :: proc() {
+	v := Vec{3};
+	print_int(int(v.double()));
+	print_int(int((v + v).x));
+
+	e: Error = i32(4);
+	value, ok := e.(i32);
+	print_int(int(value) + (1 if ok else 0));
+
+	switch (t in e) {
+	case i32:
+		print_int(int(t));
+	case:
+		print_int(0);
+	}
+
+	n, err := propagate();
+	print_int(n + (1 if err == nil else 0));
+}

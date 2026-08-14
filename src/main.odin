@@ -8,7 +8,7 @@ import "core:os"
 import "core:path/filepath"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M3)
+USAGE :: `lokec - the Loke compiler (milestone M4a)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -26,10 +26,17 @@ compile-time strings, #assert and #config are available; when selects source at
 file and procedure scope; and a directory is a package, with imports, an acyclic
 import graph, and @(public) visibility.
 
+M4a makes user types as capable as built-in ones at concrete types: procedure
+groups and one overload-resolution engine; impl and extend blocks with the three
+receiver forms, associated constants and types; init construction, conversion
+and @(implicit) from untyped constants; user operators, indexing, slicing and
+delegate on distinct types; and unions with type assertions, type switches,
+or_else and or_return.
+
 Evaluation is bounded at 1000000 steps, 256 frames and 64 MiB of scratch memory.
 
-Generics, interfaces, unions, runtime string, slices, maps, impl/extend,
-foreach, and #location/#caller_location parse and report one diagnostic.
+Generics, interfaces, runtime string, slices, maps, foreach, typeid, any_view,
+and #location/#caller_location parse and report one diagnostic.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
 directly in it as one package.

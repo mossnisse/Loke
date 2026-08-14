@@ -1,11 +1,10 @@
 package main;
 
 main :: proc() {
-	// A type switch is still deferred; the gate names the outer statement and
-	// does not descend into it.
-	x := 1;
-	switch (t in x) {
-	case int:
-		print_int(0);
+	// `foreach` is still deferred; the gate names the outer statement and does
+	// not descend into it.
+	x: [3]int;
+	foreach (value in x) {
+		print_int(value);
 	}
 }

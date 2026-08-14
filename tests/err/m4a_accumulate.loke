@@ -1,0 +1,38 @@
+package main;
+
+// Unrelated M4a failures in one file: nothing here stops the rest from being
+// reported.
+
+Vec :: struct { x: i32 }
+Value :: union { i32, bool }
+
+take_int :: proc(i: int) -> int { return i; }
+take_f32 :: proc(f: f32) -> int { return int(f); }
+take_i8 :: proc(i: i8) -> int { return int(i); }
+take_i16 :: proc(i: i16) -> int { return int(i); }
+integer_widths :: proc{take_i8, take_i16};
+
+impl Vec {
+	// A comparison operator produces `bool`.
+	compare :: operator(==) proc(a, b: Vec) -> Vec { return a; }
+	length :: proc(self) -> i32 { return self.x; }
+}
+
+main :: proc() {
+	// An ambiguous overload.
+	print_int(integer_widths(1));
+	// A method used as a value.
+	v := Vec{1};
+	f := v.length;
+	// A variant that is not in the union.
+	u: Value = i32(1);
+	bad := u.(f64);
+	// A type switch with no default that misses a variant.
+	switch (t in u) {
+	case i32:
+		print_int(0);
+	}
+	// A construction with no `init`.
+	w := Vec(1, 2);
+	print_int(1);
+}

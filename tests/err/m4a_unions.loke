@@ -1,0 +1,53 @@
+package main;
+
+Value :: union { bool, i32 }
+Bad_Variants :: union { i32, i32 }
+Bad_Align :: union @(align=3) { i32 }
+Error :: union { bool }
+
+not_optional :: proc() -> bool { return true; }
+two_values :: proc() -> (int, int) { return 1, 2; }
+
+// A procedure with several results needs every one of them named to propagate.
+unnamed :: proc() -> (int, Error) {
+	x := pair() or_return;
+	return x, nil;
+}
+
+pair :: proc() -> (int, Error) { return 1, nil; }
+
+uninitialised :: proc() -> (n: int, err: Error) {
+	// `n` has not been written yet, and `or_return` returns its current value.
+	x := pair() or_return;
+	n = x;
+	return;
+}
+
+branch_initialised :: proc(flag: bool) -> (n: int, err: Error) {
+	if (flag) { n = 1; }
+	// The assignment above is not live along the false branch.
+	x := pair() or_return;
+	n = x;
+	return;
+}
+
+main :: proc() {
+	v: Value = i32(1);
+	// `f64` is not a variant of `Value`.
+	a := v.(f64);
+	// A type switch needs a union.
+	plain := 1;
+	switch (t in plain) {
+	case int:
+		print_int(0);
+	}
+	// A type switch with no default must cover every variant.
+	switch (t in v) {
+	case i32:
+		print_int(1);
+	}
+	// `or_else` needs an optional-ok expression on its left.
+	b := not_optional() or_else true;
+	// A status has to be `bool` or nil-comparable.
+	c := two_values() or_return;
+}

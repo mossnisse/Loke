@@ -1,0 +1,52 @@
+package main;
+
+Vec :: struct { x, y: i32 }
+Flag :: struct { on: bool }
+
+impl Vec {
+	// `+` is unary or binary, never ternary.
+	too_many :: operator(+) proc(a, b, c: Vec) -> Vec { return a; }
+	// A comparison produces `bool`.
+	bad_compare :: operator(==) proc(a, b: Vec) -> Vec { return a; }
+	// A compound form takes its destination as `inout`.
+	bad_assign :: operator(+=) proc(a, b: Vec) { }
+	// The binary fallback for `-=` produces something else entirely.
+	shrink :: operator(-) proc(a, b: Vec) -> Flag { return {true}; }
+	// An `inout` result must return a place.
+	pick :: operator([]) proc(self: inout Vec, i: int) -> inout i32 { return inout self.x + 1; }
+}
+
+Sparse :: struct { total: i32 }
+
+impl Sparse {
+	get :: operator([]) proc(self: Sparse, key: int) -> i32 { return self.total; }
+	set :: operator([]=) proc(self: inout Sparse, key: int, value: i32) { self.total = value; }
+	span :: operator([:]) proc(self: Sparse, lo, hi: int) -> i32 { return self.total; }
+}
+
+// `delegate` has no meaning for a type that is not `distinct`.
+impl Flag {
+	delegate(+);
+}
+
+Meters :: distinct f64;
+
+impl Meters {
+	// `%` is not defined for `f64`.
+	delegate(%);
+}
+
+main :: proc() {
+	a := Vec{1, 2};
+	b := Vec{3, 4};
+	a -= b;
+
+	s: Sparse;
+	// `[]=` cannot supply an address.
+	p := &s[1];
+	// A user `[:]` needs both endpoints written.
+	q := s[1:];
+	// The right operand of a user compound assignment is checked once, so a
+	// broken one is reported once.
+	a += nope;
+}

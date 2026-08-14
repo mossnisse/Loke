@@ -25,6 +25,11 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	}
 	base.immutable = .Not_A_Place
 
+	// A place position belongs to this node alone: its operands and indices are
+	// ordinary value positions.
+	place := k.place_position
+	k.place_position = false
+
 	switch v in e {
 	case ^Expr_Error:
 		v.type = INVALID_TYPE
@@ -39,7 +44,16 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_selector(k, v, expected)
 
 	case ^Expr_Index:
-		check_index(k, v)
+		check_index(k, v, place)
+
+	case ^Expr_Slice:
+		check_slice(k, v, place)
+
+	case ^Expr_Type_Assert:
+		check_type_assert(k, v)
+
+	case ^Expr_Or_Else:
+		check_or_else(k, v, expected)
 
 	case ^Expr_Call:
 		check_call(k, v, expected)
@@ -68,7 +82,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		errorf(k.c, v.span, "L0390", "`%s` needs the runtime source-location type, which arrives in M6", v.name)
 		v.type = INVALID_TYPE
 
-	case ^Expr_Type_Assert, ^Expr_Slice, ^Expr_Range, ^Expr_Or_Else, ^Expr_Move,
+	case ^Expr_Range, ^Expr_Move,
 	     ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
@@ -463,7 +477,14 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		errorf(k.c, v.span, "L0334", "`%s` names a package; write `%s.name` to use one of its declarations", name, name)
 		v.type = INVALID_TYPE
 
-	case .Proc_Group, .Invalid:
+	case .Proc_Group:
+		// A group names several procedures, so it has no one procedure type to be
+		// a value of; call it, or name the member you meant.
+		v.resolution = Resolution{kind = .Procedure_Group, symbol = symbol_id}
+		errorf(k.c, v.span, "L0396", "`%s` is a procedure group and can only be called", name)
+		v.type = INVALID_TYPE
+
+	case .Invalid:
 		unsupported_construct(k, v.span)
 		v.type = INVALID_TYPE
 	}
@@ -509,7 +530,11 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		}
 	}
 
+	// The operand is not itself in callee position, whatever this selector is.
+	callee_position := k.in_callee
+	k.in_callee = false
 	operand := check_single_expr(k, v.operand)
+	k.in_callee = callee_position
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
@@ -518,23 +543,26 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 
 	// A named enum type selects its own member: `Colour.Red`.
 	if operand_base.value_category == .Type {
-		enum_type := type_underlying(k.c, operand_base.denoted_type)
+		subject := operand_base.denoted_type
+		enum_type := type_underlying(k.c, subject)
 		if type_is_enum(k.c, enum_type) {
 			member := enum_member(k.c, enum_type, intern_identifier(k.c, v.name.text))
-			if member == INVALID_SYMBOL {
-				errorf(k.c, v.span, "L0363", "`%s` has no member `%s`", type_name(k.c, operand_base.denoted_type), v.name.text)
-				v.type = INVALID_TYPE
+			if member != INVALID_SYMBOL {
+				sym := symbol_of(k.c, member)
+				v.resolution = Resolution{kind = .Field, symbol = member}
+				v.type = subject
+				v.is_const = true
+				v.const_value = sym.const_value
+				v.immutable = .Constant
 				return
 			}
-			sym := symbol_of(k.c, member)
-			v.resolution = Resolution{kind = .Field, symbol = member}
-			v.type = operand_base.denoted_type
-			v.is_const = true
-			v.const_value = sym.const_value
-			v.immutable = .Constant
+		}
+		// design.md: associated procedures and constants without `self` are
+		// accessed through the type name, and so is `Type.method(value)`.
+		if select_associated_member(k, v, subject) {
 			return
 		}
-		unsupported_construct(k, v.span)
+		errorf(k.c, v.span, "L0408", "`%s` has no member `%s`", type_name(k.c, subject), v.name.text)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -547,14 +575,16 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		through_pointer = true
 	}
 	info := type_of(k.c, base_type)
-	if info == nil || info.kind != .Struct {
-		errorf(k.c, v.span, "L0363", "`%s` has no field `%s`", type_name(k.c, operand), v.name.text)
-		v.type = INVALID_TYPE
-		return
+	field := INVALID_SYMBOL
+	if info != nil && info.kind == .Struct {
+		field = struct_field(k.c, base_type, intern_identifier(k.c, v.name.text))
 	}
-	field := struct_field(k.c, base_type, intern_identifier(k.c, v.name.text))
+	// design.md: "Field lookup takes priority over method-call sugar."
 	if field == INVALID_SYMBOL {
-		errorf(k.c, v.span, "L0363", "`%s` has no field `%s`", type_name(k.c, base_type), v.name.text)
+		if select_method(k, v, operand, callee_position) {
+			return
+		}
+		errorf(k.c, v.span, "L0363", "`%s` has no field or member `%s`", type_name(k.c, operand), v.name.text)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -580,6 +610,61 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			v.immutable = .Constant
 		}
 	}
+}
+
+// `Type.member`: an associated constant, an associated type, or a procedure
+// reached through the type name.
+@(private = "file")
+select_associated_member :: proc(k: ^Checker, v: ^Expr_Selector, subject: Type_Id) -> bool {
+	member := find_member(k, subject, intern_identifier(k.c, v.name.text))
+	if member == INVALID_SYMBOL {
+		return false
+	}
+	// A member's own signature or value may be needed before the phase that
+	// would ordinarily reach it, and both need the block's subject in scope.
+	outer := k.impl_type
+	k.impl_type = subject
+	defer k.impl_type = outer
+	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Const && sym.decl != nil {
+		if sym.decl.check_state == .Unchecked {
+			check_decl(k, sym.decl)
+		}
+	}
+	annotate_symbol_use(k, &v.base, member, v.name.text)
+	return true
+}
+
+// A method on the operand's own type. A `distinct` type carries its own members,
+// so this never looks through to the underlying type.
+@(private = "file")
+select_method :: proc(k: ^Checker, v: ^Expr_Selector, receiver: Type_Id, callee_position: bool) -> bool {
+	candidates := method_candidates(k, receiver, intern_identifier(k.c, v.name.text))
+	if len(candidates) == 0 {
+		return false
+	}
+	v.resolution = Resolution{kind = .Method, symbol = candidates[0]}
+	v.value_category = .Value
+	if !callee_position {
+		// There are no bound method values: the receiver is supplied by the call.
+		errorf(k.c, v.span, "L0408", "`%s` is a method and must be called", v.name.text)
+		v.type = INVALID_TYPE
+		return true
+	}
+	v.type = TYPE_VOID // `check_call` reads the resolution, never this
+	return true
+}
+
+// The members of `receiver` named `name` that method-call syntax can reach: an
+// associated procedure without a receiver is not one of them.
+method_candidates :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+	all := member_candidates(k, receiver, name)
+	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	for candidate in all {
+		if sym := symbol_of(k.c, candidate); sym != nil && sym.has_receiver {
+			append(&out, candidate)
+		}
+	}
+	return out[:]
 }
 
 // `alias.name`. Only the target package's own scope is searched — never its
@@ -626,15 +711,10 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 // ---------------------------------------------------------------- indexing --
 
 @(private = "file")
-check_index :: proc(k: ^Checker, v: ^Expr_Index) {
+check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	v.value_category = .Value
 	operand := check_single_expr(k, v.operand)
 	if operand == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	if len(v.indices) != 1 {
-		unsupported_construct(k, v.span)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -647,8 +727,16 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index) {
 		through_pointer = true
 	}
 	info := type_of(k.c, base_type)
-	if info == nil || info.kind != .Array {
-		errorf(k.c, v.span, "L0362", "`%s` cannot be indexed", type_name(k.c, operand))
+	// Built-in indexing first; a user `operator([])` supplies what it does not.
+	if info == nil || info.kind != .Array || len(v.indices) != 1 {
+		if check_user_index(k, v, operand, place) {
+			return
+		}
+		if info != nil && info.kind == .Array {
+			unsupported_construct(k, v.span)
+		} else {
+			errorf(k.c, v.span, "L0362", "`%s` cannot be indexed", type_name(k.c, operand))
+		}
 		v.type = INVALID_TYPE
 		return
 	}
@@ -698,6 +786,127 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index) {
 	}
 }
 
+// design.md "Indexing and slicing": in a place position the `inout` overload is
+// required and selected before ordinary ranking; everywhere else the value
+// overload is preferred, even when the receiver is mutable. Without this rule
+// the two would differ only by receiver mutability and return mode, which rank 2
+// would treat as an adjustment rather than a distinction.
+@(private = "file")
+check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: bool) -> bool {
+	all := operator_candidates_for_receiver(k, "[]", operand)
+	if len(all) == 0 {
+		return false
+	}
+	candidates := select_by_place(k, all, place)
+	if len(candidates) == 0 {
+		// design.md: `operator([]=)` can serve an assignment — which `check_assign`
+		// has already tried by the time this runs — but never an address.
+		errorf(
+			k.c,
+			v.span,
+			"L0419",
+			"`%s` has no `operator([])` returning `inout`, so this is not a place",
+			type_name(k.c, operand),
+		)
+		v.type = INVALID_TYPE
+		return true
+	}
+
+	args, ok := index_arguments(k, v.operand, v.indices)
+	if !ok {
+		v.type = INVALID_TYPE
+		return true
+	}
+	chosen, bound := resolve_operator(k, v.span, "[]", []Type_Id{operand}, args, among = candidates)
+	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+		v.type = INVALID_TYPE
+		return true
+	}
+	sym := symbol_of(k.c, chosen)
+	v.bound = bound
+	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
+	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	if operator_result_is_place(k, chosen) {
+		v.value_category = .Place
+		v.addressable = true
+		v.assignable = true
+	}
+	return true
+}
+
+// `operator([:])`. A built-in slice expression arrives with M5, so a type with
+// no `[:]` overload is still the deferred family it was.
+@(private = "file")
+check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
+	v.value_category = .Value
+	operand := check_single_expr(k, v.operand)
+	if operand == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	slicers := operator_candidates_for_receiver(k, "[:]", operand)
+	if len(slicers) == 0 {
+		unsupported_construct(k, v.span)
+		v.type = INVALID_TYPE
+		return
+	}
+	if v.lo == nil || v.hi == nil {
+		errorf(k.c, v.span, "L0421", "a user `operator([:])` needs both endpoints written")
+		v.type = INVALID_TYPE
+		return
+	}
+	endpoints := make([]Expr, 2, k.c.semantic_allocator)
+	endpoints[0], endpoints[1] = v.lo, v.hi
+	args, ok := index_arguments(k, v.operand, endpoints)
+	if !ok {
+		v.type = INVALID_TYPE
+		return
+	}
+	chosen, bound := resolve_operator(k, v.span, "[:]", []Type_Id{operand}, args, among = slicers)
+	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+		v.type = INVALID_TYPE
+		return
+	}
+	sym := symbol_of(k.c, chosen)
+	v.bound = bound
+	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
+	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+}
+
+// The overloads a place or value position may use. In a value position the
+// non-`inout` overloads are preferred but an `inout` one still serves when it is
+// all there is.
+@(private = "file")
+select_by_place :: proc(k: ^Checker, all: []Symbol_Id, place: bool) -> []Symbol_Id {
+	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	for candidate in all {
+		if operator_result_is_place(k, candidate) == place {
+			append(&out, candidate)
+		}
+	}
+	if len(out) == 0 && !place {
+		return all
+	}
+	return out[:]
+}
+
+// The receiver and every index, each checked exactly once.
+@(private = "file")
+index_arguments :: proc(k: ^Checker, receiver: Expr, indices: []Expr) -> ([]Arg_Info, bool) {
+	args := make([]Arg_Info, len(indices) + 1, k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, receiver)
+	args[0].is_receiver = true
+	ok := true
+	for index, position in indices {
+		if check_single_expr(k, index) == INVALID_TYPE {
+			ok = false
+			continue
+		}
+		args[position + 1] = arg_from_expr(k, index)
+	}
+	return args, ok
+}
+
 // ------------------------------------------------------------------ unary --
 
 @(private = "file")
@@ -705,7 +914,11 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	v.value_category = .Value
 
 	if v.op == .Amp {
+		// design.md: `&` is a place position for the purpose of overload
+		// selection, but it never creates an element in any container.
+		k.place_position = true
 		operand := check_single_expr(k, v.operand, pointee_of(k.c, expected))
+		k.place_position = false
 		if operand == INVALID_TYPE {
 			v.type = INVALID_TYPE
 			return
@@ -726,6 +939,13 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		return
 	}
 	operand_base := expr_base(v.operand)
+	// A built-in operation on built-in operands cannot be shadowed; where the
+	// language defines none, an ordinary user overload is found by lookup.
+	if !builtin_unary_defined(k, v.op, operand) {
+		if check_user_unary(k, v, operand, expected) {
+			return
+		}
+	}
 	if type_kind(k.c, operand) == .Distinct {
 		operator_mismatch(k, v.op_span, v.op, operand)
 		v.type = INVALID_TYPE
@@ -785,8 +1005,68 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 }
 
 @(private = "file")
+check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id, expected: Type_Id) -> bool {
+	symbol := operator_text(v.op)
+	operands := []Type_Id{operand}
+	if !operator_exists(k, symbol, operands) {
+		return false
+	}
+	args := make([]Arg_Info, 1, k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, v.operand)
+	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args, expected)
+	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+		v.type = INVALID_TYPE
+		return true
+	}
+	sym := symbol_of(k.c, chosen)
+	v.operand = bound[0]
+	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
+	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	return true
+}
+
+// design.md: `!=` falls back to `!(left == right)` when `==` is available and no
+// more specific `!=` overload exists.
+@(private = "file")
+check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id, expected: Type_Id) -> bool {
+	symbol := operator_text(v.op)
+	operands := []Type_Id{lhs, rhs}
+	args := make([]Arg_Info, 2, k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, v.lhs)
+	args[1] = arg_from_expr(k, v.rhs)
+	negate := false
+	if !operator_viable(k, symbol, operands, args) {
+		if v.op != .Not_Eq || !operator_viable(k, "==", operands, args) {
+			if operator_exists(k, symbol, operands) {
+				resolve_operator(k, v.op_span, symbol, operands, args, expected)
+				v.type = INVALID_TYPE
+				return true
+			}
+			return false
+		}
+		symbol = "=="
+		negate = true
+	}
+	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args, negate ? TYPE_BOOL : expected)
+	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+		v.type = INVALID_TYPE
+		return true
+	}
+	sym := symbol_of(k.c, chosen)
+	v.lhs, v.rhs = bound[0], bound[1]
+	v.negated = negate
+	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
+	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	return true
+}
+
+@(private = "file")
 check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 	v.value_category = .Value
+	if v.op == .Or_Return {
+		check_or_return(k, v)
+		return
+	}
 	if v.op != .Caret {
 		unsupported_construct(k, v.span)
 		v.type = INVALID_TYPE
@@ -816,12 +1096,10 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	v.value_category = .Value
 	v.resolution.kind = .Builtin_Operator
 
-	#partial switch v.op {
-	case .And_And, .Or_Or:
+	// `&&` and `||` control whether an operand is evaluated, so they are not
+	// overloadable (design.md "Operator declarations").
+	if v.op == .And_And || v.op == .Or_Or {
 		check_logical(k, v)
-		return
-	case .Shl, .Shr:
-		check_shift(k, v, expected)
 		return
 	}
 
@@ -830,12 +1108,25 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		is_comparison = true
 	}
+	shift := v.op == .Shl || v.op == .Shr
 
 	hint := is_comparison ? INVALID_TYPE : expected
 	lhs := check_single_expr(k, v.lhs, hint)
-	rhs := check_single_expr(k, v.rhs, hint)
+	rhs := check_single_expr(k, v.rhs, shift ? INVALID_TYPE : hint)
 	if lhs == INVALID_TYPE || rhs == INVALID_TYPE {
 		v.type = INVALID_TYPE
+		return
+	}
+
+	// The built-in operation wins whenever every operand is a built-in type and
+	// the built-in table defines this operator for them.
+	if !builtin_binary_defined(k, v.op, lhs, rhs) {
+		if check_user_binary(k, v, lhs, rhs, expected) {
+			return
+		}
+	}
+	if shift {
+		check_shift(k, v, expected, lhs, rhs)
 		return
 	}
 
@@ -850,7 +1141,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	if !operator_applies(k.c, v.op, operand_type) {
+	if !builtin_operator_applies(k.c, v.op, operand_type) {
 		operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
 		v.type = INVALID_TYPE
 		return
@@ -911,13 +1202,8 @@ check_logical :: proc(k: ^Checker, v: ^Expr_Binary) {
 // an untyped constant representable by one, and an untyped left operand first
 // takes the type it would have on its own.
 @(private = "file")
-check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
-	lhs := check_single_expr(k, v.lhs, expected)
-	rhs := check_single_expr(k, v.rhs)
-	if lhs == INVALID_TYPE || rhs == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
+check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, rhs: Type_Id) {
+	lhs := left_type
 	if type_kind(k.c, lhs) == .Distinct || (!type_is_integer(k.c, lhs) && !type_is_rune(k.c, lhs)) {
 		operator_mismatch2(k, v.op_span, v.op, lhs, rhs)
 		v.type = INVALID_TYPE
@@ -1041,7 +1327,7 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 
 	switch {
 	case left_untyped && right_untyped:
-		merged, ok := merge_untyped(lt, rt)
+		merged, ok := merge_untyped_types(lt, rt)
 		if !ok {
 			operand_mismatch(k, op_span, lt, rt)
 			return INVALID_TYPE, false
@@ -1064,8 +1350,9 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 	return INVALID_TYPE, false
 }
 
-@(private = "file")
-merge_untyped :: proc(a, b: Type_Id) -> (Type_Id, bool) {
+// Shared with operator lookup, which has to know what the built-in table would
+// unify two untyped operands to before anything materialises.
+merge_untyped_types :: proc(a, b: Type_Id) -> (Type_Id, bool) {
 	if a == b {
 		return a, true
 	}
@@ -1087,8 +1374,9 @@ merge_untyped :: proc(a, b: Type_Id) -> (Type_Id, bool) {
 	return ra > rb ? a : b, true
 }
 
-@(private = "file")
-operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
+// The built-in operator table, asked as a predicate so the unshadowable
+// built-in rule can be decided before any user lookup.
+builtin_operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
 	if type_kind(c, type) == .Distinct {
 		return false
 	}
@@ -1165,9 +1453,33 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		}
 	}
 
+	// Nor is a procedure group: it stands for several procedures, so it goes to
+	// the overload engine before anything asks it for a single procedure type.
+	if group := callee_group(k, v.callee); group != INVALID_SYMBOL {
+		check_group_call(k, v, group, expected)
+		return
+	}
+	if group := associated_group(k, v.callee); group != INVALID_SYMBOL {
+		check_group_call(k, v, group, expected)
+		return
+	}
+
+	outer_callee := k.in_callee
+	k.in_callee = true
 	callee_type := check_expr(k, v.callee)
+	k.in_callee = outer_callee
 	callee_base := expr_base(v.callee)
-	if callee_base == nil || callee_type == INVALID_TYPE {
+	if callee_base == nil {
+		v.type = INVALID_TYPE
+		return
+	}
+	// A method selector is not a value: the receiver becomes argument zero, which
+	// the selector alone cannot do.
+	if callee_base.resolution.kind == .Method {
+		check_method_call(k, v, v.callee.(^Expr_Selector), expected)
+		return
+	}
+	if callee_type == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -1208,6 +1520,159 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		v.type = info.results[0]
 		v.result_types = info.results
 	}
+}
+
+// The procedure group a callee names, or INVALID_SYMBOL. `pkg.group` names one
+// as plainly as `group` does.
+@(private = "file")
+callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
+	#partial switch v in callee {
+	case ^Expr_Ident:
+		id := lookup_symbol(k.scope, identifier_of(k.c, v))
+		if sym := symbol_of(k.c, id); sym != nil && sym.kind == .Proc_Group {
+			return id
+		}
+	case ^Expr_Selector:
+		ident, is_ident := v.operand.(^Expr_Ident)
+		if !is_ident {
+			return INVALID_SYMBOL
+		}
+		alias := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+		if alias == nil || alias.kind != .Package_Alias {
+			return INVALID_SYMBOL
+		}
+		target := package_of(k.c, alias.pkg)
+		if target == nil || target.scope == nil {
+			return INVALID_SYMBOL
+		}
+		member, found := target.scope.names[intern_identifier(k.c, v.name.text)]
+		if !found {
+			return INVALID_SYMBOL
+		}
+		if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Proc_Group && sym.public {
+			return member
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+// `Type.group(...)` and `pkg.Type.group(...)`: an associated group named through
+// the type. Resolving the operand as a type is silent when it is not one, so a
+// value receiver falls straight through to the method path.
+@(private = "file")
+associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
+	sel, is_selector := callee.(^Expr_Selector)
+	if !is_selector || sel.operand == nil {
+		return INVALID_SYMBOL
+	}
+	subject := resolve_type_syntax(k, sel.operand)
+	if subject == INVALID_TYPE {
+		return INVALID_SYMBOL
+	}
+	member := find_member(k, subject, intern_identifier(k.c, sel.name.text))
+	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Proc_Group {
+		return member
+	}
+	return INVALID_SYMBOL
+}
+
+// `value.method(args)`. The receiver is argument zero and carries its mode
+// implicitly, which is what makes `inout self` and `move self` reachable through
+// one spelling (design.md "Receiver forms").
+@(private = "file")
+check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expected: Type_Id) {
+	receiver := sel.operand
+	receiver_base := expr_base(receiver)
+	candidates := method_candidates(k, receiver_base.type, intern_identifier(k.c, sel.name.text))
+	written, args_ok := collect_call_arguments(k, v.args)
+	if !args_ok {
+		v.type = INVALID_TYPE
+		return
+	}
+	args := make([]Arg_Info, len(written) + 1, k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, receiver)
+	args[0].is_receiver = true
+	copy(args[1:], written)
+
+	description := concat(k.c, "method `", concat(k.c, sel.name.text, "`"))
+	cand, resolved := resolve_overload(k, v.span, description, candidates, args, expected)
+	if !resolved {
+		v.type = INVALID_TYPE
+		return
+	}
+	chosen := symbol_of(k.c, cand.symbol)
+	// An exclusive mutable borrow, or a consuming receiver, needs a mutable place.
+	if chosen.receiver == .Inout || chosen.receiver == .Move {
+		if !receiver_base.assignable {
+			report_not_assignable(k, receiver_base, "the receiver of a mutating method")
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	sel.resolution = Resolution{kind = .Method, symbol = cand.symbol}
+	sel.type = chosen.proc_type
+	v.resolution = Resolution{kind = .Call, symbol = cand.symbol, chosen_overload = cand.symbol}
+	if !bind_chosen_call(k, v, cand, args) {
+		v.type = INVALID_TYPE
+		return
+	}
+	switch len(chosen.results) {
+	case 0:
+		v.type = TYPE_VOID
+	case 1:
+		v.type = chosen.results[0]
+	case:
+		v.type = chosen.results[0]
+		v.result_types = chosen.results
+	}
+}
+
+// A call through a group: check every argument once, rank the members, then bind
+// against the one that wins.
+@(private = "file")
+check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected: Type_Id) {
+	sym := symbol_of(k.c, group)
+	description := concat(k.c, "`", concat(k.c, identifier_text(k.c, sym.name), "`"))
+	args, args_ok := collect_call_arguments(k, v.args)
+	if !args_ok {
+		v.type = INVALID_TYPE
+		return
+	}
+	cand, resolved := resolve_overload(k, v.span, description, sym.members, args, expected)
+	if !resolved {
+		v.type = INVALID_TYPE
+		return
+	}
+	annotate_chosen_callee(k, v, cand.symbol)
+	if !bind_chosen_call(k, v, cand, args) {
+		v.type = INVALID_TYPE
+		return
+	}
+	chosen := symbol_of(k.c, cand.symbol)
+	switch len(chosen.results) {
+	case 0:
+		v.type = TYPE_VOID
+	case 1:
+		v.type = chosen.results[0]
+	case:
+		v.type = chosen.results[0]
+		v.result_types = chosen.results
+	}
+}
+
+// Rewrites the callee to name the selected overload, so every later phase — the
+// backend included — sees an ordinary call to one procedure.
+annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
+	sym := symbol_of(k.c, chosen)
+	if base := expr_base(v.callee); base != nil && sym != nil {
+		base.resolution = Resolution{kind = .Value, symbol = chosen}
+		base.value_category = .Value
+		base.type = sym.proc_type
+	}
+	if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
+		ident.symbol = chosen
+	}
+	v.resolution = Resolution{kind = .Call, symbol = chosen, chosen_overload = chosen}
 }
 
 @(private = "file")
@@ -1556,6 +2021,42 @@ check_message_arg :: proc(k: ^Checker, e: Expr) {
 	}
 }
 
+// One argument against one parameter, with the `@(implicit)` path for an
+// untyped constant that no built-in conversion reaches. Returns the expression
+// to bind, which is the written one unless a conversion wrapped it.
+check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id) -> (Expr, bool) {
+	type := check_single_expr(k, e, target)
+	if type == INVALID_TYPE || target == INVALID_TYPE {
+		return e, false
+	}
+	if type_is_untyped(k.c, type) && !assignable(k.c, type, target) {
+		arg := arg_from_expr(k, e)
+		overload, applicable := implicit_init_overload(k, arg, target, report = true)
+		if overload != INVALID_SYMBOL {
+			return wrap_implicit_conversion(k, e, overload), true
+		}
+		if applicable {
+			return e, false
+		}
+	}
+	if !materialize(k, e, target) {
+		return e, false
+	}
+	final := expr_base(e).type
+	if !assignable(k.c, final, target) {
+		errorf(
+			k.c,
+			expr_span(e),
+			"L0310",
+			"cannot pass `%s` with `%s`",
+			type_name(k.c, target),
+			type_name(k.c, final),
+		)
+		return e, false
+	}
+	return e, true
+}
+
 // Binds written arguments to parameters, then fills the omitted ones from the
 // declaration's defaults. `v.bound` is the resolved parameter-order list the
 // backend evaluates.
@@ -1632,12 +2133,14 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 			ok = false
 			continue
 		}
-		if !check_value_expr(k, arg.value, info.parameters[slot], "pass") {
+		value, passed := check_argument_value(k, arg.value, info.parameters[slot])
+		bound[slot] = value
+		if !passed {
 			ok = false
 			continue
 		}
 		if arg.mode == .Inout {
-			base := expr_base(arg.value)
+			base := expr_base(value)
 			if !base.assignable {
 				report_not_assignable(k, base, "an `inout` argument")
 				ok = false
@@ -1673,60 +2176,128 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	return ok
 }
 
-// Built-in `T(v)`. Pointer and distinct conversions are here too; user
-// conversions and their ranking are M4.
+// `T(...)`, in the two stages design.md "Resolving `T(...)`" fixes: a built-in
+// or `distinct` conversion first, and `init` overloads otherwise. Resolution
+// stops at the first stage that produces a match, so `int(x)` cannot change
+// meaning based on imports.
 @(private = "file")
 check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
-	v.resolution = Resolution{kind = .Conversion}
 	if !gate_type(k, target, v.span) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
-		errorf(k.c, v.span, "L0373", "a conversion takes exactly one argument")
+	if conversion_target_is_builtin(k, target) &&
+	   len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value {
+		source := check_single_expr(k, v.args[0].value, target)
+		if source == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		if builtin_conversion(k, v, target, source) {
+			return
+		}
+		one := make([]Arg_Info, 1, k.c.semantic_allocator)
+		one[0] = arg_from_expr(k, v.args[0].value)
+		check_init_call(k, v, target, one, source)
+		return
+	}
+	args, ok := collect_call_arguments(k, v.args)
+	if !ok {
 		v.type = INVALID_TYPE
 		return
 	}
-	source := check_single_expr(k, v.args[0].value, target)
-	if source == INVALID_TYPE {
-		v.type = INVALID_TYPE
+	// Unwrapping a distinct value is a built-in conversion even when its
+	// underlying target is an aggregate. Keep this after argument collection so
+	// ordinary aggregate construction still reaches `init` overloads.
+	if len(args) == 1 && args[0].name == INVALID_IDENTIFIER && args[0].mode == .Value &&
+	   type_kind(k.c, args[0].type) == .Distinct &&
+	   type_underlying(k.c, args[0].type) == target &&
+	   builtin_conversion(k, v, target, args[0].type) {
 		return
 	}
+	check_init_call(k, v, target, args, INVALID_TYPE)
+}
+
+// Stage 1's predicate. A `distinct` type is grouped with the built-ins here —
+// and only here: for operator lookup it is an ordinary user type
+// (m4a-plan decision "Built-in priority").
+@(private = "file")
+conversion_target_is_builtin :: proc(k: ^Checker, target: Type_Id) -> bool {
+	#partial switch type_kind(k.c, target) {
+	case .Struct, .Union, .Interface, .Dyn, .Invalid:
+		return false
+	}
+	return true
+}
+
+// The built-in half of `T(v)`, including pointer and `distinct` conversions.
+// Returns false — without reporting — when no built-in conversion reaches the
+// target, which is what lets stage 2 run.
+@(private = "file")
+builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) -> bool {
+	base := expr_base(v.args[0].value)
+	converted: Const_Value
+	if base.is_const {
+		fits: bool
+		converted, fits = convert_const(k.c, base.const_value, target, true)
+		if !fits {
+			return false
+		}
+	} else if !convertible(k.c, source, target) {
+		return false
+	}
+	v.resolution = Resolution{kind = .Conversion}
 	v.bound = make([]Expr, 1, k.c.semantic_allocator)
 	v.bound[0] = v.args[0].value
 	v.type = target
-
-	base := expr_base(v.args[0].value)
 	if base.is_const {
-		converted, fits := convert_const(k.c, base.const_value, target, true)
-		if !fits {
+		// The operand keeps its own type; the conversion node carries the result.
+		v.is_const = true
+		v.const_value = converted
+	}
+	return true
+}
+
+// Stage 2: the visible `init` overloads for `T`, resolved by the ordinary
+// engine. `attempted` is the source type stage 1 rejected, so a target with no
+// `init` at all still reports the conversion failure the user wrote.
+@(private = "file")
+check_init_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, args: []Arg_Info, attempted: Type_Id) {
+	usable := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	for candidate in member_candidates(k, target, intern_identifier(k.c, "init")) {
+		sym := symbol_of(k.c, candidate)
+		if sym != nil && !sym.has_receiver && len(sym.results) == 1 && sym.results[0] == target {
+			append(&usable, candidate)
+		}
+	}
+	if len(usable) == 0 {
+		if attempted != INVALID_TYPE {
 			errorf(
 				k.c,
 				expr_span(v.args[0].value),
 				"L0373",
 				"`%s` cannot be converted to `%s`",
-				type_name(k.c, source),
+				type_name(k.c, attempted),
 				type_name(k.c, target),
 			)
-			v.type = INVALID_TYPE
-			return
+		} else {
+			errorf(k.c, v.span, "L0410", "`%s` has no `init` overload to construct it", type_name(k.c, target))
 		}
-		// The operand keeps its own type; the conversion node carries the result.
-		v.is_const = true
-		v.const_value = converted
+		v.type = INVALID_TYPE
 		return
 	}
-	if !convertible(k.c, source, target) {
-		errorf(
-			k.c,
-			expr_span(v.args[0].value),
-			"L0373",
-			"`%s` cannot be converted to `%s`",
-			type_name(k.c, source),
-			type_name(k.c, target),
-		)
+	description := concat(k.c, "`", concat(k.c, type_name(k.c, target), "`'s `init`"))
+	cand, resolved := resolve_overload(k, v.span, description, usable[:], args, target)
+	if !resolved {
 		v.type = INVALID_TYPE
+		return
 	}
+	annotate_chosen_callee(k, v, cand.symbol)
+	if !bind_chosen_call(k, v, cand, args) {
+		v.type = INVALID_TYPE
+		return
+	}
+	v.type = target
 }
 
 // A procedure literal in expression position is hoisted to its own module
@@ -1750,6 +2321,11 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 			pkg  = k.pkg,
 		})
 	}
+	// A nested literal is its own procedure, so an enclosing `impl` block's
+	// subject is not its receiver's type.
+	outer_impl := k.impl_type
+	k.impl_type = INVALID_TYPE
+	defer k.impl_type = outer_impl
 	resolve_proc_signature(k, v, v.symbol)
 	symbol := symbol_of(k.c, v.symbol)
 	if symbol == nil {
@@ -1961,7 +2537,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		return float_const(0, info.bits), true
 	case .Enum:
 		return int_const(c, 0), true
-	case .Pointer, .Raw_Pointer, .Proc:
+	case .Pointer, .Raw_Pointer, .Proc, .Union:
 		return nil_const(), true
 	case .Array:
 		elements := make([]Const_Value, info.count, c.semantic_allocator)
@@ -2007,6 +2583,25 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	if base == nil || target == INVALID_TYPE || base.type == INVALID_TYPE {
 		return false
 	}
+	// design.md "Unions": a variant value becomes a union value at the point of
+	// use, which is where the tag can be written.
+	if type_is_union(k.c, target) && base.type != target {
+		if union_holds(k.c, target, base.type) {
+			base.union_from = base.type
+			base.type = target
+			return true
+		}
+		// An untyped constant enters through its own default type, so which
+		// variant it lands in never depends on the order the variants are written.
+		if type_is_untyped(k.c, base.type) && base.type != TYPE_UNTYPED_NIL {
+			variant := default_type(k.c, base.type)
+			if union_holds(k.c, target, variant) && materialize(k, e, variant) {
+				base.union_from = variant
+				base.type = target
+				return true
+			}
+		}
+	}
 	if !type_is_untyped(k.c, base.type) {
 		return true
 	}
@@ -2024,7 +2619,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		if base.type == target {
 			return true
 		}
-		merged, ok := merge_untyped(base.type, target)
+		merged, ok := merge_untyped_types(base.type, target)
 		if !ok {
 			return true
 		}
@@ -2147,6 +2742,12 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
+	case .Union:
+		// The only union constant is its zero value; a variant value becomes one
+		// at run time, where the tag can be written.
+		if value.kind == .Nil {
+			return nil_const(), true
+		}
 	case .Struct, .Array:
 		if value.kind == .Aggregate && value.aggregate != nil && value.aggregate.type == target {
 			return value, true
@@ -2171,10 +2772,14 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch type_kind(c, type_underlying(c, to)) {
-		case .Pointer, .Raw_Pointer, .Proc:
+		case .Pointer, .Raw_Pointer, .Proc, .Union:
 			return true
 		}
 		return false
+	}
+	// design.md "Unions": a union is assignable from any variant it can hold.
+	if type_kind(c, to) == .Union && union_holds(c, to, from) {
+		return true
 	}
 	if from == TYPE_UNTYPED_STRING {
 		return type_kind(c, type_underlying(c, to)) == .String
