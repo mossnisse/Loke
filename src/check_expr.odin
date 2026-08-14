@@ -1962,6 +1962,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Drop:
 		check_drop_builtin(k, v, ident)
 		return
+	case .Exchange:
+		check_exchange_builtin(k, v, ident)
+		return
 	case .Default_Allocator:
 		if len(v.args) != 0 {
 			errorf(k.c, v.span, "L0490", "`default_allocator` takes no arguments")
@@ -2269,7 +2272,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator, .Drop,
+	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator, .Drop, .Exchange,
 	     .None, .Print_Int, .Assert, .Panic, .Hash, .Iter,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		return
@@ -2416,7 +2419,8 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 
 	case .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len,
-	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop:
+	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
+	     .Exchange:
 		return
 	}
 

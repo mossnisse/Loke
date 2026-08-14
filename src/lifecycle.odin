@@ -102,6 +102,61 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 }
 
 
+// design.md "Exchange": `exchange(inout destination, replacement)` "replaces a
+// definitely live value and returns its previous value without cloning it". The
+// destination's type supplies the context for the replacement, which is why the
+// built-in has no written signature.
+check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	if len(v.args) != 2 {
+		errorf(k.c, v.span, "L0505", "`exchange` takes a destination place and its replacement")
+		v.type = INVALID_TYPE
+		return
+	}
+	// "Like any `inout` operation", the marker is written at the call site.
+	if v.args[0].mode != .Inout {
+		errorf(
+			k.c,
+			v.args[0].span,
+			"L0505",
+			"`exchange` replaces the destination, so it is written `exchange(inout place, replacement)`",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	if v.args[1].mode != .Value || v.args[0].name.text != "" || v.args[1].name.text != "" {
+		unsupported_construct(k, v.span)
+		v.type = INVALID_TYPE
+		return
+	}
+
+	destination := check_single_expr(k, v.args[0].value)
+	if destination == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	base := expr_base(v.args[0].value)
+	if base == nil || !base.assignable {
+		report_not_assignable(k, base, "the destination of an `exchange`")
+		v.type = INVALID_TYPE
+		return
+	}
+	// The destination's type supplies the context, so `{}` means its zero value.
+	if !check_value_expr(k, v.args[1].value, destination, "exchange into") {
+		v.type = INVALID_TYPE
+		return
+	}
+
+	bound := make([]Expr, 2, k.c.semantic_allocator)
+	bound[0] = v.args[0].value
+	bound[1] = v.args[1].value
+	v.bound = bound
+	v.type = destination
+	// The replacement is installed as one lifecycle operation with the old value's
+	// move out, so a hook may have to exist for the destination's type.
+	contribute_lifecycle_members(k, destination)
+}
+
 // ------------------------------------------------- ownership at the call --
 
 // design.md "Parameter semantics": "Both non-default modes are required at the

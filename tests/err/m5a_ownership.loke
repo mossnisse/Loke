@@ -76,6 +76,13 @@ main :: proc() {
 		print_int(item.id);
 	}
 
+	// `exchange` replaces a definitely live value, and its marker is written at
+	// the call site like any other `inout` operation.
+	h := Res{13};
+	i := exchange(h, Res{14});
+	drop(h);
+	j := exchange(inout h, Res{15});
+
 	// Conditionally live: one path dropped it, the other did not.
 	d := Res{8};
 	if (b.id == 0) {

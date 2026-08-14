@@ -567,6 +567,25 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	// form; requiring it definitely live is the half that needed this graph.
 	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
+		case .Exchange:
+			// design.md: `exchange` "replaces a definitely live value". It leaves a
+			// completed live replacement, so the destination survives the operation
+			// and this is a use rather than a kill.
+			if len(v.bound) == 2 {
+				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
+					if slot, tracked := slot_of(graph, ident.symbol); tracked {
+						emit(graph, Flow_Event {
+							kind = .Use,
+							slot = slot,
+							span = v.span,
+							name = ident.name,
+							verb = "exchanged",
+						})
+					}
+				}
+				walk_flow_expr(graph, v.bound[1])
+			}
+			return
 		case .Drop, .Free:
 			if len(v.bound) == 1 {
 				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {

@@ -171,6 +171,22 @@ discarded :: proc() {
 	print_int(9801);
 }
 
+// design.md "Exchange": `exchange` "replaces a definitely live value and returns
+// its previous value without cloning it ... No user code runs between those two
+// moves, and the destination is never observably dead."
+exchanged :: proc() {
+	print_int(9900);
+	current := make_res(17);
+	previous := exchange(inout current, make_res(18));
+	print_int(previous.id);
+	print_int(current.id);
+
+	// The destination's type supplies the context, so `{}` is its zero value.
+	last := exchange(inout current, {});
+	print_int(last.id);
+	print_int(current.id);
+}
+
 main :: proc() {
 	scope_exit();
 	explicit();
@@ -186,4 +202,5 @@ main :: proc() {
 	replaced(true);
 	replaced(false);
 	discarded();
+	exchanged();
 }

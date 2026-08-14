@@ -622,15 +622,24 @@ witness_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id
 	return strings.to_string(b)
 }
 
+// The backend spelling of a witness. Names rather than symbol and type ids: an
+// id shifts whenever anything earlier in the universe or the type store grows,
+// which made every emitted witness name — and the goldens that pin them — churn
+// on unrelated changes. Uniqueness still comes from `witness_key`, which is what
+// the witness map is keyed by; this only has to be stable and readable.
 @(private = "file")
 witness_llvm_name :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id, args: []Generic_Arg) -> string {
 	b := strings.builder_make(c.semantic_allocator)
-	fmt.sbprintf(&b, "@loke.w.i%d.c%d", u32(interface_symbol), u32(concrete))
+	interface_name := "interface"
+	if sym := symbol_of(c, interface_symbol); sym != nil {
+		interface_name = identifier_text(c, sym.name)
+	}
+	fmt.sbprintf(&b, "@loke.w.%s.%s", llvm_safe(interface_name), llvm_safe(type_name(c, concrete)))
 	for arg in args {
 		if arg.is_type {
-			fmt.sbprintf(&b, ".t%d", u32(arg.type))
+			fmt.sbprintf(&b, ".%s", llvm_safe(type_name(c, arg.type)))
 		} else {
-			fmt.sbprintf(&b, ".v%d.%s", u32(arg.value_type), llvm_safe(const_key_text(c, arg.value)))
+			fmt.sbprintf(&b, ".%s", llvm_safe(const_key_text(c, arg.value)))
 		}
 	}
 	return strings.to_string(b)

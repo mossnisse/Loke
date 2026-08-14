@@ -184,6 +184,11 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// already gives it.
 	define(c, universe, "drop", Symbol{kind = .Builtin, builtin = .Drop, type = TYPE_VOID, proc_type = no_args})
 
+	// design.md "Exchange": `exchange(inout destination, replacement)`. Its result
+	// type is the destination's, so the interned type carries none and
+	// `check_exchange_builtin` settles both.
+	define(c, universe, "exchange", Symbol{kind = .Builtin, builtin = .Exchange, type = TYPE_VOID, proc_type = no_args})
+
 	// design.md: `hash(value, seed: uint) -> uint` over the built-in types the
 	// standard catalogue promises satisfy `Hashable`. Its operand types are
 	// checked by `check_builtin_call`, so the interned type carries none.

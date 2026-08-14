@@ -1346,6 +1346,26 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	emit_drop_place(e, base.type, slot)
 }
 
+// design.md "Exchange": "The compiler evaluates the destination place once and
+// then evaluates `replacement` completely before modifying the destination. If
+// evaluation or construction of the replacement fails or panics, the destination
+// remains unchanged. Once the replacement is ready, the compiler moves the old
+// value into result storage and moves the replacement into the destination as one
+// lifecycle operation."
+//
+// So the order below is the specification: address, replacement, load, store. No
+// hook runs between the two moves — the old value is handed back rather than
+// dropped, and the destination is never observably dead.
+@(private = "file")
+emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	address := emit_address(e, v.bound[0])
+	replacement := emit_expr(e, v.bound[1])
+	previous := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", previous, llvm_type(e, v.type), address)
+	store(e, v.type, replacement, address)
+	return previous
+}
+
 // design.md "Assignment statements": `move` "transfers the representation,
 // writes the inert zero representation to a lexical source, and marks that
 // source dead".
@@ -2874,6 +2894,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		case .Drop:
 			emit_explicit_drop(e, v)
 			return "0"
+		case .Exchange:
+			return emit_exchange(e, v)
 		case .Free:
 			emit_free(e, v)
 			return "0"

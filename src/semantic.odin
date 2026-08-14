@@ -478,6 +478,10 @@ Builtin_Kind :: enum {
 	// keyword" — a compiler special form over a storage location, which is why it
 	// is a built-in rather than an ordinary procedure (m5a-plan step 4).
 	Drop,
+	// design.md "Exchange": replaces a definitely live value and returns the
+	// previous one without cloning it. Also a special form, because no ordinary
+	// signature can express "moves both ways with nothing observable between".
+	Exchange,
 }
 
 Symbol :: struct {
