@@ -15,8 +15,9 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M5a, planned in
-[m5a-plan.md](m5a-plan.md), after M4b in [m4b-plan.md](m4b-plan.md), M4a in
+[compiler-plan.md](compiler-plan.md); the current milestone is M5b, planned in
+[m5b-plan.md](m5b-plan.md), after M5a in [m5a-plan.md](m5a-plan.md), M4b in
+[m4b-plan.md](m4b-plan.md), M4a in
 [m4a-plan.md](m4a-plan.md), M3 in
 [m3-plan.md](m3-plan.md), M2 in [m2-plan.md](m2-plan.md), M1 in
 [m1-plan.md](m1-plan.md) and M0 in [m0-plan.md](m0-plan.md).
@@ -153,8 +154,47 @@ M5a adds managed values — visibility, slices, and lifecycle:
 - copy-cost warnings at the four copy sites, configurable with `-copy-cost=N`,
   which stay silent for a managed parameter borrow, a scalar, and a temporary.
 
-Borrow provenance is M5b's: a slice may still outlive the root it views, `free`
-accepts only a direct fresh-result binding, and `free_all` is gated.
+M5b adds the two provenance analyses that consume those lifecycle facts. They
+share one control-flow view and one event stream, but answer different questions
+and fail with different diagnostics:
+
+- root provenance follows every borrow carrier — `^T`, `[]T`, `[]mut T`,
+  `any_view`, `dyn`, and parameter access — from its creation to the last use of
+  any copy, across branches and through an overwrite that ends only the value
+  that was overwritten. A place is a root plus a normalized projection path, so
+  distinct struct fields and provably distinct constant ranges carry independent
+  loans while dynamic indices, union subjects, opaque dereferences and
+  user-defined addressing overlap conservatively. Reading, writing, moving,
+  dropping, freeing, assigning, exchanging, or calling an `inout self` operation
+  on a borrowed root is rejected with the root, the borrow's creation, the
+  conflicting operation, and the later use that keeps it live;
+- temporaries get the lifetimes design.md gives them — the complete expression,
+  or the complete statement inside a control-flow header — and a borrow of a
+  local, a temporary, a slice literal, or a parameter binding cannot be returned,
+  while a static, materialized or freshly allocated root can;
+- result-provenance summaries record, per result, which borrowed parameters,
+  static storage, or fresh allocation it may name. They are collected by
+  rebuilding each body read-only and solving to a whole-program fixed point, so
+  forward and mutually recursive declarations settle identically whatever the
+  source order, and a direct call — across a package or a generic instance —
+  substitutes its own arguments. A call through a procedure value has no summary,
+  so its result derives from every borrowed argument and loses fresh-allocation
+  identity;
+- `free` takes any pointer whose provenance proves it is an allocation base,
+  consumes it, and rejects every alias that survives;
+- region provenance gives allocator values a region identity, propagates it into
+  allocation roots and owning results constructed with an allocator argument,
+  rejects such an owner stored in longer-lived static storage, verifies
+  `@(allocator_reset)` transitively, and carries the effect in the procedure type
+  so an indirect call keeps it. `free_all` is accepted when nothing survives the
+  reset — not when everything was already freed — and lowers to the provider's
+  reset entry.
+
+design.md's [What is not checked](design.md#what-is-not-checked) list is the
+deliberate boundary and stays that way: a borrow stored in a global, a record
+field, or callback state, a retained argument, `rawptr`/`[^]T`/unknown `^T`,
+`core:unsafe`, and cross-thread transfer are the programmer's responsibility, and
+each keeps a fixture proving it still compiles.
 
 Everything else — runtime `string` and `string_view`, slices, dynamic arrays,
 maps, multi-pointers, and `#location`/`#caller_location` — parses and reports one

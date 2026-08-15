@@ -28,6 +28,21 @@ constant_escapes :: proc() -> []int {
 	return views.constant_view();
 }
 
+// The reset effect crossed the package boundary: handing this body's own
+// allocator to an imported reset-capable procedure needs the same promise here.
+resets_across_a_package :: proc(allocator: Allocator) {
+	views.release(allocator);
+}
+
+// The promise written, the call is accepted; the allocation has no surviving
+// carrier, so the reset releases it.
+marked_across_a_package :: proc(@(allocator_reset) allocator: Allocator) {
+	pointer, err := new(int, allocator);
+	if (err != nil) { return; }
+	pointer^ = 1;
+	views.release(allocator);
+}
+
 main :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	view := views.first_half(numbers[:]);

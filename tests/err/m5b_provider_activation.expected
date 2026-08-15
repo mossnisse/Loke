@@ -1,0 +1,9 @@
+L0526
+@29:9
+this slice cannot be returned: `bytes` ends when this procedure returns
+L0536
+@47:2
+`held` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage, which outlives that region
+L0350
+@52:2
+this construct parses, but is not compiled yet in this milestone

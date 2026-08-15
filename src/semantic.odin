@@ -72,9 +72,9 @@ TYPE_STRING_VIEW :: Type_Id(31)
 // unqualified, and a compiler-owned identity is what lets that source compile
 // against real types (m5a-plan decision "Allocator representation").
 //
-// `Allocator` is a one-word nominal handle. Its M5a value always denotes the
+// `Allocator` is a one-word nominal handle. Its M5 value always denotes the
 // single default CRT provider; per-expression region identity is semantic
-// metadata that M5b adds, not part of the type or the ABI.
+// metadata in `src/borrow.odin`, not part of the type or the ABI.
 TYPE_ALLOCATOR :: Type_Id(32)
 // A nil-comparable error code. Nil is success, so `err != nil` is the whole
 // interface an explicitly fallible operation needs.
@@ -468,9 +468,8 @@ Builtin_Kind :: enum {
 	Iter,
 	// design.md "Allocators" and "Allocation failure". The explicitly fallible
 	// primitives always return an error and never invoke a failure policy;
-	// `free` returns no status. `free_all` is registered and type-checked in M5a
-	// but gated before lowering, because a region reset cannot be admitted until
-	// M5b proves no live dependant belongs to the region.
+	// `free` returns no status. `free_all` lowers to the provider's reset entry
+	// once region provenance has proved no dependant survives it.
 	New,
 	New_Clone,
 	Free,
@@ -1162,8 +1161,8 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	     .Map, .Interface:
 		return false
 	case .Slice:
-		// A slice is a supported runtime carrier from M5a; its borrow provenance
-		// is M5b's, not a reason to reject the value (m5a-plan step 2).
+		// A slice is a supported runtime carrier, and its borrow provenance is
+		// checked by `src/borrow.odin` rather than restricted here.
 		return type_is_supported_depth(c, info.element, depth + 1)
 	case .Union:
 		for variant in info.variants {

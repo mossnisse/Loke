@@ -7,3 +7,6 @@ this slice cannot be returned: `numbers` ends when this procedure returns
 L0511
 @22:2
 this write of `numbers` is not compatible with the read-only slice of it that is still in use
+L0538
+@34:2
+this call may reset `allocator`, so `allocator` must be marked `@(allocator_reset)`

@@ -1,0 +1,29 @@
+package main;
+
+// design.md: `free_all` "frees every allocation in the allocator's region". It
+// lowers to one indirect call through the provider's reset entry, never to a
+// guessed sequence of `free` calls: only the provider knows what its region
+// holds. The M5 default provider's entry traps, which is why the reset thunk is
+// still `unreachable` here (m5b-plan step 3).
+
+release :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+// Provenance changes no cleanup lowering: this managed local still drops once on
+// the way out, exactly as it did before the analysis existed.
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { self.id = 0; }
+}
+
+kept :: proc() -> int {
+	value := Res{1};
+	return value.id;
+}
+
+main :: proc() {
+	print_int(kept());
+	release(default_allocator());
+}

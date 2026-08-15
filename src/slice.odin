@@ -11,11 +11,9 @@
 // instead of growing a second aggregate mechanism.
 //
 // A slice is a *borrow*: it has no allocator, no cleanup, and cannot be a
-// `manual` owner. M5a implements its whole value, layout, bounds, and capability
-// behavior and records the borrowed root only as an annotation; M5b turns that
-// annotation into last-use, overlap, invalidation, and escape checking. Until
-// then, invalidating a sliced root or returning a local-root slice is the
-// documented compatibility gap (m5a-plan decision "Slice boundary").
+// `manual` owner. Its value, layout, bounds and capability behavior are here;
+// the root it borrows, its last use, and what may touch that root meanwhile are
+// `src/borrow.odin`'s (m5b-plan step 1).
 package lokec
 
 SLICE_DATA :: 0

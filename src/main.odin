@@ -9,7 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M5a)
+USAGE :: `lokec - the Loke compiler (milestone M5b)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -55,10 +55,21 @@ C runtime; and copy-cost warnings at the four copy sites.
 Evaluation is bounded at 1000000 steps, 256 frames and 64 MiB of scratch memory.
 Generic instantiation is bounded at 64 deep and 4096 instances.
 
+M5b adds the two provenance analyses. Root provenance follows every borrow
+carrier - pointers, slices, any_view, dyn and parameter access - from its
+creation to the last use of any copy, enforces compatible access and mutable
+exclusivity over normalized projection paths, and rejects a borrow that outlives
+its root or escapes its procedure. Result-provenance summaries carry the answer
+across direct calls, packages and generic instances, and settle to a fixed point
+independent of source order. Region provenance gives allocator values a region
+identity, verifies @(allocator_reset) transitively and through procedure types,
+and activates free_all once nothing survives the reset.
+
 Runtime string and string_view, dynamic arrays, maps, multi-pointers, via
 allocator policies, and #location/#caller_location parse and report one
-diagnostic. Borrow provenance is M5b: a slice may still outlive the root it
-views, free accepts only a direct fresh-result binding, and free_all is gated.
+diagnostic. Storing a borrow in a global, a record field or callback state,
+raw and unknown pointers, and cross-thread transfer are the documented v1 trust
+boundaries and are not checked.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
 directly in it as one package.

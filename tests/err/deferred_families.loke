@@ -1,9 +1,9 @@
 package main;
 
-// One `L0350` per deferred outer construct, and no descent into it. Every
-// family M5a leaves for a later milestone keeps exactly one entry here. Slices
-// are no longer among them: M5a implements their value and capability behavior,
-// and only their borrow provenance waits for M5b.
+// One `L0350` per deferred outer construct, and no descent into it. This is the
+// single M6 gate fixture for runtime string views and managed containers, whose
+// carrier and invalidation hooks `src/borrow.odin` already has. Slices are no
+// longer here: M5a implements their behavior and M5b their provenance.
 Walker :: struct { cursor: [^]int }
 
 Viewer :: struct { text: string_view }

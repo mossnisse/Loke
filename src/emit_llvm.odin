@@ -270,9 +270,10 @@ emit_preamble :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare ptr @calloc(i64, i64)")
 	fmt.sbprintln(&e.b, "declare ptr @malloc(i64)")
 	fmt.sbprintln(&e.b, "declare void @free(ptr)")
-	// The one provider handle an M5a `Allocator` value denotes. Its single slot is
+	// The one provider handle an M5 `Allocator` value denotes. Its single slot is
 	// the region-reset entry, which traps: this provider has no reset support, a
-	// different thing from M5b's "unsafe while the region has live dependants".
+	// different thing from "unsafe while the region has live dependants", which
+	// region provenance rejects at compile time.
 	fmt.sbprintfln(&e.b, "%s = private unnamed_addr constant [1 x ptr] [ ptr %s ]", CRT_ALLOCATOR_GLOBAL, CRT_RESET_THUNK)
 	fmt.sbprintln(&e.b, "")
 }

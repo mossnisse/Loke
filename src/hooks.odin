@@ -124,7 +124,7 @@ type_is_managed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // A tagged union needs tag-aware clone/drop lowering so that only its active
 // variant is touched; reject any runtime position that would require that
 // lowering instead of letting it reach the backend as a managed value with no
-// hook. M5b does not change this boundary.
+// hook. Provenance does not change this boundary.
 type_contains_managed_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	seen := make(map[Type_Id]bool, allocator = context.temp_allocator)
 	return type_contains_managed_union_inner(c, type, &seen)

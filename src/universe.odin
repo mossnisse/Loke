@@ -146,8 +146,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 
 	// design.md "Allocators": the explicitly fallible primitives. Their operand
 	// types and arity are checked by `check_builtin_call`, so the interned type
-	// carries none. `free_all` is registered and type-checked here but gated
-	// before lowering until M5b's region analysis exists.
+	// carries none.
 	allocation := []struct{name: string, kind: Builtin_Kind} {
 		{"new", .New},
 		{"new_clone", .New_Clone},

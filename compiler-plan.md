@@ -270,7 +270,7 @@ as each milestone starts.
 | **M4a** | **User abstractions** ([B8](#b8-type-checking--overload-resolution)), planned in [m4a-plan.md](m4a-plan.md). One overload-resolution engine — viability, conversion-rank vectors, tie-breakers — shared by procedure groups, `impl`/`extend` methods, user operators, `delegate`, indexing, and `init` conversions including `@(implicit)`; unions with assertions, type switches, `or_else`, and `or_return`. Concrete types only: nothing here instantiates a declaration. | User operators, methods, and `init` conversion work at concrete types; an ambiguous call lists every maximal candidate with its vector and failing tie-breaker; an `extend` block changes lookup only in its own package; unions round-trip, assertions trap or yield comma-ok by position, and `or_return` propagates through named results with `defer` in order. |
 | **M4b** | **Generics, interfaces & erased views** ([B9](#b9-generics-interfaces--specialization)), planned in [m4b-plan.md](m4b-plan.md). Declaration cloning, `$`/inference, specialization, `where`, and monomorphization; interfaces with per-requirement diagnostics and the unmanaged portion of the catalogue as ordinary Loke source; reflection and static `foreach`; `foreach` over ranges, fixed arrays, and the user iteration protocol; `typeid`, `any_view`, and `dyn` witnesses. Reflection filters struct fields by package/public visibility at its lookup package. Ordinary field access and construction temporarily retain M4a behavior and remain unfiltered until M5a. Managed types remain absent, so `Cloneable`, iteration over slices/maps/strings, `..any_view`, and lifecycle hooks stay with the milestone that introduces their dependencies. | A generic container instantiated twice yields independent instances with distinct symbols; a failed interface bound names the requirement line and the concrete type; a caller-local `extend` cannot reach into an instantiation; cross-package reflection omits package-visible fields and static expansion type-checks a different field type per visible copy; `any_view` and `dyn` obey their representation and dispatch rules, with borrow/escape checking deferred to M5b and the boundary stated. |
 | **M5a** *(implemented)* | **Visibility, slices, and lifecycle** ([B11](#b11-ownership-move--lifecycle-analysis)), planned in [m5a-plan.md](m5a-plan.md). Apply one package/public rule to reflection, ordinary field reads/writes, `offset_of`, and aggregate construction. Add complete slice value/capability behavior and constant materialization; fixed lifecycle hooks, ownership/move/deep-copy, parameter/result transfer, drop insertion, storage modifiers, copy-cost diagnostics, allocator semantic types, and a minimal default-CRT `new`/`new_clone`/safe-direct-`free` path. Full provenance, copied-root `free`, and region reset remain M5b. | Reflection and ordinary access agree across package boundaries; slices, literals, iteration, and read-only materialization run; a resource drops exactly once on every normal exit in one LIFO order with `defer`; move kills its source, conditional liveness cleans up correctly, deep copy preserves a live destination on failure, all four copy sites are diagnosed, and `Cloneable` compiles against real lifecycle and allocator types. |
-| **M5b** | **Borrows, provenance, and allocator regions** ([B12](#b12-borrow--lifetime-checker)), planned in [m5b-plan.md](m5b-plan.md). Propagate root/capability and region provenance over M5a's CFG; enforce last-use borrowing, exclusivity, invalidation, escape, copied allocation-root release, direct/cross-package result summaries, conservative procedure-value results, `free_all`, and transitive `@(allocator_reset)` effects. Close the `any_view`, `dyn`, `inout`-result, `[:]`-result, and slice lifetime gaps. | Invalid root access, local escape, longer-lived region escape, and reset are rejected with diagnostics naming the creation/dependency and conflict; copied allocation bases free once and invalidate aliases; direct and indirect calls preserve the required summaries/effects; every deliberate v1 trust boundary remains tested as accepted. |
+| **M5b** *(implemented)* | **Borrows, provenance, and allocator regions** ([B12](#b12-borrow--lifetime-checker)), planned in [m5b-plan.md](m5b-plan.md). Propagate root/capability and region provenance over M5a's CFG; enforce last-use borrowing, exclusivity, invalidation, escape, copied allocation-root release, direct/cross-package result summaries, conservative procedure-value results, `free_all`, and transitive `@(allocator_reset)` effects. Close the `any_view`, `dyn`, `inout`-result, `[:]`-result, and slice lifetime gaps. | Invalid root access, local escape, longer-lived region escape, and reset are rejected with diagnostics naming the creation/dependency and conflict; copied allocation bases free once and invalidate aliases; direct and indirect calls preserve the required summaries/effects; every deliberate v1 trust boundary remains tested as accepted. |
 | **M6** | **MIR + runtime.** Full lowering ([B13](#b13-lowering-to-mir)) + the seed runtime ([B14](#b14-runtime--core-library)): strings, dynamic arrays, maps, panic/unwind. Iteration over those types, `..any_view` variadics, the type-info table behind `type_info_of`, and `base:meta`/`base:interfaces` as nameable packages land here, on the M4 protocols. | Real programs using the managed stdlib run correctly. |
 | **M7** | **Release + interop.** LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. | Optimized release builds; C libraries link and call. |
 | **M8** | **Later.** Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
@@ -339,10 +339,35 @@ first's nodes, and both features need the same declaration-cloning facility.
 
 M5 splits at the analogous dataflow seam. M5a owns lifecycle state and the
 observable cleanup/copy behavior; M5b owns the root and region relationships
-that require those states. The only narrow bridge is M5a's fresh-allocation-base
-fact, which is sufficient to keep its direct `new`/`free` path safe and is
-subsumed by M5b's general root provenance. Region-wide reset stays gated until
-M5b can prove that no live root, owner, or borrow depends on the region.
+that require those states. The only narrow bridge was M5a's fresh-allocation-base
+fact, which kept its direct `new`/`free` path safe and is now subsumed by M5b's
+general root provenance.
+
+M5b is implemented: `src/cfg.odin`'s structural walk is split from its
+mode-specific actions, so the same block topology serves M5a's lifecycle
+analysis and two read-only provenance rebuilds, and `src/borrow.odin` solves the
+root and region lattices over the provenance event stream that second walk
+records. Root provenance is reaching loans forwards and carrier liveness
+backwards, over places that are a root plus a normalized projection path; region
+provenance is allocator identity, `@(allocator_reset)` verification, and the
+reset liveness proof. Result-provenance summaries are collected by one extra
+read-only rebuild per body and iterated to a whole-program fixed point, so they
+are independent of source order and cross package and generic-instance
+boundaries. `@(allocator_reset)` is interned into the procedure type, which is
+what makes the effect survive an indirect call. Diagnostics `L0511`–`L0514`
+(root access, invalidation, outlived root, allocation base), `L0526` (escape),
+`L0536`–`L0539` (region escape, surviving dependant, unpromised reset, misplaced
+attribute) and `L0547` (mutable user slice) are live; the narrowings taken along
+the way are recorded in [m5b-plan.md](m5b-plan.md).
+
+Two narrowings are worth stating here because they differ from the plan's
+letter. Region identity is flow-insensitive — one entry per allocator binding
+rather than a lattice — because M5 has no source-level provider that creates a
+region, so no two identities can be proven distinct and precision would buy
+nothing until M6 supplies `mem.Arena`. And a reset treats every region-backed
+owner still in scope as a surviving dependant rather than consulting M5a's
+liveness states, which over-blocks a `manual` owner that was explicitly dropped
+first; both are marked at their site and are conservative in the safe direction.
 
 ---
 

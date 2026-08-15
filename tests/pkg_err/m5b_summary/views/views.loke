@@ -24,3 +24,11 @@ TABLE :: [4]int{1, 2, 3, 4};
 constant_view :: proc() -> []int {
 	return TABLE[:];
 }
+
+// design.md: "Across a procedure call the identity is propagated through a
+// parameter marked `@(allocator_reset)`", and the effect is part of the
+// procedure type, so an importer sees it too.
+@(public)
+release :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}

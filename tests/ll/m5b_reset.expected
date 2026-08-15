@@ -1,0 +1,7 @@
+@.crt_allocator = private unnamed_addr constant [1 x ptr] [ ptr @.crt_allocator.reset ]
+%t3 = load ptr, ptr %t2
+call void %t3()
+call void @loke.p.release(ptr @.crt_allocator)
+define private void @.crt_allocator.reset() {
+call void @llvm.trap()
+call void @loke.p.Res.drop(ptr %value.

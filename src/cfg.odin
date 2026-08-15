@@ -698,11 +698,22 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 
 @(private = "file")
 walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
-	walk_flow_expr(graph, s.iterable)
+	iterated := walk_flow_expr(graph, s.iterable)
+	if graph.mode != .Lifecycle {
+		iterated = prov_iterate(graph, s, iterated)
+	}
 	head := new_flow_block(graph)
 	link(graph, graph.current, head)
 	done := new_flow_block(graph)
 	link(graph, head, done)
+	// design.md lists compiler-known iterators among the borrow carriers, and
+	// "conversion to a built-in view and compiler-known iteration preserve the
+	// source root". The read happens once per iteration, so the loan has to be
+	// live through the body, not only where the iterable was written.
+	if len(iterated) > 0 {
+		graph.current = head
+		prov_emit(graph, Prov_Event{kind = .Live, sources = iterated, span = expr_span(s.iterable)})
+	}
 
 	body := new_flow_block(graph)
 	link(graph, head, body)
@@ -1725,6 +1736,27 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, mutable, v.span, "slice")
 	}
 	return nil
+}
+
+// The borrow a `foreach` holds on its iterable. Iterating a carrier reuses the
+// loans it already holds; iterating a place borrows that place, mutably when the
+// binding is written `ref` over a mutable sequence.
+@(private = "file")
+prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> []int {
+	if len(iterated) > 0 {
+		return iterated
+	}
+	root, path, ok := prov_place_of(graph, s.iterable)
+	if !ok {
+		return nil
+	}
+	mutable := false
+	for binding in s.bindings {
+		mutable ||= binding.is_ref
+	}
+	span := expr_span(s.iterable)
+	prov_access(graph, root, path, mutable ? .Write : .Read, span)
+	return prov_borrow(graph, root, path, mutable, span, "iterator")
 }
 
 // A root that ends with the statement that created it.

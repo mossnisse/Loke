@@ -14,6 +14,39 @@
 // in a read-only provenance mode: replaying M5a's lifecycle actions would
 // duplicate its diagnostics and overwrite settled annotations (m5b-plan decision
 // "CFG purity").
+//
+// Which lattice each operation reaches, and why the other one does not
+// (m5b-plan step 5). A blank column is a claim, not an omission.
+//
+//   operation                       root   region  note
+//   ------------------------------- ------ ------- ---------------------------
+//   `&place`                        yes            mutable loan of the place
+//   slicing a place                 yes            capability from the result
+//   reslicing a carrier             yes            keeps the source loans
+//   slicing a value temporary       yes            hidden array, lexical scope
+//   `foreach` over a place          yes            iterator loan, live in body
+//   erasure into `any_view`         yes            read-only loan of the subject
+//   `dyn` conversion                yes            the pointer's own loans
+//   a borrowed parameter            yes            one loan of the caller's root
+//   an `inout` parameter/result     yes            aliases the caller's root
+//   a user `[:]` result             yes            borrows the receiver
+//   reading/writing a place         yes            compatible-access check
+//   `move` / `drop` / `exchange`    yes            invalidates the old value
+//   full assignment                 yes    yes     invalidates; may escape a region
+//   `new` / `new_clone`             yes    yes     allocation root plus its region
+//   `free`                          yes            ends one allocation root
+//   `free_all`                             yes     ends every root in the region
+//   a reset-capable call                    yes     the same effect, propagated
+//   an allocator value                      yes     region identity only
+//   an owning result with an
+//     allocator argument                    yes     no borrow edge at all
+//   a call through a procedure
+//     value                         yes    yes     conservative in both
+//
+// Operations absent from both columns are design.md's "What is not checked":
+// a carrier stored in a record field, a global or callback state, a retained
+// argument, `rawptr`/`[^]T`/unknown `^T`, `core:unsafe`, and cross-thread
+// transfer. `tests/run/m5b_trust_boundary.loke` keeps that list executable.
 package lokec
 
 import "core:fmt"
