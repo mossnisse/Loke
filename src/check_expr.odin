@@ -407,7 +407,7 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 	if sym.decl != nil && (sym.kind == .Const || (sym.kind == .Var && sym.decl.top_level)) {
 		switch sym.decl.check_state {
 		case .Unchecked:
-			check_decl(k, sym.decl)
+			check_symbol_decl_in_place(k, symbol_id)
 			sym = symbol_of(k.c, symbol_id)
 		case .Checking:
 			errorf(k.c, v.span, "L0324", "constant initialisation cycle involving `%s`", v.name)
@@ -445,6 +445,8 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 	}
 	switch sym.kind {
 	case .Type:
+		resolve_symbol_signature_in_place(k, symbol_id)
+		sym = symbol_of(k.c, symbol_id)
 		v.resolution = Resolution{kind = .Type, symbol = symbol_id}
 		v.denoted_type = sym.type
 		v.value_category = .Type
@@ -459,7 +461,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		// demand, so an enum value or array length may call a procedure declared
 		// later in the file.
 		if sym.proc_type == INVALID_TYPE && sym.decl != nil {
-			resolve_declaration_signature(k, sym.decl)
+			resolve_symbol_signature_in_place(k, symbol_id)
 			sym = symbol_of(k.c, symbol_id)
 		}
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
@@ -726,10 +728,7 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 	// phase 3; check it on demand so the use sees a real value.
 	if symbol.decl != nil && symbol.decl.check_state == .Unchecked &&
 	   (symbol.kind == .Const || symbol.kind == .Var) {
-		outer_scope, outer_pkg, outer_file := k.scope, k.pkg, k.file_node
-		k.scope, k.pkg, k.file_node = target.scope, target.id, nil
-		check_decl(k, symbol.decl)
-		k.scope, k.pkg, k.file_node = outer_scope, outer_pkg, outer_file
+		check_symbol_decl_in_place(k, symbol_id)
 	}
 	annotate_symbol_use(k, &v.base, symbol_id, v.name.text)
 }
@@ -1860,6 +1859,13 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 			return
 		}
 	}
+	// Method syntax supplies a consuming receiver's marker implicitly, but it
+	// does not relax `move`'s storage rule. In particular a field/element cannot
+	// be partially moved, and static-duration storage must remain live.
+	if chosen.receiver == .Move && !require_lexical_owner(k, receiver, "move") {
+		v.type = INVALID_TYPE
+		return
+	}
 	sel.resolution = Resolution{kind = .Method, symbol = cand.symbol}
 	sel.type = chosen.proc_type
 	v.resolution = Resolution{kind = .Call, symbol = cand.symbol, chosen_overload = cand.symbol}
@@ -2958,6 +2964,8 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			values[symbol.index] = element.value
 			if !check_value_expr(k, element.value, symbol.type, "initialise") {
 				ok = false
+			} else {
+				classify_composite_element(k, v, index, symbol.type)
 			}
 			continue
 		}
@@ -2984,6 +2992,8 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 		values[index] = element.value
 		if !check_value_expr(k, element.value, symbol.type, "initialise") {
 			ok = false
+		} else {
+			classify_composite_element(k, v, index, symbol.type)
 		}
 	}
 	if !ok {
@@ -3011,6 +3021,8 @@ check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 		values[index] = element.value
 		if !check_value_expr(k, element.value, info.element, "initialise") {
 			ok = false
+		} else {
+			classify_composite_element(k, v, index, info.element)
 		}
 	}
 	if ok {

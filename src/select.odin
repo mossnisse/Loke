@@ -78,13 +78,9 @@ activate_when_items :: proc(k: ^Checker, pkg: ^Package) -> bool {
 	if pkg == nil || pkg.scope == nil {
 		return false
 	}
-	outer_file, outer_file_node := k.file, k.file_node
-	outer_scope, outer_pkg := k.scope, k.pkg
-	defer {
-		k.file, k.file_node = outer_file, outer_file_node
-		k.scope, k.pkg = outer_scope, outer_pkg
-	}
-	k.scope, k.pkg = pkg.scope, pkg.id
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
+	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 
 	progressed := false
 	for file in pkg.files {
@@ -119,13 +115,9 @@ report_stalled_whens :: proc(k: ^Checker, pkg: ^Package) {
 	if pkg == nil || pkg.scope == nil {
 		return
 	}
-	outer_file, outer_file_node := k.file, k.file_node
-	outer_scope, outer_pkg := k.scope, k.pkg
-	defer {
-		k.file, k.file_node = outer_file, outer_file_node
-		k.scope, k.pkg = outer_scope, outer_pkg
-	}
-	k.scope, k.pkg = pkg.scope, pkg.id
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
+	k.scope, k.pkg, k.lookup_pkg = pkg.scope, pkg.id, pkg.id
 
 	for file in pkg.files {
 		pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)

@@ -161,6 +161,10 @@ Compiler :: struct {
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,
 	semantic_allocator:   mem.Allocator,
+	// Per-procedure ownership-analysis scratch, reserved once and reset after
+	// each body. Nothing built in it outlives `analyze_ownership`.
+	analysis_arena:       virtual.Arena,
+	analysis_allocator:   mem.Allocator,
 	identifier_names:     [dynamic]string,
 	identifier_by_name:   map[string]Identifier_Id,
 	types:                [dynamic]Type_Info,

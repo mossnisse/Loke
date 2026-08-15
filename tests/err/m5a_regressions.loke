@@ -1,0 +1,49 @@
+package main;
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { self.id = 0; }
+	consume :: proc(self: move Res) -> int { return self.id; }
+}
+
+Box :: struct { item: Res }
+Managed_Value :: union { Res }
+
+stale_allocation_root :: proc() {
+	p, err := new(int);
+	if (err != nil) { return; }
+	free(p);
+	x := 42;
+	p = &x;
+	free(p);
+}
+
+invalid_receivers :: proc() {
+	static_value: static = Res{1};
+	static_value.consume();
+	box := Box{Res{2}};
+	box.item.consume();
+}
+
+dead_deferred_use :: proc() {
+	value := Res{3};
+	defer print_int(value.id);
+	drop(value);
+}
+
+continue_must_run_post :: proc() {
+	x := Res{4};
+	i := 0;
+	for (; i < 2; drop(x)) {
+		print_int(x.id);
+		i += 1;
+		continue;
+	}
+}
+
+managed_union_copy :: proc() {
+	u: Managed_Value = Res{5};
+	v := u;
+	print_int(v.(Res).id);
+}

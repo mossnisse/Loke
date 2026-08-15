@@ -558,11 +558,11 @@ Symbol :: struct {
 	// A value parameter is immutable storage; an `inout` parameter is a mutable
 	// alias. Both are addressable.
 	immutable:   bool,
-	// design.md "Allocators": this binding was initialised directly by `new` or
-	// `new_clone`, so it carries a fresh allocation base and may be passed to
-	// `free`. M5a's narrow stand-in for root provenance — M5b replaces it with
-	// propagation across pointer copies and derived views, plus alias
-	// invalidation (m5a-plan decision "Minimal allocation-root fact").
+	// design.md "Allocators": this binding originates at a direct `new` or
+	// `new_clone` result (possibly through an explicit-move declaration), so the
+	// M5a CFG tracks an allocation-base fact for it. The boolean is eligibility,
+	// not the fact at every program point: full assignment and `free` update the
+	// dataflow state. M5b replaces this narrow scheme with general provenance.
 	allocation_root: bool,
 	// design.md "Managed values and storage": "A managed local declaration places
 	// an implicit conditional `defer drop(value)` at the declaration point."
@@ -664,6 +664,10 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		panic("cannot reserve the compilation's semantic arena")
 	}
 	c.semantic_allocator = virtual.arena_allocator(&c.semantic_arena)
+	if err := virtual.arena_init_growing(&c.analysis_arena); err != nil {
+		panic("cannot reserve the compilation's analysis arena")
+	}
+	c.analysis_allocator = virtual.arena_allocator(&c.analysis_arena)
 	c.identifier_names = make([dynamic]string, 0, 64, c.semantic_allocator)
 	c.identifier_by_name = make(map[string]Identifier_Id, c.semantic_allocator)
 	c.types = make([dynamic]Type_Info, 0, 64, c.semantic_allocator)
@@ -1378,6 +1382,7 @@ destroy_compilation :: proc(c: ^Compiler) {
 
 	if c.semantic_initialized {
 		virtual.arena_destroy(&c.semantic_arena)
+		virtual.arena_destroy(&c.analysis_arena)
 	}
 	c^ = {}
 }

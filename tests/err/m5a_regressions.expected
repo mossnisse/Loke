@@ -1,0 +1,24 @@
+L0494
+@11:1
+contains a managed union; tag-aware union clone and drop lowering is not implemented in M5a
+L0493
+@19:2
+current value is not the allocation base produced by `new` or `new_clone`
+L0498
+@24:2
+cannot be applied to `static` storage, which is always live
+L0497
+@26:2
+names a variable; move the owner out of the aggregate first
+L0500
+@31:18
+cannot be used here: it has already been moved, dropped, or released
+L0500
+@38:16
+cannot be dropped here: it is live on only some of the paths
+L0500
+@39:13
+cannot be used here: it is live on only some of the paths
+L0494
+@46:2
+contains a managed union; tag-aware union clone and drop lowering is not implemented in M5a

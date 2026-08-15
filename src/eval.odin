@@ -135,23 +135,19 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 		return false // the caller reports the dependency path
 	}
 
-	outer_scope, outer_pkg, outer_file := k.scope, k.pkg, k.file
+	outer_location := save_checker_location(k)
 	outer_proc, outer_results := k.proc_literal, k.result_types
 	outer_result_symbols, outer_named := k.result_symbols, k.named_results
 	outer_loop, outer_switch, outer_defer := k.loop_depth, k.switch_depth, k.in_defer
 	outer_slots := k.defer_slots
 	defer {
-		k.scope, k.pkg, k.file = outer_scope, outer_pkg, outer_file
+		restore_checker_location(k, outer_location)
 		k.proc_literal, k.result_types = outer_proc, outer_results
 		k.result_symbols, k.named_results = outer_result_symbols, outer_named
 		k.loop_depth, k.switch_depth, k.in_defer = outer_loop, outer_switch, outer_defer
 		k.defer_slots = outer_slots
 	}
-	if pkg := package_of(k.c, symbol.pkg); pkg != nil && pkg.scope != nil {
-		k.scope = pkg.scope
-		k.pkg = symbol.pkg
-	}
-	k.file = d.span.file
+	enter_symbol_location(k, symbol)
 	k.proc_literal = nil
 	k.result_types, k.result_symbols, k.named_results = nil, nil, false
 	k.loop_depth, k.switch_depth, k.in_defer = 0, 0, false

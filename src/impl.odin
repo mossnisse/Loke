@@ -360,11 +360,11 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	ensure_lifecycle_members(k, type, name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := type_of(k.c, type); info != nil {
-		expand_visible_members(k, info.members, name, &out)
+		expand_visible_members(k, type, info.members, name, &out)
 	}
 	if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
 		if members, found := pkg.extensions[type]; found {
-			expand_visible_members(k, members, name, &out)
+			expand_visible_members(k, type, members, name, &out)
 		}
 	}
 	return out[:]
@@ -403,14 +403,14 @@ require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: 
 }
 
 @(private = "file")
-expand_visible_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier_Id, out: ^[dynamic]Symbol_Id) {
+expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_Id, name: Identifier_Id, out: ^[dynamic]Symbol_Id) {
 	for member in members {
 		sym := symbol_of(k.c, member)
 		if sym == nil || sym.name != name || !member_is_visible(k, sym) {
 			continue
 		}
 		if sym.decl != nil && sym.decl.sig_state == .Unchecked {
-			resolve_declaration_signature(k, sym.decl)
+			resolve_symbol_signature_in_place(k, member, subject)
 			sym = symbol_of(k.c, member)
 		}
 		if sym.kind == .Proc_Group {
@@ -546,24 +546,5 @@ check_member_decl_in_place :: proc(k: ^Checker, member: Symbol_Id, subject: Type
 	if sym == nil || sym.decl == nil {
 		return
 	}
-	saved_scope, saved_impl := k.scope, k.impl_type
-	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
-	saved_file, saved_node := k.file, k.file_node
-	defer {
-		k.scope, k.impl_type = saved_scope, saved_impl
-		k.pkg, k.lookup_pkg = saved_pkg, saved_lookup
-		k.file, k.file_node = saved_file, saved_node
-	}
-	if sym.def_scope != nil {
-		k.scope = sym.def_scope
-	}
-	if sym.def_file_node != nil {
-		k.file, k.file_node = sym.def_file, sym.def_file_node
-	}
-	if sym.pkg != INVALID_PACKAGE {
-		k.pkg = sym.pkg
-		k.lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg
-	}
-	k.impl_type = subject
-	check_decl(k, sym.decl)
+	check_symbol_decl_in_place(k, member, subject)
 }

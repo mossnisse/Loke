@@ -1,0 +1,10 @@
+package lib;
+
+Flag :: struct { value: bool }
+
+impl Flag {
+	is_set :: proc(self) -> bool { return self.value; }
+}
+
+@(public)
+VALUE :: Flag{true}.is_set();

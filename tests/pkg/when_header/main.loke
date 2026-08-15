@@ -1,0 +1,11 @@
+package main;
+
+import "./lib";
+
+when (lib.VALUE) {
+	SELECTED :: 7;
+}
+
+main :: proc() {
+	print_int(SELECTED);
+}

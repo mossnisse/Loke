@@ -351,6 +351,72 @@ has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
 
 // ---------------------------------------------------------- signatures --
 
+// The location-dependent part of Checker state. On-demand checking is used by
+// constants, compile-time evaluation, associated members, and staged `when`
+// selection; every one of those paths must resolve names with the declaration's
+// own scope, file, package, and extension visibility.
+Checker_Location :: struct {
+	scope:      ^Scope,
+	pkg:        Package_Id,
+	lookup_pkg: Package_Id,
+	impl_type:  Type_Id,
+	file:       u32,
+	file_node:  ^File,
+}
+
+save_checker_location :: proc(k: ^Checker) -> Checker_Location {
+	return Checker_Location {
+		scope = k.scope, pkg = k.pkg, lookup_pkg = k.lookup_pkg,
+		impl_type = k.impl_type, file = k.file, file_node = k.file_node,
+	}
+}
+
+restore_checker_location :: proc(k: ^Checker, saved: Checker_Location) {
+	k.scope, k.pkg, k.lookup_pkg = saved.scope, saved.pkg, saved.lookup_pkg
+	k.impl_type, k.file, k.file_node = saved.impl_type, saved.file, saved.file_node
+}
+
+enter_symbol_location :: proc(k: ^Checker, sym: ^Symbol, subject := INVALID_TYPE) {
+	if sym == nil {
+		return
+	}
+	if sym.def_scope != nil {
+		k.scope = sym.def_scope
+	}
+	if sym.def_file_node != nil {
+		k.file, k.file_node = sym.def_file, sym.def_file_node
+	}
+	if sym.pkg != INVALID_PACKAGE {
+		k.pkg = sym.pkg
+		k.lookup_pkg = sym.lookup_pkg == INVALID_PACKAGE ? sym.pkg : sym.lookup_pkg
+	}
+	if subject != INVALID_TYPE {
+		k.impl_type = subject
+	}
+}
+
+resolve_symbol_signature_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, subject := INVALID_TYPE) {
+	sym := symbol_of(k.c, symbol_id)
+	if sym == nil || sym.decl == nil || sym.decl.sig_state != .Unchecked {
+		return
+	}
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
+	enter_symbol_location(k, sym, subject)
+	resolve_declaration_signature(k, sym.decl)
+}
+
+check_symbol_decl_in_place :: proc(k: ^Checker, symbol_id: Symbol_Id, subject := INVALID_TYPE) {
+	sym := symbol_of(k.c, symbol_id)
+	if sym == nil || sym.decl == nil {
+		return
+	}
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
+	enter_symbol_location(k, sym, subject)
+	check_decl(k, sym.decl)
+}
+
 resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	if d.sig_state != .Unchecked {
 		return // resolved, or already on the stack below this call
@@ -782,6 +848,8 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			return INVALID_TYPE
 		}
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil && symbol.kind == .Type {
+			resolve_symbol_signature_in_place(k, symbol_id)
+			symbol = symbol_of(k.c, symbol_id)
 			value.symbol = symbol_id
 			value.denoted_type = symbol.type
 			value.resolution = Resolution{kind = .Type, symbol = symbol_id}
@@ -791,7 +859,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		// A type alias is a constant whose value is a type: `Alias :: u32`.
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil && symbol.kind == .Const {
 			if symbol.decl != nil && symbol.decl.check_state == .Unchecked {
-				check_decl(k, symbol.decl)
+				check_symbol_decl_in_place(k, symbol_id)
 				symbol = symbol_of(k.c, symbol_id)
 			}
 			if symbol.const_value.kind == .Type {
@@ -1077,6 +1145,16 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	}
 	if !type_is_supported(k.c, type) {
 		unsupported_construct(k, span)
+		return false
+	}
+	if type_contains_managed_union(k.c, type) {
+		errorf(
+			k.c,
+			span,
+			"L0494",
+			"`%s` contains a managed union; tag-aware union clone and drop lowering is not implemented in M5a",
+			type_name(k.c, type),
+		)
 		return false
 	}
 	return true

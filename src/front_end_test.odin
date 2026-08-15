@@ -1161,3 +1161,46 @@ semantic_arena_serves_maps_and_large_blocks :: proc(t: ^testing.T) {
 		testing.expectf(t, symbol_of(&c, id) != nil, "symbol %d was given an ID it was never stored under", i)
 	}
 }
+
+@(test)
+ownership_worklist_converges_past_sixty_four_back_edges :: proc(t: ^testing.T) {
+	b: strings.Builder
+	strings.builder_init(&b)
+	fmt.sbprintln(&b, "package main;")
+	fmt.sbprintln(&b, "Box :: struct { value: int }")
+	fmt.sbprintln(&b, "impl Box { drop :: proc(self: inout Box) {} }")
+	fmt.sbprintln(&b, "main :: proc() {")
+	fmt.sbprintln(&b, "x := Box{1};")
+	for _ in 0 ..< 70 {
+		fmt.sbprintln(&b, "for (true) {")
+	}
+	fmt.sbprintln(&b, "y := move(x);")
+	fmt.sbprintln(&b, "break;")
+	for depth := 69; depth >= 0; depth -= 1 {
+		fmt.sbprintln(&b, "}")
+		if depth > 0 {
+			fmt.sbprintln(&b, "break;")
+		}
+	}
+	fmt.sbprintln(&b, "print_int(x.value);")
+	fmt.sbprintln(&b, "}")
+
+	c := test_compiler(strings.to_string(b))
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	pkg_id := new_package(&c, f.package_name, "<deep-flow-test>")
+	add_package_file(&c, pkg_id, &f)
+	check_one_package(&c, pkg_id)
+
+	found := false
+	for diagnostic in c.diagnostics {
+		if diagnostic.code == "L0500" {
+			found = true
+			break
+		}
+	}
+	testing.expect(t, found, "deep ownership flow stopped before reporting the moved-value use")
+}

@@ -271,6 +271,10 @@ Expr_Composite :: struct {
 	using base: Expr_Base,
 	type_expr:  Expr,
 	elements:   []Element,
+	// A borrowed managed element has value semantics: constructing the aggregate
+	// clones it, while a temporary or explicit move transfers it. Kept parallel
+	// to `elements` so the backend never has to reclassify ownership.
+	element_clones: []bool,
 	// A slice literal's hidden fixed-array root (design.md "Slice literals"). The
 	// literal's own `type` is the slice; this is the `[N]T` the backend gives
 	// storage and then slices. INVALID_TYPE for every other literal.

@@ -120,6 +120,46 @@ type_is_managed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return lifecycle_of(c, type).managed
 }
 
+// M5a implements recursive lifecycle operations for records and fixed arrays.
+// A tagged union needs tag-aware clone/drop lowering so that only its active
+// variant is touched; reject any runtime position that would require that
+// lowering instead of letting it reach the backend as a managed value with no
+// hook. M5b does not change this boundary.
+type_contains_managed_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	seen := make(map[Type_Id]bool, allocator = context.temp_allocator)
+	return type_contains_managed_union_inner(c, type, &seen)
+}
+
+@(private = "file")
+type_contains_managed_union_inner :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> bool {
+	under := type_underlying(c, type)
+	if seen[under] {
+		return false
+	}
+	seen[under] = true
+	info := type_of(c, under)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Union:
+		return lifecycle_of(c, type).managed
+	case .Array, .Slice, .Dynamic_Array:
+		return type_contains_managed_union_inner(c, info.element, seen)
+	case .Map:
+		return type_contains_managed_union_inner(c, info.key, seen) ||
+		       type_contains_managed_union_inner(c, info.element, seen)
+	case .Struct:
+		for field in info.fields {
+			sym := symbol_of(c, field)
+			if sym != nil && type_contains_managed_union_inner(c, sym.type, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // design.md: a move-only type — `try_clone :: ---` — has neither copy entry
 // point, so assignment, copy initialization, and a borrowed-parameter return all
 // have to say so rather than silently producing a shallow copy.
@@ -315,7 +355,9 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 
 // ------------------------------------------------------- allocation roots --
 
-// Does this binding carry the fresh-allocation-base fact `free` requires?
+// Is this binding one of the narrow forms for which M5a follows an allocation
+// fact? The current fact is answered by the ownership CFG; a later assignment
+// may have replaced this binding's value.
 symbol_is_allocation_root :: proc(k: ^Checker, id: Symbol_Id) -> bool {
 	sym := symbol_of(k.c, id)
 	return sym != nil && sym.allocation_root

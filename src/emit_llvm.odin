@@ -42,6 +42,7 @@ Emitter :: struct {
 	c:    ^Compiler,
 	b:    strings.Builder,
 	next: int, // temporary and unique-name counter
+	failed: bool,
 	// Backend names are an emitter concern. Semantic symbols remain reusable by
 	// MIR, interpreters, and multiple backend invocations.
 	names:        map[Symbol_Id]string,
@@ -69,10 +70,34 @@ Emitter :: struct {
 }
 
 emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int {
+	module, generated := emit_llvm_module(c, package_id)
+	if !generated {
+		return 2
+	}
+	ll_path := replace_ext(opts.output, ".ll")
+	if !os.write_entire_file(ll_path, transmute([]u8)module) {
+		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
+		return 2
+	}
+	if opts.emit_ll {
+		fmt.printfln("wrote %s", ll_path)
+		return 0
+	}
+	defer if !opts.keep_temps {
+		os.remove(ll_path)
+	}
+
+	return link(c, ll_path, opts.output)
+}
+
+// Pure module generation boundary: lowering and LLVM serialization consume the
+// checked compilation and return bytes in memory. Filesystem policy and the
+// external toolchain remain in `emit_package` above.
+emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool) {
 	pkg := package_of(c, package_id)
 	if pkg == nil {
 		errorf(c, no_span(), "L0404", "cannot emit an unknown package")
-		return 2
+		return "", false
 	}
 	e := Emitter {
 		c            = c,
@@ -106,21 +131,19 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 	emit_crt_reset_thunk(&e)
 	emit_witnesses(&e)
 	emit_entry(&e)
+	if e.failed {
+		return "", false
+	}
+	return strings.to_string(e.b), true
+}
 
-	ll_path := replace_ext(opts.output, ".ll")
-	if !os.write_entire_file(ll_path, transmute([]u8)strings.to_string(e.b)) {
-		errorf(c, no_span(), "L0401", "cannot write `%s`", ll_path)
-		return 2
+@(private = "file")
+backend_fail :: proc(e: ^Emitter, message: string) {
+	if e.failed {
+		return
 	}
-	if opts.emit_ll {
-		fmt.printfln("wrote %s", ll_path)
-		return 0
-	}
-	defer if !opts.keep_temps {
-		os.remove(ll_path)
-	}
-
-	return link(c, ll_path, opts.output)
+	e.failed = true
+	errorf(e.c, no_span(), "L0405", "internal backend contract violation: %s", message)
 }
 
 @(private = "file")
@@ -794,7 +817,8 @@ emit_global :: proc(e: ^Emitter, pkg: ^Package, d: ^Decl) {
 		} else {
 			zero, ok := zero_const(e.c, sym.type)
 			if !ok {
-				panic("a global type the checker did not gate reached the backend")
+				backend_fail(e, "a global type was not gated by the checker")
+				continue
 			}
 			value = llvm_const(e, zero, sym.type)
 		}
@@ -902,7 +926,8 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	if !named {
 		// Every declared and hoisted procedure is named before any body is
 		// emitted, so arriving here would mean emitting one nothing can call.
-		panic("a procedure reached emission without a mangled name")
+		backend_fail(e, "a procedure has no mangled name")
+		return
 	}
 
 	e.result_types = symbol.results
@@ -1262,7 +1287,8 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 			// The checker's L0350 arm gates every statement missing here, so this
 			// is a hole in that gate — and skipping it would emit a program that
 			// silently does less than the source says.
-			panic("a statement the checker did not gate reached the backend")
+			backend_fail(e, "an unresolved statement reached emission")
+			return
 		}
 		emit_foreach(e, s)
 	}
@@ -1374,7 +1400,8 @@ kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 	ident, is_ident := v.bound[0].(^Expr_Ident)
 	if !is_ident {
-		panic("`drop` reached the backend without a named operand")
+		backend_fail(e, "`drop` has no named operand")
+		return
 	}
 	sym := symbol_of(e.c, ident.symbol)
 	if sym == nil {
@@ -1975,7 +2002,8 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	hook := type_hook(e.c, type, "clone")
 	if hook == INVALID_SYMBOL {
-		panic("an implicit copy reached the backend without a `clone` member")
+		backend_fail(e, "an implicit copy has no `clone` member")
+		return "0"
 	}
 	out := temp(e)
 	fmt.sbprintfln(
@@ -2041,7 +2069,8 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		if name, ok := e.names[v.symbol]; ok {
 			return name
 		}
-		panic("a resolved place has no backend storage")
+		backend_fail(e, "a resolved place has no storage")
+		return "null"
 
 	case ^Expr_Postfix:
 		pointer := emit_expr(e, v.operand)
@@ -2276,7 +2305,8 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		out := temp(e)
 		address, ok := e.names[v.symbol]
 		if !ok {
-			panic("a resolved value has no backend storage")
+			backend_fail(e, "a resolved value has no storage")
+			return "0"
 		}
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, v.type), address)
 		return out
@@ -2361,7 +2391,8 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	}
 	// Same gate as `emit_stmt`: returning `0` here would compile silently and
 	// produce the wrong answer.
-	panic("an expression the checker did not gate reached the backend")
+	backend_fail(e, "an unresolved expression reached emission")
+	return "0"
 }
 
 // design.md "Slice literals": "The backing array of a slice literal is a hidden
@@ -2419,6 +2450,9 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 			element_type = symbol_of(e.c, info.fields[slot]).type
 		}
 		value := emit_expr(e, element.value)
+		if index < len(v.element_clones) && v.element_clones[index] {
+			value = emit_clone_value(e, element_type, value)
+		}
 		field_address := temp(e)
 		fmt.sbprintfln(
 			&e.b,
@@ -2936,7 +2970,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		case .Iter:
 			// The checker rewrote the call to name the chosen `iter` overload, so
 			// this arm is only reachable if that failed.
-			panic("an `iter` call reached the backend without a chosen overload")
+			backend_fail(e, "an `iter` call has no chosen overload")
+			return "0"
 		case .Len:
 			// Only a slice reaches here; every other `len` folded. The length is
 			// the second word.
@@ -2963,12 +2998,14 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return "0"
 		case .Free_All:
 			// The checker gates every call with its M5b diagnostic.
-			panic("`free_all` reached the backend, but M5a gates every call")
+			backend_fail(e, "`free_all` reached the M5a backend")
+			return "0"
 		case .None, .Size_Of, .Align_Of, .Offset_Of,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here
 			// would mean emitting `print_int` for a layout query.
-			panic("a built-in the checker did not fold reached the backend")
+			backend_fail(e, "an unfrozen compile-time built-in reached emission")
+			return "0"
 		}
 	}
 	results := emit_multi_call(e, v)
@@ -3230,7 +3267,10 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	place_label(e, clone_label)
 	hook := type_hook(e.c, v.alloc_type, "try_clone")
 	if hook == INVALID_SYMBOL {
-		panic("a fallible `new_clone` reached the backend without a `try_clone` member")
+		backend_fail(e, "a fallible `new_clone` has no `try_clone` member")
+		failed := make([]string, 2)
+		failed[0], failed[1] = "null", "1"
+		return failed
 	}
 	pair := clone_pair_type(value_type)
 	returned := temp(e)
@@ -3853,7 +3893,8 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		limit = length
 
 	case .Unresolved, .Static, .Protocol:
-		panic("a `foreach` the checker did not resolve reached the backend")
+		backend_fail(e, "an unresolved `foreach` reached emission")
+		return
 	}
 
 	head := new_label(e, "foreach.head")
@@ -4365,7 +4406,8 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 	if hook == INVALID_SYMBOL {
 		// `type_clone_is_fallible` said this part reaches a custom hook, so the
 		// contribution pass owed it one.
-		panic("a fallible clone part reached the backend without a `try_clone` member")
+		backend_fail(e, "a fallible clone part has no `try_clone` member")
+		return "0", "1"
 	}
 	part_type := llvm_type(e, part)
 	pair := clone_pair_type(part_type)
@@ -4398,7 +4440,8 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	hook := type_hook(e.c, subject, "try_clone")
 	if hook == INVALID_SYMBOL {
-		panic("a generated `clone` reached the backend without a `try_clone` member")
+		backend_fail(e, "a generated `clone` has no `try_clone` member")
+		return
 	}
 	returned := temp(e)
 	fmt.sbprintfln(

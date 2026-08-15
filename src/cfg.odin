@@ -14,6 +14,9 @@
 // per cleanup point instead of reconstructing which scopes an abrupt jump left.
 package lokec
 
+import "core:mem"
+import "core:slice"
+
 Block_Id :: distinct int
 
 Flow_Event_Kind :: enum {
@@ -38,15 +41,46 @@ Flow_Event :: struct {
 	// the reader wrote. Which earlier operation consumed the binding is not
 	// tracked: the states are a lattice, not a history.
 	verb:   string,
+	// M5a's narrow allocation-base fact follows only a direct allocation and a
+	// chain of explicit moves. It is dataflow state, not a permanent property of
+	// the variable: a full assignment can replace the pointer with any ^T.
+	root_direct:     bool,
+	has_root_source: bool,
+	root_source:     int,
+	require_root:    bool,
+	consume_root:    bool,
+}
+
+Allocation_Fact :: enum u8 {
+	None,
+	Root,
+	Conditional,
 }
 
 Flow_Block :: struct {
 	events: [dynamic]Flow_Event,
 	preds:  [dynamic]Block_Id,
+	succs:  [dynamic]Block_Id,
 	// Filled by `src/lifecycle.odin`'s solver.
 	entry_state: []Liveness,
 	exit_state:  []Liveness,
+	root_entry_state: []Allocation_Fact,
+	root_exit_state:  []Allocation_Fact,
 	visited:     bool,
+}
+
+Flow_Cleanup_Kind :: enum {
+	Local,
+	Defer,
+}
+
+// One registration in the unified cleanup order. Locals and written defers
+// must be kept in one list: a deferred read is valid only when every local it
+// names is still live at the exact point that registration executes.
+Flow_Cleanup :: struct {
+	kind: Flow_Cleanup_Kind,
+	slot: int,
+	stmt: Stmt,
 }
 
 // One local the analysis follows. Two kinds qualify: a managed local, which has
@@ -76,6 +110,7 @@ Flow_Graph :: struct {
 	blocks:  [dynamic]^Flow_Block,
 	tracked: [dynamic]Tracked_Local,
 	by_symbol: map[Symbol_Id]int,
+	alloc:   mem.Allocator,
 
 	k:       ^Checker,
 	current: Block_Id,
@@ -84,7 +119,7 @@ Flow_Graph :: struct {
 	// separate stack of slots in declaration order, with `scopes` holding one
 	// marker into it per open lexical scope. Leaving a scope cleans up exactly
 	// the slots above its marker and then forgets them.
-	in_scope: [dynamic]int,
+	in_scope: [dynamic]Flow_Cleanup,
 	scopes:   [dynamic]int,
 	// How many loops enclose the statement being walked, so the copy-cost report
 	// can say that a copy runs on every iteration.
@@ -100,17 +135,18 @@ NO_BLOCK :: Block_Id(-1)
 
 // nil when the body has nothing to track, which is the ordinary case and saves
 // every unmanaged procedure a graph.
-build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc) -> ^Flow_Graph {
+build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc, allocator: mem.Allocator) -> ^Flow_Graph {
 	if literal == nil || literal.body == nil {
 		return nil
 	}
-	graph := new(Flow_Graph, k.c.semantic_allocator)
+	graph := new(Flow_Graph, allocator)
 	graph.k = k
-	graph.blocks = make([dynamic]^Flow_Block, k.c.semantic_allocator)
-	graph.tracked = make([dynamic]Tracked_Local, k.c.semantic_allocator)
-	graph.by_symbol = make(map[Symbol_Id]int, 8, k.c.semantic_allocator)
-	graph.scopes = make([dynamic]int, k.c.semantic_allocator)
-	graph.in_scope = make([dynamic]int, k.c.semantic_allocator)
+	graph.alloc = allocator
+	graph.blocks = make([dynamic]^Flow_Block, allocator)
+	graph.tracked = make([dynamic]Tracked_Local, allocator)
+	graph.by_symbol = make(map[Symbol_Id]int, 8, allocator)
+	graph.scopes = make([dynamic]int, allocator)
+	graph.in_scope = make([dynamic]Flow_Cleanup, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
@@ -127,9 +163,10 @@ build_flow_graph :: proc(k: ^Checker, literal: ^Expr_Proc) -> ^Flow_Graph {
 
 @(private = "file")
 new_flow_block :: proc(graph: ^Flow_Graph) -> Block_Id {
-	block := new(Flow_Block, graph.k.c.semantic_allocator)
-	block.events = make([dynamic]Flow_Event, graph.k.c.semantic_allocator)
-	block.preds = make([dynamic]Block_Id, graph.k.c.semantic_allocator)
+	block := new(Flow_Block, graph.alloc)
+	block.events = make([dynamic]Flow_Event, graph.alloc)
+	block.preds = make([dynamic]Block_Id, graph.alloc)
+	block.succs = make([dynamic]Block_Id, graph.alloc)
 	append(&graph.blocks, block)
 	return Block_Id(len(graph.blocks) - 1)
 }
@@ -140,6 +177,7 @@ link :: proc(graph: ^Flow_Graph, from, to: Block_Id) {
 		return
 	}
 	append(&graph.blocks[to].preds, from)
+	append(&graph.blocks[from].succs, to)
 }
 
 @(private = "file")
@@ -184,7 +222,7 @@ track_move_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			}
 			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true, owns_cleanup = true})
 			graph.by_symbol[id] = len(graph.tracked) - 1
-			append(&graph.in_scope, len(graph.tracked) - 1)
+			append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = len(graph.tracked) - 1})
 		}
 	}
 }
@@ -215,7 +253,25 @@ walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 @(private = "file")
 emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 	for index := len(graph.in_scope) - 1; index >= down_to; index -= 1 {
-		slot := graph.in_scope[index]
+		action := graph.in_scope[index]
+		if action.kind == .Defer {
+			// Execute the deferred syntax at scope exit, not at registration. This
+			// gives reads, moves, drops, branches, and nested lexical cleanup their
+			// real position in the ownership dataflow.
+			// Remove this action and the already-run later registrations while it
+			// executes. Besides matching runtime stack popping, this prevents an
+			// already-diagnosed illegal `return` inside a defer from recursively
+			// invoking the same defer during error recovery.
+			// The walk appends into this same backing storage, so the entries
+			// have to be saved, not the dynamic-array header.
+			tail := slice.clone(graph.in_scope[index:], graph.alloc)
+			resize(&graph.in_scope, index)
+			walk_flow_stmt(graph, action.stmt)
+			resize(&graph.in_scope, index)
+			append(&graph.in_scope, ..tail)
+			continue
+		}
+		slot := action.slot
 		sym := symbol_of(graph.k.c, graph.tracked[slot].symbol)
 		emit(graph, Flow_Event {
 			kind = .Cleanup,
@@ -255,10 +311,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt) {
 		walk_flow_switch(graph, s)
 
 	case ^Stmt_Defer:
-		// The deferred statement runs at scope exit, after the analysis has
-		// already decided what is live there. M5b owns the "a deferred statement
-		// may read a managed local the compiler has not dropped yet" proof; M5a
-		// records the registration and does not walk the body as if it ran here.
+		append(&graph.in_scope, Flow_Cleanup{kind = .Defer, stmt = s.stmt})
 
 	case ^Stmt_Return:
 		for value in s.values {
@@ -315,7 +368,7 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		}
 	}
 	classify_declaration_copies(graph.k, d, graph.loop_depth > 0)
-	for id in d.symbols {
+	for id, symbol_index in d.symbols {
 		sym := symbol_of(graph.k.c, id)
 		if sym == nil || sym.kind != .Var {
 			continue
@@ -334,25 +387,63 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		// design.md: "Scope exit automatically drops a live managed lexical owner.
 		// It does not clean up a manual lexical owner." A `manual` owner is still
 		// followed, so `drop(x)` and use-after-drop both work on it.
-		append(&graph.tracked, Tracked_Local {
-			symbol       = id,
-			scope        = len(graph.scopes),
-			owns_cleanup = type_is_managed(graph.k.c, sym.type) && !sym.manual,
-		})
-		graph.by_symbol[id] = len(graph.tracked) - 1
-		append(&graph.in_scope, len(graph.tracked) - 1)
+		slot, already_tracked := slot_of(graph, id)
+		if !already_tracked {
+			append(&graph.tracked, Tracked_Local {
+				symbol       = id,
+				scope        = len(graph.scopes),
+				owns_cleanup = type_is_managed(graph.k.c, sym.type) && !sym.manual,
+			})
+			slot = len(graph.tracked) - 1
+			graph.by_symbol[id] = slot
+		}
+		// A deferred statement's AST is expanded at each distinct exit. Reuse its
+		// declaration's state slot, but register the runtime activation in each
+		// expanded cleanup path.
+		append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
 		// design.md: the implicit action is placed "at the declaration point",
 		// which is where initialization completes. `---` leaves storage
 		// uninitialised and so registers nothing.
 		if len(d.values) == 1 && d.values[0] == nil {
 			continue
 		}
-		emit(graph, Flow_Event {
+		event := Flow_Event {
 			kind = .Init,
-			slot = len(graph.tracked) - 1,
+			slot = slot,
 			span = sym.span,
 			name = identifier_text(graph.k.c, sym.name),
-		})
+		}
+		initializer: Expr
+		if len(d.values) == 1 && len(d.symbols) > 1 {
+			if symbol_index == 0 {
+				initializer = d.values[0]
+			}
+		} else if symbol_index < len(d.values) {
+			initializer = d.values[symbol_index]
+		}
+		annotate_root_transfer(graph, &event, initializer)
+		emit(graph, event)
+	}
+}
+
+@(private = "file")
+annotate_root_transfer :: proc(graph: ^Flow_Graph, event: ^Flow_Event, value: Expr) {
+	if value == nil {
+		return
+	}
+	#partial switch v in value {
+	case ^Expr_Call:
+		sym := symbol_of(graph.k.c, v.resolution.symbol)
+		if sym != nil && (sym.builtin == .New || sym.builtin == .New_Clone) {
+			event.root_direct = true
+		}
+	case ^Expr_Move:
+		if ident, is_ident := v.value.(^Expr_Ident); is_ident {
+			if source, tracked := slot_of(graph, ident.symbol); tracked {
+				event.has_root_source = true
+				event.root_source = source
+			}
+		}
 	}
 }
 
@@ -367,14 +458,18 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		// field or element needs the root live, which is an ordinary use.
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
 			if slot, tracked := slot_of(graph, ident.symbol); tracked {
-				emit(graph, Flow_Event {
+				event := Flow_Event {
 					kind   = .Assign,
 					slot   = slot,
 					span   = expr_span(target),
 					name   = ident.name,
 					assign = s,
 					target = index,
-				})
+				}
+				if index < len(s.rhs) {
+					annotate_root_transfer(graph, &event, s.rhs[index])
+				}
+				emit(graph, event)
 				continue
 			}
 		}
@@ -418,13 +513,18 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 		walk_flow_expr(graph, s.cond)
 	}
 	done := new_flow_block(graph)
-	link(graph, head, done)
+	if s.cond != nil {
+		link(graph, head, done)
+	}
+	post := new_flow_block(graph)
 
 	body := new_flow_block(graph)
 	link(graph, head, body)
 	graph.current = body
-	walk_flow_loop_body(graph, s.body, head, done)
-	if s.post != nil && graph.current != NO_BLOCK {
+	walk_flow_loop_body(graph, s.body, post, done)
+	link(graph, graph.current, post)
+	graph.current = post
+	if s.post != nil {
 		walk_flow_stmt(graph, s.post)
 	}
 	link(graph, graph.current, head)
@@ -521,13 +621,35 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) {
 
 	case ^Expr_Binary:
 		walk_flow_expr(graph, v.lhs)
-		walk_flow_expr(graph, v.rhs)
+		if v.op == .And_And || v.op == .Or_Or {
+			entry := graph.current
+			merge := new_flow_block(graph)
+			// One result of the left operand skips the right operand.
+			link(graph, entry, merge)
+			graph.current = new_flow_block(graph)
+			link(graph, entry, graph.current)
+			walk_flow_expr(graph, v.rhs)
+			link(graph, graph.current, merge)
+			graph.current = merge
+		} else {
+			walk_flow_expr(graph, v.rhs)
+		}
 
 	case ^Expr_Unary:
 		walk_flow_expr(graph, v.operand)
 
 	case ^Expr_Postfix:
 		walk_flow_expr(graph, v.operand)
+		if v.op == .Or_Return {
+			entry := graph.current
+			resume := new_flow_block(graph)
+			link(graph, entry, resume)
+			failure := new_flow_block(graph)
+			link(graph, entry, failure)
+			graph.current = failure
+			emit_cleanups(graph, 0)
+			graph.current = resume
+		}
 
 	case ^Expr_Selector:
 		walk_flow_expr(graph, v.operand)
@@ -556,12 +678,29 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) {
 
 	case ^Expr_Cond:
 		walk_flow_expr(graph, v.cond)
+		entry := graph.current
+		merge := new_flow_block(graph)
+		graph.current = new_flow_block(graph)
+		link(graph, entry, graph.current)
 		walk_flow_expr(graph, v.then)
+		link(graph, graph.current, merge)
+		graph.current = new_flow_block(graph)
+		link(graph, entry, graph.current)
 		walk_flow_expr(graph, v.otherwise)
+		link(graph, graph.current, merge)
+		graph.current = merge
 
 	case ^Expr_Or_Else:
 		walk_flow_expr(graph, v.value)
+		entry := graph.current
+		merge := new_flow_block(graph)
+		// Success skips the fallback; failure evaluates it.
+		link(graph, entry, merge)
+		graph.current = new_flow_block(graph)
+		link(graph, entry, graph.current)
 		walk_flow_expr(graph, v.fallback)
+		link(graph, graph.current, merge)
+		graph.current = merge
 
 	case ^Expr_Type_Assert:
 		walk_flow_expr(graph, v.operand)
@@ -650,6 +789,8 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 							span = v.span,
 							name = ident.name,
 							verb = sym.builtin == .Free ? "released" : "dropped",
+							require_root = sym.builtin == .Free,
+							consume_root = sym.builtin == .Free,
 						})
 						return
 					}
