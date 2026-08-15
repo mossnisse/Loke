@@ -333,14 +333,25 @@ Result_Provenance :: struct {
 
 Proc_Summary :: struct {
 	results: []Result_Provenance,
+	// Set only if the whole-program iteration ran out of rounds. Every step is a
+	// union over a finite lattice, so this cannot happen for a call graph whose
+	// borrow-returning chains are shorter than the bound -- but if it ever does,
+	// an incomplete summary would be permissive, so callers must fall back to the
+	// strictest answer instead of the most convenient one.
+	saturated: bool,
 }
 
-result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Result_Provenance, bool) {
+Result_Answer :: struct {
+	using provenance: Result_Provenance,
+	saturated: bool,
+}
+
+result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Result_Answer, bool) {
 	summary, found := c.result_summaries[declaration]
 	if !found || result >= len(summary.results) {
-		return Result_Provenance{}, false
+		return Result_Answer{}, false
 	}
-	return summary.results[result], true
+	return Result_Answer{provenance = summary.results[result], saturated = summary.saturated}, true
 }
 
 // Union of two possibilities. Returns whether the destination grew, which is the
@@ -412,6 +423,7 @@ PROVENANCE_SUMMARY_ROUNDS :: 32
 // argument roots substituted at direct calls. One disposable graph is built and
 // released at a time, so no analysis allocation outlives the body it describes.
 analyze_program_provenance :: proc(k: ^Checker) {
+	settled := false
 	for _ in 0 ..< PROVENANCE_SUMMARY_ROUNDS {
 		changed := false
 		for body in k.c.checked_bodies {
@@ -420,7 +432,13 @@ analyze_program_provenance :: proc(k: ^Checker) {
 			}
 		}
 		if !changed {
+			settled = true
 			break
+		}
+	}
+	if !settled {
+		for _, summary in k.c.result_summaries {
+			summary.saturated = true
 		}
 	}
 	for body in k.c.checked_bodies {

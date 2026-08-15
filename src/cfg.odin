@@ -2081,6 +2081,18 @@ prov_call_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int, bo
 		callee = v.resolution.symbol
 	}
 	if summary, found := result_summary(c, callee, 0); found {
+		if summary.saturated {
+			// The strictest answer: a result that borrows callee-local storage,
+			// which no caller may keep and none may release.
+			return prov_borrow(
+				graph,
+				prov_temp_root(graph, v.span),
+				nil,
+				carrier_is_mutable(c, v.type),
+				v.span,
+				carrier_noun(c, v.type),
+			)
+		}
 		out: []int
 		for wanted, index in summary.params {
 			if wanted && index < len(actuals) {
