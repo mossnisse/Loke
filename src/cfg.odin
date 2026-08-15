@@ -767,6 +767,15 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 @(private = "file")
 walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	prov := graph.mode != .Lifecycle
+	if prov {
+		// design.md "any_view type": the erased view holds the address of the
+		// concrete value, so it borrows the place it was erased from. M4b settled
+		// the representation; what it could not do without provenance is stop the
+		// subject from being invalidated while the view is still read.
+		if base := expr_base(e); base != nil && base.erased_from != INVALID_TYPE {
+			return prov_erase(graph, e)
+		}
+	}
 	switch v in e {
 	case ^Expr_Ident:
 		if !prov {
@@ -1290,6 +1299,48 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 }
 
 
+
+// design.md: "Conversion to a built-in view and compiler-known iteration
+// preserve the source root." An `any_view` reads its subject and never writes
+// it, so the loan is a read-only one and other reads stay legal.
+@(private = "file")
+prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+	span := expr_span(e)
+	if root, path, ok := prov_place_of(graph, e); ok {
+		prov_walk_subscripts(graph, e)
+		prov_access(graph, root, path, .Read, span)
+		return prov_borrow(graph, root, path, false, span, "view")
+	}
+	// A carrier erased into a view keeps the loans it already held; anything else
+	// is a temporary whose hidden storage ends with its statement.
+	if loans := walk_flow_expr_erased(graph, e); len(loans) > 0 {
+		return loans
+	}
+	// The storage the compiler creates to erase a value is a frame slot, not a
+	// value temporary: like the hidden array behind a slice literal, it follows
+	// the surrounding lexical scope.
+	return prov_borrow(graph, prov_hidden_root(graph, span, "this erased value"), nil, false, span, "view")
+}
+
+// A root the compiler created rather than the reader, ending with the scope it
+// was created in.
+@(private = "file")
+prov_hidden_root :: proc(graph: ^Flow_Graph, span: Span, name: string) -> Root_Id {
+	root := prov_new_root(graph, .Temporary, span, name)
+	append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = span})
+	return root
+}
+
+// The same walk with the erasure hook suppressed, so `prov_erase` can fall back
+// to the node's ordinary meaning without recursing into itself.
+@(private = "file")
+walk_flow_expr_erased :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+	saved := expr_base(e).erased_from
+	expr_base(e).erased_from = INVALID_TYPE
+	defer expr_base(e).erased_from = saved
+	return walk_flow_expr(graph, e)
+}
+
 // ------------------------------------------------------------- regions --
 
 @(private = "file")
@@ -1613,11 +1664,23 @@ prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 @(private = "file")
 prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	if len(v.bound) > 0 {
-		// A selected user `operator([:])` result: m5b-plan step 4.
-		for argument in v.bound {
-			if argument != nil {
-				walk_flow_expr(graph, argument)
+		// design.md: "A selected `operator([:])` result is a borrow of the receiver
+		// unless its result type is owning." M4a deliberately postponed this
+		// relationship because it needed provenance.
+		receiver_loans := walk_flow_expr(graph, v.bound[0])
+		for index in 1 ..< len(v.bound) {
+			if v.bound[index] != nil {
+				walk_flow_expr(graph, v.bound[index])
 			}
+		}
+		if !type_is_carrier(graph.k.c, v.type) {
+			return nil // an owning result carries no borrow edge at all
+		}
+		if len(receiver_loans) > 0 {
+			return receiver_loans
+		}
+		if root, path, ok := prov_place_of(graph, v.bound[0]); ok {
+			return prov_borrow(graph, root, path, slice_is_mutable(graph.k.c, v.type), v.span, "slice")
 		}
 		return nil
 	}
@@ -1810,6 +1873,16 @@ prov_parameter_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> Ty
 }
 
 @(private = "file")
+prov_result_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> bool {
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	if sym == nil {
+		return false
+	}
+	info := type_of(graph.k.c, sym.proc_type)
+	return info != nil && len(info.result_inout) > 0 && info.result_inout[0]
+}
+
+@(private = "file")
 prov_argument_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> bool {
 	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
 	if sym == nil {
@@ -1864,11 +1937,16 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			return nil
 		}
 	}
-	walk_flow_expr(graph, v.callee)
 	prov_call_resets(graph, v)
 	receiver := Param_Mode.Value
+	has_receiver := false
 	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.has_receiver {
-		receiver = sym.receiver
+		receiver, has_receiver = sym.receiver, true
+	}
+	// Method-call syntax puts the receiver in `bound[0]`; walking the callee
+	// selector as well would count one access twice.
+	if !(has_receiver && len(v.bound) > 0) {
+		walk_flow_expr(graph, v.callee)
 	}
 	if len(v.bound) == 0 {
 		actuals := make([][]int, max(len(v.args), 1), graph.alloc)
@@ -1951,6 +2029,18 @@ prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 @(private = "file")
 prov_call_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int, borrowed: []int) -> []int {
 	c := graph.k.c
+	// design.md "Named results": an `inout` result is the caller's storage, so
+	// the call is a place aliasing whatever the `inout` arguments named. It is not
+	// a carrier type, which is why it is answered before the carrier test.
+	if prov_result_is_inout(graph, v) {
+		out: []int
+		for slots, index in actuals {
+			if prov_argument_is_inout(graph, v, index) {
+				out = prov_join(graph, out, slots)
+			}
+		}
+		return out
+	}
 	if !type_is_carrier(c, v.type) {
 		return nil
 	}

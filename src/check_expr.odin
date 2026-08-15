@@ -941,6 +941,20 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	v.bound = bound
 	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
 	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	// design.md "Capabilities and the one rule": a mutable borrow excludes
+	// competing access, so a `[]mut T` result can only come from a receiver the
+	// call already holds exclusively. An immutable receiver may produce `[]T`.
+	if type_is_slice(k.c, v.type) && slice_is_mutable(k.c, v.type) && sym.receiver != .Inout {
+		errorf(
+			k.c,
+			v.span,
+			"L0547",
+			"this `operator([:])` yields `%s`, which is an exclusive borrow, so its `self` parameter must be `inout`",
+			type_name(k.c, v.type),
+		)
+		add_notef(k.c, sym.span, "declared here with an immutable receiver, which can only yield a read-only slice")
+		v.type = INVALID_TYPE
+	}
 }
 
 // Slicing a built-in sequence: a fixed array or another slice. Returns false

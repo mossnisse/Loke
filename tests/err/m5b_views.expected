@@ -1,0 +1,21 @@
+L0512
+@40:2
+`value` cannot be assigned here: a read-only view of it is still in use
+L0511
+@47:13
+this write of `value` is not compatible with the read-only view of it that is still in use
+L0513
+@59:12
+this view is used after `inner`, the local it borrows, has ended
+L0512
+@65:2
+`c` cannot be modified here: a mutable pointer of it is still in use
+L0512
+@75:11
+`c` cannot be moved here: a mutable pointer of it is still in use
+L0547
+@82:10
+this `operator([:])` yields `[]mut int`, which is an exclusive borrow, so its `self` parameter must be `inout`
+L0512
+@93:2
+`t` cannot be assigned here: a mutable slice of it is still in use

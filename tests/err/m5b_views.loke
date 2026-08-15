@@ -1,0 +1,99 @@
+package main;
+
+// m5b-plan step 4: erased views, user slicing, and the M4 handoffs. M4b settled
+// the runtime representations; what it could not settle without provenance is
+// whether the subject is still there.
+
+Cell :: struct { value: int }
+
+impl Cell {
+	// design.md: "any user operation whose `self` parameter is `inout`" also
+	// invalidates element and view borrows of the receiver.
+	bump :: proc(self: inout Cell) { self.value += 1; }
+	take :: proc(self: move Cell) -> int { return self.value; }
+}
+
+Table :: struct { rows: []mut int }
+
+impl Table {
+	// design.md: "`[]mut T` requires an `inout` receiver and carries exclusive
+	// capability; an immutable receiver may produce only `[]T`."
+	span :: operator([:]) proc(self: Table, lo: int, hi: int) -> []mut int {
+		return self.rows[lo:hi];
+	}
+}
+
+Ok_Table :: struct { rows: []mut int }
+
+impl Ok_Table {
+	span :: operator([:]) proc(self: inout Ok_Table, lo: int, hi: int) -> []mut int {
+		return self.rows[lo:hi];
+	}
+}
+
+// design.md "any_view type": the view holds the address of the concrete value,
+// so invalidating the subject while the view is still read is the same mistake
+// as any other borrow.
+erased_subject_assigned :: proc() {
+	value := 1;
+	view: any_view = value;
+	value = 2;
+	print_int(view.(int));
+}
+
+erased_subject_borrowed :: proc() {
+	value := 1;
+	view: any_view = value;
+	pointer := &value;
+	pointer^ = 3;
+	print_int(view.(int));
+}
+
+// An erased view of storage the compiler created still ends with its scope.
+erased_temporary_outlives_its_scope :: proc() {
+	view: any_view = 0;
+	{
+		inner := 7;
+		view = inner;
+	}
+	print_int(view.(int));
+}
+
+inout_self_invalidates_a_borrow :: proc() {
+	c := Cell{1};
+	pointer := &c.value;
+	c.bump();
+	print_int(pointer^);
+}
+
+// design.md: "Method-call syntax supplies an `inout` or `move` marker implicitly
+// for its receiver", so a `move self` call invalidates the caller's borrows
+// before the source is killed.
+move_self_invalidates_a_borrow :: proc() {
+	c := Cell{1};
+	pointer := &c.value;
+	total := c.take();
+	print_int(pointer^ + total);
+}
+
+mutable_user_slice_needs_an_exclusive_receiver :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	bad := Table{numbers[0:4]};
+	part := bad[0:2];
+	print_int(part[0]);
+}
+
+// A borrowed `operator([:])` result carries the receiver's root, so invalidating
+// the receiver while the result is live is rejected. What the slice inside the
+// receiver's own field borrows is the documented v1 trust boundary, not this.
+user_slice_result_outlives_its_receiver :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	t := Ok_Table{numbers[0:4]};
+	part := t[0:2];
+	t = Ok_Table{numbers[2:4]};
+	print_int(part[0]);
+}
+
+main :: proc() {
+	print_int(1);
+}
