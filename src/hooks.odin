@@ -353,33 +353,6 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 	return call
 }
 
-// ------------------------------------------------------- allocation roots --
-
-// Is this binding one of the narrow forms for which M5a follows an allocation
-// fact? The current fact is answered by the ownership CFG; a later assignment
-// may have replaced this binding's value.
-symbol_is_allocation_root :: proc(k: ^Checker, id: Symbol_Id) -> bool {
-	sym := symbol_of(k.c, id)
-	return sym != nil && sym.allocation_root
-}
-
-// An initialiser that hands its binding a fresh allocation base: a direct
-// `new`/`new_clone` call, or a chain of explicit moves from one. M5b widens this
-// to full root propagation (m5a-plan step 3/4).
-initializer_is_allocation_root :: proc(k: ^Checker, value: Expr) -> bool {
-	#partial switch v in value {
-	case ^Expr_Call:
-		sym := symbol_of(k.c, v.resolution.symbol)
-		return sym != nil && (sym.builtin == .New || sym.builtin == .New_Clone)
-	case ^Expr_Move:
-		// `move` transfers the base rather than copying it, so the fact follows.
-		if ident, is_ident := v.value.(^Expr_Ident); is_ident {
-			return symbol_is_allocation_root(k, ident.symbol)
-		}
-	}
-	return false
-}
-
 // ------------------------------------------------------------ validation --
 
 // `try_clone :: ---;` inside an `impl` block. design.md: "No signature is

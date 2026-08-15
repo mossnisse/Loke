@@ -1,0 +1,138 @@
+package main;
+
+// m5b-plan step 1: what the one rule *permits*. Every borrow here ends at its
+// true last use, or touches storage that is provably disjoint.
+
+Pair :: struct { a: int, b: int }
+
+Nested :: struct { left: Pair, right: Pair }
+
+sum :: proc(values: []int) -> int {
+	total := 0;
+	foreach (value in values) {
+		total += value;
+	}
+	return total;
+}
+
+// design.md: "distinct struct fields ... do not overlap", so two mutable
+// pointers into one root can be live at the same time.
+disjoint_fields :: proc() {
+	p := Pair{1, 2};
+	first := &p.a;
+	second := &p.b;
+	first^ = 10;
+	second^ = 20;
+	print_int(p.a + p.b);
+}
+
+nested_fields :: proc() {
+	n := Nested{Pair{1, 2}, Pair{3, 4}};
+	left := &n.left.a;
+	right := &n.right.b;
+	print_int(left^ + right^);
+}
+
+// Provably distinct constant ranges likewise.
+disjoint_ranges :: proc() {
+	xs := [6]int{0, 1, 2, 3, 4, 5};
+	low := xs[0:3];
+	high := xs[3:6];
+	low[0] = 100;
+	high[0] = 200;
+	print_int(sum(low) + sum(high));
+}
+
+disjoint_index_and_range :: proc() {
+	xs := [4]int{1, 2, 3, 4};
+	tail := xs[2:4];
+	print_int(xs[0] + tail[0]);
+}
+
+// design.md: "Copies of a borrow extend the same loan to the last use of any
+// copy", so the root stays borrowed until `alias` is done with it.
+copies_share_one_loan :: proc() {
+	xs := [4]int{1, 2, 3, 4};
+	view := xs[0:2];
+	alias := view;
+	print_int(alias[1]);
+	// Both names are finished, so the root is writable again.
+	xs[0] = 9;
+	print_int(xs[0]);
+}
+
+// A loan is live only on the paths that reach a later use.
+last_use_across_branches :: proc(flag: bool) {
+	xs := [4]int{1, 2, 3, 4};
+	view := xs[0:2];
+	if (flag) {
+		print_int(view[0]);
+	} else {
+		// `view` is never read again on this path, so the root is free here.
+		xs[0] = 7;
+		print_int(xs[0]);
+	}
+}
+
+// Overwriting a carrier ends the value that was overwritten, not the variable.
+overwrite_ends_one_value :: proc() {
+	xs := [2]int{1, 2};
+	ys := [2]int{3, 4};
+	view := xs[0:2];
+	view = ys[0:2];
+	// The loan on `xs` died with the overwrite even though `view` is still read.
+	xs[0] = 5;
+	print_int(view[0] + xs[0]);
+}
+
+// design.md: "A borrow that is never used again stops constraining its root
+// immediately", so these invalidations are all legal.
+invalidation_after_last_use :: proc() {
+	xs := [2]int{1, 2};
+	view := xs[0:2];
+	print_int(view[0]);
+	xs = [2]int{8, 9};
+	print_int(xs[0]);
+
+	p := Pair{1, 2};
+	pointer := &p.a;
+	print_int(pointer^);
+	p = Pair{3, 4};
+	print_int(p.a);
+}
+
+// design.md: `free` "ends the allocation root designated by a checked base
+// pointer". M5b propagates that identity through pointer copies.
+free_through_a_copy :: proc() {
+	q, err := new(int);
+	if (err != nil) { panic("allocation failed"); }
+	q^ = 41;
+	alias := q;
+	alias^ += 1;
+	print_int(alias^);
+	free(alias);
+}
+
+// A parameter is a borrow of the caller's storage, and reading it here conflicts
+// with nothing the callee can see.
+borrowed_parameter :: proc(values: []int, target: ^int) -> int {
+	target^ = values[0];
+	return sum(values) + target^;
+}
+
+main :: proc() {
+	disjoint_fields();
+	nested_fields();
+	disjoint_ranges();
+	disjoint_index_and_range();
+	copies_share_one_loan();
+	last_use_across_branches(true);
+	last_use_across_branches(false);
+	overwrite_ends_one_value();
+	invalidation_after_last_use();
+	free_through_a_copy();
+
+	xs := [3]int{5, 6, 7};
+	out := 0;
+	print_int(borrowed_parameter(xs[:], &out));
+}

@@ -1,9 +1,9 @@
 L0494
 @11:1
 contains a managed union; tag-aware union clone and drop lowering is not implemented in M5a
-L0493
+L0514
 @19:2
-current value is not the allocation base produced by `new` or `new_clone`
+`free` releases an allocation from `new` or `new_clone`; this pointer designates local
 L0498
 @24:2
 cannot be applied to `static` storage, which is always live

@@ -558,12 +558,6 @@ Symbol :: struct {
 	// A value parameter is immutable storage; an `inout` parameter is a mutable
 	// alias. Both are addressable.
 	immutable:   bool,
-	// design.md "Allocators": this binding originates at a direct `new` or
-	// `new_clone` result (possibly through an explicit-move declaration), so the
-	// M5a CFG tracks an allocation-base fact for it. The boolean is eligibility,
-	// not the fact at every program point: full assignment and `free` update the
-	// dataflow state. M5b replaces this narrow scheme with general provenance.
-	allocation_root: bool,
 	// design.md "Managed values and storage": "A managed local declaration places
 	// an implicit conditional `defer drop(value)` at the declaration point."
 	// `src/lifecycle.odin` decides both from the CFG: whether scope exit drops

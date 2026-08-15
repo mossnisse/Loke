@@ -146,6 +146,12 @@ Compiler :: struct {
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,
 
+	// Every concrete procedure body that finished checking, in checking order.
+	// design.md's two provenance analyses run after the whole program settles, so
+	// a forward or mutually recursive callee already has its result summary
+	// (m5b-plan decision "Analysis scheduling").
+	checked_bodies: [dynamic]Checked_Body,
+
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker
 	// records them and `emit_globals` walks the list (m5a-plan step 4).
@@ -325,7 +331,18 @@ truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 }
 
 // Renders every accumulated diagnostic to stderr, in source order per file.
+//
+// Most passes report in source order already, but the two provenance analyses
+// run over the whole program after checking, so their diagnostics arrive last.
+// A stable sort by position restores one reading order without disturbing the
+// relative order of two diagnostics at the same place.
 report :: proc(c: ^Compiler) {
+	slice.stable_sort_by(c.diagnostics[:], proc(a, b: Diagnostic) -> bool {
+		if a.span.file != b.span.file {
+			return a.span.file < b.span.file
+		}
+		return a.span.lo < b.span.lo
+	})
 	for &d in c.diagnostics {
 		render(c, &d)
 	}

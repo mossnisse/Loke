@@ -32,24 +32,9 @@ impl Move_Only {
 }
 
 main :: proc() {
-	// M5a frees only a binding initialised directly by `new`/`new_clone`.
-	p, err := new(int);
-	alias := p;
-	free(alias);
-	free(p);
-
 	// A move-only value has no copy entry point to allocate through.
 	m := Move_Only{1};
 	bad, berr := new_clone(m);
-
-	// The allocation-root fact is consumed by `free`, so the binding is dead
-	// afterwards, and a moved-from one is dead at its source.
-	q, qerr := new(int);
-	free(q);
-	free(q);
-	r, rerr := new(int);
-	moved := move(r);
-	free(r);
 
 	// Arity and operand shape of the allocation built-ins and `drop`.
 	bad_new := new(int, a, a);

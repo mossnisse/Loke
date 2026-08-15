@@ -510,21 +510,6 @@ join :: proc(a, b: Liveness) -> Liveness {
 	return a == b ? a : .Conditional
 }
 
-@(private = "file")
-join_allocation_fact :: proc(a, b: Allocation_Fact) -> Allocation_Fact {
-	return a == b ? a : .Conditional
-}
-
-// The fact an `Init` or `Assign` leaves behind: a direct allocation, whatever
-// the moved-from binding held, or nothing.
-@(private = "file")
-root_after :: proc(event: Flow_Event, roots: []Allocation_Fact) -> Allocation_Fact {
-	if event.root_direct {
-		return .Root
-	}
-	return event.has_root_source ? roots[event.root_source] : .None
-}
-
 // One concrete body's answer, run after checking so every node carries its type
 // and every `defer` already has its slot.
 analyze_ownership :: proc(k: ^Checker, literal: ^Expr_Proc) {
@@ -551,8 +536,6 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	for block in graph.blocks {
 		block.entry_state = make([]Liveness, tracked, graph.alloc)
 		block.exit_state = make([]Liveness, tracked, graph.alloc)
-		block.root_entry_state = make([]Allocation_Fact, tracked, graph.alloc)
-		block.root_exit_state = make([]Allocation_Fact, tracked, graph.alloc)
 		block.visited = false
 	}
 
@@ -561,7 +544,6 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	queue := make([dynamic]Block_Id, 0, len(graph.blocks), graph.alloc)
 	in_queue := make([]bool, len(graph.blocks), graph.alloc)
 	state := make([]Liveness, tracked, graph.alloc)
-	roots := make([]Allocation_Fact, tracked, graph.alloc)
 	append(&queue, Block_Id(0))
 	in_queue[0] = true
 	for head := 0; head < len(queue); head += 1 {
@@ -570,7 +552,6 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		block := graph.blocks[index]
 		in_queue[index] = false
 		mem.zero_slice(state)
-		mem.zero_slice(roots)
 		if index == 0 {
 			// An ordinary parameter is a borrow and a local is dead until its
 			// declaration completes; a `move` parameter arrives owned.
@@ -586,7 +567,6 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 				}
 				for slot in 0 ..< tracked {
 					state[slot] = first ? source.exit_state[slot] : join(state[slot], source.exit_state[slot])
-					roots[slot] = first ? source.root_exit_state[slot] : join_allocation_fact(roots[slot], source.root_exit_state[slot])
 				}
 				first = false
 			}
@@ -595,13 +575,11 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 			}
 		}
 		copy(block.entry_state, state)
-		copy(block.root_entry_state, roots)
-		run_events(graph, block, state, roots)
-		if block.visited && states_equal(block.exit_state, state) && root_states_equal(block.root_exit_state, roots) {
+		run_events(graph, block, state)
+		if block.visited && states_equal(block.exit_state, state) {
 			continue
 		}
 		copy(block.exit_state, state)
-		copy(block.root_exit_state, roots)
 		block.visited = true
 		for successor in block.succs {
 			position := int(successor)
@@ -619,10 +597,8 @@ solve_liveness :: proc(k: ^Checker, graph: ^Flow_Graph) {
 			continue
 		}
 		mem.zero_slice(state)
-		mem.zero_slice(roots)
 		copy(state, block.entry_state)
-		copy(roots, block.root_entry_state)
-		report_events(k, graph, block, state, roots)
+		report_events(k, graph, block, state)
 	}
 }
 
@@ -637,27 +613,13 @@ states_equal :: proc(a, b: []Liveness) -> bool {
 }
 
 @(private = "file")
-root_states_equal :: proc(a, b: []Allocation_Fact) -> bool {
-	for value, index in a {
-		if value != b[index] {
-			return false
-		}
-	}
-	return true
-}
-
-@(private = "file")
-run_events :: proc(graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness, roots: []Allocation_Fact) {
+run_events :: proc(graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness) {
 	for event in block.events {
 		#partial switch event.kind {
 		case .Init, .Assign:
 			state[event.slot] = .Live
-			roots[event.slot] = root_after(event, roots)
 		case .Kill:
 			state[event.slot] = .Dead
-			if event.consume_root {
-				roots[event.slot] = .None
-			}
 		case .Cleanup:
 			state[event.slot] = .Dead
 		}
@@ -666,13 +628,12 @@ run_events :: proc(graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness, ro
 
 // The diagnostics and the cleanup obligations, with the solved entry state.
 @(private = "file")
-report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness, roots: []Allocation_Fact) {
+report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness) {
 	for event in block.events {
 		local := &graph.tracked[event.slot]
 		switch event.kind {
 		case .Init:
 			state[event.slot] = .Live
-			roots[event.slot] = root_after(event, roots)
 		case .Assign:
 			// design.md: assignment drops the destination's previous value, so what
 			// the emitter needs here is the state on the way in, not on the way out.
@@ -683,17 +644,11 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 				local.conditional_assign = true
 			}
 			state[event.slot] = .Live
-			roots[event.slot] = root_after(event, roots)
 		case .Kill:
 			if state[event.slot] != .Live {
 				report_not_live(k, event, state[event.slot])
-			} else if event.require_root && roots[event.slot] != .Root {
-				report_not_allocation_root(k, event, roots[event.slot])
 			}
 			state[event.slot] = .Dead
-			if event.consume_root {
-				roots[event.slot] = .None
-			}
 		case .Use:
 			if state[event.slot] != .Live {
 				report_not_live(k, event, state[event.slot])
@@ -714,15 +669,6 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 			state[event.slot] = .Dead
 		}
 	}
-}
-
-@(private = "file")
-report_not_allocation_root :: proc(k: ^Checker, event: Flow_Event, state: Allocation_Fact) {
-	detail := "its current value is not the allocation base produced by `new` or `new_clone`"
-	if state == .Conditional {
-		detail = "it designates the allocation base on only some paths"
-	}
-	errorf(k.c, event.span, "L0493", "`%s` cannot be released here: %s", event.name, detail)
 }
 
 @(private = "file")

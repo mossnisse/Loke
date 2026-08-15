@@ -10,27 +10,18 @@ L0488
 L0489
 @23:49
 a lifecycle hook takes no written default
-L0493
-@38:7
-M5a frees only a binding initialised directly by `new` or `new_clone`
 L0491
-@43:25
+@37:25
 disables `try_clone`, so it cannot be cloned into a new allocation
 L0490
-@55:13
+@40:13
 `new` takes an operand and an optional allocator
 L0490
-@56:12
+@41:12
 `default_allocator` takes no arguments
 L0496
-@57:2
+@42:2
 `drop` takes one argument, the variable being cleaned up
 L0492
-@61:2
+@46:2
 `free_all` is not lowered until M5b
-L0500
-@49:2
-`q` cannot be released here: it has already been moved, dropped, or released
-L0500
-@52:2
-`r` cannot be released here: it has already been moved, dropped, or released

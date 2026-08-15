@@ -1,0 +1,142 @@
+package main;
+
+// m5b-plan step 1: what the one rule *rejects*. design.md "Capabilities and the
+// one rule": a checked borrow may be used only while its root is live, and every
+// access to the root while the borrow is live must be compatible with the
+// borrow's capability.
+
+Pair :: struct { a: int, b: int }
+
+Choice :: union { int, bool }
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { self.id = 0; }
+}
+
+// A mutable borrow excludes every competing access, including a read.
+read_through_a_competing_name :: proc() {
+	xs := [4]int{1, 2, 3, 4};
+	view := xs[0:2];
+	print_int(xs[0]);
+	print_int(view[0]);
+}
+
+// A read-only borrow permits compatible reads but no write.
+write_under_a_read_only_borrow :: proc(values: []int) {
+	xs := [4]int{1, 2, 3, 4};
+	view: []int = xs[0:2];
+	print_int(xs[1]);
+	xs[0] = 9;
+	print_int(view[0]);
+}
+
+// Two mutable borrows of the same field overlap.
+overlapping_borrows :: proc() {
+	p := Pair{1, 2};
+	one := &p.a;
+	two := &p.a;
+	print_int(one^ + two^);
+}
+
+// A prefix overlaps everything below it.
+whole_root_overlaps_a_field :: proc() {
+	p := Pair{1, 2};
+	field := &p.a;
+	whole := &p;
+	print_int(field^ + whole.b);
+}
+
+// A dynamic index proves nothing, so it overlaps conservatively.
+dynamic_index_overlaps :: proc(i: int) {
+	xs := [4]int{1, 2, 3, 4};
+	view := xs[0:2];
+	xs[i] = 9;
+	print_int(view[0]);
+}
+
+// A union variant assertion reads the whole subject, so it overlaps too.
+union_variant_overlaps :: proc() {
+	c: Choice = 1;
+	pointer := &c;
+	print_int(c.(int));
+	print_int(pointer^.(int));
+}
+
+// design.md: "Moving, dropping, freeing, fully assigning, or exchanging a root
+// invalidates borrows of its previous value."
+assign_under_a_borrow :: proc() {
+	xs := [2]int{1, 2};
+	view := xs[0:2];
+	xs = [2]int{3, 4};
+	print_int(view[0]);
+}
+
+move_under_a_borrow :: proc() {
+	r := Res{1};
+	pointer := &r;
+	moved := move(r);
+	print_int(pointer.id + moved.id);
+}
+
+drop_under_a_borrow :: proc() {
+	r := Res{2};
+	pointer := &r;
+	drop(r);
+	print_int(pointer.id);
+}
+
+exchange_under_a_borrow :: proc() {
+	value := 1;
+	pointer := &value;
+	old := exchange(inout value, 2);
+	print_int(old + pointer^);
+}
+
+// A borrow may not be used after the root it names has ended.
+borrow_outlives_its_root :: proc() {
+	view: []int = nil;
+	{
+		local := [3]int{1, 2, 3};
+		view = local[:];
+	}
+	print_int(view[0]);
+}
+
+// `free` needs the base pointer of a fresh allocation.
+free_of_a_lexical_root :: proc() {
+	value := 1;
+	pointer := &value;
+	free(pointer);
+}
+
+double_free :: proc() {
+	q, err := new(int);
+	if (err != nil) { panic("allocation failed"); }
+	free(q);
+	free(q);
+}
+
+// A `free` invalidates every locally tracked alias, so one that survives it is
+// the error rather than the read it would later perform.
+alias_survives_free :: proc() {
+	q, err := new(int);
+	if (err != nil) { panic("allocation failed"); }
+	alias := q;
+	free(q);
+	print_int(alias^);
+}
+
+// A body with no managed local at all still gets borrow diagnostics: M5a would
+// not have built a graph for this one.
+all_trivial_body :: proc() {
+	value := 1;
+	pointer := &value;
+	value = 2;
+	print_int(pointer^);
+}
+
+main :: proc() {
+	print_int(1);
+}

@@ -58,9 +58,12 @@ main :: proc() {
 	// Slicing a mutable addressable array gives `[]mut T`, which weakens.
 	writable := fib[0:3];
 	writable[0] = 100;
-	print_int(fib[0]);
+	print_int(writable[0]);
 	print_int(first(writable));
 	print_int(sum(writable));
+	// The mutable borrow has ended, so `fib` may be read through its own name
+	// again and sees the write.
+	print_int(fib[0]);
 
 	fill(fib[3:], 9);
 	print_int(fib[3] + fib[4] + fib[5]);

@@ -76,8 +76,10 @@ main :: proc() {
 	r := &q;
 	print_int(r.x);
 	r^ = Point{13, 14};
-	print_int(q.y);
 	print_int((r^).x);
+	// The mutable borrow has ended, so the root may be read through its own
+	// name again.
+	print_int(q.y);
 
 	// A value parameter is addressable even though it is immutable.
 	print_int(addressed(21));

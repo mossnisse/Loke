@@ -2470,25 +2470,14 @@ set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
 	v.value_category = .Value
 }
 
-// design.md: "passing `free` the wrong allocation or allocator is a programmer
-// error". M5a narrows that to what it can prove without root provenance: the
-// operand must be a binding whose initialiser is a direct `new`/`new_clone`
-// result. M5b replaces this with propagated allocation identity across pointer
-// copies, and adds the liveness half (m5a-plan step 3).
+// design.md: `free` "ends the allocation root designated by a checked base
+// pointer from `new` or `new_clone`". The syntax check is only that the operand
+// is a checked pointer; whether its value really is that allocation base, and
+// whether it has already been released, is root provenance (`src/borrow.odin`).
 @(private = "file")
 check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id) -> bool {
 	if type_kind(k.c, type_underlying(k.c, pointer)) != .Pointer {
 		errorf(k.c, expr_span(e), "L0493", "`free` takes an allocation pointer, found `%s`", type_name(k.c, pointer))
-		return false
-	}
-	ident, is_ident := e.(^Expr_Ident)
-	if !is_ident || !symbol_is_allocation_root(k, ident.symbol) {
-		errorf(
-			k.c,
-			expr_span(e),
-			"L0493",
-			"M5a frees only a binding initialised directly by `new` or `new_clone`; propagating an allocation root through pointer copies and derived views is M5b",
-		)
 		return false
 	}
 	return true

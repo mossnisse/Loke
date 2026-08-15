@@ -1310,14 +1310,9 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		mark_optional_ok(d.values[0])
 		check_expr(k, d.values[0])
 		if base := expr_base(d.values[0]); base != nil && len(base.result_types) == len(d.names) {
-			// `p, err := new(T)`: the first name receives the allocation base, so it
-			// is the one `free` may be given (m5a-plan decision "Minimal
-			// allocation-root fact").
-			root := d.kind == .Var && initializer_is_allocation_root(k, d.values[0])
 			for symbol_id, index in d.symbols {
 				if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 					symbol.type = base.result_types[index]
-					symbol.allocation_root = root && index == 0
 				}
 			}
 			return
@@ -1408,11 +1403,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 			symbol.type = final
-			// design.md "Allocators": the pointer `new` returns has release
-			// responsibility, so the binding that receives it directly is what
-			// `free` may be given (m5a-plan decision "Minimal allocation-root
-			// fact").
-			symbol.allocation_root = d.kind == .Var && initializer_is_allocation_root(k, value)
 			if d.kind == .Const {
 				folded, evaluated := require_const(k, value, "a constant initialiser", "L0311")
 				if evaluated {
@@ -1541,6 +1531,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	k.defer_slots = 0
 	defer k.defer_slots = outer_slots
 
+	errors_before := k.c.error_count
 	k.named_results = false
 	for parameter in literal.signature.params {
 		if parameter.default != nil {
@@ -1562,6 +1553,9 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	// finished body, so it runs once every node has its type and every `defer`
 	// has its slot. Implicit drops take the slots that follow (m5a-plan step 4).
 	analyze_ownership(k, literal)
+	// Root and region provenance need every body's result summary settled, so
+	// this one only joins the queue the post-checking passes walk.
+	append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
 	literal.defer_count = k.defer_slots
 	if len(symbol.results) > 0 && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")

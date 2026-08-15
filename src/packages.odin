@@ -64,6 +64,10 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		// its own signature created.
 		check_pending_impl_instances(&k)
 	}
+	// design.md "Borrows and lifetimes" and "Allocator regions and region
+	// provenance": both analyses run once the whole program is checked, over
+	// disposable read-only rebuilds of the same control-flow view.
+	analyze_program_provenance(&k)
 	return root, c.error_count == 0
 }
 
