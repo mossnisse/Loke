@@ -580,6 +580,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	reported := k.c.error_count
 	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)
 	modes := make([dynamic]Param_Mode, 0, 4, k.c.semantic_allocator)
+	resets_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
 	param_symbols := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	defaults := make([dynamic]Expr, 0, 4, k.c.semantic_allocator)
 
@@ -635,6 +636,21 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				// for the group belongs to the parameters, not to `self`.
 				name_type, mode, default = k.impl_type, .Value, nil
 			}
+			// design.md "`@(allocator_reset)`": the attribute states that a
+			// successful call "may end every allocation root in that allocator
+			// region", so it is meaningless anywhere but on an `Allocator`.
+			resets := has_attribute(parameter.attributes, "allocator_reset") &&
+				!(split && name_index == 0)
+			if resets && type_underlying(k.c, name_type) != TYPE_ALLOCATOR {
+				errorf(
+					k.c,
+					parameter.span,
+					"L0539",
+					"`@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `%s`",
+					type_name(k.c, name_type),
+				)
+				resets = false
+			}
 			binding := new_binding_symbol(k, parameter_name.name, .Parameter)
 			if bound := symbol_of(k.c, binding); bound != nil {
 				bound.type = name_type
@@ -644,6 +660,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				// parameter is a mutable alias (design.md "Parameter semantics").
 				bound.immutable = mode == .Value
 				bound.owner_proc = literal
+				bound.allocator_reset = resets
 			}
 			if position == 0 && name_index == 0 &&
 			   k.impl_type != INVALID_TYPE &&
@@ -655,6 +672,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			append(&bindings, binding)
 			append(&params, name_type)
 			append(&modes, mode)
+			append(&resets_list, resets)
 			append(&param_symbols, binding)
 			append(&defaults, default)
 		}
@@ -692,7 +710,10 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		result.symbols = bindings[:]
 	}
 
-	proc_type := intern_proc_type(k.c, params[:], modes[:], results[:], result_inout[:], literal.signature.convention)
+	proc_type := intern_proc_type(
+		k.c, params[:], modes[:], results[:], result_inout[:],
+		literal.signature.convention, resets_list[:],
+	)
 	// Parameter/result binding creation may grow the symbol store. Reacquire by
 	// ID rather than retaining a pointer across append.
 	symbol = symbol_of(k.c, symbol_id)
@@ -1008,14 +1029,27 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 	case ^Type_Proc:
 		params := make([dynamic]Type_Id, 0, len(value.params), k.c.semantic_allocator)
 		modes := make([dynamic]Param_Mode, 0, len(value.params), k.c.semantic_allocator)
+		resets := make([dynamic]bool, 0, len(value.params), k.c.semantic_allocator)
 		for parameter in value.params {
-			for _ in parameter.names {
-				append(&params, resolve_type_syntax(k, parameter.type))
+			// design.md: the reset effect is part of the written procedure type, so
+			// a value of this type keeps it through an indirect call.
+			marked := has_attribute(parameter.attributes, "allocator_reset")
+			count := max(len(parameter.names), 1)
+			for _ in 0 ..< count {
+				resolved := resolve_type_syntax(k, parameter.type)
+				if marked && type_underlying(k.c, resolved) != TYPE_ALLOCATOR {
+					errorf(
+						k.c,
+						parameter.span,
+						"L0539",
+						"`@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `%s`",
+						type_name(k.c, resolved),
+					)
+					marked = false
+				}
+				append(&params, resolved)
 				append(&modes, parameter.mode)
-			}
-			if len(parameter.names) == 0 {
-				append(&params, resolve_type_syntax(k, parameter.type))
-				append(&modes, parameter.mode)
+				append(&resets, marked)
 			}
 		}
 		results := make([dynamic]Type_Id, 0, len(value.results), k.c.semantic_allocator)
@@ -1027,7 +1061,9 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				append(&result_inout, result.is_inout)
 			}
 		}
-		value.denoted_type = intern_proc_type(k.c, params[:], modes[:], results[:], result_inout[:], value.convention)
+		value.denoted_type = intern_proc_type(
+			k.c, params[:], modes[:], results[:], result_inout[:], value.convention, resets[:],
+		)
 		value.resolution.kind = .Type
 		return value.denoted_type
 

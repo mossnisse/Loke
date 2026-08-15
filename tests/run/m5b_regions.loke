@@ -1,0 +1,74 @@
+package main;
+
+// m5b-plan step 3: what region provenance *permits*.
+
+Buffer :: struct { id: int }
+
+impl Buffer {
+	drop :: proc(self: inout Buffer) { self.id = 0; }
+}
+
+make_buffer :: proc(value: int, allocator: Allocator) -> Buffer {
+	return Buffer{value};
+}
+
+// design.md: "A Loke procedure is verified: every `free_all` operation on a
+// region that existed before procedure entry ... must be covered by one of the
+// procedure's own `@(allocator_reset)` parameters."
+release :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+// The promise propagates transitively through a direct wrapper.
+release_twice :: proc(@(allocator_reset) allocator: Allocator) {
+	release(allocator);
+	release(allocator);
+}
+
+// design.md: the proof is "that no dependant survives the reset, not that every
+// allocation was already freed", so an unfreed allocation whose last carrier use
+// is behind us is simply released by the reset.
+reset_after_last_use :: proc(@(allocator_reset) allocator: Allocator) -> int {
+	pointer, err := new(int, allocator);
+	if (err != nil) { return 0; }
+	pointer^ = 7;
+	total := pointer^;
+	// No alias survives, so the reset is accepted even though nothing was freed.
+	free_all(allocator);
+	return total;
+}
+
+// An owner whose scope has ended no longer blocks a reset.
+reset_after_an_owner_ends :: proc(@(allocator_reset) allocator: Allocator) -> int {
+	total := 0;
+	{
+		held := make_buffer(3, allocator);
+		total = held.id;
+	}
+	free_all(allocator);
+	return total;
+}
+
+// The default provider's region outlives the program, so an owner backed by it
+// may be kept in file-scope storage.
+global_buffer: Buffer;
+
+// design.md "What is not checked": "storing a pointer, slice, iterator, or other
+// view in a record field, global, container, callback state, or service object"
+// remains the programmer's responsibility, so this compiles.
+global_view: []int;
+
+store_a_view :: proc(values: []int) {
+	global_view = values;
+}
+
+main :: proc() {
+	// A reset the analysis accepts still needs a provider that supports it, so
+	// nothing here actually resets: `tests/trap` covers that half.
+	global_buffer = make_buffer(1, default_allocator());
+	print_int(global_buffer.id);
+
+	numbers := [3]int{4, 5, 6};
+	store_a_view(numbers[:]);
+	print_int(numbers[0]);
+}

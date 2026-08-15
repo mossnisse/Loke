@@ -281,6 +281,20 @@ emit_preamble :: proc(e: ^Emitter) {
 CRT_ALLOCATOR_GLOBAL :: "@.crt_allocator"
 CRT_RESET_THUNK :: "@.crt_allocator.reset"
 
+// design.md: `free_all` "frees every allocation in the allocator's region. Not
+// all allocators support this procedure." It is one indirect call through the
+// provider's reset entry, never a guessed sequence of `free` calls: only the
+// provider knows what its region contains. The M5 default provider's entry
+// traps, which is "not supported by this allocator" -- a different thing from
+// the compile-time rejection when a dependant would survive the reset.
+@(private = "file")
+emit_region_reset :: proc(e: ^Emitter, v: ^Expr_Call) {
+	handle := emit_expr(e, v.bound[0])
+	entry := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", entry, handle)
+	fmt.sbprintfln(&e.b, "  call void %s()", entry)
+}
+
 @(private = "file")
 emit_crt_reset_thunk :: proc(e: ^Emitter) {
 	// `{` is a format directive to core:fmt, so the brace is printed separately.
@@ -2997,8 +3011,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			emit_free(e, v)
 			return "0"
 		case .Free_All:
-			// The checker gates every call with its M5b diagnostic.
-			backend_fail(e, "`free_all` reached the M5a backend")
+			emit_region_reset(e, v)
 			return "0"
 		case .None, .Size_Of, .Align_Of, .Offset_Of,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:

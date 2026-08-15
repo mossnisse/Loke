@@ -1,0 +1,27 @@
+L0538
+@28:2
+this resets a region that existed before the call, so the allocator must arrive through an `@(allocator_reset)` parameter
+L0538
+@34:2
+this call may reset `allocator`, so `allocator` must be marked `@(allocator_reset)`
+L0538
+@39:2
+this call may reset `allocator`, so `allocator` must be marked `@(allocator_reset)`
+L0537
+@47:2
+this reset ends every allocation in the region, but a pointer of one of them is still in use
+L0537
+@55:2
+this reset would end the region backing `held`, which is still live here
+L0536
+@62:2
+`global_buffer` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage, which outlives that region
+L0536
+@67:2
+`kept` is backed by an allocator region this procedure received, so it cannot be stored in `static` storage, which outlives that region
+L0539
+@71:23
+`@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `int`
+L0310
+@78:32
+cannot initialise `proc(Allocator)` with `proc(@(allocator_reset) Allocator)`

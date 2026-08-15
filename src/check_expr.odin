@@ -2417,21 +2417,18 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 
 	case .Free_All:
 		allocator := check_single_expr(k, v.args[0].value, TYPE_ALLOCATOR)
-		if allocator != INVALID_TYPE && type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
+		if allocator == INVALID_TYPE || type_underlying(k.c, allocator) != TYPE_ALLOCATOR {
 			errorf(k.c, expr_span(v.args[0].value), "L0490", "`free_all` names the allocator being reset, found `%s`", type_name(k.c, allocator))
+			v.type = INVALID_TYPE
+			return
 		}
 		// design.md: "The compiler rejects `free_all`, or any call carrying the
 		// same allocator-reset effect, while a live owning value (managed or
-		// manual) or borrow still refers to storage from that allocator." That
-		// liveness proof is M5b's region analysis, so the call is registered and
-		// type-checked here and gated before lowering.
-		errorf(
-			k.c,
-			v.span,
-			"L0492",
-			"`free_all` is not lowered until M5b: a region reset needs the region analysis that proves no live owner or borrow depends on it",
-		)
-		v.type = INVALID_TYPE
+		// manual) or borrow still refers to storage from that allocator." That is
+		// region provenance, in `src/borrow.odin`; what is left here is the shape.
+		append(&bound, v.args[0].value)
+		v.bound = bound[:]
+		v.type = TYPE_VOID
 		return
 
 	case .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len,

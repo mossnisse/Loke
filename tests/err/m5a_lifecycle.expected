@@ -22,6 +22,3 @@ L0490
 L0496
 @42:2
 `drop` takes one argument, the variable being cleaned up
-L0492
-@46:2
-`free_all` is not lowered until M5b

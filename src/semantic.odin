@@ -159,6 +159,10 @@ Type_Info :: struct {
 	contributed: bit_set[Contribution],
 	parameters: []Type_Id,
 	param_modes: []Param_Mode,
+	// design.md "Procedure types": "`@(allocator_reset)` is part of the
+	// parameter's procedure type: a reset-capable procedure cannot be stored in a
+	// procedure value whose type hides that effect."
+	param_resets: []bool,
 	results:    []Type_Id,
 	result_inout: []bool,
 	convention: string,
@@ -558,6 +562,10 @@ Symbol :: struct {
 	// A value parameter is immutable storage; an `inout` parameter is a mutable
 	// alias. Both are addressable.
 	immutable:   bool,
+	// design.md "`@(allocator_reset)`": this `Allocator` parameter's region may
+	// be ended by a successful call. The promise is verified in the body and
+	// carried in the procedure type.
+	allocator_reset: bool,
 	// design.md "Managed values and storage": "A managed local declaration places
 	// an implicit conditional `defer drop(value)` at the declaration point."
 	// `src/lifecycle.odin` decides both from the CFG: whether scope exit drops
@@ -783,6 +791,7 @@ intern_proc_type :: proc(
 	results: []Type_Id,
 	result_inout: []bool,
 	convention: string,
+	param_resets: []bool = nil,
 ) -> Type_Id {
 	init_semantic_stores(c)
 	for info, index in c.types {
@@ -791,7 +800,8 @@ intern_proc_type :: proc(
 		   equal_type_ids(info.parameters, parameters) &&
 		   equal_param_modes(info.param_modes, param_modes) &&
 		   equal_type_ids(info.results, results) &&
-		   equal_bools(info.result_inout, result_inout) {
+		   equal_bools(info.result_inout, result_inout) &&
+		   equal_reset_effects(info.param_resets, param_resets) {
 			return Type_Id(index)
 		}
 	}
@@ -799,6 +809,11 @@ intern_proc_type :: proc(
 	mode_copy := make([]Param_Mode, len(param_modes), c.semantic_allocator)
 	result_copy := make([]Type_Id, len(results), c.semantic_allocator)
 	inout_copy := make([]bool, len(result_inout), c.semantic_allocator)
+	reset_copy: []bool
+	if has_reset_effect(param_resets) {
+		reset_copy = make([]bool, len(param_resets), c.semantic_allocator)
+		copy(reset_copy, param_resets)
+	}
 	copy(parameter_copy, parameters)
 	copy(mode_copy, param_modes)
 	copy(result_copy, results)
@@ -808,10 +823,42 @@ intern_proc_type :: proc(
 		bits          = c.target.pointer_bits,
 		parameters    = parameter_copy,
 		param_modes   = mode_copy,
+		param_resets  = reset_copy,
 		results       = result_copy,
 		result_inout  = inout_copy,
 		convention    = convention,
 	})
+}
+
+has_reset_effect :: proc(resets: []bool) -> bool {
+	for value in resets {
+		if value {
+			return true
+		}
+	}
+	return false
+}
+
+// A signature with no reset-marked parameter is the same type whether the list
+// is absent or all false, so an ordinary procedure never interns twice.
+@(private = "file")
+equal_reset_effects :: proc(a, b: []bool) -> bool {
+	limit := max(len(a), len(b))
+	for index in 0 ..< limit {
+		left := index < len(a) && a[index]
+		right := index < len(b) && b[index]
+		if left != right {
+			return false
+		}
+	}
+	return true
+}
+
+// Whether parameter `index` of this procedure type may reset the allocator
+// region it receives.
+proc_param_resets :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> bool {
+	info := type_of(c, type_underlying(c, proc_type))
+	return info != nil && index < len(info.param_resets) && info.param_resets[index]
 }
 
 @(private = "file")
@@ -1263,6 +1310,11 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 	for parameter, index in info.parameters {
 		if index > 0 {
 			strings.write_string(&b, ", ")
+		}
+		// The reset effect is part of the type, so two otherwise identical
+		// signatures must not print the same.
+		if index < len(info.param_resets) && info.param_resets[index] {
+			strings.write_string(&b, "@(allocator_reset) ")
 		}
 		if index < len(info.param_modes) && info.param_modes[index] == .Inout {
 			strings.write_string(&b, "inout ")

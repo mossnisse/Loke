@@ -41,9 +41,5 @@ main :: proc() {
 	handle := default_allocator(1);
 	drop();
 
-	// A region reset needs M5b's region analysis.
-	a := default_allocator();
-	free_all(a);
-
 	print_int(1);
 }

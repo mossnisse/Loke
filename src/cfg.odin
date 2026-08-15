@@ -97,6 +97,12 @@ Prov_Kind :: enum u8 {
 	Escape,
 	// `free`, which needs an allocation base and ends that allocation root.
 	Free,
+	// An allocator region reset: `free_all`, or a call through a parameter marked
+	// `@(allocator_reset)`.
+	Reset,
+	// An owner backed by a received allocator region is stored somewhere that
+	// outlives that region.
+	Region_Escape,
 }
 
 // design.md "Capabilities and the one rule". A read is compatible with a
@@ -118,8 +124,16 @@ Prov_Event :: struct {
 	path:    []Proj_Step,
 	access:  Access_Kind,
 	verb:    string,
-	// `Escape`: which result of the enclosing procedure this value becomes.
+	name:    string,
+	// `Escape`: which result of the enclosing procedure this value becomes, and
+	// the allocator region an owning result carries with it.
 	result:  int,
+	region:  Region_Set,
+	// `Reset`: whether the promise this reset needs is already written. `access`
+	// selects the form -- `Invalidate` for a direct `free_all`, `Write` for a
+	// call that hands one of this body's allocator parameters onward.
+	reset_covered: bool,
+	owner_span:    Span,
 }
 
 // A borrowed parameter arrives holding the caller's storage, which the entry
@@ -134,6 +148,9 @@ Flow_Cleanup_Kind :: enum {
 	Defer,
 	// A provenance root whose storage ends when its scope does.
 	Prov_Root,
+	// A region-backed owner leaving scope, so a later reset no longer has to
+	// treat it as a surviving dependant.
+	Prov_Owner,
 }
 
 // One registration in the unified cleanup order. Locals and written defers
@@ -188,8 +205,18 @@ Flow_Graph :: struct {
 	// a `switch` subject, or an `if`/`for`/`switch` initial statement. One list
 	// per statement is exactly that boundary.
 	temp_roots:     [dynamic]Root_Id,
+	// design.md "Allocator regions and region provenance". One entry per
+	// allocator binding and per region-backed owner; `owners_in_scope` is what a
+	// reset has to answer "would this owner survive it" against.
+	region_of:       map[Symbol_Id]Region_Set,
+	owners_in_scope: [dynamic]Symbol_Id,
+	param_count:     int,
+	// A body may borrow nothing at all and still reset a region or let an owner
+	// escape one, so the region half has its own reason to run the solver.
+	has_region_event: bool,
 
 	k:       ^Checker,
+	literal: ^Expr_Proc,
 	current: Block_Id,
 	// A slot in `tracked` is permanent: it names one declaration's state for the
 	// whole analysis. What comes and goes is scope membership, so that is a
@@ -225,6 +252,7 @@ build_flow_graph :: proc(
 	}
 	graph := new(Flow_Graph, allocator)
 	graph.k = k
+	graph.literal = literal
 	graph.alloc = allocator
 	graph.mode = mode
 	graph.blocks = make([dynamic]^Flow_Block, allocator)
@@ -239,6 +267,8 @@ build_flow_graph :: proc(
 	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
 	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
+	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
+	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
@@ -371,6 +401,10 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 			append(&graph.in_scope, ..tail)
 			continue
 		}
+		if action.kind == .Prov_Owner {
+			resize(&graph.owners_in_scope, action.slot)
+			continue
+		}
 		if action.kind == .Prov_Root {
 			// design.md: a borrow "may be used only while its root is live". The
 			// storage ends here, so every loan of it does too.
@@ -433,12 +467,14 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	case ^Stmt_Return:
 		if graph.mode != .Lifecycle {
 			for value, index in s.values {
+				region := prov_region_of(graph, value.expr)
 				loans := walk_flow_expr(graph, value.expr)
 				prov_emit(graph, Prov_Event {
 					kind    = .Escape,
 					sources = loans,
 					span    = expr_span(value.expr),
 					result  = index,
+					region  = region,
 				})
 			}
 			emit_cleanups(graph, 0)
@@ -1009,6 +1045,9 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	if graph.current == NO_BLOCK {
 		return // unreachable code borrows nothing observable
 	}
+	if event.kind == .Reset || event.kind == .Region_Escape {
+		graph.has_region_event = true
+	}
 	append(&graph.blocks[graph.current].prov, event)
 }
 
@@ -1206,11 +1245,27 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 	}
 	position := 0
 	for parameter in literal.signature.params {
+		position += len(parameter.symbols)
+	}
+	graph.param_count = position
+	position = 0
+	for parameter in literal.signature.params {
 		for id in parameter.symbols {
 			index := position
 			position += 1
 			sym := symbol_of(graph.k.c, id)
-			if sym == nil || !type_is_carrier(graph.k.c, sym.type) {
+			if sym == nil {
+				continue
+			}
+			// design.md: an allocator value's region identity is what lets the
+			// compiler recognise two values as the same region, and what an
+			// `@(allocator_reset)` promise is written about.
+			if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
+				set := prov_empty_region(graph)
+				set.params[index] = true
+				graph.region_of[id] = set
+			}
+			if !type_is_carrier(graph.k.c, sym.type) {
 				continue
 			}
 			slot, ok := prov_slot_for_symbol(graph, id)
@@ -1232,6 +1287,178 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			append(&graph.entry_defs, Prov_Entry_Def{slot = slot, loan = loan})
 		}
 	}
+}
+
+
+// ------------------------------------------------------------- regions --
+
+@(private = "file")
+prov_empty_region :: proc(graph: ^Flow_Graph) -> Region_Set {
+	return Region_Set{params = make([]bool, max(graph.param_count, 1), graph.alloc)}
+}
+
+// The allocator region an expression denotes, or an empty set when it denotes
+// nothing region-shaped.
+@(private = "file")
+prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
+	c := graph.k.c
+	#partial switch v in e {
+	case ^Expr_Ident:
+		if set, found := graph.region_of[v.symbol]; found {
+			return set
+		}
+	case ^Expr_Call:
+		if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
+			set := prov_empty_region(graph)
+			set.default = true
+			return set
+		}
+		// design.md: "an owning result constructed with an allocator parameter
+		// derives its region provenance from that allocator argument at the call
+		// site." The construction site is the call itself, so an owning result of
+		// a call that received an allocator carries that allocator's region
+		// whatever the callee did with it.
+		if type_is_managed(c, v.type) {
+			constructed := prov_empty_region(graph)
+			found_allocator := false
+			for argument in v.bound {
+				if argument == nil || type_underlying(c, expr_base(argument).type) != TYPE_ALLOCATOR {
+					continue
+				}
+				region_merge(&constructed, prov_region_of(graph, argument))
+				found_allocator = true
+			}
+			if found_allocator {
+				return constructed
+			}
+		}
+		callee := v.resolution.chosen_overload
+		if callee == INVALID_SYMBOL {
+			callee = v.resolution.symbol
+		}
+		if summary, found := result_summary(c, callee, 0); found {
+			out := prov_empty_region(graph)
+			for wanted, index in summary.region.params {
+				if wanted && index < len(v.bound) && v.bound[index] != nil {
+					region_merge(&out, prov_region_of(graph, v.bound[index]))
+				}
+			}
+			out.default ||= summary.region.default
+			out.unknown ||= summary.region.unknown
+			return out
+		}
+	}
+	if type_underlying(c, expr_base(e) == nil ? INVALID_TYPE : expr_base(e).type) == TYPE_ALLOCATOR {
+		set := prov_empty_region(graph)
+		set.unknown = true
+		return set
+	}
+	return Region_Set{}
+}
+
+// Which of this body's own allocator parameters an expression may name, and
+// whether every one of them already carries the reset promise.
+@(private = "file")
+prov_reset_promise :: proc(graph: ^Flow_Graph, set: Region_Set) -> (covered: bool, name: string) {
+	covered, name = false, ""
+	for wanted, index in set.params {
+		if !wanted {
+			continue
+		}
+		sym := prov_parameter_symbol(graph, index)
+		if sym == nil {
+			continue
+		}
+		if !sym.allocator_reset {
+			return false, identifier_text(graph.k.c, sym.name)
+		}
+		covered = true
+	}
+	return covered, ""
+}
+
+@(private = "file")
+prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
+	literal := graph.literal
+	if literal == nil || literal.signature == nil {
+		return nil
+	}
+	position := 0
+	for parameter in literal.signature.params {
+		for id in parameter.symbols {
+			if position == index {
+				return symbol_of(graph.k.c, id)
+			}
+			position += 1
+		}
+	}
+	return nil
+}
+
+// design.md: a reset "may end every allocation root in that allocator region",
+// so it is checked both for the promise it needs and for what would survive it.
+@(private = "file")
+prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool) {
+	covered, unmarked := prov_reset_promise(graph, set)
+	if !direct && unmarked == "" {
+		// Handing an allocator this body did not receive as a parameter to a
+		// reset-capable callee needs no promise of its own.
+		covered = true
+	}
+	event := Prov_Event {
+		kind          = .Reset,
+		span          = span,
+		access        = direct ? .Invalidate : .Write,
+		name          = unmarked,
+		reset_covered = unmarked == "" && (covered || !direct),
+	}
+	// A tracked owner whose backing region this may end is a blocker whatever its
+	// carriers do, because its cleanup still has to run.
+	// ponytail: "in scope" over-approximates "still needs cleanup"; a `manual`
+	// owner dropped before the reset still blocks. Tighten it when M6 gives the
+	// provenance walk the lifecycle states.
+	for id in graph.owners_in_scope {
+		owner := symbol_of(graph.k.c, id)
+		if owner == nil {
+			continue
+		}
+		event.verb = identifier_text(graph.k.c, owner.name)
+		event.owner_span = owner.span
+		break
+	}
+	prov_emit(graph, event)
+}
+
+// design.md: an owner backed by a region the procedure received "may not be
+// returned, assigned to `static`, `thread_local`, or file-scope storage".
+@(private = "file")
+prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr) {
+	ident, is_ident := target.(^Expr_Ident)
+	if !is_ident {
+		return
+	}
+	sym := symbol_of(graph.k.c, ident.symbol)
+	if sym == nil || !type_is_managed(graph.k.c, sym.type) {
+		return
+	}
+	storage := ""
+	switch {
+	case sym.duration == .Thread_Local: storage = "`thread_local` storage"
+	case sym.duration == .Static:       storage = "`static` storage"
+	case sym.decl != nil && sym.decl.top_level: storage = "file-scope storage"
+	}
+	if storage == "" {
+		return
+	}
+	if !region_is_parameter_backed(prov_region_of(graph, value)) {
+		return
+	}
+	prov_emit(graph, Prov_Event {
+		kind = .Region_Escape,
+		span = expr_span(target),
+		verb = identifier_text(graph.k.c, sym.name),
+		name = storage,
+	})
 }
 
 // ------------------------------------------------------------- places --
@@ -1465,6 +1692,13 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 		if root != NO_ROOT && graph.roots[int(root)].kind == .Local {
 			append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = sym.span})
 		}
+		initializer: Expr
+		if len(d.values) == 1 && len(d.symbols) > 1 {
+			initializer = symbol_index == 0 ? d.values[0] : nil
+		} else if symbol_index < len(d.values) {
+			initializer = d.values[symbol_index]
+		}
+		prov_declare_region(graph, id, sym, initializer)
 		slot, is_carrier := prov_slot_for_symbol(graph, id)
 		if !is_carrier {
 			continue
@@ -1492,6 +1726,32 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 	}
 }
 
+
+// An allocator binding inherits the identity it was initialised from; a managed
+// owner inherits the region its constructing call named.
+@(private = "file")
+prov_declare_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symbol, initializer: Expr) {
+	if initializer == nil {
+		return
+	}
+	if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
+		graph.region_of[id] = prov_region_of(graph, initializer)
+		return
+	}
+	if !type_is_managed(graph.k.c, sym.type) {
+		return
+	}
+	set := prov_region_of(graph, initializer)
+	if region_is_empty(set) {
+		return
+	}
+	graph.region_of[id] = set
+	// design.md: resetting a region is rejected "while a live owning value
+	// (managed or manual) ... still refers to storage from that allocator".
+	append(&graph.owners_in_scope, id)
+	append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Owner, slot = len(graph.owners_in_scope) - 1})
+}
+
 @(private = "file")
 prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	for target, index in s.lhs {
@@ -1500,6 +1760,17 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			sources = value_loans[index]
 		}
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
+			if index < len(s.rhs) {
+				prov_region_escape(graph, target, s.rhs[index])
+				if type_underlying(graph.k.c, expr_base(target).type) == TYPE_ALLOCATOR {
+					existing, found := graph.region_of[ident.symbol]
+					if !found {
+						existing = prov_empty_region(graph)
+					}
+					region_merge(&existing, prov_region_of(graph, s.rhs[index]))
+					graph.region_of[ident.symbol] = existing
+				}
+			}
 			// design.md: "Moving, dropping, freeing, fully assigning, or exchanging
 			// a root invalidates borrows of its previous value."
 			prov_invalidate(graph, target, expr_span(target), "assigned")
@@ -1573,6 +1844,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				prov_emit(graph, Prov_Event{kind = .Free, sources = sources, span = v.span})
 			}
 			return nil
+		case .Free_All:
+			if len(v.bound) >= 1 {
+				region := prov_region_of(graph, v.bound[0])
+				walk_flow_expr(graph, v.bound[0])
+				prov_reset(graph, region, v.span, true)
+			}
+			return nil
 		case .Drop:
 			if len(v.bound) == 1 {
 				prov_invalidate(graph, v.bound[0], v.span, "dropped")
@@ -1587,6 +1865,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 	}
 	walk_flow_expr(graph, v.callee)
+	prov_call_resets(graph, v)
 	receiver := Param_Mode.Value
 	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.has_receiver {
 		receiver = sym.receiver
@@ -1642,6 +1921,33 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 // conservatively derived from every borrowed argument, and fresh-allocation
 // provenance is erased -- which is what keeps an indirect result away from
 // checked `free`.
+
+// design.md: "Allocator-wide invalidation is the one effect propagated through
+// arbitrary ordinary procedure wrappers", and it survives an indirect call
+// because the attribute is part of the procedure type.
+@(private = "file")
+prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	proc_type := INVALID_TYPE
+	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym != nil {
+		proc_type = sym.proc_type
+	} else if v.callee != nil {
+		proc_type = expr_base(v.callee).type
+	}
+	if proc_type == INVALID_TYPE {
+		return
+	}
+	arguments := v.bound
+	if len(arguments) == 0 {
+		return
+	}
+	for argument, index in arguments {
+		if argument == nil || !proc_param_resets(graph.k.c, proc_type, index) {
+			continue
+		}
+		prov_reset(graph, prov_region_of(graph, argument), v.span, false)
+	}
+}
+
 @(private = "file")
 prov_call_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int, borrowed: []int) -> []int {
 	c := graph.k.c

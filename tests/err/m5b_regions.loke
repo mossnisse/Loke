@@ -1,0 +1,84 @@
+package main;
+
+// m5b-plan step 3: allocator regions and reset effects. design.md: "The
+// compiler rejects `free_all`, or any call carrying the same allocator-reset
+// effect, while a live owning value (managed or manual) or borrow still refers
+// to storage from that allocator."
+
+Buffer :: struct { id: int }
+
+impl Buffer {
+	drop :: proc(self: inout Buffer) { self.id = 0; }
+}
+
+make_buffer :: proc(value: int, allocator: Allocator) -> Buffer {
+	return Buffer{value};
+}
+
+release :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+global_buffer: Buffer;
+
+// design.md: "It may not hide a reset of a global or other pre-existing
+// allocator: such an allocator is taken through an `@(allocator_reset)`
+// parameter instead."
+hidden_reset :: proc(allocator: Allocator) {
+	free_all(allocator);
+}
+
+// The promise is verified transitively, so handing an unmarked parameter to a
+// reset-capable procedure is the same mistake one call further out.
+unmarked_wrapper :: proc(allocator: Allocator) {
+	release(allocator);
+}
+
+// The effect is part of the procedure type, so an indirect call keeps it.
+indirect_wrapper :: proc(allocator: Allocator, reset: proc(@(allocator_reset) a: Allocator)) {
+	reset(allocator);
+}
+
+// design.md: `free_all` "frees every allocation in the allocator's region", so
+// a pointer into it that is used afterwards would dangle.
+alias_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
+	pointer, err := new(int, allocator);
+	if (err != nil) { return; }
+	free_all(allocator);
+	print_int(pointer^);
+}
+
+// An owner still needing its cleanup would run that cleanup over released
+// storage, whether or not it has a later use.
+owner_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
+	held := make_buffer(1, allocator);
+	free_all(allocator);
+	print_int(held.id);
+}
+
+// design.md: an owner "backed by a region created in the current procedure may
+// not be ... assigned to `static`, `thread_local`, or file-scope storage".
+owner_escapes_to_file_scope :: proc(allocator: Allocator) {
+	global_buffer = make_buffer(2, allocator);
+}
+
+owner_escapes_to_static :: proc(allocator: Allocator) {
+	kept: static Buffer = Buffer{0};
+	kept = make_buffer(3, allocator);
+}
+
+// The attribute states something only an `Allocator` can promise.
+bad_attribute :: proc(@(allocator_reset) value: int) {
+	print_int(value);
+}
+
+// The reset effect is part of the type, so it cannot be hidden by storing the
+// procedure in a value whose type omits it.
+hidden_effect :: proc() {
+	handler: proc(a: Allocator) = release;
+	handler(default_allocator());
+}
+
+main :: proc() {
+	print_int(1);
+}

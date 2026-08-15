@@ -220,6 +220,55 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 	return "borrow"
 }
 
+// ---------------------------------------------------------- regions --
+
+// design.md "Allocator regions and region provenance": "Allocator values have a
+// region identity in addition to their allocation procedures and failure
+// policy." What the analysis needs from that identity is where it came from: a
+// parameter of this body, the process-wide default provider, or somewhere it
+// cannot see.
+//
+// design.md also settles the precision question: "When compile-time
+// region-identity analysis cannot prove two allocator values distinct, the
+// lifetime check conservatively treats their regions as possibly identical." M5
+// has no source-level provider that creates a region, so no two identities are
+// ever proven distinct and a reset must assume it ends every tracked region.
+//
+// ponytail: region identity is flow-insensitive, one entry per allocator
+// binding. An allocator variable that is reassigned to a different provider
+// merges both identities, which is conservative in the safe direction. Make it
+// a proper lattice when M6 gives regions something to be precise about.
+Region_Set :: struct {
+	// Which `Allocator` parameters of the enclosing body this value may name.
+	params:  []bool,
+	// The default provider's region, which outlives the whole program.
+	default: bool,
+	unknown: bool,
+}
+
+region_is_parameter_backed :: proc(set: Region_Set) -> bool {
+	for value in set.params {
+		if value {
+			return true
+		}
+	}
+	return false
+}
+
+region_is_empty :: proc(set: Region_Set) -> bool {
+	return !set.default && !set.unknown && !region_is_parameter_backed(set)
+}
+
+region_merge :: proc(into: ^Region_Set, from: Region_Set) {
+	for value, index in from.params {
+		if value && index < len(into.params) {
+			into.params[index] = true
+		}
+	}
+	into.default ||= from.default
+	into.unknown ||= from.unknown
+}
+
 // ------------------------------------------------------- result summaries --
 
 // design.md "Temporaries and procedure boundaries": "For a direct call to a
@@ -242,6 +291,11 @@ Result_Provenance :: struct {
 	// component exists so a caller does not silently believe the result.
 	local:   bool,
 	unknown: bool,
+	// design.md: "an owning result constructed with an allocator parameter
+	// derives its region provenance from that allocator argument at the call
+	// site." The region component is independent of the root component above:
+	// passing one rule does not waive the other.
+	region:  Region_Set,
 }
 
 Proc_Summary :: struct {
@@ -267,6 +321,14 @@ merge_provenance :: proc(into: ^Result_Provenance, from: Result_Provenance) -> b
 			changed = true
 		}
 	}
+	for value, index in from.region.params {
+		if value && index < len(into.region.params) && !into.region.params[index] {
+			into.region.params[index] = true
+			changed = true
+		}
+	}
+	if from.region.default && !into.region.default { into.region.default, changed = true, true }
+	if from.region.unknown && !into.region.unknown { into.region.unknown, changed = true, true }
 	if from.static && !into.static   { into.static, changed  = true, true }
 	if from.fresh && !into.fresh     { into.fresh, changed   = true, true }
 	if from.local && !into.local     { into.local, changed   = true, true }
@@ -349,6 +411,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		summary.results = make([]Result_Provenance, len(sym.results), k.c.semantic_allocator)
 		for index in 0 ..< len(summary.results) {
 			summary.results[index].params = make([]bool, len(sym.param_symbols), k.c.semantic_allocator)
+			summary.results[index].region.params = make([]bool, len(sym.param_symbols), k.c.semantic_allocator)
 		}
 		k.c.result_summaries[literal.symbol] = summary
 	}
@@ -380,6 +443,15 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 		for event in block.prov {
 			if event.kind == .Escape && event.result < len(summary.results) {
 				into := &summary.results[event.result]
+				if !region_is_empty(event.region) {
+					before := into.region
+					region_merge(&into.region, event.region)
+					if before.default != into.region.default ||
+					   before.unknown != into.region.unknown ||
+					   !bools_equal(before.params, into.region.params) {
+						changed = true
+					}
+				}
 				for source in event.sources {
 					for held, index in reach_row(state, state.reach, source) {
 						if held && merge_loan_provenance(state, into, graph.loans[index]) {
@@ -449,7 +521,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.slots = len(graph.prov_slots)
 	state.loans = len(graph.loans)
 	state.roots = len(graph.roots)
-	if state.loans == 0 {
+	if state.loans == 0 && !graph.has_region_event {
 		return false
 	}
 	width := max(state.slots * state.loans, 1)
@@ -570,6 +642,14 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, inv
 	case .Root_End:
 		for loan, index in graph.loans {
 			if loan.root == event.root {
+				invalid[index] = true
+			}
+		}
+	case .Reset:
+		// An accepted reset ends every allocation root in the region and
+		// invalidates all locally tracked aliases of them.
+		for loan, index in graph.loans {
+			if graph.roots[int(loan.root)].kind == .Allocation {
 				invalid[index] = true
 			}
 		}
@@ -769,12 +849,106 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				return
 			}
 		}
+	case .Reset:
+		check_region_reset(state, event, live, uses)
+	case .Region_Escape:
+		// design.md: an owner "backed by a region created in the current
+		// procedure may not be ... assigned to `static`, `thread_local`, or
+		// file-scope storage". A bare pointer, slice or view stored the same way
+		// is the documented v1 trust boundary and is deliberately not checked.
+		errorf(
+			state.k.c,
+			event.span,
+			"L0536",
+			"`%s` is backed by an allocator region this procedure received, so it cannot be stored in %s, which outlives that region",
+			event.verb,
+			event.name,
+		)
 	case .Free:
 		if base, ok := check_free_provenance(state, event); ok {
 			// design.md: `free` "invalidates every locally tracked pointer or view
 			// of that allocation", so a surviving alias is the error, not the
 			// dangling read it would later perform.
 			report_live_dependants(state, base.root, event.span, live, uses, "released")
+		}
+	}
+}
+
+
+// design.md: "The compiler rejects `free_all`, or any call carrying the same
+// allocator-reset effect, while a live owning value (managed or manual) or
+// borrow still refers to storage from that allocator."
+//
+// Two independent questions. First, may this body reset this region at all --
+// design.md: "It may not hide a reset of a global or other pre-existing
+// allocator: such an allocator is taken through an `@(allocator_reset)`
+// parameter instead." Second, would anything survive the reset.
+@(private = "file")
+check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
+	graph := state.graph
+	if event.access == .Invalidate && !event.reset_covered {
+		// The direct form: `free_all` on a region that existed before entry.
+		errorf(
+			state.k.c,
+			event.span,
+			"L0538",
+			"this resets a region that existed before the call, so the allocator must arrive through an `@(allocator_reset)` parameter",
+		)
+		return
+	}
+	if event.access == .Write && !event.reset_covered {
+		// The transitive form: handing one of this body's own allocator
+		// parameters to a reset-capable procedure resets a caller's region.
+		errorf(
+			state.k.c,
+			event.span,
+			"L0538",
+			"this call may reset `%s`, so `%s` must be marked `@(allocator_reset)`",
+			event.name,
+			event.name,
+		)
+		return
+	}
+	// A locally tracked owner that still needs its cleanup would run that cleanup
+	// over released storage.
+	if event.verb != "" {
+		errorf(
+			state.k.c,
+			event.span,
+			"L0537",
+			"this reset would end the region backing `%s`, which is still live here",
+			event.verb,
+		)
+		add_notef(state.k.c, event.owner_span, "`%s` is declared here and is cleaned up after this point", event.verb)
+		return
+	}
+	// design.md: the proof is that no dependant survives the reset, not that
+	// every allocation was already freed. An allocation whose carriers have no
+	// later use is simply released by it.
+	for slot in 0 ..< state.slots {
+		if !live[slot] {
+			continue
+		}
+		for held, index in reach_row(state, state.reach, slot) {
+			if !held || state.invalid[index] {
+				continue
+			}
+			loan := graph.loans[index]
+			if graph.roots[int(loan.root)].kind != .Allocation {
+				continue
+			}
+			errorf(
+				state.k.c,
+				event.span,
+				"L0537",
+				"this reset ends every allocation in the region, but a %s of one of them is still in use",
+				loan.what,
+			)
+			add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
+			if uses[slot].file != NO_FILE {
+				add_notef(state.k.c, uses[slot], "and is still used here, which keeps it live")
+			}
+			return
 		}
 	}
 }

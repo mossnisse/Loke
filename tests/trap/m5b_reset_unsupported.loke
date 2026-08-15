@@ -1,0 +1,17 @@
+package main;
+
+// design.md: `free_all` "frees every allocation in the allocator's region. Not
+// all allocators support this procedure." The M5 default provider is one that
+// does not, and its reset entry traps. That is a different failure from the
+// compile-time rejection when a dependant would survive the reset: this program
+// is accepted by both provenance analyses and still cannot run.
+
+release :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+main :: proc() {
+	print_int(1);
+	release(default_allocator());
+	print_int(2);
+}
