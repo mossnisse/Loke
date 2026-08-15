@@ -1,0 +1,9 @@
+L0526
+@9:9
+this slice cannot be returned: `numbers` ends when this procedure returns
+L0526
+@15:9
+this slice cannot be returned: `numbers` ends when this procedure returns
+L0511
+@22:2
+this write of `numbers` is not compatible with the read-only slice of it that is still in use

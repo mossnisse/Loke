@@ -1,0 +1,26 @@
+package views;
+
+// design.md "Temporaries and procedure boundaries": a borrow returned from
+// storage reachable through a borrowed parameter derives root provenance from
+// every borrowed argument. The summary is declaration metadata, so an importer
+// substitutes its own roots into it.
+@(public)
+first_half :: proc(values: []int) -> []int {
+	return values[:len(values) / 2];
+}
+
+// A generic instance gets its own summary, keyed on the instance rather than on
+// the template.
+@(public)
+head :: proc(values: []$T) -> []T {
+	return values[:1];
+}
+
+TABLE :: [4]int{1, 2, 3, 4};
+
+// Static and materialized roots outlive every caller, so this result escapes
+// legally.
+@(public)
+constant_view :: proc() -> []int {
+	return TABLE[:];
+}

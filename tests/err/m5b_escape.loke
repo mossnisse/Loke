@@ -1,0 +1,56 @@
+package main;
+
+// m5b-plan step 2: temporaries and procedure boundaries. design.md: "A borrow
+// derived from a local root cannot be returned."
+
+Point :: struct { x: int, y: int }
+
+returns_a_local_array :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	return local[:];
+}
+
+returns_a_slice_literal :: proc() -> []int {
+	return [3]int{1, 2, 3}[:];
+}
+
+// design.md: "The default parameter binding itself is a callee-local read-only
+// value. Taking `&parameter` borrows that local and cannot produce a returned
+// pointer."
+returns_a_parameter_binding :: proc(value: int) -> ^int {
+	return &value;
+}
+
+// design.md: "A value temporary lives until the end of its complete expression.
+// A borrow derived from it ... cannot escape it."
+returns_a_temporary :: proc() -> ^Point {
+	return &Point{1, 2};
+}
+
+first_half :: proc(values: []int) -> []int {
+	return values[:len(values) / 2];
+}
+
+// The result summary substitutes the actual argument, so the caller's local is
+// what ends here.
+returns_a_substituted_local :: proc() -> []int {
+	numbers := [4]int{1, 2, 3, 4};
+	return first_half(numbers[:]);
+}
+
+// design.md: "Fresh-allocation root provenance is never preserved through an
+// ordinary procedure value, so its result cannot be passed to checked `free`."
+indirect_allocation :: proc(make_one: proc() -> ^int) {
+	pointer := make_one();
+	free(pointer);
+}
+
+// A borrowed argument in a temporary cannot outlive the complete expression the
+// temporary belongs to.
+temporary_argument :: proc() -> []int {
+	return first_half([4]int{1, 2, 3, 4}[:]);
+}
+
+main :: proc() {
+	print_int(1);
+}

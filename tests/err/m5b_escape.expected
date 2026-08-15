@@ -1,0 +1,21 @@
+L0526
+@10:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@14:9
+this slice cannot be returned: the slice literal it borrows ends when this procedure returns
+L0526
+@21:9
+this pointer cannot be returned: `value` ends when this procedure returns
+L0526
+@27:9
+this pointer cannot be returned: the temporary it borrows ends when this procedure returns
+L0526
+@38:9
+this slice cannot be returned: `numbers` ends when this procedure returns
+L0514
+@45:2
+`free` releases an allocation from `new` or `new_clone`; this pointer designates unknown storage
+L0526
+@51:9
+this slice cannot be returned: the slice literal it borrows ends when this procedure returns

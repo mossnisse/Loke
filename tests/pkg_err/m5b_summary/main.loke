@@ -1,0 +1,37 @@
+package main;
+
+import "./views";
+
+// The summary crossed a package boundary: this result borrows `numbers`, which
+// ends with this procedure.
+escaping_across_a_package :: proc() -> []int {
+	numbers := [4]int{1, 2, 3, 4};
+	return views.first_half(numbers[:]);
+}
+
+// The same through a generic instance.
+escaping_through_an_instance :: proc() -> []int {
+	numbers := [4]int{1, 2, 3, 4};
+	return views.head(numbers[:]);
+}
+
+// A borrow of the caller's own storage still ends where the caller says it does.
+conflicting_across_a_package :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	view := views.first_half(numbers[:]);
+	numbers[0] = 9;
+	print_int(view[0]);
+}
+
+// A static root the callee named survives, so this one is accepted.
+constant_escapes :: proc() -> []int {
+	return views.constant_view();
+}
+
+main :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	view := views.first_half(numbers[:]);
+	print_int(view[0]);
+	print_int(len(views.head(numbers[:])));
+	print_int(len(constant_escapes()));
+}

@@ -1,0 +1,88 @@
+package main;
+
+// m5b-plan step 2: what result summaries *permit*. design.md: "A borrow returned
+// from storage reachable through a borrowed parameter derives root provenance
+// from every borrowed argument received by the procedure."
+
+TABLE :: [4]int{10, 20, 30, 40};
+
+sum :: proc(values: []int) -> int {
+	total := 0;
+	foreach (value in values) {
+		total += value;
+	}
+	return total;
+}
+
+first_half :: proc(values: []int) -> []int {
+	return values[:len(values) / 2];
+}
+
+// design.md: "If a procedure has multiple borrowed arguments, its returned
+// borrow conservatively derives from all of them."
+either :: proc(left: []int, right: []int, take_left: bool) -> []int {
+	if (take_left) { return left; }
+	return right;
+}
+
+// A materialized constant is a root that outlives every caller.
+constant_view :: proc() -> []int {
+	return TABLE[:];
+}
+
+// design.md: "A checked pointer to an allocation root created by `new` or
+// `new_clone` may be returned because the allocation is not callee-local
+// storage."
+allocate :: proc(value: int) -> ^int {
+	pointer, err := new(int);
+	if (err != nil) { panic("allocation failed"); }
+	pointer^ = value;
+	return pointer;
+}
+
+// design.md: "An `inout` parameter aliases the caller's root, so a borrow
+// returned from it is derived from that root."
+inout_borrow :: proc(target: inout int) -> ^int {
+	return &target;
+}
+
+// Forward and mutually recursive declarations settle to the same summaries
+// whatever order they are written in: `tail` is used before it is declared.
+skip_zero :: proc(values: []int) -> []int {
+	if (len(values) == 0 || values[0] != 0) { return values; }
+	return tail(values);
+}
+
+tail :: proc(values: []int) -> []int {
+	return skip_zero(values[1:]);
+}
+
+main :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	half := first_half(numbers[:]);
+	print_int(sum(half));
+	// The loan ends at the last use of the result, so the root is writable again.
+	numbers[0] = 9;
+	print_int(numbers[0]);
+
+	other := [2]int{5, 6};
+	picked := either(numbers[:], other[:], false);
+	print_int(sum(picked));
+
+	// A static root escapes its callee legally.
+	print_int(sum(constant_view()));
+
+	// A fresh allocation returned by a direct call keeps its identity, so the
+	// caller may release it.
+	pointer := allocate(7);
+	print_int(pointer^);
+	free(pointer);
+
+	target := 0;
+	written := inout_borrow(inout target);
+	written^ = 5;
+	print_int(target);
+
+	zeros := [4]int{0, 0, 3, 4};
+	print_int(sum(skip_zero(zeros[:])));
+}

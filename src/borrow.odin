@@ -60,6 +60,15 @@ root_label :: proc(c: ^Compiler, root: Prov_Root) -> string {
 	return fmt.aprintf("`%s`", root.name, allocator = c.semantic_allocator)
 }
 
+// The subject of a sentence about a root: its written name when it has one, and
+// what kind of storage it is when it does not.
+root_phrase :: proc(c: ^Compiler, root: Prov_Root) -> string {
+	if root.symbol != INVALID_SYMBOL {
+		return root_label(c, root)
+	}
+	return fmt.aprintf("the %s it borrows", root_kind_text(root.kind), allocator = c.semantic_allocator)
+}
+
 root_kind_text :: proc(kind: Root_Kind) -> string {
 	switch kind {
 	case .Local:         return "local"
@@ -211,6 +220,60 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 	return "borrow"
 }
 
+// ------------------------------------------------------- result summaries --
+
+// design.md "Temporaries and procedure boundaries": "For a direct call to a
+// named Loke declaration or generic instantiation, the compiler records a
+// result-provenance summary with the declaration. For each result it records two
+// independent components when applicable."
+//
+// This is the root component; the region component joins it in m5b-plan step 3.
+// Every field is a *possibility*, so the join is a union and the lattice is
+// finite, which is what makes the whole-program fixed point below terminate.
+Result_Provenance :: struct {
+	// Which borrowed parameters the result may name storage of.
+	params:  []bool,
+	// Static-duration or materialized storage, which outlives every caller.
+	static:  bool,
+	// A fresh allocation root, which is what lets a returned pointer reach
+	// checked `free`.
+	fresh:   bool,
+	// Callee-local storage. Returning it is already an error in the callee; the
+	// component exists so a caller does not silently believe the result.
+	local:   bool,
+	unknown: bool,
+}
+
+Proc_Summary :: struct {
+	results: []Result_Provenance,
+}
+
+result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Result_Provenance, bool) {
+	summary, found := c.result_summaries[declaration]
+	if !found || result >= len(summary.results) {
+		return Result_Provenance{}, false
+	}
+	return summary.results[result], true
+}
+
+// Union of two possibilities. Returns whether the destination grew, which is the
+// fixed point's termination signal.
+@(private = "file")
+merge_provenance :: proc(into: ^Result_Provenance, from: Result_Provenance) -> bool {
+	changed := false
+	for value, index in from.params {
+		if value && index < len(into.params) && !into.params[index] {
+			into.params[index] = true
+			changed = true
+		}
+	}
+	if from.static && !into.static   { into.static, changed  = true, true }
+	if from.fresh && !into.fresh     { into.fresh, changed   = true, true }
+	if from.local && !into.local     { into.local, changed   = true, true }
+	if from.unknown && !into.unknown { into.unknown, changed = true, true }
+	return changed
+}
+
 // ------------------------------------------------------------- the solver --
 
 // Per-body state the lattices share. `reach` is the forward component (which
@@ -243,15 +306,118 @@ Checked_Body :: struct {
 	clean:   bool,
 }
 
+// Source order says nothing about the call graph, so summaries are iterated to a
+// fixed point rather than solved once per declaration. The lattice is finite and
+// every step is a union, so this terminates; the bound is a safety net against a
+// non-monotone mistake, not a documented depth limit.
+PROVENANCE_SUMMARY_ROUNDS :: 32
+
 // The whole program's provenance, after every package body and promoted generic
-// instance is checked. One disposable graph is built and released at a time, so
-// no analysis allocation outlives the body it describes.
+// instance is checked. Summaries settle first, then diagnostics run with actual
+// argument roots substituted at direct calls. One disposable graph is built and
+// released at a time, so no analysis allocation outlives the body it describes.
 analyze_program_provenance :: proc(k: ^Checker) {
+	for _ in 0 ..< PROVENANCE_SUMMARY_ROUNDS {
+		changed := false
+		for body in k.c.checked_bodies {
+			if body.clean && summarize_body(k, body.literal) {
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
 	for body in k.c.checked_bodies {
 		if body.clean {
 			analyze_provenance(k, body.literal)
 		}
 	}
+}
+
+// One round of one body's result equations. Read-only apart from the summary it
+// merges into package metadata.
+@(private = "file")
+summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
+	sym := symbol_of(k.c, literal.symbol)
+	if sym == nil || len(sym.results) == 0 {
+		return false
+	}
+	summary, found := k.c.result_summaries[literal.symbol]
+	if !found {
+		summary = new(Proc_Summary, k.c.semantic_allocator)
+		summary.results = make([]Result_Provenance, len(sym.results), k.c.semantic_allocator)
+		for index in 0 ..< len(summary.results) {
+			summary.results[index].params = make([]bool, len(sym.param_symbols), k.c.semantic_allocator)
+		}
+		k.c.result_summaries[literal.symbol] = summary
+	}
+	defer free_all(k.c.analysis_allocator)
+	graph := build_flow_graph(k, literal, k.c.analysis_allocator, .Prov_Summary)
+	if graph == nil {
+		return false
+	}
+	state := Prov_State{graph = graph, k = k}
+	if !prepare_state(&state) {
+		return false
+	}
+	solve_reaching(&state)
+	return collect_escape_provenance(&state, summary)
+}
+
+// The equations: every loan that can reach a `return` becomes one possibility in
+// that result's summary.
+@(private = "file")
+collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) -> bool {
+	graph := state.graph
+	changed := false
+	for block in graph.blocks {
+		if !block.prov_visited {
+			continue
+		}
+		copy(state.reach, block.reach_entry)
+		copy(state.invalid, block.invalid_entry)
+		for event in block.prov {
+			if event.kind == .Escape && event.result < len(summary.results) {
+				into := &summary.results[event.result]
+				for source in event.sources {
+					for held, index in reach_row(state, state.reach, source) {
+						if held && merge_loan_provenance(state, into, graph.loans[index]) {
+							changed = true
+						}
+					}
+				}
+			}
+			run_prov_event(state, event, state.reach, state.invalid)
+		}
+	}
+	return changed
+}
+
+@(private = "file")
+merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Provenance, loan: Prov_Loan) -> bool {
+	root := state.graph.roots[int(loan.root)]
+	one := Result_Provenance{}
+	switch root.kind {
+	case .Param:
+		if root.param_index >= 0 && root.param_index < len(into.params) {
+			if into.params[root.param_index] {
+				return false
+			}
+			into.params[root.param_index] = true
+			return true
+		}
+		one.unknown = true
+	case .Static, .Materialized:
+		one.static = true
+	case .Allocation:
+		one.fresh = true
+	case .Local, .Slice_Literal, .Temporary:
+		one.local = true
+	case .Unknown:
+		one.unknown = true
+	}
+	return merge_provenance(into, one)
 }
 
 // One concrete body's root and region diagnostics.
@@ -266,15 +432,25 @@ analyze_provenance :: proc(k: ^Checker, literal: ^Expr_Proc) {
 
 @(private = "file")
 solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
-	state := Prov_State {
-		graph = graph,
-		k     = k,
-		slots = len(graph.prov_slots),
-		loans = len(graph.loans),
-		roots = len(graph.roots),
+	state := Prov_State{graph = graph, k = k}
+	if !prepare_state(&state) {
+		return
 	}
+	solve_reaching(&state)
+	solve_loan_liveness(&state)
+	report_provenance(&state)
+}
+
+// Sizes the per-block lattice storage. False when the body borrows nothing at
+// all, so neither rule can fail and neither pass has to run.
+@(private = "file")
+prepare_state :: proc(state: ^Prov_State) -> bool {
+	graph := state.graph
+	state.slots = len(graph.prov_slots)
+	state.loans = len(graph.loans)
+	state.roots = len(graph.roots)
 	if state.loans == 0 {
-		return // nothing borrows anything, so neither rule can fail
+		return false
 	}
 	width := max(state.slots * state.loans, 1)
 	for block in graph.blocks {
@@ -293,10 +469,7 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]bool, state.loans, graph.alloc)
-
-	solve_reaching(&state)
-	solve_loan_liveness(&state)
-	report_provenance(&state)
+	return true
 }
 
 // Forward: which loans each carrier slot may hold, and which loans an earlier
@@ -563,6 +736,36 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 					continue
 				}
 				report_root_outlived(state, event, loan, uses[slot])
+				return
+			}
+		}
+	case .Escape:
+		// design.md: "A borrow derived from a local root cannot be returned."
+		// Static, materialized and freshly allocated roots are all still there
+		// when the caller resumes, and unknown provenance is not evidence of a
+		// failure -- only an operation that needs a proof rejects it.
+		for source in event.sources {
+			for held, index in reach_row(state, state.reach, source) {
+				if !held || state.invalid[index] {
+					continue
+				}
+				loan := graph.loans[index]
+				root := graph.roots[int(loan.root)]
+				if root_outlives_body(root.kind) {
+					continue
+				}
+				errorf(
+					state.k.c,
+					event.span,
+					"L0526",
+					"this %s cannot be returned: %s ends when this procedure returns",
+					loan.what,
+					root_phrase(state.k.c, root),
+				)
+				if root.symbol != INVALID_SYMBOL && root.span.file != NO_FILE {
+					add_notef(state.k.c, root.span, "%s is declared here", root_label(state.k.c, root))
+				}
+				add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
 				return
 			}
 		}

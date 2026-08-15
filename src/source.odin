@@ -151,6 +151,11 @@ Compiler :: struct {
 	// a forward or mutually recursive callee already has its result summary
 	// (m5b-plan decision "Analysis scheduling").
 	checked_bodies: [dynamic]Checked_Body,
+	// design.md "Temporaries and procedure boundaries": the result-provenance
+	// summary "is compile-time declaration metadata, is emitted for cross-package
+	// checking, and does not change the runtime ABI". Keyed per concrete
+	// declaration or generic instance, so two instances may differ.
+	result_summaries: map[Symbol_Id]^Proc_Summary,
 
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker

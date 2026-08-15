@@ -118,6 +118,8 @@ Prov_Event :: struct {
 	path:    []Proj_Step,
 	access:  Access_Kind,
 	verb:    string,
+	// `Escape`: which result of the enclosing procedure this value becomes.
+	result:  int,
 }
 
 // A borrowed parameter arrives holding the caller's storage, which the entry
@@ -181,6 +183,11 @@ Flow_Graph :: struct {
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
+	// design.md: "A value temporary lives until the end of its complete
+	// expression", extended to the complete statement inside a `foreach` iterable,
+	// a `switch` subject, or an `if`/`for`/`switch` initial statement. One list
+	// per statement is exactly that boundary.
+	temp_roots:     [dynamic]Root_Id,
 
 	k:       ^Checker,
 	current: Block_Id,
@@ -231,6 +238,7 @@ build_flow_graph :: proc(
 	graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
 	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
 	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
+	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
@@ -380,8 +388,19 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 	}
 }
 
+// design.md: an ordinary temporary root "lives until the end of its complete
+// expression", and one in a control-flow header until that complete statement
+// ends. A header's initial statement therefore does not release its own
+// temporaries: `extend` keeps them on the enclosing statement's list.
 @(private = "file")
-walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt) {
+walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
+	mark := len(graph.temp_roots)
+	defer if !extend {
+		for index := len(graph.temp_roots) - 1; index >= mark; index -= 1 {
+			prov_emit(graph, Prov_Event{kind = .Root_End, root = graph.temp_roots[index]})
+		}
+		resize(&graph.temp_roots, mark)
+	}
 	switch s in stmt {
 	case ^Stmt_Error:
 
@@ -413,12 +432,13 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt) {
 
 	case ^Stmt_Return:
 		if graph.mode != .Lifecycle {
-			for value in s.values {
+			for value, index in s.values {
 				loans := walk_flow_expr(graph, value.expr)
 				prov_emit(graph, Prov_Event {
 					kind    = .Escape,
 					sources = loans,
 					span    = expr_span(value.expr),
+					result  = index,
 				})
 			}
 			emit_cleanups(graph, 0)
@@ -589,7 +609,7 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 @(private = "file")
 walk_flow_if :: proc(graph: ^Flow_Graph, s: ^Stmt_If) {
 	if s.init != nil {
-		walk_flow_stmt(graph, s.init)
+		walk_flow_stmt(graph, s.init, extend = true)
 	}
 	walk_flow_expr(graph, s.cond)
 	entry := graph.current
@@ -613,7 +633,7 @@ walk_flow_if :: proc(graph: ^Flow_Graph, s: ^Stmt_If) {
 @(private = "file")
 walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 	if s.init != nil {
-		walk_flow_stmt(graph, s.init)
+		walk_flow_stmt(graph, s.init, extend = true)
 	}
 	head := new_flow_block(graph)
 	link(graph, graph.current, head)
@@ -672,7 +692,7 @@ walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_
 @(private = "file")
 walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	if s.init != nil {
-		walk_flow_stmt(graph, s.init)
+		walk_flow_stmt(graph, s.init, extend = true)
 	}
 	if s.subject != nil {
 		walk_flow_expr(graph, s.subject)
@@ -1350,7 +1370,13 @@ prov_invalidate :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: strin
 prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 	root, path, ok := prov_place_of(graph, v.operand)
 	if !ok {
-		return walk_flow_expr(graph, v.operand)
+		loans := walk_flow_expr(graph, v.operand)
+		if len(loans) > 0 || !prov_expr_is_temporary(v.operand) {
+			return loans
+		}
+		// design.md: a borrow of a value temporary "may be used during that
+		// expression, including by a called procedure, but cannot escape it".
+		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, true, v.span, "pointer")
 	}
 	prov_walk_subscripts(graph, v.operand)
 	prov_access(graph, root, path, .Write, v.span)
@@ -1369,7 +1395,11 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 		return nil
 	}
 	mutable := slice_is_mutable(graph.k.c, v.type)
-	if root, path, ok := prov_place_of(graph, v.operand); ok {
+	// Only a fixed array is sliced out of a root's own inline storage. Slicing a
+	// slice, a pointer or a string view reslices the carrier, so the loans it
+	// already holds are what the result borrows.
+	array := type_kind(graph.k.c, type_underlying(graph.k.c, expr_base(v.operand).type)) == .Array
+	if root, path, ok := prov_place_of(graph, v.operand); ok && array {
 		prov_walk_subscripts(graph, v.operand)
 		if v.lo != nil {
 			walk_flow_expr(graph, v.lo)
@@ -1394,14 +1424,25 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	if len(source) > 0 {
 		return source
 	}
-	// design.md: a slice of a value temporary borrows a hidden array, which
-	// "follows the surrounding lexical scope".
-	if prov_expr_is_temporary(v.operand) {
-		root := prov_new_root(graph, .Slice_Literal, expr_span(v.operand), "this temporary")
+	// design.md: a slice literal borrows a hidden array, which "follows the
+	// surrounding lexical scope"; any other temporary ends with its statement.
+	if _, is_literal := v.operand.(^Expr_Composite); is_literal {
+		root := prov_new_root(graph, .Slice_Literal, expr_span(v.operand), "this slice literal")
 		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = expr_span(v.operand)})
 		return prov_borrow(graph, root, nil, mutable, v.span, "slice")
 	}
+	if prov_expr_is_temporary(v.operand) {
+		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, mutable, v.span, "slice")
+	}
 	return nil
+}
+
+// A root that ends with the statement that created it.
+@(private = "file")
+prov_temp_root :: proc(graph: ^Flow_Graph, span: Span) -> Root_Id {
+	root := prov_new_root(graph, .Temporary, span, "this temporary")
+	append(&graph.temp_roots, root)
+	return root
 }
 
 @(private = "file")
@@ -1551,11 +1592,18 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		receiver = sym.receiver
 	}
 	if len(v.bound) == 0 {
-		for argument in v.args {
-			walk_flow_expr(graph, argument.value)
+		actuals := make([][]int, max(len(v.args), 1), graph.alloc)
+		borrowed: []int
+		for argument, index in v.args {
+			actuals[index] = walk_flow_expr(graph, argument.value)
+			borrowed = prov_join(graph, borrowed, actuals[index])
 		}
-		return nil
+		return prov_call_result(graph, v, actuals, borrowed)
 	}
+	// The loans each actual argument carried, so a direct call can substitute
+	// them into the callee's result summary.
+	actuals := make([][]int, len(v.bound), graph.alloc)
+	borrowed: []int
 	for argument, index in v.bound {
 		if argument == nil {
 			continue
@@ -1574,10 +1622,70 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			if root, path, ok := prov_place_of(graph, argument); ok {
 				prov_walk_subscripts(graph, argument)
 				prov_access(graph, root, path, .Write, expr_span(argument))
+				// design.md: "An `inout` parameter aliases the caller's root, so a
+				// borrow returned from it is derived from that root."
+				actuals[index] = prov_borrow(graph, root, path, true, expr_span(argument), "borrow")
+				borrowed = prov_join(graph, borrowed, actuals[index])
 				continue
 			}
 		}
-		prov_weaken(graph, walk_flow_expr(graph, argument), prov_parameter_type(graph, v, index))
+		actuals[index] = walk_flow_expr(graph, argument)
+		prov_weaken(graph, actuals[index], prov_parameter_type(graph, v, index))
+		borrowed = prov_join(graph, borrowed, actuals[index])
 	}
-	return nil
+	return prov_call_result(graph, v, actuals, borrowed)
+}
+
+// design.md "Temporaries and procedure boundaries". At a direct call the actual
+// argument roots are substituted into the callee's result summary. At a call
+// through a procedure value there is no summary, so a returned carrier is
+// conservatively derived from every borrowed argument, and fresh-allocation
+// provenance is erased -- which is what keeps an indirect result away from
+// checked `free`.
+@(private = "file")
+prov_call_result :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int, borrowed: []int) -> []int {
+	c := graph.k.c
+	if !type_is_carrier(c, v.type) {
+		return nil
+	}
+	callee := v.resolution.chosen_overload
+	if callee == INVALID_SYMBOL {
+		callee = v.resolution.symbol
+	}
+	if summary, found := result_summary(c, callee, 0); found {
+		out: []int
+		for wanted, index in summary.params {
+			if wanted && index < len(actuals) {
+				out = prov_join(graph, out, actuals[index])
+			}
+		}
+		if summary.static {
+			out = prov_join(graph, out, prov_synthetic_borrow(graph, v, .Static))
+		}
+		if summary.fresh {
+			out = prov_join(graph, out, prov_synthetic_borrow(graph, v, .Allocation))
+		}
+		if summary.unknown || summary.local {
+			out = prov_join(graph, out, prov_synthetic_borrow(graph, v, .Unknown))
+		}
+		return out
+	}
+	if len(borrowed) > 0 {
+		return borrowed
+	}
+	return prov_synthetic_borrow(graph, v, .Unknown)
+}
+
+@(private = "file")
+prov_synthetic_borrow :: proc(graph: ^Flow_Graph, v: ^Expr_Call, kind: Root_Kind) -> []int {
+	name := kind == .Allocation ? "this allocation" : kind == .Static ? "static storage" : "unknown storage"
+	root := prov_new_root(graph, kind, v.span, name)
+	return prov_borrow(
+		graph,
+		root,
+		nil,
+		carrier_is_mutable(graph.k.c, v.type),
+		v.span,
+		carrier_noun(graph.k.c, v.type),
+	)
 }
