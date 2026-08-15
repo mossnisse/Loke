@@ -1,0 +1,30 @@
+package main;
+
+import "core:mem";
+import "base:runtime";
+import "base:meta";
+
+Res :: struct { id: int }
+
+// `mem.Allocator` and the predeclared `Allocator` are the same type, so one
+// spelling satisfies a signature written with the other.
+take :: proc(a: mem.Allocator) -> runtime.Allocator { return a; }
+
+// A descriptor named through `base:meta` is the identity compile-time
+// reflection already produces, not a second nominal type.
+count :: proc($T: type) -> int {
+	total := 0;
+	foreach ($field in fields_of(T)) {
+		#assert(type_of(field) == meta.Field);
+		total = total + field.index + 1;
+	}
+	return total;
+}
+
+main :: proc() {
+	a := mem.default_allocator();
+	b := take(a);
+	p, err := new(int, b);
+	if (err == nil) { free(p); }
+	print_int(count(Res));
+}

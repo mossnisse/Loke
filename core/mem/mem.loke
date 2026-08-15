@@ -1,0 +1,21 @@
+// Allocators (design.md "Allocators", "Build-selected providers").
+//
+// M6a installs one provider: the system heap, reached through
+// `mem.default_allocator()`. Source code cannot replace it; a future build
+// option may choose another implementation without changing the handle ABI,
+// because everything a caller holds is one pointer to one provider record.
+//
+// `mem.Arena` and `mem.Scratch` — the first source-level local region roots —
+// arrive with M6b, which is when a `free_all` can succeed.
+@(public)
+package mem;
+
+// The compiler contributes:
+//
+//   Allocator          the pointer-sized provider handle
+//   Allocator_Error    the allocation-failure result
+//   default_allocator  the build-selected default provider
+//
+// `default_allocator` is the same symbol the generated default argument of a
+// lifecycle hook names, so an omitted allocator and a written
+// `mem.default_allocator()` select one provider through one call.

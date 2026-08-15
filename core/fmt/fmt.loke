@@ -1,0 +1,8 @@
+// Formatted output (design.md "Formatting").
+//
+// The writer and options layer, the coherent formatter dispatch, and the
+// `print`/`println`/`eprint`/`eprintln` family arrive with M6a step 5, once
+// runtime strings, `..any_view` variadics and the runtime type-information
+// tables exist to build them on.
+@(public)
+package fmt;

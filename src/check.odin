@@ -82,6 +82,10 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	if pkg.scope == nil {
 		pkg.scope = new_scope(k.c, build_universe(k.c), .Package)
 	}
+	// Before the package's own declarations are collected, so a source
+	// declaration colliding with a contributed name is an ordinary
+	// redeclaration rather than a silent replacement.
+	contribute_standard_members(k.c, pkg)
 	k.pkg = package_id
 	k.lookup_pkg = package_id
 	k.scope = pkg.scope

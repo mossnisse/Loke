@@ -1,0 +1,7 @@
+// The explicit trust boundary (design.md "What is not checked").
+//
+// `raw_data`, `string_view` and `cstring_view` over multi-pointers and
+// unchecked storage arrive with M6a step 4, alongside the text carriers they
+// convert between.
+@(public)
+package unsafe;

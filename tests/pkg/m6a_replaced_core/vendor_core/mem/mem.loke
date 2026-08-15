@@ -1,0 +1,7 @@
+@(public)
+package mem;
+
+// Only a replacement tree declares this, so seeing it proves the explicit entry
+// won over the bundled root.
+@(public)
+marker :: proc() -> int { return 1; }

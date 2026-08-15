@@ -1,0 +1,1 @@
+call void @loke_rt_v1_free(ptr @loke_rt_v1_default_allocator, ptr

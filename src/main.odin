@@ -9,7 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M5b)
+USAGE :: `lokec - the Loke compiler (milestone M6a, steps 1-3)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -65,11 +65,25 @@ independent of source order. Region provenance gives allocator values a region
 identity, verifies @(allocator_reset) transitively and through procedure types,
 and activates free_all once nothing survives the reset.
 
+M6a begins the runtime. A versioned C seed compiles beside the generated LLVM,
+found next to the compiler unless -runtime replaces it. An Allocator is one
+pointer to one provider record carrying state, region identity, callbacks and a
+failure policy, and mem.default_allocator() names the system-heap provider that
+every new, new_clone, free, generated clone and free_all now routes through.
+base: and core: are implicit roots beside the compiler that an explicit
+-collection replaces, so base:runtime, base:meta, core:mem, core:fmt and
+core:unsafe import with no flags. Every defined runtime fault is now a
+classified panic rather than one trap: -panic=unwind replays each active
+frame's registered live cleanup, newest first, before terminating, -panic=abort
+runs none, a panic raised by a cleanup aborts at once, and an allocator's own
+.Trap policy bypasses both.
+
 Runtime string and string_view, dynamic arrays, maps, multi-pointers, via
-allocator policies, and #location/#caller_location parse and report one
-diagnostic. Storing a borrow in a global, a record field or callback state,
-raw and unknown pointers, and cross-thread transfer are the documented v1 trust
-boundaries and are not checked.
+allocator policies, #location/#caller_location, variadics, runtime type
+information and core:fmt output parse and report one diagnostic. Storing a
+borrow in a global, a record field or callback state, raw and unknown pointers,
+and cross-thread transfer are the documented v1 trust boundaries and are not
+checked.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
 directly in it as one package.
@@ -92,6 +106,12 @@ options:
     -copy-cost=N  warn at a copy site duplicating N or more inline bytes, or
                   whose lifecycle clone may allocate (default 512; "off"
                   disables it)
+    -runtime=<dir>
+                  the seed runtime's C sources; defaults to the runtime
+                  directory beside the compiler
+    -panic=unwind|abort
+                  whether a panic runs each active frame's registered cleanup
+                  before the program stops (default: unwind)
 `
 
 Options :: struct {
@@ -109,7 +129,15 @@ Options :: struct {
 	// `-copy-cost=N` in bytes, or disabled.
 	copy_cost:         u64,
 	copy_cost_enabled: bool,
+	// `-runtime=<dir>`, replacing the directory bundled beside the compiler.
+	runtime_dir: string,
+	// `-panic=unwind|abort`, the whole program's panic strategy.
+	panic_unwind: bool,
 }
+
+// design.md "Panic strategy": `unwind` is the default on hosted targets, and
+// Windows x64 is the only v1 target.
+DEFAULT_PANIC_UNWIND :: true
 
 main :: proc() {
 	os.exit(run())
@@ -126,6 +154,7 @@ run :: proc() -> int {
 	c: Compilation
 	defer destroy_compilation(&c)
 	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
+	c.panic_unwind = opts.panic_unwind
 	// Configuration is project-wide and immutable, and must be in place before
 	// the first condition is evaluated (m3-plan decision "Configuration").
 	if !seed_defines(&c, opts.defines[:]) {
@@ -185,6 +214,7 @@ run :: proc() -> int {
 @(private = "file")
 parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 	opts.copy_cost, opts.copy_cost_enabled = 512, true
+	opts.panic_unwind = DEFAULT_PANIC_UNWIND
 	for i := 0; i < len(args); i += 1 {
 		arg := args[i]
 		switch {
@@ -216,6 +246,22 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			append(&opts.collections, arg[len("-collection:"):])
 		case strings.has_prefix(arg, "-define:"):
 			append(&opts.defines, arg[len("-define:"):])
+		case strings.has_prefix(arg, "-panic="):
+			switch arg[len("-panic="):] {
+			case "unwind":
+				opts.panic_unwind = true
+			case "abort":
+				opts.panic_unwind = false
+			case:
+				fmt.eprintln("error: -panic needs `unwind` or `abort`")
+				return opts, false
+			}
+		case strings.has_prefix(arg, "-runtime="):
+			opts.runtime_dir = arg[len("-runtime="):]
+			if opts.runtime_dir == "" {
+				fmt.eprintln("error: -runtime needs a directory")
+				return opts, false
+			}
 		case strings.has_prefix(arg, "-copy-cost="):
 			text := arg[len("-copy-cost="):]
 			if text == "off" {
@@ -300,12 +346,26 @@ is_config_name :: proc(name: string) -> bool {
 	return len(name) > 0
 }
 
-// `-collection name=path`. There is no implicit `core:` root: a prefix resolves
-// only when the driver was given one.
+// `-collection name=path`, over the `base:` and `core:` roots bundled beside the
+// compiler (m6a-plan decision "Package-root precedence").
+//
+// The seeds go in first and an explicit entry replaces one outright, so a
+// project can substitute its own standard tree. Duplicate *explicit* entries
+// remain an error; replacing a seed is not a duplicate. A bundled directory that
+// is missing is diagnosed only when an import actually needs it, which is what
+// lets an installation without the standard tree still compile a program that
+// never imports it.
 @(private = "file")
 register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	init_semantic_stores(c)
-	c.collections = make(map[string]string, len(entries), c.semantic_allocator)
+	c.collections = make(map[string]string, len(entries) + 2, c.semantic_allocator)
+	for name in ([]string{"base", "core"}) {
+		if bundled := install_component(name); bundled != "" {
+			c.collections[name] = bundled
+		}
+	}
+
+	explicit := make(map[string]bool, len(entries), context.temp_allocator)
 	for entry in entries {
 		split := strings.index_byte(entry, '=')
 		if split <= 0 {
@@ -313,10 +373,11 @@ register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 			continue
 		}
 		name := entry[:split]
-		if _, duplicate := c.collections[name]; duplicate {
+		if explicit[name] {
 			errorf(c, no_span(), "L0333", "collection `%s` is registered more than once", name)
 			continue
 		}
+		explicit[name] = true
 		c.collections[name] = strings.clone(entry[split + 1:], c.semantic_allocator)
 	}
 	return c.error_count == 0

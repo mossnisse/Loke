@@ -1,0 +1,19 @@
+package main;
+
+// An explicit `-collection` entry replaces the root bundled beside the compiler
+// rather than colliding with it (m6a-plan decision "Package-root precedence").
+// This `core:mem` is the project's own directory, and it still receives the
+// compiler-owned allocator members: `core:mem` is a name the compiler
+// contributes to, whichever tree supplies its source.
+
+import "core:mem";
+
+main :: proc() {
+	print_int(mem.marker());
+	a := mem.default_allocator();
+	p, err := new(int, a);
+	if (err == nil) {
+		free(p);
+		print_int(2);
+	}
+}

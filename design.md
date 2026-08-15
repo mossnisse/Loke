@@ -504,6 +504,26 @@ an interior `^T` or `[]mut T` borrow cannot.
 > the root while the borrow is live must be compatible with the borrow's
 > capability.
 
+### Places and overlap
+
+Borrow compatibility is decided for **places**, not only for variable names. A
+place consists of its storage root and a normalized projection path through
+fields, indices, ranges, and dereferences. Places with different roots do not
+overlap. Within one root, a path overlaps itself and every prefix or descendant
+of itself.
+
+The compiler may prove distinct struct fields and distinct constant fixed-array
+indices or ranges disjoint. It composes nested slices and reslices before making
+that comparison. Union fields, dynamic indices or ranges, opaque dereferences,
+and user-defined indexing or slicing are conservative projections: they overlap
+every path that might designate the same storage. A checked pointer whose source
+is known retains the possible root and projection paths from that source.
+
+An operation on a complete root or container header overlaps every descendant.
+Consequently, proving two element paths disjoint can permit simultaneous loans
+of those elements, but cannot permit moving, dropping, replacing, freeing, or
+otherwise invalidating their common root while either loan is live.
+
 Moving, dropping, freeing, fully assigning, or exchanging a root invalidates
 borrows of its previous value. Container operations such as `append`, `resize`, `reserve`,
 `shrink`, `clear`, `remove`, map insertion, and any user operation whose `self`
@@ -585,7 +605,9 @@ result it records two independent components when applicable:
 At a direct call, the compiler substitutes the actual argument roots and
 allocator regions into the corresponding component. The summary is compile-time
 declaration metadata, is emitted for cross-package checking, and does not change
-the runtime ABI.
+the runtime ABI. Its meaning is transitive across direct calls and independent
+of declaration order, including forward and mutually recursive declarations.
+Each concrete generic instantiation has its own summary.
 
 An ordinary procedure value does not carry that declaration metadata. At a call
 through a procedure value, a returned pointer, slice, or view is conservatively
@@ -1162,6 +1184,16 @@ foreach (key, value in some_map) {
 ```
 
 By default, each iterated value is a copy. Assignment to the copy does not modify the source.
+
+When the iterable is a place or borrow carrier, evaluating it establishes an
+implicit iterator loan. The loan remains live through every execution of the
+loop body and its back-edge and ends when the complete `foreach` statement ends.
+Iteration by value holds an immutable loan; iteration by reference holds an
+exclusive mutable loan. Iterating an existing borrow carrier continues that
+carrier's loan, while iterating a place borrows the place. Competing access or
+invalidation of the iterable from inside the loop is therefore checked by the
+ordinary one rule. Value-only iteration such as an integer range needs no
+storage loan.
 
 String iteration produces Unicode runes, not bytes. The string must contain valid UTF-8.
 
@@ -5011,6 +5043,14 @@ passes its allocator explicitly. The compiler rejects `free_all`, or any call
 carrying the same allocator-reset effect, while a live owning value (managed or
 manual) or borrow still refers to storage from that allocator.
 
+For this rule, an owner is live when it may be used later or still requires
+cleanup on an outgoing path. An explicitly dropped manual owner is dead and no
+longer blocks reset; moving an owner transfers the dependency to its destination.
+An unfreed allocation root whose checked carriers have no later use does not by
+itself block reset, because the reset is the operation that releases it. A
+carrier or owner that would survive and be used or cleaned up after the reset
+does block it.
+
 ### Allocator regions and region provenance
 
 Allocator values have a region identity in addition to their allocation procedures and failure policy. Copying an allocator value preserves that identity, and every allocation records it. This is what lets the compiler recognize that two local allocator values refer to the same region. When compile-time region-identity analysis cannot prove two allocator values distinct, the lifetime check conservatively treats their regions as possibly identical. Across a procedure call the identity is propagated through a parameter marked `@(allocator_reset)`; a Loke procedure that resets an allocator received as a parameter must mark that parameter, and the compiler verifies the promise transitively. The attribute is part of procedure-type compatibility, so indirect calls preserve the same effect.
@@ -5116,7 +5156,7 @@ if (err != nil) { panic("integer allocation failed"); }
 free(ptr);
 ```
 
-- `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. Not all allocators support this procedure. The explicit argument and effect annotation make the invalidation visible through wrappers and indirect calls.
+- `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. The explicit argument and effect annotation make the invalidation visible through wrappers and indirect calls. Compile-time acceptance proves that no tracked dependant survives the reset; it does not prove that the selected allocator supports resetting. The call invokes the provider's one region-reset operation rather than guessing a sequence of individual `free` calls. If that allocator does not support region reset, the call traps.
 
 ```odin
 free_all(my_allocator);

@@ -1,0 +1,27 @@
+package main;
+
+// design.md "What the unwind runs": file-scope, `static`, and `thread_local`
+// values are *not* dropped during panic termination. Managed TLS is dropped
+// only on normal thread return — that is, by the runtime's thread detach, which
+// a panicking process never reaches.
+//
+// So the frame's own managed local is dropped here and the TLS value is not.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { print_int(self.id); }
+}
+
+session :: proc() {
+	current: thread_local Res;
+	// A field write rather than a whole-value assignment, which would first drop
+	// the value being replaced and print that too.
+	current.id = 50;
+}
+
+main :: proc() {
+	session();
+	local := Res{5};
+	panic("nothing drops the thread-local value");
+}

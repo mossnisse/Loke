@@ -1,0 +1,24 @@
+package main;
+
+// design.md "Panic during unwinding": if a `drop` hook or a deferred statement
+// raises a panic while a panic is already unwinding, "the program aborts
+// immediately, exactly as under the `abort` strategy". So the first frame's own
+// cleanup runs, the second panic stops everything, and the outer frame's
+// registered drop never runs.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) {
+		print_int(self.id);
+		if (self.id == 2) {
+			panic("a cleanup panicked");
+		}
+	}
+}
+
+main :: proc() {
+	outer := Res{1};
+	inner := Res{2};
+	panic("the first panic");
+}

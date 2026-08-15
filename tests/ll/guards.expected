@@ -1,5 +1,5 @@
 icmp eq i64 %t
-call void @llvm.trap()
+call void @loke_rt_v1_panic(ptr @.msg.
 div.special
 div.normal
 sdiv i64

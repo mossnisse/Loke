@@ -1628,6 +1628,14 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 			return
 		}
 	}
+	// The same built-in reached through the standard package that publishes it —
+	// `mem.default_allocator()`. The qualified spelling names the identical
+	// symbol, so it collapses to the identical call rather than to a wrapper
+	// (m6a-plan decision "Compiler-owned names").
+	if symbol_id := callee_package_builtin(k, v.callee); symbol_id != INVALID_SYMBOL {
+		check_builtin_call(k, v, qualify_builtin_callee(k, v), symbol_id)
+		return
+	}
 
 	// Nor is a procedure group: it stands for several procedures, so it goes to
 	// the overload engine before anything asks it for a single procedure type.
@@ -1783,6 +1791,50 @@ callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 		}
 	}
 	return INVALID_SYMBOL
+}
+
+// A `pkg.name` callee naming a public built-in of `pkg`, or INVALID_SYMBOL.
+@(private = "file")
+callee_package_builtin :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
+	selector, is_selector := callee.(^Expr_Selector)
+	if !is_selector {
+		return INVALID_SYMBOL
+	}
+	ident, is_ident := selector.operand.(^Expr_Ident)
+	if !is_ident {
+		return INVALID_SYMBOL
+	}
+	alias := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	if alias == nil || alias.kind != .Package_Alias {
+		return INVALID_SYMBOL
+	}
+	target := package_of(k.c, alias.pkg)
+	if target == nil || target.scope == nil {
+		return INVALID_SYMBOL
+	}
+	member, found := target.scope.names[intern_identifier(k.c, selector.name.text)]
+	if !found {
+		return INVALID_SYMBOL
+	}
+	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Builtin && sym.public {
+		return member
+	}
+	return INVALID_SYMBOL
+}
+
+// Rewrites `pkg.builtin(...)` to the identifier form the built-in checkers and
+// the backend already understand, keeping the original span so diagnostics still
+// point at what was written.
+@(private = "file")
+qualify_builtin_callee :: proc(k: ^Checker, v: ^Expr_Call) -> ^Expr_Ident {
+	selector := v.callee.(^Expr_Selector)
+	ident := new(Expr_Ident, k.c.semantic_allocator)
+	ident.span = selector.span
+	ident.name = selector.name.text
+	ident.name_id = intern_identifier(k.c, selector.name.text)
+	ident.symbol = INVALID_SYMBOL
+	v.callee = ident
+	return ident
 }
 
 // The `dyn` type of a call's receiver, or INVALID_TYPE. Checked before the

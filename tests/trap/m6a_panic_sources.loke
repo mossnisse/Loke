@@ -1,0 +1,23 @@
+package main;
+
+// design.md "Panics and unwinding" enumerates the runtime faults that are
+// panics. Each takes the program strategy, so each of them unwinds the frame
+// that raised it: none of them is still an undifferentiated trap.
+//
+// One program covers only one fault, so this one takes the nil dereference and
+// leaves the arithmetic, bounds, and assertion families to their `guards` and
+// `assert` siblings — what is asserted here is that a *classified* panic still
+// runs the frame's cleanup.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { print_int(self.id); }
+}
+
+main :: proc() {
+	live := Res{7};
+	defer print_int(70);
+	p: ^int;
+	print_int(p^);
+}

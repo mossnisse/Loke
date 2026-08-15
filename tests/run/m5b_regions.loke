@@ -63,8 +63,8 @@ store_a_view :: proc(values: []int) {
 }
 
 main :: proc() {
-	// A reset the analysis accepts still needs a provider that supports it, so
-	// nothing here actually resets: `tests/trap` covers that half.
+	// The default allocator is a pre-existing region, so `main` cannot hide a
+	// reset of it merely to exercise its unsupported provider entry.
 	global_buffer = make_buffer(1, default_allocator());
 	print_int(global_buffer.id);
 

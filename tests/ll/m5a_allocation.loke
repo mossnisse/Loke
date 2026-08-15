@@ -1,10 +1,12 @@
 package main;
 
-// CRT allocation lowering (m5a-plan step 6). M5a has one provider, so `new`
-// zero-initialises through `calloc`, `new_clone` fills a `malloc` through the
-// operand's own clone hook, and `free` releases. The provider handle is a
-// global whose single slot is a reset entry that traps: "this allocator cannot
-// reset" is already distinct from M5b's "reset is unsafe here".
+// Allocation lowering over the seed runtime's allocator ABI (m6a-plan step 1).
+// Every allocation names the provider record, the exact size, and the exact
+// alignment: `new` zero-initialises, `new_clone` fills a raw allocation through
+// the operand's own clone hook, and `free` returns the same size and alignment
+// the provider was given. The handle is a pointer to one
+// `loke_rt_allocator_v1`, so passing it on copies the pointer and keeps the
+// provider's state, region identity, and failure policy.
 
 Res :: struct { id: int }
 

@@ -1,0 +1,29 @@
+package main;
+
+// The allocator handle ABI (m6a-plan step 1). An `Allocator` is a pointer to
+// one `loke_rt_allocator_v1` record and nothing else, so:
+//
+//   - copying a handle into a parameter is a pointer copy, which is what keeps
+//     the provider's state, its canonical region identity, and its failure
+//     policy the same value on both sides of a call;
+//   - every allocation and release names that handle, the exact size, and the
+//     exact alignment, so an over-aligned type reaches the provider with its
+//     own alignment rather than the heap's default.
+
+Wide :: struct { a: i128, b: int }
+
+// The handle arrives as one `ptr` parameter and is forwarded unchanged.
+in_region :: proc(allocator: Allocator) -> Allocator_Error {
+	p, err := new(Wide, allocator);
+	if (err != nil) {
+		return err;
+	}
+	free(p);
+	return nil;
+}
+
+main :: proc() {
+	if (in_region(default_allocator()) == nil) {
+		print_int(0);
+	}
+}

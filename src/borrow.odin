@@ -333,25 +333,14 @@ Result_Provenance :: struct {
 
 Proc_Summary :: struct {
 	results: []Result_Provenance,
-	// Set only if the whole-program iteration ran out of rounds. Every step is a
-	// union over a finite lattice, so this cannot happen for a call graph whose
-	// borrow-returning chains are shorter than the bound -- but if it ever does,
-	// an incomplete summary would be permissive, so callers must fall back to the
-	// strictest answer instead of the most convenient one.
-	saturated: bool,
 }
 
-Result_Answer :: struct {
-	using provenance: Result_Provenance,
-	saturated: bool,
-}
-
-result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Result_Answer, bool) {
+result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Result_Provenance, bool) {
 	summary, found := c.result_summaries[declaration]
 	if !found || result >= len(summary.results) {
-		return Result_Answer{}, false
+		return Result_Provenance{}, false
 	}
-	return Result_Answer{provenance = summary.results[result], saturated = summary.saturated}, true
+	return summary.results[result], true
 }
 
 // Union of two possibilities. Returns whether the destination grew, which is the
@@ -414,17 +403,15 @@ Checked_Body :: struct {
 
 // Source order says nothing about the call graph, so summaries are iterated to a
 // fixed point rather than solved once per declaration. The lattice is finite and
-// every step is a union, so this terminates; the bound is a safety net against a
-// non-monotone mistake, not a documented depth limit.
-PROVENANCE_SUMMARY_ROUNDS :: 32
+// every step is a union, so a natural worklist-style iteration terminates without
+// imposing a source-visible call-depth limit.
 
 // The whole program's provenance, after every package body and promoted generic
 // instance is checked. Summaries settle first, then diagnostics run with actual
 // argument roots substituted at direct calls. One disposable graph is built and
 // released at a time, so no analysis allocation outlives the body it describes.
 analyze_program_provenance :: proc(k: ^Checker) {
-	settled := false
-	for _ in 0 ..< PROVENANCE_SUMMARY_ROUNDS {
+	for {
 		changed := false
 		for body in k.c.checked_bodies {
 			if body.clean && summarize_body(k, body.literal) {
@@ -432,13 +419,7 @@ analyze_program_provenance :: proc(k: ^Checker) {
 			}
 		}
 		if !changed {
-			settled = true
 			break
-		}
-	}
-	if !settled {
-		for _, summary in k.c.result_summaries {
-			summary.saturated = true
 		}
 	}
 	for body in k.c.checked_bodies {
@@ -678,6 +659,11 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, inv
 			}
 		}
 		if event.loan != NO_LOAN {
+			// A loan ID names one syntactic creation site, which can execute again
+			// after an earlier assignment, reset, or loop iteration invalidated its
+			// previous instance. The fresh definition starts a new valid instance;
+			// copied definitions keep the invalid state of their source loans.
+			invalid[int(event.loan)] = false
 			state.merged[int(event.loan)] = true
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
@@ -916,11 +902,13 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			event.name,
 		)
 	case .Free:
-		if base, ok := check_free_provenance(state, event); ok {
+		if roots, ok := check_free_provenance(state, event); ok {
 			// design.md: `free` "invalidates every locally tracked pointer or view
 			// of that allocation", so a surviving alias is the error, not the
 			// dangling read it would later perform.
-			report_live_dependants(state, base.root, event.span, live, uses, "released")
+			for root in roots {
+				report_live_dependants(state, root, event.span, live, uses, "released")
+			}
 		}
 	}
 }
@@ -950,14 +938,23 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 	if event.access == .Write && !event.reset_covered {
 		// The transitive form: handing one of this body's own allocator
 		// parameters to a reset-capable procedure resets a caller's region.
-		errorf(
-			state.k.c,
-			event.span,
-			"L0538",
-			"this call may reset `%s`, so `%s` must be marked `@(allocator_reset)`",
-			event.name,
-			event.name,
-		)
+		if event.name != "" {
+			errorf(
+				state.k.c,
+				event.span,
+				"L0538",
+				"this call may reset `%s`, so `%s` must be marked `@(allocator_reset)`",
+				event.name,
+				event.name,
+			)
+		} else {
+			errorf(
+				state.k.c,
+				event.span,
+				"L0538",
+				"this call may reset a pre-existing or unknown allocator region, so the reset cannot be hidden in this procedure",
+			)
+		}
 		return
 	}
 	// A locally tracked owner that still needs its cleanup would run that cleanup
@@ -1123,10 +1120,10 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 // pointer from `new` or `new_clone`". M5a accepted only a direct result binding;
 // propagated provenance replaces that narrowing with the real question.
 @(private = "file")
-check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> (Prov_Loan, bool) {
+check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> ([]Root_Id, bool) {
 	graph := state.graph
 	found := 0
-	base := Prov_Loan{}
+	roots := make([dynamic]Root_Id, graph.alloc)
 	for source in event.sources {
 		for held, index in reach_row(state, state.reach, source) {
 			if !held {
@@ -1135,10 +1132,39 @@ check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> (Prov_Lo
 			if state.invalid[index] {
 				errorf(state.k.c, event.span, "L0514", "this allocation has already been released")
 				add_notef(state.k.c, graph.loans[index].span, "the pointer is created here")
-				return base, false
+				return nil, false
 			}
 			found += 1
-			base = graph.loans[index]
+			base := graph.loans[index]
+			root := graph.roots[int(base.root)]
+			if root.kind != .Allocation {
+				errorf(
+					state.k.c,
+					event.span,
+					"L0514",
+					"`free` releases an allocation from `new` or `new_clone`; this pointer may designate %s",
+					root_kind_text(root.kind),
+				)
+				add_notef(state.k.c, base.span, "this possible pointer is created here")
+				return nil, false
+			}
+			if len(base.path) != 0 {
+				errorf(
+					state.k.c,
+					event.span,
+					"L0514",
+					"`free` takes the allocation base pointer, not a pointer that may be derived from it",
+				)
+				add_notef(state.k.c, base.span, "this possible pointer is created here")
+				return nil, false
+			}
+			already := false
+			for candidate in roots {
+				already ||= candidate == base.root
+			}
+			if !already {
+				append(&roots, base.root)
+			}
 		}
 	}
 	if found == 0 {
@@ -1148,29 +1174,7 @@ check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> (Prov_Lo
 			"L0514",
 			"`free` needs a pointer whose allocation root the compiler can see; this one has unknown provenance",
 		)
-		return base, false
+		return nil, false
 	}
-	root := graph.roots[int(base.root)]
-	if root.kind != .Allocation {
-		errorf(
-			state.k.c,
-			event.span,
-			"L0514",
-			"`free` releases an allocation from `new` or `new_clone`; this pointer designates %s",
-			root_kind_text(root.kind),
-		)
-		add_notef(state.k.c, base.span, "the pointer is created here")
-		return base, false
-	}
-	if len(base.path) != 0 {
-		errorf(
-			state.k.c,
-			event.span,
-			"L0514",
-			"`free` takes the allocation base pointer, not a pointer derived from it",
-		)
-		add_notef(state.k.c, base.span, "the pointer is created here")
-		return base, false
-	}
-	return base, true
+	return roots[:], true
 }

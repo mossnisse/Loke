@@ -643,6 +643,9 @@ Package :: struct {
 	// Which discovery work this package has already had. Monotonic, so a later
 	// round only does what a newly selected branch added.
 	collected:      bool,
+	// Whether the compiler already bound its own members into this package's
+	// scope (`src/stdlib.odin`). Discovery re-runs; contribution must not.
+	contributed:    bool,
 }
 
 init_semantic_stores :: proc(c: ^Compiler) {

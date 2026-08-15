@@ -13,6 +13,7 @@ import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import os2 "core:os/os2"
+import "core:slice"
 import "core:strconv"
 import "core:strings"
 
@@ -29,7 +30,53 @@ Deferred :: struct {
 	// A written `defer`, or nil for an implicit drop of `place`.
 	stmt:  Stmt,
 	place: string,
+	// The local whose storage `place` is. A cleanup thunk reaches it through the
+	// env rather than by name, so the symbol travels with the entry.
+	place_symbol: Symbol_Id,
 	type:  Type_Id,
+	// This action's index in the procedure's runtime registration state, or -1
+	// when the procedure registers no frame at all (`-panic=abort`).
+	slot: int,
+}
+
+// One procedure's runtime-visible cleanup registration (m6a-plan decision
+// "Logical panic unwind").
+//
+// design.md gives a panic no way to resume, so the runtime never unwinds the
+// native stack: it calls back into each still-live frame through a generated
+// thunk. What that thunk needs is the frame's *state* — which actions are
+// currently registered, and where their storage is — so every procedure that
+// owns a cleanup carries two arrays and pushes a `{previous, thunk, context}`
+// record.
+//
+// The arrays are separate allocas rather than fields of one record because
+// their lengths are only known once the whole body has been emitted, and a
+// `getelementptr` over `i8`/`ptr` needs no length in its type.
+Unwind_State :: struct {
+	// `[live x i1]`: whether action `i` is registered right now. Set only after
+	// the action is fully registered, cleared before normal control flow runs it.
+	live: string,
+	// `[env x ptr]`: the storage each replayed action addresses. A cleanup thunk
+	// is a separate function, so it cannot name the parent's allocas directly.
+	env:   string,
+	frame: string, // the `{previous, cleanup, context}` record this frame pushes
+	ctx:   string, // `[2 x ptr]` = {live, env}, the thunk's one argument
+	thunk: string,
+	// Every action, in source order. A live action's registration point is
+	// always lexically before any later-registered live one — an inner scope's
+	// actions are cleared when it exits — so replaying by descending index is
+	// replaying in reverse registration order.
+	actions: [dynamic]Deferred,
+	// Env index per local symbol whose address a cleanup may need.
+	env_index: map[Symbol_Id]int,
+	// The registration slot of a managed local's implicit drop, and of a written
+	// `defer`, so `move`/`drop` and a re-entered scope can clear the same
+	// registration the existing drop flags clear.
+	slot_by_symbol: map[Symbol_Id]int,
+	slot_by_defer:  map[int]int,
+	// True while the thunk itself is being emitted, so replayed code does not
+	// register a second time into the state it is replaying.
+	replaying: bool,
 }
 
 @(private = "file")
@@ -67,6 +114,15 @@ Emitter :: struct {
 	// Parameter values already bound at the call site being emitted, so a
 	// default expression that names a parameter to its left reads that value.
 	param_values: map[Symbol_Id]string,
+
+	// The current procedure's panic-cleanup registration, and the functions
+	// generated to replay it. Both are empty under `-panic=abort`.
+	unwind: Unwind_State,
+	pending: [dynamic]string,
+	// Interned C string constants (panic messages), keyed by content so one
+	// message is one global, plus the module-scope definitions they need.
+	messages: map[string]string,
+	globals:  [dynamic]string,
 }
 
 emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int {
@@ -87,7 +143,7 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 		os.remove(ll_path)
 	}
 
-	return link(c, ll_path, opts.output)
+	return link(c, ll_path, opts.output, opts)
 }
 
 // Pure module generation boundary: lowering and LLVM serialization consume the
@@ -105,6 +161,9 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		struct_names = make(map[Type_Id]string),
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),
+		pending      = make([dynamic]string),
+		messages     = make(map[string]string),
+		globals      = make([dynamic]string),
 	}
 	strings.builder_init(&e.b)
 
@@ -128,9 +187,11 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		emit_package_items(&e, package_of(c, id))
 	}
 	emit_synth_procs(&e)
-	emit_crt_reset_thunk(&e)
 	emit_witnesses(&e)
 	emit_entry(&e)
+	for text in e.globals {
+		strings.write_string(&e.b, text)
+	}
 	if e.failed {
 		return "", false
 	}
@@ -264,48 +325,60 @@ emit_preamble :: proc(e: ^Emitter) {
 	// one explicit seam instead of inheriting LLVM poison or a target-specific
 	// hardware exception.
 	fmt.sbprintln(&e.b, "declare void @llvm.trap()")
-	// design.md "Allocators": M5a has one provider, the C runtime. `calloc` is
-	// what makes `new` zero-initialised without a second memset. M6 replaces this
-	// with a real provider table behind `mem.default_allocator()`.
-	fmt.sbprintln(&e.b, "declare ptr @calloc(i64, i64)")
-	fmt.sbprintln(&e.b, "declare ptr @malloc(i64)")
-	fmt.sbprintln(&e.b, "declare void @free(ptr)")
-	// The one provider handle an M5 `Allocator` value denotes. Its single slot is
-	// the region-reset entry, which traps: this provider has no reset support, a
-	// different thing from "unsafe while the region has live dependants", which
-	// region provenance rejects at compile time.
-	fmt.sbprintfln(&e.b, "%s = private unnamed_addr constant [1 x ptr] [ ptr %s ]", CRT_ALLOCATOR_GLOBAL, CRT_RESET_THUNK)
+	emit_runtime_declarations(e)
 	fmt.sbprintln(&e.b, "")
 }
 
-// The default CRT provider handle, and its trapping reset entry.
-CRT_ALLOCATOR_GLOBAL :: "@.crt_allocator"
-CRT_RESET_THUNK :: "@.crt_allocator.reset"
+// The seed runtime's allocator surface (m6a-plan decision "Allocator handle
+// ABI"). An `Allocator` value is a pointer to a `loke_rt_allocator_v1` record
+// and nothing else, so copying a handle preserves the provider's state, its
+// canonical region identity, and its failure policy without any per-copy tag.
+//
+// The record's own fields are never loaded here: dispatch goes through the
+// runtime helpers, which keeps the layout to one reader and lets the record grow
+// behind its version/size prefix.
+RT_DEFAULT_ALLOCATOR :: "@loke_rt_v1_default_allocator"
+RT_ALLOCATOR_RECORD :: "{ i32, i32, ptr, ptr, ptr, i32, i32 }"
+
+@(private = "file")
+emit_runtime_declarations :: proc(e: ^Emitter) {
+	fmt.sbprintfln(&e.b, "%s = external global %s", RT_DEFAULT_ALLOCATOR, RT_ALLOCATOR_RECORD)
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_alloc(ptr, i64, i64)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_alloc_zeroed(ptr, i64, i64)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_resize(ptr, ptr, i64, i64, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_free(ptr, ptr, i64, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_reset(ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_alloc_failed(ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic(ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
+	fmt.sbprintln(&e.b, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
+}
+
+// The allocator a call selected: the one it was given, or the default provider
+// when the argument was omitted. The checker already bound whichever it was, so
+// this never re-derives the choice.
+@(private = "file")
+emit_allocator_operand :: proc(e: ^Emitter, v: ^Expr_Call, index: int) -> string {
+	if len(v.bound) > index {
+		return emit_expr(e, v.bound[index])
+	}
+	return RT_DEFAULT_ALLOCATOR
+}
 
 // design.md: `free_all` "frees every allocation in the allocator's region. Not
-// all allocators support this procedure." It is one indirect call through the
-// provider's reset entry, never a guessed sequence of `free` calls: only the
-// provider knows what its region contains. The M5 default provider's entry
-// traps, which is "not supported by this allocator" -- a different thing from
-// the compile-time rejection when a dependant would survive the reset.
+// all allocators support this procedure." It is one call through the provider's
+// reset callback, never a guessed sequence of `free` calls: only the provider
+// knows what its region contains. A provider that answers "no region" fails at
+// run time — a different thing from the compile-time rejection when a dependant
+// would survive the reset.
 @(private = "file")
 emit_region_reset :: proc(e: ^Emitter, v: ^Expr_Call) {
 	handle := emit_expr(e, v.bound[0])
-	entry := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", entry, handle)
-	fmt.sbprintfln(&e.b, "  call void %s()", entry)
-}
-
-@(private = "file")
-emit_crt_reset_thunk :: proc(e: ^Emitter) {
-	// `{` is a format directive to core:fmt, so the brace is printed separately.
-	fmt.sbprintf(&e.b, "define private void %s()", CRT_RESET_THUNK)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
-	emit_trap(e)
-	fmt.sbprintln(&e.b, "  ret void")
-	fmt.sbprintln(&e.b, "}")
-	fmt.sbprintln(&e.b, "")
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_reset(ptr %s)", handle)
 }
 
 // ------------------------------------------------------- layout agreement --
@@ -331,6 +404,9 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 		struct_names = make(map[Type_Id]string),
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),
+		pending      = make([dynamic]string),
+		messages     = make(map[string]string),
+		globals      = make([dynamic]string),
 	}
 	strings.builder_init(&e.b)
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
@@ -394,7 +470,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 	defer if !opts.keep_temps {
 		os.remove(ll_path)
 	}
-	if code := link(c, ll_path, opts.output); code != 0 {
+	if code := link(c, ll_path, opts.output, opts); code != 0 {
 		return code
 	}
 	defer if !opts.keep_temps {
@@ -950,6 +1026,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	e.result_slots = make([]string, len(symbol.results))
 	e.terminated = false
 	clear(&e.cleanups)
+	begin_unwind_frame(e, llvm_name)
 
 	fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.results, e.result_inout), llvm_name)
 	for parameter, index in symbol.params {
@@ -963,6 +1040,12 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	fmt.sbprintln(&e.b, ") {")
 	fmt.sbprintln(&e.b, "entry:")
 
+	// The rest of the body goes to a side builder: the frame prologue needs the
+	// number of registered actions and the number of published locals, and
+	// neither is known until the whole body has been walked.
+	module := e.b
+	e.b = strings.builder_make()
+
 	// A value parameter is immutable but addressable, so it gets storage of its
 	// own; an `inout` parameter is already the alias.
 	for parameter, index in symbol.params {
@@ -971,13 +1054,13 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 			continue
 		}
 		if symbol_param_mode(e.c, symbol, index) == .Inout {
-			e.names[binding] = fmt.aprintf("%%arg%d", index)
+			bind_local(e, binding, fmt.aprintf("%%arg%d", index))
 			continue
 		}
 		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
 		fmt.sbprintfln(&e.b, "  store %s %%arg%d, ptr %s", llvm_type(e, parameter), index, slot)
-		e.names[binding] = slot
+		bind_local(e, binding, slot)
 	}
 
 	// Named results start at their zero value (design.md "Named results").
@@ -989,7 +1072,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 			fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", slot)
 			e.result_slots[index] = slot
 			if index < len(symbol.result_symbols) && symbol.result_symbols[index] != INVALID_SYMBOL {
-				e.names[symbol.result_symbols[index]] = slot
+				bind_local(e, symbol.result_symbols[index], slot)
 			}
 			continue
 		}
@@ -1000,7 +1083,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		}
 		e.result_slots[index] = slot
 		if index < len(symbol.result_symbols) && symbol.result_symbols[index] != INVALID_SYMBOL {
-			e.names[symbol.result_symbols[index]] = slot
+			bind_local(e, symbol.result_symbols[index], slot)
 		}
 	}
 
@@ -1031,6 +1114,16 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	}
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
+
+	body := strings.to_string(e.b)
+	e.b = module
+	emit_unwind_prologue(e)
+	strings.write_string(&e.b, body)
+	emit_unwind_thunk(e)
+	for text in e.pending {
+		strings.write_string(&e.b, text)
+	}
+	clear(&e.pending)
 }
 
 @(private = "file")
@@ -1048,8 +1141,14 @@ symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mo
 emit_entry :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "define i32 @main() {")
 	fmt.sbprintln(&e.b, "entry:")
+	// design.md "Threads" and m6a-plan decision "Thread runtime": the initial
+	// thread attaches like any other, and the same detach that drops managed TLS
+	// on a normal return is simply never reached when a panic terminates the
+	// process instead.
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
 	fmt.sbprintfln(&e.b, "  call void %s()", e.names[entry_symbol(e.c)] or_else "@loke.p.main")
 	emit_thread_local_teardown(e)
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "  ret i32 0")
 	fmt.sbprintln(&e.b, "}")
 }
@@ -1099,24 +1198,333 @@ branch_if :: proc(e: ^Emitter, cond: string, then_label, else_label: string) {
 	e.terminated = true
 }
 
+// ------------------------------------------------------ runtime failures --
+
+// One zero-terminated message constant per distinct text, so the same failure
+// reported from twenty places is one global.
 @(private = "file")
-emit_trap :: proc(e: ^Emitter) {
-	fmt.sbprintln(&e.b, "  call void @llvm.trap()")
+message_global :: proc(e: ^Emitter, text: string) -> string {
+	if existing, found := e.messages[text]; found {
+		return existing
+	}
+	name := fmt.aprintf("@.msg.%d", len(e.messages))
+	e.messages[text] = name
+	// Module scope, appended at the end: a message is first needed while a
+	// function body is being written, and a global cannot be defined inside one.
+	append(&e.globals, fmt.aprintf(
+		"%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n",
+		name, len(text) + 1, llvm_escape(text),
+	))
+	return name
+}
+
+// Only printable ASCII reaches here — every message is a compiler-owned literal
+// — so the one thing that must be escaped is the quote LLVM's own syntax uses.
+@(private = "file")
+llvm_escape :: proc(text: string) -> string {
+	b := strings.builder_make()
+	for index in 0 ..< len(text) {
+		ch := text[index]
+		if ch < 0x20 || ch >= 0x7f || ch == '"' || ch == '\\' {
+			fmt.sbprintf(&b, "\\%02X", ch)
+			continue
+		}
+		strings.write_byte(&b, ch)
+	}
+	return strings.to_string(b)
+}
+
+// The compile-time string a `panic`/`assert` was written with. design.md makes
+// it a constant, so the runtime message is a module global rather than anything
+// the program has to build.
+@(private = "file")
+panic_message_text :: proc(e: ^Emitter, v: ^Expr_Call, index: int, fallback: string) -> string {
+	if index < len(v.bound) && v.bound[index] != nil {
+		if base := expr_base(v.bound[index]); base != nil && base.is_const && base.const_value.kind == .String {
+			return base.const_value.text
+		}
+	}
+	return fallback
+}
+
+// design.md "Panics and unwinding" enumerates exactly which runtime faults are
+// panics. They take the program's panic strategy: under `unwind` the runtime
+// replays each active frame's registered cleanup first, and under `abort` no
+// frames were ever registered, so the same call terminates at the fault.
+@(private = "file")
+emit_panic :: proc(e: ^Emitter, message: string) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic(ptr %s)", message_global(e, message))
 	fmt.sbprintln(&e.b, "  unreachable")
 	e.terminated = true
 }
 
-// Traps when `cond` holds, and continues in a fresh block otherwise.
+// The failures that bypass both strategies: an allocator whose policy is
+// `.Trap`, and a panic raised while one is already unwinding.
 @(private = "file")
-trap_if :: proc(e: ^Emitter, cond: string, prefix: string) {
+emit_abort :: proc(e: ^Emitter, message: string) {
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_abort(ptr %s)", message_global(e, message))
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+}
+
+// Panics when `cond` holds, and continues in a fresh block otherwise.
+@(private = "file")
+panic_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
+	guard_if(e, cond, prefix, message, emit_panic)
+}
+
+@(private = "file")
+abort_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
+	guard_if(e, cond, prefix, message, emit_abort)
+}
+
+@(private = "file")
+guard_if :: proc(
+	e: ^Emitter,
+	cond: string,
+	prefix: string,
+	message: string,
+	fail_with: proc(e: ^Emitter, message: string),
+) {
 	fail := new_label(e, prefix)
 	ok := new_label(e, "ok")
 	branch_if(e, cond, fail, ok)
 	fmt.sbprintfln(&e.b, "%s:", fail)
 	e.terminated = false
-	emit_trap(e)
+	fail_with(e, message)
 	fmt.sbprintfln(&e.b, "%s:", ok)
 	e.terminated = false
+}
+
+// ---------------------------------------------------------- panic unwind --
+
+// Whether this procedure body registers a runtime-visible frame at all. Under
+// `-panic=abort` design.md guarantees no cleanup, so nothing is registered and
+// no thunk is generated: the strategy is the difference between the two, not a
+// runtime flag the frames carry.
+@(private = "file")
+unwind_enabled :: proc(e: ^Emitter) -> bool {
+	return e.c.panic_unwind && !e.unwind.replaying
+}
+
+// Fresh registration state for one procedure. The names are chosen before the
+// body is emitted, because the body refers to storage whose size — and therefore
+// whose defining instruction — is only settled afterwards.
+@(private = "file")
+begin_unwind_frame :: proc(e: ^Emitter, llvm_name: string) {
+	e.unwind = Unwind_State {
+		actions        = make([dynamic]Deferred),
+		env_index      = make(map[Symbol_Id]int),
+		slot_by_symbol = make(map[Symbol_Id]int),
+		slot_by_defer  = make(map[int]int),
+	}
+	if !e.c.panic_unwind {
+		return
+	}
+	id := next_id(e)
+	e.unwind.frame = fmt.aprintf("%%uframe.%d", id)
+	e.unwind.live = fmt.aprintf("%%ulive.%d", id)
+	e.unwind.env = fmt.aprintf("%%uenv.%d", id)
+	e.unwind.ctx = fmt.aprintf("%%uctx.%d", id)
+	e.unwind.thunk = fmt.aprintf("@loke.u%d.%s", id, strings.trim_prefix(llvm_name, "@"))
+}
+
+// Reserves this action's registration slot. Called where the existing cleanup
+// entry is built, so the two orders cannot drift apart.
+@(private = "file")
+unwind_reserve :: proc(e: ^Emitter, entry: ^Deferred) {
+	entry.slot = -1
+	if !unwind_enabled(e) {
+		return
+	}
+	entry.slot = len(e.unwind.actions)
+	append(&e.unwind.actions, entry^)
+}
+
+// The env index of a local, assigning one on first use. A cleanup thunk is a
+// separate function, so the only way it can reach the parent's storage is
+// through a pointer the parent wrote here.
+@(private = "file")
+unwind_env_slot :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> int {
+	if index, found := e.unwind.env_index[symbol_id]; found {
+		return index
+	}
+	index := len(e.unwind.env_index)
+	e.unwind.env_index[symbol_id] = index
+	return index
+}
+
+// Names a local and, when the procedure carries a frame, publishes its address
+// into the env so a replayed `defer` can reach it.
+//
+// ponytail: every local is published, not just the ones a cleanup names. Picking
+// the smaller set means a free-variable walk over every deferred statement; one
+// extra store per local is cheaper than that pass and cannot be wrong about it.
+@(private = "file")
+bind_local :: proc(e: ^Emitter, symbol_id: Symbol_Id, name: string) {
+	e.names[symbol_id] = name
+	if symbol_id == INVALID_SYMBOL || !unwind_enabled(e) || e.unwind.env == "" {
+		return
+	}
+	fmt.sbprintfln(
+		&e.b, "  store ptr %s, ptr %s",
+		name, unwind_env_address(e, unwind_env_slot(e, symbol_id)),
+	)
+}
+
+@(private = "file")
+unwind_live_address :: proc(e: ^Emitter, slot: int) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr i8, ptr %s, i64 %d", out, e.unwind.live, slot)
+	return out
+}
+
+@(private = "file")
+unwind_env_address :: proc(e: ^Emitter, index: int) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", out, e.unwind.env, index)
+	return out
+}
+
+// Publishes an action as registered. design.md: the flag is set only once the
+// action is *fully* registered, so a panic between "this storage exists" and
+// "this value is complete" replays nothing for it. The action's storage is
+// already published — `bind_local` did that when the local was named.
+@(private = "file")
+unwind_register :: proc(e: ^Emitter, entry: Deferred) {
+	if entry.slot < 0 || !unwind_enabled(e) {
+		return
+	}
+	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", unwind_live_address(e, entry.slot))
+}
+
+// Clears a registration. Called before the action's own code runs on the normal
+// path, so a panic raised *by* a cleanup cannot ask for that cleanup again.
+@(private = "file")
+unwind_clear :: proc(e: ^Emitter, slot: int) {
+	if slot < 0 || !unwind_enabled(e) {
+		return
+	}
+	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", unwind_live_address(e, slot))
+}
+
+// The frame prologue, written once the body is emitted and the two array
+// lengths are finally known.
+@(private = "file")
+emit_unwind_prologue :: proc(e: ^Emitter) {
+	u := &e.unwind
+	if u.frame == "" {
+		return // `-panic=abort`: design.md guarantees no cleanup, so none is tracked
+	}
+	// `{` is a directive to core:fmt, so the record type is written literally.
+	FRAME :: "{ ptr, ptr, ptr }"
+	fmt.sbprint(&e.b, "  ")
+	fmt.sbprint(&e.b, u.frame)
+	fmt.sbprint(&e.b, " = alloca ")
+	fmt.sbprintln(&e.b, FRAME)
+	fmt.sbprint(&e.b, "  store ")
+	fmt.sbprint(&e.b, FRAME)
+	fmt.sbprint(&e.b, " zeroinitializer, ptr ")
+	fmt.sbprintln(&e.b, u.frame)
+	if len(u.actions) == 0 && len(u.env_index) == 0 {
+		// Nothing to replay and nothing published, so nothing is pushed. The zeroed
+		// record still makes the epilogue's pop a no-op rather than a special case.
+		return
+	}
+	// A procedure with locals but no cleanup still published their addresses, so
+	// the env exists even where the live array would be empty. LLVM drops both
+	// when nothing reads them.
+	fmt.sbprintfln(&e.b, "  %s = alloca [%d x i1]", u.live, max(len(u.actions), 1))
+	fmt.sbprintfln(
+		&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
+		u.live, max(len(u.actions), 1),
+	)
+	fmt.sbprintfln(&e.b, "  %s = alloca [%d x ptr]", u.env, max(len(u.env_index), 1))
+	fmt.sbprintfln(&e.b, "  %s = alloca [2 x ptr]", u.ctx)
+	if len(u.actions) == 0 {
+		return
+	}
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", u.live, u.ctx)
+	slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 1", slot, u.ctx)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", u.env, slot)
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_frame_push(ptr %s, ptr %s, ptr %s)",
+		u.frame, u.thunk, u.ctx,
+	)
+}
+
+// Leaving the frame normally. Passing the record rather than popping blindly is
+// what lets a procedure that registered nothing share this one path.
+@(private = "file")
+emit_unwind_pop :: proc(e: ^Emitter) {
+	if !unwind_enabled(e) || e.unwind.frame == "" {
+		return
+	}
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_frame_pop(ptr %s)", e.unwind.frame)
+}
+
+// The generated thunk: replay every still-registered action of one frame,
+// newest first. Emitted into `e.pending` because LLVM functions do not nest.
+@(private = "file")
+emit_unwind_thunk :: proc(e: ^Emitter) {
+	u := &e.unwind
+	if len(u.actions) == 0 {
+		return
+	}
+	saved_body, saved_terminated := e.b, e.terminated
+	saved_cleanups := e.cleanups
+	e.b = strings.builder_make()
+	e.terminated = false
+	e.cleanups = make([dynamic]Cleanup_Scope)
+	u.replaying = true
+
+	fmt.sbprintf(&e.b, "define private void %s(ptr %%ctx)", u.thunk)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	live, env_slot, env := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %%ctx", live)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %%ctx, i64 1", env_slot)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", env, env_slot)
+
+	// The parent's allocas are unreachable from here, so every local a replayed
+	// action names is rebound to its address in the env.
+	saved_names := make(map[Symbol_Id]string)
+	for symbol_id, index in u.env_index {
+		saved_names[symbol_id] = e.names[symbol_id]
+		address, value := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", address, env, index)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
+		e.names[symbol_id] = value
+	}
+
+	for index := len(u.actions) - 1; index >= 0; index -= 1 {
+		entry := u.actions[index]
+		flag, address := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = getelementptr i8, ptr %s, i64 %d", address, live, index)
+		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", flag, address)
+		run, skip := new_label(e, "unwind.run"), new_label(e, "unwind.skip")
+		branch_if(e, flag, run, skip)
+		place_label(e, run)
+		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", address)
+		if entry.stmt != nil {
+			emit_stmt(e, entry.stmt)
+		} else if place, bound := e.names[entry.place_symbol]; bound {
+			emit_drop_place(e, entry.type, place)
+		}
+		branch(e, skip)
+		place_label(e, skip)
+	}
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+
+	for symbol_id, name in saved_names {
+		e.names[symbol_id] = name
+	}
+	append(&e.pending, strings.to_string(e.b))
+	u.replaying = false
+	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
 }
 
 // -------------------------------------------------------------- cleanups --
@@ -1145,12 +1553,18 @@ reset_defer_flags :: proc(e: ^Emitter, stmts: []Stmt) {
 			if s.slot < len(e.defer_flags) {
 				fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", e.defer_flags[s.slot])
 			}
+			if slot, registered := e.unwind.slot_by_defer[s.slot]; registered {
+				unwind_clear(e, slot)
+			}
 		case ^Decl:
 			// A managed local's hidden flag reuses the same storage across loop
 			// iterations, so it needs the same reset a written `defer` gets.
 			for symbol_id in s.symbols {
 				if flag := drop_flag_of(e, symbol_id); flag != "" {
 					fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
+				}
+				if slot, registered := e.unwind.slot_by_symbol[symbol_id]; registered {
+					unwind_clear(e, slot)
 				}
 			}
 		case ^Stmt_When:
@@ -1201,6 +1615,10 @@ run_cleanups :: proc(e: ^Emitter, down_to: int) {
 
 @(private = "file")
 run_one_cleanup :: proc(e: ^Emitter, entry: Deferred) {
+	// design.md "Panic during unwinding": clearing the registration first is what
+	// keeps a panic raised *by* this cleanup from asking for the same cleanup
+	// again on the way down.
+	unwind_clear(e, entry.slot)
 	if entry.stmt != nil {
 		emit_stmt(e, entry.stmt)
 		return
@@ -1272,8 +1690,12 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 
 	case ^Stmt_Defer:
 		if s.slot < len(e.defer_flags) && len(e.cleanups) > 0 {
+			entry := Deferred{flag = e.defer_flags[s.slot], stmt = s.stmt}
+			unwind_reserve(e, &entry)
+			e.unwind.slot_by_defer[s.slot] = entry.slot
 			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", e.defer_flags[s.slot])
-			append(&e.cleanups[len(e.cleanups) - 1].entries, Deferred{flag = e.defer_flags[s.slot], stmt = s.stmt})
+			unwind_register(e, entry)
+			append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
 		}
 
 	case ^Stmt_Return:
@@ -1375,10 +1797,11 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	if !sym.drop_at_exit || len(e.cleanups) == 0 {
 		return
 	}
-	append(
-		&e.cleanups[len(e.cleanups) - 1].entries,
-		Deferred{flag = flag, place = e.names[symbol_id], type = sym.type},
-	)
+	entry := Deferred{flag = flag, place = e.names[symbol_id], place_symbol = symbol_id, type = sym.type}
+	unwind_reserve(e, &entry)
+	e.unwind.slot_by_symbol[symbol_id] = entry.slot
+	unwind_register(e, entry)
+	append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
 }
 
 // The hidden `i1` of a conditionally live local, or "" when the CFG left its
@@ -1406,6 +1829,11 @@ kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	}
 	if flag := drop_flag_of(e, symbol_id); flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
+	}
+	// The same fact the drop flag records, made visible to a panic: this place no
+	// longer holds a value, so its registered cleanup must not be replayed.
+	if slot, registered := e.unwind.slot_by_symbol[symbol_id]; registered {
+		unwind_clear(e, slot)
 	}
 }
 
@@ -1489,8 +1917,8 @@ declare_local :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 		return ""
 	}
 	name := fmt.aprintf("%%%s.%d", identifier_text(e.c, sym.name), next_id(e))
-	e.names[symbol_id] = name
 	fmt.sbprintfln(&e.b, "  %s = alloca %s", name, llvm_type(e, sym.type))
+	bind_local(e, symbol_id, name)
 	return name
 }
 
@@ -1913,7 +2341,7 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 	}
 	binding := fmt.aprintf("%%bind.%d", next_id(e))
 	fmt.sbprintfln(&e.b, "  %s = alloca %s", binding, llvm_type(e, entry.binding_type))
-	e.names[entry.binding_symbol] = binding
+	bind_local(e, entry.binding_symbol, binding)
 	if erased {
 		if entry.binding_type == union_type {
 			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, union_type), value, binding)
@@ -2010,9 +2438,9 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 // which in M5a is the fixed trap, so a failure never reaches a half-written
 // destination.
 //
-// ponytail: one provider, so the allocator is the CRT handle rather than the one
-// the destination carries. M6 threads the destination's allocator and its `via`
-// policy through here (m5a-plan "Failure fallback").
+// ponytail: the destination's own allocator is not threaded through yet, so an
+// implicit copy clones with the default provider. M6b threads the destination's
+// allocator and its `via` policy through here (m5a-plan "Failure fallback").
 @(private = "file")
 emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	hook := type_hook(e.c, type, "clone")
@@ -2023,7 +2451,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, CRT_ALLOCATOR_GLOBAL,
+		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, RT_DEFAULT_ALLOCATOR,
 	)
 	return out
 }
@@ -2031,6 +2459,9 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 @(private = "file")
 emit_epilogue :: proc(e: ^Emitter) {
 	run_cleanups(e, 0)
+	// This frame is leaving normally, so it is no longer one a panic can call
+	// back into.
+	emit_unwind_pop(e)
 	slot_type :: proc(e: ^Emitter, index: int) -> string {
 		return emit_result_is_inout(e, index) ? "ptr" : llvm_type(e, e.result_types[index])
 	}
@@ -2155,7 +2586,7 @@ emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	// oversized one.
 	out_of_range := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
-	trap_if(e, out_of_range, "bounds")
+	panic_if(e, out_of_range, "bounds", "index out of range")
 
 	out := temp(e)
 	fmt.sbprintfln(
@@ -2184,7 +2615,7 @@ emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
 emit_nil_check :: proc(e: ^Emitter, pointer: string) {
 	is_nil := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, pointer)
-	trap_if(e, is_nil, "nil.deref")
+	panic_if(e, is_nil, "nil.deref", "nil pointer dereference")
 }
 
 // A built-in slice expression: `base[lo:hi]` over a fixed array or another
@@ -2225,7 +2656,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past_end, high, length)
 	bad := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, reversed, past_end)
-	trap_if(e, bad, "slice.bounds")
+	panic_if(e, bad, "slice.bounds", "slice bounds out of range")
 
 	// The result's data pointer is the low bound's address in the root, so
 	// reslicing composes without a second base.
@@ -2252,7 +2683,7 @@ emit_bounds_check :: proc(e: ^Emitter, index: string, index_type: Type_Id, count
 	// truncating a 128-bit index, then use the checked i64 value for the GEP.
 	out_of_range := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp uge %s %s, %d", out_of_range, llvm_type(e, index_type), index, count)
-	trap_if(e, out_of_range, "bounds")
+	panic_if(e, out_of_range, "bounds", "index out of range")
 	return widen_to_i64(e, index, index_type)
 }
 
@@ -2598,7 +3029,7 @@ emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lh
 
 	is_zero := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, 0", is_zero, llvm, rhs)
-	trap_if(e, is_zero, "div.zero")
+	panic_if(e, is_zero, "div.zero", "integer division by zero")
 
 	if !signed {
 		out := temp(e)
@@ -2968,17 +3399,16 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			fmt.sbprintfln(&e.b, "  %s = call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)", out, arg)
 			return "0"
 		case .Assert:
-			// The runtime half of a phase-neutral built-in: the message is
-			// compile-time-only until the seed runtime lands (M6), so a failed
-			// assertion takes the same trap seam as every other defined runtime
-			// failure.
+			// The runtime half of a phase-neutral built-in. design.md makes the
+			// message a compile-time string, so it is a module global here and the
+			// failure takes the program's panic strategy like every other one.
 			cond := emit_expr(e, v.bound[0])
 			failed := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, cond)
-			trap_if(e, failed, "assert.failed")
+			panic_if(e, failed, "assert.failed", panic_message_text(e, v, 1, "assertion failed"))
 			return "0"
 		case .Panic:
-			emit_trap(e)
+			emit_panic(e, panic_message_text(e, v, 0, "explicit panic"))
 			return "0"
 		case .Hash:
 			return emit_hash(e, v.bound[0], v.bound[1])
@@ -2999,8 +3429,9 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			)
 			return out
 		case .Default_Allocator:
-			// One provider in M5a, so the handle is the provider global itself.
-			return CRT_ALLOCATOR_GLOBAL
+			// design.md "Build-selected providers": the default provider is fixed at
+			// build time, so the handle is the runtime's own record.
+			return RT_DEFAULT_ALLOCATOR
 		case .New, .New_Clone:
 			return emit_allocation(e, v, symbol.builtin)
 		case .Drop:
@@ -3211,9 +3642,6 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 // failure here — the caller receives a null pointer and a non-nil error and
 // decides.
 //
-// ponytail: one CRT provider, so the allocator operand is evaluated for its
-// effects and the call goes straight to `calloc`/`malloc`. M6's provider table
-// dispatches on the handle instead.
 @(private = "file")
 emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
 	// design.md: `new_clone` "creates a new allocation root containing a clone of
@@ -3222,13 +3650,21 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 	if kind == .New_Clone && type_clone_is_fallible(e.c, v.alloc_type) {
 		return emit_new_clone_hook(e, v)
 	}
-	size := type_size(e.c, v.alloc_type)
+	// `new(T)` binds only an allocator; `new_clone(v)` binds the value first.
+	allocator := emit_allocator_operand(e, v, kind == .New ? 0 : 1)
+	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
 	pointer := temp(e)
 	if kind == .New {
-		// design.md: `new` zero-initialises, which is what `calloc` already does.
-		fmt.sbprintfln(&e.b, "  %s = call ptr @calloc(i64 1, i64 %d)", pointer, size)
+		// design.md: `new` zero-initialises.
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_alloc_zeroed(ptr %s, i64 %d, i64 %d)",
+			pointer, allocator, size, align,
+		)
 	} else {
-		fmt.sbprintfln(&e.b, "  %s = call ptr @malloc(i64 %d)", pointer, size)
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
+			pointer, allocator, size, align,
+		)
 	}
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, pointer)
@@ -3262,7 +3698,8 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	value_type := llvm_type(e, v.alloc_type)
 	value := emit_expr(e, v.bound[0])
-	allocator := len(v.bound) > 1 ? emit_expr(e, v.bound[1]) : CRT_ALLOCATOR_GLOBAL
+	allocator := emit_allocator_operand(e, v, 1)
+	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
 
 	pointer_slot, error_slot := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = alloca ptr", pointer_slot)
@@ -3271,7 +3708,10 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
 
 	pointer := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call ptr @malloc(i64 %d)", pointer, type_size(e.c, v.alloc_type))
+	fmt.sbprintfln(
+		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
+		pointer, allocator, size, align,
+	)
 	no_memory := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, pointer)
 	clone_label := new_label(e, "newclone.clone")
@@ -3300,7 +3740,10 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	branch_if(e, failed, release_label, publish_label)
 
 	place_label(e, release_label)
-	fmt.sbprintfln(&e.b, "  call void @free(ptr %s)", pointer)
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
+		allocator, pointer, size, align,
+	)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", error, error_slot)
 	branch(e, done_label)
 
@@ -3326,11 +3769,26 @@ emit_allocation :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> strin
 
 // design.md: "Deallocation operations such as `free` and `drop` return no
 // status." The checker has already restricted the operand to a binding holding a
-// fresh allocation base.
+// fresh allocation base, so the pointee type supplies the size and alignment the
+// provider was given at `new`.
+//
+// ponytail: `free` names no allocator, and design.md makes matching the creating
+// one the program's obligation. M6a installs exactly one provider, so the
+// default record is always the right one; M6b's arenas need the allocation to
+// carry its provider, or `free` to name it.
 @(private = "file")
 emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	pointer := emit_expr(e, v.bound[0])
-	fmt.sbprintfln(&e.b, "  call void @free(ptr %s)", pointer)
+	allocator := emit_allocator_operand(e, v, 1)
+	info := type_of(e.c, type_underlying(e.c, expr_base(v.bound[0]).type))
+	if info == nil || info.kind != .Pointer {
+		backend_fail(e, "`free` did not receive an allocation pointer")
+		return
+	}
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
+		allocator, pointer, type_size(e.c, info.element), type_align(e.c, info.element),
+	)
 }
 
 // design.md "Type assertions are always checked": a single-value assertion traps
@@ -3356,7 +3814,7 @@ emit_type_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
 	if !v.optional {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
-		trap_if(e, failed, "assert.variant")
+		panic_if(e, failed, "assert.variant", "type assertion failed")
 		out := make([]string, 1)
 		out[0] = emit_union_payload(e, union_type, v.type, slot)
 		return out
@@ -3494,7 +3952,7 @@ emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		// other defined runtime failure does.
 		is_nil := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, callee)
-		trap_if(e, is_nil, "nil.call")
+		panic_if(e, is_nil, "nil.call", "call through a nil procedure value")
 	}
 
 	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound)
@@ -3702,12 +4160,36 @@ replace_ext :: proc(path: string, ext: string) -> string {
 // finds the Windows SDK itself, but computes a relative, unusable
 // VCToolsInstallDir unless it is run from a developer prompt — so the CRT
 // import libraries are located here.
+//
+// The seed runtime's C sources join the same invocation (m6a-plan decision
+// "Runtime language and discovery"): one object-and-link seam already existed,
+// and compiling the runtime here keeps it in step with the module beside it.
 @(private = "file")
-link :: proc(c: ^Compiler, ll_path: string, exe_path: string) -> int {
+link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> int {
 	clang := find_clang()
+
+	runtime_dir := resolved_runtime_dir(opts)
+	sources := runtime_sources(runtime_dir)
+	if len(sources) == 0 {
+		errorf(
+			c,
+			no_span(),
+			"L0551",
+			"no seed runtime sources in `%s`: %s",
+			runtime_dir == "" ? "<unknown>" : runtime_dir,
+			dir_exists(runtime_dir) \
+				? "the directory holds no `.c` files" \
+				: "the directory does not exist; pass `-runtime=<dir>`",
+		)
+		return 2
+	}
 
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
+	for source in sources {
+		append(&command, source)
+	}
+	append(&command, "-I", runtime_dir)
 	// The module states its triple; clang's default carries an MSVC version
 	// suffix, and the mismatch is not interesting.
 	append(&command, "-Wno-override-module")
@@ -3717,6 +4199,9 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string) -> int {
 	append(&command, "-rtlib=compiler-rt")
 	if lib := msvc_lib_dir(); lib != "" {
 		append(&command, "-L", lib)
+	}
+	for include in msvc_include_dirs() {
+		append(&command, "-isystem", include)
 	}
 
 	state, _, stderr, err := os2.process_exec(
@@ -3734,7 +4219,11 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string) -> int {
 		return 2
 	}
 	if state.exit_code != 0 {
-		errorf(c, no_span(), "L0403", "`%s` failed:\n%s", clang, string(stderr))
+		errorf(
+			c, no_span(), "L0403",
+			"`%s` failed (seed runtime: `%s`):\n%s",
+			clang, runtime_dir, string(stderr),
+		)
 		return 2
 	}
 	return 0
@@ -3759,34 +4248,90 @@ find_clang :: proc() -> string {
 
 // The MSVC toolset's `lib\x64`, or "" when there is nothing to add: a developer
 // prompt has already put it in LIB, which lld-link honours.
-//
-// ponytail: a glob and a string compare instead of vswhere.exe. Picks the
-// lexically greatest toolset, which orders real MSVC version numbers correctly
-// today. Switch to vswhere if that ever stops holding, or if a build needs a
-// specific toolset.
 @(private = "file")
 msvc_lib_dir :: proc() -> string {
 	if os2.get_env("LIB", context.allocator) != "" {
 		return ""
 	}
-
-	best := ""
-	patterns := []string {
-		`C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\lib\x64`,
-		`C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*\lib\x64`,
+	if root := msvc_tools_dir(); root != "" {
+		return filepath.join({root, "lib", "x64"})
 	}
+	return ""
+}
+
+// The C headers the seed runtime includes: the MSVC toolset's own, and the
+// Windows SDK's UCRT. Empty in a developer prompt, whose INCLUDE clang honours.
+//
+// Only the runtime's `.c` inputs need these — a generated `.ll` includes
+// nothing — so they arrived with M6a rather than with the original link seam.
+@(private = "file")
+msvc_include_dirs :: proc() -> []string {
+	if os2.get_env("INCLUDE", context.allocator) != "" {
+		return nil
+	}
+	dirs := make([dynamic]string)
+	if root := msvc_tools_dir(); root != "" {
+		append(&dirs, filepath.join({root, "include"}))
+	}
+	if ucrt := newest_match(
+		`C:\Program Files (x86)\Windows Kits\10\Include\*\ucrt`,
+		`C:\Program Files\Windows Kits\10\Include\*\ucrt`,
+	); ucrt != "" {
+		append(&dirs, ucrt)
+	}
+	return dirs[:]
+}
+
+// `...\VC\Tools\MSVC\<version>`, the root both the libraries and the headers
+// hang off. A toolset must hold both to be a candidate: a build-tools
+// installation can ship headers with no `lib\x64`, and mixing its headers with
+// another version's libraries is worse than not finding it at all.
+@(private = "file")
+msvc_tools_dir :: proc() -> string {
+	@(static) cached: string
+	@(static) resolved: bool
+	if resolved {
+		return cached
+	}
+	resolved = true
+	for candidate in newest_matches(
+		`C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
+		`C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
+	) {
+		if os.is_dir(filepath.join({candidate, "include"})) &&
+		   os.is_dir(filepath.join({candidate, "lib", "x64"})) {
+			cached = candidate
+			return cached
+		}
+	}
+	return cached
+}
+
+@(private = "file")
+newest_match :: proc(patterns: ..string) -> string {
+	all := newest_matches(..patterns)
+	return len(all) == 0 ? "" : all[0]
+}
+
+// ponytail: a glob and a string compare instead of vswhere.exe. Orders by the
+// last path element, which sorts real MSVC and SDK version numbers correctly
+// today and keeps a newer toolset under `Program Files` from losing to an older
+// one under `(x86)`. Switch to vswhere if that ever stops holding, or if a build
+// needs a specific toolset.
+@(private = "file")
+newest_matches :: proc(patterns: ..string) -> []string {
+	found := make([dynamic]string)
 	for pattern in patterns {
 		matches, err := filepath.glob(pattern)
 		if err != nil {
 			continue
 		}
-		for match in matches {
-			if match > best {
-				best = match
-			}
-		}
+		append(&found, ..matches)
 	}
-	return best
+	slice.sort_by(found[:], proc(a, b: string) -> bool {
+		return filepath.base(a) > filepath.base(b)
+	})
+	return found[:]
 }
 
 // ============================================================== iteration ==
@@ -3925,7 +4470,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		index_slot = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = alloca i64", index_slot)
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
-		e.names[s.bindings[1].symbol] = index_slot
+		bind_local(e, s.bindings[1].symbol, index_slot)
 	}
 
 	place_label(e, head)
@@ -3992,7 +4537,7 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 		slot := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, current, slot)
-		e.names[value] = slot
+		bind_local(e, value, slot)
 		return
 	}
 	address := temp(e)
@@ -4014,7 +4559,7 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 	if s.bindings[0].is_ref {
 		// `&value` is the element itself, so the binding is its address and a
 		// store through it reaches the array.
-		e.names[value] = address
+		bind_local(e, value, address)
 		return
 	}
 	// By default each iterated value is a copy, and assignment to the copy does
@@ -4024,7 +4569,7 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 	loaded := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, element, address)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, loaded, slot)
-	e.names[value] = slot
+	bind_local(e, value, slot)
 }
 
 // A user iterable: `it := iter(x)`, then `next(&it)` per step, with the loop
@@ -4048,7 +4593,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	fmt.sbprintfln(&e.b, "  %s = alloca i64", counter)
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
 	if len(s.bindings) == 2 && s.bindings[1].symbol != INVALID_SYMBOL {
-		e.names[s.bindings[1].symbol] = counter
+		bind_local(e, s.bindings[1].symbol, counter)
 	}
 
 	head := new_label(e, "foreach.head")
@@ -4075,7 +4620,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		slot := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, value, slot)
-		e.names[binding] = slot
+		bind_local(e, binding, slot)
 	}
 	emit_scoped_block(e, s.body)
 	branch(e, post)
@@ -4466,7 +5011,19 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
 	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
-	trap_if(e, failed, "clone.failed")
+	// design.md "Allocation failure": an implicit copy has nowhere to return an
+	// error, so the *allocator's* policy decides — `.Panic` follows the program
+	// strategy and `.Trap` terminates immediately under either. The runtime reads
+	// that policy off the handle the clone was given.
+	fail, ok := new_label(e, "clone.failed"), new_label(e, "ok")
+	branch_if(e, failed, fail, ok)
+	fmt.sbprintfln(&e.b, "%s:", fail)
+	e.terminated = false
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %arg1)")
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+	fmt.sbprintfln(&e.b, "%s:", ok)
+	e.terminated = false
 	fmt.sbprintfln(&e.b, "  ret %s %s", value_type, cloned)
 	fmt.sbprintln(&e.b, "}")
 }
@@ -4537,7 +5094,7 @@ emit_any_view_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
 	if !v.optional {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
-		trap_if(e, failed, "anyview.mismatch")
+		panic_if(e, failed, "anyview.mismatch", "type assertion failed")
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, target, data)
 		single := make([]string, 1)
@@ -4593,7 +5150,7 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	// design.md: calling a slot on nil panics.
 	is_nil := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, witness)
-	trap_if(e, is_nil, "dyn.nil")
+	panic_if(e, is_nil, "dyn.nil", "call through a nil dyn view")
 
 	entry, thunk := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %d", entry, witness, v.dyn_slot)
@@ -4775,7 +5332,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", witness, view_type, view, DYN_WITNESS)
 	is_nil := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, witness)
-	trap_if(e, is_nil, "dyn.nil")
+	panic_if(e, is_nil, "dyn.nil", "call through a nil dyn view")
 
 	entry, thunk := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %d", entry, witness, symbol.index)

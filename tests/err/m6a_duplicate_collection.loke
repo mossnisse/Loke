@@ -1,0 +1,8 @@
+package main;
+
+// A duplicate *explicit* `-collection` entry is still an error. Replacing one
+// of the roots bundled beside the compiler is not a duplicate — that is the
+// documented override — so only the two written `core=` entries collide
+// (m6a-plan decision "Package-root precedence").
+
+main :: proc() { }

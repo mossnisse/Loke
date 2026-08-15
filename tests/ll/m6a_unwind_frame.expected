@@ -1,0 +1,14 @@
+declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)
+declare void @loke_rt_v1_frame_pop(ptr)
+declare void @loke_rt_v1_thread_attach()
+declare void @loke_rt_v1_thread_detach()
+%ulive.6 = alloca [2 x i1]
+call void @llvm.memset.p0.i64(ptr %ulive.6, i8 0, i64 2, i1 false)
+call void @loke_rt_v1_frame_push(ptr %uframe.6, ptr @loke.u6.loke.p.owner, ptr %uctx.6)
+call void @loke_rt_v1_frame_pop(ptr %uframe.6)
+define private void @loke.u6.loke.p.owner(ptr %ctx) {
+unwind.run.
+unwind.skip.
+call void @loke.p.Res.drop(ptr %t23)
+call void @loke_rt_v1_thread_attach()
+call void @loke_rt_v1_thread_detach()

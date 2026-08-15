@@ -1,0 +1,22 @@
+package main;
+
+// The other half of `tests/trap/m6a_panic_skips_tls`: on a *normal* thread
+// return the runtime's detach drops each live managed `thread_local` value, so
+// the same declaration that a panic leaves alone is cleaned up here.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { print_int(self.id); }
+}
+
+session :: proc() {
+	current: thread_local Res;
+	current.id = 50;
+}
+
+main :: proc() {
+	session();
+	local := Res{5};
+	print_int(0);
+}

@@ -1,0 +1,23 @@
+package main;
+
+// The logical unwind ABI (m6a-plan decision "Logical panic unwind").
+//
+// A procedure that can own a cleanup pushes one opaque `{previous, thunk,
+// context}` record, publishes each action's registration in a live-flag array,
+// and pops the record when it leaves normally. The generated thunk is what the
+// runtime calls back into: it replays the still-registered actions of that one
+// frame, newest first, and clears each registration before running it so a
+// panic raised by a cleanup cannot ask for the same cleanup twice.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { print_int(self.id); }
+}
+
+owner :: proc() {
+	value := Res{1};
+	defer print_int(2);
+}
+
+main :: proc() { owner(); }

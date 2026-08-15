@@ -93,6 +93,48 @@ front_end_modes :: proc(t: ^testing.T) {
 	)
 }
 
+// The seed runtime is found beside the compiler, not beside the caller
+// (m6a-plan decision "Runtime language and discovery"): compiling from an
+// unrelated working directory must still link, and an explicit `-runtime`
+// directory must replace the bundled one rather than adding to it.
+@(test)
+seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	cwd := os.get_current_directory(context.temp_allocator)
+	compiler := filepath.join({cwd, compiler_path()}, context.temp_allocator)
+	source := filepath.join({cwd, "examples", "hello.loke"}, context.temp_allocator)
+	exe := filepath.join({cwd, TMP, "runtime-elsewhere.exe"}, context.temp_allocator)
+	elsewhere := filepath.join({cwd, TMP}, context.temp_allocator)
+
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler, source, "-o", exe}, working_dir = elsewhere},
+		context.allocator,
+	)
+	testing.expectf(t, err == nil, "cannot run %s from %s", compiler, elsewhere)
+	testing.expectf(t, state.exit_code == 0, "compiling from %s failed:\n%s", elsewhere, string(stderr))
+
+	// An empty directory is a directory that exists and holds no `.c` inputs, so
+	// the override really replaced the bundled tree.
+	bare := filepath.join({cwd, TMP, "empty-runtime"}, context.temp_allocator)
+	os.make_directory(bare)
+	replaced, _, replaced_stderr, replaced_err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string{compiler, source, "-o", exe, fmt.tprintf("-runtime=%s", bare)},
+		},
+		context.allocator,
+	)
+	testing.expectf(t, replaced_err == nil, "cannot run %s", compiler)
+	testing.expectf(t, replaced.exit_code == 2, "expected an explicit -runtime to replace the bundled tree")
+	testing.expectf(
+		t,
+		strings.contains(string(replaced_stderr), "L0551") &&
+		strings.contains(string(replaced_stderr), bare),
+		"expected L0551 naming %s, got:\n%s",
+		bare,
+		string(replaced_stderr),
+	)
+}
+
 @(test)
 programs_run :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -103,6 +145,10 @@ programs_run :: proc(t: ^testing.T) {
 	}
 }
 
+// A non-zero exit alone cannot prove what a panic did on the way down, so a
+// trap case reads its sibling `.flags` like every other corpus — which is how
+// `-panic=abort` is exercised — and may pin the stdout produced before the
+// failure with a `.expected` file (m6a-plan decision "Corpora").
 @(test)
 programs_trap :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -111,8 +157,13 @@ programs_trap :: proc(t: ^testing.T) {
 
 	for path in cases {
 		exe := fmt.tprintf("%s/trap-%s.exe", TMP, filepath.stem(path))
+		command := make([dynamic]string, context.temp_allocator)
+		append(&command, compiler_path(), path, "-o", exe)
+		for flag in extra_flags(path) {
+			append(&command, flag)
+		}
 		state, _, stderr, err := os2.process_exec(
-			os2.Process_Desc{command = []string{compiler_path(), path, "-o", exe}},
+			os2.Process_Desc{command = command[:]},
 			context.allocator,
 		)
 		if !testing.expectf(t, err == nil, "%s: cannot run %s", path, compiler_path()) {
@@ -122,12 +173,25 @@ programs_trap :: proc(t: ^testing.T) {
 			continue
 		}
 
-		run_state, _, _, run_err := os2.process_exec(
+		run_state, stdout, _, run_err := os2.process_exec(
 			os2.Process_Desc{command = []string{exe}},
 			context.allocator,
 		)
 		testing.expectf(t, run_err == nil, "%s: cannot run the produced exe", path)
 		testing.expectf(t, run_state.exit_code != 0, "%s: expected a runtime failure", path)
+
+		expected, has_expected := os.read_entire_file(expected_path(path))
+		if !has_expected {
+			continue
+		}
+		testing.expectf(
+			t,
+			normalise(string(stdout)) == normalise(string(expected)),
+			"%s: expected %q before the failure, got %q",
+			path,
+			normalise(string(expected)),
+			normalise(string(stdout)),
+		)
 	}
 }
 

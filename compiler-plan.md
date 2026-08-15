@@ -28,19 +28,19 @@ revisit trigger noted.
 
 | # | Decision | Recommendation | Status | Why / revisit when |
 |---|----------|----------------|--------|--------------------|
-| A1 | **IR count** | 3 durable stages: untyped AST → the same AST annotated with types/resolutions → a simple basic-block **MIR** for lowering & backends. Ownership and borrow dataflow use a lightweight per-procedure CFG view whose blocks reference typed-AST nodes; it is an analysis index, not another lowered IR. | Open, low-risk | Typed-AST analyses need control-flow edges, while backends need explicit operations and basic blocks. Keep the CFG view disposable and add a 4th durable IR only when a transformation cannot be expressed cleanly in MIR. |
+| A1 | **IR count** | 2 durable v1 stages: untyped AST → the same AST annotated with types/resolutions. Ownership and borrow dataflow use a lightweight per-procedure CFG view whose blocks reference typed-AST nodes; it is an analysis index, not another lowered IR. Add a durable basic-block MIR when a second backend or another concrete consumer exists. | Settled for v1 | The typed-AST-to-textual-LLVM emitter is already the only v1 backend. MIR would currently rewrite that working path without serving another consumer; the disposable CFG remains sufficient for semantic dataflow. |
 | A2 | **Generics** | Monomorphization (instantiate per concrete argument set), with sharing of identical emitted bodies allowed later. | Open | design.md locks semantic specialization before ABI lowering, but explicitly leaves physical code sharing as an implementation detail. Revisit if compile time or binary size shows that full monomorphization is costly; internal dictionaries or erasure must remain unobservable at the ABI. |
 | A3 | **Compile-time evaluation** | One tree-walking interpreter over the typed AST, reused everywhere a compile-time value is needed. | Locked | design.md requires ordinary `proc`s run at compile time. This engine is the keystone (see [B10](#b10-compile-time-evaluation-engine)); build it once, call it from constants, `when`, `where`, array lengths, `static foreach`, reflection. |
-| A4 | **Debug backend (no-LLVM path)** | Direct **MIR → x86-64** codegen, emitting COFF objects. No transpiler, no external toolchain on this path. | Deferred — [out of v1 scope](#d-out-of-scope-for-v1) | Still the long-term goal (self-contained fast debug build), but a large component of its own. v1 ships on LLVM only; the eventual approach is recorded here so the MIR seam ([B13](#b13-lowering-to-mir)) stays backend-agnostic. |
+| A4 | **Debug backend (no-LLVM path)** | Introduce the deferred backend-agnostic MIR, then lower it directly to x86-64 COFF. No transpiler or external toolchain on this path. | Deferred — [out of v1 scope](#d-out-of-scope-for-v1) | Still the long-term goal, but it is the first concrete second consumer that justifies a durable MIR. v1 ships on the existing LLVM path. |
 | A5 | **LLVM interface** | Emit **textual `.ll`** and run `opt`/`llc`/`clang`. Move to the LLVM-C API only if IR-emit throughput matters. | Open, low-risk | Textual IR is trivial to inspect and needs no linked LLVM. Odin itself uses the C API — that's the upgrade path. |
-| A6 | **Runtime/core seed language** | Write the minimal runtime (allocators, panic/unwind, string/array/map primitives, `dyn` dispatch) **in Odin/C first**; port to Loke-written `core` once the compiler can compile it. | Open | Avoids a chicken-and-egg block: the compiler needs a runtime to produce working exes before it can compile a Loke-written one. |
+| A6 | **Runtime/core seed language** | A versioned **C** runtime supplies allocation, panic, thread, and container primitives; ordinary Loke-source `base:`/`core:` packages layer their public APIs on it. | Settled for M6 | C sources can join the existing clang invocation without a bootstrap cycle. Loke source remains the public library surface once the required language features exist. |
 | A7 | **Linker** | Shell out to whatever's on the box (`lld-link` or MSVC `link.exe`); emit standard COFF objects. | Open, low-risk | Direct PE writing is a later optimization, not a v1 need. |
 | A8 | **Compiler memory** | Per-phase arenas; intern types and identifiers into long-lived pools. | Locked (Odin has no GC) | Simple, fast, and frees a whole phase at once. |
 | A9 | **Self-hosting** | No. Compiler stays in Odin for v1. | Locked | Self-hosting is a post-v1 goal, not a constraint now. |
 | A10 | **Incremental & parallel compilation** | Not in v1. Keep the package as the natural boundary so it can be added later. | Locked (design lists it open) | Correctness and a working pipeline first; parallelism is an optimization with its own project. |
 
-The one worth an explicit answer before much code exists is **A6** (runtime seed
-language). The rest have safe lazy defaults.
+A1 and A6 are settled for v1. The remaining open entries have safe lazy
+defaults.
 
 ---
 
@@ -66,8 +66,9 @@ Load files as byte buffers, map byte-offset ↔ line/col, render errors with sou
 snippets, carets, notes, and stable error codes; accumulate rather than abort.
 - **In:** file paths. **Out:** buffers + a diagnostics sink used by every later phase.
 - **Loke-specific:** the brief makes error quality a headline goal — this is a
-  first-class component, not an afterthought. Every AST/MIR node carries a span
-  back to here. Build it in [M0](#c-milestones) and never let a phase throw away spans.
+  first-class component, not an afterthought. Every AST node and future lowered
+  node carries a span back to here. Build it in [M0](#c-milestones) and never
+  let a phase throw away spans.
 - **Defer:** JSON diagnostic output, fix-its, colors are cheap add-ons.
 
 #### B3. Lexer
@@ -178,8 +179,9 @@ step/recursion/memory limits that **diagnose** rather than fall back to runtime.
 Build or reuse the disposable per-procedure CFG view described in A1. Use it to
 place `drop`s at scope exit in reverse-init order, order them against `defer`,
 track moved-from bindings and drop flags, select deep copies for managed owners,
-honor `manual`/`static`/`thread_local`, compute panic-unwind cleanup sets, and
-materialize constants used by non-constant indexing or slicing.
+honor `manual`/`static`/`thread_local`, compute the cleanup registration and
+liveness facts consumed by normal exit and panic unwind, and materialize
+constants used by non-constant indexing or slicing.
 - **In:** typed (post-generic) AST. **Out:** typed AST annotated with explicit
   copy/drop/defer/move obligations + the analysis CFG view.
 - **Loke-specific:** default deep-copy for mutable owners (design §Value-semantic
@@ -211,16 +213,18 @@ and propagate that promise through direct and indirect calls.
 ### Lowering & runtime
 
 #### B13. Lowering to MIR
-After monomorphization and the ownership/borrow analyses, lower the annotated
-typed AST to a simple basic-block MIR. Rebuild durable basic blocks rather than
-promoting the disposable analysis CFG: make explicit the method calls,
-operators, composite literals, `foreach`, `defer`, `or_return`, slice/map ops,
-`any_view` conversion/assertion/type-switch operations and call-scoped variadic
-storage, `dyn` witness dispatch, string ops, bounds checks, and copy/drop calls
-into the runtime.
+
+**Deferred past v1 with A4.** When a second backend or another concrete consumer
+exists, lower the annotated typed AST to a simple basic-block MIR. Rebuild
+durable basic blocks rather than promoting the disposable analysis CFG: make
+explicit method calls, operators, composite literals, `foreach`, `defer`,
+`or_return`, slice/map ops, erased conversion/assertion/type-switch operations,
+call-scoped variadic storage, witness dispatch, string ops, bounds checks, and
+runtime copy/drop/panic calls.
 - **In:** fully resolved typed AST + ownership/provenance annotations. **Out:**
   backend-agnostic MIR with explicit cleanup and control flow.
-- **Loke-specific:** the seam both backends target ([A4](#a-big-decisions)/[A5](#a-big-decisions)); keep it small and explicit.
+- **Loke-specific:** keep it small and backend-agnostic when it is introduced;
+  do not promote the semantic CFG into a durable lowering IR.
 
 #### B14. Runtime / core library
 Minimal runtime linked into every program: allocator interface + default
@@ -240,7 +244,8 @@ foreign-ABI-safe types, Windows x64 calling convention, `"c"`/`"stdcall"`
 conventions, foreign symbol/link-name handling. **Shared by all codegen backends.**
 
 #### B16. LLVM backend (release)
-MIR → textual LLVM IR ([A5](#a-big-decisions)) → `opt`/`llc`. Optimized release builds.
+Annotated typed AST → textual LLVM IR ([A5](#a-big-decisions)) →
+`opt`/`llc`/`clang`. Optimized release builds.
 The only backend in v1 — the no-LLVM debug backend is [out of scope](#d-out-of-scope-for-v1).
 
 #### B17. Linking & object emission
@@ -266,12 +271,13 @@ as each milestone starts.
 | **M0** | **Vertical slice.** Driver + source mgr + diagnostics skeleton + lexer + parser for a tiny subset (`main`, int vars, arithmetic, a builtin print) + trivial type check + **a running Windows exe via the LLVM textual path** ([A5](#a-big-decisions) — least code to a first exe). | `main :: proc(){ ... }` compiles and prints. The whole spine and the backend seam exist. |
 | **M1** | **Full front end.** Complete lexer + parser for *all* of grammar.md with error recovery + a parser/lexer test corpus. | Every grammar construct parses; malformed inputs give good, recovering diagnostics. |
 | **M2** | **Static core semantics.** Universe/name resolution, built-in type checking and constant folding, plus typed LLVM widening for the non-generic, non-managed core: numeric/Boolean/rune scalars, raw and typed pointers, fixed arrays, structs, enums, distinct and procedure types; assignment, control flow, `defer`, procedures, and procedure values. User-defined operators and unions remain gated. | Programs in the precisely bounded [M2 subset](m2-plan.md#scope) type-check, fold, compile, and run through the textual-LLVM path; deferred outer constructs still produce one non-cascading gate diagnostic. |
-| **M3** | **Compile-time engine and packages** ([B5](#b5-package-loading--import-graph)/[B10](#b10-compile-time-evaluation-engine)). Retain the checker's contextual leaf/operator folding as the shared value core and add the typed interpreter for procedure evaluation; add file- and procedure-scope `when`, staged conditional imports, multi-file packages, untyped compile-time strings, `#assert`/`#config` with `-define`, phase-neutral `assert`/`panic`, and natural-layout `size_of`/`align_of`/`offset_of`/`len`. Collection prefixes resolve through `-collection name=path`, with no implicit `core:` root. `#location`/`#caller_location` move to M6 with runtime `string` and `Source_Code_Location`; packed/foreign layout remains M7. | Compile-time `proc` evaluation works from every required M3 context; discarded `when` branches are neither checked nor emitted; the conditional package graph reaches a stable DAG; multi-package code emits collision-free symbols; layout agrees with executed LLVM-derived values (`-check-layout`); and sandbox/limit failures are diagnosed with the compile-time stack. |
+| **M3** | **Compile-time engine and packages** ([B5](#b5-package-loading--import-graph)/[B10](#b10-compile-time-evaluation-engine)). Retain the checker's contextual leaf/operator folding as the shared value core and add the typed interpreter for procedure evaluation; add file- and procedure-scope `when`, staged conditional imports, multi-file packages, untyped compile-time strings, `#assert`/`#config` with `-define`, phase-neutral `assert`/`panic`, and natural-layout `size_of`/`align_of`/`offset_of`/`len`. Collection prefixes resolve through `-collection name=path`, with no implicit `core:` root. `#location`/`#caller_location` move to M6a with runtime `string` and `Source_Code_Location`; packed/foreign layout remains M7. | Compile-time `proc` evaluation works from every required M3 context; discarded `when` branches are neither checked nor emitted; the conditional package graph reaches a stable DAG; multi-package code emits collision-free symbols; layout agrees with executed LLVM-derived values (`-check-layout`); and sandbox/limit failures are diagnosed with the compile-time stack. |
 | **M4a** | **User abstractions** ([B8](#b8-type-checking--overload-resolution)), planned in [m4a-plan.md](m4a-plan.md). One overload-resolution engine — viability, conversion-rank vectors, tie-breakers — shared by procedure groups, `impl`/`extend` methods, user operators, `delegate`, indexing, and `init` conversions including `@(implicit)`; unions with assertions, type switches, `or_else`, and `or_return`. Concrete types only: nothing here instantiates a declaration. | User operators, methods, and `init` conversion work at concrete types; an ambiguous call lists every maximal candidate with its vector and failing tie-breaker; an `extend` block changes lookup only in its own package; unions round-trip, assertions trap or yield comma-ok by position, and `or_return` propagates through named results with `defer` in order. |
 | **M4b** | **Generics, interfaces & erased views** ([B9](#b9-generics-interfaces--specialization)), planned in [m4b-plan.md](m4b-plan.md). Declaration cloning, `$`/inference, specialization, `where`, and monomorphization; interfaces with per-requirement diagnostics and the unmanaged portion of the catalogue as ordinary Loke source; reflection and static `foreach`; `foreach` over ranges, fixed arrays, and the user iteration protocol; `typeid`, `any_view`, and `dyn` witnesses. Reflection filters struct fields by package/public visibility at its lookup package. Ordinary field access and construction temporarily retain M4a behavior and remain unfiltered until M5a. Managed types remain absent, so `Cloneable`, iteration over slices/maps/strings, `..any_view`, and lifecycle hooks stay with the milestone that introduces their dependencies. | A generic container instantiated twice yields independent instances with distinct symbols; a failed interface bound names the requirement line and the concrete type; a caller-local `extend` cannot reach into an instantiation; cross-package reflection omits package-visible fields and static expansion type-checks a different field type per visible copy; `any_view` and `dyn` obey their representation and dispatch rules, with borrow/escape checking deferred to M5b and the boundary stated. |
 | **M5a** *(implemented)* | **Visibility, slices, and lifecycle** ([B11](#b11-ownership-move--lifecycle-analysis)), planned in [m5a-plan.md](m5a-plan.md). Apply one package/public rule to reflection, ordinary field reads/writes, `offset_of`, and aggregate construction. Add complete slice value/capability behavior and constant materialization; fixed lifecycle hooks, ownership/move/deep-copy, parameter/result transfer, drop insertion, storage modifiers, copy-cost diagnostics, allocator semantic types, and a minimal default-CRT `new`/`new_clone`/safe-direct-`free` path. Full provenance, copied-root `free`, and region reset remain M5b. | Reflection and ordinary access agree across package boundaries; slices, literals, iteration, and read-only materialization run; a resource drops exactly once on every normal exit in one LIFO order with `defer`; move kills its source, conditional liveness cleans up correctly, deep copy preserves a live destination on failure, all four copy sites are diagnosed, and `Cloneable` compiles against real lifecycle and allocator types. |
 | **M5b** *(implemented)* | **Borrows, provenance, and allocator regions** ([B12](#b12-borrow--lifetime-checker)), planned in [m5b-plan.md](m5b-plan.md). Propagate root/capability and region provenance over M5a's CFG; enforce last-use borrowing, exclusivity, invalidation, escape, copied allocation-root release, direct/cross-package result summaries, conservative procedure-value results, `free_all`, and transitive `@(allocator_reset)` effects. Close the `any_view`, `dyn`, `inout`-result, `[:]`-result, and slice lifetime gaps. | Invalid root access, local escape, longer-lived region escape, and reset are rejected with diagnostics naming the creation/dependency and conflict; copied allocation bases free once and invalidate aliases; direct and indirect calls preserve the required summaries/effects; every deliberate v1 trust boundary remains tested as accepted. |
-| **M6** | **MIR + runtime.** Full lowering ([B13](#b13-lowering-to-mir)) + the seed runtime ([B14](#b14-runtime--core-library)): strings, dynamic arrays, maps, panic/unwind. Iteration over those types, `..any_view` variadics, the type-info table behind `type_info_of`, and `base:meta`/`base:interfaces` as nameable packages land here, on the M4 protocols. | Real programs using the managed stdlib run correctly. |
+| **M6a** | **Runtime foundations and strings** ([B14](#b14-runtime--core-library)), planned in [m6a-plan.md](m6a-plan.md). Add the versioned C runtime and allocator-provider ABI, implicit `base:`/`core:` roots and nameable runtime/meta/mem/fmt/unsafe packages, logical cross-frame panic cleanup with unwind/abort selection, runtime strings and borrowed text views, multi-pointers, ordinary `..T` plus call-scoped `..any_view` variadics, checked runtime type information, coherent erased formatting, and source locations. | Programs link the compiler-relative runtime; every specified panic follows unwind or abort correctly; text ownership/borrowing is checked; homogeneous and erased variadics run; `fmt` replaces `print_int`; `type_info_of` and source locations expose their frozen runtime layouts. |
+| **M6b** | **Managed containers and regions**, bounded in [m6b-plan.md](m6b-plan.md) and detailed just in time. Add dynamic arrays and maps with complete operations/lifecycle/formatting, eager `via` and lazy default allocator binding, iteration and invalidation, `mem.Arena`/`mem.Scratch` as real local regions, successful reset, and the remaining dynamic-array-dependent string/unsafe/evaluator handoffs. | Dynamic arrays and maps preserve value, allocator, failure, and borrow semantics; arena-backed owners cannot escape or survive reset; all managed runtime types iterate, format, copy/move/drop, and fail without publishing partial state. |
 | **M7** | **Release + interop.** LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. | Optimized release builds; C libraries link and call. |
 | **M8** | **Later.** Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
 
@@ -284,9 +290,11 @@ monomorphized types. M5a establishes lifecycle liveness, cleanup ordering, and
 the concrete carriers without requiring general provenance; M5b consumes those
 states and CFG edges for every borrow, escape, and allocator-reset rule. Slices
 land in M5a because they have no runtime allocator or cleanup obligation, are
-required by materialization, and give M5b a real built-in carrier to check. M6
-turns those analysis results into durable MIR only once everything above is
-resolved. User-defined operator resolution lands in M4a
+required by materialization, and give M5b a real built-in carrier to check. M6a
+turns those analysis results into a working runtime, panic cleanup, strings, and
+standard library seams; M6b consumes those seams for containers and real local
+allocator regions. Durable MIR waits until a second backend or another concrete
+consumer justifies it. User-defined operator resolution lands in M4a
 beside named overloads because both share candidate formation, conversion
 vectors, and the same tie-breakers; M2 implements only the fixed built-in
 operator table.
@@ -360,11 +368,44 @@ what makes the effect survive an indirect call. Diagnostics `L0511`–`L0514`
 attribute) and `L0547` (mutable user slice) are live; the narrowings taken along
 the way are recorded in [m5b-plan.md](m5b-plan.md).
 
+M6a is partly implemented: steps 1–3 of [m6a-plan.md](m6a-plan.md) are in place
+and steps 4–6 are not started. `runtime/` holds the versioned C seed, whose
+sorted `*.c` inputs join the existing clang invocation; the directory is
+resolved from the canonical `lokec.exe` path unless `-runtime=<dir>` replaces
+it. An `Allocator` is one pointer to a `loke_rt_allocator_v1` record — version
+and size prefix, state, canonical region identity, ops table, failure policy —
+so copying a handle preserves every one of those facts, and `new`, `new_clone`,
+`free`, generated lifecycle clones and `free_all` all dispatch through it with
+the exact size and alignment. `base` and `core` are seeded from directories
+beside the compiler and replaced, not merged, by an explicit `-collection`;
+`src/stdlib.odin` binds `Allocator`, `Allocator_Error`, `default_allocator`,
+`meta.Field` and `meta.Enum_Value` into `core:mem`, `base:runtime` and
+`base:meta` as the *same* identities the universe and M4b already own, so no
+spelling creates a second type. Every runtime fault that design.md calls a panic
+now reaches `loke_rt_v1_panic` with its own message instead of `llvm.trap`;
+under `-panic=unwind` each procedure that owns a cleanup pushes an opaque
+`{previous, thunk, context}` frame, publishes each action's registration in a
+live-flag array, and generates one thunk that replays the still-registered
+actions newest-first, while `-panic=abort` registers nothing. `L0551` is live.
+
+Three deviations from the M6a plan's letter are worth stating. The frozen
+`Type_Kind`/`Member_Info`/`Type_Info`/`Source_Code_Location` declarations, and
+with them `#location`/`#caller_location`, wait for step 4 rather than landing in
+step 2: every one of those layouts has a `string_view` field, so declaring them
+earlier would declare a package that cannot compile. Every local is published
+into the unwind env rather than only those a cleanup names, which trades one
+store per local for not needing a free-variable pass over every deferred
+statement. And two of step 1's listed checks — a failed `resize` preserving the
+old allocation, and an unsupported provider reset failing at run time — have no
+source-level operand until M6b's dynamic arrays and arenas exist, so they are
+enforced in the C runtime and left untested from Loke, exactly as the plan
+already defers the arena-backed `free_all` fixtures.
+
 Two narrowings are worth stating here because they differ from the plan's
 letter. Region identity is flow-insensitive — one entry per allocator binding
 rather than a lattice — because M5 has no source-level provider that creates a
 region, so no two identities can be proven distinct and precision would buy
-nothing until M6 supplies `mem.Arena`. And a reset treats every region-backed
+nothing until M6b supplies `mem.Arena`. And a reset treats every region-backed
 owner still in scope as a surviving dependant rather than consulting M5a's
 liveness states, which over-blocks a `manual` owner that was explicitly dropped
 first; both are marked at their site and are conservative in the safe direction.
@@ -373,9 +414,10 @@ first; both are marked at their site and are conservative in the safe direction.
 
 ## D. Out of scope for v1
 
-- **No-LLVM debug backend** (direct MIR → x86-64, [A4](#a-big-decisions)) — still a
-  long-term goal, but v1 ships on the LLVM backend only. Keep the MIR seam
-  ([B13](#b13-lowering-to-mir)) backend-agnostic so it can be added without rework.
+- **MIR and the no-LLVM debug backend** ([B13](#b13-lowering-to-mir)/[A4](#a-big-decisions))
+  — still long-term goals, but v1 has one lowering consumer and ships on the
+  annotated-typed-AST-to-LLVM path. Introduce the small backend-agnostic MIR with
+  the second backend rather than maintaining an unused durable representation.
 
 Mostly already deferred by design.md's open questions — don't build them:
 recoverable panics / `recover`, first-class tuples, a GC allocator, Unicode

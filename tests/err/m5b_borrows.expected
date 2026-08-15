@@ -33,7 +33,7 @@ L0513
 this slice is used after `local`, the local it borrows, has ended
 L0514
 @111:2
-`free` releases an allocation from `new` or `new_clone`; this pointer designates local
+`free` releases an allocation from `new` or `new_clone`; this pointer may designate local
 L0512
 @117:2
 this allocation cannot be released here: a pointer of it is still in use

@@ -1,0 +1,24 @@
+// The runtime ABI package (design.md "Allocators", "`type` and `typeid`",
+// m6a-plan decision "Runtime metadata ABI").
+//
+// This package is authoritative for the layouts the compiler and the seed
+// runtime both write: the allocator surface, the public type metadata, and
+// `Source_Code_Location`. The compiler asserts its own layout against these
+// declarations rather than the other way round, so the record shapes cannot
+// drift apart silently.
+//
+// `Allocator` and `Allocator_Error` are contributed by the compiler
+// (`src/stdlib.odin`) and bind the *same* types the unqualified predeclared
+// names do. `runtime.Allocator` and `Allocator` are one type, not two.
+@(public)
+package runtime;
+
+// The compiler contributes:
+//
+//   Allocator        the pointer-sized provider handle
+//   Allocator_Error  the allocation-failure result
+//
+// The frozen `Type_Kind`, `Member_Kind`, `Member_Info`, `Type_Info` and
+// `Source_Code_Location` declarations arrive with M6a step 4, which is what
+// makes `string_view` a usable field type; declaring them here first would
+// declare a package that cannot be compiled.

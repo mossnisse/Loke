@@ -187,9 +187,10 @@ indirectly cannot be passed to checked `free`.
   accepted reset, end every allocation root in that region and invalidate all
   locally tracked aliases. An unfreed allocation whose carriers have no later
   use is released by the reset and is not itself a blocker.
-- Lower the accepted operation through the allocator reset entry. Test the M5
-  default provider's unsupported-operation trap separately from the compile-time
-  live-dependant diagnostic; M6 providers supply a successful reset path.
+- Lower the accepted operation through the allocator reset entry. Keep the M5
+  default provider's unsupported-operation trap covered in the emitted IR; a
+  safe M5 entry procedure cannot invoke it by hiding that pre-existing region's
+  reset. M6 providers supply a successful reset path.
 - Use M5-available compile fixtures with allocator parameters and explicit
   allocation roots. Include both `new` followed by last carrier use and an
   accepted reset without prior `free`, and the corresponding rejection when an

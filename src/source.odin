@@ -145,6 +145,11 @@ Compiler :: struct {
 	// whenever its lifecycle clone may allocate.
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,
+	// design.md "Panic strategy": `-panic=unwind` registers one logical frame per
+	// procedure that can own a cleanup, so a panic replays the live actions of
+	// every active Loke frame before terminating. `-panic=abort` registers none.
+	// The strategy is a whole-program build selection, never a source construct.
+	panic_unwind:        bool,
 
 	// Every concrete procedure body that finished checking, in checking order.
 	// design.md's two provenance analyses run after the whole program settles, so

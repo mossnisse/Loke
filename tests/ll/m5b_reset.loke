@@ -1,10 +1,12 @@
 package main;
 
 // design.md: `free_all` "frees every allocation in the allocator's region". It
-// lowers to one indirect call through the provider's reset entry, never to a
-// guessed sequence of `free` calls: only the provider knows what its region
-// holds. The M5 default provider's entry traps, which is why the reset thunk is
-// still `unreachable` here (m5b-plan step 3).
+// lowers to one call through the provider's reset callback, never to a guessed
+// sequence of `free` calls: only the provider knows what its region holds. The
+// system-heap provider has no region and fails that call at run time.
+// `release` is deliberately not called with `default_allocator()` here: a
+// program cannot hide a reset of that pre-existing region in `main` merely to
+// exercise an unsupported provider.
 
 release :: proc(@(allocator_reset) allocator: Allocator) {
 	free_all(allocator);
@@ -25,5 +27,4 @@ kept :: proc() -> int {
 
 main :: proc() {
 	print_int(kept());
-	release(default_allocator());
 }

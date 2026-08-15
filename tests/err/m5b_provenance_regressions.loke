@@ -1,0 +1,119 @@
+package main;
+
+// A fresh loan created after an earlier invalidation of the same lexical root
+// is valid, and therefore constrains later competing access.
+borrow_after_invalidation :: proc() {
+	values := [2]int{1, 2};
+	values = [2]int{3, 4};
+	view := values[:];
+	values[0] = 9;
+	print_int(view[0]);
+}
+
+// Re-entering a creation site starts a fresh loan on every loop iteration.
+loop_reborrow :: proc(iterations: int) {
+	values := [2]int{1, 2};
+	for (i := 0; i < iterations; i += 1) {
+		view := values[:];
+		print_int(values[0]);
+		print_int(view[0]);
+		values = [2]int{3, 4};
+	}
+}
+
+// Earlier actuals stay borrowed while later actuals are evaluated and while
+// the callee runs.
+observe_then_write :: proc(view: []int, target: inout [2]int) {
+	print_int(view[0]);
+	target[0] = 9;
+}
+
+call_argument_overlap :: proc() {
+	values := [2]int{1, 2};
+	observe_then_write(values[:], inout values);
+}
+
+// Every possible reaching value must be an allocation base before `free` is
+// admitted; one heap path cannot excuse the stack path.
+conditional_free :: proc(use_heap: bool) {
+	local := 7;
+	pointer := &local;
+	if (use_heap) {
+		allocated, err := new(int);
+		if (err != nil) { return; }
+		pointer = allocated;
+	}
+	free(pointer);
+}
+
+return_second :: proc(values: []int) -> (int, []int) {
+	return 0, values;
+}
+
+// Provenance is selected by result position, not attached only to result zero.
+second_result_borrow :: proc() {
+	values := [2]int{1, 2};
+	number, view := return_second(values[:]);
+	values[0] = number;
+	print_int(view[0]);
+}
+
+Buffer :: struct { id: int }
+
+impl Buffer {
+	drop :: proc(self: inout Buffer) { self.id = 0; }
+}
+
+make_buffer :: proc(value: int, allocator: Allocator) -> Buffer {
+	return Buffer{value};
+}
+
+// A later assignment transfers region provenance into an initially dead owner.
+assigned_owner_region :: proc(@(allocator_reset) allocator: Allocator) {
+	held: Buffer = ---;
+	held = make_buffer(1, allocator);
+	free_all(allocator);
+	print_int(held.id);
+}
+
+release :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+// The default provider is pre-existing storage, not a locally created region
+// whose reset a parameterless wrapper may hide.
+hidden_default_reset :: proc() {
+	release(default_allocator());
+}
+
+identity_buffer :: proc(value: move Buffer) -> Buffer {
+	return value;
+}
+
+// Procedure-value owning results retain every moved-owner region candidate.
+indirect_moved_owner :: proc(
+	@(allocator_reset) allocator: Allocator,
+	transform: proc(value: move Buffer) -> Buffer,
+) {
+	result: Buffer = ---;
+	{
+		source := make_buffer(2, allocator);
+		result = transform(move(source));
+	}
+	free_all(allocator);
+	print_int(result.id);
+}
+
+main :: proc() { }
+
+// Region summaries, like root summaries, are selected by result position.
+return_second_buffer :: proc(allocator: Allocator) -> (int, Buffer) {
+	return 0, make_buffer(3, allocator);
+}
+
+second_result_region :: proc(@(allocator_reset) allocator: Allocator) {
+	number, held := return_second_buffer(allocator);
+	print_int(number);
+	free_all(allocator);
+	print_int(held.id);
+}

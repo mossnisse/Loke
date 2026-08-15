@@ -1,0 +1,16 @@
+// The compile-time reflection descriptors (design.md "Compile-time
+// reflection").
+//
+// `fields_of` and `enum_values_of` already produce values of these types; this
+// package gives them their written names. The compiler contributes both, so
+// `meta.Field` is the identity M4b created rather than a second nominal type.
+//
+// They remain compile-time-only: naming a descriptor type does not make a
+// descriptor storable at run time.
+@(public)
+package meta;
+
+// The compiler contributes:
+//
+//   Field       a record field: name, declared type, declaration index, tag
+//   Enum_Value  an enum member: name, value, declaration index

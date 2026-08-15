@@ -1,0 +1,18 @@
+package main;
+
+// design.md "Panic strategy": the strategy "never changes which programs are
+// valid, only what observable cleanup happens on the way down". A program that
+// does not panic behaves identically under both, which is what makes the
+// registration bookkeeping invisible to a normal run.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { print_int(self.id); }
+}
+
+main :: proc() {
+	a := Res{1};
+	defer print_int(2);
+	b := Res{3};
+}

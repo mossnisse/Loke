@@ -1,0 +1,33 @@
+package main;
+
+// design.md "Panic strategy": the two strategies "trade cleanup for size and
+// simplicity", and never change which programs are valid — only what observable
+// cleanup happens on the way down.
+//
+// This is the `-panic=abort` half of the pair: design.md says that strategy
+// "runs no cleanup and terminates the program immediately at the point of the
+// fault", so the `.expected` file beside it is empty.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { print_int(self.id); }
+}
+
+inner :: proc() {
+	c := Res{3};
+	defer print_int(30);
+	panic("the third frame fails");
+}
+
+middle :: proc() {
+	b := Res{2};
+	defer print_int(20);
+	inner();
+}
+
+main :: proc() {
+	a := Res{1};
+	defer print_int(10);
+	middle();
+}
