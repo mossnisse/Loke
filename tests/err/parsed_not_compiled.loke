@@ -1,8 +1,10 @@
 package main; import "core:fmt";
 
 main :: proc() {
-	// A deferred type gates once at the declaration that names it, and the gate
-	// does not descend into the statements that use it.
+	// m6b-plan step 1: the container *type* is complete — layout, zero value,
+	// lifecycle — while each operation is ungated only in the step that also
+	// installs its invalidation. So the declaration is accepted and the
+	// iteration is the one construct that gates.
 	table: map[int]int;
 	foreach (value in table) {
 		fmt.println(value);

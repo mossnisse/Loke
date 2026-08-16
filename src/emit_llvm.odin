@@ -137,6 +137,13 @@ Emitter :: struct {
 	// dispatch names the same storage.
 	fmt_writer:  string,
 	fmt_options: string,
+	// One operation table per concrete container type, keyed by that type so a
+	// `[dynamic]int` reached from ten places shares one table and one set of
+	// element thunks (m6b-plan decision "Container runtime boundary").
+	container_ops: map[Type_Id]string,
+	// The element and key thunks those tables point at, keyed by generated name:
+	// one part type reached from two container types is one thunk.
+	container_thunks: map[string]bool,
 	// Interned C string constants (panic messages), keyed by content so one
 	// message is one global, plus the module-scope definitions they need.
 	messages: map[string]string,
@@ -183,6 +190,8 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		param_values = make(map[Symbol_Id]string),
 		pending      = make([dynamic]string),
 		pending_thunks = make([dynamic]string),
+		container_ops = make(map[Type_Id]string),
+		container_thunks = make(map[string]bool),
 		messages     = make(map[string]string),
 		literals     = make(map[string]string),
 		globals      = make([dynamic]string),
@@ -390,7 +399,9 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bool(ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_rune(ptr, i32)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_ptr(ptr, ptr)")
+	emit_carrier_types(e)
 	emit_text_declarations(e)
+	emit_container_declarations(e)
 }
 
 // design.md "string type" and "string type conversions". The two named types are
@@ -446,13 +457,24 @@ text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
 	return strings.to_string(b)
 }
 
-@(private = "file")
-emit_text_declarations :: proc(e: ^Emitter) {
-	// `{` is a directive to core:fmt, so the record shapes are written literally.
+// The named carrier shapes every module needs, whether or not it emits a body:
+// a struct with a `string` or a container field mentions them, so the layout
+// probe has to define them exactly as the real module does.
+//
+// `{` is a directive to core:fmt, so the record shapes are written literally.
+emit_carrier_types :: proc(e: ^Emitter) {
 	fmt.sbprint(&e.b, STRING_TYPE)
 	fmt.sbprintln(&e.b, " = type { ptr, i64, i64 }")
 	fmt.sbprint(&e.b, STRING_VIEW_TYPE)
 	fmt.sbprintln(&e.b, " = type { ptr, i64 }")
+	fmt.sbprint(&e.b, CONTAINER_TYPE)
+	fmt.sbprintln(&e.b, " = type { ptr, i64, i64, ptr }")
+	fmt.sbprint(&e.b, CONTAINER_OPS_TYPE)
+	fmt.sbprintln(&e.b, " = type { i64, i64, ptr, ptr, i64, i64, ptr, ptr, ptr, ptr }")
+}
+
+@(private = "file")
+emit_text_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_from_bytes(ptr, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_concat(ptr, ptr, i64, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_clone(ptr, ptr, i64, ptr)")
@@ -464,6 +486,187 @@ emit_text_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_rune_at(ptr, i64, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_bytes_compare(ptr, i64, ptr, i64)")
 	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_cstring_len(ptr)")
+}
+
+// ============================================================= containers ==
+
+// m6b-plan decisions "Dynamic-array value ABI", "Map value ABI" and "Container
+// runtime boundary". One four-word header serves both containers, and the raw
+// storage behind it belongs to `runtime/container.c`.
+CONTAINER_TYPE :: "%loke.container"
+CONTAINER_OPS_TYPE :: "%loke.container_ops"
+
+@(private = "file")
+emit_container_declarations :: proc(e: ^Emitter) {
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_reserve(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_clone(ptr, ptr, ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_drop(ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_reserve(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_clone(ptr, ptr, ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_drop(ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_checked_add(i64, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_checked_bytes(i64, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_container_fault(ptr)")
+}
+
+// The operation table for one concrete container type, made once and reused.
+// The element and key thunks it points at are generated alongside it, so asking
+// for the table is the only thing a caller has to do.
+@(private = "file")
+container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
+	under := type_underlying(e.c, type)
+	if existing, found := e.container_ops[under]; found {
+		return existing
+	}
+	name := fmt.aprintf("@.loke.ops.%d", int(under))
+	// Registered before the thunks are generated: a container whose element is
+	// itself a container would otherwise recurse forever.
+	e.container_ops[under] = name
+
+	element := container_element(e.c, under)
+	key := container_key(e.c, under)
+	elem_drop := container_drop_thunk(e, element)
+	elem_clone := container_clone_thunk(e, element)
+	key_drop, key_clone, key_hash, key_equal := "null", "null", "null", "null"
+	key_size, key_align := u64(0), u64(0)
+	if key != INVALID_TYPE {
+		key_drop = container_drop_thunk(e, key)
+		key_clone = container_clone_thunk(e, key)
+		key_size, key_align = type_size(e.c, key), type_align(e.c, key)
+	}
+	// `{` is a directive to core:fmt, so the row is concatenated rather than
+	// formatted.
+	b := strings.builder_make()
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant %s ", name, CONTAINER_OPS_TYPE)
+	strings.write_string(&b, "{")
+	fmt.sbprintf(
+		&b, " i64 %d, i64 %d, ptr %s, ptr %s, i64 %d, i64 %d, ptr %s, ptr %s, ptr %s, ptr %s }\n",
+		type_size(e.c, element), type_align(e.c, element), elem_drop, elem_clone,
+		key_size, key_align, key_drop, key_clone, key_hash, key_equal,
+	)
+	append(&e.globals, strings.to_string(b))
+	return name
+}
+
+// A NULL `drop` means the part is trivially destroyed, which is what keeps the
+// C loop out of the way entirely for a `[dynamic]int`.
+@(private = "file")
+container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
+	if part == INVALID_TYPE || !type_is_managed(e.c, part) {
+		return "null"
+	}
+	name := fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part)))
+	if e.container_thunks[name] {
+		return name
+	}
+	e.container_thunks[name] = true
+	saved_body, saved_terminated := e.b, e.terminated
+	e.b, e.terminated = strings.builder_make(), false
+	// `{` is a directive to core:fmt, so the brace is printed separately.
+	fmt.sbprintf(&e.b, "define private void %s(ptr %%p)", name)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	emit_drop_place(e, part, "%p")
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+	text := strings.to_string(e.b)
+	e.b, e.terminated = saved_body, saved_terminated
+	append(&e.pending_thunks, text)
+	return name
+}
+
+// A NULL `clone` means the part's clone is the copy its representation already
+// is, so the C helper memcpys the whole run instead of calling back per element.
+@(private = "file")
+container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
+	if part == INVALID_TYPE || !type_is_managed(e.c, part) {
+		return "null"
+	}
+	name := fmt.aprintf("@loke.cclone.%d", int(type_underlying(e.c, part)))
+	if e.container_thunks[name] {
+		return name
+	}
+	e.container_thunks[name] = true
+	saved_body, saved_terminated := e.b, e.terminated
+	e.b, e.terminated = strings.builder_make(), false
+	fmt.sbprintf(&e.b, "define private i32 %s(ptr %%out, ptr %%src, ptr %%a)", name)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	ok := emit_try_clone_into(e, part, "%out", "%src", "%a")
+	widened := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", widened, ok)
+	fmt.sbprintfln(&e.b, "  ret i32 %s", widened)
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+	text := strings.to_string(e.b)
+	e.b, e.terminated = saved_body, saved_terminated
+	append(&e.pending_thunks, text)
+	return name
+}
+
+// Deep-copy the value at `src` into the storage at `out`, answering an `i1` that
+// is true on success. This is the one place that knows how the three kinds of
+// managed part differ: a container clones through its C helper, a fallible hook
+// returns its own error, and everything else has a clone that cannot fail.
+//
+// On failure `out` is left untouched, which is what lets the caller destroy
+// exactly the prefix it did build (m6b-plan decision "Atomic mutation").
+@(private = "file")
+emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: string) -> string {
+	if lifecycle_of(e.c, type).container {
+		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_clone" : "loke_rt_v1_dyn_clone"
+		status, ok := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @%s(ptr %s, ptr %s, ptr %s, ptr %s)",
+			status, helper, out, src, container_ops_global(e, type), allocator,
+		)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, status)
+		return ok
+	}
+	value := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, type), src)
+	if !type_clone_is_fallible(e.c, type) {
+		store(e, type, emit_clone_value(e, type, value, allocator), out)
+		return "true"
+	}
+	hook := type_hook(e.c, type, "try_clone")
+	if hook == INVALID_SYMBOL {
+		backend_fail(e, "a fallible container element has no `try_clone` member")
+		return "false"
+	}
+	pair := clone_pair_type(llvm_type(e, type))
+	returned := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
+		returned, pair, e.names[hook], llvm_type(e, type), value, allocator,
+	)
+	cloned, error, ok := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", ok, error)
+	// The hook already cleaned its own temporary on the failing path, and a
+	// failed clone returns the zero value, so publishing it unconditionally would
+	// leave an inert value the caller must not count as initialised. Store it
+	// only where it is real.
+	store_label, done_label := new_label(e, "clone.store"), new_label(e, "clone.done")
+	branch_if(e, ok, store_label, done_label)
+	place_label(e, store_label)
+	store(e, type, cloned, out)
+	branch(e, done_label)
+	place_label(e, done_label)
+	e.terminated = false
+	return ok
+}
+
+// The provider a construction into one destination selects: the declaration's
+// written `via`, or the default when it has no policy (m6b-plan decision
+// "Allocator binding"). The policy belongs to the declaration, so this is the
+// destination's own symbol rather than anything the source value carries.
+@(private = "file")
+emit_destination_allocator :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
+	written := symbol_via_allocator(e.c, symbol_id)
+	return written == nil ? RT_DEFAULT_ALLOCATOR : emit_expr(e, written)
 }
 
 // The allocator a call selected: the one it was given, or the default provider
@@ -514,6 +717,8 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 		param_values = make(map[Symbol_Id]string),
 		pending      = make([dynamic]string),
 		pending_thunks = make([dynamic]string),
+		container_ops = make(map[Type_Id]string),
+		container_thunks = make(map[string]bool),
 		messages     = make(map[string]string),
 		literals     = make(map[string]string),
 		globals      = make([dynamic]string),
@@ -526,6 +731,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 	// thread-local values, but it links the same seed runtime and therefore owes
 	// the runtime the no-op side of that ABI.
 	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() { ret void }")
+	emit_carrier_types(&e)
 	emit_struct_definitions(&e)
 
 	probes := make([dynamic]Layout_Probe)
@@ -637,7 +843,8 @@ layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct,
-	     .Distinct, .Union, .Slice, .Allocator, .Allocator_Error:
+	     .Distinct, .Union, .Slice, .Allocator, .Allocator_Error,
+	     .Dynamic_Array, .Map:
 		return true
 	}
 	return false
@@ -795,6 +1002,11 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		return STRING_TYPE
 	case .String_View:
 		return STRING_VIEW_TYPE
+	case .Dynamic_Array, .Map:
+		// m6b-plan decisions "Dynamic-array value ABI" and "Map value ABI": both
+		// headers are the same four words, so they share one backend type exactly
+		// as the two slice capabilities do.
+		return CONTAINER_TYPE
 	case .Array:
 		return fmt.aprintf("[%d x %s]", info.count, llvm_type(e, info.element))
 	case .Struct, .Union, .Any_View, .Dyn, .Slice:
@@ -1094,7 +1306,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		}
 		strings.write_string(&b, " ]")
 		return strings.to_string(b)
-	case .Struct, .Any_View, .Dyn, .Slice:
+	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
 		if value.kind == .Nil {
 			return "zeroinitializer"
 		}
@@ -1920,7 +2132,7 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 		if i < len(d.values) && d.values[i] != nil {
 			value := emit_expr(e, d.values[i])
 			if i < len(d.value_clones) && d.value_clones[i] {
-				value = emit_clone_value(e, sym.type, value)
+				value = emit_clone_value(e, sym.type, value, emit_destination_allocator(e, symbol_id))
 			}
 			store(e, sym.type, value, slot)
 			register_implicit_drop(e, symbol_id)
@@ -2105,7 +2317,10 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 			// design.md: the clone happens before the destination is touched, so a
 			// failure leaves a previously live destination unchanged.
 			if index < len(s.rhs_clones) && s.rhs_clones[index] {
-				values[index] = emit_clone_value(e, expr_base(s.lhs[index]).type, values[index])
+				values[index] = emit_clone_value(
+					e, expr_base(s.lhs[index]).type, values[index],
+					emit_destination_allocator(e, place_root_symbol(e.c, s.lhs[index])),
+				)
 			}
 			types[index] = expr_base(value).type
 		}
@@ -2590,18 +2805,38 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 // design.md: an implicit copy — a binding, an assignment, or the return of a
 // borrowed managed owner — goes through `clone`, the policy-following entry
 // point. It calls `try_clone` once and applies the allocator's failure policy,
-// which in M5a is the fixed trap, so a failure never reaches a half-written
-// destination.
+// so a failure never reaches a half-written destination.
 //
-// ponytail: the destination's own allocator is not threaded through yet, so an
-// implicit copy clones with the default provider. M6b threads the destination's
-// allocator and its `via` policy through here (m5a-plan "Failure fallback").
+// `allocator` is the destination's selected provider: its written `via`, or the
+// default when the declaration has no policy (m6b-plan decision "Allocator
+// binding").
 @(private = "file")
-emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
+emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator := RT_DEFAULT_ALLOCATOR) -> string {
+	entry := lifecycle_of(e.c, type)
+	// design.md "Dynamic arrays"/"Maps": a container's copy is a deep clone, so
+	// an implicit copy duplicates the storage through the C helper and applies
+	// the allocator's failure policy — there is nowhere here to return an error.
+	if entry.container {
+		source, destination := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", source, CONTAINER_TYPE)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", destination, CONTAINER_TYPE)
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", CONTAINER_TYPE, value, source)
+		ok := emit_try_clone_into(e, type, destination, source, allocator)
+		fail_label, done_label := new_label(e, "cclone.fail"), new_label(e, "cclone.done")
+		branch_if(e, ok, done_label, fail_label)
+		place_label(e, fail_label)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
+		branch(e, done_label)
+		place_label(e, done_label)
+		e.terminated = false
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, CONTAINER_TYPE, destination)
+		return out
+	}
 	// design.md "string type": "cheap value copy; immutable backing storage may
 	// be shared". An implicit copy of a string retains a handle; only `.clone()`
 	// allocates, and that is a written call, not this path.
-	if lifecycle_of(e.c, type).intrinsic {
+	if entry.intrinsic {
 		owner := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", owner, STRING_TYPE, value, STRING_OWNER)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_retain(i64 %s)", owner)
@@ -2615,7 +2850,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, RT_DEFAULT_ALLOCATOR,
+		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, allocator,
 	)
 	return out
 }
@@ -4832,6 +5067,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return RT_DEFAULT_ALLOCATOR
 		case .New, .New_Clone:
 			return emit_allocation(e, v, symbol.builtin)
+		case .Make:
+			return emit_make_container(e, v)[0]
 		case .Drop:
 			emit_explicit_drop(e, v)
 			return "0"
@@ -5012,6 +5249,9 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		if kind := call_builtin_kind(e, v); kind == .New || kind == .New_Clone {
 			return emit_allocation_pair(e, v, kind)
 		}
+		if call_builtin_kind(e, v) == .Make {
+			return emit_make_container(e, v)
+		}
 		if v.text != .None {
 			return emit_text_operation(e, v)
 		}
@@ -5178,6 +5418,86 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 @(private = "file")
 emit_allocation :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
 	return emit_allocation_pair(e, v, kind)[0]
+}
+
+// `make(T, counts..., allocator)`. The checker bound the counts in written
+// order followed by the allocator, so this only has to run them.
+//
+// The header is built in storage and published complete: the provider handle is
+// written first, because the reserve below allocates *through* it, and a failed
+// reserve leaves an empty container bound to that same provider rather than
+// something half-built (m6b-plan decision "Atomic mutation").
+@(private = "file")
+emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	is_map := type_is_map(e.c, v.alloc_type)
+	counts := is_map ? 1 : 2
+	values := make([]string, counts)
+	for index in 0 ..< counts {
+		values[index] = v.bound[index] == nil ? "" : emit_expr(e, v.bound[index])
+	}
+	allocator := v.bound[counts] == nil ? RT_DEFAULT_ALLOCATOR : emit_expr(e, v.bound[counts])
+
+	header := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", header, CONTAINER_TYPE)
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", CONTAINER_TYPE, header)
+	provider := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		provider, CONTAINER_TYPE, header, CONTAINER_ALLOC,
+	)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, provider)
+
+	// design.md: `cap` defaults to `len`, and a `len > cap` relationship is an
+	// ordinary program fault rather than an allocation failure.
+	length := values[0] == "" ? "0" : values[0]
+	capacity := length
+	if !is_map && len(values) > 1 && values[1] != "" {
+		capacity = values[1]
+		bad := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, %s", bad, length, capacity)
+		panic_if(e, bad, "make.len_gt_cap", "a container's length cannot exceed its capacity")
+	}
+	negative := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, length)
+	panic_if(e, negative, "make.negative", "a container's length cannot be negative")
+
+	helper := is_map ? "loke_rt_v1_map_reserve" : "loke_rt_v1_dyn_reserve"
+	status := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i32 @%s(ptr %s, ptr %s, i64 %s)",
+		status, helper, header, container_ops_global(e, v.alloc_type), capacity,
+	)
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	fill_label, done_label := new_label(e, "make.fill"), new_label(e, "make.done")
+	branch_if(e, failed, done_label, fill_label)
+
+	// A dynamic array's initial length is `len` zero values. Every Loke zero
+	// value is all-zero bits, so this is one memset rather than a per-element
+	// loop, and dropping those zeros is the no-op every hook must already handle.
+	place_label(e, fill_label)
+	if !is_map {
+		element := container_element(e.c, v.alloc_type)
+		data, bytes := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, header)
+		fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, length, type_size(e.c, element))
+		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", data, bytes)
+		count_slot := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+			count_slot, CONTAINER_TYPE, header, CONTAINER_LEN,
+		)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, count_slot)
+	}
+	branch(e, done_label)
+	place_label(e, done_label)
+	e.terminated = false
+
+	out := make([]string, 2)
+	out[0], out[1] = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out[0], CONTAINER_TYPE, header)
+	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out[1], failed)
+	return out
 }
 
 // design.md: "Deallocation operations such as `free` and `drop` return no
@@ -6716,6 +7036,17 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 // value only on the success path.
 @(private = "file")
 emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string) {
+	// A container part has no `try_clone` member: its fallible clone is the
+	// versioned C helper, driven by this type's generated operation table.
+	if lifecycle_of(e.c, part).container {
+		destination := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", destination, CONTAINER_TYPE)
+		ok := emit_try_clone_into(e, part, destination, source, "%arg1")
+		cloned, error := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", cloned, CONTAINER_TYPE, destination)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 1", error, ok)
+		return cloned, error
+	}
 	hook := type_hook(e.c, part, "try_clone")
 	if hook == INVALID_SYMBOL {
 		// `type_clone_is_fallible` said this part reaches a custom hook, so the
@@ -6840,6 +7171,15 @@ type_hook :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
 // the same walk from a different caller.
 emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if !type_is_managed(e.c, type) {
+		return
+	}
+	// design.md "Dynamic arrays"/"Maps": container drop destroys every live
+	// element exactly once, releases the raw storage through the bound provider,
+	// and writes the inert all-zero representation. The all-zero value has no
+	// storage and no provider, so dropping one is already a no-op in the helper.
+	if lifecycle_of(e.c, type).container {
+		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_drop" : "loke_rt_v1_dyn_drop"
+		fmt.sbprintfln(&e.b, "  call void @%s(ptr %s, ptr %s)", helper, address, container_ops_global(e, type))
 		return
 	}
 	// design.md "string type": the drop releases one handle, and the last one

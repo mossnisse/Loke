@@ -1,0 +1,436 @@
+/* Raw storage and table mechanics for the two managed containers.
+ *
+ * m6b-plan decision "Container runtime boundary": textual LLVM should not
+ * duplicate a hash-table implementation, while C cannot know what a concrete
+ * Loke element costs to clone, drop, hash, or compare. So the split is: every
+ * byte of storage bookkeeping is here, and every Loke-visible operation on an
+ * element arrives as a generated thunk in `loke_rt_container_ops_v1`.
+ *
+ * Two invariants hold throughout:
+ *
+ *   - Nothing wrapped reaches a provider. Every product and sum that sizes an
+ *     allocation goes through the checked helpers at the top of this file.
+ *   - A failed operation leaves the container bit-for-bit unchanged. New
+ *     storage is filled completely before any header word is published, and a
+ *     clone that fails part-way destroys exactly the prefix it built.
+ */
+#include "loke_rt.h"
+
+#include <string.h>
+
+/* ----------------------------------------------------------- checked math -- */
+
+int32_t loke_rt_v1_checked_add(int64_t a, int64_t b, int64_t *out) {
+	if (a < 0 || b < 0 || a > INT64_MAX - b) {
+		return 0;
+	}
+	*out = a + b;
+	return 1;
+}
+
+int32_t loke_rt_v1_checked_bytes(int64_t count, uint64_t size, uint64_t *out) {
+	uint64_t n;
+	if (count < 0) {
+		return 0;
+	}
+	n = (uint64_t)count;
+	if (size != 0 && n > UINT64_MAX / size) {
+		return 0;
+	}
+	*out = n * size;
+	return 1;
+}
+
+static uint64_t sane_container_align(uint64_t align) {
+	return align == 0 ? 1 : align;
+}
+
+static int32_t checked_round_up(uint64_t value, uint64_t align, uint64_t *out) {
+	uint64_t a = sane_container_align(align);
+	if (value > UINT64_MAX - (a - 1)) {
+		return 0;
+	}
+	*out = (value + a - 1) / a * a;
+	return 1;
+}
+
+/* --------------------------------------------------------------- dynamic -- */
+
+static void *dyn_at(const loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t index) {
+	return (char *)self->data + (uint64_t)index * ops->elem_size;
+}
+
+/* m6b-plan decision "Growth/table policy": geometric growth with a small
+ * minimum. The exact sequence is pinned by the runtime tests and is deliberately
+ * not a language guarantee. */
+static int32_t dyn_growth_target(int64_t cap, int64_t min_capacity, int64_t *out) {
+	int64_t want = min_capacity;
+	if (cap > 0) {
+		int64_t doubled;
+		if (loke_rt_v1_checked_add(cap, cap, &doubled) && doubled > want) {
+			want = doubled;
+		}
+	}
+	if (want < 8) {
+		want = 8;
+	}
+	if (want < min_capacity) {
+		return 0;
+	}
+	*out = want;
+	return 1;
+}
+
+int32_t loke_rt_v1_dyn_reserve(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
+	int64_t target;
+	uint64_t old_bytes, new_bytes;
+	void *storage;
+
+	if (min_capacity < 0) {
+		loke_rt_v1_container_fault("a container capacity cannot be negative");
+	}
+	if (min_capacity <= self->cap) {
+		return 1;
+	}
+	if (!dyn_growth_target(self->cap, min_capacity, &target)) {
+		return 0;
+	}
+	if (!loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
+		return 0;
+	}
+	if (!loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &old_bytes)) {
+		return 0;
+	}
+	/* A zero-sized element needs no storage at all, and `_aligned_realloc` of
+	 * zero bytes would answer NULL and read as a failure. */
+	if (new_bytes == 0) {
+		self->cap = target;
+		return 1;
+	}
+	storage = loke_rt_v1_resize(
+		self->allocator, self->data, old_bytes, new_bytes, sane_container_align(ops->elem_align));
+	if (storage == 0) {
+		return 0; /* the old allocation is still live and unchanged */
+	}
+	self->data = storage;
+	self->cap = target;
+	return 1;
+}
+
+void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops) {
+	uint64_t bytes;
+	if (self->data != 0) {
+		if (ops->elem_drop != 0) {
+			int64_t i;
+			for (i = 0; i < self->len; i += 1) {
+				ops->elem_drop(dyn_at(self, ops, i));
+			}
+		}
+		if (loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes) && bytes != 0) {
+			loke_rt_v1_free(self->allocator, self->data, bytes, sane_container_align(ops->elem_align));
+		}
+	}
+	memset(self, 0, sizeof *self);
+}
+
+int32_t loke_rt_v1_dyn_clone(
+	loke_rt_dynamic_v1 *out, const loke_rt_dynamic_v1 *src,
+	const loke_rt_container_ops_v1 *ops, const loke_rt_allocator_v1 *a) {
+	int64_t i;
+
+	memset(out, 0, sizeof *out);
+	/* m6b-plan decision "Allocator binding": an explicit clone is bound to the
+	 * selected allocator even when the result is empty. */
+	out->allocator = a;
+	if (src->len == 0) {
+		return 1;
+	}
+	if (!loke_rt_v1_dyn_reserve(out, ops, src->len)) {
+		memset(out, 0, sizeof *out);
+		out->allocator = a;
+		return 0;
+	}
+	if (ops->elem_clone == 0) {
+		uint64_t bytes;
+		if (!loke_rt_v1_checked_bytes(src->len, ops->elem_size, &bytes)) {
+			loke_rt_v1_dyn_drop(out, ops);
+			out->allocator = a;
+			return 0;
+		}
+		memcpy(out->data, src->data, (size_t)bytes);
+		out->len = src->len;
+		return 1;
+	}
+	for (i = 0; i < src->len; i += 1) {
+		if (!ops->elem_clone(dyn_at(out, ops, i), dyn_at(src, ops, i), a)) {
+			/* The initialized prefix, and only it, is destroyed. */
+			out->len = i;
+			loke_rt_v1_dyn_drop(out, ops);
+			out->allocator = a;
+			return 0;
+		}
+	}
+	out->len = src->len;
+	return 1;
+}
+
+/* ------------------------------------------------------------------- map -- */
+
+static uint8_t *map_controls(const loke_rt_map_table_v1 *t) {
+	return (uint8_t *)t + t->controls_offset;
+}
+
+static void *map_key_at(const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, int64_t slot) {
+	return (char *)t + t->keys_offset + (uint64_t)slot * ops->key_size;
+}
+
+static void *map_value_at(const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, int64_t slot) {
+	return (char *)t + t->values_offset + (uint64_t)slot * ops->elem_size;
+}
+
+/* m6b-plan decision "Map algorithm and coherence": an opaque per-table seed, so
+ * iteration order is unspecified and no program can come to depend on it. The
+ * mix is deterministic within one process and derived from the table's own
+ * address and a running counter. */
+static uint64_t map_next_seed(const void *block) {
+	static uint64_t counter = 0x9e3779b97f4a7c15u;
+	uint64_t x = counter + (uint64_t)(uintptr_t)block;
+	counter += 0x9e3779b97f4a7c15u;
+	x ^= x >> 30;
+	x *= 0xbf58476d1ce4e5b9u;
+	x ^= x >> 27;
+	x *= 0x94d049bb133111ebu;
+	x ^= x >> 31;
+	return x;
+}
+
+/* Maximum load: seven eighths. Pinned by the runtime tests, not by the
+ * language. */
+static int64_t map_capacity_of(int64_t slot_count) {
+	return slot_count - slot_count / 8;
+}
+
+static int32_t map_slots_for(int64_t min_capacity, int64_t *out) {
+	int64_t slots = 8;
+	while (map_capacity_of(slots) < min_capacity) {
+		if (slots > INT64_MAX / 2) {
+			return 0;
+		}
+		slots *= 2;
+	}
+	*out = slots;
+	return 1;
+}
+
+/* One block: header, controls, keys, values. Every offset is checked, so a slot
+ * count that cannot be described never reaches the provider. */
+static int32_t map_block_shape(
+	const loke_rt_container_ops_v1 *ops, int64_t slots, loke_rt_map_table_v1 *shape) {
+	uint64_t cursor, bytes;
+	uint64_t align = sane_container_align(ops->key_align);
+	if (sane_container_align(ops->elem_align) > align) {
+		align = sane_container_align(ops->elem_align);
+	}
+	if (align < 8) {
+		align = 8; /* the header itself is eight-aligned */
+	}
+
+	if (!checked_round_up(sizeof(loke_rt_map_table_v1), 8, &cursor)) {
+		return 0;
+	}
+	shape->controls_offset = cursor;
+	if (!loke_rt_v1_checked_bytes(slots, 1, &bytes) || bytes > UINT64_MAX - cursor) {
+		return 0;
+	}
+	cursor += bytes;
+
+	if (!checked_round_up(cursor, ops->key_align, &cursor)) {
+		return 0;
+	}
+	shape->keys_offset = cursor;
+	if (!loke_rt_v1_checked_bytes(slots, ops->key_size, &bytes) || bytes > UINT64_MAX - cursor) {
+		return 0;
+	}
+	cursor += bytes;
+
+	if (!checked_round_up(cursor, ops->elem_align, &cursor)) {
+		return 0;
+	}
+	shape->values_offset = cursor;
+	if (!loke_rt_v1_checked_bytes(slots, ops->elem_size, &bytes) || bytes > UINT64_MAX - cursor) {
+		return 0;
+	}
+	cursor += bytes;
+
+	if (!checked_round_up(cursor, align, &shape->block_size)) {
+		return 0;
+	}
+	shape->slot_count = slots;
+	shape->occupied = 0;
+	shape->tombstones = 0;
+	shape->block_align = align;
+	return 1;
+}
+
+static void map_free_block(const loke_rt_allocator_v1 *a, loke_rt_map_table_v1 *t) {
+	loke_rt_v1_free(a, t, t->block_size, t->block_align);
+}
+
+/* Relocation within a rehash is a compiler-known move of initialized
+ * representations: m6b-plan decision "Element lifecycle" is explicit that it
+ * does not call user clone or drop hooks. */
+static void map_place_moved(
+	loke_rt_map_table_v1 *dst, const loke_rt_container_ops_v1 *ops, const void *key, const void *value) {
+	uint64_t mask = (uint64_t)dst->slot_count - 1;
+	uint64_t index = ops->key_hash(key, dst->seed) & mask;
+	uint8_t *controls = map_controls(dst);
+	for (;;) {
+		if (controls[index] != LOKE_RT_MAP_OCCUPIED) {
+			memcpy(map_key_at(dst, ops, (int64_t)index), key, (size_t)ops->key_size);
+			memcpy(map_value_at(dst, ops, (int64_t)index), value, (size_t)ops->elem_size);
+			controls[index] = LOKE_RT_MAP_OCCUPIED;
+			dst->occupied += 1;
+			return;
+		}
+		index = (index + 1) & mask;
+	}
+}
+
+int32_t loke_rt_v1_map_reserve(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
+	loke_rt_map_table_v1 shape;
+	loke_rt_map_table_v1 *fresh;
+	loke_rt_map_table_v1 *old = (loke_rt_map_table_v1 *)self->table;
+	int64_t slots, want;
+
+	if (min_capacity < 0) {
+		loke_rt_v1_container_fault("a container capacity cannot be negative");
+	}
+	if (min_capacity <= self->cap && (old != 0 || min_capacity == 0)) {
+		return 1;
+	}
+	want = min_capacity < self->len ? self->len : min_capacity;
+	if (!map_slots_for(want, &slots)) {
+		return 0;
+	}
+	if (!map_block_shape(ops, slots, &shape)) {
+		return 0;
+	}
+	fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc_zeroed(
+		self->allocator, shape.block_size, shape.block_align);
+	if (fresh == 0) {
+		return 0; /* the old table is still live and unchanged */
+	}
+	*fresh = shape;
+	fresh->seed = map_next_seed(fresh);
+
+	if (old != 0) {
+		uint8_t *controls = map_controls(old);
+		int64_t slot;
+		for (slot = 0; slot < old->slot_count; slot += 1) {
+			if (controls[slot] == LOKE_RT_MAP_OCCUPIED) {
+				map_place_moved(fresh, ops, map_key_at(old, ops, slot), map_value_at(old, ops, slot));
+			}
+		}
+		map_free_block(self->allocator, old);
+	}
+	self->table = fresh;
+	self->cap = map_capacity_of(slots);
+	return 1;
+}
+
+void loke_rt_v1_map_drop(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops) {
+	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)self->table;
+	if (t != 0) {
+		if (ops->key_drop != 0 || ops->elem_drop != 0) {
+			uint8_t *controls = map_controls(t);
+			int64_t slot;
+			for (slot = 0; slot < t->slot_count; slot += 1) {
+				if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
+					continue;
+				}
+				if (ops->key_drop != 0) {
+					ops->key_drop(map_key_at(t, ops, slot));
+				}
+				if (ops->elem_drop != 0) {
+					ops->elem_drop(map_value_at(t, ops, slot));
+				}
+			}
+		}
+		map_free_block(self->allocator, t);
+	}
+	memset(self, 0, sizeof *self);
+}
+
+/* The whole block is copied first and each live key and value is then deepened
+ * in place, so no slot moves and the clone never depends on two hashes of
+ * "equal" keys agreeing. */
+int32_t loke_rt_v1_map_clone(
+	loke_rt_map_v1 *out, const loke_rt_map_v1 *src,
+	const loke_rt_container_ops_v1 *ops, const loke_rt_allocator_v1 *a) {
+	const loke_rt_map_table_v1 *source = (const loke_rt_map_table_v1 *)src->table;
+	loke_rt_map_table_v1 *fresh;
+	uint8_t *controls;
+	int64_t slot;
+
+	memset(out, 0, sizeof *out);
+	out->allocator = a;
+	if (source == 0 || src->len == 0) {
+		return 1;
+	}
+	fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc(a, source->block_size, source->block_align);
+	if (fresh == 0) {
+		return 0;
+	}
+	memcpy(fresh, source, (size_t)source->block_size);
+	controls = map_controls(fresh);
+	for (slot = 0; slot < fresh->slot_count; slot += 1) {
+		if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
+			continue;
+		}
+		if (ops->key_clone != 0 &&
+		    !ops->key_clone(map_key_at(fresh, ops, slot), map_key_at(source, ops, slot), a)) {
+			break;
+		}
+		if (ops->elem_clone != 0 &&
+		    !ops->elem_clone(map_value_at(fresh, ops, slot), map_value_at(source, ops, slot), a)) {
+			/* The key of this slot is already deepened, so it is part of the
+			 * prefix that has to be destroyed. */
+			if (ops->key_drop != 0) {
+				ops->key_drop(map_key_at(fresh, ops, slot));
+			}
+			break;
+		}
+	}
+	if (slot < fresh->slot_count) {
+		/* Failure. Everything below `slot` is an independent clone; everything at
+		 * or above it still aliases the source and must not be dropped. */
+		int64_t done;
+		for (done = 0; done < slot; done += 1) {
+			if (controls[done] != LOKE_RT_MAP_OCCUPIED) {
+				continue;
+			}
+			if (ops->key_drop != 0) {
+				ops->key_drop(map_key_at(fresh, ops, done));
+			}
+			if (ops->elem_drop != 0) {
+				ops->elem_drop(map_value_at(fresh, ops, done));
+			}
+		}
+		loke_rt_v1_free(a, fresh, fresh->block_size, fresh->block_align);
+		return 0;
+	}
+	out->table = fresh;
+	out->len = src->len;
+	out->cap = src->cap;
+	return 1;
+}
+
+/* --------------------------------------------------------------- faults -- */
+
+/* design.md: an invalid index or a negative size is an ordinary program fault,
+ * so it takes the program panic strategy rather than an allocator policy. */
+void loke_rt_v1_container_fault(const char *what) {
+	loke_rt_v1_panic(what);
+}

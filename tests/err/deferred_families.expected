@@ -1,10 +1,18 @@
 L0441
-@13:1
+@15:1
 compile-time metadata
-L0350
-@18:1
-L0350
-@23:2
-L0350
-@24:2
-parses, but is not compiled yet in this milestone
+L0576
+@18:24
+which file-scope storage cannot do
+L0577
+@25:17
+`int` has no destination allocation to select
+L0577
+@28:19
+`string` has no destination allocation to select
+L0576
+@30:32
+which `static` storage cannot do
+L0578
+@32:25
+a `via` policy names an `Allocator`, found `untyped int`

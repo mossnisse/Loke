@@ -20,8 +20,8 @@ package main; import "core:fmt";
 // local region. The M5 equivalents below already fail for the two distinct
 // reasons the examples are there to distinguish, so activating the exact source
 // in M6 is a matter of replacing the storage, not of reopening the analysis.
-// This fixture also pins the M6 gate on the source above: `[dynamic]u8` and
-// `via` still report one diagnostic each.
+// This fixture also pins how far M6b has got: `[dynamic]u8` is a complete type
+// with a complete lifecycle, and its operations still gate one at a time.
 
 // The root failure: a borrow of local storage cannot be returned.
 bad_view :: proc() -> []int {
@@ -47,10 +47,11 @@ bad_owner :: proc(allocator: Allocator) {
 	held = make_buffer(allocator);
 }
 
-// The M6 storage itself, still gated.
+// The M6 storage itself: the declaration is accepted, and the operation on it
+// is what still gates.
 gated :: proc() {
 	bytes: [dynamic]u8;
-	fmt.println(1);
+	fmt.println(len(bytes));
 }
 
 main :: proc() {

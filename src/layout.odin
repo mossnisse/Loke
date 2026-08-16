@@ -108,11 +108,13 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		offsets[0] = 0
 		offsets[1] = shape.tag_offset
 
-	case .Struct, .Any_View, .Dyn, .Slice:
+	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
 		// A slice's two words are ordinary fields, so it lays out here rather than
 		// carrying a second hand-written shape (m5a-plan decision "Slice
-		// representation").
+		// representation"). The two container headers are the same idea with four
+		// words (m6b-plan decisions "Dynamic-array value ABI", "Map value ABI").
 		ensure_slice_fields(c, type)
+		ensure_container_fields(c, type)
 		info = type_of(c, type)
 		offsets = make([]u64, len(info.fields), c.semantic_allocator)
 		cursor := u64(0)

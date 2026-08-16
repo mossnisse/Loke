@@ -143,6 +143,10 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"new_clone", .New_Clone},
 		{"free", .Free},
 		{"free_all", .Free_All},
+		// design.md "Dynamic arrays" and "Maps": `make` names a container *type*
+		// and binds the result to the selected allocator. No ordinary signature can
+		// spell a type-valued first operand, so it joins the built-ins here.
+		{"make", .Make},
 	}
 	for entry in allocation {
 		define(c, universe, entry.name, Symbol {

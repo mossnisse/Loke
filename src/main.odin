@@ -99,9 +99,14 @@ for each printable type and a package may write format for its own - and
 core:fmt print, println, eprint and eprintln go through it, over
 writers a program can also take for itself with fmt.stdout and fmt.stderr.
 
-Dynamic arrays, maps, string.to_runes, the dynamic raw_data overload and via
-allocator policies parse and report one diagnostic. Storing a borrow in a
-global, a record field or callback state, raw and unknown pointers, and
+[dynamic]T and map[K]V are complete four-word managed values: the all-zero
+header is a usable constant in every storage duration, make binds a container to
+a selected allocator, a via policy chooses the provider a destination is built
+with, and copy, move, drop, exchange and panic cleanup are exact. Their
+operations - literals with elements, indexing, len, append and the rest - each
+report one diagnostic until the step that also installs their invalidation.
+string.to_runes and the dynamic raw_data overload do the same. Storing a borrow
+in a global, a record field or callback state, raw and unknown pointers, and
 cross-thread transfer are the documented v1 trust boundaries and are not
 checked.
 

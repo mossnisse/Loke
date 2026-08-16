@@ -151,6 +151,105 @@ int32_t loke_rt_v1_bytes_compare(
 	const uint8_t *a_data, int64_t a_len, const uint8_t *b_data, int64_t b_len);
 int64_t loke_rt_v1_cstring_len(const uint8_t *p);
 
+/* ------------------------------------------------------------ containers -- */
+
+/* m6b-plan decisions "Dynamic-array value ABI", "Map value ABI" and "Container
+ * runtime boundary". Both managed containers are four words, and both keep the
+ * provider handle their drop has to release through. The all-zero value is
+ * empty, allocator-unbound, and immediately usable, which is what makes a
+ * file-scope or `static` container a constant.
+ *
+ * The raw storage and table mechanics live here; what a *Loke* element or key
+ * costs to clone, drop, hash and compare cannot be known by C, so the compiler
+ * hands one operation table of generated thunks to every call. */
+typedef struct loke_rt_dynamic_v1 {
+	void *data;
+	int64_t len;
+	int64_t cap;
+	const loke_rt_allocator_v1 *allocator;
+} loke_rt_dynamic_v1;
+
+typedef struct loke_rt_map_v1 {
+	void *table;
+	int64_t len;
+	/* Entries insertable before the next growth, not the raw slot count. */
+	int64_t cap;
+	const loke_rt_allocator_v1 *allocator;
+} loke_rt_map_v1;
+
+LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_dynamic_v1) == 32, dynamic_value_size);
+LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_map_v1) == 32, map_value_size);
+
+/* One private table per concrete element, or key/value combination. A NULL
+ * `drop` means the part is trivially destroyed; a NULL `clone` means its clone
+ * is the copy its representation already is. The key half is zero for a dynamic
+ * array. */
+typedef struct loke_rt_container_ops_v1 {
+	uint64_t elem_size;
+	uint64_t elem_align;
+	void (*elem_drop)(void *elem);
+	int32_t (*elem_clone)(void *out, const void *src, const loke_rt_allocator_v1 *a);
+
+	uint64_t key_size;
+	uint64_t key_align;
+	void (*key_drop)(void *key);
+	int32_t (*key_clone)(void *out, const void *src, const loke_rt_allocator_v1 *a);
+	uint64_t (*key_hash)(const void *key, uint64_t seed);
+	int32_t (*key_equal)(const void *a, const void *b);
+} loke_rt_container_ops_v1;
+
+/* The header of one map allocation. design.md leaves map order unspecified, and
+ * m6b-plan keeps the seed and the control metadata *out* of the public value, so
+ * the table algorithm can change without changing `map[K]V`'s layout.
+ *
+ * One block holds the header, then `slot_count` control bytes, then the key
+ * array, then the value array. Offsets are stored rather than recomputed so the
+ * reader and the allocator agree byte for byte. */
+enum { LOKE_RT_MAP_EMPTY = 0, LOKE_RT_MAP_TOMBSTONE = 1, LOKE_RT_MAP_OCCUPIED = 2 };
+
+typedef struct loke_rt_map_table_v1 {
+	int64_t slot_count; /* a power of two */
+	int64_t occupied;
+	int64_t tombstones;
+	uint64_t seed;
+	uint64_t controls_offset;
+	uint64_t keys_offset;
+	uint64_t values_offset;
+	uint64_t block_size;
+	uint64_t block_align;
+} loke_rt_map_table_v1;
+
+/* Every one of these returns 1 on success. On failure the container is
+ * bit-for-bit unchanged, which is what m6b-plan decision "Atomic mutation"
+ * requires of every fallible container operation. */
+int32_t loke_rt_v1_dyn_reserve(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
+int32_t loke_rt_v1_dyn_clone(
+	loke_rt_dynamic_v1 *out, const loke_rt_dynamic_v1 *src,
+	const loke_rt_container_ops_v1 *ops, const loke_rt_allocator_v1 *a);
+/* Destroys every live element, releases the storage, and writes the inert
+ * all-zero representation. */
+void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops);
+
+int32_t loke_rt_v1_map_reserve(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
+int32_t loke_rt_v1_map_clone(
+	loke_rt_map_v1 *out, const loke_rt_map_v1 *src,
+	const loke_rt_container_ops_v1 *ops, const loke_rt_allocator_v1 *a);
+void loke_rt_v1_map_drop(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops);
+
+/* Checked container arithmetic, shared by the generated code and the helpers
+ * above: a source `int` count is signed and its overflow is defined to wrap, and
+ * m6b-plan decision "Checked sizes" forbids letting that rule reach a provider
+ * as an undersized allocation. Each answers 0 when the result is not
+ * representable. */
+int32_t loke_rt_v1_checked_add(int64_t a, int64_t b, int64_t *out);
+int32_t loke_rt_v1_checked_bytes(int64_t count, uint64_t size, uint64_t *out);
+
+/* An invalid index, a negative count, or a `len > cap` relationship is an
+ * ordinary program fault, not an allocator failure. */
+void loke_rt_v1_container_fault(const char *what);
+
 /* ------------------------------------------------------------ formatting -- */
 
 /* design.md "String format printing": "Formatting is a library protocol." The

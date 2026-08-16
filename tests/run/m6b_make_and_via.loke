@@ -1,0 +1,56 @@
+package main; import "core:mem"; import "core:fmt";
+
+// `make` and the `via` allocator policy (m6b-plan step 1, decisions "Allocator
+// binding" and "`via` applicability").
+//
+// design.md: `make` creates a container bound to the selected allocator, and
+// m6b-plan is explicit that the result is bound "even when empty". The counts
+// are ordinary runtime values, so a request that is representable but cannot be
+// satisfied comes back as an error rather than a policy failure — `make` is one
+// of the explicitly fallible primitives.
+//
+// No container *operation* is called here: each one is ungated in the step that
+// also installs its invalidation.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { self.id = 0; }
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		return Res{self.id}, nil;
+	}
+}
+
+chosen :: proc() -> Allocator {
+	return mem.default_allocator();
+}
+
+main :: proc() {
+	// Four zero-valued elements inside a capacity of sixteen. The zero of a
+	// managed element is the inert value every hook must already handle, so the
+	// fill is not a construction and the drop of an untouched element is a no-op.
+	rows, err := make([dynamic]Res, 4, 16);
+	fmt.println(err == nil);
+
+	// A map takes an optional reservation, and the allocator is recognised by its
+	// type rather than by a written parameter name.
+	pool, perr := make(map[int]Res, 32, mem.default_allocator());
+	fmt.println(perr == nil);
+
+	// Empty, and still bound: `make` with no counts allocates nothing.
+	empty, eerr := make([dynamic]string);
+	fmt.println(eerr == nil);
+
+	// Representable, and far larger than any heap will give: the error comes
+	// back and the value is an empty container bound to its provider.
+	huge, herr := make([dynamic]i128, 0, 1152921504606846976);
+	fmt.println(herr != nil);
+
+	// A written policy on a local managed owner. The provider is selected when
+	// the declaration is evaluated, and the declaration keeps it across drop and
+	// revival even though the handle itself travels with the value.
+	kept: [dynamic]Res via chosen();
+	table: map[int]Res via mem.default_allocator();
+	held: Res via chosen();
+	fmt.println(held.id);
+}

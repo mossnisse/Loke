@@ -36,7 +36,13 @@ Lifecycle :: struct {
 	// the runtime's shared-storage retain and release rather than anything a
 	// package could write. There is no hook symbol to find, so the emitter
 	// recognises this flag instead of looking one up (m6a-plan step 4).
+	//
+	// The same is true of `[dynamic]T` and `map[K]V`, whose clone and drop are
+	// the versioned C helpers driven by a generated operation table (m6b-plan
+	// step 1). `container` tells the two apart, because a string's implicit copy
+	// is a retain while a container's is a real deep clone that can fail.
 	intrinsic:        bool,
+	container:        bool,
 	state:            Size_State,
 }
 
@@ -64,7 +70,8 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 		// design.md: assignment of a `string` shares immutable backing storage and
 		// the last drop deallocates through the string's bound allocator, so a
 		// string is an owner exactly like a record with a written `drop`.
-		entry.intrinsic = info.kind == .String
+		entry.container = info.kind == .Dynamic_Array || info.kind == .Map
+		entry.intrinsic = info.kind == .String || entry.container
 		entry.managed =
 			entry.intrinsic ||
 			entry.custom_drop != INVALID_SYMBOL ||
@@ -188,8 +195,13 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	#partial switch info.kind {
-	case .Array:
+	case .Array, .Dynamic_Array:
+		// A container of a move-only element is itself move-only for the same
+		// reason a record holding one is: the deep clone would have no hook to
+		// call for the element it has to duplicate.
 		return type_clone_disabled(c, info.element)
+	case .Map:
+		return type_clone_disabled(c, info.key) || type_clone_disabled(c, info.element)
 	case .Struct:
 		for field in info.fields {
 			sym := symbol_of(c, field)
@@ -238,6 +250,16 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	}
 	#partial switch info.kind {
 	case .Struct, .Array:
+	case .Dynamic_Array, .Map:
+		// A container's clone and drop are the versioned C helpers, so there is no
+		// member to install. What the generated operation table calls *is* the
+		// element's (and key's) own hook, so the recursion still has to run.
+		info.contributed += {.Lifecycle}
+		contribute_lifecycle_members(k, info.element)
+		if info.kind == .Map {
+			contribute_lifecycle_members(k, info.key)
+		}
+		return
 	case:
 		// A built-in's copy is its representation, so it needs no hook.
 		return
@@ -311,6 +333,11 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	if lifecycle_of(c, type).custom_try_clone != INVALID_SYMBOL {
+		return true
+	}
+	// A container's clone duplicates its storage, so it allocates and can fail
+	// whatever its element is (m6b-plan decision "Element lifecycle").
+	if lifecycle_of(c, type).container {
 		return true
 	}
 	// A fixed array inherits its element's, so one part answers for every index.

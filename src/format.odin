@@ -126,7 +126,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		wanted = []Type_Id{TYPE_ANY_VIEW, writer, options}
 		k.c.format_requested = true
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Hash,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Free,
+	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
 		v.type = INVALID_TYPE

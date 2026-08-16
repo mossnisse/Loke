@@ -268,6 +268,10 @@ check_iter_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		v.type = INVALID_TYPE
 		return
 	}
+	if !gate_container_operation(k, subject, expr_span(v.args[0].value)) {
+		v.type = INVALID_TYPE
+		return
+	}
 	ensure_iteration_members(k, subject)
 	chosen := iteration_member(k, subject, "iter")
 	sym := symbol_of(k.c, chosen)
@@ -455,6 +459,11 @@ check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range)
 // `iter(value)`, and `next(self: inout Iterator) -> (Element, bool)`.
 @(private = "file")
 check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
+	// A container's protocol members arrive with m6b-plan step 4, together with
+	// the whole-container loan the loop holds across its back-edge.
+	if !gate_container_operation(k, subject, expr_span(s.iterable)) {
+		return FLOWS
+	}
 	if s.bindings[0].is_ref {
 		// design.md "By-reference iteration": by-reference `foreach` is a
 		// built-in-container facility, and the protocol has only value-producing

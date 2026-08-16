@@ -773,6 +773,10 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		v.type = INVALID_TYPE
 		return
 	}
+	if !gate_container_operation(k, base_type, v.span) {
+		v.type = INVALID_TYPE
+		return
+	}
 	// Built-in indexing first; a user `operator([])` supplies what it does not.
 	indexable := info != nil && (info.kind == .Array || info.kind == .Slice)
 	if !indexable || len(v.indices) != 1 {
@@ -2142,6 +2146,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Iter:
 		check_iter_builtin(k, v, ident)
 		return
+	case .Make:
+		check_make_builtin(k, v, ident)
+		return
 	case .New, .New_Clone, .Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
 		return
@@ -2449,6 +2456,10 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Align_Of:
 		result = type_align(k.c, operand)
 	case .Len:
+		if !gate_container_operation(k, operand, v.span) {
+			v.type = INVALID_TYPE
+			return
+		}
 		info := type_of(k.c, type_underlying(k.c, operand))
 		if info == nil || info.kind != .Array {
 			errorf(k.c, v.span, "L0386", "`len` needs a fixed array, found `%s`", type_name(k.c, operand))
@@ -2479,7 +2490,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator, .Drop, .Exchange,
+	case .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .None, .Assert, .Panic, .Hash, .Iter,
@@ -2634,7 +2645,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.type = TYPE_VOID
 		return
 
-	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len,
+	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Make,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
@@ -2659,6 +2670,124 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		append(&bound, v.args[1].value)
 	}
 	v.bound = bound[:]
+}
+
+// design.md "Dynamic arrays" and "Maps": `make` creates a container bound to the
+// selected allocator.
+//
+//   make([dynamic]T, len: int = 0, cap: int = len, allocator = default)
+//       -> ([dynamic]T, Allocator_Error)
+//   make(map[K]V, reservation: int = 0, allocator = default)
+//       -> (map[K]V, Allocator_Error)
+//
+// m6b-plan decision "Allocator binding": the result is bound to the selected
+// allocator "even when empty", so `make` is also how a program chooses a
+// provider for a container it then fills. The counts are ordinary runtime `int`
+// expressions; `len > cap` and a negative count are program faults, not
+// allocation failures, and are checked where the allocation is made.
+//
+// The trailing allocator is recognised by its type rather than by position:
+// `Allocator` is a distinct nominal type, so no count can be mistaken for one
+// and `make([dynamic]int, arena.allocator())` needs no written parameter name.
+@(private = "file")
+check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	if len(v.args) == 0 {
+		errorf(k.c, v.span, "L0579", "`make` names the container type to create")
+		v.type = INVALID_TYPE
+		return
+	}
+	for arg in v.args {
+		if arg.name.text != "" || arg.mode != .Value {
+			unsupported_construct(k, arg.span)
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	container := layout_operand_type(k, v.args[0].value, .Make)
+	if container == INVALID_TYPE || !gate_type(k, container, expr_span(v.args[0].value)) {
+		v.type = INVALID_TYPE
+		return
+	}
+	if !type_is_container(k.c, container) {
+		errorf(
+			k.c,
+			expr_span(v.args[0].value),
+			"L0579",
+			"`make` creates a `[dynamic]T` or a `map[K]V`, found `%s`",
+			type_name(k.c, container),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	// A container of a move-only element has no clone, but it can still be
+	// created: what `make` produces is empty or zero-filled, never a copy.
+	contribute_lifecycle_members(k, container)
+
+	is_map := type_is_map(k.c, container)
+	max_counts := is_map ? 1 : 2
+	counts := make([dynamic]Expr, 0, 2, k.c.semantic_allocator)
+	allocator: Expr
+	for index in 1 ..< len(v.args) {
+		argument := v.args[index].value
+		if check_single_expr(k, argument, allocator_hint(k, index, len(v.args))) == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		if type_underlying(k.c, expr_base(argument).type) == TYPE_ALLOCATOR {
+			if index != len(v.args) - 1 {
+				errorf(k.c, expr_span(argument), "L0579", "the allocator is `make`'s last argument")
+				v.type = INVALID_TYPE
+				return
+			}
+			allocator = argument
+			continue
+		}
+		if len(counts) == max_counts {
+			shape := is_map ? "a map, an optional reservation, and an optional allocator" :
+				"a dynamic array type, an optional length and capacity, and an optional allocator"
+			errorf(k.c, expr_span(argument), "L0579", "`make` takes %s", shape)
+			v.type = INVALID_TYPE
+			return
+		}
+		if !materialize(k, argument, TYPE_INT) || type_underlying(k.c, expr_base(argument).type) != TYPE_INT {
+			errorf(
+				k.c,
+				expr_span(argument),
+				"L0579",
+				"a `make` %s is an `int`, found `%s`",
+				is_map ? "reservation" : "length or capacity",
+				type_name(k.c, expr_base(argument).type),
+			)
+			v.type = INVALID_TYPE
+			return
+		}
+		append(&counts, argument)
+	}
+
+	// Bound in a fixed shape the backend never has to re-derive: the counts in
+	// written order, then the allocator, which is nil when it was omitted.
+	bound := make([]Expr, max_counts + 1, k.c.semantic_allocator)
+	for count, index in counts {
+		bound[index] = count
+	}
+	bound[max_counts] = allocator
+	v.bound = bound
+	v.alloc_type = container
+
+	results := make([]Type_Id, 2, k.c.semantic_allocator)
+	results[0] = container
+	results[1] = TYPE_ALLOCATOR_ERROR
+	v.result_types = results
+	v.type = container
+}
+
+// An argument that could be the trailing allocator is checked with `Allocator`
+// as its context, so `mem.default_allocator()` resolves the same way it does in
+// any other allocator position. Everything before it wants `int`.
+@(private = "file")
+allocator_hint :: proc(k: ^Checker, index: int, count: int) -> Type_Id {
+	return index == count - 1 ? INVALID_TYPE : TYPE_INT
 }
 
 @(private = "file")
@@ -3084,6 +3213,14 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		check_array_literal(k, v, target, info)
 	case .Slice:
 		check_slice_literal(k, v, target, info)
+	case .Dynamic_Array, .Map:
+		// design.md: the all-zero container is "empty, allocator-unbound,
+		// constant, and immediately usable", so `{}` needs no construction at all.
+		// A literal with elements is a real one, and arrives with its own step.
+		if len(v.elements) != 0 {
+			gate_container_operation(k, target, v.span)
+			v.type = INVALID_TYPE
+		}
 	case:
 		errorf(k.c, v.span, "L0376", "`%s` cannot be built from a composite literal", type_name(k.c, target))
 		v.type = INVALID_TYPE
@@ -3305,11 +3442,13 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		aggregate.type = type
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
-	case .Struct, .Any_View, .Dyn, .Slice:
+	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
 		// The zero value of an erased view is nil: a null pointer pair. A nil slice
 		// is the same shape — a null pointer and a zero length (design.md "Nil
-		// slices").
+		// slices"). A container's is the four-word all-zero header, which design.md
+		// requires be "empty, allocator-unbound, constant, and immediately usable".
 		ensure_slice_fields(c, under)
+		ensure_container_fields(c, under)
 		info = type_of(c, under)
 		elements := make([]Const_Value, len(info.fields), c.semantic_allocator)
 		for field, index in info.fields {

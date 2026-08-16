@@ -1,26 +1,34 @@
 package main; import "core:mem"; import "core:fmt";
 
-// One `L0350` per deferred outer construct, and no descent into it. This is the
-// single gate fixture for the managed containers, whose carrier and
-// invalidation hooks `src/borrow.odin` already has. Slices are no longer here:
-// M5a implements their behavior and M5b their provenance. Strings, string
-// views, C string views, and multi-pointers are no longer here either: M6a
-// step 4 implements all four.
+// The `via` applicability rules and the one construct that is still deliberately
+// not a runtime type (m6b-plan step 1, decision "`via` applicability").
+//
+// design.md: `via` selects the provider a destination's value is *built* with,
+// so it belongs to a managed owner "whose canonical clone accepts a destination
+// allocator". Everything with no destination allocation to select is rejected,
+// and every static-duration form is rejected before its expression is even
+// checked — a provider call is not a constant initialiser.
 
 // An interface is not deferred: it is deliberately compile-time metadata, so it
 // has its own diagnostic rather than a milestone gate.
 Trait :: interface($Self: type) { }
 stored: Trait;
 
-// A written allocator policy needs a provider to select, which arrives with
-// `mem.Arena` in M6b. `manual`, `static`, and `thread_local` are no longer here:
-// M5a implements all three (m5a-plan step 4).
+// File-scope storage is initialised before any code runs.
 pooled: manual int via allocator_of();
 
 allocator_of :: proc() -> Allocator { return mem.default_allocator(); }
 
 main :: proc() {
-	xs: [dynamic]int;
-	table: map[int]int;
+	// A trivial value owns no allocation, so there is nothing for a policy to
+	// select.
+	plain: int via allocator_of();
+	// design.md "string type": assignment shares immutable backing storage
+	// through a retain rather than allocating into the destination.
+	text: string via allocator_of();
+	// `static` and `thread_local` are rejected for the same reason file scope is.
+	kept: static [dynamic]int via allocator_of();
+	// A policy names an `Allocator`, not any other value.
+	rows: [dynamic]int via 7;
 	fmt.println(1);
 }

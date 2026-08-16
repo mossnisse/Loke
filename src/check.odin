@@ -965,7 +965,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if element == INVALID_TYPE {
 			return INVALID_TYPE
 		}
-		value.denoted_type = intern_type(k.c, Type_Key{kind = .Dynamic_Array, element = element}, Type_Info{kind = .Dynamic_Array, element = element})
+		value.denoted_type = dynamic_array_of(k.c, element)
 		value.resolution.kind = .Type
 		return value.denoted_type
 
@@ -1019,7 +1019,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if key == INVALID_TYPE || element == INVALID_TYPE {
 			return INVALID_TYPE
 		}
-		value.denoted_type = intern_type(k.c, Type_Key{kind = .Map, key = key, element = element}, Type_Info{kind = .Map, key = key, element = element})
+		value.denoted_type = map_of(k.c, key, element)
 		value.resolution.kind = .Type
 		return value.denoted_type
 
@@ -1322,12 +1322,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			return
 		}
 	}
-	// `via` stays gated at the enclosing declaration: a written allocator policy
-	// needs a local provider to select, which arrives with `mem.Arena` in M6b.
-	if d.via != nil {
-		unsupported_construct(k, d.span)
-		return
-	}
 	for symbol_id in d.symbols {
 		if sym := symbol_of(k.c, symbol_id); sym != nil {
 			sym.manual = d.manual
@@ -1345,6 +1339,14 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		return // the written type did not resolve, and said so
 	}
 	if declared != INVALID_TYPE && !gate_type(k, declared, d.span) {
+		return
+	}
+	// design.md "Allocators": `T via expression` selects the provider this
+	// declaration's value is built with. The policy is settled here, before the
+	// initialiser, because a container literal initialising this destination
+	// constructs with the selected allocator rather than through a
+	// default-backed temporary (m6b-plan decision "Allocator binding").
+	if !check_via_policy(k, d, declared) {
 		return
 	}
 	// A local may hold an `any_view`; a global cannot, and no position may hold

@@ -1,0 +1,29 @@
+package main; import "core:fmt";
+
+// The two managed container headers, checked against LLVM's own placement
+// (m6b-plan step 1 exit: "layouts agree in C/Loke/LLVM").
+//
+// Both are four words, so a record mixing them with scalars has to place the
+// scalars around a 8-aligned, 32-byte member. Nesting a container inside a
+// container and inside a fixed array covers the cases where the header is an
+// element rather than a field.
+
+Inner :: struct { ids: [dynamic]int, tag: u16 }
+
+Outer :: struct {
+	flag:   bool,
+	lookup: map[string]Inner,
+	rows:   [3][dynamic]u8,
+	nested: [dynamic]map[int]i128,
+	wide:   i128,
+}
+
+main :: proc() {
+	// Named uses, so nothing above is dropped before the probe runs.
+	i: Inner;
+	o: Outer;
+	d: [dynamic]rune;
+	m: map[rune]f32;
+	fmt.println(size_of(i) + size_of(o) + size_of(d) + size_of(m));
+	fmt.println(align_of(Inner) + align_of(Outer) + offset_of(Outer, wide));
+}

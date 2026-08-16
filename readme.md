@@ -16,7 +16,7 @@ The normative language specification is in [design.md](design.md), and its gramm
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
 [compiler-plan.md](compiler-plan.md); the current milestone is M6a, planned in
-[m6a-plan.md](m6a-plan.md), with M6b bounded for just-in-time planning in
+[m6a-plan.md](m6a-plan.md), with M6b planned in detail in
 [m6b-plan.md](m6b-plan.md), after M5b in [m5b-plan.md](m5b-plan.md), M5a in
 [m5a-plan.md](m5a-plan.md), M4b in [m4b-plan.md](m4b-plan.md), M4a in
 [m4a-plan.md](m4a-plan.md), M3 in
@@ -234,9 +234,19 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   one table. A program that wants the sink itself takes `fmt.stdout()` or
   `fmt.stderr()` and writes with `fmt.format_to`.
 
-Everything else — dynamic arrays, maps, `string.to_runes`, the dynamic
-`raw_data` overload, and `via` allocator policies — parses and reports one
-diagnostic at the enclosing construct.
+- `[dynamic]T` and `map[K]V` are complete four-word managed values. The all-zero
+  header is empty, allocator-unbound and constant, so a file-scope, `static` or
+  `thread_local` container needs no code before `main`; `make` binds a container
+  to a selected allocator even when the result is empty; a `T via provider`
+  declaration chooses the allocator its destination is built with, and is
+  rejected on a value with no destination allocation to select; and copy, move,
+  `drop`, `exchange`, revival and panic cleanup are exact through the versioned
+  container helpers and one generated operation table per concrete type.
+
+Everything else — the container *operations* (a literal with elements, indexing,
+`len`, `append`, iteration, formatting), `string.to_runes`, and the dynamic
+`raw_data` overload — parses and reports one diagnostic at the operation. Each is
+ungated in the step that also installs its invalidation.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.

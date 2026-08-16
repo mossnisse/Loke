@@ -479,6 +479,11 @@ Builtin_Kind :: enum {
 	New_Clone,
 	Free,
 	Free_All,
+	// design.md "Dynamic arrays" and "Maps": `make` creates a container bound to
+	// the selected allocator, with an optional initial length and capacity. Its
+	// first operand is a *type*, which no ordinary signature can spell, so it is
+	// a built-in (m6b-plan step 1).
+	Make,
 	// The default provider handle, spelled `mem.default_allocator()`. The symbol
 	// is compiler-owned and `core:mem` binds it, so a generated default argument
 	// and a written call are one call.
@@ -603,6 +608,12 @@ Symbol :: struct {
 	// code." The value is still tracked — an explicit `drop` and use-after-drop
 	// both need its liveness — it simply has no scope-exit obligation.
 	manual:           bool,
+	// design.md "Allocators": the `via` allocator expression this declaration
+	// wrote, or nil for the lazy default binding. m6b-plan decision "Allocator
+	// binding" keeps this on the *declaration*: it survives drop and move and is
+	// what a later revival selects, while the handle a live value currently holds
+	// travels in the value itself.
+	via:              Expr,
 	// design.md "Storage modifiers": `static` exists for the life of the process
 	// and `thread_local` for the life of its thread. Either one makes a *local*
 	// declaration name storage outside the frame, so the backend gives it a
@@ -1217,8 +1228,16 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 		// a read-only capability, and its lifetime is no longer checked after
 		// conversion" — a documented trust boundary, not an unsupported type.
 		return type_is_supported_depth(c, info.element, depth + 1)
-	case .Dynamic_Array, .Map, .Interface:
+	case .Interface:
 		return false
+	case .Dynamic_Array:
+		// design.md "Dynamic arrays": an owning managed container since M6b. Its
+		// operations are gated individually rather than by the type, so the zero
+		// value is a usable constant from step 1 onwards.
+		return type_is_supported_depth(c, info.element, depth + 1)
+	case .Map:
+		return type_is_supported_depth(c, info.key, depth + 1) &&
+		       type_is_supported_depth(c, info.element, depth + 1)
 	case .Slice:
 		// A slice is a supported runtime carrier, and its borrow provenance is
 		// checked by `src/borrow.odin` rather than restricted here.

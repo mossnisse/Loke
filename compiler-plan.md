@@ -277,7 +277,7 @@ as each milestone starts.
 | **M5a** *(implemented)* | **Visibility, slices, and lifecycle** ([B11](#b11-ownership-move--lifecycle-analysis)), planned in [m5a-plan.md](m5a-plan.md). Apply one package/public rule to reflection, ordinary field reads/writes, `offset_of`, and aggregate construction. Add complete slice value/capability behavior and constant materialization; fixed lifecycle hooks, ownership/move/deep-copy, parameter/result transfer, drop insertion, storage modifiers, copy-cost diagnostics, allocator semantic types, and a minimal default-CRT `new`/`new_clone`/safe-direct-`free` path. Full provenance, copied-root `free`, and region reset remain M5b. | Reflection and ordinary access agree across package boundaries; slices, literals, iteration, and read-only materialization run; a resource drops exactly once on every normal exit in one LIFO order with `defer`; move kills its source, conditional liveness cleans up correctly, deep copy preserves a live destination on failure, all four copy sites are diagnosed, and `Cloneable` compiles against real lifecycle and allocator types. |
 | **M5b** *(implemented)* | **Borrows, provenance, and allocator regions** ([B12](#b12-borrow--lifetime-checker)), planned in [m5b-plan.md](m5b-plan.md). Propagate root/capability and region provenance over M5a's CFG; enforce last-use borrowing, exclusivity, invalidation, escape, copied allocation-root release, direct/cross-package result summaries, conservative procedure-value results, `free_all`, and transitive `@(allocator_reset)` effects. Close the `any_view`, `dyn`, `inout`-result, `[:]`-result, and slice lifetime gaps. | Invalid root access, local escape, longer-lived region escape, and reset are rejected with diagnostics naming the creation/dependency and conflict; copied allocation bases free once and invalidate aliases; direct and indirect calls preserve the required summaries/effects; every deliberate v1 trust boundary remains tested as accepted. |
 | **M6a** | **Runtime foundations and strings** ([B14](#b14-runtime--core-library)), planned in [m6a-plan.md](m6a-plan.md). Add the versioned C runtime and allocator-provider ABI, implicit `base:`/`core:` roots and nameable runtime/meta/mem/fmt/unsafe packages, logical cross-frame panic cleanup with unwind/abort selection, runtime strings and borrowed text views, multi-pointers, ordinary `..T` plus call-scoped `..any_view` variadics, checked runtime type information, coherent erased formatting, and source locations. | Programs link the compiler-relative runtime; every specified panic follows unwind or abort correctly; text ownership/borrowing is checked; homogeneous and erased variadics run; `fmt` replaces `print_int`; `type_info_of` and source locations expose their frozen runtime layouts. |
-| **M6b** | **Managed containers and regions**, bounded in [m6b-plan.md](m6b-plan.md) and detailed just in time. Add dynamic arrays and maps with complete operations/lifecycle/formatting, eager `via` and lazy default allocator binding, iteration and invalidation, `mem.Arena`/`mem.Scratch` as real local regions, successful reset, and the remaining dynamic-array-dependent string/unsafe/evaluator handoffs. | Dynamic arrays and maps preserve value, allocator, failure, and borrow semantics; arena-backed owners cannot escape or survive reset; all managed runtime types iterate, format, copy/move/drop, and fail without publishing partial state. |
+| **M6b** | **Managed containers and regions**, planned in detail in [m6b-plan.md](m6b-plan.md). Add dynamic arrays and maps with complete operations/lifecycle/formatting, eager `via` and lazy default allocator binding, iteration and invalidation, address-stable `mem.Arena`/`mem.Scratch` controls as real local regions, successful reset, and the remaining dynamic-array-dependent string/unsafe/evaluator handoffs. | Dynamic arrays and maps preserve value, allocator, failure, and borrow semantics; arena-backed owners cannot escape or survive reset; moving a provider preserves its allocator-record address and region identity; all managed runtime types iterate, format, copy/move/drop, and fail without publishing partial state. |
 | **M7** | **Release + interop.** LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. | Optimized release builds; C libraries link and call. |
 | **M8** | **Later.** Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
 
@@ -472,6 +472,39 @@ nothing until M6b supplies `mem.Arena`. And a reset treats every region-backed
 owner still in scope as a surviving dependant rather than consulting M5a's
 liveness states, which over-blocks a `manual` owner that was explicitly dropped
 first; both are marked at their site and are conservative in the safe direction.
+
+M6b step 1 is implemented ([m6b-plan.md](m6b-plan.md)). `[dynamic]T` and
+`map[K]V` are compiler-owned struct-shaped types with four synthesised fields —
+storage, length, capacity, and the bound provider handle — so layout, parameter
+passing, constant zeros, runtime metadata and emission all reuse the aggregate
+paths a slice already uses, and `-check-layout` proves both headers against
+LLVM's own placement. `runtime/container.c` owns every byte of storage
+bookkeeping behind them: checked byte sizes and round-ups, geometric array
+growth, and one open-addressed table block holding header, control bytes, keys
+and values with an opaque per-table seed. What C cannot know — what a concrete
+Loke element costs to clone or drop — arrives as one generated
+`loke_rt_container_ops_v1` per concrete type, whose element and key thunks are
+memoised per part type. A container's clone and drop are therefore intrinsic,
+like a `string`'s, but its implicit copy is a real deep clone that can fail,
+which is why `type_clone_is_fallible` answers true for one and a container of a
+move-only element is itself move-only.
+
+Two consequences fall out. `emit_clone_value` now takes the destination's
+selected allocator, which retires the M5a shortcut that cloned every implicit
+copy with the default provider: a `T via provider` declaration records its
+policy on the *symbol*, so it survives drop and move and is what a revival
+selects, while the handle a live value holds travels in the value. And `make` is
+a new built-in whose first operand is a type; its trailing allocator is
+recognised by type rather than by position, so `make([dynamic]int, 8, arena)`
+needs no written parameter name. Diagnostics `L0576`–`L0579` (static-duration
+`via`, inapplicable `via`, non-allocator policy, `make` shape) are live.
+
+Two things are deliberately not here yet. Every container *operation* still
+reports `L0350` at the operation rather than at the declaration — a literal with
+elements, indexing, `len`, iteration — because each is ungated in the step that
+also installs its M5b invalidation. And there is no failure-injection provider:
+an allocation that must fail is written as a representable request no heap will
+satisfy, which is what the existing M5a clone-failure fixtures already do.
 
 ---
 

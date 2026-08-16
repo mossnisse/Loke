@@ -1,0 +1,52 @@
+package main; import "core:fmt";
+
+// The two frozen container headers and the all-zero value (m6b-plan step 1,
+// decisions "Dynamic-array value ABI" and "Map value ABI").
+//
+// Both are four words: storage, length, capacity, and the bound provider. The
+// all-zero value is "empty, allocator-unbound, constant, and immediately
+// usable", which is what lets a file-scope, `static`, or `thread_local`
+// container be constant-initialised with no code running before `main`. Nothing
+// here calls a container operation: each one is ungated only in the step that
+// also installs its invalidation.
+
+Record :: struct {
+	names: [dynamic]string,
+	table: map[int]string,
+	tag:   []u8,
+	id:    int,
+}
+
+// design.md "Values that outlive every scope": all three storage durations take
+// the constant zero, so none of them needs code before `main`.
+globals: [dynamic]int;
+lookup: map[string]int;
+
+count_bytes :: proc() -> int {
+	seen: static [dynamic]int;
+	local: thread_local map[int]int;
+	return size_of(seen) + size_of(local);
+}
+
+main :: proc() {
+	fmt.println(size_of([dynamic]int));
+	fmt.println(align_of([dynamic]int));
+	fmt.println(size_of(map[int]string));
+	fmt.println(align_of(map[int]string));
+	// Four words each, plus a two-word slice and one `int`.
+	fmt.println(size_of(Record));
+	fmt.println(count_bytes());
+
+	// A container-holding record is managed, so this local's scope exit drops
+	// every part exactly once. Both containers are empty and unbound, so both
+	// drops release no storage.
+	value: Record;
+	value.id = 3;
+	fmt.println(value.id);
+
+	// An implicit copy of a managed owner is a deep clone, not a hidden alias.
+	// Cloning two empty containers allocates nothing and cannot fail.
+	copy := value;
+	fmt.println(copy.id);
+	fmt.println(size_of(globals) + size_of(lookup));
+}
