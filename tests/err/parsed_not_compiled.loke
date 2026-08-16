@@ -1,17 +1,22 @@
 package main; import "core:fmt";
 
-// m6b-plan step 6: the compile-time evaluator does not yet own managed
-// containers. A container operation has a compiler-generated body rather than a
-// written one, so asking for one during constant folding reports that there is
-// nothing to evaluate.
-BUILT :: build_it();
+// The compile-time evaluator has no `foreach`. It parses, checks, and runs at
+// run time; it simply has no compile-time meaning yet, so a constant that needs
+// one says so rather than silently generating code.
+//
+// A map is rejected for its own reason and keeps its own fixture: its iteration
+// order is unspecified, so the case stays closed even after this one opens.
+TOTAL :: total();
 
-build_it :: proc() -> int {
-	xs: [dynamic]int;
-	xs.append(1, 2, 3);
-	return len(xs);
+total :: proc() -> int {
+	xs: [dynamic]int = {1, 2, 3};
+	sum := 0;
+	foreach (v in xs) {
+		sum += v;
+	}
+	return sum;
 }
 
 main :: proc() {
-	fmt.println(BUILT);
+	fmt.println(TOTAL);
 }

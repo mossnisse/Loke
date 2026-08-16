@@ -657,7 +657,50 @@ program point in `src/lifecycle.odin`; consuming it needs a must-be-dead join
 beside the existing may-be-invalid one, which is the shape of the remaining work
 and is marked at its site.
 
-Step 6 has not started.
+M6b step 6 is implemented: the compile-time evaluator, and the audit.
+
+A compile-time container is its live contents and nothing else. There is no
+allocation to model, no provider to bind, and no address to hand out, so the
+runtime's four-word header has no compile-time meaning at all — which is why
+`zero_value` and `value_from_const` both answer the *empty container* rather
+than a four-element record. The evaluator performs each operation from the same
+`Symbol.container_op` the backend emits from, so the two cannot drift apart by
+being written twice against one description.
+
+Two things are deliberately *not* observable there, and both are rejected rather
+than approximated, because an approximation would let a folded constant differ
+from what the same source computes at run time. A map's iteration order, which
+design.md leaves unspecified — `L0593`, written as its own case in the `foreach`
+arm so it stays closed when compile-time `foreach` does arrive, rather than
+being covered incidentally by the general "no compile-time meaning". And a
+capacity, which is a property of an allocation — `L0595`. design.md gained one
+clause for the second, since capacity growth was already documented as not a
+language guarantee.
+
+Escape is `L0594`: design.md gives a container exactly one constant value, the
+empty one, so a non-empty one cannot leave evaluation. An empty one freezes to
+the all-zero header and is fine.
+
+Every M6b gate is now retired. The last one — a container reaching the general
+index path — was removed rather than left: it could only fire for `xs[a, b]`,
+where "unsupported construct" is a worse diagnostic than the ordinary arity one.
+`tests/err/parsed_not_compiled` was repointed at the honest remaining limit,
+compile-time `foreach`.
+
+One plan exit condition is not met, and weakening a safety rule to meet it would
+have been the wrong trade. The plan asks that
+`free_all(mem.default_allocator())` reach the runtime unsupported-reset trap.
+It cannot: M5b settled, with design.md's own words and a fixture
+(`hidden_default_reset`), that the default provider is pre-existing storage
+whose reset a parameterless wrapper may not hide — and since `main` takes no
+parameters, no promise chain can start. Both the direct and the transitive form
+are therefore rejected at compile time, which is the stricter and, on M5b's
+reading, the correct answer. The runtime half is implemented and unchanged since
+M6a: a provider whose `reset` answers 0 aborts. It is simply unreachable from
+checked Loke, and is marked as such at its site so nobody assumes it is covered.
+
+The reset-liveness gap recorded under step 5 is still open, and is the one thing
+M6b leaves for its own list rather than for the trust boundaries.
 
 ---
 

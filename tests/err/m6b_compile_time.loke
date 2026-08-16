@@ -1,0 +1,50 @@
+package main; import "core:fmt";
+
+// What a compile-time container may not do (m6b-plan step 6).
+//
+// Three of these are the same objection: a compile-time answer must not depend
+// on something the language does not promise, or on something the evaluator does
+// not have. The fourth is the memory ceiling, which is a diagnostic rather than
+// a silent fallback to generating runtime code.
+
+// design.md gives a container exactly one constant value, the empty one, because
+// anything else would need an allocation no constant can own.
+ESCAPED :: built();
+built :: proc() -> [dynamic]int {
+	xs: [dynamic]int;
+	xs.append(1, 2);
+	return xs;
+}
+
+// A capacity is a property of an allocation, and there is none here. Answering
+// the length instead would let this constant differ from what the same code
+// computes at run time.
+CAPPED :: capped();
+capped :: proc() -> int {
+	xs: [dynamic]int;
+	xs.reserve(8);
+	return cap(xs);
+}
+
+// design.md "Maps": "**Iteration order is unspecified.**" The evaluator has one
+// definite order, and exposing it would promise what the language refuses to.
+WALKED :: walked();
+walked :: proc() -> int {
+	m: map[int]int;
+	m[1] = 2;
+	total := 0;
+	foreach (key, value in m) { total += key + value; }
+	return total;
+}
+
+// The ceiling is reached deterministically and reported at it.
+HUGE :: huge();
+huge :: proc() -> int {
+	xs: [dynamic]int;
+	for (i := 0; i < 100000000; i += 1) { xs.append(i); }
+	return len(xs);
+}
+
+main :: proc() {
+	fmt.println(CAPPED + WALKED + HUGE);
+}

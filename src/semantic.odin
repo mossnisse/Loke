@@ -1200,10 +1200,9 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 // syntax still resolves to a real `Type_Id`, so this walks rather than looking
 // for absence (m2-plan decision "Deferred types").
 //
-// What is still deferred after M6a, each with exactly one `tests/err` fixture:
-// dynamic arrays and maps (M6b), and `interface` as a runtime type — which is
-// not deferred but deliberately compile-time metadata, so `gate_type` gives it
-// its own L0441.
+// Nothing is deferred after M6b. `interface` as a runtime type is the one
+// rejection left here, and it is not a deferral: an interface is deliberately
+// compile-time metadata, so `gate_type` gives it its own L0441.
 type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_is_supported_depth(c, id, 0)
 }

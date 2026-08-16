@@ -15,9 +15,9 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M6a, planned in
-[m6a-plan.md](m6a-plan.md), with M6b planned in detail in
-[m6b-plan.md](m6b-plan.md), after M5b in [m5b-plan.md](m5b-plan.md), M5a in
+[compiler-plan.md](compiler-plan.md); the current milestone is M6b, planned in
+[m6b-plan.md](m6b-plan.md), after M6a in [m6a-plan.md](m6a-plan.md), M5b in
+[m5b-plan.md](m5b-plan.md), M5a in
 [m5a-plan.md](m5a-plan.md), M4b in [m4b-plan.md](m4b-plan.md), M4a in
 [m4a-plan.md](m4a-plan.md), M3 in
 [m3-plan.md](m3-plan.md), M2 in [m2-plan.md](m2-plan.md), M1 in
@@ -292,7 +292,13 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   region backing it, and a wrapper may return the provider owner but not a bare
   handle to it.
 
-Compile-time evaluation of a managed container is what M6b has left to do.
+- a compile-time procedure may use containers as temporaries. The evaluator runs
+  the same operations the backend emits, from the same operation code, bounded by
+  the same step and memory limits — and a container cannot escape into the
+  generated program, because design.md gives it exactly one constant value, the
+  empty one. What is deliberately unspecified at runtime is rejected rather than
+  approximated: a map's iteration order, and a capacity, which is a property of an
+  allocation that compile-time storage does not have.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.

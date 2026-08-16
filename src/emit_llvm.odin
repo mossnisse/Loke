@@ -5978,9 +5978,10 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 // provider was given at `new`.
 //
 // ponytail: `free` names no allocator, and design.md makes matching the creating
-// one the program's obligation. M6a installs exactly one provider, so the
-// default record is always the right one; M6b's arenas need the allocation to
-// carry its provider, or `free` to name it.
+// one the program's obligation, so this uses the default record. An allocation
+// made from an arena is released by that region's reset instead; write the
+// allocator argument to `free` when the two must match exactly. Carrying the
+// provider in the allocation itself is the upgrade if that becomes common.
 @(private = "file")
 emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	pointer := emit_expr(e, v.bound[0])
@@ -6168,8 +6169,8 @@ emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 // compiler-owned contiguous storage and hands over a slice of it.
 //
 // The storage is a stack buffer: fixed-size when the element count is static,
-// and a checked dynamic `alloca` when a spread makes it runtime-sized. Nothing
-// here depends on M6b's dynamic arrays.
+// and a checked dynamic `alloca` when a spread makes it runtime-sized. A pack is
+// a borrow of that buffer, so it never involves a dynamic array.
 @(private = "file")
 Variadic_Pack :: struct {
 	value:   string,

@@ -137,18 +137,6 @@ container_key :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return info.key
 }
 
-// m6b-plan step 1: the type, its layout, its zero constant, and its whole
-// lifecycle land first, and each *operation* is ungated only in the step that
-// also installs its invalidation. Until then a container value is a usable
-// declaration whose operations report one milestone diagnostic apiece.
-gate_container_operation :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
-	if !type_is_container(k.c, type) {
-		return true
-	}
-	unsupported_construct(k, span)
-	return false
-}
-
 // ------------------------------------------------------ contributed members --
 
 // Which operation one contributed member is, so the backend writes the right

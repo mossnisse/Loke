@@ -11,9 +11,9 @@
 // promise across compiler versions; what it must do is agree between the
 // compile-time and runtime paths, which is why both spell the same two steps.
 //
-// ponytail: one non-seeded mixing constant, no per-process seed. A hash-flooding
-// defence belongs with the map implementation (M6b), which is what would
-// choose and thread a per-table seed.
+// ponytail: one non-seeded mixing constant. The per-table seed a map threads
+// through `hash` is what varies the result between tables; a per-*process* seed,
+// which is what a hash-flooding defence needs, is not derived here.
 package lokec
 
 // The 64-bit FNV prime.

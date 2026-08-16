@@ -130,10 +130,18 @@ long as it lives; both may back a container through via. A body may free_all a
 region it created without any promise, and the region stays usable afterwards -
 but not while an owner backed by it survives. An owner cannot be returned from,
 or stored past, the region that backs it, and a handle alone cannot be returned
-where the provider owner could be. Compile-time evaluation of a managed
-container is what remains. Storing a borrow in a global, a record field or
-callback state, raw and unknown pointers, and cross-thread transfer are the
-documented v1 trust boundaries and are not checked.
+where the provider owner could be.
+
+A compile-time procedure may use containers as temporaries: the evaluator runs
+the same operations the backend emits, bounded by the same step and memory
+limits, and a container cannot escape into the generated program because its only
+constant value is the empty one. What is deliberately unspecified at runtime is
+rejected rather than approximated - map iteration order, and a capacity, which is
+a property of an allocation compile-time storage does not have.
+
+Storing a borrow in a global, a record field or callback state, raw and unknown
+pointers, and cross-thread transfer are the documented v1 trust boundaries and
+are not checked.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
 directly in it as one package.

@@ -913,9 +913,13 @@ only through language constants and [`#config`](#configidentifier-default).
 Build scripts are ordinary programs run by the build system; compile-time
 procedures do not acquire ambient access to the machine performing the build.
 For identical source, configuration, and target, evaluation must produce the
-same result. An operation with deliberately unspecified runtime ordering, such
-as map iteration, is rejected on an executed compile-time path; maps remain
-available for keyed lookup and working storage.
+same result. An operation whose runtime answer is deliberately unspecified is
+rejected on an executed compile-time path rather than approximated, because an
+approximation would let a folded constant differ from what the same source
+computes at runtime. Map iteration is one such operation; maps remain available
+for keyed lookup and working storage. A container's capacity is another: it is a
+property of an allocation, and compile-time storage has none, so `cap` is
+rejected while `len` is an ordinary compile-time fact.
 
 # Comments
 

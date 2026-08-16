@@ -114,6 +114,12 @@ void loke_rt_v1_alloc_failed(const loke_rt_allocator_v1 *a) {
 	loke_rt_v1_panic("allocation failed");
 }
 
+/* ponytail: the abort below is unreachable from checked Loke. The only provider
+ * whose `reset` answers 0 is the system heap, and the region rules reject every
+ * source form that would hand it to a `free_all` -- a parameterless body may not
+ * hide a reset of pre-existing storage, and `main` takes no parameters, so no
+ * promise chain can start. It stays because a future provider may answer 0, and
+ * because a silent no-op here would be worse than a stop. */
 void loke_rt_v1_reset(const loke_rt_allocator_v1 *a) {
 	check_record(a);
 	if (a->ops->reset(a->state) == 0) {

@@ -1,0 +1,12 @@
+L0594
+@12:12
+a `[dynamic]int` cannot escape compile-time evaluation: its only constant value is the empty one
+L0595
+@22:11
+`cap` has no compile-time meaning: a capacity is a property of an allocation, and there is none here
+L0593
+@31:11
+a map cannot be iterated at compile time: its iteration order is unspecified
+L0342
+@41:9
+compile-time evaluation exceeded

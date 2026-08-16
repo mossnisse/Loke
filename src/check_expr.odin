@@ -793,10 +793,6 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		check_map_index(k, v, info, base_type, place)
 		return
 	}
-	if !gate_container_operation(k, base_type, v.span) {
-		v.type = INVALID_TYPE
-		return
-	}
 	// Built-in indexing first; a user `operator([])` supplies what it does not.
 	indexable := info != nil && (info.kind == .Array || info.kind == .Slice)
 	if !indexable || len(v.indices) != 1 {

@@ -279,6 +279,13 @@ value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eva
 		text       = cv.text,
 		type_value = cv.type_value,
 	}
+	// The all-zero header is the *empty container*, not a four-element record:
+	// compile-time evaluation has no allocation, no capacity and no provider to
+	// carry, so reading the constant back has to produce the same emptiness
+	// `zero_value` makes.
+	if type_is_container(ev.k.c, type) {
+		return Eval_Value{kind = .Aggregate, type = type}, true
+	}
 	if cv.kind == .Aggregate && cv.aggregate != nil {
 		holder := type != INVALID_TYPE ? type : cv.aggregate.type
 		value.type = holder
@@ -327,6 +334,22 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value) -> (Const_Value, bool) {
 	if v.target != nil || v.proc_value != INVALID_SYMBOL {
 		eval_fail(ev, ev.origin, "L0341", "a pointer cannot escape compile-time evaluation")
 		return Const_Value{}, false
+	}
+	// design.md: a container's only constant is the all-zero header, because
+	// anything else would need an allocation that no constant can own. So a
+	// compile-time container is a *temporary*: usable while the evaluation runs,
+	// and never the thing it produces.
+	if type_is_container(ev.k.c, v.type) {
+		if len(v.elements) > 0 {
+			eval_fail(
+				ev, ev.origin, "L0594",
+				"a `%s` cannot escape compile-time evaluation: its only constant value is the empty one",
+				type_name(ev.k.c, v.type),
+			)
+			return Const_Value{}, false
+		}
+		zero, ok := zero_const(ev.k.c, v.type)
+		return zero, ok
 	}
 	cv := Const_Value {
 		kind       = v.kind,
@@ -386,6 +409,12 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	if type_is_pointer(ev.k.c, type) {
 		return Eval_Value{kind = .Nil, type = type}, true
 	}
+	// design.md: a container's zero value is "empty, allocator-unbound, constant,
+	// and immediately usable". Here that is simply no elements: the four-word
+	// header models an allocation, and compile-time evaluation has none.
+	if type_is_container(ev.k.c, type) {
+		return Eval_Value{kind = .Aggregate, type = type}, true
+	}
 	zero, ok := zero_const(ev.k.c, type)
 	if !ok {
 		return Eval_Value{kind = .Invalid, type = type}, false
@@ -440,6 +469,11 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (Eval_Value, bool) {
 		operand, ok := eval_aggregate_value(ev, v.operand)
 		if !ok {
 			return Eval_Value{}, false
+		}
+		// design.md "Maps": a read never inserts and answers the zero value for a
+		// missing key. It is a value position, so it does not need the place.
+		if type_is_map(ev.k.c, operand.type) {
+			return eval_map_read(ev, v, &operand)
 		}
 		index_value, index_ok := eval_expr(ev, v.indices[0])
 		if !index_ok {
@@ -575,6 +609,11 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
 		eval_fail(ev, v.op_span, "L0341", "a user operator has no compile-time meaning yet")
 		return Eval_Value{}, false
 	}
+	// design.md "Maps": "`ok := key in m`" -- the right operand settles the key's
+	// type, so this is not an ordinary unified binary operation.
+	if v.op == .In {
+		return eval_map_membership(ev, v)
+	}
 	#partial switch v.op {
 	case .And_And, .Or_Or:
 		left, ok := eval_expr(ev, v.lhs)
@@ -664,6 +703,9 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 
 @(private = "file")
 eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool) {
+	if type_is_container(ev.k.c, v.type) {
+		return eval_container_literal(ev, v)
+	}
 	value, zeroed := zero_value(ev, v.type)
 	if !zeroed {
 		return Eval_Value{}, false
@@ -704,6 +746,443 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 		value.elements[slot] = copied
 	}
 	return value, true
+}
+
+// -------------------------------------------------------------- containers --
+
+// design.md's containers, at compile time (m6b-plan step 6).
+//
+// A compile-time container is its live contents and nothing else: a `[dynamic]T`
+// holds its elements in order, and a `map[K]V` holds alternating key/value pairs
+// in insertion order. There is no allocation to model, no provider to bind, and
+// no address to hand out, so the runtime's four-word header has no compile-time
+// meaning — which is why `zero_value` and `value_from_const` both answer the
+// *empty container* rather than a four-element record.
+//
+// Two things are therefore *not* observable here, and both are rejected rather
+// than approximated: a capacity, which is a property of an allocation; and a
+// map's iteration order, which design.md leaves unspecified. Approximating
+// either would let a constant folded at compile time differ from what the same
+// code computes at run time.
+//
+// Memory is charged through `eval_elements` exactly as every other aggregate is,
+// so a container that grows without bound reaches `EVAL_MAX_MEMORY` on the same
+// counter as everything else. Failure is a diagnostic, and the whole evaluation
+// stops: there is no partially built value to clean up, because the evaluator's
+// arena is discarded whole.
+
+// The key and value halves of a map entry live at `2i` and `2i+1`.
+@(private = "file")
+MAP_ENTRY_KEY :: 0
+@(private = "file")
+MAP_ENTRY_VALUE :: 1
+
+// Replaces a container's contents with `next`, charging the new storage.
+@(private = "file")
+set_contents :: proc(ev: ^Evaluator, slot: ^Eval_Value, next: []Eval_Value) -> bool {
+	elements, allocated := eval_elements(ev, len(next))
+	if !allocated {
+		return false
+	}
+	copy(elements, next)
+	slot.elements = elements
+	return true
+}
+
+@(private = "file")
+eval_container_literal :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool) {
+	out := Eval_Value{kind = .Aggregate, type = v.type}
+	is_map := type_is_map(ev.k.c, v.type)
+	count := len(v.elements) * (is_map ? 2 : 1)
+	elements, allocated := eval_elements(ev, count)
+	if !allocated {
+		return Eval_Value{}, false
+	}
+	written := 0
+	for element in v.elements {
+		value, ok := eval_expr(ev, element.value)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		copied, copied_ok := copy_value(ev, value)
+		if !copied_ok {
+			return Eval_Value{}, false
+		}
+		if !is_map {
+			elements[written] = copied
+			written += 1
+			continue
+		}
+		// design.md "Maps": a literal writes each entry `key = value`.
+		key, key_ok := eval_expr(ev, element.key)
+		if !key_ok {
+			return Eval_Value{}, false
+		}
+		key_copy, key_copied := copy_value(ev, key)
+		if !key_copied {
+			return Eval_Value{}, false
+		}
+		elements[written + MAP_ENTRY_KEY] = key_copy
+		elements[written + MAP_ENTRY_VALUE] = copied
+		written += 2
+	}
+	out.elements = elements[:written]
+	if is_map {
+		// A repeated key in a literal keeps the last value, exactly as the runtime
+		// table does, so the two agree on a source the checker permits.
+		deduped, ok := map_deduplicate(ev, out)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		out = deduped
+	}
+	return out, true
+}
+
+@(private = "file")
+map_deduplicate :: proc(ev: ^Evaluator, m: Eval_Value) -> (Eval_Value, bool) {
+	out := m
+	kept := make([dynamic]Eval_Value, 0, len(m.elements), ev.alloc)
+	for index := 0; index < len(m.elements); index += 2 {
+		found := -1
+		for other := 0; other < len(kept); other += 2 {
+			same, ok := eval_compare(ev, .Eq_Eq, kept[other], m.elements[index])
+			if !ok {
+				return Eval_Value{}, false
+			}
+			if same {
+				found = other
+				break
+			}
+		}
+		if found >= 0 {
+			kept[found + MAP_ENTRY_VALUE] = m.elements[index + MAP_ENTRY_VALUE]
+			continue
+		}
+		append(&kept, m.elements[index], m.elements[index + MAP_ENTRY_VALUE])
+	}
+	if !set_contents(ev, &out, kept[:]) {
+		return Eval_Value{}, false
+	}
+	return out, true
+}
+
+// The entry index of `key`, or -1. Linear: a compile-time map is bounded by the
+// step limit, and a hash table here would only add a second hash implementation
+// to keep coherent with the runtime one.
+@(private = "file")
+map_find :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (int, bool) {
+	for index := 0; index < len(m.elements); index += 2 {
+		same, ok := eval_compare(ev, .Eq_Eq, m.elements[index], key)
+		if !ok {
+			return -1, false
+		}
+		if same {
+			return index, true
+		}
+	}
+	return -1, true
+}
+
+// The stored value slot for `key`, inserting a zero entry when it is missing.
+// design.md: `m[key] = v` and every chain rooted in one is an inserting place.
+@(private = "file")
+map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Eval_Value, bool) {
+	at, ok := map_find(ev, m, key)
+	if !ok {
+		return nil, false
+	}
+	if at >= 0 {
+		return &m.elements[at + MAP_ENTRY_VALUE], true
+	}
+	zero, zeroed := zero_value(ev, container_element(ev.k.c, m.type))
+	if !zeroed {
+		return nil, false
+	}
+	key_copy, copied := copy_value(ev, key)
+	if !copied {
+		return nil, false
+	}
+	grown := make([dynamic]Eval_Value, 0, len(m.elements) + 2, ev.alloc)
+	append(&grown, ..m.elements)
+	append(&grown, key_copy, zero)
+	if !set_contents(ev, m, grown[:]) {
+		return nil, false
+	}
+	return &m.elements[len(m.elements) - 1], true
+}
+
+// One contributed container operation. The receiver is `inout`, so it is a place
+// in every case; what differs is what each one does to the contents.
+@(private = "file")
+eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> ([]Eval_Value, bool) {
+	if len(v.bound) == 0 || v.bound[0] == nil {
+		return nil, false
+	}
+	self, ok := eval_place(ev, v.bound[0])
+	if !ok {
+		return nil, false
+	}
+	element := container_element(ev.k.c, self.type)
+	no_error := Eval_Value{kind = .Nil, type = TYPE_ALLOCATOR_ERROR}
+	none: []Eval_Value
+
+	// Results outlive this frame, so they are built in the evaluator's arena.
+	results :: proc(ev: ^Evaluator, values: ..Eval_Value) -> []Eval_Value {
+		out := make([]Eval_Value, len(values), ev.alloc)
+		copy(out, values)
+		return out
+	}
+	yes := Eval_Value{kind = .Boolean, type = TYPE_BOOL, boolean = true}
+	no := Eval_Value{kind = .Boolean, type = TYPE_BOOL}
+
+	// The argument at `index`, already evaluated and deep-copied.
+	argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (Eval_Value, bool) {
+		if index >= len(v.bound) || v.bound[index] == nil {
+			return Eval_Value{}, false
+		}
+		value, ok := eval_expr(ev, v.bound[index])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		return copy_value(ev, value)
+	}
+
+	// An `int` argument, with the negative-count fault the runtime raises.
+	count_argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (int, bool) {
+		value, ok := eval_expr(ev, v.bound[index])
+		if !ok {
+			return 0, false
+		}
+		number, fits := bi_to_i64(ev.k.c, value.integer)
+		if !fits || number < 0 {
+			eval_fail(ev, expr_span(v.bound[index]), "L0343", "a container count cannot be negative")
+			return 0, false
+		}
+		return int(number), true
+	}
+
+	fallible := len(symbol.results) == 1 && symbol.results[0] == TYPE_ALLOCATOR_ERROR
+	switch symbol.container_op {
+	case .None:
+		return nil, false
+
+	case .Append, .Try_Append:
+		// design.md "Variadic parameters": the pack is a read-only slice, and a
+		// `..slice` spread needs a compile-time slice value, which the evaluator
+		// does not have. The written elements are what it can run.
+		if len(v.variadic_spreads) > 0 {
+			eval_fail(ev, v.span, "L0341", "a `..` spread has no compile-time meaning")
+			return nil, false
+		}
+		grown := make([dynamic]Eval_Value, 0, len(self.elements) + len(v.variadic_elements), ev.alloc)
+		append(&grown, ..self.elements)
+		for written in v.variadic_elements {
+			value, value_ok := eval_expr(ev, written)
+			if !value_ok {
+				return nil, false
+			}
+			copied, copied_ok := copy_value(ev, value)
+			if !copied_ok {
+				return nil, false
+			}
+			append(&grown, copied)
+		}
+		if !set_contents(ev, self, grown[:]) {
+			return nil, false
+		}
+		return fallible ? results(ev, no_error) : none, true
+
+	case .Insert, .Try_Insert:
+		at, at_ok := count_argument(ev, v, 1)
+		value, value_ok := argument(ev, v, 2)
+		if !at_ok || !value_ok {
+			return nil, false
+		}
+		if at > len(self.elements) {
+			eval_fail(ev, v.span, "L0361", "index %d is out of range", at)
+			return nil, false
+		}
+		grown := make([dynamic]Eval_Value, 0, len(self.elements) + 1, ev.alloc)
+		append(&grown, ..self.elements[:at])
+		append(&grown, value)
+		append(&grown, ..self.elements[at:])
+		if !set_contents(ev, self, grown[:]) {
+			return nil, false
+		}
+		return fallible ? results(ev, no_error) : none, true
+
+	case .Pop:
+		// design.md optional-ok: an empty container yields the zero value and false.
+		if len(self.elements) == 0 {
+			zero, zeroed := zero_value(ev, element)
+			if !zeroed {
+				return nil, false
+			}
+			return results(ev, zero, no), true
+		}
+		last := self.elements[len(self.elements) - 1]
+		self.elements = self.elements[:len(self.elements) - 1]
+		return results(ev, last, yes), true
+
+	case .Remove, .Remove_Unordered:
+		at, at_ok := count_argument(ev, v, 1)
+		if !at_ok {
+			return nil, false
+		}
+		if at >= len(self.elements) {
+			eval_fail(ev, v.span, "L0361", "index %d is out of range", at)
+			return nil, false
+		}
+		taken := self.elements[at]
+		kept := make([dynamic]Eval_Value, 0, len(self.elements) - 1, ev.alloc)
+		if symbol.container_op == .Remove_Unordered {
+			// O(1): the last element moves into the hole, and the tail shortens.
+			append(&kept, ..self.elements[:len(self.elements) - 1])
+			if at < len(kept) {
+				kept[at] = self.elements[len(self.elements) - 1]
+			}
+		} else {
+			append(&kept, ..self.elements[:at])
+			append(&kept, ..self.elements[at + 1:])
+		}
+		if !set_contents(ev, self, kept[:]) {
+			return nil, false
+		}
+		return results(ev, taken), true
+
+	case .Clear, .Map_Clear:
+		self.elements = nil
+		return none, true
+
+	case .Resize, .Try_Resize:
+		size, size_ok := count_argument(ev, v, 1)
+		if !size_ok {
+			return nil, false
+		}
+		next := make([dynamic]Eval_Value, 0, size, ev.alloc)
+		for index in 0 ..< size {
+			if index < len(self.elements) {
+				append(&next, self.elements[index])
+				continue
+			}
+			zero, zeroed := zero_value(ev, element)
+			if !zeroed {
+				return nil, false
+			}
+			append(&next, zero)
+		}
+		if !set_contents(ev, self, next[:]) {
+			return nil, false
+		}
+		return fallible ? results(ev, no_error) : none, true
+
+	case .Reserve, .Try_Reserve, .Shrink, .Try_Shrink, .Map_Reserve, .Map_Try_Reserve,
+	     .Map_Shrink, .Map_Try_Shrink:
+		// Capacity is a property of an allocation, and there is none here. Reserving
+		// or shrinking is therefore observably nothing, which is exactly what makes
+		// `cap` answer the length.
+		if _, ok := count_argument(ev, v, 1); !ok {
+			return nil, false
+		}
+		return fallible ? results(ev, no_error) : none, true
+
+	case .Map_Find:
+		// design.md: `find` "returns a pointer to the existing value and `true`, or
+		// `nil` and `false`. It does not insert."
+		key, key_ok := argument(ev, v, 1)
+		if !key_ok {
+			return nil, false
+		}
+		at, found_ok := map_find(ev, self, key)
+		if !found_ok {
+			return nil, false
+		}
+		pointer := Eval_Value{kind = .Nil, type = symbol.results[0]}
+		if at >= 0 {
+			pointer.target = &self.elements[at + MAP_ENTRY_VALUE]
+		}
+		return results(ev, pointer, at >= 0 ? yes : no), true
+
+	case .Map_Try_Insert:
+		key, key_ok := argument(ev, v, 1)
+		value, value_ok := argument(ev, v, 2)
+		if !key_ok || !value_ok {
+			return nil, false
+		}
+		slot, slot_ok := map_entry_place(ev, self, key)
+		if !slot_ok {
+			return nil, false
+		}
+		slot^ = value
+		return results(ev, no_error), true
+
+	case .Map_Remove:
+		key, key_ok := argument(ev, v, 1)
+		if !key_ok {
+			return nil, false
+		}
+		at, found_ok := map_find(ev, self, key)
+		if !found_ok {
+			return nil, false
+		}
+		if at < 0 {
+			zero, zeroed := zero_value(ev, element)
+			if !zeroed {
+				return nil, false
+			}
+			return results(ev, zero, no), true
+		}
+		taken := self.elements[at + MAP_ENTRY_VALUE]
+		kept := make([dynamic]Eval_Value, 0, len(self.elements) - 2, ev.alloc)
+		append(&kept, ..self.elements[:at])
+		append(&kept, ..self.elements[at + 2:])
+		if !set_contents(ev, self, kept[:]) {
+			return nil, false
+		}
+		return results(ev, taken, yes), true
+	}
+	return nil, false
+}
+
+// design.md "Maps": "Reading a key that is not present yields the zero value.
+// It does not insert." The comma-ok form adds whether it was there.
+@(private = "file")
+eval_map_read :: proc(ev: ^Evaluator, v: ^Expr_Index, m: ^Eval_Value) -> (Eval_Value, bool) {
+	key, key_ok := eval_expr(ev, v.indices[0])
+	if !key_ok {
+		return Eval_Value{}, false
+	}
+	at, found := map_find(ev, m, key)
+	if !found {
+		return Eval_Value{}, false
+	}
+	if at >= 0 {
+		return m.elements[at + MAP_ENTRY_VALUE], true
+	}
+	return zero_value(ev, container_element(ev.k.c, m.type))
+}
+
+// `key in m`, and its negation.
+@(private = "file")
+eval_map_membership :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
+	key, key_ok := eval_expr(ev, v.lhs)
+	subject, subject_ok := eval_expr(ev, v.rhs)
+	if !key_ok || !subject_ok {
+		return Eval_Value{}, false
+	}
+	at, found := map_find(ev, &subject, key)
+	if !found {
+		return Eval_Value{}, false
+	}
+	present := at >= 0
+	return Eval_Value{kind = .Boolean, type = TYPE_BOOL, boolean = present}, true
+}
+
+// How many entries a container holds. A map stores two slots per entry.
+@(private = "file")
+container_length :: proc(c: ^Compiler, v: Eval_Value) -> int {
+	return type_is_map(c, v.type) ? len(v.elements) / 2 : len(v.elements)
 }
 
 // ------------------------------------------------------------------ places --
@@ -753,6 +1232,27 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 		base, ok := eval_aggregate_place(ev, v.operand)
 		if !ok {
 			return nil, false
+		}
+		// design.md: the same syntax as an assignment target *inserts*, and so does
+		// every field or index chain rooted in one. `map_inserts` is the checker's
+		// answer to which position this is.
+		if type_is_map(ev.k.c, base.type) {
+			key, key_ok := eval_expr(ev, v.indices[0])
+			if !key_ok {
+				return nil, false
+			}
+			if !v.map_inserts {
+				at, found := map_find(ev, base, key)
+				if !found {
+					return nil, false
+				}
+				if at < 0 {
+					eval_fail(ev, v.span, "L0343", "this key is not in the map")
+					return nil, false
+				}
+				return &base.elements[at + MAP_ENTRY_VALUE], true
+			}
+			return map_entry_place(ev, base, key)
 		}
 		index_value, index_ok := eval_expr(ev, v.indices[0])
 		if !index_ok {
@@ -833,6 +1333,18 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	callee := symbol_of(ev.k.c, v.resolution.symbol)
 	if callee != nil && callee.kind == .Builtin {
 		return eval_builtin(ev, v, callee)
+	}
+	// A contributed container operation has no body to walk: the backend writes
+	// one and the evaluator performs one, from the same `container_op`.
+	if chosen := symbol_of(ev.k.c, v.resolution.chosen_overload); chosen != nil && chosen.synth == .Container_Op {
+		results, ok := eval_container_op(ev, v, chosen)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		if len(results) == 0 {
+			return Eval_Value{kind = .Invalid, type = TYPE_VOID}, true
+		}
+		return results[0], true
 	}
 
 	target, target_ok := eval_call_target(ev, v)
@@ -1042,6 +1554,45 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		eval_fail(ev, v.span, "L0343", "compile-time panic%s", eval_message(ev, v, 0))
 		return Eval_Value{}, false
 
+	case .Cap:
+		// A capacity is a property of an allocation, and compile-time evaluation
+		// has none. Answering the length instead would let a constant folded here
+		// differ from what the same code computes at run time, which is the same
+		// objection that closes compile-time map iteration.
+		eval_fail(
+			ev, v.span, "L0595",
+			"`cap` has no compile-time meaning: a capacity is a property of an allocation, and there is none here",
+		)
+		return Eval_Value{}, false
+
+	case .Len:
+		// A fixed array's `len` folds long before this. What reaches here is a
+		// container, whose length is a fact the evaluator holds.
+		subject, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		return Eval_Value {
+			kind    = .Integer,
+			type    = TYPE_INT,
+			integer = bi_from_i64(ev.k.c, i64(container_length(ev.k.c, subject))),
+		}, true
+
+	case .Drop:
+		// design.md: `drop` "runs the cleanup operation, writes the inert zero
+		// representation, and marks the variable dead". The evaluator has no
+		// storage to release, so what is left is the zero representation.
+		slot, ok := eval_place(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		zeroed, made := zero_value(ev, slot.type)
+		if !made {
+			return Eval_Value{}, false
+		}
+		slot^ = zeroed
+		return void, true
+
 	case .Hash:
 		// The compile-time half of the compiler-contributed `hash`: the same two
 		// steps the backend emits, so a folded hash and a runtime one agree.
@@ -1200,6 +1751,19 @@ eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 		return flow
 
 	case ^Stmt_Foreach:
+		// design.md "Maps": "**Iteration order is unspecified.**" The evaluator has
+		// one definite order — insertion — and exposing it would make a
+		// compile-time answer depend on something the language refuses to promise,
+		// and disagree with the same loop at run time. Rejected by its own reason
+		// rather than by the general one below, so the case stays closed when
+		// `foreach` does become evaluable.
+		if s.kind == .Map {
+			eval_fail(
+				ev, s.span, "L0593",
+				"a map cannot be iterated at compile time: its iteration order is unspecified",
+			)
+			return .Fail
+		}
 	}
 	eval_fail(ev, stmt_span(stmt), "L0341", "this statement has no compile-time meaning")
 	return .Fail
@@ -1269,6 +1833,11 @@ bind_local :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol_id: Symbol_Id, val
 
 @(private = "file")
 eval_call_results :: proc(ev: ^Evaluator, call: ^Expr_Call) -> ([]Eval_Value, bool) {
+	// `taken, removed := xs.remove(0)` reaches the operation the same way a
+	// single-value call does.
+	if chosen := symbol_of(ev.k.c, call.resolution.chosen_overload); chosen != nil && chosen.synth == .Container_Op {
+		return eval_container_op(ev, call, chosen)
+	}
 	target, ok := eval_call_target(ev, call)
 	if !ok {
 		return nil, false

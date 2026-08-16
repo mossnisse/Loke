@@ -194,7 +194,7 @@ Text_Op :: enum {
 	Bytes,      // a read-only borrowed []u8
 	Clone,      // an independent managed copy
 	To_C_View,  // a zero-terminated borrow for the complete expression
-	To_Runes,   // gated to M6b: its result type does not exist yet
+	To_Runes,   // `st.to_runes()`, a `[dynamic]rune` by copy
 	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
 }
 
