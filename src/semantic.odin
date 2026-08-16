@@ -130,6 +130,10 @@ Type_Kind :: enum {
 Contribution :: enum u8 {
 	Iteration,
 	Lifecycle,
+	// design.md "Dynamic arrays" and "Maps": the operation set the compiler
+	// contributes to a container type, so `xs.append(1)` is an ordinary method
+	// call and generic code finds the same members (m6b-plan step 2).
+	Container,
 }
 
 Type_Info :: struct {
@@ -457,6 +461,9 @@ Builtin_Kind :: enum {
 	Align_Of,
 	Offset_Of,
 	Len,
+	// design.md "Dynamic arrays": `cap(value)` is the container header's third
+	// word, and unlike `len` it has no fixed-array or text meaning.
+	Cap,
 	// design.md "Standard interface catalogue": the built-ins promised to satisfy
 	// `Hashable` need an operation to satisfy it *with*, so the compiler
 	// contributes one rather than the catalogue hard-coding a predicate.
@@ -565,6 +572,8 @@ Symbol :: struct {
 	// `@(implicit)` on a one-argument `init` overload: reachable from an untyped
 	// constant without being written.
 	implicit:     bool,
+	// Which container operation a contributed member is (`src/container.odin`).
+	container_op: Container_Op,
 	// The canonical text of `operator(sym)`, or "" for an ordinary procedure.
 	// `[]=` and `[:]` are several tokens, so this is text rather than a token.
 	operator:     string,

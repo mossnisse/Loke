@@ -506,6 +506,33 @@ also installs its M5b invalidation. And there is no failure-injection provider:
 an allocation that must fail is written as a representable request no heap will
 satisfy, which is what the existing M5a clone-failure fixtures already do.
 
+M6b step 2 is implemented: the dynamic-array operation set. The decisive choice
+is that the operations are *contributed members* rather than a second call path.
+`xs.append(1)` is an ordinary method call, so it reuses overload ranking, `..T`
+packing, default arguments, and the `inout`-receiver place rule — and the same
+members are what generic code constrained by the standard catalogue finds. Two
+consequences follow. `bind_variadic_arguments` had to learn about receivers: a
+variadic *method* was previously impossible, and without the receiver its first
+written argument ranked against the receiver's own type. And because a `..T`
+pack is by the language's own rule a read-only slice, `append` clones each
+element into the container through its selected allocator; a move-only element
+therefore cannot travel through the variadic form, which is a consequence of the
+pack's type rather than a shortcut.
+
+Provenance needed two edges added. `xs[lo:hi]` now lends from the container's own
+root exactly as slicing a fixed array does, and `&xs[i]` lends the whole
+container rather than one slot, because once the storage can move no projection
+survives. An `inout` receiver already recorded an invalidating access, so every
+mutating operation ended every view of it as soon as those two edges existed.
+
+Growth never releases the old block until the copy out of it is complete, so a
+`src` pointing into the container's own storage stays readable; `dyn_src_aliases`
+makes that explicit for `insert`. In practice the M5b one rule already rejects
+the source-level case — `ys.append(..ys[:])` is a read of `ys` under an exclusive
+borrow of it — so the C-side handling is defence for callers the language does
+not yet have, not a path source code can reach. Diagnostics `L0386` (a `cap`
+whose operand is not a container) joins the range already in use.
+
 ---
 
 ## D. Out of scope for v1

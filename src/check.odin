@@ -1471,6 +1471,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			}
 		}
 
+		bind_literal_allocator(k.c, value, symbol_id)
 		if symbol := symbol_of(k.c, symbol_id); symbol != nil {
 			symbol.type = final
 			if d.kind == .Const {

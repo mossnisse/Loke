@@ -175,6 +175,310 @@ int32_t loke_rt_v1_dyn_clone(
 	return 1;
 }
 
+/* --------------------------------------------------- dynamic operations -- */
+
+/* design.md's lazy default binding: an unbound container binds a provider the
+ * first time it needs one. A `via` declaration wrote its own at the declaration
+ * point, so this never overrides a written policy. */
+void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self) {
+	if (self->allocator == 0) {
+		self->allocator = &loke_rt_v1_default_allocator;
+	}
+}
+
+/* Growth that keeps the old block alive. A source slice pointing into that block
+ * has to stay readable until the copy out of it is finished, which a plain
+ * `resize` cannot promise. */
+typedef struct dyn_grow_undo {
+	void *old_data;
+	int64_t old_cap;
+	int32_t grew;
+} dyn_grow_undo;
+
+static int32_t dyn_regrow(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	int64_t need, int32_t force, dyn_grow_undo *undo) {
+	int64_t target;
+	uint64_t bytes, used;
+	void *fresh;
+
+	undo->grew = 0;
+	undo->old_data = self->data;
+	undo->old_cap = self->cap;
+	if (need <= self->cap && !force) {
+		return 1;
+	}
+	if (!dyn_growth_target(self->cap, need, &target)) {
+		return 0;
+	}
+	if (!loke_rt_v1_checked_bytes(target, ops->elem_size, &bytes)) {
+		return 0;
+	}
+	if (bytes == 0) {
+		self->cap = target;
+		return 1;
+	}
+	fresh = loke_rt_v1_alloc(self->allocator, bytes, sane_container_align(ops->elem_align));
+	if (fresh == 0) {
+		return 0;
+	}
+	/* Relocation within an allocation change is a compiler-known move of
+	 * initialized representations: no user hook runs. */
+	if (loke_rt_v1_checked_bytes(self->len, ops->elem_size, &used) && used != 0) {
+		memcpy(fresh, self->data, (size_t)used);
+	}
+	self->data = fresh;
+	self->cap = target;
+	undo->grew = 1;
+	return 1;
+}
+
+static void dyn_regrow_commit(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const dyn_grow_undo *undo) {
+	uint64_t bytes;
+	if (undo->grew && undo->old_data != 0 &&
+	    loke_rt_v1_checked_bytes(undo->old_cap, ops->elem_size, &bytes) && bytes != 0) {
+		loke_rt_v1_free(self->allocator, undo->old_data, bytes, sane_container_align(ops->elem_align));
+	}
+}
+
+static void dyn_regrow_rollback(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const dyn_grow_undo *undo) {
+	uint64_t bytes;
+	if (!undo->grew) {
+		return;
+	}
+	if (loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes) && bytes != 0) {
+		loke_rt_v1_free(self->allocator, self->data, bytes, sane_container_align(ops->elem_align));
+	}
+	self->data = undo->old_data;
+	self->cap = undo->old_cap;
+}
+
+/* Whether `src` points into this container's own storage, in which case a shift
+ * of the existing elements would overwrite it and the operation has to build a
+ * fresh block instead. */
+static int32_t dyn_src_aliases(
+	const loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src) {
+	const char *base = (const char *)self->data;
+	const char *p = (const char *)src;
+	uint64_t bytes;
+	if (base == 0 || !loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &bytes)) {
+		return 0;
+	}
+	return p >= base && p < base + bytes;
+}
+
+/* Fills slots [at, at+count) from `src`, destroying exactly the prefix it built
+ * if one element's clone fails. */
+static int32_t dyn_fill(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	int64_t at, const void *src, int64_t count) {
+	int64_t i, j;
+	uint64_t bytes;
+	if (ops->elem_clone == 0) {
+		if (!loke_rt_v1_checked_bytes(count, ops->elem_size, &bytes)) {
+			return 0;
+		}
+		if (bytes != 0) {
+			memcpy(dyn_at(self, ops, at), src, (size_t)bytes);
+		}
+		return 1;
+	}
+	for (i = 0; i < count; i += 1) {
+		const void *from = (const char *)src + (uint64_t)i * ops->elem_size;
+		if (ops->elem_clone(dyn_at(self, ops, at + i), from, self->allocator)) {
+			continue;
+		}
+		if (ops->elem_drop != 0) {
+			for (j = 0; j < i; j += 1) {
+				ops->elem_drop(dyn_at(self, ops, at + j));
+			}
+		}
+		return 0;
+	}
+	return 1;
+}
+
+int32_t loke_rt_v1_dyn_append(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src, int64_t count) {
+	dyn_grow_undo undo;
+	int64_t need;
+
+	if (count < 0) {
+		loke_rt_v1_container_fault("a container append count cannot be negative");
+	}
+	if (count == 0) {
+		return 1;
+	}
+	loke_rt_v1_dyn_bind(self);
+	if (!loke_rt_v1_checked_add(self->len, count, &need)) {
+		return 0;
+	}
+	/* Appending writes past `len`, which no live element and therefore no
+	 * possible source overlaps, so only reallocation is a hazard here. */
+	if (!dyn_regrow(self, ops, need, 0, &undo)) {
+		return 0;
+	}
+	if (!dyn_fill(self, ops, self->len, src, count)) {
+		dyn_regrow_rollback(self, ops, &undo);
+		return 0;
+	}
+	self->len = need;
+	dyn_regrow_commit(self, ops, &undo);
+	return 1;
+}
+
+int32_t loke_rt_v1_dyn_insert(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	int64_t index, const void *src, int64_t count) {
+	dyn_grow_undo undo;
+	int64_t need, tail;
+	uint64_t tail_bytes;
+
+	if (index < 0 || index > self->len) {
+		loke_rt_v1_container_fault("this insert index is out of range");
+	}
+	if (count < 0) {
+		loke_rt_v1_container_fault("a container insert count cannot be negative");
+	}
+	if (count == 0) {
+		return 1;
+	}
+	loke_rt_v1_dyn_bind(self);
+	if (!loke_rt_v1_checked_add(self->len, count, &need)) {
+		return 0;
+	}
+	/* An insert shifts live elements, so a source inside this container's own
+	 * storage would be overwritten by that shift. Building a fresh block leaves
+	 * the source block untouched until the copy is done. */
+	if (!dyn_regrow(self, ops, need, dyn_src_aliases(self, ops, src), &undo)) {
+		return 0;
+	}
+	tail = self->len - index;
+	if (loke_rt_v1_checked_bytes(tail, ops->elem_size, &tail_bytes) && tail_bytes != 0) {
+		memmove(dyn_at(self, ops, index + count), dyn_at(self, ops, index), (size_t)tail_bytes);
+	}
+	if (!dyn_fill(self, ops, index, src, count)) {
+		if (tail_bytes != 0) {
+			memmove(dyn_at(self, ops, index), dyn_at(self, ops, index + count), (size_t)tail_bytes);
+		}
+		dyn_regrow_rollback(self, ops, &undo);
+		return 0;
+	}
+	self->len = need;
+	dyn_regrow_commit(self, ops, &undo);
+	return 1;
+}
+
+int32_t loke_rt_v1_dyn_pop(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, void *out) {
+	if (self->len == 0) {
+		memset(out, 0, (size_t)ops->elem_size);
+		return 0;
+	}
+	self->len -= 1;
+	/* The element moves to the result: it is neither cloned nor dropped. */
+	memcpy(out, dyn_at(self, ops, self->len), (size_t)ops->elem_size);
+	return 1;
+}
+
+void loke_rt_v1_dyn_remove(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	int64_t index, void *out, int32_t unordered) {
+	uint64_t tail_bytes;
+	if (index < 0 || index >= self->len) {
+		loke_rt_v1_container_fault("this removal index is out of range");
+	}
+	memcpy(out, dyn_at(self, ops, index), (size_t)ops->elem_size);
+	self->len -= 1;
+	if (index == self->len) {
+		return;
+	}
+	if (unordered) {
+		memcpy(dyn_at(self, ops, index), dyn_at(self, ops, self->len), (size_t)ops->elem_size);
+		return;
+	}
+	if (loke_rt_v1_checked_bytes(self->len - index, ops->elem_size, &tail_bytes) && tail_bytes != 0) {
+		memmove(dyn_at(self, ops, index), dyn_at(self, ops, index + 1), (size_t)tail_bytes);
+	}
+}
+
+void loke_rt_v1_dyn_clear(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops) {
+	int64_t i;
+	if (ops->elem_drop != 0) {
+		for (i = 0; i < self->len; i += 1) {
+			ops->elem_drop(dyn_at(self, ops, i));
+		}
+	}
+	self->len = 0;
+}
+
+int32_t loke_rt_v1_dyn_resize(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len) {
+	uint64_t bytes;
+	int64_t i;
+
+	if (new_len < 0) {
+		loke_rt_v1_container_fault("a container length cannot be negative");
+	}
+	if (new_len < self->len) {
+		if (ops->elem_drop != 0) {
+			for (i = new_len; i < self->len; i += 1) {
+				ops->elem_drop(dyn_at(self, ops, i));
+			}
+		}
+		self->len = new_len;
+		return 1;
+	}
+	if (new_len == self->len) {
+		return 1;
+	}
+	loke_rt_v1_dyn_bind(self);
+	if (!loke_rt_v1_dyn_reserve(self, ops, new_len)) {
+		return 0;
+	}
+	/* Every Loke zero value is all-zero bits, so the new tail is one memset and
+	 * the drop of an untouched element is the no-op every hook already handles. */
+	if (loke_rt_v1_checked_bytes(new_len - self->len, ops->elem_size, &bytes) && bytes != 0) {
+		memset(dyn_at(self, ops, self->len), 0, (size_t)bytes);
+	}
+	self->len = new_len;
+	return 1;
+}
+
+int32_t loke_rt_v1_dyn_shrink(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
+	int64_t target = self->len < min_capacity ? min_capacity : self->len;
+	uint64_t old_bytes, new_bytes;
+	void *storage;
+
+	if (min_capacity < 0) {
+		loke_rt_v1_container_fault("a container capacity cannot be negative");
+	}
+	if (target >= self->cap || self->data == 0) {
+		return 1;
+	}
+	if (!loke_rt_v1_checked_bytes(self->cap, ops->elem_size, &old_bytes) ||
+	    !loke_rt_v1_checked_bytes(target, ops->elem_size, &new_bytes)) {
+		return 0;
+	}
+	if (new_bytes == 0) {
+		loke_rt_v1_free(self->allocator, self->data, old_bytes, sane_container_align(ops->elem_align));
+		self->data = 0;
+		self->cap = 0;
+		return 1;
+	}
+	storage = loke_rt_v1_resize(
+		self->allocator, self->data, old_bytes, new_bytes, sane_container_align(ops->elem_align));
+	if (storage == 0) {
+		return 0; /* the old allocation is still live and unchanged */
+	}
+	self->data = storage;
+	self->cap = target;
+	return 1;
+}
+
 /* ------------------------------------------------------------------- map -- */
 
 static uint8_t *map_controls(const loke_rt_map_table_v1 *t) {

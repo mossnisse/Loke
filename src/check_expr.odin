@@ -773,6 +773,13 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// design.md "Dynamic arrays": "Indexing and slicing produce views into the
+	// current allocation." A dynamic array's element is an ordinary mutable place
+	// whose bound is the header's length word, exactly as a `[]mut T`'s is.
+	if info != nil && info.kind == .Dynamic_Array && len(v.indices) == 1 {
+		check_dynamic_index(k, v, info)
+		return
+	}
 	if !gate_container_operation(k, base_type, v.span) {
 		v.type = INVALID_TYPE
 		return
@@ -890,6 +897,28 @@ check_slice_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, operand
 	v.addressable = info.mutable
 	v.assignable = info.mutable
 	v.immutable = info.mutable ? .None : .Read_Only
+}
+
+// A dynamic array's element place. The bound is a runtime word, so nothing here
+// folds; the capability is unconditional, because a `[dynamic]T` is an owner
+// rather than a borrow and its owner may always write through it.
+@(private = "file")
+check_dynamic_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info) {
+	index_type := check_single_expr(k, v.indices[0], TYPE_INT)
+	if index_type != INVALID_TYPE {
+		materialize(k, v.indices[0], TYPE_INT)
+		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
+			errorf(
+				k.c, expr_span(v.indices[0]), "L0362",
+				"an index must be an integer, found `%s`", type_name(k.c, index_type),
+			)
+		}
+	}
+	v.type = info.element
+	v.value_category = .Place
+	v.addressable = true
+	v.assignable = true
+	v.immutable = .None
 }
 
 // design.md "Indexing and slicing": in a place position the `inout` overload is
@@ -1026,6 +1055,12 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 	case .Slice:
 		element = info.element
 		mutable = info.mutable
+	case .Dynamic_Array:
+		// design.md "Dynamic arrays": "Indexing and slicing produce views into the
+		// current allocation." A container is an owner, so the view it hands out is
+		// mutable whenever the place it is taken from can be written.
+		element = info.element
+		mutable = base.assignable
 	case .String, .String_View:
 		// design.md "From string to X": `st[low:high]` borrows a subrange as a
 		// `string_view`. It is a borrow of the string's owner and cannot outlive
@@ -2134,7 +2169,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Assert, .Panic:
 		check_assert_or_panic(k, v, ident, sym.builtin)
 		return
-	case .Size_Of, .Align_Of, .Offset_Of, .Len:
+	case .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap:
 		check_layout_builtin(k, v, ident, sym.builtin)
 		return
 	case .Hash:
@@ -2420,6 +2455,23 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = TYPE_INT
 		return
 	}
+	// design.md "Dynamic arrays" and "Maps": `len` and `cap` are O(1) reads of the
+	// container header's own words, so neither folds.
+	if (kind == .Len || kind == .Cap) && type_is_container(k.c, operand) {
+		bound := make([]Expr, 1, k.c.semantic_allocator)
+		bound[0] = v.args[0].value
+		v.bound = bound
+		v.type = TYPE_INT
+		return
+	}
+	if kind == .Cap {
+		errorf(
+			k.c, v.span, "L0386",
+			"`cap` needs a `[dynamic]T` or a `map[K]V`, found `%s`", type_name(k.c, operand),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
 	// design.md: "`len(text)` is shorthand for `text.byte_len()` so that it
 	// remains a constant-time operation."
 	if kind == .Len && type_is_utf8_text(k.c, operand) {
@@ -2456,10 +2508,6 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Align_Of:
 		result = type_align(k.c, operand)
 	case .Len:
-		if !gate_container_operation(k, operand, v.span) {
-			v.type = INVALID_TYPE
-			return
-		}
 		info := type_of(k.c, type_underlying(k.c, operand))
 		if info == nil || info.kind != .Array {
 			errorf(k.c, v.span, "L0386", "`len` needs a fixed array, found `%s`", type_name(k.c, operand))
@@ -2490,7 +2538,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
+	case .Cap, .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .None, .Assert, .Panic, .Hash, .Iter,
@@ -2645,7 +2693,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.type = TYPE_VOID
 		return
 
-	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Make,
+	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Make,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
@@ -3213,10 +3261,12 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		check_array_literal(k, v, target, info)
 	case .Slice:
 		check_slice_literal(k, v, target, info)
-	case .Dynamic_Array, .Map:
+	case .Dynamic_Array:
+		check_dynamic_literal(k, v, target, info)
+	case .Map:
 		// design.md: the all-zero container is "empty, allocator-unbound,
 		// constant, and immediately usable", so `{}` needs no construction at all.
-		// A literal with elements is a real one, and arrives with its own step.
+		// A map literal with entries arrives with the map operations themselves.
 		if len(v.elements) != 0 {
 			gate_container_operation(k, target, v.span)
 			v.type = INVALID_TYPE
@@ -3366,6 +3416,33 @@ check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 	}
 	if ok {
 		fold_aggregate(k, v, target, values, nil)
+	}
+}
+
+// design.md "Dynamic arrays": a literal builds a container, so unlike a fixed
+// array's it is never a constant — it allocates through the destination's
+// selected allocator. An empty one allocates nothing and stays the constant
+// all-zero header, which is what `xs = {}` means.
+@(private = "file")
+check_dynamic_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
+	if len(v.elements) == 0 {
+		v.is_const = true
+		if zero, ok := zero_const(k.c, target); ok {
+			v.const_value = zero
+		}
+		return
+	}
+	// Insertion clones a borrowed element, so its copy entry point has to exist.
+	contribute_lifecycle_members(k, info.element)
+	for element, index in v.elements {
+		if element.key != nil {
+			unsupported_construct(k, element.span)
+			continue
+		}
+		if !check_value_expr(k, element.value, info.element, "initialise") {
+			continue
+		}
+		classify_composite_element(k, v, index, info.element)
 	}
 }
 

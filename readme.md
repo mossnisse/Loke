@@ -241,12 +241,20 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   declaration chooses the allocator its destination is built with, and is
   rejected on a value with no destination allocation to select; and copy, move,
   `drop`, `exchange`, revival and panic cleanup are exact through the versioned
-  container helpers and one generated operation table per concrete type.
+  container helpers and one generated operation table per concrete type;
+- a dynamic array runs its whole operation set. Literals, `make`, indexing and
+  indexed assignment, slicing, `len` and `cap`, and `append` (values, `..slice`
+  spreads, or both), `insert`, `pop`, `remove`, `remove_unordered`, `clear`,
+  `resize`, `reserve` and `shrink` — each with a `try_` form that returns the
+  error instead of applying the allocator's failure policy. The operations are
+  contributed *members*, so `xs.append(1)` is an ordinary method call and generic
+  code finds the same ones. A failed allocation or element clone leaves the
+  container bit-for-bit unchanged, and every view and element pointer it hands
+  out ends at the first operation that may move its storage.
 
-Everything else — the container *operations* (a literal with elements, indexing,
-`len`, `append`, iteration, formatting), `string.to_runes`, and the dynamic
-`raw_data` overload — parses and reports one diagnostic at the operation. Each is
-ungated in the step that also installs its invalidation.
+Everything else — maps, container iteration and formatting, `string.to_runes`,
+and the dynamic `raw_data` overload — parses and reports one diagnostic at the
+operation. Each is ungated in the step that also installs its invalidation.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.

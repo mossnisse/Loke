@@ -1674,14 +1674,25 @@ prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, boo
 		if len(v.bound) > 0 || v.operand == nil {
 			return NO_ROOT, nil, false // user-defined addressing
 		}
-		if type_kind(c, type_underlying(c, expr_base(v.operand).type)) != .Array {
-			return NO_ROOT, nil, false
+		// A container element is a place in its owner's *current allocation*, so
+		// the container is the root and every relocating operation on it ends the
+		// pointer. Which slot is unknowable once the storage can move, so the
+		// projection is the whole container.
+		#partial switch type_kind(c, type_underlying(c, expr_base(v.operand).type)) {
+		case .Array:
+			root, path, ok := prov_place_of(graph, v.operand)
+			if !ok {
+				return NO_ROOT, nil, false
+			}
+			return root, prov_extend(graph, path, prov_index_step(graph, v.indices)), true
+		case .Dynamic_Array:
+			root, path, ok := prov_place_of(graph, v.operand)
+			if !ok {
+				return NO_ROOT, nil, false
+			}
+			return root, prov_extend(graph, path, proj_wild()), true
 		}
-		root, path, ok := prov_place_of(graph, v.operand)
-		if !ok {
-			return NO_ROOT, nil, false
-		}
-		return root, prov_extend(graph, path, prov_index_step(graph, v.indices)), true
+		return NO_ROOT, nil, false
 	}
 	return NO_ROOT, nil, false
 }
@@ -1812,8 +1823,11 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	// already holds are what the result borrows.
 	// design.md: `st[low:high]` borrows "a subrange view" of the string's own
 	// storage, exactly as slicing a fixed array borrows the array's.
+	// design.md "Dynamic arrays": "Indexing and slicing produce views into the
+	// current allocation", so a container lends from its own root too — that
+	// borrow is what every relocating operation on it then invalidates.
 	operand_kind := type_kind(graph.k.c, type_underlying(graph.k.c, expr_base(v.operand).type))
-	array := operand_kind == .Array || operand_kind == .String
+	array := operand_kind == .Array || operand_kind == .String || operand_kind == .Dynamic_Array
 	if root, path, ok := prov_place_of(graph, v.operand); ok && array {
 		prov_walk_subscripts(graph, v.operand)
 		if v.lo != nil {

@@ -499,6 +499,14 @@ CONTAINER_OPS_TYPE :: "%loke.container_ops"
 @(private = "file")
 emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_reserve(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_bind(ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_append(ptr, ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_insert(ptr, ptr, i64, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_pop(ptr, ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_remove(ptr, ptr, i64, ptr, i32)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_clear(ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_resize(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_shrink(ptr, ptr, i64)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_dyn_clone(ptr, ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_dyn_drop(ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_reserve(ptr, ptr, i64)")
@@ -657,6 +665,23 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 	place_label(e, done_label)
 	e.terminated = false
 	return ok
+}
+
+// Writes a container declaration's written `via` into its header at the
+// declaration point. A declaration with no policy is left allocator-unbound,
+// which is what makes the lazy default binding observable.
+@(private = "file")
+emit_eager_via_binding :: proc(e: ^Emitter, symbol_id: Symbol_Id, address: string) {
+	sym := symbol_of(e.c, symbol_id)
+	if sym == nil || sym.via == nil || !type_is_container(e.c, sym.type) {
+		return
+	}
+	provider, slot := emit_expr(e, sym.via), temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		slot, CONTAINER_TYPE, address, CONTAINER_ALLOC,
+	)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", provider, slot)
 }
 
 // The provider a construction into one destination selects: the declaration's
@@ -2142,6 +2167,10 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 		if ok {
 			store(e, sym.type, llvm_const(e, zero, sym.type), slot)
 		}
+		// design.md "Allocators": a written `via` is *eager* — the provider is
+		// selected where the declaration is evaluated, so a later operation on this
+		// container allocates through it rather than lazily binding the default.
+		emit_eager_via_binding(e, symbol_id, slot)
 		register_implicit_drop(e, symbol_id)
 	}
 }
@@ -2943,6 +2972,11 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		if type_is_slice(e.c, expr_base(v.operand).type) {
 			return emit_slice_element_address(e, v)
 		}
+		// A dynamic array's element lives behind its data word, bounded by its
+		// length word: the same two loads, read out of the container header.
+		if type_is_dynamic_array(e.c, expr_base(v.operand).type) {
+			return emit_dynamic_element_address(e, v)
+		}
 		// design.md "Multi-pointers": "Indexing without bounds checking." There is
 		// no length to check against, which is exactly what the type says.
 		if operand_info := type_of(e.c, type_underlying(e.c, expr_base(v.operand).type));
@@ -2980,6 +3014,40 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, type))
 	store(e, type, emit_expr(e, expr), slot)
 	return slot
+}
+
+// `xs[i]`: the element's address inside the container's current allocation,
+// bounds-checked against the header's length word. design.md: "Indexing and
+// slicing produce views into the current allocation", so this address is exactly
+// as long-lived as that allocation — which is what the M5b invalidation events
+// registered by every relocating operation are there to enforce.
+@(private = "file")
+emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
+	operand_type := expr_base(v.operand).type
+	header := emit_address(e, v.operand)
+	data, length := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, header)
+	length_slot := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		length_slot, CONTAINER_TYPE, header, CONTAINER_LEN,
+	)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", length, length_slot)
+
+	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
+	// Unsigned, so a negative index is caught by the same comparison as an
+	// oversized one.
+	out_of_range := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
+	panic_if(e, out_of_range, "bounds", "index out of range")
+
+	out := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		out, llvm_type(e, container_element(e.c, operand_type)), data, index,
+	)
+	return out
 }
 
 // `s[i]`: the element's address inside the slice's root, bounds-checked against
@@ -3052,6 +3120,13 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 		data, length = temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, llvm, value, SLICE_DATA)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, llvm, value, SLICE_LEN)
+	} else if info.kind == .Dynamic_Array {
+		// The view is over the *current* allocation and stops at `len`, never at
+		// the capacity: the slots past the length hold no initialized element.
+		value := emit_expr(e, v.operand)
+		data, length = temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, CONTAINER_TYPE, value, CONTAINER_STORAGE)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, CONTAINER_TYPE, value, CONTAINER_LEN)
 	} else {
 		data = emit_address(e, v.operand)
 		length = fmt.aprintf("%d", info.count)
@@ -3381,6 +3456,10 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 	if info == nil {
 		return
 	}
+	if info.kind == .Dynamic_Array {
+		emit_dynamic_literal_into(e, v, address, info.element)
+		return
+	}
 	for element, index in v.elements {
 		slot := index
 		element_type := info.element
@@ -3404,6 +3483,81 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 		)
 		store(e, element_type, value, field_address)
 	}
+}
+
+// `[dynamic]T{a, b, c}` over the header this expression has already zeroed.
+//
+// Each element is appended as soon as it is evaluated, so the container itself
+// owns the initialized prefix: the C helper destroys exactly that prefix if a
+// later clone fails, and the destination's own drop covers it afterwards.
+//
+// ponytail: a panic raised *inside* a later element's expression leaks the
+// earlier ones, because the literal's storage is not registered for unwind until
+// it reaches its destination. The variadic pack's per-element flag array is the
+// upgrade path if that window ever matters.
+@(private = "file")
+emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, element: Type_Id) {
+	if len(v.elements) == 0 {
+		return
+	}
+	ops := container_ops_global(e, v.type)
+	// The destination's own policy is written before the first reservation, so
+	// the literal never allocates through a default-backed provider first.
+	if v.via != nil {
+		provider, slot := emit_expr(e, v.via), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+			slot, CONTAINER_TYPE, address, CONTAINER_ALLOC,
+		)
+		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", provider, slot)
+	}
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_dyn_bind(ptr %s)", address)
+	reserved := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i32 @loke_rt_v1_dyn_reserve(ptr %s, ptr %s, i64 %d)",
+		reserved, address, ops, len(v.elements),
+	)
+	emit_container_policy_failure(e, address, reserved)
+
+	slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, element))
+	for written, index in v.elements {
+		value := emit_expr(e, written.value)
+		if index < len(v.element_clones) && v.element_clones[index] {
+			value = emit_clone_value(e, element, value)
+		}
+		store(e, element, value, slot)
+		status := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %s, ptr %s, ptr %s, i64 1)",
+			status, address, ops, slot,
+		)
+		emit_container_policy_failure(e, address, status)
+		// The staged copy was cloned into the container, so this frame still owns
+		// the temporary it appended from.
+		emit_drop_place(e, element, slot)
+	}
+}
+
+// A container operation with no result to report through applies the provider's
+// own failure policy, exactly as an implicit allocation does.
+@(private = "file")
+emit_container_policy_failure :: proc(e: ^Emitter, header, status: string) {
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	fail_label, done_label := new_label(e, "clit.fail"), new_label(e, "clit.done")
+	branch_if(e, failed, fail_label, done_label)
+	place_label(e, fail_label)
+	slot, provider := temp(e), temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		slot, CONTAINER_TYPE, header, CONTAINER_ALLOC,
+	)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", provider, slot)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+	branch(e, done_label)
+	place_label(e, done_label)
+	e.terminated = false
 }
 
 @(private = "file")
@@ -5050,15 +5204,17 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			// this arm is only reachable if that failed.
 			backend_fail(e, "an `iter` call has no chosen overload")
 			return "0"
-		case .Len:
-			// Only a slice reaches here; every other `len` folded. The length is
-			// the second word.
-			slice := emit_expr(e, v.bound[0])
+		case .Len, .Cap:
+			// A slice and the two containers reach here; every other `len` folded.
+			// Both headers keep the length in the same word a slice does, so the
+			// only difference is which one is read.
+			source := emit_expr(e, v.bound[0])
+			word := symbol.builtin == .Cap ? CONTAINER_CAP : SLICE_LEN
 			out := temp(e)
 			fmt.sbprintfln(
 				&e.b,
 				"  %s = extractvalue %s %s, %d",
-				out, llvm_type(e, expr_base(v.bound[0]).type), slice, SLICE_LEN,
+				out, llvm_type(e, expr_base(v.bound[0]).type), source, word,
 			)
 			return out
 		case .Default_Allocator:
@@ -6753,6 +6909,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_clone(e, symbol, name)
 		case .Dyn_Forward:
 			emit_dyn_forwarding_slot(e, symbol, name)
+		case .Container_Op:
+			emit_synth_container_op(e, symbol, name)
 		case .None:
 		}
 		fmt.sbprintln(&e.b, "")
@@ -6919,6 +7077,157 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// ------------------------------------------------------ container bodies --
+
+// One contributed container operation. Every one of them is a call into the
+// versioned C helper with this type's operation table; what differs is how the
+// arguments arrive and what comes back.
+//
+// A fallible operation has two forms. The `try_` one returns the error and the
+// caller decides; the ordinary one has nowhere to report it, so it applies the
+// *allocator's* failure policy, which is what design.md's "Allocation failure"
+// requires of an implicit allocation.
+@(private = "file")
+emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	container := symbol.params[0]
+	element := container_element(e.c, container)
+	element_llvm := llvm_type(e, element)
+	ops := container_ops_global(e, container)
+	fallible := len(symbol.results) == 1 && symbol.results[0] == TYPE_ALLOCATOR_ERROR
+
+	result := llvm_result_type(e, symbol.results, nil)
+	fmt.sbprintf(&e.b, "define %s %s(", result, name)
+	for parameter, index in symbol.params {
+		if index > 0 {
+			fmt.sbprint(&e.b, ", ")
+		}
+		type := index == 0 ? "ptr" : llvm_type(e, parameter)
+		fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
+	}
+	fmt.sbprintln(&e.b, ") {")
+	fmt.sbprintln(&e.b, "entry:")
+	e.terminated = false
+
+	// A single value entering the container is spilled so the helper can read it
+	// through a pointer, exactly as it reads a `..T` pack's storage.
+	value_storage :: proc(e: ^Emitter, element: Type_Id, argument: string) -> string {
+		slot := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, element))
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, element), argument, slot)
+		return slot
+	}
+
+	status := ""
+	switch symbol.container_op {
+	case .Append, .Try_Append:
+		data, count := temp(e), temp(e)
+		pack := llvm_type(e, symbol.params[1])
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg1, %d", data, pack, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg1, %d", count, pack, SLICE_LEN)
+		status = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %%arg0, ptr %s, ptr %s, i64 %s)",
+			status, ops, data, count,
+		)
+
+	case .Insert, .Try_Insert:
+		slot := value_storage(e, element, "%arg2")
+		status = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i64 1)",
+			status, ops, slot,
+		)
+		// The argument was a borrowed copy of the caller's value and the helper
+		// cloned from it, so this frame still owns it.
+		emit_drop_place(e, element, slot)
+
+	case .Pop:
+		out, found := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", out, element_llvm)
+		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_dyn_pop(ptr %%arg0, ptr %s, ptr %s)", found, ops, out)
+		value, ok, first, pair := temp(e), temp(e), temp(e), optional_pair_type(element_llvm)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, element_llvm, value)
+		built := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, 1", built, pair, first, ok)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, built)
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Remove, .Remove_Unordered:
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", out, element_llvm)
+		fmt.sbprintfln(
+			&e.b, "  call void @loke_rt_v1_dyn_remove(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i32 %d)",
+			ops, out, symbol.container_op == .Remove_Unordered ? 1 : 0,
+		)
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
+		fmt.sbprintfln(&e.b, "  ret %s %s", element_llvm, value)
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Clear:
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_dyn_clear(ptr %%arg0, ptr %s)", ops)
+		fmt.sbprintln(&e.b, "  ret void")
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Resize, .Try_Resize:
+		status = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_dyn_resize(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
+		)
+
+	case .Reserve, .Try_Reserve:
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_dyn_bind(ptr %%arg0)")
+		status = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_dyn_reserve(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
+		)
+
+	case .Shrink, .Try_Shrink:
+		status = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_dyn_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
+		)
+
+	case .None:
+		backend_fail(e, "a contributed container member has no operation")
+		fmt.sbprintln(&e.b, "  ret void")
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	if fallible {
+		error := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to %s", error, failed, llvm_type(e, TYPE_ALLOCATOR_ERROR))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, error)
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+	// The ordinary form has no result to report through, so the provider's own
+	// policy decides: `.Panic` follows the program strategy, `.Trap` terminates.
+	provider, fail_label, done_label := temp(e), new_label(e, "cop.fail"), new_label(e, "cop.done")
+	branch_if(e, failed, fail_label, done_label)
+	place_label(e, fail_label)
+	slot := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
+		slot, CONTAINER_TYPE, CONTAINER_ALLOC,
+	)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", provider, slot)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+	branch(e, done_label)
+	place_label(e, done_label)
+	e.terminated = false
+	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 }
 

@@ -102,11 +102,15 @@ writers a program can also take for itself with fmt.stdout and fmt.stderr.
 [dynamic]T and map[K]V are complete four-word managed values: the all-zero
 header is a usable constant in every storage duration, make binds a container to
 a selected allocator, a via policy chooses the provider a destination is built
-with, and copy, move, drop, exchange and panic cleanup are exact. Their
-operations - literals with elements, indexing, len, append and the rest - each
-report one diagnostic until the step that also installs their invalidation.
-string.to_runes and the dynamic raw_data overload do the same. Storing a borrow
-in a global, a record field or callback state, raw and unknown pointers, and
+with, and copy, move, drop, exchange and panic cleanup are exact. A dynamic
+array runs its whole operation set - literals, indexing and indexed assignment,
+slicing, len and cap, append with values and ..slice spreads, insert, pop,
+remove, remove_unordered, clear, resize, reserve, shrink, and the try_ forms
+that return an error instead of applying the allocator's policy. Every view and
+element pointer it hands out ends at the first operation that may move its
+storage. Maps, container iteration and formatting, string.to_runes and the
+dynamic raw_data overload each still report one diagnostic. Storing a borrow in
+a global, a record field or callback state, raw and unknown pointers, and
 cross-thread transfer are the documented v1 trust boundaries and are not
 checked.
 

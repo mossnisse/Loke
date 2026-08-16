@@ -92,6 +92,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"align_of", .Align_Of},
 		{"offset_of", .Offset_Of},
 		{"len", .Len},
+		{"cap", .Cap},
 	}
 	for entry in layout {
 		define(c, universe, entry.name, Symbol {

@@ -1,0 +1,14 @@
+L0512
+@14:2
+`xs` cannot be modified here: a mutable slice of it is still in use
+L0512
+@21:2
+`xs` cannot be modified here: a mutable pointer of it is still in use
+L0512
+@28:2
+L0512
+@35:2
+`xs` cannot be dropped here: a mutable slice of it is still in use
+L0512
+@42:2
+`xs` cannot be assigned here: a mutable slice of it is still in use

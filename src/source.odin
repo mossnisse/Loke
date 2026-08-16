@@ -184,6 +184,8 @@ Compiler :: struct {
 	// replaces it with the design's written `= mem.default_allocator()`.
 	default_allocator_symbol: Symbol_Id,
 	default_allocator_arg:    Expr,
+	// The constant `0` a defaulted container `shrink` floor uses.
+	zero_int_arg:             Expr,
 
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,

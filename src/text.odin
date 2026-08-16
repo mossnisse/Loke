@@ -282,7 +282,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	info := type_of(k.c, under)
 
 	switch kind {
-	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Hash,
+	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
@@ -527,12 +527,17 @@ variadic_parameter_index :: proc(info: ^Type_Info) -> int {
 //
 // A sole compatible spread forwards its slice directly, which is what makes
 // `println(..args)` inside a variadic procedure cost nothing.
+// `receiver` is the method-call receiver, which is parameter 0 and is not one of
+// the written arguments; it is nil for a free call. Without it a variadic
+// method would rank its first written argument against its own receiver's type
+// (m6b-plan step 2: the contributed `append` is exactly such a method).
 bind_variadic_arguments :: proc(
 	k: ^Checker,
 	v: ^Expr_Call,
 	info: ^Type_Info,
 	declaration: Symbol_Id,
 	prechecked := false,
+	receiver: Expr = nil,
 ) -> bool {
 	pack := variadic_parameter_index(info)
 	element := slice_element(k.c, info.parameters[pack])
@@ -542,23 +547,28 @@ bind_variadic_arguments :: proc(
 
 	// The fixed parameters, positionally. design.md gives no way to name one past
 	// a variadic, so a named argument here would have to name a fixed one.
+	first := 0
+	if receiver != nil {
+		bound[0] = receiver
+		first = 1
+	}
 	fixed := 0
-	for fixed < len(v.args) && fixed < pack {
+	for first + fixed < pack && fixed < len(v.args) {
 		arg := v.args[fixed]
 		if arg.name.text != "" || arg.mode == .Spread {
 			break
 		}
-		value, passed := pass_argument(k, arg.value, info.parameters[fixed], prechecked)
-		bound[fixed] = value
+		value, passed := pass_argument(k, arg.value, info.parameters[first + fixed], prechecked)
+		bound[first + fixed] = value
 		ok = ok && passed
 		fixed += 1
 	}
-	for index in fixed ..< pack {
+	for index in first + fixed ..< pack {
 		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
 			errorf(
 				k.c, v.span, "L0322",
 				"this procedure takes at least %d argument%s, found %d",
-				pack, pack == 1 ? "" : "s", len(v.args),
+				pack - first, pack - first == 1 ? "" : "s", len(v.args),
 			)
 			return false
 		}

@@ -1,0 +1,52 @@
+package main; import "core:fmt";
+
+// Container invalidation (m6b-plan step 2, decision "Container invalidation").
+//
+// design.md "Dynamic arrays": "Indexing and slicing produce views into the
+// current allocation", so every operation that may relocate, shift, truncate or
+// release that allocation ends every view and element pointer of it. The rule is
+// the one M5b already enforces for a fixed array — what M6b adds is the borrow
+// edge from a container to the views it hands out.
+
+grow :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	view := xs[:];
+	xs.append(4);
+	fmt.println(len(view));
+}
+
+shift :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	element := &xs[0];
+	xs.remove(1);
+	fmt.println(element^);
+}
+
+truncate :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	view := xs[1:];
+	xs.clear();
+	fmt.println(len(view));
+}
+
+release :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	view := xs[:];
+	drop(xs);
+	fmt.println(len(view));
+}
+
+replace :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	view := xs[:];
+	xs = {4, 5};
+	fmt.println(len(view));
+}
+
+main :: proc() {
+	grow();
+	shift();
+	truncate();
+	release();
+	replace();
+}

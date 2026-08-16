@@ -358,6 +358,9 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	// The generated `try_clone`/`clone` are contributed the same way, so a record
 	// without a hand-written hook still has both copy entry points.
 	ensure_lifecycle_members(k, type, name)
+	// A container's operation set, so `xs.append(1)` is an ordinary method call
+	// and generic code finds the same members (design.md "Dynamic arrays").
+	ensure_container_members(k, type)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := type_of(k.c, type); info != nil {
 		expand_visible_members(k, type, info.members, name, &out)
@@ -428,6 +431,7 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	ensure_iteration_members(k, type)
 	ensure_lifecycle_members(k, type, name)
+	ensure_container_members(k, type)
 	if info := type_of(k.c, type); info != nil {
 		if found := visible_member_named(k, info.members, name); found != INVALID_SYMBOL {
 			return found

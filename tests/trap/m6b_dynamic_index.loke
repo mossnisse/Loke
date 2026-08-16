@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+// design.md: "an invalid insert/removal index ... remain ordinary program
+// faults" even in an allocation-fallible form. A dynamic array's bound is its
+// length word, so a slot inside the capacity but past the length is out of
+// range like any other (m6b-plan decision "Checked sizes").
+
+main :: proc() {
+	xs: [dynamic]int;
+	xs.reserve(16);
+	xs.append(1);
+	fmt.println(len(xs));
+	fmt.println(cap(xs) >= 16);
+	fmt.println(xs[1]);
+}

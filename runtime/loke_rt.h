@@ -231,6 +231,42 @@ int32_t loke_rt_v1_dyn_clone(
  * all-zero representation. */
 void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops);
 
+/* The mutating dynamic-array operations. Each binds the container's provider on
+ * first need — design.md's lazy default binding — and each clones from `src`
+ * through `ops->elem_clone`, because a `..T` pack is a read-only slice and a
+ * borrowed element has to be duplicated to be kept.
+ *
+ * `src` may point into the container's own storage: `xs.append(..xs[:])` is
+ * ordinary source. Growth therefore never releases the old block until the copy
+ * out of it is complete (m6b-plan decision "Dynamic-array operations").
+ *
+ * The `int32_t` returns are 1 on success. An allocation that fails leaves the
+ * container bit-for-bit unchanged; an invalid index or a negative count is an
+ * ordinary program fault and does not return at all. */
+int32_t loke_rt_v1_dyn_append(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, const void *src, int64_t count);
+int32_t loke_rt_v1_dyn_insert(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	int64_t index, const void *src, int64_t count);
+/* Moves the last element to `out` and answers 0 when the container was empty. */
+int32_t loke_rt_v1_dyn_pop(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, void *out);
+/* Moves element `index` to `out`. `unordered` fills the hole with the last
+ * element instead of shifting the tail down. */
+void loke_rt_v1_dyn_remove(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops,
+	int64_t index, void *out, int32_t unordered);
+/* Destroys every element and keeps the capacity. */
+void loke_rt_v1_dyn_clear(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops);
+int32_t loke_rt_v1_dyn_resize(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t new_len);
+/* Releases capacity down to `max(len, min_capacity)`. */
+int32_t loke_rt_v1_dyn_shrink(
+	loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
+/* The provider a container will allocate through, binding the default on first
+ * need. A `via` declaration has already written its own. */
+void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self);
+
 int32_t loke_rt_v1_map_reserve(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
 int32_t loke_rt_v1_map_clone(

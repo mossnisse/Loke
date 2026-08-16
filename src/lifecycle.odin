@@ -372,6 +372,9 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 		if base == nil {
 			continue
 		}
+		// A container literal replacing a destination with a written policy is
+		// built with that policy's provider, not with a default-backed temporary.
+		bind_literal_allocator(k.c, value, place_root_symbol(k.c, s.lhs[index]))
 		if expression_is_borrowed_place(k.c, value) {
 			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop)
 		}

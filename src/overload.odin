@@ -692,7 +692,13 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 	// already checked every written argument, so it binds them without checking
 	// them a second time.
 	if info := type_of(k.c, sym.proc_type); variadic_parameter_index(info) >= 0 {
-		bound_ok := bind_variadic_arguments(k, v, info, cand.symbol, prechecked = true)
+		// A method call's receiver is parameter 0 and is not one of the written
+		// arguments, so the pack binder is told which expression fills it.
+		receiver: Expr
+		if len(cand.args) > 0 && cand.args[0].is_receiver {
+			receiver = cand.args[0].expr
+		}
+		bound_ok := bind_variadic_arguments(k, v, info, cand.symbol, prechecked = true, receiver = receiver)
 		require_argument_ownership(k, v, cand.symbol)
 		return bound_ok
 	}

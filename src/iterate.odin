@@ -53,6 +53,9 @@ Synth_Kind :: enum {
 	// design.md: "`dyn I` itself satisfies `I` by compiler-provided forwarding
 	// slots." Each one calls through the view's own witness.
 	Dyn_Forward,
+	// design.md "Dynamic arrays" and "Maps": one contributed container operation.
+	// Which one is `Symbol.container_op` (m6b-plan step 2).
+	Container_Op,
 }
 
 // ---------------------------------------------------------- range values --

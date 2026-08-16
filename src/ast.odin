@@ -322,6 +322,11 @@ Expr_Composite :: struct {
 	// literal's own `type` is the slice; this is the `[N]T` the backend gives
 	// storage and then slices. INVALID_TYPE for every other literal.
 	backing:    Type_Id,
+	// m6b-plan decision "Allocator binding": "A container literal initializing or
+	// replacing a known destination constructs directly with that destination's
+	// selected allocator rather than allocating a default-backed temporary
+	// first." This is that destination's written `via`, or nil.
+	via:        Expr,
 }
 
 Type_Pointer :: struct {

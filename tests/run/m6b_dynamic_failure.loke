@@ -1,0 +1,60 @@
+package main; import "core:fmt";
+
+// Allocation failure and partial-clone cleanup on a dynamic array (m6b-plan
+// step 2, decision "Atomic mutation").
+//
+// design.md: a `try_` form recovers allocation and cloning failure and returns
+// the error, and "on failure, temporaries are dropped in reverse order and the
+// original container is bit-for-bit unchanged". The ordinary form has nowhere to
+// report the failure and applies the allocator's policy instead.
+//
+// A representable request no heap will satisfy is how a failing provider is
+// written; there is no failure-injection provider.
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+
+// One element whose own `try_clone` fails, so the container's insertion has to
+// clean up the prefix it already built.
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { self.id = 0; }
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		if (self.id == 3) {
+			p, err := new(Huge, allocator);
+			if (err != nil) {
+				return Res{0}, err;
+			}
+			free(p);
+		}
+		return Res{self.id}, nil;
+	}
+}
+
+main :: proc() {
+	xs: [dynamic]i128 = {1, 2, 3};
+
+	// A representable capacity that cannot be allocated. The header and every
+	// element are unchanged, and the container is still usable afterwards.
+	fmt.println(xs.try_reserve(1152921504606846976) != nil);
+	fmt.println(len(xs));
+	fmt.println(cap(xs));
+	fmt.println(xs[2]);
+
+	fmt.println(xs.try_resize(1152921504606846976) != nil);
+	fmt.println(len(xs));
+
+	fmt.println(xs.try_append(4) == nil);
+	fmt.println(len(xs));
+	fmt.println(xs[3]);
+
+	// The third element's clone fails, so the two already cloned into the
+	// container are destroyed and nothing is published.
+	items: [dynamic]Res;
+	fmt.println(items.try_append(Res{1}, Res{2}, Res{3}) != nil);
+	fmt.println(len(items));
+
+	// And the container still works.
+	fmt.println(items.try_append(Res{7}) == nil);
+	fmt.println(items[0].id);
+}
