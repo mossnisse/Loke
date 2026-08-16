@@ -749,6 +749,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
 	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.formatters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
+	c.reset_dead = make(map[^Expr_Call][]Symbol_Id, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits

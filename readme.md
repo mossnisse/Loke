@@ -290,7 +290,9 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   backed by that region, or a borrow of one — and only of that region: two
   arenas are two regions. An owner cannot be returned from, or stored past, the
   region backing it, and a wrapper may return the provider owner but not a bare
-  handle to it.
+  handle to it. "Surviving" is M5a's definite liveness rather than lexical scope,
+  so an explicitly dropped owner stops blocking — while one dropped on only some
+  paths keeps blocking, because it may still need its cleanup on the others.
 
 - a compile-time procedure may use containers as temporaries. The evaluator runs
   the same operations the backend emits, from the same operation code, bounded by

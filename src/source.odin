@@ -189,6 +189,11 @@ Compiler :: struct {
 	default_allocator_arg:    Expr,
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,
+	// design.md: "An explicitly dropped manual owner is dead and no longer blocks
+	// reset." M5a's liveness answers that, one pass and one graph earlier than the
+	// reset check, so the definitely-dead owners at each reset call are recorded
+	// here (`src/lifecycle.odin`, `src/cfg.odin`).
+	reset_dead:               map[^Expr_Call][]Symbol_Id,
 	// The nil `[]mut u8` a defaulted `mem.Arena()` receives (`src/region.odin`).
 	empty_slice_arg:          Expr,
 

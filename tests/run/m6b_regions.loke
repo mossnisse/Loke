@@ -76,6 +76,31 @@ reset_through_wrapper :: proc() {
 	fmt.println(len(again));
 }
 
+// design.md: "an owner is live when it may be used later or still requires
+// cleanup on an outgoing path. An explicitly dropped manual owner is dead and no
+// longer blocks reset." Scope presence cannot answer that; M5a's definite
+// liveness can, and does.
+dropped_owner_permits_reset :: proc() {
+	arena := mem.Arena();
+	raw: manual [dynamic]u8 via arena.allocator();
+	raw.append(1, 2, 3);
+	fmt.println(len(raw));
+	drop(raw);
+	free_all(arena.allocator());
+
+	// A managed owner moved out is dead in the same way.
+	xs: [dynamic]u8 via arena.allocator() = {};
+	xs.append(4, 5);
+	ys := move(xs);
+	fmt.println(len(ys));
+	drop(ys);
+	free_all(arena.allocator());
+
+	after: [dynamic]u8 via arena.allocator() = {};
+	after.append(6);
+	fmt.println(len(after));
+}
+
 // Two providers are two regions, so one reset is not the other's business.
 distinct_regions :: proc() {
 	a := mem.Arena();
@@ -155,6 +180,7 @@ main :: proc() {
 	reusable_reset();
 	handle_survives_reset();
 	reset_through_wrapper();
+	dropped_owner_permits_reset();
 	distinct_regions();
 	grows();
 	moved();

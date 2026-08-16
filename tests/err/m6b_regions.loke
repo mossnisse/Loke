@@ -71,6 +71,19 @@ surviving_owner :: proc() {
 	fmt.println(len(scratch));
 }
 
+// design.md: an owner is dead "when it may be used later or still requires
+// cleanup on an outgoing path". Dropped on one path only, it may still require
+// cleanup on the other, so it keeps blocking — `Conditional` is not `Dead`.
+conditionally_dropped :: proc(flag: bool) {
+	arena := mem.Arena();
+	xs: [dynamic]u8 via arena.allocator() = {};
+	xs.append(1);
+	if (flag) {
+		drop(xs);
+	}
+	free_all(arena.allocator());
+}
+
 // design.md: an owner "backed by a region created in the current procedure may
 // not be ... assigned to `static`, `thread_local`, or file-scope storage".
 held: [dynamic]u8;

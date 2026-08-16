@@ -9,7 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M6a)
+USAGE :: `lokec - the Loke compiler (milestone M6b)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -128,9 +128,10 @@ blocks, so moving one never changes its record address or its region identity.
 An Arena may be laid over a caller's fixed buffer, which it then borrows for as
 long as it lives; both may back a container through via. A body may free_all a
 region it created without any promise, and the region stays usable afterwards -
-but not while an owner backed by it survives. An owner cannot be returned from,
-or stored past, the region that backs it, and a handle alone cannot be returned
-where the provider owner could be.
+but not while an owner backed by it survives - surviving by M5a's definite
+liveness, so an explicitly dropped owner stops blocking. An owner cannot be
+returned from, or stored past, the region that backs it, and a handle alone
+cannot be returned where the provider owner could be.
 
 A compile-time procedure may use containers as temporaries: the evaluator runs
 the same operations the backend emits, bounded by the same step and memory

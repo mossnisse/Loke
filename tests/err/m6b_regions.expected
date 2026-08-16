@@ -14,6 +14,9 @@ this slice cannot be returned: `buffer` ends when this procedure returns
 L0537
 @70:2
 this reset would end the region backing `scratch`, which is still live here
+L0537
+@84:2
+this reset would end the region backing `xs`, which is still live here
 L0536
-@81:2
+@94:2
 `held` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region

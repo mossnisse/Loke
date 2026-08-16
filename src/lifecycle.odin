@@ -633,8 +633,12 @@ run_events :: proc(graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness) {
 @(private = "file")
 report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state: []Liveness) {
 	for event in block.events {
+		if event.kind == .Reset_Point {
+			record_reset_liveness(k, graph, event, state)
+			continue
+		}
 		local := &graph.tracked[event.slot]
-		switch event.kind {
+		#partial switch event.kind {
 		case .Init:
 			state[event.slot] = .Live
 		case .Assign:
@@ -672,6 +676,29 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 			state[event.slot] = .Dead
 		}
 	}
+}
+
+// design.md: "For this rule, an owner is live when it may be used later or still
+// requires cleanup on an outgoing path. An explicitly dropped manual owner is
+// dead and no longer blocks reset."
+//
+// That is exactly this analysis's `.Dead`, and only `.Dead`: a conditionally
+// live owner may still need its cleanup on one path, so it keeps blocking. The
+// reset check itself runs in a later pass over a different graph, so the answer
+// is recorded against the call node both passes walk, in the compilation arena
+// rather than this analysis's own (m6b-plan step 5).
+@(private = "file")
+record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event, state: []Liveness) {
+	if event.call == nil {
+		return
+	}
+	dead := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	for local, slot in graph.tracked {
+		if state[slot] == .Dead {
+			append(&dead, local.symbol)
+		}
+	}
+	k.c.reset_dead[event.call] = dead[:]
 }
 
 @(private = "file")

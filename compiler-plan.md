@@ -649,13 +649,21 @@ assigning a place *clones* it, so the destination is built with its own
 allocator and inherits nothing; the escape check was reading the source's region
 and would have rejected a copy that is entirely safe.
 
-One half of one bullet is open. design.md distinguishes an owner that is still
-live from one already dropped, and the reset check still uses in-scope presence
-rather than M5a's definite liveness — so an explicitly dropped `manual` owner
-still blocks a reset it should not. M5a computes exactly the needed fact per
-program point in `src/lifecycle.odin`; consuming it needs a must-be-dead join
-beside the existing may-be-invalid one, which is the shape of the remaining work
-and is marked at its site.
+The reset check uses M5a's definite liveness rather than scope presence, so
+design.md's "an explicitly dropped manual owner is dead and no longer blocks
+reset" holds literally. Getting there needed no new lattice: M5a already
+classifies every tracked local as definitely live, definitely dead, or
+conditionally live at each program point, and the only real problem was that it
+runs one pass earlier over a *different* graph, which it then discards. So the
+liveness pass emits one `Reset_Point` event — inert for its own transfer — and
+records, against the reset's own call node, which owners were definitely dead
+there; the provenance pass reads that back. Both passes decide what counts as a
+reset through one shared `call_is_reset`, so they cannot disagree about which
+calls to record and which to check.
+
+Only `Dead` releases the block. A conditionally live owner may still need its
+cleanup on one path, so dropping it inside an `if` keeps the reset rejected —
+which `tests/err/m6b_regions` pins alongside the accepted forms.
 
 M6b step 6 is implemented: the compile-time evaluator, and the audit.
 
@@ -699,8 +707,9 @@ reading, the correct answer. The runtime half is implemented and unchanged since
 M6a: a provider whose `reset` answers 0 aborts. It is simply unreachable from
 checked Loke, and is marked as such at its site so nobody assumes it is covered.
 
-The reset-liveness gap recorded under step 5 is still open, and is the one thing
-M6b leaves for its own list rather than for the trust boundaries.
+The reset-liveness gap recorded under step 5 was closed after the audit; see
+that step's record. M6b leaves nothing on its own list — what remains is the
+documented v1 trust-boundary set, unchanged.
 
 ---
 

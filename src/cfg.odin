@@ -40,6 +40,12 @@ Flow_Event_Kind :: enum {
 	Kill,
 	Use,
 	Cleanup,
+	// An allocator-region reset, noted only so the *later* provenance pass can
+	// ask which owners were definitely dead at it. design.md: "An explicitly
+	// dropped manual owner is dead and no longer blocks reset." The two passes
+	// run over separate graphs, so the answer is recorded against the call node
+	// both of them walk (m6b-plan step 5).
+	Reset_Point,
 }
 
 Flow_Event :: struct {
@@ -49,6 +55,8 @@ Flow_Event :: struct {
 	name:   string,
 	assign: ^Stmt_Assign,
 	target: int,
+	// `Reset_Point`: the call whose liveness answer is being recorded.
+	call:   ^Expr_Call,
 	// The operation being attempted at this event, so a diagnostic can name what
 	// the reader wrote. Which earlier operation consumed the binding is not
 	// tracked: the states are a lattice, not a history.
@@ -1104,7 +1112,43 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			walk_flow_expr(graph, argument.value)
 		}
 	}
+	note_reset_point(graph, v)
 	return nil
+}
+
+// Whether this call resets an allocator region: `free_all`, or a call handing an
+// argument to an `@(allocator_reset)` parameter. One predicate, so the liveness
+// pass and the provenance pass cannot disagree about which calls are resets.
+call_is_reset :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
+	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Free_All {
+		return true
+	}
+	proc_type := INVALID_TYPE
+	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil {
+		proc_type = sym.proc_type
+	} else if v.callee != nil {
+		proc_type = expr_base(v.callee).type
+	}
+	if proc_type == INVALID_TYPE {
+		return false
+	}
+	for argument, index in v.bound {
+		if argument != nil && proc_param_resets(c, proc_type, index) {
+			return true
+		}
+	}
+	return false
+}
+
+// Emitted after the arguments, because that is where the reset happens: an
+// argument may itself move an owner out, and the state that matters is the one
+// the reset sees.
+@(private = "file")
+note_reset_point :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	if len(graph.tracked) == 0 || !call_is_reset(graph.k.c, v) {
+		return
+	}
+	emit(graph, Flow_Event{kind = .Reset_Point, span = v.span, call = v})
 }
 
 // ------------------------------------------------- provenance construction --
@@ -1668,7 +1712,7 @@ prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
 // design.md: a reset "may end every allocation root in that allocator region",
 // so it is checked both for the promise it needs and for what would survive it.
 @(private = "file")
-prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool) {
+prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool, at: ^Expr_Call) {
 	covered, unmarked := prov_reset_promise(graph, set)
 	if !direct && unmarked == "" && region_is_empty(set) {
 		// Default and unknown regions are pre-existing and must not be hidden
@@ -1694,15 +1738,19 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	// this reset can actually reach: a second arena's containers are none of its
 	// business, which is the whole point of giving each local provider a token.
 	//
-	// ponytail: "in scope" over-approximates "still needs cleanup", so an
-	// explicitly dropped owner still blocks. M5a already computes definite
-	// liveness per program point (`src/lifecycle.odin`); wiring it in needs a
-	// must-be-dead join beside the existing may-be-invalid one, which is the
-	// remaining half of this rule.
+	//
+	// design.md: "an owner is live when it may be used later or still requires
+	// cleanup on an outgoing path. An explicitly dropped manual owner is dead and
+	// no longer blocks reset." Scope presence cannot answer that, so the answer is
+	// M5a's, recorded at this same call node one pass earlier.
+	dead := graph.k.c.reset_dead[at]
 	for id in graph.owners_in_scope {
 		owner := symbol_of(graph.k.c, id)
 		owner_region, found := graph.region_of[id]
 		if owner == nil || !found || region_is_empty(owner_region) {
+			continue
+		}
+		if symbol_in(dead, id) {
 			continue
 		}
 		// The provider being reset is not its own dependant.
@@ -1717,6 +1765,16 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		break
 	}
 	prov_emit(graph, event)
+}
+
+@(private = "file")
+symbol_in :: proc(list: []Symbol_Id, id: Symbol_Id) -> bool {
+	for entry in list {
+		if entry == id {
+			return true
+		}
+	}
+	return false
 }
 
 // design.md: an owner backed by a region the procedure received "may not be
@@ -2281,7 +2339,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			if len(v.bound) >= 1 {
 				region := prov_region_of(graph, v.bound[0])
 				walk_flow_expr(graph, v.bound[0])
-				prov_reset(graph, region, v.span, true)
+				prov_reset(graph, region, v.span, true, v)
 			}
 			return nil
 		case .Drop:
@@ -2491,7 +2549,7 @@ prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 		if argument == nil || !proc_param_resets(graph.k.c, proc_type, index) {
 			continue
 		}
-		prov_reset(graph, prov_region_of(graph, argument), v.span, false)
+		prov_reset(graph, prov_region_of(graph, argument), v.span, false, v)
 	}
 }
 
