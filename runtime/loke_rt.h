@@ -287,6 +287,10 @@ void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *
 int32_t loke_rt_v1_map_shrink(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
 void loke_rt_v1_map_bind(loke_rt_map_v1 *self);
+/* One step of a map walk. Answers 0 when finished, otherwise the cursor to
+ * resume from, so an iterator keeps one integer and no table knowledge. */
+int64_t loke_rt_v1_map_scan(
+	void *table, const loke_rt_container_ops_v1 *ops, int64_t cursor, void **out_key, void **out_value);
 
 /* Checked container arithmetic, shared by the generated code and the helpers
  * above: a source `int` count is signed and its overflow is defined to wrap, and

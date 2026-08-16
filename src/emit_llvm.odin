@@ -516,6 +516,7 @@ emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_checked_bytes(i64, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_container_fault(ptr)")
 	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_hash_bytes(ptr, i64, i64)")
+	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_map_scan(ptr, ptr, i64, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_bind(ptr)")
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_map_find(ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_map_entry(ptr, ptr, ptr, ptr)")
@@ -1026,7 +1027,13 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 		}
 		ensure_slice_fields(e.c, type)
 		info = type_of(e.c, type)
-	} else if info.kind != .Struct && info.kind != .Any_View && info.kind != .Dyn {
+	} else if info.kind == .Any_View {
+		// A program that imports `core:fmt` without formatting anything never asks
+		// for an `any_view` value, so its two members are still uninstalled when
+		// `core:fmt`'s own body — which does use them — is emitted.
+		ensure_any_view_fields(e.c)
+		info = type_of(e.c, type)
+	} else if info.kind != .Struct && info.kind != .Dyn {
 		return
 	}
 	emitted[type] = true
@@ -6770,6 +6777,10 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		emit_text_foreach(e, s)
 		return
 	}
+	if s.kind == .Map {
+		emit_map_foreach(e, s)
+		return
+	}
 	emit_indexed_foreach(e, s)
 }
 
@@ -6836,6 +6847,78 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	place_label(e, done)
 }
 
+// design.md "Maps": a slot walk, and "**Iteration order is unspecified.**" The
+// cursor is one integer the runtime hands back; the table's controls, seed, and
+// slot count stay entirely inside `runtime/container.c`.
+//
+// One name binds the value; two bind the key and the value. Either value binding
+// may be written `&`, in which case it names the stored slot rather than a copy.
+@(private = "file")
+emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
+	container := expr_base(s.iterable).type
+	ops := container_ops_global(e, container)
+	header := emit_address(e, s.iterable)
+	table, cursor := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", table, header)
+	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	key_out, value_out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca ptr", key_out)
+	fmt.sbprintfln(&e.b, "  %s = alloca ptr", value_out)
+
+	head := new_label(e, "foreach.head")
+	body := new_label(e, "foreach.body")
+	post := new_label(e, "foreach.post")
+	done := new_label(e, "foreach.done")
+	e.break_label, e.continue_label = done, post
+	e.continue_depth = len(e.cleanups)
+
+	place_label(e, head)
+	current, next := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", current, cursor)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
+		next, table, ops, current, key_out, value_out,
+	)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
+	finished := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
+	branch_if(e, finished, done, body)
+
+	place_label(e, body)
+	key_binding, value_binding := -1, 0
+	if len(s.bindings) == 2 {
+		key_binding, value_binding = 0, 1
+	}
+	if key_binding >= 0 && s.bindings[key_binding].symbol != INVALID_SYMBOL {
+		// The key binding is immutable, so it borrows the stored key in place: no
+		// per-iteration clone, and therefore no per-iteration drop either.
+		address := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", address, key_out)
+		bind_local(e, s.bindings[key_binding].symbol, address)
+	}
+	if s.bindings[value_binding].symbol != INVALID_SYMBOL {
+		element := container_element(e.c, container)
+		address := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", address, value_out)
+		if s.bindings[value_binding].is_ref {
+			// `&value` names the stored slot, so a write reaches the table.
+			bind_local(e, s.bindings[value_binding].symbol, address)
+		} else {
+			value, slot := temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, element), address)
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, element))
+			store(e, element, value, slot)
+			bind_local(e, s.bindings[value_binding].symbol, slot)
+		}
+	}
+	emit_scoped_block(e, s.body)
+	branch(e, post)
+	place_label(e, post)
+	branch(e, head)
+	place_label(e, done)
+}
+
 // A range or a fixed array: an index loop, with no iterator object at all.
 @(private = "file")
 emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
@@ -6893,7 +6976,25 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 		limit = length
 
-	case .Unresolved, .Static, .Protocol, .Text:
+	case .Dynamic:
+		// design.md "Dynamic arrays": the loop views the *current* allocation and
+		// stops at the length, never at the capacity. The whole-container loan the
+		// loop holds is what keeps that snapshot true for its duration.
+		header := emit_address(e, s.iterable)
+		array_slot = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", array_slot, header)
+		length_slot, length := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+			length_slot, CONTAINER_TYPE, header, CONTAINER_LEN,
+		)
+		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", length, length_slot)
+		counter_type = "i64"
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+		limit = length
+
+	case .Unresolved, .Static, .Protocol, .Text, .Map:
 		backend_fail(e, "an unresolved `foreach` reached emission")
 		return
 	}
@@ -6919,7 +7020,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	current := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", current, counter_type, cursor)
 	test := temp(e)
-	if s.kind == .Array || s.kind == .Slice {
+	if s.kind == .Array || s.kind == .Slice || s.kind == .Dynamic {
 		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
 	} else {
 		// `..<` stops before the high endpoint and `..=` includes it; a stored
@@ -6940,7 +7041,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	fmt.sbprintfln(&e.b, "%s:", post)
 	e.terminated = false
-	if s.kind != .Array && s.kind != .Slice {
+	if s.kind != .Array && s.kind != .Slice && s.kind != .Dynamic {
 		// An inclusive range whose high endpoint is the integer maximum cannot
 		// represent high+1. Finish directly after yielding high instead.
 		at_high, finished := temp(e), temp(e)
@@ -6975,7 +7076,7 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 	if value == INVALID_SYMBOL {
 		return // the discard binding names nothing
 	}
-	if s.kind != .Array && s.kind != .Slice {
+	if s.kind != .Array && s.kind != .Slice && s.kind != .Dynamic {
 		slot := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, current, slot)
@@ -6983,7 +7084,7 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 		return
 	}
 	address := temp(e)
-	if s.kind == .Slice {
+	if s.kind == .Slice || s.kind == .Dynamic {
 		// `array_slot` is the slice's data pointer, so the element index walks it
 		// directly rather than indexing into an inline array.
 		fmt.sbprintfln(

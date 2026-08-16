@@ -365,10 +365,6 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		errorf(k.c, s.span, "L0456", "a `foreach` binds one or two names")
 		return FLOWS
 	}
-	if len(s.bindings) == 2 && s.bindings[1].is_ref {
-		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
-		return FLOWS
-	}
 
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
@@ -398,6 +394,16 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	case info.kind == .Slice:
 		s.kind = .Slice
 		s.element_type = info.element
+	case info.kind == .Dynamic_Array:
+		s.kind = .Dynamic
+		s.element_type = info.element
+	case info.kind == .Map:
+		// design.md: "Map values can be iterated by-reference, but their keys
+		// cannot since map keys are immutable." One name binds the value; two bind
+		// the key and the value, which is the exception to "value, index".
+		s.kind = .Map
+		s.element_type = info.element
+		s.key_type = info.key
 	case info.kind == .String || info.kind == .String_View:
 		// design.md: "String iteration yields Unicode scalar values by default.
 		// Byte iteration is explicit" — `foreach (b, i in text.bytes())`.
@@ -410,6 +416,30 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		return check_protocol_foreach(k, s, subject)
 	}
 
+	// design.md: "the index binding is a counter". A map is the exception — its
+	// second name is the *value*, and that is the one a `&` may take.
+	if len(s.bindings) == 2 && s.bindings[1].is_ref && s.kind != .Map {
+		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
+		return FLOWS
+	}
+	if s.kind == .Map {
+		// design.md: "Map values can be iterated by-reference, but their keys
+		// cannot since map keys are immutable."
+		key_binding := len(s.bindings) == 2 ? 0 : -1
+		if key_binding >= 0 && s.bindings[key_binding].is_ref {
+			errorf(
+				k.c, s.bindings[key_binding].name.span, "L0591",
+				"a map key is immutable, so it cannot be iterated by reference; write `foreach (key, &value in m)`",
+			)
+			return FLOWS
+		}
+		value_binding := len(s.bindings) == 2 ? 1 : 0
+		if s.bindings[value_binding].is_ref && !expr_base(s.iterable).assignable {
+			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
+			return FLOWS
+		}
+		return check_map_foreach_body(k, s)
+	}
 	// design.md "Slices": "Element assignment and iteration by reference require
 	// `[]mut T`." The capability is the slice's own, not whether the variable
 	// holding it can be rebound.
@@ -441,6 +471,43 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		return FLOWS
 	}
 	return check_foreach_body(k, s, s.element_type)
+}
+
+// design.md: "`foreach (key, &value in some_map)`". The first of two names is
+// the key, not a counter, so the ordinary body binder cannot be reused as is.
+@(private = "file")
+check_map_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
+	if len(s.bindings) == 1 {
+		return check_foreach_body(k, s, s.element_type)
+	}
+	if !gate_type(k, s.key_type, expr_span(s.iterable)) ||
+	   !gate_type(k, s.element_type, expr_span(s.iterable)) {
+		return FLOWS
+	}
+	// design.md: "Map values can be iterated by-reference, but their keys cannot
+	// since map keys are immutable." An immutable key binding is therefore a
+	// *borrow* of the stored key rather than a copy — which is what lets
+	// `map[string]V` be iterated at all, and why no per-iteration clone or drop
+	// is needed for it. The loop's whole-container loan is what keeps that
+	// borrow valid across the back-edge.
+	if !s.bindings[1].is_ref && type_is_managed(k.c, s.element_type) {
+		errorf(
+			k.c, s.bindings[1].name.span, "L0504",
+			"a by-value `foreach` over `%s` copies a managed value, which M5a does not clean up per iteration; write `&%s`",
+			type_name(k.c, s.element_type),
+			s.bindings[1].name.text,
+		)
+		return FLOWS
+	}
+	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], s.key_type, false)
+	s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], s.element_type, s.bindings[1].is_ref)
+
+	incoming := clone_result_assignments(k.c, k.assigned_results)
+	k.loop_depth += 1
+	body := check_scoped_block(k, s.body)
+	k.loop_depth -= 1
+	k.assigned_results = incoming
+	return Flow_Info{can_fall_through = true, returns = body.returns}
 }
 
 @(private = "file")

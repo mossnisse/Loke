@@ -1,12 +1,15 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 main :: proc() {
-	// m6b-plan step 1: the container *type* is complete — layout, zero value,
-	// lifecycle — while each operation is ungated only in the step that also
-	// installs its invalidation. So the declaration is accepted and the
-	// iteration is the one construct that gates.
+	// m6b-plan step 4: containers iterate, and the dynamic `unsafe.raw_data`
+	// overload is the handoff that still waits — it crosses the unsafe provenance
+	// boundary and lands with the conversion row itself.
 	table: map[int]int;
-	foreach (value in table) {
-		fmt.println(value);
+	table[1] = 2;
+	foreach (key, value in table) {
+		fmt.println(key + value);
 	}
+	xs: [dynamic]u8;
+	p := unsafe.raw_data(xs);
+	fmt.println(p != nil);
 }

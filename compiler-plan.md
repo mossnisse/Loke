@@ -558,6 +558,30 @@ addresses for one syntax: the inserting entry, and the existing slot or a zeroed
 temporary. `in` became a real binary operator (`L0587`) rather than an
 unimplemented token.
 
+M6b step 4 is half implemented: container iteration. A dynamic array reuses the
+existing index-loop lowering with the header's length word as its bound; a map
+walks slots through one runtime `map_scan` that hands back a cursor, so the
+controls, seed, and slot count stay entirely inside the C helper and iteration
+order is unspecified by construction. design.md's two-name exception is real —
+the first of two names is the key — and a key binding *borrows* the stored key in
+place rather than copying it, which is what lets `map[string]V` be iterated at
+all without a per-iteration clone and drop. `L0591` rejects `&key`.
+
+One defect found on the way is fixed here rather than left: a program that
+imported `core:fmt` without formatting anything emitted an empty `any_view`
+struct, because that type's two members are installed on first *use* and
+`core:fmt`'s own body was emitted before any use existed.
+
+One gap is open and is not papered over. A loop's whole-container loan is
+created and does end every borrow correctly *after* the loop, and a direct write
+inside the body — `foreach (v in xs) { xs[0] = 5; }` — is rejected. A mutating
+*method* call on the same container inside the body — `xs.append(v)`,
+`xs.clear()` — is not yet rejected, because the invalidating access an `inout`
+receiver records behaves differently from a write against a loan that is live
+only through the loop's back-edge. Formatting, `string.to_runes`, and the
+dynamic `unsafe.raw_data` overload are also still outstanding from step 4, and
+steps 5 and 6 have not started.
+
 ---
 
 ## D. Out of scope for v1

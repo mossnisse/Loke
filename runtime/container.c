@@ -943,6 +943,30 @@ int32_t loke_rt_v1_map_shrink(
 	return 1;
 }
 
+/* design.md: "**Iteration order is unspecified.**" A scan walks slots in table
+ * order, which is exactly what makes that true — the seed decides where an entry
+ * lands. Answers 0 when the walk is finished, and otherwise the cursor to resume
+ * from, so the caller keeps one integer and no table knowledge. */
+int64_t loke_rt_v1_map_scan(
+	void *table, const loke_rt_container_ops_v1 *ops, int64_t cursor, void **out_key, void **out_value) {
+	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)table;
+	uint8_t *controls;
+	int64_t slot;
+	if (t == 0 || cursor < 0) {
+		return 0;
+	}
+	controls = map_controls(t);
+	for (slot = cursor; slot < t->slot_count; slot += 1) {
+		if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
+			continue;
+		}
+		*out_key = map_key_at(t, ops, slot);
+		*out_value = map_value_at(t, ops, slot);
+		return slot + 1;
+	}
+	return 0;
+}
+
 /* ---------------------------------------------------------------- hash -- */
 
 /* design.md's standard catalogue promises `string` and `string_view` satisfy

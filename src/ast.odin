@@ -742,6 +742,12 @@ Foreach_Kind :: enum {
 	Stored_Range,
 	Array,
 	Slice,
+	// design.md "Dynamic arrays": an index loop over the current allocation,
+	// bounded by the header's length word rather than a static count.
+	Dynamic,
+	// design.md "Maps": a slot walk. "**Iteration order is unspecified.**" The
+	// two-name form binds the key and the value rather than a value and an index.
+	Map,
 	// design.md "String iteration": yields Unicode scalar values, and "the second
 	// name in a string loop is a byte offset, not a rune counter".
 	Text,
@@ -756,6 +762,8 @@ Stmt_Foreach :: struct {
 	// Semantic result, written by the checker and read by the backend.
 	kind:          Foreach_Kind,
 	element_type:  Type_Id,
+	// A map's key type, bound by the first of two names.
+	key_type:      Type_Id,
 	count:         u64,       // a fixed array's length
 	iterator_type: Type_Id,   // the protocol path's opaque iterator
 	iter_symbol:   Symbol_Id,

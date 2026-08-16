@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 // The one provider-activation fixture (m5b-plan step 5). design.md's two
 // rejected returns under "How root and region provenance compose" are written
@@ -47,8 +47,8 @@ bad_owner :: proc(allocator: Allocator) {
 	held = make_buffer(allocator);
 }
 
-// The M6 storage itself. Its own operations run now; iteration is the one that
-// still gates, because the whole-container loan a loop holds arrives with it.
+// The M6 storage itself. Its own operations and its iteration run now; the
+// unsafe conversion out of it is the row that still gates.
 gated :: proc() {
 	bytes: [dynamic]u8;
 	bytes.append(1, 2);
@@ -56,6 +56,7 @@ gated :: proc() {
 	foreach (b in bytes) {
 		fmt.println(b);
 	}
+	fmt.println(unsafe.raw_data(bytes) != nil);
 }
 
 main :: proc() {
