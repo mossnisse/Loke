@@ -1,0 +1,57 @@
+package main; import "core:fmt";
+
+// The whole-container loop loan (m6b-plan step 4).
+//
+// design.md "Capabilities and the one rule": a loop holds a borrow of the thing
+// it walks for the loop's whole duration, so nothing may end or relocate that
+// storage from inside the body. The loan is created once, before the loop, and
+// re-established at the head on every iteration -- an invalidation recorded in
+// the body therefore conflicts with the *next* iteration's iterator as well as
+// with the one that recorded it.
+
+grow :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	foreach (v in xs) {
+		xs.append(v);
+	}
+}
+
+clear_while_walking :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	foreach (v in xs) {
+		xs.clear();
+		fmt.println(v);
+	}
+}
+
+write_while_walking :: proc() {
+	xs: [dynamic]int = {1, 2, 3};
+	foreach (v in xs) {
+		xs[0] = v;
+	}
+}
+
+map_while_walking :: proc() {
+	m: map[int]int;
+	m[1] = 2;
+	foreach (key, value in m) {
+		fmt.println(key + value);
+		m.clear();
+	}
+}
+
+map_insert_while_walking :: proc() {
+	m: map[int]int;
+	m[1] = 2;
+	foreach (key, value in m) {
+		m[key + 1] = value;
+	}
+}
+
+main :: proc() {
+	grow();
+	clear_while_walking();
+	write_while_walking();
+	map_while_walking();
+	map_insert_while_walking();
+}

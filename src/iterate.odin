@@ -32,6 +32,9 @@ ITER_RANGE_CLOSED :: 2
 ITER_ARRAY_DATA :: 0
 ITER_ARRAY_INDEX :: 1
 
+ITER_MAP_TABLE :: 0
+ITER_MAP_CURSOR :: 1
+
 // A procedure the compiler contributes rather than the user writing it. It has
 // a real symbol and a real emitted body; the backend knows how to write each
 // shape (the same seam `delegate` uses for its forwarding overloads).
@@ -45,6 +48,15 @@ Synth_Kind :: enum {
 	// the bound differs, because a slice carries its length rather than having it
 	// baked into the type.
 	Slice_Next,
+	// A dynamic array's `iter` builds the same `{ data, index }` a slice's does,
+	// out of the header's current storage and length words, so `Slice_Next` is
+	// its `next` verbatim. The iterator deliberately does not hold the container:
+	// an iterator is a borrow, and a managed field in it would be followed by a
+	// drop that has no business running.
+	Dynamic_Iter,
+	// design.md "Maps": `{ table, cursor }`, walked by the runtime's slot scan.
+	Map_Iter,
+	Map_Next,
 	// design.md "Lifecycle hooks and resource types": a record that writes no
 	// `try_clone` still has one, and `clone` is always generated from it
 	// (m5a-plan step 3).
@@ -117,22 +129,52 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 	return type
 }
 
+// `holds` is what the iterator stores, which is the iterable itself except for a
+// dynamic array: that one stores the `{ data, len }` view of its current
+// allocation. The key stays the iterable, so each one keeps its own iterator
+// type and its own single contributed `next`.
 @(private = "file")
-array_iterator_type :: proc(c: ^Compiler, array: Type_Id) -> Type_Id {
+array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE) -> Type_Id {
 	if existing, found := c.iterator_types[array]; found {
 		return existing
 	}
+	stored := holds == INVALID_TYPE ? array : holds
 	element := type_of(c, array).element
 	name := intern_identifier(c, fmt.aprintf("Array_Iterator(%s)", type_name(c, array), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_ARRAY_DATA] = new_field_symbol(c, "data", array, ITER_ARRAY_DATA)
+	fields[ITER_ARRAY_DATA] = new_field_symbol(c, "data", stored, ITER_ARRAY_DATA)
 	fields[ITER_ARRAY_INDEX] = new_field_symbol(c, "index", TYPE_INT, ITER_ARRAY_INDEX)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		info.mangled = fmt.aprintf("Array_Iterator.%s", llvm_safe(type_name(c, array)), allocator = c.semantic_allocator)
 	}
 	c.iterator_types[array] = type
+	return type
+}
+
+// design.md "Maps": iteration is a slot walk whose position is one integer the
+// runtime hands back. The table pointer is raw on purpose -- the iterator is a
+// borrow of the map, not a second header that anything would drop.
+@(private = "file")
+map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
+	if existing, found := c.iterator_types[subject]; found {
+		return existing
+	}
+	element := type_of(c, subject).element
+	name := intern_identifier(c, fmt.aprintf("Map_Iterator(%s)", type_name(c, subject), allocator = c.semantic_allocator))
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[ITER_MAP_TABLE] = new_field_symbol(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
+	fields[ITER_MAP_CURSOR] = new_field_symbol(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
+	if info := type_of(c, type); info != nil {
+		info.fields = fields
+		// The map this walks. `next` needs its operation table, and the raw table
+		// pointer alone cannot name it.
+		info.key = subject
+		info.mangled = fmt.aprintf("Map_Iterator.%s", llvm_safe(type_name(c, subject)), allocator = c.semantic_allocator)
+	}
+	c.iterator_types[subject] = type
 	return type
 }
 
@@ -168,6 +210,20 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		element = info.element
 		iterator = array_iterator_type(k.c, under)
 		iter_kind, next_kind = .Array_Iter, .Slice_Next
+	case info.kind == .Dynamic_Array:
+		// design.md "Dynamic arrays": iteration views the current allocation and
+		// stops at the length. That is exactly a slice, so the protocol members are
+		// the slice ones with a different `iter`.
+		element = info.element
+		iterator = array_iterator_type(k.c, under, slice_of(k.c, info.element, mutable = false))
+		iter_kind, next_kind = .Dynamic_Iter, .Slice_Next
+	case info.kind == .Map:
+		// design.md "Maps": one name binds the value, so the protocol's single
+		// `Element` is the value type. The key is reachable only through the
+		// two-name loop form, which is direct iteration rather than the protocol.
+		element = info.element
+		iterator = map_iterator_type(k.c, under)
+		iter_kind, next_kind = .Map_Iter, .Map_Next
 	case:
 		return
 	}
@@ -268,10 +324,6 @@ check_iter_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	}
 	subject := check_single_expr(k, v.args[0].value)
 	if subject == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	if !gate_container_operation(k, subject, expr_span(v.args[0].value)) {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -529,11 +581,6 @@ check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range)
 // `iter(value)`, and `next(self: inout Iterator) -> (Element, bool)`.
 @(private = "file")
 check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
-	// A container's protocol members arrive with m6b-plan step 4, together with
-	// the whole-container loan the loop holds across its back-edge.
-	if !gate_container_operation(k, subject, expr_span(s.iterable)) {
-		return FLOWS
-	}
 	if s.bindings[0].is_ref {
 		// design.md "By-reference iteration": by-reference `foreach` is a
 		// built-in-container facility, and the protocol has only value-producing

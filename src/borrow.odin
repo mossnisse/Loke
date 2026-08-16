@@ -673,6 +673,21 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, inv
 			state.merged[int(event.loan)] = true
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
+	case .Live:
+		// Only a loop head's re-read sets this. The loan was created once, before
+		// the loop, but it is re-established every iteration, so an invalidation
+		// recorded inside the body must not reach the body's own entry through the
+		// back edge -- that would hide the very conflict it is evidence of.
+		if !event.revives {
+			break
+		}
+		for source in event.sources {
+			for held, index in reach_row(state, reach, source) {
+				if held {
+					invalid[index] = false
+				}
+			}
+		}
 	case .Access:
 		if event.access != .Invalidate {
 			break

@@ -262,9 +262,25 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   frozen operation table, so one map keeps one policy in every package it travels
   through.
 
-Everything else — container iteration and formatting, `string.to_runes`, and the
-dynamic `raw_data` overload — parses and reports one diagnostic at the
-operation. Each is ungated in the step that also installs its invalidation.
+- both containers iterate. A dynamic array yields value-and-index like a slice
+  and `&value` names the element in place; a map is design.md's two-name
+  exception, where the first of two names is the key, not a counter — a key
+  binding borrows the stored key rather than copying it, and `&key` is rejected
+  because map keys are immutable. Both contribute the same
+  `Element`/`Iterator`/`iter`/`next` members a user type declares by hand, so
+  generic code sees exactly what direct iteration does. A loop holds a
+  whole-container loan for its entire duration *including across the back edge*,
+  so a write, a growth or an end of what it walks is rejected from inside the
+  body even when only the next iteration would see it;
+
+- both format recursively through the coherent formatter table (`[1, 2, 3]`,
+  `[key = value]`), `st.to_runes()` builds a `[dynamic]rune` whose capacity is
+  the exact rune count and which releases its partial buffer if the allocation
+  fails, and `unsafe.raw_data([dynamic]E)` hands back the current data pointer
+  with no length, no capability and no further lifetime checking.
+
+`mem.Arena` and `mem.Scratch`, and compile-time evaluation of a managed
+container, are what M6b has left to do.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.

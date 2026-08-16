@@ -58,4 +58,18 @@ main :: proc() {
 	fmt.println(sum_all(half));
 	fmt.println(sum_all(closed));
 	fmt.println(sum_all(Countdown{3}));
+
+	// m6b-plan step 4: the built-in containers contribute the same protocol
+	// members, so generic and direct iteration agree. A map's single `Element` is
+	// its value; the key is reachable only through the two-name loop form.
+	#assert(interfaces.Iterable([dynamic]int));
+	#assert(interfaces.Iterable(map[int]int));
+	ys: [dynamic]int = {4, 5, 6};
+	fmt.println(sum_all(ys));
+	d, d_ok := first(ys);
+	fmt.println(d);
+	m: map[int]int;
+	m[1] = 10;
+	m[2] = 20;
+	fmt.println(sum_all(m));
 }

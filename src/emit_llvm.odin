@@ -479,6 +479,7 @@ emit_text_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_concat(ptr, ptr, i64, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_clone(ptr, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_from_runes(ptr, ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_to_runes(ptr, ptr, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_retain(i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_release(i64)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_utf8_valid(ptr, i64)")
@@ -4507,6 +4508,19 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, SLICE_LEN)
 		emit_format_sequence(e, info.element, data, length, inline_array = false)
 
+	case .Dynamic_Array:
+		// The current allocation up to the length word, which is the same thing a
+		// slice of it prints. Nesting is free: the element's own thunk runs.
+		value, data, length := temp(e), temp(e), temp(e)
+		storage := llvm_type(e, under)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, CONTAINER_STORAGE)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, CONTAINER_LEN)
+		emit_format_sequence(e, info.element, data, length, inline_array = false)
+
+	case .Map:
+		emit_format_map(e, under, address)
+
 	case .Struct:
 		emit_format_struct(e, type, under, address)
 
@@ -4675,6 +4689,57 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string,
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", advanced, index)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, cursor)
 	branch(e, head)
+	place_label(e, done)
+	emit_format_literal(e, "]")
+}
+
+// design.md "Maps": "**Iteration order is unspecified.**" A printed map is
+// therefore `[key = value, ...]` in whatever order the slot walk finds, which is
+// the same walk `foreach` performs. Both halves go through their own thunks, so
+// a map of maps prints.
+@(private = "file")
+emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
+	info := type_of(e.c, under)
+	ops := container_ops_global(e, under)
+	table, cursor := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", table, address)
+	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	key_out, value_out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca ptr", key_out)
+	fmt.sbprintfln(&e.b, "  %s = alloca ptr", value_out)
+	emit_format_literal(e, "[")
+
+	head, body, done := new_label(e, "fmt.map.head"), new_label(e, "fmt.map.body"), new_label(e, "fmt.map.done")
+	place_label(e, head)
+	current, next := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", current, cursor)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
+		next, table, ops, current, key_out, value_out,
+	)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", more, next)
+	branch_if(e, more, body, done)
+
+	place_label(e, body)
+	first := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", first, current)
+	separator, entry := new_label(e, "fmt.map.sep"), new_label(e, "fmt.map.entry")
+	branch_if(e, first, entry, separator)
+	place_label(e, separator)
+	emit_format_literal(e, ", ")
+	branch(e, entry)
+	place_label(e, entry)
+	key_slot, value_slot := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", key_slot, key_out)
+	emit_format_call(e, info.key, key_slot)
+	emit_format_literal(e, " = ")
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value_slot, value_out)
+	emit_format_call(e, info.element, value_slot)
+	branch(e, head)
+
 	place_label(e, done)
 	emit_format_literal(e, "]")
 }
@@ -5186,7 +5251,31 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		out[0] = data
 
 	case .To_Runes:
-		backend_fail(e, "`to_runes` is gated to M6b and should not reach the backend")
+		// An implicit allocation: design.md's "Allocation failure" gives it nowhere
+		// to report, so failure follows the provider's policy. The helper releases
+		// its partial buffer first, so the panic path leaks nothing.
+		data, length := emit_text_parts(e, v.bound[0])
+		ops := container_ops_global(e, v.type)
+		slot, ok := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, CONTAINER_TYPE)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_string_to_runes(ptr %s, ptr %s, ptr %s, i64 %s, ptr %s)",
+			ok, slot, ops, data, length, RT_DEFAULT_ALLOCATOR,
+		)
+		failed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
+		fail, done := new_label(e, "runes.failed"), new_label(e, "ok")
+		branch_if(e, failed, fail, done)
+		fmt.sbprintfln(&e.b, "%s:", fail)
+		e.terminated = false
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
+		fmt.sbprintln(&e.b, "  unreachable")
+		e.terminated = true
+		fmt.sbprintfln(&e.b, "%s:", done)
+		e.terminated = false
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, CONTAINER_TYPE, slot)
+		out[0] = value
 
 	case .From_Runes:
 		slice := emit_expr(e, v.bound[0])
@@ -5328,6 +5417,11 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> [
 			out[0] = data
 		case .String, .String_View:
 			data, _ := emit_text_parts(e, v.bound[0])
+			out[0] = data
+		case .Dynamic_Array:
+			// The *current* allocation's first element. Nothing keeps it current.
+			value, data := emit_expr(e, v.bound[0]), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, CONTAINER_TYPE, value, CONTAINER_STORAGE)
 			out[0] = data
 		case:
 			// A pointer to a fixed array, or a `cstring_view`: the value is already
@@ -7207,7 +7301,7 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		e.terminated = false
 		name := e.names[symbol_id]
 		switch symbol.synth {
-		case .Range_Iter, .Array_Iter:
+		case .Range_Iter, .Array_Iter, .Dynamic_Iter, .Map_Iter:
 			emit_synth_iter(e, symbol, name)
 		case .Range_Next:
 			emit_synth_range_next(e, symbol, name)
@@ -7215,6 +7309,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_array_next(e, symbol, name)
 		case .Slice_Next:
 			emit_synth_slice_next(e, symbol, name)
+		case .Map_Next:
+			emit_synth_map_next(e, symbol, name)
 		case .Try_Clone:
 			emit_synth_try_clone(e, symbol, name)
 		case .Clone:
@@ -7242,6 +7338,36 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %%arg0, %d", first, iterator, source, ITER_ARRAY_DATA)
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, %d", out, iterator, first, ITER_ARRAY_INDEX)
+		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+	if symbol.synth == .Dynamic_Iter {
+		// `{ {storage, len}, 0 }`: the current allocation, viewed as a slice. The
+		// capacity and the allocator stay behind, which is what keeps the iterator
+		// a borrow rather than a second header.
+		view_type := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.results[0]).fields[ITER_ARRAY_DATA]).type)
+		storage, length := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", storage, source, CONTAINER_STORAGE)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", length, source, CONTAINER_LEN)
+		view, filled := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", view, view_type, storage, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", filled, view_type, view, length, SLICE_LEN)
+		first, out := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, view_type, filled, ITER_ARRAY_DATA)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, %d", out, iterator, first, ITER_ARRAY_INDEX)
+		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+	if symbol.synth == .Map_Iter {
+		// `{ table, 0 }`. A null table is the empty map, and the runtime's scan
+		// answers "finished" for it without touching anything.
+		table := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", table, source, CONTAINER_STORAGE)
+		first, out := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, iterator, table, ITER_MAP_TABLE)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, %d", out, iterator, first, ITER_MAP_CURSOR)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -7382,6 +7508,54 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	stepped := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", stepped, index_ptr)
+	first, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, value)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, out)
+
+	fmt.sbprintfln(&e.b, "%s:", stop_label)
+	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// The map half of `next`. design.md "Maps": "**Iteration order is
+// unspecified.**" The cursor is the runtime's own slot position, so the walk is
+// the same one a direct `foreach` performs; the protocol's single `Element` is
+// the value, and the key is reachable only through the two-name loop form.
+@(private = "file")
+emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	element := llvm_type(e, symbol.results[0])
+	iterator := llvm_type(e, symbol.params[0])
+	ops := container_ops_global(e, type_of(e.c, symbol.params[0]).key)
+
+	pair_type := optional_pair_type(element)
+	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	table_ptr, table := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", table_ptr, iterator, ITER_MAP_TABLE)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", table, table_ptr)
+	cursor_ptr, cursor := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", cursor_ptr, iterator, ITER_MAP_CURSOR)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", cursor, cursor_ptr)
+	key_out, value_out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca ptr", key_out)
+	fmt.sbprintfln(&e.b, "  %s = alloca ptr", value_out)
+	next := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
+		next, table, ops, cursor, key_out, value_out,
+	)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor_ptr)
+	finished := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", finished, next)
+	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
+	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", finished, stop_label, yield_label)
+
+	fmt.sbprintfln(&e.b, "%s:", yield_label)
+	address, value := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", address, value_out)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element, address)
 	first, out := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, value)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)

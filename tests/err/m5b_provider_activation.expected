@@ -1,9 +1,6 @@
 L0526
-@29:9
+@30:9
 this slice cannot be returned: `bytes` ends when this procedure returns
 L0536
-@47:2
+@48:2
 `held` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage, which outlives that region
-L0570
-@59:30
-`unsafe.raw_data([dynamic]E)` is not implemented in M6a

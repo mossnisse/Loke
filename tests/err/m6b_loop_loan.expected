@@ -1,0 +1,14 @@
+L0512
+@15:3
+`xs` cannot be modified here: a read-only iterator of it is still in use
+L0512
+@22:3
+L0511
+@30:3
+this write of `xs` is not compatible with the read-only iterator of it that is still in use
+L0512
+@39:3
+`m` cannot be modified here: a read-only iterator of it is still in use
+L0511
+@47:3
+this write of `m` is not compatible with the read-only iterator of it that is still in use

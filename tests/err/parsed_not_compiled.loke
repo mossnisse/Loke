@@ -1,15 +1,17 @@
-package main; import "core:fmt"; import "core:unsafe";
+package main; import "core:fmt";
+
+// m6b-plan step 6: the compile-time evaluator does not yet own managed
+// containers. A container operation has a compiler-generated body rather than a
+// written one, so asking for one during constant folding reports that there is
+// nothing to evaluate.
+BUILT :: build_it();
+
+build_it :: proc() -> int {
+	xs: [dynamic]int;
+	xs.append(1, 2, 3);
+	return len(xs);
+}
 
 main :: proc() {
-	// m6b-plan step 4: containers iterate, and the dynamic `unsafe.raw_data`
-	// overload is the handoff that still waits — it crosses the unsafe provenance
-	// boundary and lands with the conversion row itself.
-	table: map[int]int;
-	table[1] = 2;
-	foreach (key, value in table) {
-		fmt.println(key + value);
-	}
-	xs: [dynamic]u8;
-	p := unsafe.raw_data(xs);
-	fmt.println(p != nil);
+	fmt.println(BUILT);
 }

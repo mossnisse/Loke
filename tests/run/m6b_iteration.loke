@@ -50,4 +50,23 @@ main :: proc() {
 	foreach (v in empty) { steps += 1; }
 	foreach (k, v in none) { steps += 1; }
 	fmt.println(steps);
+
+	// Formatting through M6a's table, recursively. A dynamic array prints the
+	// current allocation up to its length; a map prints `[key = value]` in slot
+	// order, which is unspecified -- so only single-entry and empty maps are
+	// printed here.
+	fmt.println(xs);
+	fmt.println(empty);
+	fmt.println(none);
+	one: map[string]int;
+	one["only"] = 5;
+	fmt.println(one);
+
+	nested: [dynamic][dynamic]int;
+	inner: [dynamic]int = {1, 2};
+	nested.append(inner);
+	fmt.println(nested);
+	deep: map[int][dynamic]int;
+	deep[7] = {8, 9};
+	fmt.println(deep);
 }

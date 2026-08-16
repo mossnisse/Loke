@@ -137,6 +137,8 @@ int32_t loke_rt_v1_string_clone(
 /* Runes in, UTF-8 out. Rejects a surrogate or out-of-range scalar value. */
 int32_t loke_rt_v1_string_from_runes(
 	loke_rt_string_v1 *out, const int32_t *runes, int64_t count, const loke_rt_allocator_v1 *a);
+/* `loke_rt_v1_string_to_runes` is with the container helpers below, because its
+ * result is a `[dynamic]rune` and that type has to be declared first. */
 
 void loke_rt_v1_string_retain(uintptr_t owner_flags);
 void loke_rt_v1_string_release(uintptr_t owner_flags);
@@ -266,6 +268,14 @@ int32_t loke_rt_v1_dyn_shrink(
 /* The provider a container will allocate through, binding the default on first
  * need. A `via` declaration has already written its own. */
 void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self);
+
+/* design.md "string type conversions": `st.to_runes()` copies. `out` must be
+ * the all-zero empty container; on failure it is left exactly that way with the
+ * partial buffer released, which is the prefix cleanup an implicit allocation
+ * needs before it hands control to the allocator's failure policy. */
+int32_t loke_rt_v1_string_to_runes(
+	loke_rt_dynamic_v1 *out, const loke_rt_container_ops_v1 *ops,
+	const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a);
 
 int32_t loke_rt_v1_map_reserve(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);

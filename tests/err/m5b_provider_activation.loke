@@ -21,7 +21,8 @@ package main; import "core:fmt"; import "core:unsafe";
 // reasons the examples are there to distinguish, so activating the exact source
 // in M6 is a matter of replacing the storage, not of reopening the analysis.
 // This fixture also pins how far M6b has got: `[dynamic]u8` is a complete type
-// with a complete lifecycle, and its operations still gate one at a time.
+// with a complete lifecycle, complete operations, iteration, formatting, and the
+// unsafe conversion out of it. What is left is `mem.Arena` itself.
 
 // The root failure: a borrow of local storage cannot be returned.
 bad_view :: proc() -> []int {
@@ -47,16 +48,18 @@ bad_owner :: proc(allocator: Allocator) {
 	held = make_buffer(allocator);
 }
 
-// The M6 storage itself. Its own operations and its iteration run now; the
-// unsafe conversion out of it is the row that still gates.
-gated :: proc() {
+// The M6 storage itself, complete: operations, iteration, and the unsafe
+// conversion out of it all run. Only the local region provider is still absent.
+usable :: proc() {
 	bytes: [dynamic]u8;
 	bytes.append(1, 2);
 	fmt.println(len(bytes));
 	foreach (b in bytes) {
 		fmt.println(b);
 	}
-	fmt.println(unsafe.raw_data(bytes) != nil);
+	raw := unsafe.raw_data(bytes);
+	fmt.println(raw[0]);
+	fmt.println(bytes);
 }
 
 main :: proc() {

@@ -130,11 +130,16 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		v.type = TYPE_CSTRING_VIEW
 
 	case .To_Runes:
-		errorf(
-			k.c, v.span, "L0562",
-			"`to_runes` produces a `[dynamic]rune`, which is not implemented in M6a",
-		)
-		v.type = INVALID_TYPE
+		// design.md "string type conversions": `[dynamic]rune` by copy. The result
+		// is an owner, so its lifecycle members have to exist before it is built.
+		if !type_is_utf8_text(k.c, operand) {
+			text_operand_error(k, v, sel, operand)
+			return true
+		}
+		v.type = dynamic_array_of(k.c, TYPE_RUNE)
+		ensure_container_fields(k.c, v.type)
+		ensure_container_members(k, v.type)
+		contribute_lifecycle_members(k, v.type)
 
 	case .From_Runes:
 		v.type = INVALID_TYPE // reached only through the type-name path above
@@ -302,12 +307,11 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		case .String, .String_View, .CString_View:
 			element = TYPE_U8
 		case .Dynamic_Array:
-			errorf(
-				k.c, expr_span(bound[0]), "L0570",
-				"`unsafe.raw_data([dynamic]E)` is not implemented in M6a",
-			)
-			v.type = INVALID_TYPE
-			return
+			// design.md: the result "carries neither a length nor an owner", so it
+			// crosses the unsafe boundary exactly as a slice's does. The container
+			// may relocate its storage at any later operation and nothing here
+			// records that -- which is the point of the boundary.
+			element = info.element
 		}
 		if element == INVALID_TYPE {
 			errorf(

@@ -135,6 +135,11 @@ Prov_Event :: struct {
 	// call that hands one of this body's allocator parameters onward.
 	reset_covered: bool,
 	owner_span:    Span,
+	// `Live`: this use re-establishes the loans it names rather than merely
+	// keeping them alive. A loop head re-reads its iterable once per iteration,
+	// so an invalidation recorded in the body must not travel the back edge and
+	// make the next iteration's iterator look already dead.
+	revives:       bool,
 }
 
 // A borrowed parameter arrives holding the caller's storage, which the entry
@@ -739,7 +744,9 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	// live through the body, not only where the iterable was written.
 	if len(iterated) > 0 {
 		graph.current = head
-		prov_emit(graph, Prov_Event{kind = .Live, sources = iterated, span = expr_span(s.iterable)})
+		prov_emit(graph, Prov_Event{
+			kind = .Live, sources = iterated, span = expr_span(s.iterable), revives = true,
+		})
 	}
 
 	body := new_flow_block(graph)
@@ -1686,6 +1693,15 @@ prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, boo
 			}
 			return root, prov_extend(graph, path, prov_index_step(graph, v.indices)), true
 		case .Dynamic_Array:
+			root, path, ok := prov_place_of(graph, v.operand)
+			if !ok {
+				return NO_ROOT, nil, false
+			}
+			return root, prov_extend(graph, path, proj_wild()), true
+		case .Map:
+			// design.md "Maps": "Insertion may reallocate the map, so the index is a
+			// mutable borrow of `m` for the duration of the statement." Rehashing
+			// moves every slot, so no narrower projection would be true.
 			root, path, ok := prov_place_of(graph, v.operand)
 			if !ok {
 				return NO_ROOT, nil, false

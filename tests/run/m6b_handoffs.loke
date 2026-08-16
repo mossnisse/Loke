@@ -1,0 +1,45 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// The two conversion rows M6a left for M6b (m6b-plan step 4).
+//
+// design.md "string type conversions" lists `[dynamic]rune | copy |
+// st.to_runes()`, and "unsafe.raw_data procedure" says the result "carries
+// neither a length nor a read-only capability, and its lifetime is no longer
+// checked after conversion".
+
+main :: proc() {
+	// One, two, three, and four-byte scalar values, so the decoder is exercised
+	// past ASCII and past the basic multilingual plane.
+	text: string = "hé€𝄞";
+	rs := text.to_runes();
+	fmt.println(len(rs));
+	fmt.println(rs[0]);
+	fmt.println(rs[1]);
+	fmt.println(rs[2]);
+	fmt.println(rs[3]);
+	fmt.println(rs);
+
+	// The capacity is the exact rune count, not the byte length: `to_runes`
+	// counts before it reserves.
+	fmt.println(cap(rs) >= 4);
+
+	// Empty text allocates nothing at all and still answers a usable container.
+	blank: string = "";
+	empty := blank.to_runes();
+	fmt.println(len(empty));
+	fmt.println(cap(empty));
+
+	// Round trip.
+	back, ok := string.from_runes(rs[:]);
+	fmt.println(back);
+	fmt.println(ok);
+
+	// The unsafe boundary: the current data pointer and nothing else.
+	xs: [dynamic]u8 = {7, 8, 9};
+	p := unsafe.raw_data(xs);
+	fmt.println(p[0]);
+	fmt.println(p[2]);
+	// An unbound, never-allocated container has no storage to point at.
+	none: [dynamic]u8;
+	fmt.println(unsafe.raw_data(none) == unsafe.raw_data(none));
+}

@@ -113,11 +113,18 @@ literals, m[key] reads that never insert, the comma-ok form, key in m, inserting
 places through field and index chains, find, try_insert, remove, clear, reserve
 and shrink. Its key needs a coherent == and hash pair that is built in or
 inherent to the key's own package - a caller-local extend never enters the
-frozen operation table. Container iteration and formatting, string.to_runes and
-the dynamic raw_data overload each still report one diagnostic. Storing a borrow in
-a global, a record field or callback state, raw and unknown pointers, and
-cross-thread transfer are the documented v1 trust boundaries and are not
-checked.
+frozen operation table. Both iterate - a map two-name loop binds the key and the
+value, and map iteration order is unspecified - and both contribute the same
+Element/Iterator/iter/next members a user type declares by hand, so generic and
+direct iteration agree. A loop holds a whole-container loan for its entire
+duration, including across the back edge, so nothing inside the body may write
+to, grow, or end what it walks. Both format recursively through the coherent
+formatter table, string.to_runes builds a [dynamic]rune, and
+unsafe.raw_data([dynamic]E) exposes the current data pointer with no length and
+no lifetime. mem.Arena and mem.Scratch, and compile-time evaluation of a managed
+container, are what remain. Storing a borrow in a global, a record field or
+callback state, raw and unknown pointers, and cross-thread transfer are the
+documented v1 trust boundaries and are not checked.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
 directly in it as one package.

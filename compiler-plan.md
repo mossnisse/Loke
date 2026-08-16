@@ -558,7 +558,7 @@ addresses for one syntax: the inserting entry, and the existing slot or a zeroed
 temporary. `in` became a real binary operator (`L0587`) rather than an
 unimplemented token.
 
-M6b step 4 is half implemented: container iteration. A dynamic array reuses the
+M6b step 4 is implemented: container iteration. A dynamic array reuses the
 existing index-loop lowering with the header's length word as its bound; a map
 walks slots through one runtime `map_scan` that hands back a cursor, so the
 controls, seed, and slot count stay entirely inside the C helper and iteration
@@ -572,15 +572,51 @@ imported `core:fmt` without formatting anything emitted an empty `any_view`
 struct, because that type's two members are installed on first *use* and
 `core:fmt`'s own body was emitted before any use existed.
 
-One gap is open and is not papered over. A loop's whole-container loan is
-created and does end every borrow correctly *after* the loop, and a direct write
-inside the body — `foreach (v in xs) { xs[0] = 5; }` — is rejected. A mutating
-*method* call on the same container inside the body — `xs.append(v)`,
-`xs.clear()` — is not yet rejected, because the invalidating access an `inout`
-receiver records behaves differently from a write against a loan that is live
-only through the loop's back-edge. Formatting, `string.to_runes`, and the
-dynamic `unsafe.raw_data` overload are also still outstanding from step 4, and
-steps 5 and 6 have not started.
+The loop-loan gap recorded here earlier is closed. A direct write inside the
+body was rejected while a mutating *method* call was not, and the asymmetry was
+real rather than cosmetic: an invalidating access marks every overlapping loan
+dead, that bit is a forward fixed point, and a loop's back edge carried it from
+the body all the way round to the body's own *entry* — so by the time the check
+ran, the iterator loan already looked dead. A write never sets the bit, which is
+exactly why `xs[0] = 5` was caught and `xs.append(v)` was not. The fix says what
+is actually true: the loop head re-reads its iterable every iteration, so the
+`Live` event emitted there is marked `revives` and re-establishes the loans it
+names. Nothing else emits that marker, and an invalidation followed by a use
+*within* one iteration is still caught by the same in-block replay as before.
+`tests/err/m6b_loop_loan` pins all five forms.
+
+The same investigation turned up a second real hole: `prov_place_of` had no
+`.Map` arm, so `m[key] = v` recorded only the operand *read* rather than a write
+of the container. It was caught anyway — as "this read of `m`" — but for the
+wrong reason, and inside a loop body it was not caught at all. Insertion may
+rehash, so the projection is the whole map, exactly as a dynamic array's is.
+
+Both containers now contribute `Element`, `Iterator`, `iter` and `next`. A
+dynamic array's iterator deliberately holds the `{data, len}` view rather than
+the container header: an iterator is a borrow, and a managed field inside one
+would be followed by a drop with no business running. That also makes
+`Slice_Next` its `next` verbatim. A map's iterator is `{table, cursor}` over the
+same runtime slot scan the direct loop uses, and its single `Element` is the
+value — the key is reachable only through the two-name loop form, which is
+direct iteration rather than the protocol.
+
+Formatting is the slice formatter for a dynamic array and a `[key = value]` slot
+walk for a map, both recursive through M6a's table, so a map of dynamic arrays
+prints. `string.to_runes` counts before it reserves, so the capacity is the exact
+rune count rather than a fourfold over-allocation on ASCII, and releases its
+partial buffer before handing control to the allocator's failure policy.
+`unsafe.raw_data([dynamic]E)` is one `extractvalue` — the current allocation's
+first element, with nothing keeping it current, which is the whole point of the
+boundary.
+
+One unrelated defect was found and *not* fixed here, because it is not M6b's:
+an untyped composite literal cannot be passed to any overload-resolved call, so
+`b.set({1, 2})` fails where the free `f({1, 2})` works. `collect_call_arguments`
+checks every written argument once with no destination type — correct for untyped
+constants, wrong for a composite literal, which has no untyped form to fall back
+on. It is filed separately.
+
+Steps 5 and 6 have not started.
 
 ---
 

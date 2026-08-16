@@ -989,3 +989,47 @@ uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed) 
 void loke_rt_v1_container_fault(const char *what) {
 	loke_rt_v1_panic(what);
 }
+
+/* ------------------------------------------------------------- to_runes -- */
+
+/* design.md "string type conversions": `[dynamic]rune` by copy. Two passes,
+ * because the exact count is cheap to compute and an upper bound of one rune per
+ * byte would over-allocate fourfold on ASCII.
+ *
+ * `rune` is trivial, so "prefix cleanup" is exactly releasing the buffer: there
+ * are no partly built elements to destroy. The decoder cannot fail on a valid
+ * `string`, which every Loke text already is. */
+int32_t loke_rt_v1_string_to_runes(
+	loke_rt_dynamic_v1 *out, const loke_rt_container_ops_v1 *ops,
+	const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a) {
+	int64_t count, offset, written;
+	int32_t *slots;
+
+	out->data = 0;
+	out->len = 0;
+	out->cap = 0;
+	out->allocator = a;
+	count = loke_rt_v1_rune_count(data, len);
+	if (count == 0) {
+		return 1;
+	}
+	if (!loke_rt_v1_dyn_reserve(out, ops, count)) {
+		loke_rt_v1_dyn_drop(out, ops);
+		return 0;
+	}
+	slots = (int32_t *)out->data;
+	offset = 0;
+	written = 0;
+	while (offset < len && written < count) {
+		int32_t decoded = 0;
+		int64_t used = loke_rt_v1_rune_at(data, len, offset, &decoded);
+		if (used <= 0) {
+			break;
+		}
+		slots[written] = decoded;
+		written += 1;
+		offset += used;
+	}
+	out->len = written;
+	return 1;
+}
