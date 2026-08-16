@@ -140,7 +140,7 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument) -> ([]Arg_Info, bo
 		if arg.name.text != "" {
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
-		k.place_position = arg.mode == .Inout
+		k.place_position, k.insert_position = arg.mode == .Inout, arg.mode == .Inout
 		info.type = check_single_expr(k, arg.value)
 		k.place_position = false
 		if info.type == INVALID_TYPE {

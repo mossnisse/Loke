@@ -273,6 +273,20 @@ int32_t loke_rt_v1_map_clone(
 	loke_rt_map_v1 *out, const loke_rt_map_v1 *src,
 	const loke_rt_container_ops_v1 *ops, const loke_rt_allocator_v1 *a);
 void loke_rt_v1_map_drop(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops);
+/* design.md "Maps". `find` never inserts and answers NULL for a missing key;
+ * `entry` is the inserting place behind `m[key] = v` and every field or index
+ * chain rooted in one, and answers NULL only when the insertion could not
+ * allocate. `remove` moves the stored value out and drops the key. */
+void *loke_rt_v1_map_find(
+	const loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key);
+void *loke_rt_v1_map_entry(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, int32_t *inserted);
+int32_t loke_rt_v1_map_remove(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, void *out);
+void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops);
+int32_t loke_rt_v1_map_shrink(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);
+void loke_rt_v1_map_bind(loke_rt_map_v1 *self);
 
 /* Checked container arithmetic, shared by the generated code and the helpers
  * above: a source `int` count is signed and its overflow is defined to wrap, and
@@ -285,6 +299,11 @@ int32_t loke_rt_v1_checked_bytes(int64_t count, uint64_t size, uint64_t *out);
 /* An invalid index, a negative count, or a `len > cap` relationship is an
  * ordinary program fault, not an allocator failure. */
 void loke_rt_v1_container_fault(const char *what);
+
+/* The byte-wise half of `hash`. design.md's catalogue promises `string` and
+ * `string_view` satisfy `Hashable`, and the mix is the same FNV-1a step the
+ * compiler folds over a scalar, so the compile-time and runtime answers agree. */
+uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed);
 
 /* ------------------------------------------------------------ formatting -- */
 

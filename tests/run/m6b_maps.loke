@@ -1,0 +1,127 @@
+package main; import "core:fmt";
+
+// Maps end to end (m6b-plan step 3).
+//
+// design.md "Maps": one syntax with two behaviours chosen by position. A read
+// never inserts and answers the zero value for a missing key; the same syntax as
+// an assignment target inserts, and so does every field or index chain rooted in
+// one. `find` is the non-inserting lookup, and `&m[key]` deliberately is not.
+
+Test :: struct { x: int, y: int }
+
+// design.md: "For a user-defined key, both operations must be inherent
+// implementations belonging to the key type."
+Id :: struct { a: int, b: int }
+
+impl Id {
+	hash :: proc(self, seed: uint) -> uint {
+		return hash(self.a, hash(self.b, seed));
+	}
+	same :: operator(==) proc(x, y: Id) -> bool {
+		return x.a == y.a && x.b == y.b;
+	}
+}
+
+main :: proc() {
+	// A literal writes each entry `key = value`.
+	m := map[string]Test{
+		"Bob" = { 0, 0 },
+		"Chloe" = { 1, 1 },
+	};
+	fmt.println(len(m));
+
+	// design.md's own example, verbatim in behaviour.
+	m["Bob"] = Test{3, 3};
+	fmt.println(m["Bob"].x);
+	m["Chloe"].x = 0;
+	fmt.println(m["Chloe"].x);
+	m["Dana"].x = 7;
+	fmt.println(len(m));
+	fmt.println(m["Dana"].x);
+	fmt.println(m["Dana"].y);
+
+	// A read of a missing key is the zero value and does not insert.
+	fmt.println(m["nobody"].x);
+	fmt.println(len(m));
+
+	// The three membership forms.
+	entry, ok := m["Bob"];
+	fmt.println(entry.x);
+	fmt.println(ok);
+	_, missing := m["nobody"];
+	fmt.println(missing);
+	fmt.println("Chloe" in m);
+	fmt.println("nobody" in m);
+
+	// `find` never inserts and hands back a pointer to the stored value.
+	slot, found := m.find("Chloe");
+	fmt.println(found);
+	if (found) {
+		slot^ = Test{9, 9};
+	}
+	fmt.println(m["Chloe"].y);
+	_, absent := m.find("nobody");
+	fmt.println(absent);
+	fmt.println(len(m));
+
+	// Removal moves the stored value out and drops the key.
+	taken, removed := m.remove("Bob");
+	fmt.println(taken.x);
+	fmt.println(removed);
+	_, again := m.remove("Bob");
+	fmt.println(again);
+	fmt.println(len(m));
+
+	// Capacity and clearing.
+	counts: map[string]int;
+	counts.reserve(64);
+	fmt.println(cap(counts) >= 64);
+	counts["a"] = 1;
+	counts["a"] += 5;
+	fmt.println(counts["a"]);
+	fmt.println(counts.try_insert("b", 2) == nil);
+	fmt.println(counts["b"]);
+	counts.shrink();
+	fmt.println(len(counts));
+	fmt.println(cap(counts) >= 2);
+	counts.clear();
+	fmt.println(len(counts));
+
+	// A user key with an inherent coherent pair.
+	ids: map[Id]int;
+	ids[Id{1, 2}] = 7;
+	ids[Id{3, 4}] = 8;
+	fmt.println(ids[Id{1, 2}]);
+	fmt.println(ids[Id{3, 4}]);
+	fmt.println(Id{9, 9} in ids);
+	fmt.println(len(ids));
+
+	// Managed keys and values: both halves are cloned on insertion and
+	// destroyed exactly once by `clear` or by the map's own drop.
+	names: map[string]string;
+	names["one"] = "first";
+	names["two"] = "second";
+	names["one"] = "replaced";
+	fmt.println(names["one"]);
+	fmt.println(len(names));
+	names.clear();
+	fmt.println(len(names));
+
+	// Growth past the load threshold, so the table rehashes several times.
+	wide: map[int]int;
+	for (i := 0; i < 200; i += 1) {
+		wide[i] = i * 2;
+	}
+	fmt.println(len(wide));
+	fmt.println(wide[7]);
+	fmt.println(wide[199]);
+	total := 0;
+	for (i := 0; i < 200; i += 2) {
+		_, gone := wide.remove(i);
+		if (gone) { total += 1; }
+	}
+	fmt.println(total);
+	fmt.println(len(wide));
+	fmt.println(wide[3]);
+	fmt.println(0 in wide);
+}

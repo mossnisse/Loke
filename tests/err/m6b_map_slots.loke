@@ -1,0 +1,43 @@
+package main; import "core:fmt";
+
+// Slot invalidation (m6b-plan decision "Container invalidation").
+//
+// design.md: "Insertion may reallocate the map, so the index is a mutable borrow
+// of `m` for the duration of the statement", and `find` hands back a pointer into
+// the current table. Every insertion, removal, clear, shrink, drop, and
+// replacement therefore ends every slot pointer of that map.
+
+insert :: proc() {
+	m := map[string]int{"a" = 1};
+	slot, ok := m.find("a");
+	m["b"] = 2;
+	if (ok) { fmt.println(slot^); }
+}
+
+removal :: proc() {
+	m := map[string]int{"a" = 1};
+	slot, ok := m.find("a");
+	_, _ = m.remove("a");
+	if (ok) { fmt.println(slot^); }
+}
+
+rehash :: proc() {
+	m := map[string]int{"a" = 1};
+	slot, ok := m.find("a");
+	m.shrink();
+	if (ok) { fmt.println(slot^); }
+}
+
+release :: proc() {
+	m := map[string]int{"a" = 1};
+	slot, ok := m.find("a");
+	drop(m);
+	if (ok) { fmt.println(slot^); }
+}
+
+main :: proc() {
+	insert();
+	removal();
+	rehash();
+	release();
+}

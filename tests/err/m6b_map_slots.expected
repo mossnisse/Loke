@@ -1,0 +1,11 @@
+L0511
+@13:2
+this read of `m` is not compatible with the mutable borrow of it that is still in use
+L0512
+@20:9
+`m` cannot be modified here: a mutable borrow of it is still in use
+L0512
+@27:2
+L0512
+@34:2
+`m` cannot be dropped here: a mutable borrow of it is still in use

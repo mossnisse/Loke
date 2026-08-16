@@ -108,8 +108,13 @@ slicing, len and cap, append with values and ..slice spreads, insert, pop,
 remove, remove_unordered, clear, resize, reserve, shrink, and the try_ forms
 that return an error instead of applying the allocator's policy. Every view and
 element pointer it hands out ends at the first operation that may move its
-storage. Maps, container iteration and formatting, string.to_runes and the
-dynamic raw_data overload each still report one diagnostic. Storing a borrow in
+storage. A map runs an open-addressed table with an opaque per-table seed:
+literals, m[key] reads that never insert, the comma-ok form, key in m, inserting
+places through field and index chains, find, try_insert, remove, clear, reserve
+and shrink. Its key needs a coherent == and hash pair that is built in or
+inherent to the key's own package - a caller-local extend never enters the
+frozen operation table. Container iteration and formatting, string.to_runes and
+the dynamic raw_data overload each still report one diagnostic. Storing a borrow in
 a global, a record field or callback state, raw and unknown pointers, and
 cross-thread transfer are the documented v1 trust boundaries and are not
 checked.

@@ -1,0 +1,3 @@
+L0586
+@21:2
+`Id` cannot be a map key: it needs an inherent `==` and `hash(value, seed: uint) -> uint` pair in its own package

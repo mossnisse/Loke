@@ -533,6 +533,31 @@ borrow of it — so the C-side handling is defence for callers the language does
 not yet have, not a path source code can reach. Diagnostics `L0386` (a `cap`
 whose operand is not a container) joins the range already in use.
 
+M6b step 3 is implemented: maps. `runtime/container.c` holds one open-addressed
+block per table — header, control bytes, keys, values — with linear probing,
+explicit tombstones, power-of-two slot counts, a seven-eighths load ceiling, and
+an opaque per-table seed derived from the block address and a running counter, so
+iteration order is unspecified by construction rather than by promise. Growth and
+`shrink` both rebuild, which also clears every tombstone.
+
+The coherence rule needed a new lookup rather than the ordinary interface query:
+`map_key_policy` accepts a built-in `Hashable` conformance or a pair of *inherent*
+members, and never consults `Package.extensions`. It is asked at `gate_type`, so
+one map reports once however many operations it has, and `L0586` is its
+diagnostic. `string` and `string_view` became hashable in the same step — the
+catalogue always listed them — with a byte-wise FNV-1a that the constant folder
+and `loke_rt_v1_hash_bytes` spell identically.
+
+The place/read split needed one new checker fact. `k.place_position` already
+existed for `inout` overload selection, but design.md makes `&m[key]` a place
+position that deliberately does *not* insert, so `k.insert_position` was added
+beside it and only the writing positions set both. Place-ness now also propagates
+through a selector's operand, which is what makes design.md's `m["Dana"].x = 7`
+insert while `fmt.println(m["nobody"].x)` does not — and the backend has two
+addresses for one syntax: the inserting entry, and the existing slot or a zeroed
+temporary. `in` became a real binary operator (`L0587`) rather than an
+unimplemented token.
+
 ---
 
 ## D. Out of scope for v1

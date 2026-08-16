@@ -1,0 +1,6 @@
+// The key type's own package, which declares neither operation.
+@(public)
+package keys;
+
+@(public)
+Id :: struct { @(public) v: int }

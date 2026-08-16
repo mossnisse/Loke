@@ -1,0 +1,6 @@
+L0586
+@27:2
+`Bare` cannot be a map key: it needs an inherent `==` and `hash(value, seed: uint) -> uint` pair in its own package
+L0586
+@28:2
+`Half` cannot be a map key: it has an inherent `hash` but no inherent `==`

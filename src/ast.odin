@@ -142,6 +142,12 @@ Expr_Index :: struct {
 	// A user `operator([])`: the arguments in parameter order, receiver first.
 	// The resolution names the overload; an `inout` result makes this a place.
 	bound:      []Expr,
+	// design.md "Maps": `m[key]` in a *place* position inserts the zero value
+	// when the key is absent, while a read of the same syntax does not. Which one
+	// this occurrence is comes from its position, so the checker records it.
+	map_inserts: bool,
+	// A comma-ok destination, which gives `m[key]` its `(V, bool)` shape.
+	map_optional: bool,
 }
 
 // `x[lo:hi]`; either endpoint may be nil.

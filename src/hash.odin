@@ -32,10 +32,90 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	     .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc,
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune:
 		return true
+	case .String, .String_View, .Untyped_String:
+		// design.md's catalogue lists both text carriers. Their `==` is already
+		// byte-wise, so a byte-wise hash is the coherent partner (m6b-plan step 3).
+		return true
 	case .Array:
 		return type_is_hashable(c, info.element)
 	}
 	return false
+}
+
+// design.md "Maps": a key needs "a **coherent** `==` and
+// `hash(value, seed: uint) -> uint`", and for a user-defined key "both
+// operations must be inherent implementations belonging to the key type;
+// caller-local extensions do not qualify even if an ordinary interface check in
+// that extension's package would succeed".
+//
+// So this asks only two questions: does the compiler supply the pair, or does
+// the key type's *own* package declare both? An `extend` block never enters the
+// answer, which is what makes one `map[K]V` use one policy in every package it
+// travels through.
+Key_Policy :: struct {
+	builtin:   bool,
+	hash:      Symbol_Id,
+	equal:     Symbol_Id,
+	// Why the type does not qualify, for the diagnostic. Empty when it does.
+	reason:    string,
+}
+
+map_key_policy :: proc(k: ^Checker, key: Type_Id) -> Key_Policy {
+	if key == INVALID_TYPE {
+		return Key_Policy{reason = "is not a type"}
+	}
+	if type_is_hashable(k.c, key) {
+		return Key_Policy{builtin = true, hash = INVALID_SYMBOL, equal = INVALID_SYMBOL}
+	}
+	hash := inherent_member_named(k, key, "hash")
+	equal := inherent_operator_named(k, key, "==")
+	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
+		return Key_Policy{
+			hash = INVALID_SYMBOL, equal = INVALID_SYMBOL,
+			reason = "needs an inherent `==` and `hash(value, seed: uint) -> uint` pair in its own package",
+		}
+	}
+	if hash == INVALID_SYMBOL {
+		return Key_Policy{hash = INVALID_SYMBOL, equal = INVALID_SYMBOL, reason = "has an inherent `==` but no inherent `hash`"}
+	}
+	if equal == INVALID_SYMBOL {
+		return Key_Policy{hash = INVALID_SYMBOL, equal = INVALID_SYMBOL, reason = "has an inherent `hash` but no inherent `==`"}
+	}
+	return Key_Policy{hash = hash, equal = equal}
+}
+
+// An `impl` member of the type's own package, never an `extend` one. `members`
+// on the type is exactly the inherent set (`src/impl.odin` keeps extensions in
+// the extending package instead), so the lookup is direct.
+@(private = "file")
+inherent_member_named :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
+	info := type_of(k.c, type_underlying(k.c, type))
+	if info == nil {
+		return INVALID_SYMBOL
+	}
+	wanted := intern_identifier(k.c, name)
+	for member in info.members {
+		sym := symbol_of(k.c, member)
+		if sym != nil && sym.name == wanted && sym.kind == .Proc && sym.operator == "" {
+			return member
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+@(private = "file")
+inherent_operator_named :: proc(k: ^Checker, type: Type_Id, symbol_text: string) -> Symbol_Id {
+	info := type_of(k.c, type_underlying(k.c, type))
+	if info == nil {
+		return INVALID_SYMBOL
+	}
+	for member in info.members {
+		sym := symbol_of(k.c, member)
+		if sym != nil && sym.operator == symbol_text {
+			return member
+		}
+	}
+	return INVALID_SYMBOL
 }
 
 // ------------------------------------------------------------- checking --
@@ -114,6 +194,15 @@ hash_scalar_bits :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> u64
 hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64) -> u64 {
 	under := type_underlying(c, type)
 	info := type_of(c, under)
+	#partial switch type_kind(c, under) {
+	case .String, .String_View, .Untyped_String:
+		// Byte-wise, exactly as `loke_rt_v1_hash_bytes` does it at run time.
+		result := seed
+		for index in 0 ..< len(value.text) {
+			result = (result ~ u64(value.text[index])) * HASH_MULTIPLIER
+		}
+		return result
+	}
 	if info != nil && info.kind == .Array {
 		result := seed
 		for index in 0 ..< int(info.count) {

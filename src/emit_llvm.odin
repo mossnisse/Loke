@@ -515,6 +515,13 @@ emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_checked_add(i64, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_checked_bytes(i64, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_container_fault(ptr)")
+	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_hash_bytes(ptr, i64, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_bind(ptr)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_map_find(ptr, ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_map_entry(ptr, ptr, ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_remove(ptr, ptr, ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_clear(ptr, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_shrink(ptr, ptr, i64)")
 }
 
 // The operation table for one concrete container type, made once and reused.
@@ -540,6 +547,8 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 	if key != INVALID_TYPE {
 		key_drop = container_drop_thunk(e, key)
 		key_clone = container_clone_thunk(e, key)
+		key_hash = container_hash_thunk(e, key)
+		key_equal = container_equal_thunk(e, key)
 		key_size, key_align = type_size(e.c, key), type_align(e.c, key)
 	}
 	// `{` is a directive to core:fmt, so the row is concatenated rather than
@@ -611,6 +620,107 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	e.b, e.terminated = saved_body, saved_terminated
 	append(&e.pending_thunks, text)
 	return name
+}
+
+// m6b-plan decision "Map algorithm and coherence": the concrete operation table
+// *freezes* the key's `==`/`hash` selection, so a map that travels between
+// packages keeps one policy. The checker has already rejected a key with no
+// coherent inherent pair, so this only has to emit whichever pair it settled on.
+@(private = "file")
+container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
+	name := fmt.aprintf("@loke.chash.%d", int(type_underlying(e.c, key)))
+	if e.container_thunks[name] {
+		return name
+	}
+	e.container_thunks[name] = true
+	saved_body, saved_terminated := e.b, e.terminated
+	e.b, e.terminated = strings.builder_make(), false
+	fmt.sbprintf(&e.b, "define private i64 %s(ptr %%p, i64 %%seed)", name)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	value := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%p", value, llvm_type(e, key))
+	out := ""
+	if hook := key_policy_member(e.c, key, false); hook != INVALID_SYMBOL {
+		out = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i64 %s(%s %s, i64 %%seed)",
+			out, e.names[hook], llvm_type(e, key), value,
+		)
+	} else {
+		out = emit_hash_value(e, key, value, "%seed")
+	}
+	fmt.sbprintfln(&e.b, "  ret i64 %s", out)
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+	text := strings.to_string(e.b)
+	e.b, e.terminated = saved_body, saved_terminated
+	append(&e.pending_thunks, text)
+	return name
+}
+
+@(private = "file")
+container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
+	name := fmt.aprintf("@loke.cequal.%d", int(type_underlying(e.c, key)))
+	if e.container_thunks[name] {
+		return name
+	}
+	e.container_thunks[name] = true
+	saved_body, saved_terminated := e.b, e.terminated
+	e.b, e.terminated = strings.builder_make(), false
+	fmt.sbprintf(&e.b, "define private i32 %s(ptr %%a, ptr %%b)", name)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	llvm := llvm_type(e, key)
+	left, right := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%a", left, llvm)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%b", right, llvm)
+	same := ""
+	if hook := key_policy_member(e.c, key, true); hook != INVALID_SYMBOL {
+		same = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i1 %s(%s %s, %s %s)",
+			same, e.names[hook], llvm, left, llvm, right,
+		)
+	} else {
+		same = emit_compare(e, .Eq_Eq, key, left, right)
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, same)
+	fmt.sbprintfln(&e.b, "  ret i32 %s", out)
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+	text := strings.to_string(e.b)
+	e.b, e.terminated = saved_body, saved_terminated
+	append(&e.pending_thunks, text)
+	return name
+}
+
+// The key type's own inherent `hash` or `operator(==)`, or INVALID_SYMBOL when
+// the compiler supplies the pair. An `extend` member is never one of these.
+@(private = "file")
+key_policy_member :: proc(c: ^Compiler, key: Type_Id, want_equal: bool) -> Symbol_Id {
+	if type_is_hashable(c, key) {
+		return INVALID_SYMBOL
+	}
+	info := type_of(c, type_underlying(c, key))
+	if info == nil {
+		return INVALID_SYMBOL
+	}
+	for member in info.members {
+		sym := symbol_of(c, member)
+		if sym == nil {
+			continue
+		}
+		if want_equal && sym.operator == "==" {
+			return member
+		}
+		if !want_equal && sym.operator == "" && sym.kind == .Proc &&
+		   identifier_text(c, sym.name) == "hash" {
+			return member
+		}
+	}
+	return INVALID_SYMBOL
 }
 
 // Deep-copy the value at `src` into the storage at `out`, answering an `i1` that
@@ -2977,6 +3087,16 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		if type_is_dynamic_array(e.c, expr_base(v.operand).type) {
 			return emit_dynamic_element_address(e, v)
 		}
+		if type_is_map(e.c, expr_base(v.operand).type) {
+			// design.md: only a real place position inserts. A read reached through
+			// a field chain — `m[key].x` as a value — still needs an address, and it
+			// is the existing slot's or a zeroed temporary's.
+			if v.map_inserts {
+				return emit_map_place(e, v)
+			}
+			address, _ := emit_map_read_address(e, v)
+			return address
+		}
 		// design.md "Multi-pointers": "Indexing without bounds checking." There is
 		// no length to check against, which is exactly what the type says.
 		if operand_info := type_of(e.c, type_underlying(e.c, expr_base(v.operand).type));
@@ -3346,6 +3466,12 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Selector, ^Expr_Index:
+		// design.md "Maps": a read does not insert, and a missing key "returns the
+		// zero value". The address of that zero is a temporary of this frame.
+		if index, is_index := expr.(^Expr_Index); is_index && !index.map_inserts &&
+		   index.operand != nil && type_is_map(e.c, expr_base(index.operand).type) {
+			return emit_map_lookup(e, index)[0]
+		}
 		// A user `operator([])`. A value overload produces the element; an `inout`
 		// overload produces its address, which is then read through.
 		if index, is_index := expr.(^Expr_Index); is_index && base.resolution.kind == .User_Operator {
@@ -3460,6 +3586,10 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 		emit_dynamic_literal_into(e, v, address, info.element)
 		return
 	}
+	if info.kind == .Map {
+		emit_map_literal_into(e, v, address, info.key, info.element)
+		return
+	}
 	for element, index in v.elements {
 		slot := index
 		element_type := info.element
@@ -3539,6 +3669,66 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 	}
 }
 
+// `map[K]V{ key = value, ... }` over the header this expression has already
+// zeroed. Each entry is inserted as soon as it is evaluated, so the map itself
+// owns what has been built; the same unwind window the dynamic-array literal has
+// applies here for the same reason.
+@(private = "file")
+emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, key, element: Type_Id) {
+	if len(v.elements) == 0 {
+		return
+	}
+	ops := container_ops_global(e, v.type)
+	if v.via != nil {
+		provider, slot := emit_expr(e, v.via), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+			slot, CONTAINER_TYPE, address, CONTAINER_ALLOC,
+		)
+		fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", provider, slot)
+	}
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_map_bind(ptr %s)", address)
+	reserved := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i32 @loke_rt_v1_map_reserve(ptr %s, ptr %s, i64 %d)",
+		reserved, address, ops, len(v.elements),
+	)
+	emit_container_policy_failure(e, address, reserved)
+
+	for written, index in v.elements {
+		key_slot := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", key_slot, llvm_type(e, key))
+		store(e, key, emit_expr(e, written.key), key_slot)
+		value := emit_expr(e, written.value)
+		if index < len(v.element_clones) && v.element_clones[index] {
+			value = emit_clone_value(e, element, value)
+		}
+		place := emit_map_entry(e, ops, address, key_slot)
+		emit_drop_place(e, key, key_slot)
+		missing := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+		fail_label, store_label, done_label :=
+			new_label(e, "mlit.fail"), new_label(e, "mlit.store"), new_label(e, "mlit.done")
+		branch_if(e, missing, fail_label, store_label)
+		place_label(e, fail_label)
+		provider, slot := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+			slot, CONTAINER_TYPE, address, CONTAINER_ALLOC,
+		)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", provider, slot)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+		branch(e, done_label)
+		place_label(e, store_label)
+		// A duplicate key replaces its value, so whatever the slot held goes first.
+		emit_drop_place(e, element, place)
+		store(e, element, value, place)
+		branch(e, done_label)
+		place_label(e, done_label)
+		e.terminated = false
+	}
+}
+
 // A container operation with no result to report through applies the provider's
 // own failure policy, exactly as an implicit allocation does.
 @(private = "file")
@@ -3606,6 +3796,8 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	#partial switch v.op {
 	case .And_And, .Or_Or:
 		return emit_short_circuit(e, v)
+	case .In:
+		return emit_map_membership(e, v)
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		operand_type := expr_base(v.lhs).type
 		lhs := emit_expr(e, v.lhs)
@@ -3784,7 +3976,6 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 	return out
 }
 
-@(private = "file")
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
 	// design.md: "`string` and `string_view` values are comparable and ordered,
 	// lexically byte-wise." One runtime call answers all six operators.
@@ -5285,7 +5476,6 @@ emit_hash :: proc(e: ^Emitter, value_expr, seed_expr: Expr) -> string {
 	return emit_hash_value(e, expr_base(value_expr).type, value, seed)
 }
 
-@(private = "file")
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
 	under := type_underlying(e.c, type)
 	info := type_of(e.c, under)
@@ -5297,6 +5487,19 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 			current = emit_hash_value(e, info.element, element, current)
 		}
 		return current
+	}
+	// design.md: `string` and `string_view` hash byte-wise, which is the coherent
+	// partner of the byte-wise `==` they already have.
+	if type_is_utf8_text(e.c, under) {
+		storage := llvm_type(e, under)
+		data, length, out := temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, STRING_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, STRING_LEN)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)",
+			out, data, length, seed,
+		)
+		return out
 	}
 	bits := emit_hash_bits(e, under, value)
 	mixed := temp(e)
@@ -5419,6 +5622,14 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		}
 		if len(v.result_types) > 1 {
 			return emit_multi_call(e, v)
+		}
+		single := make([]string, 1)
+		single[0] = emit_expr(e, expr)
+		return single
+	case ^Expr_Index:
+		// `elem, ok := m[key]`, the comma-ok form of a non-inserting read.
+		if v.operand != nil && type_is_map(e.c, expr_base(v.operand).type) && !v.map_inserts {
+			return emit_map_lookup(e, v)
 		}
 		single := make([]string, 1)
 		single[0] = emit_expr(e, expr)
@@ -7196,6 +7407,93 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
 		)
 
+	case .Map_Find:
+		// design.md: "It returns a pointer to the existing value and `true`, or
+		// `nil` and `false`. It does not insert."
+		slot := value_storage(e, container_key(e.c, container), "%arg1")
+		found, ok := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %%arg0, ptr %s, ptr %s)", found, ops, slot,
+		)
+		emit_drop_place(e, container_key(e.c, container), slot)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", ok, found)
+		pair, first, built := optional_pair_type("ptr"), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, 0", first, pair, found)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, 1", built, pair, first, ok)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, built)
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Map_Try_Insert:
+		key_type := container_key(e.c, container)
+		key_slot := value_storage(e, key_type, "%arg1")
+		place := emit_map_entry(e, ops, "%arg0", key_slot)
+		emit_drop_place(e, key_type, key_slot)
+		missing, ok_label, done_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.done")
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+		branch_if(e, missing, done_label, ok_label)
+		place_label(e, ok_label)
+		// The slot's previous value -- the freshly written zero, or the entry that
+		// was already there -- is destroyed before the new one is published.
+		emit_drop_place(e, element, place)
+		// The argument is a borrowed copy the caller still owns, so a managed value
+		// is duplicated into the slot rather than aliased.
+		stored := "%arg2"
+		if type_is_managed(e.c, element) {
+			stored = emit_clone_value(e, element, stored)
+		}
+		store(e, element, stored, place)
+		branch(e, done_label)
+		place_label(e, done_label)
+		e.terminated = false
+		failed_insert, error := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed_insert, place)
+		fmt.sbprintfln(
+			&e.b, "  %s = zext i1 %s to %s", error, failed_insert, llvm_type(e, TYPE_ALLOCATOR_ERROR),
+		)
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, error)
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Map_Remove:
+		key_type := container_key(e.c, container)
+		key_slot := value_storage(e, key_type, "%arg1")
+		out, found := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", out, element_llvm)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_map_remove(ptr %%arg0, ptr %s, ptr %s, ptr %s)",
+			found, ops, key_slot, out,
+		)
+		emit_drop_place(e, key_type, key_slot)
+		value, ok := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
+		pair, first, built := optional_pair_type(element_llvm), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, element_llvm, value)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, 1", built, pair, first, ok)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, built)
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Map_Clear:
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_map_clear(ptr %%arg0, ptr %s)", ops)
+		fmt.sbprintln(&e.b, "  ret void")
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Map_Reserve, .Map_Try_Reserve:
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_map_bind(ptr %%arg0)")
+		status = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_map_reserve(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
+		)
+
+	case .Map_Shrink, .Map_Try_Shrink:
+		status = temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_map_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
+		)
+
 	case .None:
 		backend_fail(e, "a contributed container member has no operation")
 		fmt.sbprintln(&e.b, "  ret void")
@@ -7229,6 +7527,122 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	e.terminated = false
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
+}
+
+// `key in m`: one probe, no insertion and no value.
+@(private = "file")
+emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
+	container := expr_base(v.rhs).type
+	key := container_key(e.c, container)
+	ops := container_ops_global(e, container)
+	header := emit_address(e, v.rhs)
+	value := emit_expr(e, v.lhs)
+	key_slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", key_slot, llvm_type(e, key))
+	store(e, key, value, key_slot)
+	found, out := temp(e), temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
+	)
+	emit_drop_place(e, key, key_slot)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", out, found)
+	return out
+}
+
+// `m[key]` in a place position. design.md: "If the key is absent, the zero value
+// of the element type is inserted first and the resulting slot is the location."
+// The insertion allocates, and a place has nowhere to report a failure, so the
+// provider's own policy decides.
+@(private = "file")
+emit_map_place :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
+	container := expr_base(v.operand).type
+	ops := container_ops_global(e, container)
+	header := emit_address(e, v.operand)
+	key_slot := emit_map_key_slot(e, v, container)
+	place := emit_map_entry(e, ops, header, key_slot)
+	emit_drop_place(e, container_key(e.c, container), key_slot)
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, place)
+	fail_label, done_label := new_label(e, "mplace.fail"), new_label(e, "mplace.done")
+	branch_if(e, failed, fail_label, done_label)
+	place_label(e, fail_label)
+	provider, slot := temp(e), temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		slot, CONTAINER_TYPE, header, CONTAINER_ALLOC,
+	)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", provider, slot)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+	branch(e, done_label)
+	place_label(e, done_label)
+	e.terminated = false
+	return place
+}
+
+// The address a non-inserting read of `m[key]` produces: the existing slot, or a
+// zeroed temporary of this frame. design.md: "A lookup of a missing key returns
+// the zero value", and reading one must not create an entry.
+@(private = "file")
+emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
+	container := expr_base(v.operand).type
+	element := container_element(e.c, container)
+	element_llvm := llvm_type(e, element)
+	ops := container_ops_global(e, container)
+	header := emit_address(e, v.operand)
+	key_slot := emit_map_key_slot(e, v, container)
+
+	found := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
+	)
+	emit_drop_place(e, container_key(e.c, container), key_slot)
+	zero_slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", zero_slot, element_llvm)
+	if zero, ok := zero_const(e.c, element); ok {
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element_llvm, llvm_const(e, zero, element), zero_slot)
+	}
+	present, source := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", present, found)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", source, present, found, zero_slot)
+	return source, present
+}
+
+// `m[key]` as a read, in both its single-value and comma-ok shapes.
+@(private = "file")
+emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> []string {
+	element_llvm := llvm_type(e, container_element(e.c, expr_base(v.operand).type))
+	source, present := emit_map_read_address(e, v)
+	value := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, source)
+	out := make([]string, 2)
+	out[0], out[1] = value, present
+	return out
+}
+
+// The key, spilled so the C helper can read it through a pointer. The value is
+// this frame's, so a managed key is dropped by the caller once the probe is
+// done.
+@(private = "file")
+emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> string {
+	key := container_key(e.c, container)
+	value := emit_expr(e, v.indices[0])
+	slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, key))
+	store(e, key, value, slot)
+	return slot
+}
+
+// design.md "Maps": an inserting place. The slot is found or created with the
+// zero value, and the answer is NULL only when the insertion could not allocate.
+@(private = "file")
+emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot: string) -> string {
+	inserted, place := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca i32", inserted)
+	fmt.sbprintfln(
+		&e.b, "  %s = call ptr @loke_rt_v1_map_entry(ptr %s, ptr %s, ptr %s, ptr %s)",
+		place, header, ops, key_slot, inserted,
+	)
+	return place
 }
 
 // ------------------------------------------------------- lifecycle bodies --

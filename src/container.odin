@@ -169,6 +169,16 @@ Container_Op :: enum {
 	Try_Reserve,
 	Shrink,
 	Try_Shrink,
+	// The map half. `find` never inserts; `m[key] = v` and every chain rooted in
+	// one are places rather than calls, so they are not members.
+	Map_Find,
+	Map_Try_Insert,
+	Map_Remove,
+	Map_Clear,
+	Map_Reserve,
+	Map_Try_Reserve,
+	Map_Shrink,
+	Map_Try_Shrink,
 }
 
 // design.md "Dynamic arrays": the operation set, contributed as real members so
@@ -184,7 +194,15 @@ Container_Op :: enum {
 // value and has the same rule for the same reason.
 ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	info := type_of(k.c, type)
-	if info == nil || info.kind != .Dynamic_Array || .Container in info.contributed {
+	if info == nil || .Container in info.contributed {
+		return
+	}
+	if info.kind == .Map {
+		info.contributed += {.Container}
+		ensure_map_members(k, type, info)
+		return
+	}
+	if info.kind != .Dynamic_Array {
 		return
 	}
 	info.contributed += {.Container}
@@ -257,6 +275,86 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
 	add_members(k.c, type, members[:])
+}
+
+// design.md "Map container operations": `len`, `cap`, `clear`, `reserve`,
+// `shrink`, and the non-inserting `find`. Insertion is a *place* — `m[key] = v`
+// and every field or index chain rooted in one — so the only call form of it is
+// the recoverable `try_insert`.
+@(private = "file")
+ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
+	key, value := info.key, info.element
+	// Both halves are cloned on insertion, so both copy entry points must exist.
+	contribute_lifecycle_members(k, key)
+	contribute_lifecycle_members(k, value)
+
+	members := make([dynamic]Symbol_Id, 0, 8, k.c.semantic_allocator)
+	none := []Type_Id{}
+	fails := []Type_Id{TYPE_ALLOCATOR_ERROR}
+
+	// design.md: `find` "returns a pointer to the existing value and `true`, or
+	// `nil` and `false`. It does not insert." The receiver is `inout` because the
+	// pointer it hands back grants mutation of the stored value.
+	append(&members, container_member(
+		k, type, "find", .Map_Find,
+		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
+		[]Type_Id{pointer_to(k.c, value), TYPE_BOOL}, 0,
+	))
+	append(&members, container_member(
+		k, type, "try_insert", .Map_Try_Insert,
+		[]Type_Id{type, key, value}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
+	))
+	// design.md: removal moves the stored value to the result and answers
+	// zero/false when the key was absent.
+	append(&members, container_member(
+		k, type, "remove", .Map_Remove,
+		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value}, []Type_Id{value, TYPE_BOOL}, 0,
+	))
+	append(&members, container_member(
+		k, type, "clear", .Map_Clear, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
+	))
+	append(&members, container_member(
+		k, type, "reserve", .Map_Reserve,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 0,
+	))
+	append(&members, container_member(
+		k, type, "try_reserve", .Map_Try_Reserve,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 0,
+	))
+	append(&members, container_member(
+		k, type, "shrink", .Map_Shrink,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 1,
+	))
+	append(&members, container_member(
+		k, type, "try_shrink", .Map_Try_Shrink,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
+	))
+	add_members(k.c, type, members[:])
+}
+
+// design.md "Maps": "Any type can be a map key when it satisfies the operations
+// of `interfaces.Hashable`, with a **coherent** `==` and `hash(value, seed:
+// uint) -> uint`", and a user key's pair must be inherent. Checked where the map
+// type is named rather than at each operation, so one map reports once.
+require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
+	key := container_key(k.c, type)
+	if key == INVALID_TYPE {
+		return true
+	}
+	policy := map_key_policy(k, key)
+	if policy.reason == "" {
+		return true
+	}
+	errorf(
+		k.c, span, "L0586",
+		"`%s` cannot be a map key: it %s",
+		type_name(k.c, key), policy.reason,
+	)
+	add_notef(
+		k.c, no_span(),
+		"an `extend` block does not qualify; wrap the key in a local `distinct` type with its own inherent operations",
+	)
+	return false
 }
 
 // `defaulted` is the first parameter position that takes the constant zero, or

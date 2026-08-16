@@ -972,7 +972,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	bound[0] = sel.operand
 	for arg, position in v.args {
 		want := params[position + 1]
-		k.place_position = modes[position + 1] == .Inout
+		k.place_position, k.insert_position = modes[position + 1] == .Inout, modes[position + 1] == .Inout
 		checked := check_single_expr(k, arg.value, want)
 		k.place_position = false
 		if checked == INVALID_TYPE || !materialize_argument(k, arg.value, want) {

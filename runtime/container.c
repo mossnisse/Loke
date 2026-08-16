@@ -90,6 +90,7 @@ int32_t loke_rt_v1_dyn_reserve(
 	if (min_capacity < 0) {
 		loke_rt_v1_container_fault("a container capacity cannot be negative");
 	}
+	loke_rt_v1_dyn_bind(self);
 	if (min_capacity <= self->cap) {
 		return 1;
 	}
@@ -611,6 +612,7 @@ int32_t loke_rt_v1_map_reserve(
 	if (min_capacity < 0) {
 		loke_rt_v1_container_fault("a container capacity cannot be negative");
 	}
+	loke_rt_v1_map_bind(self);
 	if (min_capacity <= self->cap && (old != 0 || min_capacity == 0)) {
 		return 1;
 	}
@@ -729,6 +731,231 @@ int32_t loke_rt_v1_map_clone(
 	out->len = src->len;
 	out->cap = src->cap;
 	return 1;
+}
+
+/* -------------------------------------------------------- map operations -- */
+
+void loke_rt_v1_map_bind(loke_rt_map_v1 *self) {
+	if (self->allocator == 0) {
+		self->allocator = &loke_rt_v1_default_allocator;
+	}
+}
+
+/* The slot holding `key`, or -1. A probe stops at the first empty control byte:
+ * a tombstone is skipped, because an entry inserted after a removal may lie
+ * beyond it. */
+static int64_t map_probe(
+	const loke_rt_map_table_v1 *t, const loke_rt_container_ops_v1 *ops, const void *key) {
+	uint64_t mask = (uint64_t)t->slot_count - 1;
+	uint64_t index = ops->key_hash(key, t->seed) & mask;
+	const uint8_t *controls = map_controls(t);
+	int64_t probes;
+	for (probes = 0; probes < t->slot_count; probes += 1) {
+		if (controls[index] == LOKE_RT_MAP_EMPTY) {
+			return -1;
+		}
+		if (controls[index] == LOKE_RT_MAP_OCCUPIED &&
+		    ops->key_equal(map_key_at(t, ops, (int64_t)index), key)) {
+			return (int64_t)index;
+		}
+		index = (index + 1) & mask;
+	}
+	return -1;
+}
+
+void *loke_rt_v1_map_find(
+	const loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key) {
+	const loke_rt_map_table_v1 *t = (const loke_rt_map_table_v1 *)self->table;
+	int64_t slot;
+	if (t == 0 || self->len == 0) {
+		return 0;
+	}
+	slot = map_probe(t, ops, key);
+	return slot < 0 ? 0 : map_value_at(t, ops, slot);
+}
+
+/* design.md: "`m[key]` as an assignment target inserts. If the key is absent,
+ * the zero value of the element type is inserted first and the resulting slot
+ * is the location." The zero value is written only after growth has succeeded,
+ * so a failed insertion never leaves a partial slot; NULL is that failure. */
+void *loke_rt_v1_map_entry(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, int32_t *inserted) {
+	loke_rt_map_table_v1 *t;
+	uint8_t *controls;
+	uint64_t mask, index;
+	int64_t slot, first_free;
+
+	*inserted = 0;
+	loke_rt_v1_map_bind(self);
+	t = (loke_rt_map_table_v1 *)self->table;
+	if (t != 0) {
+		slot = map_probe(t, ops, key);
+		if (slot >= 0) {
+			return map_value_at(t, ops, slot);
+		}
+	}
+	/* Growth first: the key clone below must not be stranded by a table that
+	 * then fails to allocate. Tombstones count against the load, so a table full
+	 * of them is rebuilt rather than probed forever. */
+	if (t == 0 || self->len + 1 > self->cap ||
+	    t->occupied + t->tombstones + 1 > t->slot_count - t->slot_count / 8) {
+		if (!loke_rt_v1_map_reserve(self, ops, self->len + 1)) {
+			return 0;
+		}
+		t = (loke_rt_map_table_v1 *)self->table;
+	}
+
+	controls = map_controls(t);
+	mask = (uint64_t)t->slot_count - 1;
+	index = ops->key_hash(key, t->seed) & mask;
+	first_free = -1;
+	for (;;) {
+		if (controls[index] == LOKE_RT_MAP_OCCUPIED) {
+			index = (index + 1) & mask;
+			continue;
+		}
+		if (controls[index] == LOKE_RT_MAP_TOMBSTONE && first_free < 0) {
+			first_free = (int64_t)index;
+			index = (index + 1) & mask;
+			continue;
+		}
+		break;
+	}
+	if (first_free >= 0) {
+		t->tombstones -= 1;
+		index = (uint64_t)first_free;
+	}
+	/* The stored key is an independent clone: the caller's may be a borrow. */
+	if (ops->key_clone != 0) {
+		if (!ops->key_clone(map_key_at(t, ops, (int64_t)index), key, self->allocator)) {
+			if (first_free >= 0) {
+				t->tombstones += 1;
+			}
+			return 0;
+		}
+	} else {
+		memcpy(map_key_at(t, ops, (int64_t)index), key, (size_t)ops->key_size);
+	}
+	memset(map_value_at(t, ops, (int64_t)index), 0, (size_t)ops->elem_size);
+	controls[index] = LOKE_RT_MAP_OCCUPIED;
+	t->occupied += 1;
+	self->len += 1;
+	*inserted = 1;
+	return map_value_at(t, ops, (int64_t)index);
+}
+
+/* Moves the stored value to `out`, drops the key, and answers 0 when the key was
+ * absent. The slot becomes a tombstone, because an entry inserted after it may
+ * lie beyond it in a probe run. */
+int32_t loke_rt_v1_map_remove(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, void *out) {
+	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)self->table;
+	int64_t slot;
+
+	memset(out, 0, (size_t)ops->elem_size);
+	if (t == 0 || self->len == 0) {
+		return 0;
+	}
+	slot = map_probe(t, ops, key);
+	if (slot < 0) {
+		return 0;
+	}
+	memcpy(out, map_value_at(t, ops, slot), (size_t)ops->elem_size);
+	if (ops->key_drop != 0) {
+		ops->key_drop(map_key_at(t, ops, slot));
+	}
+	map_controls(t)[slot] = LOKE_RT_MAP_TOMBSTONE;
+	t->occupied -= 1;
+	t->tombstones += 1;
+	self->len -= 1;
+	return 1;
+}
+
+void loke_rt_v1_map_clear(loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops) {
+	loke_rt_map_table_v1 *t = (loke_rt_map_table_v1 *)self->table;
+	uint8_t *controls;
+	int64_t slot;
+	if (t == 0) {
+		return;
+	}
+	controls = map_controls(t);
+	for (slot = 0; slot < t->slot_count; slot += 1) {
+		if (controls[slot] != LOKE_RT_MAP_OCCUPIED) {
+			continue;
+		}
+		if (ops->key_drop != 0) {
+			ops->key_drop(map_key_at(t, ops, slot));
+		}
+		if (ops->elem_drop != 0) {
+			ops->elem_drop(map_value_at(t, ops, slot));
+		}
+	}
+	memset(controls, LOKE_RT_MAP_EMPTY, (size_t)t->slot_count);
+	t->occupied = 0;
+	t->tombstones = 0;
+	self->len = 0;
+}
+
+/* design.md: `shrink` "removes excess capacity". A rebuild at the smallest slot
+ * count that still holds the live entries also clears every tombstone. */
+int32_t loke_rt_v1_map_shrink(
+	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity) {
+	loke_rt_map_table_v1 shape;
+	loke_rt_map_table_v1 *fresh;
+	loke_rt_map_table_v1 *old = (loke_rt_map_table_v1 *)self->table;
+	int64_t want = self->len < min_capacity ? min_capacity : self->len;
+	int64_t slots;
+
+	if (min_capacity < 0) {
+		loke_rt_v1_container_fault("a container capacity cannot be negative");
+	}
+	if (old == 0) {
+		return 1;
+	}
+	if (!map_slots_for(want, &slots)) {
+		return 0;
+	}
+	if (slots >= old->slot_count && old->tombstones == 0) {
+		return 1;
+	}
+	if (!map_block_shape(ops, slots, &shape)) {
+		return 0;
+	}
+	fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc_zeroed(
+		self->allocator, shape.block_size, shape.block_align);
+	if (fresh == 0) {
+		return 0; /* the old table is still live and unchanged */
+	}
+	*fresh = shape;
+	fresh->seed = map_next_seed(fresh);
+	{
+		uint8_t *controls = map_controls(old);
+		int64_t slot;
+		for (slot = 0; slot < old->slot_count; slot += 1) {
+			if (controls[slot] == LOKE_RT_MAP_OCCUPIED) {
+				map_place_moved(fresh, ops, map_key_at(old, ops, slot), map_value_at(old, ops, slot));
+			}
+		}
+	}
+	map_free_block(self->allocator, old);
+	self->table = fresh;
+	self->cap = map_capacity_of(slots);
+	return 1;
+}
+
+/* ---------------------------------------------------------------- hash -- */
+
+/* design.md's standard catalogue promises `string` and `string_view` satisfy
+ * `Hashable`, and two equal texts must hash equally however they were built. The
+ * mix is the same 64-bit FNV-1a step the compiler folds over a scalar, applied
+ * once per byte, so the compile-time and runtime paths agree exactly. */
+uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed) {
+	uint64_t h = seed;
+	int64_t i;
+	for (i = 0; i < len; i += 1) {
+		h = (h ^ (uint64_t)data[i]) * 1099511628211u;
+	}
+	return h;
 }
 
 /* --------------------------------------------------------------- faults -- */

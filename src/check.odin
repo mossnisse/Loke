@@ -28,6 +28,10 @@ Checker :: struct {
 	// overload returning `inout T` is required before ordinary ranking. The flag
 	// is consumed by the node it is set for and never inherited by its operands.
 	place_position: bool,
+	// design.md "Maps": a place position that really writes — an assignment
+	// target, a compound assignment, or an `inout` argument — makes `m[key]`
+	// insert. `&m[key]` is a place position for overload selection only.
+	insert_position: bool,
 	// How many generic instantiations enclose the code being checked. A `where`
 	// clause needs generic parameters in scope, which is either a template being
 	// instantiated or a declaration inside one.
@@ -1215,6 +1219,11 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		unsupported_construct(k, span)
 		return false
 	}
+	// design.md "Maps": the key's coherent `==`/`hash` pair is settled where the
+	// map type is named, so one map reports once rather than once per operation.
+	if type_is_map(k.c, type) && !require_map_key_policy(k, type, span) {
+		return false
+	}
 	if type_contains_managed_union(k.c, type) {
 		errorf(
 			k.c,
@@ -2066,9 +2075,9 @@ check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id) -> Type_Id
 	}
 	// An assignment destination is a place position, which is what selects an
 	// `inout` indexing overload before ordinary ranking.
-	k.place_position = true
+	k.place_position, k.insert_position = true, true
 	type := check_single_expr(k, target)
-	k.place_position = false
+	k.place_position, k.insert_position = false, false
 	if type == INVALID_TYPE {
 		return INVALID_TYPE
 	}

@@ -1,0 +1,30 @@
+package main; import "core:fmt";
+
+// design.md "Maps": a key needs "a **coherent** `==` and `hash(value, seed:
+// uint) -> uint`", and "for a user-defined key, both operations must be inherent
+// implementations belonging to the key type; caller-local extensions do not
+// qualify even if an ordinary interface check in that extension's package would
+// succeed" (m6b-plan decision "Map algorithm and coherence").
+//
+// The check is at the map type, so one map reports once however many operations
+// it has.
+
+// Neither operation.
+Bare :: struct { v: int }
+
+// One half only.
+Half :: struct { v: int }
+
+impl Half {
+	hash :: proc(self, seed: uint) -> uint { return hash(self.v, seed); }
+}
+
+// The cross-package half of the rule — an `extend` block in the *using* package
+// that would satisfy an ordinary local query — is `tests/pkg_err/m6b_map_key`,
+// because `extend` on a same-package type is already rejected on its own.
+
+main :: proc() {
+	bare: map[Bare]int;
+	half: map[Half]int;
+	fmt.println(1);
+}

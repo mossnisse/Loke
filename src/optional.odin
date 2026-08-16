@@ -16,6 +16,11 @@ mark_optional_ok :: proc(e: Expr) {
 	if assertion, is_assert := e.(^Expr_Type_Assert); is_assert {
 		assertion.optional = true
 	}
+	// design.md "Maps": "`elem, ok := m[key]`" is "the **comma-ok** form". The
+	// phase decides the node's result shape, exactly as it does for an assertion.
+	if index, is_index := e.(^Expr_Index); is_index {
+		index.map_optional = true
+	}
 }
 
 check_type_assert :: proc(k: ^Checker, v: ^Expr_Type_Assert) {

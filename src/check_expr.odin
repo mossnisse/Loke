@@ -41,7 +41,12 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_ident(k, v)
 
 	case ^Expr_Selector:
+		// design.md "Maps": "`m["Dana"].x = 7` inserts a zero `Test` for "Dana",
+		// then assigns `.x`" — so a place position reaches through a field chain
+		// to the map index that roots it.
+		k.place_position = place
 		check_selector(k, v, expected)
+		k.place_position = false
 
 	case ^Expr_Index:
 		check_index(k, v, place)
@@ -740,7 +745,11 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 @(private = "file")
 check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	v.value_category = .Value
+	// A chain such as `m[key][i] = v` roots in the map index, which is the one
+	// that inserts; the inner subscript expressions are ordinary values.
+	k.place_position = place
 	operand := check_single_expr(k, v.operand)
+	k.place_position = false
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
@@ -778,6 +787,10 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	// whose bound is the header's length word, exactly as a `[]mut T`'s is.
 	if info != nil && info.kind == .Dynamic_Array && len(v.indices) == 1 {
 		check_dynamic_index(k, v, info)
+		return
+	}
+	if info != nil && info.kind == .Map && len(v.indices) == 1 {
+		check_map_index(k, v, info, base_type, place)
 		return
 	}
 	if !gate_container_operation(k, base_type, v.span) {
@@ -919,6 +932,76 @@ check_dynamic_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info) {
 	v.addressable = true
 	v.assignable = true
 	v.immutable = .None
+}
+
+// design.md "Maps": "`ok := key in m`" is "true if the element for that key
+// exists". It never inserts and never produces the value, so it is the cheapest
+// of the three membership forms.
+@(private = "file")
+check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
+	container := check_single_expr(k, v.rhs)
+	if container == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	if !type_is_map(k.c, container) {
+		errorf(
+			k.c, v.op_span, "L0587",
+			"`in` tests a `map[K]V` for a key, found `%s`", type_name(k.c, container),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	if !check_value_expr(k, v.lhs, container_key(k.c, container), "look up") {
+		v.type = INVALID_TYPE
+		return
+	}
+	v.type = TYPE_BOOL
+}
+
+// design.md "Maps": one syntax, two behaviours chosen by position.
+//
+// "`m[key]` as an assignment target inserts. If the key is absent, the zero
+// value of the element type is inserted first and the resulting slot is the
+// location." A read does not insert and "returns the zero value" for a missing
+// key; `elem, ok := m[key]` is the comma-ok form of that read.
+//
+// "Insertion may reallocate the map, so the index is a mutable borrow of `m` for
+// the duration of the statement" — which is what the receiver access recorded by
+// `src/cfg.odin` makes true.
+@(private = "file")
+check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, container: Type_Id, place: bool) {
+	if !check_value_expr(k, v.indices[0], info.key, "look up") {
+		v.type = INVALID_TYPE
+		return
+	}
+	// design.md: "`&m[key]` is not a special lookup form" and does not insert, so
+	// the address-of place position is excluded here rather than at the `&`.
+	v.map_inserts = place && k.insert_position
+	v.type = info.element
+	if place {
+		// An inserting place is a location: assignable, and addressable so a
+		// field or index chain rooted in it works.
+		v.value_category = .Place
+		v.addressable = true
+		v.assignable = true
+		v.immutable = .None
+		if !expr_base(v.operand).assignable {
+			report_not_assignable(k, expr_base(v.operand), "an inserting map index")
+			v.type = INVALID_TYPE
+		}
+		return
+	}
+	// A read produces a value, not a location: `&m[key]` is deliberately not a
+	// non-inserting lookup, and `m.find(key)` is.
+	v.value_category = .Value
+	v.addressable = false
+	v.assignable = false
+	if v.map_optional {
+		results := make([]Type_Id, 2, k.c.semantic_allocator)
+		results[0], results[1] = info.element, TYPE_BOOL
+		v.result_types = results
+	}
 }
 
 // design.md "Indexing and slicing": in a place position the `inout` overload is
@@ -1198,9 +1281,10 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	if v.op == .Amp {
 		// design.md: `&` is a place position for the purpose of overload
 		// selection, but it never creates an element in any container.
-		k.place_position = true
+		saved_insert := k.insert_position
+		k.place_position, k.insert_position = true, false
 		operand := check_single_expr(k, v.operand, pointee_of(k.c, expected))
-		k.place_position = false
+		k.place_position, k.insert_position = false, saved_insert
 		if operand == INVALID_TYPE {
 			v.type = INVALID_TYPE
 			return
@@ -1382,6 +1466,13 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	// overloadable (design.md "Operator declarations").
 	if v.op == .And_And || v.op == .Or_Or {
 		check_logical(k, v)
+		return
+	}
+
+	// design.md "Maps": "`ok := key in m`". The right operand settles the key's
+	// type, so this is not an ordinary unified binary operation.
+	if v.op == .In {
+		check_map_membership(k, v)
 		return
 	}
 
@@ -3264,13 +3355,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	case .Dynamic_Array:
 		check_dynamic_literal(k, v, target, info)
 	case .Map:
-		// design.md: the all-zero container is "empty, allocator-unbound,
-		// constant, and immediately usable", so `{}` needs no construction at all.
-		// A map literal with entries arrives with the map operations themselves.
-		if len(v.elements) != 0 {
-			gate_container_operation(k, target, v.span)
-			v.type = INVALID_TYPE
-		}
+		check_map_literal(k, v, target, info)
 	case:
 		errorf(k.c, v.span, "L0376", "`%s` cannot be built from a composite literal", type_name(k.c, target))
 		v.type = INVALID_TYPE
@@ -3437,6 +3522,39 @@ check_dynamic_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, 
 	for element, index in v.elements {
 		if element.key != nil {
 			unsupported_construct(k, element.span)
+			continue
+		}
+		if !check_value_expr(k, element.value, info.element, "initialise") {
+			continue
+		}
+		classify_composite_element(k, v, index, info.element)
+	}
+}
+
+// design.md "Maps": "A map literal initializes a map", written `key = value`.
+// Like a dynamic array's it allocates and is therefore never a constant; the
+// empty one is the constant all-zero header.
+@(private = "file")
+check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
+	if len(v.elements) == 0 {
+		v.is_const = true
+		if zero, ok := zero_const(k.c, target); ok {
+			v.const_value = zero
+		}
+		return
+	}
+	// Insertion clones both halves, so both copy entry points have to exist.
+	contribute_lifecycle_members(k, info.key)
+	contribute_lifecycle_members(k, info.element)
+	for element, index in v.elements {
+		if element.key == nil {
+			errorf(
+				k.c, element.span, "L0376",
+				"a `%s` literal writes each entry as `key = value`", type_name(k.c, target),
+			)
+			continue
+		}
+		if !check_value_expr(k, element.key, info.key, "use as a key") {
 			continue
 		}
 		if !check_value_expr(k, element.value, info.element, "initialise") {

@@ -252,8 +252,18 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   container bit-for-bit unchanged, and every view and element pointer it hands
   out ends at the first operation that may move its storage.
 
-Everything else — maps, container iteration and formatting, `string.to_runes`,
-and the dynamic `raw_data` overload — parses and reports one diagnostic at the
+- a map is an open-addressed table with an opaque per-table seed, so iteration
+  order is unspecified by construction. Literals, a read of `m[key]` that never
+  inserts, the comma-ok form, `key in m`, an inserting place through field and
+  index chains (`m["Dana"].x = 7` inserts a zero and assigns), the non-inserting
+  `m.find(key)`, `try_insert`, `remove`, `clear`, `reserve` and `shrink` all
+  run. A key needs a **coherent** `==` and `hash` pair that is either built in or
+  inherent to the key's own package: a caller-local `extend` never enters the
+  frozen operation table, so one map keeps one policy in every package it travels
+  through.
+
+Everything else — container iteration and formatting, `string.to_runes`, and the
+dynamic `raw_data` overload — parses and reports one diagnostic at the
 operation. Each is ungated in the step that also installs its invalidation.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
