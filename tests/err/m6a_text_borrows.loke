@@ -1,0 +1,41 @@
+package main; import "core:fmt";
+
+// design.md "string type conversions": a `string_view` "does not own or
+// terminate its storage", a subrange view "is a borrow of that slice's owner
+// and cannot outlive it", and a `to_c_view()` temporary "cannot be assigned,
+// returned, or stored". All three are the same borrow rule M5b already
+// enforces, now reaching the text carriers.
+
+import "core:unsafe";
+
+built :: proc() -> string { return "hej" + "då"; }
+
+leak_subrange :: proc() -> string_view {
+	owned := built();
+	return owned[0:3];
+}
+
+leak_bytes :: proc() -> []u8 {
+	owned := built();
+	return owned.bytes();
+}
+
+leak_c_view :: proc() -> cstring_view {
+	owned := built();
+	return owned.to_c_view();
+}
+
+// A literal has static lifetime, so borrowing one is not an escape at all.
+kept :: proc() -> string_view {
+	static_text: string = "hej";
+	return static_text;
+}
+
+// design.md "string type": "Direct integer indexing of a string is not allowed
+// because a UTF-8 code point may contain multiple bytes."
+indexed :: proc() -> u8 {
+	text: string = "hej";
+	return text[0];
+}
+
+main :: proc() { fmt.println(0); }

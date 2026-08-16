@@ -1,4 +1,4 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 // m5b-plan step 3: what region provenance *permits*.
 
@@ -65,10 +65,10 @@ store_a_view :: proc(values: []int) {
 main :: proc() {
 	// The default allocator is a pre-existing region, so `main` cannot hide a
 	// reset of it merely to exercise its unsupported provider entry.
-	global_buffer = make_buffer(1, default_allocator());
-	print_int(global_buffer.id);
+	global_buffer = make_buffer(1, mem.default_allocator());
+	fmt.println(global_buffer.id);
 
 	numbers := [3]int{4, 5, 6};
 	store_a_view(numbers[:]);
-	print_int(numbers[0]);
+	fmt.println(numbers[0]);
 }

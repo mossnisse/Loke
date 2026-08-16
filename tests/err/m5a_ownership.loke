@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Ownership diagnostics (m5a-plan step 4). design.md "Managed values and
 // storage": "A use that requires a value is valid only in the definitely-live
@@ -41,7 +41,7 @@ main :: proc() {
 	a := Res{1};
 	b := move(a);
 	// `a` is dead until a full assignment revives it.
-	print_int(a.id);
+	fmt.println(a.id);
 
 	c := Res{2};
 	drop(c);
@@ -49,7 +49,7 @@ main :: proc() {
 
 	// A full assignment revives a dead binding.
 	c = Res{3};
-	print_int(c.id);
+	fmt.println(c.id);
 
 	// `drop` operates on a storage location, not a field or an element.
 	p := Pair{Res{4}, Res{5}};
@@ -58,11 +58,11 @@ main :: proc() {
 	// Static-duration storage is always live.
 	drop(global);
 
-	print_int(borrow(b));
+	fmt.println(borrow(b));
 
 	// A `move` parameter needs its marker at the call site.
 	e := Res{9};
-	print_int(take(e));
+	fmt.println(take(e));
 
 	// A move-only type has no copy entry point for a binding or an assignment.
 	f := Only{10};
@@ -73,7 +73,7 @@ main :: proc() {
 	// site in M5a.
 	table := [2]Res{Res{11}, Res{12}};
 	foreach (item in table) {
-		print_int(item.id);
+		fmt.println(item.id);
 	}
 
 	// `exchange` replaces a definitely live value, and its marker is written at
@@ -96,5 +96,5 @@ main :: proc() {
 	if (b.id == 0) {
 		drop(d);
 	}
-	print_int(d.id);
+	fmt.println(d.id);
 }

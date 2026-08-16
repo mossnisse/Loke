@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // m5b-plan step 1: what the one rule *permits*. Every borrow here ends at its
 // true last use, or touches storage that is provably disjoint.
@@ -23,14 +23,14 @@ disjoint_fields :: proc() {
 	second := &p.b;
 	first^ = 10;
 	second^ = 20;
-	print_int(p.a + p.b);
+	fmt.println(p.a + p.b);
 }
 
 nested_fields :: proc() {
 	n := Nested{Pair{1, 2}, Pair{3, 4}};
 	left := &n.left.a;
 	right := &n.right.b;
-	print_int(left^ + right^);
+	fmt.println(left^ + right^);
 }
 
 // Provably distinct constant ranges likewise.
@@ -40,13 +40,13 @@ disjoint_ranges :: proc() {
 	high := xs[3:6];
 	low[0] = 100;
 	high[0] = 200;
-	print_int(sum(low) + sum(high));
+	fmt.println(sum(low) + sum(high));
 }
 
 disjoint_index_and_range :: proc() {
 	xs := [4]int{1, 2, 3, 4};
 	tail := xs[2:4];
-	print_int(xs[0] + tail[0]);
+	fmt.println(xs[0] + tail[0]);
 }
 
 // design.md: "Copies of a borrow extend the same loan to the last use of any
@@ -55,10 +55,10 @@ copies_share_one_loan :: proc() {
 	xs := [4]int{1, 2, 3, 4};
 	view := xs[0:2];
 	alias := view;
-	print_int(alias[1]);
+	fmt.println(alias[1]);
 	// Both names are finished, so the root is writable again.
 	xs[0] = 9;
-	print_int(xs[0]);
+	fmt.println(xs[0]);
 }
 
 // A loan is live only on the paths that reach a later use.
@@ -66,11 +66,11 @@ last_use_across_branches :: proc(flag: bool) {
 	xs := [4]int{1, 2, 3, 4};
 	view := xs[0:2];
 	if (flag) {
-		print_int(view[0]);
+		fmt.println(view[0]);
 	} else {
 		// `view` is never read again on this path, so the root is free here.
 		xs[0] = 7;
-		print_int(xs[0]);
+		fmt.println(xs[0]);
 	}
 }
 
@@ -82,7 +82,7 @@ overwrite_ends_one_value :: proc() {
 	view = ys[0:2];
 	// The loan on `xs` died with the overwrite even though `view` is still read.
 	xs[0] = 5;
-	print_int(view[0] + xs[0]);
+	fmt.println(view[0] + xs[0]);
 }
 
 // design.md: "A borrow that is never used again stops constraining its root
@@ -90,15 +90,15 @@ overwrite_ends_one_value :: proc() {
 invalidation_after_last_use :: proc() {
 	xs := [2]int{1, 2};
 	view := xs[0:2];
-	print_int(view[0]);
+	fmt.println(view[0]);
 	xs = [2]int{8, 9};
-	print_int(xs[0]);
+	fmt.println(xs[0]);
 
 	p := Pair{1, 2};
 	pointer := &p.a;
-	print_int(pointer^);
+	fmt.println(pointer^);
 	p = Pair{3, 4};
-	print_int(p.a);
+	fmt.println(p.a);
 }
 
 // design.md: `free` "ends the allocation root designated by a checked base
@@ -109,7 +109,7 @@ free_through_a_copy :: proc() {
 	q^ = 41;
 	alias := q;
 	alias^ += 1;
-	print_int(alias^);
+	fmt.println(alias^);
 	free(alias);
 }
 
@@ -134,5 +134,5 @@ main :: proc() {
 
 	xs := [3]int{5, 6, 7};
 	out := 0;
-	print_int(borrowed_parameter(xs[:], &out));
+	fmt.println(borrowed_parameter(xs[:], &out));
 }

@@ -1,15 +1,13 @@
-package main;
+package main; import "core:fmt";
 
 BUDGET :: #config(BUDGET, 5);
 LABEL :: #config(LABEL, "x");
 
 main :: proc() {
-	// A compile-time string has no runtime representation yet.
-	s := "hi";
-	print_int(len(s));
 	// A false static assertion breaks compilation, message and all.
 	#assert(BUDGET > 100, "the budget shrank");
 	#assert(LABEL == "y");
-	// The source-location forms wait for the seed runtime.
-	print_int(len(#location()));
+	// design.md: `#location` produces a `runtime.Source_Code_Location`, so the
+	// file's package has to be able to name that type.
+	fmt.println(#location().line);
 }

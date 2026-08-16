@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // A three-package diamond: this package and `geom` both reach `util`, and the
 // alias is a lexical name, not a second instance of the package.
@@ -7,13 +7,13 @@ import u "util";
 
 main :: proc() {
 	p := geom.Point{3, 4};
-	print_int(geom.area(p));
-	print_int(geom.ORIGIN);
-	print_int(u.double(21));
-	print_int(u.SEED);
+	fmt.println(geom.area(p));
+	fmt.println(geom.ORIGIN);
+	fmt.println(u.double(21));
+	fmt.println(u.SEED);
 	// The same package under two names is the same declarations.
-	print_int(geom.seed_used());
+	fmt.println(geom.seed_used());
 	// A hoisted procedure literal, owned and named by its own package.
-	print_int(geom.apply(p));
-	print_int(u.SEED + geom.ORIGIN);
+	fmt.println(geom.apply(p));
+	fmt.println(u.SEED + geom.ORIGIN);
 }

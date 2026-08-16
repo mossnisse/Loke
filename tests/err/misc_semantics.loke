@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Bad_Enum :: enum u8 { A = 300, B, B }
 
@@ -7,5 +7,5 @@ Grid :: [-1]int;
 main :: proc() {
 	a, b := 1;
 	d := 1 / 0;
-	print_int(a + b + d);
+	fmt.println(a + b + d);
 }

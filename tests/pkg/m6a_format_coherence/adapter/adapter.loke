@@ -1,0 +1,27 @@
+@(public)
+package adapter;
+
+import "core:fmt";
+import "../vendor";
+
+// A caller-local extension may declare a `format` and call it. It is not
+// eligible for erased printing: an `any_view` carries only a pointer and a
+// `typeid`, so the callee has no way to recover a call-site-specific overload.
+// `vendor.Plain` therefore still prints with the compiler-generated formatter,
+// in this package as much as in any other.
+extend vendor.Plain {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+		fmt.format_to(w, "adapter", self.id);
+	}
+}
+
+@(public)
+spelled_here :: proc(p: vendor.Plain, w: fmt.Writer) {
+	p.format(w, fmt.DEFAULT_OPTIONS);
+}
+
+// The extension is visible here, and printing still does not use it.
+@(public)
+printed_here :: proc(p: vendor.Plain) {
+	fmt.println(p);
+}

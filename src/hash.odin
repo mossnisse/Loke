@@ -12,7 +12,7 @@
 // compile-time and runtime paths, which is why both spell the same two steps.
 //
 // ponytail: one non-seeded mixing constant, no per-process seed. A hash-flooding
-// defence belongs with the map implementation (M5/M6), which is what would
+// defence belongs with the map implementation (M6b), which is what would
 // choose and thread a per-table seed.
 package lokec
 

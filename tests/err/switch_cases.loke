@@ -1,29 +1,29 @@
-package main;
+package main; import "core:fmt";
 
 Colour :: enum { Red, Green, Blue }
 
 partial :: proc(c: Colour) {
 	switch (c) {
 	case .Red:
-		print_int(1);
+		fmt.println(1);
 	}
 }
 
 duplicated :: proc(n: int) {
 	switch (n) {
 	case 1:
-		print_int(1);
+		fmt.println(1);
 	case 1:
-		print_int(2);
+		fmt.println(2);
 	case:
-		print_int(3);
+		fmt.println(3);
 	}
 }
 
 open :: proc(n: int) {
 	switch (n) {
 	case 1:
-		print_int(1);
+		fmt.println(1);
 	}
 }
 

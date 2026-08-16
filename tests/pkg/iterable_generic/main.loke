@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "base:interfaces";
 
@@ -44,18 +44,18 @@ main :: proc() {
 
 	xs := [3]int{1, 2, 3};
 	a, a_ok := first(xs);
-	print_int(a);
+	fmt.println(a);
 
 	half := 1 ..< 4;
 	closed := 1 ..= 4;
 	b, b_ok := first(half);
-	print_int(b);
+	fmt.println(b);
 
 	c, c_ok := first(Countdown{5});
-	print_int(c);
+	fmt.println(c);
 
-	print_int(sum_all(xs));
-	print_int(sum_all(half));
-	print_int(sum_all(closed));
-	print_int(sum_all(Countdown{3}));
+	fmt.println(sum_all(xs));
+	fmt.println(sum_all(half));
+	fmt.println(sum_all(closed));
+	fmt.println(sum_all(Countdown{3}));
 }

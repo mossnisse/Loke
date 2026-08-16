@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 spin :: proc() -> int {
 	x := 0;
@@ -11,5 +11,5 @@ spin :: proc() -> int {
 N :: spin();
 
 main :: proc() {
-	print_int(N);
+	fmt.println(N);
 }

@@ -312,12 +312,19 @@ conversion syntax uses the existing parenthesised-type expression,
 ```
 Struct_Type = "struct" Generic_Parameters? Attributes? Where_Clause? "{" Field_List? "}"
 Field_List  = Field ("," Field)* ","?
-Field       = Attributes? "using"? Identifier_List ":" Type Field_Tag?
+Field       = Attributes? "using"? Member_Name_List ":" Type Field_Tag?
 Field_Tag   = String_Literal | Raw_String_Literal
 
 Enum_Type   = "enum" Type? "{" Enum_Field_List? "}"
 Enum_Field_List = Enum_Field ("," Enum_Field)* ","?
-Enum_Field  = Identifier ("=" Expression)?
+Enum_Field  = Member_Name ("=" Expression)?
+
+// A member name is an identifier, plus the keyword `type`: a name in this
+// position can never begin a type expression, and the reflection descriptors
+// and the runtime metadata both spell one of their members `type`
+// (`field.type`, `runtime.Member_Info.type`).
+Member_Name_List = Member_Name ("," Member_Name)*
+Member_Name = Identifier | "type"
 
 Union_Type  = "union" Generic_Parameters? Attributes? Where_Clause? "{" Union_Variants? "}"
 Union_Variants = Type ("," Type)* ","?
@@ -495,8 +502,7 @@ Branch_Statement = ("break" | "continue") ";"
 ```
 
 `for (;;)` is the three-part header with every part empty. `for (cond)` is the
-condition-only form. `break` and `continue` take no operand and there are no
-labels.
+condition-only form.
 
 A `foreach` whose bindings carry `$` is a **static expansion**: it requires a
 compile-time iterable and expands its block once per element. The two forms share
@@ -566,7 +572,7 @@ Unary_Expression = ("+" | "-" | "!" | "~" | "&") Unary_Expression
 
 Postfix_Expression = Primary_Expression Suffix*
 Suffix = "^"                                          // dereference
-       | "." Identifier                               // selector
+       | "." Member_Name                              // selector
        | "." "(" Type ")"                             // type assertion
        | "(" Argument_List? ")"                       // call or conversion
        | "[" Index_Or_Slice "]"

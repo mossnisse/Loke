@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // A struct field's array length and an enum member's value are both resolved
 // while signatures are built, long before phase 3 would check these bodies.
@@ -44,22 +44,22 @@ FIRST :: built().cells[0];
 SECOND :: built().cells[1];
 
 main :: proc() {
-	print_int(SIZE);
-	print_int(FIRST);
-	print_int(SECOND);
-	print_int(int(Level.Low));
-	print_int(int(Level.High));
+	fmt.println(SIZE);
+	fmt.println(FIRST);
+	fmt.println(SECOND);
+	fmt.println(int(Level.Low));
+	fmt.println(int(Level.High));
 
 	// The same procedures are ordinary runtime procedures.
-	print_int(sum_to(4));
-	print_int(fib(7));
+	fmt.println(sum_to(4));
+	fmt.println(fib(7));
 
 	t: Table;
 	bump(inout t, 3, 9);
-	print_int(t.cells[3]);
+	fmt.println(t.cells[3]);
 
 	// A true `assert` costs nothing at run time and is not a compile-time
 	// failure either.
 	assert(SIZE == 13);
-	print_int(1);
+	fmt.println(1);
 }

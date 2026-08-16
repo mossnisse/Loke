@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The same source as the defaults case in `m3_strings.loke`, compiled with the
 // overrides in `m3_config.flags`: an override must be representable as the
@@ -9,8 +9,8 @@ VERBOSE :: #config(VERBOSE, false);
 
 main :: proc() {
 	#assert(LIMIT == 42, "the override did not reach `#config`");
-	print_int(LIMIT);
-	print_int(1 if VERBOSE else 0);
-	print_int(len(MODE));
-	print_int(len(MODE + "/" + MODE));
+	fmt.println(LIMIT);
+	fmt.println(1 if VERBOSE else 0);
+	fmt.println(len(MODE));
+	fmt.println(len(MODE + "/" + MODE));
 }

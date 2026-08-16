@@ -62,8 +62,9 @@ semantic_ids_survive_phases :: proc(t: ^testing.T) {
 N :: 3;
 main :: proc() {
 	x := N + 1;
-	print_int(x);
-}`
+	sink(x);
+}
+sink :: proc(value: int) {}`
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	f := parse(&c, 0, lex(&c, 0))
@@ -100,7 +101,8 @@ main :: proc() {
 @(test)
 package_collection_crosses_file_boundaries :: proc(t: ^testing.T) {
 	first_text := `package main;
-main :: proc() { print_int(N); }`
+main :: proc() { sink(N); }
+sink :: proc(value: int) {}`
 	second_text := `package main;
 N :: 7;`
 	c := test_compiler(first_text)
@@ -247,7 +249,7 @@ parser_ast_golden :: proc(t: ^testing.T) {
 N :: 3;
 main :: proc() {
 	x := N + 1;
-	print_int(x);
+	sink(x);
 	return;
 }`
 	c := test_compiler(text)
@@ -287,7 +289,7 @@ main :: proc() {
         (var names=["x"]
           (binary Plus (ident "N") (int "1"))
         )
-        (call (ident "print_int") (ident "x"))
+        (call (ident "sink") (ident "x"))
         (return)
       )
     )
@@ -316,7 +318,7 @@ parser_recovery_retains_nodes :: proc(t: ^testing.T) {
 import ;
 main :: proc() {
 	x := 1 + ;
-	print_int(2);
+	sink(2);
 }`
 	c := test_compiler(text)
 	tokens := lex(&c, 0)
@@ -430,7 +432,7 @@ spans_end_at_the_last_consumed_token :: proc(t: ^testing.T) {
 
 main :: proc() {
 	x := 1
-	print_int(2);
+	sink(2);
 }
 `
 	c := test_compiler(text)
@@ -858,7 +860,7 @@ range_does_not_chain :: proc(t: ^testing.T) {
 
 main :: proc() {
 	x := 1 ..< 2 ..< 3;
-	print_int(4);
+	sink(4);
 }
 `
 	c := test_compiler(text)
@@ -932,7 +934,7 @@ main :: proc() {
 	a := ^int;
 	b := type;
 	c := proc();
-	print_int(1);
+	sink(1);
 }
 `
 	invalid := test_compiler(invalid_text)
@@ -989,7 +991,7 @@ missing_list_separators_are_diagnosed :: proc(t: ^testing.T) {
 main :: proc() {
 	a := f(1 2);
 	b := Point{1 2};
-	print_int(3);
+	sink(3);
 }
 `
 	c := test_compiler(text)
@@ -1017,7 +1019,7 @@ attribute_groups_require_elements_and_no_trailing_comma :: proc(t: ^testing.T) {
 main :: proc() {
 	@() x := 1;
 	@(cold,) y := 2;
-	print_int(3);
+	sink(3);
 }
 `
 	c := test_compiler(text)
@@ -1069,10 +1071,11 @@ rejected_generic_candidates_are_negative_cached :: proc(t: ^testing.T) {
 large :: proc(values: [$N]int) -> int where N > 5 { return N; }
 small :: proc(values: [2]int) -> int { return 2; }
 choose :: proc{large, small};
+sink :: proc(value: int) {}
 main :: proc() {
-	print_int(choose([2]int{}));
-	print_int(choose([2]int{}));
-	print_int(choose([6]int{1, 2, 3, 4, 5, 6}));
+	sink(choose([2]int{}));
+	sink(choose([2]int{}));
+	sink(choose([6]int{1, 2, 3, 4, 5, 6}));
 }`
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
@@ -1182,8 +1185,9 @@ ownership_worklist_converges_past_sixty_four_back_edges :: proc(t: ^testing.T) {
 			fmt.sbprintln(&b, "break;")
 		}
 	}
-	fmt.sbprintln(&b, "print_int(x.value);")
+	fmt.sbprintln(&b, "sink(x.value);")
 	fmt.sbprintln(&b, "}")
+	fmt.sbprintln(&b, "sink :: proc(value: int) {}")
 
 	c := test_compiler(strings.to_string(b))
 	defer destroy_compilation(&c)

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "./container";
 
@@ -16,15 +16,15 @@ main :: proc() {
 	b := container.make_pair(i32, 2, 3);
 
 	// Two instantiations of one template, each with its own annotations.
-	print_int(a.combine());        // definition-site `blend_int`: 2 + 3
-	print_int(int(b.combine()));   // definition-site `blend_i32`: 2*10 + 3
+	fmt.println(a.combine());        // definition-site `blend_int`: 2 + 3
+	fmt.println(int(b.combine()));   // definition-site `blend_i32`: 2*10 + 3
 
 	// `describe` selected `label` at its own definition site: the specialized
 	// block for `Pair(int)`, the generic one for `Pair(i32)`, and never the
 	// extension declared here.
-	print_int(a.describe());
-	print_int(b.describe());
+	fmt.println(a.describe());
+	fmt.println(b.describe());
 
 	// The caller's own extension is reachable by its ordinary spelling.
-	print_int(label(a));
+	fmt.println(label(a));
 }

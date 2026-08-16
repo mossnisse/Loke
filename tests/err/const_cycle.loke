@@ -1,8 +1,8 @@
-package main;
+package main; import "core:fmt";
 
 LEFT :: RIGHT;
 RIGHT :: LEFT;
 
 main :: proc() {
-	print_int(LEFT);
+	fmt.println(LEFT);
 }

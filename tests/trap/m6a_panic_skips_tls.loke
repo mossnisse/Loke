@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "What the unwind runs": file-scope, `static`, and `thread_local`
 // values are *not* dropped during panic termination. Managed TLS is dropped
@@ -10,7 +10,7 @@ package main;
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { print_int(self.id); }
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
 }
 
 session :: proc() {

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Res :: struct { id: int }
 
@@ -28,7 +28,7 @@ invalid_receivers :: proc() {
 
 dead_deferred_use :: proc() {
 	value := Res{3};
-	defer print_int(value.id);
+	defer fmt.println(value.id);
 	drop(value);
 }
 
@@ -36,7 +36,7 @@ continue_must_run_post :: proc() {
 	x := Res{4};
 	i := 0;
 	for (; i < 2; drop(x)) {
-		print_int(x.id);
+		fmt.println(x.id);
 		i += 1;
 		continue;
 	}
@@ -45,5 +45,5 @@ continue_must_run_post :: proc() {
 managed_union_copy :: proc() {
 	u: Managed_Value = Res{5};
 	v := u;
-	print_int(v.(Res).id);
+	fmt.println(v.(Res).id);
 }

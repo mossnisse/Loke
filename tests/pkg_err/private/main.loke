@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 import "lib";
 
 main :: proc() {
-	print_int(lib.secret);
-	print_int(lib.missing_entirely);
-	print_int(lib.exported());
+	fmt.println(lib.secret);
+	fmt.println(lib.missing_entirely);
+	fmt.println(lib.exported());
 }

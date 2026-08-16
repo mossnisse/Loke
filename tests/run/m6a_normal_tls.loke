@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The other half of `tests/trap/m6a_panic_skips_tls`: on a *normal* thread
 // return the runtime's detach drops each live managed `thread_local` value, so
@@ -7,7 +7,7 @@ package main;
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { print_int(self.id); }
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
 }
 
 session :: proc() {
@@ -18,5 +18,5 @@ session :: proc() {
 main :: proc() {
 	session();
 	local := Res{5};
-	print_int(0);
+	fmt.println(0);
 }

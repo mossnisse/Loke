@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Canvas :: struct { marks: int }
 
@@ -67,23 +67,23 @@ paint :: proc(target: dyn Drawable, canvas: inout Canvas) -> int {
 }
 
 main :: proc() {
-	print_int(describe(7));
-	print_int(describe(true));
-	print_int(describe(Circle{5}));
-	print_int(describe(1.5));
+	fmt.println(describe(7));
+	fmt.println(describe(true));
+	fmt.println(describe(Circle{5}));
+	fmt.println(describe(1.5));
 
 	// A temporary converted for a call stays valid through the call.
 	view: any_view = 42;
 	n, ok := view.(int);
-	print_int(n);
-	print_int(view.(int));
+	fmt.println(n);
+	fmt.println(view.(int));
 
 	c := Circle{3};
 	s := Square{2};
 	canvas: Canvas = {0};
-	print_int(paint((dyn Drawable)(&c), inout canvas));
-	print_int(paint((dyn Drawable)(&s), inout canvas));
-	print_int(canvas.marks);
+	fmt.println(paint((dyn Drawable)(&c), inout canvas));
+	fmt.println(paint((dyn Drawable)(&s), inout canvas));
+	fmt.println(canvas.marks);
 	more();
 }
 
@@ -98,24 +98,24 @@ more :: proc() {
 	c := Circle{4};
 	canvas: Canvas = {0};
 	// A concrete type: a specialized direct call.
-	print_int(paint_static(c, inout canvas));
+	fmt.println(paint_static(c, inout canvas));
 	// A `dyn` value: witness dispatch through the forwarding slots.
 	view := (dyn Drawable)(&c);
-	print_int(paint_static(view, inout canvas));
-	print_int(canvas.marks);
+	fmt.println(paint_static(view, inout canvas));
+	fmt.println(canvas.marks);
 
 	// The zero value of every `dyn` type is nil, and it compares with nil.
 	empty: dyn Drawable = nil;
-	if (empty == nil) { print_int(1); } else { print_int(0); }
+	if (empty == nil) { fmt.println(1); } else { fmt.println(0); }
 	copied := view;
-	print_int(copied.size());
+	fmt.println(copied.size());
 
 	// Distinct non-subject applications get distinct witness globals.
 	token := Token{9};
-	print_int(((dyn Tagged(int))(&token)).tag());
-	print_int(((dyn Tagged(bool))(&token)).tag());
+	fmt.println(((dyn Tagged(int))(&token)).tag());
+	fmt.println(((dyn Tagged(bool))(&token)).tag());
 	// Composed applications substitute their written argument vector.
-	print_int(((dyn Int_Valued)(&token)).value());
+	fmt.println(((dyn Int_Valued)(&token)).value());
 
 	// An inout dyn slot works directly and when `dyn I` itself is erased as I,
 	// which exercises the compiler-provided forwarding procedure's pointer ABI.
@@ -124,5 +124,5 @@ more :: proc() {
 	mutable.bump();
 	nested := (dyn Bumpable)(&mutable);
 	nested.bump();
-	print_int(counter.value);
+	fmt.println(counter.value);
 }

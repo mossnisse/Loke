@@ -1,0 +1,76 @@
+package main; import "core:fmt";
+
+// Runtime text end to end (m6a-plan step 4).
+//
+// design.md "string type": a `string` is an immutable, owning UTF-8 value that
+// "behaves like a simple local variable"; a literal uses static storage; a
+// runtime string owns a managed buffer; assignment shares that buffer and only
+// `.clone()` copies it. `string_view` is the borrowed half, and a `string`
+// converts to one implicitly.
+
+byte_count :: proc(text: string_view) -> int { return len(text); }
+
+main :: proc() {
+	// A literal is a compile-time constant over static, zero-terminated storage.
+	literal: string = "Hej, världen";
+	fmt.println(len(literal));          // 13 bytes: `ä` takes two of them
+	fmt.println(literal.byte_len());    // `len` is shorthand for this
+	fmt.println(literal.rune_count());  // 12 scalar values
+
+	// The implicit borrow costs nothing and needs no validation.
+	fmt.println(byte_count(literal));
+	fmt.println(byte_count(literal[5:]));
+
+	// Concatenation allocates and produces an owning `string`.
+	joined := "Hej" + ", " + "värld";
+	fmt.println(len(joined));
+	fmt.println(joined.rune_count());
+
+	// Assignment shares the backing storage; `clone` does not.
+	shared := joined;
+	copied := joined.clone();
+	fmt.println(1 if shared == joined else 0);
+	fmt.println(1 if copied == joined else 0);
+
+	// Lexical byte-wise order.
+	fmt.println(1 if "abc" < "abd" else 0);
+	fmt.println(1 if "abc" < "ab" else 0);
+
+	// Bytes are a read-only borrow of the same storage.
+	bytes := literal.bytes();
+	fmt.println(len(bytes));
+	fmt.println(int(bytes[0]));
+
+	// design.md "String iteration": the second name is a byte offset, so it
+	// advances by 1 to 4 per step rather than counting runes.
+	x: string = "AÅ✓";
+	foreach (codepoint, offset in x) {
+		fmt.println(offset);
+		fmt.println(int(codepoint));
+	}
+
+	// Validating conversions have optional-ok results.
+	good := [?]u8{72, 105};
+	valid, valid_ok := string(good[:]);
+	fmt.println(len(valid) if valid_ok else -1);
+
+	invalid := [?]u8{0xC3, 0x28};
+	broken, broken_ok := string(invalid[:]);
+	fmt.println(-1 if broken_ok else len(broken));
+
+	view, view_ok := string_view(good[:]);
+	fmt.println(len(view) if view_ok else -1);
+
+	// A literal has static lifetime, so it initializes a C view directly.
+	terminated: cstring_view = "hej";
+	scanned, scanned_ok := string(terminated);
+	fmt.println(len(scanned) if scanned_ok else -1);
+
+	// And a runtime string reuses the terminator its buffer already carries.
+	back, back_ok := string(joined.to_c_view());
+	fmt.println(len(back) if back_ok else -1);
+
+	runes := [?]rune{'A', 0x00C5};
+	built, built_ok := string.from_runes(runes[:]);
+	fmt.println(len(built) if built_ok else -1);
+}

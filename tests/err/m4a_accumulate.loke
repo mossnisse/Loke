@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Unrelated M4a failures in one file: nothing here stops the rest from being
 // reported.
@@ -20,7 +20,7 @@ impl Vec {
 
 main :: proc() {
 	// An ambiguous overload.
-	print_int(integer_widths(1));
+	fmt.println(integer_widths(1));
 	// A method used as a value.
 	v := Vec{1};
 	f := v.length;
@@ -30,9 +30,9 @@ main :: proc() {
 	// A type switch with no default that misses a variant.
 	switch (t in u) {
 	case i32:
-		print_int(0);
+		fmt.println(0);
 	}
 	// A construction with no `init`.
 	w := Vec(1, 2);
-	print_int(1);
+	fmt.println(1);
 }

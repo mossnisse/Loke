@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Value :: union { bool, i32, f64 }
 Error_Code :: enum { Something_Bad, Something_Worse }
@@ -17,7 +17,7 @@ caller_2 :: proc() -> (int, Error) { return 123, nil; }
 failing :: proc() -> (int, Error) { return 7, Error_Code.Something_Bad; }
 
 good :: proc() -> (n: int, err: Error) {
-	defer print_int(900);
+	defer fmt.println(900);
 	n = 0;
 	x := caller_2() or_return;
 	caller_1() or_return;
@@ -26,7 +26,7 @@ good :: proc() -> (n: int, err: Error) {
 }
 
 bad :: proc() -> (n: int, err: Error) {
-	defer print_int(901);
+	defer fmt.println(901);
 	n = 5;
 	x := failing() or_return;
 	n = x + 1000;
@@ -76,61 +76,61 @@ describe :: proc(v: Value) -> int {
 main :: proc() {
 	// The zero value of a union is nil.
 	v: Value;
-	print_int(1 if v == nil else 0);
+	fmt.println(1 if v == nil else 0);
 
 	// Every variant round-trips.
 	v = i32(7);
-	print_int(int(v.(i32)));
+	fmt.println(int(v.(i32)));
 	v = true;
-	print_int(1 if v.(bool) else 0);
+	fmt.println(1 if v.(bool) else 0);
 	v = 2.5;
-	print_int(int(v.(f64)));
+	fmt.println(int(v.(f64)));
 
 	// Nil comparison and variant equality.
 	a: Value = i32(7);
 	b: Value = i32(7);
 	c: Value = true;
-	print_int(1 if a == b else 0);
-	print_int(1 if a == c else 0);
-	print_int(1 if a != c else 0);
-	print_int(1 if a == nil else 0);
+	fmt.println(1 if a == b else 0);
+	fmt.println(1 if a == c else 0);
+	fmt.println(1 if a != c else 0);
+	fmt.println(1 if a == nil else 0);
 
 	// The comma-ok form never traps.
 	m, ok := a.(f64);
-	print_int(1 if ok else 0);
-	print_int(int(m));
+	fmt.println(1 if ok else 0);
+	fmt.println(int(m));
 
-	print_int(describe(a));
-	print_int(describe(c));
-	print_int(describe(v));
+	fmt.println(describe(a));
+	fmt.println(describe(c));
+	fmt.println(describe(v));
 	empty: Value;
-	print_int(describe(empty));
+	fmt.println(describe(empty));
 
 	// The error protocol.
 	n1, e1 := good();
-	print_int(n1);
-	print_int(1 if e1 == nil else 0);
+	fmt.println(n1);
+	fmt.println(1 if e1 == nil else 0);
 	n2, e2 := bad();
-	print_int(n2);
-	print_int(1 if e2 == nil else 0);
-	print_int(1 if status_user() else 0);
+	fmt.println(n2);
+	fmt.println(1 if e2 == nil else 0);
+	fmt.println(1 if status_user() else 0);
 	pn, pe := propagate_pointer(true);
-	print_int(pn);
-	print_int(1 if pe != nil else 0);
+	fmt.println(pn);
+	fmt.println(1 if pe != nil else 0);
 	bn, be := branch_result(false);
-	print_int(bn);
-	print_int(1 if be == nil else 0);
+	fmt.println(bn);
+	fmt.println(1 if be == nil else 0);
 
 	// `or_else` supplies a fallback without evaluating it on success.
-	print_int(int(a.(i32) or_else i32(123)));
-	print_int(int(a.(f64) or_else 4.0));
+	fmt.println(int(a.(i32) or_else i32(123)));
+	fmt.println(int(a.(f64) or_else 4.0));
 
 	// `@(align=N)` raises the payload's alignment, which `tests/layout` can only
 	// confirm agrees with LLVM — the values themselves belong here.
-	print_int(size_of(Narrow));
-	print_int(align_of(Narrow));
-	print_int(size_of(Wide_Aligned));
-	print_int(align_of(Wide_Aligned));
-	print_int(size_of(Holder));
-	print_int(offset_of(Holder, value));
+	fmt.println(size_of(Narrow));
+	fmt.println(align_of(Narrow));
+	fmt.println(size_of(Wide_Aligned));
+	fmt.println(align_of(Wide_Aligned));
+	fmt.println(size_of(Holder));
+	fmt.println(offset_of(Holder, value));
 }

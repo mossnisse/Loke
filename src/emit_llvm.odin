@@ -34,6 +34,16 @@ Deferred :: struct {
 	// env rather than by name, so the symbol travels with the entry.
 	place_symbol: Symbol_Id,
 	type:  Type_Id,
+	// A compiler-owned variadic buffer uses one cleanup action with per-element
+	// flags. The three env indices let the unwind thunk reach its dynamic buffer,
+	// flag array, and runtime count; the direct names serve normal cleanup.
+	array_cleanup:  bool,
+	array_buffer:   string,
+	array_flags:    string,
+	array_count:    string,
+	array_buffer_env: int,
+	array_flags_env:  int,
+	array_count_env:  int,
 	// This action's index in the procedure's runtime registration state, or -1
 	// when the procedure registers no frame at all (`-panic=abort`).
 	slot: int,
@@ -69,6 +79,7 @@ Unwind_State :: struct {
 	actions: [dynamic]Deferred,
 	// Env index per local symbol whose address a cleanup may need.
 	env_index: map[Symbol_Id]int,
+	env_count: int,
 	// The registration slot of a managed local's implicit drop, and of a written
 	// `defer`, so `move`/`drop` and a re-entered scope can clear the same
 	// registration the existing drop flags clear.
@@ -119,9 +130,18 @@ Emitter :: struct {
 	// generated to replay it. Both are empty under `-panic=abort`.
 	unwind: Unwind_State,
 	pending: [dynamic]string,
+	// Generated formatter thunks, flushed once at the end of the module: each is
+	// a function, and a function cannot be defined inside another.
+	pending_thunks: [dynamic]string,
+	// The writer and options records a `format_any` call spilled, so a nested
+	// dispatch names the same storage.
+	fmt_writer:  string,
+	fmt_options: string,
 	// Interned C string constants (panic messages), keyed by content so one
 	// message is one global, plus the module-scope definitions they need.
 	messages: map[string]string,
+	// Static literal storage, keyed by content so one literal is one global.
+	literals: map[string]string,
 	globals:  [dynamic]string,
 }
 
@@ -162,7 +182,9 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),
 		pending      = make([dynamic]string),
+		pending_thunks = make([dynamic]string),
 		messages     = make(map[string]string),
+		literals     = make(map[string]string),
 		globals      = make([dynamic]string),
 	}
 	strings.builder_init(&e.b)
@@ -189,6 +211,11 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 	emit_synth_procs(&e)
 	emit_witnesses(&e)
 	emit_entry(&e)
+	emit_type_info_tables(&e)
+	emit_format_thunks(&e)
+	for text in e.pending_thunks {
+		strings.write_string(&e.b, text)
+	}
 	for text in e.globals {
 		strings.write_string(&e.b, text)
 	}
@@ -317,14 +344,10 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 emit_preamble :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, e.c.target.triple)
 	fmt.sbprintln(&e.b, "")
-	// ponytail: printf stands in for core:fmt until the seed runtime lands (M6).
-	fmt.sbprintln(&e.b, `@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"`)
-	fmt.sbprintln(&e.b, "declare i32 @printf(ptr, ...)")
-	// M2 has no runtime yet. Every defined runtime failure — division by zero,
-	// an index out of range, a nil dereference or nil indirect call — takes this
-	// one explicit seam instead of inheriting LLVM poison or a target-specific
-	// hardware exception.
-	fmt.sbprintln(&e.b, "declare void @llvm.trap()")
+	// Every defined runtime failure — division by zero, an index out of range, a
+	// nil dereference or nil indirect call — reaches the seed runtime's panic or
+	// abort entry rather than inheriting LLVM poison, a target-specific hardware
+	// exception, or the `llvm.trap` that stood in for both before M6a.
 	emit_runtime_declarations(e)
 	fmt.sbprintln(&e.b, "")
 }
@@ -356,6 +379,91 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
 	fmt.sbprintln(&e.b, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
+	fmt.sbprintln(&e.b, "declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_write_std(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_i64(ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_u64(ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_i128(ptr, i64, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_u128(ptr, i64, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_f64(ptr, double)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_bool(ptr, i32)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_rune(ptr, i32)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_fmt_ptr(ptr, ptr)")
+	emit_text_declarations(e)
+}
+
+// design.md "string type" and "string type conversions". The two named types are
+// the frozen carriers: an owning `string` is data, byte length, and owner flags;
+// a borrowed `string_view` is data and byte length, with no allocator and no
+// ownership.
+STRING_TYPE :: "%loke.string"
+STRING_VIEW_TYPE :: "%loke.string_view"
+STRING_DATA :: 0
+STRING_LEN :: 1
+STRING_OWNER :: 2
+VIEW_DATA :: 0
+VIEW_LEN :: 1
+// `owner_flags` of a literal. Zero is the empty value; anything else is the
+// address of a runtime buffer's header.
+STRING_STATIC :: 1
+
+// One zero-terminated static constant per distinct literal. design.md: "A string
+// literal uses static storage", and its bytes are already zero-terminated, which
+// is what lets the same global initialize a `cstring_view`.
+@(private = "file")
+text_literal_global :: proc(e: ^Emitter, text: string) -> string {
+	if existing, found := e.literals[text]; found {
+		return existing
+	}
+	name := fmt.aprintf("@.str.%d", len(e.literals))
+	e.literals[text] = name
+	append(&e.globals, fmt.aprintf(
+		"%s = private unnamed_addr constant [%d x i8] c\"%s\\00\"\n",
+		name, len(text) + 1, llvm_escape(text),
+	))
+	return name
+}
+
+// A literal `string` or `string_view` value. A literal costs no allocation and
+// no handle accounting: its owner flags say "static", which is exactly what a
+// retain and a release both ignore.
+@(private = "file")
+text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
+	if value.kind != .String || value.text == "" {
+		// design.md: "The empty value is all zero", and a nil view has length 0 and
+		// points at no storage.
+		return "zeroinitializer"
+	}
+	b := strings.builder_make()
+	strings.write_string(&b, "{ ptr ")
+	strings.write_string(&b, text_literal_global(e, value.text))
+	fmt.sbprintf(&b, ", i64 %d", len(value.text))
+	if owning {
+		fmt.sbprintf(&b, ", i64 %d", STRING_STATIC)
+	}
+	strings.write_string(&b, " }")
+	return strings.to_string(b)
+}
+
+@(private = "file")
+emit_text_declarations :: proc(e: ^Emitter) {
+	// `{` is a directive to core:fmt, so the record shapes are written literally.
+	fmt.sbprint(&e.b, STRING_TYPE)
+	fmt.sbprintln(&e.b, " = type { ptr, i64, i64 }")
+	fmt.sbprint(&e.b, STRING_VIEW_TYPE)
+	fmt.sbprintln(&e.b, " = type { ptr, i64 }")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_from_bytes(ptr, ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_concat(ptr, ptr, i64, ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_clone(ptr, ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_from_runes(ptr, ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_retain(i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_release(i64)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_utf8_valid(ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_rune_count(ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_rune_at(ptr, i64, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_bytes_compare(ptr, i64, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare i64 @loke_rt_v1_cstring_len(ptr)")
 }
 
 // The allocator a call selected: the one it was given, or the default provider
@@ -405,13 +513,19 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),
 		pending      = make([dynamic]string),
+		pending_thunks = make([dynamic]string),
 		messages     = make(map[string]string),
+		literals     = make(map[string]string),
 		globals      = make([dynamic]string),
 	}
 	strings.builder_init(&e.b)
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
 	fmt.sbprintln(&e.b, `@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"`)
 	fmt.sbprintln(&e.b, "declare i32 @printf(ptr, ...)")
+	// The normal module supplies this detach callback. A layout probe has no Loke
+	// thread-local values, but it links the same seed runtime and therefore owes
+	// the runtime the no-op side of that ABI.
+	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() { ret void }")
 	emit_struct_definitions(&e)
 
 	probes := make([dynamic]Layout_Probe)
@@ -672,9 +786,15 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 			return "float"
 		}
 		return "double"
-	case .Pointer, .Raw_Pointer, .Proc, .Allocator:
-		// An `Allocator` is a one-word handle on the single default provider.
+	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View:
+		// An `Allocator` is a one-word handle on the provider record; a
+		// `cstring_view` is one zero-terminated address; a multi-pointer is one
+		// address with neither a length nor a capability.
 		return "ptr"
+	case .String:
+		return STRING_TYPE
+	case .String_View:
+		return STRING_VIEW_TYPE
 	case .Array:
 		return fmt.aprintf("[%d x %s]", info.count, llvm_type(e, info.element))
 	case .Struct, .Union, .Any_View, .Dyn, .Slice:
@@ -871,14 +991,13 @@ emit_static_locals :: proc(e: ^Emitter) {
 	}
 }
 
-// design.md: "At normal thread return, the runtime drops each live managed
-// `thread_local` value in reverse initialization order."
-//
-// ponytail: M5a creates no threads, so the main thread is every thread and this
-// runs once, after `main` returns. M6's runtime thread entry and exit is what
-// makes it general (m5a-plan "Panic and TLS").
+// The fixed callback the runtime invokes from `thread_detach`. It addresses
+// LLVM thread-local globals, so the same function drops the values belonging to
+// whichever initial, runtime-created, or foreign-attached thread is detaching.
 @(private = "file")
 emit_thread_local_teardown :: proc(e: ^Emitter) {
+	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() {")
+	fmt.sbprintln(&e.b, "entry:")
 	for index := len(e.c.static_locals) - 1; index >= 0; index -= 1 {
 		symbol_id := e.c.static_locals[index]
 		sym := symbol_of(e.c, symbol_id)
@@ -890,6 +1009,9 @@ emit_thread_local_teardown :: proc(e: ^Emitter) {
 		}
 		emit_drop_place(e, sym.type, e.names[symbol_id])
 	}
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
 }
 
 // File-scope variables need constant initialisers (design.md "Values that
@@ -942,8 +1064,14 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		return bi_text(e.c, bi_wrap(e.c, value.integer, bits, signed))
 	case .Float:
 		return llvm_float(value.float, info.bits)
-	case .Pointer, .Raw_Pointer, .Proc, .Allocator:
+	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		return "null"
+	case .CString_View:
+		// design.md: "A string literal may initialize a `cstring_view` because its
+		// zero-terminated bytes have static lifetime."
+		return value.kind == .String ? text_literal_global(e, value.text) : "null"
+	case .String, .String_View:
+		return text_constant(e, value, info.kind == .String)
 	case .Allocator_Error:
 		// Nil is success, and success is zero.
 		return value.kind == .Nil ? "0" : bi_text(e.c, value.integer)
@@ -1139,6 +1267,7 @@ symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mo
 // Loke's `main` is not the C `main`.
 @(private = "file")
 emit_entry :: proc(e: ^Emitter) {
+	emit_thread_local_teardown(e)
 	fmt.sbprintln(&e.b, "define i32 @main() {")
 	fmt.sbprintln(&e.b, "entry:")
 	// design.md "Threads" and m6a-plan decision "Thread runtime": the initial
@@ -1147,7 +1276,6 @@ emit_entry :: proc(e: ^Emitter) {
 	// process instead.
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
 	fmt.sbprintfln(&e.b, "  call void %s()", e.names[entry_symbol(e.c)] or_else "@loke.p.main")
-	emit_thread_local_teardown(e)
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "  ret i32 0")
 	fmt.sbprintln(&e.b, "}")
@@ -1349,9 +1477,25 @@ unwind_env_slot :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> int {
 	if index, found := e.unwind.env_index[symbol_id]; found {
 		return index
 	}
-	index := len(e.unwind.env_index)
+	index := e.unwind.env_count
+	e.unwind.env_count += 1
 	e.unwind.env_index[symbol_id] = index
 	return index
+}
+
+@(private = "file")
+unwind_reserve_env :: proc(e: ^Emitter) -> int {
+	index := e.unwind.env_count
+	e.unwind.env_count += 1
+	return index
+}
+
+@(private = "file")
+unwind_publish_env :: proc(e: ^Emitter, index: int, address: string) {
+	if !unwind_enabled(e) || index < 0 || address == "" {
+		return
+	}
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", address, unwind_env_address(e, index))
 }
 
 // Names a local and, when the procedure carries a frame, publishes its address
@@ -1426,7 +1570,7 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 	fmt.sbprint(&e.b, FRAME)
 	fmt.sbprint(&e.b, " zeroinitializer, ptr ")
 	fmt.sbprintln(&e.b, u.frame)
-	if len(u.actions) == 0 && len(u.env_index) == 0 {
+	if len(u.actions) == 0 && u.env_count == 0 {
 		// Nothing to replay and nothing published, so nothing is pushed. The zeroed
 		// record still makes the epilogue's pop a no-op rather than a special case.
 		return
@@ -1439,7 +1583,7 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 		&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
 		u.live, max(len(u.actions), 1),
 	)
-	fmt.sbprintfln(&e.b, "  %s = alloca [%d x ptr]", u.env, max(len(u.env_index), 1))
+	fmt.sbprintfln(&e.b, "  %s = alloca [%d x ptr]", u.env, max(u.env_count, 1))
 	fmt.sbprintfln(&e.b, "  %s = alloca [2 x ptr]", u.ctx)
 	if len(u.actions) == 0 {
 		return
@@ -1507,7 +1651,18 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		branch_if(e, flag, run, skip)
 		place_label(e, run)
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", address)
-		if entry.stmt != nil {
+		if entry.array_cleanup {
+			load_env := proc(e: ^Emitter, env: string, index: int) -> string {
+				slot, value := temp(e), temp(e)
+				fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", slot, env, index)
+				fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, slot)
+				return value
+			}
+			buffer := load_env(e, env, entry.array_buffer_env)
+			flags := load_env(e, env, entry.array_flags_env)
+			count := load_env(e, env, entry.array_count_env)
+			emit_drop_flagged_array(e, entry.type, buffer, flags, count)
+		} else if entry.stmt != nil {
 			emit_stmt(e, entry.stmt)
 		} else if place, bound := e.names[entry.place_symbol]; bound {
 			emit_drop_place(e, entry.type, place)
@@ -2443,6 +2598,15 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 // allocator and its `via` policy through here (m5a-plan "Failure fallback").
 @(private = "file")
 emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
+	// design.md "string type": "cheap value copy; immutable backing storage may
+	// be shared". An implicit copy of a string retains a handle; only `.clone()`
+	// allocates, and that is a written call, not this path.
+	if lifecycle_of(e.c, type).intrinsic {
+		owner := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", owner, STRING_TYPE, value, STRING_OWNER)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_retain(i64 %s)", owner)
+		return value
+	}
 	hook := type_hook(e.c, type, "clone")
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "an implicit copy has no `clone` member")
@@ -2544,6 +2708,19 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		if type_is_slice(e.c, expr_base(v.operand).type) {
 			return emit_slice_element_address(e, v)
 		}
+		// design.md "Multi-pointers": "Indexing without bounds checking." There is
+		// no length to check against, which is exactly what the type says.
+		if operand_info := type_of(e.c, type_underlying(e.c, expr_base(v.operand).type));
+		   operand_info != nil && operand_info.kind == .Multi_Pointer {
+			data := emit_expr(e, v.operand)
+			index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
+			out := temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+				out, llvm_type(e, operand_info.element), data, index,
+			)
+			return out
+		}
 		base_type, base_address := emit_base_address(e, v.operand)
 		info := type_of(e.c, type_underlying(e.c, base_type))
 		index := emit_expr(e, v.indices[0])
@@ -2628,6 +2805,12 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	element := info.element
 
 	data, length := "", ""
+	#partial switch info.kind {
+	case .String, .String_View:
+		return emit_text_subrange(e, v)
+	case .Multi_Pointer:
+		return emit_multi_pointer_slice(e, v)
+	}
 	if info.kind == .Slice {
 		value := emit_expr(e, v.operand)
 		llvm := llvm_type(e, operand_type)
@@ -2676,6 +2859,69 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	return out
 }
 
+// design.md "From string to X": `st[low:high]` is a subrange *view*. The bounds
+// are byte offsets, and a range that split a code point would hand out a
+// `string_view` that is not valid UTF-8 — so the encoding is checked with the
+// range, not merely the length.
+@(private = "file")
+emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
+	data, length := emit_text_parts(e, v.operand)
+	low := "0"
+	if v.lo != nil {
+		low = widen_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
+	}
+	high := length
+	if v.hi != nil {
+		high = widen_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
+	}
+	reversed, past_end, bad := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past_end, high, length)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, reversed, past_end)
+	panic_if(e, bad, "slice.bounds", "string slice bounds out of range")
+
+	start, count := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds i8, ptr %s, i64 %s", start, data, low)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
+	valid, split := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, start, count)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", split, valid)
+	panic_if(e, split, "slice.utf8", "string slice bounds split a code point")
+
+	first, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, start, VIEW_DATA)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, STRING_VIEW_TYPE, first, count, VIEW_LEN)
+	return out
+}
+
+// design.md "Multi-pointers": `x[:]`/`x[i:]` stay multi-pointers and carry no
+// bounds; `x[:n]`/`x[i:n]` produce a `[]T` and are checked, because only then is
+// there a length to check against.
+@(private = "file")
+emit_multi_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
+	element := type_of(e.c, type_underlying(e.c, expr_base(v.operand).type)).element
+	data := emit_expr(e, v.operand)
+	low := "0"
+	if v.lo != nil {
+		low = widen_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
+	}
+	start := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		start, llvm_type(e, element), data, low,
+	)
+	if v.hi == nil {
+		return start
+	}
+	high := widen_to_i64(e, emit_expr(e, v.hi), expr_base(v.hi).type)
+	reversed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", reversed, low, high)
+	panic_if(e, reversed, "slice.bounds", "slice bounds out of range")
+	count := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
+	return emit_slice_value(e, v.type, start, count)
+}
+
 @(private = "file")
 emit_bounds_check :: proc(e: ^Emitter, index: string, index_type: Type_Id, count: u64) -> string {
 	// An unsigned comparison catches a negative index and an oversized one at
@@ -2721,6 +2967,22 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		address := spill_iterable(e, expr)
 		base.erased_from, base.type = from, target
 		return emit_any_view_value(e, address, from)
+	}
+	// design.md: a `string` borrowed as a `string_view` — the same pointer and
+	// byte length, with the owning word dropped. Nothing is retained: the view
+	// borrows the string and cannot outlive it, which `src/borrow.odin` checks.
+	if from := base.view_from; from != INVALID_TYPE {
+		target := base.type
+		base.view_from, base.type = INVALID_TYPE, from
+		value := emit_expr(e, expr)
+		base.view_from, base.type = from, target
+		data, length := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, STRING_TYPE, value, STRING_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, STRING_TYPE, value, STRING_LEN)
+		first, out := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, data, VIEW_DATA)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, STRING_VIEW_TYPE, first, length, VIEW_LEN)
+		return out
 	}
 	if from := base.union_from; from != INVALID_TYPE {
 		target := base.type
@@ -2961,9 +3223,29 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 		rhs := emit_expr(e, v.rhs)
 		return emit_compare(e, v.op, operand_type, lhs, rhs)
 	}
+	if v.op == .Plus && type_is_utf8_text(e.c, expr_base(v.lhs).type) {
+		return emit_text_concat(e, v)
+	}
 	lhs := emit_expr(e, v.lhs)
 	rhs := emit_expr(e, v.rhs)
 	return emit_binary_op(e, v.op, v.type, expr_base(v.rhs).type, lhs, rhs)
+}
+
+// design.md "Concatenation": "the operation allocates from
+// `mem.default_allocator()` and follows its failure policy". Both operands are
+// already valid UTF-8, so the result needs no validation.
+@(private = "file")
+emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
+	left_data, left_len := emit_text_parts(e, v.lhs)
+	right_data, right_len := emit_text_parts(e, v.rhs)
+	return emit_text_allocating_call(
+		e, "loke_rt_v1_string_concat",
+		fmt.aprintf(
+			"ptr %s, i64 %s, ptr %s, i64 %s, ptr %s",
+			left_data, left_len, right_data, right_len, RT_DEFAULT_ALLOCATOR,
+		),
+		fail_is_panic = true,
+	)
 }
 
 @(private = "file")
@@ -3115,6 +3397,39 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 
 @(private = "file")
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
+	// design.md: "`string` and `string_view` values are comparable and ordered,
+	// lexically byte-wise." One runtime call answers all six operators.
+	if type_is_utf8_text(e.c, type) {
+		storage := llvm_type(e, type_underlying(e.c, type))
+		left_data, left_len, right_data, right_len := temp(e), temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", left_data, storage, lhs, STRING_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", left_len, storage, lhs, STRING_LEN)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", right_data, storage, rhs, STRING_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", right_len, storage, rhs, STRING_LEN)
+		order := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
+			order, left_data, left_len, right_data, right_len,
+		)
+		name := ""
+		#partial switch op {
+		case .Eq_Eq:
+			name = "eq"
+		case .Not_Eq:
+			name = "ne"
+		case .Lt:
+			name = "slt"
+		case .Lt_Eq:
+			name = "sle"
+		case .Gt:
+			name = "sgt"
+		case .Gt_Eq:
+			name = "sge"
+		}
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp %s i32 %s, 0", out, name, order)
+		return out
+	}
 	if type_is_aggregate(e.c, type) || type_is_union(e.c, type) || type_is_erased_view(e.c, type) {
 		equal := emit_equal(e, type, lhs, rhs)
 		if op == .Eq_Eq {
@@ -3373,6 +3688,1088 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond) -> string {
 	return out
 }
 
+// ================================================== coherent formatting ==
+
+// design.md "String format printing" and m6a-plan decision "Coherent
+// formatting": runtime formatting has one formatter per concrete `typeid`. The
+// table is private and parallel to the type-info table, because the public
+// `Type_Info` layout deliberately exposes no code pointers — that is what keeps
+// `base:runtime` from having to know `core:fmt` exists.
+FMT_THUNKS :: "@.loke.fmt_thunks"
+FMT_THUNK_COUNT :: "@.loke.fmt_thunks.count"
+TYPE_NAMES :: "@.loke.type_names"
+
+@(private = "file")
+fmt_thunk_name :: proc(e: ^Emitter, type: Type_Id) -> string {
+	return fmt.aprintf("@loke.f.%d", typeid_value(e.c, type))
+}
+
+// One generated formatter per requested printable type, then the table that
+// dispatches an erased value to it.
+@(private = "file")
+emit_format_thunks :: proc(e: ^Emitter) {
+	if !e.c.format_requested {
+		return
+	}
+	count := len(e.c.typeid_order)
+	entries := make([]string, count + 1)
+	entries[0] = "null"
+	for index in 1 ..< len(entries) {
+		entries[index] = "null"
+	}
+	for type in e.c.typeid_order {
+		id := typeid_value(e.c, type)
+		if id == 0 || int(id) > count || !type_is_printable(e.c, type) {
+			continue
+		}
+		emit_one_format_thunk(e, type)
+		entries[id] = fmt_thunk_name(e, type)
+	}
+
+	// The names a `typeid` prints as. This is the same text `runtime.Type_Info`
+	// carries, but it is a private table so that printing does not oblige a
+	// program to import `base:runtime` for a public record it never names.
+	names := make([]string, count + 1)
+	for index in 0 ..< len(names) {
+		names[index] = ""
+	}
+	for type in e.c.typeid_order {
+		id := typeid_value(e.c, type)
+		if id != 0 && int(id) <= count {
+			names[id] = type_name(e.c, type)
+		}
+	}
+
+	b := strings.builder_make()
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x ptr] [", FMT_THUNKS, count + 1)
+	for entry, index in entries {
+		if index > 0 {
+			strings.write_string(&b, ",")
+		}
+		fmt.sbprintf(&b, " ptr %s", entry)
+	}
+	strings.write_string(&b, " ]\n")
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", FMT_THUNK_COUNT, count)
+	// Built with the same `{ptr, len}` shape a `string_view` has, so the formatter
+	// reads it with the loads it already emits for one.
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x %s] [", TYPE_NAMES, count + 1, STRING_VIEW_TYPE)
+	for name, index in names {
+		if index > 0 {
+			strings.write_string(&b, ",")
+		}
+		if name == "" {
+			fmt.sbprintf(&b, " %s zeroinitializer", STRING_VIEW_TYPE)
+			continue
+		}
+		// `{` is a core:fmt format directive, so this row is concatenated.
+		strings.write_string(&b, strings.concatenate({
+			" ", STRING_VIEW_TYPE, " { ptr ", text_literal_global(e, name),
+			", i64 ", fmt.aprintf("%d", len(name)), " }",
+		}))
+	}
+	strings.write_string(&b, " ]\n")
+	append(&e.globals, strings.to_string(b))
+}
+
+// design.md gives no spelling for an aggregate, so these are the ones the
+// library's own examples imply: elements between brackets, fields named inside
+// braces, and an enum by the member's own name.
+@(private = "file")
+emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
+	saved_body, saved_terminated := e.b, e.terminated
+	e.b = strings.builder_make()
+	e.terminated = false
+
+	fmt.sbprintf(&e.b, "define private void %s(ptr %%data, ptr %%w, ptr %%o)", fmt_thunk_name(e, type))
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	emit_format_body(e, type, "%data")
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+
+	text := strings.to_string(e.b)
+	e.b, e.terminated = saved_body, saved_terminated
+	append(&e.pending_thunks, text)
+}
+
+// A literal separator: `[`, `, `, ` = ` and friends all go through the same
+// static storage the string literals already use.
+@(private = "file")
+emit_format_literal :: proc(e: ^Emitter, text: string) {
+	global := text_literal_global(e, text)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %d)", global, len(text))
+}
+
+@(private = "file")
+emit_format_call :: proc(e: ^Emitter, type: Type_Id, address: string) {
+	if !type_is_printable(e.c, type) || typeid_value(e.c, type) == 0 {
+		emit_format_literal(e, "<unformattable>")
+		return
+	}
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %%w, ptr %%o)", fmt_thunk_name(e, type), address)
+}
+
+@(private = "file")
+emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
+	// design.md's coherence rule: a `format` declared in the value type's own
+	// package *is* the formatter for that type, so the thunk is a call to it.
+	if hook := e.c.formatters[type]; hook != INVALID_SYMBOL {
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, type), address)
+		writer, options := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%w", writer, llvm_type(e, e.c.runtime_types["Writer"]))
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%o", options, llvm_type(e, e.c.runtime_types["Options"]))
+		fmt.sbprintfln(
+			&e.b, "  call void %s(%s %s, %s %s, %s %s)",
+			e.names[hook],
+			llvm_type(e, type), value,
+			llvm_type(e, e.c.runtime_types["Writer"]), writer,
+			llvm_type(e, e.c.runtime_types["Options"]), options,
+		)
+		return
+	}
+	// A `distinct` type prints as the shape it wraps: it has a fresh identity,
+	// not a fresh representation.
+	under := type_underlying(e.c, type)
+	info := type_of(e.c, under)
+	if info == nil {
+		emit_format_literal(e, "<unformattable>")
+		return
+	}
+
+	#partial switch info.kind {
+	case .Bool:
+		value, widened := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", value, address)
+		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", widened, value)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bool(ptr %%w, i32 %s)", widened)
+
+	case .Int, .Allocator_Error:
+		llvm := llvm_type(e, under)
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm, address)
+		signed := type_signed(e.c, under)
+		if type_bits(e.c, under) > 64 {
+			low, shifted, high := temp(e), temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = trunc %s %s to i64", low, llvm, value)
+			fmt.sbprintfln(&e.b, "  %s = lshr %s %s, 64", shifted, llvm, value)
+			fmt.sbprintfln(&e.b, "  %s = trunc %s %s to i64", high, llvm, shifted)
+			callee := signed ? "loke_rt_v1_fmt_i128" : "loke_rt_v1_fmt_u128"
+			fmt.sbprintfln(&e.b, "  call void @%s(ptr %%w, i64 %s, i64 %s, ptr %%o)", callee, low, high)
+			return
+		}
+		widened := widen_to_i64(e, value, under)
+		if signed {
+			fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_i64(ptr %%w, i64 %s, ptr %%o)", widened)
+		} else {
+			fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_u64(ptr %%w, i64 %s, ptr %%o)", widened)
+		}
+
+	case .Typeid:
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", value, address)
+		emit_format_type_name(e, value)
+
+	case .Rune:
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load i32, ptr %s", value, address)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_rune(ptr %%w, i32 %s)", value)
+
+	case .Float:
+		llvm := llvm_type(e, under)
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm, address)
+		widened := value
+		if llvm != "double" {
+			widened = temp(e)
+			fmt.sbprintfln(&e.b, "  %s = fpext %s %s to double", widened, llvm, value)
+		}
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f64(ptr %%w, double %s)", widened)
+
+	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator:
+		value := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_ptr(ptr %%w, ptr %s)", value)
+
+	case .String, .String_View:
+		value, data, length := temp(e), temp(e), temp(e)
+		storage := llvm_type(e, under)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, STRING_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, STRING_LEN)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %s)", data, length)
+
+	case .CString_View:
+		value, length := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
+		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, value)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %s)", value, length)
+
+	case .Enum:
+		emit_format_enum(e, under, address)
+
+	case .Array:
+		emit_format_sequence(e, info.element, address, fmt.aprintf("%d", info.count), inline_array = true)
+
+	case .Slice:
+		value, data, length := temp(e), temp(e), temp(e)
+		storage := llvm_type(e, under)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, SLICE_LEN)
+		emit_format_sequence(e, info.element, data, length, inline_array = false)
+
+	case .Struct:
+		emit_format_struct(e, type, under, address)
+
+	case .Any_View:
+		// design.md: the erased view is a pointer plus a `typeid`, which is exactly
+		// what the dispatch needs — so a nested `any_view` formats its subject.
+		value, data, id := temp(e), temp(e), temp(e)
+		storage := llvm_type(e, under)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, ANY_VIEW_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", id, storage, value, ANY_VIEW_ID)
+		emit_format_dispatch(e, data, id)
+
+	case .Union:
+		emit_format_union(e, under, address)
+
+	case:
+		// A `dyn` view, and anything else whose spelling design.md does not fix,
+		// prints as its type name, which is still coherent.
+		emit_format_literal(e, type_name(e.c, type))
+	}
+}
+
+// design.md "Unions": "tag 0 is nil", and a union prints as whatever it is
+// currently holding — the same thing a type switch would see. The chain is over
+// variants for the same reason the enum one is: the tag is not an index into
+// anything the formatter can address.
+@(private = "file")
+emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
+	info := type_of(e.c, under)
+	shape := union_layout(e.c, under)
+	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+	value := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, under), address)
+	tag := emit_union_tag(e, under, value)
+	slot := emit_union_spill(e, under, value)
+	done := new_label(e, "fmt.union.done")
+	for variant in info.variants {
+		matched := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = icmp eq %s %s, %d",
+			matched, tag_llvm, tag, union_variant_tag(e.c, under, variant),
+		)
+		hit, next := new_label(e, "fmt.union.hit"), new_label(e, "fmt.union.next")
+		branch_if(e, matched, hit, next)
+		place_label(e, hit)
+		payload := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0",
+			payload, llvm_type(e, under), slot,
+		)
+		emit_format_body(e, variant, payload)
+		branch(e, done)
+		place_label(e, next)
+	}
+	// Tag 0: design.md's nil union, which prints like every other nil.
+	emit_format_literal(e, "<nil>")
+	branch(e, done)
+	place_label(e, done)
+}
+
+// design.md: `type_info_of` "accepts a runtime `typeid` and returns runtime
+// metadata", and that metadata carries the type's name — so a `typeid` prints as
+// the name of what it identifies. An id with no entry, including the nil one and
+// a forged one, has no name to print and falls back to its numeric identity.
+@(private = "file")
+emit_format_type_name :: proc(e: ^Emitter, id: string) {
+	limit, zero, past, bad := temp(e), temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, FMT_THUNK_COUNT)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
+	safe := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
+	view, data, stride, length := temp(e), temp(e), temp(e), temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		view, STRING_VIEW_TYPE, TYPE_NAMES, safe,
+	)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, view)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		stride, STRING_VIEW_TYPE, view, STRING_LEN,
+	)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", length, stride)
+	// An id with no name — the nil one, a forged one, or a type this program
+	// never requested — has nothing to spell, so it prints its numeric identity.
+	missing := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", missing, length)
+	numeric, named, done := new_label(e, "fmt.typeid.number"), new_label(e, "fmt.typeid.named"), new_label(e, "fmt.typeid.done")
+	branch_if(e, missing, numeric, named)
+
+	place_label(e, named)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %s)", data, length)
+	branch(e, done)
+
+	place_label(e, numeric)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_u64(ptr %%w, i64 %s, ptr %%o)", id)
+	branch(e, done)
+	place_label(e, done)
+}
+
+// design.md: an enum's members "are named constants that need not be
+// contiguous", so the spelling is a chain of comparisons rather than an index.
+@(private = "file")
+emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
+	info := type_of(e.c, under)
+	llvm := llvm_type(e, under)
+	value := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm, address)
+	done := new_label(e, "fmt.enum.done")
+	for field in info.fields {
+		sym := symbol_of(e.c, field)
+		if sym == nil || sym.const_value.kind != .Integer {
+			continue
+		}
+		matched := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = icmp eq %s %s, %s",
+			matched, llvm, value, bi_text(e.c, sym.const_value.integer),
+		)
+		hit, next := new_label(e, "fmt.enum.hit"), new_label(e, "fmt.enum.next")
+		branch_if(e, matched, hit, next)
+		place_label(e, hit)
+		emit_format_literal(e, identifier_text(e.c, sym.name))
+		branch(e, done)
+		place_label(e, next)
+	}
+	// A value no member names is still a value: print the number rather than
+	// nothing.
+	widened := widen_to_i64(e, value, under)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_i64(ptr %%w, i64 %s, ptr %%o)", widened)
+	branch(e, done)
+	place_label(e, done)
+}
+
+@(private = "file")
+emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string, inline_array: bool) {
+	emit_format_literal(e, "[")
+	cursor := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	head, body, done := new_label(e, "fmt.seq.head"), new_label(e, "fmt.seq.body"), new_label(e, "fmt.seq.done")
+	place_label(e, head)
+	index := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", index, cursor)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", more, index, count)
+	branch_if(e, more, body, done)
+	place_label(e, body)
+	first := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", first, index)
+	separator, formatted := new_label(e, "fmt.seq.sep"), new_label(e, "fmt.seq.item")
+	branch_if(e, first, formatted, separator)
+	place_label(e, separator)
+	emit_format_literal(e, ", ")
+	branch(e, formatted)
+	place_label(e, formatted)
+	slot := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		slot, llvm_type(e, element), base, index,
+	)
+	emit_format_call(e, element, slot)
+	advanced := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", advanced, index)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, cursor)
+	branch(e, head)
+	place_label(e, done)
+	emit_format_literal(e, "]")
+}
+
+@(private = "file")
+emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
+	info := type_of(e.c, under)
+	emit_format_literal(e, type_name(e.c, type))
+	emit_format_literal(e, "{")
+	written := 0
+	for field, index in info.fields {
+		sym := symbol_of(e.c, field)
+		if sym == nil || !sym.public {
+			continue // the same public rule the metadata table follows
+		}
+		if written > 0 {
+			emit_format_literal(e, ", ")
+		}
+		written += 1
+		emit_format_literal(e, identifier_text(e.c, sym.name))
+		emit_format_literal(e, " = ")
+		slot := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+			slot, llvm_type(e, under), address, index,
+		)
+		emit_format_call(e, sym.type, slot)
+	}
+	emit_format_literal(e, "}")
+}
+
+// The erased dispatch itself: look the concrete formatter up by `typeid`, which
+// is the only thing an `any_view` carries. A nil or forged id has no formatter,
+// so it prints as nil rather than reading past the table.
+@(private = "file")
+emit_format_dispatch :: proc(e: ^Emitter, data, id: string) {
+	limit := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, FMT_THUNK_COUNT)
+	zero, past, bad := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
+	safe := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
+	slot, thunk := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %s", slot, FMT_THUNKS, safe)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, slot)
+	missing := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, thunk)
+	none, call, done := new_label(e, "fmt.none"), new_label(e, "fmt.call"), new_label(e, "fmt.done")
+	branch_if(e, missing, none, call)
+	place_label(e, none)
+	emit_format_literal(e, "<nil>")
+	branch(e, done)
+	place_label(e, call)
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %%w, ptr %%o)", thunk, data)
+	branch(e, done)
+	place_label(e, done)
+}
+
+// The four compiler-owned `core:fmt` entry points.
+@(private = "file")
+emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
+	writer_type := llvm_type(e, e.c.runtime_types["Writer"])
+	#partial switch kind {
+	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer:
+		stream := kind == .Fmt_Stdout_Writer ? 0 : 1
+		first, out := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = insertvalue %s undef, ptr @loke_rt_v1_write_std, 0",
+			first, writer_type,
+		)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, ptr inttoptr (i64 %d to ptr), 1", out, writer_type, first, stream)
+		return out
+
+	case .Fmt_Write_Bytes:
+		writer := spill_value(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[0]))
+		data, length := emit_text_parts(e, v.bound[1])
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 %s)", writer, data, length)
+		return "0"
+
+	case .Fmt_Format_Any:
+		view := emit_expr(e, v.bound[0])
+		storage := llvm_type(e, TYPE_ANY_VIEW)
+		data, id := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, view, ANY_VIEW_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", id, storage, view, ANY_VIEW_ID)
+		// The thunks name `%w` and `%o`, so the two records are spilled to storage
+		// the call can address.
+		writer := spill_value(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[1]))
+		options := spill_value(e, e.c.runtime_types["Options"], emit_expr(e, v.bound[2]))
+		saved_w, saved_o := e.fmt_writer, e.fmt_options
+		e.fmt_writer, e.fmt_options = writer, options
+		emit_format_dispatch_at(e, data, id, writer, options)
+		e.fmt_writer, e.fmt_options = saved_w, saved_o
+		return "0"
+	}
+	return "0"
+}
+
+// The dispatch, written at a call site rather than inside a thunk, so the two
+// records are named operands instead of the thunk's own parameters.
+@(private = "file")
+emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) {
+	limit := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, FMT_THUNK_COUNT)
+	zero, past, bad := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
+	safe := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
+	slot, thunk := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %s", slot, FMT_THUNKS, safe)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, slot)
+	missing := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, thunk)
+	none, call, done := new_label(e, "fmt.none"), new_label(e, "fmt.call"), new_label(e, "fmt.done")
+	branch_if(e, missing, none, call)
+	place_label(e, none)
+	nil_text := text_literal_global(e, "<nil>")
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %s, ptr %s, i64 5)", writer, nil_text)
+	branch(e, done)
+	place_label(e, call)
+	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %s, ptr %s)", thunk, data, writer, options)
+	branch(e, done)
+	place_label(e, done)
+}
+
+@(private = "file")
+spill_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
+	slot := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, type))
+	store(e, type, value, slot)
+	return slot
+}
+
+// ==================================================== runtime metadata ==
+
+// design.md "`type` and `typeid`": one dense entry per requested runtime type,
+// keyed by the frozen `typeid`, plus a zero entry at index 0 so the nil id
+// resolves to nothing. `base:runtime` owns the layouts; this fills them.
+//
+// The table is emitted only for a program that asked for it, and every entry is
+// a type the compilation already requested a `typeid` for -- which
+// `close_type_info_requests` has extended to everything the public metadata
+// names, so a member type is always resolvable too.
+TYPE_INFO_TABLE :: "@.loke.type_info"
+TYPE_INFO_COUNT :: "@.loke.type_info.count"
+
+@(private = "file")
+emit_type_info_tables :: proc(e: ^Emitter) {
+	if !e.c.type_info_requested {
+		return
+	}
+	record, has_record := e.c.runtime_types["Type_Info"]
+	member, has_member := e.c.runtime_types["Member_Info"]
+	if !has_record || !has_member {
+		backend_fail(e, "`type_info_of` was checked without the `base:runtime` layouts")
+		return
+	}
+	// Frozen ids are 1..N and dense, so the table is indexed directly.
+	count := len(e.c.typeid_order)
+	entries := make([]string, count + 1)
+	entries[0] = "zeroinitializer"
+	for type in e.c.typeid_order {
+		id := typeid_value(e.c, type)
+		if id == 0 || int(id) > count {
+			continue
+		}
+		entries[id] = type_info_entry(e, record, member, type)
+	}
+	for index in 0 ..< len(entries) {
+		if entries[index] == "" {
+			entries[index] = "zeroinitializer"
+		}
+	}
+
+	b := strings.builder_make()
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x %s] [", TYPE_INFO_TABLE, count + 1, struct_name(e, record))
+	for entry, index in entries {
+		if index > 0 {
+			strings.write_string(&b, ",")
+		}
+		fmt.sbprintf(&b, " %s %s", struct_name(e, record), entry)
+	}
+	strings.write_string(&b, " ]\n")
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant i64 %d\n", TYPE_INFO_COUNT, count)
+	append(&e.globals, strings.to_string(b))
+}
+
+@(private = "file")
+type_info_entry :: proc(e: ^Emitter, record, member, type: Type_Id) -> string {
+	shape := type_of(e.c, type_underlying(e.c, type))
+	members := type_info_members(e, member, type)
+
+	values := make(map[string]string)
+	defer delete(values)
+	values["id"] = fmt.aprintf("%d", typeid_value(e.c, type))
+	values["kind"] = fmt.aprintf("%d", public_type_kind(e.c, type))
+	values["name"] = text_constant(e, Const_Value{kind = .String, text = type_name(e.c, type)}, false)
+	values["size"] = fmt.aprintf("%d", type_size(e.c, type))
+	values["align"] = fmt.aprintf("%d", type_align(e.c, type))
+	values["bits"] = fmt.aprintf("%d", shape == nil ? 0 : shape.bits)
+	values["signed"] = shape != nil && shape.signed ? "true" : "false"
+	values["element"] = fmt.aprintf("%d", typeid_value(e.c, shape == nil ? INVALID_TYPE : shape.element))
+	values["key"] = fmt.aprintf("%d", typeid_value(e.c, shape == nil ? INVALID_TYPE : shape.key))
+	values["count"] = fmt.aprintf("%d", shape == nil ? 0 : shape.count)
+	values["members"] = members
+	return named_field_constant(e, record, values)
+}
+
+// The public `Type_Kind` a compiler kind maps to. The order is frozen by
+// `base/runtime`'s declaration; adding a member there requires a runtime ABI
+// version bump. The untyped kinds never reach here: a `typeid` is only ever
+// requested for a concrete runtime type.
+@(private = "file")
+public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
+	PUBLIC_KINDS :: []string {
+		"Invalid", "Void", "Bool", "Signed_Int", "Unsigned_Int", "Float", "Rune",
+		"Raw_Pointer", "Pointer", "Multi_Pointer", "Array", "Slice", "Dynamic_Array", "Map",
+		"Struct", "Enum", "Union", "Proc", "String", "String_View", "CString_View",
+		"Typeid", "Any_View", "Dyn", "Distinct", "Simd", "Allocator", "Allocator_Error",
+	}
+	wanted := "Invalid"
+	// A `distinct` type is its own public kind: it has a fresh identity, and the
+	// shape it wraps stays reachable through `element`.
+	under := type_underlying(c, type)
+	if type_kind(c, type) == .Distinct {
+		wanted = "Distinct"
+	} else {
+		#partial switch type_kind(c, under) {
+		case .Void:            wanted = "Void"
+		case .Bool:            wanted = "Bool"
+		case .Int:             wanted = type_signed(c, under) ? "Signed_Int" : "Unsigned_Int"
+		case .Float:           wanted = "Float"
+		case .Rune:            wanted = "Rune"
+		case .Raw_Pointer:     wanted = "Raw_Pointer"
+		case .Pointer:         wanted = "Pointer"
+		case .Multi_Pointer:   wanted = "Multi_Pointer"
+		case .Array:           wanted = "Array"
+		case .Slice:           wanted = "Slice"
+		case .Dynamic_Array:   wanted = "Dynamic_Array"
+		case .Map:             wanted = "Map"
+		case .Struct:          wanted = "Struct"
+		case .Enum:            wanted = "Enum"
+		case .Union:           wanted = "Union"
+		case .Proc:            wanted = "Proc"
+		case .String:          wanted = "String"
+		case .String_View:     wanted = "String_View"
+		case .CString_View:    wanted = "CString_View"
+		case .Typeid:          wanted = "Typeid"
+		case .Any_View:        wanted = "Any_View"
+		case .Dyn:             wanted = "Dyn"
+		case .Allocator:       wanted = "Allocator"
+		case .Allocator_Error: wanted = "Allocator_Error"
+		}
+	}
+	for name, index in PUBLIC_KINDS {
+		if name == wanted {
+			return index
+		}
+	}
+	return 0
+}
+
+// The `[]Member_Info` of one aggregate: a struct's public fields, an enum's
+// members, a union's variants, or a procedure's parameters and results, in
+// declaration order.
+@(private = "file")
+type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
+	shape := type_of(e.c, type_underlying(e.c, type))
+	if shape == nil {
+		return "zeroinitializer"
+	}
+	entries := make([dynamic]string)
+	#partial switch shape.kind {
+	case .Struct:
+		for field, index in shape.fields {
+			sym := symbol_of(e.c, field)
+			if sym == nil || !sym.public {
+				continue // design.md: member tables expose public fields only
+			}
+			values := make(map[string]string)
+			defer delete(values)
+			values["kind"] = "0" // Field
+			values["name"] = text_constant(e, Const_Value{kind = .String, text = identifier_text(e.c, sym.name)}, false)
+			values["tag"] = text_constant(e, Const_Value{kind = .String, text = field_tag_text(e.c, type, sym)}, false)
+			values["type"] = fmt.aprintf("%d", typeid_value(e.c, sym.type))
+			values["offset"] = fmt.aprintf("%d", type_field_offset(e.c, type, index))
+			append(&entries, named_field_constant(e, member, values))
+		}
+	case .Enum:
+		for field in shape.fields {
+			sym := symbol_of(e.c, field)
+			if sym == nil {
+				continue
+			}
+			low, high := enum_raw_words(e.c, sym.const_value)
+			values := make(map[string]string)
+			defer delete(values)
+			values["kind"] = "1" // Enum_Value
+			values["name"] = text_constant(e, Const_Value{kind = .String, text = identifier_text(e.c, sym.name)}, false)
+			values["type"] = fmt.aprintf("%d", typeid_value(e.c, type))
+			values["value_low"] = low
+			values["value_high"] = high
+			append(&entries, named_field_constant(e, member, values))
+		}
+	case .Union:
+		for variant in shape.variants {
+			values := make(map[string]string)
+			defer delete(values)
+			values["kind"] = "2" // Union_Variant
+			values["name"] = text_constant(e, Const_Value{kind = .String, text = type_name(e.c, variant)}, false)
+			values["type"] = fmt.aprintf("%d", typeid_value(e.c, variant))
+			append(&entries, named_field_constant(e, member, values))
+		}
+	case .Proc:
+		for parameter in shape.parameters {
+			values := make(map[string]string)
+			defer delete(values)
+			values["kind"] = "3" // Parameter
+			values["type"] = fmt.aprintf("%d", typeid_value(e.c, parameter))
+			append(&entries, named_field_constant(e, member, values))
+		}
+		for result in shape.results {
+			values := make(map[string]string)
+			defer delete(values)
+			values["kind"] = "4" // Result
+			values["type"] = fmt.aprintf("%d", typeid_value(e.c, result))
+			append(&entries, named_field_constant(e, member, values))
+		}
+	}
+	if len(entries) == 0 {
+		return "zeroinitializer"
+	}
+	name := fmt.aprintf("@.loke.members.%d", len(e.globals))
+	b := strings.builder_make()
+	fmt.sbprintf(&b, "%s = private unnamed_addr constant [%d x %s] [", name, len(entries), struct_name(e, member))
+	for entry, index in entries {
+		if index > 0 {
+			strings.write_string(&b, ",")
+		}
+		fmt.sbprintf(&b, " %s %s", struct_name(e, member), entry)
+	}
+	strings.write_string(&b, " ]\n")
+	append(&e.globals, strings.to_string(b))
+	// `{` is a directive to core:fmt, so the slice constant is built rather than
+	// formatted.
+	slice := strings.builder_make()
+	strings.write_string(&slice, "{ ptr ")
+	strings.write_string(&slice, name)
+	fmt.sbprintf(&slice, ", i64 %d ", len(entries))
+	strings.write_string(&slice, "}")
+	return strings.to_string(slice)
+}
+
+// design.md: enum values use "the two raw words without narrowing signed or
+// unsigned 128-bit values".
+//
+// ponytail: the low word carries the value and the high word its sign
+// extension. Every enum backing this compiler accepts fits in 64 bits today; a
+// 128-bit backing needs the real split here and nowhere else.
+@(private = "file")
+enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: string) {
+	if value.kind != .Integer {
+		return "0", "0"
+	}
+	mask := bi_sub(c, bi_pow2(c, 64), bi_from_i64(c, 1))
+	low_bits := bi_and(c, value.integer, mask)
+	high_bits := bi_and(c, bi_shr(c, value.integer, 64), mask)
+	low_value, low_ok := bi_to_u64(c, low_bits)
+	high_value, high_ok := bi_to_u64(c, high_bits)
+	if !low_ok || !high_ok {
+		return "0", "0" // both halves were masked to 64 bits; defensive only
+	}
+	return fmt.aprintf("%d", low_value), fmt.aprintf("%d", high_value)
+}
+
+// One aggregate constant, filled by *name* against the record's declared
+// fields. design.md's layouts are the ABI authority, so matching by name means a
+// reordered or renamed field produces a differently ordered constant rather than
+// a silently wrong table.
+@(private = "file")
+named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]string) -> string {
+	info := type_of(e.c, type_underlying(e.c, record))
+	if info == nil {
+		backend_fail(e, "a runtime metadata record has no fields")
+		return "zeroinitializer"
+	}
+	b := strings.builder_make()
+	strings.write_string(&b, "{")
+	for field, index in info.fields {
+		sym := symbol_of(e.c, field)
+		if sym == nil {
+			continue
+		}
+		if index > 0 {
+			strings.write_string(&b, ",")
+		}
+		name := identifier_text(e.c, sym.name)
+		value, supplied := values[name]
+		if !supplied {
+			zero, ok := zero_const(e.c, sym.type)
+			value = ok ? llvm_const(e, zero, sym.type) : "zeroinitializer"
+		}
+		fmt.sbprintf(&b, " %s %s", llvm_type(e, sym.type), value)
+	}
+	strings.write_string(&b, " }")
+	return strings.to_string(b)
+}
+
+// design.md: `type_info_of(0)` and an out-of-range or forged id return nil. The
+// builtin lowers to a checked table address, not a runtime call.
+@(private = "file")
+emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	id := emit_expr(e, v.bound[0])
+	limit := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, TYPE_INFO_COUNT)
+	zero, past := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
+	bad := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
+	record := e.c.runtime_types["Type_Info"]
+	address := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		address, struct_name(e, record), TYPE_INFO_TABLE, id,
+	)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr null, ptr %s", out, bad, address)
+	return out
+}
+
+// ------------------------------------------------------------------- text --
+
+// `{ data, len }` for a slice type.
+@(private = "file")
+emit_slice_value :: proc(e: ^Emitter, slice_type: Type_Id, data, length: string) -> string {
+	storage := llvm_type(e, slice_type)
+	first, out := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, storage, data, SLICE_DATA)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, storage, first, length, SLICE_LEN)
+	return out
+}
+
+// The data pointer and byte length of a `string` or `string_view` value, which
+// is all every text operation needs: the two carriers differ only in whether a
+// third word owns the storage.
+@(private = "file")
+emit_text_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: string) {
+	type := type_underlying(e.c, expr_base(operand).type)
+	value := emit_expr(e, operand)
+	if type_kind(e.c, type) == .CString_View {
+		// design.md "C string views": terminated, not measured, so its length is a
+		// scan rather than a field.
+		length = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, value)
+		return value, length
+	}
+	storage := llvm_type(e, type)
+	data, length = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, STRING_DATA)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, STRING_LEN)
+	return data, length
+}
+
+@(private = "file")
+emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	out := make([]string, 1)
+	out[0] = "0"
+	switch v.text {
+	case .None:
+		backend_fail(e, "a text call has no operation")
+
+	case .Byte_Len:
+		// design.md: "`len(text)` is shorthand for `text.byte_len()` so that it
+		// remains a constant-time operation."
+		_, length := emit_text_parts(e, v.bound[0])
+		out[0] = length
+
+	case .Rune_Count:
+		data, length := emit_text_parts(e, v.bound[0])
+		out[0] = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_rune_count(ptr %s, i64 %s)", out[0], data, length)
+
+	case .Bytes:
+		// A read-only `[]u8` over the same storage: the borrow costs nothing and
+		// cannot be widened to `[]mut u8`.
+		data, length := emit_text_parts(e, v.bound[0])
+		out[0] = emit_slice_value(e, v.type, data, length)
+
+	case .Clone:
+		data, length := emit_text_parts(e, v.bound[0])
+		out[0] = emit_text_allocating_call(
+			e, "loke_rt_v1_string_clone",
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, RT_DEFAULT_ALLOCATOR),
+			fail_is_panic = true,
+		)
+
+	case .To_C_View:
+		// ponytail: every `string` buffer is allocated with room for a terminator
+		// and a literal already carries one, so the "add a terminator only when
+		// necessary" case of design.md's rule never arises and no call-scoped
+		// temporary is created. A representation that could hand out an
+		// unterminated `string` would need the allocating branch back.
+		data, _ := emit_text_parts(e, v.bound[0])
+		out[0] = data
+
+	case .To_Runes:
+		backend_fail(e, "`to_runes` is gated to M6b and should not reach the backend")
+
+	case .From_Runes:
+		slice := emit_expr(e, v.bound[0])
+		storage := llvm_type(e, expr_base(v.bound[0]).type)
+		data, count := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, slice, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", count, storage, slice, SLICE_LEN)
+		return emit_text_optional_ok(
+			e, "loke_rt_v1_string_from_runes",
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, RT_DEFAULT_ALLOCATOR),
+		)
+	}
+	return out
+}
+
+// A runtime call that fills a `string` out-parameter and answers 1 on success.
+// The out-pointer form keeps the ABI to pointers and integers, so the C and
+// LLVM sides cannot disagree about how a 24-byte aggregate is returned.
+@(private = "file")
+emit_text_call_slot :: proc(e: ^Emitter, callee: string, arguments: string) -> (slot: string, ok: string) {
+	slot = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, STRING_TYPE)
+	ok = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call i32 @%s(ptr %s, %s)", ok, callee, slot, arguments)
+	return slot, ok
+}
+
+// design.md "Allocation failure": an implicit allocation — a clone, a
+// concatenation — has nowhere to return an error, so failure follows the
+// allocator's own policy.
+@(private = "file")
+emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments: string, fail_is_panic: bool) -> string {
+	slot, ok := emit_text_call_slot(e, callee, arguments)
+	if fail_is_panic {
+		failed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
+		fail, done := new_label(e, "text.failed"), new_label(e, "ok")
+		branch_if(e, failed, fail, done)
+		fmt.sbprintfln(&e.b, "%s:", fail)
+		e.terminated = false
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
+		fmt.sbprintln(&e.b, "  unreachable")
+		e.terminated = true
+		fmt.sbprintfln(&e.b, "%s:", done)
+		e.terminated = false
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, STRING_TYPE, slot)
+	return out
+}
+
+// design.md "Optional-ok results": the value is the zero value on failure, which
+// the runtime has already published into the slot.
+@(private = "file")
+emit_text_optional_ok :: proc(e: ^Emitter, callee, arguments: string) -> []string {
+	slot, ok := emit_text_call_slot(e, callee, arguments)
+	out := make([]string, 2)
+	out[0], out[1] = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out[0], STRING_TYPE, slot)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", out[1], ok)
+	return out
+}
+
+// design.md "string type conversions": every one of these validates, so each has
+// optional-ok results and publishes the zero value on failure.
+@(private = "file")
+emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	switch v.text_conversion {
+	case .None:
+		break
+
+	case .String_From_Bytes:
+		data, length := emit_byte_slice_parts(e, v.bound[0])
+		return emit_text_optional_ok(
+			e, "loke_rt_v1_string_from_bytes",
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, RT_DEFAULT_ALLOCATOR),
+		)
+
+	case .View_From_Bytes:
+		// design.md "From []u8 to X": "validate and borrow". No allocation and no
+		// copy — the view points into the slice's own root, and `src/borrow.odin`
+		// is what keeps it from outliving that root.
+		data, length := emit_byte_slice_parts(e, v.bound[0])
+		valid, ok := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, data, length)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, valid)
+		kept_data, kept_len := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
+		first, view := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, kept_data, VIEW_DATA)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", view, STRING_VIEW_TYPE, first, kept_len, VIEW_LEN)
+		out := make([]string, 2)
+		out[0], out[1] = view, ok
+		return out
+
+	case .String_From_C_View:
+		// design.md "C string views": "Converting it to `string` scans for the
+		// terminator, validates UTF-8, and copies into owned storage."
+		pointer := emit_expr(e, v.bound[0])
+		length := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, pointer)
+		return emit_text_optional_ok(
+			e, "loke_rt_v1_string_from_bytes",
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", pointer, length, RT_DEFAULT_ALLOCATOR),
+		)
+	}
+	backend_fail(e, "an unclassified text conversion reached emission")
+	out := make([]string, 2)
+	out[0], out[1] = "zeroinitializer", "false"
+	return out
+}
+
+@(private = "file")
+emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: string) {
+	storage := llvm_type(e, expr_base(operand).type)
+	value := emit_expr(e, operand)
+	data, length = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, SLICE_DATA)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, SLICE_LEN)
+	return data, length
+}
+
+// design.md "unsafe.raw_data procedure": "A multi-pointer carries neither a
+// length nor a read-only capability, and its lifetime is no longer checked after
+// conversion." So each of these is an address extraction and nothing more —
+// except `unsafe.string_view`, which still validates, because the type it
+// produces promises valid UTF-8.
+@(private = "file")
+emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
+	out := make([]string, 1)
+	out[0] = "null"
+	operand_kind := type_kind(e.c, type_underlying(e.c, expr_base(v.bound[0]).type))
+	#partial switch kind {
+	case .Unsafe_Raw_Data:
+		#partial switch operand_kind {
+		case .Slice:
+			data, _ := emit_byte_slice_parts(e, v.bound[0])
+			out[0] = data
+		case .String, .String_View:
+			data, _ := emit_text_parts(e, v.bound[0])
+			out[0] = data
+		case:
+			// A pointer to a fixed array, or a `cstring_view`: the value is already
+			// the address of the first element.
+			out[0] = emit_expr(e, v.bound[0])
+		}
+
+	case .Unsafe_C_String_View:
+		out[0] = emit_expr(e, v.bound[0])
+
+	case .Unsafe_String_View:
+		data := emit_expr(e, v.bound[0])
+		length := widen_to_i64(e, emit_expr(e, v.bound[1]), expr_base(v.bound[1]).type)
+		valid, ok := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_utf8_valid(ptr %s, i64 %s)", valid, data, length)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, valid)
+		kept_data, kept_len := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
+		first, view := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, kept_data, VIEW_DATA)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", view, STRING_VIEW_TYPE, first, kept_len, VIEW_LEN)
+		pair := make([]string, 2)
+		pair[0], pair[1] = view, ok
+		return pair
+	}
+	return out
+}
+
 // ------------------------------------------------------------------- calls --
 
 @(private = "file")
@@ -3384,20 +4781,21 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	if v.resolution.kind == .Conversion && type_is_dyn(e.c, v.type) {
 		return emit_dyn_value(e, v)
 	}
+	if v.text_conversion != .None {
+		return emit_text_conversion(e, v)[0]
+	}
 	if v.resolution.kind == .Conversion {
 		return emit_conversion(e, v)
 	}
 	if v.reflect != .None {
 		return emit_descriptor_operation(e, v)
 	}
+	if v.text != .None {
+		return emit_text_operation(e, v)[0]
+	}
 	symbol := symbol_of(e.c, v.resolution.symbol)
 	if symbol != nil && symbol.kind == .Builtin {
 		switch symbol.builtin {
-		case .Print_Int:
-			arg := emit_expr(e, v.bound[0])
-			out := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = call i32 (ptr, ...) @printf(ptr @.fmt_int, i64 %s)", out, arg)
-			return "0"
 		case .Assert:
 			// The runtime half of a phase-neutral built-in. design.md makes the
 			// message a compile-time string, so it is a module global here and the
@@ -3439,6 +4837,12 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return "0"
 		case .Exchange:
 			return emit_exchange(e, v)
+		case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
+			return emit_unsafe_builtin(e, v, symbol.builtin)[0]
+		case .Type_Info_Of:
+			return emit_type_info_of(e, v)
+		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
+			return emit_fmt_builtin(e, v, symbol.builtin)
 		case .Free:
 			emit_free(e, v)
 			return "0"
@@ -3448,7 +4852,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		case .None, .Size_Of, .Align_Of, .Offset_Of,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here
-			// would mean emitting `print_int` for a layout query.
+			// would mean emitting a runtime call for a layout query.
 			backend_fail(e, "an unfrozen compile-time built-in reached emission")
 			return "0"
 		}
@@ -3607,6 +5011,15 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		// own lowering; `emit_call` is what knows the difference.
 		if kind := call_builtin_kind(e, v); kind == .New || kind == .New_Clone {
 			return emit_allocation_pair(e, v, kind)
+		}
+		if v.text != .None {
+			return emit_text_operation(e, v)
+		}
+		if v.text_conversion != .None {
+			return emit_text_conversion(e, v)
+		}
+		if kind := call_builtin_kind(e, v); kind == .Unsafe_String_View {
+			return emit_unsafe_builtin(e, v, kind)
 		}
 		if len(v.result_types) > 1 {
 			return emit_multi_call(e, v)
@@ -3955,7 +5368,257 @@ emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		panic_if(e, is_nil, "nil.call", "call through a nil procedure value")
 	}
 
-	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound)
+	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound, v)
+}
+
+// design.md "Variadic parameters": the callee always receives one read-only
+// slice, so the caller either forwards a compatible spread as-is or builds
+// compiler-owned contiguous storage and hands over a slice of it.
+//
+// The storage is a stack buffer: fixed-size when the element count is static,
+// and a checked dynamic `alloca` when a spread makes it runtime-sized. Nothing
+// here depends on M6b's dynamic arrays.
+@(private = "file")
+Variadic_Pack :: struct {
+	value:   string,
+	cleanup: Deferred,
+}
+
+@(private = "file")
+register_variadic_cleanup :: proc(
+	e: ^Emitter, element: Type_Id, buffer, flags, count: string,
+) -> Deferred {
+	entry := Deferred {
+		type             = element,
+		array_cleanup    = true,
+		array_buffer     = buffer,
+		array_flags      = flags,
+		array_count      = count,
+		array_buffer_env = -1,
+		array_flags_env  = -1,
+		array_count_env  = -1,
+		slot             = -1,
+	}
+	if unwind_enabled(e) {
+		entry.array_buffer_env = unwind_reserve_env(e)
+		entry.array_flags_env = unwind_reserve_env(e)
+		entry.array_count_env = unwind_reserve_env(e)
+	}
+	unwind_reserve(e, &entry)
+	unwind_publish_env(e, entry.array_buffer_env, buffer)
+	unwind_publish_env(e, entry.array_flags_env, flags)
+	unwind_publish_env(e, entry.array_count_env, count)
+	unwind_register(e, entry)
+	return entry
+}
+
+@(private = "file")
+checked_variadic_total :: proc(e: ^Emitter, total, added: string) -> string {
+	negative := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, added)
+	panic_if(e, negative, "variadic.length", "invalid variadic spread length")
+	sum := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", sum, total, added)
+	overflow := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", overflow, sum, total)
+	panic_if(e, overflow, "variadic.size", "variadic argument pack is too large")
+	return sum
+}
+
+@(private = "file")
+emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Variadic_Pack {
+	// A sole compatible spread forwards its slice directly, which is what makes
+	// `println(..args)` inside a variadic procedure cost nothing.
+	if v.variadic_forwards {
+		return Variadic_Pack{value = emit_expr(e, v.bound[v.variadic_slot])}
+	}
+	element := slice_element(e.c, pack_type)
+	element_llvm := llvm_type(e, element)
+	static_count := len(v.variadic_elements)
+	if len(v.variadic_spreads) == 0 && static_count == 0 {
+		// design.md's `sum()` case: an empty pack is a nil slice, which has length
+		// 0 and points at no storage.
+		return Variadic_Pack{value = "zeroinitializer"}
+	}
+	managed := type_is_managed(e.c, element)
+
+	// Managed explicit operands first enter fixed staging storage. That storage
+	// is already registered while later operands are evaluated, so a panic cannot
+	// strand an owned temporary before the runtime-sized final buffer exists.
+	staging, staging_flags, staging_count := "", "", ""
+	staging_cleanup := Deferred{slot = -1}
+	if managed && static_count > 0 {
+		staging, staging_flags, staging_count = temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca [%d x %s]", staging, static_count, element_llvm)
+		fmt.sbprintfln(&e.b, "  %s = alloca [%d x i1]", staging_flags, static_count)
+		fmt.sbprintfln(
+			&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
+			staging_flags, static_count,
+		)
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", staging_count)
+		fmt.sbprintfln(&e.b, "  store i64 %d, ptr %s", static_count, staging_count)
+		staging_cleanup = register_variadic_cleanup(e, element, staging, staging_flags, staging_count)
+	}
+
+	// Every operand is evaluated once, in written order, before any storage is
+	// formed: a spread's length is part of the size the buffer needs.
+	elements := make([]string, static_count)
+	spreads := make([]string, len(v.variadic_spreads))
+	spread_data := make([]string, len(v.variadic_spreads))
+	spread_len := make([]string, len(v.variadic_spreads))
+	next_element, next_spread := 0, 0
+	total := fmt.aprintf("%d", static_count)
+	for is_spread in v.variadic_order {
+		if is_spread {
+			expr := v.variadic_spreads[next_spread]
+			spreads[next_spread] = emit_expr(e, expr)
+			storage := llvm_type(e, expr_base(expr).type)
+			data, length := temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, spreads[next_spread], SLICE_DATA)
+			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, spreads[next_spread], SLICE_LEN)
+			spread_data[next_spread], spread_len[next_spread] = data, length
+			total = checked_variadic_total(e, total, length)
+			next_spread += 1
+			continue
+		}
+		expr := v.variadic_elements[next_element]
+		value := emit_expr(e, expr)
+		// A borrowed owner is cloned; a temporary or move already owns the value
+		// transferred into staging.
+		if managed && expression_is_borrowed_place(e.c, expr) {
+			value = emit_clone_value(e, element, value)
+		}
+		elements[next_element] = value
+		if managed {
+			slot, flag := temp(e), temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %d",
+				slot, static_count, element_llvm, staging, next_element,
+			)
+			store(e, element, value, slot)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", flag, staging_flags, next_element)
+			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+		}
+		next_element += 1
+	}
+
+	buffer := temp(e)
+	if len(v.variadic_spreads) == 0 {
+		fmt.sbprintfln(&e.b, "  %s = alloca [%d x %s]", buffer, static_count, element_llvm)
+	} else {
+		limit := u64(max(i64)) / max(type_size(e.c, element), 1)
+		too_large := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, total, limit)
+		panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
+		fmt.sbprintfln(&e.b, "  %s = alloca %s, i64 %s", buffer, element_llvm, total)
+	}
+	final_flags, final_count := "", ""
+	cleanup := Deferred{slot = -1}
+	if managed {
+		final_flags, final_count = temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca i1, i64 %s", final_flags, total)
+		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", final_flags, total)
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", final_count)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", total, final_count)
+		cleanup = register_variadic_cleanup(e, element, buffer, final_flags, final_count)
+	}
+
+	cursor := "0"
+	cursor_slot := ""
+	if managed {
+		cursor_slot = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor_slot)
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor_slot)
+	}
+	next_element, next_spread = 0, 0
+	for is_spread in v.variadic_order {
+		if managed {
+			if is_spread {
+				index_slot := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = alloca i64", index_slot)
+				fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
+				head, body, done := new_label(e, "vararg.copy.head"), new_label(e, "vararg.copy.body"), new_label(e, "vararg.copy.done")
+				branch(e, head)
+				place_label(e, head)
+				index := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", index, index_slot)
+				more := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", more, index, spread_len[next_spread])
+				branch_if(e, more, body, done)
+				place_label(e, body)
+				source, loaded := temp(e), temp(e)
+				fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", source, element_llvm, spread_data[next_spread], index)
+				fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, element_llvm, source)
+				cloned := emit_clone_value(e, element, loaded)
+				position, destination := temp(e), temp(e)
+				fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", position, cursor_slot)
+				fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", destination, element_llvm, buffer, position)
+				store(e, element, cloned, destination)
+				flag := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", flag, final_flags, position)
+				fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+				next_index, next_position := temp(e), temp(e)
+				fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next_index, index)
+				fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_index, index_slot)
+				fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next_position, position)
+				fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_position, cursor_slot)
+				branch(e, head)
+				place_label(e, done)
+				next_spread += 1
+				continue
+			}
+			position, destination, source := temp(e), temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", position, cursor_slot)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", destination, element_llvm, buffer, position)
+			fmt.sbprintfln(
+				&e.b, "  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %d",
+				source, static_count, element_llvm, staging, next_element,
+			)
+			loaded := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, element_llvm, source)
+			store(e, element, loaded, destination)
+			final_flag, staging_flag := temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", final_flag, final_flags, position)
+			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", final_flag)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", staging_flag, staging_flags, next_element)
+			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", staging_flag)
+			next_position := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next_position, position)
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_position, cursor_slot)
+			next_element += 1
+			continue
+		}
+		slot := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+			slot, element_llvm, buffer, cursor,
+		)
+		if is_spread {
+			bytes := temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = mul i64 %s, %d",
+				bytes, spread_len[next_spread], type_size(e.c, element),
+			)
+			fmt.sbprintfln(
+				&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %s, i1 false)",
+				slot, spread_data[next_spread], bytes,
+			)
+			advanced := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, cursor, spread_len[next_spread])
+			cursor = advanced
+			next_spread += 1
+			continue
+		}
+		store(e, element, elements[next_element], slot)
+		advanced := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", advanced, cursor)
+		cursor = advanced
+		next_element += 1
+	}
+	if staging_cleanup.array_cleanup {
+		unwind_clear(e, staging_cleanup.slot)
+	}
+	return Variadic_Pack{value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup}
 }
 
 // The shared call sequence: bind the operands left to right, emit the call, and
@@ -3967,6 +5630,7 @@ emit_bound_call :: proc(
 	callee: string,
 	callee_type: ^Type_Info,
 	bound: []Expr,
+	call_node: ^Expr_Call = nil,
 ) -> []string {
 	symbol := symbol_of(e.c, symbol_id)
 	if callee_type == nil {
@@ -3982,7 +5646,21 @@ emit_bound_call :: proc(
 	}
 
 	operands := make([]string, len(bound))
+	// design.md "Variadic parameters": the pack is materialised where it appears
+	// in the argument order, so the explicit arguments and the spreads are
+	// evaluated exactly once, left to right, together with the fixed ones.
+	pack := -1
+	if call_node != nil && call_node.is_variadic {
+		pack = call_node.variadic_slot
+	}
+	pack_cleanup := Deferred{slot = -1}
 	for argument, index in bound {
+		if index == pack {
+			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index])
+			operands[index] = packed.value
+			pack_cleanup = packed.cleanup
+			continue
+		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
 		if mode == .Inout {
 			operands[index] = emit_address(e, argument)
@@ -4019,6 +5697,13 @@ emit_bound_call :: proc(
 		fmt.sbprintf(&e.b, "%s %s", type, operand)
 	}
 	fmt.sbprintln(&e.b, ")")
+	if pack_cleanup.array_cleanup {
+		emit_drop_flagged_array(
+			e, pack_cleanup.type, pack_cleanup.array_buffer,
+			pack_cleanup.array_flags, pack_cleanup.array_count,
+		)
+		unwind_clear(e, pack_cleanup.slot)
+	}
 
 	switch len(callee_type.results) {
 	case 0:
@@ -4039,6 +5724,9 @@ emit_bound_call :: proc(
 
 @(private = "file")
 emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	if v.text_conversion != .None {
+		return emit_text_conversion(e, v)[0]
+	}
 	source_expr := v.bound[0]
 	source := expr_base(source_expr).type
 	target := v.type
@@ -4391,7 +6079,74 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		emit_protocol_foreach(e, s)
 		return
 	}
+	if s.kind == .Text {
+		emit_text_foreach(e, s)
+		return
+	}
 	emit_indexed_foreach(e, s)
+}
+
+// design.md "String iteration": the loop yields decoded code points, and the
+// second name is "the index at which the yielded code point begins, so it
+// advances by 1 to 4 per step and the loop's final offset is not `len(x) - 1`".
+// That is the unit that can be fed back into `bytes()` or a subrange.
+@(private = "file")
+emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
+	data, length := emit_text_parts(e, s.iterable)
+	offset, decoded := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca i64", offset)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", offset)
+	fmt.sbprintfln(&e.b, "  %s = alloca i32", decoded)
+
+	head := new_label(e, "foreach.head")
+	body := new_label(e, "foreach.body")
+	post := new_label(e, "foreach.post")
+	done := new_label(e, "foreach.done")
+	e.break_label, e.continue_label = done, post
+	e.continue_depth = len(e.cleanups)
+
+	place_label(e, head)
+	current := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", current, offset)
+	at_end := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp sge i64 %s, %s", at_end, current, length)
+	branch_if(e, at_end, done, body)
+
+	place_label(e, body)
+	used := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)",
+		used, data, length, current, decoded,
+	)
+	// A `string` is valid UTF-8 by construction and every borrowed view of one is
+	// checked where it is created, so a zero here would mean the invariant was
+	// already broken.
+	stalled := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", stalled, used)
+	panic_if(e, stalled, "text.invalid", "invalid UTF-8 in a string")
+
+	if binding := s.bindings[0].symbol; binding != INVALID_SYMBOL {
+		slot, value := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca i32", slot)
+		fmt.sbprintfln(&e.b, "  %s = load i32, ptr %s", value, decoded)
+		fmt.sbprintfln(&e.b, "  store i32 %s, ptr %s", value, slot)
+		bind_local(e, binding, slot)
+	}
+	if len(s.bindings) == 2 && s.bindings[1].symbol != INVALID_SYMBOL {
+		slot := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", slot)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", current, slot)
+		bind_local(e, s.bindings[1].symbol, slot)
+	}
+	emit_scoped_block(e, s.body)
+	branch(e, post)
+
+	place_label(e, post)
+	advanced := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, current, used)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", advanced, offset)
+	branch(e, head)
+	place_label(e, done)
 }
 
 // A range or a fixed array: an index loop, with no iterator object at all.
@@ -4451,7 +6206,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 		limit = length
 
-	case .Unresolved, .Static, .Protocol:
+	case .Unresolved, .Static, .Protocol, .Text:
 		backend_fail(e, "an unresolved `foreach` reached emission")
 		return
 	}
@@ -4982,6 +6737,47 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 	return cloned, error
 }
 
+// Drops every initialized element of a compiler-owned variadic buffer in
+// reverse order. A flag is cleared before its hook runs, so a panic raised by
+// that hook cannot replay the same element; remaining flags stay visible to the
+// frame's unwind action.
+@(private = "file")
+emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, count_address: string) {
+	count, cursor := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", count, count_address)
+	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, cursor)
+	head, inspect, done := new_label(e, "vararg.drop.head"), new_label(e, "vararg.drop.inspect"), new_label(e, "vararg.drop.done")
+	branch(e, head)
+	place_label(e, head)
+	remaining := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", remaining, cursor)
+	has_more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, 0", has_more, remaining)
+	branch_if(e, has_more, inspect, done)
+	place_label(e, inspect)
+	index := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", index, remaining)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", index, cursor)
+	flag_address, live := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", flag_address, flags, index)
+	fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", live, flag_address)
+	run, next := new_label(e, "vararg.drop.run"), new_label(e, "vararg.drop.next")
+	branch_if(e, live, run, next)
+	place_label(e, run)
+	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag_address)
+	slot := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
+		slot, llvm_type(e, element), buffer, index,
+	)
+	emit_drop_place(e, element, slot)
+	branch(e, next)
+	place_label(e, next)
+	branch(e, head)
+	place_label(e, done)
+}
+
 // design.md: "`clone` ... calls `try_clone` once and, on failure, invokes the
 // supplied allocator's failure policy."
 //
@@ -5044,6 +6840,16 @@ type_hook :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
 // the same walk from a different caller.
 emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if !type_is_managed(e.c, type) {
+		return
+	}
+	// design.md "string type": the drop releases one handle, and the last one
+	// deallocates through the allocator the string was created with. A static
+	// literal and the empty value are both no-ops the runtime recognises.
+	if lifecycle_of(e.c, type).intrinsic {
+		value, owner := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, STRING_TYPE, address)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", owner, STRING_TYPE, value, STRING_OWNER)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_release(i64 %s)", owner)
 		return
 	}
 	if hook := custom_drop_of(e.c, type); hook != INVALID_SYMBOL {

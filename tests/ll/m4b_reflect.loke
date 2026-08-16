@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Point :: struct { x: int, y: i32 }
 Colour :: enum { Red, Green }
@@ -8,9 +8,9 @@ main :: proc() {
 	// A static expansion emits its copies in order with no loop at all.
 	foreach ($field in fields_of(Point)) {
 		when (type_of(field.get(&p)) == int) {
-			print_int(field.get(&p));
+			fmt.println(field.get(&p));
 		} else {
-			print_int(int(field.get(&p)));
+			fmt.println(int(field.get(&p)));
 		}
 	}
 	// An empty expansion emits nothing.
@@ -18,5 +18,5 @@ main :: proc() {
 
 	id := typeid_of(Point);
 	other := typeid_of(Colour);
-	if (id == other) { print_int(0); } else { print_int(1); }
+	if (id == other) { fmt.println(0); } else { fmt.println(1); }
 }

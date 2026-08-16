@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The generated copy entry points (m5a-plan step 3). A record no part of which
 // reaches a custom hook cannot fail, so its `try_clone` is the copy its
@@ -24,13 +24,13 @@ Group :: struct {
 main :: proc() {
 	p := Plain{1, 2};
 	q := p.clone();
-	print_int(q.x);
+	fmt.println(q.x);
 
 	g := Group{Res{1}, Res{2}};
 	c, error := g.try_clone();
 	if (error == nil) {
-		print_int(c.second.id);
+		fmt.println(c.second.id);
 	}
 	d := g.clone();
-	print_int(d.first.id);
+	fmt.println(d.first.id);
 }

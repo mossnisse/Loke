@@ -19,14 +19,21 @@
  * be shared between threads. */
 static __declspec(thread) loke_rt_frame_v1 *frames;
 static __declspec(thread) int32_t panicking;
+static __declspec(thread) int32_t attached;
 
 void loke_rt_v1_thread_attach(void) {
 	frames = 0;
 	panicking = 0;
+	attached = 1;
 }
 
 void loke_rt_v1_thread_detach(void) {
 	frames = 0;
+	if (attached) {
+		/* Clear first: a cleanup panic terminates without recursively detaching. */
+		attached = 0;
+		loke_rt_v1_program_tls_cleanup();
+	}
 }
 
 void loke_rt_v1_frame_push(loke_rt_frame_v1 *frame, loke_rt_cleanup_v1 cleanup, void *context) {

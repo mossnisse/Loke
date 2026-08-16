@@ -8,7 +8,7 @@ L0441
 @18:1
 compile-time metadata
 L0444
-@26:12
+@26:14
 does not satisfy `Additive(Flag)`
 this requirement does not hold
 L0444
@@ -17,5 +17,5 @@ L0443
 @28:10
 takes 1 argument, found 2
 L0445
-@30:21
+@30:23
 no compiler-supplied `hash`

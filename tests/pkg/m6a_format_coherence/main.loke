@@ -1,0 +1,19 @@
+package main;
+
+import "core:fmt";
+import "./vendor";
+import "./adapter";
+
+main :: proc() {
+	m := vendor.Money{5};
+	// The owning package's formatter, whichever package prints the value.
+	fmt.println(m);
+
+	p := vendor.Plain{7};
+	// The extension is callable where it is visible ...
+	adapter.spelled_here(p, fmt.stdout());
+	fmt.println();
+	// ... and changes erased printing in neither package.
+	adapter.printed_here(p);
+	fmt.println(p);
+}

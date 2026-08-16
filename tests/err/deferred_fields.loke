@@ -1,13 +1,14 @@
-package main;
+package main; import "core:fmt";
 
 // Several deferred field types, one diagnostic: the gate is per declaration,
-// not per field.
+// not per field. `string` and `[]u8` are no longer deferred (M6a step 4), so
+// what is left is the managed-container half.
 Record :: struct {
-	name:  string,
-	other: string,
+	names: [dynamic]string,
+	table: map[int]string,
 	tag:   []u8,
 }
 
 main :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

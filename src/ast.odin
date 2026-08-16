@@ -37,6 +37,10 @@ Expr_Base :: struct {
 	// `any_view` that `type` now names. The emitter evaluates the node at this
 	// type, takes its address, and pairs it with the frozen `typeid`.
 	erased_from: Type_Id,
+	// design.md "string type conversions": a `string` borrowed as a
+	// `string_view`. The source type is kept so the backend narrows the owning
+	// three-word value to the two-word view rather than reinterpreting it.
+	view_from:   Type_Id,
 	// Set at construction when this node or any child is an error node, so
 	// recovery never has to re-walk a subtree to find out.
 	has_error:   bool,
@@ -173,6 +177,30 @@ Reflect_Op :: enum {
 	Field_Pointer,
 }
 
+// design.md "string type" and "string type conversions": the operations a text
+// carrier answers to. They are compiler-defined rather than library members
+// because their operand types are built in and their results follow the carrier
+// (m6a-plan step 4).
+Text_Op :: enum {
+	None,
+	Byte_Len,   // O(1), and what `len(text)` is shorthand for
+	Rune_Count, // O(n) Unicode scalar values
+	Bytes,      // a read-only borrowed []u8
+	Clone,      // an independent managed copy
+	To_C_View,  // a zero-terminated borrow for the complete expression
+	To_Runes,   // gated to M6b: its result type does not exist yet
+	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
+}
+
+// design.md "string type conversions": the conversions that validate their
+// input, and therefore have optional-ok results rather than a plain value.
+Text_Conversion :: enum {
+	None,
+	String_From_Bytes,  // `string(bytes)`   — validate and copy
+	View_From_Bytes,    // `string_view(bytes)` — validate and borrow
+	String_From_C_View, // `string(cview)`   — scan, validate, and copy
+}
+
 // A call, a conversion, or a generic application — syntax cannot tell them
 // apart, and M2's name resolution does not need it to.
 Expr_Call :: struct {
@@ -186,6 +214,21 @@ Expr_Call :: struct {
 	// descriptor selected.
 	reflect:       Reflect_Op,
 	reflect_field: Symbol_Id,
+	// `text.byte_len()`, `text.bytes()`, and the rest of the text surface.
+	text:            Text_Op,
+	// A validating text conversion, which has optional-ok results.
+	text_conversion: Text_Conversion,
+	// design.md "Variadic parameters". `variadic_slot` is the packed parameter's
+	// index, or -1. `variadic_forwards` marks the sole-spread case, where
+	// `bound[variadic_slot]` is the slice itself; otherwise the explicit
+	// `variadic_elements` and the `variadic_spreads` are concatenated in
+	// `variadic_order` (true = the next spread, false = the next element).
+	is_variadic:       bool,
+	variadic_slot:     int,
+	variadic_forwards: bool,
+	variadic_elements: []Expr,
+	variadic_spreads:  []Expr,
+	variadic_order:    []bool,
 	// The witness a `(dyn I)(&value)` conversion selected, or nil.
 	dyn_witness:   ^Witness,
 	// A slot call through a `dyn` value: its index in the witness.
@@ -688,6 +731,9 @@ Foreach_Kind :: enum {
 	Stored_Range,
 	Array,
 	Slice,
+	// design.md "String iteration": yields Unicode scalar values, and "the second
+	// name in a string loop is a byte offset, not a rune counter".
+	Text,
 	Protocol,
 }
 

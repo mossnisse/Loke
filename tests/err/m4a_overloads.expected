@@ -8,17 +8,17 @@ L0393
 @21:25
 is not a procedure, so it cannot be a group member
 L0391
-@26:12
+@26:14
 candidate `take_i8` with conversion vector (2)
 candidate `take_i16` with conversion vector (2)
 selection failed at tie-breaker 4
 L0391
-@31:12
+@31:14
 candidate `cross_a` with conversion vector (3, 0)
 candidate `cross_b` with conversion vector (0, 3)
 selection failed at crossed conversion vectors
 L0392
-@34:12
+@34:14
 no overload of `numbers` applies to these arguments
 does not apply: argument 1 is `untyped bool` where `int` is wanted
 L0396

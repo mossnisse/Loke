@@ -1,0 +1,20 @@
+package main; import "core:fmt";
+
+// The runtime string representation (m6a-plan decision "Runtime string
+// representation").
+//
+// A `string` is three words — data, byte length, owner flags. A literal is a
+// compile-time constant over static, zero-terminated storage whose owner word is
+// the static bit, so it costs neither an allocation nor a handle update.
+// Assignment retains a handle and scope exit releases one; only `.clone()`
+// allocates an independent buffer.
+
+share :: proc(text: string) -> string {
+	held := text;
+	return held;
+}
+
+main :: proc() {
+	literal: string = "hej";
+	fmt.println(len(share(literal)));
+}

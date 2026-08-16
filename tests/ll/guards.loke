@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Point :: struct { x: int, y: int }
 
@@ -10,36 +10,36 @@ main :: proc() {
 	// Signed division: a zero guard and the `MIN / -1` seam.
 	a := 10;
 	b := 3;
-	print_int(a / b);
+	fmt.println(a / b);
 
 	// An oversized shift never reaches an LLVM shift instruction.
 	count: uint = 70;
 	c: i32 = -1;
-	print_int(int(c >> count));
+	fmt.println(int(c >> count));
 
 	// Short-circuit blocks with a phi.
 	p := true;
 	q := false;
-	print_int(1 if p && q else 0);
+	fmt.println(1 if p && q else 0);
 
 	// Bounds check, then a nil check through a pointer.
 	xs := [4]int{1, 2, 3, 4};
 	i := 2;
-	print_int(xs[i]);
+	fmt.println(xs[i]);
 
 	pt := Point{1, 2};
 	r := &pt;
-	print_int(r.x);
+	fmt.println(r.x);
 
 	// Recursive aggregate equality.
 	other := Point{1, 2};
-	print_int(1 if pt == other else 0);
+	fmt.println(1 if pt == other else 0);
 
 	// A defer flag, reset on scope activation and set at registration.
-	defer print_int(9);
+	defer fmt.println(9);
 
 	// An indirect call through a procedure value.
-	print_int(indirect(double, 4));
+	fmt.println(indirect(double, 4));
 }
 
 double :: proc(a: int) -> int {

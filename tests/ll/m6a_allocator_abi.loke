@@ -1,4 +1,4 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 // The allocator handle ABI (m6a-plan step 1). An `Allocator` is a pointer to
 // one `loke_rt_allocator_v1` record and nothing else, so:
@@ -23,7 +23,7 @@ in_region :: proc(allocator: Allocator) -> Allocator_Error {
 }
 
 main :: proc() {
-	if (in_region(default_allocator()) == nil) {
-		print_int(0);
+	if (in_region(mem.default_allocator()) == nil) {
+		fmt.println(0);
 	}
 }

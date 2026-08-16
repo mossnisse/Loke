@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "base:interfaces";
 
@@ -75,28 +75,28 @@ main :: proc() {
 	ints: Stack(int, 4) = {};
 	ints.push(2);
 	ints.push(3);
-	print_int(ints.total());
+	fmt.println(ints.total());
 
 	runes: Stack(i32, 2) = {};
 	runes.push(7);
-	print_int(int(runes.total()));
+	fmt.println(int(runes.total()));
 
 	// The container satisfies the standard `Iterable` interface.
 	#assert(interfaces.Iterable(Stack(int, 4)));
 	seen := 0;
 	foreach (v in ints) { seen = seen + v; }
-	print_int(seen);
+	fmt.println(seen);
 
 	// Reflection, statically expanded.
-	print_int(field_count(Summary));
+	fmt.println(field_count(Summary));
 
 	// One erased call site.
 	s := Summary{1, 4};
 	view := (dyn Report)(&s);
-	print_int(view.lines());
+	fmt.println(view.lines());
 
 	// A written range and a stored one.
 	sum := 0;
 	foreach (i in 1 ..= 3) { sum += i; }
-	print_int(sum);
+	fmt.println(sum);
 }

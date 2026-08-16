@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The M5a integration case (m5a-plan step 6): a slice, a materialised constant
 // table, a custom lifecycle, a `move` parameter, a conditional initialisation,
@@ -19,7 +19,7 @@ impl Handle {
 
 	drop :: proc(self: inout Handle) {
 		if (self.valid) {
-			print_int(self.id);
+			fmt.println(self.id);
 			self.valid = false;
 		}
 	}
@@ -51,7 +51,7 @@ total :: proc(values: []int) -> int {
 // Conditional initialisation: only one path leaves a live owner at the exit the
 // `return` takes, so the cleanup asks a hidden flag.
 maybe :: proc(want: bool) -> int {
-	defer print_int(9);
+	defer fmt.println(9);
 	held := open_handle(1);
 	if (!want) {
 		drop(held);
@@ -65,21 +65,21 @@ main :: proc() {
 	// A slice of a local array, and the materialised constant table.
 	numbers := [4]int{1, 2, 3, 4};
 	view := numbers[:];
-	print_int(total(view));
-	print_int(total(view[1:3]));
-	print_int(lookup(2));
-	print_int(lookup(0) + TABLE[3]);
+	fmt.println(total(view));
+	fmt.println(total(view[1:3]));
+	fmt.println(lookup(2));
+	fmt.println(lookup(0) + TABLE[3]);
 
 	// A custom lifecycle: an implicit copy clones, and both owners drop.
 	original := open_handle(5);
 	copy := original;
-	print_int(copy.id);
+	fmt.println(copy.id);
 
 	// A `move` parameter kills the caller's source and drops in the callee.
 	given := open_handle(7);
-	print_int(consume(move(given)));
+	fmt.println(consume(move(given)));
 
 	// Conditional initialisation on both paths.
-	print_int(maybe(true));
-	print_int(maybe(false));
+	fmt.println(maybe(true));
+	fmt.println(maybe(false));
 }

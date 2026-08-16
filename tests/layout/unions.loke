@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Every union shape the checker has to agree with LLVM about: a narrow payload,
 // an `i64` payload, an `i128` payload, and an explicitly aligned one — each on
@@ -35,6 +35,6 @@ main :: proc() {
 	k: Widest_Array;
 	l: Aligned_Array;
 	m: Nested;
-	print_int(int(size_of(Small)) + int(size_of(Wide)) + int(size_of(Widest)));
-	print_int(int(size_of(Aligned)) + int(size_of(Nested)));
+	fmt.println(int(size_of(Small)) + int(size_of(Wide)) + int(size_of(Widest)));
+	fmt.println(int(size_of(Aligned)) + int(size_of(Nested)));
 }

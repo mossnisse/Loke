@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Vector2 :: struct { x, y: i32 }
 
@@ -47,33 +47,33 @@ magnitude2 :: proc(z: Complex) -> f64 { return z.real*z.real + z.imaginary*z.ima
 
 main :: proc() {
 	v := Vector2{3, 4};
-	print_int(int(v.length_squared()));
+	fmt.println(int(v.length_squared()));
 	// Method-call syntax is uniform procedure-call syntax.
-	print_int(int(Vector2.length_squared(v)));
-	print_int(int(v.dot(Vector2{2, 1})));
-	print_int(int(v.shifted()));
-	print_int(int(v.shifted(1)));
-	print_int(int(Vector2.dot(v, v)));
+	fmt.println(int(Vector2.length_squared(v)));
+	fmt.println(int(v.dot(Vector2{2, 1})));
+	fmt.println(int(v.shifted()));
+	fmt.println(int(v.shifted(1)));
+	fmt.println(int(Vector2.dot(v, v)));
 	v.scale(2);
-	print_int(int(v.x));
-	print_int(int(v.consume()));
+	fmt.println(int(v.x));
+	fmt.println(int(v.consume()));
 
 	origin := Vector2.zero;
-	print_int(int(origin.x));
+	fmt.println(int(origin.x));
 	e: Vector2.Element = 9;
-	print_int(int(e));
+	fmt.println(int(e));
 
 	a := Vector2(1, 2);
-	print_int(int(a.y));
+	fmt.println(int(a.y));
 	b := Vector2(5);
-	print_int(int(b.x) + int(b.y));
+	fmt.println(int(b.x) + int(b.y));
 
 	z := Complex(3.0, 4.0);
-	print_int(int(magnitude2(z)));
+	fmt.println(int(magnitude2(z)));
 	// `2.0` is an untyped float constant, so `@(implicit)` applies.
-	print_int(int(magnitude2(2.0)));
+	fmt.println(int(magnitude2(2.0)));
 	scale: f64 = 5.0;
-	print_int(int(magnitude2(Complex(scale))));
+	fmt.println(int(magnitude2(Complex(scale))));
 	Complex.bump(&z);
-	print_int(int(z.real));
+	fmt.println(int(z.real));
 }

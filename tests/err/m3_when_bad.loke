@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 runtime_flag: int = 1;
 
@@ -19,6 +19,6 @@ when (MISSING) {
 
 main :: proc() {
 	when ("no") {
-		print_int(1);
+		fmt.println(1);
 	}
 }

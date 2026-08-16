@@ -1,6 +1,6 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	x: Missing = 1;
-	print_int(x);
+	fmt.println(x);
 }

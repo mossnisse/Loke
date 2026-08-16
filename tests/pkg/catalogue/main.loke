@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The unmanaged subset of the standard catalogue, reached through
 // `-collection base=base` because M4b adds no implicit `base:` root.
@@ -69,6 +69,6 @@ main :: proc() {
 	#assert(interfaces.Numeric(Meters));
 	#assert(!interfaces.Integral(Meters));
 
-	print_int(total(2, 3));
-	print_int(int(f64(total(Meters(1.5), Meters(2.5)))));
+	fmt.println(total(2, 3));
+	fmt.println(int(f64(total(Meters(1.5), Meters(2.5)))));
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "Assignment statements": "If cloning fails, the compiler invokes
 // that allocator's failure policy ... and leaves a previously live destination
@@ -27,12 +27,12 @@ main :: proc() {
 	// The explicit entry point hands the error back, so this much runs.
 	_, error := source.try_clone();
 	if (error == nil) {
-		print_int(0);
+		fmt.println(0);
 		return;
 	}
-	print_int(1);
+	fmt.println(1);
 
 	// An implicit copy has no error to hand back, so it traps.
 	destination := source;
-	print_int(destination.id);
+	fmt.println(destination.id);
 }

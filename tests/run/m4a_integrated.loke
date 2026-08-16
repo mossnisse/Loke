@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // One program using methods, operators, `init` conversion, a union result, and
 // `or_return` together.
@@ -67,30 +67,30 @@ main :: proc() {
 	a := Account(Money(100));
 	b := Account();
 
-	print_int(int(i64(a.total())));
-	print_int(1 if b.open else 0);
+	fmt.println(int(i64(a.total())));
+	fmt.println(1 if b.open else 0);
 
 	moved, err := transfer(inout a, inout b, Money(30));
-	print_int(int(i64(moved)));
-	print_int(describe(err));
-	print_int(int(i64(a.total())));
+	fmt.println(int(i64(moved)));
+	fmt.println(describe(err));
+	fmt.println(int(i64(a.total())));
 
 	// `b` is closed, so the withdrawal fails and nothing moves.
 	moved2, err2 := transfer(inout b, inout a, Money(10));
-	print_int(int(i64(moved2)));
-	print_int(describe(err2));
+	fmt.println(int(i64(moved2)));
+	fmt.println(describe(err2));
 
 	// A failure that is not "closed".
 	moved3, err3 := transfer(inout a, inout b, Money(1000));
-	print_int(int(i64(moved3)));
-	print_int(describe(err3));
+	fmt.println(int(i64(moved3)));
+	fmt.println(describe(err3));
 
 	ledger: Ledger;
 	ledger[2] = 9;
-	print_int(int(ledger[2]));
-	print_int(int(ledger[0]));
+	fmt.println(int(ledger[2]));
+	fmt.println(int(ledger[0]));
 
 	// Delegated comparison and the `!=` fallback.
-	print_int(1 if Money(3) < Money(4) else 0);
-	print_int(1 if Money(3) != Money(4) else 0);
+	fmt.println(1 if Money(3) < Money(4) else 0);
+	fmt.println(1 if Money(3) != Money(4) else 0);
 }

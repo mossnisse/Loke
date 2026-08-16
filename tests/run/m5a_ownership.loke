@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Implicit drops, `move`, and explicit `drop` (m5a-plan step 4).
 //
@@ -15,7 +15,7 @@ Res :: struct { id: int }
 impl Res {
 	drop :: proc(self: inout Res) {
 		if (self.id != 0) {
-			print_int(self.id);
+			fmt.println(self.id);
 		}
 	}
 }
@@ -26,7 +26,7 @@ make_res :: proc(id: int) -> Res {
 
 // Two locals, cleaned up in reverse registration order.
 scope_exit :: proc() {
-	print_int(1000);
+	fmt.println(1000);
 	a := make_res(1);
 	b := make_res(2);
 }
@@ -34,14 +34,14 @@ scope_exit :: proc() {
 // An explicit `drop` marks the variable dead, so scope exit does not run a
 // second one.
 explicit :: proc() {
-	print_int(2000);
+	fmt.println(2000);
 	a := make_res(3);
 	drop(a);
 }
 
 // `move` transfers the representation and leaves the source dead.
 moved :: proc() {
-	print_int(3000);
+	fmt.println(3000);
 	a := make_res(4);
 	b := move(a);
 }
@@ -50,9 +50,9 @@ moved :: proc() {
 // was registered after `a`. With the argument true, `b` is already dead by the
 // time its slot runs, which is what the hidden flag records.
 interleaved :: proc(flag: bool) {
-	print_int(4000);
+	fmt.println(4000);
 	a := make_res(5);
-	defer print_int(99);
+	defer fmt.println(99);
 	b := make_res(6);
 	if (flag) {
 		drop(b);
@@ -61,7 +61,7 @@ interleaved :: proc(flag: bool) {
 
 // A `return` cleans up every scope it leaves, innermost first.
 early :: proc(flag: bool) {
-	print_int(5000);
+	fmt.println(5000);
 	a := make_res(7);
 	if (flag) {
 		b := make_res(8);
@@ -72,7 +72,7 @@ early :: proc(flag: bool) {
 
 // Each iteration drops its own local before the next one runs.
 looping :: proc() {
-	print_int(6000);
+	fmt.println(6000);
 	for (i := 0; i < 2; i += 1) {
 		x := make_res(10 + i);
 	}
@@ -92,11 +92,11 @@ impl Res {
 }
 
 transferred :: proc() {
-	print_int(7000);
+	fmt.println(7000);
 	a := make_res(12);
-	print_int(consuming(move(a)));
+	fmt.println(consuming(move(a)));
 	b := make_res(13);
-	print_int(b.consume());
+	fmt.println(b.consume());
 }
 
 // A borrowed managed parameter owns nothing it could move out, so returning it
@@ -113,11 +113,11 @@ returns_local :: proc() -> Res {
 }
 
 returning :: proc() {
-	print_int(8000);
+	fmt.println(8000);
 	source := make_res(14);
 	copy := returns_borrow(source);
 	moved := returns_local();
-	print_int(moved.id);
+	fmt.println(moved.id);
 }
 
 // design.md "Assignment statements": "Assignment has value semantics ... It does
@@ -134,63 +134,63 @@ impl Counted {
 
 	drop :: proc(self: inout Counted) {
 		if (self.id != 0) {
-			print_int(self.id);
+			fmt.println(self.id);
 		}
 	}
 }
 
 copies :: proc() {
-	print_int(9000);
+	fmt.println(9000);
 	source := Counted{1};
 	binding := source;
-	print_int(binding.id);
+	fmt.println(binding.id);
 
 	// The destination's previous value is dropped once the clone succeeded.
 	destination := Counted{2};
 	destination = source;
-	print_int(destination.id);
+	fmt.println(destination.id);
 }
 
 // A destination one path dropped and the other did not: the replacement asks
 // the hidden flag rather than dropping unconditionally.
 replaced :: proc(flag: bool) {
-	print_int(9500);
+	fmt.println(9500);
 	x := Counted{3};
 	if (flag) {
 		drop(x);
 	}
 	x = Counted{4};
-	print_int(x.id);
+	fmt.println(x.id);
 }
 
 // design.md: an owning temporary nothing binds is still a completed
 // initialization, so it is cleaned up exactly once rather than leaked.
 discarded :: proc() {
-	print_int(9800);
+	fmt.println(9800);
 	make_res(16);
-	print_int(9801);
+	fmt.println(9801);
 }
 
 // design.md "Exchange": `exchange` "replaces a definitely live value and returns
 // its previous value without cloning it ... No user code runs between those two
 // moves, and the destination is never observably dead."
 exchanged :: proc() {
-	print_int(9900);
+	fmt.println(9900);
 	current := make_res(17);
 	previous := exchange(inout current, make_res(18));
-	print_int(previous.id);
-	print_int(current.id);
+	fmt.println(previous.id);
+	fmt.println(current.id);
 
 	// The destination's type supplies the context, so `{}` is its zero value.
 	last := exchange(inout current, {});
-	print_int(last.id);
-	print_int(current.id);
+	fmt.println(last.id);
+	fmt.println(current.id);
 }
 
 // design.md "Storage modifiers": "`manual` disables automatic cleanup", so
 // scope exit leaves it alone and an explicit `drop` is what releases it.
 manual_owner :: proc() {
-	print_int(9700);
+	fmt.println(9700);
 	automatic := make_res(19);
 	held: manual Res = make_res(20);
 	released: manual Res = make_res(21);
@@ -211,7 +211,7 @@ counted :: proc() -> int {
 session :: proc() {
 	current: thread_local Res;
 	current = make_res(22);
-	print_int(current.id);
+	fmt.println(current.id);
 }
 
 main :: proc() {
@@ -231,7 +231,7 @@ main :: proc() {
 	discarded();
 	exchanged();
 	manual_owner();
-	print_int(counted());
-	print_int(counted());
+	fmt.println(counted());
+	fmt.println(counted());
 	session();
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Allocation lowering over the seed runtime's allocator ABI (m6a-plan step 1).
 // Every allocation names the provider record, the exact size, and the exact
@@ -37,5 +37,5 @@ main :: proc() {
 	if (rerr == nil) {
 		free(r);
 	}
-	print_int(0);
+	fmt.println(0);
 }

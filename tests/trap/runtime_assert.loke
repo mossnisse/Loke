@@ -1,10 +1,10 @@
-package main;
+package main; import "core:fmt";
 
 // A false `assert` reached at run time takes the trap seam; its message stays
 // compile-time-only until the seed runtime lands (M6).
 main :: proc() {
 	n := 0;
-	print_int(1);
+	fmt.println(1);
 	assert(n > 0);
-	print_int(2);
+	fmt.println(2);
 }

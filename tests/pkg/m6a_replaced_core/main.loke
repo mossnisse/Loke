@@ -5,15 +5,16 @@ package main;
 // This `core:mem` is the project's own directory, and it still receives the
 // compiler-owned allocator members: `core:mem` is a name the compiler
 // contributes to, whichever tree supplies its source.
+//
+// The replacement tree has no `fmt`, so what this case observes it observes
+// through `assert` rather than printing.
 
 import "core:mem";
 
 main :: proc() {
-	print_int(mem.marker());
+	assert(mem.marker() == 1);
 	a := mem.default_allocator();
 	p, err := new(int, a);
-	if (err == nil) {
-		free(p);
-		print_int(2);
-	}
+	assert(err == nil);
+	free(p);
 }

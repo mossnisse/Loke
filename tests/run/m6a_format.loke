@@ -1,0 +1,88 @@
+package main;
+
+// design.md "String format printing": formatting is a library protocol over
+// `format(value, writer, options)`, and runtime formatting is coherent per
+// concrete `typeid`. The compiler supplies a formatter for every printable
+// built-in; a package may write one for a type it declares, and that one wins
+// for erased printing too.
+
+import "core:fmt";
+import "base:runtime";
+
+Colour :: enum { Red, Green = 5, Blue }
+
+Point :: struct {
+	@(public) x: int,
+	@(public) y: i32,
+}
+
+Value :: union { int, bool }
+
+Money :: struct { @(public) cents: int }
+
+Meters :: distinct int;
+
+impl Meters {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+		fmt.format_to(w, "meters");
+	}
+}
+
+// Declared in `Money`'s own package, so this is the eligible formatter.
+impl Money {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+		fmt.format_to(w, "$", self.cents);
+	}
+}
+
+// A writer is one procedure and its state, so a counting sink is an ordinary
+// value of the same type the standard ones have.
+count_bytes :: proc(state: rawptr, bytes: [^]u8, count: int) {
+	total := (^int)(state);
+	total^ = total^ + count;
+}
+
+main :: proc() {
+	// Scalars, in every shape the generated thunks spell.
+	fmt.println(1, -7, u8(255), true, 'A', 3.5);
+
+	// Text: an owning string and a borrowed view print the same bytes.
+	s: string = "hej";
+	v: string_view = s;
+	fmt.println(s, v);
+
+	// Pointers and identities.
+	p: ^int;
+	fmt.println(p);
+	fmt.println(typeid_of(int));
+
+	// Aggregates: enum, struct, fixed array, slice, and union.
+	fmt.println(Colour.Green, Colour.Red);
+	fmt.println(Point{1, 2});
+	xs := [?]int{10, 20, 30};
+	fmt.println(xs);
+	fmt.println(xs[:]);
+	u: Value = 4;
+	fmt.println(u);
+
+	// The user-owned formatter, direct and through the erased path.
+	m := Money{250};
+	fmt.println(m);
+
+	// A location is an ordinary record, so it prints like one.
+	fmt.println(#location().procedure, #location().line);
+
+	// `eprint` goes to the error stream, which the corpus does not capture.
+	fmt.eprintln("to stderr");
+
+	// A writer the program supplies itself.
+	total := 0;
+	sink := fmt.Writer{count_bytes, rawptr(&total)};
+	fmt.format_to(sink, 1, 22, 333);
+	fmt.println(total);
+
+	// Formatting keeps all 128 value bits, and a distinct type owns its formatter
+	// rather than inheriting the formatter of its representation.
+	fmt.println(i128(18446744073709551617), u128(18446744073709551617));
+	fmt.println(Meters(3));
+}

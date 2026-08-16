@@ -213,7 +213,19 @@ parse_error :: proc(
 	error_labelf(p.c, span, code, label, format, ..args)
 }
 
+// A member name: a field, an enum member, or the name after `.`. design.md
+// spells one of them `type` — `field.type` on a reflection descriptor, and
+// `Member_Info.type` in the runtime metadata — and a name in this position can
+// never start a type expression, so the keyword is accepted here and nowhere
+// else.
 @(private = "file")
+expect_member_name :: proc(p: ^Parser, code: string, what: string) -> (Token, bool) {
+	if at(p, .Type) {
+		return advance(p), true
+	}
+	return expect(p, .Ident, code, what)
+}
+
 expect :: proc(p: ^Parser, kind: Token_Kind, code: string, what: string) -> (Token, bool) {
 	if at(p, kind) {
 		return advance(p), true
@@ -1760,7 +1772,7 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 				e = a
 				continue
 			}
-			name, ok := expect(p, .Ident, "L0225", "a name after `.`")
+			name, ok := expect_member_name(p, "L0225", "a name after `.`")
 			s := new_expr(p, Expr_Selector, lo)
 			s.operand = e
 			if ok {
@@ -2746,7 +2758,7 @@ parse_field_list :: proc(p: ^Parser) -> []Field {
 
 		names := make([dynamic]Name, 0, 0, p.allocator)
 		for {
-			name, ok := expect(p, .Ident, "L0241", "a field name")
+			name, ok := expect_member_name(p, "L0241", "a field name")
 			if !ok {
 				break
 			}
@@ -2788,7 +2800,7 @@ parse_enum :: proc(p: ^Parser) -> Expr {
 	for !at(p, .Rbrace) && !at(p, .EOF) {
 		start := current(p)
 		field: Enum_Field
-		name, ok := expect(p, .Ident, "L0241", "an enum member name")
+		name, ok := expect_member_name(p, "L0241", "an enum member name")
 		if ok {
 			field.name = name_of(p, name)
 		}

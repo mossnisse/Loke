@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md: "`clone` ... calls `try_clone` once and, on failure, invokes the
 // supplied allocator's failure policy." M5a's fixed fallback is a
@@ -27,12 +27,12 @@ main :: proc() {
 	w := Wrapper{Failing{1}};
 	_, error := w.try_clone();
 	if (error == nil) {
-		print_int(0);
+		fmt.println(0);
 		return;
 	}
-	print_int(1);
+	fmt.println(1);
 
 	// The generated `clone` has no error to hand back, so it traps.
 	other := w.clone();
-	print_int(other.inner.id);
+	fmt.println(other.inner.id);
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The body cannot be typed while it is being typed, so the length it needs has
 // no answer.
@@ -8,5 +8,5 @@ self :: proc() -> int {
 }
 
 main :: proc() {
-	print_int(self());
+	fmt.println(self());
 }

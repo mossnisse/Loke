@@ -1,4 +1,4 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 R :: struct { x: int }
 
@@ -20,7 +20,7 @@ T :: struct { w: int }
 impl T {
 	// The allocator default is supplied by the compiler until `core:mem` is
 	// nameable in M6, so a written one is rejected.
-	try_clone :: proc(self, allocator: Allocator = default_allocator()) -> (T, Allocator_Error) {
+	try_clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> (T, Allocator_Error) {
 		return self, nil;
 	}
 }
@@ -38,8 +38,8 @@ main :: proc() {
 
 	// Arity and operand shape of the allocation built-ins and `drop`.
 	bad_new := new(int, a, a);
-	handle := default_allocator(1);
+	handle := mem.default_allocator(1);
 	drop();
 
-	print_int(1);
+	fmt.println(1);
 }

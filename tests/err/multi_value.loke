@@ -1,11 +1,11 @@
-package main;
+package main; import "core:fmt";
 
 pair :: proc() -> (int, int) {
 	return 1, 2;
 }
 
 main :: proc() {
-	print_int(pair());
+	fmt.println(pair());
 	a := pair();
-	print_int(a);
+	fmt.println(a);
 }

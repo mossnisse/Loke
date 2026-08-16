@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "Panic strategy": the strategy "never changes which programs are
 // valid, only what observable cleanup happens on the way down". A program that
@@ -8,11 +8,11 @@ package main;
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { print_int(self.id); }
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
 }
 
 main :: proc() {
 	a := Res{1};
-	defer print_int(2);
+	defer fmt.println(2);
 	b := Res{3};
 }

@@ -1,9 +1,9 @@
 L0356
-@9:21
+@9:23
 a shift count must have an unsigned integer type
 L0356
 @10:12
 a shift count must have an unsigned integer type
 L0356
-@11:21
+@11:23
 a shift count cannot be negative

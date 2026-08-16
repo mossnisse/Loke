@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // A collection prefix resolves only through `-collection`; there is no
 // built-in `core:` root.
@@ -6,6 +6,6 @@ import "lib:strings";
 import alias "lib:strings";
 
 main :: proc() {
-	print_int(strings.width());
-	print_int(alias.width());
+	fmt.println(strings.width());
+	fmt.println(alias.width());
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Canvas :: struct { marks: int }
 
@@ -59,13 +59,13 @@ main :: proc() {
 	erased: any_view = 1;
 	switch (t in erased) {
 	case Drawable:
-		print_int(1);
+		fmt.println(1);
 	case:
-		print_int(0);
+		fmt.println(0);
 	}
 	x := view.(Circle);
 	switch (t in view) {
 	case Circle:
-		print_int(1);
+		fmt.println(1);
 	}
 }

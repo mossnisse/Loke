@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 Value :: union { bool, i32 }
 
 main :: proc() {
 	v: Value = i32(7);
 	// A failed single-value assertion traps; the comma-ok form does not.
-	print_int(1 if v.(bool) else 0);
+	fmt.println(1 if v.(bool) else 0);
 }

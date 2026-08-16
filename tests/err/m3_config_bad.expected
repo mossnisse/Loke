@@ -5,5 +5,5 @@ L0388
 @6:11
 `-define:NARROW=999` is not representable by `u8`
 L0388
-@10:20
+@10:22
 `#config` needs a name

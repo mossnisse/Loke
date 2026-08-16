@@ -67,10 +67,24 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		size = u64(type_bits(c, type) + 7) / 8
 		alignment = min(size, u64(c.target.max_align))
 
-	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator:
-		// An `Allocator` is a one-word provider handle.
+	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View:
+		// An `Allocator` is a one-word provider handle, and a `cstring_view` is one
+		// zero-terminated address (design.md "C string views").
 		size = u64(c.target.pointer_bits) / 8
 		alignment = size
+
+	case .String_View:
+		// design.md: "an immutable, validated UTF-8 borrow represented by a pointer
+		// and a byte length".
+		alignment = u64(c.target.pointer_bits) / 8
+		size = 2 * alignment
+
+	case .String:
+		// m6a-plan decision "Runtime string representation": data pointer, byte
+		// length, and the owner flags that tell a static literal from a runtime
+		// buffer and identify that buffer's header.
+		alignment = u64(c.target.pointer_bits) / 8
+		size = 3 * alignment
 
 	case .Allocator_Error:
 		size = u64(type_bits(c, type) + 7) / 8

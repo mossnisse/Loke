@@ -1,0 +1,31 @@
+package main; import "core:fmt";
+
+// A `string` is a managed owner with a compiler-supplied lifecycle rather than a
+// written `drop`, so the unwind has to run its release like any other cleanup
+// action (design.md "string type", "What the unwind runs").
+//
+// A release prints nothing, so what this pins is that the two string actions sit
+// in the same registration list as the witness without displacing it: the
+// witness still drops, and the walk still reaches the end and terminates.
+
+Witness :: struct { id: int }
+
+impl Witness {
+	drop :: proc(self: inout Witness) { fmt.println(self.id); }
+}
+
+deeper :: proc() {
+	panic("stop here");
+}
+
+owner :: proc() {
+	first := "a" + "b";
+	middle := Witness{7};
+	second := first.clone();
+	fmt.println(second.byte_len());
+	deeper();
+}
+
+main :: proc() {
+	owner();
+}

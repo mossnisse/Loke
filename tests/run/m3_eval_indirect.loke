@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 pair :: proc() -> (int, int) {
 	return 20, 22;
@@ -19,5 +19,5 @@ compute :: proc() -> int {
 VALUE :: compute();
 
 main :: proc() {
-	print_int(VALUE);
+	fmt.println(VALUE);
 }

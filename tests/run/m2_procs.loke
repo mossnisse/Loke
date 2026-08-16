@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Point :: struct { x: int, y: int }
 
@@ -56,7 +56,7 @@ is_odd :: proc(n: int) -> bool {
 
 // A bare early return still drains the cleanup stack.
 early :: proc(n: int) -> int {
-	defer print_int(-1);
+	defer fmt.println(-1);
 	if (n < 0) {
 		return 0;
 	}
@@ -76,49 +76,49 @@ multiply :: proc(a: int, b: int) -> int {
 }
 
 main :: proc() {
-	print_int(scaled(3));
-	print_int(scaled(3, 4));
-	print_int(scaled(3, 4, 5));
-	print_int(scaled(bias = 1, base = 2));
-	print_int(scaled(2, factor = 3));
+	fmt.println(scaled(3));
+	fmt.println(scaled(3, 4));
+	fmt.println(scaled(3, 4, 5));
+	fmt.println(scaled(bias = 1, base = 2));
+	fmt.println(scaled(2, factor = 3));
 
 	n := 10;
 	bump(inout n, 5);
-	print_int(n);
+	fmt.println(n);
 
 	p := Point{1, 2};
 	move_point(inout p, 10, 20);
-	print_int(p.x);
-	print_int(p.y);
+	fmt.println(p.x);
+	fmt.println(p.y);
 
 	q, r := divmod(17, 5);
-	print_int(q);
-	print_int(r);
+	fmt.println(q);
+	fmt.println(r);
 
 	low, high := minmax(9, 4);
-	print_int(low);
-	print_int(high);
+	fmt.println(low);
+	fmt.println(high);
 
 	a, b := forward(20, 6);
-	print_int(a);
-	print_int(b);
+	fmt.println(a);
+	fmt.println(b);
 
-	print_int(factorial(6));
-	print_int(1 if is_even(10) else 0);
-	print_int(1 if is_odd(10) else 0);
+	fmt.println(factorial(6));
+	fmt.println(1 if is_even(10) else 0);
+	fmt.println(1 if is_odd(10) else 0);
 
-	print_int(early(3));
-	print_int(early(-3));
+	fmt.println(early(3));
+	fmt.println(early(-3));
 
 	// A procedure value: assigned, reassigned, and called indirectly.
 	op: proc(a: int, b: int) -> int = add;
-	print_int(op(6, 7));
+	fmt.println(op(6, 7));
 	op = multiply;
-	print_int(op(6, 7));
-	print_int(apply(add, 100, 23));
+	fmt.println(op(6, 7));
+	fmt.println(apply(add, 100, 23));
 
 	// A non-capturing procedure literal is hoisted to its own function.
 	square := proc(a: int, b: int) -> int { return a * a + b; };
-	print_int(square(5, 1));
-	print_int(apply(square, 4, 2));
+	fmt.println(square(5, 1));
+	fmt.println(apply(square, 4, 2));
 }

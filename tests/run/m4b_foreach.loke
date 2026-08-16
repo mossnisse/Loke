@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Countdown :: struct { start: int }
 Countdown_Iterator :: struct { current: int }
@@ -25,53 +25,53 @@ impl Countdown_Iterator {
 
 main :: proc() {
 	// A written range, half-open and closed.
-	foreach (i in 0 ..< 3) { print_int(i); }
-	foreach (i in 1 ..= 3) { print_int(i); }
+	foreach (i in 0 ..< 3) { fmt.println(i); }
+	foreach (i in 1 ..= 3) { fmt.println(i); }
 
 	// A stored range keeps its kind.
 	half := 0 ..< 3;
 	closed := 0 ..= 3;
-	foreach (i in half) { print_int(i); }
-	foreach (i in closed) { print_int(i); }
+	foreach (i in half) { fmt.println(i); }
+	foreach (i in closed) { fmt.println(i); }
 
 	// A fixed array, by value and with an index.
 	xs := [3]int{10, 20, 30};
-	foreach (v in xs) { print_int(v); }
-	foreach (v, i in xs) { print_int(i); print_int(v); }
+	foreach (v in xs) { fmt.println(v); }
+	foreach (v, i in xs) { fmt.println(i); fmt.println(v); }
 
 	// By reference over a mutable array.
 	foreach (&v in xs) { v = v + 1; }
-	foreach (v in xs) { print_int(v); }
+	foreach (v in xs) { fmt.println(v); }
 
 	// The discard binding.
 	total := 0;
 	foreach (_ in xs) { total += 1; }
-	print_int(total);
+	fmt.println(total);
 
 	// break, continue, and defer.
 	foreach (i in 0 ..< 5) {
 		if (i == 1) { continue; }
 		if (i == 3) { break; }
-		print_int(i);
+		fmt.println(i);
 	}
 
 	// A user iterable through the protocol, with the loop's own counter.
-	foreach (v in Countdown{3}) { print_int(v); }
-	foreach (v, i in Countdown{2}) { print_int(i); print_int(v); }
+	foreach (v in Countdown{3}) { fmt.println(v); }
+	foreach (v, i in Countdown{2}) { fmt.println(i); fmt.println(v); }
 
 	// Inclusive ranges terminate after the maximum representable endpoint,
 	// both in direct lowering and through the synthesized iterator protocol.
 	low: u8 = 254;
 	high: u8 = 255;
-	foreach (v in low ..= high) { print_int(int(v)); }
+	foreach (v in low ..= high) { fmt.println(int(v)); }
 	maximum := low ..= high;
 	it := iter(maximum);
 	first, first_ok := it.next();
 	second, second_ok := it.next();
 	_, done := it.next();
-	if (first_ok) { print_int(int(first)); }
-	if (second_ok) { print_int(int(second)); }
-	if (done) { print_int(0); } else { print_int(1); }
+	if (first_ok) { fmt.println(int(first)); }
+	if (second_ok) { fmt.println(int(second)); }
+	if (done) { fmt.println(0); } else { fmt.println(1); }
 }
 
 // A user `iter_reverse` is an ordinary callable overload and does not change

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // m5b-plan step 2: what result summaries *permit*. design.md: "A borrow returned
 // from storage reachable through a borrowed parameter derives root provenance
@@ -60,29 +60,29 @@ tail :: proc(values: []int) -> []int {
 main :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	half := first_half(numbers[:]);
-	print_int(sum(half));
+	fmt.println(sum(half));
 	// The loan ends at the last use of the result, so the root is writable again.
 	numbers[0] = 9;
-	print_int(numbers[0]);
+	fmt.println(numbers[0]);
 
 	other := [2]int{5, 6};
 	picked := either(numbers[:], other[:], false);
-	print_int(sum(picked));
+	fmt.println(sum(picked));
 
 	// A static root escapes its callee legally.
-	print_int(sum(constant_view()));
+	fmt.println(sum(constant_view()));
 
 	// A fresh allocation returned by a direct call keeps its identity, so the
 	// caller may release it.
 	pointer := allocate(7);
-	print_int(pointer^);
+	fmt.println(pointer^);
 	free(pointer);
 
 	target := 0;
 	written := inout_borrow(inout target);
 	written^ = 5;
-	print_int(target);
+	fmt.println(target);
 
 	zeros := [4]int{0, 0, 3, 4};
-	print_int(sum(skip_zero(zeros[:])));
+	fmt.println(sum(skip_zero(zeros[:])));
 }

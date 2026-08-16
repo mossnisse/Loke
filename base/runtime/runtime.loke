@@ -4,21 +4,76 @@
 // This package is authoritative for the layouts the compiler and the seed
 // runtime both write: the allocator surface, the public type metadata, and
 // `Source_Code_Location`. The compiler asserts its own layout against these
-// declarations rather than the other way round, so the record shapes cannot
+// declarations rather than the other way round, so the two record shapes cannot
 // drift apart silently.
 //
 // `Allocator` and `Allocator_Error` are contributed by the compiler
 // (`src/stdlib.odin`) and bind the *same* types the unqualified predeclared
 // names do. `runtime.Allocator` and `Allocator` are one type, not two.
+//
+// Adding a field, or an enum member, requires a runtime ABI version bump:
+// generated metadata tables are written against exactly this field order.
 @(public)
 package runtime;
 
-// The compiler contributes:
+// Every kind a `typeid` can describe. `Invalid` is the zero value, which is
+// what an unknown or forged id resolves to.
+@(public)
+Type_Kind :: enum u8 {
+	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
+	Raw_Pointer, Pointer, Multi_Pointer, Array, Slice, Dynamic_Array, Map,
+	Struct, Enum, Union, Proc, String, String_View, CString_View,
+	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
+}
+
+@(public)
+Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
+
+// One member of an aggregate. Names and tags use static storage, so a
+// `Member_Info` owns nothing and needs no cleanup.
 //
-//   Allocator        the pointer-sized provider handle
-//   Allocator_Error  the allocation-failure result
+// `value_low`/`value_high` carry an enum member's raw value in two words,
+// without narrowing a signed or unsigned 128-bit value; the owning type's
+// `bits` and `signed` say how to read them. Unused fields are zero.
+@(public)
+Member_Info :: struct {
+	kind:       Member_Kind,
+	name:       string_view,
+	tag:        string_view,
+	type:       typeid,
+	offset:     int,
+	value_low:  u64,
+	value_high: u64,
+}
+
+// design.md "`type` and `typeid`": the runtime half of reflection. A `typeid` is
+// an ordinary scalar, so `type_info_of` is a checked lookup rather than a
+// promise that every id is valid.
 //
-// The frozen `Type_Kind`, `Member_Kind`, `Member_Info`, `Type_Info` and
-// `Source_Code_Location` declarations arrive with M6a step 4, which is what
-// makes `string_view` a usable field type; declaring them here first would
-// declare a package that cannot be compiled.
+// Aggregate member tables expose public fields only; procedure entries retain
+// written parameter and result order, and union variants retain declaration
+// order. Unused scalar, relation, and member fields are zero.
+@(public)
+Type_Info :: struct {
+	id:      typeid,
+	kind:    Type_Kind,
+	name:    string_view,
+	size:    int,
+	align:   int,
+	bits:    int,
+	signed:  bool,
+	element: typeid,
+	key:     typeid,
+	count:   int,
+	members: []Member_Info,
+}
+
+// design.md: `#location` and `#caller_location` produce one of these. Line and
+// column are one-based, and both views point at static storage.
+@(public)
+Source_Code_Location :: struct {
+	file:      string_view,
+	procedure: string_view,
+	line:      int,
+	column:    int,
+}

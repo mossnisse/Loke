@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "./views";
 
@@ -20,7 +20,7 @@ conflicting_across_a_package :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	view := views.first_half(numbers[:]);
 	numbers[0] = 9;
-	print_int(view[0]);
+	fmt.println(view[0]);
 }
 
 // A static root the callee named survives, so this one is accepted.
@@ -46,7 +46,7 @@ marked_across_a_package :: proc(@(allocator_reset) allocator: Allocator) {
 main :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	view := views.first_half(numbers[:]);
-	print_int(view[0]);
-	print_int(len(views.head(numbers[:])));
-	print_int(len(constant_escapes()));
+	fmt.println(view[0]);
+	fmt.println(len(views.head(numbers[:])));
+	fmt.println(len(constant_escapes()));
 }

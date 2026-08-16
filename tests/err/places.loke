@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Point :: struct { x: int, y: int }
 
@@ -6,7 +6,7 @@ CONSTANT :: 5;
 
 immutable :: proc(value: int) {
 	value = 1;
-	print_int(value);
+	fmt.println(value);
 }
 
 main :: proc() {

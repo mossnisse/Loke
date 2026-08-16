@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "./lib";
 
@@ -7,5 +7,5 @@ when (lib.VALUE) {
 }
 
 main :: proc() {
-	print_int(SELECTED);
+	fmt.println(SELECTED);
 }

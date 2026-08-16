@@ -18,7 +18,7 @@ fold_arithmetic :: proc(
 ) -> (Const_Value, bool) {
 	if a.kind == .String || b.kind == .String {
 		// design.md: `+` joins two compile-time strings, and nothing else applies
-		// to them until M6 gives `string` a runtime representation.
+		// to them. Runtime text operations belong to `string`, not to this.
 		if op != .Plus || a.kind != .String || b.kind != .String {
 			errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 			return Const_Value{}, false

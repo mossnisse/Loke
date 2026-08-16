@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Untyped compile-time strings: joined, compared, and measured, but never
 // stored in a runtime binding (m3-plan decision "Strings").
@@ -19,9 +19,9 @@ main :: proc() {
 	#assert(GREETING < NAME);
 	#assert(len(ESCAPED) == 11);
 
-	print_int(len(FULL));
-	print_int(len(ESCAPED));
-	print_int(LIMIT);
-	print_int(1 if VERBOSE else 0);
-	print_int(len(MODE));
+	fmt.println(len(FULL));
+	fmt.println(len(ESCAPED));
+	fmt.println(LIMIT);
+	fmt.println(1 if VERBOSE else 0);
+	fmt.println(len(MODE));
 }

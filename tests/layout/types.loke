@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Every interesting M2 shape, so `-check-layout` has something to disagree
 // about: empty and nested structs, arrays of aggregates, pointers, enums with
@@ -32,6 +32,6 @@ main :: proc() {
 	h: Handle;
 	f: Callback;
 	e: Empty;
-	print_int(size_of(Pair) + align_of(Mixed) + offset_of(Nested, tail) + len(c.grid));
-	print_int(size_of(p) + size_of(m) + size_of(n) + size_of(s) + size_of(w) + size_of(h) + size_of(f) + size_of(e));
+	fmt.println(size_of(Pair) + align_of(Mixed) + offset_of(Nested, tail) + len(c.grid));
+	fmt.println(size_of(p) + size_of(m) + size_of(n) + size_of(s) + size_of(w) + size_of(h) + size_of(f) + size_of(e));
 }

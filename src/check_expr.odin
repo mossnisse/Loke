@@ -77,10 +77,12 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_proc_literal(k, v)
 
 	case ^Expr_Hash:
-		// A `#name` outside a call. `#location` and `#caller_location` are the
-		// only ones that mean anything here, and both wait for M6.
-		errorf(k.c, v.span, "L0390", "`%s` needs the runtime source-location type, which arrives in M6", v.name)
-		v.type = INVALID_TYPE
+		// A `#name` outside a call. Only `#caller_location` means anything here:
+		// design.md says it "may appear only as the default value of a procedure
+		// parameter, and it is evaluated at each call that omits that argument".
+		// This checks the declaration; `substitute_caller_location` is what
+		// replaces it per call site.
+		check_caller_location(k, v)
 
 	case ^Expr_Range:
 		check_range(k, v)
@@ -752,6 +754,25 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		through_pointer = true
 	}
 	info := type_of(k.c, base_type)
+	// design.md "Multi-pointers": "Indexing without bounds checking." The loss of
+	// the bound is the whole point of the type, and it is visible at the
+	// `unsafe.raw_data` call that produced the multi-pointer.
+	if info != nil && info.kind == .Multi_Pointer && len(v.indices) == 1 {
+		check_multi_pointer_index(k, v, info)
+		return
+	}
+	// design.md "string type": "Direct integer indexing of a string is not
+	// allowed because a UTF-8 code point may contain multiple bytes."
+	if info != nil && (info.kind == .String || info.kind == .String_View) {
+		errorf(
+			k.c, v.span, "L0563",
+			"`%s` cannot be indexed by an integer, because a UTF-8 code point may span several bytes",
+			type_name(k.c, operand),
+		)
+		add_notef(k.c, v.span, "use `text.bytes()[index]`, a subrange `text[low:high]`, or rune iteration")
+		v.type = INVALID_TYPE
+		return
+	}
 	// Built-in indexing first; a user `operator([])` supplies what it does not.
 	indexable := info != nil && (info.kind == .Array || info.kind == .Slice)
 	if !indexable || len(v.indices) != 1 {
@@ -832,6 +853,22 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 // `s[i]` over a slice. The element is a place in the *root's* storage, so its
 // capability comes from the slice's, not from whether the slice variable itself
 // is assignable: rebinding `s` and writing `s[0]` are different rights.
+@(private = "file")
+check_multi_pointer_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info) {
+	if index_type := check_single_expr(k, v.indices[0], TYPE_INT); index_type != INVALID_TYPE {
+		materialize(k, v.indices[0], TYPE_INT)
+		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
+			errorf(k.c, expr_span(v.indices[0]), "L0362", "an index must be an integer, found `%s`", type_name(k.c, index_type))
+		}
+	}
+	v.type = info.element
+	// The element is a place through the address, exactly as `p^` is: a
+	// multi-pointer carries no read-only capability either.
+	v.value_category = .Place
+	v.addressable = true
+	v.assignable = true
+}
+
 @(private = "file")
 check_slice_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, operand: Type_Id) {
 	index_type := check_single_expr(k, v.indices[0], TYPE_INT)
@@ -985,6 +1022,15 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 	case .Slice:
 		element = info.element
 		mutable = info.mutable
+	case .String, .String_View:
+		// design.md "From string to X": `st[low:high]` borrows a subrange as a
+		// `string_view`. It is a borrow of the string's owner and cannot outlive
+		// it, which `src/borrow.odin` checks.
+		return check_text_subrange(k, v)
+	case .Multi_Pointer:
+		// design.md "Multi-pointers": `x[:]` and `x[i:]` stay multi-pointers,
+		// while `x[:n]` and `x[i:n]` produce a bounds-carrying `[]T`.
+		return check_multi_pointer_slice(k, v, info.element)
 	case:
 		return false
 	}
@@ -1008,6 +1054,47 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 		return true
 	}
 	v.type = slice_of(k.c, element, mutable)
+	v.value_category = .Value
+	v.immutable = .Temporary
+	return true
+}
+
+// design.md: `st[low:high]` is "a subrange view". A byte range that splits a
+// code point would break the type's UTF-8 invariant, so the bounds are checked
+// at run time against both the length and the encoding.
+@(private = "file")
+check_text_subrange :: proc(k: ^Checker, v: ^Expr_Slice) -> bool {
+	ok := true
+	if v.lo != nil && !check_slice_endpoint(k, v.lo) {
+		ok = false
+	}
+	if v.hi != nil && !check_slice_endpoint(k, v.hi) {
+		ok = false
+	}
+	v.type = ok ? TYPE_STRING_VIEW : INVALID_TYPE
+	v.value_category = .Value
+	v.immutable = .Temporary
+	return true
+}
+
+// design.md "Multi-pointers": slicing is "bounds checked when both low and high
+// operands are given" — which is exactly the case whose result carries a length.
+@(private = "file")
+check_multi_pointer_slice :: proc(k: ^Checker, v: ^Expr_Slice, element: Type_Id) -> bool {
+	ok := true
+	if v.lo != nil && !check_slice_endpoint(k, v.lo) {
+		ok = false
+	}
+	if v.hi != nil && !check_slice_endpoint(k, v.hi) {
+		ok = false
+	}
+	if !ok {
+		v.type = INVALID_TYPE
+		return true
+	}
+	// A multi-pointer has no length, so an omitted high bound cannot produce one:
+	// the result stays a multi-pointer and the loss of bounds stays visible.
+	v.type = v.hi == nil ? multi_pointer_to(k.c, element) : slice_of(k.c, element, mutable = true)
 	v.value_category = .Value
 	v.immutable = .Temporary
 	return true
@@ -1323,6 +1410,11 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 	v.type = operand_type
+	// design.md: "For two `string` operands, `a + b` returns a new owning
+	// `string`... Two `string_view` operands also produce an owning `string`."
+	if v.op == .Plus && type_is_utf8_text(k.c, operand_type) {
+		v.type = TYPE_STRING
+	}
 
 	left, right := expr_base(v.lhs), expr_base(v.rhs)
 	if !left.is_const || !right.is_const {
@@ -1522,6 +1614,14 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 		}
 		return lt, true
 	}
+	// design.md "Concatenation" and "Comparison operators": "A `string` and a
+	// `string_view` can occur in either order." They meet at the borrowed view,
+	// which is the one both sides can produce without allocating.
+	if type_is_utf8_text(k.c, lt) && type_is_utf8_text(k.c, rt) {
+		if materialize(k, lhs, TYPE_STRING_VIEW) && materialize(k, rhs, TYPE_STRING_VIEW) {
+			return TYPE_STRING_VIEW, true
+		}
+	}
 	operand_mismatch(k, op_span, lt, rt)
 	return INVALID_TYPE, false
 }
@@ -1558,6 +1658,12 @@ builtin_operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) ->
 	}
 	#partial switch op {
 	case .Plus:
+		// design.md "Concatenation": two `string`/`string_view` operands in either
+		// order produce an owning `string`.
+		#partial switch type_kind(c, type_underlying(c, type)) {
+		case .String, .String_View:
+			return true
+		}
 		return type_is_numeric(c, type) || type_kind(c, type) == .Untyped_String
 	case .Minus, .Star, .Slash:
 		return type_is_numeric(c, type)
@@ -1688,6 +1794,14 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	// a descriptor constant, whose result type follows that descriptor. Only a
 	// name bound to one qualifies, which is what a `$field` binding is, so no
 	// other callee is checked twice looking for it.
+	// `text.byte_len()`, `text.bytes()`, `string.from_runes(...)`: compiler-defined
+	// operations on the built-in text carriers, whose operands and results are
+	// both built-in types (m6a-plan step 4).
+	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
+		if check_text_operation(k, v, sel) {
+			return
+		}
+	}
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && callee_is_descriptor(k, sel.operand) {
 		check_single_expr(k, sel.operand)
 		if check_descriptor_operation(k, v, sel) {
@@ -2011,7 +2125,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	v.resolution = Resolution{kind = .Call, symbol = symbol_id, chosen_overload = symbol_id}
 
 	// Exhaustive on purpose: a built-in with no arm here would fall through to
-	// the ordinary parameter path and be emitted as `print_int`.
+	// the ordinary parameter path and be called as if it were declared there.
 	switch sym.builtin {
 	case .Assert, .Panic:
 		check_assert_or_panic(k, v, ident, sym.builtin)
@@ -2037,6 +2151,15 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Exchange:
 		check_exchange_builtin(k, v, ident)
 		return
+	case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
+		check_unsafe_builtin(k, v, ident, sym.builtin)
+		return
+	case .Type_Info_Of:
+		check_type_info_of(k, v)
+		return
+	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
+		check_fmt_builtin(k, v, ident, sym.builtin)
+		return
 	case .Default_Allocator:
 		if len(v.args) != 0 {
 			errorf(k.c, v.span, "L0490", "`default_allocator` takes no arguments")
@@ -2046,8 +2169,6 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		v.bound = nil
 		v.type = TYPE_ALLOCATOR
 		return
-	case .Print_Int:
-		// Checked against its declared parameters, just below.
 	case .None:
 		unsupported_construct(k, v.span)
 		v.type = INVALID_TYPE
@@ -2153,10 +2274,13 @@ check_hash_call :: proc(k: ^Checker, v: ^Expr_Call, hash: ^Expr_Hash) {
 	case "#config":
 		check_config(k, v)
 
+	case "#location":
+		check_location(k, v, hash)
+
 	case:
-		// `#location` and `#caller_location` need a runtime `string` and
-		// `runtime.Source_Code_Location`, which arrive with the seed runtime.
-		errorf(k.c, v.span, "L0390", "`%s` needs the runtime source-location type, which arrives in M6", hash.name)
+		// `#caller_location` is only meaningful as a parameter default, where it is
+		// substituted at each omitted argument before ordinary default checking.
+		errorf(k.c, v.span, "L0573", "`%s` is not a call", hash.name)
 		v.type = INVALID_TYPE
 	}
 }
@@ -2289,6 +2413,17 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = TYPE_INT
 		return
 	}
+	// design.md: "`len(text)` is shorthand for `text.byte_len()` so that it
+	// remains a constant-time operation."
+	if kind == .Len && type_is_utf8_text(k.c, operand) {
+		bound := make([]Expr, 1, k.c.semantic_allocator)
+		bound[0] = v.args[0].value
+		v.bound = bound
+		v.text = .Byte_Len
+		v.resolution = Resolution{kind = .Builtin_Operator}
+		v.type = TYPE_INT
+		return
+	}
 	// A compile-time string has a length but no runtime type to gate, so it is
 	// answered before the type is inspected.
 	if kind == .Len && operand == TYPE_UNTYPED_STRING {
@@ -2345,7 +2480,9 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
 	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator, .Drop, .Exchange,
-	     .None, .Print_Int, .Assert, .Panic, .Hash, .Iter,
+	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
+	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
+	     .None, .Assert, .Panic, .Hash, .Iter,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		return
 	}
@@ -2387,8 +2524,8 @@ layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id
 //   free(pointer)
 //   free_all(allocator)
 //
-// An omitted allocator argument is the default provider, which the compiler
-// supplies until `core:mem` is nameable in M6.
+// An omitted allocator argument is the default provider: the same symbol
+// `mem.default_allocator()` names.
 @(private = "file")
 check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	arity_low, arity_high := 1, 2
@@ -2497,9 +2634,10 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.type = TYPE_VOID
 		return
 
-	case .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len,
+	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
-	     .Exchange:
+	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
+	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
 		return
 	}
 
@@ -2601,6 +2739,12 @@ check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id) -> (Expr, bo
 @(private = "file")
 bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration: Symbol_Id) -> bool {
 	count := len(info.parameters)
+	// design.md "Variadic parameters": every trailing argument fills one
+	// parameter, so the pack is settled before the ordinary positional binding
+	// runs and the written arguments it consumed are no longer separate.
+	if variadic_parameter_index(info) >= 0 {
+		return bind_variadic_arguments(k, v, info, declaration)
+	}
 	bound := make([]Expr, count, k.c.semantic_allocator)
 	modes := make([]Argument_Mode, count, k.c.semantic_allocator)
 	filled := make([]bool, count, k.c.semantic_allocator)
@@ -2707,7 +2851,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 			)
 			return false
 		}
-		bound[index] = declared.param_defaults[index]
+		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
 	}
 
 	v.bound = bound
@@ -2774,6 +2918,12 @@ conversion_target_is_builtin :: proc(k: ^Checker, target: Type_Id) -> bool {
 // target, which is what lets stage 2 run.
 @(private = "file")
 builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) -> bool {
+	// design.md "string type conversions": a conversion that validates its input
+	// has optional-ok semantics rather than producing a value that may not hold
+	// the invariant its type promises.
+	if check_text_conversion(k, v, target, source) {
+		return true
+	}
 	base := expr_base(v.args[0].value)
 	converted: Const_Value
 	if base.is_const {
@@ -3135,8 +3285,13 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		return float_const(0, info.bits), true
 	case .Enum:
 		return int_const(c, 0), true
-	case .Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error:
+	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error,
+	     .CString_View:
 		return nil_const(), true
+	// design.md "string type": "The empty value is all zero." A nil view has
+	// length 0 and points at no storage.
+	case .String, .String_View:
+		return Const_Value{kind = .String}, true
 	case .Array:
 		elements := make([]Const_Value, info.count, c.semantic_allocator)
 		element, ok := zero_const(c, info.element)
@@ -3208,6 +3363,15 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// design.md "any_view type": the conversion is implicit at an `any_view`
 	// destination. The concrete type is kept so the backend knows what to take
 	// the address of and which `typeid` to pair with it.
+	// design.md: "A `string` converts implicitly to a `string_view`" — a borrow
+	// that "costs nothing" and needs no validation, because a `string` is already
+	// valid UTF-8 by construction.
+	if type_kind(k.c, type_underlying(k.c, target)) == .String_View &&
+	   type_kind(k.c, type_underlying(k.c, base.type)) == .String {
+		base.view_from = base.type
+		base.type = target
+		return true
+	}
 	if target == TYPE_ANY_VIEW && base.type != TYPE_ANY_VIEW {
 		if !any_view_accepts(k.c, base.type) {
 			return false
@@ -3317,7 +3481,10 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return value, true
 		}
-	case .Untyped_String, .String:
+	// design.md "From a string literal to X": a literal's zero-terminated bytes
+	// have static lifetime, so the same constant initializes an owning `string`,
+	// a borrowed view, and a C view alike.
+	case .Untyped_String, .String, .String_View, .CString_View:
 		if value.kind == .String {
 			return value, true
 		}
@@ -3395,7 +3562,8 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch type_kind(c, type_underlying(c, to)) {
-		case .Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice,
+		case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice,
+		     .String, .String_View, .CString_View,
 		     .Allocator, .Allocator_Error:
 			// The zero value of every erased view is nil, and so is a slice's
 			// (design.md "Nil slices"). A nil `Allocator_Error` is success.
@@ -3413,7 +3581,26 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true
 	}
 	if from == TYPE_UNTYPED_STRING {
-		return type_kind(c, type_underlying(c, to)) == .String
+		// design.md "From a string literal to X": a literal's bytes have static
+		// lifetime, so it initializes an owning `string`, a borrowed view, and a
+		// zero-terminated C view alike.
+		#partial switch type_kind(c, type_underlying(c, to)) {
+		case .String, .String_View, .CString_View:
+			return true
+		}
+		return false
+	}
+	// design.md "string type conversions": "**A `string` converts implicitly to a
+	// `string_view`**... The conversion is a borrow of the string, it costs
+	// nothing, and it needs no validation because a `string` is already valid
+	// UTF-8 by construction." The conversion runs one way only.
+	if type_kind(c, type_underlying(c, from)) == .String &&
+	   type_kind(c, type_underlying(c, to)) == .String_View {
+		return true
+	}
+	// design.md "Multi-pointers": "Implicit conversions between `^T` and `[^]T`."
+	if multi_pointer_converts(c, from, to) {
+		return true
 	}
 	if type_is_untyped(c, from) {
 		#partial switch type_kind(c, type_underlying(c, to)) {
@@ -3423,9 +3610,13 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	// Any pointer converts to `rawptr` without a written conversion; the reverse
-	// needs one.
-	if to == TYPE_RAWPTR && type_kind(c, type_underlying(c, from)) == .Pointer {
-		return true
+	// needs one. design.md: a multi-pointer converts "to `rawptr`, like all
+	// pointers".
+	if to == TYPE_RAWPTR {
+		#partial switch type_kind(c, type_underlying(c, from)) {
+		case .Pointer, .Multi_Pointer:
+			return true
+		}
 	}
 	// design.md: conversion from a concrete value to `any_view` is implicit when
 	// an `any_view` destination is expected, and never allocates.
@@ -3459,7 +3650,7 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	pointerish :: proc(kind: Type_Kind) -> bool {
 		#partial switch kind {
-		case .Pointer, .Raw_Pointer:
+		case .Pointer, .Multi_Pointer, .Raw_Pointer:
 			return true
 		}
 		return false

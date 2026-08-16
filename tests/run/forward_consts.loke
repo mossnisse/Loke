@@ -1,8 +1,8 @@
-package main;
+package main; import "core:fmt";
 
 ANSWER :: BASE + 1;
 BASE :: 41;
 
 main :: proc() {
-	print_int(ANSWER);
+	fmt.println(ANSWER);
 }

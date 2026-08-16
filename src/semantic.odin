@@ -44,9 +44,8 @@ TYPE_RUNE     :: Type_Id(19)
 TYPE_RAWPTR   :: Type_Id(20)
 TYPE_TYPE     :: Type_Id(21)
 
-// `string` is deferred to M6 but predeclared, so a program that names it gets
-// `L0350` rather than "unknown type", which would be a lie. `typeid` and
-// `any_view` became real runtime types in M4b.
+// `string` became an owning runtime carrier in M6a; `typeid` and `any_view`
+// became real runtime types in M4b.
 TYPE_STRING   :: Type_Id(22)
 TYPE_TYPEID   :: Type_Id(23)
 TYPE_ANY_VIEW :: Type_Id(24)
@@ -57,30 +56,36 @@ TYPE_UNTYPED_BOOL  :: Type_Id(27)
 TYPE_UNTYPED_RUNE  :: Type_Id(28)
 TYPE_UNTYPED_NIL   :: Type_Id(29)
 // A compile-time string. It may be concatenated, compared, measured, and used
-// as a configuration value or diagnostic message, but it has no runtime
-// representation until M6 (m3-plan decision "Strings").
+// as a configuration value or diagnostic message. It is not a runtime carrier:
+// where a value is wanted it defaults to `string` (m3-plan decision
+// "Strings").
 TYPE_UNTYPED_STRING :: Type_Id(30)
 
-// A borrowed view over UTF-8 text. M4b gives it an identity and constant values,
-// because a reflection descriptor's name and tag are `string_view`s; ordinary
-// runtime construction, storage, and operations wait for M6.
+// A borrowed view over UTF-8 text: a pointer and a byte length, and no
+// allocator. design.md "string type conversions": it "has the same byte, rune,
+// and iteration operations as `string`, but it has no allocator and does not own
+// or terminate its storage".
 TYPE_STRING_VIEW :: Type_Id(31)
 
-// design.md "Allocators" and "Allocation failure". These belong to `core:mem` /
-// `base:runtime`, which are not nameable until M6, so M5a owns them here: the
-// catalogue's `Cloneable` and the fixed lifecycle signatures both spell them
-// unqualified, and a compiler-owned identity is what lets that source compile
-// against real types (m5a-plan decision "Allocator representation").
+// design.md "Allocators" and "Allocation failure". `core:mem` and `base:runtime`
+// export exactly these identities rather than declaring their own: the
+// catalogue's `Cloneable` and the fixed lifecycle signatures spell them
+// unqualified, so they stay predeclared as well (m6a-plan decision
+// "Compiler-owned names").
 //
-// `Allocator` is a one-word nominal handle. Its M5 value always denotes the
-// single default CRT provider; per-expression region identity is semantic
-// metadata in `src/borrow.odin`, not part of the type or the ABI.
+// `Allocator` is a one-word nominal handle pointing at the seed runtime's
+// provider record. Per-expression region identity is semantic metadata in
+// `src/borrow.odin`, not part of the type or the ABI.
 TYPE_ALLOCATOR :: Type_Id(32)
 // A nil-comparable error code. Nil is success, so `err != nil` is the whole
 // interface an explicitly fallible operation needs.
 TYPE_ALLOCATOR_ERROR :: Type_Id(33)
 
-FIRST_DYNAMIC_TYPE :: Type_Id(34)
+// design.md "C string views": a non-owning, zero-terminated byte view — the type
+// a C `char const *` maps to. One word, and deliberately not a promise of UTF-8.
+TYPE_CSTRING_VIEW :: Type_Id(34)
+
+FIRST_DYNAMIC_TYPE :: Type_Id(35)
 
 Type_Kind :: enum {
 	Invalid,
@@ -98,13 +103,14 @@ Type_Kind :: enum {
 	Untyped_String,
 	String,
 	String_View,
+	CString_View,
 	Typeid,
 	Any_View,
 	Pointer,
 	Multi_Pointer,
 	Slice,
 	// design.md "Allocators": a nominal runtime handle, and a nil-comparable
-	// error code. Both are compiler-owned until `core:mem` is nameable in M6.
+	// error code. Both are compiler-owned identities that `core:mem` exports.
 	Allocator,
 	Allocator_Error,
 	Dynamic_Array,
@@ -441,11 +447,10 @@ Symbol_Kind :: enum {
 }
 
 // Which built-in a `Symbol_Kind.Builtin` symbol is. One shared `Builtin` kind
-// with no identity would make every built-in call emit `print_int`
-// (m3-plan decision "Phase-neutral `assert`/`panic`").
+// with no identity would leave every built-in call indistinguishable at the
+// point that has to lower it (m3-plan decision "Phase-neutral `assert`/`panic`").
 Builtin_Kind :: enum {
 	None,
-	Print_Int,
 	Assert,
 	Panic,
 	Size_Of,
@@ -474,8 +479,9 @@ Builtin_Kind :: enum {
 	New_Clone,
 	Free,
 	Free_All,
-	// The default provider handle. Spelled `mem.default_allocator()` in
-	// design.md; the compiler supplies it until `core:mem` is nameable in M6.
+	// The default provider handle, spelled `mem.default_allocator()`. The symbol
+	// is compiler-owned and `core:mem` binds it, so a generated default argument
+	// and a written call are one call.
 	Default_Allocator,
 	// design.md "Storage modifiers": "`drop` is a predeclared identifier, not a
 	// keyword" — a compiler special form over a storage location, which is why it
@@ -485,6 +491,24 @@ Builtin_Kind :: enum {
 	// previous one without cloning it. Also a special form, because no ordinary
 	// signature can express "moves both ways with nothing observable between".
 	Exchange,
+	// design.md "unsafe.raw_data procedure" and "string type conversions": the
+	// `core:unsafe` surface, where "the loss of bounds and borrow capability
+	// [is] visible at the call site". Each takes an operand whose shape the
+	// ordinary signature language cannot spell, so each is a built-in.
+	Unsafe_Raw_Data,
+	Unsafe_String_View,
+	Unsafe_C_String_View,
+	// design.md "`type` and `typeid`": `type_info_of(id)` "accepts a runtime
+	// `typeid` and returns runtime metadata". A `typeid` is an ordinary scalar and
+	// can be forged, so the lookup is checked rather than an unchecked index.
+	Type_Info_Of,
+	// design.md "String format printing": the compiler-owned half of `core:fmt`.
+	// The writers reach the process streams the seed runtime owns, and
+	// `format_any` is the erased dispatch that makes formatting coherent.
+	Fmt_Stdout_Writer,
+	Fmt_Stderr_Writer,
+	Fmt_Write_Bytes,
+	Fmt_Format_Any,
 }
 
 Symbol :: struct {
@@ -697,6 +721,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
+	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)
+	c.formatters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits
@@ -736,6 +762,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 		Type_Info{kind = .String_View, bits = 2 * pointer_bits},
 		Type_Info{kind = .Allocator, bits = pointer_bits},
 		Type_Info{kind = .Allocator_Error, bits = int_bits},
+		Type_Info{kind = .CString_View, bits = pointer_bits},
 	)
 	assert(Type_Id(len(c.types)) == FIRST_DYNAMIC_TYPE, "predeclared type table is out of step with its IDs")
 	append(&c.symbols, Symbol{})
@@ -910,6 +937,16 @@ pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	)
 }
 
+// design.md "Multi-pointers": "`[^]T` is a multi-pointer to T value(s)", an
+// address with neither a length nor a read-only capability.
+multi_pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+	return intern_type(
+		c,
+		Type_Key{kind = .Multi_Pointer, element = element},
+		Type_Info{kind = .Multi_Pointer, element = element, bits = c.target.pointer_bits},
+	)
+}
+
 array_of :: proc(c: ^Compiler, element: Type_Id, count: u64) -> Type_Id {
 	return intern_type(
 		c,
@@ -1053,9 +1090,14 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		return false
 	}
 	#partial switch info.kind {
-	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum,
+	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc, .Enum,
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
+		return true
+	// design.md: "`string` and `string_view` values are comparable and ordered,
+	// lexically byte-wise." A `cstring_view` is not: it promises no encoding and
+	// carries no length, so comparing two of them would compare addresses.
+	case .String, .String_View:
 		return true
 	// design.md "Allocation failure": recovery is written `if (err != nil)`, so
 	// the error code is nil-comparable. An `Allocator` handle is comparable for
@@ -1096,7 +1138,11 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch type_kind(c, type_underlying(c, id)) {
 	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune,
-	     .Untyped_String:
+	     .Untyped_String, .String, .String_View:
+		return true
+	// design.md: "Ordering compares the addresses as unsigned `uintptr` values,
+	// producing a total order within one execution."
+	case .Pointer, .Multi_Pointer, .Raw_Pointer:
 		return true
 	}
 	return false
@@ -1117,7 +1163,8 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	case .Untyped_Nil:
 		return INVALID_TYPE // `x := nil` has no type to infer
 	case .Untyped_String:
-		// Named so the gate reports one L0350; M6 gives `string` a runtime shape.
+		// design.md "string type": an untyped string literal defaults to the
+		// owning `string`, and a `string_view` parameter borrows it from there.
 		return TYPE_STRING
 	}
 	return id
@@ -1127,10 +1174,10 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 // syntax still resolves to a real `Type_Id`, so this walks rather than looking
 // for absence (m2-plan decision "Deferred types").
 //
-// What is still deferred after M4b, each with exactly one `tests/err` fixture:
-// `string` and `string_view` (M6), multi-pointers, slices, dynamic arrays and
-// maps (M5/M6), and `interface` as a runtime type — which is not deferred but
-// deliberately compile-time metadata, so `gate_type` gives it its own L0441.
+// What is still deferred after M6a, each with exactly one `tests/err` fixture:
+// dynamic arrays and maps (M6b), and `interface` as a runtime type — which is
+// not deferred but deliberately compile-time metadata, so `gate_type` gives it
+// its own L0441.
 type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_is_supported_depth(c, id, 0)
 }
@@ -1160,8 +1207,17 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 		return true
 	case .Allocator, .Allocator_Error:
 		return true
-	case .String, .String_View, .Multi_Pointer, .Dynamic_Array,
-	     .Map, .Interface:
+	case .String, .String_View, .CString_View:
+		// design.md "string type" and "C string views": real runtime carriers since
+		// M6a. Their borrow provenance is checked by `src/borrow.odin` rather than
+		// restricted here.
+		return true
+	case .Multi_Pointer:
+		// design.md "Multi-pointers": a multi-pointer "carries neither a length nor
+		// a read-only capability, and its lifetime is no longer checked after
+		// conversion" — a documented trust boundary, not an unsupported type.
+		return type_is_supported_depth(c, info.element, depth + 1)
+	case .Dynamic_Array, .Map, .Interface:
 		return false
 	case .Slice:
 		// A slice is a supported runtime carrier, and its borrow provenance is
@@ -1256,6 +1312,8 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 		return "any_view"
 	case TYPE_STRING_VIEW:
 		return "string_view"
+	case TYPE_CSTRING_VIEW:
+		return "cstring_view"
 	case TYPE_UNTYPED_INT:
 		return "untyped int"
 	case TYPE_UNTYPED_FLOAT:

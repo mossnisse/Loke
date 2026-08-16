@@ -1,0 +1,12 @@
+L0574
+@6:19
+a variadic parameter must be the last one
+L0462
+@12:45
+L0462
+@13:47
+L0462
+@17:1
+L0574
+@24:18
+`..` spreads a `[]int`, found `[]u8`

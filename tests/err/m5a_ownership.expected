@@ -11,7 +11,7 @@ L0498
 @59:7
 cannot be applied to file-scope storage, which is always live
 L0501
-@65:17
+@65:19
 is a `move` parameter, so this argument is written `move(...)`
 L0504
 @75:11
@@ -35,7 +35,7 @@ L0503
 @70:6
 so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0500
-@44:12
+@44:14
 `a` cannot be used here: it has already been moved, dropped, or released
 L0500
 @48:2
@@ -44,5 +44,5 @@ L0500
 @84:7
 `h` cannot be exchanged here: it has already been moved, dropped, or released
 L0500
-@99:12
+@99:14
 `d` cannot be used here: it is live on only some of the paths that reach this point

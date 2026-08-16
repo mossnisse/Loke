@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "Panic strategy": the two strategies "trade cleanup for size and
 // simplicity", and never change which programs are valid — only what observable
@@ -11,23 +11,23 @@ package main;
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { print_int(self.id); }
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
 }
 
 inner :: proc() {
 	c := Res{3};
-	defer print_int(30);
+	defer fmt.println(30);
 	panic("the third frame fails");
 }
 
 middle :: proc() {
 	b := Res{2};
-	defer print_int(20);
+	defer fmt.println(20);
 	inner();
 }
 
 main :: proc() {
 	a := Res{1};
-	defer print_int(10);
+	defer fmt.println(10);
 	middle();
 }

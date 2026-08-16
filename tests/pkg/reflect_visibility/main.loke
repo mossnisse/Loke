@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "./models";
 
@@ -13,10 +13,10 @@ count_there :: proc() -> int {
 main :: proc() {
 	// Inside the declaring package every field is visible; from here the
 	// `@(private)` one is not.
-	print_int(models.count_here());
-	print_int(count_there());
+	fmt.println(models.count_here());
+	fmt.println(count_there());
 	mixed := models.make_mixed(10, 20);
 	foreach ($field in fields_of(models.Mixed)) {
-		print_int(field.get(&mixed));
+		fmt.println(field.get(&mixed));
 	}
 }

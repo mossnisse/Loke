@@ -1,11 +1,11 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	outer := 1;
 	{
 		inner := outer + 1;
-		print_int(inner);
+		fmt.println(inner);
 	}
-	print_int(outer);
+	fmt.println(outer);
 	return;
 }

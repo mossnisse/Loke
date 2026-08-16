@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Unrelated M4b failures in one file: every one is reported, and none of them
 // stops the checker from reaching the next.
@@ -15,9 +15,9 @@ only_arrays :: proc(x: [$N]int) -> int where N > 1 { return N; }
 
 main :: proc() {
 	// A generic name is not a value.
-	print_int(Boxed);
+	fmt.println(Boxed);
 	// A bound no argument satisfies.
-	print_int(only_arrays([1]int{1}));
+	fmt.println(only_arrays([1]int{1}));
 	// A concrete type with no slot cannot be erased.
 	t: Thing = {1};
 	view := (dyn Named)(&t);
@@ -28,5 +28,5 @@ main :: proc() {
 	// A static expansion is not a loop.
 	foreach ($field in fields_of(Thing)) { continue; }
 	// A range needs integer endpoints.
-	foreach (v in true ..< false) { print_int(1); }
+	foreach (v in true ..< false) { fmt.println(1); }
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // where splits a procedure group
 big :: proc(x: [$N]int) -> int
@@ -29,13 +29,13 @@ Limited :: struct($T: type, $N: int) where N > 1 {
 main :: proc() {
 	x := [3]int{1, 2, 3};
 	y := [2]int{4, 9};
-	print_int(size(x));
-	print_int(size(y));
+	fmt.println(size(x));
+	fmt.println(size(y));
 
 	b: Box(int) = {5};
-	print_int(describe_group(b));
-	print_int(describe_group(7));
+	fmt.println(describe_group(b));
+	fmt.println(describe_group(7));
 
 	l: Limited(int, 3) = {[3]int{1,2,3}};
-	print_int(l.items[2]);
+	fmt.println(l.items[2]);
 }

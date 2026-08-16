@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 printf: int = 7;
 loke_main: int = 8;
 
 main :: proc() {
-	print_int(printf);
-	print_int(loke_main);
+	fmt.println(printf);
+	fmt.println(loke_main);
 }

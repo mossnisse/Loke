@@ -1,0 +1,31 @@
+package main; import "core:fmt";
+
+// design.md "any_view type": "**A variadic `..any_view` parameter is the only
+// exception to the container rule.**" The caller converts each argument to
+// `any_view` and materializes a temporary `[]any_view` for the duration of the
+// call; the callee may read, index, iterate, and forward it.
+
+count :: proc(args: ..any_view) -> int { return len(args); }
+
+// Type assertions still work on an erased element, because an `any_view` is a
+// pointer plus a `typeid` however it was formed.
+ints :: proc(args: ..any_view) -> int {
+	total := 0;
+	foreach (a in args) {
+		if (n, ok := a.(int); ok) { total = total + n; }
+	}
+	return total;
+}
+
+// design.md: "The called procedure can read, index, iterate, and forward the
+// slice to another `..any_view` parameter."
+forward :: proc(args: ..any_view) -> int { return ints(..args); }
+
+main :: proc() {
+	fmt.println(count());
+	fmt.println(count(1, true, 'c'));
+	fmt.println(ints(1, 2, true, 3));
+	fmt.println(forward(10, 20, false));
+	x := 5;
+	fmt.println(ints(x, x));
+}

@@ -1,5 +1,5 @@
-package main;
+package main; import "core:fmt";
 
 helper :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

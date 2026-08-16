@@ -1,0 +1,61 @@
+package main; import "core:fmt";
+
+import "base:runtime";
+
+Mission :: enum { Survey, Rescue, First_Contact }
+
+Spaceship :: struct {
+	@(public) name:        string,
+	@(public) mission:     Mission,
+	@(public) crew:        int,
+	@(public) fuel:        f64,
+	@(public) operational: bool,
+}
+
+// Static reflection expands this body once per field. Each expansion has the
+// field's concrete type, even though this procedure works for any record.
+print_manifest :: proc(value: ^$T) {
+	foreach ($field in fields_of(T)) {
+		// Every field starts with the byte length of its reflected name, followed
+		// by a compact numerical rendering of its value.
+		fmt.println(len(field.name));
+		when (type_of(field.get(value)) == string) {
+			fmt.println(len(field.get(value)));
+		} else when (type_of(field.get(value)) == Mission) {
+			fmt.println(int(field.get(value)));
+		} else when (type_of(field.get(value)) == f64) {
+			fmt.println(int(field.get(value)));
+		} else when (type_of(field.get(value)) == bool) {
+			fmt.println(1 if field.get(value) else 0);
+		} else {
+			fmt.println(field.get(value));
+		}
+	}
+}
+
+clamp :: proc(value, low, high: $T) -> T {
+	if (value < low) { return low; }
+	if (value > high) { return high; }
+	return value;
+}
+
+main :: proc() {
+	ship := Spaceship{"Skidbladnir", .First_Contact, 7, 83.5, true};
+	print_manifest(&ship);
+
+	ship.fuel = clamp(ship.fuel - 12.75, 0.0, 100.0);
+	fmt.println(int(ship.fuel));
+
+	foreach ($member, $index in enum_values_of(Mission)) {
+		fmt.println(index + 1);
+		fmt.println(len(member.name));
+		fmt.println(int(member.value));
+	}
+
+	info := type_info_of(typeid_of(Spaceship));
+	if (info != nil) {
+		fmt.println(len(info.name));
+		fmt.println(info.size);
+		fmt.println(len(info.members));
+	}
+}

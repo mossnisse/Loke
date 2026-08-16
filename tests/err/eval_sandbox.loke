@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 counter: int = 3;
 
@@ -9,5 +9,5 @@ read_global :: proc() -> int {
 N :: read_global();
 
 main :: proc() {
-	print_int(N);
+	fmt.println(N);
 }

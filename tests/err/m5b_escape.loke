@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // m5b-plan step 2: temporaries and procedure boundaries. design.md: "A borrow
 // derived from a local root cannot be returned."
@@ -52,5 +52,5 @@ temporary_argument :: proc() -> []int {
 }
 
 main :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

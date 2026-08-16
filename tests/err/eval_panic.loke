@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 positive :: proc(n: int) -> int {
 	assert(n > 0, "positive() needs a positive argument");
@@ -16,6 +16,6 @@ A :: positive(-1);
 B :: checked(0);
 
 main :: proc() {
-	print_int(A);
-	print_int(B);
+	fmt.println(A);
+	fmt.println(B);
 }

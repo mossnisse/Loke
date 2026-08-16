@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	x := 7;
 	y := x * 6 - 2;
-	print_int(y);
-	print_int(y % 5);
-	print_int(-x);
+	fmt.println(y);
+	fmt.println(y % 5);
+	fmt.println(-x);
 }

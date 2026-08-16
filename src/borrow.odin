@@ -223,7 +223,12 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	#partial switch type_kind(c, type_underlying(c, type)) {
-	case .Pointer, .Slice, .String_View, .Any_View, .Dyn:
+	case .Pointer, .Slice, .String_View, .CString_View, .Any_View, .Dyn:
+		// design.md "C string views": a view from `to_c_view()` is "valid for that
+		// complete expression" and "cannot be assigned, returned, or stored", which
+		// is exactly what following it as a carrier enforces. One received from
+		// foreign code has no owner the compiler knows, so it simply carries no
+		// loan — the documented trust boundary, not a second rule.
 		return true
 	}
 	return false
@@ -246,7 +251,8 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 	#partial switch type_kind(c, type_underlying(c, type)) {
 	case .Pointer:     return "pointer"
 	case .Slice:       return "slice"
-	case .String_View: return "string view"
+	case .String_View:  return "string view"
+	case .CString_View: return "C string view"
 	case .Any_View:    return "view"
 	case .Dyn:         return "dyn view"
 	}

@@ -15,13 +15,13 @@ L0436
 @8:34
 exceeds the compiler's generic instantiation limit
 L0434
-@33:12
+@33:14
 does not satisfy the bound `N > 5`
 L0431
-@35:12
+@35:14
 is generic and needs its arguments
 L0392
-@36:12
+@36:14
 L0435
 @13:46
 a `where` bound must be a compile-time boolean

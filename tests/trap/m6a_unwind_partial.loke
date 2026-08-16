@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "What the unwind runs": scope-exit cleanup runs for every *fully
 // initialized* managed owner. A declaration whose initializer panics never
@@ -11,7 +11,7 @@ package main;
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { print_int(self.id); }
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
 }
 
 fail :: proc() -> int {
@@ -23,5 +23,5 @@ main :: proc() {
 	first := Res{1};
 	second := Res{2};
 	third := Res{fail()};
-	print_int(99);
+	fmt.println(99);
 }

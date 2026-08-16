@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md: `free_all` "frees every allocation in the allocator's region". It
 // lowers to one call through the provider's reset callback, never to a guessed
@@ -26,5 +26,5 @@ kept :: proc() -> int {
 }
 
 main :: proc() {
-	print_int(kept());
+	fmt.println(kept());
 }

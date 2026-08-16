@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Canvas :: struct { marks: int }
 
@@ -20,11 +20,11 @@ main :: proc() {
 	c := Circle{3};
 	s := Square{2};
 	// One call site, two concrete types, one indirect call.
-	print_int(through_view((dyn Drawable)(&c)));
-	print_int(through_view((dyn Drawable)(&s)));
+	fmt.println(through_view((dyn Drawable)(&c)));
+	fmt.println(through_view((dyn Drawable)(&s)));
 	// The equivalent generic call is direct.
-	print_int(statically(c));
+	fmt.println(statically(c));
 	// An `any_view` made from a temporary has storage for the complete call.
 	view: any_view = 42;
-	print_int(view.(int));
+	fmt.println(view.(int));
 }

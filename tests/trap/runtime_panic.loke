@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	n := 0;
 	if (n == 0) {
 		panic();
 	}
-	print_int(1);
+	fmt.println(1);
 }

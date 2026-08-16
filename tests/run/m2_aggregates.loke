@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Colour :: enum u8 { Red, Green = 10, Blue }
 
@@ -20,45 +20,45 @@ global_table: [3]int = TABLE;
 
 main :: proc() {
 	// Enum members, explicit and implicit values, ordering and equality.
-	print_int(int(Colour.Red));
-	print_int(int(Colour.Green));
-	print_int(int(Colour.Blue));
-	print_int(1 if Colour.Green < Colour.Blue else 0);
+	fmt.println(int(Colour.Red));
+	fmt.println(int(Colour.Green));
+	fmt.println(int(Colour.Blue));
+	fmt.println(1 if Colour.Green < Colour.Blue else 0);
 	c: Colour = .Green;
-	print_int(1 if c == Colour.Green else 0);
+	fmt.println(1 if c == Colour.Green else 0);
 
 	// Constant field selection and constant indexing.
-	print_int(UNIT.b.y);
-	print_int(TABLE[2]);
-	print_int(global_line.a.x);
-	print_int(global_table[1]);
+	fmt.println(UNIT.b.y);
+	fmt.println(TABLE[2]);
+	fmt.println(global_line.a.x);
+	fmt.println(global_table[1]);
 	narrow_index: u8 = 2;
-	print_int(global_table[narrow_index]);
+	fmt.println(global_table[narrow_index]);
 
 	// Nested and named literals, and source-order elements.
 	l := Line{a = Point{5, 6}, colour = .Red, b = Point{7, 8}};
-	print_int(l.a.y + l.b.x);
-	print_int(int(l.colour));
+	fmt.println(l.a.y + l.b.x);
+	fmt.println(int(l.colour));
 
 	// A field with no element written keeps its zero value.
 	partial := Line{a = Point{1, 1}};
-	print_int(partial.b.x + partial.b.y + int(partial.colour));
+	fmt.println(partial.b.x + partial.b.y + int(partial.colour));
 
 	// Structural equality, recursive through nested structs and arrays.
 	p := Line{a = Point{5, 6}, b = Point{7, 8}, colour = .Red};
-	print_int(1 if l == p else 0);
+	fmt.println(1 if l == p else 0);
 	p.b.y = 0;
-	print_int(1 if l == p else 0);
-	print_int(1 if l != p else 0);
+	fmt.println(1 if l == p else 0);
+	fmt.println(1 if l != p else 0);
 
 	// `[?]T` takes its length from the literal.
 	inferred := [?]int{1, 2, 3, 4, 5};
-	print_int(inferred[4]);
+	fmt.println(inferred[4]);
 
 	rows := [2][2]int{[2]int{1, 2}, [2]int{3, 4}};
 	same := [2][2]int{[2]int{1, 2}, [2]int{3, 4}};
-	print_int(1 if rows == same else 0);
-	print_int(rows[1][0]);
+	fmt.println(1 if rows == same else 0);
+	fmt.println(rows[1][0]);
 
 	// Runtime indexing and mutation through a place.
 	xs: [4]int;
@@ -69,34 +69,34 @@ main :: proc() {
 	for (i := 0; i < 4; i += 1) {
 		total += xs[i];
 	}
-	print_int(total);
+	fmt.println(total);
 
 	// Pointers: address-of, dereference, and field access through one hop.
 	q := Point{11, 12};
 	r := &q;
-	print_int(r.x);
+	fmt.println(r.x);
 	r^ = Point{13, 14};
-	print_int((r^).x);
+	fmt.println((r^).x);
 	// The mutable borrow has ended, so the root may be read through its own
 	// name again.
-	print_int(q.y);
+	fmt.println(q.y);
 
 	// A value parameter is addressable even though it is immutable.
-	print_int(addressed(21));
+	fmt.println(addressed(21));
 
 	// Pointer-recursive data.
 	tail := Node{value = 2, next = nil};
 	head := Node{value = 1, next = &tail};
-	print_int(head.next.value);
-	print_int(1 if tail.next == nil else 0);
+	fmt.println(head.next.value);
+	fmt.println(1 if tail.next == nil else 0);
 
 	// A distinct type has a fresh identity and converts explicitly.
 	m: Meters = Meters(100);
-	print_int(int(m));
-	print_int(1 if m == Meters(100) else 0);
+	fmt.println(int(m));
+	fmt.println(1 if m == Meters(100) else 0);
 
 	// A composite literal is addressable temporary storage.
-	print_int(sum_point(&Point{30, 12}));
+	fmt.println(sum_point(&Point{30, 12}));
 }
 
 addressed :: proc(value: int) -> int {

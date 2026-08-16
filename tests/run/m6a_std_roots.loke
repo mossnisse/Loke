@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "core:mem";
 import "base:runtime";
@@ -26,5 +26,5 @@ main :: proc() {
 	b := take(a);
 	p, err := new(int, b);
 	if (err == nil) { free(p); }
-	print_int(count(Res));
+	fmt.println(count(Res));
 }

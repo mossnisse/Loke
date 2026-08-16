@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "Panic during unwinding": if a `drop` hook or a deferred statement
 // raises a panic while a panic is already unwinding, "the program aborts
@@ -10,7 +10,7 @@ Res :: struct { id: int }
 
 impl Res {
 	drop :: proc(self: inout Res) {
-		print_int(self.id);
+		fmt.println(self.id);
 		if (self.id == 2) {
 			panic("a cleanup panicked");
 		}

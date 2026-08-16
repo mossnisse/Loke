@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 show_bool :: proc(b: bool) -> int { return 1 if b else 0; }
 show_int  :: proc(i: int)  -> int { return i; }
@@ -11,15 +11,15 @@ pad3 :: proc(i: int, j: int, k: int) -> int { return i * j * k; }
 padded :: proc{pad, pad3};
 
 main :: proc() {
-	print_int(show(true));
+	fmt.println(show(true));
 	// An integer constant prefers an integer destination to a floating one.
-	print_int(show(7));
-	print_int(show(int(7)));
-	print_int(show(2.5));
+	fmt.println(show(7));
+	fmt.println(show(int(7)));
+	fmt.println(show(2.5));
 	x: f32 = 3.0;
-	print_int(show(x));
-	print_int(padded(3));
-	print_int(padded(3, 4));
-	print_int(padded(2, 3, 4));
-	print_int(padded(by = 40, i = 2));
+	fmt.println(show(x));
+	fmt.println(padded(3));
+	fmt.println(padded(3, 4));
+	fmt.println(padded(2, 3, 4));
+	fmt.println(padded(by = 40, i = 2));
 }

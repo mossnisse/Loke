@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "What is not checked" is a list of things that must keep compiling.
 // The analysis is deliberately local to one procedure body, and every bullet
@@ -71,18 +71,18 @@ main :: proc() {
 	numbers := [3]int{4, 5, 6};
 	target := 0;
 	store_in_a_global(numbers[:], &target);
-	print_int(global_view[0] + global_pointer^);
+	fmt.println(global_view[0] + global_pointer^);
 
 	holder := store_in_a_record_field(numbers[:]);
-	print_int(holder.view[1]);
+	fmt.println(holder.view[1]);
 
 	retain_an_argument(numbers[:]);
-	print_int(global_holder.view[2]);
+	fmt.println(global_holder.view[2]);
 
-	print_int(deref_unknown_provenance(supply_one));
-	print_int(hidden_alias());
+	fmt.println(deref_unknown_provenance(supply_one));
+	fmt.println(hidden_alias());
 	run_with(store_a_view, numbers[:]);
-	print_int(global_view[0]);
+	fmt.println(global_view[0]);
 }
 
 store_a_view :: proc(values: []int) {

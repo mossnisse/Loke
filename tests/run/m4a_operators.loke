@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Vec :: struct { x, y: i32 }
 
@@ -107,69 +107,69 @@ main :: proc() {
 	a := Vec{1, 2};
 	b := Vec{3, 4};
 	c := a + b;
-	print_int(int(c.x));
-	print_int(int(c.y));
+	fmt.println(int(c.x));
+	fmt.println(int(c.y));
 	d := -c;
-	print_int(int(d.x));
-	print_int(1 if a == b else 0);
+	fmt.println(int(d.x));
+	fmt.println(1 if a == b else 0);
 	// `!=` falls back to `!(a == b)`.
-	print_int(1 if a != b else 0);
-	print_int(1 if a < b else 0);
+	fmt.println(1 if a != b else 0);
+	fmt.println(1 if a < b else 0);
 	// `+=` follows from `+` by the compound-assignment fallback.
 	a += b;
-	print_int(int(a.x));
+	fmt.println(int(a.x));
 	// `int + int` still means integer addition with a user `+` in scope.
-	print_int(2 + 3);
+	fmt.println(2 + 3);
 	// The named form is always available.
-	print_int(int(Vec.add(a, b).x));
+	fmt.println(int(Vec.add(a, b).x));
 
 	g: Grid;
 	g[1, 2] = 7;
-	print_int(int(g[1, 2]));
+	fmt.println(int(g[1, 2]));
 	p := &g[0, 0];
 	p^ = 5;
-	print_int(int(g[0, 0]));
-	print_int(int(g[0:7]));
+	fmt.println(int(g[0, 0]));
+	fmt.println(int(g[0:7]));
 
 	s: Sparse;
 	s[3] = 4;
-	print_int(int(s.total));
-	print_int(int(s[1]));
+	fmt.println(int(s.total));
+	fmt.println(int(s[1]));
 
 	m := Meters(3.0);
 	n := Meters(4.0);
-	print_int(int(f64(m + n)));
+	fmt.println(int(f64(m + n)));
 	m += n;
-	print_int(int(f64(m)));
-	print_int(1 if m < n else 0);
-	print_int(1 if m != n else 0);
+	fmt.println(int(f64(m)));
+	fmt.println(1 if m < n else 0);
+	fmt.println(1 if m != n else 0);
 
 	// Delegation to a user overload, including the `!=` fallback over the
 	// delegated `==` and a compound form whose parameter is not the subject.
 	t := Tally{1};
 	u := Tally{2};
-	print_int(int((t + u).count_of()));
-	print_int(1 if t == u else 0);
-	print_int(1 if t != u else 0);
+	fmt.println(int((t + u).count_of()));
+	fmt.println(1 if t == u else 0);
+	fmt.println(1 if t != u else 0);
 	t += 5;
-	print_int(int(t.count_of()));
-	print_int(int(t[2]));
+	fmt.println(int(t.count_of()));
+	fmt.println(int(t[2]));
 	t[0] = 9;
-	print_int(int(t.count_of()));
+	fmt.println(int(t.count_of()));
 	// A distinct value unwraps through stage 1 even when its base is a struct.
 	unwrapped := Cell(t);
-	print_int(int(unwrapped.count));
+	fmt.println(int(unwrapped.count));
 
 	// `z + 2.0` reaches the constant-only `init` conversion.
 	z := Complex(3.0);
-	print_int(int((z + 2.0).real));
+	fmt.println(int((z + 2.0).real));
 
 	// The implicit init group uses ordinary overload ranking.
-	print_int(int(scalar_value(7)));
-	print_int(int(scalar_value(2.5)));
+	fmt.println(int(scalar_value(7)));
+	fmt.println(int(scalar_value(2.5)));
 
 	qualified := _int{31};
 	pointee := 32;
-	print_int(int(qualified.read()));
-	print_int(int((&pointee).read()));
+	fmt.println(int(qualified.read()));
+	fmt.println(int((&pointee).read()));
 }

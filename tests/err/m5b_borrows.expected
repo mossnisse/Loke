@@ -1,5 +1,5 @@
 L0511
-@22:12
+@22:14
 this read of `xs` is not compatible with the mutable slice of it that is still in use
 L0511
 @31:2
@@ -14,7 +14,7 @@ L0511
 @55:2
 this write of `xs` is not compatible with the mutable slice of it that is still in use
 L0511
-@63:12
+@63:14
 this read of `c` is not compatible with the mutable pointer of it that is still in use
 L0512
 @72:2
@@ -29,7 +29,7 @@ L0512
 @93:9
 `value` cannot be exchanged here: a mutable pointer of it is still in use
 L0513
-@104:12
+@104:14
 this slice is used after `local`, the local it borrows, has ended
 L0514
 @111:2

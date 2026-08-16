@@ -1,8 +1,8 @@
-package main;
+package main; import "core:fmt";
 
 source: int = 41;
 derived: int = source + 1;
 
 main :: proc() {
-	print_int(derived);
+	fmt.println(derived);
 }

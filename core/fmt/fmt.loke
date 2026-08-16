@@ -1,8 +1,98 @@
-// Formatted output (design.md "Formatting").
+// Formatted output (design.md "String format printing", "Formatting is a
+// library protocol").
 //
-// The writer and options layer, the coherent formatter dispatch, and the
-// `print`/`println`/`eprint`/`eprintln` family arrive with M6a step 5, once
-// runtime strings, `..any_view` variadics and the runtime type-information
-// tables exist to build them on.
+// The protocol is a `format(value, writer, options)` procedure. `Writer` is a
+// byte sink — one procedure and its state — and `Options` is what a formatter
+// reads to spell a scalar. Both layouts are shared with the seed runtime, which
+// is where a formatter's bytes finally go.
+//
+// design.md's coherence rule: runtime formatting has one formatter per concrete
+// `typeid`. Built-ins receive compiler-generated formatters, and a user
+// customization is eligible only when its `format` is declared in the value
+// type's own package. A caller-local `extend` may still declare a `format` and
+// call it explicitly, but it cannot change what `print` does — an `any_view`
+// carries only a pointer and a `typeid`, so a callee has no way to recover a
+// call-site-specific overload.
 @(public)
 package fmt;
+
+// One byte sink. `write` receives `state` unchanged, which is what lets the
+// same shape serve a stream, a buffer, and a counting sink.
+@(public)
+Writer :: struct {
+	@(public) write: proc(state: rawptr, bytes: [^]u8, count: int),
+	@(public) state: rawptr,
+}
+
+// How a formatter spells a scalar. `base` is 2 to 36; anything else reads as 10.
+@(public)
+Options :: struct {
+	@(public) base:      int,
+	@(public) uppercase: bool,
+}
+
+@(public)
+DEFAULT_OPTIONS :: Options{10, false};
+
+// The compiler contributes:
+//
+//   stdout_writer()      the process output sink
+//   stderr_writer()      the process error sink
+//   write_bytes(w, view) one string view, straight through the sink
+//   format_any(v, w, o)  dispatch through the private per-typeid formatter table
+//
+// `format_any` is the erased half of the coherence rule: it looks the value's
+// concrete formatter up by `typeid`, which is the only thing an `any_view`
+// carries, so two packages cannot give one type two erased spellings.
+
+@(public)
+print :: proc(args: ..any_view) {
+	emit(stdout_writer(), ..args);
+}
+
+@(public)
+println :: proc(args: ..any_view) {
+	w := stdout_writer();
+	emit(w, ..args);
+	write_bytes(w, "\n");
+}
+
+@(public)
+eprint :: proc(args: ..any_view) {
+	emit(stderr_writer(), ..args);
+}
+
+@(public)
+eprintln :: proc(args: ..any_view) {
+	w := stderr_writer();
+	emit(w, ..args);
+	write_bytes(w, "\n");
+}
+
+// The process sinks, as ordinary values. The intrinsics behind them are
+// package-private — nothing outside this package should reach the dispatch
+// table — so these are what a caller writing to a `Writer` uses.
+@(public)
+stdout :: proc() -> Writer { return stdout_writer(); }
+
+@(public)
+stderr :: proc() -> Writer { return stderr_writer(); }
+
+// design.md's own examples separate arguments with a space:
+// `fmt.println(offset, codepoint)` prints `0 A`.
+@(public)
+format_to :: proc(w: Writer, args: ..any_view) {
+	emit(w, ..args);
+}
+
+@(private)
+emit :: proc(w: Writer, args: ..any_view) {
+	first := true;
+	foreach (a in args) {
+		if (!first) {
+			write_bytes(w, " ");
+		}
+		first = false;
+		format_any(a, w, DEFAULT_OPTIONS);
+	}
+}

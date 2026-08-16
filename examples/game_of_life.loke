@@ -1,0 +1,78 @@
+package main; import "core:fmt";
+
+WIDTH       :: 31;
+HEIGHT      :: 15;
+GENERATIONS :: 12;
+
+Board :: struct { cells: [WIDTH*HEIGHT]bool }
+
+impl Board {
+	get :: operator([]) proc(self: Board, x, y: int) -> bool {
+		return self.cells[y*WIDTH + x];
+	}
+
+	get_mut :: operator([]) proc(self: inout Board, x, y: int) -> inout bool {
+		return inout self.cells[y*WIDTH + x];
+	}
+}
+
+alive_neighbours :: proc(board: Board, x, y: int) -> int {
+	total := 0;
+	for (dy := -1; dy <= 1; dy += 1) {
+		for (dx := -1; dx <= 1; dx += 1) {
+			if (dx == 0 && dy == 0) { continue; }
+			nx, ny := x + dx, y + dy;
+			if (nx >= 0 && nx < WIDTH && ny >= 0 && ny < HEIGHT && board[nx, ny]) {
+				total += 1;
+			}
+		}
+	}
+	return total;
+}
+
+tick :: proc(board: Board) -> Board {
+	next: Board;
+	for (y := 0; y < HEIGHT; y += 1) {
+		for (x := 0; x < WIDTH; x += 1) {
+			neighbours := alive_neighbours(board, x, y);
+			next[x, y] = neighbours == 3 || (board[x, y] && neighbours == 2);
+		}
+	}
+	return next;
+}
+
+population :: proc(board: Board) -> int {
+	total := 0;
+	for (y := 0; y < HEIGHT; y += 1) {
+		for (x := 0; x < WIDTH; x += 1) {
+			if (board[x, y]) { total += 1; }
+		}
+	}
+	return total;
+}
+
+seed_glider_gun :: proc(board: inout Board) {
+	// Gosper's glider gun. It will launch a glider during this short run.
+	points := [36][2]int{
+		{1, 5}, {1, 6}, {2, 5}, {2, 6},
+		{11, 5}, {11, 6}, {11, 7}, {12, 4}, {12, 8},
+		{13, 3}, {13, 9}, {14, 3}, {14, 9}, {15, 6},
+		{16, 4}, {16, 8}, {17, 5}, {17, 6}, {17, 7}, {18, 6},
+		{21, 3}, {21, 4}, {21, 5}, {22, 3}, {22, 4}, {22, 5},
+		{23, 2}, {23, 6}, {25, 1}, {25, 2}, {25, 6}, {25, 7},
+		{29, 3}, {29, 4}, {30, 3}, {30, 4},
+	};
+	foreach (point in points) {
+		board[point[0], point[1]] = true;
+	}
+}
+
+main :: proc() {
+	board: Board;
+	seed_glider_gun(inout board);
+	// One line per generation: the live-cell population of Gosper's gun.
+	foreach (generation in 0 ..< GENERATIONS) {
+		fmt.println(population(board));
+		board = tick(board);
+	}
+}

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 TABLE :: [3]int{1, 2, 3};
 
@@ -19,7 +19,7 @@ main :: proc() {
 	// Slices compare against nil and nothing else.
 	other: []int = data[:];
 	if (readable == other) {
-		print_int(1);
+		fmt.println(1);
 	}
 
 	// By-reference iteration needs `[]mut T`.
@@ -43,9 +43,9 @@ main :: proc() {
 	// destination.
 	inferred: []int = {1, 2};
 
-	print_int(len(mutable));
-	print_int(len(converted));
-	print_int(len(back));
+	fmt.println(len(mutable));
+	fmt.println(len(converted));
+	fmt.println(len(back));
 }
 
 runtime_index :: proc() -> int {

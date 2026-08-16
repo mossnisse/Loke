@@ -2,7 +2,7 @@ L0502
 @51:46
 disables `try_clone`, so a borrowed value of it cannot be returned by value
 warning[L0507]: this argument copies 16 bytes from `pair`
-@59:20
+@59:22
 warning[L0507]: this binding copies 16 bytes from `pair`
 @66:12
 warning[L0507]: this binding clones `res`

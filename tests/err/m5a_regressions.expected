@@ -11,13 +11,13 @@ L0497
 @26:2
 names a variable; move the owner out of the aggregate first
 L0500
-@31:18
+@31:20
 cannot be used here: it has already been moved, dropped, or released
 L0500
 @38:16
 cannot be dropped here: it is live on only some of the paths
 L0500
-@39:13
+@39:15
 cannot be used here: it is live on only some of the paths
 L0494
 @46:2

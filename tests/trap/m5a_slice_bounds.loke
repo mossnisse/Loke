@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // A reversed slice range traps rather than producing a negative length.
 main :: proc() {
@@ -6,5 +6,5 @@ main :: proc() {
 	high := 1;
 	low := 3;
 	view := data[low:high];
-	print_int(len(view));
+	fmt.println(len(view));
 }

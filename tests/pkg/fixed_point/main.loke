@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 READY :: true;
 
@@ -15,7 +15,7 @@ when (conditional.VALUE == 2) {
 }
 
 main :: proc() {
-	print_int(early.VALUE);
-	print_int(conditional.VALUE);
-	print_int(SELECTED);
+	fmt.println(early.VALUE);
+	fmt.println(conditional.VALUE);
+	fmt.println(SELECTED);
 }

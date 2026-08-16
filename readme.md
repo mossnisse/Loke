@@ -55,7 +55,7 @@ M3 adds the compile-time engine and packages:
   `len` folded to `int`. Their operands are inspected, never evaluated;
 - untyped compile-time strings — joined, compared, and measured — plus
   `#assert(condition[, message])`, `#config(NAME, default)`, and
-  `-define:NAME=VALUE`. Storing one in a runtime binding is still one `L0350`;
+  `-define:NAME=VALUE`;
 - `when` at file and procedure scope, as structural source selection: an
   unselected branch is parsed and nothing else;
 - directory packages, multi-file packages, relative and `collection:` imports,
@@ -65,11 +65,8 @@ M3 adds the compile-time engine and packages:
 
 Evaluation is bounded: 1,000,000 steps, 256 explicit frames, and 64 MiB of
 scratch memory. Exceeding one is a diagnostic, never a silent fallback to
-generating runtime code. Reading a mutable file-scope variable, calling
-`print_int`, or letting a pointer escape is rejected on an executed path.
-
-An import path prefix resolves only through `-collection name=path`; there is no
-implicit `core:` root and no core library yet.
+generating runtime code. Reading a mutable file-scope variable, printing,
+or letting a pointer escape is rejected on an executed path.
 
 M4a makes user-defined types as capable as built-in ones at concrete types:
 
@@ -197,8 +194,48 @@ field, or callback state, a retained argument, `rawptr`/`[^]T`/unknown `^T`,
 `core:unsafe`, and cross-thread transfer are the programmer's responsibility, and
 each keeps a fixture proving it still compiles.
 
-Everything else — runtime `string` and `string_view`, slices, dynamic arrays,
-maps, multi-pointers, and `#location`/`#caller_location` — parses and reports one
+M6a begins the runtime. A versioned C seed — allocation, failure, panic frames,
+text, and scalar formatting — is compiled beside the generated LLVM and found
+next to the compiler unless `-runtime=<dir>` replaces it:
+
+- an `Allocator` is one pointer to one `loke_rt_allocator_v1` record carrying
+  provider state, canonical region identity, the four callbacks, and a
+  `.Panic`/`.Trap` failure policy. Copying the handle preserves region identity,
+  and `mem.default_allocator()` names the system-heap provider that `new`,
+  `new_clone`, `free`, `free_all`, and every generated clone route through;
+- `base:` and `core:` are implicit roots beside the compiler that an explicit
+  `-collection` entry replaces rather than collides with, so `base:runtime`,
+  `base:meta`, `core:mem`, `core:fmt`, and `core:unsafe` import with no flags;
+- every defined runtime fault is a classified panic instead of one trap.
+  `-panic=unwind` registers a logical frame per procedure with cleanup and
+  replays each active frame's live cleanup newest-first before terminating;
+  `-panic=abort` registers none; a panic raised while unwinding aborts at once;
+  and an allocator's `.Trap` policy bypasses both. Normal thread detach drops
+  managed thread-local storage, and a panic does not;
+- `string` is an immutable owning UTF-8 value over shared, atomically counted
+  storage; a literal is a constant over static zero-terminated bytes; assignment
+  shares and only `clone` copies. `string_view` and `cstring_view` borrow, and
+  the same M5b analysis that follows slices follows them. Byte and rune
+  operations, subranges, concatenation, comparison, rune iteration with byte
+  offsets, and the validating conversions with optional-ok results are all
+  available, as are `[^]T` and the `core:unsafe` surface;
+- `..T` packs any mix of explicit arguments and `..slice` spreads into one
+  read-only slice, forwards a sole compatible spread untouched, and takes part in
+  overload ranking with the fixed-over-variadic tie-breaker intact. The
+  call-scoped `..any_view` carries mixed types without letting the slice or an
+  element escape;
+- `type_info_of` maps every live `typeid` to stable `runtime.Type_Info` metadata
+  and returns nil for the zero id and for a forged one, and
+  `#location`/`#caller_location` produce constant `runtime.Source_Code_Location`
+  values;
+- formatting is coherent per concrete `typeid`: the compiler generates one
+  formatter per printable type, a package may write `format` for a type it owns,
+  and `core:fmt`'s `print`/`println`/`eprint`/`eprintln` dispatch through that
+  one table. A program that wants the sink itself takes `fmt.stdout()` or
+  `fmt.stderr()` and writes with `fmt.format_to`.
+
+Everything else — dynamic arrays, maps, `string.to_runes`, the dynamic
+`raw_data` overload, and `via` allocator policies — parses and reports one
 diagnostic at the enclosing construct.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through

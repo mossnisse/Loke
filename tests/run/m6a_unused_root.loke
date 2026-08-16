@@ -2,6 +2,8 @@ package main;
 
 // A standard root that does not exist is diagnosed only when an import needs
 // it (m6a-plan decision "Package-root precedence"). This program never names
-// `core:`, so a compiler installed without that component still builds it.
+// `core:`, so a compiler installed without that component still builds it —
+// which is also why it cannot print: `core:fmt` lives under the root this case
+// deliberately points at nothing.
 
-main :: proc() { print_int(3); }
+main :: proc() { assert(3 == 3); }

@@ -23,7 +23,7 @@ L0424
 @37:17
 a file-scope union starts at nil; assign the variant in `main`
 L0310
-@49:26
+@49:28
 cannot pass `Complex` with `f64`
 L0363
 @53:2
@@ -41,7 +41,7 @@ L0408
 @61:7
 `Complex` has no member `magnitude`
 L0391
-@62:27
+@62:29
 implicit `init` for `Ambiguous` is ambiguous here
 candidate `from_i8` with conversion vector (2)
 candidate `from_i16` with conversion vector (2)

@@ -12,11 +12,12 @@
 // `try_clone :: ---;` disables both copy entry points, making the type
 // move-only. `clone` is generated from `try_clone` and is never written by hand.
 //
-// M5a narrowing: design.md gives the canonical hook a default argument of
-// `mem.default_allocator()`, but `core:mem` is not nameable until M6. A custom
-// hook is therefore written with a plain `allocator: Allocator` parameter and
-// the compiler supplies the default at every call site that omits it
-// (m5a-plan step 3). Writing a default on a lifecycle hook is rejected.
+// Narrowing: design.md gives the canonical hook a default argument of
+// `mem.default_allocator()`, and that default is fixed by the language rather
+// than chosen per type. A custom hook is therefore written with a plain
+// `allocator: Allocator` parameter and the compiler supplies the default at
+// every call site that omits it (m5a-plan step 3). Writing a default on a
+// lifecycle hook is rejected — including the one the design spells.
 package lokec
 
 // What a type's lifecycle is, cached per nominal type. Resolved lazily because a
@@ -31,6 +32,11 @@ Lifecycle :: struct {
 	// disabled `try_clone`, or a recursively managed field. A managed value is
 	// what scope exit cleans up and what assignment clones.
 	managed:          bool,
+	// design.md "string type": a `string` is managed, but its clone and drop are
+	// the runtime's shared-storage retain and release rather than anything a
+	// package could write. There is no hook symbol to find, so the emitter
+	// recognises this flag instead of looking one up (m6a-plan step 4).
+	intrinsic:        bool,
 	state:            Size_State,
 }
 
@@ -55,7 +61,12 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 	info := type_of(c, under)
 	if info != nil {
 		collect_hooks(c, under, info, entry)
+		// design.md: assignment of a `string` shares immutable backing storage and
+		// the last drop deallocates through the string's bound allocator, so a
+		// string is an owner exactly like a record with a written `drop`.
+		entry.intrinsic = info.kind == .String
 		entry.managed =
+			entry.intrinsic ||
 			entry.custom_drop != INVALID_SYMBOL ||
 			entry.custom_try_clone != INVALID_SYMBOL ||
 			entry.clone_disabled ||
@@ -463,15 +474,16 @@ require_hook_shape :: proc(
 		)
 		return
 	}
-	// M5a narrowing: the design's default argument names `mem.default_allocator()`,
-	// which is not spellable until M6, so the compiler supplies it instead.
+	// The design's default argument names `mem.default_allocator()`, which is
+	// fixed for every implementation, so the compiler supplies it instead of
+	// re-checking a written copy of it.
 	if name == "try_clone" && len(sym.param_defaults) > 1 {
 		if sym.param_defaults[1] != nil {
 			errorf(
 				k.c,
 				expr_span(sym.param_defaults[1]),
 				"L0489",
-				"a lifecycle hook takes no written default; the compiler supplies the allocator until `core:mem` is nameable in M6",
+				"a lifecycle hook takes no written default; the compiler supplies `mem.default_allocator()`",
 			)
 			return
 		}

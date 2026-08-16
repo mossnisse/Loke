@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Countdown :: struct { start: int }
 Countdown_Iterator :: struct { current: int }
@@ -47,18 +47,18 @@ impl Broken_Next_State {
 
 main :: proc() {
 	// By-reference iteration is a built-in-container facility.
-	foreach (&v in Countdown{3}) { print_int(v); }
+	foreach (&v in Countdown{3}) { fmt.println(v); }
 	// A type with no protocol members at all.
 	o: Opaque = {1};
-	foreach (v in o) { print_int(v); }
+	foreach (v in o) { fmt.println(v); }
 	// A range produces values, so it has no place to borrow.
-	foreach (&v in 0 ..< 3) { print_int(v); }
+	foreach (&v in 0 ..< 3) { fmt.println(v); }
 	// The index binding is a counter.
 	xs := [3]int{1, 2, 3};
-	foreach (v, &i in xs) { print_int(v); }
+	foreach (v, &i in xs) { fmt.println(v); }
 	// A range needs integer or rune endpoints.
-	foreach (v in 1.5 ..< 3.5) { print_int(int(v)); }
+	foreach (v in 1.5 ..< 3.5) { fmt.println(int(v)); }
 	// Protocol shapes are rejected by the checker rather than reaching lowering.
-	foreach (v in Broken_Iter{}) { print_int(v); }
-	foreach (v in Broken_Next{}) { print_int(v); }
+	foreach (v in Broken_Iter{}) { fmt.println(v); }
+	foreach (v in Broken_Next{}) { fmt.println(v); }
 }

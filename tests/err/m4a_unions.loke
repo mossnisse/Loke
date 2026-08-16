@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Value :: union { bool, i32 }
 Bad_Variants :: union { i32, i32 }
@@ -39,12 +39,12 @@ main :: proc() {
 	plain := 1;
 	switch (t in plain) {
 	case int:
-		print_int(0);
+		fmt.println(0);
 	}
 	// A type switch with no default must cover every variant.
 	switch (t in v) {
 	case i32:
-		print_int(1);
+		fmt.println(1);
 	}
 	// `or_else` needs an optional-ok expression on its left.
 	b := not_optional() or_else true;

@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+A :: struct { value: int }
+B :: struct { value: int }
+
+raw :: proc(id: typeid) -> i64 {
+	p := &id;
+	return (^i64)(rawptr(p))^;
+}
+
+main :: proc() {
+	first := typeid_of(i8);
+	second := typeid_of(u128);
+	fmt.println(raw(typeid_of(A)), raw(typeid_of(B)), raw(first), raw(second));
+}

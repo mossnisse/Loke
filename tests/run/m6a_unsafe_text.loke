@@ -1,0 +1,44 @@
+package main; import "core:fmt";
+
+// design.md "Multi-pointers" and "unsafe.raw_data procedure": a multi-pointer
+// carries neither a length nor a read-only capability, and its lifetime is no
+// longer checked after conversion — which is why every one of these starts at a
+// visible `unsafe.` call site.
+
+import "core:unsafe";
+
+main :: proc() {
+	values := [?]int{10, 20, 30};
+	p := unsafe.raw_data(values[:]);
+
+	// Indexing is unchecked; slicing with both bounds gives the length back.
+	fmt.println(p[1]);
+	tail := p[1:3];
+	fmt.println(len(tail));
+	fmt.println(tail[0]);
+
+	// `x[i:]` stays a multi-pointer, so the bound is still absent.
+	rest := p[2:];
+	fmt.println(rest[0]);
+
+	// A multi-pointer converts implicitly to and from `^T`.
+	single: ^int = p;
+	fmt.println(single^);
+	again: [^]int = single;
+	fmt.println(again[0]);
+
+	// Text through the unsafe boundary and back.
+	text: string = "hej";
+	bytes := unsafe.raw_data(text);
+	view, view_ok := unsafe.string_view(bytes, 3);
+	fmt.println(len(view) if view_ok else -1);
+
+	terminated := unsafe.cstring_view(bytes);
+	owned, owned_ok := string(terminated);
+	fmt.println(len(owned) if owned_ok else -1);
+
+	// The validation is real: these bytes are not UTF-8.
+	raw := [?]u8{0xFF, 0xFE};
+	bad, bad_ok := unsafe.string_view(unsafe.raw_data(raw[:]), 2);
+	fmt.println(-1 if bad_ok else len(bad));
+}

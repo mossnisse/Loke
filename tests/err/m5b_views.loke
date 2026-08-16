@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // m5b-plan step 4: erased views, user slicing, and the M4 handoffs. M4b settled
 // the runtime representations; what it could not settle without provenance is
@@ -38,7 +38,7 @@ erased_subject_assigned :: proc() {
 	value := 1;
 	view: any_view = value;
 	value = 2;
-	print_int(view.(int));
+	fmt.println(view.(int));
 }
 
 erased_subject_borrowed :: proc() {
@@ -46,7 +46,7 @@ erased_subject_borrowed :: proc() {
 	view: any_view = value;
 	pointer := &value;
 	pointer^ = 3;
-	print_int(view.(int));
+	fmt.println(view.(int));
 }
 
 // An erased view of storage the compiler created still ends with its scope.
@@ -56,14 +56,14 @@ erased_temporary_outlives_its_scope :: proc() {
 		inner := 7;
 		view = inner;
 	}
-	print_int(view.(int));
+	fmt.println(view.(int));
 }
 
 inout_self_invalidates_a_borrow :: proc() {
 	c := Cell{1};
 	pointer := &c.value;
 	c.bump();
-	print_int(pointer^);
+	fmt.println(pointer^);
 }
 
 // design.md: "Method-call syntax supplies an `inout` or `move` marker implicitly
@@ -73,14 +73,14 @@ move_self_invalidates_a_borrow :: proc() {
 	c := Cell{1};
 	pointer := &c.value;
 	total := c.take();
-	print_int(pointer^ + total);
+	fmt.println(pointer^ + total);
 }
 
 mutable_user_slice_needs_an_exclusive_receiver :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	bad := Table{numbers[0:4]};
 	part := bad[0:2];
-	print_int(part[0]);
+	fmt.println(part[0]);
 }
 
 // A borrowed `operator([:])` result carries the receiver's root, so invalidating
@@ -91,9 +91,9 @@ user_slice_result_outlives_its_receiver :: proc() {
 	t := Ok_Table{numbers[0:4]};
 	part := t[0:2];
 	t = Ok_Table{numbers[2:4]};
-	print_int(part[0]);
+	fmt.println(part[0]);
 }
 
 main :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

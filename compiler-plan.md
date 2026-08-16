@@ -368,8 +368,7 @@ what makes the effect survive an indirect call. Diagnostics `L0511`–`L0514`
 attribute) and `L0547` (mutable user slice) are live; the narrowings taken along
 the way are recorded in [m5b-plan.md](m5b-plan.md).
 
-M6a is partly implemented: steps 1–3 of [m6a-plan.md](m6a-plan.md) are in place
-and steps 4–6 are not started. `runtime/` holds the versioned C seed, whose
+M6a is implemented in full ([m6a-plan.md](m6a-plan.md)). `runtime/` holds the versioned C seed, whose
 sorted `*.c` inputs join the existing clang invocation; the directory is
 resolved from the canonical `lokec.exe` path unless `-runtime=<dir>` replaces
 it. An `Allocator` is one pointer to a `loke_rt_allocator_v1` record — version
@@ -386,20 +385,84 @@ now reaches `loke_rt_v1_panic` with its own message instead of `llvm.trap`;
 under `-panic=unwind` each procedure that owns a cleanup pushes an opaque
 `{previous, thunk, context}` frame, publishes each action's registration in a
 live-flag array, and generates one thunk that replays the still-registered
-actions newest-first, while `-panic=abort` registers nothing. `L0551` is live.
+actions newest-first, while `-panic=abort` registers nothing. Step 4 makes text real. A `string` is `{data, byte_len, owner_flags}`: a literal
+is a compile-time constant over static zero-terminated storage with the static
+bit set, and a runtime buffer carries a header holding an atomic handle count
+and the allocator that created it, so assignment retains, drop releases, the
+last handle frees through that allocator, and only `.clone()` allocates.
+`string_view` is `{data, byte_len}` and `cstring_view` is one address; both are
+borrow carriers, so `src/borrow.odin` rejects an escaping subrange, `bytes()`
+result, or `to_c_view()` temporary with the same machinery it already applied to
+slices. `src/text.odin` holds the checking side of the operations and
+conversions, `[^]T` indexes without a bound and slices into either shape,
+`core:unsafe` publishes `raw_data`/`string_view`/`cstring_view`, and `#location`
+and `#caller_location` fold to constant `runtime.Source_Code_Location`
+aggregates.
 
-Three deviations from the M6a plan's letter are worth stating. The frozen
+Step 5 adds the erased half. A `..T` parameter is one read-only `[]T`: a sole
+compatible spread forwards its slice untouched, and any other mix of explicit
+arguments and `..slice` spreads is concatenated in source order into
+compiler-owned stack storage, sized statically when it can be and with a
+runtime `alloca` when a spread makes it dynamic. Overload ranking places
+trailing arguments into the pack and design.md's fixed-over-variadic
+tie-breaker still decides between candidates. `..any_view` is the call-scoped
+exception: its slice and elements cannot be returned or stored, and a
+source-declared `[]any_view` is still rejected everywhere else. `type_info_of`
+reads a dense table keyed by the frozen `typeid`, built over a requested set
+closed recursively so member types resolve, and answers nil for the zero id and
+for one forged out of range. Formatting is coherent per concrete `typeid`: the
+compiler generates one thunk per printable type into a private table parallel to
+the type-info table, an owning package's own `format(value, writer, options)`
+replaces the generated one, and two such declarations for one type are `L0572` —
+a defensive check, because the ordinary member-uniqueness rule `L0409` reaches
+every program that would reach it first. A `typeid` prints as the name of what it
+identifies, read from a private table parallel to the thunks so that printing
+does not oblige a program to import `base:runtime`.
+`core:fmt` is ordinary Loke source over four compiler-owned intrinsics — the two
+standard writers, a raw byte sink, and the erased dispatch — so `print`,
+`println`, `eprint`, `eprintln`, and `format_to` are library procedures.
+
+Step 6 retires the scaffolding. `print_int` is gone and every fixture prints
+through `core:fmt`; the source-visible `default_allocator()` is gone and the
+symbol it named is now reachable only as `mem.default_allocator()`, which is
+still the same `Symbol_Id` a generated lifecycle default resolves to. Nothing
+emits `llvm.trap` any more. `string`, `string_view`, `Allocator` and
+`Allocator_Error` stay predeclared on purpose, as the plan's "Compiler-owned
+names" decision requires, and export the same `Type_Id`s through `core:mem` and
+`base:runtime`. `type_is_supported` now denies only dynamic arrays, maps, and
+`interface` as a runtime type, and the `L0350` fixtures are down to the managed
+containers and `via`. `L0551` and `L0561`–`L0575` are live.
+
+Five deviations from the M6a plan's letter are worth stating. The frozen
 `Type_Kind`/`Member_Info`/`Type_Info`/`Source_Code_Location` declarations, and
-with them `#location`/`#caller_location`, wait for step 4 rather than landing in
-step 2: every one of those layouts has a `string_view` field, so declaring them
-earlier would declare a package that cannot compile. Every local is published
-into the unwind env rather than only those a cleanup names, which trades one
-store per local for not needing a free-variable pass over every deferred
-statement. And two of step 1's listed checks — a failed `resize` preserving the
-old allocation, and an unsupported provider reset failing at run time — have no
-source-level operand until M6b's dynamic arrays and arenas exist, so they are
-enforced in the C runtime and left untested from Loke, exactly as the plan
-already defers the arena-backed `free_all` fixtures.
+with them `#location`/`#caller_location`, landed in step 4 rather than step 2:
+every one of those layouts has a `string_view` field, so declaring them earlier
+would have declared a package that cannot compile. Every local is published into
+the unwind env rather than only those a cleanup names, which trades one store
+per local for not needing a free-variable pass over every deferred statement.
+Two of step 1's listed checks — a failed `resize` preserving the old allocation,
+and an unsupported provider reset failing at run time — have no source-level
+operand until M6b's dynamic arrays and arenas exist, so they are enforced in the
+C runtime and left untested from Loke, exactly as the plan already defers the
+arena-backed `free_all` fixtures. And `#location`/`#caller_location` require the
+file's package to import `base:runtime`, because that package owns the one
+`Source_Code_Location` identity and the compiler does not force it into a
+program that never asked for it; the diagnostic says so. `type_info_of` requires
+the same import for the same reason.
+
+The fifth is a narrowing kept rather than retired: a lifecycle hook still cannot
+write the default argument design.md spells for it. The compiler supplies
+`mem.default_allocator()` at every call site that omits one, and `L0489` now says
+that instead of naming a milestone.
+
+Two smaller decisions belong with step 4. `to_c_view()` never allocates: every
+`string` buffer is allocated with room for a terminator and a literal already
+carries one, so design.md's "adds a terminator only when necessary" case cannot
+arise under this representation, and the call-scoped temporary it describes is
+not created. And the parser now accepts the keyword `type` as a member name — a
+field, an enum member, or the name after `.` — because design.md spells both
+`field.type` and `runtime.Member_Info.type` that way and neither was reachable
+before; a name in that position can never begin a type expression.
 
 Two narrowings are worth stating here because they differ from the plan's
 letter. Region identity is flow-insensitive — one entry per allocator binding
@@ -445,6 +508,3 @@ Thin and boring, added per milestone — not a framework project:
 - **Parser fuzzing** once M1 lands — cheap insurance for "never crash, always diagnose."
 
 ---
-
-*Next step: pick a milestone (M0 is the natural start) or a single component and
-turn it into a detailed implementation plan.*

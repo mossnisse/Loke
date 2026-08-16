@@ -15,6 +15,7 @@ package lokec
 
 import "core:fmt"
 import "core:slice"
+import "core:strings"
 
 // ------------------------------------------------------- descriptor types --
 
@@ -168,7 +169,8 @@ aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) ->
 	return Const_Value{kind = .Aggregate, type_value = type, aggregate = aggregate}
 }
 
-@(private = "file")
+// design.md "Struct field tags": the tag a serialization library reads. Shared
+// with the runtime metadata table, which carries the same text.
 field_tag_text :: proc(c: ^Compiler, subject: Type_Id, field: ^Symbol) -> string {
 	info := type_of(c, type_underlying(c, subject))
 	if info == nil {
@@ -219,24 +221,154 @@ freeze_typeids :: proc(c: ^Compiler) {
 	if c.typeid_frozen {
 		return
 	}
+	// design.md's public metadata names element, key, field, variant, parameter
+	// and result types, so every one of them has to be resolvable through
+	// `type_info_of` too. Closing the set here — before the ids are assigned —
+	// is what makes a recursive walk of the metadata terminate at a real entry
+	// rather than at nil (m6a-plan decision "Type-info lookup").
+	if c.type_info_requested || c.format_requested {
+		for index := 0; index < len(c.typeid_order); index += 1 {
+			request_referenced_typeids(c, c.typeid_order[index])
+		}
+	}
 	c.typeid_frozen = true
 	sorted := make([]Type_Id, len(c.typeid_order), c.semantic_allocator)
 	copy(sorted, c.typeid_order[:])
-	slice.sort_by(sorted, proc(a, b: Type_Id) -> bool {
-		return typeid_sort_key(a) < typeid_sort_key(b)
-	})
+	keys := make(map[Type_Id]string, c.semantic_allocator)
+	for type in sorted {
+		keys[type] = typeid_sort_key(c, type)
+	}
+	// `slice.sort_by` takes a non-capturing procedure; use insertion sort here so
+	// the precomputed compilation-owned keys remain available to the comparison.
+	for index in 1 ..< len(sorted) {
+		current := sorted[index]
+		position := index
+		for position > 0 && keys[current] < keys[sorted[position - 1]] {
+			sorted[position] = sorted[position - 1]
+			position -= 1
+		}
+		sorted[position] = current
+	}
 	for type, index in sorted {
 		c.typeid_values[type] = u64(index) + 1
 	}
 }
 
-// The canonical key is compilation-global, and the only stable identity a type
-// has before names are mangled is the order it was created in. Sorting by it
-// still removes the *request* order — which depends on traversal — from the
-// answer, which is what determinism needs.
+// Every type the public metadata of `type` names. The walk is iterative over
+// `typeid_order`, which this appends to, so a cycle through a record field
+// terminates on the already-requested check.
 @(private = "file")
-typeid_sort_key :: proc(type: Type_Id) -> u32 {
-	return u32(type)
+request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
+	info := type_of(c, type)
+	if info == nil {
+		return
+	}
+	consider :: proc(c: ^Compiler, referenced: Type_Id) {
+		if referenced == INVALID_TYPE || !type_is_supported(c, referenced) {
+			return
+		}
+		if type_is_compile_time_only(c, referenced) {
+			return
+		}
+		request_typeid(c, referenced)
+	}
+	// A `distinct` type's own underlying shape is reachable through `element`.
+	if info.kind == .Distinct {
+		consider(c, info.element)
+	}
+	under := type_of(c, type_underlying(c, type))
+	if under == nil {
+		return
+	}
+	consider(c, under.element)
+	consider(c, under.key)
+	for field in under.fields {
+		if sym := symbol_of(c, field); sym != nil && under.kind == .Struct {
+			consider(c, sym.type)
+		}
+	}
+	for variant in under.variants {
+		consider(c, variant)
+	}
+	for parameter in under.parameters {
+		consider(c, parameter)
+	}
+	for result in under.results {
+		consider(c, result)
+	}
+}
+
+// A canonical identity independent of both request order and the internal
+// Type_Id allocation order. Nominal types use their package-qualified symbol;
+// structural types recursively name their complete shape.
+@(private = "file")
+typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
+	if depth >= 64 {
+		return "<recursive>"
+	}
+	// The predeclared table contains distinct language identities with identical
+	// shapes (`int` and `i64` on a 64-bit target, for example). Their catalogue
+	// position is fixed by the language, but its readable name makes the key
+	// independent of that internal numeric position as well as request order.
+	if type >= 0 && type < FIRST_DYNAMIC_TYPE {
+		return fmt.aprintf(
+			"predeclared:%s", type_name(c, type),
+			allocator = c.semantic_allocator,
+		)
+	}
+	info := type_of(c, type)
+	if info == nil {
+		return "000:<invalid>"
+	}
+	if info.symbol != INVALID_SYMBOL {
+		if sym := symbol_of(c, info.symbol); sym != nil {
+			pkg_key := ""
+			if pkg := package_of(c, sym.pkg); pkg != nil {
+				pkg_key = pkg.key
+			}
+			return fmt.aprintf(
+				"nominal:%s:%s", pkg_key, identifier_text(c, sym.name),
+				allocator = c.semantic_allocator,
+			)
+		}
+	}
+	// Predeclared and compiler-owned named identities are unique compilation-wide.
+	if info.name != INVALID_IDENTIFIER {
+		return fmt.aprintf(
+			"named:%d:%s", int(info.kind), identifier_text(c, info.name),
+			allocator = c.semantic_allocator,
+		)
+	}
+	b := strings.builder_make(c.semantic_allocator)
+	fmt.sbprintf(
+		&b, "shape:%d:b%d:s%t:m%t:a%d", int(info.kind), info.bits,
+		info.signed, info.mutable, info.written_align,
+	)
+	if info.element != INVALID_TYPE {
+		fmt.sbprintf(&b, ":e{%s}", typeid_sort_key(c, info.element, depth + 1))
+	}
+	if info.key != INVALID_TYPE {
+		fmt.sbprintf(&b, ":k{%s}", typeid_sort_key(c, info.key, depth + 1))
+	}
+	if info.count != 0 {
+		fmt.sbprintf(&b, ":n%d", info.count)
+	}
+	for parameter, index in info.parameters {
+		mode := index < len(info.param_modes) ? int(info.param_modes[index]) : 0
+		reset := index < len(info.param_resets) && info.param_resets[index]
+		fmt.sbprintf(
+			&b, ":p%d:%t{%s}", mode, reset,
+			typeid_sort_key(c, parameter, depth + 1),
+		)
+	}
+	for result, index in info.results {
+		inout := index < len(info.result_inout) && info.result_inout[index]
+		fmt.sbprintf(&b, ":r%t{%s}", inout, typeid_sort_key(c, result, depth + 1))
+	}
+	if info.convention != "" {
+		fmt.sbprintf(&b, ":c{%s}", info.convention)
+	}
+	return strings.to_string(b)
 }
 
 typeid_value :: proc(c: ^Compiler, type: Type_Id) -> u64 {
@@ -325,7 +457,9 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.const_value = value
 
 	case .New, .New_Clone, .Free, .Free_All, .Default_Allocator, .Drop, .Exchange,
-	     .None, .Print_Int, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Hash, .Type_Of, .Iter:
+	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
+	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
+	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Hash, .Type_Of, .Iter:
 		unreachable()
 	}
 }

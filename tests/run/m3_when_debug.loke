@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The other selection of `m3_when.loke`, driven by `m3_when_debug.flags`. Only
 // the selected branch is declared, checked, and emitted, so the branch not
@@ -16,10 +16,10 @@ main :: proc() {
 	total := 0;
 	when (DEBUG) {
 		total += LEVEL;
-		defer print_int(900);
+		defer fmt.println(900);
 	} else {
 		total += 100;
-		defer print_int(901);
+		defer fmt.println(901);
 	}
-	print_int(total);
+	fmt.println(total);
 }

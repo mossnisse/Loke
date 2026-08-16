@@ -1,11 +1,11 @@
-package main;
+package main; import "core:fmt";
 
 Point :: struct { x: int }
 
 main :: proc() {
 	n := 1;
-	print_int(len(n));
-	print_int(offset_of(Point, z));
-	print_int(size_of());
-	print_int(offset_of(Point, 1 + 2));
+	fmt.println(len(n));
+	fmt.println(offset_of(Point, z));
+	fmt.println(size_of());
+	fmt.println(offset_of(Point, 1 + 2));
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 // m5b-plan step 3: allocator regions and reset effects. design.md: "The
 // compiler rejects `free_all`, or any call carrying the same allocator-reset
@@ -45,7 +45,7 @@ alias_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	pointer, err := new(int, allocator);
 	if (err != nil) { return; }
 	free_all(allocator);
-	print_int(pointer^);
+	fmt.println(pointer^);
 }
 
 // An owner still needing its cleanup would run that cleanup over released
@@ -53,7 +53,7 @@ alias_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
 owner_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	held := make_buffer(1, allocator);
 	free_all(allocator);
-	print_int(held.id);
+	fmt.println(held.id);
 }
 
 // design.md: an owner "backed by a region created in the current procedure may
@@ -69,16 +69,16 @@ owner_escapes_to_static :: proc(allocator: Allocator) {
 
 // The attribute states something only an `Allocator` can promise.
 bad_attribute :: proc(@(allocator_reset) value: int) {
-	print_int(value);
+	fmt.println(value);
 }
 
 // The reset effect is part of the type, so it cannot be hidden by storing the
 // procedure in a value whose type omits it.
 hidden_effect :: proc() {
 	handler: proc(a: Allocator) = release;
-	handler(default_allocator());
+	handler(mem.default_allocator());
 }
 
 main :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Colour :: enum { Red, Green = 5, Blue }
 
@@ -36,62 +36,62 @@ fib :: proc(n: int) -> int {
 }
 
 main :: proc() {
-	print_int(Total);
-	print_int(global_counter);
+	fmt.println(Total);
+	fmt.println(global_counter);
 
 	// scalar widths and wrapping
 	small: i8 = 127;
 	small += 1;
-	print_int(int(small));
+	fmt.println(int(small));
 
 	u: u8 = 1;
-	print_int(int(u << 20));
+	fmt.println(int(u << 20));
 
 	neg: i32 = -1;
-	print_int(int(neg >> 40));
+	fmt.println(int(neg >> 40));
 
 	// floats
 	f: f32 = 1.5;
 	g := f * 2.0;
-	print_int(int(g));
+	fmt.println(int(g));
 
 	// booleans and conditionals
 	flag := true && !false;
-	print_int(1 if flag else 0);
+	fmt.println(1 if flag else 0);
 
 	// arrays
 	xs: [4]int;
 	xs[0] = 10;
 	xs[3] = 40;
-	print_int(xs[0] + xs[3]);
+	fmt.println(xs[0] + xs[3]);
 
 	ys := [4]int{1, 2, 3, 4};
-	print_int(ys[2]);
+	fmt.println(ys[2]);
 
 	// structs
 	p := Point{3, 4};
 	q := Point{y = 4, x = 3};
-	print_int(1 if p == q else 0);
+	fmt.println(1 if p == q else 0);
 	swap(inout p);
-	print_int(p.x);
+	fmt.println(p.x);
 
 	// pointers
 	r := &p;
 	r.x = 99;
-	print_int(p.x);
+	fmt.println(p.x);
 
 	n := Node{value = 5, next = nil};
-	print_int(n.value);
+	fmt.println(n.value);
 
 	// enums
 	c := Colour.Blue;
 	switch (c) {
 	case .Red:
-		print_int(0);
+		fmt.println(0);
 	case .Green:
-		print_int(5);
+		fmt.println(5);
 	case .Blue:
-		print_int(6);
+		fmt.println(6);
 	}
 
 	// loops, defer, break/continue
@@ -101,27 +101,27 @@ main :: proc() {
 		if (i == 4) { break; }
 		sum += i;
 	}
-	print_int(sum);
+	fmt.println(sum);
 
 	// calls
-	print_int(add(1));
-	print_int(add(1, 2));
-	print_int(add(b = 3, a = 4));
-	print_int(fib(10));
+	fmt.println(add(1));
+	fmt.println(add(1, 2));
+	fmt.println(add(b = 3, a = 4));
+	fmt.println(fib(10));
 
 	a, b := divmod(17, 5);
-	print_int(a);
-	print_int(b);
+	fmt.println(a);
+	fmt.println(b);
 
 	// procedure values
 	op: proc(a: int, b: int) -> int = add;
-	print_int(op(2, 3));
+	fmt.println(op(2, 3));
 
 	deferred();
 }
 
 deferred :: proc() {
-	defer print_int(1);
-	defer print_int(2);
-	print_int(3);
+	defer fmt.println(1);
+	defer fmt.println(2);
+	fmt.println(3);
 }

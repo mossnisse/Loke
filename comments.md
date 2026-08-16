@@ -6,6 +6,16 @@ Decisions that are deliberately not yet made are recorded here rather than left 
 
 Should import paths encode package versions, and should a package declaration remain mandatory in every file? The current version requires the declaration and leaves dependency versions to the build system or package manager. A future package design may need reproducible version selection without making source imports depend on a particular registry.
 
+## package header files
+
+An files containing all public signature and what is reachable from the outside.
+Should be optional but if it exists it should be checked by the compiler that it's correct.
+A way to improve encapsulation and make it easier to see what an package can do both for humans and LLM's.
+
+## package declaration
+
+is the package declaration needed or is it unessesary sermony?
+
 ## Retaining defer
 
 Does scope-based `defer` provide enough clarity and utility to remain in the final language? Its current semantics are fully defined, including its ordering with automatic cleanup. The remaining question is whether explicit resource types and managed cleanup make most uses unnecessary.
@@ -55,6 +65,10 @@ owner that needs it.
 ## Borrow checking across procedure boundaries
 
 The rule in [Borrows and lifetimes](design.md#borrows-and-lifetimes) treats a returned borrow as derived from every borrowed argument whose storage is reachable through a parameter. It rejects results attributed to temporary arguments before they can escape, so it is sound but coarse and can force copies in code that does not need them. Whether that imprecision is acceptable in practice can only be answered by writing a real library against it.
+
+## unsafe alive
+
+should we add an function to mark an dead variable to alive. The idea is to have an explicit unsafe mechanism for optimizing code and cheat the mechanism that checks if variables are safe to use.
 
 ## Concurrency refinements
 
@@ -126,12 +140,16 @@ Not required by anything in this document.
 
 ## intrinsics and inline assembly
 
+How to add some suport to go even more low level and use SIMD efficiently, Intrinsic or inline assembly?
+
 ## Compile time
 
 file handling?
 fail load, can the programmer easily see what is going to run at compile time
 
 ## abstraction over SOA
+
+Is it the programers responsibility to abstract ove the right thing or does the language need some help with that?
 
 ## LLM optimization
 

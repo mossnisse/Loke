@@ -1,0 +1,72 @@
+package main; import "core:fmt";
+
+// design.md "Variadic parameters": a variadic procedure accepts a variable
+// number of arguments, and `..slice` passes a slice as varargs. The callee
+// always receives one read-only slice, so `foreach` over it is ordinary slice
+// iteration (m6a-plan decision "Ordinary variadics").
+
+sum :: proc(nums: ..int) -> int {
+	total := 0;
+	foreach (n in nums) { total = total + n; }
+	return total;
+}
+
+// A sole compatible spread forwards its slice directly rather than rebuilding
+// one, which is what makes forwarding cost nothing.
+forwarded :: proc(nums: ..int) -> int { return sum(..nums); }
+
+// Fixed parameters come first; the variadic one is always last.
+offset :: proc(base: int, nums: ..int) -> int { return base + sum(..nums); }
+
+// A default before the pack is still filled when the call omits it.
+defaulted :: proc(base: int = 100, nums: ..int) -> int { return base + sum(..nums); }
+
+// Overload ranking places trailing arguments in the pack, and design.md's
+// tie-breaker still prefers a fixed-arity candidate over a variadic one.
+exact :: proc(a: int, b: int) -> int { return 1000; }
+packed :: proc(nums: ..int) -> int { return sum(..nums); }
+one_of :: proc{exact, packed};
+
+Res :: struct { id: int }
+
+impl Res {
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		return Res{self.id + 100}, nil;
+	}
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
+}
+
+consume :: proc(values: ..Res) {
+	fmt.println(values[0].id + values[1].id);
+}
+
+main :: proc() {
+	fmt.println(sum());
+	fmt.println(sum(1, 2));
+	fmt.println(sum(1, 2, 3, 4, 5));
+
+	odds := []int{1, 3, 5};
+	fmt.println(sum(..odds));
+	fmt.println(sum(10, ..odds, 20));
+	fmt.println(sum(..odds, ..odds));
+
+	fmt.println(forwarded(7, 8));
+	fmt.println(offset(100, 1, 2));
+	fmt.println(defaulted());
+
+	// Variadic shape is part of the procedure type, so an indirect call works.
+	f: proc(nums: ..int) -> int = sum;
+	fmt.println(f(4, 5));
+
+	fmt.println(one_of(1, 2));
+	fmt.println(one_of(1, 2, 3));
+	fmt.println(one_of(..odds));
+	fmt.println(one_of());
+
+	// A borrowed managed argument is cloned, a temporary is moved, and both pack
+	// elements are destroyed in reverse order immediately after the call.
+	resource := Res{1};
+	consume(resource, Res{2});
+	pair := [?]Res{Res{3}, Res{4}};
+	consume(Res{5}, ..pair[:]);
+}

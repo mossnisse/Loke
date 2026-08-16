@@ -1,6 +1,6 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	zero := 0;
-	print_int(1 / zero);
+	fmt.println(1 / zero);
 }

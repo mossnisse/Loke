@@ -1,10 +1,10 @@
-package main;
+package main; import "core:fmt";
 
 /* a block comment /* that nests */ and closes here */
 main :: proc() {
 	mask := 0b1111 &~ 0x3;      // longest match: `&~`, not `&` then `~`
 	shifted := 0o10 << 2;       // 8 << 2
-	print_int(mask);
-	print_int(shifted);
-	print_int(1_000 - 968);     // `_` separators
+	fmt.println(mask);
+	fmt.println(shifted);
+	fmt.println(1_000 - 968);     // `_` separators
 }

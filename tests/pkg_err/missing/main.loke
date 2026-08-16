@@ -1,8 +1,8 @@
-package main;
+package main; import "core:fmt";
 
 import "nowhere";
 import "vendor:widgets";
 
 main :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

@@ -1,0 +1,27 @@
+package main;
+
+// The shape of coherent formatting: one private thunk per printable concrete
+// type, a table of them keyed by the frozen `typeid`, the parallel table of
+// names a `typeid` prints as, and one checked indexed dispatch per erased
+// argument (m6a-plan step 5).
+
+import "core:fmt";
+
+Point :: struct {
+	@(public) x: int,
+	@(public) y: int,
+}
+
+Money :: struct { @(public) cents: int }
+
+// Declared in the value type's own package, so the thunk calls it instead of
+// spelling a struct.
+impl Money {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+		fmt.format_to(w, self.cents);
+	}
+}
+
+main :: proc() {
+	fmt.println(1, Point{2, 3}, Money{4});
+}

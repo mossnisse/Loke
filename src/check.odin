@@ -573,6 +573,18 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 // Builds the flattened parameter and result lists a call site binds against,
 // and interns the procedure type. One entry per parameter *name*, so
 // `proc(a, b: int)` really has two parameters.
+// design.md's variadic form is one trailing parameter: everything after it
+// would be unreachable, and two of them would make the split ambiguous.
+@(private = "file")
+variadic_position_ok :: proc(k: ^Checker, literal: ^Expr_Proc, position, name_index: int, span: Span) -> bool {
+	last := &literal.signature.params[len(literal.signature.params) - 1]
+	if position != len(literal.signature.params) - 1 || name_index != len(last.names) - 1 {
+		errorf(k.c, span, "L0574", "a variadic parameter must be the last one")
+		return false
+	}
+	return true
+}
+
 resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol_Id) {
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || literal.signature == nil {
@@ -654,6 +666,17 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 					type_name(k.c, name_type),
 				)
 				resets = false
+			}
+			// design.md "Variadic parameters": `nums: ..int` is one read-only
+			// `[]int` in the callee, which is what makes `foreach (n in nums)`
+			// ordinary slice iteration and the ABI shared with a written slice
+			// parameter (m6a-plan decision "Ordinary variadics").
+			if mode == .Variadic && name_type != INVALID_TYPE {
+				if !variadic_position_ok(k, literal, position, name_index, parameter.span) {
+					mode = .Value
+				} else {
+					name_type = slice_of(k.c, name_type, mutable = false)
+				}
 			}
 			binding := new_binding_symbol(k, parameter_name.name, .Parameter)
 			if bound := symbol_of(k.c, binding); bound != nil {
@@ -1051,6 +1074,11 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 					)
 					marked = false
 				}
+				// design.md "Procedure types": variadic shape is part of the type, so
+				// the parameter is the same read-only slice it is in a declaration.
+				if parameter.mode == .Variadic && resolved != INVALID_TYPE {
+					resolved = slice_of(k.c, resolved, mutable = false)
+				}
 				append(&params, resolved)
 				append(&modes, parameter.mode)
 				append(&resets, marked)
@@ -1295,7 +1323,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		}
 	}
 	// `via` stays gated at the enclosing declaration: a written allocator policy
-	// needs a provider to select, which arrives with `core:mem` in M6.
+	// needs a local provider to select, which arrives with `mem.Arena` in M6b.
 	if d.via != nil {
 		unsupported_construct(k, d.span)
 		return

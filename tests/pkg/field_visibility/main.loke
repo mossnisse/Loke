@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "./models";
 
@@ -16,15 +16,15 @@ main :: proc() {
 	built := models.build(3, 4);
 
 	// Public fields: read, write, measure, and both literal forms.
-	print_int(built.x + built.y);
+	fmt.println(built.x + built.y);
 	built.x = 10;
-	print_int(built.x);
-	print_int(offset_of(models.Point, x));
+	fmt.println(built.x);
+	fmt.println(offset_of(models.Point, x));
 
 	positional := models.Point{1, 2};   // `scratch` is omitted, so it zero-fills
 	named := models.Point{x = 1, y = 2};
-	print_int(positional.x + named.y);
+	fmt.println(positional.x + named.y);
 
-	print_int(models.visible_here());
-	print_int(visible_there());
+	fmt.println(models.visible_here());
+	fmt.println(visible_there());
 }

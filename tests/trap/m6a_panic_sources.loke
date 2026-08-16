@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "Panics and unwinding" enumerates the runtime faults that are
 // panics. Each takes the program strategy, so each of them unwinds the frame
@@ -12,12 +12,12 @@ package main;
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { print_int(self.id); }
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
 }
 
 main :: proc() {
 	live := Res{7};
-	defer print_int(70);
+	defer fmt.println(70);
 	p: ^int;
-	print_int(p^);
+	fmt.println(p^);
 }

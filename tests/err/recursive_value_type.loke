@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // A by-value cycle has no finite size; the pointer-recursive `Ok` does.
 A :: struct { b: B }
@@ -7,5 +7,5 @@ B :: struct { a: A }
 Ok :: struct { next: ^Ok }
 
 main :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

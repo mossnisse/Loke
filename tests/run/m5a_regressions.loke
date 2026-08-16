@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Ownership/lifecycle regression cases found during the M5a implementation
 // audit. The hooks make a clone and every missing cleanup observable.
@@ -10,7 +10,7 @@ impl Res {
 	}
 
 	drop :: proc(self: inout Res) {
-		if (self.id != 0) { print_int(self.id); }
+		if (self.id != 0) { fmt.println(self.id); }
 		self.id = 0;
 	}
 }
@@ -18,27 +18,27 @@ impl Res {
 Box :: struct { item: Res }
 
 conditional_move :: proc() {
-	print_int(1000);
+	fmt.println(1000);
 	a := Res{1};
 	b := Res{2};
 	flag := true;
 	c := move(a) if flag else move(b);
-	print_int(c.id);
+	fmt.println(c.id);
 }
 
 aggregate_copy :: proc() {
-	print_int(2000);
+	fmt.println(2000);
 	source := Res{3};
 	box := Box{source};
-	print_int(box.item.id);
+	fmt.println(box.item.id);
 }
 
 continue_runs_post :: proc() {
-	print_int(3000);
+	fmt.println(3000);
 	x := Res{4};
 	i := 0;
 	for (; i < 2; x = Res{10 + i}) {
-		print_int(x.id);
+		fmt.println(x.id);
 		i += 1;
 		continue;
 	}

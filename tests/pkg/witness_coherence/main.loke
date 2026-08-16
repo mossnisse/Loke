@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "./shapes";
 import "./draw";
@@ -6,6 +6,6 @@ import "./other";
 
 main :: proc() {
 	c := shapes.Circle{5};
-	print_int(draw.erase(&c));
-	print_int(other.erase(&c));
+	fmt.println(draw.erase(&c));
+	fmt.println(other.erase(&c));
 }

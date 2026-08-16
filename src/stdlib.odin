@@ -18,6 +18,8 @@ package lokec
 STD_RUNTIME :: "base:runtime"
 STD_META :: "base:meta"
 STD_MEM :: "core:mem"
+STD_UNSAFE :: "core:unsafe"
+STD_FMT :: "core:fmt"
 
 // Called once per package, right after its scope exists and before any of its
 // own declarations are collected, so a source declaration colliding with a
@@ -42,12 +44,46 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 			// one provider.
 			contribute_symbol(c, pkg, "default_allocator", c.default_allocator_symbol)
 		}
+	case STD_UNSAFE:
+		// design.md "unsafe.raw_data procedure": these make "the loss of bounds and
+		// borrow capability visible at the call site", which is the whole reason
+		// they are spelled `unsafe.` rather than being implicit conversions.
+		contribute_builtin(c, pkg, "raw_data", .Unsafe_Raw_Data)
+		contribute_builtin(c, pkg, "string_view", .Unsafe_String_View)
+		contribute_builtin(c, pkg, "cstring_view", .Unsafe_C_String_View)
+	case STD_FMT:
+		// design.md "String format printing": the library owns the protocol, the
+		// writer, the options, and the `print` family. What the compiler owns is
+		// the process sinks and the erased per-`typeid` dispatch — the one thing a
+		// Loke procedure cannot express, because an `any_view` carries only a
+		// pointer and a `typeid`.
+		//
+		// These are package-private: `core:fmt`'s own source names them
+		// unqualified, and nothing outside it should reach the dispatch table.
+		contribute_builtin(c, pkg, "stdout_writer", .Fmt_Stdout_Writer, public = false)
+		contribute_builtin(c, pkg, "stderr_writer", .Fmt_Stderr_Writer, public = false)
+		contribute_builtin(c, pkg, "write_bytes", .Fmt_Write_Bytes, public = false)
+		contribute_builtin(c, pkg, "format_any", .Fmt_Format_Any, public = false)
 	case STD_META:
 		// The compile-time reflection descriptors M4b already owns. They remain
 		// compile-time-only types: naming them does not make them storable.
 		contribute_type(c, pkg, "Field", meta_field_type(c))
 		contribute_type(c, pkg, "Enum_Value", meta_enum_value_type(c))
 	}
+}
+
+@(private = "file")
+contribute_builtin :: proc(c: ^Compiler, pkg: ^Package, name: string, kind: Builtin_Kind, public := true) {
+	symbol_id := new_symbol(c, Symbol {
+		name      = intern_identifier(c, name),
+		span      = no_span(),
+		kind      = .Builtin,
+		builtin   = kind,
+		type      = TYPE_VOID,
+		proc_type = intern_proc_type(c, nil, nil, nil, nil, ""),
+		public    = public,
+	})
+	pkg.scope.names[intern_identifier(c, name)] = symbol_id
 }
 
 @(private = "file")

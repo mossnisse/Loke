@@ -1,4 +1,4 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 // design.md "Allocators" and "Allocation failure" (m5a-plan step 3): the
 // explicitly fallible primitives always return their error and never invoke a
@@ -37,26 +37,26 @@ main :: proc() {
 	// `new` zero-initialises and reports failure explicitly.
 	p, err := new(int);
 	if (err != nil) {
-		print_int(-1);
+		fmt.println(-1);
 		return;
 	}
-	print_int(p^);
+	fmt.println(p^);
 	p^ = 42;
-	print_int(p^);
+	fmt.println(p^);
 	free(p);
 
 	// `new_clone` copies its operand into the fresh allocation.
 	q, qerr := new_clone(7);
 	if (qerr == nil) {
-		print_int(q^);
+		fmt.println(q^);
 		free(q);
 	}
 
 	// An explicit allocator argument selects the same default provider in M5a.
-	a := default_allocator();
+	a := mem.default_allocator();
 	r, rerr := new(Counter, a);
 	if (rerr == nil) {
-		print_int(r^.count);
+		fmt.println(r^.count);
 		free(r);
 	}
 
@@ -64,13 +64,13 @@ main :: proc() {
 	one := Counter{5};
 	two, cerr := one.try_clone(a);
 	if (cerr == nil) {
-		print_int(two.count);
+		fmt.println(two.count);
 	}
 
 	// A `drop` hook is an ordinary member until step 4 inserts implicit calls.
 	h := Handle{1, true};
 	h.drop();
 	if (!h.valid) {
-		print_int(1);
+		fmt.println(1);
 	}
 }

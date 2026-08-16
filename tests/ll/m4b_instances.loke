@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Table :: struct($Key, $Value: type) {
 	key:   Key,
@@ -19,17 +19,17 @@ swapped :: proc(pair: [2]$E) -> [2]E {
 
 main :: proc() {
 	t: Table(int, i32) = {5, 7};
-	print_int(int(lookup(&t, 5)));
+	fmt.println(int(lookup(&t, 5)));
 
 	u: Table(i32, int) = {1, 9};
-	print_int(lookup(&u, 1));
+	fmt.println(lookup(&u, 1));
 
 	s := swapped([2]int{4, 6});
-	print_int(s[0]);
-	print_int(s[1]);
+	fmt.println(s[0]);
+	fmt.println(s[1]);
 
 	// Tie-breaker 4: `^Table($K, $V)` is more specialized than `^$T`.
-	print_int(int(tables(&t, 5)));
+	fmt.println(int(tables(&t, 5)));
 	n := 3;
-	print_int(tables(&n));
+	fmt.println(tables(&n));
 }

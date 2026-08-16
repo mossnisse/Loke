@@ -2,7 +2,8 @@
 // placement").
 //
 // Blocks reference the typed AST rather than replacing it: this is a lightweight
-// analysis view, not MIR, and the backend still receives annotated AST until M6.
+// analysis view, not MIR: the backend receives annotated AST, and a real MIR is
+// deferred past v1.
 // It is rebuilt for each concrete body instance, so a generic specialization
 // never shares liveness state with another one.
 //
@@ -1071,6 +1072,15 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			walk_flow_expr(graph, argument)
 		}
 	}
+	// A packed variadic parameter leaves `bound[variadic_slot]` nil and keeps the
+	// arguments themselves in the two lists, so the loop above walked past them.
+	// Each one is still an ordinary use of whatever it names.
+	for element in v.variadic_elements {
+		walk_flow_expr(graph, element)
+	}
+	for spread in v.variadic_spreads {
+		walk_flow_expr(graph, spread)
+	}
 	if len(v.bound) == 0 {
 		for argument in v.args {
 			walk_flow_expr(graph, argument.value)
@@ -1210,9 +1220,13 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 		return 0, false
 	}
 	append(&graph.prov_slots, Prov_Slot {
-		symbol = id,
-		name   = identifier_text(graph.k.c, sym.name),
-		span   = sym.span,
+		symbol     = id,
+		name       = identifier_text(graph.k.c, sym.name),
+		span       = sym.span,
+		// A declared slot holds no *fresh* borrow of its own: whatever it holds
+		// came from an expression that made its own temporary slot. Leaving this
+		// at the zero value would make `prov_weaken` read loan 0 instead.
+		fresh_loan = NO_LOAN,
 	})
 	slot := len(graph.prov_slots) - 1
 	graph.slot_by_symbol[id] = slot
@@ -1796,7 +1810,10 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	// Only a fixed array is sliced out of a root's own inline storage. Slicing a
 	// slice, a pointer or a string view reslices the carrier, so the loans it
 	// already holds are what the result borrows.
-	array := type_kind(graph.k.c, type_underlying(graph.k.c, expr_base(v.operand).type)) == .Array
+	// design.md: `st[low:high]` borrows "a subrange view" of the string's own
+	// storage, exactly as slicing a fixed array borrows the array's.
+	operand_kind := type_kind(graph.k.c, type_underlying(graph.k.c, expr_base(v.operand).type))
+	array := operand_kind == .Array || operand_kind == .String
 	if root, path, ok := prov_place_of(graph, v.operand); ok && array {
 		prov_walk_subscripts(graph, v.operand)
 		if v.lo != nil {
@@ -1807,7 +1824,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 		}
 		full := prov_extend(graph, path, prov_range_step(graph, v))
 		prov_access(graph, root, full, mutable ? .Write : .Read, v.span)
-		return prov_borrow(graph, root, full, mutable, v.span, "slice")
+		return prov_borrow(graph, root, full, mutable, v.span, carrier_noun(graph.k.c, v.type))
 	}
 	// Reslicing a carrier keeps the loans it already holds. Composing the two
 	// ranges could only narrow the result, so the source loans are both the
@@ -2073,6 +2090,9 @@ prov_argument_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) ->
 @(private = "file")
 prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	c := graph.k.c
+	if v.text != .None || v.text_conversion != .None {
+		return prov_text_call(graph, v)
+	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
 		case .New, .New_Clone:
@@ -2143,6 +2163,14 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	actuals := make([][]int, len(v.bound), graph.alloc)
 	borrowed: []int
 	for argument, index in v.bound {
+		// design.md "Variadic parameters": the pack slot holds no single written
+		// expression unless a sole spread is forwarded. Its operands are walked
+		// here so each one's borrows still reach the call boundary.
+		if v.is_variadic && index == v.variadic_slot && !v.variadic_forwards {
+			actuals[index] = prov_variadic_pack(graph, v)
+			borrowed = prov_join(graph, borrowed, actuals[index])
+			continue
+		}
 		if argument == nil {
 			continue
 		}
@@ -2180,6 +2208,73 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
 	return prov_store_call_results(graph, v, actuals, borrowed)
+}
+
+// Every operand of an unforwarded variadic pack, in written order. The pack
+// itself is compiler-owned stack storage, so its loans are exactly the union of
+// what its elements and spreads carry.
+@(private = "file")
+prov_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	joined: []int
+	next_element, next_spread := 0, 0
+	for is_spread in v.variadic_order {
+		operand: Expr
+		if is_spread {
+			operand = v.variadic_spreads[next_spread]
+			next_spread += 1
+		} else {
+			operand = v.variadic_elements[next_element]
+			next_element += 1
+		}
+		joined = prov_join(graph, joined, walk_flow_expr(graph, operand))
+	}
+	return joined
+}
+
+// design.md "string type conversions": every text operation is either a borrow
+// of its operand or a fresh owner, and which it is follows from the result type
+// alone. A borrow carries the operand's loans; an owner carries none, so the
+// analysis stops there rather than pretending the result outlives its source.
+@(private = "file")
+prov_text_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	source: []int
+	for argument, index in v.bound {
+		if argument == nil {
+			continue
+		}
+		loans := walk_flow_expr(graph, argument)
+		if index == 0 {
+			source = loans
+			// `text.bytes()`, `text[lo:hi]`, and `to_c_view()` all borrow the
+			// receiver's own storage, so a receiver that is itself a root — an owning
+			// `string` local — lends it here.
+			if len(source) == 0 && text_result_borrows(graph.k.c, v) {
+				if root, path, ok := prov_place_of(graph, argument); ok {
+					source = prov_borrow(graph, root, path, false, v.span, "view")
+				}
+			}
+		}
+	}
+	if !text_result_borrows(graph.k.c, v) {
+		return nil
+	}
+	return source
+}
+
+// Whether this text operation's result is a borrow of its operand rather than a
+// fresh owner. `clone`, `+`, and every validating conversion that copies produce
+// owners; the views do not.
+@(private = "file")
+text_result_borrows :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
+	if v.text == .Clone || v.text == .From_Runes {
+		return false
+	}
+	#partial switch v.text_conversion {
+	case .String_From_Bytes, .String_From_C_View:
+		return false
+	}
+	result := len(v.result_types) > 0 ? v.result_types[0] : v.type
+	return type_is_carrier(c, result)
 }
 
 @(private = "file")

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Point :: struct { x: i32, y: i64 }
 
@@ -14,16 +14,16 @@ side_effect :: proc() -> int {
 }
 
 main :: proc() {
-	print_int(size_of(Point));
-	print_int(align_of(Point));
-	print_int(offset_of(Point, y));
-	print_int(size_of(i128));
-	print_int(align_of(f16));
+	fmt.println(size_of(Point));
+	fmt.println(align_of(Point));
+	fmt.println(offset_of(Point, y));
+	fmt.println(size_of(i128));
+	fmt.println(align_of(f16));
 
 	// A dead local is a legal unevaluated operand: the query inspects its type.
 	dead: [4]Point;
-	print_int(size_of(dead));
-	print_int(len(dead));
+	fmt.println(size_of(dead));
+	fmt.println(len(dead));
 
-	print_int(size_of(side_effect()));
+	fmt.println(size_of(side_effect()));
 }

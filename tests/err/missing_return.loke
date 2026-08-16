@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 falls_out :: proc(n: int) -> int {
 	if (n > 0) {
@@ -7,5 +7,5 @@ falls_out :: proc(n: int) -> int {
 }
 
 main :: proc() {
-	print_int(falls_out(1));
+	fmt.println(falls_out(1));
 }

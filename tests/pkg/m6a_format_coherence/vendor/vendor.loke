@@ -1,0 +1,19 @@
+@(public)
+package vendor;
+
+import "core:fmt";
+
+@(public)
+Money :: struct { @(public) cents: int }
+
+// design.md's coherence rule: a `format` declared in the value type's own
+// package is the one erased printing uses, for every caller in the program.
+impl Money {
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) {
+		fmt.format_to(w, "vendor", self.cents);
+	}
+}
+
+// The same package, deliberately without a formatter of its own.
+@(public)
+Plain :: struct { @(public) id: int }

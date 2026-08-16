@@ -1,10 +1,10 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	// A deferred type gates once at the declaration that names it, and the gate
 	// does not descend into the statements that use it.
 	table: map[int]int;
 	foreach (value in table) {
-		print_int(value);
+		fmt.println(value);
 	}
 }

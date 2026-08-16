@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md: a shift count has an unsigned integer type, or is an untyped
 // constant a typed unsigned integer could represent. The compound form is held
@@ -6,7 +6,7 @@ package main;
 main :: proc() {
 	value := 1;
 	count := 2;
-	print_int(value << count);
+	fmt.println(value << count);
 	value <<= count;
-	print_int(value >> -1);
+	fmt.println(value >> -1);
 }

@@ -1,0 +1,30 @@
+package main; import "core:fmt";
+
+// design.md "`#location() or #location(<entity>)`" and "`#caller_location`".
+// Every field is known at compile time, so a location is one constant aggregate
+// over static storage and costs nothing at run time.
+
+import "base:runtime";
+
+target :: proc() { }
+
+// design.md: `#caller_location` "is evaluated at each call that omits that
+// argument, like any other default", so two calls on two lines disagree.
+report :: proc(loc: runtime.Source_Code_Location = #caller_location) -> int {
+	return loc.line;
+}
+
+main :: proc() {
+	here := #location();
+	fmt.println(here.line);
+	fmt.println(here.column);
+	fmt.println(len(here.procedure));
+
+	// A named entity gives its *declaration* span, not the span of naming it.
+	fmt.println(#location(target).line);
+
+	fmt.println(report());
+	fmt.println(report());
+	// An explicitly written argument wins over the default.
+	fmt.println(report(#location(target)));
+}

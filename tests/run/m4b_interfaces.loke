@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Additive :: interface($T: type) {
 	T(0) -> T;
@@ -50,7 +50,7 @@ main :: proc() {
 	#assert(!Source(Flag));
 	#assert(Named(Byte_Source));
 	#assert(!Named(Flag));
-	print_int(sum3(1, 2, 3));
+	fmt.println(sum3(1, 2, 3));
 	check_more();
 }
 
@@ -70,5 +70,5 @@ check_more :: proc() {
 	#assert(Reversed(Byte_Source));
 	#assert(!Reversed(Flag));
 	b: Byte_Source = {3};
-	print_int(describe_twice(b));
+	fmt.println(describe_twice(b));
 }

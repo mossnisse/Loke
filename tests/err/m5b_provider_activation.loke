@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The one provider-activation fixture (m5b-plan step 5). design.md's two
 // rejected returns under "How root and region provenance compose" are written
@@ -50,9 +50,9 @@ bad_owner :: proc(allocator: Allocator) {
 // The M6 storage itself, still gated.
 gated :: proc() {
 	bytes: [dynamic]u8;
-	print_int(1);
+	fmt.println(1);
 }
 
 main :: proc() {
-	print_int(1);
+	fmt.println(1);
 }

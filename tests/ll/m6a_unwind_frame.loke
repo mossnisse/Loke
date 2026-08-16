@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The logical unwind ABI (m6a-plan decision "Logical panic unwind").
 //
@@ -12,12 +12,12 @@ package main;
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { print_int(self.id); }
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
 }
 
 owner :: proc() {
 	value := Res{1};
-	defer print_int(2);
+	defer fmt.println(2);
 }
 
 main :: proc() { owner(); }

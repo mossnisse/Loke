@@ -1,11 +1,11 @@
-package main;
+package main; import "core:fmt";
 
 import "lib";
 
 main :: proc() {
-	print_int(lib.EXPORTED);
-	print_int(lib.also_exported());
+	fmt.println(lib.EXPORTED);
+	fmt.println(lib.also_exported());
 	v: lib.Visible;
 	v.n = 3;
-	print_int(v.n);
+	fmt.println(v.n);
 }

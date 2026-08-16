@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // Self-bootstrap: the condition needs the very package its own branch imports.
 when (helper.ENABLED) {
@@ -12,5 +12,5 @@ when (NEVER_DECLARED) {
 }
 
 main :: proc() {
-	print_int(0);
+	fmt.println(0);
 }

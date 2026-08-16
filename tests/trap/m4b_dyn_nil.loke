@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Canvas :: struct { marks: int }
 
@@ -9,5 +9,5 @@ Drawable :: interface($Self: type) {
 main :: proc() {
 	// design.md: calling a slot on nil panics.
 	empty: dyn Drawable = nil;
-	print_int(empty.size());
+	fmt.println(empty.size());
 }

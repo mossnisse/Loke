@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 WIDTH :: 8;
 HEIGHT : int : 5;
 
 main :: proc() {
 	area := WIDTH * HEIGHT;
-	print_int(area);
+	fmt.println(area);
 }

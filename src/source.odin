@@ -150,6 +150,18 @@ Compiler :: struct {
 	// every active Loke frame before terminating. `-panic=abort` registers none.
 	// The strategy is a whole-program build selection, never a source construct.
 	panic_unwind:        bool,
+	// design.md "`type` and `typeid`": whether this program asked for runtime
+	// metadata at all. The dense table is emitted only when it did.
+	type_info_requested: bool,
+	// Whether the erased formatter table is needed. `core:fmt` asks for it by
+	// naming its dispatch intrinsic; nothing else can.
+	format_requested:    bool,
+	// design.md's coherence rule: at most one `format` per concrete type, and only
+	// from the type's own package. Resolved once, after the typeid set is closed.
+	formatters:          map[Type_Id]Symbol_Id,
+	// The `base:runtime` types the compiler needs to build that table, resolved
+	// through the import that made them nameable so there is one identity.
+	runtime_types:       map[string]Type_Id,
 
 	// Every concrete procedure body that finished checking, in checking order.
 	// design.md's two provenance analyses run after the whole program settles, so

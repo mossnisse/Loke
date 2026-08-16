@@ -1,0 +1,51 @@
+package main; import "core:fmt";
+
+// design.md "`type` and `typeid`": `type_info_of(id)` "accepts a runtime
+// `typeid` and returns runtime metadata". The table is dense and keyed by the
+// frozen id, so a lookup is a checked index rather than a runtime call — and a
+// `typeid` is an ordinary scalar, so the check is what makes a forged one
+// answer nil instead of reading past the table.
+
+import "base:runtime";
+
+Point :: struct {
+	@(public) x: int,
+	@(public) y: i32 `json:"why"`,
+}
+
+Colour :: enum { Red, Green = 5, Blue }
+
+Huge :: enum u128 { Value = 18446744073709551617 }
+
+// A `typeid` is an ordinary runtime scalar, so an out-of-range value can be
+// produced through unsafe storage reinterpretation.
+forge :: proc(raw: i64) -> typeid {
+	p := &raw;
+	q := (^typeid)(rawptr(p));
+	return q^;
+}
+
+main :: proc() {
+	info := type_info_of(typeid_of(Point));
+	if (info != nil) {
+		fmt.println(info.size);
+		fmt.println(len(info.members));
+		fmt.println(int(info.kind));
+		fmt.println(len(info.name));
+	}
+	u := type_info_of(typeid_of(u8));
+	if (u != nil) {
+		fmt.println(u.bits);
+		fmt.println(1 if u.signed else 0);
+	}
+	empty: typeid;
+	fmt.println(0 if type_info_of(empty) == nil else 1);
+	forged := forge(999999);
+	fmt.println(0 if type_info_of(forged) == nil else 1);
+	c := type_info_of(typeid_of(Colour));
+	if (c != nil) { fmt.println(len(c.members)); }
+	wide := type_info_of(typeid_of(Huge));
+	if (wide != nil) {
+		fmt.println(wide.members[0].value_low, wide.members[0].value_high);
+	}
+}

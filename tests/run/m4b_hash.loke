@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Equatable :: interface($T: type) {
 	(a, b: T) a == b -> bool;
@@ -24,19 +24,19 @@ main :: proc() {
 	FOLDED :: hash(7, uint(0));
 	runtime_seed: uint = 0;
 	runtime_value := 7;
-	if (hash(runtime_value, runtime_seed) == FOLDED) { print_int(1); } else { print_int(0); }
+	if (hash(runtime_value, runtime_seed) == FOLDED) { fmt.println(1); } else { fmt.println(0); }
 
 	// `+0` and `-0` hash identically because they compare equal.
 	positive := 0.0;
 	negative := -0.0;
-	if (hash(positive, runtime_seed) == hash(negative, runtime_seed)) { print_int(1); } else { print_int(0); }
+	if (hash(positive, runtime_seed) == hash(negative, runtime_seed)) { fmt.println(1); } else { fmt.println(0); }
 
 	// A fixed array folds over its elements.
 	xs := [3]int{1, 2, 3};
-	if (hash(xs, runtime_seed) == hash([3]int{1, 2, 3}, uint(0))) { print_int(1); } else { print_int(0); }
+	if (hash(xs, runtime_seed) == hash([3]int{1, 2, 3}, uint(0))) { fmt.println(1); } else { fmt.println(0); }
 
 	// Compile-time floats use the bit width of their declared type.
 	F32_FOLDED :: hash(f32(1.5), uint(0));
 	runtime_f32: f32 = 1.5;
-	if (hash(runtime_f32, runtime_seed) == F32_FOLDED) { print_int(1); } else { print_int(0); }
+	if (hash(runtime_f32, runtime_seed) == F32_FOLDED) { fmt.println(1); } else { fmt.println(0); }
 }

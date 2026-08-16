@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Additive :: interface($T: type) {
 	T(0) -> T;
@@ -23,9 +23,9 @@ Boxed :: struct($T: type) where Additive(T) { value: T }
 
 main :: proc() {
 	f: Flag = {true};
-	print_int(sum3(f, f, f));
+	fmt.println(sum3(f, f, f));
 	b: Boxed(Flag) = {};
 	#assert(Additive(int, f64));
 	// A record or union needs its own coherent equality and hash pair.
-	print_int(int(hash(f, uint(0))));
+	fmt.println(int(hash(f, uint(0))));
 }

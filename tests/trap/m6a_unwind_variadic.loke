@@ -1,0 +1,20 @@
+package main; import "core:fmt";
+
+// A managed variadic pack is a live cleanup while its callee runs. Panic drops
+// the moved temporary, the cloned borrowed argument, and then the caller's
+// original owner, each exactly once.
+Res :: struct { id: int }
+
+impl Res {
+	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		return Res{self.id + 100}, nil;
+	}
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
+}
+
+explode :: proc(values: ..Res) { panic("inside variadic callee"); }
+
+main :: proc() {
+	resource := Res{1};
+	explode(resource, Res{2});
+}

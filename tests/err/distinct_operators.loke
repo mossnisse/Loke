@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 Meters :: distinct int;
 
 main :: proc() {
 	a := Meters(1);
 	b := Meters(2);
-	print_int(int(a + b));
+	fmt.println(int(a + b));
 }

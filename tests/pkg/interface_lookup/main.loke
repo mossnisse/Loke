@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 import "./shapes";
 import "./iface";
@@ -15,5 +15,5 @@ main :: proc() {
 
 	// The caller's own extension is still an ordinary method here.
 	g: shapes.Gadget = {5};
-	print_int(g.describe());
+	fmt.println(g.describe());
 }

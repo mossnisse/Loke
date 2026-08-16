@@ -1,7 +1,7 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	xs := [4]int{1, 2, 3, 4};
 	i := 7;
-	print_int(xs[i]);
+	fmt.println(xs[i]);
 }

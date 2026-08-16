@@ -1,12 +1,11 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 // One `L0350` per deferred outer construct, and no descent into it. This is the
-// single M6 gate fixture for runtime string views and managed containers, whose
-// carrier and invalidation hooks `src/borrow.odin` already has. Slices are no
-// longer here: M5a implements their behavior and M5b their provenance.
-Walker :: struct { cursor: [^]int }
-
-Viewer :: struct { text: string_view }
+// single gate fixture for the managed containers, whose carrier and
+// invalidation hooks `src/borrow.odin` already has. Slices are no longer here:
+// M5a implements their behavior and M5b their provenance. Strings, string
+// views, C string views, and multi-pointers are no longer here either: M6a
+// step 4 implements all four.
 
 // An interface is not deferred: it is deliberately compile-time metadata, so it
 // has its own diagnostic rather than a milestone gate.
@@ -14,15 +13,14 @@ Trait :: interface($Self: type) { }
 stored: Trait;
 
 // A written allocator policy needs a provider to select, which arrives with
-// `core:mem` in M6. `manual`, `static`, and `thread_local` are no longer here:
+// `mem.Arena` in M6b. `manual`, `static`, and `thread_local` are no longer here:
 // M5a implements all three (m5a-plan step 4).
 pooled: manual int via allocator_of();
 
-allocator_of :: proc() -> Allocator { return default_allocator(); }
+allocator_of :: proc() -> Allocator { return mem.default_allocator(); }
 
 main :: proc() {
 	xs: [dynamic]int;
 	table: map[int]int;
-	text := "hello";
-	print_int(1);
+	fmt.println(1);
 }

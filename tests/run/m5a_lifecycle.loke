@@ -1,4 +1,4 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 // design.md "Lifecycle hooks and resource types" (m5a-plan step 3): a record
 // receives field-wise `try_clone` and a `clone` generated from it, a custom
@@ -27,7 +27,7 @@ impl Res {
 	// partial-clone cleanup below already has to run this exactly once per part
 	// it managed to build.
 	drop :: proc(self: inout Res) {
-		print_int(self.id);
+		fmt.println(self.id);
 		self.id = 0;
 	}
 }
@@ -56,19 +56,19 @@ main :: proc() {
 	// written: the compiler supplies the default until `core:mem` is nameable.
 	p := Plain{1, 2};
 	q := p.clone();
-	print_int(q.x + q.y);
+	fmt.println(q.x + q.y);
 
 	// An explicit allocator selects the same default provider in M5a.
-	a := default_allocator();
+	a := mem.default_allocator();
 	r := p.clone(a);
-	print_int(r.y);
+	fmt.println(r.y);
 
 	// The generated `try_clone` is field-wise: the custom hook of `Res` runs for
 	// every element, so each id gains 100.
 	ok := Group{[2]Res{Res{11}, Res{22}}, Failing{0}};
 	single, single_error := ok.items[0].try_clone();
 	if (single_error == nil) {
-		print_int(single.id);
+		fmt.println(single.id);
 	}
 
 	// `tail` fails, so the two elements already cloned into the temporary are
@@ -76,16 +76,16 @@ main :: proc() {
 	// zero paired with the error.
 	failed, error := ok.try_clone();
 	if (error != nil) {
-		print_int(-1);
+		fmt.println(-1);
 	}
-	print_int(failed.items[0].id);
-	print_int(failed.tail.id);
+	fmt.println(failed.items[0].id);
+	fmt.println(failed.tail.id);
 
 	// design.md: `new_clone` "creates a new allocation root containing a clone of
 	// the value", so it fills the allocation through the same hook.
 	held, allocation_error := new_clone(Res{5});
 	if (allocation_error == nil) {
-		print_int(held^.id);
+		fmt.println(held^.id);
 		free(held);
 	}
 
@@ -93,7 +93,7 @@ main :: proc() {
 	// already cloned are dropped, then the block is released.
 	spare, group_error := new_clone(ok);
 	if (group_error != nil) {
-		print_int(-2);
+		fmt.println(-2);
 	}
 
 	// Falling out of `main` drops every managed local still live, in reverse

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Pair :: struct($T: type) {
 	first:  T,
@@ -22,9 +22,9 @@ first_of :: proc(values: [$N]$E) -> E {
 main :: proc() {
 	a: Pair(int) = {2, 3};
 	b: Pair(f64) = {1.5, 2.5};
-	print_int(a.sum());
-	print_int(int(b.sum()));
-	print_int(identity(int, 7));
+	fmt.println(a.sum());
+	fmt.println(int(b.sum()));
+	fmt.println(identity(int, 7));
 	xs := [3]int{9, 8, 7};
-	print_int(first_of(xs));
+	fmt.println(first_of(xs));
 }

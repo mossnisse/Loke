@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The shapes m5a-plan step 2 requires to stay auditable: one two-word slice
 // type shared by both capabilities, a hidden literal root, bounds checks, one
@@ -14,20 +14,20 @@ main :: proc() {
 	// Two capabilities, one representation.
 	writable: []mut int = data[:];
 	readable: []int = writable;
-	print_int(len(readable));
-	print_int(writable[0]);
+	fmt.println(len(readable));
+	fmt.println(writable[0]);
 
 	// A hidden fixed-array root in the surrounding scope.
 	literal := []int{5, 6};
-	print_int(literal[1]);
+	fmt.println(literal[1]);
 
 	// One object for both the runtime index and the slice.
 	index := runtime_index();
-	print_int(SHARED[index]);
-	print_int(SHARED[:][2]);
+	fmt.println(SHARED[index]);
+	fmt.println(SHARED[:][2]);
 
 	// Constant indices fold, so `FOLDED` needs no storage.
-	print_int(FOLDED[0] + FOLDED[1]);
+	fmt.println(FOLDED[0] + FOLDED[1]);
 }
 
 runtime_index :: proc() -> int {

@@ -1,12 +1,12 @@
-package main;
+package main; import "core:fmt";
 
 value: int = 1;
 
 main :: proc() {
 	value := 2;
-	print_int(value);
+	fmt.println(value);
 	{
 		other := value + 1;
-		print_int(other);
+		fmt.println(other);
 	}
 }

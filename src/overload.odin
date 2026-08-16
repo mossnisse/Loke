@@ -140,10 +140,6 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument) -> ([]Arg_Info, bo
 		if arg.name.text != "" {
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
-		if arg.mode == .Spread {
-			unsupported_construct(k, arg.span)
-			ok = false
-		}
 		k.place_position = arg.mode == .Inout
 		info.type = check_single_expr(k, arg.value)
 		k.place_position = false
@@ -280,6 +276,16 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 
 	count := len(sym.params)
 	cand.filled = make([]bool, count, k.c.semantic_allocator)
+	// design.md "Variadic parameters": every trailing argument fills the one pack
+	// slot, so ranking places them there rather than running out of parameters.
+	// An explicit argument ranks against the element type and a `..slice` spread
+	// against the pack's own slice type.
+	pack := variadic_parameter_index(info)
+	element := INVALID_TYPE
+	if pack >= 0 {
+		cand.variadic = true
+		element = slice_element(k.c, sym.params[pack])
+	}
 	named := false
 	for arg, index in args {
 		slot := index
@@ -311,6 +317,8 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		} else if named {
 			cand.reason = "a positional argument cannot follow a named one"
 			return cand
+		} else if pack >= 0 && slot >= pack {
+			slot = pack
 		} else if slot >= count {
 			cand.reason = fmt.aprintf(
 				"it takes %d argument%s, found %d",
@@ -324,13 +332,26 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		cand.filled[slot] = true
 		cand.slots[index] = slot
 		mode := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
-		rank, via := argument_rank(k, arg, sym.params[slot], mode)
+		want := sym.params[slot]
+		if slot == pack {
+			if arg.name != INVALID_IDENTIFIER {
+				cand.reason = "a variadic argument cannot be named"
+				return cand
+			}
+			// The pack itself is passed by value however the arguments arrived.
+			mode = .Value
+			want = arg.mode == .Spread ? sym.params[pack] : element
+		} else if arg.mode == .Spread {
+			cand.reason = "`..` spreads into a variadic parameter"
+			return cand
+		}
+		rank, via := argument_rank(k, arg, want, mode)
 		if rank == RANK_NONE {
 			cand.reason = fmt.aprintf(
 				"argument %d is `%s` where `%s` is wanted",
 				index + 1,
 				type_name(k.c, args[index].type),
-				type_name(k.c, sym.params[slot]),
+				type_name(k.c, want),
 				allocator = k.c.semantic_allocator,
 			)
 			return cand
@@ -341,6 +362,10 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 
 	for slot in 0 ..< count {
 		if cand.filled[slot] {
+			continue
+		}
+		// An empty pack is a legal call: the callee receives a zero-length slice.
+		if slot == pack {
 			continue
 		}
 		if slot >= len(sym.param_defaults) || sym.param_defaults[slot] == nil {
@@ -662,6 +687,14 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 	sym := symbol_of(k.c, cand.symbol)
 	if sym == nil {
 		return false
+	}
+	// A pack is settled by the one procedure that knows how to build it. Ranking
+	// already checked every written argument, so it binds them without checking
+	// them a second time.
+	if info := type_of(k.c, sym.proc_type); variadic_parameter_index(info) >= 0 {
+		bound_ok := bind_variadic_arguments(k, v, info, cand.symbol, prechecked = true)
+		require_argument_ownership(k, v, cand.symbol)
+		return bound_ok
 	}
 	// A generic candidate ranked the runtime subset of the written arguments, so
 	// binding follows what the candidate itself saw.

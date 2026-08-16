@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 takes_two :: proc(a: int, b: int) -> int {
 	return a + b;
@@ -14,14 +14,14 @@ backwards :: proc(a: int = b, b: int = 1) -> int {
 }
 
 main :: proc() {
-	print_int(takes_two(1));
-	print_int(takes_two(1, 2, 3));
-	print_int(takes_two(missing = 1, b = 2));
-	print_int(takes_two(a = 1, 2));
+	fmt.println(takes_two(1));
+	fmt.println(takes_two(1, 2, 3));
+	fmt.println(takes_two(missing = 1, b = 2));
+	fmt.println(takes_two(a = 1, 2));
 
 	n := 1;
 	aliased(n);
 	aliased(inout 5);
-	print_int(takes_two(inout n, 2));
-	print_int(backwards());
+	fmt.println(takes_two(inout n, 2));
+	fmt.println(backwards());
 }

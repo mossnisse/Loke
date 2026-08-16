@@ -391,6 +391,11 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	case info.kind == .Slice:
 		s.kind = .Slice
 		s.element_type = info.element
+	case info.kind == .String || info.kind == .String_View:
+		// design.md: "String iteration yields Unicode scalar values by default.
+		// Byte iteration is explicit" — `foreach (b, i in text.bytes())`.
+		s.kind = .Text
+		s.element_type = TYPE_RUNE
 	case info.is_range:
 		s.kind = .Stored_Range
 		s.element_type = info.element
@@ -413,12 +418,19 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 			)
 			return FLOWS
 		}
-	} else if s.bindings[0].is_ref && !expr_base(s.iterable).assignable {
+	} else if s.kind != .Text && s.bindings[0].is_ref && !expr_base(s.iterable).assignable {
 		report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
 		return FLOWS
 	}
 	if s.kind == .Stored_Range && s.bindings[0].is_ref {
 		errorf(k.c, s.bindings[0].name.span, "L0457", "a range produces values, so it cannot be iterated by reference")
+		return FLOWS
+	}
+	if s.kind == .Text && s.bindings[0].is_ref {
+		errorf(
+			k.c, s.bindings[0].name.span, "L0564",
+			"a string yields decoded code points, so it cannot be iterated by reference",
+		)
 		return FLOWS
 	}
 	return check_foreach_body(k, s, s.element_type)

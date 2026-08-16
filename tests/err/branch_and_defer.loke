@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 stray :: proc() {
 	break;
@@ -11,12 +11,12 @@ escaping :: proc() -> int {
 		defer break;
 	}
 	defer {
-		defer print_int(1);
+		defer fmt.println(1);
 	}
 	return 0;
 }
 
 main :: proc() {
 	stray();
-	print_int(escaping());
+	fmt.println(escaping());
 }

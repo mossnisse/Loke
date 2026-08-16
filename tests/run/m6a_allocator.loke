@@ -1,4 +1,4 @@
-package main;
+package main; import "core:mem"; import "core:fmt";
 
 // The seed runtime's default provider, end to end (m6a-plan step 1). The
 // allocation is real memory from the system heap, the handle survives being
@@ -19,12 +19,12 @@ round_trip :: proc(allocator: Allocator) -> int {
 }
 
 main :: proc() {
-	print_int(round_trip(default_allocator()));
+	fmt.println(round_trip(mem.default_allocator()));
 
 	// `new_clone` through the same provider, with a value whose clone can fail.
 	q, qerr := new_clone(41);
 	if (qerr == nil) {
-		print_int(q^ + 1);
+		fmt.println(q^ + 1);
 		free(q);
 	}
 }

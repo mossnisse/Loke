@@ -1,10 +1,10 @@
-package main;
+package main; import "core:fmt";
 
 // These paths used to collapse to the same LLVM package prefix.
 import dash "a-b";
 import dot "a.b";
 
 main :: proc() {
-	print_int(dash.value());
-	print_int(dot.value());
+	fmt.println(dash.value());
+	fmt.println(dot.value());
 }

@@ -1,6 +1,6 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	f: proc(a: int) -> int = nil;
-	print_int(f(1));
+	fmt.println(f(1));
 }

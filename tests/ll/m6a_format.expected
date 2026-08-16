@@ -1,0 +1,10 @@
+@.loke.fmt_thunks = private unnamed_addr constant [4 x ptr] [ ptr null, ptr @loke.f.1, ptr @loke.f.2, ptr @loke.f.3 ]
+@.loke.fmt_thunks.count = private unnamed_addr constant i64 3
+@.loke.type_names = private unnamed_addr constant [4 x %loke.string_view] [ %loke.string_view zeroinitializer, %loke.string_view { ptr @.str.10, i64 5 }, %loke.string_view { ptr @.str.3, i64 5 }, %loke.string_view { ptr @.str.11, i64 3 } ]
+define private void @loke.f.1(ptr %data, ptr %w, ptr %o) {
+define private void @loke.f.2(ptr %data, ptr %w, ptr %o) {
+define private void @loke.f.3(ptr %data, ptr %w, ptr %o) {
+call void @loke.p.Money.format(%struct.Money.37 %t146, %struct.Writer.38 %t147, %struct.Options.39 %t148)
+%t92 = load i64, ptr @.loke.fmt_thunks.count
+%t97 = getelementptr inbounds ptr, ptr @.loke.fmt_thunks, i64 %t96
+declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)

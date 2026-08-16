@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Vec :: struct { x: i32 }
 Error :: union { i32 }
@@ -11,7 +11,7 @@ impl Vec {
 step :: proc() -> (int, Error) { return 1, nil; }
 
 propagate :: proc() -> (n: int, err: Error) {
-	defer print_int(0);
+	defer fmt.println(0);
 	n = 0;
 	x := step() or_return;
 	n = x;
@@ -20,20 +20,20 @@ propagate :: proc() -> (n: int, err: Error) {
 
 main :: proc() {
 	v := Vec{3};
-	print_int(int(v.double()));
-	print_int(int((v + v).x));
+	fmt.println(int(v.double()));
+	fmt.println(int((v + v).x));
 
 	e: Error = i32(4);
 	value, ok := e.(i32);
-	print_int(int(value) + (1 if ok else 0));
+	fmt.println(int(value) + (1 if ok else 0));
 
 	switch (t in e) {
 	case i32:
-		print_int(int(t));
+		fmt.println(int(t));
 	case:
-		print_int(0);
+		fmt.println(0);
 	}
 
 	n, err := propagate();
-	print_int(n + (1 if err == nil else 0));
+	fmt.println(n + (1 if err == nil else 0));
 }

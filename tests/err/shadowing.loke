@@ -1,9 +1,9 @@
-package main;
+package main; import "core:fmt";
 
 main :: proc() {
 	x := 1;
 	{
 		x := 2;
-		print_int(x);
+		fmt.println(x);
 	}
 }

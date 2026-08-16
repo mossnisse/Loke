@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Point :: struct { x: int, y: int }
 Colour :: enum { Red }
@@ -24,6 +24,6 @@ main :: proc() {
 	foreach ($field in fields_of(Colour)) { }
 	c: Colour = .Red;
 	foreach ($field in fields_of(Point)) {
-		print_int(field.get(&c));
+		fmt.println(field.get(&c));
 	}
 }

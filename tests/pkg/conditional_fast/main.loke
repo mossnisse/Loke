@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // The `-define:FAST=true` selection of `tests/pkg/conditional`; keep the two
 // trees in step.
@@ -23,9 +23,9 @@ when (BACKEND == 1) {
 }
 
 main :: proc() {
-	print_int(BACKEND);
-	print_int(LABEL);
-	print_int(chosen());
+	fmt.println(BACKEND);
+	fmt.println(LABEL);
+	fmt.println(chosen());
 	// An unconditional body naming a declaration a selected branch introduced.
-	print_int(BACKEND + LABEL);
+	fmt.println(BACKEND + LABEL);
 }

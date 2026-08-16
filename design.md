@@ -2173,6 +2173,8 @@ String indices used by low-level APIs are byte offsets throughout. Unicode proce
 
 Formatting is a library protocol. A user type provides a visible `format(value, writer, options)` overload; byte-buffer interpretations and field tags belong to `core:fmt`, not the language specification.
 
+Runtime formatting is **coherent per concrete `typeid`**: one type has one erased spelling for the whole program. A `format` overload is eligible for it only when it is declared in the package that declares the value type; the compiler supplies one for every other printable type. Two eligible declarations for one type are rejected at the second. A caller-local `extend` may still declare a `format` and call it explicitly, but it does not change what `print` does — an erased value carries only a pointer and a `typeid`, so a callee has no way to recover a call-site-specific overload. This is the same coherence requirement [maps](#maps) place on `==` and `hash`, and for the same reason.
+
 # C string views
 
 `cstring_view` is a non-owning, zero-terminated byte view — the type a C `char const *` maps to. It does not promise UTF-8 because foreign strings frequently use another encoding or arbitrary bytes. A view received from foreign code has no owner known to the compiler, so keeping it alive is the programmer's responsibility, as with anything crossing the [foreign boundary](#what-is-not-checked). Converting it to `string` scans for the terminator, validates UTF-8, and copies into owned storage.
@@ -4486,7 +4488,57 @@ info = type_info_of(id);
 `typeid_of(T)` maps a compile-time `type` value to its runtime `typeid` constant.
 `type_info_of(id)` accepts a runtime `typeid` and returns runtime metadata. It
 does not recover a compile-time `type`, because runtime information cannot flow
-back into specialization.
+back into specialization. A `typeid` is an ordinary scalar and can be forged, so
+the lookup is checked: the nil `typeid`, and any id this program has no entry
+for, produce a nil result.
+
+The metadata layouts are public and belong to `base:runtime`, which a program
+must import to name them:
+
+```odin
+Type_Kind :: enum u8 {
+	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
+	Raw_Pointer, Pointer, Multi_Pointer, Array, Slice, Dynamic_Array, Map,
+	Struct, Enum, Union, Proc, String, String_View, CString_View,
+	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
+}
+
+Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
+
+Member_Info :: struct {
+	kind:       Member_Kind,
+	name:       string_view,
+	tag:        string_view,
+	type:       typeid,
+	offset:     int,
+	value_low:  u64,
+	value_high: u64,
+}
+
+Type_Info :: struct {
+	id:      typeid,
+	kind:    Type_Kind,
+	name:    string_view,
+	size:    int,
+	align:   int,
+	bits:    int,
+	signed:  bool,
+	element: typeid,
+	key:     typeid,
+	count:   int,
+	members: []Member_Info,
+}
+```
+
+Every view and slice above points at static storage, so a `^Type_Info` owns
+nothing and needs no cleanup. Aggregate member tables expose public fields only,
+procedure entries keep written parameter and result order, union variants keep
+declaration order, and unused scalar, relation, and member fields are zero. An
+enum member's raw value is carried in `value_low`/`value_high` so that a signed
+or unsigned 128-bit value survives; the owning type's `bits` and `signed` say how
+to read them. Adding a field or an enum member to these records is a runtime ABI
+change, because generated metadata tables are written against exactly this field
+order.
 
 ## Compile-time reflection
 
@@ -5887,6 +5939,19 @@ main :: proc() {
 procedure, as a `runtime.Source_Code_Location`. It may appear only as the
 default value of a procedure parameter, and it is evaluated at each call that
 omits that argument, like any other [default](#default-values).
+
+`Source_Code_Location` is public, belongs to `base:runtime`, and is a constant:
+
+```odin
+Source_Code_Location :: struct {
+	file:      string_view,
+	procedure: string_view,
+	line:      int,
+	column:    int,
+}
+```
+
+Line and column are one-based, and both views point at static storage.
 
 ```odin
 package example_caller_location;

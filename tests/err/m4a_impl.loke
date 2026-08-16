@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 Complex :: struct { real, imaginary: f64 }
 Point :: struct { x: int }
@@ -46,7 +46,7 @@ magnitude :: proc(z: Complex) -> f64 { return z.real; }
 main :: proc() {
 	// `@(implicit)` is reachable only from an untyped constant.
 	scale: f64 = 5.0;
-	print_int(int(magnitude(scale)));
+	fmt.println(int(magnitude(scale)));
 
 	z := Complex(1.0);
 	// No method sugar for a pointer parameter.
@@ -59,7 +59,7 @@ main :: proc() {
 	p := Point(1, 2);
 	// `Complex` has no member `magnitude`.
 	q := Complex.magnitude;
-	print_int(take_ambiguous(1));
+	fmt.println(take_ambiguous(1));
 }
 
 Ambiguous :: struct { value: int }

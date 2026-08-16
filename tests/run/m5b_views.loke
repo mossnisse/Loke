@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // m5b-plan step 4: what erased views and user slicing *permit*. M4b's
 // representations and witness dispatch are unchanged; provenance only adds the
@@ -38,28 +38,28 @@ erased_copies :: proc() {
 	value := 7;
 	view: any_view = value;
 	alias := view;
-	print_int(view.(int));
-	print_int(alias.(int));
+	fmt.println(view.(int));
+	fmt.println(alias.(int));
 	switch (v in alias) {
-	case int:  print_int(v);
-	case:      print_int(0);
+	case int:  fmt.println(v);
+	case:      fmt.println(0);
 	}
 	// Every view is finished, so the subject is writable again.
 	value = 8;
-	print_int(value);
+	fmt.println(value);
 }
 
 // A `dyn` view keeps the pointer's provenance, and nil behaviour is unchanged.
 dyn_views :: proc() {
 	square := Square{3};
 	view := (dyn Shape)(&square);
-	print_int(view.area());
+	fmt.println(view.area());
 	// The dyn view has ended, so the subject may be written again.
 	square.side = 4;
-	print_int(square.side);
+	fmt.println(square.side);
 
 	absent: dyn Shape = nil;
-	print_int(1 if absent == nil else 0);
+	fmt.println(1 if absent == nil else 0);
 }
 
 user_slicing :: proc() {
@@ -67,7 +67,7 @@ user_slicing :: proc() {
 	t := Ok_Table{numbers[0:4]};
 	part := t[0:2];
 	part[0] = 9;
-	print_int(part[0] + part[1]);
+	fmt.println(part[0] + part[1]);
 }
 
 borrowed_field_slice :: proc(values: []int) -> int {
@@ -81,5 +81,5 @@ main :: proc() {
 	dyn_views();
 	user_slicing();
 	numbers := [3]int{5, 6, 7};
-	print_int(borrowed_field_slice(numbers[:]));
+	fmt.println(borrowed_field_slice(numbers[:]));
 }

@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 take_int :: proc(i: int) -> int { return i; }
 take_f32 :: proc(f: f32) -> int { return int(f); }
@@ -23,17 +23,17 @@ not_a_procedure :: proc{CONSTANT};
 main :: proc() {
 	// Both conversions preserve integer kind, and no tie-breaker distinguishes
 	// the destination widths.
-	print_int(integer_widths(1));
+	fmt.println(integer_widths(1));
 
 	// Crossed vectors are ambiguous by design.
 	value := 1;
 	pointer := &value;
-	print_int(crossed(pointer, pointer));
+	fmt.println(crossed(pointer, pointer));
 
 	// Nothing in the group takes these arguments.
-	print_int(numbers(true, false));
+	fmt.println(numbers(true, false));
 
 	// A group is not a value.
 	f := numbers;
-	print_int(take_two(1, 2));
+	fmt.println(take_two(1, 2));
 }

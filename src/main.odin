@@ -9,7 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M6a, steps 1-3)
+USAGE :: `lokec - the Loke compiler (milestone M6a)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.
@@ -78,11 +78,31 @@ frame's registered live cleanup, newest first, before terminating, -panic=abort
 runs none, a panic raised by a cleanup aborts at once, and an allocator's own
 .Trap policy bypasses both.
 
-Runtime string and string_view, dynamic arrays, maps, multi-pointers, via
-allocator policies, #location/#caller_location, variadics, runtime type
-information and core:fmt output parse and report one diagnostic. Storing a
-borrow in a global, a record field or callback state, raw and unknown pointers,
-and cross-thread transfer are the documented v1 trust boundaries and are not
+Text is real. A string is an immutable owning UTF-8 value over shared,
+atomically counted storage; a literal is a constant over static zero-terminated
+bytes; assignment shares and only clone copies. string_view and cstring_view
+borrow, and every borrow is checked by the same M5b analysis that follows
+slices. len, byte_len, rune_count, bytes, clone, to_c_view, subranges,
+concatenation, byte-wise comparison, rune iteration with byte offsets, and every
+validating conversion with optional-ok results are available, as are
+multi-pointers and the core:unsafe raw_data/string_view/cstring_view surface.
+#location and #caller_location produce constant runtime.Source_Code_Location
+values.
+
+A procedure takes ..T and receives one read-only slice, built from any mix of
+explicit arguments and ..slice spreads; overload ranking places them and still
+prefers a fixed-arity candidate. The call-scoped ..any_view carries mixed types
+without letting the slice or an element escape. type_info_of maps every live
+typeid to stable runtime.Type_Info metadata and answers nil for a forged one.
+Formatting is coherent per concrete typeid - the compiler generates a formatter
+for each printable type and a package may write format for its own - and
+core:fmt print, println, eprint and eprintln go through it, over
+writers a program can also take for itself with fmt.stdout and fmt.stderr.
+
+Dynamic arrays, maps, string.to_runes, the dynamic raw_data overload and via
+allocator policies parse and report one diagnostic. Storing a borrow in a
+global, a record field or callback state, raw and unknown pointers, and
+cross-thread transfer are the documented v1 trust boundaries and are not
 checked.
 
 An input is a .loke file or a directory; a directory compiles every .loke file
@@ -99,7 +119,9 @@ options:
     -dump-ast     print a deterministic syntax tree and stop after parsing
     -check-layout compare every folded size/alignment/offset with LLVM's own
     -collection name=path
-                  register an import-path prefix; there is no built-in core:
+                  register an import-path prefix; base: and core: are seeded
+                  from the directories beside the compiler, and an explicit
+                  entry replaces one of those
     -define:NAME=VALUE
                   set a project-wide #config value: true, false, an integer,
                   or a string
@@ -201,6 +223,14 @@ run :: proc() -> int {
 	// body is emitted, so traversal order cannot change an observable ID
 	// (m4b-plan decision "`typeid`").
 	freeze_typeids(&c)
+	// design.md's formatter coherence is decided once the requested type set is
+	// closed, so "one formatter per concrete type" is a whole-program answer
+	// rather than a per-call-site one.
+	discover_formatters(&c)
+	if c.error_count > 0 {
+		report(&c)
+		return 1
+	}
 
 	if opts.check_layout {
 		return check_layout_agreement(&c, opts)

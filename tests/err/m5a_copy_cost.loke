@@ -1,4 +1,4 @@
-package main;
+package main; import "core:fmt";
 
 // design.md "Copy-cost diagnostics" (m5a-plan step 5). "A copy site is a point
 // that duplicates a value instead of moving or borrowing it": a trivial
@@ -56,11 +56,11 @@ main :: proc() {
 	count := 4;
 
 	// A copy site: a place duplicated into a trivial aggregate parameter.
-	print_int(inspect(pair));
+	fmt.println(inspect(pair));
 	// Not copy sites: a managed borrow, a scalar, and a temporary.
-	print_int(borrows(res));
-	print_int(counts(count));
-	print_int(inspect(Pair{5, 6}));
+	fmt.println(borrows(res));
+	fmt.println(counts(count));
+	fmt.println(inspect(Pair{5, 6}));
 
 	// A binding and an assignment from a place.
 	copied := pair;
@@ -70,7 +70,7 @@ main :: proc() {
 	// A temporary transfers rather than duplicating.
 	fresh := Pair{7, 8};
 
-	print_int(give_back(res).id);
+	fmt.println(give_back(res).id);
 
 	// The cost is more prominent inside a loop.
 	for (i := 0; i < 2; i += 1) {

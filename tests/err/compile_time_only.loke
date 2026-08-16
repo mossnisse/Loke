@@ -1,8 +1,8 @@
-package main;
+package main; import "core:fmt";
 
 Alias :: u32;
 
 main :: proc() {
 	t: type = Alias;
-	print_int(1);
+	fmt.println(1);
 }
