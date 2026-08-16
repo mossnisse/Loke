@@ -1,0 +1,86 @@
+package main; import "core:fmt"; import "core:mem";
+
+// Region provenance with real local regions (m6b-plan step 5).
+//
+// design.md's own rejected examples, now written against the storage they were
+// always written for. M5b activated the *analyses* against substitute storage;
+// what was missing was a provider that creates a local region.
+
+// design.md "How root and region provenance compose", verbatim:
+//
+//   bad_view :: proc() -> []u8 {
+//   	arena := mem.Arena();
+//   	bytes: [dynamic]u8 via arena.allocator() = {};
+//   	return bytes[:]; // ERROR: borrow outlives the local root `bytes`
+//   }
+bad_view :: proc() -> []u8 {
+	arena := mem.Arena();
+	bytes: [dynamic]u8 via arena.allocator() = {};
+	return bytes[:];
+}
+
+// ...and its companion, which fails for a different reason: the owner, not a
+// borrow of it, outlives the region.
+//
+//   bad_owner :: proc() -> [dynamic]u8 {
+//   	arena := mem.Arena();
+//   	bytes: [dynamic]u8 via arena.allocator() = {};
+//   	return move(bytes); // ERROR: owner outlives allocator region `arena`
+//   }
+bad_owner :: proc() -> [dynamic]u8 {
+	arena := mem.Arena();
+	bytes: [dynamic]u8 via arena.allocator() = {};
+	return move(bytes);
+}
+
+// design.md "Allocators": returning the array without `move` is the same
+// failure, because "returning a managed local ... transfers that owned value
+// into result storage without cloning".
+bad_buffer :: proc() -> [dynamic]u8 {
+	arena := mem.Arena();
+	bytes: [dynamic]u8 via arena.allocator() = {};
+	bytes.append(1, 2, 3);
+	return bytes;
+}
+
+// design.md: "A wrapper may return a provider owner and transfer its fresh
+// root, but may not return only a handle to that root."
+leaked_handle :: proc() -> Allocator {
+	arena := mem.Arena();
+	return arena.allocator();
+}
+
+// A fixed-buffer arena borrows the buffer for as long as it lives, so it cannot
+// outlive it either.
+leaked_fixed :: proc() -> mem.Arena {
+	buffer: [4096]u8 = {};
+	return mem.Arena(buffer[:]);
+}
+
+// design.md: "release_scratch(arena.allocator()); // ERROR while `scratch` or
+// `view` is live".
+release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+surviving_owner :: proc() {
+	arena := mem.Arena();
+	scratch: [dynamic]u8 via arena.allocator() = {};
+	scratch.append(1);
+	release_scratch(arena.allocator());
+	fmt.println(len(scratch));
+}
+
+// design.md: an owner "backed by a region created in the current procedure may
+// not be ... assigned to `static`, `thread_local`, or file-scope storage".
+held: [dynamic]u8;
+
+escaping_owner :: proc() {
+	arena := mem.Arena();
+	bytes: [dynamic]u8 via arena.allocator() = {};
+	held = move(bytes);
+}
+
+main :: proc() {
+	fmt.println(1);
+}

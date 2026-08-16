@@ -279,8 +279,20 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   fails, and `unsafe.raw_data([dynamic]E)` hands back the current data pointer
   with no length, no capability and no further lifetime checking.
 
-`mem.Arena` and `mem.Scratch`, and compile-time evaluation of a managed
-container, are what M6b has left to do.
+- `mem.Arena` and `mem.Scratch` are local allocator regions. The control block
+  is address-stable, so moving the owner never changes its record address or its
+  region identity — a provider is move-only for the same reason. An `Arena` may
+  be laid over a caller's fixed buffer (`mem.Arena(buffer[:])`), which puts a
+  dynamic array's backing storage in the current frame and makes the arena a
+  borrow of that buffer for as long as it lives. `free_all` on a region this body
+  created needs no `@(allocator_reset)` promise and is *reusable*: the region
+  works again afterwards. What it rejects is a surviving dependant — an owner
+  backed by that region, or a borrow of one — and only of that region: two
+  arenas are two regions. An owner cannot be returned from, or stored past, the
+  region backing it, and a wrapper may return the provider owner but not a bare
+  handle to it.
+
+Compile-time evaluation of a managed container is what M6b has left to do.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.

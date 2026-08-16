@@ -227,6 +227,10 @@ Flow_Graph :: struct {
 	region_of:       map[Symbol_Id]Region_Set,
 	owners_in_scope: [dynamic]Symbol_Id,
 	param_count:     int,
+	// One bit per local `mem.Arena`/`mem.Scratch` in this body (m6b-plan step 5).
+	// The list is what a diagnostic names the region by.
+	provider_bits:    map[Symbol_Id]u64,
+	provider_symbols: [dynamic]Symbol_Id,
 	// A body may borrow nothing at all and still reset a region or let an owner
 	// escape one, so the region half has its own reason to run the solver.
 	has_region_event: bool,
@@ -286,6 +290,8 @@ build_flow_graph :: proc(
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
 	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
+	graph.provider_bits = make(map[Symbol_Id]u64, 4, allocator)
+	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
@@ -501,12 +507,17 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 						}
 					}
 				}
+				escaping := prov_result_region(graph, value.expr, 0)
 				prov_emit(graph, Prov_Event {
 					kind    = .Escape,
 					sources = first,
 					span    = expr_span(value.expr),
 					result  = value_index,
-					region  = prov_result_region(graph, value.expr, 0),
+					region  = escaping,
+					// design.md's `bad_owner`: "ERROR: owner outlives allocator region
+					// `arena`". The region ends with the frame, so no result can carry
+					// it -- and the diagnostic has to name which region that is.
+					name    = prov_region_name(graph, escaping),
 				})
 			}
 			emit_cleanups(graph, 0)
@@ -1111,6 +1122,11 @@ prov_emit :: proc(graph: ^Flow_Graph, event: Prov_Event) {
 	if event.kind == .Reset || event.kind == .Region_Escape {
 		graph.has_region_event = true
 	}
+	// A body that borrows nothing can still return an owner backed by one of its
+	// own regions, which is the only thing that would make the solver run.
+	if event.kind == .Escape && region_has_local(event.region) {
+		graph.has_region_event = true
+	}
 	append(&graph.blocks[graph.current].prov, event)
 }
 
@@ -1426,6 +1442,49 @@ prov_empty_region :: proc(graph: ^Flow_Graph) -> Region_Set {
 	return Region_Set{params = make([]bool, max(graph.param_count, 1), graph.alloc)}
 }
 
+// The token for one local provider, made on first ask. Past 64 providers in one
+// body the set degrades to `crowded`, which means "may be any of them" and only
+// ever makes the answer more conservative.
+@(private = "file")
+prov_provider_region :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Region_Set {
+	out := prov_empty_region(graph)
+	if existing, found := graph.provider_bits[id]; found {
+		out.locals = existing
+		return out
+	}
+	index := len(graph.provider_symbols)
+	if index >= 64 {
+		out.crowded = true
+		return out
+	}
+	append(&graph.provider_symbols, id)
+	bit := u64(1) << u64(index)
+	graph.provider_bits[id] = bit
+	out.locals = bit
+	return out
+}
+
+// The name a diagnostic gives one local region, or "" when the set names more
+// than one -- in which case the sentence has to talk about the owner instead.
+prov_region_name :: proc(graph: ^Flow_Graph, set: Region_Set) -> string {
+	if set.crowded {
+		return ""
+	}
+	found := ""
+	for id, index in graph.provider_symbols {
+		if set.locals & (u64(1) << u64(index)) == 0 {
+			continue
+		}
+		if found != "" {
+			return ""
+		}
+		if sym := symbol_of(graph.k.c, id); sym != nil {
+			found = identifier_text(graph.k.c, sym.name)
+		}
+	}
+	return found
+}
+
 // The allocator region an expression denotes, or an empty set when it denotes
 // nothing region-shaped.
 @(private = "file")
@@ -1464,6 +1523,12 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 			set.default = true
 			return set
 		}
+		// `arena.allocator()`: the handle names the provider's own region, and
+		// design.md's "copying an allocator value preserves that identity" then
+		// carries it through every copy of the handle for free.
+		if set, ok := prov_handle_region(graph, v); ok {
+			return set
+		}
 		if results, found := graph.call_results[v]; found && len(results) > 0 {
 			return results[0].region
 		}
@@ -1475,6 +1540,29 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		return set
 	}
 	return Region_Set{}
+}
+
+// The region an `arena.allocator()` names. The receiver has to be a lexical
+// provider: a handle taken from a temporary provider would name a region that
+// ended at the end of the statement, and there is nothing sensible to say about
+// it beyond the conservative "unknown".
+@(private = "file")
+prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bool) {
+	if call_provider_op(graph.k.c, v) != .Handle || len(v.bound) == 0 {
+		return Region_Set{}, false
+	}
+	ident, is_ident := v.bound[0].(^Expr_Ident)
+	if !is_ident {
+		set := prov_empty_region(graph)
+		set.unknown = true
+		return set, true
+	}
+	if set, found := graph.region_of[ident.symbol]; found {
+		return set, true
+	}
+	set := prov_empty_region(graph)
+	set.unknown = true
+	return set, true
 }
 
 // The region component of one call result. Direct summaries are substituted by
@@ -1491,6 +1579,11 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result: int, result_
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
 		out.default = true
 		return out
+	}
+	// `arena.allocator()`. Recorded here as well as in `prov_region_of`, because
+	// a call's stored result summary is consulted before the expression walk.
+	if set, ok := prov_handle_region(graph, v); ok {
+		return set
 	}
 	callee := v.resolution.chosen_overload
 	if callee == INVALID_SYMBOL {
@@ -1578,10 +1671,15 @@ prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
 prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool) {
 	covered, unmarked := prov_reset_promise(graph, set)
 	if !direct && unmarked == "" && region_is_empty(set) {
-		// M6 may give a separately represented locally created provider region an
-		// exemption here. Default and unknown regions are pre-existing and must not
-		// be hidden merely because they are not this body's parameters.
+		// Default and unknown regions are pre-existing and must not be hidden
+		// merely because they are not this body's parameters.
 		covered = true
+	}
+	// design.md: "A procedure may reset a region it created locally, because no
+	// caller-owned value can belong to it." No promise is needed, and none could
+	// be written -- the region does not exist outside this body.
+	if region_is_local_only(set) {
+		covered, unmarked = true, ""
 	}
 	event := Prov_Event {
 		kind          = .Reset,
@@ -1592,14 +1690,26 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		reset_covered = unmarked == "" && covered,
 	}
 	// A tracked owner whose backing region this may end is a blocker whatever its
-	// carriers do, because its cleanup still has to run.
-	// ponytail: "in scope" over-approximates "still needs cleanup"; a `manual`
-	// owner dropped before the reset still blocks. Tighten it when M6 gives the
-	// provenance walk the lifecycle states.
+	// carriers do, because its cleanup still has to run. Only owners of a region
+	// this reset can actually reach: a second arena's containers are none of its
+	// business, which is the whole point of giving each local provider a token.
+	//
+	// ponytail: "in scope" over-approximates "still needs cleanup", so an
+	// explicitly dropped owner still blocks. M5a already computes definite
+	// liveness per program point (`src/lifecycle.odin`); wiring it in needs a
+	// must-be-dead join beside the existing may-be-invalid one, which is the
+	// remaining half of this rule.
 	for id in graph.owners_in_scope {
 		owner := symbol_of(graph.k.c, id)
 		owner_region, found := graph.region_of[id]
 		if owner == nil || !found || region_is_empty(owner_region) {
+			continue
+		}
+		// The provider being reset is not its own dependant.
+		if type_is_region_provider(graph.k.c, owner.type) {
+			continue
+		}
+		if !regions_may_overlap(owner_region, set) {
 			continue
 		}
 		event.verb = identifier_text(graph.k.c, owner.name)
@@ -1630,14 +1740,23 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr, result
 	if storage == "" {
 		return
 	}
-	if !region_is_parameter_backed(prov_result_region(graph, value, result)) {
+	// design.md: "an allocating clone receives the destination allocator's region
+	// provenance". Assigning a place *copies* it, so the destination is built with
+	// its own allocator and inherits nothing; only a `move`, a call result, or a
+	// constructed aggregate carries a region into the destination.
+	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(graph.k.c, value) {
+		return
+	}
+	set := prov_result_region(graph, value, result)
+	if !region_is_parameter_backed(set) && !region_has_local(set) {
 		return
 	}
 	prov_emit(graph, Prov_Event {
-		kind = .Region_Escape,
-		span = expr_span(target),
-		verb = identifier_text(graph.k.c, sym.name),
-		name = storage,
+		kind   = .Region_Escape,
+		span   = expr_span(target),
+		verb   = identifier_text(graph.k.c, sym.name),
+		name   = storage,
+		region = set,
 	})
 }
 
@@ -1969,6 +2088,14 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 // owner inherits the region its constructing call named.
 @(private = "file")
 prov_declare_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symbol, initializer: Expr, result := 0) {
+	// design.md: a local `mem.Arena`/`mem.Scratch` *is* a region this body
+	// created, so it gets its own token rather than merging into anything.
+	if type_is_region_provider(graph.k.c, sym.type) && sym.duration == .None {
+		graph.region_of[id] = prov_provider_region(graph, id)
+		append(&graph.owners_in_scope, id)
+		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Owner, slot = len(graph.owners_in_scope) - 1})
+		return
+	}
 	if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
 		if initializer != nil {
 			graph.region_of[id] = prov_result_region(graph, initializer, result)
@@ -1978,19 +2105,27 @@ prov_declare_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symbol, ini
 	if !type_is_managed(graph.k.c, sym.type) {
 		return
 	}
+	set := prov_empty_region(graph)
+	// design.md: "An explicit `via` allocator is bound at the declaration." That
+	// binding, not the initialiser, is what decides an owner's region -- a literal
+	// `{}` names no region at all, and `via arena.allocator()` names one exactly.
+	if written := symbol_via_allocator(graph.k.c, id); written != nil {
+		region_merge(&set, prov_region_of(graph, written))
+	}
 	if initializer != nil {
-		set := prov_result_region(graph, initializer, result)
-		if !region_is_empty(set) {
-			graph.region_of[id] = set
-			if sym.duration != .None && region_is_parameter_backed(set) {
-				storage := sym.duration == .Thread_Local ? "`thread_local` storage" : "`static` storage"
-				prov_emit(graph, Prov_Event {
-					kind = .Region_Escape,
-					span = sym.span,
-					verb = identifier_text(graph.k.c, sym.name),
-					name = storage,
-				})
-			}
+		region_merge(&set, prov_result_region(graph, initializer, result))
+	}
+	if !region_is_empty(set) {
+		graph.region_of[id] = set
+		if sym.duration != .None && (region_is_parameter_backed(set) || region_has_local(set)) {
+			storage := sym.duration == .Thread_Local ? "`thread_local` storage" : "`static` storage"
+			prov_emit(graph, Prov_Event {
+				kind   = .Region_Escape,
+				span   = sym.span,
+				verb   = identifier_text(graph.k.c, sym.name),
+				name   = storage,
+				region = set,
+			})
 		}
 	}
 	// design.md: resetting a region is rejected "while a live owning value

@@ -43,6 +43,11 @@ Lifecycle :: struct {
 	// is a retain while a container's is a real deep clone that can fail.
 	intrinsic:        bool,
 	container:        bool,
+	// A local allocator-region provider (`src/region.odin`). Managed, and
+	// move-only: two owners of one control block would release it twice, and a
+	// bump region has no meaningful copy. So `clone` is disabled here rather than
+	// generated and then trapped at run time.
+	provider:         bool,
 	state:            Size_State,
 }
 
@@ -71,7 +76,9 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 		// the last drop deallocates through the string's bound allocator, so a
 		// string is an owner exactly like a record with a written `drop`.
 		entry.container = info.kind == .Dynamic_Array || info.kind == .Map
-		entry.intrinsic = info.kind == .String || entry.container
+		entry.provider = info.provider
+		entry.intrinsic = info.kind == .String || entry.container || entry.provider
+		entry.clone_disabled ||= entry.provider
 		entry.managed =
 			entry.intrinsic ||
 			entry.custom_drop != INVALID_SYMBOL ||

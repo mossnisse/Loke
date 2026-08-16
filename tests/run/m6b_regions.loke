@@ -1,0 +1,162 @@
+package main; import "core:fmt"; import "core:mem";
+
+// Local allocator regions (m6b-plan step 5).
+//
+// design.md "Allocators": "There is no ambient temporary allocator. Temporary
+// storage has a reset boundary and runtime identity, so code creates a
+// `mem.Scratch` or `mem.Arena` owner and passes its allocator explicitly."
+//
+// The control block is address-stable and the region identity *is* its address,
+// so moving the owner cannot change either. `free_all` is a reusable reset: the
+// region stays usable afterwards.
+
+// design.md "The allocator selects the location of backing storage": an arena
+// over a local fixed buffer puts a dynamic array's storage in this frame.
+in_frame :: proc() {
+	buffer: [4096]u8 = {};
+	arena := mem.Arena(buffer[:]);
+	data: [dynamic]int via arena.allocator() = {};
+	data.append(1, 2, 3);
+	fmt.println(len(data));
+	fmt.println(data[2]);
+}
+
+// design.md's own example, verbatim.
+scratch_storage :: proc() {
+	scratch := mem.Scratch();
+	temporary: [dynamic]int via scratch.allocator() = {};
+	temporary.reserve(64);
+	fmt.println(cap(temporary) >= 64);
+}
+
+// A reset this body is allowed to perform, because it created the region. It
+// ends every allocation and leaves the region usable.
+reusable_reset :: proc() {
+	arena := mem.Arena();
+	{
+		temporary: [dynamic]u8 via arena.allocator() = {};
+		temporary.append(1, 2, 3);
+		fmt.println(len(temporary));
+	}
+	free_all(arena.allocator());
+	after: [dynamic]u8 via arena.allocator() = {};
+	after.append(4, 5);
+	fmt.println(len(after));
+	fmt.println(after[1]);
+}
+
+// design.md: a handle "remains valid for the reset control", so using one after
+// the reset is not a surviving dependant.
+handle_survives_reset :: proc() {
+	arena := mem.Arena();
+	handle := arena.allocator();
+	free_all(handle);
+	xs: [dynamic]u8 via handle = {};
+	xs.append(9);
+	fmt.println(len(xs));
+}
+
+// design.md: "release_scratch(arena.allocator())" once nothing is live. The
+// promise the callee carries is what lets the reset cross a call boundary at
+// all; a region this body created needs no promise of its own.
+release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
+	free_all(allocator);
+}
+
+reset_through_wrapper :: proc() {
+	arena := mem.Arena();
+	{
+		scratch: [dynamic]u8 via arena.allocator() = {};
+		scratch.append(1, 2, 3);
+		fmt.println(len(scratch));
+	}
+	release_scratch(arena.allocator());
+	again: [dynamic]u8 via arena.allocator() = {};
+	again.append(6);
+	fmt.println(len(again));
+}
+
+// Two providers are two regions, so one reset is not the other's business.
+distinct_regions :: proc() {
+	a := mem.Arena();
+	b := mem.Arena();
+	xs: [dynamic]u8 via a.allocator() = {};
+	xs.append(1, 2);
+	free_all(b.allocator());
+	fmt.println(len(xs));
+}
+
+// The region grows past its first block, so the block chain is exercised.
+grows :: proc() {
+	arena := mem.Arena();
+	{
+		xs: [dynamic]int via arena.allocator() = {};
+		for (i := 0; i < 2000; i += 1) {
+			xs.append(i);
+		}
+		fmt.println(len(xs));
+		fmt.println(xs[1999]);
+	}
+	free_all(arena.allocator());
+	fmt.println(1);
+}
+
+// Moving a provider preserves its record address and its region identity, so
+// the owner backed by it keeps working through the move.
+Holder :: struct { arena: mem.Arena }
+
+moved :: proc() {
+	arena := mem.Arena();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(7);
+	holder := Holder{move(arena)};
+	xs.append(8);
+	fmt.println(len(xs));
+	fmt.println(xs[1]);
+	fmt.println(holder.arena.allocator() != nil);
+}
+
+// Nested regions: a provider whose parent is the program default, and a fixed
+// arena laid over storage the outer region supplied.
+nested :: proc() {
+	outer := mem.Arena();
+	room: [dynamic]u8 via outer.allocator() = {};
+	room.resize(2048);
+	inner := mem.Arena(room[:]);
+	xs: [dynamic]int via inner.allocator() = {};
+	xs.append(1, 2, 3, 4);
+	fmt.println(len(xs));
+	fmt.println(xs[3]);
+}
+
+// design.md "Explicit runtime environments": a provider is an ordinary field of
+// an application record, which is what "runtime identity, passed explicitly"
+// means in practice. The record inherits the provider's move-only lifecycle.
+Request_Env :: struct {
+	scratch: mem.Scratch,
+	id:      int,
+}
+
+in_a_record :: proc(env: inout Request_Env) -> int {
+	xs: [dynamic]int via env.scratch.allocator() = {};
+	xs.append(env.id, env.id * 2);
+	return xs[1];
+}
+
+environment :: proc() {
+	env := Request_Env{mem.Scratch(), 21};
+	fmt.println(in_a_record(inout env));
+}
+
+main :: proc() {
+	environment();
+	in_frame();
+	scratch_storage();
+	reusable_reset();
+	handle_survives_reset();
+	reset_through_wrapper();
+	distinct_regions();
+	grows();
+	moved();
+	nested();
+}

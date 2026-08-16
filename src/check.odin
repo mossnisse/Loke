@@ -1224,6 +1224,11 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if type_is_map(k.c, type) && !require_map_key_policy(k, type, span) {
 		return false
 	}
+	// A named region provider gets its constructors and `allocator` here, for the
+	// same reason a container gets its operations where its type is named.
+	if type_is_region_provider(k.c, type) {
+		ensure_provider_members(k, type_underlying(k.c, type))
+	}
 	if type_contains_managed_union(k.c, type) {
 		errorf(
 			k.c,

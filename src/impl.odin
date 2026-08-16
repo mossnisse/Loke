@@ -361,6 +361,9 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	// A container's operation set, so `xs.append(1)` is an ordinary method call
 	// and generic code finds the same members (design.md "Dynamic arrays").
 	ensure_container_members(k, type)
+	// And a local region provider's constructor and `allocator`, for the same
+	// reason: it is a compiler-owned type whose members no source file declares.
+	ensure_provider_members(k, type)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := type_of(k.c, type); info != nil {
 		expand_visible_members(k, type, info.members, name, &out)
@@ -432,6 +435,7 @@ find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_I
 	ensure_iteration_members(k, type)
 	ensure_lifecycle_members(k, type, name)
 	ensure_container_members(k, type)
+	ensure_provider_members(k, type)
 	if info := type_of(k.c, type); info != nil {
 		if found := visible_member_named(k, info.members, name); found != INVALID_SYMBOL {
 			return found

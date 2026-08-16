@@ -5,8 +5,8 @@
 // option may choose another implementation without changing the handle ABI,
 // because everything a caller holds is one pointer to one provider record.
 //
-// `mem.Arena` and `mem.Scratch` — the first source-level local region roots —
-// arrive with M6b, which is when a `free_all` can succeed.
+// M6b adds the two local region roots, `mem.Arena` and `mem.Scratch`, which is
+// what makes a `free_all` able to succeed at all.
 @(public)
 package mem;
 
@@ -19,3 +19,20 @@ package mem;
 // `default_allocator` is the same symbol the generated default argument of a
 // lifecycle hook names, so an omitted allocator and a written
 // `mem.default_allocator()` select one provider through one call.
+//
+//   Arena              a local bump region, optionally over a caller's buffer
+//   Scratch            the same, always provider-backed
+//
+// Both are compiler-owned because the region lattice has to *recognise* them,
+// not merely call them: a region created here is one this body may reset without
+// a promise, and one no owner may outlive.
+//
+//   arena := mem.Arena();               // blocks from the default provider
+//   arena := mem.Arena(buffer[:]);      // the caller's storage, no allocation
+//   scratch := mem.Scratch();
+//   xs: [dynamic]int via arena.allocator() = {};
+//   free_all(arena.allocator());        // reusable: the region stays usable
+//
+// A provider is move-only: two owners of one control block would release it
+// twice, and a bump region has no meaningful copy. Moving one never changes its
+// record address, so its region identity survives the move.

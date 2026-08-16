@@ -112,6 +112,9 @@ Compiler :: struct {
 	// numeric only after `freeze_typeids`.
 	meta_field_type:      Type_Id,
 	meta_enum_value_type: Type_Id,
+	// The two local region providers (`src/region.odin`), created on first use.
+	arena_type:           Type_Id,
+	scratch_type:         Type_Id,
 	typeid_requested:     map[Type_Id]bool,
 	typeid_order:         [dynamic]Type_Id,
 	typeid_values:        map[Type_Id]u64,
@@ -186,6 +189,8 @@ Compiler :: struct {
 	default_allocator_arg:    Expr,
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,
+	// The nil `[]mut u8` a defaulted `mem.Arena()` receives (`src/region.odin`).
+	empty_slice_arg:          Expr,
 
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,

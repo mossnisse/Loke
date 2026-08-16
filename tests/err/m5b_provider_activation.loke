@@ -1,28 +1,15 @@
 package main; import "core:fmt"; import "core:unsafe";
 
-// The one provider-activation fixture (m5b-plan step 5). design.md's two
-// rejected returns under "How root and region provenance compose" are written
-// against `mem.Arena` and `[dynamic]u8`, neither of which is nameable until M6:
+// The provider-activation fixture (m5b-plan step 5). It pinned the two analyses
+// design.md distinguishes under "How root and region provenance compose" while
+// `mem.Arena` was still unwritable, using substitute storage that fails for the
+// same two reasons.
 //
-//   bad_view :: proc() -> []u8 {
-//   	arena := mem.Arena();
-//   	bytes: [dynamic]u8 via arena.allocator() = {};
-//   	return bytes[:]; // ERROR: borrow outlives the local root `bytes`
-//   }
-//
-//   bad_owner :: proc() -> [dynamic]u8 {
-//   	arena := mem.Arena();
-//   	bytes: [dynamic]u8 via arena.allocator() = {};
-//   	return move(bytes); // ERROR: owner outlives allocator region `arena`
-//   }
-//
-// Both analyses are in place; what is missing is a provider that creates a
-// local region. The M5 equivalents below already fail for the two distinct
-// reasons the examples are there to distinguish, so activating the exact source
-// in M6 is a matter of replacing the storage, not of reopening the analysis.
-// This fixture also pins how far M6b has got: `[dynamic]u8` is a complete type
-// with a complete lifecycle, complete operations, iteration, formatting, and the
-// unsafe conversion out of it. What is left is `mem.Arena` itself.
+// M6b step 5 supplied the provider, and `tests/err/m6b_regions` now runs
+// design.md's exact source. What stays here is the pair of *substitutes*: a
+// borrow of a plain local array, and an owner backed by a region this body
+// received rather than created. They are different roots and a different region
+// kind from the M6b ones, so keeping both keeps both paths covered.
 
 // The root failure: a borrow of local storage cannot be returned.
 bad_view :: proc() -> []int {

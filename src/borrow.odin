@@ -222,6 +222,13 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
+	// design.md "The allocator selects the location of backing storage": an arena
+	// laid over a caller's fixed buffer holds that buffer for as long as the arena
+	// lives, so a provider is a borrow carrier like any other (m6b-plan step 5).
+	// A provider-backed one borrows nothing and simply carries no loan.
+	if type_is_region_provider(c, type) {
+		return true
+	}
 	#partial switch type_kind(c, type_underlying(c, type)) {
 	case .Pointer, .Slice, .String_View, .CString_View, .Any_View, .Dyn:
 		// design.md "C string views": a view from `to_c_view()` is "valid for that
@@ -238,6 +245,9 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // mutable borrows", while `[]T`, `string_view` and ordinary parameter access are
 // immutable ones.
 carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if type_is_region_provider(c, type) {
+		return true // it writes into the buffer it was given
+	}
 	#partial switch type_kind(c, type_underlying(c, type)) {
 	case .Pointer:
 		return true
@@ -248,6 +258,9 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
+	if type_is_region_provider(c, type) {
+		return "region"
+	}
 	#partial switch type_kind(c, type_underlying(c, type)) {
 	case .Pointer:     return "pointer"
 	case .Slice:       return "slice"
@@ -283,6 +296,49 @@ Region_Set :: struct {
 	// The default provider's region, which outlives the whole program.
 	default: bool,
 	unknown: bool,
+	// design.md "Allocator regions and region provenance": a region *created in
+	// this procedure*, by a local `mem.Arena` or `mem.Scratch`. One bit per local
+	// provider, because these are the regions a body may reset without a promise
+	// and the ones an owner may not outlive (m6b-plan step 5).
+	//
+	// A word rather than a slice: a body with more than 64 local providers is not
+	// a thing, and the overflow bit degrades to the conservative answer instead of
+	// growing an allocation onto every region set in the compiler.
+	locals:  u64,
+	// More local providers than bits. Treated as "may be any of them".
+	crowded: bool,
+}
+
+// The identity `region_merge` starts from for a body-independent set.
+region_has_local :: proc(set: Region_Set) -> bool {
+	return set.locals != 0 || set.crowded
+}
+
+// A region this body created and nothing outside it can name. design.md: "A
+// procedure may reset a region it created locally, because no caller-owned value
+// can belong to it."
+region_is_local_only :: proc(set: Region_Set) -> bool {
+	return region_has_local(set) && !set.default && !set.unknown && !region_is_parameter_backed(set)
+}
+
+// Whether two sets may name the same region. Used to decide which owners one
+// reset actually threatens: an owner of a *different* arena is not its business.
+regions_may_overlap :: proc(a, b: Region_Set) -> bool {
+	if a.unknown || b.unknown || a.crowded || b.crowded {
+		return true
+	}
+	if a.default && b.default {
+		return true
+	}
+	if a.locals & b.locals != 0 {
+		return true
+	}
+	for wanted, index in a.params {
+		if wanted && index < len(b.params) && b.params[index] {
+			return true
+		}
+	}
+	return false
 }
 
 region_is_parameter_backed :: proc(set: Region_Set) -> bool {
@@ -295,7 +351,7 @@ region_is_parameter_backed :: proc(set: Region_Set) -> bool {
 }
 
 region_is_empty :: proc(set: Region_Set) -> bool {
-	return !set.default && !set.unknown && !region_is_parameter_backed(set)
+	return !set.default && !set.unknown && !region_has_local(set) && !region_is_parameter_backed(set)
 }
 
 region_merge :: proc(into: ^Region_Set, from: Region_Set) {
@@ -306,6 +362,8 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) {
 	}
 	into.default ||= from.default
 	into.unknown ||= from.unknown
+	into.locals |= from.locals
+	into.crowded ||= from.crowded
 }
 
 // ------------------------------------------------------- result summaries --
@@ -878,6 +936,25 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			}
 		}
 	case .Escape:
+		// design.md's `bad_owner`, the region half of a return: an owner "backed by
+		// a region created in the current procedure may not be returned". The
+		// region ends with the frame, so moving the owner into result storage would
+		// hand the caller a value whose backing storage is already gone.
+		if region_has_local(event.region) {
+			if event.name != "" {
+				errorf(
+					state.k.c, event.span, "L0592",
+					"this result is backed by `%s`, an allocator region that ends when this procedure returns",
+					event.name,
+				)
+			} else {
+				errorf(
+					state.k.c, event.span, "L0592",
+					"this result is backed by an allocator region created in this procedure, which ends when it returns",
+				)
+			}
+			return
+		}
 		// design.md: "A borrow derived from a local root cannot be returned."
 		// Static, materialized and freshly allocated roots are all still there
 		// when the caller resumes, and unknown provenance is not evidence of a
@@ -914,6 +991,17 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		// procedure may not be ... assigned to `static`, `thread_local`, or
 		// file-scope storage". A bare pointer, slice or view stored the same way
 		// is the documented v1 trust boundary and is deliberately not checked.
+		if region_has_local(event.region) {
+			errorf(
+				state.k.c,
+				event.span,
+				"L0536",
+				"`%s` is backed by an allocator region created in this procedure, so it cannot be stored in %s, which outlives that region",
+				event.verb,
+				event.name,
+			)
+			return
+		}
 		errorf(
 			state.k.c,
 			event.span,

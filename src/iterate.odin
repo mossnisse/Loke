@@ -68,6 +68,9 @@ Synth_Kind :: enum {
 	// design.md "Dynamic arrays" and "Maps": one contributed container operation.
 	// Which one is `Symbol.container_op` (m6b-plan step 2).
 	Container_Op,
+	// design.md "Allocators": one `mem.Arena`/`mem.Scratch` operation. Which one
+	// is `Symbol.provider_op` (m6b-plan step 5).
+	Provider_Op,
 }
 
 // ---------------------------------------------------------- range values --

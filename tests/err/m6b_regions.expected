@@ -1,0 +1,19 @@
+L0526
+@19:9
+this slice cannot be returned: `bytes` ends when this procedure returns
+L0592
+@33:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns
+L0592
+@43:9
+L0592
+@50:9
+L0526
+@57:9
+this slice cannot be returned: `buffer` ends when this procedure returns
+L0537
+@70:2
+this reset would end the region backing `scratch`, which is still live here
+L0536
+@81:2
+`held` is backed by an allocator region created in this procedure, so it cannot be stored in file-scope storage, which outlives that region

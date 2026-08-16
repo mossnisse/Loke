@@ -121,8 +121,17 @@ duration, including across the back edge, so nothing inside the body may write
 to, grow, or end what it walks. Both format recursively through the coherent
 formatter table, string.to_runes builds a [dynamic]rune, and
 unsafe.raw_data([dynamic]E) exposes the current data pointer with no length and
-no lifetime. mem.Arena and mem.Scratch, and compile-time evaluation of a managed
-container, are what remain. Storing a borrow in a global, a record field or
+no lifetime.
+
+mem.Arena and mem.Scratch are local allocator regions: address-stable control
+blocks, so moving one never changes its record address or its region identity.
+An Arena may be laid over a caller's fixed buffer, which it then borrows for as
+long as it lives; both may back a container through via. A body may free_all a
+region it created without any promise, and the region stays usable afterwards -
+but not while an owner backed by it survives. An owner cannot be returned from,
+or stored past, the region that backs it, and a handle alone cannot be returned
+where the provider owner could be. Compile-time evaluation of a managed
+container is what remains. Storing a borrow in a global, a record field or
 callback state, raw and unknown pointers, and cross-thread transfer are the
 documented v1 trust boundaries and are not checked.
 

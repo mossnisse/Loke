@@ -199,6 +199,10 @@ Type_Info :: struct {
 	// aggregates, and this is the marker that forbids materializing one into
 	// runtime storage (design.md "Compile-time reflection").
 	descriptor:    bool,
+	// One of the two local allocator-region providers, `mem.Arena` and
+	// `mem.Scratch` (`src/region.odin`). The marker the lifecycle classifier, the
+	// region lattice, and the drop path all read.
+	provider:      bool,
 	// Cached natural layout (`src/layout.odin`). `offsets` has one entry per
 	// struct field, in declaration order.
 	layout_state: Size_State,
@@ -574,6 +578,8 @@ Symbol :: struct {
 	implicit:     bool,
 	// Which container operation a contributed member is (`src/container.odin`).
 	container_op: Container_Op,
+	// Which region-provider operation it is (`src/region.odin`).
+	provider_op:  Provider_Op,
 	// The canonical text of `operator(sym)`, or "" for an ordinary procedure.
 	// `[]=` and `[:]` are several tokens, so this is text rather than a token.
 	operator:     string,

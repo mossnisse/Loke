@@ -43,6 +43,12 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 			// allocator and a written `mem.default_allocator()` are one call through
 			// one provider.
 			contribute_symbol(c, pkg, "default_allocator", c.default_allocator_symbol)
+			// design.md "Allocators": "there is no ambient temporary allocator …
+			// code creates a `mem.Scratch` or `mem.Arena` owner and passes its
+			// allocator explicitly". Both are compiler-owned because the region
+			// lattice has to recognise them, not merely call them.
+			contribute_type(c, pkg, "Arena", arena_type(c))
+			contribute_type(c, pkg, "Scratch", scratch_type(c))
 		}
 	case STD_UNSAFE:
 		// design.md "unsafe.raw_data procedure": these make "the loss of bounds and

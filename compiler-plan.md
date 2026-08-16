@@ -616,7 +616,48 @@ checks every written argument once with no destination type — correct for unty
 constants, wrong for a composite literal, which has no untyped form to fall back
 on. It is filed separately.
 
-Steps 5 and 6 have not started.
+M6b step 5 is implemented: local allocator regions. `mem.Arena` and
+`mem.Scratch` are two nominal names over one address-stable control block in
+`runtime/arena.c`, and a Loke value is one pointer to it. That is the whole
+design: design.md says "copying an allocator value preserves that identity", and
+here the identity *is* the control block's address, so a move, a copied handle,
+and a handle passed through a call all preserve it without a per-copy tag. A
+provider is move-only, because two owners of one control block would release it
+twice and a bump region has no meaningful copy.
+
+An `Arena` may be laid over a caller's fixed buffer, in which case the control
+block is carved out of the front of that buffer and the region never allocates at
+all. The buffer must then outlive the arena — which is not a new rule: a provider
+is a *borrow carrier*, so `mem.Arena(buffer[:])` carries the buffer's loan and
+the existing root analysis rejects returning it with no region machinery
+involved. The two constructors are one contributed `init` with a defaulted empty
+buffer rather than two overloads, because a Loke type has one member per name.
+
+The region lattice gained one bit per local provider — a word, not a slice, with
+an overflow bit that degrades to the conservative answer, since a body with more
+than 64 arenas is not a thing. Those bits are what make three separate rules
+true at once: a body may reset a region it created *without* a promise, because
+no caller can own anything in it; a reset blocks only on owners of *that* region,
+so two arenas do not interfere; and an owner backed by a local region may not be
+returned or stored past it (`L0592`). design.md's `bad_view` and `bad_owner` now
+run verbatim in `tests/err/m6b_regions`.
+
+Two corrections fell out of writing it. A `via` binding, not the initialiser, is
+what gives an owner its region — a literal `{}` names no region at all, so
+region provenance was simply not reaching any container that had one. And
+assigning a place *clones* it, so the destination is built with its own
+allocator and inherits nothing; the escape check was reading the source's region
+and would have rejected a copy that is entirely safe.
+
+One half of one bullet is open. design.md distinguishes an owner that is still
+live from one already dropped, and the reset check still uses in-scope presence
+rather than M5a's definite liveness — so an explicitly dropped `manual` owner
+still blocks a reset it should not. M5a computes exactly the needed fact per
+program point in `src/lifecycle.odin`; consuming it needs a must-be-dead join
+beside the existing may-be-invalid one, which is the shape of the remaining work
+and is marked at its site.
+
+Step 6 has not started.
 
 ---
 

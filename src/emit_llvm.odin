@@ -480,6 +480,10 @@ emit_text_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_clone(ptr, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_from_runes(ptr, ptr, i64, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_string_to_runes(ptr, ptr, ptr, i64, ptr)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_open(ptr)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_open_fixed(ptr, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_arena_drop(ptr)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_arena_allocator(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_retain(i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_string_release(i64)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_utf8_valid(ptr, i64)")
@@ -7319,6 +7323,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_dyn_forwarding_slot(e, symbol, name)
 		case .Container_Op:
 			emit_synth_container_op(e, symbol, name)
+		case .Provider_Op:
+			emit_synth_provider_op(e, symbol, name)
 		case .None:
 		}
 		fmt.sbprintln(&e.b, "")
@@ -7564,6 +7570,102 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
 	fmt.sbprintln(&e.b, "}")
+}
+
+// ------------------------------------------------------- provider bodies --
+
+// One contributed `mem.Arena`/`mem.Scratch` operation. The Loke value is one
+// pointer to an address-stable control block, so each of these is a single
+// runtime call and an `insertvalue`.
+@(private = "file")
+emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	provider := llvm_type(e, symbol.results[0] == TYPE_ALLOCATOR ? symbol.params[0] : symbol.results[0])
+	result := llvm_result_type(e, symbol.results, nil)
+	fmt.sbprintf(&e.b, "define %s %s(", result, name)
+	for parameter, index in symbol.params {
+		if index > 0 {
+			fmt.sbprint(&e.b, ", ")
+		}
+		fmt.sbprintf(&e.b, "%s %%arg%d", llvm_type(e, parameter), index)
+	}
+	fmt.sbprintln(&e.b, ") {")
+	fmt.sbprintln(&e.b, "entry:")
+	e.terminated = false
+
+	switch symbol.provider_op {
+	case .None:
+	case .Open:
+		// An empty buffer means "ask the program default provider for blocks", so
+		// a failure there is an ordinary implicit-allocation failure. A non-empty
+		// one carves the control block out of the caller's storage and cannot fail
+		// for want of memory: a buffer too small to hold one is a program fault
+		// the runtime raises, not something a policy could rescue.
+		control := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca ptr", control)
+		if len(symbol.params) == 0 {
+			opened := temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %s)", opened, RT_DEFAULT_ALLOCATOR,
+			)
+			emit_provider_open_check(e, opened)
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", opened, control)
+		} else {
+			buffer := llvm_type(e, symbol.params[0])
+			data, length, given := temp(e), temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", data, buffer, SLICE_DATA)
+			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", length, buffer, SLICE_LEN)
+			fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", given, length)
+			over, backed, joined :=
+				new_label(e, "arena.fixed"), new_label(e, "arena.backed"), new_label(e, "arena.open")
+			branch_if(e, given, over, backed)
+
+			place_label(e, over)
+			fixed := temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", fixed, data, length,
+			)
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", fixed, control)
+			branch(e, joined)
+
+			place_label(e, backed)
+			opened := temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %s)", opened, RT_DEFAULT_ALLOCATOR,
+			)
+			emit_provider_open_check(e, opened)
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", opened, control)
+			branch(e, joined)
+
+			place_label(e, joined)
+		}
+		loaded, out := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", loaded, control)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", out, provider, loaded, PROVIDER_CONTROL)
+		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
+
+	case .Handle:
+		control, handle := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", control, provider, PROVIDER_CONTROL)
+		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_allocator(ptr %s)", handle, control)
+		fmt.sbprintfln(&e.b, "  ret ptr %s", handle)
+	}
+	fmt.sbprintln(&e.b, "}")
+	e.terminated = true
+}
+
+@(private = "file")
+emit_provider_open_check :: proc(e: ^Emitter, control: string) {
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, control)
+	fail, done := new_label(e, "arena.failed"), new_label(e, "ok")
+	branch_if(e, failed, fail, done)
+	fmt.sbprintfln(&e.b, "%s:", fail)
+	e.terminated = false
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
+	fmt.sbprintln(&e.b, "  unreachable")
+	e.terminated = true
+	fmt.sbprintfln(&e.b, "%s:", done)
+	e.terminated = false
 }
 
 // ------------------------------------------------------ container bodies --
@@ -8178,6 +8280,16 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if lifecycle_of(e.c, type).container {
 		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_drop" : "loke_rt_v1_dyn_drop"
 		fmt.sbprintfln(&e.b, "  call void @%s(ptr %s, ptr %s)", helper, address, container_ops_global(e, type))
+		return
+	}
+	// design.md "Allocators": ending a local region releases every block it
+	// handed out. The zero (or moved-from) control pointer drops to nothing,
+	// which is what makes a moved-out provider safe to leave behind.
+	if lifecycle_of(e.c, type).provider {
+		control := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", control, address)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_drop(ptr %s)", control)
+		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", address)
 		return
 	}
 	// design.md "string type": the drop releases one handle, and the last one
