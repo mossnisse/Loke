@@ -16,13 +16,15 @@ This document specifies the Loke programming language.
   - [Literals](#literals)
   - [Comments](#comments)
 - [2. Types & Values](#2-types--values)
-  - [Basic types](#basic-types)
-  - [Untyped constants](#untyped-constants)
-  - [string type](#string-type)
-  - [C string views](#c-string-views)
-  - [string type conversions](#string-type-conversions)
-  - [User-defined abstractions](#user-defined-abstractions)
-  - [Advanced types](#advanced-types)
+  - [Primitive types](#primitive-types)
+  - [String types and views](#string-types-and-views)
+  - [Pointer types](#pointer-types)
+  - [Sequence types](#sequence-types)
+  - [Map types](#map-types)
+  - [Structured and algebraic types](#structured-and-algebraic-types)
+  - [Procedure and meta types](#procedure-and-meta-types)
+  - [Methods and abstractions](#methods-and-abstractions)
+  - [Interfaces and polymorphism](#interfaces-and-polymorphism)
 - [3. Declarations & Storage Duration](#3-declarations--storage-duration)
   - [Variable declarations](#variable-declarations)
   - [Constant declarations](#constant-declarations)
@@ -167,7 +169,9 @@ x: int; // trailing comment
 
 # 2. Types & Values
 
-## Basic types
+## Primitive types
+
+### Basic types
 
 Loke's basic types are:
 
@@ -198,7 +202,7 @@ any_view // erased view of any value
 
 `string` is immutable UTF-8 with an O(1) byte length. Foreign calls use `cstring_view` and temporary zero-terminated conversions; there is no second owning C-string type.
 
-### Zero values
+#### Zero values
 
 Every runtime value type has a zero value, written `{}`. A local receives it only with an explicit initializer (`x: T = {};`); omitting the initializer leaves the local dead. File-scope, `static`, and `thread_local` variables are zero-initialized when they have no initializer.
 
@@ -214,7 +218,7 @@ Aggregate zero values are built recursively from their fields. A type with a cus
 
 Compile-time-only `type` and reflection descriptors have no zero value.
 
-### Type conversion
+#### Type conversion
 
 `T(v)` converts `v` to type `T`:
 
@@ -226,7 +230,7 @@ u := u32(f);
 
 Assigning between different types requires an explicit conversion unless an implicit conversion rule applies.
 
-## Untyped constants
+### Untyped constants
 
 Some constant expressions has an loose/untyped type. Context implicitly converts an untyped value to a compatible concrete type.
 
@@ -237,7 +241,9 @@ S :: "Hello"; // untyped string; converts to string
 B :: true;    // untyped boolean; converts to bool
 ```
 
-## string type
+## String types and views
+
+### string type
 
 `string` is an immutable, owning UTF-8 value. It behaves like a simple local: it can be assigned, returned, and stored with no explicit construction, cleanup, or `defer`.
 
@@ -272,7 +278,7 @@ builder.append("world");
 message := builder.finish(); // moves the buffer into an immutable string when possible
 ```
 
-### String iteration
+#### String iteration
 
 String iteration yields Unicode scalar values by default; byte iteration is explicit.
 
@@ -307,13 +313,13 @@ foreach (codepoint, offset in x) {
 
 Low-level string indices are byte offsets throughout; Unicode procedures state their unit in their names.
 
-### String format printing
+#### String format printing
 
 Formatting is a library protocol: a user type provides a visible `format(value, writer, options)` overload. Buffer handling and field tags belong to `core:fmt`, not this specification.
 
 Runtime formatting is **coherent per concrete `typeid`**: one type has one erased spelling program-wide. A `format` overload is eligible only when declared in the package that declares the value type; the compiler supplies one for every other printable type, and a second eligible declaration is rejected. A caller-local `extend` may declare and call its own `format`, but it does not change what `print` does, because an erased value carries only a pointer and a `typeid`. This is the same coherence rule [maps](#maps) place on `==` and `hash`.
 
-## C string views
+### C string views
 
 `cstring_view` is a non-owning, zero-terminated byte view — what C `char const *` maps to. It does not promise UTF-8, since foreign strings often use other encodings. A view from foreign code has no owner known to the compiler, so keeping it alive is the programmer's responsibility (see [foreign boundary](#what-is-not-checked)). Converting it to `string` scans for the terminator, validates UTF-8, and copies into owned storage.
 
@@ -327,7 +333,7 @@ c_api(runtime_name.to_c_view());   // temporary lives through this call
 
 To retain an owned zero-terminated buffer, use `C_String` from `core:cstrings`, a library type over `[dynamic]u8` exposing `view() -> cstring_view`.
 
-## string type conversions
+### string type conversions
 
 Safe conversions return managed values or explicit borrows; they never hide a mutable alias.
 
@@ -369,7 +375,7 @@ The language has no `const` qualifier. Slice capability is in the type: `[]T` is
 
 Checked provenance follows a local `^T` and its copies until it is stored in an untracked place or converted through `core:unsafe`. A `^T` loaded from such a place or received from foreign code is an unchecked address.
 
-### From string to X
+#### From string to X
 
 | To | Action | Code |
 | --- | --- | --- |
@@ -383,21 +389,21 @@ Checked provenance follows a local `^T` and its copies until it is stored in an 
 | `[dynamic]rune` | copy | `st.to_runes()` |
 | `[^]u8` | unsafe borrow | `unsafe.raw_data(st.bytes())` |
 
-### From cstring_view to X
+#### From cstring_view to X
 
 | To | Action | Code |
 | --- | --- | --- |
 | `string` | validate and copy, optional-ok | `string(st)` |
 | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
 
-### From a string literal to X
+#### From a string literal to X
 
 | To | Action | Code |
 | --- | --- | --- |
 | `string` | share static storage | `newstr: string = st` |
 | `cstring_view` | borrow static storage | `newstr: cstring_view = st` |
 
-### From []u8 to X
+#### From []u8 to X
 
 | To | Action | Code |
 | --- | --- | --- |
@@ -405,26 +411,1200 @@ Checked provenance follows a local `^T` and its copies until it is stored in an 
 | `string_view` | validate and borrow, optional-ok | `string_view(st)` |
 | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
 
-### From []rune to string
+#### From []rune to string
 
 | Action | Code |
 | --- | --- |
 | validate and copy, optional-ok | `string.from_runes(st)` |
 
-### From [^]u8 to cstring_view
+#### From [^]u8 to cstring_view
 
 | Action | Code |
 | --- | --- |
 | unsafe borrow | `unsafe.cstring_view(st)` |
 
-### From [^]u8 and length int to string
+#### From [^]u8 and length int to string
 
 | Action | Code |
 | --- | --- |
 | validate and copy, optional-ok | `string(ptr[0:length])` |
 | unsafe validate and borrow, optional-ok | `unsafe.string_view(ptr, length)` |
 
-## User-defined abstractions
+## Pointer types
+
+### Pointers
+
+A pointer contains the memory address of a value. `^T` is a pointer to `T`. Its zero value is `nil`.
+
+```odin
+p: ^int = nil;
+```
+
+The `&` operator returns the address of an addressable operand:
+
+```odin
+i := 123;
+p := &i;
+```
+
+The postfix `^` operator dereferences a pointer:
+
+```odin
+fmt.println(p^); // read `i` through the pointer `p`
+p^ = 1337;       // write `i` through the pointer `p`
+```
+
+Loke uses `^` for pointer types and pointer dereference:
+
+```odin
+i := 0;
+p: ^int = &i; // ^ on the left
+x := p^;      // ^ on the right
+```
+
+Pointer arithmetic is not an operator. `core:mem.ptr_offset` and
+`core:mem.ptr_sub` provide explicit address calculations.
+
+### Multi-pointers
+
+A multi-pointer describes a foreign (C-like) pointer that acts like an array. `[^]T` is a multi-pointer to `T`. Its zero value is nil.
+
+```odin
+p: [^]int = nil;
+```
+
+What multi-pointers support:
+
+- Indexing without bounds checking.
+- Slicing, with bounds checking when both low and high operands are given.
+- Implicit conversions between `^T` and `[^]T`.
+- Implicit conversion to `rawptr`, like all pointers.
+
+What multi-pointers DO NOT SUPPORT:
+
+- Dereferencing, making a multi-pointer closer to a slim slice than a pointer.
+
+The type mainly aids foreign code, documenting intent and easing conversion of C pointers into slices.
+
+The following are the rules for indexing and slicing for multi-pointers, and what type they produce depending on the operands given:
+
+```odin
+x: [^]T = ...;
+```
+
+x[i]   -> T
+x[:]   -> [^]T
+x[i:]  -> [^]T
+x[:n]  -> []T
+x[i:n] -> []T
+
+Interacting with Multi-Pointers is easiest using `unsafe.raw_data`, which makes the loss of bounds and borrow capability visible at the call site.
+
+```odin
+a: [^]int = nil;
+fmt.println(a); // <nil>
+b := [?]int { 10, 20, 30 };
+a = unsafe.raw_data(b[:]);
+fmt.println(a, a[1], b); // 0x7FFCBE9FE688 20 [10, 20, 30]
+```
+
+The language name for `[^]T` is *multi-pointer*.
+
+### unsafe.raw_data procedure
+
+`unsafe.raw_data` is a `core:unsafe` procedure that returns the underlying data of a built-in data type as a multi-pointer. A multi-pointer carries neither a length nor a read-only capability, and its lifetime is no longer checked after conversion.
+
+```odin
+unsafe.raw_data([]$E)              -> [^]E;    // read-only slices; capability is discarded
+unsafe.raw_data([]mut $E)          -> [^]E;    // mutable slices
+unsafe.raw_data([dynamic]$E)       -> [^]E;    // dynamic arrays
+unsafe.raw_data(^[$N]$E)           -> [^]E;    // fixed arrays
+unsafe.raw_data(^Simd($E, $N))     -> [^]E;    // SIMD vectors
+unsafe.raw_data(string)            -> [^]byte;
+```
+
+For a nested fixed array, `unsafe.raw_data` exposes one array level at a time. If `grid` has type `[Rows][Columns]T`, then `unsafe.raw_data(&grid)` has type `[^][Columns]T`, while `unsafe.raw_data(&grid[0])` has type `[^]T` and points at the first scalar element of the contiguous row-major storage.
+
+## Sequence types
+
+### Fixed arrays
+
+A fixed array contains a compile-time number of elements of one type. An array index can have an integer, character, or enumeration type.
+
+This declaration constructs a fixed array:
+
+```odin
+x := [5]int{1, 2, 3, 4, 5};
+foreach (i in 0..=4) {
+	fmt.println(x[i]);
+}
+```
+
+A fixed array stores its elements contiguously. Its layout is equivalent to a record with one field for each element.
+
+`x[i]` accesses element `i` of `x`. The first element has index 0.
+
+#### Multidimensional arrays
+
+A multidimensional fixed array is an ordinary nested array. `[Rows][Columns]T` means an outer array of `Rows` values, each of which is an inner `[Columns]T` array:
+
+```odin
+grid := [2][3]int{
+	{1, 2, 3},
+	{4, 5, 6},
+};
+
+row := grid[1];       // [3]int{4, 5, 6}
+x := grid[1][2];      // 6
+```
+
+Nested fixed arrays are one contiguous value; they are not arrays of pointers. Their layout is row-major in declaration order, with the rightmost index varying fastest. For `a: [D0][D1]...[Dn]T`, the scalar elements of `a[0]` precede those of `a[1]`. In two dimensions, `a[row][column]` has the flat element offset `row*Columns + column`.
+
+**Built-in indexing takes exactly one index.** A nested container is indexed by chaining: `a[i][j][k]`. Each step is evaluated left to right and performs its own bounds check, and it is a compile-time error if an intermediate value is not indexable.
+
+The comma form `a[i, j]` is reserved for a user-defined [`operator([])`](#indexing-and-slicing) taking that many indices, and is a compile-time error on a built-in container. The two spellings never coincide: `value[i][j]` is two independent indexing operations, while `value[i, j]` is one operation receiving both indices at once, free to map them onto rectangular, column-major, strided, or sparse storage.
+
+`[][]T` is a slice of slices and `[dynamic][dynamic]T` is a dynamic array of independently managed dynamic arrays; their inner containers may have different lengths and, for dynamic arrays, separate allocations. They are potentially jagged, and only nested *fixed* arrays have the single contiguous layout described above.
+
+The base language gives arrays no mathematical meaning. Fixed arrays support storage, indexing, iteration, slicing, and structural equality, but not arithmetic or broadcasting; vector, swizzle, and matrix operations belong in libraries. A rectangular dynamically sized container is likewise a library type holding one flat `[dynamic]T`, its dimensions, and an `operator([])` for multi-index access.
+
+A fixed-array length can be inferred from its literal with a question mark (`?`):
+
+```odin
+x := [?]int{1, 2, 3, 4, 5};
+```
+
+Designated initializers set elements by index or index range:
+
+```odin
+favorite_animals := [?]string{
+	// Assign by index
+	0 = "Raven",
+	1 = "Zebra",
+	2 = "Spider",
+	// Assign by range of indices
+	3..=5 = "Frog",
+	6..<8 = "Cat",
+}
+```
+
+The built-in `len` procedure returns the array length.
+
+```odin
+x: [5]int = {};
+#assert(len(x) == 5);
+```
+
+Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a multi-pointer:
+
+```odin
+p := unsafe.raw_data(&x);
+p[n] = 123; // unchecked; the programmer proves that n is valid
+```
+
+No source attribute or build flag silently changes indexing semantics. The explicit unchecked conversion should be limited to small scopes where the bounds argument is locally evident.
+
+### SIMD vectors
+
+`Simd(T, N)` is a predeclared generic type representing a fixed-width vector of `N` lanes of `T`. `N` must be a compile-time constant power of two, and `T` must be a built-in integer, floating-point, or boolean type.
+
+Arithmetic and bitwise operators apply **lane-wise** and produce a vector of the same shape. A scalar `T` implicitly converts to `Simd(T, N)` by splatting into every lane, so mixed scalar-vector expressions work without a written conversion:
+
+```odin
+a: Simd(f32, 4) = {1, 2, 3, 4};
+b := a * 2;              // {2, 4, 6, 8}: the scalar is splatted
+c := a + b;              // lane-wise
+lane := c[1];            // constant index yields f32
+```
+
+Comparison operators are **whole-vector**, not lane-wise: `==` and `!=` on two vectors yield a single `bool`, matching [comparability](#comparison-operators) elsewhere and keeping `Simd` usable with `Equatable`, maps, and generic code. Per-lane predicates are `core:simd` procedures such as `simd.lanes_eq`, which return a boolean vector. Ordering operators are not defined on vectors.
+
+Indexing requires a constant index and is bounds-checked at compile time. A lane is not addressable — `&v[0]` is rejected — because a vector value may live entirely in a register. Code that needs element addresses goes through `unsafe.raw_data(&v)`, which yields `[^]T` over the vector's storage.
+
+Size and alignment are target-defined; `size_of(Simd(T, N))` is at least `N*size_of(T)` and may be larger. A `Simd(T, N)` type is [foreign-ABI-safe](#foreign-abi-safe-types) only on a target whose ABI defines a vector class for that shape, on the same terms as `f16` and the 128-bit integers.
+
+### Slices
+
+A slice is a non-owning view of a sequence. Its length is a runtime value. `[]T` has read-only elements. `[]mut T` has mutable elements. Both types have the same runtime representation. Mutability is a static capability and does not change the ABI.
+
+A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, including when its original owner happens to be mutable. Slicing a mutable, addressable array or dynamic array produces `[]mut T`; slicing an immutable parameter, a string, or an existing `[]T` produces `[]T`.
+
+A slice expression has a low bound and a high bound separated by a colon:
+
+a[low : high]
+
+The range includes the low bound and excludes the high bound.
+
+```odin
+fibonaccis := [6]int{0, 1, 1, 2, 3, 5};
+s: []int = fibonaccis[1:4]; // creates a slice which includes elements 1 through 3
+fmt.println(s); // 1, 1, 2
+```
+
+A slice does not own element storage. Its runtime value contains a pointer and a length.
+
+**A slice is a borrow.** It is not an owning value: it has no allocator, it is never cleaned up at scope exit, and it cannot be a `manual` owner. Creating a slice over a dynamic array therefore constrains that container for as long as the slice is live, and the rules in [Borrows and lifetimes](#borrows-and-lifetimes) apply in full:
+
+```odin
+numbers := [dynamic]int{1, 2, 3};
+view: []int = numbers[:]; // mutable capability is weakened to read-only
+numbers.append(4);   // ERROR: `numbers` may reallocate while `view` is live
+fmt.println(view[0]);
+```
+
+A slice over a fixed array is a borrow of that array's storage, and so is bound by the array's scope in the same way. A slice over a string literal borrows static storage and is therefore valid for the whole program.
+
+To keep the data after the owner expires, make an owned copy. `slice.clone(view)` returns an owned `[dynamic]T`.
+
+The built-in `len` procedure returns the slice length. Element assignment and iteration by reference require `[]mut T`:
+
+```odin
+x: []mut int = ...;
+x[0] = 10;
+foreach (&value in x) {
+	value += 1;
+}
+length_of_x := len(x);
+```
+
+#### Slice literals
+
+A slice literal does not specify a length. This is an array literal:
+
+[3]int{1, 6, 3}
+
+This slice literal creates the same hidden array and returns a read-only slice of it:
+
+[]int{1, 6, 3}
+
+**A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice.
+
+```odin
+readable := []int{1, 6, 3};        // []int
+writable := []mut int{1, 6, 3};    // []mut int
+writable[0] = 99;
+readable[0] = 99;                  // ERROR: elements of `[]int` are read-only
+```
+
+The backing array of a slice literal is a hidden fixed-array owner in the surrounding lexical scope, so the slice remains valid until that scope exits. At file scope it has static lifetime. Returning a slice literal from a procedure is rejected because its hidden owner is local, just as returning a slice of a named local array is rejected.
+
+#### Slice shorthand
+
+For the array:
+
+```odin
+a: [6]int = {};
+```
+
+these slice expressions are equivalent:
+
+a[0:6]
+a[:6]
+a[0:]
+a[:]
+
+When grabbing a chunk of a slice:
+
+a[offset:offset+length]
+
+can also be written:
+
+a[offset:][:length]
+
+#### Nil slices
+
+The zero value of a slice is nil. A nil slice has a length of 0 and does not point to any underlying memory. Slices can be compared against nil and nothing else.
+
+```odin
+s: []int = nil;
+if (s == nil) {
+	fmt.println("s is nil!");
+}
+```
+
+#### Sorting slices
+
+A mutable slice can be sorted in ascending order as follows. The library procedures accept `[]mut T`; passing a read-only `[]T` is a compile-time error:
+
+```odin
+s := []mut int{1, 6, 3, 5 ,7, 3, 0};
+slice.sort(s);
+```
+
+or in descending order
+
+```odin
+r := []mut int{1, 6, 3, 5 ,7, 3, 0};
+slice.reverse_sort(r);
+```
+
+### Dynamic arrays
+
+Dynamic arrays are mutable owning values whose length may change at runtime. The value behaves like a local variable; its variable-sized backing storage is obtained through an allocator and released automatically when the array leaves scope.
+
+```odin
+x: [dynamic]int = {};
+x.append(10); // the zero value is immediately usable
+```
+
+Along with `len`, dynamic arrays provide `cap` to report their current underlying capacity. Assignment creates an independent array, while `move` transfers its backing allocation:
+
+```odin
+x := [dynamic]int{1, 2, 3};
+y := x;       // deep copy
+z := move(x); // allocation transfer; x becomes dead
+```
+
+A managed dynamic array stores its allocator with its allocation, so automatic cleanup always uses the right one. A declaration may select another allocator, without becoming manual, with the `via` modifier. `via` selects storage; it does not bring names into scope.
+
+**`via` appears only on declarations.** A procedure that needs an allocator takes an ordinary parameter. By convention, the parameter is named `allocator` and defaults to `mem.default_allocator()`. Callers supply it like any other argument.
+
+`via` selects the declaration's allocation policy for its destination, applied also when cloning into a dead or allocator-unbound variable. An allocator parameter is an ordinary value following the [runtime default](#default-values) rules. A `move` keeps the moved owner's allocator and does not relocate storage to satisfy the destination policy.
+
+```odin
+temporary: [dynamic]u8 via scratch_allocator = {};
+```
+
+**An explicit `via` allocator is bound at the declaration; the program default is bound lazily.** A zero-valued array without `via` has no backing storage and is allocator-unbound; its first operation needing an allocator records `mem.default_allocator()` before allocating. Since the build selects one provider program-wide with no scoped overrides, delaying this load cannot change the provider, and it keeps the zero representation a compile-time constant — required for file-scope, `static`, and `thread_local` owners. A `via` declaration records its allocator immediately.
+
+```odin
+numbers: [dynamic]int = {};                       // zero value remains unbound until needed
+scratch: [dynamic]int via arena.allocator() = {}; // binds this arena here
+
+fill(inout numbers);                              // first allocation binds the program default
+fill(inout scratch);                              // continues using the bound arena
+```
+
+**The allocator selects the location of backing storage.** `[dynamic]T` specifies a runtime length and allocator-provided backing storage. It does not require heap storage. To put the backing storage in the current stack frame, use `via` with an arena over a local fixed buffer:
+
+```odin
+buffer: [4096]u8 = {};                            // a live value in this frame
+arena := mem.Arena(buffer[:]);
+data: [dynamic]int via arena.allocator() = {};    // runtime length, backing is in `buffer`
+data.append(1, 2, 3);                             // no heap allocation
+```
+
+Storage location depends on the type: a local `[N]T` stores its elements in the value, a `[dynamic]T` stores them wherever its allocator provides (possibly the stack), and [`Small_Array(T, N)`](#fixed-capacity-arrays) stores an `N`-element buffer in the value. A stack-frame value must have a compile-time `size_of` that depends only on the type. `manual` specifies ownership; `via` specifies an allocator.
+
+Copy initialization uses the destination's bound allocator, resolving its declaration policy if the zero destination is still allocator-unbound. Assignment into an existing live array preserves that array's allocator. `move` transfers both the allocation and its allocator; after that owner is moved out or dropped, revival by copy again uses the destination declaration's policy. `clone(value, allocator)` and `try_clone(value, allocator)` are available when a specific allocator is required.
+
+A slice of a dynamic array is a borrowed view. While that view is live, operations that may reallocate the owner are rejected:
+
+```odin
+values := [dynamic]int{1, 2, 3};
+middle := values[1:];
+values.append(4); // error: append may invalidate `middle`
+use(middle);
+```
+
+#### Appending to a dynamic array
+
+Container operations use method syntax. These are built-in operations rather than dynamically dispatched methods.
+
+```odin
+x: [dynamic]int = {};
+x.append(123);
+x.append(4, 1, 74, 3); // append multiple values at once
+
+y: [dynamic]int = {};
+y.append(..x[:]); // append a slice
+```
+
+Ordinary mutating operations use the allocator's configured failure policy, which normally reports an out-of-memory panic. Fallible variants such as `try_append` and `try_reserve` return `Allocator_Error` for code that needs to recover.
+
+The `try_` prefix is a library-wide convention meaning: *report the failure this operation would otherwise panic on, and leave the value unchanged.* The result type depends on what can fail — `Allocator_Error` for an operation that can fail only by allocating, `bool` for one on a never-allocating container such as [`Small_Array(T, N)`](#fixed-capacity-arrays). The prefix names the contract, not the result type.
+
+#### Assigning to a dynamic array
+
+`insert` adds an element and shifts later elements upwards. Its index must be in `0..=len(x)`.
+
+**Indexed assignment does not change the array length.** `x[i] = v` causes an out-of-range panic when `i >= len(x)`. This rule prevents an incorrect index from silently increasing the array length. To assign past the current end, first change the length and then assign:
+
+```odin
+x: [dynamic]int = {};
+x.reserve(16);
+x.insert(0, 10);
+
+x.resize(4);                        // [10, 0, 0, 0]
+x[3] = 10;
+fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 10] 4 16
+
+x[3] = 20;
+x.append(30);
+fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30] 5 16
+
+x.append(40, 50, 60);
+fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30, 40, 50, 60] 8 16
+```
+
+Loke has no separate grow-and-assign operation. Use `resize` to grow and zero-fill an array. Use `append` to add elements at the end.
+
+#### Removing from a dynamic array
+
+Removing from a dynamic array can be done in several ways using the built-in procedures:
+
+- `pop` removes and returns the last element with [optional-ok semantics](#optional-ok-results), as `(T, bool)`; on an empty array the value is zero and `ok` is false.
+- `remove_unordered` removes and returns an element in O(1) by moving the last element into its location.
+- `remove` removes and returns an element while preserving order.
+
+```odin
+x: [dynamic]int = {};
+x.append(1, 2, 3, 4, 5); // [1, 2, 3, 4, 5]
+x.pop(); // [1, 2, 3, 4]
+x.remove(0); // [2, 3, 4]
+x.remove_unordered(0); // [4, 3]
+```
+
+Other variants can be found in the built-in procedures documentation.
+
+#### Slicing and sorting a dynamic array
+
+Dynamic arrays can be sliced and sorted:
+
+```odin
+s: [dynamic]int = {};
+s.append(1, 6, 3, 5, 7, 3, 0); // [1, 6, 3, 5, 7, 3, 0]
+s.sort(); // [0, 1, 3, 3, 5, 6, 7]
+```
+
+#### Creating and releasing slices and dynamic arrays
+
+Managed dynamic arrays need no explicit construction or deletion. Their zero value is usable, literals create managed values, and capacity can be reserved separately:
+
+```odin
+a: [dynamic]int = {};   // len(a) == 0, cap(a) == 0
+b := [dynamic]int{1, 2, 3};
+c: [dynamic]int = {};
+c.resize(6);            // len(c) == 6; new elements are zero
+c.reserve(32);          // capacity is at least 32
+
+// with an explicit allocator:
+scratch := mem.Scratch();
+temporary: [dynamic]int via scratch.allocator() = {};
+temporary.reserve(64);
+```
+
+`drop` releases an owner, writes its inert zero representation, and makes the binding dead. Managed code can instead use automatic scope cleanup.
+
+```odin
+drop(b);
+// `b` is dead here; assign a complete new value before using it again.
+b = [dynamic]int{};
+assert(len(b) == 0);
+```
+
+Low-level code may opt out of scope-exit cleanup with `manual` and use the fallible `make` constructor. `make` returns an ordinary owning value; the destination declaration determines whether cleanup is automatic. Moving a manual owner into a managed variable still requires `move`:
+
+```odin
+raw: manual [dynamic]int;
+allocation_error: Allocator_Error;
+raw, allocation_error = make([dynamic]int, 0, 64, my_allocator);
+if (allocation_error != nil) { panic("array allocation failed"); }
+owned := move(raw); // `owned` is managed; `raw` is dead and needs no `drop`
+
+managed, managed_error := make([dynamic]int, 0, 64, my_allocator);
+// `managed` is cleaned up automatically because its declaration is not manual.
+```
+
+#### Clearing a dynamic array
+
+`clear` removes all elements from a dynamic array. It sets `len()` to 0 and does not change `cap()`.
+
+```odin
+x: [dynamic]int = {};
+x.append(1, 2, 3, 4, 5); // [1, 2, 3, 4, 5]
+fmt.println(len(x)); // 5
+x.clear(); // []
+fmt.println(len(x)); // 0
+```
+
+#### Resizing and reserving a dynamic array
+
+A dynamic array can change its length or reserve capacity. These operations have different effects:
+
+- `resize` sets the length to the requested element count. It can also increase the capacity.
+- `reserve` makes the capacity at least the requested element count. It does not change the length.
+- `shrink` reduces the capacity to the current length or to the specified minimum capacity.
+
+```odin
+x: [dynamic]int = {};
+fmt.println(len(x), cap(x)); // 0 0
+x.append(1, 2, 3); // [1, 2, 3]
+fmt.println(len(x), cap(x)); // 3 8 — the growth policy is implementation-defined; 8 is illustrative
+x.resize(5);
+fmt.println(x[:]); // [1, 2, 3, 0, 0] other values are zero'd memory
+fmt.println(len(x), cap(x)); // 5 8
+x.reserve(32);
+fmt.println(len(x), cap(x)); // 5 32
+x.shrink();
+fmt.println(len(x), cap(x)); // 5 5
+```
+
+#### Fixed-capacity arrays
+
+A growable array with inline fixed capacity is the library type `Small_Array(T, N)`, not a second built-in array form. It implements the ordinary indexing, slicing, iteration, and container procedures through the same abstraction facilities available to user code. It never allocates; operations that would exceed `N` panic, while their `try_` forms leave the value unchanged and return false.
+
+```odin
+x: Small_Array(int, 8) = {};
+x.append(1, 2, 3);
+fmt.println(len(x), cap(x)); // 3 8
+```
+
+## Map types
+
+### Maps
+
+A map maps keys to values. Its zero value is empty and immediately usable. Like a dynamic array, a map is managed by default and releases its backing storage automatically.
+
+**Iteration order is unspecified.** It can differ between iterations of one unmodified map, between maps with the same entries, and between program runs. To get a stable order, collect and sort the keys. Map iteration is not valid on an executed [compile-time path](#compile-time-procedure-evaluation), because compile-time results must be reproducible.
+
+Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `hash(value, seed: uint) -> uint` (equal values produce equal hashes). Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
+
+```odin
+m: map[string]int = {};
+m["Bob"] = 2;
+fmt.println(m["Bob"]);
+```
+
+To insert or update an element of a map:
+
+```odin
+m[key] = elem;
+```
+
+To retrieve an element:
+
+```odin
+elem = m[key];
+```
+
+To remove an element:
+
+```odin
+m.remove(key);
+```
+
+A lookup of a missing key returns the zero value. Use the optional-ok result or the `in` operator to test whether the key exists:
+
+```odin
+elem, ok := m[key]; // `ok` is true if the element for that key exists
+```
+
+or
+
+```odin
+ok := key in m; // `ok` is true if the element for that key exists
+```
+
+The first form is the **comma-ok** form.
+
+A map literal initializes a map:
+
+```odin
+m := map[string]int{
+	"Bob" = 2,
+	"Chloe" = 5,
+}
+```
+
+Map literals create managed values using the current allocator. Low-level code that must avoid implicit allocation can use a `manual` declaration or a project-level lint that rejects implicit allocation.
+
+A map index in a place position is a location, so a field of a stored value can be assigned directly:
+
+```odin
+Test :: struct {
+	x: int,
+	y: int,
+}
+
+m := map[string]Test{
+	"Bob" = { 0, 0 },
+	"Chloe" = { 1, 1 },
+}
+
+m["Bob"] = { 3, 3 };
+m["Chloe"].x = 0;    // allowed: assigns the field of the stored value
+m["Dana"].x = 7;     // inserts a zero `Test` for "Dana", then assigns `.x`
+```
+
+The two forms differ when the key is missing:
+
+- **`m[key]` as an assignment target inserts.** If the key is absent, a zero element is inserted first and its slot is the location — the same behavior `m[key] = elem` has, extended to field and index chains. It applies to the target of an assignment or compound assignment and to an `inout` argument. Insertion may reallocate the map, so the index is a mutable borrow of `m` for the statement. This differs from [dynamic-array assignment](#assigning-to-a-dynamic-array), where an index past the end panics rather than growing the array; a map key is not positional.
+- **A non-inserting lookup is `m.find(key)`,** not `&m[key]`. It has [optional-ok semantics](#optional-ok-results), yielding a pointer to the existing slot and a `bool`:
+
+```odin
+value, ok := m.find("Bob");
+if (ok) {
+	value^ = { 2, 2 };
+}
+```
+
+  `&m[key]` is not a special lookup form: `&` always returns one pointer, never an optional-ok result. Use `find` for a non-inserting lookup.
+
+#### Map container operations
+
+The built-in map supports these container operations:
+
+- `len(some_map)` returns the number of entries.
+- `cap(some_map)` returns the current capacity. An insertion can reallocate when it exceeds this capacity.
+- `some_map.clear()` removes all entries and retains the capacity.
+- `some_map.reserve(capacity)` reserves capacity for at least the requested number of entries.
+- `some_map.shrink()` removes excess capacity.
+- `some_map.find(key)` returns `(^V, bool)`. It returns a pointer to the existing value and `true`, or `nil` and `false`. It does not insert.
+
+## Structured and algebraic types
+
+### Type alias
+
+A type alias gives another name to a type:
+
+```odin
+My_Int :: int;
+#assert(My_Int == int);
+```
+
+### Distinct types
+
+A distinct type is a new type with the same representation as its underlying type.
+
+```odin
+My_Int :: distinct int;
+#assert(My_Int != int);
+```
+
+A distinct type may define its own methods, operators, constructors, conversions, interfaces, formatting, and lifecycle hooks. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form below.
+
+Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
+
+```odin
+Foo :: struct {};
+#assert(Foo != struct{});
+```
+
+#### Delegating operators
+
+A single forwarding overload is one line — unwrap to the underlying type, apply its operator, wrap the result back:
+
+```odin
+Meters :: distinct f64;
+
+impl Meters {
+    add :: operator(+) proc(a, b: Meters) -> Meters { return Meters(f64(a) + f64(b)); }
+}
+```
+
+but a numeric newtype needs that same line for every operator it wants. `delegate` generates those forwarding overloads from a list of operator symbols, parsed exactly as [`operator(...)`](#operator-declarations), inside an `impl` or `extend` block for a distinct type:
+
+```odin
+Meters :: distinct f64;
+
+impl Meters {
+    delegate(+, -, ==, !=, <, <=, >, >=);
+}
+
+a := Meters(3);
+b := Meters(4);
+c := a + b;      // Meters(7): generated (a, b: Meters) -> Meters
+a += b;          // += follows from + by the compound-assignment fallback
+ok := a < b;     // bool: a comparison result is not wrapped
+```
+
+For each listed symbol, `delegate` generates the underlying type's overloads of that operator (fixed at declaration time, so a caller's extensions cannot change them), substituting the distinct type for the underlying type in every operand and result. Each generated overload unwraps its operands, applies the underlying operator, and wraps a result *of the underlying type* back; a result of any other type — a comparison `bool`, a dot-product `f32` — passes through unchanged. Compound-assignment forms follow from their binary operators via the [fallback rule](#operator-declarations), so delegating `+` also gives `+=`.
+
+Delegation is selective by design. `Meters` delegates `+` and `-` but not `*` or `/`: two lengths add to a length but multiply to an area, a different type. A mixed-operand operator such as `Meters * f64 -> Meters` is written by hand. Listing a symbol the underlying type does not define is an error, and delegating one already declared explicitly in the same block is a redeclaration.
+
+`delegate` has no meaning for a non-`distinct` type. Non-operator behavior — a method, or a `hash`, `compare`, or `format` overload — is re-exported by an ordinary one-line procedure that unwraps, calls, and where relevant wraps; these are rarer and need no bulk form.
+
+### Structs
+
+A struct is a record that contains named fields. The dot operator selects a field:
+
+```odin
+Vector2 :: struct {
+	x: f32,
+	y: f32,
+}
+v := Vector2{1, 2};
+v.x = 4;
+fmt.println(v.x);
+```
+
+The dot operator can also select a field through a struct pointer:
+
+```odin
+v := Vector2{1, 2};
+p := &v;
+p.x = 1335;
+fmt.println(v);
+```
+
+For a pointer to a struct, `p.field` is equivalent to `p^.field`.
+
+#### Struct literals
+
+A struct literal starts with its type and a pair of braces. An unnamed initializer list must supply all fields or no fields:
+
+```odin
+Vector3 :: struct {
+	x, y, z: f32,
+}
+v: Vector3;
+v = Vector3{}; // Zero value
+v = Vector3{1, 4, 9};
+```
+
+A named initializer list can supply a subset of fields. Field order does not matter. Omitted fields use their zero value:
+
+```odin
+v := Vector3{z=1, y=2};
+assert(v.x == 0);
+assert(v.y == 2);
+assert(v.z == 1);
+```
+
+Structs can be nested by defining a field as a struct.
+
+```odin
+Foo :: struct {
+	a, b, c: int,
+	
+	bar_1: struct {
+		x, y, z: int,
+	},
+
+	bar_2: struct {
+		x, y, z: int,
+	},
+
+	_: struct {
+		x, y, z: int,
+	},
+}
+```
+
+#### Struct layout attributes
+
+Structs can be annotated with different memory layout and alignment requirements:
+
+struct @(align=4)  {...} // require four-byte alignment
+struct @(packed)    {...} // remove padding between fields
+
+These use the same attribute syntax as declarations and statements. Foreign layout uses the target ABI rules, equality optimizations require compiler proof, and validated construction uses an `init` procedure.
+
+#### Struct field tags
+
+A string literal after a struct field is a field tag. Runtime type information can read this metadata. Libraries usually use tags to specify how to encode, decode, or format a field. The language does not interpret the tag contents.
+
+```odin
+User :: struct {
+	flag: bool, // untagged field
+	age:  int    "custom whatever information",
+	name: string `json:"username" xml:"user-name" fmt:"q"`, // `core:reflect` layout
+}
+```
+
+Within Loke’s core library, the standard convention is to use a key that denotes the consuming package followed by a value. For example, `json` tags are processed by `core:encoding/json`, while `fmt` tags are processed by `core:fmt`.
+
+A package can define comma-separated options in its tag value. For example:
+
+```odin
+name: string `json:"username,omitempty"`,
+```
+
+### Promoted struct fields
+
+A struct field declared with `using` promotes that field's members for selector lookup on the containing value. This is the only use of `using`; it does not import packages or inject names from parameters, locals, enum types, or arbitrary values into lexical scope.
+
+```odin
+Vector3 :: struct{x, y, z: f32};
+Quaternion_F32 :: struct{x, y, z, w: f32}; // ordinary library-defined type
+Entity :: struct {
+	position: Vector3,
+	orientation: Quaternion_F32, // library-defined type
+}
+```
+
+Promoting `position` makes its fields appear as selectors on `Entity`:
+
+```odin
+Entity :: struct {
+	using position: Vector3,
+	orientation: Quaternion_F32, // library-defined type
+}
+foo :: proc(entity: ^Entity) {
+	fmt.println(entity.x, entity.y, entity.z);
+}
+```
+
+Promoted names are only member-lookup shorthand. An explicitly declared field on the outer struct wins over a promoted name; otherwise two promoted fields supplying the same name make that selector ambiguous. A `using` field does not make the containing struct a subtype of the field type and does not create an implicit conversion. Passing the embedded value requires explicit selection, such as `consume(value.position)`.
+
+### Unions
+
+A union is a discriminated union, also known as a tagged union or sum type. The zero value of a union is nil.
+
+```odin
+Value :: union {
+	bool,
+	i32,
+	f32,
+	string,
+}
+v: Value;
+v = "Hellope";
+
+// type assert that `v` is a `string` and panic otherwise
+s1 := v.(string);
+
+// Type assertion with an explicit Boolean check. This does not panic.
+s2, ok := v.(string);
+```
+
+A type assertion is single-valued where the asserted type is the only expected result, and it panics if the union does not currently hold that variant. In a comma-ok destination or as the left operand of `or_else` it instead has [optional-ok semantics](#optional-ok-results), producing `(T, bool)` and never panicking.
+
+A type assertion must name the asserted type; the compiler does not infer it from context.
+
+#### Type assertions are always checked
+
+No attribute, build flag, or `core:unsafe` operation removes the tag check from `v.(T)`. Code that already knows the active variant still uses the ordinary assertion; the optimizer may remove the check when that fact is provable.
+
+#### Type switch statement
+
+A type switch is a construct that allows several type assertions in series. A type switch is like a regular switch statement, but the cases are types (not values). For a union, the only case types allowed are that of the union.
+
+```odin
+value: Value = ...;
+switch (v in value) {
+case string:
+	#assert(type_of(v) == string)
+
+case bool:
+	#assert(type_of(v) == bool)
+
+case i32, f32:
+	// This case allows for multiple types, therefore we cannot know which type to use
+	// `v` remains the original union value
+	#assert(type_of(v) == Value)
+case:
+	// Default case
+	// In this case, it is `nil`
+}
+```
+
+#### Union alignment
+
+Unions have the `align` attribute, like structures:
+
+union @(align=4) {...} // align to 4 bytes
+
+### Enumerations
+
+An enumeration defines a distinct type and a fixed set of named values. Values have declaration order:
+
+```odin
+Direction :: enum{North, East, South, West};
+```
+
+The following holds:
+
+int(Direction.North) == 0
+int(Direction.East)  == 1
+int(Direction.South) == 2
+int(Direction.West)  == 3
+
+Enum fields can be assigned an explicit value:
+
+```odin
+Foo :: enum {
+	A,
+	B = 4, // Holes are valid
+	C = 7,
+	D = 1337,
+}
+```
+
+If an enumeration requires a specific size, a backing integer type can be specified. By default, int is used as the backing type for an enumeration.
+
+```odin
+Foo :: enum u8 {A, B, C}; // Foo is 8 bits
+```
+
+Enum members are named constants, not numbers with a name: they may have holes, and arithmetic on them is not defined. See [Arithmetic operators](#arithmetic-operators). Convert to the backing integer type when a numeric value is wanted, and use the library `Bit_Set(Enum)` for flag sets.
+
+Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_Snake_Case`, and the core library follows suit. The convention is not compiler-enforced, but the spelling of a compiler-provided member is normative.
+
+#### Implicit selector expression
+
+An implicit selector omits the enumeration type when context supplies that type. It has this form:
+
+.member_name
+
+For example:
+
+```odin
+Foo :: enum{A, B, C};
+f: Foo;
+f = Foo.A;
+f = .A;
+
+switch (f) {
+case .A:
+	fmt.println("foo");
+case .B:
+	fmt.println("bar");
+case .C:
+	fmt.println("baz");
+}
+```
+
+#### Iterating an enumeration
+
+An enum *type* can be iterated directly, yielding its declared members in declaration order. This supports tasks such as printing every member or populating a library-defined `Enum_Array(Enum, T)`.
+
+This is a compiler special case, not the [iteration protocol](#iteration-protocol): that protocol runs over runtime values via `iter(value)`, while a `type` exists only at compile time and has no `impl`. The compiler recognizes an enum type in a `foreach` header and lowers it directly; it is the only type accepted there, so `foreach (x in int)` or `foreach (x in Some_Struct)` is an error.
+
+```odin
+Direction :: enum{North, East, South, West};
+
+foreach (direction, index in Direction) {
+	fmt.println(index, direction);
+	// 0 North
+	// 1 East
+	// 2 South
+	// 3 West
+}
+```
+
+## Procedure and meta types
+
+### Procedure type
+
+A procedure type is a code pointer. Its zero value is `nil`.
+
+Examples:
+
+```odin
+proc(x: int) -> bool
+proc(c: proc(x: int) -> bool) -> (i32, f32);
+```
+
+A variable can have a procedure type:
+
+```odin
+Callback :: proc() -> int;
+a: Callback = nil;
+assert(a == nil);
+a = proc() -> int { return 0; };
+fmt.println(a()); // 0
+a = proc() -> int { return 100; };
+fmt.println(a()); // 100
+```
+
+#### Calling conventions
+
+Loke supports the following calling-convention names:
+
+- `loke` — the default convention for a Loke procedure, using the target-specific parameter classification described under [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering). It passes only the arguments required by the source-level procedure type and ABI lowering; there is no implicit environment pointer.
+- `c` — the target C ABI's default calling convention.
+- `stdcall` — the Microsoft stdcall convention on targets that support it.
+
+Compiler- or target-specific conventions use namespaced extension strings; the portable set is limited to conventions with a stable cross-toolchain meaning.
+
+The default calling convention is `loke`, unless a declaration is within a foreign block, where it is `c`.
+
+A procedure type with a different calling convention can be declared like the following:
+
+proc "c" (n: i32, data: rawptr)
+
+Procedure types are compatible only when calling convention, parameter and result types, parameter modes, variadic shape, and type-level parameter effects match. In particular, `@(allocator_reset)` is part of the parameter's procedure type: a reset-capable procedure cannot be stored in a procedure value whose type hides that effect. Declaration-only attributes such as visibility and deprecation do not participate in type compatibility. Omitted-argument defaults are declaration metadata rather than type metadata; every call through a procedure value supplies the full parameter list.
+
+Result-provenance summaries are also declaration metadata rather than part of a
+procedure type. A direct call can use the summary, but converting a declaration
+to a procedure value erases it and activates the conservative indirect-call
+rule under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries).
+
+### `type` and `typeid`
+
+`type` is a compile-time-only type whose values are Loke types. It is used for
+generic type parameters, compile-time reflection, and procedures that compute a
+type:
+
+```odin
+Index_Type :: proc($Count: uint) -> type {
+	when (Count <= 256) {
+		return u8;
+	} else when (Count <= 65536) {
+		return u16;
+	} else {
+		return u32;
+	}
+}
+
+Index :: Index_Type(1000);
+```
+
+A `type` value has no runtime representation or zero value. It may be bound by a
+constant, used as a `$` parameter, or returned by a procedure whose every call
+is evaluated at compile time. It cannot be the type of a variable, ordinary
+non-`$` parameter, record field, container element, foreign declaration, or
+runtime procedure value; compiler-defined reflection descriptors are the only
+records allowed to carry it internally. A procedure whose signature contains `type` or a
+compile-time reflection descriptor is itself compile-time-only and cannot be
+exported or stored in a procedure value.
+
+Two `type` values support `==` and `!=` during compilation; equality means the
+same Loke type identity after aliases are resolved. They have no ordering and
+cannot be elements or keys of runtime or materialized containers.
+
+`typeid` is an ordinary runtime scalar holding the unique identifier of one concrete runtime type. It is not usable as a type and does not make a generic procedure, keeping runtime reflection from becoming a second spelling of specialization.
+
+`typeid` is used by `any_view`, [`dyn Interface`](#borrowed-dynamic-interface-values),
+and runtime reflection:
+
+```odin
+a := typeid_of(bool);
+i: int = 123;
+b := typeid_of(type_of(i));
+```
+
+A typeid can be mapped to relevant type information which can be used in applications such as printing types and editing data:
+
+```odin
+import "base:runtime";
+
+main :: proc() {
+	u := u8(123);
+	id := typeid_of(type_of(u));
+	info: ^runtime.Type_Info;
+info = type_info_of(id);
+}
+```
+
+`typeid_of(T)` maps a compile-time `type` value to its runtime `typeid` constant.
+`type_info_of(id)` accepts a runtime `typeid` and returns runtime metadata. It
+does not recover a compile-time `type`, because runtime information cannot flow
+back into specialization. A `typeid` is an ordinary scalar and can be forged, so
+the lookup is checked: the nil `typeid`, and any id this program has no entry
+for, produce a nil result.
+
+The metadata layouts are public and belong to `base:runtime`, which a program
+must import to name them:
+
+```odin
+Type_Kind :: enum u8 {
+	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
+	Raw_Pointer, Pointer, Multi_Pointer, Array, Slice, Dynamic_Array, Map,
+	Struct, Enum, Union, Proc, String, String_View, CString_View,
+	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
+}
+
+Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
+
+Member_Info :: struct {
+	kind:       Member_Kind,
+	name:       string_view,
+	tag:        string_view,
+	type:       typeid,
+	offset:     int,
+	value_low:  u64,
+	value_high: u64,
+}
+
+Type_Info :: struct {
+	id:      typeid,
+	kind:    Type_Kind,
+	name:    string_view,
+	size:    int,
+	align:   int,
+	bits:    int,
+	signed:  bool,
+	element: typeid,
+	key:     typeid,
+	count:   int,
+	members: []Member_Info,
+}
+```
+
+Every view and slice above points at static storage, so a `^Type_Info` owns
+nothing and needs no cleanup. Aggregate member tables expose public fields only,
+procedure entries keep written parameter and result order, union variants keep
+declaration order, and unused scalar, relation, and member fields are zero. An
+enum member's raw value is carried in `value_low`/`value_high` so that a signed
+or unsigned 128-bit value survives; the owning type's `bits` and `signed` say how
+to read them. Adding a field or an enum member to these records is a runtime ABI
+change, because generated metadata tables are written against exactly this field
+order.
+
+### Compile-time reflection
+
+The compiler exposes two typed, immutable reflection descriptors, `meta.Field`
+and `meta.Enum_Value`. Their names are exported by the compiler-defined
+`base:meta` package and they exist only during compilation.
+
+`fields_of(T)` and `enum_values_of(T)` return compile-time fixed arrays of the
+corresponding descriptor type. Descriptors are opaque and cannot be forged. Names
+are constant `string_view` values, and a descriptor's `.type` member is a
+compile-time `type` value. A `meta.Field` also carries its declared
+[field tag](#struct-field-tags), which is what serialization libraries read.
+
+Both preserve source declaration order, after conditional `when` selection.
+Reflection observes only declarations visible from its lookup package. Thus
+`fields_of(T)` contains every selected field when the lookup package declares
+`T`, but only public fields when reflecting from another package. In a generic
+body the reflection lookup package is the generic declaration's definition
+package, so an instantiation has the same reflected shape in every caller.
+
+Reflection is limited to these two descriptors. Adding a further descriptor in a
+later version is a backward-compatible change; removing one is not.
+
+A `meta.Field` bound by static expansion provides compiler-defined operations
+whose result follows that particular field's type:
+
+```odin
+visit_fields :: proc(value: ^$T, visitor: inout $Visitor) {
+	foreach ($field in fields_of(T)) {
+		visitor.visit(field.pointer(value));
+	}
+}
+```
+
+`field.get(value)` accepts `^T`, reads the selected field, and has type
+`field.type` after expansion. `field.pointer(value)` also accepts `^T` and
+returns `^field.type`. Both take a pointer so that one expansion body can use
+either without restructuring its parameter. The
+normal visibility, packed-field, borrow, copy, and mutation rules still apply;
+`pointer` is rejected for a packed field. There is no string-based field lookup.
+
+Reflection values may be inspected, compared for identity, passed to `$`
+parameters, and iterated by static `foreach`. They cannot be materialized into
+runtime storage. Runtime tools instead use the less powerful
+`runtime.Type_Info` reached through `type_info_of`.
+
+### any_view type
+
+`any_view` is a non-owning type-erased value, used for formatting, logging, reflection, and other call-oriented APIs. Internally it is a pointer plus a `typeid`, and creating one borrows its source. Its zero value is nil.
+
+It may be a local variable or parameter, but it cannot be a result type, global, struct or union field, container element, or captured/stored value. The ordinary local borrow checker ensures a local `any_view` does not outlive or overlap an invalidating operation on its source. A temporary converted for a call remains valid through that complete call expression.
+
+**A variadic `..any_view` parameter is the only exception to the container rule.** Formatting procedures such as `fmt.println(a, b, c)` use this form. The caller converts each argument to `any_view`. It materializes a temporary `[]any_view` for the duration of the call.
+
+```odin
+println :: proc(args: ..any_view) { ... }
+```
+
+The slice and its elements borrow the caller's temporary arguments and live only for the complete call expression. The called procedure can read, index, iterate, and forward the slice to another `..any_view` parameter, but must not store the slice or an element past the call.
+
+No other operation produces `[]any_view`; there is no `any_view` array, dynamic array, or slice local, so this is a calling form, not a container type. [`@(c_vararg)`](#c_vararg) is separate signature notation, passing the original concrete arguments with the C default argument promotions.
+
+Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime type assertions and type switches.
+
+```odin
+print_value :: proc(value: any_view) { ... }
+print_value(42); // the temporary lives through the call
+```
+
+`any_view` has no owning counterpart; its type erasure is call-scoped, so a procedure may inspect the erased value but not retain it. To retain a value of one of several types, use a union; for open borrowed runtime behavior, use `dyn Interface` or a record of callbacks; to retain something arbitrary, own it concretely and pass an `any_view` or `dyn` view at the point of use.
+
+## Methods and abstractions
 
 ### General rules
 
@@ -924,6 +2104,81 @@ destination = move(temporary);
 
 `apply_failure_policy` is not a source-level procedure; it denotes the allocator behavior under [Allocation failure](#allocation-failure). The destination is unchanged if `try_clone` fails; calling `try_clone` explicitly returns the error and never applies the policy.
 
+### Standard customization procedures
+
+The standard library recognizes ordinary overloadable procedures for common behavior:
+
+| Procedure | Purpose |
+| --- | --- |
+| `len(value)` | Number of logical elements or bytes, as defined by the type |
+| `cap(value)` | Current capacity when meaningful |
+| `hash(value, seed: uint) -> uint` | Hashing for maps and sets |
+| `format(value, writer, options)` | Formatting and printing |
+| `compare(left, right)` | Three-way ordering when useful |
+| `iter(value: T) -> T.Iterator` | Forward iteration using the type's associated iterator |
+| `iter_reverse(value)` | Reverse iteration when the type supplies it |
+| `clone(value, allocator := mem.default_allocator())` | Explicit independent copy |
+| `try_clone(value, allocator := mem.default_allocator())` | Fallible independent copy |
+
+These use normal overload groups and are written as free calls — `len(x)`, `hash(key, seed)`, `clone(value)` — which is canonical and always available. For lifecycle-enabled types the compiler contributes free `clone` and `try_clone` overloads forwarding to the fixed hooks; a user customizes copying by replacing `T.try_clone`, not by adding an unrelated free clone.
+
+**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible `extend` block, or a built-in container operation such as `append`, `remove`, `reserve`, or `sort`. Loke does not rewrite `f(x)` as `x.f()`.
+
+A type may declare one of the procedures above as a method:
+
+```odin
+impl Ring_Buffer {
+	len :: proc(self) -> int { return self.count; }
+}
+
+buffer: Ring_Buffer = {};
+n := len(buffer);        // always valid: the overload group
+m := buffer.len();       // also valid: `Ring_Buffer` declared it with `self`
+```
+
+For built-in containers, `len(x)` and `cap(x)` are free calls (the queries generic code makes on a type parameter, via `(c: T) len(c) -> int`), while mutators such as `x.append(v)` are receiver methods.
+
+### Library numeric types
+
+Complex numbers and quaternions are standard-library abstractions, not base-language types, built from ordinary structs, methods, operators, conversions, interfaces, and formatting hooks:
+
+```odin
+Complex_F64 :: struct {
+	real, imaginary: f64,
+}
+
+impl Complex_F64 {
+	init_components :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
+		return {real, imaginary};
+	}
+
+	add :: operator(+) proc(left, right: Complex_F64) -> Complex_F64 {
+		return {left.real + right.real, left.imaginary + right.imaginary};
+	}
+
+	multiply :: operator(*) proc(left, right: Complex_F64) -> Complex_F64 {
+		return {
+			left.real*right.real - left.imaginary*right.imaginary,
+			left.real*right.imaginary + left.imaginary*right.real,
+		};
+	}
+
+	@(implicit)
+	from_scalar :: proc(value: f64) -> Complex_F64 {
+		return {value, 0};
+	}
+
+	init :: proc{init_components, from_scalar};
+}
+
+z := Complex_F64(1, 2);
+w := z*z + 2.0;               // `2.0` is a constant, so `from_scalar` applies
+```
+
+The standard library may offer generic `Complex(T)` and `Quaternion(T)` families with no special compiler relationship. A scalar *constant* is promoted by an `@(implicit)` one-argument `init`; a scalar *variable* is promoted explicitly, `Complex_F64(x)`. The same facilities suffice for third-party fixed-point, decimal, rational, dual, interval, and unit-aware numeric types, and for the vector, matrix, and swizzle types built on [`Simd(T, N)`](#simd-vectors).
+
+## Interfaces and polymorphism
+
 ### Interfaces and generic operators
 
 An `interface` names a set of compile-time structural requirements. A type satisfies it implicitly when every requirement holds; no `implements` declaration is needed. An interface is compile-time metadata, not a runtime value type; runtime polymorphism is requested explicitly with [`dyn Interface`](#borrowed-dynamic-interface-values).
@@ -1161,1245 +2416,6 @@ paint(&drawable, inout canvas); // T is dyn Drawable; witness dispatch
 Passing a concrete value to generic code never introduces dynamic dispatch; the caller must construct a `dyn` value first, or the parameter must ask for one. A `dyn` value also converts without allocation to a composed base interface, preserving the data pointer and selecting the base interface's witness.
 
 There is no owning erased value in the base language: a future owner must state its allocator, alignment, move, clone, drop, and thread-affinity behavior. Closed heterogeneous ownership uses unions; open ownership combines an explicit allocation owner with a record of callbacks. `shared(dyn I)` shares only the two-word view and does not extend the payload's lifetime.
-
-### Standard customization procedures
-
-The standard library recognizes ordinary overloadable procedures for common behavior:
-
-| Procedure | Purpose |
-| --- | --- |
-| `len(value)` | Number of logical elements or bytes, as defined by the type |
-| `cap(value)` | Current capacity when meaningful |
-| `hash(value, seed: uint) -> uint` | Hashing for maps and sets |
-| `format(value, writer, options)` | Formatting and printing |
-| `compare(left, right)` | Three-way ordering when useful |
-| `iter(value: T) -> T.Iterator` | Forward iteration using the type's associated iterator |
-| `iter_reverse(value)` | Reverse iteration when the type supplies it |
-| `clone(value, allocator := mem.default_allocator())` | Explicit independent copy |
-| `try_clone(value, allocator := mem.default_allocator())` | Fallible independent copy |
-
-These use normal overload groups and are written as free calls — `len(x)`, `hash(key, seed)`, `clone(value)` — which is canonical and always available. For lifecycle-enabled types the compiler contributes free `clone` and `try_clone` overloads forwarding to the fixed hooks; a user customizes copying by replacing `T.try_clone`, not by adding an unrelated free clone.
-
-**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible `extend` block, or a built-in container operation such as `append`, `remove`, `reserve`, or `sort`. Loke does not rewrite `f(x)` as `x.f()`.
-
-A type may declare one of the procedures above as a method:
-
-```odin
-impl Ring_Buffer {
-	len :: proc(self) -> int { return self.count; }
-}
-
-buffer: Ring_Buffer = {};
-n := len(buffer);        // always valid: the overload group
-m := buffer.len();       // also valid: `Ring_Buffer` declared it with `self`
-```
-
-For built-in containers, `len(x)` and `cap(x)` are free calls (the queries generic code makes on a type parameter, via `(c: T) len(c) -> int`), while mutators such as `x.append(v)` are receiver methods.
-
-### Library numeric types
-
-Complex numbers and quaternions are standard-library abstractions, not base-language types, built from ordinary structs, methods, operators, conversions, interfaces, and formatting hooks:
-
-```odin
-Complex_F64 :: struct {
-	real, imaginary: f64,
-}
-
-impl Complex_F64 {
-	init_components :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
-		return {real, imaginary};
-	}
-
-	add :: operator(+) proc(left, right: Complex_F64) -> Complex_F64 {
-		return {left.real + right.real, left.imaginary + right.imaginary};
-	}
-
-	multiply :: operator(*) proc(left, right: Complex_F64) -> Complex_F64 {
-		return {
-			left.real*right.real - left.imaginary*right.imaginary,
-			left.real*right.imaginary + left.imaginary*right.real,
-		};
-	}
-
-	@(implicit)
-	from_scalar :: proc(value: f64) -> Complex_F64 {
-		return {value, 0};
-	}
-
-	init :: proc{init_components, from_scalar};
-}
-
-z := Complex_F64(1, 2);
-w := z*z + 2.0;               // `2.0` is a constant, so `from_scalar` applies
-```
-
-The standard library may offer generic `Complex(T)` and `Quaternion(T)` families with no special compiler relationship. A scalar *constant* is promoted by an `@(implicit)` one-argument `init`; a scalar *variable* is promoted explicitly, `Complex_F64(x)`. The same facilities suffice for third-party fixed-point, decimal, rational, dual, interval, and unit-aware numeric types, and for the vector, matrix, and swizzle types built on [`Simd(T, N)`](#simd-vectors).
-
-## Advanced types
-
-### Type alias
-
-A type alias gives another name to a type:
-
-```odin
-My_Int :: int;
-#assert(My_Int == int);
-```
-
-### Distinct types
-
-A distinct type is a new type with the same representation as its underlying type.
-
-```odin
-My_Int :: distinct int;
-#assert(My_Int != int);
-```
-
-A distinct type may define its own methods, operators, constructors, conversions, interfaces, formatting, and lifecycle hooks. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form below.
-
-Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
-
-```odin
-Foo :: struct {};
-#assert(Foo != struct{});
-```
-
-#### Delegating operators
-
-A single forwarding overload is one line — unwrap to the underlying type, apply its operator, wrap the result back:
-
-```odin
-Meters :: distinct f64;
-
-impl Meters {
-    add :: operator(+) proc(a, b: Meters) -> Meters { return Meters(f64(a) + f64(b)); }
-}
-```
-
-but a numeric newtype needs that same line for every operator it wants. `delegate` generates those forwarding overloads from a list of operator symbols, parsed exactly as [`operator(...)`](#operator-declarations), inside an `impl` or `extend` block for a distinct type:
-
-```odin
-Meters :: distinct f64;
-
-impl Meters {
-    delegate(+, -, ==, !=, <, <=, >, >=);
-}
-
-a := Meters(3);
-b := Meters(4);
-c := a + b;      // Meters(7): generated (a, b: Meters) -> Meters
-a += b;          // += follows from + by the compound-assignment fallback
-ok := a < b;     // bool: a comparison result is not wrapped
-```
-
-For each listed symbol, `delegate` generates the underlying type's overloads of that operator (fixed at declaration time, so a caller's extensions cannot change them), substituting the distinct type for the underlying type in every operand and result. Each generated overload unwraps its operands, applies the underlying operator, and wraps a result *of the underlying type* back; a result of any other type — a comparison `bool`, a dot-product `f32` — passes through unchanged. Compound-assignment forms follow from their binary operators via the [fallback rule](#operator-declarations), so delegating `+` also gives `+=`.
-
-Delegation is selective by design. `Meters` delegates `+` and `-` but not `*` or `/`: two lengths add to a length but multiply to an area, a different type. A mixed-operand operator such as `Meters * f64 -> Meters` is written by hand. Listing a symbol the underlying type does not define is an error, and delegating one already declared explicitly in the same block is a redeclaration.
-
-`delegate` has no meaning for a non-`distinct` type. Non-operator behavior — a method, or a `hash`, `compare`, or `format` overload — is re-exported by an ordinary one-line procedure that unwraps, calls, and where relevant wraps; these are rarer and need no bulk form.
-
-### Fixed arrays
-
-A fixed array contains a compile-time number of elements of one type. An array index can have an integer, character, or enumeration type.
-
-This declaration constructs a fixed array:
-
-```odin
-x := [5]int{1, 2, 3, 4, 5};
-foreach (i in 0..=4) {
-	fmt.println(x[i]);
-}
-```
-
-A fixed array stores its elements contiguously. Its layout is equivalent to a record with one field for each element.
-
-`x[i]` accesses element `i` of `x`. The first element has index 0.
-
-#### Multidimensional arrays
-
-A multidimensional fixed array is an ordinary nested array. `[Rows][Columns]T` means an outer array of `Rows` values, each of which is an inner `[Columns]T` array:
-
-```odin
-grid := [2][3]int{
-	{1, 2, 3},
-	{4, 5, 6},
-};
-
-row := grid[1];       // [3]int{4, 5, 6}
-x := grid[1][2];      // 6
-```
-
-Nested fixed arrays are one contiguous value; they are not arrays of pointers. Their layout is row-major in declaration order, with the rightmost index varying fastest. For `a: [D0][D1]...[Dn]T`, the scalar elements of `a[0]` precede those of `a[1]`. In two dimensions, `a[row][column]` has the flat element offset `row*Columns + column`.
-
-**Built-in indexing takes exactly one index.** A nested container is indexed by chaining: `a[i][j][k]`. Each step is evaluated left to right and performs its own bounds check, and it is a compile-time error if an intermediate value is not indexable.
-
-The comma form `a[i, j]` is reserved for a user-defined [`operator([])`](#indexing-and-slicing) taking that many indices, and is a compile-time error on a built-in container. The two spellings never coincide: `value[i][j]` is two independent indexing operations, while `value[i, j]` is one operation receiving both indices at once, free to map them onto rectangular, column-major, strided, or sparse storage.
-
-`[][]T` is a slice of slices and `[dynamic][dynamic]T` is a dynamic array of independently managed dynamic arrays; their inner containers may have different lengths and, for dynamic arrays, separate allocations. They are potentially jagged, and only nested *fixed* arrays have the single contiguous layout described above.
-
-The base language gives arrays no mathematical meaning. Fixed arrays support storage, indexing, iteration, slicing, and structural equality, but not arithmetic or broadcasting; vector, swizzle, and matrix operations belong in libraries. A rectangular dynamically sized container is likewise a library type holding one flat `[dynamic]T`, its dimensions, and an `operator([])` for multi-index access.
-
-A fixed-array length can be inferred from its literal with a question mark (`?`):
-
-```odin
-x := [?]int{1, 2, 3, 4, 5};
-```
-
-Designated initializers set elements by index or index range:
-
-```odin
-favorite_animals := [?]string{
-	// Assign by index
-	0 = "Raven",
-	1 = "Zebra",
-	2 = "Spider",
-	// Assign by range of indices
-	3..=5 = "Frog",
-	6..<8 = "Cat",
-}
-```
-
-The built-in `len` procedure returns the array length.
-
-```odin
-x: [5]int = {};
-#assert(len(x) == 5);
-```
-
-Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a multi-pointer:
-
-```odin
-p := unsafe.raw_data(&x);
-p[n] = 123; // unchecked; the programmer proves that n is valid
-```
-
-No source attribute or build flag silently changes indexing semantics. The explicit unchecked conversion should be limited to small scopes where the bounds argument is locally evident.
-
-### SIMD vectors
-
-`Simd(T, N)` is a predeclared generic type representing a fixed-width vector of `N` lanes of `T`. `N` must be a compile-time constant power of two, and `T` must be a built-in integer, floating-point, or boolean type.
-
-Arithmetic and bitwise operators apply **lane-wise** and produce a vector of the same shape. A scalar `T` implicitly converts to `Simd(T, N)` by splatting into every lane, so mixed scalar-vector expressions work without a written conversion:
-
-```odin
-a: Simd(f32, 4) = {1, 2, 3, 4};
-b := a * 2;              // {2, 4, 6, 8}: the scalar is splatted
-c := a + b;              // lane-wise
-lane := c[1];            // constant index yields f32
-```
-
-Comparison operators are **whole-vector**, not lane-wise: `==` and `!=` on two vectors yield a single `bool`, matching [comparability](#comparison-operators) elsewhere and keeping `Simd` usable with `Equatable`, maps, and generic code. Per-lane predicates are `core:simd` procedures such as `simd.lanes_eq`, which return a boolean vector. Ordering operators are not defined on vectors.
-
-Indexing requires a constant index and is bounds-checked at compile time. A lane is not addressable — `&v[0]` is rejected — because a vector value may live entirely in a register. Code that needs element addresses goes through `unsafe.raw_data(&v)`, which yields `[^]T` over the vector's storage.
-
-Size and alignment are target-defined; `size_of(Simd(T, N))` is at least `N*size_of(T)` and may be larger. A `Simd(T, N)` type is [foreign-ABI-safe](#foreign-abi-safe-types) only on a target whose ABI defines a vector class for that shape, on the same terms as `f16` and the 128-bit integers.
-
-### Slices
-
-A slice is a non-owning view of a sequence. Its length is a runtime value. `[]T` has read-only elements. `[]mut T` has mutable elements. Both types have the same runtime representation. Mutability is a static capability and does not change the ABI.
-
-A mutable slice implicitly weakens to a read-only slice. A read-only slice never converts to a mutable slice, including when its original owner happens to be mutable. Slicing a mutable, addressable array or dynamic array produces `[]mut T`; slicing an immutable parameter, a string, or an existing `[]T` produces `[]T`.
-
-A slice expression has a low bound and a high bound separated by a colon:
-
-a[low : high]
-
-The range includes the low bound and excludes the high bound.
-
-```odin
-fibonaccis := [6]int{0, 1, 1, 2, 3, 5};
-s: []int = fibonaccis[1:4]; // creates a slice which includes elements 1 through 3
-fmt.println(s); // 1, 1, 2
-```
-
-A slice does not own element storage. Its runtime value contains a pointer and a length.
-
-**A slice is a borrow.** It is not an owning value: it has no allocator, it is never cleaned up at scope exit, and it cannot be a `manual` owner. Creating a slice over a dynamic array therefore constrains that container for as long as the slice is live, and the rules in [Borrows and lifetimes](#borrows-and-lifetimes) apply in full:
-
-```odin
-numbers := [dynamic]int{1, 2, 3};
-view: []int = numbers[:]; // mutable capability is weakened to read-only
-numbers.append(4);   // ERROR: `numbers` may reallocate while `view` is live
-fmt.println(view[0]);
-```
-
-A slice over a fixed array is a borrow of that array's storage, and so is bound by the array's scope in the same way. A slice over a string literal borrows static storage and is therefore valid for the whole program.
-
-To keep the data after the owner expires, make an owned copy. `slice.clone(view)` returns an owned `[dynamic]T`.
-
-The built-in `len` procedure returns the slice length. Element assignment and iteration by reference require `[]mut T`:
-
-```odin
-x: []mut int = ...;
-x[0] = 10;
-foreach (&value in x) {
-	value += 1;
-}
-length_of_x := len(x);
-```
-
-#### Slice literals
-
-A slice literal does not specify a length. This is an array literal:
-
-[3]int{1, 6, 3}
-
-This slice literal creates the same hidden array and returns a read-only slice of it:
-
-[]int{1, 6, 3}
-
-**A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice.
-
-```odin
-readable := []int{1, 6, 3};        // []int
-writable := []mut int{1, 6, 3};    // []mut int
-writable[0] = 99;
-readable[0] = 99;                  // ERROR: elements of `[]int` are read-only
-```
-
-The backing array of a slice literal is a hidden fixed-array owner in the surrounding lexical scope, so the slice remains valid until that scope exits. At file scope it has static lifetime. Returning a slice literal from a procedure is rejected because its hidden owner is local, just as returning a slice of a named local array is rejected.
-
-#### Slice shorthand
-
-For the array:
-
-```odin
-a: [6]int = {};
-```
-
-these slice expressions are equivalent:
-
-a[0:6]
-a[:6]
-a[0:]
-a[:]
-
-When grabbing a chunk of a slice:
-
-a[offset:offset+length]
-
-can also be written:
-
-a[offset:][:length]
-
-#### Nil slices
-
-The zero value of a slice is nil. A nil slice has a length of 0 and does not point to any underlying memory. Slices can be compared against nil and nothing else.
-
-```odin
-s: []int = nil;
-if (s == nil) {
-	fmt.println("s is nil!");
-}
-```
-
-#### Sorting slices
-
-A mutable slice can be sorted in ascending order as follows. The library procedures accept `[]mut T`; passing a read-only `[]T` is a compile-time error:
-
-```odin
-s := []mut int{1, 6, 3, 5 ,7, 3, 0};
-slice.sort(s);
-```
-
-or in descending order
-
-```odin
-r := []mut int{1, 6, 3, 5 ,7, 3, 0};
-slice.reverse_sort(r);
-```
-
-### Dynamic arrays
-
-Dynamic arrays are mutable owning values whose length may change at runtime. The value behaves like a local variable; its variable-sized backing storage is obtained through an allocator and released automatically when the array leaves scope.
-
-```odin
-x: [dynamic]int = {};
-x.append(10); // the zero value is immediately usable
-```
-
-Along with `len`, dynamic arrays provide `cap` to report their current underlying capacity. Assignment creates an independent array, while `move` transfers its backing allocation:
-
-```odin
-x := [dynamic]int{1, 2, 3};
-y := x;       // deep copy
-z := move(x); // allocation transfer; x becomes dead
-```
-
-A managed dynamic array stores its allocator with its allocation, so automatic cleanup always uses the right one. A declaration may select another allocator, without becoming manual, with the `via` modifier. `via` selects storage; it does not bring names into scope.
-
-**`via` appears only on declarations.** A procedure that needs an allocator takes an ordinary parameter. By convention, the parameter is named `allocator` and defaults to `mem.default_allocator()`. Callers supply it like any other argument.
-
-`via` selects the declaration's allocation policy for its destination, applied also when cloning into a dead or allocator-unbound variable. An allocator parameter is an ordinary value following the [runtime default](#default-values) rules. A `move` keeps the moved owner's allocator and does not relocate storage to satisfy the destination policy.
-
-```odin
-temporary: [dynamic]u8 via scratch_allocator = {};
-```
-
-**An explicit `via` allocator is bound at the declaration; the program default is bound lazily.** A zero-valued array without `via` has no backing storage and is allocator-unbound; its first operation needing an allocator records `mem.default_allocator()` before allocating. Since the build selects one provider program-wide with no scoped overrides, delaying this load cannot change the provider, and it keeps the zero representation a compile-time constant — required for file-scope, `static`, and `thread_local` owners. A `via` declaration records its allocator immediately.
-
-```odin
-numbers: [dynamic]int = {};                       // zero value remains unbound until needed
-scratch: [dynamic]int via arena.allocator() = {}; // binds this arena here
-
-fill(inout numbers);                              // first allocation binds the program default
-fill(inout scratch);                              // continues using the bound arena
-```
-
-**The allocator selects the location of backing storage.** `[dynamic]T` specifies a runtime length and allocator-provided backing storage. It does not require heap storage. To put the backing storage in the current stack frame, use `via` with an arena over a local fixed buffer:
-
-```odin
-buffer: [4096]u8 = {};                            // a live value in this frame
-arena := mem.Arena(buffer[:]);
-data: [dynamic]int via arena.allocator() = {};    // runtime length, backing is in `buffer`
-data.append(1, 2, 3);                             // no heap allocation
-```
-
-Storage location depends on the type: a local `[N]T` stores its elements in the value, a `[dynamic]T` stores them wherever its allocator provides (possibly the stack), and [`Small_Array(T, N)`](#fixed-capacity-arrays) stores an `N`-element buffer in the value. A stack-frame value must have a compile-time `size_of` that depends only on the type. `manual` specifies ownership; `via` specifies an allocator.
-
-Copy initialization uses the destination's bound allocator, resolving its declaration policy if the zero destination is still allocator-unbound. Assignment into an existing live array preserves that array's allocator. `move` transfers both the allocation and its allocator; after that owner is moved out or dropped, revival by copy again uses the destination declaration's policy. `clone(value, allocator)` and `try_clone(value, allocator)` are available when a specific allocator is required.
-
-A slice of a dynamic array is a borrowed view. While that view is live, operations that may reallocate the owner are rejected:
-
-```odin
-values := [dynamic]int{1, 2, 3};
-middle := values[1:];
-values.append(4); // error: append may invalidate `middle`
-use(middle);
-```
-
-#### Appending to a dynamic array
-
-Container operations use method syntax. These are built-in operations rather than dynamically dispatched methods.
-
-```odin
-x: [dynamic]int = {};
-x.append(123);
-x.append(4, 1, 74, 3); // append multiple values at once
-
-y: [dynamic]int = {};
-y.append(..x[:]); // append a slice
-```
-
-Ordinary mutating operations use the allocator's configured failure policy, which normally reports an out-of-memory panic. Fallible variants such as `try_append` and `try_reserve` return `Allocator_Error` for code that needs to recover.
-
-The `try_` prefix is a library-wide convention meaning: *report the failure this operation would otherwise panic on, and leave the value unchanged.* The result type depends on what can fail — `Allocator_Error` for an operation that can fail only by allocating, `bool` for one on a never-allocating container such as [`Small_Array(T, N)`](#fixed-capacity-arrays). The prefix names the contract, not the result type.
-
-#### Assigning to a dynamic array
-
-`insert` adds an element and shifts later elements upwards. Its index must be in `0..=len(x)`.
-
-**Indexed assignment does not change the array length.** `x[i] = v` causes an out-of-range panic when `i >= len(x)`. This rule prevents an incorrect index from silently increasing the array length. To assign past the current end, first change the length and then assign:
-
-```odin
-x: [dynamic]int = {};
-x.reserve(16);
-x.insert(0, 10);
-
-x.resize(4);                        // [10, 0, 0, 0]
-x[3] = 10;
-fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 10] 4 16
-
-x[3] = 20;
-x.append(30);
-fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30] 5 16
-
-x.append(40, 50, 60);
-fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30, 40, 50, 60] 8 16
-```
-
-Loke has no separate grow-and-assign operation. Use `resize` to grow and zero-fill an array. Use `append` to add elements at the end.
-
-#### Removing from a dynamic array
-
-Removing from a dynamic array can be done in several ways using the built-in procedures:
-
-- `pop` removes and returns the last element with [optional-ok semantics](#optional-ok-results), as `(T, bool)`; on an empty array the value is zero and `ok` is false.
-- `remove_unordered` removes and returns an element in O(1) by moving the last element into its location.
-- `remove` removes and returns an element while preserving order.
-
-```odin
-x: [dynamic]int = {};
-x.append(1, 2, 3, 4, 5); // [1, 2, 3, 4, 5]
-x.pop(); // [1, 2, 3, 4]
-x.remove(0); // [2, 3, 4]
-x.remove_unordered(0); // [4, 3]
-```
-
-Other variants can be found in the built-in procedures documentation.
-
-#### Slicing and sorting a dynamic array
-
-Dynamic arrays can be sliced and sorted:
-
-```odin
-s: [dynamic]int = {};
-s.append(1, 6, 3, 5, 7, 3, 0); // [1, 6, 3, 5, 7, 3, 0]
-s.sort(); // [0, 1, 3, 3, 5, 6, 7]
-```
-
-#### Creating and releasing slices and dynamic arrays
-
-Managed dynamic arrays need no explicit construction or deletion. Their zero value is usable, literals create managed values, and capacity can be reserved separately:
-
-```odin
-a: [dynamic]int = {};   // len(a) == 0, cap(a) == 0
-b := [dynamic]int{1, 2, 3};
-c: [dynamic]int = {};
-c.resize(6);            // len(c) == 6; new elements are zero
-c.reserve(32);          // capacity is at least 32
-
-// with an explicit allocator:
-scratch := mem.Scratch();
-temporary: [dynamic]int via scratch.allocator() = {};
-temporary.reserve(64);
-```
-
-`drop` releases an owner, writes its inert zero representation, and makes the binding dead. Managed code can instead use automatic scope cleanup.
-
-```odin
-drop(b);
-// `b` is dead here; assign a complete new value before using it again.
-b = [dynamic]int{};
-assert(len(b) == 0);
-```
-
-Low-level code may opt out of scope-exit cleanup with `manual` and use the fallible `make` constructor. `make` returns an ordinary owning value; the destination declaration determines whether cleanup is automatic. Moving a manual owner into a managed variable still requires `move`:
-
-```odin
-raw: manual [dynamic]int;
-allocation_error: Allocator_Error;
-raw, allocation_error = make([dynamic]int, 0, 64, my_allocator);
-if (allocation_error != nil) { panic("array allocation failed"); }
-owned := move(raw); // `owned` is managed; `raw` is dead and needs no `drop`
-
-managed, managed_error := make([dynamic]int, 0, 64, my_allocator);
-// `managed` is cleaned up automatically because its declaration is not manual.
-```
-
-#### Clearing a dynamic array
-
-`clear` removes all elements from a dynamic array. It sets `len()` to 0 and does not change `cap()`.
-
-```odin
-x: [dynamic]int = {};
-x.append(1, 2, 3, 4, 5); // [1, 2, 3, 4, 5]
-fmt.println(len(x)); // 5
-x.clear(); // []
-fmt.println(len(x)); // 0
-```
-
-#### Resizing and reserving a dynamic array
-
-A dynamic array can change its length or reserve capacity. These operations have different effects:
-
-- `resize` sets the length to the requested element count. It can also increase the capacity.
-- `reserve` makes the capacity at least the requested element count. It does not change the length.
-- `shrink` reduces the capacity to the current length or to the specified minimum capacity.
-
-```odin
-x: [dynamic]int = {};
-fmt.println(len(x), cap(x)); // 0 0
-x.append(1, 2, 3); // [1, 2, 3]
-fmt.println(len(x), cap(x)); // 3 8 — the growth policy is implementation-defined; 8 is illustrative
-x.resize(5);
-fmt.println(x[:]); // [1, 2, 3, 0, 0] other values are zero'd memory
-fmt.println(len(x), cap(x)); // 5 8
-x.reserve(32);
-fmt.println(len(x), cap(x)); // 5 32
-x.shrink();
-fmt.println(len(x), cap(x)); // 5 5
-```
-
-#### Fixed-capacity arrays
-
-A growable array with inline fixed capacity is the library type `Small_Array(T, N)`, not a second built-in array form. It implements the ordinary indexing, slicing, iteration, and container procedures through the same abstraction facilities available to user code. It never allocates; operations that would exceed `N` panic, while their `try_` forms leave the value unchanged and return false.
-
-```odin
-x: Small_Array(int, 8) = {};
-x.append(1, 2, 3);
-fmt.println(len(x), cap(x)); // 3 8
-```
-
-### Enumerations
-
-An enumeration defines a distinct type and a fixed set of named values. Values have declaration order:
-
-```odin
-Direction :: enum{North, East, South, West};
-```
-
-The following holds:
-
-int(Direction.North) == 0
-int(Direction.East)  == 1
-int(Direction.South) == 2
-int(Direction.West)  == 3
-
-Enum fields can be assigned an explicit value:
-
-```odin
-Foo :: enum {
-	A,
-	B = 4, // Holes are valid
-	C = 7,
-	D = 1337,
-}
-```
-
-If an enumeration requires a specific size, a backing integer type can be specified. By default, int is used as the backing type for an enumeration.
-
-```odin
-Foo :: enum u8 {A, B, C}; // Foo is 8 bits
-```
-
-Enum members are named constants, not numbers with a name: they may have holes, and arithmetic on them is not defined. See [Arithmetic operators](#arithmetic-operators). Convert to the backing integer type when a numeric value is wanted, and use the library `Bit_Set(Enum)` for flag sets.
-
-Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_Snake_Case`, and the core library follows suit. The convention is not compiler-enforced, but the spelling of a compiler-provided member is normative.
-
-#### Implicit selector expression
-
-An implicit selector omits the enumeration type when context supplies that type. It has this form:
-
-.member_name
-
-For example:
-
-```odin
-Foo :: enum{A, B, C};
-f: Foo;
-f = Foo.A;
-f = .A;
-
-switch (f) {
-case .A:
-	fmt.println("foo");
-case .B:
-	fmt.println("bar");
-case .C:
-	fmt.println("baz");
-}
-```
-
-#### Iterating an enumeration
-
-An enum *type* can be iterated directly, yielding its declared members in declaration order. This supports tasks such as printing every member or populating a library-defined `Enum_Array(Enum, T)`.
-
-This is a compiler special case, not the [iteration protocol](#iteration-protocol): that protocol runs over runtime values via `iter(value)`, while a `type` exists only at compile time and has no `impl`. The compiler recognizes an enum type in a `foreach` header and lowers it directly; it is the only type accepted there, so `foreach (x in int)` or `foreach (x in Some_Struct)` is an error.
-
-```odin
-Direction :: enum{North, East, South, West};
-
-foreach (direction, index in Direction) {
-	fmt.println(index, direction);
-	// 0 North
-	// 1 East
-	// 2 South
-	// 3 West
-}
-```
-
-### Pointers
-
-A pointer contains the memory address of a value. `^T` is a pointer to `T`. Its zero value is `nil`.
-
-```odin
-p: ^int = nil;
-```
-
-The `&` operator returns the address of an addressable operand:
-
-```odin
-i := 123;
-p := &i;
-```
-
-The postfix `^` operator dereferences a pointer:
-
-```odin
-fmt.println(p^); // read `i` through the pointer `p`
-p^ = 1337;       // write `i` through the pointer `p`
-```
-
-Loke uses `^` for pointer types and pointer dereference:
-
-```odin
-i := 0;
-p: ^int = &i; // ^ on the left
-x := p^;      // ^ on the right
-```
-
-Pointer arithmetic is not an operator. `core:mem.ptr_offset` and
-`core:mem.ptr_sub` provide explicit address calculations.
-
-### Structs
-
-A struct is a record that contains named fields. The dot operator selects a field:
-
-```odin
-Vector2 :: struct {
-	x: f32,
-	y: f32,
-}
-v := Vector2{1, 2};
-v.x = 4;
-fmt.println(v.x);
-```
-
-The dot operator can also select a field through a struct pointer:
-
-```odin
-v := Vector2{1, 2};
-p := &v;
-p.x = 1335;
-fmt.println(v);
-```
-
-For a pointer to a struct, `p.field` is equivalent to `p^.field`.
-
-#### Struct literals
-
-A struct literal starts with its type and a pair of braces. An unnamed initializer list must supply all fields or no fields:
-
-```odin
-Vector3 :: struct {
-	x, y, z: f32,
-}
-v: Vector3;
-v = Vector3{}; // Zero value
-v = Vector3{1, 4, 9};
-```
-
-A named initializer list can supply a subset of fields. Field order does not matter. Omitted fields use their zero value:
-
-```odin
-v := Vector3{z=1, y=2};
-assert(v.x == 0);
-assert(v.y == 2);
-assert(v.z == 1);
-```
-
-Structs can be nested by defining a field as a struct.
-
-```odin
-Foo :: struct {
-	a, b, c: int,
-	
-	bar_1: struct {
-		x, y, z: int,
-	},
-
-	bar_2: struct {
-		x, y, z: int,
-	},
-
-	_: struct {
-		x, y, z: int,
-	},
-}
-```
-
-#### Struct layout attributes
-
-Structs can be annotated with different memory layout and alignment requirements:
-
-struct @(align=4)  {...} // require four-byte alignment
-struct @(packed)    {...} // remove padding between fields
-
-These use the same attribute syntax as declarations and statements. Foreign layout uses the target ABI rules, equality optimizations require compiler proof, and validated construction uses an `init` procedure.
-
-#### Struct field tags
-
-A string literal after a struct field is a field tag. Runtime type information can read this metadata. Libraries usually use tags to specify how to encode, decode, or format a field. The language does not interpret the tag contents.
-
-```odin
-User :: struct {
-	flag: bool, // untagged field
-	age:  int    "custom whatever information",
-	name: string `json:"username" xml:"user-name" fmt:"q"`, // `core:reflect` layout
-}
-```
-
-Within Loke’s core library, the standard convention is to use a key that denotes the consuming package followed by a value. For example, `json` tags are processed by `core:encoding/json`, while `fmt` tags are processed by `core:fmt`.
-
-A package can define comma-separated options in its tag value. For example:
-
-```odin
-name: string `json:"username,omitempty"`,
-```
-
-### Unions
-
-A union is a discriminated union, also known as a tagged union or sum type. The zero value of a union is nil.
-
-```odin
-Value :: union {
-	bool,
-	i32,
-	f32,
-	string,
-}
-v: Value;
-v = "Hellope";
-
-// type assert that `v` is a `string` and panic otherwise
-s1 := v.(string);
-
-// Type assertion with an explicit Boolean check. This does not panic.
-s2, ok := v.(string);
-```
-
-A type assertion is single-valued where the asserted type is the only expected result, and it panics if the union does not currently hold that variant. In a comma-ok destination or as the left operand of `or_else` it instead has [optional-ok semantics](#optional-ok-results), producing `(T, bool)` and never panicking.
-
-A type assertion must name the asserted type; the compiler does not infer it from context.
-
-#### Type assertions are always checked
-
-No attribute, build flag, or `core:unsafe` operation removes the tag check from `v.(T)`. Code that already knows the active variant still uses the ordinary assertion; the optimizer may remove the check when that fact is provable.
-
-#### Type switch statement
-
-A type switch is a construct that allows several type assertions in series. A type switch is like a regular switch statement, but the cases are types (not values). For a union, the only case types allowed are that of the union.
-
-```odin
-value: Value = ...;
-switch (v in value) {
-case string:
-	#assert(type_of(v) == string)
-
-case bool:
-	#assert(type_of(v) == bool)
-
-case i32, f32:
-	// This case allows for multiple types, therefore we cannot know which type to use
-	// `v` remains the original union value
-	#assert(type_of(v) == Value)
-case:
-	// Default case
-	// In this case, it is `nil`
-}
-```
-
-#### Union alignment
-
-Unions have the `align` attribute, like structures:
-
-union @(align=4) {...} // align to 4 bytes
-
-### Maps
-
-A map maps keys to values. Its zero value is empty and immediately usable. Like a dynamic array, a map is managed by default and releases its backing storage automatically.
-
-**Iteration order is unspecified.** It can differ between iterations of one unmodified map, between maps with the same entries, and between program runs. To get a stable order, collect and sort the keys. Map iteration is not valid on an executed [compile-time path](#compile-time-procedure-evaluation), because compile-time results must be reproducible.
-
-Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `hash(value, seed: uint) -> uint` (equal values produce equal hashes). Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
-
-```odin
-m: map[string]int = {};
-m["Bob"] = 2;
-fmt.println(m["Bob"]);
-```
-
-To insert or update an element of a map:
-
-```odin
-m[key] = elem;
-```
-
-To retrieve an element:
-
-```odin
-elem = m[key];
-```
-
-To remove an element:
-
-```odin
-m.remove(key);
-```
-
-A lookup of a missing key returns the zero value. Use the optional-ok result or the `in` operator to test whether the key exists:
-
-```odin
-elem, ok := m[key]; // `ok` is true if the element for that key exists
-```
-
-or
-
-```odin
-ok := key in m; // `ok` is true if the element for that key exists
-```
-
-The first form is the **comma-ok** form.
-
-A map literal initializes a map:
-
-```odin
-m := map[string]int{
-	"Bob" = 2,
-	"Chloe" = 5,
-}
-```
-
-Map literals create managed values using the current allocator. Low-level code that must avoid implicit allocation can use a `manual` declaration or a project-level lint that rejects implicit allocation.
-
-A map index in a place position is a location, so a field of a stored value can be assigned directly:
-
-```odin
-Test :: struct {
-	x: int,
-	y: int,
-}
-
-m := map[string]Test{
-	"Bob" = { 0, 0 },
-	"Chloe" = { 1, 1 },
-}
-
-m["Bob"] = { 3, 3 };
-m["Chloe"].x = 0;    // allowed: assigns the field of the stored value
-m["Dana"].x = 7;     // inserts a zero `Test` for "Dana", then assigns `.x`
-```
-
-The two forms differ when the key is missing:
-
-- **`m[key]` as an assignment target inserts.** If the key is absent, a zero element is inserted first and its slot is the location — the same behavior `m[key] = elem` has, extended to field and index chains. It applies to the target of an assignment or compound assignment and to an `inout` argument. Insertion may reallocate the map, so the index is a mutable borrow of `m` for the statement. This differs from [dynamic-array assignment](#assigning-to-a-dynamic-array), where an index past the end panics rather than growing the array; a map key is not positional.
-- **A non-inserting lookup is `m.find(key)`,** not `&m[key]`. It has [optional-ok semantics](#optional-ok-results), yielding a pointer to the existing slot and a `bool`:
-
-```odin
-value, ok := m.find("Bob");
-if (ok) {
-	value^ = { 2, 2 };
-}
-```
-
-  `&m[key]` is not a special lookup form: `&` always returns one pointer, never an optional-ok result. Use `find` for a non-inserting lookup.
-
-#### Map container operations
-
-The built-in map supports these container operations:
-
-- `len(some_map)` returns the number of entries.
-- `cap(some_map)` returns the current capacity. An insertion can reallocate when it exceeds this capacity.
-- `some_map.clear()` removes all entries and retains the capacity.
-- `some_map.reserve(capacity)` reserves capacity for at least the requested number of entries.
-- `some_map.shrink()` removes excess capacity.
-- `some_map.find(key)` returns `(^V, bool)`. It returns a pointer to the existing value and `true`, or `nil` and `false`. It does not insert.
-
-### Procedure type
-
-A procedure type is a code pointer. Its zero value is `nil`.
-
-Examples:
-
-```odin
-proc(x: int) -> bool
-proc(c: proc(x: int) -> bool) -> (i32, f32);
-```
-
-A variable can have a procedure type:
-
-```odin
-Callback :: proc() -> int;
-a: Callback = nil;
-assert(a == nil);
-a = proc() -> int { return 0; };
-fmt.println(a()); // 0
-a = proc() -> int { return 100; };
-fmt.println(a()); // 100
-```
-
-#### Calling conventions
-
-Loke supports the following calling-convention names:
-
-- `loke` — the default convention for a Loke procedure, using the target-specific parameter classification described under [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering). It passes only the arguments required by the source-level procedure type and ABI lowering; there is no implicit environment pointer.
-- `c` — the target C ABI's default calling convention.
-- `stdcall` — the Microsoft stdcall convention on targets that support it.
-
-Compiler- or target-specific conventions use namespaced extension strings; the portable set is limited to conventions with a stable cross-toolchain meaning.
-
-The default calling convention is `loke`, unless a declaration is within a foreign block, where it is `c`.
-
-A procedure type with a different calling convention can be declared like the following:
-
-proc "c" (n: i32, data: rawptr)
-
-Procedure types are compatible only when calling convention, parameter and result types, parameter modes, variadic shape, and type-level parameter effects match. In particular, `@(allocator_reset)` is part of the parameter's procedure type: a reset-capable procedure cannot be stored in a procedure value whose type hides that effect. Declaration-only attributes such as visibility and deprecation do not participate in type compatibility. Omitted-argument defaults are declaration metadata rather than type metadata; every call through a procedure value supplies the full parameter list.
-
-Result-provenance summaries are also declaration metadata rather than part of a
-procedure type. A direct call can use the summary, but converting a declaration
-to a procedure value erases it and activates the conservative indirect-call
-rule under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries).
-
-### `type` and `typeid`
-
-`type` is a compile-time-only type whose values are Loke types. It is used for
-generic type parameters, compile-time reflection, and procedures that compute a
-type:
-
-```odin
-Index_Type :: proc($Count: uint) -> type {
-	when (Count <= 256) {
-		return u8;
-	} else when (Count <= 65536) {
-		return u16;
-	} else {
-		return u32;
-	}
-}
-
-Index :: Index_Type(1000);
-```
-
-A `type` value has no runtime representation or zero value. It may be bound by a
-constant, used as a `$` parameter, or returned by a procedure whose every call
-is evaluated at compile time. It cannot be the type of a variable, ordinary
-non-`$` parameter, record field, container element, foreign declaration, or
-runtime procedure value; compiler-defined reflection descriptors are the only
-records allowed to carry it internally. A procedure whose signature contains `type` or a
-compile-time reflection descriptor is itself compile-time-only and cannot be
-exported or stored in a procedure value.
-
-Two `type` values support `==` and `!=` during compilation; equality means the
-same Loke type identity after aliases are resolved. They have no ordering and
-cannot be elements or keys of runtime or materialized containers.
-
-`typeid` is an ordinary runtime scalar holding the unique identifier of one concrete runtime type. It is not usable as a type and does not make a generic procedure, keeping runtime reflection from becoming a second spelling of specialization.
-
-`typeid` is used by `any_view`, [`dyn Interface`](#borrowed-dynamic-interface-values),
-and runtime reflection:
-
-```odin
-a := typeid_of(bool);
-i: int = 123;
-b := typeid_of(type_of(i));
-```
-
-A typeid can be mapped to relevant type information which can be used in applications such as printing types and editing data:
-
-```odin
-import "base:runtime";
-
-main :: proc() {
-	u := u8(123);
-	id := typeid_of(type_of(u));
-	info: ^runtime.Type_Info;
-info = type_info_of(id);
-}
-```
-
-`typeid_of(T)` maps a compile-time `type` value to its runtime `typeid` constant.
-`type_info_of(id)` accepts a runtime `typeid` and returns runtime metadata. It
-does not recover a compile-time `type`, because runtime information cannot flow
-back into specialization. A `typeid` is an ordinary scalar and can be forged, so
-the lookup is checked: the nil `typeid`, and any id this program has no entry
-for, produce a nil result.
-
-The metadata layouts are public and belong to `base:runtime`, which a program
-must import to name them:
-
-```odin
-Type_Kind :: enum u8 {
-	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
-	Raw_Pointer, Pointer, Multi_Pointer, Array, Slice, Dynamic_Array, Map,
-	Struct, Enum, Union, Proc, String, String_View, CString_View,
-	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
-}
-
-Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
-
-Member_Info :: struct {
-	kind:       Member_Kind,
-	name:       string_view,
-	tag:        string_view,
-	type:       typeid,
-	offset:     int,
-	value_low:  u64,
-	value_high: u64,
-}
-
-Type_Info :: struct {
-	id:      typeid,
-	kind:    Type_Kind,
-	name:    string_view,
-	size:    int,
-	align:   int,
-	bits:    int,
-	signed:  bool,
-	element: typeid,
-	key:     typeid,
-	count:   int,
-	members: []Member_Info,
-}
-```
-
-Every view and slice above points at static storage, so a `^Type_Info` owns
-nothing and needs no cleanup. Aggregate member tables expose public fields only,
-procedure entries keep written parameter and result order, union variants keep
-declaration order, and unused scalar, relation, and member fields are zero. An
-enum member's raw value is carried in `value_low`/`value_high` so that a signed
-or unsigned 128-bit value survives; the owning type's `bits` and `signed` say how
-to read them. Adding a field or an enum member to these records is a runtime ABI
-change, because generated metadata tables are written against exactly this field
-order.
-
-### Compile-time reflection
-
-The compiler exposes two typed, immutable reflection descriptors, `meta.Field`
-and `meta.Enum_Value`. Their names are exported by the compiler-defined
-`base:meta` package and they exist only during compilation.
-
-`fields_of(T)` and `enum_values_of(T)` return compile-time fixed arrays of the
-corresponding descriptor type. Descriptors are opaque and cannot be forged. Names
-are constant `string_view` values, and a descriptor's `.type` member is a
-compile-time `type` value. A `meta.Field` also carries its declared
-[field tag](#struct-field-tags), which is what serialization libraries read.
-
-Both preserve source declaration order, after conditional `when` selection.
-Reflection observes only declarations visible from its lookup package. Thus
-`fields_of(T)` contains every selected field when the lookup package declares
-`T`, but only public fields when reflecting from another package. In a generic
-body the reflection lookup package is the generic declaration's definition
-package, so an instantiation has the same reflected shape in every caller.
-
-Reflection is limited to these two descriptors. Adding a further descriptor in a
-later version is a backward-compatible change; removing one is not.
-
-A `meta.Field` bound by static expansion provides compiler-defined operations
-whose result follows that particular field's type:
-
-```odin
-visit_fields :: proc(value: ^$T, visitor: inout $Visitor) {
-	foreach ($field in fields_of(T)) {
-		visitor.visit(field.pointer(value));
-	}
-}
-```
-
-`field.get(value)` accepts `^T`, reads the selected field, and has type
-`field.type` after expansion. `field.pointer(value)` also accepts `^T` and
-returns `^field.type`. Both take a pointer so that one expansion body can use
-either without restructuring its parameter. The
-normal visibility, packed-field, borrow, copy, and mutation rules still apply;
-`pointer` is rejected for a packed field. There is no string-based field lookup.
-
-Reflection values may be inspected, compared for identity, passed to `$`
-parameters, and iterated by static `foreach`. They cannot be materialized into
-runtime storage. Runtime tools instead use the less powerful
-`runtime.Type_Info` reached through `type_info_of`.
-
-### any_view type
-
-`any_view` is a non-owning type-erased value, used for formatting, logging, reflection, and other call-oriented APIs. Internally it is a pointer plus a `typeid`, and creating one borrows its source. Its zero value is nil.
-
-It may be a local variable or parameter, but it cannot be a result type, global, struct or union field, container element, or captured/stored value. The ordinary local borrow checker ensures a local `any_view` does not outlive or overlap an invalidating operation on its source. A temporary converted for a call remains valid through that complete call expression.
-
-**A variadic `..any_view` parameter is the only exception to the container rule.** Formatting procedures such as `fmt.println(a, b, c)` use this form. The caller converts each argument to `any_view`. It materializes a temporary `[]any_view` for the duration of the call.
-
-```odin
-println :: proc(args: ..any_view) { ... }
-```
-
-The slice and its elements borrow the caller's temporary arguments and live only for the complete call expression. The called procedure can read, index, iterate, and forward the slice to another `..any_view` parameter, but must not store the slice or an element past the call.
-
-No other operation produces `[]any_view`; there is no `any_view` array, dynamic array, or slice local, so this is a calling form, not a container type. [`@(c_vararg)`](#c_vararg) is separate signature notation, passing the original concrete arguments with the C default argument promotions.
-
-Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime type assertions and type switches.
-
-```odin
-print_value :: proc(value: any_view) { ... }
-print_value(42); // the temporary lives through the call
-```
-
-`any_view` has no owning counterpart; its type erasure is call-scoped, so a procedure may inspect the erased value but not retain it. To retain a value of one of several types, use a union; for open borrowed runtime behavior, use `dyn Interface` or a record of callbacks; to retain something arbitrary, own it concretely and pass an `any_view` or `dyn` view at the point of use.
-
-### Multi-pointers
-
-A multi-pointer describes a foreign (C-like) pointer that acts like an array. `[^]T` is a multi-pointer to `T`. Its zero value is nil.
-
-```odin
-p: [^]int = nil;
-```
-
-What multi-pointers support:
-
-- Indexing without bounds checking.
-- Slicing, with bounds checking when both low and high operands are given.
-- Implicit conversions between `^T` and `[^]T`.
-- Implicit conversion to `rawptr`, like all pointers.
-
-What multi-pointers DO NOT SUPPORT:
-
-- Dereferencing, making a multi-pointer closer to a slim slice than a pointer.
-
-The type mainly aids foreign code, documenting intent and easing conversion of C pointers into slices.
-
-The following are the rules for indexing and slicing for multi-pointers, and what type they produce depending on the operands given:
-
-```odin
-x: [^]T = ...;
-```
-
-x[i]   -> T
-x[:]   -> [^]T
-x[i:]  -> [^]T
-x[:n]  -> []T
-x[i:n] -> []T
-
-Interacting with Multi-Pointers is easiest using `unsafe.raw_data`, which makes the loss of bounds and borrow capability visible at the call site.
-
-```odin
-a: [^]int = nil;
-fmt.println(a); // <nil>
-b := [?]int { 10, 20, 30 };
-a = unsafe.raw_data(b[:]);
-fmt.println(a, a[1], b); // 0x7FFCBE9FE688 20 [10, 20, 30]
-```
-
-The language name for `[^]T` is *multi-pointer*.
-
-### unsafe.raw_data procedure
-
-`unsafe.raw_data` is a `core:unsafe` procedure that returns the underlying data of a built-in data type as a multi-pointer. A multi-pointer carries neither a length nor a read-only capability, and its lifetime is no longer checked after conversion.
-
-```odin
-unsafe.raw_data([]$E)              -> [^]E;    // read-only slices; capability is discarded
-unsafe.raw_data([]mut $E)          -> [^]E;    // mutable slices
-unsafe.raw_data([dynamic]$E)       -> [^]E;    // dynamic arrays
-unsafe.raw_data(^[$N]$E)           -> [^]E;    // fixed arrays
-unsafe.raw_data(^Simd($E, $N))     -> [^]E;    // SIMD vectors
-unsafe.raw_data(string)            -> [^]byte;
-```
-
-For a nested fixed array, `unsafe.raw_data` exposes one array level at a time. If `grid` has type `[Rows][Columns]T`, then `unsafe.raw_data(&grid)` has type `[^][Columns]T`, while `unsafe.raw_data(&grid[0])` has type `[^]T` and points at the first scalar element of the contiguous row-major storage.
-
-### Promoted struct fields
-
-A struct field declared with `using` promotes that field's members for selector lookup on the containing value. This is the only use of `using`; it does not import packages or inject names from parameters, locals, enum types, or arbitrary values into lexical scope.
-
-```odin
-Vector3 :: struct{x, y, z: f32};
-Quaternion_F32 :: struct{x, y, z, w: f32}; // ordinary library-defined type
-Entity :: struct {
-	position: Vector3,
-	orientation: Quaternion_F32, // library-defined type
-}
-```
-
-Promoting `position` makes its fields appear as selectors on `Entity`:
-
-```odin
-Entity :: struct {
-	using position: Vector3,
-	orientation: Quaternion_F32, // library-defined type
-}
-foo :: proc(entity: ^Entity) {
-	fmt.println(entity.x, entity.y, entity.z);
-}
-```
-
-Promoted names are only member-lookup shorthand. An explicitly declared field on the outer struct wins over a promoted name; otherwise two promoted fields supplying the same name make that selector ambiguous. A `using` field does not make the containing struct a subtype of the field type and does not create an implicit conversion. Passing the embedded value requires explicit selection, such as `consume(value.position)`.
 
 # 3. Declarations & Storage Duration
 
