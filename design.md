@@ -5099,6 +5099,20 @@ passes its allocator explicitly. The compiler rejects `free_all`, or any call
 carrying the same allocator-reset effect, while a live owning value (managed or
 manual) or borrow still refers to storage from that allocator.
 
+`Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows
+the supplied storage; provider-backed construction takes a parent allocator and
+defaults it to the program provider. Ordinary construction applies the parent's
+failure policy, while the `try_` procedures return a zero owner and an explicit
+error. A provider-backed child must be dropped before its parent region is reset
+or ended.
+
+```odin
+fixed := mem.Arena(buffer[:]);
+arena := mem.Arena(parent_allocator);
+scratch := mem.Scratch();
+maybe, err := mem.try_scratch(parent_allocator);
+```
+
 For this rule, an owner is live when it may be used later or still requires
 cleanup on an outgoing path. An explicitly dropped manual owner is dead and no
 longer blocks reset; moving an owner transfers the dependency to its destination.
