@@ -1,0 +1,5 @@
+declare i64 @strlen(ptr)
+declare i32 @printf(ptr, ...)
+declare double @dot(ptr, ptr)
+@errno_value = external global i32
+call i32 (ptr, ...) @printf(

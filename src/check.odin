@@ -97,8 +97,14 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
 		for item in file.active_items {
-			if d, ok := item.(^Decl); ok {
-				declare_all(k, d, top_level = true)
+			#partial switch v in item {
+			case ^Decl:
+				declare_all(k, v, top_level = true)
+			case ^Item_Foreign_Block:
+				// design.md "Foreign system": a block's members are collected as
+				// ordinary symbols here, so nothing downstream needs a foreign path
+				// for name resolution or overloads (m7-plan step 4).
+				declare_foreign_block(k, v)
 			}
 		}
 	}
@@ -171,6 +177,8 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 				resolve_declaration_signature(k, v)
 			case ^Item_Impl:
 				resolve_impl_signatures(k, v)
+			case ^Item_Foreign_Block:
+				check_foreign_block(k, v)
 			}
 		}
 	}
@@ -202,7 +210,9 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 				check_decl(k, v)
 			case ^Item_Impl:
 				check_impl_block(k, v)
-			case ^Item_Import, ^Item_Error:
+			case ^Item_Import, ^Item_Foreign_Import, ^Item_Foreign_Block, ^Item_Error:
+				// Foreign imports carry only a link path; foreign blocks were checked
+				// in phase 2b. Neither has a Loke body to check here (m7-plan step 4).
 			case:
 				unsupported_construct(k, item_span(item))
 			}
@@ -265,8 +275,8 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 
 // Creates the symbols for one declaration. Shadowing anything already visible
 // inside the enclosing procedure is rejected, which is the default design.md's
-// open question records.
-@(private = "file")
+// open question records. Also called for a foreign block's members
+// (`src/foreign.odin`), so they become ordinary package symbols.
 declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 	if len(d.symbols) > 0 {
 		return // already collected in an earlier phase
@@ -614,6 +624,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)
 	modes := make([dynamic]Param_Mode, 0, 4, k.c.semantic_allocator)
 	resets_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
+	by_ptr_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
 	param_symbols := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	defaults := make([dynamic]Expr, 0, 4, k.c.semantic_allocator)
 
@@ -621,8 +632,24 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	// the rule is decided once rather than re-derived from the syntax afterwards.
 	has_receiver := false
 	receiver_mode := Param_Mode.Value
+	is_foreign := symbol.is_foreign
+	saw_c_vararg := false
 
 	for &parameter, position in literal.signature.params {
+		// design.md "`@(c_vararg)`": the final `..any_view` of a foreign
+		// declaration is a checker-only C variadic, not a real slice parameter, so
+		// it never joins the lowered signature (m7-plan step 4).
+		if has_attribute(parameter.attributes, "c_vararg") {
+			check_c_vararg_param(k, is_foreign, literal, position, parameter)
+			saw_c_vararg = true
+			continue
+		}
+		// `@(by_ptr) p: T` lowers to `T const *`; it is foreign-declaration metadata.
+		is_by_ptr := has_attribute(parameter.attributes, "by_ptr")
+		if is_by_ptr && !is_foreign {
+			errorf(k.c, parameter.span, "L0626", "`@(by_ptr)` is only allowed on a foreign procedure parameter")
+			is_by_ptr = false
+		}
 		before := k.c.error_count
 		parameter_type := resolve_type_syntax(k, parameter.type)
 		if parameter.type != nil && parameter_type == INVALID_TYPE && k.c.error_count == before {
@@ -717,6 +744,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			append(&params, name_type)
 			append(&modes, mode)
 			append(&resets_list, resets)
+			append(&by_ptr_list, is_by_ptr)
 			append(&param_symbols, binding)
 			append(&defaults, default)
 		}
@@ -771,6 +799,8 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.param_defaults = defaults[:]
 	symbol.result_symbols = result_symbols[:]
 	symbol.proc_type = proc_type
+	symbol.param_by_ptr = by_ptr_list[:]
+	symbol.c_vararg = saw_c_vararg
 	symbol.signature_error = k.c.error_count > reported
 	// design.md "Receiver forms": three modes and no others, and a first
 	// parameter typed `^T` is deliberately not one of them — it keeps the name
@@ -1560,6 +1590,14 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 		errorf(k.c, d.span, "L0312", "a procedure declaration binds exactly one name")
 	}
 	signature := literal.signature
+	// A foreign declaration is bodiless by design and is checked by
+	// `check_foreign_block`; reaching here (e.g. a compile-time path forcing the
+	// callee's declaration) must not re-gate it (m7-plan step 4).
+	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL {
+		if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
+			return
+		}
+	}
 	// A `"c"`/`"stdcall"` procedure with a body compiles under the Windows x64
 	// classification (m7-plan step 3); a bodiless foreign declaration still waits
 	// for the foreign-block pass (step 4).

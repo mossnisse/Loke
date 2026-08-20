@@ -1,0 +1,22 @@
+package main; import "core:fmt";
+
+// design.md "Foreign system" (m7-plan step 4): a program calls real C library
+// routines through a foreign block. `legacy_stdio_definitions.lib` is part of
+// the MSVC toolchain the compiler already links against; the CRT symbols
+// resolve there. `@(link_name)` binds a Loke name to a different C symbol.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	strlen :: proc "c" (s: cstring_view) -> uint ---;
+	abs :: proc "c" (n: i32) -> i32 ---;
+	toupper :: proc "c" (ch: i32) -> i32 ---;
+	@(link_name = "abs") renamed_abs :: proc "c" (n: i32) -> i32 ---;
+}
+
+main :: proc() {
+	fmt.println(strlen("hello, world"));
+	fmt.println(abs(-42));
+	fmt.println(toupper(105));
+	fmt.println(renamed_abs(-7));
+}

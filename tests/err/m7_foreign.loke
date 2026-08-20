@@ -1,0 +1,21 @@
+package main;
+
+// design.md "Foreign system" (m7-plan step 4): a foreign procedure has no body,
+// a foreign global has no initializer, `@(by_ptr)` is foreign-only, `@(c_vararg)`
+// marks the final variadic parameter, and a C-variadic call cannot spread.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	with_body :: proc "c" () { }
+	bad_global: i32 = 5;
+	misplaced_va :: proc "c" (@(c_vararg) a: ..any_view, trailing: i32) ---;
+	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+}
+
+not_foreign :: proc(@(by_ptr) x: i32) { }
+
+main :: proc() {
+	nums: [3]i32 = [3]i32{ 1, 2, 3 };
+	printf("%d", ..nums);
+}

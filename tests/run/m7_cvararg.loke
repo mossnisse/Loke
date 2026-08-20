@@ -1,0 +1,19 @@
+package main;
+
+// design.md "`@(c_vararg)`" (m7-plan step 4): `printf` passes each concrete
+// argument with the C default promotions (`f32`->`double`, narrow ints->`i32`).
+// Output goes through the C runtime, so this program uses only `printf` to keep
+// the stream ordering deterministic.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+}
+
+main :: proc() {
+	name: cstring_view = "world";
+	printf("int %d, str %s, char %c\n", 42, name, 65);
+	printf("float %.2f, wide %lld\n", 3.5, 1000000000000);
+	printf("no varargs here\n");
+}

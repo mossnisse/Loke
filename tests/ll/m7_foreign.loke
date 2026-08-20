@@ -1,0 +1,24 @@
+package main;
+
+// design.md "Foreign system" (m7-plan step 4): the `declare` a foreign block
+// emits for each member, under the Windows x64 classification. A `@(c_vararg)`
+// declaration ends with `...`; a `@(by_ptr)` parameter and a foreign global are
+// pointers/external storage.
+
+Vec :: struct { x: f64, y: f64, z: f64 }
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+foreign libc {
+	strlen :: proc "c" (s: cstring_view) -> uint ---;
+	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
+	dot :: proc "c" (@(by_ptr) a: Vec, @(by_ptr) b: Vec) -> f64 ---;
+	errno_value: i32;
+}
+
+main :: proc() {
+	_ = strlen("x");
+	_ = printf("%d\n", 1);
+	_ = dot(Vec{ x = 0.0, y = 0.0, z = 0.0 }, Vec{ x = 0.0, y = 0.0, z = 0.0 });
+	_ = errno_value;
+}

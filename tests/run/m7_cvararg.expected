@@ -1,0 +1,3 @@
+int 42, str world, char A
+float 3.50, wide 1000000000000
+no varargs here

@@ -550,7 +550,10 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 		}
 		path, has_path := expect(p, .String, "L0250", "the library path, as a string literal")
 		if has_path {
-			item.path = text_of(p, path)
+			// The token text keeps its quotes; a library path has no escapes worth
+			// decoding, so slicing them off is the whole unquote (m7-plan step 4).
+			raw := text_of(p, path)
+			item.path = len(raw) >= 2 ? raw[1:len(raw) - 1] : raw
 		}
 		_, terminated := expect(p, .Semicolon, "L0250", "`;` after the foreign import")
 

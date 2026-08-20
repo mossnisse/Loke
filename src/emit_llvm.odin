@@ -230,6 +230,9 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		name_package_symbols(&e, package_of(c, id))
 	}
 	name_synth_procs(&e)
+	// Foreign `declare`s and `external global`s, once each: a call or a global
+	// reference names one already (m7-plan step 4).
+	emit_foreign_declarations(&e)
 	// Module-level storage first: a body that names a `static` local needs its
 	// global to exist before the body is emitted.
 	emit_static_locals(&e)
@@ -289,6 +292,21 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 					}
 					e.names[d.symbols[0]] = llvm_proc_name(pkg, llvm_safe(qualified_member_name(e.c, sym)))
 				}
+			case ^Item_Foreign_Block:
+				// design.md "Foreign system": a member's link name is its external
+				// symbol, so calls and the `declare` share `@<link_name>` with no
+				// package mangling (m7-plan step 4).
+				for member in v.members {
+					d, is_decl := member.(^Decl)
+					if !is_decl {
+						continue
+					}
+					for sid in d.symbols {
+						if sym := symbol_of(e.c, sid); sym != nil && sym.is_foreign {
+							e.names[sid] = foreign_llvm_name(sym)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -328,6 +346,97 @@ name_synth_procs :: proc(e: ^Emitter) {
 symbol_is_template :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> bool {
 	sym := symbol_of(c, symbol_id)
 	return sym != nil && sym.generic
+}
+
+// The external symbol a foreign declaration binds: `@<link_name>`, with no
+// package mangling, so the linker resolves it against the imported library.
+@(private = "file")
+foreign_llvm_name :: proc(sym: ^Symbol) -> string {
+	return fmt.aprintf("@%s", sym.link_name)
+}
+
+// One `declare` per foreign procedure and one `external global` per foreign
+// variable, deduplicated by symbol name (m7-plan step 4). The classified
+// signature matches the C library's definition under the Windows x64 ABI.
+@(private = "file")
+emit_foreign_declarations :: proc(e: ^Emitter) {
+	seen := make(map[string]bool)
+	for id in package_order(e.c) {
+		pkg := package_of(e.c, id)
+		if pkg == nil {
+			continue
+		}
+		for file in pkg.files {
+			for item in file.active_items {
+				block, ok := item.(^Item_Foreign_Block)
+				if !ok {
+					continue
+				}
+				for member in block.members {
+					d, is_decl := member.(^Decl)
+					if !is_decl {
+						continue
+					}
+					for sid in d.symbols {
+						sym := symbol_of(e.c, sid)
+						if sym == nil || !sym.is_foreign {
+							continue
+						}
+						name := foreign_llvm_name(sym)
+						if seen[name] {
+							continue
+						}
+						seen[name] = true
+						emit_foreign_declare(e, sym)
+					}
+				}
+			}
+		}
+	}
+}
+
+@(private = "file")
+emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol) {
+	name := foreign_llvm_name(sym)
+	if sym.kind != .Proc {
+		fmt.sbprintfln(&e.b, "%s = external global %s", name, llvm_type(e, sym.type))
+		return
+	}
+	ret := "void"
+	sret_prefix := ""
+	if len(sym.results) == 1 {
+		result := sym.results[0]
+		switch abi_pass(e.c, result) {
+		case .Indirect:
+			sret_prefix = fmt.aprintf("ptr sret(%s) align %d", llvm_type(e, result), type_align(e.c, result))
+		case .Reg_Int:
+			ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
+		case .Bool_I1:
+			ret = "zeroext i1"
+		case .Direct:
+			ret = llvm_type(e, result)
+		}
+	}
+	fmt.sbprintf(&e.b, "declare %s %s(", ret, name)
+	need_comma := false
+	if sret_prefix != "" {
+		fmt.sbprint(&e.b, sret_prefix)
+		need_comma = true
+	}
+	for parameter, index in sym.params {
+		if need_comma {
+			fmt.sbprint(&e.b, ", ")
+		}
+		need_comma = true
+		fmt.sbprint(&e.b, foreign_param_type(e, sym, parameter, index))
+	}
+	if sym.c_vararg {
+		if need_comma {
+			fmt.sbprint(&e.b, ", ")
+		}
+		fmt.sbprint(&e.b, "...")
+	}
+	fmt.sbprintln(&e.b, ")")
 }
 
 @(private = "file")
@@ -1858,7 +1967,8 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 // The LLVM type (with any ABI attribute) one foreign parameter occupies.
 @(private = "file")
 foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, index: int) -> string {
-	if symbol_param_mode(e.c, symbol, index) == .Inout {
+	// design.md: `inout T` and `@(by_ptr) T` both cross as a pointer.
+	if symbol_param_mode(e.c, symbol, index) == .Inout || param_is_by_ptr(symbol, index) {
 		return "ptr"
 	}
 	switch abi_pass(e.c, parameter) {
@@ -6794,7 +6904,117 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 // temporary, emits the call, and reconstructs the aggregate result the loke
 // caller consumes. `loke`-convention calls never reach here.
 @(private = "file")
-emit_foreign_call :: proc(e: ^Emitter, callee: string, callee_type: ^Type_Info, operands: []string) -> []string {
+param_is_by_ptr :: proc(sym: ^Symbol, index: int) -> bool {
+	return sym != nil && index < len(sym.param_by_ptr) && sym.param_by_ptr[index]
+}
+
+// design.md "`@(c_vararg)`": the C default argument promotions. `f32` widens to
+// `double`; `bool`, an enum, and an integer narrower than 32 bits widen to
+// `i32`; an aggregate follows the ordinary by-value classification. Returns the
+// promoted `<type> <value>` operand.
+@(private = "file")
+emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
+	under := type_underlying(e.c, type)
+	info := type_of(e.c, under)
+	if info == nil {
+		return fmt.aprintf("%s %s", llvm_type(e, type), operand)
+	}
+	#partial switch info.kind {
+	case .Float:
+		if info.bits == 32 {
+			out := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = fpext float %s to double", out, operand)
+			return fmt.aprintf("double %s", out)
+		}
+		return fmt.aprintf("%s %s", llvm_type(e, under), operand)
+	case .Bool:
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, operand)
+		return fmt.aprintf("i32 %s", out)
+	case .Int, .Enum:
+		bits := type_bits(e.c, under)
+		if bits < 32 {
+			out := temp(e)
+			op := type_signed(e.c, under) ? "sext" : "zext"
+			fmt.sbprintfln(&e.b, "  %s = %s i%d %s to i32", out, op, bits, operand)
+			return fmt.aprintf("i32 %s", out)
+		}
+		return fmt.aprintf("i%d %s", bits, operand)
+	case .Struct, .Array, .Union:
+		#partial switch abi_pass(e.c, under) {
+		case .Reg_Int:
+			slot, loaded := temp(e), temp(e)
+			bits, align := abi_reg_bits(e.c, under), type_align(e.c, under)
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, under))
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, under), operand, slot, align)
+			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
+			return fmt.aprintf("i%d %s", bits, loaded)
+		case .Indirect:
+			slot := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, under))
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, under), operand, slot)
+			return fmt.aprintf("ptr %s", slot)
+		}
+	}
+	return fmt.aprintf("%s %s", llvm_type(e, type), operand)
+}
+
+// The explicit LLVM function type a variadic call names: `<ret> (<fixed...>, ...)`,
+// matching the `declare`'s parameter types without their call-site attributes.
+@(private = "file")
+foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, symbol: ^Symbol, has_sret: bool) -> string {
+	ret := "void"
+	if len(callee_type.results) == 1 {
+		result := callee_type.results[0]
+		#partial switch abi_pass(e.c, result) {
+		case .Reg_Int:
+			ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
+		case .Bool_I1:
+			ret = "i1"
+		case .Direct:
+			ret = llvm_type(e, result)
+		}
+	}
+	b := strings.builder_make()
+	fmt.sbprintf(&b, "%s (", ret)
+	need_comma := false
+	if has_sret {
+		fmt.sbprint(&b, "ptr")
+		need_comma = true
+	}
+	for parameter, index in callee_type.parameters {
+		if need_comma {
+			fmt.sbprint(&b, ", ")
+		}
+		need_comma = true
+		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		if mode == .Inout || param_is_by_ptr(symbol, index) {
+			fmt.sbprint(&b, "ptr")
+			continue
+		}
+		#partial switch abi_pass(e.c, parameter) {
+		case .Bool_I1:
+			fmt.sbprint(&b, "i1")
+		case .Reg_Int:
+			fmt.sbprintf(&b, "i%d", abi_reg_bits(e.c, parameter))
+		case .Indirect:
+			fmt.sbprint(&b, "ptr")
+		case .Direct:
+			fmt.sbprint(&b, llvm_type(e, parameter))
+		}
+	}
+	if need_comma {
+		fmt.sbprint(&b, ", ")
+	}
+	fmt.sbprint(&b, "...)")
+	return strings.to_string(b)
+}
+
+@(private = "file")
+emit_foreign_call :: proc(
+	e: ^Emitter, callee: string, callee_type: ^Type_Info, operands: []string,
+	symbol: ^Symbol, bound: []Expr,
+) -> []string {
 	ret := "void"
 	sret := ""
 	result_type := INVALID_TYPE
@@ -6813,6 +7033,11 @@ emit_foreign_call :: proc(e: ^Emitter, callee: string, callee_type: ^Type_Info, 
 		}
 	}
 
+	// design.md "`@(c_vararg)`": arguments past the fixed parameters are concrete
+	// C variadics with the default promotions applied here.
+	fixed := len(callee_type.parameters)
+	c_vararg := symbol != nil && symbol.c_vararg
+
 	args := make([dynamic]string, 0, len(operands) + 1)
 	if sret != "" {
 		append(&args, fmt.aprintf(
@@ -6820,10 +7045,22 @@ emit_foreign_call :: proc(e: ^Emitter, callee: string, callee_type: ^Type_Info, 
 		))
 	}
 	for operand, index in operands {
+		if c_vararg && index >= fixed {
+			append(&args, emit_c_vararg_promote(e, expr_base(bound[index]).type, operand))
+			continue
+		}
 		parameter := callee_type.parameters[index]
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		// An `inout` or `@(by_ptr)` parameter both cross as a pointer to storage.
 		if mode == .Inout {
 			append(&args, fmt.aprintf("ptr %s", operand))
+			continue
+		}
+		if param_is_by_ptr(symbol, index) {
+			slot := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), operand, slot)
+			append(&args, fmt.aprintf("ptr %s", slot))
 			continue
 		}
 		switch abi_pass(e.c, parameter) {
@@ -6846,12 +7083,18 @@ emit_foreign_call :: proc(e: ^Emitter, callee: string, callee_type: ^Type_Info, 
 		}
 	}
 
+	// A variadic call names the explicit function type in place of the plain
+	// return type; a fixed call names only the return type.
+	head := ret
+	if c_vararg {
+		head = foreign_call_type(e, callee_type, symbol, sret != "")
+	}
 	call := ""
 	if ret == "void" {
-		fmt.sbprintf(&e.b, "  call void %s(", callee)
+		fmt.sbprintf(&e.b, "  call %s %s(", head, callee)
 	} else {
 		call = temp(e)
-		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, ret, callee)
+		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, head, callee)
 	}
 	for arg, index in args {
 		if index > 0 {
@@ -6943,7 +7186,7 @@ emit_bound_call :: proc(
 	}
 
 	if convention_is_foreign(callee_type.convention) {
-		return emit_foreign_call(e, callee, callee_type, operands)
+		return emit_foreign_call(e, callee, callee_type, operands, symbol, bound)
 	}
 
 	result_type := llvm_result_type(e, callee_type.results, callee_type.result_inout)
@@ -7138,6 +7381,14 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 		return 2
 	}
 
+	// design.md "Foreign system": every active foreign import joins the link
+	// command, libraries and assembled objects alike (m7-plan step 4). A missing
+	// file or assembler is diagnosed here, by name, before clang runs.
+	foreign_inputs, foreign_ok := collect_foreign_link_inputs(c, exe_path)
+	if !foreign_ok {
+		return 2
+	}
+
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
 	// design.md "Build configuration": the selected optimization mode maps to one
@@ -7145,6 +7396,9 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	append(&command, opt_clang_flag(opts.opt_mode))
 	for source in sources {
 		append(&command, source)
+	}
+	for input in foreign_inputs {
+		append(&command, input)
 	}
 	append(&command, "-I", runtime_dir)
 	// The module states its triple; clang's default carries an MSVC version
@@ -7176,6 +7430,17 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 		return 2
 	}
 	if state.exit_code != 0 {
+		// design.md "Foreign system": an unresolved link name is its own failure —
+		// the binding named a symbol the libraries do not define (m7-plan step 4).
+		if strings.contains(string(stderr), "unresolved external symbol") ||
+		   strings.contains(string(stderr), "undefined symbol") {
+			errorf(
+				c, no_span(), "L0633",
+				"a foreign link name was not found in any imported library:\n%s",
+				string(stderr),
+			)
+			return 2
+		}
 		errorf(
 			c, no_span(), "L0403",
 			"`%s` failed (seed runtime: `%s`):\n%s",
@@ -7184,6 +7449,94 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 		return 2
 	}
 	return 0
+}
+
+// design.md "Library resolution" (m7-plan step 4): every active `foreign import`
+// becomes a link input. A `system:` prefix passes the bare name to the linker's
+// search path; a relative path resolves against the importing file. `.s`/`.S` go
+// to clang, `.asm` is assembled by `nasm`, and anything else is a library file.
+// The inputs are deduplicated and returned in a deterministic order.
+@(private = "file")
+collect_foreign_link_inputs :: proc(c: ^Compiler, exe_path: string) -> (inputs: []string, ok: bool) {
+	out := make([dynamic]string)
+	seen := make(map[string]bool)
+	ok = true
+	for id in package_order(c) {
+		pkg := package_of(c, id)
+		if pkg == nil {
+			continue
+		}
+		for file in pkg.files {
+			for item in file.active_items {
+				imp, is_imp := item.(^Item_Foreign_Import)
+				if !is_imp || imp.path == "" {
+					continue
+				}
+				if strings.has_prefix(imp.path, "system:") {
+					// A bare library name for the linker's own search path. clang finds
+					// it through `-l<name>`; a `.lib`/`.a` suffix is dropped so the
+					// linker adds its own.
+					name := imp.path[len("system:"):]
+					name = strings.trim_suffix(name, ".lib")
+					name = strings.trim_suffix(name, ".a")
+					if name != "" {
+						flag := fmt.aprintf("-l%s", name)
+						if !seen[flag] {
+							seen[flag] = true
+							append(&out, flag)
+						}
+					}
+					continue
+				}
+				dir := filepath.dir(c.sources[imp.span.file].path)
+				resolved := filepath.is_abs(imp.path) ? imp.path : filepath.join({dir, imp.path})
+				if seen[resolved] {
+					continue
+				}
+				seen[resolved] = true
+				if !os.is_file(resolved) {
+					errorf(c, imp.span, "L0631", "cannot find the foreign import `%s`", resolved)
+					ok = false
+					continue
+				}
+				ext := strings.to_lower(filepath.ext(resolved))
+				if ext == ".asm" {
+					if obj, assembled := assemble_nasm(c, resolved, exe_path, imp.span); assembled {
+						append(&out, obj)
+					} else {
+						ok = false
+					}
+					continue
+				}
+				append(&out, resolved)
+			}
+		}
+	}
+	return out[:], ok
+}
+
+// Assembles a `.asm` input with `nasm` for the Windows x64 object format. A
+// missing or failing assembler is L0632 — the assembler-specific diagnostic.
+@(private = "file")
+assemble_nasm :: proc(c: ^Compiler, source, exe_path: string, span: Span) -> (obj: string, ok: bool) {
+	nasm := os2.get_env("LOKE_NASM", context.allocator)
+	if nasm == "" {
+		nasm = "nasm"
+	}
+	obj = filepath.join({filepath.dir(exe_path), fmt.aprintf("%s.obj", filepath.stem(source))})
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = []string{nasm, "-f", "win64", source, "-o", obj}},
+		context.allocator,
+	)
+	if err != nil {
+		errorf(c, span, "L0632", "cannot assemble `%s`: install `nasm` on PATH or set LOKE_NASM", source)
+		return "", false
+	}
+	if state.exit_code != 0 {
+		errorf(c, span, "L0632", "`nasm` failed to assemble `%s`:\n%s", source, string(stderr))
+		return "", false
+	}
+	return obj, true
 }
 
 @(private = "file")

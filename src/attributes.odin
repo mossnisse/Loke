@@ -23,6 +23,7 @@ Attr_Pos :: enum {
 	Parameter,
 	Struct_Literal,
 	Union_Literal,
+	Foreign_Block,
 }
 
 Attr_Shape :: enum {
@@ -44,14 +45,14 @@ Attr_Spec :: struct {
 attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	@(static) specs: map[string]Attr_Spec
 	if len(specs) == 0 {
-		specs["public"] = {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field}, .None}
-		specs["private"] = {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field}, .None}
-		specs["require_results"] = {{.Proc_Decl, .Proc_Group}, .None}
+		specs["public"] = {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
+		specs["private"] = {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
+		specs["require_results"] = {{.Proc_Decl, .Proc_Group, .Foreign_Block}, .None}
 		specs["deprecated"] = {{.Proc_Decl}, .Value_Required}
 		specs["export"] = {{.Proc_Decl, .Var_Decl}, .None}
 		specs["implicit"] = {{.Proc_Decl}, .None}
 		specs["link_name"] = {{.Proc_Decl, .Var_Decl}, .Value_Required}
-		specs["default_calling_convention"] = {{}, .Value_Required}
+		specs["default_calling_convention"] = {{.Foreign_Block}, .Value_Required}
 		specs["allocator_reset"] = {{.Parameter}, .None}
 		specs["by_ptr"] = {{.Parameter}, .None}
 		specs["c_vararg"] = {{.Parameter}, .None}
@@ -74,6 +75,7 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	case .Parameter:      return "a parameter"
 	case .Struct_Literal: return "a struct type"
 	case .Union_Literal:  return "a union type"
+	case .Foreign_Block:  return "a foreign block"
 	}
 	return "here"
 }
@@ -142,6 +144,13 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 			case ^Decl:
 				validate_decl_attributes(k, v)
 			case ^Item_Impl:
+				for member in v.members {
+					if d, ok := member.(^Decl); ok {
+						validate_decl_attributes(k, d)
+					}
+				}
+			case ^Item_Foreign_Block:
+				validate_attribute_list(k, v.attributes, .Foreign_Block)
 				for member in v.members {
 					if d, ok := member.(^Decl); ok {
 						validate_decl_attributes(k, d)

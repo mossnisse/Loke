@@ -3100,6 +3100,11 @@ check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id) -> (Expr, bo
 @(private = "file")
 bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration: Symbol_Id) -> bool {
 	count := len(info.parameters)
+	// design.md "`@(c_vararg)`": a foreign C-variadic call passes each concrete
+	// argument after the fixed ones, with no slice built (m7-plan step 4).
+	if declared := symbol_of(k.c, declaration); declared != nil && declared.c_vararg {
+		return bind_c_vararg_arguments(k, v, info)
+	}
 	// design.md "Variadic parameters": every trailing argument fills one
 	// parameter, so the pack is settled before the ordinary positional binding
 	// runs and the written arguments it consumed are no longer separate.
@@ -3217,6 +3222,62 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 
 	v.bound = bound
 	require_argument_ownership(k, v, declaration)
+	return ok
+}
+
+// design.md "`@(c_vararg)`": the fixed parameters bind normally; every argument
+// after them is a concrete C variadic — inferred, required foreign-ABI-safe
+// after the default promotions, and never spread. `v.bound` keeps all of them so
+// the backend emits one true varargs call (m7-plan step 4).
+@(private = "file")
+bind_c_vararg_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info) -> bool {
+	fixed := len(info.parameters)
+	if len(v.args) < fixed {
+		errorf(
+			k.c, v.span, "L0322", "this procedure takes at least %d argument%s, found %d",
+			fixed, fixed == 1 ? "" : "s", len(v.args),
+		)
+		return false
+	}
+	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
+	ok := true
+	for arg, index in v.args {
+		if arg.mode == .Spread {
+			errorf(k.c, arg.span, "L0628", "a C-variadic call cannot spread; pass each concrete argument")
+			ok = false
+			continue
+		}
+		if arg.name.text != "" {
+			errorf(k.c, arg.span, "L0371", "a C-variadic call takes positional arguments only")
+			ok = false
+			continue
+		}
+		if index < fixed {
+			value, passed := check_argument_value(k, arg.value, info.parameters[index])
+			bound[index] = value
+			if !passed {
+				ok = false
+			}
+			continue
+		}
+		bound[index] = arg.value
+		type := check_single_expr(k, arg.value)
+		if type == INVALID_TYPE {
+			ok = false
+			continue
+		}
+		// An untyped literal defaults to its concrete type, which is what actually
+		// crosses (and what the C promotions then act on).
+		if type_is_untyped(k.c, type) {
+			type = default_type(k.c, type)
+			check_single_expr(k, arg.value, type)
+		}
+		if safe, reason := foreign_abi_safe(k.c, type); !safe {
+			errorf(k.c, arg.span, "L0619", "a C-variadic argument is not ABI-safe: %s", reason)
+			ok = false
+		}
+	}
+	v.bound = bound
 	return ok
 }
 

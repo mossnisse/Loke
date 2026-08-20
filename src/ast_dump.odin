@@ -88,7 +88,8 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 		dump_indent(b, depth)
 		fmt.sbprint(b, "(foreign-import")
 		dump_attributes(b, node.attributes)
-		fmt.sbprintfln(b, " %q %s)", node.name.text, node.path)
+		// The stored path is unquoted; the dump shows it as the written literal.
+		fmt.sbprintfln(b, " %q %q)", node.name.text, node.path)
 
 	case ^Item_Foreign_Block:
 		dump_indent(b, depth)

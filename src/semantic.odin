@@ -651,6 +651,19 @@ Symbol :: struct {
 	// results. Copied to a foreign block's members and applied to a procedure group
 	// after overload selection (m7-plan step 1).
 	require_results:    bool,
+	// design.md "Foreign system" (m7-plan step 4): a foreign declaration has no
+	// body. It names an external symbol in `foreign_library` under `link_name`
+	// (its own written name unless `@(link_name)` renamed it), and the backend
+	// emits a `declare`/`external global` rather than a definition.
+	is_foreign:         bool,
+	foreign_library:    string,
+	link_name:          string,
+	// design.md "Parameter semantics": one entry per parameter. `@(by_ptr)` passes
+	// `T const *` instead of by value; `@(c_vararg)` marks the final `..any_view`
+	// as a true C variadic. Both are foreign-declaration metadata, not part of the
+	// procedure type (m7-plan step 4).
+	param_by_ptr:       []bool,
+	c_vararg:           bool,
 }
 
 Build_Config_Enum :: enum u8 {
