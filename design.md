@@ -2,14 +2,9 @@
 
 This document specifies the Loke programming language.
 
-## Document Metadata & Navigation
+## Navigation
 
-**Status:** Draft  
-**Scope:** Normative specification of Loke's syntax, semantics, and runtime model.
-
-### Navigation
-
-- [1. Lexical Elements](#1-lexical-elements)
+- [1. Source Structure](#1-source-structure)
   - [File format](#file-format)
   - [Code blocks](#code-blocks)
   - [Identifiers](#identifiers)
@@ -54,7 +49,7 @@ This document specifies the Loke programming language.
   - [Useful idioms](#useful-idioms)
   - [Library types assumed by this specification](#library-types-assumed-by-this-specification)
 
-# 1. Lexical Elements
+# 1. Source Structure
 
 ## File format
 
@@ -139,15 +134,15 @@ A string literal uses double quotes, a character literal single quotes, and `\` 
 
 A numeric literal may contain underscores for readability (`1_000_000_000`). A decimal point or exponent makes it floating-point (`1.0e9`). The prefixes `0b`, `0o`, and `0x` give binary, octal, and hexadecimal; a leading zero alone does not mean octal.
 
-A numeric literal starts as an untyped integer or untyped floating constant, evaluated without first rounding to a runtime type. Context converts it implicitly:
+A numeric literal starts as an unfixed integer or unfixed floating constant, evaluated without first rounding to a runtime type. Context converts it implicitly:
 
-- an untyped integer constant converts to an integer type when its value is in range, or to a floating-point type under the rule below;
-- an untyped floating constant converts only to a floating-point type, never implicitly to an integer, even when its value is integral.
+- an unfixed integer constant converts to an integer type when its value is in range, or to a floating-point type under the rule below;
+- an unfixed floating constant converts only to a floating-point type, never implicitly to an integer, even when its value is integral.
 
-Converting a finite untyped constant to a floating-point type rounds once, IEEE-754 round-to-nearest ties-to-even; it is rejected if the result would overflow to infinity, though rounding to subnormal or zero is allowed. Infinity and NaN may convert to a floating-point type but never to an integer; the IEEE class and an infinity's sign are preserved, and a NaN payload is implementation-defined.
+Converting a finite unfixed constant to a floating-point type rounds once, IEEE-754 round-to-nearest ties-to-even; it is rejected if the result would overflow to infinity, though rounding to subnormal or zero is allowed. Infinity and NaN may convert to a floating-point type but never to an integer; the IEEE class and an infinity's sign are preserved, and a NaN payload is implementation-defined.
 
 ```odin
-x: int = 1.0;      // ERROR: untyped floating constant does not convert to `int`
+x: int = 1.0;      // ERROR: unfixed floating constant does not convert to `int`
 x: int = int(1.0); // OK: explicit floating-to-integer conversion
 y: f64 = 1;        // OK: integer constant rounded to `f64`
 z: f64 = 0.1;      // OK: rounded once to `f64`
@@ -230,15 +225,15 @@ u := u32(f);
 
 Assigning between different types requires an explicit conversion unless an implicit conversion rule applies.
 
-### Untyped constants
+### Unfixed constants
 
-Some constant expressions has an loose/untyped type. Context implicitly converts an untyped value to a compatible concrete type.
+Some constant expressions have an unfixed type. Context implicitly converts an unfixed value to a compatible concrete type.
 
 ```odin
-I :: 42;      // untyped integer; converts to an integer or floating type
-F :: 1.27;    // untyped float; converts only to a floating type
-S :: "Hello"; // untyped string; converts to string
-B :: true;    // untyped boolean; converts to bool
+I :: 42;      // unfixed integer; converts to an integer or floating type
+F :: 1.27;    // unfixed float; converts only to a floating type
+S :: "Hello"; // unfixed string; converts to string
+B :: true;    // unfixed boolean; converts to bool
 ```
 
 ## String types and views
@@ -1812,11 +1807,11 @@ Candidates are ranked with the same algorithm as named-procedure overloads. Cand
 
 0. Exact type and parameter-mode match.
 1. Borrow, dereference, or mutable-to-read-only adjustment that creates no value.
-2. Contextual conversion of a compatible untyped constant preserving its kind (integer→integer, floating→floating, boolean→`bool`, rune→rune, string→string).
-3. Any other built-in implicit conversion, including untyped integer constant → floating type.
-4. A user [`@(implicit)`](#implicit-conversion-from-constants) conversion. Reachable only for an untyped-constant argument, so it applies at most once and cannot chain.
+2. Contextual conversion of a compatible unfixed constant preserving its kind (integer→integer, floating→floating, boolean→`bool`, rune→rune, string→string).
+3. Any other built-in implicit conversion, including unfixed integer constant → floating type.
+4. A user [`@(implicit)`](#implicit-conversion-from-constants) conversion. Reachable only for an unfixed-constant argument, so it applies at most once and cannot chain.
 
-Rank 4 sits below every built-in conversion so a constant prefers a built-in destination: for `foo :: proc{foo_f64, foo_complex}`, `foo(2.0)` selects `foo_f64` at rank 2, not `Complex_F64` at rank 4. The default type of an untyped constant does not participate in ranking: `foo(7)` picks an integer over a floating overload, but `i8` vs `int` overloads (or `f32` vs `f64` for `7.0`) remain ambiguous.
+Rank 4 sits below every built-in conversion so a constant prefers a built-in destination: for `foo :: proc{foo_f64, foo_complex}`, `foo(2.0)` selects `foo_f64` at rank 2, not `Complex_F64` at rank 4. The default type of an unfixed constant does not participate in ranking: `foo(7)` picks an integer over a floating overload, but `i8` vs `int` overloads (or `f32` vs `f64` for `7.0`) remain ambiguous.
 
 The ranks form a vector; they are not summed and argument order does not break ties. A is better than B when A is no worse for every argument and strictly better for at least one. Crossed vectors like `(0, 3)` and `(3, 0)` are intentionally ambiguous.
 
@@ -2018,9 +2013,9 @@ distance_k := Kilometers(distance_m); // explicit user conversion
 
 #### Implicit conversion from constants
 
-Adding `@(implicit)` to a one-argument `init` overload lets it apply without being written, **but only when the argument is an untyped constant**; a runtime value of the same type always requires the explicit form.
+Adding `@(implicit)` to a one-argument `init` overload lets it apply without being written, **but only when the argument is an unfixed constant**; a runtime value of the same type always requires the explicit form.
 
-The parameter type must be a built-in numeric, boolean, rune, or string type, so an untyped constant kind can reach it. The constant must convert to that parameter type under the ordinary [untyped-constant rule](#untyped-constants). So an untyped floating constant can reach an `@(implicit)` conversion whose parameter is floating-point, but not one whose parameter is an integer.
+The parameter type must be a built-in numeric, boolean, rune, or string type, so an unfixed constant kind can reach it. The constant must convert to that parameter type under the ordinary [unfixed-constant rule](#unfixed-constants). So an unfixed floating constant can reach an `@(implicit)` conversion whose parameter is floating-point, but not one whose parameter is an integer.
 
 ```odin
 impl Complex_F64 {
@@ -2037,7 +2032,7 @@ impl Complex_F64 {
 }
 
 z := Complex_F64(1, 2);
-w := z*z + 2.0;              // OK: `2.0` is an untyped float constant
+w := z*z + 2.0;              // OK: `2.0` is an unfixed float constant
 
 scale: f64 = read_scale();
 bad := z + scale;            // ERROR: no operator `+` for (Complex_F64, f64)
@@ -2047,7 +2042,7 @@ good := z + Complex_F64(scale);
 Restricting the rule to constants keeps [library numeric types](#library-numeric-types) usable (`z*z + 2.0` means what it looks like) while giving up a general implicit-conversion facility:
 
 - runtime conversions stay explicit and do not depend on declarations in scope;
-- chains cannot form, since an untyped constant takes at most one user conversion;
+- chains cannot form, since an unfixed constant takes at most one user conversion;
 - narrowing is already caught by the constant-representability rule at compile time.
 
 #### Resolving `T(...)`
@@ -2616,7 +2611,7 @@ Multiple declarations such as `y, z := 20, 30;` remain valid. More general tuple
 A constant binds a name to a value. The value must be available at compile time and cannot change.
 
 ```odin
-x :: "what"; // constant `x` has the untyped string value "what"
+x :: "what"; // constant `x` has the unfixed string value "what"
 ```
 
 A constant declaration can specify a type:
@@ -2794,7 +2789,7 @@ Binary:
 >>      right shift                integer >> unsigned integer
 ```
 
-Except for shift operations, if one operand is an untyped constant and the other operand is not, the constant is implicitly converted to the type of the other operand (if possible).
+Except for shift operations, if one operand is an unfixed constant and the other operand is not, the constant is implicitly converted to the type of the other operand (if possible).
 
 **`+` concatenates strings at compile time and runtime.** For two `string` operands, `a + b` returns a new owning `string`. It contains the bytes of `a` followed by the bytes of `b`. Both operands contain valid UTF-8, so the result does not need validation.
 
@@ -2804,7 +2799,7 @@ This is the ordinary convenient spelling and it is the right one for building a 
 
 Enum values do not support arithmetic or bitwise operators. An enum's members are named constants that need not be contiguous, so `Foo.A + Foo.B` need not be a member of `Foo` and has no useful meaning; convert to the backing integer type when arithmetic is intended. Flag sets are the library type `Bit_Set(Enum)` rather than bitwise operators on the enum itself. Enums remain [comparable and ordered](#comparison-operators).
 
-The right operand in a shift expression must have an unsigned integer type or be an untyped constant representable by a typed unsigned integer. If the left operand of a non-constant shift expression is an untyped constant, it is first implicitly converted to the type it would assume if the shift expression were replaced solely by the left operand alone (with type inference and hinting rules applied).
+The right operand in a shift expression must have an unsigned integer type or be an unfixed constant representable by a typed unsigned integer. If the left operand of a non-constant shift expression is an unfixed constant, it is first implicitly converted to the type it would assume if the shift expression were replaced solely by the left operand alone (with type inference and hinting rules applied).
 
 ### Comparison operators
 
@@ -3238,6 +3233,8 @@ foreach (key in some_map) {
 }
 ```
 
+An enum *type* is also accepted in a `foreach` header, as a compiler special case that yields its members; see [Iterating an enumeration](#iterating-an-enumeration).
+
 A second binding receives an index, or a map value:
 
 ```odin
@@ -3649,7 +3646,7 @@ fmt.println(fibonacci(3)); // 2
 
 This rule keeps [borrow and lifetime](#borrows-and-lifetimes) analysis local. A procedure literal cannot capture and retain a borrow.
 
-#### Parameters
+### Parameters
 
 A procedure can have zero or more parameters. This procedure multiplies two integers:
 
@@ -3669,7 +3666,7 @@ multiply :: proc(x, y: int) -> int {
 fmt.println(multiply(137, 432));
 ```
 
-##### Parameter semantics and ABI lowering
+#### Parameter semantics and ABI lowering
 
 By default, procedures use the `loke` calling convention. It uses the platform C ABI as a base and defines its own deterministic classification of parameters and results. It adds no implicit environment or service argument. Every caller and callee compiled for the same target ABI must use the same classification; indirect passing is not a choice they may make independently at each call.
 
@@ -3689,7 +3686,7 @@ Returning such a borrowed parameter by value performs a logical clone, since the
 
 After these rules, the ABI may pass a parameter in registers, an argument slot, or indirectly through a hidden pointer to caller-prepared temporary storage. That temporary is valid until the call completes, cannot be retained by the callee, and grants no permission to modify the caller's variable; `&value` inside the procedure addresses the callee-local binding. This lowering is an implementation detail of the `loke` convention; a foreign procedure follows its declared foreign ABI, including that ABI's aggregate-passing rules.
 
-##### Copy-cost diagnostics
+#### Copy-cost diagnostics
 
 Size is never a type error, and a large type does not by itself require a warning.
 
@@ -4570,14 +4567,14 @@ This is also the one-line fix when porting a package written against a public-by
 ### Built-in constants
 
 ```text
-false // untyped boolean constant equivalent to the expression 0!=0
-true  // untyped boolean constant equivalent to the expression 0==0
+false // unfixed boolean constant equivalent to the expression 0!=0
+true  // unfixed boolean constant equivalent to the expression 0==0
 ```
 
 ### Built-in values
 
 ```text
-nil   // untyped nil value used for certain values
+nil   // unfixed nil value used for certain values
 ```
 
 `---` is not a value or an initializer. It is declaration syntax used for a
@@ -4607,7 +4604,7 @@ For the full list, see the documentation for package `builtin`. The compiler-def
 | `panic(message)` | Panics at runtime or diagnoses the currently evaluated compile-time call |
 | `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
-| `transmute(T, value)` | Bit cast between two same-sized types with a [trivial lifecycle](#transmute-procedure) |
+| `transmute(T, value)` | Bit cast between two same-sized types with a [trivial lifecycle]|
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
 
 `len`, `cap`, `size_of`, `align_of`, and `offset_of` all result in `int`.
@@ -5475,7 +5472,7 @@ These attributes specify linkage or visibility. They specify the symbol that a d
 
 #### `@(implicit)`
 
-`@(implicit)` permits an implicit call to a one-argument overload in the target type's `init` group. The argument must be an untyped constant. The parameter type must be a built-in numeric, Boolean, rune, or string type. A runtime value requires the explicit `Target(value)` form. See [Implicit conversion from constants](#implicit-conversion-from-constants).
+`@(implicit)` permits an implicit call to a one-argument overload in the target type's `init` group. The argument must be an unfixed constant. The parameter type must be a built-in numeric, Boolean, rune, or string type. A runtime value requires the explicit `Target(value)` form. See [Implicit conversion from constants](#implicit-conversion-from-constants).
 
 `@(implicit)` on a procedure that is not a one-argument `init` overload is an error.
 
@@ -5787,7 +5784,7 @@ The convention is that the `bool` comes last and is named `ok`, and that the val
 
 #### Implicit type conversions
 
-Loke is strongly typed. The following list contains all built-in implicit conversions. The only user-defined implicit conversion applies to an untyped constant. An import cannot add other implicit conversions. Thus, conversion behavior does not depend on the imported packages.
+Loke is strongly typed. The following list contains all built-in implicit conversions. The only user-defined implicit conversion applies to an unfixed constant. An import cannot add other implicit conversions. Thus, conversion behavior does not depend on the imported packages.
 
 - ^T -> rawptr
 - [^]T -> rawptr
@@ -5797,13 +5794,13 @@ Loke is strongly typed. The following list contains all built-in implicit conver
 - Any of its variants to the union
 - T -> Simd(T, N)
 - distinct proc <-> proc (same base types)
-- Untyped integers -> built-in integer types when in range, and built-in floating-point types under the specified rounding rule
-- Untyped floats -> built-in floating-point types under the specified rounding rule; never implicitly to integer types
-- Untyped booleans -> `bool`
-- Untyped rune -> all rune types
+- Unfixed integers -> built-in integer types when in range, and built-in floating-point types under the specified rounding rule
+- Unfixed floats -> built-in floating-point types under the specified rounding rule; never implicitly to integer types
+- Unfixed booleans -> `bool`
+- Unfixed rune -> all rune types
 - `string` -> `string_view`; a non-owning borrow of the string, subject to [Borrows and lifetimes](#borrows-and-lifetimes)
-- Untyped strings -> `string`, `string_view`, or `cstring_view` when the destination supplies the required lifetime
-- Untyped constants into a user type through a visible [`@(implicit)`](#implicit-conversion-from-constants) conversion; this is how literals enter library numeric types, and it is the only user-defined implicit conversion
+- Unfixed strings -> `string`, `string_view`, or `cstring_view` when the destination supplies the required lifetime
+- Unfixed constants into a user type through a visible [`@(implicit)`](#implicit-conversion-from-constants) conversion; this is how literals enter library numeric types, and it is the only user-defined implicit conversion
 
 ## Library types assumed by this specification
 

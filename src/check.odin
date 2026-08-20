@@ -175,6 +175,12 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 		}
 	}
 
+	// design.md "Attributes": one validation pass over the settled item view,
+	// after signatures so a procedure group's symbol kind is known, so an unknown,
+	// misplaced, duplicated, or badly shaped attribute is one exact diagnostic
+	// (m7-plan step 1).
+	validate_attributes(k, pkg)
+
 	// Phase 2c: a struct or array that contains itself by value has no finite
 	// size, and LLVM cannot be asked to lay one out. Pointer edges break the
 	// cycle, so this runs on the resolved graph and before any emission.
@@ -444,6 +450,7 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		if len(d.symbols) > 0 && d.symbols[0] != INVALID_SYMBOL {
 			literal.symbol = d.symbols[0]
 			resolve_proc_signature(k, literal, d.symbols[0])
+			apply_proc_metadata(k, d, d.symbols[0])
 		}
 		return
 	}
@@ -464,6 +471,7 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	case ^Expr_Proc_Group:
 		symbol.kind = .Proc_Group
 		resolve_group_members(k, d.symbols[0], value)
+		apply_proc_metadata(k, d, d.symbols[0])
 	case ^Expr_Operator:
 		resolve_operator_declaration(k, d, value)
 	case ^Type_Distinct:
@@ -502,6 +510,11 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	}
 	if info := type_of(k.c, type); info != nil {
 		info.fields = members[:]
+		// design.md "Record layout attributes": `@(packed)` removes inter-field
+		// padding and `@(align=N)` raises the whole record's alignment (m7-plan
+		// step 2). Both are read here so the cached layout and the emitter agree.
+		info.packed = record_is_packed(value)
+		info.written_align = record_written_alignment(k, value)
 	}
 }
 
@@ -741,6 +754,10 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		result.symbols = bindings[:]
 	}
 
+	if validate_convention(k, literal.signature.convention, literal.span) &&
+	   convention_is_foreign(literal.signature.convention) {
+		check_foreign_signature(k, params[:], modes[:], results[:], literal.span)
+	}
 	proc_type := intern_proc_type(
 		k.c, params[:], modes[:], results[:], result_inout[:],
 		literal.signature.convention, resets_list[:],
@@ -1096,6 +1113,10 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				append(&results, resolve_type_syntax(k, result.type))
 				append(&result_inout, result.is_inout)
 			}
+		}
+		if validate_convention(k, value.convention, value.span) &&
+		   convention_is_foreign(value.convention) {
+			check_foreign_signature(k, params[:], modes[:], results[:], value.span)
 		}
 		value.denoted_type = intern_proc_type(
 			k.c, params[:], modes[:], results[:], result_inout[:], value.convention, resets[:],
@@ -1539,7 +1560,10 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 		errorf(k.c, d.span, "L0312", "a procedure declaration binds exactly one name")
 	}
 	signature := literal.signature
-	if literal.bodiless || signature == nil || signature.convention != "" {
+	// A `"c"`/`"stdcall"` procedure with a body compiles under the Windows x64
+	// classification (m7-plan step 3); a bodiless foreign declaration still waits
+	// for the foreign-block pass (step 4).
+	if literal.bodiless || signature == nil {
 		unsupported_construct(k, literal.span)
 		return
 	}
@@ -1714,6 +1738,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 				errorf(k.c, expr_span(expr), "L0313", "this expression statement has no effect")
 			}
 			check_expr(k, expr)
+			report_discarded_required_results(k, expr)
 			// `panic` never returns, in either phase, so nothing after it in this
 			// block is reachable.
 			if is_builtin_call(k.c, expr, .Panic) {

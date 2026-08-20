@@ -1,0 +1,19 @@
+L0618
+unknown calling convention `fastcall`
+@11:16
+
+L0619
+`string` is a managed `string`
+@12:16
+
+L0619
+member `inner.s` of `Nested` is a managed `string`
+@13:16
+
+L0619
+`[4]i32` is a fixed array (write `[^]T` or `^T` at a C boundary)
+@14:16
+
+L0620
+a foreign procedure returns at most one value, found 2
+@15:16

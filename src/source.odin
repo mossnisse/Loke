@@ -153,6 +153,14 @@ Compiler :: struct {
 	// every active Loke frame before terminating. `-panic=abort` registers none.
 	// The strategy is a whole-program build selection, never a source construct.
 	panic_unwind:        bool,
+	// design.md "Build configuration": the whole-program optimization and build
+	// mode the driver selected. The `LOKE_OPTIMIZATION_MODE` and `LOKE_BUILD_MODE`
+	// predeclared constants take their value from these (m7-plan step 1).
+	opt_mode:            Opt_Mode,
+	build_mode:          Build_Mode,
+	// The build-configuration enum types, synthesized once and shared by the
+	// `LOKE_*` universe constants and their `base:runtime` bindings.
+	build_config:        Build_Config,
 	// design.md "`type` and `typeid`": whether this program asked for runtime
 	// metadata at all. The dense table is emitted only when it did.
 	type_info_requested: bool,
@@ -194,9 +202,6 @@ Compiler :: struct {
 	// reset check, so the definitely-dead owners at each reset call are recorded
 	// here (`src/lifecycle.odin`, `src/cfg.odin`).
 	reset_dead:               map[^Expr_Call][]Symbol_Id,
-	// The nil `[]mut u8` a defaulted `mem.Arena()` receives (`src/region.odin`).
-	empty_slice_arg:          Expr,
-
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,

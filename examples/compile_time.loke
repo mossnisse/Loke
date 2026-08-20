@@ -1,0 +1,138 @@
+package main;
+import "core:fmt";
+import "base:runtime";
+
+// Work that happens before the program starts.
+//
+// There is no second language here. Every procedure below is an ordinary one;
+// what decides whether it runs at compile time is the context it is used in. A
+// constant initializer, an array length, an enum value, a `when` condition and
+// a `#assert` all need an answer during compilation, so the compiler runs the
+// procedure. The same procedure called from `main` runs at run time, with the
+// same semantics and the same result.
+
+// A build knob. `lokec examples/compile_time.loke -define:SIEVE_LIMIT=100`
+// changes every table below, including the array lengths.
+LIMIT :: #config(SIEVE_LIMIT, 50);
+
+// ---------------------------------------------------------------- tables --
+
+// An ordinary sieve. Nothing marks it as compile-time. It allocates a dynamic
+// array as a working temporary — at compile time that container lives in
+// compiler-owned storage, charged against the evaluator's own memory and step
+// budget, and it cannot escape into the generated program.
+count_primes :: proc(limit: int) -> int {
+	sieve: [dynamic]bool;
+	sieve.resize(limit + 1);
+	total := 0;
+	for (n := 2; n <= limit; n += 1) {
+		if (sieve[n]) { continue; }
+		total += 1;
+		for (m := n * n; m <= limit; m += n) { sieve[m] = true; }
+	}
+	return total;
+}
+
+// The count is a constant, so it can be an array *length* — which makes the
+// next procedure's result type depend on the answer to the previous one.
+PRIME_COUNT :: count_primes(LIMIT);
+
+collect_primes :: proc(limit: int) -> [PRIME_COUNT]int {
+	out: [PRIME_COUNT]int;
+	sieve: [dynamic]bool;
+	sieve.resize(limit + 1);
+	next := 0;
+	for (n := 2; n <= limit; n += 1) {
+		if (sieve[n]) { continue; }
+		out[next] = n;
+		next += 1;
+		for (m := n * n; m <= limit; m += n) { sieve[m] = true; }
+	}
+	return out;
+}
+
+// A constant aggregate. By the time the program runs, this is static data —
+// no loop, no allocation, no initialization code.
+PRIMES :: collect_primes(LIMIT);
+
+// ------------------------------------------------------------ reflection --
+
+Colour :: enum { Red, Green = 5, Blue }
+
+Reading :: struct {
+	sensor:   string_view,
+	celsius:  f64,
+	samples:  int,
+	verified: bool,
+}
+
+// `foreach ($name in ...)` is a static expansion, not a loop: the body is
+// copied once per member, and each copy is type-checked on its own. This one
+// works for any enum because the expansion knows the members before it runs.
+name_of :: proc(value: $E) -> string_view {
+	foreach ($member in enum_values_of(E)) {
+		if (int(value) == int(member.value)) { return member.name; }
+	}
+	return "?";
+}
+
+// The same trick over a record's fields. Each copy of the body sees a
+// *different* concrete field type, which is why the `when` chain below can
+// branch on it — the branch not taken is never checked and never emitted.
+print_record :: proc(value: ^$T) {
+	foreach ($field in fields_of(T)) {
+		when (type_of(field.get(value)) == string_view) {
+			fmt.println(" ", field.name, "=", field.get(value));
+		} else when (type_of(field.get(value)) == f64) {
+			fmt.println(" ", field.name, "=", field.get(value), "(f64)");
+		} else {
+			fmt.println(" ", field.name, "=", field.get(value));
+		}
+	}
+}
+
+// ------------------------------------------------------------------ main --
+
+main :: proc() {
+	// Proven during compilation. A false one is a compile error, not a test
+	// that has to be run.
+	#assert(PRIME_COUNT > 0);
+	#assert(PRIMES[0] == 2);
+	#assert(PRIMES[1] == 3);
+	#assert(type_of(PRIME_COUNT) == int);
+	#assert(len(PRIMES) == PRIME_COUNT);
+
+	fmt.println("limit:", LIMIT);
+	fmt.println("primes below limit:", PRIME_COUNT);
+	fmt.println("first:", PRIMES[0], "last:", PRIMES[PRIME_COUNT - 1]);
+
+	// The headline: one procedure, both phases, same answer. The left side was
+	// computed during compilation and is a literal in the binary; the right
+	// side runs the sieve now.
+	fmt.println("agree:", PRIME_COUNT == count_primes(LIMIT));
+
+	// Layout folds too, so these are constants rather than queries.
+	fmt.println("bytes of table:", size_of([PRIME_COUNT]int));
+	fmt.println("Reading is", size_of(Reading), "bytes, aligned", align_of(Reading));
+	fmt.println("celsius at offset", offset_of(Reading, celsius));
+
+	// `when` selects source rather than choosing a branch at run time: the
+	// discarded arm is not compiled and is not checked.
+	when (LIMIT >= 50) {
+		fmt.println("table is large");
+	} else {
+		fmt.println("table is small");
+	}
+
+	// Static expansion, used generically.
+	fmt.println("colour:", name_of(Colour.Green));
+	fmt.println("colour:", name_of(Colour.Blue));
+
+	sample := Reading{"probe-1", 21.5, 128, true};
+	fmt.println("reading:");
+	print_record(&sample);
+
+	// Source position is a compile-time value, so this costs nothing to ask.
+	here := #location();
+	fmt.println("printed from line", here.line, "of", here.file);
+}

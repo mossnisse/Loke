@@ -1,0 +1,16 @@
+package main; import "core:fmt";
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
+}
+
+fail :: proc() -> int {
+	panic("later dynamic-array element failed");
+	return 0;
+}
+
+main :: proc() {
+	xs: [dynamic]Res = {Res{1}, Res{fail()}};
+}

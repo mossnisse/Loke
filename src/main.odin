@@ -173,6 +173,11 @@ options:
     -panic=unwind|abort
                   whether a panic runs each active frame's registered cleanup
                   before the program stops (default: unwind)
+    -opt=none|minimal|size|speed|aggressive
+                  optimization level, mapped to clang -O0/-O1/-Os/-O2/-O3
+                  (default: none)
+    -build-mode=exe|obj
+                  build an executable, or a relocatable object (default: exe)
 `
 
 Options :: struct {
@@ -194,6 +199,10 @@ Options :: struct {
 	runtime_dir: string,
 	// `-panic=unwind|abort`, the whole program's panic strategy.
 	panic_unwind: bool,
+	// `-opt=none|minimal|size|speed|aggressive` and `-build-mode=exe|obj`
+	// (m7-plan step 1).
+	opt_mode:   Opt_Mode,
+	build_mode: Build_Mode,
 }
 
 // design.md "Panic strategy": `unwind` is the default on hosted targets, and
@@ -216,6 +225,14 @@ run :: proc() -> int {
 	defer destroy_compilation(&c)
 	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
 	c.panic_unwind = opts.panic_unwind
+	c.opt_mode, c.build_mode = opts.opt_mode, opts.build_mode
+	// Object build mode is implemented in m7-plan step 5; until then the flag
+	// parses but is not honoured.
+	if opts.build_mode == .Obj {
+		errorf(&c, no_span(), "L0602", "`-build-mode=obj` is not yet implemented")
+		report(&c)
+		return 1
+	}
 	// Configuration is project-wide and immutable, and must be in place before
 	// the first condition is evaluated (m3-plan decision "Configuration").
 	if !seed_defines(&c, opts.defines[:]) {
@@ -323,6 +340,25 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 				opts.panic_unwind = false
 			case:
 				fmt.eprintln("error: -panic needs `unwind` or `abort`")
+				return opts, false
+			}
+		case strings.has_prefix(arg, "-opt="):
+			switch arg[len("-opt="):] {
+			case "none":       opts.opt_mode = .None
+			case "minimal":    opts.opt_mode = .Minimal
+			case "size":       opts.opt_mode = .Size
+			case "speed":      opts.opt_mode = .Speed
+			case "aggressive": opts.opt_mode = .Aggressive
+			case:
+				fmt.eprintln("error: -opt needs `none`, `minimal`, `size`, `speed`, or `aggressive`")
+				return opts, false
+			}
+		case strings.has_prefix(arg, "-build-mode="):
+			switch arg[len("-build-mode="):] {
+			case "exe": opts.build_mode = .Exe
+			case "obj": opts.build_mode = .Obj
+			case:
+				fmt.eprintln("error: -build-mode needs `exe` or `obj`")
 				return opts, false
 			}
 		case strings.has_prefix(arg, "-runtime="):

@@ -45,6 +45,23 @@ compiler_path :: proc() -> string {
 	return LOKEC_DEFAULT
 }
 
+// Extra compiler flags applied to every run/trap compile, from the environment.
+// The differential-optimization corpus sets `LOKE_TEST_FLAGS=-opt=speed` (and
+// the other four modes) and requires identical observable results at each
+// (m7-plan step 1, decision "Optimization safety").
+@(private)
+env_flags :: proc() -> []string {
+	text := os.get_env("LOKE_TEST_FLAGS", context.temp_allocator)
+	if text == "" {
+		return nil
+	}
+	flags := make([dynamic]string, context.temp_allocator)
+	for field in strings.fields(text) {
+		append(&flags, field)
+	}
+	return flags[:]
+}
+
 // The corpus shells out, so a forgotten build must fail visibly instead of
 // validating an unrelated stale executable. An explicitly supplied `LOKEC`
 // path is trusted because CI may place its build outside this source tree.
@@ -159,6 +176,9 @@ programs_trap :: proc(t: ^testing.T) {
 		exe := fmt.tprintf("%s/trap-%s.exe", TMP, filepath.stem(path))
 		command := make([dynamic]string, context.temp_allocator)
 		append(&command, compiler_path(), path, "-o", exe)
+		for flag in env_flags() {
+			append(&command, flag)
+		}
 		for flag in extra_flags(path) {
 			append(&command, flag)
 		}
@@ -339,6 +359,9 @@ run_one_program :: proc(t: ^testing.T, path, expected_file, exe: string) {
 
 	command := make([dynamic]string, context.temp_allocator)
 	append(&command, compiler_path(), path, "-o", exe)
+	for flag in env_flags() {
+		append(&command, flag)
+	}
 	for flag in extra_flags(path) {
 		append(&command, flag)
 	}

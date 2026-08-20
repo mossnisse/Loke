@@ -173,8 +173,57 @@ environment :: proc() {
 	fmt.println(in_a_record(inout env));
 }
 
+// Provider-backed children use the written parent allocator. Dropping the
+// child ends that dependency, after which the parent can be reset and reused.
+parented :: proc() {
+	outer := mem.Arena();
+	inner := mem.Arena(outer.allocator());
+	xs: [dynamic]int via inner.allocator() = {};
+	xs.append(7, 8, 9);
+	fmt.println(xs[2]);
+	child := make_child(inner.allocator());
+	ys: [dynamic]int via child.allocator() = {};
+	ys.append(10);
+	fmt.println(ys[0]);
+	drop(ys);
+	drop(child);
+	drop(xs);
+	drop(inner);
+	free_all(outer.allocator());
+	fmt.println(1);
+}
+
+// A wrapper transfers a fresh provider owner rather than leaking only its
+// allocator handle.
+make_scratch :: proc() -> mem.Scratch { return mem.Scratch(); }
+make_child :: proc(parent: Allocator) -> mem.Scratch { return mem.Scratch(parent); }
+
+wrapped_provider :: proc() {
+	scratch := make_scratch();
+	xs: [dynamic]int via scratch.allocator() = {};
+	xs.append(12);
+	fmt.println(xs[0]);
+}
+
+// The fallible constructors report the parent provider's failure without
+// invoking its policy. A fixed 4096-byte parent cannot supply the 4096-byte
+// initial block requested by a child.
+fallible_provider :: proc() {
+	buffer: [4096]u8 = {};
+	parent := mem.Arena(buffer[:]);
+	a, a_err := mem.try_arena(parent.allocator());
+	s, s_err := mem.try_scratch(parent.allocator());
+	fmt.println(a_err != nil);
+	fmt.println(s_err != nil);
+	drop(a);
+	drop(s);
+}
+
 main :: proc() {
 	environment();
+	parented();
+	wrapped_provider();
+	fallible_provider();
 	in_frame();
 	scratch_storage();
 	reusable_reset();

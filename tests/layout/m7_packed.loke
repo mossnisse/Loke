@@ -1,0 +1,34 @@
+package main; import "core:fmt";
+
+// Every attributed record shape the checker must agree with LLVM about
+// (m7-plan step 2): a packed struct, an over-aligned struct, their combination,
+// each nested in another struct and used as a fixed-array element.
+
+Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
+Over :: struct @(align=16) { b: bool, n: i32 }
+Both :: struct @(packed, align=8) { x: u8, y: i32 }
+
+Hold_Packed :: struct { flag: bool, value: Packed }
+Hold_Over :: struct { flag: bool, value: Over }
+Hold_Both :: struct { flag: bool, value: Both }
+
+Packed_Array :: [3]Packed;
+Over_Array :: [2]Over;
+Both_Array :: [4]Both;
+
+Nested :: struct { inner: Hold_Over, tail: [2]Packed }
+
+main :: proc() {
+	a: Packed;
+	b: Over;
+	c: Both;
+	d: Hold_Packed;
+	e: Hold_Over;
+	f: Hold_Both;
+	g: Packed_Array;
+	h: Over_Array;
+	i: Both_Array;
+	j: Nested;
+	fmt.println(int(size_of(Packed)) + int(size_of(Over)) + int(size_of(Both)));
+	fmt.println(int(align_of(Over)) + int(size_of(Nested)));
+}

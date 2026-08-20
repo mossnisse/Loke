@@ -1,0 +1,206 @@
+package lokec
+
+// The foreign ABI surface (m7-plan step 3). Two things live here:
+//
+//   - Calling-convention acceptance: `""` (the default `loke`), `"c"`, and
+//     `"stdcall"` are the only spellings a signature may carry; every other is
+//     rejected by name. `loke` keeps LLVM's own aggregate lowering unchanged; a
+//     foreign convention triggers the Windows x64 classification in the emitter.
+//
+//   - The foreign-ABI-safety predicate (design.md "Foreign-ABI-safe types"),
+//     one recursive rule reused by foreign parameters, results, globals,
+//     procedure-pointer signatures, exported declarations, and C variadic
+//     arguments. Its diagnostic names the member path that made a type unsafe,
+//     not just the outermost type.
+
+import "core:fmt"
+
+// A foreign convention is any accepted spelling other than the default `loke`.
+convention_is_foreign :: proc(convention: string) -> bool {
+	return convention == "c" || convention == "stdcall"
+}
+
+// design.md "Calling conventions": `"c"` and `"stdcall"` are the two foreign
+// spellings; `loke` is written as the empty string. Everything else is a typo
+// or an unimplemented convention and is rejected by name (L0618).
+validate_convention :: proc(k: ^Checker, convention: string, span: Span) -> bool {
+	switch convention {
+	case "", "c", "stdcall":
+		return true
+	}
+	errorf(
+		k.c,
+		span,
+		"L0618",
+		"unknown calling convention `%s`; the accepted conventions are `c` and `stdcall`",
+		convention,
+	)
+	return false
+}
+
+// design.md "Foreign-ABI-safe types" / "Parameter semantics": every by-value
+// parameter and the result of a foreign-convention signature must be ABI-safe; a
+// `move` parameter and more than one result have no C representation. An `inout`
+// parameter lowers to a pointer, so its pointee need not itself be ABI-safe
+// (m7-plan step 3).
+check_foreign_signature :: proc(k: ^Checker, params: []Type_Id, modes: []Param_Mode, results: []Type_Id, span: Span) {
+	for param, index in params {
+		mode := index < len(modes) ? modes[index] : Param_Mode.Value
+		#partial switch mode {
+		case .Move:
+			errorf(k.c, span, "L0621", "a foreign parameter cannot use `move`: a C call acquires no cleanup responsibility")
+			continue
+		case .Inout, .Variadic:
+			continue
+		}
+		if ok, reason := foreign_abi_safe(k.c, param); !ok {
+			errorf(k.c, span, "L0619", "a foreign parameter is not ABI-safe: %s", reason)
+		}
+	}
+	if len(results) > 1 {
+		errorf(k.c, span, "L0620", "a foreign procedure returns at most one value, found %d", len(results))
+	}
+	for result in results {
+		if ok, reason := foreign_abi_safe(k.c, result); !ok {
+			errorf(k.c, span, "L0619", "a foreign result is not ABI-safe: %s", reason)
+		}
+	}
+}
+
+// design.md "Foreign-ABI-safe types". `top_level` is false inside a struct,
+// where a fixed array is permitted (it becomes a C array field); at a parameter,
+// result, or global it is true and a fixed array is rejected because C adjusts
+// such parameters to pointers. On failure `reason` names the member path.
+foreign_abi_safe :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok: bool, reason: string) {
+	safe, noun, path := abi_walk(c, type, top_level)
+	if safe {
+		return true, ""
+	}
+	if path == "" {
+		return false, fmt.tprintf("`%s` is %s", type_name(c, type), noun)
+	}
+	return false, fmt.tprintf("member `%s` of `%s` is %s", path, type_name(c, type), noun)
+}
+
+// The Windows x64 classification of one by-value foreign parameter or result
+// (m7-plan decision "Win64 classification"), confirmed against clang's own IR.
+Abi_Pass :: enum {
+	Direct,   // a scalar or pointer, passed as its own LLVM type
+	Bool_I1,  // a direct C `_Bool`: `i1 zeroext` in the signature, one byte stored
+	Reg_Int,  // an aggregate of size 1/2/4/8, passed in one integer register `iN`
+	Indirect, // any other aggregate: a pointer to caller-owned storage, `sret` result
+}
+
+abi_pass :: proc(c: ^Compiler, type: Type_Id) -> Abi_Pass {
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil {
+		return .Direct
+	}
+	#partial switch info.kind {
+	case .Bool:
+		return .Bool_I1
+	case .Struct, .Array, .Union:
+		switch type_size(c, under) {
+		case 1, 2, 4, 8:
+			return .Reg_Int
+		}
+		return .Indirect
+	}
+	return .Direct
+}
+
+// The integer register width (in bits) a `Reg_Int` aggregate occupies: its
+// byte-exact size, 8/16/32/64.
+abi_reg_bits :: proc(c: ^Compiler, type: Type_Id) -> u64 {
+	return type_size(c, type_underlying(c, type)) * 8
+}
+
+// Returns whether `type` is safe, and on failure the noun describing the
+// offending leaf plus the dotted field path from `type` down to it.
+@(private = "file")
+abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, noun: string, path: string) {
+	if type == INVALID_TYPE {
+		return false, "not a resolved type", ""
+	}
+	under := type_underlying(c, type)
+	info := type_of(c, under)
+	if info == nil {
+		return false, "not a resolved type", ""
+	}
+	#partial switch info.kind {
+	case .Int, .Float, .Rune, .Bool, .Enum, .Raw_Pointer, .Pointer, .Multi_Pointer, .CString_View:
+		// Scalars and pointers pass as themselves; an enum has integer backing;
+		// a pointer's pointee need not be safe because only an address crosses.
+		return true, "", ""
+	case .Proc:
+		// A procedure pointer is safe only when it itself uses a foreign
+		// convention and its whole signature is safe.
+		if !convention_is_foreign(info.convention) {
+			return false, "a `loke`-convention procedure pointer", ""
+		}
+		for param in info.parameters {
+			if s, n, p := abi_walk(c, param, true); !s {
+				return false, n, p
+			}
+		}
+		for result in info.results {
+			if s, n, p := abi_walk(c, result, true); !s {
+				return false, n, p
+			}
+		}
+		return true, "", ""
+	case .Array:
+		if top_level {
+			return false, "a fixed array (write `[^]T` or `^T` at a C boundary)", ""
+		}
+		return abi_walk(c, info.element, false)
+	case .Struct:
+		// A plain struct with a trivial lifecycle whose fields are recursively
+		// safe. Naming the offending field beats naming the whole record, so a
+		// managed field is found by recursion before the lifecycle check fires;
+		// a custom hook with otherwise-safe fields falls through to it.
+		for field in info.fields {
+			sym := symbol_of(c, field)
+			if sym == nil {
+				continue
+			}
+			if s, n, p := abi_walk(c, sym.type, false); !s {
+				name := identifier_text(c, sym.name)
+				if p != "" {
+					return false, n, fmt.tprintf("%s.%s", name, p)
+				}
+				return false, n, name
+			}
+		}
+		if type_is_managed(c, under) {
+			return false, "a record with a non-trivial lifecycle", ""
+		}
+		return true, "", ""
+	case .String:
+		return false, "a managed `string`", ""
+	case .String_View:
+		return false, "a `string_view` (two words, not a C type)", ""
+	case .Slice:
+		return false, "a slice", ""
+	case .Dynamic_Array:
+		return false, "a managed dynamic array", ""
+	case .Map:
+		return false, "a managed map", ""
+	case .Union:
+		return false, "a tagged union", ""
+	case .Any_View:
+		return false, "an `any_view`", ""
+	case .Dyn:
+		return false, "a `dyn` interface value", ""
+	case .Interface:
+		return false, "an interface, which has no runtime ABI", ""
+	case .Typeid:
+		return false, "a `typeid`", ""
+	case .Type:
+		return false, "a compile-time `type`, which has no runtime ABI", ""
+	case .Allocator, .Allocator_Error:
+		return false, "a Loke-specific runtime handle", ""
+	}
+	return false, "not foreign-ABI-safe", ""
+}

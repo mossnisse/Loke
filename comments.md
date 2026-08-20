@@ -175,6 +175,14 @@ This section is non-normative. It records why Loke differs from Odin and why
 some larger design choices were made. [`design.md`](design.md) remains the
 authoritative language definition.
 
+## shorten dynamic array syntax
+
+change [dynamic] to [dyn]
+
+## directives
+
+now when we have compile time procedures should some directives be changed to procedures?
+
 ## Added features compared to Odin
 
 ### Local borrow checking

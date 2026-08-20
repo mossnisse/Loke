@@ -195,11 +195,20 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		proc_type = no_args,
 	})
 
+	// design.md "Build configuration": the `LOKE_*` constants (m7-plan step 1).
+	predeclare_build_config(c, universe)
+
 	return universe
 }
 
 @(private = "file")
 define :: proc(c: ^Compiler, scope: ^Scope, name: string, template: Symbol) {
+	define_universe(c, scope, name, template)
+}
+
+// Package-visible so `src/build_config.odin` can predeclare the `LOKE_*`
+// constants into the same scope.
+define_universe :: proc(c: ^Compiler, scope: ^Scope, name: string, template: Symbol) {
 	symbol := template
 	symbol.name = intern_identifier(c, name)
 	symbol.span = no_span()

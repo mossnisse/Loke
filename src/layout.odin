@@ -124,12 +124,17 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 				continue
 			}
 			field_size := type_size(c, symbol.type)
-			field_align := type_align(c, symbol.type)
+			// design.md "@(packed)": a packed field is placed at the running cursor
+			// with no alignment padding, and the record's own natural alignment stays
+			// 1. Every other struct aligns each field to its type.
+			field_align := info.packed ? u64(1) : type_align(c, symbol.type)
 			cursor = align_up(cursor, field_align)
 			offsets[index] = cursor
 			cursor += field_size
 			alignment = max(alignment, field_align)
 		}
+		// design.md "@(align=N)": raises the record's alignment, never lowers it.
+		alignment = max(alignment, info.written_align)
 		// Tail padding, so `[2]T` puts the second element on T's alignment.
 		size = align_up(cursor, alignment)
 	}

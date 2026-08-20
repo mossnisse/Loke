@@ -233,6 +233,10 @@ Flow_Graph :: struct {
 	// allocator binding and per region-backed owner; `owners_in_scope` is what a
 	// reset has to answer "would this owner survive it" against.
 	region_of:       map[Symbol_Id]Region_Set,
+	// A provider owns its own region, but provider-backed construction also makes
+	// it depend on the parent allocator until the child is dropped. Keeping that
+	// edge separate avoids confusing `child.allocator()` with the parent region.
+	provider_parents: map[Symbol_Id]Region_Set,
 	owners_in_scope: [dynamic]Symbol_Id,
 	param_count:     int,
 	// One bit per local `mem.Arena`/`mem.Scratch` in this body (m6b-plan step 5).
@@ -297,6 +301,7 @@ build_flow_graph :: proc(
 	graph.call_results = make(map[^Expr_Call][]Prov_Call_Result, 8, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
+	graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
 	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
 	graph.provider_bits = make(map[Symbol_Id]u64, 4, allocator)
 	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
@@ -515,7 +520,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 						}
 					}
 				}
-				escaping := prov_result_region(graph, value.expr, 0)
+				escaping := prov_escape_region(graph, value.expr, 0)
 				prov_emit(graph, Prov_Event {
 					kind    = .Escape,
 					sources = first,
@@ -1215,6 +1220,26 @@ prov_result_region :: proc(graph: ^Flow_Graph, value: Expr, result: int) -> Regi
 	return result == 0 ? prov_region_of(graph, value) : Region_Set{}
 }
 
+// Returning a region provider transfers the provider's dependency, not the
+// callee-local token that identifies allocations made *by* that provider. The
+// caller creates a fresh token for the returned owner and retains the parent
+// edge represented here.
+@(private = "file")
+prov_escape_region :: proc(graph: ^Flow_Graph, value: Expr, result: int) -> Region_Set {
+	if result == 0 && expr_base(value) != nil && type_is_region_provider(graph.k.c, expr_base(value).type) {
+		#partial switch v in value {
+		case ^Expr_Ident:
+			if parent, found := graph.provider_parents[v.symbol]; found {
+				return parent
+			}
+			return Region_Set{}
+		case ^Expr_Move:
+			return prov_escape_region(graph, v.value, 0)
+		}
+	}
+	return prov_result_region(graph, value, result)
+}
+
 @(private = "file")
 prov_new_root :: proc(graph: ^Flow_Graph, kind: Root_Kind, span: Span, name: string) -> Root_Id {
 	append(&graph.roots, Prov_Root{kind = kind, span = span, name = name, param_index = -1})
@@ -1629,6 +1654,12 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result: int, result_
 	if set, ok := prov_handle_region(graph, v); ok {
 		return set
 	}
+	// A fixed arena borrows its buffer but has no allocator-region parent. The
+	// ordinary loan analysis carries that buffer lifetime; inventing an unknown
+	// allocator dependency here would make unrelated resets spuriously overlap.
+	if call_provider_op(c, v) == .Open_Fixed {
+		return out
+	}
 	callee := v.resolution.chosen_overload
 	if callee == INVALID_SYMBOL {
 		callee = v.resolution.symbol
@@ -1746,15 +1777,26 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	dead := graph.k.c.reset_dead[at]
 	for id in graph.owners_in_scope {
 		owner := symbol_of(graph.k.c, id)
-		owner_region, found := graph.region_of[id]
-		if owner == nil || !found || region_is_empty(owner_region) {
+		if owner == nil {
 			continue
 		}
 		if symbol_in(dead, id) {
 			continue
 		}
-		// The provider being reset is not its own dependant.
 		if type_is_region_provider(graph.k.c, owner.type) {
+			// The provider being reset is not its own dependant, but a live child
+			// provider is: releasing the parent would invalidate the child's blocks
+			// and later cleanup.
+			parent, found := graph.provider_parents[id]
+			if found && regions_may_overlap(parent, set) {
+				event.verb = identifier_text(graph.k.c, owner.name)
+				event.owner_span = owner.span
+				break
+			}
+			continue
+		}
+		owner_region, found := graph.region_of[id]
+		if !found || region_is_empty(owner_region) {
 			continue
 		}
 		if !regions_may_overlap(owner_region, set) {
@@ -2150,6 +2192,12 @@ prov_declare_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symbol, ini
 	// created, so it gets its own token rather than merging into anything.
 	if type_is_region_provider(graph.k.c, sym.type) && sym.duration == .None {
 		graph.region_of[id] = prov_provider_region(graph, id)
+		if initializer != nil {
+			parent := prov_result_region(graph, initializer, result)
+			if !region_is_empty(parent) {
+				graph.provider_parents[id] = parent
+			}
+		}
 		append(&graph.owners_in_scope, id)
 		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Owner, slot = len(graph.owners_in_scope) - 1})
 		return

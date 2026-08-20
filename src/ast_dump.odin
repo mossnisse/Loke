@@ -611,7 +611,9 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Type_Proc:
 		fmt.sbprint(b, "(proc-type")
 		if node.convention != "" {
-			fmt.sbprintf(b, " %s", node.convention)
+			// The stored convention is unquoted; the dump shows it as the source
+			// string literal it was written as.
+			fmt.sbprintf(b, " %q", node.convention)
 		}
 		for param in node.params {
 			dump_parameter(b, param, depth)

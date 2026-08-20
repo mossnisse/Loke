@@ -1,0 +1,8 @@
+define i32 @loke.p.reg_param(i32 %arg0) {
+define i32 @loke.p.reg_result(i32 %arg0) {
+define i64 @loke.p.indirect(ptr %arg0) {
+define void @loke.p.sret(ptr sret(
+align 8 %arg.sret, i64 %arg0) {
+define zeroext i1 @loke.p.boolean(i1 zeroext %arg0) {
+define double @loke.p.scalars(i32 %arg0, i64 %arg1, float %arg2, double %arg3, ptr %arg4) {
+define i32 @loke.p.stdc(i32 %arg0) {

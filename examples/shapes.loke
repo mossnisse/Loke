@@ -1,0 +1,87 @@
+package main;
+import "core:fmt";
+
+// The same abstraction, dispatched two ways.
+//
+// An interface is a compile-time description of what a type must provide. A
+// generic procedure constrained by one is specialized per concrete type and
+// dispatches statically; `dyn Shape` erases the type behind a witness table and
+// dispatches at run time. Both read the same requirements, so a type satisfies
+// them once and works in both.
+
+Shape :: interface($T: type) {
+	slot area:      proc(self) -> f64;
+	slot perimeter: proc(self) -> f64;
+	slot name:      proc(self) -> string_view;
+}
+
+Circle    :: struct { radius: f64 }
+Rectangle :: struct { width, height: f64 }
+
+PI :: 3.14159265358979;
+
+impl Circle {
+	area      :: proc(self) -> f64 { return PI * self.radius * self.radius; }
+	perimeter :: proc(self) -> f64 { return 2.0 * PI * self.radius; }
+	name      :: proc(self) -> string_view { return "circle"; }
+}
+
+impl Rectangle {
+	area      :: proc(self) -> f64 { return self.width * self.height; }
+	perimeter :: proc(self) -> f64 { return 2.0 * (self.width + self.height); }
+	name      :: proc(self) -> string_view { return "rectangle"; }
+
+	// Not part of `Shape`. A concrete instantiation can still use it; an erased
+	// `dyn Shape` cannot, because the witness table carries only the slots.
+	is_square :: proc(self) -> bool { return self.width == self.height; }
+}
+
+// Static dispatch. `T` is one concrete type per instantiation, so every call
+// below is direct and the compiler can see straight through it.
+compactness :: proc(shape: $T) -> f64 where Shape(T) {
+	p := shape.perimeter();
+	return 4.0 * PI * shape.area() / (p * p);
+}
+
+// Runtime dispatch. One body serves every shape; the call goes through the
+// witness table. `dyn Shape` is a borrowed view — it never owns its referent.
+report :: proc(shape: dyn Shape) {
+	fmt.println(shape.name(), "area", shape.area(), "perimeter", shape.perimeter());
+}
+
+total_area :: proc(shapes: []dyn Shape) -> f64 {
+	total := 0.0;
+	foreach (shape in shapes) { total += shape.area(); }
+	return total;
+}
+
+main :: proc() {
+	unit   := Circle{1.0};
+	square := Rectangle{2.0, 2.0};
+	wide   := Rectangle{4.0, 1.0};
+
+	// The interface is a compile-time question, answerable at compile time.
+	#assert(Shape(Circle));
+	#assert(Shape(Rectangle));
+	#assert(!Shape(int));
+
+	// Specialized per type: two instantiations, two direct calls.
+	fmt.println("circle compactness:", compactness(unit));
+	fmt.println("square compactness:", compactness(square));
+
+	// Erased: one body, three calls through a witness table.
+	report((dyn Shape)(&unit));
+	report((dyn Shape)(&square));
+	report((dyn Shape)(&wide));
+
+	shapes := [?]dyn Shape{
+		(dyn Shape)(&unit),
+		(dyn Shape)(&square),
+		(dyn Shape)(&wide),
+	};
+	fmt.println("total area:", total_area(shapes[:]));
+
+	// Only the concrete type has the method the interface never mentioned.
+	fmt.println("square is square:", square.is_square());
+	fmt.println("wide is square:", wide.is_square());
+}

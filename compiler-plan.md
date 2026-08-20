@@ -278,8 +278,8 @@ as each milestone starts.
 | **M5b** *(implemented)* | **Borrows, provenance, and allocator regions** ([B12](#b12-borrow--lifetime-checker)), planned in [m5b-plan.md](m5b-plan.md). Propagate root/capability and region provenance over M5a's CFG; enforce last-use borrowing, exclusivity, invalidation, escape, copied allocation-root release, direct/cross-package result summaries, conservative procedure-value results, `free_all`, and transitive `@(allocator_reset)` effects. Close the `any_view`, `dyn`, `inout`-result, `[:]`-result, and slice lifetime gaps. | Invalid root access, local escape, longer-lived region escape, and reset are rejected with diagnostics naming the creation/dependency and conflict; copied allocation bases free once and invalidate aliases; direct and indirect calls preserve the required summaries/effects; every deliberate v1 trust boundary remains tested as accepted. |
 | **M6a** | **Runtime foundations and strings** ([B14](#b14-runtime--core-library)), planned in [m6a-plan.md](m6a-plan.md). Add the versioned C runtime and allocator-provider ABI, implicit `base:`/`core:` roots and nameable runtime/meta/mem/fmt/unsafe packages, logical cross-frame panic cleanup with unwind/abort selection, runtime strings and borrowed text views, multi-pointers, ordinary `..T` plus call-scoped `..any_view` variadics, checked runtime type information, coherent erased formatting, and source locations. | Programs link the compiler-relative runtime; every specified panic follows unwind or abort correctly; text ownership/borrowing is checked; homogeneous and erased variadics run; `fmt` replaces `print_int`; `type_info_of` and source locations expose their frozen runtime layouts. |
 | **M6b** | **Managed containers and regions**, planned in detail in [m6b-plan.md](m6b-plan.md). Add dynamic arrays and maps with complete operations/lifecycle/formatting, eager `via` and lazy default allocator binding, iteration and invalidation, address-stable `mem.Arena`/`mem.Scratch` controls as real local regions, successful reset, and the remaining dynamic-array-dependent string/unsafe/evaluator handoffs. | Dynamic arrays and maps preserve value, allocator, failure, and borrow semantics; arena-backed owners cannot escape or survive reset; moving a provider preserves its allocator-record address and region identity; all managed runtime types iterate, format, copy/move/drop, and fail without publishing partial state. |
-| **M7** | **Release + interop.** LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. | Optimized release builds; C libraries link and call. |
-| **M8** | **Later.** Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
+| **M7** | **Release + interop**, planned in [m7-plan.md](m7-plan.md). LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. Optimization and build modes with the `LOKE_*` build constants; one attribute validation table; `@(packed)`/`@(align=N)`; the Windows x64 classification for `"c"`/`"stdcall"` with `@(by_ptr)` and `@(c_vararg)`; foreign imports, blocks and globals; `@(export)` with object output; and `core:os` over a foreign block. | Optimized release builds, identical in behaviour at every optimization level; C libraries link and call, and C links and calls exported Loke code. |
+| **M8** | **Later.** `Simd(T, N)` with lane-wise operators and `core:simd`; the [library types](#d-out-of-scope-for-v1) design.md assumes, including the compiler atomic intrinsics `Atomic(T)` and `shared(T)` need; then Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
 
 Sequencing rationale: M3 precedes M4 because type-checking generics needs
 compile-time evaluation (`where`, lengths, `when`). Package discovery is the
@@ -630,8 +630,15 @@ block is carved out of the front of that buffer and the region never allocates a
 all. The buffer must then outlive the arena — which is not a new rule: a provider
 is a *borrow carrier*, so `mem.Arena(buffer[:])` carries the buffer's loan and
 the existing root analysis rejects returning it with no region machinery
-involved. The two constructors are one contributed `init` with a defaulted empty
-buffer rather than two overloads, because a Loke type has one member per name.
+involved. `Arena` therefore has distinct fixed-buffer and provider-backed
+`init` overloads; the latter, and `Scratch`, accept a parent allocator defaulted
+to `mem.default_allocator()`. `mem.try_arena` and `mem.try_scratch` expose the
+same provider-backed construction without applying the parent's failure policy.
+A live provider-backed child records its parent-region dependency, so resetting
+the parent is rejected until the child is dropped. Provider result summaries
+transfer that dependency while giving the caller's returned owner a fresh local
+region token, which permits ordinary wrapper procedures without leaking a bare
+handle.
 
 The region lattice gained one bit per local provider — a word, not a slice, with
 an overflow bit that degrades to the conservative answer, since a body with more
@@ -719,6 +726,19 @@ documented v1 trust-boundary set, unchanged.
   — still long-term goals, but v1 has one lowering consumer and ships on the
   annotated-typed-AST-to-LLVM path. Introduce the small backend-agnostic MIR with
   the second backend rather than maintaining an unused durable representation.
+- **`Simd(T, N)`** — specified in design.md and reserved in the public
+  `Type_Kind`, but nothing in the language, runtime, or standard packages depends
+  on it, so it is the one piece of ABI surface that can be left out without
+  leaving another feature half-built. M8.
+- **The library types design.md assumes** — `String_Builder`, `C_String`,
+  `Small_Array(T, N)`, `Bit_Set`/`Enum_Array`, `Complex`/`Quaternion`,
+  `Little_Endian`/`Big_Endian`, slice sorting, `Logger`/`core:log`, and
+  `shared(T)`/`weak(T)`/`Atomic(T)`/`core:sync`. All but the last group are
+  ordinary Loke source over facilities M6 already provides; that group needs
+  compiler atomic intrinsics, which want their own memory-model fixtures. M8.
+  `core:os` is the exception and stays in M7: the program model names `os.args`
+  and `os.exit` normatively, and writing them over a foreign block is the proof
+  that the foreign system works.
 
 Mostly already deferred by design.md's open questions — don't build them:
 recoverable panics / `recover`, first-class tuples, a GC allocator, Unicode

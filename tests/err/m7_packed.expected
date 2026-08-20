@@ -1,0 +1,11 @@
+L0607
+`@(packed)` cannot appear on a union type
+@9:22
+
+L0614
+cannot take the address of `y`
+@14:11
+
+L0614
+it is reached through a packed struct
+@16:12

@@ -1,0 +1,20 @@
+package main;
+
+// design.md "@(packed)" (m7-plan step 2): a packed field is not addressable, and
+// `@(packed)` applies to a struct rather than a union. The whole packed value's
+// address stays valid.
+
+Packed :: struct @(packed) { x: u8, y: i32 }
+Outer :: struct { inner: Packed }
+Bad_Union :: union @(packed) { i32, bool } // L0607: packed is struct-only
+
+main :: proc() {
+	p := Packed{ x = 1, y = 2 };
+	whole := &p;          // ok: the whole value is addressable
+	field := &p.y;        // L0614: a packed field is not addressable
+	o := Outer{ inner = p };
+	nested := &o.inner.y; // L0614: reached through the packed struct
+	_ = whole;
+	_ = field;
+	_ = nested;
+}

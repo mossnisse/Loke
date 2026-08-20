@@ -43,14 +43,25 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 		return
 	}
 	info.variants = variants[:]
-	info.written_align = union_written_alignment(k, value)
+	info.written_align = record_written_alignment(k, value)
+	// `@(packed)` on a union is rejected by the attribute table (L0607); design.md
+	// applies it to a struct only (m7-plan step 2).
 }
 
-// design.md "Union alignment": `union @(align=4) {...}`. Only a power of two the
-// target supports is accepted; a written alignment under the natural one would
-// under-align a variant, so `union_layout` raises rather than lowers.
-@(private = "file")
-union_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
+// design.md "@(packed)": whether a struct/union literal carries the tag.
+record_is_packed :: proc(value: ^Type_Record) -> bool {
+	for attribute in value.attributes {
+		if len(attribute.path) == 1 && attribute.path[0].text == "packed" {
+			return true
+		}
+	}
+	return false
+}
+
+// design.md "@(align=N)": `union @(align=4) {...}` and `struct @(align=4) {...}`.
+// Only a power of two the target supports is accepted; a written alignment under
+// the natural one raises rather than lowers (m7-plan decision on layout).
+record_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
 	for attribute in value.attributes {
 		if len(attribute.path) != 1 || attribute.path[0].text != "align" {
 			continue

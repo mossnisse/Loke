@@ -284,7 +284,11 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   region identity — a provider is move-only for the same reason. An `Arena` may
   be laid over a caller's fixed buffer (`mem.Arena(buffer[:])`), which puts a
   dynamic array's backing storage in the current frame and makes the arena a
-  borrow of that buffer for as long as it lives. `free_all` on a region this body
+  borrow of that buffer for as long as it lives. The provider-backed
+  `mem.Arena(parent)` and `mem.Scratch(parent)` forms default their parent to
+  `mem.default_allocator()`; `mem.try_arena` and `mem.try_scratch` report parent
+  allocation failure explicitly. A child provider keeps its parent region live.
+  `free_all` on a region this body
   created needs no `@(allocator_reset)` promise and is *reusable*: the region
   works again afterwards. What it rejects is a surviving dependant — an owner
   backed by that region, or a borrow of one — and only of that region: two

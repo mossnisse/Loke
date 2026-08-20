@@ -1,0 +1,7 @@
+{
+  "code-runner.executorMap": {
+    "loke": "cd $dir && .\\lokec.exe $fileName -o program.exe && .\\program.exe"
+  },
+  "code-runner.clearPreviousOutput": true,
+  "code-runner.runInTerminal": true
+}

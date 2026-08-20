@@ -6,26 +6,28 @@
       "type": "shell",
       "command": "odin",
       "args": ["build", "src", "-out:lokec.exe"],
-      "group": "build",
       "problemMatcher": []
     },
     {
       "label": "Compile current Loke file",
       "type": "shell",
       "command": "${workspaceFolder}\\lokec.exe",
-      "args": [
-        "${file}",
-        "-o",
-        "${workspaceFolder}\\program.exe"
-      ],
-      "dependsOn": "Build Loke compiler",
+      "args": ["${file}", "-o", "${workspaceFolder}\\program.exe"],
       "problemMatcher": []
     },
     {
-      "label": "Run current Loke file",
+      "label": "Run Loke (Fast)",
       "type": "shell",
       "command": "${workspaceFolder}\\program.exe",
       "dependsOn": "Compile current Loke file",
+      "problemMatcher": []
+    },
+    {
+      "label": "Run Loke (Full Rebuild)",
+      "type": "shell",
+      "command": "${workspaceFolder}\\program.exe",
+      "dependsOn": ["Build Loke compiler", "Compile current Loke file"],
+      "dependsOrder": "sequence",
       "problemMatcher": []
     }
   ]

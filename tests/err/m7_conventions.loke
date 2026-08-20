@@ -1,0 +1,17 @@
+package main;
+
+// design.md "Calling conventions" / "Foreign-ABI-safe types" (m7-plan step 3):
+// only `c` and `stdcall` are accepted conventions, and every by-value parameter
+// and result of a foreign signature must be ABI-safe. An unsafe type names the
+// member path that made it so.
+
+Inner :: struct { s: string }
+Nested :: struct { a: i32, inner: Inner }
+
+bad_conv    :: proc "fastcall" () { }
+str_param   :: proc "c" (s: string) { }
+nested_bad  :: proc "c" (n: Nested) { }
+array_param :: proc "c" (a: [4]i32) { }
+multi_ret   :: proc "c" () -> (i32, i32) { return 1, 2; }
+
+main :: proc() { }

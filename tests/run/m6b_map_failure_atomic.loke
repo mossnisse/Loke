@@ -1,0 +1,56 @@
+package main; import "core:fmt";
+
+// Map insertion has two independent failure points: cloning the incoming value
+// and cloning a new key while the table grows. Neither may replace an existing
+// value or publish a rehash.
+Huge :: struct { pad: [4611686018427387904]u8 }
+
+Key :: struct { id: int }
+
+impl Key {
+	drop :: proc(self: inout Key) { self.id = 0; }
+	try_clone :: proc(self, allocator: Allocator) -> (Key, Allocator_Error) {
+		if (self.id == 99) {
+			p, err := new(Huge, allocator);
+			if (err != nil) { return Key{0}, err; }
+			free(p);
+		}
+		return Key{self.id}, nil;
+	}
+	hash :: proc(self, seed: uint) -> uint { return hash(self.id, seed); }
+	same :: operator(==) proc(x, y: Key) -> bool { return x.id == y.id; }
+}
+
+Value :: struct { id: int }
+
+impl Value {
+	drop :: proc(self: inout Value) { self.id = 0; }
+	try_clone :: proc(self, allocator: Allocator) -> (Value, Allocator_Error) {
+		if (self.id == 99) {
+			p, err := new(Huge, allocator);
+			if (err != nil) { return Value{0}, err; }
+			free(p);
+		}
+		return Value{self.id}, nil;
+	}
+}
+
+main :: proc() {
+	m: map[Key]Value;
+	for (i := 0; i < 7; i += 1) {
+		fmt.println(m.try_insert(Key{i}, Value{i + 10}) == nil);
+	}
+	before := cap(m);
+
+	// The eighth key needs growth. Its clone fails, so even table metadata stays
+	// unchanged and all seven original entries remain reachable.
+	fmt.println(m.try_insert(Key{99}, Value{80}) != nil);
+	fmt.println(cap(m) == before);
+	fmt.println(len(m));
+	fmt.println(m[Key{6}].id);
+
+	// A failed value clone while replacing a key leaves the old value intact.
+	fmt.println(m.try_insert(Key{1}, Value{99}) != nil);
+	fmt.println(len(m));
+	fmt.println(m[Key{1}].id);
+}

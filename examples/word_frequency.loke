@@ -1,0 +1,70 @@
+package main; import "core:fmt";
+
+// Text, maps, and dynamic arrays working together.
+//
+// The counter's key is a `string_view`: every word borrows the bytes of `text`
+// rather than allocating a copy of them. That is checked, not hoped for — the
+// borrow analysis knows the map holds views into `text` and would reject any
+// attempt to outlive it.
+//
+// Map iteration order is deliberately unspecified, so the words are also
+// recorded in a dynamic array in first-seen order. Anything that needs a stable
+// order keeps one; the table itself never promises one.
+
+TEXT ::
+	"the quick brown fox jumps over the lazy dog " +
+	"while the dog sleeps and the fox runs on";
+
+count_words :: proc(text: string, counts: inout map[string_view]int, order: inout [dynamic]string_view) {
+	// `text[i]` is deliberately not an index: one code point can span several
+	// bytes. `bytes()` is the explicit byte view.
+	bytes := text.bytes();
+	start := 0;
+	for (i := 0; i <= len(bytes); i += 1) {
+		if (i < len(bytes) && bytes[i] != ' ') { continue; }
+		if (i > start) {
+			word := text[start:i];
+			// A read never inserts, so this asks the question without answering it.
+			if (!(word in counts)) { order.append(word); }
+			// As an assignment target the same syntax does insert.
+			counts[word] += 1;
+		}
+		start = i + 1;
+	}
+}
+
+main :: proc() {
+	text: string = TEXT;
+
+	counts: map[string_view]int;
+	order:  [dynamic]string_view;
+	count_words(text, inout counts, inout order);
+
+	// One name over a map binds the value; two names bind key and value.
+	total := 0;
+	foreach (n in counts) { total += n; }
+	fmt.println("distinct:", len(counts));
+	fmt.println("total:", total);
+
+	repeated: [dynamic]string_view;
+	foreach (word in order) {
+		fmt.println(word, counts[word]);
+		if (counts[word] > 1) { repeated.append(word); }
+	}
+
+	// A container formats through the same coherent formatter table a scalar
+	// does, recursively, so this needs no loop.
+	fmt.println("repeated:", repeated);
+
+	// `find` hands back a pointer to the stored value without inserting.
+	slot, found := counts.find("fox");
+	if (found) {
+		slot^ += 100;
+	}
+	fmt.println("fox:", counts["fox"]);
+	fmt.println("cat:", counts["cat"]);        // a missing key reads as zero
+	fmt.println("cat present:", "cat" in counts);
+
+	// Every allocation above — both containers and their tables — is released
+	// here, in reverse declaration order, with no `free` written anywhere.
+}

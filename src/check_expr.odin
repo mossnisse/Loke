@@ -474,6 +474,15 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value
 		v.type = sym.proc_type
+		// design.md "@(deprecated)": a warning at each use — a call or a value use
+		// both resolve the name here (m7-plan step 1).
+		if sym.deprecated {
+			if sym.deprecated_message != "" {
+				warnf(k.c, v.span, "L0611", "`%s` is deprecated: %s", name, sym.deprecated_message)
+			} else {
+				warnf(k.c, v.span, "L0611", "`%s` is deprecated", name)
+			}
+		}
 
 	case .Builtin:
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
@@ -481,6 +490,10 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = INVALID_TYPE
 
 	case .Const, .Enum_Member:
+		// A `LOKE_*` build-config constant allocates its enum type on first use.
+		if sym.build_config_enum != .None && sym.type == INVALID_TYPE {
+			sym.type = build_config_enum_type(k.c, sym.build_config_enum)
+		}
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value
 		v.type = sym.type
@@ -1270,6 +1283,31 @@ index_arguments :: proc(k: ^Checker, receiver: Expr, indices: []Expr) -> ([]Arg_
 
 // ------------------------------------------------------------------ unary --
 
+// design.md "@(packed)": whether a place expression is a field reached through a
+// packed struct at any level of its selector chain, and the field name to name in
+// the diagnostic. The whole packed value is fine; only a field of it is rejected.
+@(private = "file")
+packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
+	cur := operand
+	for {
+		sel, ok := cur.(^Expr_Selector)
+		if !ok || sel.operand == nil {
+			return "", false
+		}
+		base := expr_base(sel.operand)
+		if base != nil {
+			struct_type := type_underlying(k.c, base.type)
+			if info := type_of(k.c, struct_type); info != nil && info.kind == .Pointer {
+				struct_type = type_underlying(k.c, info.element)
+			}
+			if info := type_of(k.c, struct_type); info != nil && info.kind == .Struct && info.packed {
+				return sel.name.text, true
+			}
+		}
+		cur = sel.operand
+	}
+}
+
 @(private = "file")
 check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	v.value_category = .Value
@@ -1288,6 +1326,17 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		operand_base := expr_base(v.operand)
 		if !operand_base.addressable {
 			errorf(k.c, v.op_span, "L0357", "`&` needs an addressable operand")
+			v.type = INVALID_TYPE
+			return
+		}
+		// design.md "@(packed)": "An individual packed field is not addressable" —
+		// the base address of a packed value need not meet a field's alignment. The
+		// whole value's address stays valid (m7-plan step 2).
+		if field, packed := packed_field_reached(k, v.operand); packed {
+			errorf(
+				k.c, v.op_span, "L0614",
+				"cannot take the address of `%s`: it is reached through a packed struct", field,
+			)
 			v.type = INVALID_TYPE
 			return
 		}
@@ -1453,6 +1502,13 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 
 // ----------------------------------------------------------------- binary --
 
+// A bare `.Member` with no operand — the implicit enum selector.
+@(private = "file")
+is_implicit_selector :: proc(e: Expr) -> bool {
+	sel, ok := e.(^Expr_Selector)
+	return ok && sel.operand == nil
+}
+
 @(private = "file")
 check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	v.value_category = .Value
@@ -1480,8 +1536,20 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	shift := v.op == .Shl || v.op == .Shr
 
 	hint := is_comparison ? INVALID_TYPE : expected
-	lhs := check_single_expr(k, v.lhs, hint)
-	rhs := check_single_expr(k, v.rhs, shift ? INVALID_TYPE : hint)
+	lhs, rhs: Type_Id
+	// A comparison operand written as a bare `.Member` takes its expected enum
+	// type from the other operand, which is how `when (LOKE_OS == .Windows)`
+	// resolves the selector (design.md "Build configuration").
+	if is_comparison && is_implicit_selector(v.rhs) && !is_implicit_selector(v.lhs) {
+		lhs = check_single_expr(k, v.lhs, INVALID_TYPE)
+		rhs = check_single_expr(k, v.rhs, lhs)
+	} else if is_comparison && is_implicit_selector(v.lhs) && !is_implicit_selector(v.rhs) {
+		rhs = check_single_expr(k, v.rhs, INVALID_TYPE)
+		lhs = check_single_expr(k, v.lhs, rhs)
+	} else {
+		lhs = check_single_expr(k, v.lhs, hint)
+		rhs = check_single_expr(k, v.rhs, shift ? INVALID_TYPE : hint)
+	}
 	if lhs == INVALID_TYPE || rhs == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
@@ -1996,6 +2064,35 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	case:
 		v.type = info.results[0]
 		v.result_types = info.results
+	}
+}
+
+// design.md "@(require_results)": a bare call statement discards its results.
+// The policy comes from the selected declaration or, after overload selection,
+// from the procedure group the call went through (m7-plan step 1). An explicit
+// `_ = call()` is an assignment, not this statement, so it is never reached.
+report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
+	call, is_call := expr.(^Expr_Call)
+	if !is_call || call.type == TYPE_VOID {
+		return // not a call, or a call with no results
+	}
+	required := false
+	name := ""
+	if selected := symbol_of(k.c, call.resolution.chosen_overload); selected != nil {
+		required = selected.require_results
+		name = identifier_text(k.c, selected.name)
+	}
+	if !required {
+		if group := symbol_of(k.c, callee_group(k, call.callee)); group != nil && group.require_results {
+			required = true
+			name = identifier_text(k.c, group.name)
+		}
+	}
+	if required {
+		errorf(
+			k.c, call.span, "L0612",
+			"the result of `%s` must be used or discarded with `_ = ...`", name,
+		)
 	}
 }
 
@@ -3613,6 +3710,12 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		return float_const(0, info.bits), true
 	case .Enum:
 		return int_const(c, 0), true
+	case .Typeid:
+		// design.md "`type` and `typeid`": `Invalid` is the zero value, and a nil id
+		// resolves to it. Its numeric form is 0, so an uninitialised `typeid` local
+		// must be zeroed rather than left as stack garbage (an optimizer otherwise
+		// promotes the undef and `type_info_of` reads past the table).
+		return type_const(INVALID_TYPE), true
 	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error,
 	     .CString_View:
 		return nil_const(), true

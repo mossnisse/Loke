@@ -154,10 +154,14 @@ Type_Info :: struct {
 	// A union's variants, in declaration order. Variant 0 is the first written
 	// one; tag 0 is nil (m4a-plan decision "Union representation").
 	variants:   []Type_Id,
-	// A validated `union @(align=N)`, or 0. Kept apart from `align`, which the
-	// layout pass overwrites with the computed result: `union_layout` is asked
-	// again by the emitter after that, and both must get the same answer.
+	// A validated `union @(align=N)` or `struct @(align=N)`, or 0. Kept apart from
+	// `align`, which the layout pass overwrites with the computed result:
+	// `union_layout` is asked again by the emitter after that, and both must get
+	// the same answer.
 	written_align: u64,
+	// design.md "@(packed)": this struct removes inter-field padding and has a
+	// natural alignment of 1 (an `@(align=N)` may still raise it). (m7-plan step 2)
+	packed:        bool,
 	// Inherent members written by `impl`: methods, associated constants, and
 	// associated types. `extend` never writes here — its members are package-scoped
 	// and live in `Package.extensions` (m4a-plan decision "Method storage").
@@ -634,6 +638,29 @@ Symbol :: struct {
 	// declaration name storage outside the frame, so the backend gives it a
 	// global rather than an `alloca` (m5a-plan step 4).
 	duration:         Duration,
+	// design.md "Build configuration": which `LOKE_*` enum this predeclared
+	// constant belongs to, or `.None`. Its enum type is allocated lazily on first
+	// use so a program that never reads build config keeps identical type
+	// numbering (m7-plan step 1).
+	build_config_enum: Build_Config_Enum,
+	// design.md "@(deprecated)": the warning message printed at each use of this
+	// procedure, or "" if it is not deprecated (m7-plan step 1).
+	deprecated_message: string,
+	deprecated:         bool,
+	// design.md "@(require_results)": each call must use or explicitly discard the
+	// results. Copied to a foreign block's members and applied to a procedure group
+	// after overload selection (m7-plan step 1).
+	require_results:    bool,
+}
+
+Build_Config_Enum :: enum u8 {
+	None,
+	Arch,
+	Os,
+	Endian,
+	Build_Mode,
+	Optimization_Mode,
+	Vendor,
 }
 
 Scope_Kind :: enum {
@@ -1400,7 +1427,13 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 @(private = "file")
 proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 	b := strings.builder_make(c.semantic_allocator)
-	strings.write_string(&b, "proc(")
+	strings.write_string(&b, "proc")
+	// A foreign convention is part of the type, so a `loke` and a `"c"` signature
+	// that otherwise match must not print the same (m7-plan step 3).
+	if info.convention != "" {
+		fmt.sbprintf(&b, " %q", info.convention)
+	}
+	strings.write_string(&b, "(")
 	for parameter, index in info.parameters {
 		if index > 0 {
 			strings.write_string(&b, ", ")

@@ -1,0 +1,26 @@
+package main; import "core:fmt";
+
+// design.md "Calling conventions" (m7-plan step 3): a Loke `"c"`/`"stdcall"`
+// procedure round-trips every classified parameter and result shape when called
+// from Loke. The values crossing the Windows x64 classification must survive it.
+
+Point :: struct { x: i32, y: i32 }       // size 8: one integer register
+Wide  :: struct { a: i64, b: i64, c: i64 } // size 24: indirect / sret
+
+sum_point :: proc "c" (p: Point) -> i32 { return p.x + p.y; }
+make_point :: proc "c" (x: i32, y: i32) -> Point { return Point{ x = x, y = y }; }
+sum_wide  :: proc "c" (w: Wide) -> i64 { return w.a + w.b + w.c; }
+make_wide :: proc "c" (n: i64) -> Wide { return Wide{ a = n, b = n * 2, c = n * 3 }; }
+flip      :: proc "c" (b: bool) -> bool { return !b; }
+mix       :: proc "stdcall" (i: i32, f: f64, p: Point) -> f64 { return f + f64(i) + f64(p.x); }
+
+main :: proc() {
+	fmt.println(sum_point(Point{ x = 3, y = 4 }));
+	made := make_point(10, 20);
+	fmt.println(made.x, made.y);
+	fmt.println(sum_wide(Wide{ a = 1, b = 2, c = 3 }));
+	w := make_wide(5);
+	fmt.println(w.a, w.b, w.c);
+	fmt.println(flip(false), flip(true));
+	fmt.println(mix(2, 1.5, Point{ x = 100, y = 0 }));
+}

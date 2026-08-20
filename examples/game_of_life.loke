@@ -1,4 +1,5 @@
-package main; import "core:fmt";
+package main;
+import "core:fmt";
 
 WIDTH       :: 31;
 HEIGHT      :: 15;

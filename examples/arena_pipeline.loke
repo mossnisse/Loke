@@ -1,0 +1,76 @@
+package main;
+import "core:fmt";
+import "core:mem";
+
+// Where a value's storage comes from, made explicit.
+//
+// Loke has no ambient temporary allocator. Temporary storage is an owner with a
+// reset boundary and a runtime identity, created where it is needed and passed
+// on explicitly. A container's `via` clause names the provider it allocates
+// from, and that choice is checked: an owner backed by a local region cannot be
+// returned from, or stored past, the region that backs it.
+
+Sample :: struct { id: int, value: f64 }
+
+// A stage that needs scratch space takes the allocator it should use. Nothing
+// is inherited from the caller, so reading this signature is enough to know
+// where the work allocates.
+smooth :: proc(input: []Sample, scratch: Allocator) -> f64 {
+	// `via scratch` binds the whole container to the caller's region: the
+	// header, the storage, and every reallocation on the way.
+	window: [dynamic]f64 via scratch = {};
+	foreach (sample in input) {
+		window.append(sample.value);
+		if (len(window) > 3) { window.remove(0); }
+	}
+	total := 0.0;
+	foreach (v in window) { total += v; }
+	return total / f64(len(window));
+}
+
+// A caller that owns the region: it may reset one it created without any
+// promise from anyone, because no caller can own anything inside it.
+run_batches :: proc(samples: []Sample) {
+	scratch := mem.Scratch();
+	for (start := 0; start < len(samples); start += 4) {
+		stop := start + 4;
+		if (stop > len(samples)) { stop = len(samples); }
+		fmt.println("batch", start / 4, "mean", smooth(samples[start:stop], scratch.allocator()));
+
+		// Everything the stage allocated is gone in one step. The region stays
+		// usable afterwards, so the next batch reuses the same pages.
+		free_all(scratch.allocator());
+	}
+}
+
+// An arena laid over a fixed buffer allocates nothing at all: its control block
+// is carved from the front of the caller's storage and the region hands out the
+// rest. The arena borrows that buffer for as long as it lives, and the borrow
+// analysis is what enforces it.
+in_frame :: proc() -> int {
+	buffer: [1024]u8 = {};
+	arena := mem.Arena(buffer[:]);
+
+	ids: [dynamic]int via arena.allocator() = {};
+	for (i := 0; i < 16; i += 1) { ids.append(i * i); }
+
+	// This map's table lives in the same frame-local buffer.
+	seen: map[int]bool via arena.allocator();
+	foreach (id in ids) { seen[id] = true; }
+
+	return len(ids) + len(seen);
+}
+
+main :: proc() {
+	samples: [dynamic]Sample;
+	for (i := 0; i < 10; i += 1) {
+		samples.append(Sample{i, f64(i) * 1.5});
+	}
+
+	run_batches(samples[:]);
+	fmt.println("in frame:", in_frame());
+
+	// The default provider is the system heap, and it is what a container binds
+	// to when no `via` selects anything else. `samples` releases here.
+	fmt.println("samples:", len(samples));
+}

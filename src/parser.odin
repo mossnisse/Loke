@@ -2431,7 +2431,10 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 
 	convention := ""
 	if at(p, .String) {
-		convention = text_of(p, advance(p))
+		// The token text includes its quotes; a calling convention is a bare word
+		// with no escapes, so slicing them off is the whole unquote (m7-plan step 3).
+		raw := text_of(p, advance(p))
+		convention = len(raw) >= 2 ? raw[1:len(raw) - 1] : raw
 	}
 
 	params, params_ok := parse_parameter_list(p)

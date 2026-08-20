@@ -1,0 +1,16 @@
+package main; import "core:fmt";
+
+// design.md "Record layout attributes" (m7-plan step 2): the byte-exact LLVM
+// bodies and the `align 1` that a packed field's load and store carry.
+
+Packed :: struct @(packed) { x: u8, y: i32 }
+Over :: struct @(align=16) { b: bool, n: i32 }
+Both :: struct @(packed, align=8) { x: u8, y: i32 }
+
+main :: proc() {
+	p := Packed{ x = 1, y = 2 };
+	p.y = 3;
+	o := Over{ b = true, n = 4 };
+	b := Both{ x = 5, y = 6 };
+	fmt.println(p.y, o.n, b.y);
+}

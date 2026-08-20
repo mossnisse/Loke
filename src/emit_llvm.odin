@@ -30,6 +30,11 @@ Deferred :: struct {
 	// A written `defer`, or nil for an implicit drop of `place`.
 	stmt:  Stmt,
 	place: string,
+	// A compiler-owned temporary has no lexical symbol. Its address is published
+	// directly through `place_env` so panic replay can still destroy it while it
+	// is only partially built.
+	temporary_place: bool,
+	place_env:       int,
 	// The local whose storage `place` is. A cleanup thunk reaches it through the
 	// env rather than by name, so the symbol travels with the entry.
 	place_symbol: Symbol_Id,
@@ -105,6 +110,12 @@ Emitter :: struct {
 	// MIR, interpreters, and multiple backend invocations.
 	names:        map[Symbol_Id]string,
 	struct_names: map[Type_Id]string,
+	// design.md "@(packed)": the guaranteed alignment of a place, keyed by its
+	// pointer temporary, when it is lower than the pointee's natural alignment —
+	// which is what an access through a packed field is. A load or store then
+	// carries `align 1` so the optimizer never assumes the missing alignment
+	// (m7-plan step 2, decision "Alignment at use sites").
+	place_align:  map[string]u64,
 
 	// Whether the block being appended to already ends in a terminator. LLVM
 	// rejects both a block without one and an instruction after one.
@@ -116,6 +127,13 @@ Emitter :: struct {
 	// Which results were declared `inout`. Such a result is returned as the
 	// address of a place, which is what makes `grid[i] = v` an ordinary store.
 	result_inout: []bool,
+	// design.md "Calling conventions": whether the procedure being emitted uses a
+	// foreign convention, so its signature and `ret` follow the Windows x64
+	// classification (m7-plan step 3) rather than LLVM's own aggregate lowering.
+	abi_foreign:  bool,
+	// The hidden `sret` result pointer, when the single result is returned
+	// indirectly. Empty otherwise. The body's result slot aliases it directly.
+	abi_sret:     string,
 	defer_flags:  []string,
 	cleanups:     [dynamic]Cleanup_Scope,
 	break_label:    string,
@@ -186,6 +204,7 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		c            = c,
 		names        = make(map[Symbol_Id]string),
 		struct_names = make(map[Type_Id]string),
+		place_align  = make(map[string]u64),
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),
 		pending      = make([dynamic]string),
@@ -289,12 +308,19 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 // every package's items.
 @(private = "file")
 name_synth_procs :: proc(e: ^Emitter) {
+	used := make(map[string]bool)
 	for symbol_id in e.c.synth_procs {
 		symbol := symbol_of(e.c, symbol_id)
 		if symbol == nil {
 			continue
 		}
-		e.names[symbol_id] = fmt.aprintf("@loke.i.%s", llvm_safe(qualified_member_name(e.c, symbol)))
+		base := fmt.aprintf("@loke.i.%s", llvm_safe(qualified_member_name(e.c, symbol)))
+		name := base
+		if used[name] {
+			name = fmt.aprintf("%s.%d", base, int(symbol_id))
+		}
+		used[name] = true
+		e.names[symbol_id] = name
 	}
 }
 
@@ -854,6 +880,7 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 		c            = c,
 		names        = make(map[Symbol_Id]string),
 		struct_names = make(map[Type_Id]string),
+		place_align  = make(map[string]u64),
 		cleanups     = make([dynamic]Cleanup_Scope),
 		param_values = make(map[Symbol_Id]string),
 		pending      = make([dynamic]string),
@@ -1053,15 +1080,99 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 	name := struct_name(e, type)
 	// `{` is a format directive to core:fmt, so the brace is printed separately.
 	fmt.sbprintf(&e.b, "%s = type", name)
-	fmt.sbprint(&e.b, " {")
+	fmt.sbprintln(&e.b, strings.concatenate({" ", struct_body(e, type, info)}))
+}
+
+// The LLVM aggregate body of a struct. A natural record keeps its plain
+// `{ ... }` spelling; a `@(packed)`/`@(align=N)` record is laid out byte-exact so
+// LLVM's own size, alignment, and field offsets equal the checker's cached ones
+// (m7-plan step 2, decision "Attributed LLVM layout"). Field GEP indices stay
+// equal to the logical field index in every form, so field walks are unchanged.
+@(private = "file")
+struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
+	// The cached alignment and size are read below, so the layout must be computed
+	// first; computing a field's layout can grow the type store, so `info` is then
+	// reacquired before its fields are read.
+	natural := record_natural_align(e.c, info_in)
+	type_size(e.c, type)
+	info := type_of(e.c, type)
+	packed := info.packed
+	over_aligned := info.align > natural
+	if !packed && !over_aligned {
+		b := strings.builder_make()
+		strings.write_string(&b, "{")
+		for field, index in info.fields {
+			symbol := symbol_of(e.c, field)
+			if index > 0 {
+				strings.write_string(&b, ",")
+			}
+			fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
+		}
+		strings.write_string(&b, " }")
+		return strings.to_string(b)
+	}
+
+	b := strings.builder_make()
+	if packed && over_aligned {
+		// Tight packing (needs an LLVM packed body) and a raised alignment (which a
+		// packed body cannot report) at once: each field becomes a byte array so a
+		// non-packed body neither re-pads nor drops the alignment, and a trailing
+		// zero-length aligned member forces the record's alignment and size.
+		// ponytail: byte-array fields make whole-value `extractvalue`/`insertvalue`
+		// ill-typed, so `==` and reflection over a combined packed+align struct are
+		// unsupported; add a memcmp/GEP path if such a struct ever needs them.
+		strings.write_string(&b, "{")
+		for field, index in info.fields {
+			symbol := symbol_of(e.c, field)
+			if index > 0 {
+				strings.write_string(&b, ",")
+			}
+			fmt.sbprintf(&b, " [%d x i8]", type_size(e.c, symbol.type))
+		}
+		fmt.sbprintf(&b, ", [0 x i%d] }", info.align * 8)
+		return strings.to_string(b)
+	}
+	if packed {
+		// Tight packing, natural alignment 1: an LLVM packed body matches exactly.
+		strings.write_string(&b, "<{")
+		for field, index in info.fields {
+			symbol := symbol_of(e.c, field)
+			if index > 0 {
+				strings.write_string(&b, ",")
+			}
+			fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
+		}
+		strings.write_string(&b, " }>")
+		return strings.to_string(b)
+	}
+	// `@(align=N)` only: natural field offsets, so a plain body already agrees; a
+	// trailing zero-length aligned member raises the alignment and tail padding.
+	strings.write_string(&b, "{")
 	for field, index in info.fields {
 		symbol := symbol_of(e.c, field)
 		if index > 0 {
-			fmt.sbprint(&e.b, ",")
+			strings.write_string(&b, ",")
 		}
-		fmt.sbprintf(&e.b, " %s", llvm_type(e, symbol.type))
+		fmt.sbprintf(&b, " %s", llvm_type(e, symbol.type))
 	}
-	fmt.sbprintln(&e.b, " }")
+	fmt.sbprintf(&b, ", [0 x i%d] }", info.align * 8)
+	return strings.to_string(b)
+}
+
+// The alignment a struct would have with no `@(align=N)`: the maximum field
+// alignment, or 1 for a packed or empty record.
+@(private = "file")
+record_natural_align :: proc(c: ^Compiler, info: ^Type_Info) -> u64 {
+	if info.packed {
+		return 1
+	}
+	natural := u64(1)
+	for field in info.fields {
+		if symbol := symbol_of(c, field); symbol != nil {
+			natural = max(natural, type_align(c, symbol.type))
+		}
+	}
+	return natural
 }
 
 // The struct a value-typed field depends on, looking through arrays and
@@ -1457,8 +1568,13 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		if value.kind == .Nil {
 			return "zeroinitializer"
 		}
+		// A `@(packed)`/`@(align=N)` struct's constant must match the byte-exact
+		// body `struct_body` emits (m7-plan step 2).
+		packed := info.kind == .Struct && info.packed
+		over_aligned := info.kind == .Struct && info.align > record_natural_align(e.c, info)
+		byte_array := packed && over_aligned
 		b := strings.builder_make()
-		strings.write_string(&b, "{")
+		strings.write_string(&b, byte_array ? "{" : (packed ? "<{" : "{"))
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
 			if index > 0 {
@@ -1468,12 +1584,62 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			if value.aggregate != nil && index < len(value.aggregate.elements) {
 				element = value.aggregate.elements[index]
 			}
-			fmt.sbprintf(&b, " %s %s", llvm_type(e, symbol.type), llvm_const(e, element, symbol.type))
+			if byte_array {
+				fmt.sbprintf(&b, " [%d x i8] %s", type_size(e.c, symbol.type), field_byte_const(e, element, symbol.type))
+			} else {
+				fmt.sbprintf(&b, " %s %s", llvm_type(e, symbol.type), llvm_const(e, element, symbol.type))
+			}
 		}
-		strings.write_string(&b, " }")
+		if over_aligned {
+			fmt.sbprintf(&b, ", [0 x i%d] zeroinitializer", info.align * 8)
+		}
+		strings.write_string(&b, byte_array ? " }" : (packed ? " }>" : " }"))
 		return strings.to_string(b)
 	}
 	return "0"
+}
+
+// The `[size x i8]` constant of one field inside a combined `@(packed, align=N)`
+// struct, whose body uses byte arrays so a non-packed LLVM record neither
+// re-pads nor drops the raised alignment. Scalar fields up to eight bytes get
+// their little-endian bytes; anything wider or non-scalar is zeroed.
+// ponytail: scalar-only byte constants — a combined-packed struct with a wide
+// (i128) or aggregate field used as a compile-time constant zeroes that field;
+// widen this if such a constant is ever needed.
+@(private = "file")
+field_byte_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
+	size := int(type_size(e.c, type))
+	under := type_underlying(e.c, type)
+	info := type_of(e.c, under)
+	raw: u64
+	ok := false
+	if info != nil && size >= 1 && size <= 8 {
+		#partial switch info.kind {
+		case .Int, .Enum, .Rune:
+			if value.kind == .Integer || value.kind == .Rune {
+				wrapped := bi_wrap(e.c, value.integer, size * 8, false)
+				raw, ok = bi_to_u64(e.c, wrapped)
+			}
+		case .Bool:
+			raw, ok = value.boolean ? 1 : 0, true
+		case .Float:
+			switch info.bits {
+			case 16: raw, ok = u64(f64_to_f16_bits(value.float)), true
+			case 32: raw, ok = u64(transmute(u32)f32(value.float)), true
+			case:    raw, ok = transmute(u64)value.float, true
+			}
+		}
+	}
+	if !ok {
+		return "zeroinitializer"
+	}
+	b := strings.builder_make()
+	strings.write_string(&b, "c\"")
+	for i in 0 ..< size {
+		fmt.sbprintf(&b, "\\%02X", u8(raw >> u64(8 * i)))
+	}
+	strings.write_string(&b, "\"")
+	return strings.to_string(b)
 }
 
 // LLVM's decimal float syntax is only exact for values it can round-trip, so
@@ -1512,19 +1678,25 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	e.result_inout = result_inout_of(e, symbol.proc_type)
 	e.result_slots = make([]string, len(symbol.results))
 	e.terminated = false
+	e.abi_foreign = convention_is_foreign(proc_convention_of(e, symbol))
+	e.abi_sret = ""
 	clear(&e.cleanups)
 	begin_unwind_frame(e, llvm_name)
 
-	fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.results, e.result_inout), llvm_name)
-	for parameter, index in symbol.params {
-		if index > 0 {
-			fmt.sbprint(&e.b, ", ")
+	if e.abi_foreign {
+		emit_foreign_signature(e, symbol, llvm_name)
+	} else {
+		fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.results, e.result_inout), llvm_name)
+		for parameter, index in symbol.params {
+			if index > 0 {
+				fmt.sbprint(&e.b, ", ")
+			}
+			mode := symbol_param_mode(e.c, symbol, index)
+			type := mode == .Inout ? "ptr" : llvm_type(e, parameter)
+			fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
 		}
-		mode := symbol_param_mode(e.c, symbol, index)
-		type := mode == .Inout ? "ptr" : llvm_type(e, parameter)
-		fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
+		fmt.sbprintln(&e.b, ") {")
 	}
-	fmt.sbprintln(&e.b, ") {")
 	fmt.sbprintln(&e.b, "entry:")
 
 	// The rest of the body goes to a side builder: the frame prologue needs the
@@ -1544,6 +1716,10 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 			bind_local(e, binding, fmt.aprintf("%%arg%d", index))
 			continue
 		}
+		if e.abi_foreign {
+			bind_local(e, binding, emit_foreign_param_slot(e, parameter, index))
+			continue
+		}
 		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
 		fmt.sbprintfln(&e.b, "  store %s %%arg%d, ptr %s", llvm_type(e, parameter), index, slot)
@@ -1552,6 +1728,18 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 
 	// Named results start at their zero value (design.md "Named results").
 	for result, index in symbol.results {
+		// A single result returned through a hidden `sret` pointer writes straight
+		// into caller storage: the result slot is that pointer, not a fresh alloca.
+		if e.abi_sret != "" && index == 0 {
+			e.result_slots[0] = e.abi_sret
+			if zero, ok := zero_const(e.c, result); ok {
+				fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, result), llvm_const(e, zero, result), e.abi_sret)
+			}
+			if len(symbol.result_symbols) > 0 && symbol.result_symbols[0] != INVALID_SYMBOL {
+				bind_local(e, symbol.result_symbols[0], e.abi_sret)
+			}
+			continue
+		}
 		slot := fmt.aprintf("%%r%d.%d", index, next_id(e))
 		if emit_result_is_inout(e, index) {
 			// The slot holds the address of the place being handed back.
@@ -1620,6 +1808,128 @@ symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mo
 		return .Value
 	}
 	return info.param_modes[index]
+}
+
+@(private = "file")
+proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
+	info := type_of(e.c, symbol.proc_type)
+	return info == nil ? "" : info.convention
+}
+
+// The `define` signature of a foreign-convention procedure under the Windows x64
+// classification (m7-plan step 3). A result larger than one register becomes a
+// hidden leading `sret` pointer and a `void` return; `e.abi_sret` records it.
+@(private = "file")
+emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
+	ret := "void"
+	sret_prefix := ""
+	if len(symbol.results) == 1 {
+		result := symbol.results[0]
+		switch abi_pass(e.c, result) {
+		case .Indirect:
+			e.abi_sret = "%arg.sret"
+			sret_prefix = fmt.aprintf(
+				"ptr sret(%s) align %d %s", llvm_type(e, result), type_align(e.c, result), e.abi_sret,
+			)
+		case .Reg_Int:
+			ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result))
+		case .Bool_I1:
+			ret = "zeroext i1"
+		case .Direct:
+			ret = llvm_type(e, result)
+		}
+	}
+	fmt.sbprintf(&e.b, "define %s %s(", ret, llvm_name)
+	need_comma := false
+	if sret_prefix != "" {
+		fmt.sbprint(&e.b, sret_prefix)
+		need_comma = true
+	}
+	for parameter, index in symbol.params {
+		if need_comma {
+			fmt.sbprint(&e.b, ", ")
+		}
+		need_comma = true
+		fmt.sbprintf(&e.b, "%s %%arg%d", foreign_param_type(e, symbol, parameter, index), index)
+	}
+	fmt.sbprintln(&e.b, ") {")
+}
+
+// The LLVM type (with any ABI attribute) one foreign parameter occupies.
+@(private = "file")
+foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, index: int) -> string {
+	if symbol_param_mode(e.c, symbol, index) == .Inout {
+		return "ptr"
+	}
+	switch abi_pass(e.c, parameter) {
+	case .Bool_I1:
+		// A parameter attribute follows the type, unlike the return attribute.
+		return "i1 zeroext"
+	case .Reg_Int:
+		return fmt.aprintf("i%d", abi_reg_bits(e.c, parameter))
+	case .Indirect:
+		return "ptr"
+	case .Direct:
+		return llvm_type(e, parameter)
+	}
+	return llvm_type(e, parameter)
+}
+
+// Materializes a foreign value parameter's addressable storage from its incoming
+// register, and returns the slot the body binds to. A register-sized aggregate is
+// stored byte-exact through an integer; a larger one is already a caller-owned
+// pointer the immutable value parameter uses directly.
+@(private = "file")
+emit_foreign_param_slot :: proc(e: ^Emitter, parameter: Type_Id, index: int) -> string {
+	arg := fmt.aprintf("%%arg%d", index)
+	switch abi_pass(e.c, parameter) {
+	case .Indirect:
+		return arg
+	case .Reg_Int:
+		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+		fmt.sbprintfln(
+			&e.b, "  store i%d %s, ptr %s, align %d",
+			abi_reg_bits(e.c, parameter), arg, slot, type_align(e.c, parameter),
+		)
+		return slot
+	case .Bool_I1, .Direct:
+		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), arg, slot)
+		return slot
+	}
+	return arg
+}
+
+// The classified `ret` of a foreign-convention procedure (m7-plan step 3): a
+// register-sized aggregate result is read back byte-exact as an integer, a
+// larger one has already been written through `sret`.
+@(private = "file")
+emit_foreign_return :: proc(e: ^Emitter) {
+	if len(e.result_types) == 0 {
+		fmt.sbprintln(&e.b, "  ret void")
+		return
+	}
+	result := e.result_types[0]
+	slot := e.result_slots[0]
+	switch abi_pass(e.c, result) {
+	case .Indirect:
+		fmt.sbprintln(&e.b, "  ret void")
+	case .Reg_Int:
+		bits := abi_reg_bits(e.c, result)
+		v := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", v, bits, slot, type_align(e.c, result))
+		fmt.sbprintfln(&e.b, "  ret i%d %s", bits, v)
+	case .Bool_I1:
+		v := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", v, slot)
+		fmt.sbprintfln(&e.b, "  ret i1 %s", v)
+	case .Direct:
+		v := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", v, llvm_type(e, result), slot)
+		fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, result), v)
+	}
 }
 
 // The C entry point. Internal runtime startup belongs here, which is why
@@ -2023,6 +2333,11 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 			emit_drop_flagged_array(e, entry.type, buffer, flags, count)
 		} else if entry.stmt != nil {
 			emit_stmt(e, entry.stmt)
+		} else if entry.temporary_place {
+			slot, place := temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", slot, env, entry.place_env)
+			fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", place, slot)
+			emit_drop_place(e, entry.type, place)
 		} else if place, bound := e.names[entry.place_symbol]; bound {
 			emit_drop_place(e, entry.type, place)
 		}
@@ -2039,6 +2354,26 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	append(&e.pending, strings.to_string(e.b))
 	u.replaying = false
 	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
+}
+
+// Registers a partially constructed compiler-owned value for panic replay. It
+// never enters the lexical cleanup stack: the builder clears it once complete,
+// at which point ordinary destination ownership takes over.
+@(private = "file")
+begin_temporary_drop :: proc(e: ^Emitter, type: Type_Id, place: string) -> Deferred {
+	entry := Deferred{type = type, place = place, temporary_place = true, slot = -1, place_env = -1}
+	if unwind_enabled(e) {
+		entry.place_env = unwind_reserve_env(e)
+	}
+	unwind_reserve(e, &entry)
+	unwind_publish_env(e, entry.place_env, place)
+	unwind_register(e, entry)
+	return entry
+}
+
+@(private = "file")
+finish_temporary_drop :: proc(e: ^Emitter, entry: Deferred) {
+	unwind_clear(e, entry.slot)
 }
 
 // -------------------------------------------------------------- cleanups --
@@ -2995,7 +3330,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	}
 	hook := type_hook(e.c, type, "clone")
 	if hook == INVALID_SYMBOL {
-		backend_fail(e, "an implicit copy has no `clone` member")
+		backend_fail(e, fmt.aprintf("an implicit copy of `%s` has no `clone` member", type_name(e.c, type)))
 		return "0"
 	}
 	out := temp(e)
@@ -3012,6 +3347,11 @@ emit_epilogue :: proc(e: ^Emitter) {
 	// This frame is leaving normally, so it is no longer one a panic can call
 	// back into.
 	emit_unwind_pop(e)
+	if e.abi_foreign {
+		emit_foreign_return(e)
+		e.terminated = true
+		return
+	}
 	slot_type :: proc(e: ^Emitter, index: int) -> string {
 		return emit_result_is_inout(e, index) ? "ptr" : llvm_type(e, e.result_types[index])
 	}
@@ -3048,7 +3388,41 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	if address == "" || value == "" {
 		return
 	}
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, type), value, address)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s%s", llvm_type(e, type), value, address, align_suffix(e, address, type))
+}
+
+// The guaranteed alignment of a place, defaulting to the pointee's natural
+// alignment when nothing lower was recorded (m7-plan step 2).
+@(private = "file")
+place_align_of :: proc(e: ^Emitter, address: string, type: Type_Id) -> u64 {
+	if a, ok := e.place_align[address]; ok {
+		return a
+	}
+	return type_align(e.c, type)
+}
+
+// `, align N` when a place is known to be less aligned than its pointee wants —
+// which is what reaching through a packed field produces. Empty otherwise, so
+// every ordinary access keeps its unchanged IR.
+@(private = "file")
+align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
+	if a, ok := e.place_align[address]; ok && a < type_align(e.c, type) {
+		return fmt.aprintf(", align %d", a)
+	}
+	return ""
+}
+
+// Records the effective alignment of the address of `field` reached from a base
+// place, lowering it to 1 through a packed struct so nested access stays
+// unaligned (m7-plan decision "Alignment at use sites").
+@(private = "file")
+record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_address: string, field_type: Type_Id) {
+	base_info := type_of(e.c, type_underlying(e.c, base_type))
+	base_align := place_align_of(e, base_address, base_type)
+	field_align := base_info != nil && base_info.packed ? u64(1) : min(base_align, type_align(e.c, field_type))
+	if field_align < type_align(e.c, field_type) {
+		e.place_align[field_address] = field_align
+	}
 }
 
 // The address of a place. Composite literals get temporary storage here, which
@@ -3082,6 +3456,7 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 			"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
 			out, llvm_type(e, base_type), base_address, symbol.index,
 		)
+		record_field_align(e, base_type, base_address, out, symbol.type)
 		return out
 
 	case ^Expr_Index:
@@ -3501,7 +3876,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		}
 		address := emit_address(e, expr)
 		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, base.type), address)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s%s", out, llvm_type(e, base.type), address, align_suffix(e, address, base.type))
 		return out
 
 	case ^Expr_Unary:
@@ -3623,6 +3998,7 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 			"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
 			field_address, llvm_type(e, v.type), address, slot,
 		)
+		record_field_align(e, v.type, address, field_address, element_type)
 		store(e, element_type, value, field_address)
 	}
 }
@@ -3630,13 +4006,9 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 // `[dynamic]T{a, b, c}` over the header this expression has already zeroed.
 //
 // Each element is appended as soon as it is evaluated, so the container itself
-// owns the initialized prefix: the C helper destroys exactly that prefix if a
-// later clone fails, and the destination's own drop covers it afterwards.
-//
-// ponytail: a panic raised *inside* a later element's expression leaks the
-// earlier ones, because the literal's storage is not registered for unwind until
-// it reaches its destination. The variadic pack's per-element flag array is the
-// upgrade path if that window ever matters.
+// owns the initialized prefix. A temporary unwind action covers that prefix
+// while later expressions run; destination ownership takes over only after the
+// complete literal has been built.
 @(private = "file")
 emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, element: Type_Id) {
 	if len(v.elements) == 0 {
@@ -3660,6 +4032,7 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 		reserved, address, ops, len(v.elements),
 	)
 	emit_container_policy_failure(e, address, reserved)
+	cleanup := begin_temporary_drop(e, v.type, address)
 
 	slot := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, element))
@@ -3679,12 +4052,12 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 		// the temporary it appended from.
 		emit_drop_place(e, element, slot)
 	}
+	finish_temporary_drop(e, cleanup)
 }
 
 // `map[K]V{ key = value, ... }` over the header this expression has already
-// zeroed. Each entry is inserted as soon as it is evaluated, so the map itself
-// owns what has been built; the same unwind window the dynamic-array literal has
-// applies here for the same reason.
+// zeroed. Each entry is inserted as soon as it is evaluated, so a temporary
+// unwind action lets the map destroy the prefix if a later key/value panics.
 @(private = "file")
 emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, key, element: Type_Id) {
 	if len(v.elements) == 0 {
@@ -3706,6 +4079,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		reserved, address, ops, len(v.elements),
 	)
 	emit_container_policy_failure(e, address, reserved)
+	cleanup := begin_temporary_drop(e, v.type, address)
 
 	for written, index in v.elements {
 		key_slot := temp(e)
@@ -3739,6 +4113,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		place_label(e, done_label)
 		e.terminated = false
 	}
+	finish_temporary_drop(e, cleanup)
 }
 
 // A container operation with no result to report through applies the provider's
@@ -6414,6 +6789,100 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	return Variadic_Pack{value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup}
 }
 
+// The call side of the Windows x64 classification (m7-plan step 3). Operands are
+// already evaluated; this materializes each into its ABI register or caller-owned
+// temporary, emits the call, and reconstructs the aggregate result the loke
+// caller consumes. `loke`-convention calls never reach here.
+@(private = "file")
+emit_foreign_call :: proc(e: ^Emitter, callee: string, callee_type: ^Type_Info, operands: []string) -> []string {
+	ret := "void"
+	sret := ""
+	result_type := INVALID_TYPE
+	if len(callee_type.results) == 1 {
+		result_type = callee_type.results[0]
+		switch abi_pass(e.c, result_type) {
+		case .Indirect:
+			sret = temp(e)
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", sret, llvm_type(e, result_type))
+		case .Reg_Int:
+			ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result_type))
+		case .Bool_I1:
+			ret = "zeroext i1"
+		case .Direct:
+			ret = llvm_type(e, result_type)
+		}
+	}
+
+	args := make([dynamic]string, 0, len(operands) + 1)
+	if sret != "" {
+		append(&args, fmt.aprintf(
+			"ptr sret(%s) align %d %s", llvm_type(e, result_type), type_align(e.c, result_type), sret,
+		))
+	}
+	for operand, index in operands {
+		parameter := callee_type.parameters[index]
+		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		if mode == .Inout {
+			append(&args, fmt.aprintf("ptr %s", operand))
+			continue
+		}
+		switch abi_pass(e.c, parameter) {
+		case .Bool_I1:
+			append(&args, fmt.aprintf("i1 zeroext %s", operand))
+		case .Reg_Int:
+			slot, loaded := temp(e), temp(e)
+			bits, align := abi_reg_bits(e.c, parameter), type_align(e.c, parameter)
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, parameter), operand, slot, align)
+			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
+			append(&args, fmt.aprintf("i%d %s", bits, loaded))
+		case .Indirect:
+			slot := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), operand, slot)
+			append(&args, fmt.aprintf("ptr %s", slot))
+		case .Direct:
+			append(&args, fmt.aprintf("%s %s", llvm_type(e, parameter), operand))
+		}
+	}
+
+	call := ""
+	if ret == "void" {
+		fmt.sbprintf(&e.b, "  call void %s(", callee)
+	} else {
+		call = temp(e)
+		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, ret, callee)
+	}
+	for arg, index in args {
+		if index > 0 {
+			fmt.sbprint(&e.b, ", ")
+		}
+		fmt.sbprint(&e.b, arg)
+	}
+	fmt.sbprintln(&e.b, ")")
+
+	if len(callee_type.results) == 0 {
+		return nil
+	}
+	single := make([]string, 1)
+	switch abi_pass(e.c, result_type) {
+	case .Indirect:
+		v := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", v, llvm_type(e, result_type), sret)
+		single[0] = v
+	case .Reg_Int:
+		slot, v := temp(e), temp(e)
+		align := type_align(e.c, result_type)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, result_type))
+		fmt.sbprintfln(&e.b, "  store i%d %s, ptr %s, align %d", abi_reg_bits(e.c, result_type), call, slot, align)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", v, llvm_type(e, result_type), slot, align)
+		single[0] = v
+	case .Bool_I1, .Direct:
+		single[0] = call
+	}
+	return single
+}
+
 // The shared call sequence: bind the operands left to right, emit the call, and
 // hand back one operand per result.
 @(private = "file")
@@ -6471,6 +6940,10 @@ emit_bound_call :: proc(
 		if symbol != nil && index < len(symbol.param_symbols) && symbol.param_symbols[index] != INVALID_SYMBOL {
 			e.param_values[symbol.param_symbols[index]] = operands[index]
 		}
+	}
+
+	if convention_is_foreign(callee_type.convention) {
+		return emit_foreign_call(e, callee, callee_type, operands)
 	}
 
 	result_type := llvm_result_type(e, callee_type.results, callee_type.result_inout)
@@ -6667,6 +7140,9 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
+	// design.md "Build configuration": the selected optimization mode maps to one
+	// `-O` flag on the single clang invocation (m7-plan decision "Release output").
+	append(&command, opt_clang_flag(opts.opt_mode))
 	for source in sources {
 		append(&command, source)
 	}
@@ -7596,53 +8072,39 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	switch symbol.provider_op {
 	case .None:
 	case .Open:
-		// An empty buffer means "ask the program default provider for blocks", so
-		// a failure there is an ordinary implicit-allocation failure. A non-empty
-		// one carves the control block out of the caller's storage and cannot fail
-		// for want of memory: a buffer too small to hold one is a program fault
-		// the runtime raises, not something a policy could rescue.
-		control := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca ptr", control)
-		if len(symbol.params) == 0 {
-			opened := temp(e)
-			fmt.sbprintfln(
-				&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %s)", opened, RT_DEFAULT_ALLOCATOR,
-			)
-			emit_provider_open_check(e, opened)
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", opened, control)
-		} else {
-			buffer := llvm_type(e, symbol.params[0])
-			data, length, given := temp(e), temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", data, buffer, SLICE_DATA)
-			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", length, buffer, SLICE_LEN)
-			fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", given, length)
-			over, backed, joined :=
-				new_label(e, "arena.fixed"), new_label(e, "arena.backed"), new_label(e, "arena.open")
-			branch_if(e, given, over, backed)
-
-			place_label(e, over)
-			fixed := temp(e)
-			fmt.sbprintfln(
-				&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", fixed, data, length,
-			)
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", fixed, control)
-			branch(e, joined)
-
-			place_label(e, backed)
-			opened := temp(e)
-			fmt.sbprintfln(
-				&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %s)", opened, RT_DEFAULT_ALLOCATOR,
-			)
-			emit_provider_open_check(e, opened)
-			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", opened, control)
-			branch(e, joined)
-
-			place_label(e, joined)
-		}
-		loaded, out := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", loaded, control)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", out, provider, loaded, PROVIDER_CONTROL)
+		opened, out := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
+		emit_provider_open_check(e, opened, "%arg0")
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", out, provider, opened, PROVIDER_CONTROL)
 		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
+
+	case .Open_Fixed:
+		// Fixed storage cannot fail for want of memory. A buffer too small for the
+		// control block is a program fault raised by the runtime.
+		buffer := llvm_type(e, symbol.params[0])
+		data, length, opened, out := temp(e), temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", data, buffer, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", length, buffer, SLICE_LEN)
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", opened, data, length,
+		)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", out, provider, opened, PROVIDER_CONTROL)
+		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
+
+	case .Try_Open:
+		opened, value, first, failed, error, out := temp(e), temp(e), temp(e), temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", value, provider, opened, PROVIDER_CONTROL)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, result, provider, value)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, opened)
+		fmt.sbprintfln(
+			&e.b, "  %s = zext i1 %s to %s", error, failed, llvm_type(e, TYPE_ALLOCATOR_ERROR),
+		)
+		fmt.sbprintfln(
+			&e.b, "  %s = insertvalue %s %s, %s %s, 1",
+			out, result, first, llvm_type(e, TYPE_ALLOCATOR_ERROR), error,
+		)
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, out)
 
 	case .Handle:
 		control, handle := temp(e), temp(e)
@@ -7655,14 +8117,14 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 }
 
 @(private = "file")
-emit_provider_open_check :: proc(e: ^Emitter, control: string) {
+emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, control)
 	fail, done := new_label(e, "arena.failed"), new_label(e, "ok")
 	branch_if(e, failed, fail, done)
 	fmt.sbprintfln(&e.b, "%s:", fail)
 	e.terminated = false
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
 	fmt.sbprintln(&e.b, "  unreachable")
 	e.terminated = true
 	fmt.sbprintfln(&e.b, "%s:", done)
@@ -7804,33 +8266,58 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	case .Map_Try_Insert:
 		key_type := container_key(e.c, container)
+		// Stage the value clone before asking the runtime for an inserting place.
+		// A fallible clone must leave an existing entry untouched, and must not
+		// publish a new key whose value could not be constructed.
+		allocator_slot, bound_allocator := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
+			allocator_slot, CONTAINER_TYPE, CONTAINER_ALLOC,
+		)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", bound_allocator, allocator_slot)
+		unbound, allocator := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", unbound, bound_allocator)
+		fmt.sbprintfln(
+			&e.b, "  %s = select i1 %s, ptr %s, ptr %s",
+			allocator, unbound, RT_DEFAULT_ALLOCATOR, bound_allocator,
+		)
+		staged := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca %s", staged, element_llvm)
+		cloned := "true"
+		if type_is_managed(e.c, element) {
+			source := value_storage(e, element, "%arg2")
+			cloned = emit_try_clone_into(e, element, staged, source, allocator)
+		} else {
+			store(e, element, "%arg2", staged)
+		}
+		clone_ready, clone_failed := new_label(e, "mins.cloned"), new_label(e, "mins.clone_failed")
+		branch_if(e, cloned, clone_ready, clone_failed)
+		place_label(e, clone_failed)
+		fmt.sbprintfln(&e.b, "  ret %s 1", result)
+		e.terminated = true
+
+		place_label(e, clone_ready)
 		key_slot := value_storage(e, key_type, "%arg1")
 		place := emit_map_entry(e, ops, "%arg0", key_slot)
 		emit_drop_place(e, key_type, key_slot)
-		missing, ok_label, done_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.done")
+		missing, ok_label, failed_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.failed")
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
-		branch_if(e, missing, done_label, ok_label)
+		branch_if(e, missing, failed_label, ok_label)
+		place_label(e, failed_label)
+		emit_drop_place(e, element, staged)
+		fmt.sbprintfln(&e.b, "  ret %s 1", result)
+		e.terminated = true
+
 		place_label(e, ok_label)
-		// The slot's previous value -- the freshly written zero, or the entry that
-		// was already there -- is destroyed before the new one is published.
+		// The clone is complete, so replacement can now commit without a failure
+		// point between destroying the old value and publishing the new one.
 		emit_drop_place(e, element, place)
-		// The argument is a borrowed copy the caller still owns, so a managed value
-		// is duplicated into the slot rather than aliased.
-		stored := "%arg2"
-		if type_is_managed(e.c, element) {
-			stored = emit_clone_value(e, element, stored)
-		}
+		stored := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", stored, element_llvm, staged)
 		store(e, element, stored, place)
-		branch(e, done_label)
-		place_label(e, done_label)
-		e.terminated = false
-		failed_insert, error := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed_insert, place)
-		fmt.sbprintfln(
-			&e.b, "  %s = zext i1 %s to %s", error, failed_insert, llvm_type(e, TYPE_ALLOCATOR_ERROR),
-		)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, error)
+		fmt.sbprintfln(&e.b, "  ret %s 0", result)
 		fmt.sbprintln(&e.b, "}")
+		e.terminated = true
 		return
 
 	case .Map_Remove:

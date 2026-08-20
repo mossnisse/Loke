@@ -97,3 +97,12 @@ escaping_owner :: proc() {
 main :: proc() {
 	fmt.println(1);
 }
+
+// A provider-backed child requires its parent to stay live until the child is
+// dropped, just like an ordinary owner allocated in that parent region.
+surviving_child :: proc() {
+	parent := mem.Arena();
+	child := mem.Scratch(parent.allocator());
+	free_all(parent.allocator());
+	drop(child);
+}

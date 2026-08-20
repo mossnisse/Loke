@@ -1,0 +1,46 @@
+package main; import "core:fmt";
+import "base:runtime";
+
+// design.md "Record layout attributes" (m7-plan step 2): packed fields load and
+// store unaligned, `@(align=N)` raises alignment, and `offset_of`/`size_of`/
+// runtime type info all agree. A nested access through a packed value stays
+// correct, and the value round-trips through a by-value call and a fixed array.
+
+Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
+Over :: struct @(align=16) { b: bool, n: i32 }
+Both :: struct @(packed, align=8) { x: u8, y: i32 }
+Outer :: struct { head: u8, inner: Packed }
+
+read_y :: proc(p: Packed) -> i32 { return p.y; }
+
+main :: proc() {
+	// Folded layout built-ins.
+	fmt.println(size_of(Packed), align_of(Packed));
+	fmt.println(offset_of(Packed, x), offset_of(Packed, y), offset_of(Packed, z), offset_of(Packed, w));
+	fmt.println(size_of(Over), align_of(Over));
+	fmt.println(size_of(Both), align_of(Both), offset_of(Both, y));
+
+	// Unaligned field load/store round-trip.
+	p := Packed{ x = 1, y = 1000000, z = 7, w = 2 };
+	fmt.println(p.x, p.y, p.z, p.w);
+	p.y = -5;
+	fmt.println(p.y, read_y(p));
+
+	// Fixed-array element and nested packed field.
+	arr: [3]Packed;
+	arr[2] = p;
+	fmt.println(arr[2].y);
+	o := Outer{ head = 9, inner = p };
+	o.inner.y = 42;
+	fmt.println(o.head, o.inner.y);
+
+	// Combined and over-aligned values round-trip too.
+	b := Both{ x = 3, y = 77 };
+	fmt.println(b.x, b.y);
+	ov := Over{ b = true, n = 123 };
+	fmt.println(ov.n);
+
+	// Runtime type info reports the packed size.
+	info := type_info_of(typeid_of(Packed));
+	if (info != nil) { fmt.println(info.size, info.align); }
+}

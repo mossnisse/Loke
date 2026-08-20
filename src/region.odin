@@ -26,13 +26,13 @@ PROVIDER_CONTROL :: 0
 // Which contributed operation one provider member is.
 Provider_Op :: enum {
 	None,
-	// `mem.Arena()`, `mem.Arena(buffer)`, `mem.Scratch()`. One member with a
-	// defaulted buffer rather than two overloads, because a Loke type has one
-	// member per name. An empty buffer means "ask the program default provider
-	// for blocks"; a non-empty one carves the control block out of the caller's
-	// storage, so the region never allocates at all and the buffer has to outlive
-	// it — an ordinary borrow, checked as one.
+	// Provider-backed `mem.Arena(parent)` and `mem.Scratch(parent)`.
 	Open,
+	// `mem.Arena(buffer)`, whose storage and control block live in the buffer.
+	Open_Fixed,
+	// Fallible package procedures `mem.try_arena(parent)` and
+	// `mem.try_scratch(parent)`.
+	Try_Open,
 	// `arena.allocator()`: the handle. Its region is this provider's.
 	Handle,
 }
@@ -77,7 +77,9 @@ type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 // design.md writes both constructors as calls on the type name, which is the
-// ordinary `init` path: `arena := mem.Arena();` and `mem.Arena(buffer[:])`.
+// ordinary `init` path. Provider-backed construction accepts an explicit parent
+// allocator and defaults to the program provider; `Arena(buffer)` remains the
+// fixed-storage overload.
 ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 	info := type_of(k.c, type_underlying(k.c, type))
 	if info == nil || !info.provider || .Container in info.contributed {
@@ -88,57 +90,35 @@ ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 	// design.md "The allocator selects the location of backing storage":
 	// `arena := mem.Arena(buffer[:])` puts a dynamic array's backing storage in
 	// the current stack frame. The buffer is written into, so it is `[]mut u8`.
-	// `mem.Scratch` is always provider-backed and takes no buffer at all.
-	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+	// `mem.Scratch` is always provider-backed.
+	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
 	if type == k.c.arena_type {
 		buffer := slice_of(k.c, TYPE_U8, mutable = true)
-		init := provider_member(
-			k, type, "init", .Open,
-			[]Type_Id{buffer}, []Param_Mode{.Value}, []Type_Id{type}, has_receiver = false,
-		)
-		if sym := symbol_of(k.c, init); sym != nil {
-			sym.param_defaults[0] = empty_slice_arg(k.c, buffer)
-		}
-		append(&members, init)
-	} else {
 		append(&members, provider_member(
-			k, type, "init", .Open, []Type_Id{}, []Param_Mode{}, []Type_Id{type}, has_receiver = false,
+			k.c, type, "init", .Open_Fixed,
+			[]Type_Id{buffer}, []Param_Mode{.Value}, []Type_Id{type}, has_receiver = false,
 		))
 	}
+	open := provider_member(
+		k.c, type, "init", .Open,
+		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value}, []Type_Id{type}, has_receiver = false,
+	)
+	if sym := symbol_of(k.c, open); sym != nil {
+		sym.param_defaults[0] = default_allocator_arg(k.c)
+	}
+	append(&members, open)
 	// The receiver is by value: the handle is derived from the control block's
 	// address, and reading a provider does not modify it.
 	append(&members, provider_member(
-		k, type, "allocator", .Handle,
+		k.c, type, "allocator", .Handle,
 		[]Type_Id{type}, []Param_Mode{.Value}, []Type_Id{TYPE_ALLOCATOR}, has_receiver = true,
 	))
 	add_members(k.c, type, members[:])
 }
 
-// The nil slice a defaulted `mem.Arena()` receives. One shared node, exactly as
-// a written default argument is shared by every call site that omits it.
-@(private = "file")
-empty_slice_arg :: proc(c: ^Compiler, type: Type_Id) -> Expr {
-	if c.empty_slice_arg != nil {
-		return c.empty_slice_arg
-	}
-	value, ok := zero_const(c, type)
-	if !ok {
-		return nil
-	}
-	literal := new(Expr_Literal, c.semantic_allocator)
-	literal.span = no_span()
-	literal.kind = .Int // unread: the constant value is what the backend emits
-	literal.type = type
-	literal.value_category = .Value
-	literal.is_const = true
-	literal.const_value = value
-	c.empty_slice_arg = literal
-	return literal
-}
-
 @(private = "file")
 provider_member :: proc(
-	k: ^Checker,
+	c: ^Compiler,
 	owner: Type_Id,
 	name: string,
 	op: Provider_Op,
@@ -147,13 +127,28 @@ provider_member :: proc(
 	results: []Type_Id,
 	has_receiver: bool,
 ) -> Symbol_Id {
-	id := synth_proc(k.c, name, .Provider_Op, owner, params, modes, results)
-	if sym := symbol_of(k.c, id); sym != nil {
+	id := synth_proc(c, name, .Provider_Op, owner, params, modes, results)
+	if sym := symbol_of(c, id); sym != nil {
 		sym.has_receiver = has_receiver
 		if has_receiver {
 			sym.receiver = .Value
 		}
 		sym.provider_op = op
+	}
+	return id
+}
+
+// A package-level fallible constructor. It is synthesized eagerly when
+// `core:mem` is loaded because, unlike an associated member, package lookup has
+// no type from which to trigger lazy contribution.
+provider_try_proc :: proc(c: ^Compiler, owner: Type_Id, name: string) -> Symbol_Id {
+	id := provider_member(
+		c, owner, name, .Try_Open,
+		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value}, []Type_Id{owner, TYPE_ALLOCATOR_ERROR},
+		has_receiver = false,
+	)
+	if sym := symbol_of(c, id); sym != nil {
+		sym.param_defaults[0] = default_allocator_arg(c)
 	}
 	return id
 }

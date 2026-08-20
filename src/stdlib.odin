@@ -36,6 +36,10 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 		// One `Type_Id` under three spellings, never three types.
 		contribute_type(c, pkg, "Allocator", TYPE_ALLOCATOR)
 		contribute_type(c, pkg, "Allocator_Error", TYPE_ALLOCATOR_ERROR)
+		// The `LOKE_*` enum types are intentionally not bound into `base:runtime`:
+		// doing it eagerly would allocate them for every importer and shift type
+		// numbering. Nothing in M7 needs `runtime.Os` by name; a later milestone
+		// that does can bind it lazily. (m7-plan step 1)
 		if pkg.key == STD_MEM {
 			// design.md: an `Allocator` "is obtained by the ordinary runtime default
 			// expression `mem.default_allocator()`". This is the *same* symbol the
@@ -49,6 +53,8 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 			// lattice has to recognise them, not merely call them.
 			contribute_type(c, pkg, "Arena", arena_type(c))
 			contribute_type(c, pkg, "Scratch", scratch_type(c))
+			contribute_symbol(c, pkg, "try_arena", provider_try_proc(c, arena_type(c), "try_arena"))
+			contribute_symbol(c, pkg, "try_scratch", provider_try_proc(c, scratch_type(c), "try_scratch"))
 		}
 	case STD_UNSAFE:
 		// design.md "unsafe.raw_data procedure": these make "the loss of bounds and

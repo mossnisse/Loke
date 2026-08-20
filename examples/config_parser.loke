@@ -1,0 +1,119 @@
+package main;
+import "core:fmt";
+
+// Failure and cleanup, which in Loke are the same subject.
+//
+// A fallible procedure returns its error as an ordinary value in the last
+// result. `or_return` propagates it without hiding the control flow, `or_else`
+// supplies a fallback, and an optional-ok result answers "was there one?"
+// positionally. Cleanup is not part of that story at all: a value with a `drop`
+// hook is destroyed exactly once on every path out of its scope, including the
+// early returns `or_return` writes.
+
+Parse_Error :: enum { Empty_Line, Missing_Separator, Bad_Number }
+Error :: union { Parse_Error }
+
+// A resource whose release is observable. Nothing here is reference-counted or
+// deferred to a collector: the drop runs at the closing brace, in reverse
+// declaration order, after any `defer` in the same scope.
+Reader :: struct { name: string, line: int }
+
+impl Reader {
+	init :: proc(name: string) -> Reader {
+		fmt.println("open", name);
+		return {name, 0};
+	}
+
+	drop :: proc(self: inout Reader) {
+		fmt.println("close", self.name, "lines read:", self.line);
+	}
+}
+
+digits :: proc(text: string_view) -> (int, Error) {
+	if (len(text) == 0) { return 0, Parse_Error.Bad_Number; }
+	value := 0;
+	// Iterating text yields code points, not bytes, so this is correct for any
+	// input rather than only for ASCII.
+	foreach (ch in text) {
+		if (ch < '0' || ch > '9') { return 0, Parse_Error.Bad_Number; }
+		value = value * 10 + int(ch - '0');
+	}
+	return value, nil;
+}
+
+// Two results and an error. Every `or_return` below is one early return with
+// full cleanup, not a hidden jump.
+parse_entry :: proc(line: string_view) -> (key: string_view, value: int, err: Error) {
+	if (len(line) == 0) { return "", 0, Parse_Error.Empty_Line; }
+
+	bytes := line.bytes();
+	separator := -1;
+	for (i := 0; i < len(bytes); i += 1) {
+		if (bytes[i] == '=') { separator = i; break; }
+	}
+	if (separator < 0) { return "", 0, Parse_Error.Missing_Separator; }
+
+	key, value = line[0:separator], 0;
+	value = digits(line[separator + 1:]) or_return;
+	return;
+}
+
+load :: proc(reader: inout Reader, lines: []string_view, into: inout map[string_view]int) -> Error {
+	foreach (line in lines) {
+		reader.line += 1;
+		// The first bad line stops the load and reports why.
+		key, value := parse_entry(line) or_return;
+		into[key] = value;
+	}
+	return nil;
+}
+
+describe :: proc(err: Error) -> string_view {
+	switch (e in err) {
+	case Parse_Error:
+		switch (e) {
+		case .Empty_Line:        return "empty line";
+		case .Missing_Separator: return "missing `=`";
+		case .Bad_Number:        return "not a number";
+		}
+	case:
+		return "none";
+	}
+	return "none";
+}
+
+main :: proc() {
+	settings: map[string_view]int;
+
+	{
+		reader := Reader("settings.ini");
+		good := [?]string_view{ "width=1280", "height=720", "depth=32" };
+		err := load(inout reader, good[:], inout settings);
+		fmt.println("error:", describe(err));
+		fmt.println("width:", settings["width"]);
+	} // `reader` is closed here, at the brace
+
+	{
+		reader := Reader("broken.ini");
+		defer fmt.println("leaving the broken load");
+
+		bad := [?]string_view{ "colour=blue", "height=1080" };
+		err := load(inout reader, bad[:], inout settings);
+		fmt.println("error:", describe(err));
+		// The load stopped at the first bad line, so the second never arrived.
+		fmt.println("height still:", settings["height"]);
+	} // `defer` first, then the drop
+
+	// A missing key reads as zero, which is often not the answer you want. The
+	// optional-ok form distinguishes "absent" from "present and zero".
+	depth, present := settings["depth"];
+	fmt.println("depth:", depth, "present:", present);
+
+	_, missing := settings["colour"];
+	fmt.println("colour present:", missing);
+
+	// `or_else` supplies a fallback for an optional-ok expression, and evaluates
+	// it only when the value is absent.
+	fmt.println("depth or 8:", settings["depth"] or_else 8);
+	fmt.println("colour or 8:", settings["colour"] or_else 8);
+}
