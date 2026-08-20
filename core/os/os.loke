@@ -1,0 +1,97 @@
+// Process arguments and termination (design.md "Program entry and exit").
+//
+// This is ordinary Loke source over one foreign block: the compiler knows
+// nothing about `os`. Startup belongs to the executable runtime, which converts
+// the incoming UTF-16 argument vector to cached UTF-8 before the initial thread
+// attaches, so importing this package runs no package initializer.
+@(public)
+package os;
+
+import "core:unsafe";
+
+// The seed runtime is already part of every link, so this block names it without
+// a `foreign import` of its own: there is no library file to find.
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_args_count")
+	rt_args_count :: proc "c" () -> int ---;
+	@(link_name="loke_rt_v1_args_at")
+	rt_args_at :: proc "c" (index: int) -> cstring_view ---;
+	@(link_name="loke_rt_v1_args_len")
+	rt_args_len :: proc "c" (index: int) -> int ---;
+	@(link_name="exit")
+	rt_exit :: proc "c" (status: i32) ---;
+}
+
+// The process argument vector: read-only, with process lifetime and no storage
+// of its own. `len` counts, indexing copies into an owning `string`, and
+// iteration yields borrowed `string_view`s over the runtime's cached bytes —
+// which outlive every use, because the process owns them.
+@(public)
+Args :: struct {}
+
+// The zero value is the whole vector; there is nothing else one could be.
+@(public)
+args: Args = {};
+
+@(public)
+Args_Iterator :: struct { next_index: int }
+
+impl Args {
+	Element  :: string_view;
+	Iterator :: Args_Iterator;
+
+	len :: proc(self) -> int {
+		return rt_args_count();
+	}
+
+	// design.md "From cstring_view to X": the conversion validates UTF-8 and
+	// copies into owned storage. The runtime's bytes are already valid, so the
+	// optional-ok failure is unreachable; an out-of-range index yields "" rather
+	// than reading past the vector.
+	at :: operator([]) proc(self, index: int) -> string {
+		if (index < 0 || index >= rt_args_count()) {
+			return "";
+		}
+		text, ok := string(rt_args_at(index));
+		if (!ok) { return ""; }
+		return text;
+	}
+
+	iter :: proc(self) -> Args_Iterator {
+		return {0};
+	}
+}
+
+impl Args_Iterator {
+	next :: proc(self: inout Args_Iterator) -> (string_view, bool) {
+		if (self.next_index >= rt_args_count()) {
+			return "", false;
+		}
+		index := self.next_index;
+		self.next_index += 1;
+		return view_at(index), true;
+	}
+}
+
+// A borrow of one cached argument. The bytes live for the process, so the view
+// has no owner to outlive; the runtime already validated them as UTF-8, which is
+// why the optional-ok failure is unreachable.
+@(public)
+view_at :: proc(index: int) -> string_view {
+	if (index < 0 || index >= rt_args_count()) {
+		return "";
+	}
+	bytes := unsafe.raw_data(rt_args_at(index));
+	view, ok := unsafe.string_view(bytes, rt_args_len(index));
+	if (!ok) { return ""; }
+	return view;
+}
+
+// design.md "Program entry and exit": terminates immediately. It runs no
+// `defer`, no automatic `drop`, and no thread-local cleanup — the process dies
+// inside the call, so that is true by construction rather than by a rule the
+// compiler enforces.
+@(public)
+exit :: proc(status: int) {
+	rt_exit(i32(status));
+}

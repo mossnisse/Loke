@@ -1,0 +1,25 @@
+package main; import "core:fmt"; import "core:os";
+
+// Real process arguments (m7-plan step 5). The corpus harness runs this with a
+// fixed vector including non-ASCII arguments, which is what proves the
+// UTF-16-to-UTF-8 conversion the generated `wmain` performs. Argument 0 is the
+// executable path and is machine-specific, so only the arguments after it are
+// printed — by index, and then again by iteration.
+
+main :: proc() {
+	count := os.args.len();
+	fmt.println(count);
+
+	for (i := 1; i < count; i += 1) {
+		value := os.args[i];
+		fmt.println(value);
+		fmt.println(len(value));
+	}
+
+	seen := 0;
+	foreach (a in os.args) {
+		if (seen > 0) { fmt.println(a); }
+		seen += 1;
+	}
+	fmt.println(seen);
+}

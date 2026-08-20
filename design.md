@@ -4479,6 +4479,30 @@ main :: proc() {
 }
 ```
 
+#### Executable startup ABI
+
+The compiler emits the executable's C entry; Loke's `main` is not the C `main`. On Windows the entry is `wmain(int, wchar_t **)`, so the process arguments arrive as UTF-16. The entry converts them once, into cached UTF-8 held for the process lifetime, and only then attaches the initial thread and calls `main`. Two consequences follow:
+
+- `os.args` is a read of already-valid UTF-8, never a conversion. Loke's UTF-8 invariant holds without any package needing an initializer to run.
+- An [object build](#build-configuration) emits no entry at all. Its foreign host owns process startup, so no argument conversion happens and `os.args` reports no arguments there. A host that wants them supplies its own mechanism.
+
+An unpaired surrogate in the incoming vector — which Windows does not exclude — is converted to U+FFFD, because a Loke `string` cannot hold one.
+
+#### `os.Args`
+
+`os.args` has type `os.Args`: a read-only view with process lifetime and no storage of its own. Its zero value is the whole vector, and there is nothing else one could be.
+
+| Operation | Result |
+| --- | --- |
+| `os.args.len()` | the argument count, including the executable path at index 0 |
+| `os.args[i]` | an owning UTF-8 `string`, copied; out of range yields `""` |
+| `foreach (a in os.args)` | a borrowed `string_view` per argument |
+| `os.view_at(i)` | the same borrow by index; out of range yields `""` |
+
+Indexing copies, so its `string` outlives any later use of the view. Iteration borrows, which costs nothing and is safe without a lifetime rule: the runtime owns those bytes for as long as the process exists.
+
+`os.exit(status)` terminates immediately. It runs no `defer`, no automatic `drop`, and no thread-local cleanup — the process dies inside the call, so that is true by construction rather than by a rule the compiler enforces.
+
 ### Import statement
 
 The following program imports the fmt and os packages from the core library collection.
@@ -5329,6 +5353,16 @@ when (FOO) {
 
 Configuration values are immutable constants. File selection, generated sources, test discovery, lint configuration, instrumentation policy, and language-feature policy are expressed in the build system rather than through source-file tags.
 
+#### Build modes
+
+`LOKE_BUILD_MODE` names the requested output kind.
+
+`exe` requires a package named `main`, emits the [executable entry](#executable-startup-abi), and links the compiled module, the runtime, imported libraries, and any assembly imports into an executable.
+
+`obj` accepts any root package, requires no `main`, and emits no entry. It produces one relocatable object from the compiled module alone. That object deliberately keeps its runtime and foreign references unresolved: its C consumer supplies the runtime and the libraries at the final link, and owns process startup, which is what makes the runtime dependency explicit rather than hidden. An assembly import cannot ride along inside a single relocatable object, so an `obj` build that contains one is an error naming the file its consumer must assemble and link separately.
+
+A [foreign thread](#threads) that calls into an object build must attach and detach through the documented runtime API, exactly as any other non-Loke thread does.
+
 ## Compile-time built-ins
 
 ### `#assert(<boolean>)`
@@ -5808,7 +5842,7 @@ Several types, interfaces, and a few core procedures are used in normative text 
 
 | Type | Used by | Status |
 | --- | --- | --- |
-| `os.args`, `os.exit`, `os.open`, `os.close`, `os.Handle` | [program entry and exit](#program-entry-and-exit), the [`defer`](#defer-statement) example | `core:os`. The program model reads command-line arguments from `os.args`. `os.exit` terminates immediately with a specified status. File handles are ordinary library resources with no compiler-known behavior. |
+| `os.Args`, `os.args`, `os.exit`, `os.open`, `os.close`, `os.Handle` | [program entry and exit](#program-entry-and-exit), the [`defer`](#defer-statement) example | `core:os`, ordinary Loke source over one foreign block; the compiler knows nothing about it. `os.args` has the [frozen `Args` surface](#osargs) over the vector the [executable entry](#executable-startup-abi) converted. `os.exit` terminates immediately with a specified status. File handles are ordinary library resources with no compiler-known behavior. |
 | `String_Builder` | [string type](#string-type) | Built from `[dynamic]u8`. |
 | `C_String` | [C string views](#c-string-views) | Owned zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |

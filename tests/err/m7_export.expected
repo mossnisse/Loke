@@ -1,0 +1,15 @@
+L0634
+two declarations export the symbol `first`
+@13:1
+
+L0629
+an exported procedure must use a foreign calling convention
+@16:1
+
+L0635
+cannot use the reserved `loke_rt_` runtime prefix
+@19:1
+
+L0619
+an exported global is not ABI-safe: member `text` of `Managed`
+@22:1

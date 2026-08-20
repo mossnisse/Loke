@@ -1,0 +1,18 @@
+package widget;
+
+// design.md "Build modes" (m7-plan step 5): a non-`main` root package compiled
+// with `-build-mode=obj`. The object defines the exported symbols and leaves
+// its runtime and CRT references unresolved for the C host to supply.
+
+@(export)
+widget_add :: proc "c" (a: i32, b: i32) -> i32 {
+	return a + b;
+}
+
+@(export, link_name="widget_answer")
+answer :: proc "c" () -> i32 {
+	return 42;
+}
+
+@(export)
+widget_counter: i32 = 7;

@@ -7,9 +7,8 @@
 // own diagnostic. `@(deprecated)` and `@(require_results)` also gain behaviour
 // here (their flags are set in `resolve_declaration_signature`).
 //
-// Foreign-block attributes and the record-layout value validation (power-of-two
-// `@(align=N)`) stay with their own features: foreign blocks are still gated to
-// L0350 until step 4, and `union @(align=N)` is validated in `src/union.odin`.
+// The record-layout value validation (power-of-two `@(align=N)`) stays with its
+// own feature: `union @(align=N)` is validated in `src/union.odin`.
 package lokec
 
 Attr_Pos :: enum {
@@ -38,10 +37,7 @@ Attr_Spec :: struct {
 }
 
 // design.md "Attributes" and "Layout and ABI attributes". Every base-language
-// attribute, with where it may appear and the value it takes. Foreign-only
-// positions (foreign blocks and their members) are added in step 4;
-// `default_calling_convention` therefore has no valid position yet and is
-// misplaced wherever it is written until then.
+// attribute, with where it may appear and the value it takes.
 attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	@(static) specs: map[string]Attr_Spec
 	if len(specs) == 0 {
@@ -134,7 +130,7 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 // The whole-package attribute pass, run once over the settled item view. It
 // visits every attribute-bearing node the checker owns in step 1: the package
 // clause, top-level declarations, procedure parameters, and record type
-// literals with their fields. Foreign blocks are still gated (step 4).
+// literals with their fields, and foreign blocks with theirs (step 4).
 validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file

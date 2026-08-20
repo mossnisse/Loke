@@ -205,7 +205,11 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   `new_clone`, `free`, `free_all`, and every generated clone route through;
 - `base:` and `core:` are implicit roots beside the compiler that an explicit
   `-collection` entry replaces rather than collides with, so `base:runtime`,
-  `base:meta`, `core:mem`, `core:fmt`, and `core:unsafe` import with no flags;
+  `base:meta`, `core:mem`, `core:fmt`, `core:os`, and `core:unsafe` import with
+  no flags. `core:os` is ordinary Loke source over a foreign block, which is the
+  proof that the foreign system works: the executable's C entry is `wmain`, so
+  the runtime converts the UTF-16 argument vector to cached UTF-8 once before the
+  initial thread attaches, and `os.args` is a read rather than a conversion;
 - every defined runtime fault is a classified panic instead of one trap.
   `-panic=unwind` registers a logical frame per procedure with cleanup and
   replays each active frame's live cleanup newest-first before terminating;
@@ -314,6 +318,8 @@ odin build src -out:lokec.exe
 lokec.exe examples/hello.loke -o hello.exe && hello.exe
 lokec.exe tests/pkg/diamond -o diamond.exe          # a directory is one package
 lokec.exe app -collection core=vendor/core -define:DEBUG=true
+lokec.exe app -opt=speed -o app.exe                 # -O2 on the one clang call
+lokec.exe tests/obj/lib.loke -build-mode=obj        # one object for a C host
 lokec.exe tests/pkg/catalogue -collection base=base       # the interface catalogue
 lokec.exe examples/hello.loke -parse-only
 lokec.exe examples/hello.loke -dump-ast

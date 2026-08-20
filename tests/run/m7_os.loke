@@ -1,0 +1,30 @@
+package main; import "core:fmt"; import "core:os";
+
+// design.md "Program entry and exit" (m7-plan step 5): `os.args` is a
+// process-lifetime, read-only view over the argument vector the generated
+// `wmain` converted from UTF-16 to UTF-8 before the initial thread attached.
+//
+// The corpus runs a program with no extra arguments, so only the executable path
+// is present; `tests/os/args.loke` is the case that passes real ones. What is
+// asserted here is the surface: `len`, indexing, iteration, and the out-of-range
+// answers — none of which depend on the machine's paths.
+
+main :: proc() {
+	fmt.println(os.args.len());
+
+	// Indexing copies into owning UTF-8 storage, so the result is a `string`.
+	first := os.args[0];
+	fmt.println(len(first) > 0);
+
+	// Out of range in either direction is the empty string, not a fault.
+	fmt.println(len(os.args[-1]));
+	fmt.println(len(os.args[os.args.len()]));
+
+	// Iteration borrows: the runtime owns the bytes for the whole process.
+	count := 0;
+	foreach (a in os.args) {
+		count += 1;
+		fmt.println(len(a) == len(first));
+	}
+	fmt.println(count);
+}

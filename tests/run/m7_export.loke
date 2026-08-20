@@ -1,0 +1,27 @@
+package main; import "core:fmt";
+
+// design.md "@(export)" (m7-plan step 5): an exported declaration emits under
+// its written symbol instead of the mangled `@loke.p...` one. That is a linkage
+// change only — Loke callers still reach it by name, and `@(link_name)` renames
+// the symbol without renaming the declaration.
+
+@(export)
+exported_add :: proc "c" (a: i32, b: i32) -> i32 {
+	return a + b;
+}
+
+@(export, link_name="renamed_symbol")
+under_another_name :: proc "c" () -> i32 {
+	return 42;
+}
+
+@(export)
+exported_counter: i32 = 7;
+
+main :: proc() {
+	fmt.println(int(exported_add(3, 4)));
+	fmt.println(int(under_another_name()));
+	fmt.println(int(exported_counter));
+	exported_counter = 9;
+	fmt.println(int(exported_counter));
+}

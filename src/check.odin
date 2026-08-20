@@ -7,6 +7,8 @@
 // tree (decision A1).
 package lokec
 
+import "core:strings"
+
 Checker :: struct {
 	c:     ^Compiler,
 	file:  u32,
@@ -270,6 +272,88 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 		errorf(c, span, "L0303", "`main` must be a procedure: `main :: proc() { ... }`")
 	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || len(info.results) != 0 {
 		errorf(c, symbol.span, "L0303", "`main` must have no parameters and no results: `main :: proc() { ... }`")
+	}
+}
+
+// design.md "@(export)" (m7-plan step 5): whole-program pass over every settled
+// declaration. An exported symbol emits under its written name (or `@(link_name)`)
+// instead of the mangled one; two claiming the same name is a link-time failure
+// with no source location, so the compiler — owning the whole symbol table —
+// names both. An exported procedure must use a foreign calling convention and an
+// ABI-safe signature (the latter already checked by `resolve_declaration_signature`);
+// an exported global must have an ABI-safe type; neither may claim the reserved
+// `loke_rt_` runtime prefix.
+check_exports :: proc(c: ^Compiler) {
+	claimed := make(map[string]Span, 16, context.temp_allocator)
+	for id in package_order(c) {
+		pkg := package_of(c, id)
+		if pkg == nil {
+			continue
+		}
+		for file in pkg.files {
+			for item in file.active_items {
+				#partial switch v in item {
+				case ^Decl:
+					check_export_decl(c, v, &claimed)
+				case ^Item_Impl:
+					for member in v.members {
+						if d, ok := member.(^Decl); ok {
+							check_export_decl(c, d, &claimed)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+@(private = "file")
+check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Span) {
+	if !has_attribute(d.attributes, "export") {
+		return
+	}
+	for sid in d.symbols {
+		sym := symbol_of(c, sid)
+		// A foreign member has no body to export; skip it rather than redefine.
+		if sym == nil || sym.is_foreign {
+			continue
+		}
+		name, has := attribute_string_value(c, d.attributes, "link_name")
+		if !has {
+			name = identifier_text(c, sym.name)
+		}
+		if strings.has_prefix(name, "loke_rt_") {
+			errorf(c, sym.span, "L0635", "an exported symbol cannot use the reserved `loke_rt_` runtime prefix: `%s`", name)
+			continue
+		}
+		// A generic `@(export)` is already L0438 from the generic rules; skipping it
+		// here keeps that one diagnostic rather than adding a second.
+		if sym.generic {
+			continue
+		}
+		#partial switch sym.kind {
+		case .Proc:
+			info := type_of(c, sym.proc_type)
+			if info == nil || !convention_is_foreign(info.convention) {
+				errorf(c, sym.span, "L0629", "an exported procedure must use a foreign calling convention: `proc \"c\" (...)`")
+				continue
+			}
+		case .Var:
+			if ok, reason := foreign_abi_safe(c, sym.type); !ok {
+				errorf(c, sym.span, "L0619", "an exported global is not ABI-safe: %s", reason)
+				continue
+			}
+		case:
+			continue // export on anything else is a misplaced-attribute error already
+		}
+		if first, seen := claimed[name]; seen {
+			errorf(c, sym.span, "L0634", "two declarations export the symbol `%s`", name)
+			add_notef(c, first, "`%s` is also exported here", name)
+			continue
+		}
+		claimed[name] = sym.span
+		sym.exported = true
+		sym.link_name = name
 	}
 }
 

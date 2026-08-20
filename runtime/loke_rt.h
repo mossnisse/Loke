@@ -436,6 +436,18 @@ void loke_rt_v1_panic(const char *message);
  * is `.Trap`, and a panic raised while one is already unwinding. */
 void loke_rt_v1_abort(const char *what);
 
+/* --------------------------------------------------- process arguments -- */
+
+/* design.md "Program entry and exit" (m7-plan step 5). The generated `wmain`
+ * calls the initializer once, before the initial thread attaches; the two
+ * getters are foreign-ABI-safe scalars that `core:os` reads as ordinary Loke
+ * source over a foreign block. An object build calls neither: its foreign host
+ * owns startup, so `os.args` reports no arguments there. */
+void loke_rt_v1_args_init(int32_t argc, const uint16_t **argv);
+int64_t loke_rt_v1_args_count(void);
+const char *loke_rt_v1_args_at(int64_t index);
+int64_t loke_rt_v1_args_len(int64_t index);
+
 #if defined(__cplusplus)
 }
 #endif

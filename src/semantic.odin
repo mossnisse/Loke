@@ -658,6 +658,10 @@ Symbol :: struct {
 	is_foreign:         bool,
 	foreign_library:    string,
 	link_name:          string,
+	// design.md "@(export)" (m7-plan step 5): the declaration emits its symbol into
+	// the object under `link_name` (its written name unless `@(link_name)` renamed
+	// it) instead of the mangled `@loke.p...`, so a C consumer can link to it.
+	exported:           bool,
 	// design.md "Parameter semantics": one entry per parameter. `@(by_ptr)` passes
 	// `T const *` instead of by value; `@(c_vararg)` marks the final `..any_view`
 	// as a true C variadic. Both are foreign-declaration metadata, not part of the

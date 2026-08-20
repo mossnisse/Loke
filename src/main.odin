@@ -226,13 +226,6 @@ run :: proc() -> int {
 	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
 	c.panic_unwind = opts.panic_unwind
 	c.opt_mode, c.build_mode = opts.opt_mode, opts.build_mode
-	// Object build mode is implemented in m7-plan step 5; until then the flag
-	// parses but is not honoured.
-	if opts.build_mode == .Obj {
-		errorf(&c, no_span(), "L0602", "`-build-mode=obj` is not yet implemented")
-		report(&c)
-		return 1
-	}
 	// Configuration is project-wide and immutable, and must be in place before
 	// the first condition is evaluated (m3-plan decision "Configuration").
 	if !seed_defines(&c, opts.defines[:]) {
@@ -268,7 +261,12 @@ run :: proc() -> int {
 
 	package_id, compiled := compile_program(&c, opts.input)
 	if compiled {
-		validate_executable(&c, package_id)
+		// An object build (m7-plan step 5) accepts any root package: its foreign
+		// host owns process entry, so `main` is neither required nor emitted.
+		if opts.build_mode == .Exe {
+			validate_executable(&c, package_id)
+		}
+		check_exports(&c)
 	}
 	if c.error_count > 0 {
 		report(&c)
@@ -396,7 +394,8 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 	if opts.output == "" {
 		// A directory input takes its own name; a file input drops its extension.
 		stem := strings.trim_suffix(strings.trim_suffix(opts.input, "/"), filepath.ext(opts.input))
-		opts.output = strings.concatenate({stem, ".exe"})
+		// An object build defaults to `.obj`, an executable to `.exe` (m7-plan step 5).
+		opts.output = strings.concatenate({stem, opts.build_mode == .Obj ? ".obj" : ".exe"})
 	}
 	return opts, true
 }

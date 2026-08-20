@@ -188,7 +188,60 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 		os.remove(ll_path)
 	}
 
+	// design.md "Build modes" (m7-plan step 5): an object build is one relocatable
+	// module. `clang -c` compiles the generated `.ll` alone; the seed runtime and
+	// foreign symbols stay unresolved for the C host to supply at its final link.
+	if c.build_mode == .Obj {
+		return compile_object(c, ll_path, opts.output, opts)
+	}
 	return link(c, ll_path, opts.output, opts)
+}
+
+// The object-build compile seam (m7-plan step 5). No runtime sources, no
+// libraries, no entry: `clang -c` turns the module's `.ll` into one `.obj` with
+// its runtime and foreign references left unresolved. An assembly import cannot
+// ride along in a single relocatable object, so it is diagnosed with the
+// instruction its final consumer needs.
+@(private = "file")
+compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string, opts: Options) -> int {
+	for id in package_order(c) {
+		pkg := package_of(c, id)
+		if pkg == nil {
+			continue
+		}
+		for file in pkg.files {
+			for item in file.active_items {
+				imp, is_imp := item.(^Item_Foreign_Import)
+				if !is_imp {
+					continue
+				}
+				if strings.to_lower(filepath.ext(imp.path)) == ".asm" {
+					errorf(
+						c, imp.span, "L0603",
+						"an object build cannot assemble `%s`; the final consumer must assemble it with `nasm -f win64` and link the result",
+						imp.path,
+					)
+					return 2
+				}
+			}
+		}
+	}
+
+	clang := find_clang()
+	command := []string{clang, "-c", ll_path, "-o", obj_path, opt_clang_flag(opts.opt_mode), "-Wno-override-module"}
+	state, _, stderr, err := os2.process_exec(os2.Process_Desc{command = command}, context.allocator)
+	if err != nil {
+		errorf(
+			c, no_span(), "L0402",
+			"cannot run `%s`: install LLVM (`winget install LLVM.LLVM`) or set LOKE_CLANG", clang,
+		)
+		return 2
+	}
+	if state.exit_code != 0 {
+		errorf(c, no_span(), "L0403", "`%s -c` failed:\n%s", clang, string(stderr))
+		return 2
+	}
+	return 0
 }
 
 // Pure module generation boundary: lowering and LLVM serialization consume the
@@ -241,7 +294,16 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 	}
 	emit_synth_procs(&e)
 	emit_witnesses(&e)
-	emit_entry(&e)
+	// The TLS teardown thunk is supplied by *every* generated module: the runtime's
+	// `thread_detach` calls it, so an object build needs it as much as an
+	// executable does.
+	emit_thread_local_teardown(&e)
+	// design.md "Build modes" (m7-plan step 5): an object build emits no C entry.
+	// Its foreign host owns process startup and calls the exported procedures; a
+	// generated `main`/`wmain` would collide with the host's own entry.
+	if c.build_mode == .Exe {
+		emit_entry(&e)
+	}
 	emit_type_info_tables(&e)
 	emit_format_thunks(&e)
 	for text in e.pending_thunks {
@@ -277,7 +339,14 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 				// A template has no signature and no body of its own; only its
 				// instances are named and emitted.
 				if decl_proc_literal(v) != nil && len(v.symbols) > 0 && !symbol_is_template(e.c, v.symbols[0]) {
-					e.names[v.symbols[0]] = llvm_proc_name(pkg, v.names[0].text)
+					// design.md "@(export)" (m7-plan step 5): an exported procedure emits
+					// its definition under the written/`@(link_name)` symbol so a C
+					// consumer can link to it, in place of the mangled name.
+					if sym := symbol_of(e.c, v.symbols[0]); sym != nil && sym.exported {
+						e.names[v.symbols[0]] = fmt.aprintf("@%s", sym.link_name)
+					} else {
+						e.names[v.symbols[0]] = llvm_proc_name(pkg, v.names[0].text)
+					}
 				}
 			case ^Item_Impl:
 				// A method is an ordinary procedure under a type-qualified name.
@@ -520,6 +589,10 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
+	// design.md "Program entry and exit" (m7-plan step 5): the generated `wmain`
+	// converts the argument vector once; `core:os` reads it through its own foreign
+	// block, so only the initializer is declared here.
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_args_init(i32, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
 	fmt.sbprintln(&e.b, "declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)")
@@ -1601,7 +1674,11 @@ emit_global :: proc(e: ^Emitter, pkg: ^Package, d: ^Decl) {
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		name := llvm_global_name(pkg, identifier_text(e.c, sym.name))
+		// design.md "@(export)": an exported global emits under its written or
+		// `@(link_name)` symbol, not the mangled one (m7-plan step 5).
+		name := sym.exported \
+			? fmt.aprintf("@%s", sym.link_name) \
+			: llvm_global_name(pkg, identifier_text(e.c, sym.name))
 		e.names[symbol_id] = name
 		value := ""
 		if i < len(d.values) && d.values[i] != nil && is_const_expr(d.values[i]) {
@@ -2044,11 +2121,16 @@ emit_foreign_return :: proc(e: ^Emitter) {
 
 // The C entry point. Internal runtime startup belongs here, which is why
 // Loke's `main` is not the C `main`.
+//
+// design.md "Program entry and exit" (m7-plan step 5): the entry is `wmain`, so
+// the process arguments arrive as UTF-16 and are converted to cached UTF-8 by
+// the runtime before anything else runs. `os.args` is then a read, not a
+// conversion, and no Loke package needs an initializer.
 @(private = "file")
 emit_entry :: proc(e: ^Emitter) {
-	emit_thread_local_teardown(e)
-	fmt.sbprintln(&e.b, "define i32 @main() {")
+	fmt.sbprintln(&e.b, "define i32 @wmain(i32 %argc, ptr %argv) {")
 	fmt.sbprintln(&e.b, "entry:")
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
 	// design.md "Threads" and m6a-plan decision "Thread runtime": the initial
 	// thread attaches like any other, and the same detach that drops managed TLS
 	// on a normal return is simply never reached when a panic terminates the
@@ -3558,6 +3640,16 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		return pointer
 
 	case ^Expr_Selector:
+		// `pkg.name` naming another package's global is a whole symbol, not a field
+		// of its operand: the operand is a package alias with no storage to index
+		// into. Its own name is the address.
+		if v.resolution.kind == .Value {
+			if name, ok := e.names[v.resolution.symbol]; ok {
+				return name
+			}
+			backend_fail(e, "a resolved place has no storage")
+			return "null"
+		}
 		symbol := symbol_of(e.c, v.resolution.symbol)
 		base_type, base_address := emit_base_address(e, v.operand)
 		out := temp(e)

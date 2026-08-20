@@ -1,0 +1,24 @@
+package main;
+
+// design.md "@(export)" (m7-plan step 5): the compiler owns the whole symbol
+// table, so two declarations claiming one exported symbol is a source-level
+// diagnostic naming both rather than a link failure naming neither.
+
+Managed :: struct { text: string }
+
+@(export)
+first :: proc "c" () -> i32 { return 1; }
+
+@(export, link_name="first")
+second :: proc "c" () -> i32 { return 2; }
+
+@(export)
+mangled :: proc() -> i32 { return 3; }
+
+@(export, link_name="loke_rt_v1_panic")
+steals_runtime :: proc "c" () {}
+
+@(export)
+bad_global: Managed = {};
+
+main :: proc() {}

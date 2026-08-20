@@ -16,6 +16,14 @@
 //   tests/syntax_err/*.loke        the same, for parser diagnostics, and assert
 //     with .expected               the file's trailing sentinel survived recovery
 //
+// Two cases are one-off rather than a corpus, because each needs something the
+// glob-and-compare shape cannot express:
+//
+//   tests/obj/{lib.loke,host.c}    an object build linked into a C host that
+//                                  owns process entry and supplies the runtime
+//   tests/os/args.{loke,expected}  a program run with a real, non-ASCII argument
+//                                  vector, which every other case lacks
+//
 // Any case may sit beside a `.flags` file of extra compiler options, one per
 // line, which is how `-define` and `-collection` are exercised.
 //
@@ -27,6 +35,7 @@
 package tests
 
 import "core:fmt"
+import "core:log"
 import "core:os"
 import os2 "core:os/os2"
 import "core:path/filepath"
@@ -302,6 +311,168 @@ packages_run :: proc(t: ^testing.T) {
 			fmt.tprintf("%s/pkg-%s.exe", TMP, filepath.base(path)),
 		)
 	}
+}
+
+// design.md "Program entry and exit" (m7-plan step 5): the corpus runs every
+// other case with no arguments, so this is the one that passes a real vector —
+// including non-ASCII arguments, which is what exercises the UTF-16-to-UTF-8
+// conversion the generated `wmain` performs before the initial thread attaches.
+@(test)
+process_arguments_reach_os_args :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/os-args.exe", TMP)
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "tests/os/args.loke", "-o", exe}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "compile failed:\n%s", string(stderr)) {
+		return
+	}
+
+	expected, has_expected := os.read_entire_file("tests/os/args.expected")
+	if !testing.expect(t, has_expected, "missing tests/os/args.expected") {
+		return
+	}
+	run_state, stdout, _, run_err := os2.process_exec(
+		os2.Process_Desc{command = []string{exe, "alpha", "héllo", "日本"}},
+		context.allocator,
+	)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(t, run_state.exit_code == 0, "exited with %d", run_state.exit_code)
+	testing.expectf(
+		t,
+		normalise(string(stdout)) == normalise(string(expected)),
+		"expected %q, got %q",
+		normalise(string(expected)),
+		normalise(string(stdout)),
+	)
+}
+
+// design.md "Build modes" (m7-plan step 5): `-build-mode=obj` produces one
+// relocatable module from a non-`main` root. This links it into a C program that
+// owns process entry and supplies the seed runtime, and asserts the object
+// defines no entry symbol of its own.
+@(test)
+object_build_links_into_a_c_host :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	clang, include_flags, found := host_toolchain()
+	if !found {
+		log.info("no clang or MSVC toolset found; skipping the object-build host link")
+		return
+	}
+
+	obj := fmt.tprintf("%s/widget.obj", TMP)
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string{compiler_path(), "tests/obj/lib.loke", "-build-mode=obj", "-o", obj},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "the object build failed:\n%s", string(stderr)) {
+		return
+	}
+
+	// The object owns no entry: a compiler-generated `main`/`wmain` would collide
+	// with the host's own, and the runtime references it keeps are the point.
+	nm := filepath.join({filepath.dir(clang), "llvm-nm.exe"}, context.temp_allocator)
+	if os.is_file(nm) {
+		nm_state, symbols, _, nm_err := os2.process_exec(
+			os2.Process_Desc{command = []string{nm, obj}},
+			context.allocator,
+		)
+		if testing.expectf(t, nm_err == nil && nm_state.exit_code == 0, "cannot list %s", obj) {
+			text := string(symbols)
+			testing.expectf(t, !strings.contains(text, " T main"), "the object defines `main`:\n%s", text)
+			testing.expectf(t, !strings.contains(text, " T wmain"), "the object defines `wmain`:\n%s", text)
+			testing.expectf(t, strings.contains(text, " T widget_add"), "the object does not define `widget_add`:\n%s", text)
+			testing.expectf(
+				t,
+				strings.contains(text, "U loke_rt_v1_thread_attach") ||
+				strings.contains(text, "U loke_rt_v1_frame_pop") ||
+				strings.contains(text, "U memset"),
+				"the object resolved references its host should supply:\n%s",
+				text,
+			)
+		}
+	}
+
+	// The host link: the object, the C entry, and the seed runtime sources.
+	exe := fmt.tprintf("%s/widget-host.exe", TMP)
+	command := make([dynamic]string, context.temp_allocator)
+	// `-rtlib=compiler-rt` is the same choice the compiler's own link makes: the
+	// runtime's 128-bit division helpers are not in the MSVC CRT.
+	append(&command, clang, "tests/obj/host.c", obj, "-o", exe, "-Wno-override-module", "-rtlib=compiler-rt")
+	runtime_sources, _ := filepath.glob("runtime/*.c")
+	for source in runtime_sources {
+		append(&command, source)
+	}
+	append(&command, "-I", "runtime")
+	for flag in include_flags {
+		append(&command, flag)
+	}
+	link_state, _, link_stderr, link_err := os2.process_exec(
+		os2.Process_Desc{command = command[:]},
+		context.allocator,
+	)
+	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
+		return
+	}
+	if !testing.expectf(t, link_state.exit_code == 0, "the host link failed:\n%s", string(link_stderr)) {
+		return
+	}
+
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(t, run_state.exit_code == 0, "the C host got the wrong answer (exit %d)", run_state.exit_code)
+}
+
+// clang plus the `-isystem`/`-L` flags its Windows target needs outside a
+// developer prompt, discovered the same way the compiler's own link does. The
+// test skips rather than fails when neither is installed.
+@(private)
+host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
+	clang = os.get_env("LOKE_CLANG", context.temp_allocator)
+	if clang == "" {
+		for candidate in ([]string{`C:\Program Files\LLVM\bin\clang.exe`, `C:\Program Files (x86)\LLVM\bin\clang.exe`}) {
+			if os.is_file(candidate) {
+				clang = candidate
+				break
+			}
+		}
+	}
+	if clang == "" || !os.is_file(clang) {
+		return "", nil, false
+	}
+	out := make([dynamic]string, context.temp_allocator)
+	if os.get_env("INCLUDE", context.temp_allocator) == "" {
+		tools := newest_directory(`C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`)
+		ucrt := newest_directory(`C:\Program Files (x86)\Windows Kits\10\Include\*\ucrt`)
+		if tools == "" || ucrt == "" {
+			return "", nil, false
+		}
+		append(&out, "-isystem", filepath.join({tools, "include"}, context.temp_allocator))
+		append(&out, "-isystem", ucrt)
+		append(&out, "-L", filepath.join({tools, "lib", "x64"}, context.temp_allocator))
+	}
+	return clang, out[:], true
+}
+
+@(private)
+newest_directory :: proc(pattern: string) -> string {
+	matches, _ := filepath.glob(pattern)
+	newest := ""
+	for match in matches {
+		if os.is_dir(match) && match > newest {
+			newest = match
+		}
+	}
+	return newest
 }
 
 @(test)

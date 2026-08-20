@@ -1,0 +1,4 @@
+define i32 @wmain(i32 %argc, ptr %argv) {
+call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)
+call void @loke_rt_v1_thread_attach()
+define i32 @exported_symbol()

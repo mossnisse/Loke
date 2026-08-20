@@ -12,7 +12,7 @@ package lokec
 // `@(default_calling_convention)` changes that default; a member's own
 // convention still wins.
 foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> string {
-	if value, ok := attribute_string_value(k, block.attributes, "default_calling_convention"); ok {
+	if value, ok := attribute_string_value(k.c, block.attributes, "default_calling_convention"); ok {
 		return value
 	}
 	return "c"
@@ -106,7 +106,7 @@ check_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
 			if block_requires && sym.kind == .Proc {
 				sym.require_results = true
 			}
-			if name, has := attribute_string_value(k, d.attributes, "link_name"); has {
+			if name, has := attribute_string_value(k.c, d.attributes, "link_name"); has {
 				sym.link_name = name
 			} else {
 				sym.link_name = identifier_text(k.c, sym.name)
@@ -160,13 +160,13 @@ check_c_vararg_param :: proc(k: ^Checker, is_foreign: bool, literal: ^Expr_Proc,
 }
 
 // The string value of a named attribute in a list, decoded from its literal.
-attribute_string_value :: proc(k: ^Checker, attributes: []Attribute, name: string) -> (string, bool) {
+attribute_string_value :: proc(c: ^Compiler, attributes: []Attribute, name: string) -> (string, bool) {
 	for attribute in attributes {
 		if len(attribute.path) != 1 || attribute.path[0].text != name {
 			continue
 		}
 		if lit, ok := attribute.value.(^Expr_Literal); ok && (lit.kind == .String || lit.kind == .Raw_String) {
-			if text, decoded := decode_string_literal(k.c, lit.text, lit.kind == .Raw_String); decoded {
+			if text, decoded := decode_string_literal(c, lit.text, lit.kind == .Raw_String); decoded {
 				return text, true
 			}
 		}

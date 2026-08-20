@@ -1,0 +1,24 @@
+package main; import "core:fmt"; import "core:os";
+
+// design.md "Program entry and exit" (m7-plan step 5): `os.exit` terminates
+// immediately. It runs no `defer`, no automatic `drop`, and no thread-local
+// cleanup — the process dies inside the call, so this is true by construction
+// rather than by a rule the compiler enforces. The sibling
+// `tests/run/m6a_normal_tls` shows the same declarations being cleaned up on a
+// normal return, which is what makes this output's silence meaningful.
+
+Res :: struct { id: int }
+
+impl Res {
+	drop :: proc(self: inout Res) { fmt.println(self.id); }
+}
+
+main :: proc() {
+	defer fmt.println(1);
+	current: thread_local Res;
+	current.id = 2;
+	local := Res{3};
+	fmt.println(0);
+	os.exit(0);
+	fmt.println(4);
+}
