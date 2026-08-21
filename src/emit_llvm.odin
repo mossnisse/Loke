@@ -67,6 +67,11 @@ Deferred :: struct {
 // The arrays are separate allocas rather than fields of one record because
 // their lengths are only known once the whole body has been emitted, and a
 // `getelementptr` over `i8`/`ptr` needs no length in its type.
+Unwind_Env_Binding :: struct {
+	symbol: Symbol_Id,
+	index:  int,
+}
+
 Unwind_State :: struct {
 	// `[live x i1]`: whether action `i` is registered right now. Set only after
 	// the action is fully registered, cleared before normal control flow runs it.
@@ -84,6 +89,9 @@ Unwind_State :: struct {
 	actions: [dynamic]Deferred,
 	// Env index per local symbol whose address a cleanup may need.
 	env_index: map[Symbol_Id]int,
+	// Symbol bindings in assignment order. Non-symbol env slots may be
+	// interleaved, so each entry retains its actual slot index.
+	env_bindings: [dynamic]Unwind_Env_Binding,
 	env_count: int,
 	// The registration slot of a managed local's implicit drop, and of a written
 	// `defer`, so `move`/`drop` and a re-entered scope can clear the same
@@ -2531,6 +2539,7 @@ begin_unwind_frame :: proc(e: ^Emitter, llvm_name: string) {
 	e.unwind = Unwind_State {
 		actions        = make([dynamic]Deferred),
 		env_index      = make(map[Symbol_Id]int),
+		env_bindings   = make([dynamic]Unwind_Env_Binding),
 		slot_by_symbol = make(map[Symbol_Id]int),
 		slot_by_defer  = make(map[int]int),
 	}
@@ -2568,6 +2577,7 @@ unwind_env_slot :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> int {
 	index := e.unwind.env_count
 	e.unwind.env_count += 1
 	e.unwind.env_index[symbol_id] = index
+	append(&e.unwind.env_bindings, Unwind_Env_Binding{symbol = symbol_id, index = index})
 	return index
 }
 
@@ -2721,13 +2731,13 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 
 	// The parent's allocas are unreachable from here, so every local a replayed
 	// action names is rebound to its address in the env.
-	saved_names := make(map[Symbol_Id]string)
-	for symbol_id, index in u.env_index {
-		saved_names[symbol_id] = e.names[symbol_id]
+	saved_names := make([dynamic]string, 0, len(u.env_bindings))
+	for binding in u.env_bindings {
+		append(&saved_names, e.names[binding.symbol])
 		address, value := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", address, env, index)
+		fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %s, i64 %d", address, env, binding.index)
 		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
-		e.names[symbol_id] = value
+		e.names[binding.symbol] = value
 	}
 
 	for index := len(u.actions) - 1; index >= 0; index -= 1 {
@@ -2767,8 +2777,8 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
 
-	for symbol_id, name in saved_names {
-		e.names[symbol_id] = name
+	for binding, index in u.env_bindings {
+		e.names[binding.symbol] = saved_names[index]
 	}
 	append(&e.pending, hoist_fixed_allocas(strings.to_string(e.b)))
 	u.replaying = false

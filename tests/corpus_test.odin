@@ -267,6 +267,42 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 	}
 }
 
+// Unwind environments assign slots on first use. Keep thunk emission in that
+// same order: iterating the symbol-to-slot map here used to produce several
+// byte-distinct modules for one unchanged input.
+@(test)
+generated_ir_is_reproducible :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/deterministic.exe", TMP)
+	ll_path := fmt.tprintf("%s/deterministic.ll", TMP)
+	baseline: string
+	for run := 0; run < 12; run += 1 {
+		state, _, stderr, err := os2.process_exec(
+			os2.Process_Desc{command = []string{
+				compiler_path(), "tests/run/m3_eval.loke", "-o", exe, "-emit-ll",
+			}},
+			context.allocator,
+		)
+		if !testing.expectf(t, err == nil, "run %d: cannot run %s", run + 1, compiler_path()) {
+			return
+		}
+		if !testing.expectf(t, state.exit_code == 0, "run %d: compile failed\n%s", run + 1, string(stderr)) {
+			return
+		}
+		ir, read_ok := os.read_entire_file(ll_path)
+		if !testing.expectf(t, read_ok, "run %d: no IR at %s", run + 1, ll_path) {
+			return
+		}
+		if run == 0 {
+			baseline = string(ir)
+			continue
+		}
+		if !testing.expectf(t, string(ir) == baseline, "run %d: generated IR changed", run + 1) {
+			return
+		}
+	}
+}
+
 // `-check-layout` builds a second module that asks LLVM for the size,
 // alignment, and field offsets of every type in the file, runs it, and compares
 // the answers with the checker's cached layout. What the folded built-ins
