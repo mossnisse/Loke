@@ -1295,8 +1295,14 @@ check_where_clauses :: proc(k: ^Checker, clauses: []Expr, span: Span, what: stri
 	for clause in clauses {
 		mark := len(k.c.diagnostics)
 		errors := k.c.error_count
+		if !report {
+			k.c.speculation_depth += 1
+		}
 		type := check_single_expr(k, clause, TYPE_BOOL)
 		folded, evaluated := require_const(k, clause, "a `where` bound", "L0435")
+		if !report {
+			k.c.speculation_depth -= 1
+		}
 		failed := type == INVALID_TYPE || !evaluated || folded.kind != .Boolean
 		if !failed && folded.boolean {
 			truncate_diagnostics(k.c, mark)

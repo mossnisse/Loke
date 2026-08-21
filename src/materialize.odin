@@ -62,6 +62,11 @@ request_materialization :: proc(k: ^Checker, e: Expr) -> bool {
 	if symbol == INVALID_SYMBOL {
 		return false
 	}
+	if k.c.speculation_depth > 0 {
+		// The hypothetical expression still type-checks as a named constant, but
+		// an accepted, non-speculative use is what gives it module storage.
+		return true
+	}
 	if _, found := k.c.materialized[symbol]; found {
 		return true
 	}

@@ -312,6 +312,11 @@ interface_check :: proc(
 			reason = "this interface composes itself",
 		}, false
 	}
+	// Requirements are hypothetical programs. They deliberately use the real
+	// checker on cloned syntax, while registry gates keep rejected probes from
+	// changing typeids or adding backend-only globals and witness tables.
+	k.c.speculation_depth += 1
+	defer k.c.speculation_depth -= 1
 
 	// The scratch scope: the interface's own parameters bound to the arguments,
 	// hanging off the interface declaration's lexical scope.

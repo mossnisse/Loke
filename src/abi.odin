@@ -86,7 +86,9 @@ check_foreign_signature :: proc(
 // result, or global it is true and a fixed array is rejected because C adjusts
 // such parameters to pointers. On failure `reason` names the member path.
 foreign_abi_safe :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok: bool, reason: string) {
-	safe, noun, path := abi_walk(c, type, top_level)
+	visiting := make([]bool, len(c.types), context.temp_allocator)
+	saw_cycle := false
+	safe, noun, path := abi_walk(c, type, top_level, visiting, &saw_cycle)
 	if safe {
 		return true, ""
 	}
@@ -133,7 +135,13 @@ abi_reg_bits :: proc(c: ^Compiler, type: Type_Id) -> u64 {
 // Returns whether `type` is safe, and on failure the noun describing the
 // offending leaf plus the dotted field path from `type` down to it.
 @(private = "file")
-abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, noun: string, path: string) {
+abi_walk :: proc(
+	c: ^Compiler,
+	type: Type_Id,
+	top_level: bool,
+	visiting: []bool,
+	saw_cycle: ^bool,
+) -> (safe: bool, noun: string, path: string) {
 	if type == INVALID_TYPE {
 		return false, "not a resolved type", ""
 	}
@@ -141,6 +149,21 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 	info := type_of(c, under)
 	if info == nil {
 		return false, "not a resolved type", ""
+	}
+	index := int(under)
+	marked := false
+	if index >= 0 && index < len(visiting) {
+		if visiting[index] {
+			// Signature resolution precedes the finite-size pass. Let that pass own
+			// the diagnostic for an illegal by-value cycle without recursing here.
+			saw_cycle^ = true
+			return true, "", ""
+		}
+		visiting[index] = true
+		marked = true
+	}
+	defer if marked {
+		visiting[index] = false
 	}
 	#partial switch info.kind {
 	case .Int:
@@ -165,7 +188,7 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 			if mode == .Inout || (index < len(info.param_by_ptr) && info.param_by_ptr[index]) {
 				continue
 			}
-			if s, n, p := abi_walk(c, param, true); !s {
+			if s, n, p := abi_walk(c, param, true, visiting, saw_cycle); !s {
 				return false, n, p
 			}
 		}
@@ -173,7 +196,7 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 			if index < len(info.result_inout) && info.result_inout[index] {
 				continue
 			}
-			if s, n, p := abi_walk(c, result, true); !s {
+			if s, n, p := abi_walk(c, result, true, visiting, saw_cycle); !s {
 				return false, n, p
 			}
 		}
@@ -182,7 +205,7 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 		if top_level {
 			return false, "a fixed array (write `[^]T` or `^T` at a C boundary)", ""
 		}
-		return abi_walk(c, info.element, false)
+		return abi_walk(c, info.element, false, visiting, saw_cycle)
 	case .Struct:
 		// A plain struct with a trivial lifecycle whose fields are recursively
 		// safe. Naming the offending field beats naming the whole record, so a
@@ -193,7 +216,7 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 			if sym == nil {
 				continue
 			}
-			if s, n, p := abi_walk(c, sym.type, false); !s {
+			if s, n, p := abi_walk(c, sym.type, false, visiting, saw_cycle); !s {
 				name := identifier_text(c, sym.name)
 				if p != "" {
 					return false, n, fmt.tprintf("%s.%s", name, p)
@@ -201,7 +224,7 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 				return false, n, name
 			}
 		}
-		if type_is_managed(c, under) {
+		if !saw_cycle^ && type_is_managed(c, under) {
 			return false, "a record with a non-trivial lifecycle", ""
 		}
 		return true, "", ""

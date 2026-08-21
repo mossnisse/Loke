@@ -41,6 +41,62 @@ test_compiler :: proc(text: string) -> Compiler {
 	return c
 }
 
+@(test)
+deep_type_graphs_have_no_arbitrary_cutoff :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	deep := TYPE_I32
+	for _ in 0 ..< 96 {
+		deep = new_type(&c, Type_Info{kind = .Distinct, element = deep})
+	}
+	testing.expect(t, type_underlying(&c, deep) == TYPE_I32, "a valid distinct chain was truncated")
+}
+
+@(private = "file")
+deep_typeid_pair :: proc(reverse: bool) -> (u64, u64) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	left, right := TYPE_I32, TYPE_I64
+	for _ in 0 ..< 96 {
+		left = new_type(&c, Type_Info{kind = .Pointer, element = left})
+		right = new_type(&c, Type_Info{kind = .Pointer, element = right})
+	}
+	if reverse {
+		request_typeid(&c, right)
+		request_typeid(&c, left)
+	} else {
+		request_typeid(&c, left)
+		request_typeid(&c, right)
+	}
+	freeze_typeids(&c)
+	return typeid_value(&c, left), typeid_value(&c, right)
+}
+
+@(test)
+deep_typeids_are_request_order_independent :: proc(t: ^testing.T) {
+	left_first, right_first := deep_typeid_pair(false)
+	left_reverse, right_reverse := deep_typeid_pair(true)
+	testing.expect(t, left_first != right_first, "different deep type graphs received one identity")
+	testing.expect(t, left_first == left_reverse, "deep left typeid depends on request order")
+	testing.expect(t, right_first == right_reverse, "deep right typeid depends on request order")
+}
+
+@(test)
+foreign_abi_walk_defers_by_value_cycles_to_size_check :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	record := new_type(&c, Type_Info{kind = .Struct})
+	field := new_symbol(&c, Symbol{kind = .Var, type = record})
+	fields := make([]Symbol_Id, 1, c.semantic_allocator)
+	fields[0] = field
+	type_of(&c, record).fields = fields
+	safe, _ := foreign_abi_safe(&c, record)
+	testing.expect(t, safe, "ABI traversal diagnosed or recursed before finite-size checking")
+}
+
 @(private = "file")
 append_test_source :: proc(c: ^Compiler, path, text: string) -> u32 {
 	starts := make([dynamic]u32)

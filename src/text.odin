@@ -706,7 +706,9 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 	}
 	// The table is only emitted when a program asks for it, and every entry it
 	// holds is one the compilation already requested a `typeid` for.
-	k.c.type_info_requested = true
+	if k.c.speculation_depth == 0 {
+		k.c.type_info_requested = true
+	}
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = v.args[0].value
 	v.bound = bound

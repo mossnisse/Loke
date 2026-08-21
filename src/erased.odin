@@ -603,8 +603,10 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	}
 	k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
 	witness.slots = slots
-	k.c.witnesses[key] = witness
-	append(&k.c.witness_order, witness)
+	if k.c.speculation_depth == 0 {
+		k.c.witnesses[key] = witness
+		append(&k.c.witness_order, witness)
+	}
 	return witness
 }
 

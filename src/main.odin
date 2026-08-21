@@ -9,7 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M6b)
+USAGE :: `lokec - the Loke compiler (milestone M7)
 
 All of the language's syntax lexes and parses, so -parse-only and -dump-ast
 accept any valid program.

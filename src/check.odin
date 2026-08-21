@@ -886,8 +886,6 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.param_defaults = defaults[:]
 	symbol.result_symbols = result_symbols[:]
 	symbol.proc_type = proc_type
-	symbol.param_by_ptr = by_ptr_list[:]
-	symbol.c_vararg = saw_c_vararg
 	symbol.signature_error = k.c.error_count > reported
 	// design.md "Receiver forms": three modes and no others, and a first
 	// parameter typed `^T` is deliberately not one of them — it keeps the name

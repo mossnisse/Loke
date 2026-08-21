@@ -124,7 +124,9 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		// design.md: formatting is coherent per concrete `typeid`, so the erased
 		// value is all the dispatch has and all it needs.
 		wanted = []Type_Id{TYPE_ANY_VIEW, writer, options}
-		k.c.format_requested = true
+		if k.c.speculation_depth == 0 {
+			k.c.format_requested = true
+		}
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,

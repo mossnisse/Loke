@@ -500,8 +500,13 @@ static void *map_value_at(const loke_rt_map_table_v1 *t, const loke_rt_container
  * address and a running counter. */
 static uint64_t map_next_seed(const void *block) {
 	static uint64_t counter = 0x9e3779b97f4a7c15u;
-	uint64_t x = counter + (uint64_t)(uintptr_t)block;
-	counter += 0x9e3779b97f4a7c15u;
+	/* Map construction is allowed on independent threads. Reserve a unique
+	 * counter value atomically; relaxed ordering is sufficient because the value
+	 * is entropy, not synchronization. These are the same clang atomics used by
+	 * the reference-counted text runtime. */
+	uint64_t x = __atomic_fetch_add(
+		&counter, 0x9e3779b97f4a7c15u, __ATOMIC_RELAXED
+	) + (uint64_t)(uintptr_t)block;
 	x ^= x >> 30;
 	x *= 0xbf58476d1ce4e5b9u;
 	x ^= x >> 27;

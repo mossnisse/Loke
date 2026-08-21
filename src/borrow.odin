@@ -465,25 +465,53 @@ Checked_Body :: struct {
 	clean:   bool,
 }
 
-// Source order says nothing about the call graph, so summaries are iterated to a
-// fixed point rather than solved once per declaration. The lattice is finite and
-// every step is a union, so a natural worklist-style iteration terminates without
-// imposing a source-visible call-depth limit.
+// Source order says nothing about the call graph. The lattice is finite and
+// every step is a union; direct dependencies discovered by the first graph build
+// drive a worklist without imposing a source-visible call-depth limit.
 
 // The whole program's provenance, after every package body and promoted generic
 // instance is checked. Summaries settle first, then diagnostics run with actual
 // argument roots substituted at direct calls. One disposable graph is built and
 // released at a time, so no analysis allocation outlives the body it describes.
 analyze_program_provenance :: proc(k: ^Checker) {
-	for {
-		changed := false
-		for body in k.c.checked_bodies {
-			if body.clean && summarize_body(k, body.literal) {
-				changed = true
-			}
+	// The discovery pass records the stable direct-call graph while seeding each
+	// monotone summary. A second visit is necessary because source order may put a
+	// caller before its callee; after that, only an affected caller is rebuilt.
+	for body in k.c.checked_bodies {
+		if body.clean {
+			_ = summarize_body(k, body.literal)
 		}
-		if !changed {
-			break
+	}
+	queue := make([dynamic]^Expr_Proc, 0, len(k.c.checked_bodies), context.temp_allocator)
+	queued := make([]bool, len(k.c.symbols), context.temp_allocator)
+	for body in k.c.checked_bodies {
+		if body.clean && body.literal != nil {
+			append(&queue, body.literal)
+			queued[int(body.literal.symbol)] = true
+		}
+	}
+	for head := 0; head < len(queue); head += 1 {
+		literal := queue[head]
+		queued[int(literal.symbol)] = false
+		if !summarize_body(k, literal) {
+			continue
+		}
+		for caller in k.c.checked_bodies {
+			if !caller.clean || caller.literal == nil {
+				continue
+			}
+			depends := false
+			for callee in k.c.result_summary_dependencies[caller.literal.symbol] {
+				if callee == literal.symbol {
+					depends = true
+					break
+				}
+			}
+			index := int(caller.literal.symbol)
+			if depends && !queued[index] {
+				append(&queue, caller.literal)
+				queued[index] = true
+			}
 		}
 	}
 	for body in k.c.checked_bodies {
@@ -515,6 +543,11 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	graph := build_flow_graph(k, literal, k.c.analysis_allocator, .Prov_Summary)
 	if graph == nil {
 		return false
+	}
+	if _, known := k.c.result_summary_dependencies[literal.symbol]; !known {
+		dependencies := make([]Symbol_Id, len(graph.summary_callees), k.c.semantic_allocator)
+		copy(dependencies, graph.summary_callees[:])
+		k.c.result_summary_dependencies[literal.symbol] = dependencies
 	}
 	state := Prov_State{graph = graph, k = k}
 	if !prepare_state(&state) {

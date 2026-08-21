@@ -315,13 +315,32 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 	if e.failed {
 		return "", false
 	}
-	// Fixed-size stack storage belongs to a function, not to the block that first
-	// needs it. Do this once over the completed textual module so every function
-	// emitter -- ordinary procedures, unwind/format/container thunks, synthetic
-	// members, witnesses, TLS teardown, and process entry -- shares the same seam.
-	// Keeping the collection function-local also prevents a thunk's slots from
-	// leaking into the next ordinary procedure's prologue.
-	return hoist_fixed_allocas(strings.to_string(e.b)), true
+	return strings.to_string(e.b), true
+}
+
+// Every function emitter writes into an isolated buffer. Finalization applies
+// function-local prologue policy before the bytes reach the module builder, so
+// storage can never leak into the next function even as new emitters are added.
+@(private = "file")
+Function_Emission :: struct {
+	parent:            strings.Builder,
+	parent_terminated: bool,
+}
+
+@(private = "file")
+begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
+	state := Function_Emission{parent = e.b, parent_terminated = e.terminated}
+	e.b = strings.builder_make()
+	e.terminated = false
+	return state
+}
+
+@(private = "file")
+finish_function_emission :: proc(e: ^Emitter, state: Function_Emission) {
+	text := hoist_fixed_allocas(strings.to_string(e.b))
+	e.b = state.parent
+	e.terminated = state.parent_terminated
+	strings.write_string(&e.b, text)
 }
 
 // Moves every fixed-size `alloca` to the entry block of the function that owns
@@ -403,13 +422,32 @@ emit_function_with_entry_allocas :: proc(out: ^strings.Builder, lines: []string)
 
 @(private = "file")
 fixed_alloca_line :: proc(line: string) -> bool {
-	if !strings.contains(line, " = alloca ") {
+	marker := strings.index(line, " = alloca ")
+	if marker < 0 {
 		return false
 	}
-	// Every runtime count currently has the canonical `i64 %name` spelling.
-	// Fixed array dimensions live inside the allocated type (`[N x T]`) and do
-	// not match this suffix.
-	return !strings.contains(line, ", i64 %")
+	// Find the optional element-count operand, ignoring commas nested in literal
+	// aggregate and function types. An SSA count cannot be evaluated in the entry
+	// block, regardless of whether LLVM spells its integer type as i32 or i64.
+	tail := line[marker + len(" = alloca "):]
+	depth := 0
+	for ch, index in tail {
+		switch ch {
+		case '[', '{', '<', '(':
+			depth += 1
+		case ']', '}', '>', ')':
+			depth -= 1
+		case ',':
+			if depth == 0 {
+				operand := strings.trim_space(tail[index + 1:])
+				if strings.has_prefix(operand, "align ") {
+					return true
+				}
+				return !strings.contains(operand, "%")
+			}
+		}
+	}
+	return true
 }
 
 @(private = "file")
@@ -900,7 +938,7 @@ container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
-	text := strings.to_string(e.b)
+	text := hoist_fixed_allocas(strings.to_string(e.b))
 	e.b, e.terminated = saved_body, saved_terminated
 	append(&e.pending_thunks, text)
 	return name
@@ -929,7 +967,7 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	fmt.sbprintfln(&e.b, "  ret i32 %s", widened)
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
-	text := strings.to_string(e.b)
+	text := hoist_fixed_allocas(strings.to_string(e.b))
 	e.b, e.terminated = saved_body, saved_terminated
 	append(&e.pending_thunks, text)
 	return name
@@ -966,7 +1004,7 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 	fmt.sbprintfln(&e.b, "  ret i64 %s", out)
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
-	text := strings.to_string(e.b)
+	text := hoist_fixed_allocas(strings.to_string(e.b))
 	e.b, e.terminated = saved_body, saved_terminated
 	append(&e.pending_thunks, text)
 	return name
@@ -1003,7 +1041,7 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 	fmt.sbprintfln(&e.b, "  ret i32 %s", out)
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
-	text := strings.to_string(e.b)
+	text := hoist_fixed_allocas(strings.to_string(e.b))
 	e.b, e.terminated = saved_body, saved_terminated
 	append(&e.pending_thunks, text)
 	return name
@@ -1748,6 +1786,8 @@ emit_static_locals :: proc(e: ^Emitter) {
 // whichever initial, runtime-created, or foreign-attached thread is detaching.
 @(private = "file")
 emit_thread_local_teardown :: proc(e: ^Emitter) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_tls_cleanup() {")
 	fmt.sbprintln(&e.b, "entry:")
 	for index := len(e.c.static_locals) - 1; index >= 0; index -= 1 {
@@ -2028,6 +2068,8 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		backend_fail(e, "a procedure has no mangled name")
 		return
 	}
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 
 	e.result_types = symbol.results
 	e.result_inout = result_inout_of(e, symbol.proc_type)
@@ -2309,6 +2351,8 @@ emit_foreign_return :: proc(e: ^Emitter) {
 // conversion, and no Loke package needs an initializer.
 @(private = "file")
 emit_entry :: proc(e: ^Emitter) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	fmt.sbprintln(&e.b, "define i32 @wmain(i32 %argc, ptr %argv) {")
 	fmt.sbprintln(&e.b, "entry:")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
@@ -2724,7 +2768,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	for symbol_id, name in saved_names {
 		e.names[symbol_id] = name
 	}
-	append(&e.pending, strings.to_string(e.b))
+	append(&e.pending, hoist_fixed_allocas(strings.to_string(e.b)))
 	u.replaying = false
 	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
 }
@@ -5202,7 +5246,7 @@ emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
 
-	text := strings.to_string(e.b)
+	text := hoist_fixed_allocas(strings.to_string(e.b))
 	e.b, e.terminated = saved_body, saved_terminated
 	append(&e.pending_thunks, text)
 }
@@ -8517,6 +8561,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 
 @(private = "file")
 emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	source := llvm_type(e, symbol.params[0])
 	iterator := llvm_type(e, symbol.results[0])
 	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0)", iterator, name, source)
@@ -8577,6 +8623,8 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 @(private = "file")
 emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	element := llvm_type(e, symbol.results[0])
 	iterator := llvm_type(e, symbol.params[0])
 	signed := type_signed(e.c, symbol.results[0]) || type_is_rune(e.c, symbol.results[0])
@@ -8626,6 +8674,8 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 @(private = "file")
 emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	element := llvm_type(e, symbol.results[0])
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
@@ -8668,6 +8718,8 @@ emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // data pointer rather than into an inline array.
 @(private = "file")
 emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	element := llvm_type(e, symbol.results[0])
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
@@ -8714,6 +8766,8 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // the value, and the key is reachable only through the two-name loop form.
 @(private = "file")
 emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	element := llvm_type(e, symbol.results[0])
 	iterator := llvm_type(e, symbol.params[0])
 	ops := container_ops_global(e, type_of(e.c, symbol.params[0]).key)
@@ -8763,6 +8817,8 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // runtime call and an `insertvalue`.
 @(private = "file")
 emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	provider := llvm_type(e, symbol.results[0] == TYPE_ALLOCATOR ? symbol.params[0] : symbol.results[0])
 	result := llvm_result_type(e, symbol.results, nil)
 	fmt.sbprintf(&e.b, "define %s %s(", result, name)
@@ -8850,6 +8906,8 @@ emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
 // requires of an implicit allocation.
 @(private = "file")
 emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	container := symbol.params[0]
 	element := container_element(e.c, container)
 	element_llvm := llvm_type(e, element)
@@ -9239,6 +9297,8 @@ clone_pair_type :: proc(value: string) -> string {
 // only where a real hook can return an error.
 @(private = "file")
 emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
 	value_type := llvm_type(e, subject)
 	pair := clone_pair_type(value_type)
@@ -9411,6 +9471,8 @@ emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, co
 // `.Panic`/`.Trap` dispatch replaces the trap block, not the shape.
 @(private = "file")
 emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
 	value_type := llvm_type(e, subject)
 	pair := clone_pair_type(value_type)
@@ -9703,6 +9765,8 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	if target == nil {
 		return
 	}
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	e.terminated = false
 	name := witness_thunk_name(e, witness, index)
 	signature := type_of(e.c, target.proc_type)
@@ -9757,6 +9821,8 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 // slot's thunk with the view's own data pointer.
 @(private = "file")
 emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
 	signature := type_of(e.c, symbol.proc_type)
 	result_type := llvm_result_type(e, symbol.results, nil)
 	view_type := llvm_type(e, symbol.params[0])

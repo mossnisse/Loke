@@ -363,4 +363,5 @@ lokec.exe examples/hello.loke -dump-ast
 lokec.exe tests/layout/types.loke -check-layout
 odin test src -define:ODIN_TEST_TRACK_MEMORY=false
 odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
+./test-all.ps1                         # unit/integration + all five opt modes
 ```

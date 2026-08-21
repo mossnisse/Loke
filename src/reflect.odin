@@ -203,7 +203,7 @@ typeid_const :: proc(type: Type_Id) -> Const_Value {
 }
 
 request_typeid :: proc(c: ^Compiler, type: Type_Id) {
-	if type == INVALID_TYPE {
+	if type == INVALID_TYPE || c.speculation_depth > 0 {
 		return
 	}
 	if _, seen := c.typeid_requested[type]; seen {
@@ -302,23 +302,50 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 // Type_Id allocation order. Nominal types use their package-qualified symbol;
 // structural types recursively name their complete shape.
 @(private = "file")
-typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
-	if depth >= 64 {
-		return "<recursive>"
+typeid_sort_key :: proc(c: ^Compiler, type: Type_Id) -> string {
+	memo := make(map[Type_Id]string, c.semantic_allocator)
+	visiting := make(map[Type_Id]bool, c.semantic_allocator)
+	return typeid_sort_key_walk(c, type, &memo, &visiting)
+}
+
+// Memoization makes the key proportional to the type graph rather than its
+// expanded tree. `visiting` is an explicit cycle detector: valid recursive
+// types cross a pointer and never recur structurally, while malformed by-value
+// cycles receive one stable sentinel until the finite-size pass rejects them.
+@(private = "file")
+typeid_sort_key_walk :: proc(
+	c: ^Compiler,
+	type: Type_Id,
+	memo: ^map[Type_Id]string,
+	visiting: ^map[Type_Id]bool,
+) -> string {
+	if key, found := memo^[type]; found {
+		return key
 	}
+	if visiting^[type] {
+		return "000:<invalid-recursive-type>"
+	}
+	visiting^[type] = true
+	defer visiting^[type] = false
+
+	result := ""
 	// The predeclared table contains distinct language identities with identical
 	// shapes (`int` and `i64` on a 64-bit target, for example). Their catalogue
 	// position is fixed by the language, but its readable name makes the key
 	// independent of that internal numeric position as well as request order.
 	if type >= 0 && type < FIRST_DYNAMIC_TYPE {
-		return fmt.aprintf(
+		result = fmt.aprintf(
 			"predeclared:%s", type_name(c, type),
 			allocator = c.semantic_allocator,
 		)
+		memo^[type] = result
+		return result
 	}
 	info := type_of(c, type)
 	if info == nil {
-		return "000:<invalid>"
+		result = "000:<invalid>"
+		memo^[type] = result
+		return result
 	}
 	if info.symbol != INVALID_SYMBOL {
 		if sym := symbol_of(c, info.symbol); sym != nil {
@@ -326,18 +353,22 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
 			if pkg := package_of(c, sym.pkg); pkg != nil {
 				pkg_key = pkg.key
 			}
-			return fmt.aprintf(
+			result = fmt.aprintf(
 				"nominal:%s:%s", pkg_key, identifier_text(c, sym.name),
 				allocator = c.semantic_allocator,
 			)
+			memo^[type] = result
+			return result
 		}
 	}
 	// Predeclared and compiler-owned named identities are unique compilation-wide.
 	if info.name != INVALID_IDENTIFIER {
-		return fmt.aprintf(
+		result = fmt.aprintf(
 			"named:%d:%s", int(info.kind), identifier_text(c, info.name),
 			allocator = c.semantic_allocator,
 		)
+		memo^[type] = result
+		return result
 	}
 	b := strings.builder_make(c.semantic_allocator)
 	fmt.sbprintf(
@@ -345,10 +376,10 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
 		info.signed, info.mutable, info.written_align,
 	)
 	if info.element != INVALID_TYPE {
-		fmt.sbprintf(&b, ":e{%s}", typeid_sort_key(c, info.element, depth + 1))
+		fmt.sbprintf(&b, ":e{%s}", typeid_sort_key_walk(c, info.element, memo, visiting))
 	}
 	if info.key != INVALID_TYPE {
-		fmt.sbprintf(&b, ":k{%s}", typeid_sort_key(c, info.key, depth + 1))
+		fmt.sbprintf(&b, ":k{%s}", typeid_sort_key_walk(c, info.key, memo, visiting))
 	}
 	if info.count != 0 {
 		fmt.sbprintf(&b, ":n%d", info.count)
@@ -359,12 +390,12 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
 		by_ptr := index < len(info.param_by_ptr) && info.param_by_ptr[index]
 		fmt.sbprintf(
 			&b, ":p%d:%t:%t{%s}", mode, reset, by_ptr,
-			typeid_sort_key(c, parameter, depth + 1),
+			typeid_sort_key_walk(c, parameter, memo, visiting),
 		)
 	}
 	for result, index in info.results {
 		inout := index < len(info.result_inout) && info.result_inout[index]
-		fmt.sbprintf(&b, ":r%t{%s}", inout, typeid_sort_key(c, result, depth + 1))
+		fmt.sbprintf(&b, ":r%t{%s}", inout, typeid_sort_key_walk(c, result, memo, visiting))
 	}
 	if info.convention != "" {
 		fmt.sbprintf(&b, ":c{%s}", info.convention)
@@ -372,7 +403,9 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
 	if info.c_vararg {
 		fmt.sbprint(&b, ":cvararg")
 	}
-	return strings.to_string(b)
+	result = strings.to_string(b)
+	memo^[type] = result
+	return result
 }
 
 typeid_value :: proc(c: ^Compiler, type: Type_Id) -> u64 {

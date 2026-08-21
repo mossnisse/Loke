@@ -177,8 +177,8 @@ Type_Info :: struct {
 	// parameter's procedure type: a reset-capable procedure cannot be stored in a
 	// procedure value whose type hides that effect."
 	param_resets: []bool,
-	// Foreign ABI adapters must survive calls through procedure values. Erasing
-	// either one changes the LLVM function type at an indirect call site.
+	// Foreign ABI adapters are part of procedure type identity. Erasing either
+	// one changes the LLVM function type at an indirect call site.
 	param_by_ptr: []bool,
 	c_vararg:     bool,
 	results:    []Type_Id,
@@ -666,12 +666,6 @@ Symbol :: struct {
 	// the object under `link_name` (its written name unless `@(link_name)` renamed
 	// it) instead of the mangled `@loke.p...`, so a C consumer can link to it.
 	exported:           bool,
-	// design.md "Parameter semantics": one entry per parameter. `@(by_ptr)` passes
-	// `T const *` instead of by value; `@(c_vararg)` marks the final `..any_view`
-	// as a true C variadic. Both are foreign-declaration metadata, not part of the
-	// procedure type (m7-plan step 4).
-	param_by_ptr:       []bool,
-	c_vararg:           bool,
 }
 
 Build_Config_Enum :: enum u8 {
@@ -797,6 +791,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
 	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.formatters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
+	c.result_summary_dependencies = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.reset_dead = make(map[^Expr_Call][]Symbol_Id, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
@@ -1081,7 +1076,11 @@ type_signed :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // which is what layout, folding, and lowering need.
 type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	current := id
-	for i := 0; i < 64; i += 1 {
+	// A valid chain cannot visit more types than the compilation owns. Using that
+	// invariant avoids both an arbitrary nesting limit and an allocation in this
+	// very hot helper. If an invalid distinct cycle exists, return a member of the
+	// cycle; the finite-size pass is responsible for diagnosing it.
+	for _ in 0 ..< len(c.types) + 1 {
 		info := type_of(c, current)
 		if info == nil || info.kind != .Distinct || info.element == INVALID_TYPE {
 			return current

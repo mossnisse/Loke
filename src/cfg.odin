@@ -224,6 +224,9 @@ Flow_Graph :: struct {
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
 	call_results:   map[^Expr_Call][]Prov_Call_Result,
+	// Direct callees whose result summaries this graph reads. Populated only in
+	// summary mode and copied into compilation metadata before the graph dies.
+	summary_callees: [dynamic]Symbol_Id,
 	// design.md: "A value temporary lives until the end of its complete
 	// expression", extended to the complete statement inside a `foreach` iterable,
 	// a `switch` subject, or an `if`/`for`/`switch` initial statement. One list
@@ -299,6 +302,7 @@ build_flow_graph :: proc(
 	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
 	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 	graph.call_results = make(map[^Expr_Call][]Prov_Call_Result, 8, allocator)
+	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
 	graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
@@ -1665,6 +1669,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result: int, result_
 		callee = v.resolution.symbol
 	}
 	direct := prov_has_direct_body(c, callee)
+	prov_note_summary_dependency(graph, callee, direct)
 	if summary, found := result_summary(c, callee, result); found {
 		for wanted, index in summary.region.params {
 			if wanted && index < len(v.bound) && v.bound[index] != nil {
@@ -2630,6 +2635,8 @@ prov_call_result :: proc(
 	if callee == INVALID_SYMBOL {
 		callee = v.resolution.symbol
 	}
+	direct := prov_has_direct_body(c, callee)
+	prov_note_summary_dependency(graph, callee, direct)
 	if summary, found := result_summary(c, callee, result); found {
 		out: []int
 		for wanted, index in summary.params {
@@ -2651,13 +2658,26 @@ prov_call_result :: proc(
 	// A named body without a summary yet is a forward fixed-point edge, not an
 	// indirect call with erased metadata. Contribute nothing this round; its
 	// monotone summary will be substituted once that body has been visited.
-	if prov_has_direct_body(c, callee) {
+	if direct {
 		return nil
 	}
 	if len(borrowed) > 0 {
 		return borrowed
 	}
 	return prov_synthetic_borrow(graph, v, .Unknown, result_type)
+}
+
+@(private = "file")
+prov_note_summary_dependency :: proc(graph: ^Flow_Graph, callee: Symbol_Id, direct: bool) {
+	if graph.mode != .Prov_Summary || !direct || callee == INVALID_SYMBOL {
+		return
+	}
+	for existing in graph.summary_callees {
+		if existing == callee {
+			return
+		}
+	}
+	append(&graph.summary_callees, callee)
 }
 
 @(private = "file")

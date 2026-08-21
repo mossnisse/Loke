@@ -69,6 +69,11 @@ Compiler :: struct {
 	diagnostics: [dynamic]Diagnostic,
 	error_count: int,
 
+	// Hypothetical checks (overload bounds and interface requirements) may use
+	// the ordinary checker, but must not enroll backend artifacts in the final
+	// module. Nested checks share this counter so every registry has one gate.
+	speculation_depth: int,
+
 
 	// The widths `int`, `uint`, `uintptr` and every pointer take. Checker and
 	// emitter read this one record so they cannot disagree.
@@ -184,6 +189,9 @@ Compiler :: struct {
 	// checking, and does not change the runtime ABI". Keyed per concrete
 	// declaration or generic instance, so two instances may differ.
 	result_summaries: map[Symbol_Id]^Proc_Summary,
+	// Direct summary dependencies, discovered while building each body's first
+	// provenance graph. The solver schedules only callers of a changed callee.
+	result_summary_dependencies: map[Symbol_Id][]Symbol_Id,
 
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker
