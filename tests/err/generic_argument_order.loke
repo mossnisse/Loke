@@ -1,0 +1,7 @@
+package main;
+
+accept :: proc(x: int, $T: type, y: T) {}
+
+main :: proc() {
+	accept(1, T = int, 2);
+}

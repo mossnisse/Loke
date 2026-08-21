@@ -1,0 +1,16 @@
+package main;
+
+import "core:fmt";
+
+take_int :: proc($N: int) -> int { return 1; }
+take_float :: proc($N: f64) -> int { return 2; }
+take :: proc{take_int, take_float};
+
+first :: proc(values: ..$T) -> T {
+	return values[0];
+}
+
+main :: proc() {
+	values := [?]int{7, 8};
+	fmt.println(take(1), first(..values[:]));
+}

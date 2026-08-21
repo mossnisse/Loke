@@ -34,6 +34,8 @@ main :: proc() {
 
 	file := in_root(directory, "notes.txt");
 	fmt.println(fs.write_text(file, "första\n") == nil);
+	// An existing file is not an already-satisfied directory creation.
+	fmt.println(io.is(fs.create_directories(file), .Already_Exists));
 	text, read_error := fs.read_text(file);
 	fmt.println(read_error == nil);
 	fmt.println(text);

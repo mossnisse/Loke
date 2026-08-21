@@ -266,7 +266,9 @@ read_console_line :: proc(
 		}
 		chunk, decode_error := utf16.decode(units[0:count], allocator);
 		if (decode_error != nil) {
-			return "", io.make_error(.Invalid_Data, .Read_Line);
+			fault := decode_error.(utf16.Fault);
+			code := io.Code.Out_Of_Memory if fault == .Out_Of_Memory else io.Code.Invalid_Data;
+			return "", io.make_error(code, .Read_Line);
 		}
 		builder.append(chunk);
 		if (ended) { break; }
@@ -315,6 +317,12 @@ restore_handler :: proc "stdcall" (event: u32) -> i32 {
 begin_raw :: proc(
 	input: Input = stdin(), options: Raw_Options = {},
 ) -> (Raw_Mode, io.Error) {
+	// One process-global restore record can safely describe one live scope. A
+	// second would overwrite the original cooked mode and could leave the console
+	// raw when either value closes or the control handler runs.
+	if (handler_handle != 0) {
+		return Raw_Mode{}, io.make_error(.Already_Exists, .Terminal_Mode);
+	}
 	previous: u32 = 0;
 	if (rt_get_console_mode(input.handle, &previous) == 0) {
 		return Raw_Mode{}, io.make_error(.Not_A_Terminal, .Terminal_Mode);
@@ -323,14 +331,20 @@ begin_raw :: proc(
 	if (options.interrupt_as_key) {
 		wanted = wanted & ~u32(ENABLE_PROCESSED_INPUT);
 	}
-	if (rt_set_console_mode(input.handle, wanted) == 0) {
-		return Raw_Mode{}, from_last_error(.Terminal_Mode);
-	}
+	// Install the process-level restore path before changing the terminal. A
+	// registration failure therefore leaves the console untouched.
 	handler_handle = input.handle;
 	handler_mode = previous;
 	if (!handler_installed) {
-		rt_set_ctrl_handler(restore_handler, 1);
+		if (rt_set_ctrl_handler(restore_handler, 1) == 0) {
+			handler_handle = 0;
+			return Raw_Mode{}, from_last_error(.Terminal_Mode);
+		}
 		handler_installed = true;
+	}
+	if (rt_set_console_mode(input.handle, wanted) == 0) {
+		handler_handle = 0;
+		return Raw_Mode{}, from_last_error(.Terminal_Mode);
 	}
 	return Raw_Mode{input.handle, previous, true, 0}, nil;
 }

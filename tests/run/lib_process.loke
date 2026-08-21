@@ -1,0 +1,26 @@
+package main;
+
+import "core:fmt";
+import "core:io";
+import "core:mem";
+import "core:os";
+
+// Process-state allocation failures keep their normalized I/O identity. A
+// deliberately small fixed arena makes UTF-16 decoding fail without depending
+// on machine memory pressure.
+main :: proc() {
+	name: string_view = "LOKE_STDLIB_OOM_CHECK_7E2C";
+	value: string_view =
+		"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+		"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
+		"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
+	fmt.println(os.set_environment(name, value) == nil);
+
+	room: [160]u8 = {};
+	arena := mem.Arena(room[:]);
+	_, present, error := os.get_environment(name, arena.allocator());
+	fmt.println(present);
+	fmt.println(io.is(error, .Out_Of_Memory));
+
+	fmt.println(os.unset_environment(name) == nil);
+}

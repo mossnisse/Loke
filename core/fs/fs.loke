@@ -244,14 +244,21 @@ create_directories :: proc(path: string_view) -> io.Error {
 		if (!is_separator(bytes[at]) || at == 0) { continue; }
 		parent := path[0:at];
 		if (len(parent) == 0) { continue; }
-		if (error := create_directory(parent); error != nil && !io.is(error, .Already_Exists)) {
-			return error;
-		}
+		ensure_directory(parent) or_return;
 	}
-	if (error := create_directory(path); error != nil && !io.is(error, .Already_Exists)) {
-		return error;
-	}
-	return nil;
+	return ensure_directory(path);
+}
+
+// `CreateDirectoryW` uses the same Already_Exists code for an existing
+// directory and an existing non-directory. Only the former satisfies this
+// operation's postcondition.
+@(private)
+ensure_directory :: proc(path: string_view) -> io.Error {
+	error := create_directory(path);
+	if (error == nil || !io.is(error, .Already_Exists)) { return error; }
+	info, metadata_error := metadata(path);
+	if (metadata_error != nil) { return metadata_error; }
+	return nil if info.kind == .Directory else error;
 }
 
 remove_directory :: proc(path: string_view) -> io.Error {
@@ -640,7 +647,7 @@ impl Directory_Reader {
 			count := utf16.length_of(units);
 			name, decode_error := utf16.decode(units[0:count], self.allocator);
 			if (decode_error != nil) {
-				return Directory_Entry{}, false, io.make_error(.Invalid_Data, .Read_Directory);
+				return Directory_Entry{}, false, from_utf16_error(decode_error, .Read_Directory);
 			}
 			self.current = name;
 			if (self.current == "." || self.current == "..") { continue; }
@@ -667,6 +674,13 @@ read_directory_native :: proc(
 	reader.handle = handle;
 	reader.pending = true;
 	return reader, nil;
+}
+
+@(private)
+from_utf16_error :: proc(error: utf16.Error, operation: io.Operation) -> io.Error {
+	fault := error.(utf16.Fault);
+	code := io.Code.Out_Of_Memory if fault == .Out_Of_Memory else io.Code.Invalid_Data;
+	return io.make_error(code, operation);
 }
 
 } else {

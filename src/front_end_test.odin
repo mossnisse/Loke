@@ -228,6 +228,17 @@ helper :: proc() { }`
 }
 
 @(test)
+default_output_keeps_a_dotted_directory_name :: proc(t: ^testing.T) {
+	actual := default_output_path("tests/pkg/mangle/a.b", .Obj)
+	testing.expectf(
+		t,
+		actual == "tests/pkg/mangle/a.b.obj" || actual == `tests\pkg\mangle\a.b.obj`,
+		"dotted directory defaulted to %q",
+		actual,
+	)
+}
+
+@(test)
 lexer_golden :: proc(t: ^testing.T) {
 	text := `name 123 1.5 "text" ` + "`raw`" + ` 'x' #assert
 break case continue defer distinct dyn dynamic else enum extend for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return struct switch type union via when where

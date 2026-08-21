@@ -3,6 +3,21 @@ package lokec
 import "core:testing"
 
 @(test)
+artifact_extension_ignores_dotted_parent_directories :: proc(t: ^testing.T) {
+	actual := replace_ext(`C:\release.v2\program`, ".ll")
+	testing.expectf(t, actual == `C:\release.v2\program.ll`, "unexpected artifact path %q", actual)
+}
+
+@(test)
+assembly_temporaries_include_the_source_identity :: proc(t: ^testing.T) {
+	first := assembly_object_path(`C:\one\helper.asm`, `C:\out\program.exe`)
+	second := assembly_object_path(`C:\two\helper.asm`, `C:\out\program.exe`)
+	again := assembly_object_path(`c:\ONE\helper.asm`, `C:\out\program.exe`)
+	testing.expectf(t, first != second, "different assembly sources collide at %q", first)
+	testing.expectf(t, first == again, "one Windows source path produced %q and %q", first, again)
+}
+
+@(test)
 fixed_allocas_are_hoisted_per_function :: proc(t: ^testing.T) {
 	module :=
 		"define void @first(i64 %n, i32 %m) {\n" +

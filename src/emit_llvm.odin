@@ -7616,9 +7616,12 @@ entry_symbol :: proc(c: ^Compiler) -> Symbol_Id {
 	return lookup_symbol(pkg.scope, intern_identifier(c, "main"))
 }
 
-@(private = "file")
 replace_ext :: proc(path: string, ext: string) -> string {
-	if i := strings.last_index_byte(path, '.'); i >= 0 {
+	// A dot in a parent directory is not this file's extension. Keeping the
+	// spelling otherwise intact also avoids moving an extensionless output to a
+	// different directory while deriving its `.ll` companion.
+	separator := max(strings.last_index_byte(path, '/'), strings.last_index_byte(path, '\\'))
+	if i := strings.last_index_byte(path, '.'); i > separator {
 		return strings.concatenate({path[:i], ext})
 	}
 	return strings.concatenate({path, ext})
@@ -7761,10 +7764,13 @@ collect_foreign_link_inputs :: proc(c: ^Compiler, exe_path: string) -> (inputs: 
 				}
 				dir := filepath.dir(c.sources[imp.span.file].path)
 				resolved := filepath.is_abs(imp.path) ? imp.path : filepath.join({dir, imp.path})
-				if seen[resolved] {
+				// The v1 target is Windows: alternate separator/case spellings of one
+				// file are one link input, just as they are one package identity.
+				input_key := strings.concatenate({"file:", strings.to_lower(filepath.clean(resolved))})
+				if seen[input_key] {
 					continue
 				}
-				seen[resolved] = true
+				seen[input_key] = true
 				if !os.is_file(resolved) {
 					errorf(c, imp.span, "L0631", "cannot find the foreign import `%s`", resolved)
 					ok = false
@@ -7794,7 +7800,7 @@ assemble_nasm :: proc(c: ^Compiler, source, exe_path: string, span: Span) -> (ob
 	if nasm == "" {
 		nasm = "nasm"
 	}
-	obj = filepath.join({filepath.dir(exe_path), fmt.aprintf("%s.obj", filepath.stem(source))})
+	obj = assembly_object_path(source, exe_path)
 	state, _, stderr, err := os2.process_exec(
 		os2.Process_Desc{command = []string{nasm, "-f", "win64", source, "-o", obj}},
 		context.allocator,
@@ -7808,6 +7814,21 @@ assemble_nasm :: proc(c: ^Compiler, source, exe_path: string, span: Span) -> (ob
 		return "", false
 	}
 	return obj, true
+}
+
+// Two packages may each import `helper.asm`. NASM runs before the final clang
+// link, so a basename-only temporary lets the later source overwrite the
+// earlier one. A stable hash of the canonical, case-folded Windows path keeps
+// those objects distinct while deduplicating alternate spellings of one file.
+assembly_object_path :: proc(source, exe_path: string) -> string {
+	canonical := filepath.clean(source)
+	key := strings.to_lower(canonical)
+	hash := u64(14695981039346656037) // FNV-1a offset basis
+	for index in 0 ..< len(key) {
+		hash = (hash ~ u64(key[index])) * HASH_MULTIPLIER
+	}
+	name := fmt.aprintf("%s.%x.obj", filepath.stem(source), hash)
+	return filepath.join({filepath.dir(exe_path), name})
 }
 
 @(private = "file")

@@ -392,12 +392,26 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 		return opts, false
 	}
 	if opts.output == "" {
-		// A directory input takes its own name; a file input drops its extension.
-		stem := strings.trim_suffix(strings.trim_suffix(opts.input, "/"), filepath.ext(opts.input))
-		// An object build defaults to `.obj`, an executable to `.exe` (m7-plan step 5).
-		opts.output = strings.concatenate({stem, opts.build_mode == .Obj ? ".obj" : ".exe"})
+		opts.output = default_output_path(opts.input, opts.build_mode)
 	}
 	return opts, true
+}
+
+// A directory takes its complete final component, including dots; only a file
+// sheds its extension. Trim either host separator from a written directory so
+// `package\` and `package/` both produce the sibling `package.exe`.
+default_output_path :: proc(input: string, mode: Build_Mode) -> string {
+	stem := input
+	if info, err := os.stat(input, context.temp_allocator); err == nil && info.is_dir {
+		trimmed := strings.trim_right(input, "/\\")
+		if trimmed != "" {
+			stem = trimmed
+		}
+	} else {
+		stem = strings.trim_suffix(input, filepath.ext(input))
+	}
+	// An object build defaults to `.obj`, an executable to `.exe` (m7-plan step 5).
+	return strings.concatenate({stem, mode == .Obj ? ".obj" : ".exe"})
 }
 
 // `-define:NAME=VALUE`. The value is a boolean, an integer, or — failing both —

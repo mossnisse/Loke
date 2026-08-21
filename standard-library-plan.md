@@ -779,6 +779,12 @@ nothing is registered until a caller asks for raw mode.
 
 `begin_raw` on redirected input returns `Not_A_Terminal`.
 
+Only one `Raw_Mode` may be live in a process. The process-level control handler
+has one authoritative saved console mode; allowing another scope to overwrite
+it would make out-of-order cleanup or a control event restore the wrong mode.
+A second `begin_raw` therefore returns `Already_Exists` and leaves the terminal
+unchanged.
+
 `Key_Event` contains a Unicode rune for text input, a `Key` enum for special
 keys, and explicit modifier flags. The first `Key` set should cover arrows,
 Home, End, Page Up/Down, Insert, Delete, Backspace, Enter, Escape, Tab, and F1

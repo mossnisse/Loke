@@ -102,7 +102,9 @@ from_wide :: proc(
 ) -> (string, io.Error) {
 	text, error := utf16.decode(units[0:count], allocator);
 	if (error != nil) {
-		return "", io.make_error(.Invalid_Data, operation);
+		fault := error.(utf16.Fault);
+		code := io.Code.Out_Of_Memory if fault == .Out_Of_Memory else io.Code.Invalid_Data;
+		return "", io.make_error(code, operation);
 	}
 	return text, nil;
 }

@@ -81,4 +81,13 @@ main :: proc() {
 	show_f64("1.2.3");
 	show_f64("1e");
 	show_f64("abc");
+
+	// Mantissas are accumulated without wrapping, and a finite spelling outside
+	// f64's range reports Overflow instead of succeeding with infinity.
+	large, large_error := strconv.parse_f64("30000000000000000000");
+	fmt.println(large_error == nil);
+	fmt.println(large > 29000000000000000000.0 && large < 31000000000000000000.0);
+	_, float_overflow := strconv.parse_f64("1e999");
+	fault := float_overflow.(strconv.Fault);
+	fmt.println(int(fault));
 }

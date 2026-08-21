@@ -54,6 +54,20 @@ impl Broken_Writer {
 	}
 }
 
+// A legal Reader edge: progress and a failure in the same result. Helpers must
+// consume the byte without forgetting the accompanying error.
+Error_After_Byte :: struct { done: bool }
+
+impl Error_After_Byte {
+	@(public)
+	read :: proc(self: inout Error_After_Byte, destination: []mut u8) -> (int, io.Error) {
+		if (self.done) { return 0, io.make_error(.End_Of_Input, .Read); }
+		self.done = true;
+		destination[0] = u8('x');
+		return 1, io.make_error(.Other, .Read);
+	}
+}
+
 reader_over :: proc(text: string_view, most: int) -> Short_Reader {
 	return Short_Reader{text.bytes(), 0, most};
 }
@@ -123,6 +137,10 @@ main :: proc() {
 	kept := reader_over("keep\n", 5);
 	with_ending, _ := io.read_line(inout kept, options = io.Line_Options{true});
 	fmt.println(len(with_ending));
+
+	combined: Error_After_Byte = {};
+	_, combined_error := io.read_line(inout combined);
+	fmt.println(io.is(combined_error, .Other));
 
 	// The formatting bridge latches the first failure.
 	formatted: Short_Writer = {};

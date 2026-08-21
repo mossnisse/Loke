@@ -40,9 +40,14 @@ Arg_Info :: struct {
 
 Candidate :: struct {
 	symbol: Symbol_Id,
-	// One rank per supplied argument, in written order. Never summed: the ranks
-	// form a vector and argument order does not break ties.
+	// One rank per argument that survives into this candidate's concrete runtime
+	// signature. Never summed: the ranks form a vector and argument order does
+	// not break ties.
 	ranks:  []int,
+	// Generic `$` arguments are absent from `args`/`ranks` because those arrays
+	// drive runtime binding. They remain written call arguments and therefore
+	// participate in overload ordering through this full vector.
+	ordering_ranks: []int,
 	// Which parameter each supplied argument fills.
 	slots:  []int,
 	filled: []bool,
@@ -68,6 +73,11 @@ Candidate :: struct {
 	scope:      ^Scope,
 	viable:     bool,
 	reason:     string,
+}
+
+@(private = "file")
+candidate_ranks :: proc(cand: ^Candidate) -> []int {
+	return cand.ordering_ranks != nil ? cand.ordering_ranks : cand.ranks
 }
 
 // -------------------------------------------------------------- groups --
@@ -415,6 +425,31 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		}
 	}
 	cand := build_candidate(k, instance.symbol, inference.runtime_args)
+	if cand.viable {
+		ordering := make([]int, len(args), k.c.semantic_allocator)
+		runtime_index := 0
+		for arg, index in args {
+			if inference.compile_time[index] {
+				rank, _ := argument_rank(k, arg, inference.compile_targets[index], .Value)
+				if rank == RANK_NONE {
+					cand.viable = false
+					cand.reason = fmt.aprintf(
+						"argument %d is `%s` where `%s` is wanted",
+						index + 1,
+						type_name(k.c, arg.type),
+						type_name(k.c, inference.compile_targets[index]),
+						allocator = k.c.semantic_allocator,
+					)
+					break
+				}
+				ordering[index] = rank
+				continue
+			}
+			ordering[index] = cand.ranks[runtime_index]
+			runtime_index += 1
+		}
+		cand.ordering_ranks = ordering
+	}
 	cand.parametric = true
 	cand.specificity = template.specificity
 	cand.instance = instance
@@ -485,7 +520,7 @@ tie_break :: proc(a, b: ^Candidate) -> (int, int) {
 
 @(private = "file")
 candidate_better :: proc(a, b: ^Candidate) -> bool {
-	switch compare_vectors(a.ranks, b.ranks) {
+	switch compare_vectors(candidate_ranks(a), candidate_ranks(b)) {
 	case -1:
 		return true
 	case 1, 2:
@@ -639,7 +674,7 @@ report_ambiguity :: proc(k: ^Checker, span: Span, description: string, all: []Ca
 			sym.span,
 			"candidate `%s` with conversion vector %s",
 			identifier_text(k.c, sym.name),
-			vector_text(k.c, all[index].ranks),
+			vector_text(k.c, candidate_ranks(&all[index])),
 		)
 	}
 	add_notef(k.c, no_span(), "selection failed at %s", failing_tie_breaker(all, maximal))
@@ -654,7 +689,7 @@ failing_tie_breaker :: proc(all: []Candidate, maximal: []int) -> string {
 			if other == index {
 				continue
 			}
-			if compare_vectors(all[index].ranks, all[other].ranks) == 2 {
+			if compare_vectors(candidate_ranks(&all[index]), candidate_ranks(&all[other])) == 2 {
 				return "crossed conversion vectors, which are ambiguous by design"
 			}
 			_, consulted := tie_break(&all[index], &all[other])

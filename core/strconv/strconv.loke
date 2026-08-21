@@ -109,25 +109,25 @@ parse_f64 :: proc(text: string_view) -> (f64, Parse_Error) {
 			exponent += 1;
 			continue;
 		}
-		next := mantissa * 10 + u64(bytes[at] - u8('0'));
-		if (next < mantissa) {
+		digit := u64(bytes[at] - u8('0'));
+		if (mantissa > (0xFFFFFFFFFFFFFFFF - digit) / 10) {
 			saturated = true;
 			exponent += 1;
 			continue;
 		}
-		mantissa = next;
+		mantissa = mantissa * 10 + digit;
 	}
 	if (at < len(bytes) && bytes[at] == u8('.')) {
 		at += 1;
 		for (; at < len(bytes) && is_digit(bytes[at]); at += 1) {
 			digits += 1;
 			if (saturated) { continue; }
-			next := mantissa * 10 + u64(bytes[at] - u8('0'));
-			if (next < mantissa) {
+			digit := u64(bytes[at] - u8('0'));
+			if (mantissa > (0xFFFFFFFFFFFFFFFF - digit) / 10) {
 				saturated = true;
 				continue;
 			}
-			mantissa = next;
+			mantissa = mantissa * 10 + digit;
 			exponent -= 1;
 		}
 	}
@@ -156,6 +156,12 @@ parse_f64 :: proc(text: string_view) -> (f64, Parse_Error) {
 	if (at != len(bytes)) { return 0, Fault.Trailing_Data; }
 
 	value := scale(f64(mantissa), exponent);
+	// Scaling a finite decimal outside f64's range must not quietly manufacture
+	// an infinity: infinities are not accepted spellings, and `Fault.Overflow`
+	// exists precisely for a value the destination cannot hold.
+	if (mantissa != 0 && value > 1.7976931348623157e308) {
+		return 0, Fault.Overflow;
+	}
 	return -value if negative else value, nil;
 }
 

@@ -299,11 +299,21 @@ read_line :: proc(
 					if (kept >= 0 && collected[kept] == u8('\r')) {
 						collected.resize(kept);
 					}
+					if (error != nil && !is(error, .End_Of_Input)) {
+						return "", error;
+					}
 					break;
 				}
 			}
 			if (failed := collected.try_append(one[0]); failed != nil) {
 				return "", from_allocator_error(failed, .Read_Line);
+			}
+			// A reader may make progress and report a failure in the same call. The
+			// byte belongs to this line, but the accompanying failure must not be
+			// replaced by whatever the next read happens to return.
+			if (error != nil) {
+				if (!is(error, .End_Of_Input)) { return "", error; }
+				ended = true;
 			}
 			continue;
 		}

@@ -655,6 +655,12 @@ bind_pattern_name :: proc(
 Inference :: struct {
 	bindings:     []Generic_Binding,
 	runtime_args: []Arg_Info,
+	// Which written arguments were consumed by `$` parameters, and the
+	// concrete type each one was converted to. Overload ordering still ranks
+	// those written arguments even though they do not survive in the runtime
+	// signature.
+	compile_time:    []bool,
+	compile_targets: []Type_Id,
 	scope:        ^Scope,
 	reason:       string,
 	ok:           bool,
@@ -691,6 +697,19 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		k.file, k.file_node = outer_file, outer_file_node
 	}
 
+	// This is a property of the written call, before `$` arguments disappear
+	// from an instantiated signature. Delaying it until `build_candidate` would
+	// accept a positional argument after a named compile-time argument.
+	named := false
+	for arg in args {
+		if arg.name != INVALID_IDENTIFIER {
+			named = true
+		} else if named {
+			result.reason = "a positional argument cannot follow a named one"
+			return result
+		}
+	}
+
 	// Inference binds `$` names; ranking is `build_candidate`'s job against the
 	// substituted signature. So an argument a *name* claims goes to its own
 	// parameter, an omitted one with a default is simply not bound here — the
@@ -698,6 +717,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	// fills a variadic pack.
 	claimed := make([]bool, len(args), k.c.semantic_allocator)
 	compile_time := make([]bool, len(args), k.c.semantic_allocator)
+	compile_targets := make([]Type_Id, len(args), k.c.semantic_allocator)
 	next := 0
 	position := 0
 	for parameter in literal.signature.params {
@@ -705,7 +725,22 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			// A pattern in the element type binds from the first of the remaining
 			// arguments; the rest are ranked, not matched.
 			if index, found := claim_argument(args, INVALID_IDENTIFIER, &next, claimed); found {
-				match_type_pattern(k, parameter.type, args[index].type, scope, &bindings)
+				matched := args[index].type
+				// A spread supplies the pack slice, while the written variadic type is
+				// its element. Infer `$T` in `..$T` from `..values`, not from the
+				// whole `[]T` carrier.
+				if args[index].mode == .Spread {
+					matched = slice_element(k.c, matched)
+				}
+				if matched == INVALID_TYPE ||
+				   !match_type_pattern(k, parameter.type, matched, scope, &bindings) {
+					result.reason = fmt.aprintf(
+						"`%s` does not match the variadic parameter's element shape",
+						type_name(k.c, args[index].type),
+						allocator = k.c.semantic_allocator,
+					)
+					return result
+				}
 			}
 			for {
 				if _, found := claim_argument(args, INVALID_IDENTIFIER, &next, claimed); !found {
@@ -756,6 +791,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 				result.reason = bound
 				return result
 			}
+			compile_targets[index] = wanted != INVALID_TYPE ? wanted : default_type(k.c, arg.type)
 		}
 	}
 	// An argument no parameter claimed, named or positional, is the extra one.
@@ -782,6 +818,8 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 
 	result.bindings = bindings[:]
 	result.runtime_args = runtime[:]
+	result.compile_time = compile_time
+	result.compile_targets = compile_targets
 	result.ok = true
 	return result
 }
