@@ -989,8 +989,7 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 	fmt.sbprintf(&e.b, "define private i64 %s(ptr %%p, i64 %%seed)", name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
-	value := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%p", value, llvm_type(e, key))
+	value := load(e, llvm_type(e, key), "%p")
 	out := ""
 	if hook := key_policy_member(e.c, key, false); hook != INVALID_SYMBOL {
 		out = temp(e)
@@ -1023,9 +1022,8 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
 	llvm := llvm_type(e, key)
-	left, right := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%a", left, llvm)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%b", right, llvm)
+	left := load(e, llvm, "%a")
+	right := load(e, llvm, "%b")
 	same := ""
 	if hook := key_policy_member(e.c, key, true); hook != INVALID_SYMBOL {
 		same = temp(e)
@@ -1093,8 +1091,7 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, status)
 		return ok
 	}
-	value := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, type), src)
+	value := load(e, llvm_type(e, type), src)
 	if !type_clone_is_fallible(e.c, type) {
 		store(e, type, emit_clone_value(e, type, value, allocator), out)
 		return "true"
@@ -1110,9 +1107,9 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
 		returned, pair, e.names[hook], llvm_type(e, type), value, allocator,
 	)
-	cloned, error, ok := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	cloned := extract(e, pair, returned, 0)
+	error := extract(e, pair, returned, 1)
+	ok := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", ok, error)
 	// The hook already cleaned its own temporary on the failing path, and a
 	// failed clone returns the zero value, so publishing it unconditionally would
@@ -1624,19 +1621,16 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 @(private = "file")
 emit_union_value :: proc(e: ^Emitter, union_type, variant: Type_Id, value: string) -> string {
 	slot := emit_union_slot(e, union_type, variant, value)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, union_type), slot)
+	out := load(e, llvm_type(e, union_type), slot)
 	return out
 }
 
 @(private = "file")
 emit_union_slot :: proc(e: ^Emitter, union_type, variant: Type_Id, value: string) -> string {
 	llvm := llvm_type(e, union_type)
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm)
+	slot := alloca(e, llvm)
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, slot)
-	payload := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0", payload, llvm, slot)
+	payload := gep_field(e, llvm, slot, 0)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, variant), value, payload)
 	emit_union_store_tag(e, union_type, slot, union_variant_tag(e.c, union_type, variant))
 	return slot
@@ -1646,12 +1640,7 @@ emit_union_slot :: proc(e: ^Emitter, union_type, variant: Type_Id, value: string
 emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag: int) {
 	llvm := llvm_type(e, union_type)
 	shape := union_layout(e.c, union_type)
-	address := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		address, llvm, slot, union_tag_member(e, union_type),
-	)
+	address := gep_field(e, llvm, slot, union_tag_member(e, union_type))
 	fmt.sbprintfln(&e.b, "  store i%d %d, ptr %s", shape.tag_bytes * 8, tag, address)
 }
 
@@ -1659,12 +1648,7 @@ emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag
 // tests.
 @(private = "file")
 emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
-	out := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = extractvalue %s %s, %d",
-		out, llvm_type(e, union_type), value, union_tag_member(e, union_type),
-	)
+	out := extract(e, llvm_type(e, union_type), value, union_tag_member(e, union_type))
 	return out
 }
 
@@ -1672,22 +1656,15 @@ emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> strin
 @(private = "file")
 emit_union_spill :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
 	llvm := llvm_type(e, union_type)
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm)
+	slot := alloca(e, llvm)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, value, slot)
 	return slot
 }
 
 @(private = "file")
 emit_union_payload :: proc(e: ^Emitter, union_type, variant: Type_Id, slot: string) -> string {
-	payload := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0",
-		payload, llvm_type(e, union_type), slot,
-	)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, variant), payload)
+	payload := gep_field(e, llvm_type(e, union_type), slot, 0)
+	out := load(e, llvm_type(e, variant), payload)
 	return out
 }
 
@@ -2318,8 +2295,7 @@ emit_foreign_return :: proc(e: ^Emitter) {
 	result := e.result_types[0]
 	slot := e.result_slots[0]
 	if emit_result_is_inout(e, 0) {
-		v := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", v, slot)
+		v := load(e, "ptr", slot)
 		fmt.sbprintfln(&e.b, "  ret ptr %s", v)
 		return
 	}
@@ -2332,12 +2308,10 @@ emit_foreign_return :: proc(e: ^Emitter) {
 		fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", v, bits, slot, type_align(e.c, result))
 		fmt.sbprintfln(&e.b, "  ret i%d %s", bits, v)
 	case .Bool_I1:
-		v := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", v, slot)
+		v := load(e, "i1", slot)
 		fmt.sbprintfln(&e.b, "  ret i1 %s", v)
 	case .Direct:
-		v := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", v, llvm_type(e, result), slot)
+		v := load(e, llvm_type(e, result), slot)
 		fmt.sbprintfln(&e.b, "  ret %s %s", llvm_type(e, result), v)
 	}
 }
@@ -2383,6 +2357,59 @@ temp :: proc(e: ^Emitter) -> string {
 @(private = "file")
 new_label :: proc(e: ^Emitter, prefix: string) -> string {
 	return fmt.aprintf("%s.%d", prefix, next_id(e))
+}
+
+// ---------------------------------------------------- instruction spellings --
+//
+// The handful of instructions that produce a value and are emitted everywhere.
+// Each names its own result, so a caller writes what it wants rather than
+// threading a `temp(e)` through a format string. They take the LLVM type as
+// *text*, because that is what the call sites already hold — `llvm_type(e, id)`
+// for a Loke type, or one of the fixed spellings like `CONTAINER_TYPE`.
+
+@(private = "file")
+extract :: proc(e: ^Emitter, aggregate: string, value: string, index: int) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", out, aggregate, value, index)
+	return out
+}
+
+// A plain, naturally aligned load. A place that is known to be *under*-aligned —
+// which is what reaching through a packed field produces — needs the explicit
+// `, align N` form instead, exactly as `store` gets it from `align_suffix`
+// (m7-plan step 2).
+@(private = "file")
+load :: proc(e: ^Emitter, type: string, address: string) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, type, address)
+	return out
+}
+
+@(private = "file")
+alloca :: proc(e: ^Emitter, type: string) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", out, type)
+	return out
+}
+
+// The address of field `index` of an aggregate.
+@(private = "file")
+gep_field :: proc(e: ^Emitter, aggregate: string, address: string, index: int) -> string {
+	out := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
+		out, aggregate, address, index,
+	)
+	return out
+}
+
+// The address of element `index` of a sequence, where `index` is an i64 operand
+// rather than a constant field number.
+@(private = "file")
+gep_at :: proc(e: ^Emitter, element: string, address: string, index: string) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", out, element, address, index)
+	return out
 }
 
 @(private = "file")
@@ -2687,8 +2714,8 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	fmt.sbprintf(&e.b, "define private void %s(ptr %%ctx)", u.thunk)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
-	live, env_slot, env := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %%ctx", live)
+	live := load(e, "ptr", "%ctx")
+	env_slot, env := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %%ctx, i64 1", env_slot)
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", env, env_slot)
 
@@ -2839,8 +2866,7 @@ run_cleanups :: proc(e: ^Emitter, down_to: int) {
 				run_one_cleanup(e, entry)
 				continue
 			}
-			flag := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", flag, entry.flag)
+			flag := load(e, "i1", entry.flag)
 			run := new_label(e, "defer.run")
 			skip := new_label(e, "defer.skip")
 			branch_if(e, flag, run, skip)
@@ -3117,8 +3143,7 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	if expression_is_borrowed_place(e.c, expr) {
 		return
 	}
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, base.type))
+	slot := alloca(e, llvm_type(e, base.type))
 	store(e, base.type, value, slot)
 	emit_drop_place(e, base.type, slot)
 }
@@ -3137,8 +3162,7 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	address := emit_address(e, v.bound[0])
 	replacement := emit_expr(e, v.bound[1])
-	previous := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", previous, llvm_type(e, v.type), address)
+	previous := load(e, llvm_type(e, v.type), address)
 	store(e, v.type, replacement, address)
 	return previous
 }
@@ -3242,8 +3266,7 @@ emit_replace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: st
 	if state == .Live || flag == "" {
 		emit_drop_place(e, type, address)
 	} else {
-		live := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", live, flag)
+		live := load(e, "i1", flag)
 		run, skip := new_label(e, "replace.drop"), new_label(e, "replace.done")
 		branch_if(e, live, run, skip)
 		place_label(e, run)
@@ -3276,8 +3299,7 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	}
 	type := expr_base(target).type
 	address := emit_address(e, target)
-	current := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", current, llvm_type(e, type), address)
+	current := load(e, llvm_type(e, type), address)
 	rhs := emit_expr(e, s.rhs[0])
 	op := compound_op(s.op)
 	result := emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
@@ -3596,8 +3618,7 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 			return
 		}
 		// A concrete case reads the erased value through the data pointer.
-		loaded := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, llvm_type(e, entry.binding_type), slot)
+		loaded := load(e, llvm_type(e, entry.binding_type), slot)
 		store(e, entry.binding_type, loaded, binding)
 		return
 	}
@@ -3695,9 +3716,8 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	// an implicit copy duplicates the storage through the C helper and applies
 	// the allocator's failure policy — there is nowhere here to return an error.
 	if entry.container {
-		source, destination := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", source, CONTAINER_TYPE)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", destination, CONTAINER_TYPE)
+		source := alloca(e, CONTAINER_TYPE)
+		destination := alloca(e, CONTAINER_TYPE)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", CONTAINER_TYPE, value, source)
 		ok := emit_try_clone_into(e, type, destination, source, allocator)
 		fail_label, done_label := new_label(e, "cclone.fail"), new_label(e, "cclone.done")
@@ -3707,16 +3727,14 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		branch(e, done_label)
 		place_label(e, done_label)
 		e.terminated = false
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, CONTAINER_TYPE, destination)
+		out := load(e, CONTAINER_TYPE, destination)
 		return out
 	}
 	// design.md "string type": "cheap value copy; immutable backing storage may
 	// be shared". An implicit copy of a string retains a handle; only `.clone()`
 	// allocates, and that is a written call, not this path.
 	if entry.intrinsic {
-		owner := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", owner, STRING_TYPE, value, STRING_OWNER)
+		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_retain(i64 %s)", owner)
 		return value
 	}
@@ -3751,15 +3769,13 @@ emit_epilogue :: proc(e: ^Emitter) {
 	case 0:
 		fmt.sbprintln(&e.b, "  ret void")
 	case 1:
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, slot_type(e, 0), e.result_slots[0])
+		value := load(e, slot_type(e, 0), e.result_slots[0])
 		fmt.sbprintfln(&e.b, "  ret %s %s", slot_type(e, 0), value)
 	case:
 		aggregate := "undef"
 		result_type := llvm_result_type(e, e.result_types, e.result_inout)
 		for _, index in e.result_types {
-			value := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, slot_type(e, index), e.result_slots[index])
+			value := load(e, slot_type(e, index), e.result_slots[index])
 			next := temp(e)
 			fmt.sbprintfln(
 				&e.b,
@@ -3852,12 +3868,7 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		}
 		symbol := symbol_of(e.c, v.resolution.symbol)
 		base_type, base_address := emit_base_address(e, v.operand)
-		out := temp(e)
-		fmt.sbprintfln(
-			&e.b,
-			"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-			out, llvm_type(e, base_type), base_address, symbol.index,
-		)
+		out := gep_field(e, llvm_type(e, base_type), base_address, int(symbol.index))
 		record_field_align(e, base_type, base_address, out, symbol.type)
 		return out
 
@@ -3892,11 +3903,7 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		   operand_info != nil && operand_info.kind == .Multi_Pointer {
 			data := emit_expr(e, v.operand)
 			index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
-			out := temp(e)
-			fmt.sbprintfln(
-				&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-				out, llvm_type(e, operand_info.element), data, index,
-			)
+			out := gep_at(e, llvm_type(e, operand_info.element), data, index)
 			return out
 		}
 		base_type, base_address := emit_base_address(e, v.operand)
@@ -3912,8 +3919,7 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Composite:
-		slot := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, v.type))
+		slot := alloca(e, llvm_type(e, v.type))
 		emit_composite_into(e, v, slot)
 		return slot
 
@@ -3925,15 +3931,13 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		// An ordinary aggregate result selected immediately by a field still needs
 		// addressable temporary storage for that selection.
 		type := expr_base(expr).type
-		slot := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, type))
+		slot := alloca(e, llvm_type(e, type))
 		store(e, type, emit_call(e, v), slot)
 		return slot
 	}
 	// Any other addressable expression is materialised into a temporary.
 	type := expr_base(expr).type
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, type))
+	slot := alloca(e, llvm_type(e, type))
 	store(e, type, emit_expr(e, expr), slot)
 	return slot
 }
@@ -3947,13 +3951,9 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	operand_type := expr_base(v.operand).type
 	header := emit_address(e, v.operand)
-	data, length := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, header)
-	length_slot := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		length_slot, CONTAINER_TYPE, header, CONTAINER_LEN,
-	)
+	data := load(e, "ptr", header)
+	length := temp(e)
+	length_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
 	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", length, length_slot)
 
 	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
@@ -3963,12 +3963,7 @@ emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
 	panic_if(e, out_of_range, "bounds", "index out of range")
 
-	out := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		out, llvm_type(e, container_element(e.c, operand_type)), data, index,
-	)
+	out := gep_at(e, llvm_type(e, container_element(e.c, operand_type)), data, index)
 	return out
 }
 
@@ -3979,9 +3974,8 @@ emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	operand_type := expr_base(v.operand).type
 	slice := emit_expr(e, v.operand)
 	llvm := llvm_type(e, operand_type)
-	data, length := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, llvm, slice, SLICE_DATA)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, llvm, slice, SLICE_LEN)
+	data := extract(e, llvm, slice, SLICE_DATA)
+	length := extract(e, llvm, slice, SLICE_LEN)
 
 	index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
 	// Unsigned, so a negative index is caught by the same comparison as an
@@ -3990,12 +3984,7 @@ emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %s, %s", out_of_range, index, length)
 	panic_if(e, out_of_range, "bounds", "index out of range")
 
-	out := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		out, llvm_type(e, slice_element(e.c, operand_type)), data, index,
-	)
+	out := gep_at(e, llvm_type(e, slice_element(e.c, operand_type)), data, index)
 	return out
 }
 
@@ -4075,12 +4064,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 
 	// The result's data pointer is the low bound's address in the root, so
 	// reslicing composes without a second base.
-	start := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		start, llvm_type(e, element), data, low,
-	)
+	start := gep_at(e, llvm_type(e, element), data, low)
 	count := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
 
@@ -4130,11 +4114,7 @@ emit_multi_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	if v.lo != nil {
 		low = widen_to_i64(e, emit_expr(e, v.lo), expr_base(v.lo).type)
 	}
-	start := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		start, llvm_type(e, element), data, low,
-	)
+	start := gep_at(e, llvm_type(e, element), data, low)
 	if v.hi == nil {
 		return start
 	}
@@ -4201,9 +4181,8 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		base.view_from, base.type = INVALID_TYPE, from
 		value := emit_expr(e, expr)
 		base.view_from, base.type = from, target
-		data, length := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, STRING_TYPE, value, STRING_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, STRING_TYPE, value, STRING_LEN)
+		data := extract(e, STRING_TYPE, value, STRING_DATA)
+		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
 	if from := base.union_from; from != INVALID_TYPE {
@@ -4253,8 +4232,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 			return len(results) == 0 ? "0" : results[0]
 		}
 		address := emit_address(e, expr)
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, base.type), address)
+		out := load(e, llvm_type(e, base.type), address)
 		return out
 
 	case ^Expr_Selector, ^Expr_Index:
@@ -4271,8 +4249,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 			if base.value_category != .Place {
 				return result
 			}
-			out := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, base.type), result)
+			out := load(e, llvm_type(e, base.type), result)
 			return out
 		}
 		// `pkg.f` as a value is the procedure itself, not storage holding one.
@@ -4298,8 +4275,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		if base.value_category != .Place {
 			return result
 		}
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, base.type), result)
+		out := load(e, llvm_type(e, base.type), result)
 		return out
 
 	case ^Expr_Type_Assert, ^Expr_Or_Else:
@@ -4310,8 +4286,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 			return emit_slice_literal(e, v)
 		}
 		slot := emit_address(e, expr)
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, v.type), slot)
+		out := load(e, llvm_type(e, v.type), slot)
 		return out
 
 	case ^Expr_Proc:
@@ -4344,8 +4319,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite) -> string {
 	backing := v.backing
 	info := type_of(e.c, backing)
-	root := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", root, llvm_type(e, backing))
+	root := alloca(e, llvm_type(e, backing))
 
 	for element, index in v.elements {
 		slot := temp(e)
@@ -4394,12 +4368,7 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 		if index < len(v.element_clones) && v.element_clones[index] {
 			value = emit_clone_value(e, element_type, value)
 		}
-		field_address := temp(e)
-		fmt.sbprintfln(
-			&e.b,
-			"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-			field_address, llvm_type(e, v.type), address, slot,
-		)
+		field_address := gep_field(e, llvm_type(e, v.type), address, slot)
 		record_field_align(e, v.type, address, field_address, element_type)
 		store(e, element_type, value, field_address)
 	}
@@ -4436,8 +4405,7 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 	emit_container_policy_failure(e, address, reserved)
 	cleanup := begin_temporary_drop(e, v.type, address)
 
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, element))
+	slot := alloca(e, llvm_type(e, element))
 	for written, index in v.elements {
 		value := emit_expr(e, written.value)
 		if index < len(v.element_clones) && v.element_clones[index] {
@@ -4484,8 +4452,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 	cleanup := begin_temporary_drop(e, v.type, address)
 
 	for written, index in v.elements {
-		key_slot := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", key_slot, llvm_type(e, key))
+		key_slot := alloca(e, llvm_type(e, key))
 		store(e, key, emit_expr(e, written.key), key_slot)
 		value := emit_expr(e, written.value)
 		if index < len(v.element_clones) && v.element_clones[index] {
@@ -4527,12 +4494,8 @@ emit_container_policy_failure :: proc(e: ^Emitter, header, status: string) {
 	fail_label, done_label := new_label(e, "clit.fail"), new_label(e, "clit.done")
 	branch_if(e, failed, fail_label, done_label)
 	place_label(e, fail_label)
-	slot, provider := temp(e), temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		slot, CONTAINER_TYPE, header, CONTAINER_ALLOC,
-	)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", provider, slot)
+	slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC)
+	provider := load(e, "ptr", slot)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
 	branch(e, done_label)
 	place_label(e, done_label)
@@ -4770,11 +4733,10 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 	// lexically byte-wise." One runtime call answers all six operators.
 	if type_is_utf8_text(e.c, type) {
 		storage := llvm_type(e, type_underlying(e.c, type))
-		left_data, left_len, right_data, right_len := temp(e), temp(e), temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", left_data, storage, lhs, STRING_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", left_len, storage, lhs, STRING_LEN)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", right_data, storage, rhs, STRING_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", right_len, storage, rhs, STRING_LEN)
+		left_data := extract(e, storage, lhs, STRING_DATA)
+		left_len := extract(e, storage, lhs, STRING_LEN)
+		right_data := extract(e, storage, rhs, STRING_DATA)
+		right_len := extract(e, storage, rhs, STRING_LEN)
 		order := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
@@ -4873,9 +4835,8 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		// nil is the zero view. Comparing the second word — the witness, or the
 		// `typeid` — is what distinguishes a live view from the nil one.
 		llvm := llvm_type(e, under)
-		left, right := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", left, llvm, lhs)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", right, llvm, rhs)
+		left := extract(e, llvm, lhs, 1)
+		right := extract(e, llvm, rhs, 1)
 		out := temp(e)
 		operand := info.kind == .Dyn ? "ptr" : "i64"
 		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", out, operand, left, right)
@@ -4884,17 +4845,16 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		// The checker admits only `slice == nil`, and a nil slice is the one with a
 		// null data pointer, so the first word decides it.
 		llvm := llvm_type(e, under)
-		left, right := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", left, llvm, lhs, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", right, llvm, rhs, SLICE_DATA)
+		left := extract(e, llvm, lhs, SLICE_DATA)
+		right := extract(e, llvm, rhs, SLICE_DATA)
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, %s", out, left, right)
 		return out
 	case .Array:
 		result := "true"
 		for index in 0 ..< int(info.count) {
-			left := extract(e, under, lhs, index)
-			right := extract(e, under, rhs, index)
+			left := extract(e, llvm_type(e, under), lhs, index)
+			right := extract(e, llvm_type(e, under), rhs, index)
 			leaf := emit_equal(e, info.element, left, right)
 			result = combine_and(e, result, leaf)
 		}
@@ -4910,8 +4870,8 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		result := "true"
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
-			left := extract(e, under, lhs, index)
-			right := extract(e, under, rhs, index)
+			left := extract(e, llvm_type(e, under), lhs, index)
+			right := extract(e, llvm_type(e, under), rhs, index)
 			leaf := emit_equal(e, symbol.type, left, right)
 			result = combine_and(e, result, leaf)
 		}
@@ -4992,8 +4952,8 @@ record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -
 @(private = "file")
 emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
-	left_slot, right_slot := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", left_slot, llvm)
+	left_slot := alloca(e, llvm)
+	right_slot := temp(e)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, lhs, left_slot)
 	fmt.sbprintfln(&e.b, "  %s = alloca %s", right_slot, llvm)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, rhs, right_slot)
@@ -5002,9 +4962,8 @@ emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_In
 	for field, index in info.fields {
 		symbol := symbol_of(e.c, field)
 		field_llvm := llvm_type(e, symbol.type)
-		left_ptr, right_ptr := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d", left_ptr, llvm, left_slot, index)
-		fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d", right_ptr, llvm, right_slot, index)
+		left_ptr := gep_field(e, llvm, left_slot, index)
+		right_ptr := gep_field(e, llvm, right_slot, index)
 		left, right := temp(e), temp(e)
 		// A packed field guarantees no more than byte alignment.
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align 1", left, field_llvm, left_ptr)
@@ -5012,13 +4971,6 @@ emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_In
 		result = combine_and(e, result, emit_equal(e, symbol.type, left, right))
 	}
 	return result
-}
-
-@(private = "file")
-extract :: proc(e: ^Emitter, aggregate_type: Type_Id, value: string, index: int) -> string {
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", out, llvm_type(e, aggregate_type), value, index)
-	return out
 }
 
 @(private = "file")
@@ -5234,11 +5186,9 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	// design.md's coherence rule: a `format` declared in the value type's own
 	// package *is* the formatter for that type, so the thunk is a call to it.
 	if hook := e.c.formatters[type]; hook != INVALID_SYMBOL {
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, type), address)
-		writer, options := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%w", writer, llvm_type(e, e.c.runtime_types["Writer"]))
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%o", options, llvm_type(e, e.c.runtime_types["Options"]))
+		value := load(e, llvm_type(e, type), address)
+		writer := load(e, llvm_type(e, e.c.runtime_types["Writer"]), "%w")
+		options := load(e, llvm_type(e, e.c.runtime_types["Options"]), "%o")
 		fmt.sbprintfln(
 			&e.b, "  call void %s(%s %s, %s %s, %s %s)",
 			e.names[hook],
@@ -5259,15 +5209,14 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 
 	#partial switch info.kind {
 	case .Bool:
-		value, widened := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", value, address)
+		value := load(e, "i1", address)
+		widened := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", widened, value)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bool(ptr %%w, i32 %s)", widened)
 
 	case .Int, .Allocator_Error:
 		llvm := llvm_type(e, under)
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm, address)
+		value := load(e, llvm, address)
 		signed := type_signed(e.c, under)
 		if type_bits(e.c, under) > 64 {
 			low, shifted, high := temp(e), temp(e), temp(e)
@@ -5286,19 +5235,16 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		}
 
 	case .Typeid:
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", value, address)
+		value := load(e, "i64", address)
 		emit_format_type_name(e, value)
 
 	case .Rune:
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load i32, ptr %s", value, address)
+		value := load(e, "i32", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_rune(ptr %%w, i32 %s)", value)
 
 	case .Float:
 		llvm := llvm_type(e, under)
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm, address)
+		value := load(e, llvm, address)
 		widened := value
 		if llvm != "double" {
 			widened = temp(e)
@@ -5307,8 +5253,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f64(ptr %%w, double %s)", widened)
 
 	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator:
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
+		value := load(e, "ptr", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_ptr(ptr %%w, ptr %s)", value)
 
 	case .String, .String_View:
@@ -5320,8 +5265,8 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %s)", data, length)
 
 	case .CString_View:
-		value, length := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value, address)
+		value := load(e, "ptr", address)
+		length := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, value)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_bytes(ptr %%w, ptr %s, i64 %s)", value, length)
 
@@ -5384,8 +5329,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
 	shape := union_layout(e.c, under)
 	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
-	value := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, under), address)
+	value := load(e, llvm_type(e, under), address)
 	tag := emit_union_tag(e, under, value)
 	slot := emit_union_spill(e, under, value)
 	done := new_label(e, "fmt.union.done")
@@ -5398,11 +5342,7 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 		hit, next := new_label(e, "fmt.union.hit"), new_label(e, "fmt.union.next")
 		branch_if(e, matched, hit, next)
 		place_label(e, hit)
-		payload := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0",
-			payload, llvm_type(e, under), slot,
-		)
+		payload := gep_field(e, llvm_type(e, under), slot, 0)
 		emit_format_body(e, variant, payload)
 		branch(e, done)
 		place_label(e, next)
@@ -5419,24 +5359,17 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 // a forged one, has no name to print and falls back to its numeric identity.
 @(private = "file")
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
-	limit, zero, past, bad := temp(e), temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, FMT_THUNK_COUNT)
+	limit := load(e, "i64", FMT_THUNK_COUNT)
+	zero, past, bad := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
 	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
 	safe := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
-	view, data, stride, length := temp(e), temp(e), temp(e), temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		view, STRING_VIEW_TYPE, TYPE_NAMES, safe,
-	)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, view)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		stride, STRING_VIEW_TYPE, view, STRING_LEN,
-	)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", length, stride)
+	view := gep_at(e, STRING_VIEW_TYPE, TYPE_NAMES, safe)
+	data := load(e, "ptr", view)
+	stride := gep_field(e, STRING_VIEW_TYPE, view, STRING_LEN)
+	length := load(e, "i64", stride)
 	// An id with no name — the nil one, a forged one, or a type this program
 	// never requested — has nothing to spell, so it prints its numeric identity.
 	missing := temp(e)
@@ -5460,8 +5393,7 @@ emit_format_type_name :: proc(e: ^Emitter, id: string) {
 emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
 	llvm := llvm_type(e, under)
-	value := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm, address)
+	value := load(e, llvm, address)
 	done := new_label(e, "fmt.enum.done")
 	for field in info.fields {
 		sym := symbol_of(e.c, field)
@@ -5491,13 +5423,11 @@ emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 @(private = "file")
 emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string, inline_array: bool) {
 	emit_format_literal(e, "[")
-	cursor := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 	head, body, done := new_label(e, "fmt.seq.head"), new_label(e, "fmt.seq.body"), new_label(e, "fmt.seq.done")
 	place_label(e, head)
-	index := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", index, cursor)
+	index := load(e, "i64", cursor)
 	more := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", more, index, count)
 	branch_if(e, more, body, done)
@@ -5510,11 +5440,7 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string,
 	emit_format_literal(e, ", ")
 	branch(e, formatted)
 	place_label(e, formatted)
-	slot := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		slot, llvm_type(e, element), base, index,
-	)
+	slot := gep_at(e, llvm_type(e, element), base, index)
 	emit_format_call(e, element, slot)
 	advanced := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", advanced, index)
@@ -5532,19 +5458,17 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string,
 emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
 	ops := container_ops_global(e, under)
-	table, cursor := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", table, address)
-	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	table := load(e, "ptr", address)
+	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
-	key_out, value_out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca ptr", key_out)
-	fmt.sbprintfln(&e.b, "  %s = alloca ptr", value_out)
+	key_out := alloca(e, "ptr")
+	value_out := alloca(e, "ptr")
 	emit_format_literal(e, "[")
 
 	head, body, done := new_label(e, "fmt.map.head"), new_label(e, "fmt.map.body"), new_label(e, "fmt.map.done")
 	place_label(e, head)
-	current, next := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", current, cursor)
+	current := load(e, "i64", cursor)
+	next := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
 		next, table, ops, current, key_out, value_out,
@@ -5563,8 +5487,8 @@ emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	emit_format_literal(e, ", ")
 	branch(e, entry)
 	place_label(e, entry)
-	key_slot, value_slot := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", key_slot, key_out)
+	key_slot := load(e, "ptr", key_out)
+	value_slot := temp(e)
 	emit_format_call(e, info.key, key_slot)
 	emit_format_literal(e, " = ")
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", value_slot, value_out)
@@ -5592,11 +5516,7 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 		written += 1
 		emit_format_literal(e, identifier_text(e.c, sym.name))
 		emit_format_literal(e, " = ")
-		slot := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-			slot, llvm_type(e, under), address, index,
-		)
+		slot := gep_field(e, llvm_type(e, under), address, index)
 		emit_format_call(e, sym.type, slot)
 	}
 	emit_format_literal(e, "}")
@@ -5607,8 +5527,7 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 // so it prints as nil rather than reading past the table.
 @(private = "file")
 emit_format_dispatch :: proc(e: ^Emitter, data, id: string) {
-	limit := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, FMT_THUNK_COUNT)
+	limit := load(e, "i64", FMT_THUNK_COUNT)
 	zero, past, bad := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
@@ -5655,9 +5574,8 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 	case .Fmt_Format_Any:
 		view := emit_expr(e, v.bound[0])
 		storage := llvm_type(e, TYPE_ANY_VIEW)
-		data, id := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, view, ANY_VIEW_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", id, storage, view, ANY_VIEW_ID)
+		data := extract(e, storage, view, ANY_VIEW_DATA)
+		id := extract(e, storage, view, ANY_VIEW_ID)
 		// The thunks name `%w` and `%o`, so the two records are spilled to storage
 		// the call can address.
 		writer := spill_value(e, e.c.runtime_types["Writer"], emit_expr(e, v.bound[1]))
@@ -5675,8 +5593,7 @@ emit_fmt_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> stri
 // records are named operands instead of the thunk's own parameters.
 @(private = "file")
 emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) {
-	limit := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, FMT_THUNK_COUNT)
+	limit := load(e, "i64", FMT_THUNK_COUNT)
 	zero, past, bad := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
@@ -5702,8 +5619,7 @@ emit_format_dispatch_at :: proc(e: ^Emitter, data, id, writer, options: string) 
 
 @(private = "file")
 spill_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, type))
+	slot := alloca(e, llvm_type(e, type))
 	store(e, type, value, slot)
 	return slot
 }
@@ -5988,19 +5904,14 @@ named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]st
 @(private = "file")
 emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	id := emit_expr(e, v.bound[0])
-	limit := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", limit, TYPE_INFO_COUNT)
+	limit := load(e, "i64", TYPE_INFO_COUNT)
 	zero, past := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
 	bad := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
 	record := e.c.runtime_types["Type_Info"]
-	address := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		address, struct_name(e, record), TYPE_INFO_TABLE, id,
-	)
+	address := gep_at(e, struct_name(e, record), TYPE_INFO_TABLE, id)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr null, ptr %s", out, bad, address)
 	return out
@@ -6096,8 +6007,8 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		// its partial buffer first, so the panic path leaks nothing.
 		data, length := emit_text_parts(e, v.bound[0])
 		ops := container_ops_global(e, v.type)
-		slot, ok := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, CONTAINER_TYPE)
+		slot := alloca(e, CONTAINER_TYPE)
+		ok := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_string_to_runes(ptr %s, ptr %s, ptr %s, i64 %s, ptr %s)",
 			ok, slot, ops, data, length, RT_DEFAULT_ALLOCATOR,
@@ -6113,16 +6024,14 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		e.terminated = true
 		fmt.sbprintfln(&e.b, "%s:", done)
 		e.terminated = false
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, CONTAINER_TYPE, slot)
+		value := load(e, CONTAINER_TYPE, slot)
 		out[0] = value
 
 	case .From_Runes:
 		slice := emit_expr(e, v.bound[0])
 		storage := llvm_type(e, expr_base(v.bound[0]).type)
-		data, count := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, slice, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", count, storage, slice, SLICE_LEN)
+		data := extract(e, storage, slice, SLICE_DATA)
+		count := extract(e, storage, slice, SLICE_LEN)
 		return emit_text_optional_ok(
 			e, "loke_rt_v1_string_from_runes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, RT_DEFAULT_ALLOCATOR),
@@ -6162,8 +6071,7 @@ emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments: string, fail_i
 		fmt.sbprintfln(&e.b, "%s:", done)
 		e.terminated = false
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, STRING_TYPE, slot)
+	out := load(e, STRING_TYPE, slot)
 	return out
 }
 
@@ -6338,12 +6246,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			// only difference is which one is read.
 			source := emit_expr(e, v.bound[0])
 			word := symbol.builtin == .Cap ? CONTAINER_CAP : SLICE_LEN
-			out := temp(e)
-			fmt.sbprintfln(
-				&e.b,
-				"  %s = extractvalue %s %s, %d",
-				out, llvm_type(e, expr_base(v.bound[0]).type), source, word,
-			)
+			out := extract(e, llvm_type(e, expr_base(v.bound[0]).type), source, word)
 			return out
 		case .Default_Allocator:
 			// design.md "Build-selected providers": the default provider is fixed at
@@ -6390,17 +6293,11 @@ emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	base := emit_expr(e, v.bound[0])
 	owner := type_of(e.c, type_underlying(e.c, expr_base(v.bound[0]).type))
 	field := symbol_of(e.c, v.reflect_field)
-	address := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		address, llvm_type(e, owner.element), base, field.index,
-	)
+	address := gep_field(e, llvm_type(e, owner.element), base, int(field.index))
 	if v.reflect == .Field_Pointer {
 		return address
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, field.type), address)
+	out := load(e, llvm_type(e, field.type), address)
 	return out
 }
 
@@ -6419,8 +6316,7 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	if info != nil && info.kind == .Array {
 		current := seed
 		for index in 0 ..< int(info.count) {
-			element := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", element, llvm_type(e, under), value, index)
+			element := extract(e, llvm_type(e, under), value, index)
 			current = emit_hash_value(e, info.element, element, current)
 		}
 		return current
@@ -6429,9 +6325,9 @@ emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> stri
 	// partner of the byte-wise `==` they already have.
 	if type_is_utf8_text(e.c, under) {
 		storage := llvm_type(e, under)
-		data, length, out := temp(e), temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, STRING_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, value, STRING_LEN)
+		data := extract(e, storage, value, STRING_DATA)
+		length := extract(e, storage, value, STRING_LEN)
+		out := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)",
 			out, data, length, seed,
@@ -6658,9 +6554,8 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	allocator := emit_allocator_operand(e, v, 1)
 	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
 
-	pointer_slot, error_slot := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca ptr", pointer_slot)
-	fmt.sbprintfln(&e.b, "  %s = alloca i64", error_slot)
+	pointer_slot := alloca(e, "ptr")
+	error_slot := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", pointer_slot)
 	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
 
@@ -6689,9 +6584,9 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
 		returned, pair, e.names[hook], value_type, value, allocator,
 	)
-	cloned, error, failed := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	cloned := extract(e, pair, returned, 0)
+	error := extract(e, pair, returned, 1)
+	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
 	release_label, publish_label := new_label(e, "newclone.release"), new_label(e, "newclone.publish")
 	branch_if(e, failed, release_label, publish_label)
@@ -6741,14 +6636,9 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	}
 	allocator := v.bound[counts] == nil ? RT_DEFAULT_ALLOCATOR : emit_expr(e, v.bound[counts])
 
-	header := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", header, CONTAINER_TYPE)
+	header := alloca(e, CONTAINER_TYPE)
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", CONTAINER_TYPE, header)
-	provider := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		provider, CONTAINER_TYPE, header, CONTAINER_ALLOC,
-	)
+	provider := gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, provider)
 
 	// design.md: `cap` defaults to `len`, and a `len > cap` relationship is an
@@ -6782,15 +6672,11 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	place_label(e, fill_label)
 	if !is_map {
 		element := container_element(e.c, v.alloc_type)
-		data, bytes := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, header)
+		data := load(e, "ptr", header)
+		bytes := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, length, type_size(e.c, element))
 		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", data, bytes)
-		count_slot := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-			count_slot, CONTAINER_TYPE, header, CONTAINER_LEN,
-		)
+		count_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, count_slot)
 	}
 	branch(e, done_label)
@@ -6860,19 +6746,12 @@ emit_type_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
 	// The zeroed payload is selected by address, so no aggregate has to be
 	// selected and nothing out of bounds is ever read.
 	llvm := llvm_type(e, v.type)
-	zero_slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", zero_slot, llvm)
+	zero_slot := alloca(e, llvm)
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, zero_slot)
-	payload := temp(e)
-	fmt.sbprintfln(
-		&e.b,
-		"  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 0",
-		payload, llvm_type(e, union_type), slot,
-	)
+	payload := gep_field(e, llvm_type(e, union_type), slot, 0)
 	chosen := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", chosen, matched, payload, zero_slot)
-	loaded := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, llvm, chosen)
+	loaded := load(e, llvm, chosen)
 
 	out := make([]string, 2)
 	out[0], out[1] = loaded, matched
@@ -7098,9 +6977,8 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 			expr := v.variadic_spreads[next_spread]
 			spreads[next_spread] = emit_expr(e, expr)
 			storage := llvm_type(e, expr_base(expr).type)
-			data, length := temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, spreads[next_spread], SLICE_DATA)
-			fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, storage, spreads[next_spread], SLICE_LEN)
+			data := extract(e, storage, spreads[next_spread], SLICE_DATA)
+			length := extract(e, storage, spreads[next_spread], SLICE_LEN)
 			spread_data[next_spread], spread_len[next_spread] = data, length
 			total = checked_variadic_total(e, total, length)
 			next_spread += 1
@@ -7159,25 +7037,21 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	for is_spread in v.variadic_order {
 		if managed {
 			if is_spread {
-				index_slot := temp(e)
-				fmt.sbprintfln(&e.b, "  %s = alloca i64", index_slot)
+				index_slot := alloca(e, "i64")
 				fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
 				head, body, done := new_label(e, "vararg.copy.head"), new_label(e, "vararg.copy.body"), new_label(e, "vararg.copy.done")
 				branch(e, head)
 				place_label(e, head)
-				index := temp(e)
-				fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", index, index_slot)
+				index := load(e, "i64", index_slot)
 				more := temp(e)
 				fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", more, index, spread_len[next_spread])
 				branch_if(e, more, body, done)
 				place_label(e, body)
-				source, loaded := temp(e), temp(e)
-				fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", source, element_llvm, spread_data[next_spread], index)
-				fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, element_llvm, source)
+				source := gep_at(e, element_llvm, spread_data[next_spread], index)
+				loaded := load(e, element_llvm, source)
 				cloned := emit_clone_value(e, element, loaded)
-				position, destination := temp(e), temp(e)
-				fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", position, cursor_slot)
-				fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", destination, element_llvm, buffer, position)
+				position := load(e, "i64", cursor_slot)
+				destination := gep_at(e, element_llvm, buffer, position)
 				store(e, element, cloned, destination)
 				flag := temp(e)
 				fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", flag, final_flags, position)
@@ -7192,15 +7066,14 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 				next_spread += 1
 				continue
 			}
-			position, destination, source := temp(e), temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", position, cursor_slot)
-			fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", destination, element_llvm, buffer, position)
+			position := load(e, "i64", cursor_slot)
+			destination := gep_at(e, element_llvm, buffer, position)
+			source := temp(e)
 			fmt.sbprintfln(
 				&e.b, "  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %d",
 				source, static_count, element_llvm, staging, next_element,
 			)
-			loaded := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, element_llvm, source)
+			loaded := load(e, element_llvm, source)
 			store(e, element, loaded, destination)
 			final_flag, staging_flag := temp(e), temp(e)
 			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", final_flag, final_flags, position)
@@ -7213,11 +7086,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 			next_element += 1
 			continue
 		}
-		slot := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-			slot, element_llvm, buffer, cursor,
-		)
+		slot := gep_at(e, element_llvm, buffer, cursor)
 		if is_spread {
 			bytes := temp(e)
 			fmt.sbprintfln(
@@ -7302,8 +7171,7 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
 			return fmt.aprintf("i%d %s", bits, loaded)
 		case .Indirect:
-			slot := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, under))
+			slot := alloca(e, llvm_type(e, under))
 			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, under), operand, slot)
 			return fmt.aprintf("ptr %s", slot)
 		}
@@ -7417,8 +7285,7 @@ emit_foreign_call :: proc(
 			continue
 		}
 		if param_is_by_ptr(callee_type, index) {
-			slot := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+			slot := alloca(e, llvm_type(e, parameter))
 			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), operand, slot)
 			append(&args, fmt.aprintf("ptr %s", slot))
 			continue
@@ -7434,8 +7301,7 @@ emit_foreign_call :: proc(
 			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
 			append(&args, fmt.aprintf("i%d %s", bits, loaded))
 		case .Indirect:
-			slot := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+			slot := alloca(e, llvm_type(e, parameter))
 			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), operand, slot)
 			append(&args, fmt.aprintf("ptr %s", slot))
 		case .Direct:
@@ -7474,8 +7340,7 @@ emit_foreign_call :: proc(
 	}
 	switch abi_pass(e.c, result_type) {
 	case .Indirect:
-		v := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", v, llvm_type(e, result_type), sret)
+		v := load(e, llvm_type(e, result_type), sret)
 		single[0] = v
 	case .Reg_Int:
 		slot, v := temp(e), temp(e)
@@ -7588,8 +7453,7 @@ emit_bound_call :: proc(
 	}
 	results := make([]string, len(callee_type.results))
 	for index in 0 ..< len(callee_type.results) {
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", out, result_type, call, index)
+		out := extract(e, result_type, call, index)
 		results[index] = out
 	}
 	return results
@@ -8083,8 +7947,8 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 @(private = "file")
 emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	data, length := emit_text_parts(e, s.iterable)
-	offset, decoded := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca i64", offset)
+	offset := alloca(e, "i64")
+	decoded := temp(e)
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", offset)
 	fmt.sbprintfln(&e.b, "  %s = alloca i32", decoded)
 
@@ -8096,8 +7960,7 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	e.continue_depth = len(e.cleanups)
 
 	place_label(e, head)
-	current := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", current, offset)
+	current := load(e, "i64", offset)
 	at_end := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp sge i64 %s, %s", at_end, current, length)
 	branch_if(e, at_end, done, body)
@@ -8116,15 +7979,13 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	panic_if(e, stalled, "text.invalid", "invalid UTF-8 in a string")
 
 	if binding := s.bindings[0].symbol; binding != INVALID_SYMBOL {
-		slot, value := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca i32", slot)
-		fmt.sbprintfln(&e.b, "  %s = load i32, ptr %s", value, decoded)
+		slot := alloca(e, "i32")
+		value := load(e, "i32", decoded)
 		fmt.sbprintfln(&e.b, "  store i32 %s, ptr %s", value, slot)
 		bind_local(e, binding, slot)
 	}
 	if len(s.bindings) == 2 && s.bindings[1].symbol != INVALID_SYMBOL {
-		slot := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", slot)
+		slot := alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", current, slot)
 		bind_local(e, s.bindings[1].symbol, slot)
 	}
@@ -8150,13 +8011,11 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	container := expr_base(s.iterable).type
 	ops := container_ops_global(e, container)
 	header := emit_address(e, s.iterable)
-	table, cursor := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", table, header)
-	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	table := load(e, "ptr", header)
+	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
-	key_out, value_out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca ptr", key_out)
-	fmt.sbprintfln(&e.b, "  %s = alloca ptr", value_out)
+	key_out := alloca(e, "ptr")
+	value_out := alloca(e, "ptr")
 
 	head := new_label(e, "foreach.head")
 	body := new_label(e, "foreach.body")
@@ -8166,8 +8025,8 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	e.continue_depth = len(e.cleanups)
 
 	place_label(e, head)
-	current, next := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", current, cursor)
+	current := load(e, "i64", cursor)
+	next := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
 		next, table, ops, current, key_out, value_out,
@@ -8185,21 +8044,18 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	if key_binding >= 0 && s.bindings[key_binding].symbol != INVALID_SYMBOL {
 		// The key binding is immutable, so it borrows the stored key in place: no
 		// per-iteration clone, and therefore no per-iteration drop either.
-		address := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", address, key_out)
+		address := load(e, "ptr", key_out)
 		bind_local(e, s.bindings[key_binding].symbol, address)
 	}
 	if s.bindings[value_binding].symbol != INVALID_SYMBOL {
 		element := container_element(e.c, container)
-		address := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", address, value_out)
+		address := load(e, "ptr", value_out)
 		if s.bindings[value_binding].is_ref {
 			// `&value` names the stored slot, so a write reaches the table.
 			bind_local(e, s.bindings[value_binding].symbol, address)
 		} else {
-			value, slot := temp(e), temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, llvm_type(e, element), address)
-			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, element))
+			value := load(e, llvm_type(e, element), address)
+			slot := alloca(e, llvm_type(e, element))
 			store(e, element, value, slot)
 			bind_local(e, s.bindings[value_binding].symbol, slot)
 		}
@@ -8234,12 +8090,9 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	case .Stored_Range:
 		range_type := llvm_type(e, expr_base(s.iterable).type)
 		value := emit_expr(e, s.iterable)
-		low := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", low, range_type, value, RANGE_LOW)
-		high := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", high, range_type, value, RANGE_HIGH)
-		flag := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", flag, range_type, value, RANGE_CLOSED)
+		low := extract(e, range_type, value, RANGE_LOW)
+		high := extract(e, range_type, value, RANGE_HIGH)
+		flag := extract(e, range_type, value, RANGE_CLOSED)
 		fmt.sbprintfln(&e.b, "  %s = alloca %s", cursor, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, low, cursor)
 		limit = high
@@ -8261,8 +8114,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		value := emit_expr(e, s.iterable)
 		array_slot = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", array_slot, slice_type, value, SLICE_DATA)
-		length := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, slice_type, value, SLICE_LEN)
+		length := extract(e, slice_type, value, SLICE_LEN)
 		counter_type = "i64"
 		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
@@ -8275,12 +8127,8 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		header := emit_address(e, s.iterable)
 		array_slot = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", array_slot, header)
-		length_slot, length := temp(e), temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-			length_slot, CONTAINER_TYPE, header, CONTAINER_LEN,
-		)
-		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", length, length_slot)
+		length_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
+		length := load(e, "i64", length_slot)
 		counter_type = "i64"
 		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
@@ -8309,8 +8157,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	}
 
 	place_label(e, head)
-	current := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", current, counter_type, cursor)
+	current := load(e, counter_type, cursor)
 	test := temp(e)
 	if s.kind == .Array || s.kind == .Slice || s.kind == .Dynamic {
 		fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", test, current, limit)
@@ -8355,8 +8202,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 @(private = "file")
 step_counter :: proc(e: ^Emitter, slot, type: string) {
-	current := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", current, type, slot)
+	current := load(e, type, slot)
 	next := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add %s %s, 1", next, type, current)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", type, next, slot)
@@ -8369,8 +8215,7 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 		return // the discard binding names nothing
 	}
 	if s.kind != .Array && s.kind != .Slice && s.kind != .Dynamic {
-		slot := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, element)
+		slot := alloca(e, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, current, slot)
 		bind_local(e, value, slot)
 		return
@@ -8399,10 +8244,8 @@ bind_indexed_value :: proc(e: ^Emitter, s: ^Stmt_Foreach, current, array_slot, e
 	}
 	// By default each iterated value is a copy, and assignment to the copy does
 	// not modify the source.
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, element)
-	loaded := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, element, address)
+	slot := alloca(e, element)
+	loaded := load(e, element, address)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, loaded, slot)
 	bind_local(e, value, slot)
 }
@@ -8414,8 +8257,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	iter_sym := symbol_of(e.c, s.iter_symbol)
 	subject := emit_expr(e, s.iterable)
 	iterator_type := llvm_type(e, s.iterator_type)
-	iterator := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", iterator, iterator_type)
+	iterator := alloca(e, iterator_type)
 	made := temp(e)
 	fmt.sbprintfln(
 		&e.b,
@@ -8424,8 +8266,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", iterator_type, made, iterator)
 
-	counter := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca i64", counter)
+	counter := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
 	if len(s.bindings) == 2 && s.bindings[1].symbol != INVALID_SYMBOL {
 		bind_local(e, s.bindings[1].symbol, counter)
@@ -8443,17 +8284,14 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	pair_type := optional_pair_type(element)
 	pair := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", pair, pair_type, e.names[s.next_symbol], iterator)
-	value := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", value, pair_type, pair)
-	ok := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", ok, pair_type, pair)
+	value := extract(e, pair_type, pair, 0)
+	ok := extract(e, pair_type, pair, 1)
 	branch_if(e, ok, body, done)
 
 	fmt.sbprintfln(&e.b, "%s:", body)
 	e.terminated = false
 	if binding := s.bindings[0].symbol; binding != INVALID_SYMBOL {
-		slot := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, element)
+		slot := alloca(e, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, value, slot)
 		bind_local(e, binding, slot)
 	}
@@ -8478,8 +8316,7 @@ spill_iterable :: proc(e: ^Emitter, expr: Expr) -> string {
 		return emit_address(e, expr)
 	}
 	value := emit_expr(e, expr)
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, base.type))
+	slot := alloca(e, llvm_type(e, base.type))
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, base.type), value, slot)
 	return slot
 }
@@ -8549,9 +8386,8 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// capacity and the allocator stay behind, which is what keeps the iterator
 		// a borrow rather than a second header.
 		view_type := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.results[0]).fields[ITER_ARRAY_DATA]).type)
-		storage, length := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", storage, source, CONTAINER_STORAGE)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", length, source, CONTAINER_LEN)
+		storage := extract(e, source, "%arg0", CONTAINER_STORAGE)
+		length := extract(e, source, "%arg0", CONTAINER_LEN)
 		filled := emit_ptr_len(e, view_type, storage, length)
 		first, out := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, view_type, filled, ITER_ARRAY_DATA)
@@ -8563,8 +8399,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	if symbol.synth == .Map_Iter {
 		// `{ table, 0 }`. A null table is the empty map, and the runtime's scan
 		// answers "finished" for it without touching anything.
-		table := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", table, source, CONTAINER_STORAGE)
+		table := extract(e, source, "%arg0", CONTAINER_STORAGE)
 		first, out := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, iterator, table, ITER_MAP_TABLE)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, %d", out, iterator, first, ITER_MAP_CURSOR)
@@ -8573,10 +8408,9 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 	element := llvm_type(e, type_of(e.c, symbol.params[0]).element)
-	low, high, closed := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", low, source, RANGE_LOW)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", high, source, RANGE_HIGH)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", closed, source, RANGE_CLOSED)
+	low := extract(e, source, "%arg0", RANGE_LOW)
+	high := extract(e, source, "%arg0", RANGE_HIGH)
+	closed := extract(e, source, "%arg0", RANGE_CLOSED)
 	step1, step2, out := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", step1, iterator, element, low, ITER_RANGE_CURRENT)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", step2, iterator, step1, element, high, ITER_RANGE_HIGH)
@@ -8597,15 +8431,12 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
-	current_ptr, current := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", current_ptr, iterator, ITER_RANGE_CURRENT)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", current, element, current_ptr)
-	high_ptr, high := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", high_ptr, iterator, ITER_RANGE_HIGH)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", high, element, high_ptr)
-	closed_ptr, closed := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", closed_ptr, iterator, ITER_RANGE_CLOSED)
-	fmt.sbprintfln(&e.b, "  %s = load i1, ptr %s", closed, closed_ptr)
+	current_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_CURRENT)
+	current := load(e, element, current_ptr)
+	high_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_HIGH)
+	high := load(e, element, high_ptr)
+	closed_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_CLOSED)
+	closed := load(e, "i1", closed_ptr)
 
 	open_test, closed_test, live := temp(e), temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", open_test, signed ? "slt" : "ult", element, current, high)
@@ -8651,17 +8482,16 @@ emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
-	index_ptr, index := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", index_ptr, iterator, ITER_ARRAY_INDEX)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", index, index_ptr)
+	index_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_INDEX)
+	index := load(e, "i64", index_ptr)
 	live := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %d", live, index, count)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
 
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	data_ptr, slot, value := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", data_ptr, iterator, ITER_ARRAY_DATA)
+	data_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA)
+	slot, value := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %s", slot, data_type, data_ptr, index)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element, slot)
 	stepped := temp(e)
@@ -8694,23 +8524,20 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
-	index_ptr, index := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", index_ptr, iterator, ITER_ARRAY_INDEX)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", index, index_ptr)
-	slice_ptr, slice_value, length := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", slice_ptr, iterator, ITER_ARRAY_DATA)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", slice_value, slice_llvm, slice_ptr)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, slice_llvm, slice_value, SLICE_LEN)
+	index_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_INDEX)
+	index := load(e, "i64", index_ptr)
+	slice_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA)
+	slice_value := load(e, slice_llvm, slice_ptr)
+	length := extract(e, slice_llvm, slice_value, SLICE_LEN)
 	live := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", live, index, length)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
 
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	data, slot, value := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, slice_llvm, slice_value, SLICE_DATA)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", slot, element, data, index)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element, slot)
+	data := extract(e, slice_llvm, slice_value, SLICE_DATA)
+	slot := gep_at(e, element, data, index)
+	value := load(e, element, slot)
 	stepped := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", stepped, index_ptr)
@@ -8740,15 +8567,12 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
-	table_ptr, table := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", table_ptr, iterator, ITER_MAP_TABLE)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", table, table_ptr)
-	cursor_ptr, cursor := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d", cursor_ptr, iterator, ITER_MAP_CURSOR)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", cursor, cursor_ptr)
-	key_out, value_out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca ptr", key_out)
-	fmt.sbprintfln(&e.b, "  %s = alloca ptr", value_out)
+	table_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_TABLE)
+	table := load(e, "ptr", table_ptr)
+	cursor_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_CURSOR)
+	cursor := load(e, "i64", cursor_ptr)
+	key_out := alloca(e, "ptr")
+	value_out := alloca(e, "ptr")
 	next := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call i64 @loke_rt_v1_map_scan(ptr %s, ptr %s, i64 %s, ptr %s, ptr %s)",
@@ -8761,9 +8585,8 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", finished, stop_label, yield_label)
 
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	address, value := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", address, value_out)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element, address)
+	address := load(e, "ptr", value_out)
+	value := load(e, element, address)
 	first, out := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, value)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)
@@ -8809,9 +8632,9 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// Fixed storage cannot fail for want of memory. A buffer too small for the
 		// control block is a program fault raised by the runtime.
 		buffer := llvm_type(e, symbol.params[0])
-		data, length, opened, out := temp(e), temp(e), temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", data, buffer, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", length, buffer, SLICE_LEN)
+		data := extract(e, buffer, "%arg0", SLICE_DATA)
+		length := extract(e, buffer, "%arg0", SLICE_LEN)
+		opened, out := temp(e), temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", opened, data, length,
 		)
@@ -8834,8 +8657,8 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, out)
 
 	case .Handle:
-		control, handle := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", control, provider, PROVIDER_CONTROL)
+		control := extract(e, provider, "%arg0", PROVIDER_CONTROL)
+		handle := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_allocator(ptr %s)", handle, control)
 		fmt.sbprintfln(&e.b, "  ret ptr %s", handle)
 	}
@@ -8894,8 +8717,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// A single value entering the container is spilled so the helper can read it
 	// through a pointer, exactly as it reads a `..T` pack's storage.
 	value_storage :: proc(e: ^Emitter, element: Type_Id, argument: string) -> string {
-		slot := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, element))
+		slot := alloca(e, llvm_type(e, element))
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, element), argument, slot)
 		return slot
 	}
@@ -8925,8 +8747,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		emit_drop_place(e, element, slot)
 
 	case .Pop:
-		out, found := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", out, element_llvm)
+		out := alloca(e, element_llvm)
+		found := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_dyn_pop(ptr %%arg0, ptr %s, ptr %s)", found, ops, out)
 		value, ok, first, pair := temp(e), temp(e), temp(e), optional_pair_type(element_llvm)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
@@ -8939,14 +8761,12 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 
 	case .Remove, .Remove_Unordered:
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", out, element_llvm)
+		out := alloca(e, element_llvm)
 		fmt.sbprintfln(
 			&e.b, "  call void @loke_rt_v1_dyn_remove(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i32 %d)",
 			ops, out, symbol.container_op == .Remove_Unordered ? 1 : 0,
 		)
-		value := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
+		value := load(e, element_llvm, out)
 		fmt.sbprintfln(&e.b, "  ret %s %s", element_llvm, value)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -8998,20 +8818,15 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// Stage the value clone before asking the runtime for an inserting place.
 		// A fallible clone must leave an existing entry untouched, and must not
 		// publish a new key whose value could not be constructed.
-		allocator_slot, bound_allocator := temp(e), temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
-			allocator_slot, CONTAINER_TYPE, CONTAINER_ALLOC,
-		)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", bound_allocator, allocator_slot)
+		allocator_slot := gep_field(e, CONTAINER_TYPE, "%arg0", CONTAINER_ALLOC)
+		bound_allocator := load(e, "ptr", allocator_slot)
 		unbound, allocator := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", unbound, bound_allocator)
 		fmt.sbprintfln(
 			&e.b, "  %s = select i1 %s, ptr %s, ptr %s",
 			allocator, unbound, RT_DEFAULT_ALLOCATOR, bound_allocator,
 		)
-		staged := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", staged, element_llvm)
+		staged := alloca(e, element_llvm)
 		cloned := "true"
 		if type_is_managed(e.c, element) {
 			source := value_storage(e, element, "%arg2")
@@ -9041,8 +8856,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// The clone is complete, so replacement can now commit without a failure
 		// point between destroying the old value and publishing the new one.
 		emit_drop_place(e, element, place)
-		stored := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", stored, element_llvm, staged)
+		stored := load(e, element_llvm, staged)
 		store(e, element, stored, place)
 		fmt.sbprintfln(&e.b, "  ret %s 0", result)
 		fmt.sbprintln(&e.b, "}")
@@ -9052,15 +8866,15 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	case .Map_Remove:
 		key_type := container_key(e.c, container)
 		key_slot := value_storage(e, key_type, "%arg1")
-		out, found := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", out, element_llvm)
+		out := alloca(e, element_llvm)
+		found := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_map_remove(ptr %%arg0, ptr %s, ptr %s, ptr %s)",
 			found, ops, key_slot, out,
 		)
 		emit_drop_place(e, key_type, key_slot)
-		value, ok := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
+		value := load(e, element_llvm, out)
+		ok := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
 		pair, first, built := optional_pair_type(element_llvm), temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, element_llvm, value)
@@ -9109,11 +8923,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	provider, fail_label, done_label := temp(e), new_label(e, "cop.fail"), new_label(e, "cop.done")
 	branch_if(e, failed, fail_label, done_label)
 	place_label(e, fail_label)
-	slot := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
-		slot, CONTAINER_TYPE, CONTAINER_ALLOC,
-	)
+	slot := gep_field(e, CONTAINER_TYPE, "%arg0", CONTAINER_ALLOC)
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", provider, slot)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
 	branch(e, done_label)
@@ -9131,8 +8941,7 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	ops := container_ops_global(e, container)
 	header := emit_address(e, v.rhs)
 	value := emit_expr(e, v.lhs)
-	key_slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", key_slot, llvm_type(e, key))
+	key_slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, key_slot)
 	found, out := temp(e), temp(e)
 	fmt.sbprintfln(
@@ -9190,8 +8999,7 @@ emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
 		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
 	)
 	emit_drop_place(e, container_key(e.c, container), key_slot)
-	zero_slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", zero_slot, element_llvm)
+	zero_slot := alloca(e, element_llvm)
 	if zero, ok := zero_const(e.c, element); ok {
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element_llvm, llvm_const(e, zero, element), zero_slot)
 	}
@@ -9206,8 +9014,7 @@ emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
 emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> []string {
 	element_llvm := llvm_type(e, container_element(e.c, expr_base(v.operand).type))
 	source, present := emit_map_read_address(e, v)
-	value := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, source)
+	value := load(e, element_llvm, source)
 	out := make([]string, 2)
 	out[0], out[1] = value, present
 	return out
@@ -9220,8 +9027,7 @@ emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> []string {
 emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> string {
 	key := container_key(e.c, container)
 	value := emit_expr(e, v.indices[0])
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, key))
+	slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, slot)
 	return slot
 }
@@ -9230,8 +9036,8 @@ emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> st
 // zero value, and the answer is NULL only when the insertion could not allocate.
 @(private = "file")
 emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot: string) -> string {
-	inserted, place := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca i32", inserted)
+	inserted := alloca(e, "i32")
+	place := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call ptr @loke_rt_v1_map_entry(ptr %s, ptr %s, ptr %s, ptr %s)",
 		place, header, ops, key_slot, inserted,
@@ -9282,8 +9088,8 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	// Both sides are addressed rather than kept in registers: a failure path has
 	// to drop what the destination already holds, and a drop hook takes a place.
-	self, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", self, value_type)
+	self := alloca(e, value_type)
+	out := temp(e)
 	fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
 	fmt.sbprintfln(&e.b, "  %s = alloca %s", out, value_type)
 	// design.md: "every hook must handle the inert zero value", and a cleanup that
@@ -9295,8 +9101,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		source := element_address(e, subject, self, index)
 		destination := element_address(e, subject, out, index)
 		if !type_clone_is_fallible(e.c, part) {
-			loaded := temp(e)
-			fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, llvm_type(e, part), source)
+			loaded := load(e, llvm_type(e, part), source)
 			store(e, part, loaded, destination)
 			continue
 		}
@@ -9323,8 +9128,8 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		store(e, part, cloned, destination)
 	}
 
-	built, first, result := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", built, value_type, out)
+	built := load(e, value_type, out)
+	first, result := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, value_type, built)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, 1", result, pair, first)
 	fmt.sbprintfln(&e.b, "  ret %s %s", pair, result)
@@ -9358,11 +9163,10 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 	// A container part has no `try_clone` member: its fallible clone is the
 	// versioned C helper, driven by this type's generated operation table.
 	if lifecycle_of(e.c, part).container {
-		destination := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", destination, CONTAINER_TYPE)
+		destination := alloca(e, CONTAINER_TYPE)
 		ok := emit_try_clone_into(e, part, destination, source, "%arg1")
-		cloned, error := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", cloned, CONTAINER_TYPE, destination)
+		cloned := load(e, CONTAINER_TYPE, destination)
+		error := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 1", error, ok)
 		return cloned, error
 	}
@@ -9375,15 +9179,14 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 	}
 	part_type := llvm_type(e, part)
 	pair := clone_pair_type(part_type)
-	loaded, returned := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, part_type, source)
+	loaded := load(e, part_type, source)
+	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %%arg1)",
 		returned, pair, e.names[hook], part_type, loaded,
 	)
-	cloned, error := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	cloned := extract(e, pair, returned, 0)
+	error := extract(e, pair, returned, 1)
 	return cloned, error
 }
 
@@ -9393,15 +9196,13 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 // frame's unwind action.
 @(private = "file")
 emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, count_address: string) {
-	count, cursor := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", count, count_address)
-	fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+	count := load(e, "i64", count_address)
+	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, cursor)
 	head, inspect, done := new_label(e, "vararg.drop.head"), new_label(e, "vararg.drop.inspect"), new_label(e, "vararg.drop.done")
 	branch(e, head)
 	place_label(e, head)
-	remaining := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", remaining, cursor)
+	remaining := load(e, "i64", cursor)
 	has_more := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, 0", has_more, remaining)
 	branch_if(e, has_more, inspect, done)
@@ -9416,11 +9217,7 @@ emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, co
 	branch_if(e, live, run, next)
 	place_label(e, run)
 	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag_address)
-	slot := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s",
-		slot, llvm_type(e, element), buffer, index,
-	)
+	slot := gep_at(e, llvm_type(e, element), buffer, index)
 	emit_drop_place(e, element, slot)
 	branch(e, next)
 	place_label(e, next)
@@ -9455,9 +9252,9 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		&e.b, "  %s = call %s %s(%s %%arg0, ptr %%arg1)",
 		returned, pair, e.names[hook], value_type,
 	)
-	cloned, error, failed := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", cloned, pair, returned)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", error, pair, returned)
+	cloned := extract(e, pair, returned, 0)
+	error := extract(e, pair, returned, 1)
+	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
 	// design.md "Allocation failure": an implicit copy has nowhere to return an
 	// error, so the *allocator's* policy decides — `.Panic` follows the program
@@ -9507,8 +9304,7 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	// handed out. The zero (or moved-from) control pointer drops to nothing,
 	// which is what makes a moved-out provider safe to leave behind.
 	if lifecycle_of(e.c, type).provider {
-		control := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", control, address)
+		control := load(e, "ptr", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_drop(ptr %s)", control)
 		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", address)
 		return
@@ -9517,9 +9313,8 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	// deallocates through the allocator the string was created with. A static
 	// literal and the empty value are both no-ops the runtime recognises.
 	if lifecycle_of(e.c, type).intrinsic {
-		value, owner := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, STRING_TYPE, address)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", owner, STRING_TYPE, value, STRING_OWNER)
+		value := load(e, STRING_TYPE, address)
+		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_release(i64 %s)", owner)
 		return
 	}
@@ -9561,9 +9356,8 @@ emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> 
 emit_any_view_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
 	view := emit_expr(e, v.operand)
 	storage := llvm_type(e, TYPE_ANY_VIEW)
-	data, id := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, view, ANY_VIEW_DATA)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", id, storage, view, ANY_VIEW_ID)
+	data := extract(e, storage, view, ANY_VIEW_DATA)
+	id := extract(e, storage, view, ANY_VIEW_ID)
 	matched := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", matched, id, typeid_value(e.c, v.type))
 
@@ -9572,27 +9366,23 @@ emit_any_view_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
 		panic_if(e, failed, "anyview.mismatch", "type assertion failed")
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, target, data)
+		out := load(e, target, data)
 		single := make([]string, 1)
 		single[0] = out
 		return single
 	}
 
-	slot := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, target)
+	slot := alloca(e, target)
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", target, slot)
 	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", matched, then_label, done_label)
 	fmt.sbprintfln(&e.b, "%s:", then_label)
-	loaded := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", loaded, target, data)
+	loaded := load(e, target, data)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", target, loaded, slot)
 	branch(e, done_label)
 	fmt.sbprintfln(&e.b, "%s:", done_label)
 	e.terminated = false
-	payload := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", payload, target, slot)
+	payload := load(e, target, slot)
 	pair := make([]string, 2)
 	pair[0], pair[1] = payload, matched
 	return pair
@@ -9620,9 +9410,8 @@ emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	view := emit_expr(e, v.bound[0])
 	storage := llvm_type(e, expr_base(v.bound[0]).type)
-	data, witness := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, view, DYN_DATA)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", witness, storage, view, DYN_WITNESS)
+	data := extract(e, storage, view, DYN_DATA)
+	witness := extract(e, storage, view, DYN_WITNESS)
 
 	// design.md: calling a slot on nil panics.
 	is_nil := temp(e)
@@ -9750,8 +9539,7 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	// it is loaded; an `inout self` is already the alias the callee wants.
 	receiver := "%arg0"
 	if slot.mode != .Inout {
-		loaded := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%arg0", loaded, llvm_type(e, target.params[0]))
+		loaded := load(e, llvm_type(e, target.params[0]), "%arg0")
 		receiver = loaded
 	}
 
@@ -9808,9 +9596,8 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		view = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %%arg0", view, view_type)
 	}
-	data, witness := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, view_type, view, DYN_DATA)
-	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", witness, view_type, view, DYN_WITNESS)
+	data := extract(e, view_type, view, DYN_DATA)
+	witness := extract(e, view_type, view, DYN_WITNESS)
 	is_nil := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, witness)
 	panic_if(e, is_nil, "dyn.nil", "call through a nil dyn view")
