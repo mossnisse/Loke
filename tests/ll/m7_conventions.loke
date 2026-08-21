@@ -17,6 +17,8 @@ sret       :: proc "c" (x: i64) -> S16 { return S16{ a = x, b = x }; }
 boolean    :: proc "c" (b: bool) -> bool { return !b; }
 scalars    :: proc "c" (i: i32, l: i64, f: f32, d: f64, p: rawptr) -> f64 { return d; }
 stdc       :: proc "stdcall" (s: S4) -> i32 { return s.a; }
+borrowed: i32 = 1;
+borrow      :: proc "c" () -> inout i32 { return inout borrowed; }
 
 main :: proc() {
 	fmt.println(reg_param(S4{ a = 1 }));
@@ -26,4 +28,5 @@ main :: proc() {
 	fmt.println(boolean(true));
 	fmt.println(scalars(1, 2, 3.0, 4.0, nil));
 	fmt.println(stdc(S4{ a = 6 }));
+	borrow() = 7;
 }

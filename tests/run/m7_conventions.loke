@@ -14,6 +14,9 @@ make_wide :: proc "c" (n: i64) -> Wide { return Wide{ a = n, b = n * 2, c = n * 
 flip      :: proc "c" (b: bool) -> bool { return !b; }
 mix       :: proc "stdcall" (i: i32, f: f64, p: Point) -> f64 { return f + f64(i) + f64(p.x); }
 
+borrowed_value: i32 = 7;
+borrow_value :: proc "c" () -> inout i32 { return inout borrowed_value; }
+
 main :: proc() {
 	fmt.println(sum_point(Point{ x = 3, y = 4 }));
 	made := make_point(10, 20);
@@ -23,4 +26,6 @@ main :: proc() {
 	fmt.println(w.a, w.b, w.c);
 	fmt.println(flip(false), flip(true));
 	fmt.println(mix(2, 1.5, Point{ x = 100, y = 0 }));
+	borrow_value() = 11;
+	fmt.println(borrowed_value);
 }

@@ -1,5 +1,9 @@
 declare i64 @strlen(ptr)
 declare i32 @printf(ptr, ...)
 declare double @dot(ptr, ptr)
+declare void @consume(ptr)
+declare ptr @cell()
 @errno_value = external global i32
 call i32 (ptr, ...) @printf(
+call void %
+call ptr @cell()

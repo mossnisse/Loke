@@ -356,8 +356,9 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
 	for parameter, index in info.parameters {
 		mode := index < len(info.param_modes) ? int(info.param_modes[index]) : 0
 		reset := index < len(info.param_resets) && info.param_resets[index]
+		by_ptr := index < len(info.param_by_ptr) && info.param_by_ptr[index]
 		fmt.sbprintf(
-			&b, ":p%d:%t{%s}", mode, reset,
+			&b, ":p%d:%t:%t{%s}", mode, reset, by_ptr,
 			typeid_sort_key(c, parameter, depth + 1),
 		)
 	}
@@ -367,6 +368,9 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> string {
 	}
 	if info.convention != "" {
 		fmt.sbprintf(&b, ":c{%s}", info.convention)
+	}
+	if info.c_vararg {
+		fmt.sbprint(&b, ":cvararg")
 	}
 	return strings.to_string(b)
 }

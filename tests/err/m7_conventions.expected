@@ -17,3 +17,11 @@ L0619
 L0620
 a foreign procedure returns at most one value, found 2
 @15:16
+
+L0619
+`i128` is an integer wider than 64 bits on the Win64 C ABI
+@16:16
+
+L0619
+`i128` is an integer wider than 64 bits on the Win64 C ABI
+@16:16

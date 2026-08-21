@@ -177,6 +177,10 @@ Type_Info :: struct {
 	// parameter's procedure type: a reset-capable procedure cannot be stored in a
 	// procedure value whose type hides that effect."
 	param_resets: []bool,
+	// Foreign ABI adapters must survive calls through procedure values. Erasing
+	// either one changes the LLVM function type at an indirect call site.
+	param_by_ptr: []bool,
+	c_vararg:     bool,
 	results:    []Type_Id,
 	result_inout: []bool,
 	convention: string,
@@ -892,6 +896,8 @@ intern_proc_type :: proc(
 	result_inout: []bool,
 	convention: string,
 	param_resets: []bool = nil,
+	param_by_ptr: []bool = nil,
+	c_vararg := false,
 ) -> Type_Id {
 	init_semantic_stores(c)
 	for info, index in c.types {
@@ -901,7 +907,9 @@ intern_proc_type :: proc(
 		   equal_param_modes(info.param_modes, param_modes) &&
 		   equal_type_ids(info.results, results) &&
 		   equal_bools(info.result_inout, result_inout) &&
-		   equal_reset_effects(info.param_resets, param_resets) {
+		   equal_reset_effects(info.param_resets, param_resets) &&
+		   equal_reset_effects(info.param_by_ptr, param_by_ptr) &&
+		   info.c_vararg == c_vararg {
 			return Type_Id(index)
 		}
 	}
@@ -914,6 +922,11 @@ intern_proc_type :: proc(
 		reset_copy = make([]bool, len(param_resets), c.semantic_allocator)
 		copy(reset_copy, param_resets)
 	}
+	by_ptr_copy: []bool
+	if has_reset_effect(param_by_ptr) {
+		by_ptr_copy = make([]bool, len(param_by_ptr), c.semantic_allocator)
+		copy(by_ptr_copy, param_by_ptr)
+	}
 	copy(parameter_copy, parameters)
 	copy(mode_copy, param_modes)
 	copy(result_copy, results)
@@ -924,6 +937,8 @@ intern_proc_type :: proc(
 		parameters    = parameter_copy,
 		param_modes   = mode_copy,
 		param_resets  = reset_copy,
+		param_by_ptr  = by_ptr_copy,
+		c_vararg      = c_vararg,
 		results       = result_copy,
 		result_inout  = inout_copy,
 		convention    = convention,

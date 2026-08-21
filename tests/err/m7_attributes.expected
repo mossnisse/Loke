@@ -22,8 +22,16 @@ L0608
 `@(public)` takes no value
 @22:3
 
+L0608
+`@(deprecated)` needs a string value
+@25:3
+
+L0606
+unknown attribute `@(unknown_local)`
+@35:4
+
 L0612
 the result of `h` must be used or discarded with `_ = ...`
-@33:2
+@37:2
 
 warning[L0611]: `g` is deprecated: use `g2` instead

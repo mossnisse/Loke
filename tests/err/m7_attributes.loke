@@ -22,6 +22,9 @@ e :: proc() {}
 @(public = "yes")
 f: int = 0;
 
+@(deprecated = 456)
+bad_message :: proc() {}
+
 @(deprecated = "use `g2` instead")
 g :: proc() -> int { return 1; }
 
@@ -29,6 +32,7 @@ g :: proc() -> int { return 1; }
 h :: proc() -> int { return 2; }
 
 main :: proc() {
+	@(unknown_local) value := 1;
 	g();
 	h();
 }

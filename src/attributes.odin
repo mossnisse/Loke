@@ -121,6 +121,12 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 		case .Value_Required:
 			if attribute.value == nil {
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a value: `@(%s=...)`", name, name)
+			} else if lit, ok := attribute.value.(^Expr_Literal); !ok ||
+			          (lit.kind != .String && lit.kind != .Raw_String) {
+				// Every base-language value-bearing attribute currently takes a
+				// string. Checking the literal kind here prevents consumers from
+				// silently treating a malformed value as if the attribute were absent.
+				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a string value", name)
 			}
 		case .Deferred:
 		}
@@ -157,7 +163,6 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	}
 }
 
-@(private = "file")
 validate_decl_attributes :: proc(k: ^Checker, d: ^Decl) {
 	if len(d.symbols) == 0 {
 		return

@@ -893,21 +893,25 @@ diagnostic per way of writing an attribute wrongly, plus the two that carry
 behaviour at the use site. All thirteen attributes design.md defines were checked
 to have behaviour outside the validation table, not merely a table row.
 
-The audit also found one defect it is deliberately *not* fixing, because doing so
-is a backend refactor rather than an M7 obligation. Several `alloca`s are emitted
-at their point of use rather than in the entry block — the composite-literal
-temporary, the slice-literal backing root, the union spill, and now the
-byte-member equality scratch. LLVM releases an `alloca` only when the function
-returns, so any of them reached inside a loop grows the stack per iteration: a
-two-million-iteration `==` against a struct literal exhausts the stack at
-`-opt=none`, and `-opt=speed` and above hide it because SROA promotes the slot.
-`emit_slice_literal` already carried a note saying to hoist "if a real program
-shows stack growth", which one now does. The fix needs an entry-block seam every
-function emitter shares, and `src/emit_llvm.odin` has twenty-one sites that write
-`define`+`entry:` while only `emit_proc` has such a seam; a first attempt that
-flushed hoisted allocas from `emit_unwind_prologue` was reverted, because the
-other twenty would have leaked theirs into whichever function's prologue ran
-next. It is recorded here and marked at each site rather than half-fixed.
+The audit also found one defect it deliberately did *not* fix as part of M7,
+because doing so was a backend refactor rather than an M7 obligation. Several
+`alloca`s were emitted at their point of use rather than in the entry block —
+the composite-literal temporary, the slice-literal backing root, the union spill,
+and the byte-member equality scratch. LLVM releases an `alloca` only when the
+function returns, so any of them reached inside a loop grew the stack per
+iteration: a two-million-iteration `==` against a struct literal exhausted the
+stack at `-opt=none`, while `-opt=speed` and above hid it because SROA promoted
+the slot. A first narrow attempt that flushed hoisted allocas from
+`emit_unwind_prologue` was reverted because the other twenty function emitters
+would leak their slots into whichever ordinary procedure prologue ran next.
+
+The follow-up fix is now implemented at the shared textual-module seam. Once all
+ordinary and generated functions have been emitted, `hoist_fixed_allocas` moves
+each function's fixed-size slots to that function's own `entry:` block. Runtime-
+sized variadic packs stay at their use because their SSA count does not exist at
+entry. `src/emit_llvm_test.odin` pins function isolation and that dynamic
+exception, and `tests/run/m7_alloca_hoist` runs the original two-million-iteration
+shape at `-opt=none`.
 
 Otherwise M7 leaves nothing on its own list. What remains is the documented v1
 trust-boundary set, unchanged — retention of a pointer, `cstring_view`, or

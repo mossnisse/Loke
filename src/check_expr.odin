@@ -2076,6 +2076,11 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		v.type = TYPE_VOID
 	case 1:
 		v.type = info.results[0]
+		if len(info.result_inout) > 0 && info.result_inout[0] {
+			v.value_category = .Place
+			v.addressable = true
+			v.assignable = true
+		}
 	case:
 		v.type = info.results[0]
 		v.result_types = info.results
@@ -3130,7 +3135,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	count := len(info.parameters)
 	// design.md "`@(c_vararg)`": a foreign C-variadic call passes each concrete
 	// argument after the fixed ones, with no slice built (m7-plan step 4).
-	if declared := symbol_of(k.c, declaration); declared != nil && declared.c_vararg {
+	if info.c_vararg {
 		return bind_c_vararg_arguments(k, v, info)
 	}
 	// design.md "Variadic parameters": every trailing argument fills one

@@ -868,11 +868,14 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 
 	if validate_convention(k, literal.signature.convention, literal.span) &&
 	   convention_is_foreign(literal.signature.convention) {
-		check_foreign_signature(k, params[:], modes[:], results[:], literal.span)
+		check_foreign_signature(
+			k, params[:], modes[:], by_ptr_list[:], results[:], result_inout[:], literal.span,
+		)
 	}
 	proc_type := intern_proc_type(
 		k.c, params[:], modes[:], results[:], result_inout[:],
 		literal.signature.convention, resets_list[:],
+		param_by_ptr = by_ptr_list[:], c_vararg = saw_c_vararg,
 	)
 	// Parameter/result binding creation may grow the symbol store. Reacquire by
 	// ID rather than retaining a pointer across append.
@@ -1230,7 +1233,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		}
 		if validate_convention(k, value.convention, value.span) &&
 		   convention_is_foreign(value.convention) {
-			check_foreign_signature(k, params[:], modes[:], results[:], value.span)
+			check_foreign_signature(k, params[:], modes[:], nil, results[:], result_inout[:], value.span)
 		}
 		value.denoted_type = intern_proc_type(
 			k.c, params[:], modes[:], results[:], result_inout[:], value.convention, resets[:],
@@ -1897,6 +1900,9 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	case ^Decl:
 		declare_all(k, s)
 		install_symbols(k.scope, k.c, s.symbols)
+		// Local declaration symbols do not exist during the package-wide attribute
+		// pass, so validate their attributes once they are declared here.
+		validate_decl_attributes(k, s)
 		check_decl(k, s)
 		return FLOWS
 

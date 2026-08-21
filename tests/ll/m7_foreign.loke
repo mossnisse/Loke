@@ -13,6 +13,8 @@ foreign libc {
 	strlen :: proc "c" (s: cstring_view) -> uint ---;
 	printf :: proc "c" (fmt: cstring_view, @(c_vararg) args: ..any_view) -> i32 ---;
 	dot :: proc "c" (@(by_ptr) a: Vec, @(by_ptr) b: Vec) -> f64 ---;
+	consume :: proc "c" (@(by_ptr) value: Vec) ---;
+	cell :: proc "c" () -> inout i32 ---;
 	errno_value: i32;
 }
 
@@ -20,5 +22,8 @@ main :: proc() {
 	_ = strlen("x");
 	_ = printf("%d\n", 1);
 	_ = dot(Vec{ x = 0.0, y = 0.0, z = 0.0 }, Vec{ x = 0.0, y = 0.0, z = 0.0 });
+	callback := consume;
+	callback(Vec{ x = 1.0, y = 2.0, z = 3.0 });
+	_ = cell();
 	_ = errno_value;
 }

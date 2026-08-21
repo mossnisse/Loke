@@ -43,7 +43,15 @@ validate_convention :: proc(k: ^Checker, convention: string, span: Span) -> bool
 // `move` parameter and more than one result have no C representation. An `inout`
 // parameter lowers to a pointer, so its pointee need not itself be ABI-safe
 // (m7-plan step 3).
-check_foreign_signature :: proc(k: ^Checker, params: []Type_Id, modes: []Param_Mode, results: []Type_Id, span: Span) {
+check_foreign_signature :: proc(
+	k: ^Checker,
+	params: []Type_Id,
+	modes: []Param_Mode,
+	by_ptr: []bool,
+	results: []Type_Id,
+	result_inout: []bool,
+	span: Span,
+) {
 	for param, index in params {
 		mode := index < len(modes) ? modes[index] : Param_Mode.Value
 		#partial switch mode {
@@ -53,6 +61,9 @@ check_foreign_signature :: proc(k: ^Checker, params: []Type_Id, modes: []Param_M
 		case .Inout, .Variadic:
 			continue
 		}
+		if index < len(by_ptr) && by_ptr[index] {
+			continue
+		}
 		if ok, reason := foreign_abi_safe(k.c, param); !ok {
 			errorf(k.c, span, "L0619", "a foreign parameter is not ABI-safe: %s", reason)
 		}
@@ -60,7 +71,10 @@ check_foreign_signature :: proc(k: ^Checker, params: []Type_Id, modes: []Param_M
 	if len(results) > 1 {
 		errorf(k.c, span, "L0620", "a foreign procedure returns at most one value, found %d", len(results))
 	}
-	for result in results {
+	for result, index in results {
+		if index < len(result_inout) && result_inout[index] {
+			continue
+		}
 		if ok, reason := foreign_abi_safe(k.c, result); !ok {
 			errorf(k.c, span, "L0619", "a foreign result is not ABI-safe: %s", reason)
 		}
@@ -129,7 +143,14 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 		return false, "not a resolved type", ""
 	}
 	#partial switch info.kind {
-	case .Int, .Float, .Rune, .Bool, .Enum, .Raw_Pointer, .Pointer, .Multi_Pointer, .CString_View:
+	case .Int:
+		// Clang's Win64 ABI does not lower `__int128` as Loke's direct `i128`.
+		// Reject it until the target-specific indirect/vector classification exists.
+		if info.bits > 64 {
+			return false, "an integer wider than 64 bits on the Win64 C ABI", ""
+		}
+		return true, "", ""
+	case .Float, .Rune, .Bool, .Enum, .Raw_Pointer, .Pointer, .Multi_Pointer, .CString_View:
 		// Scalars and pointers pass as themselves; an enum has integer backing;
 		// a pointer's pointee need not be safe because only an address crosses.
 		return true, "", ""
@@ -139,12 +160,19 @@ abi_walk :: proc(c: ^Compiler, type: Type_Id, top_level: bool) -> (safe: bool, n
 		if !convention_is_foreign(info.convention) {
 			return false, "a `loke`-convention procedure pointer", ""
 		}
-		for param in info.parameters {
+		for param, index in info.parameters {
+			mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+			if mode == .Inout || (index < len(info.param_by_ptr) && info.param_by_ptr[index]) {
+				continue
+			}
 			if s, n, p := abi_walk(c, param, true); !s {
 				return false, n, p
 			}
 		}
-		for result in info.results {
+		for result, index in info.results {
+			if index < len(info.result_inout) && info.result_inout[index] {
+				continue
+			}
 			if s, n, p := abi_walk(c, result, true); !s {
 				return false, n, p
 			}

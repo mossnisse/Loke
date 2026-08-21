@@ -10,6 +10,10 @@ Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }
 Over :: struct @(align=16) { b: bool, n: i32 }
 Both :: struct @(packed, align=8) { x: u8, y: i32 }
 Outer :: struct { head: u8, inner: Packed }
+Const_Inner :: struct { x: i64, y: i64 }
+Const_Outer :: struct @(packed, align=16) { tag: u8, inner: Const_Inner }
+
+saved: Const_Outer = { tag = 9, inner = { x = 41, y = 42 } };
 
 read_y :: proc(p: Packed) -> i32 { return p.y; }
 
@@ -45,6 +49,10 @@ main :: proc() {
 	// Reflection and formatting stay on the ordinary field-GEP path.
 	fmt.println(b == Both{ x = 3, y = 77 }, b == Both{ x = 3, y = 78 });
 	fmt.println(ov == Over{ b = true, n = 123 });
+
+	// Byte-array constants must retain nested aggregate fields rather than
+	// silently replacing every non-scalar field with zero.
+	fmt.println(saved.tag, saved.inner.x, saved.inner.y);
 
 	// Runtime type info reports the packed size.
 	info := type_info_of(typeid_of(Packed));

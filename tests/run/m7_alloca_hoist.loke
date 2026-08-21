@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+// Fixed-size compiler temporaries belong to the function entry block. At
+// -opt=none this loop used to allocate four packed-record scratch slots on every
+// iteration and exhaust the native stack before it could print.
+Both :: struct @(packed, align=8) { x: u8, y: i32 }
+
+main :: proc() {
+	want := Both{ x = 3, y = 77 };
+	ok := true;
+	for (i := 0; i < 2000000; i += 1) {
+		ok = ok && want == Both{ x = 3, y = 77 };
+	}
+	fmt.println(ok);
+}
