@@ -1,0 +1,211 @@
+// Process state: the environment, the working directory, and the executable's
+// own path (standard-library-plan "`core:os` additions").
+//
+// Files are **not** here. `core:os` is process state; opening a file is
+// `core:fs.open`. A process-spawning API is deferred until handle inheritance,
+// quoting, environment replacement, and pipe ownership can be designed together.
+@(public)
+package os;
+
+import "core:encoding/utf16";
+import "core:io";
+import "core:mem";
+import "core:strings";
+import "core:unsafe";
+
+// The value of `name`, and whether it is set at all. The boolean is what
+// separates a missing variable from one whose value is the empty string; the
+// owning result uses the supplied allocator.
+//
+// A name or value that is not valid Unicode is `Invalid_Data`: the library's
+// contract is UTF-8, and a native string that cannot be represented is reported
+// rather than silently changed.
+get_environment :: proc(
+	name: string_view, allocator: Allocator = mem.default_allocator(),
+) -> (string, bool, io.Error) {
+	return get_environment_native(name, allocator);
+}
+
+// Note for the first target: Windows treats setting a variable to the empty
+// string as removing it, so a later `get_environment` answers "not set" rather
+// than "set to nothing". That is the platform's behavior, not this library's
+// choice, and it is why the boolean above is about presence rather than length.
+set_environment :: proc(name: string_view, value: string_view) -> io.Error {
+	return set_environment_native(name, value);
+}
+
+unset_environment :: proc(name: string_view) -> io.Error {
+	return unset_environment_native(name);
+}
+
+working_directory :: proc(
+	allocator: Allocator = mem.default_allocator(),
+) -> (string, io.Error) {
+	return working_directory_native(allocator);
+}
+
+set_working_directory :: proc(path: string_view) -> io.Error {
+	return set_working_directory_native(path);
+}
+
+executable_path :: proc(
+	allocator: Allocator = mem.default_allocator(),
+) -> (string, io.Error) {
+	return executable_path_native(allocator);
+}
+
+when (LOKE_OS == .Windows) {
+
+foreign import kernel32 "system:kernel32.lib";
+
+foreign kernel32 {
+	@(link_name="GetEnvironmentVariableW")
+	rt_get_environment :: proc "stdcall" (name: [^]u16, buffer: [^]u16, size: u32) -> u32 ---;
+	@(link_name="SetEnvironmentVariableW")
+	rt_set_environment :: proc "stdcall" (name: [^]u16, value: [^]u16) -> i32 ---;
+	@(link_name="GetCurrentDirectoryW")
+	rt_get_directory :: proc "stdcall" (size: u32, buffer: [^]u16) -> u32 ---;
+	@(link_name="SetCurrentDirectoryW")
+	rt_set_directory :: proc "stdcall" (path: [^]u16) -> i32 ---;
+	@(link_name="GetModuleFileNameW")
+	rt_module_file_name :: proc "stdcall" (module: int, buffer: [^]u16, size: u32) -> u32 ---;
+	@(link_name="GetLastError")
+	rt_last_error :: proc "stdcall" () -> u32 ---;
+}
+
+@(private) ERROR_ENVVAR_NOT_FOUND :: 203;
+
+@(private)
+from_last_error :: proc(operation: io.Operation) -> io.Error {
+	native := rt_last_error();
+	code := io.Code.Other;
+	if (native == 2 || native == 3 || native == u32(ERROR_ENVVAR_NOT_FOUND)) { code = .Not_Found; }
+	else if (native == 5) { code = .Permission_Denied; }
+	else if (native == 8 || native == 14) { code = .Out_Of_Memory; }
+	else if (native == 123 || native == 206) { code = .Invalid_Path; }
+	return io.make_error(code, operation, native);
+}
+
+@(private)
+wide :: proc(text: string_view, operation: io.Operation) -> ([dynamic]u16, io.Error) {
+	units, error := utf16.encode(text, mem.default_allocator());
+	if (error != nil) {
+		return units, io.make_error(.Out_Of_Memory, operation);
+	}
+	return units, nil;
+}
+
+// Decodes a wide buffer of `count` units into an owning `string`.
+@(private)
+from_wide :: proc(
+	units: []u16, count: int, allocator: Allocator, operation: io.Operation,
+) -> (string, io.Error) {
+	text, error := utf16.decode(units[0:count], allocator);
+	if (error != nil) {
+		return "", io.make_error(.Invalid_Data, operation);
+	}
+	return text, nil;
+}
+
+@(private)
+get_environment_native :: proc(
+	name: string_view, allocator: Allocator,
+) -> (string, bool, io.Error) {
+	encoded, name_error := wide(name, .Environment);
+	if (name_error != nil) { return "", false, name_error; }
+
+	// The first call sizes the buffer: with a zero-length destination the answer
+	// is the length *including* the terminator, or zero for a failure.
+	needed := rt_get_environment(unsafe.raw_data(encoded), nil, 0);
+	if (needed == 0) {
+		error := from_last_error(.Environment);
+		if (io.is(error, .Not_Found)) { return "", false, nil; }
+		return "", false, error;
+	}
+	buffer, made := make([dynamic]u16, int(needed), int(needed), mem.default_allocator());
+	if (made != nil) {
+		return "", false, io.from_allocator_error(made, .Environment);
+	}
+	written := rt_get_environment(unsafe.raw_data(encoded), unsafe.raw_data(buffer), needed);
+	if (written == 0 || written >= needed) {
+		// A concurrent change resized the value between the two calls.
+		return "", false, from_last_error(.Environment);
+	}
+	text, decode_error := from_wide(buffer[:], int(written), allocator, .Environment);
+	if (decode_error != nil) { return "", false, decode_error; }
+	return text, true, nil;
+}
+
+@(private)
+set_environment_native :: proc(name: string_view, value: string_view) -> io.Error {
+	encoded_name := wide(name, .Environment) or_return;
+	encoded_value := wide(value, .Environment) or_return;
+	if (rt_set_environment(unsafe.raw_data(encoded_name), unsafe.raw_data(encoded_value)) == 0) {
+		return from_last_error(.Environment);
+	}
+	return nil;
+}
+
+@(private)
+unset_environment_native :: proc(name: string_view) -> io.Error {
+	encoded := wide(name, .Environment) or_return;
+	// A null value removes the variable.
+	if (rt_set_environment(unsafe.raw_data(encoded), nil) == 0) {
+		return from_last_error(.Environment);
+	}
+	return nil;
+}
+
+@(private)
+working_directory_native :: proc(allocator: Allocator) -> (string, io.Error) {
+	needed := rt_get_directory(0, nil);
+	if (needed == 0) {
+		return "", from_last_error(.Working_Directory);
+	}
+	buffer, made := make([dynamic]u16, int(needed), int(needed), mem.default_allocator());
+	if (made != nil) {
+		return "", io.from_allocator_error(made, .Working_Directory);
+	}
+	written := rt_get_directory(needed, unsafe.raw_data(buffer));
+	if (written == 0 || written >= needed) {
+		return "", from_last_error(.Working_Directory);
+	}
+	return from_wide(buffer[:], int(written), allocator, .Working_Directory);
+}
+
+@(private)
+set_working_directory_native :: proc(path: string_view) -> io.Error {
+	encoded := wide(path, .Working_Directory) or_return;
+	if (rt_set_directory(unsafe.raw_data(encoded)) == 0) {
+		return from_last_error(.Working_Directory);
+	}
+	return nil;
+}
+
+@(private)
+executable_path_native :: proc(allocator: Allocator) -> (string, io.Error) {
+	// `GetModuleFileNameW` has no size query: it fills whatever it is given and
+	// says so, which is indistinguishable from "it exactly fitted". Growing until
+	// the answer is shorter than the buffer is the documented way to be sure.
+	size := 260;
+	for (; size <= 65536; size *= 2) {
+		buffer, made := make([dynamic]u16, size, size, mem.default_allocator());
+		if (made != nil) {
+			return "", io.from_allocator_error(made, .Executable_Path);
+		}
+		written := rt_module_file_name(0, unsafe.raw_data(buffer), u32(size));
+		if (written == 0) {
+			return "", from_last_error(.Executable_Path);
+		}
+		if (int(written) < size) {
+			return from_wide(buffer[:], int(written), allocator, .Executable_Path);
+		}
+	}
+	return "", io.make_error(.Limit_Exceeded, .Executable_Path);
+}
+
+} else {
+
+// No non-Windows backend yet; `LOKE_OS` is a fixed `.Windows`.
+
+}

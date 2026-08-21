@@ -6097,6 +6097,28 @@ emit_text_optional_ok :: proc(e: ^Emitter, callee, arguments: string) -> []strin
 	return out
 }
 
+// `strings.allocate_string(text, allocator)`: the same copy `.clone()` performs,
+// but into storage from the caller's allocator and reporting failure instead of
+// applying that allocator's policy. The bytes come from a `string_view` and are
+// already valid UTF-8, so `loke_rt_v1_string_clone` is the right entry — it
+// copies without re-validating, and records the allocator in the string header
+// so the eventual release returns the block to the same provider.
+@(private = "file")
+emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	data, length := emit_text_parts(e, v.bound[0])
+	allocator := emit_expr(e, v.bound[1])
+	slot, ok := emit_text_call_slot(
+		e, "loke_rt_v1_string_clone", fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, allocator),
+	)
+	out := make([]string, 2)
+	out[0] = load(e, STRING_TYPE, slot)
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
+	out[1] = temp(e)
+	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to %s", out[1], failed, llvm_type(e, TYPE_ALLOCATOR_ERROR))
+	return out
+}
+
 // design.md "string type conversions": every one of these validates, so each has
 // optional-ok results and publishes the zero value on failure.
 @(private = "file")
@@ -6277,6 +6299,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return emit_type_info_of(e, v)
 		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
 			return emit_fmt_builtin(e, v, symbol.builtin)
+		case .Strings_Allocate:
+			return emit_strings_allocate(e, v)[0]
 		case .Free:
 			emit_free(e, v)
 			return "0"
@@ -6446,6 +6470,12 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 	#partial switch v in expr {
 	case ^Expr_Call:
+		// A slot call has no callee symbol and no callee value — the thunk comes
+		// out of the witness table — so it can never take the ordinary call path
+		// below, whatever its result count is.
+		if v.is_dyn_call {
+			return emit_dyn_slot_call(e, v)
+		}
 		// A conversion and a built-in are calls in syntax only, and each has its
 		// own lowering; `emit_call` is what knows the difference.
 		if kind := call_builtin_kind(e, v); kind == .New || kind == .New_Clone {
@@ -6462,6 +6492,9 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		}
 		if kind := call_builtin_kind(e, v); kind == .Unsafe_String_View {
 			return emit_unsafe_builtin(e, v, kind)
+		}
+		if call_builtin_kind(e, v) == .Strings_Allocate {
+			return emit_strings_allocate(e, v)
 		}
 		if len(v.result_types) > 1 {
 			return emit_multi_call(e, v)

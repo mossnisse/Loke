@@ -263,7 +263,7 @@ bytes := text.bytes();           // read-only borrowed []u8
 
 `len(text)` is shorthand for `text.byte_len()` (constant time). A string cannot be indexed by integer, since a code point may span several bytes; use `text.bytes()[i]`, iteration, or Unicode procedures. Grapheme clusters are handled by the Unicode library, not the core string type.
 
-Repeated concatenation uses `String_Builder` from `core:strings`, a library type over `[dynamic]u8` with no compiler support:
+Repeated concatenation uses `String_Builder` from `core:strings`, a library type over `[dynamic]u8`. The compiler contributes one package-private primitive to that package — a copy of known-valid UTF-8 into string storage taken from a *supplied* allocator — because every built-in text operation allocates from the default provider and a library cannot otherwise honour `strings.clone(text, allocator)`. The UTF-8 algorithms, the growth policy, and the failure policy are ordinary Loke:
 
 ```odin
 builder: String_Builder = {};
@@ -2069,8 +2069,9 @@ The signatures are fixed: `drop` is `proc(self: inout T)`, and the canonical cop
 A custom `try_clone` may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations. This is enforced like the `hash`/equality coherence contract on map keys.
 
 ```odin
+// This is the shape `core:fs` uses for its own `File`.
 File :: struct {
-	handle: os.Handle,
+	handle: int,
 	valid:  bool,
 }
 
@@ -2079,7 +2080,7 @@ impl File {
 
 	drop :: proc(self: inout File) {
 		if (self.valid) {
-			os.close(self.handle);
+			close_handle(self.handle);
 			self.valid = false;
 		}
 	}
@@ -3539,11 +3540,13 @@ Will print 3, 2, and then 1.
 A real world use case for defer may be something like the following:
 
 ```odin
-f, err := os.open("my_file.txt");
-if (err != os.ERROR_NONE) {
+file, err := fs.open_read("my_file.txt");
+if (err != nil) {
 	// handle error
 }
-defer os.close(f);
+// `file` is a managed local, so its `drop` closes a live handle on every path
+// out of this scope. The explicit close is what observes a close failure.
+defer file.close();
 // rest of code
 ```
 
@@ -5848,9 +5851,10 @@ Several types, interfaces, and a few core procedures are used in normative text 
 
 | Type | Used by | Status |
 | --- | --- | --- |
-| `os.Args`, `os.args`, `os.exit`, `os.open`, `os.close`, `os.Handle` | [program entry and exit](#program-entry-and-exit), the [`defer`](#defer-statement) example | `core:os`, ordinary Loke source over one foreign block; the compiler knows nothing about it. `os.args` has the [frozen `Args` surface](#osargs) over the vector the [executable entry](#executable-startup-abi) converted. `os.exit` terminates immediately with a specified status. File handles are ordinary library resources with no compiler-known behavior. |
-| `String_Builder` | [string type](#string-type) | Built from `[dynamic]u8`. |
-| `C_String` | [C string views](#c-string-views) | Owned zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. |
+| `os.Args`, `os.args`, `os.exit` | [program entry and exit](#program-entry-and-exit) | `core:os`, ordinary Loke source over one foreign block; the compiler knows nothing about it. `os.args` has the [frozen `Args` surface](#osargs) over the vector the [executable entry](#executable-startup-abi) converted. `os.exit` terminates immediately with a specified status. |
+| `fs.File`, `fs.open`, `File.close` | the [`defer`](#defer-statement) and [lifecycle hook](#lifecycle-hooks-and-resource-types) examples | `core:fs`. Files are **not** in `core:os`: that package is process state, and the package owning the argument vector should not also own file handles. `fs.File` is an ordinary library resource with no compiler-known behavior — a move-only record whose `drop` closes a live handle. There is no `os.open` alias; one spelling for opening a file is the point. |
+| `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `len(builder)` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> (string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
+| `C_String` | [C string views](#c-string-views) | `core:cstrings`. Owned zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. It does not promise UTF-8, and its constructor rejects an interior zero, so the view it hands out is never shorter than the data it owns. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |
 | `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |
 | `Little_Endian(T)`, `Big_Endian(T)` | [basic types](#basic-types) | Distinct storage wrappers supplied by binary-format libraries. |

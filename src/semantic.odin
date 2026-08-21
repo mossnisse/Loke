@@ -533,6 +533,14 @@ Builtin_Kind :: enum {
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
 	Fmt_Format_Any,
+	// design.md "Allocators": "string-producing procedures accept a conventional
+	// `allocator` argument when selection is needed". Every built-in text
+	// operation allocates from the default provider instead, so this is the one
+	// bridge a library needs to honour a caller's allocator. It is contributed
+	// package-privately to `core:strings`, which publishes it as `clone` and
+	// `try_clone`, and to `core:fmt`, which cannot import `core:strings` for
+	// `to_string` without emitting that whole package into every program.
+	Strings_Allocate,
 }
 
 Symbol :: struct {

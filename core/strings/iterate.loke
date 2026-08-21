@@ -1,0 +1,119 @@
+// Borrowing iterators: split, fields, and lines (standard-library-plan
+// "Borrowing transformations and iterators").
+//
+// None of these allocates. Every part borrows the text it was built from, so it
+// cannot outlive it — which is exactly what a `string_view` already promises.
+// Each is an ordinary iteration protocol implementation, so `foreach` walks it
+// and generic code sees the same `Element`/`Iterator`/`iter`/`next` members a
+// built-in container contributes.
+@(public)
+package strings;
+
+// Every part between occurrences of `separator`, left to right. A trailing
+// separator therefore yields a final empty part, and an empty separator yields
+// the whole text once.
+split :: proc(text: string_view, separator: string_view) -> Split_Iterator {
+	return Split_Iterator{text, separator, false};
+}
+
+Split_Iterator :: struct {
+	@(private) rest:      string_view,
+	@(private) separator: string_view,
+	@(private) done:      bool,
+}
+
+impl Split_Iterator {
+	Element  :: string_view;
+	Iterator :: Split_Iterator;
+
+	iter :: proc(self) -> Split_Iterator { return self; }
+
+	next :: proc(self: inout Split_Iterator) -> (string_view, bool) {
+		if (self.done) { return "", false; }
+		at, found := index(self.rest, self.separator);
+		if (!found || len(self.separator) == 0) {
+			self.done = true;
+			return self.rest, true;
+		}
+		part := self.rest[0:at];
+		self.rest = self.rest[at + len(self.separator):];
+		return part, true;
+	}
+}
+
+// Runs of non-whitespace, with every run of Unicode White_Space between them
+// discarded. Empty and all-whitespace text yield nothing.
+fields :: proc(text: string_view) -> Fields_Iterator {
+	return Fields_Iterator{text};
+}
+
+Fields_Iterator :: struct {
+	@(private) rest: string_view,
+}
+
+impl Fields_Iterator {
+	Element  :: string_view;
+	Iterator :: Fields_Iterator;
+
+	iter :: proc(self) -> Fields_Iterator { return self; }
+
+	next :: proc(self: inout Fields_Iterator) -> (string_view, bool) {
+		start := len(self.rest);
+		foreach (codepoint, offset in self.rest) {
+			if (!is_space(codepoint)) {
+				start = offset;
+				break;
+			}
+		}
+		rest := self.rest[start:];
+		if (len(rest) == 0) {
+			self.rest = rest;
+			return "", false;
+		}
+		end := len(rest);
+		foreach (codepoint, offset in rest) {
+			if (is_space(codepoint)) {
+				end = offset;
+				break;
+			}
+		}
+		self.rest = rest[end:];
+		return rest[0:end], true;
+	}
+}
+
+// Lines separated by `\n` or `\r\n`, with the ending removed. A final
+// unterminated line is yielded; a final ending is not followed by an empty line.
+lines :: proc(text: string_view) -> Lines_Iterator {
+	return Lines_Iterator{text, false};
+}
+
+Lines_Iterator :: struct {
+	@(private) rest: string_view,
+	@(private) done: bool,
+}
+
+impl Lines_Iterator {
+	Element  :: string_view;
+	Iterator :: Lines_Iterator;
+
+	iter :: proc(self) -> Lines_Iterator { return self; }
+
+	next :: proc(self: inout Lines_Iterator) -> (string_view, bool) {
+		if (self.done) { return "", false; }
+		at, found := index_byte(self.rest, u8('\n'));
+		if (!found) {
+			self.done = true;
+			if (len(self.rest) == 0) { return "", false; }
+			return self.rest, true;
+		}
+		line := self.rest[0:at];
+		// A byte read, not a subrange: `len(line) - 1` is the middle of a code
+		// point whenever the line ends with a multi-byte one.
+		if (len(line) > 0 && line.bytes()[len(line) - 1] == u8('\r')) {
+			line = line[0:len(line) - 1];
+		}
+		self.rest = self.rest[at + 1:];
+		return line, true;
+	}
+}

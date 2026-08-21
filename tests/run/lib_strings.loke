@@ -1,0 +1,112 @@
+package main; import "core:fmt"; import "core:strings"; import "core:mem";
+
+// `core:strings` end to end (standard-library-plan stage 1).
+
+main :: proc() {
+	text: string_view = "Hej, världen";
+
+	// Queries. Every index is a byte offset, so `värld` starts at 5.
+	fmt.println(strings.contains(text, "värld"));
+	fmt.println(strings.contains(text, "world"));
+	fmt.println(strings.starts_with(text, "Hej"));
+	fmt.println(strings.ends_with(text, "en"));
+	at, found := strings.index(text, "v");
+	fmt.println(at);
+	fmt.println(found);
+	missing, missing_ok := strings.index(text, "zz");
+	fmt.println(missing);
+	fmt.println(missing_ok);
+	last, _ := strings.last_index("abcabc", "b");
+	fmt.println(last);
+	byte_at, _ := strings.index_byte(text, u8(','));
+	fmt.println(byte_at);
+	rune_at, _ := strings.index_rune(text, 'ä');
+	fmt.println(rune_at);
+	fmt.println(strings.count("a,b,c", ","));
+	fmt.println(strings.count("aaaa", "aa"));
+
+	// The documented empty-needle behaviour.
+	empty_at, empty_ok := strings.index("abc", "");
+	fmt.println(empty_at);
+	fmt.println(empty_ok);
+	empty_last, _ := strings.last_index("abc", "");
+	fmt.println(empty_last);
+	fmt.println(strings.count("abc", ""));
+
+	// Trimming borrows: no allocation, and Unicode whitespace counts.
+	padded: string_view = "  hi \t";
+	fmt.println(strings.trim_space(padded));
+	fmt.println(len(strings.trim_left_space(padded)));
+	fmt.println(strings.trim_right_space("hi  ") == "hi");
+	fmt.println(strings.trim("xxhixx", "x"));
+	fmt.println(len(strings.trim_space("   ")));
+
+	before, after, cut_ok := strings.cut("key=value", "=");
+	fmt.println(before);
+	fmt.println(after);
+	fmt.println(cut_ok);
+	whole, tail, no_cut := strings.cut("key", "=");
+	fmt.println(whole);
+	fmt.println(len(tail));
+	fmt.println(no_cut);
+
+	// Iterators.
+	foreach (part in strings.split("a,b,,c", ",")) {
+		fmt.println(len(part));
+	}
+	foreach (field in strings.fields("  one\ttwo   three ")) {
+		fmt.println(field);
+	}
+	foreach (line in strings.lines("first\r\nsecond\nthird")) {
+		fmt.println(line);
+	}
+	count := 0;
+	foreach (line in strings.lines("trailing\n")) {
+		count += 1;
+	}
+	fmt.println(count);
+
+	// Allocating transformations.
+	parts := [?]string_view{"a", "b", "c"};
+	fmt.println(strings.join(parts[:], "-"));
+	fmt.println(strings.join(parts[:]));
+	fmt.println(strings.repeat("ab", 3));
+	fmt.println(len(strings.repeat("ab", 0)));
+	fmt.println(strings.replace("a.b.c", ".", "/"));
+	fmt.println(strings.replace("a.b.c", ".", "/", 1));
+	fmt.println(strings.to_upper("hej å"));
+	fmt.println(strings.to_lower("HEJ Å"));
+	fmt.println(strings.clone(text));
+
+	// The builder. Its zero value is usable and allocator-unbound.
+	builder: strings.String_Builder = {};
+	builder.append("hello");
+	builder.append(' ');
+	builder.append("värld");
+	builder.append_byte_ascii(u8('!'));
+	fmt.println(builder.len());
+	message := builder.finish();
+	fmt.println(message);
+	fmt.println(builder.len());
+
+	// And it is reusable: the allocation survives `finish`.
+	builder.append("again");
+	fmt.println(builder.finish());
+
+	// An explicit allocator reaches both the buffer and the finished string.
+	arena := mem.Arena();
+	scoped := strings.init(arena.allocator());
+	scoped.append("in the arena");
+	fmt.println(scoped.clone_string(mem.default_allocator()));
+
+	// The fallible surface reports instead of panicking.
+	fallible: strings.String_Builder = {};
+	if (fallible.try_reserve(16) != nil) { fmt.println("reserve failed"); }
+	if (fallible.try_append("ok") != nil) { fmt.println("append failed"); }
+	if (fallible.try_append('!') != nil) { fmt.println("append failed"); }
+	if (fallible.try_append_byte_ascii(u8('?')) != nil) { fmt.println("append failed"); }
+	done, error := fallible.try_finish();
+	fmt.println(done);
+	fmt.println(error == nil);
+	fmt.println(fallible.len());
+}

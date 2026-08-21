@@ -691,19 +691,40 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		k.file, k.file_node = outer_file, outer_file_node
 	}
 
+	// Inference binds `$` names; ranking is `build_candidate`'s job against the
+	// substituted signature. So an argument a *name* claims goes to its own
+	// parameter, an omitted one with a default is simply not bound here — the
+	// instance's own signature carries the default — and every remaining argument
+	// fills a variadic pack.
+	claimed := make([]bool, len(args), k.c.semantic_allocator)
+	compile_time := make([]bool, len(args), k.c.semantic_allocator)
+	next := 0
 	position := 0
 	for parameter in literal.signature.params {
+		if parameter.mode == .Variadic {
+			// A pattern in the element type binds from the first of the remaining
+			// arguments; the rest are ranked, not matched.
+			if index, found := claim_argument(args, INVALID_IDENTIFIER, &next, claimed); found {
+				match_type_pattern(k, parameter.type, args[index].type, scope, &bindings)
+			}
+			for {
+				if _, found := claim_argument(args, INVALID_IDENTIFIER, &next, claimed); !found {
+					break
+				}
+			}
+			continue
+		}
 		for entry in parameter.names {
-			if position >= len(args) {
+			position += 1
+			index, found := claim_argument(args, entry.name.id, &next, claimed)
+			if !found {
+				if parameter.default != nil {
+					continue
+				}
 				result.reason = "it needs more arguments than were supplied"
 				return result
 			}
-			arg := args[position]
-			position += 1
-			if arg.name != INVALID_IDENTIFIER {
-				result.reason = "a generic procedure binds its arguments positionally"
-				return result
-			}
+			arg := args[index]
 			if !entry.is_poly {
 				// An ordinary runtime parameter, whose written type may still be a
 				// pattern binding parts of the argument's type.
@@ -716,9 +737,9 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 					)
 					return result
 				}
-				append(&runtime, arg)
 				continue
 			}
+			compile_time[index] = true
 
 			// A `$` parameter is a compile-time input. Its declared type may itself
 			// be `$I`, which binds the argument's own type.
@@ -737,21 +758,65 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			}
 		}
 	}
-	if position < len(args) {
-		result.reason = fmt.aprintf(
-			"it takes %d argument%s, found %d",
-			position,
-			position == 1 ? "" : "s",
-			len(args),
-			allocator = k.c.semantic_allocator,
-		)
-		return result
+	// An argument no parameter claimed, named or positional, is the extra one.
+	for _, index in args {
+		if !claimed[index] {
+			result.reason = fmt.aprintf(
+				"it takes %d argument%s, found %d",
+				position,
+				position == 1 ? "" : "s",
+				len(args),
+				allocator = k.c.semantic_allocator,
+			)
+			return result
+		}
+	}
+	// The runtime arguments keep their *written* order, because that is the order
+	// `build_candidate` ranks them in: an unnamed argument fills the slot at its
+	// own index, and a named one finds its parameter by name.
+	for arg, index in args {
+		if !compile_time[index] {
+			append(&runtime, arg)
+		}
 	}
 
 	result.bindings = bindings[:]
 	result.runtime_args = runtime[:]
 	result.ok = true
 	return result
+}
+
+// The argument a parameter takes: the one written with its name if there is one,
+// otherwise the next unclaimed positional argument. Named arguments are matched
+// first so that `f(reader, limit = 5)` binds `limit` to its own parameter rather
+// than to the one it sits next to.
+@(private = "file")
+claim_argument :: proc(
+	args: []Arg_Info, name: Identifier_Id, next: ^int, claimed: []bool,
+) -> (int, bool) {
+	if name != INVALID_IDENTIFIER {
+		for arg, index in args {
+			if !claimed[index] && arg.name == name {
+				claimed[index] = true
+				return index, true
+			}
+		}
+	}
+	for next^ < len(args) {
+		index := next^
+		next^ += 1
+		if claimed[index] {
+			continue
+		}
+		if args[index].name != INVALID_IDENTIFIER {
+			// A named argument belongs to the parameter it names, so it never fills a
+			// positional slot; the parameter it names claims it above.
+			continue
+		}
+		claimed[index] = true
+		return index, true
+	}
+	return -1, false
 }
 
 // A `$N: int` or `$T: type` argument. `type` receives a type; everything else

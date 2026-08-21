@@ -1,6 +1,6 @@
-%t108 = getelementptr inbounds %struct.Point.36, ptr %p.106, i32 0, i32 0
-%t118 = getelementptr inbounds %struct.Point.36, ptr %p.106, i32 0, i32 1
-%t120 = sext i32 %t119 to i64
-%id.129 = alloca i64
-store i64 2, ptr %id.129
-store i64 1, ptr %other.131
+%t274 = getelementptr inbounds %struct.Point.36, ptr %p.272, i32 0, i32 0
+%t284 = getelementptr inbounds %struct.Point.36, ptr %p.272, i32 0, i32 1
+%t286 = sext i32 %t285 to i64
+%id.295 = alloca i64
+store i64 2, ptr %id.295
+store i64 1, ptr %other.297

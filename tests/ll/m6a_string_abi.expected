@@ -4,5 +4,5 @@ declare void @loke_rt_v1_string_retain(i64)
 declare void @loke_rt_v1_string_release(i64)
 call void @loke_rt_v1_string_retain(i64
 call void @loke_rt_v1_string_release(i64
-store %loke.string { ptr @.str.3, i64 3, i64 1 }, ptr %literal.116
+store %loke.string { ptr @.str.3, i64 3, i64 1 }, ptr %literal.282
 @.str.3 = private unnamed_addr constant [4 x i8] c"hej\00"

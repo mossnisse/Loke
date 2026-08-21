@@ -1,0 +1,462 @@
+// Standard streams, line input, and terminal key events (standard-library-plan
+// "`core:term`").
+//
+// Terminal input has two levels. Line input is the default for a command-line
+// program and works when the standard handles are redirected to pipes or files.
+// Key events are an explicit terminal-only facility: a scoped `Raw_Mode`, not a
+// global keyboard hook and not GUI input.
+//
+// **Importing this package does nothing.** It performs no I/O, reads no
+// environment state, and changes no terminal mode. The standard handles are
+// acquired by a call, and raw mode exists only while a `Raw_Mode` value does.
+@(public)
+package term;
+
+import "core:encoding/utf16";
+import "core:io";
+import "core:mem";
+import "core:strings";
+import "core:unsafe";
+
+// A borrowed process standard handle. These lightweight values do not own the
+// handle and cannot close it — the process does, and outlives every one of them.
+Input :: struct {
+	@(private) handle: int,
+}
+
+Output :: struct {
+	@(private) handle: int,
+}
+
+impl Input {
+	// The raw byte stream, which is what makes `Input` an `io.Reader`.
+	//
+	// ponytail: bytes, through `ReadFile`. When the handle is a real console
+	// rather than a pipe, those bytes are in the console's input code page, not
+	// UTF-8 — so this is the right entry for redirected input and for ASCII, and
+	// `read_line` below is what a program should use for interactive text. A
+	// UTF-8 console reader needs a buffer that survives between calls, which this
+	// deliberately non-owning value does not have.
+	read :: proc(self: inout Input, destination: []mut u8) -> (int, io.Error) {
+		if (len(destination) == 0) { return 0, nil; }
+		return read_handle(self.handle, destination);
+	}
+}
+
+impl Output {
+	write :: proc(self: inout Output, source: []u8) -> (int, io.Error) {
+		if (len(source) == 0) { return 0, nil; }
+		return write_handle(self.handle, source);
+	}
+}
+
+stdin :: proc() -> Input { return Input{standard_handle(.Input)}; }
+stdout :: proc() -> Output { return Output{standard_handle(.Output)}; }
+stderr :: proc() -> Output { return Output{standard_handle(.Error)}; }
+
+@(private)
+Stream :: enum {Input, Output, Error}
+
+// One line from standard input, without its ending unless `keep_ending` asks.
+//
+// A real console is read as UTF-16 and converted, so typed non-ASCII text
+// arrives intact; a redirected handle is read as bytes and validated as UTF-8.
+// End of input before any byte is `End_Of_Input`.
+read_line :: proc(
+	allocator: Allocator = mem.default_allocator(),
+	options: io.Line_Options = {},
+) -> (string, io.Error) {
+	source := stdin();
+	if (is_console(source.handle)) {
+		return read_console_line(source.handle, allocator, options);
+	}
+	return io.read_line(inout source, allocator, options);
+}
+
+// The label, then a line. It returns an output failure as well as an input one,
+// and does not add a newline of its own.
+//
+// There is nothing to flush: this package's `Output` is unbuffered, so the label
+// has reached the operating system before the read begins.
+prompt :: proc(
+	label: string_view,
+	allocator: Allocator = mem.default_allocator(),
+	options: io.Line_Options = {},
+) -> (text: string, error: io.Error) {
+	out := stdout();
+	text = "";
+	io.write_string(inout out, label) or_return;
+	return read_line(allocator, options);
+}
+
+// ------------------------------------------------------------- key events --
+
+Key :: enum {
+	// The event carries a scalar value in `value`.
+	Character,
+	Up, Down, Left, Right,
+	Home, End, Page_Up, Page_Down,
+	Insert, Delete, Backspace, Enter, Escape, Tab,
+	F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+	// A key this decoder has no name for. `value` is zero.
+	Unknown,
+}
+
+Key_Event :: struct {
+	key:     Key,
+	value:   rune,
+	shift:   bool,
+	control: bool,
+	alt:     bool,
+}
+
+Raw_Options :: struct {
+	// By default Ctrl+C keeps its ordinary meaning and interrupts the process.
+	// Asking for it as a key event means the program is responsible for
+	// terminating itself.
+	interrupt_as_key: bool,
+}
+
+// ------------------------------------------------------------- the platform --
+
+when (LOKE_OS == .Windows) {
+
+foreign import kernel32 "system:kernel32.lib";
+
+@(private) STD_INPUT :: 0xFFFFFFF6;  // -10
+@(private) STD_OUTPUT :: 0xFFFFFFF5; // -11
+@(private) STD_ERROR :: 0xFFFFFFF4;  // -12
+
+@(private) ENABLE_PROCESSED_INPUT :: 0x0001;
+@(private) ENABLE_LINE_INPUT :: 0x0002;
+@(private) ENABLE_ECHO_INPUT :: 0x0004;
+
+@(private) KEY_EVENT :: 0x0001;
+@(private) RIGHT_ALT_PRESSED :: 0x0001;
+@(private) LEFT_ALT_PRESSED :: 0x0002;
+@(private) RIGHT_CTRL_PRESSED :: 0x0004;
+@(private) LEFT_CTRL_PRESSED :: 0x0008;
+@(private) SHIFT_PRESSED :: 0x0010;
+
+foreign kernel32 {
+	@(link_name="GetStdHandle")
+	rt_std_handle :: proc "stdcall" (which: u32) -> int ---;
+	@(link_name="ReadFile")
+	rt_read_file :: proc "stdcall" (
+		handle: int, buffer: [^]u8, count: u32, read: ^u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="WriteFile")
+	rt_write_file :: proc "stdcall" (
+		handle: int, buffer: [^]u8, count: u32, written: ^u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="GetLastError")
+	rt_last_error :: proc "stdcall" () -> u32 ---;
+	@(link_name="GetConsoleMode")
+	rt_get_console_mode :: proc "stdcall" (handle: int, mode: ^u32) -> i32 ---;
+	@(link_name="SetConsoleMode")
+	rt_set_console_mode :: proc "stdcall" (handle: int, mode: u32) -> i32 ---;
+	@(link_name="ReadConsoleW")
+	rt_read_console :: proc "stdcall" (
+		handle: int, buffer: [^]u16, count: u32, read: ^u32, control: rawptr,
+	) -> i32 ---;
+	@(link_name="ReadConsoleInputW")
+	rt_read_console_input :: proc "stdcall" (
+		handle: int, records: rawptr, count: u32, read: ^u32,
+	) -> i32 ---;
+	@(link_name="SetConsoleCtrlHandler")
+	rt_set_ctrl_handler :: proc "stdcall" (
+		handler: proc "stdcall" (event: u32) -> i32, add: i32,
+	) -> i32 ---;
+}
+
+// `INPUT_RECORD` with the `KEY_EVENT_RECORD` arm written out: 20 bytes,
+// alignment 4. Every other arm of the union is no larger, so a key event that
+// arrives as one of them is read and skipped by `event_type`.
+@(private)
+Input_Record :: struct {
+	event_type:    u16,
+	@(private) pad: u16,
+	key_down:      i32,
+	repeat_count:  u16,
+	virtual_key:   u16,
+	virtual_scan:  u16,
+	unicode_char:  u16,
+	control_state: u32,
+}
+
+@(private)
+standard_handle :: proc(stream: Stream) -> int {
+	if (stream == .Input) { return rt_std_handle(u32(STD_INPUT)); }
+	if (stream == .Output) { return rt_std_handle(u32(STD_OUTPUT)); }
+	return rt_std_handle(u32(STD_ERROR));
+}
+
+// Whether the handle is a real console rather than a pipe or a file. It is also
+// exactly the question `begin_raw` has to answer.
+@(private)
+is_console :: proc(handle: int) -> bool {
+	mode: u32 = 0;
+	return rt_get_console_mode(handle, &mode) != 0;
+}
+
+@(private)
+from_last_error :: proc(operation: io.Operation) -> io.Error {
+	native := rt_last_error();
+	code := io.Code.Other;
+	if (native == 109 || native == 232) { code = .Broken_Pipe; }
+	else if (native == 38) { code = .End_Of_Input; }
+	else if (native == 5) { code = .Permission_Denied; }
+	else if (native == 6) { code = .Not_A_Terminal; }
+	else if (native == 995) { code = .Interrupted; }
+	return io.make_error(code, operation, native);
+}
+
+@(private)
+read_handle :: proc(handle: int, destination: []mut u8) -> (int, io.Error) {
+	read: u32 = 0;
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(len(destination)), &read, nil) == 0) {
+		error := from_last_error(.Read);
+		if (io.is(error, .Broken_Pipe)) {
+			return 0, io.make_error(.End_Of_Input, .Read);
+		}
+		return 0, error;
+	}
+	if (read == 0) {
+		return 0, io.make_error(.End_Of_Input, .Read);
+	}
+	return int(read), nil;
+}
+
+@(private)
+write_handle :: proc(handle: int, source: []u8) -> (int, io.Error) {
+	written: u32 = 0;
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(len(source)), &written, nil) == 0) {
+		return 0, from_last_error(.Write);
+	}
+	return int(written), nil;
+}
+
+// A console delivers UTF-16, one cooked line at a time. The loop is for a line
+// longer than the buffer, not for the ordinary case.
+@(private)
+read_console_line :: proc(
+	handle: int, allocator: Allocator, options: io.Line_Options,
+) -> (string, io.Error) {
+	builder := strings.init(allocator);
+	units: [512]u16 = {};
+	total := 0;
+	for (;;) {
+		read: u32 = 0;
+		if (rt_read_console(handle, unsafe.raw_data(units[:]), 512, &read, nil) == 0) {
+			return "", from_last_error(.Read_Line);
+		}
+		if (read == 0) {
+			// Ctrl+Z at the start of a line is the console's end of input.
+			if (total == 0) {
+				return "", io.make_error(.End_Of_Input, .Read_Line);
+			}
+			break;
+		}
+		count := int(read);
+		total += count;
+		ended := count > 0 && units[count - 1] == u16('\n');
+		if (ended && !options.keep_ending) {
+			count -= 1;
+			if (count > 0 && units[count - 1] == u16('\r')) { count -= 1; }
+		}
+		chunk, decode_error := utf16.decode(units[0:count], allocator);
+		if (decode_error != nil) {
+			return "", io.make_error(.Invalid_Data, .Read_Line);
+		}
+		builder.append(chunk);
+		if (ended) { break; }
+	}
+	return builder.finish(), nil;
+}
+
+// The scoped resource. Its `drop` restores the exact previous mode on ordinary
+// return, `break`, `continue`, and — **only in a build using the `unwind` panic
+// strategy** — during panic unwinding.
+//
+// Under the `abort` strategy no cleanup is guaranteed, and `os.exit` runs no
+// `defer`, no `drop`, and no thread-local cleanup on any strategy: a program
+// that calls `os.exit` while raw leaves the user's terminal raw. Because a
+// wedged terminal outlives the process that wedged it, `begin_raw` also
+// registers a console control handler, so Ctrl+C, Ctrl+Break, and closing the
+// window restore the mode without depending on Loke cleanup running at all.
+Raw_Mode :: struct {
+	@(private) handle:   int,
+	@(private) previous: u32,
+	@(private) live:     bool,
+	// A high surrogate whose low half has not arrived yet.
+	@(private) pending:  u16,
+}
+
+// The saved mode reachable from a control handler, which runs on a thread of the
+// operating system's choosing and can be given no argument of its own. This is
+// the one piece of process state the package keeps — and nothing writes it until
+// a caller asks for raw mode.
+@(private) handler_handle: int = 0;
+@(private) handler_mode: u32 = 0;
+@(private) handler_installed: bool = false;
+
+@(private)
+restore_handler :: proc "stdcall" (event: u32) -> i32 {
+	if (handler_handle != 0) {
+		rt_set_console_mode(handler_handle, handler_mode);
+	}
+	// FALSE: the next handler in the chain still runs, so the default terminating
+	// behaviour is unchanged. Restoring the mode is all this does.
+	return 0;
+}
+
+// Raw mode for the duration of the returned value. Redirected input is
+// `Not_A_Terminal`.
+begin_raw :: proc(
+	input: Input = stdin(), options: Raw_Options = {},
+) -> (Raw_Mode, io.Error) {
+	previous: u32 = 0;
+	if (rt_get_console_mode(input.handle, &previous) == 0) {
+		return Raw_Mode{}, io.make_error(.Not_A_Terminal, .Terminal_Mode);
+	}
+	wanted := previous & ~u32(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+	if (options.interrupt_as_key) {
+		wanted = wanted & ~u32(ENABLE_PROCESSED_INPUT);
+	}
+	if (rt_set_console_mode(input.handle, wanted) == 0) {
+		return Raw_Mode{}, from_last_error(.Terminal_Mode);
+	}
+	handler_handle = input.handle;
+	handler_mode = previous;
+	if (!handler_installed) {
+		rt_set_ctrl_handler(restore_handler, 1);
+		handler_installed = true;
+	}
+	return Raw_Mode{input.handle, previous, true, 0}, nil;
+}
+
+impl Raw_Mode {
+	// One owner of a terminal mode; a second would restore it twice, out of order.
+	try_clone :: ---;
+
+	drop :: proc(self: inout Raw_Mode) {
+		if (self.live) {
+			rt_set_console_mode(self.handle, self.previous);
+			self.live = false;
+			handler_handle = 0;
+		}
+	}
+
+	// Idempotent, and leaves the value inert even when the restore failed.
+	close :: proc(self: inout Raw_Mode) -> io.Error {
+		if (!self.live) { return nil; }
+		self.live = false;
+		handler_handle = 0;
+		if (rt_set_console_mode(self.handle, self.previous) == 0) {
+			return from_last_error(.Terminal_Mode);
+		}
+		return nil;
+	}
+
+	// One key event. Key releases, mouse events, focus changes, and window resizes
+	// are consumed and skipped: they belong to a later terminal package, and a
+	// caller of this one asked for keys.
+	//
+	// A repeat count is reported as that many individual events on later calls
+	// only if the platform sends them; this decoder does not expand one record
+	// into several, because doing so would reorder it against the next.
+	read_key :: proc(self: inout Raw_Mode) -> (Key_Event, io.Error) {
+		if (!self.live) {
+			return Key_Event{}, io.make_error(.Not_A_Terminal, .Read_Key);
+		}
+		record: Input_Record = {};
+		for (;;) {
+			read: u32 = 0;
+			if (rt_read_console_input(self.handle, &record, 1, &read) == 0) {
+				return Key_Event{}, from_last_error(.Read_Key);
+			}
+			if (read == 0) {
+				return Key_Event{}, io.make_error(.End_Of_Input, .Read_Key);
+			}
+			if (record.event_type != u16(KEY_EVENT) || record.key_down == 0) {
+				continue;
+			}
+			event, produced := decode_record(inout self, record);
+			if (produced) { return event, nil; }
+		}
+	}
+}
+
+// One native record to one event, or `false` when the record was only half of a
+// surrogate pair and the other half has still to arrive.
+@(private)
+decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> (Key_Event, bool) {
+	event: Key_Event = {};
+	event.shift = (record.control_state & u32(SHIFT_PRESSED)) != 0;
+	event.control =
+		(record.control_state & u32(LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+	event.alt = (record.control_state & u32(LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
+
+	unit := record.unicode_char;
+	if (mode.pending != 0) {
+		high := mode.pending;
+		mode.pending = 0;
+		if (unit >= 0xDC00 && unit <= 0xDFFF) {
+			combined := 0x10000 + ((int(high) - 0xD800) << 10) + (int(unit) - 0xDC00);
+			event.key = .Character;
+			event.value = rune(combined);
+			return event, true;
+		}
+	}
+	if (unit >= 0xD800 && unit <= 0xDBFF) {
+		mode.pending = unit;
+		return event, false;
+	}
+
+	// A named key first: Enter, Tab, Escape and Backspace all carry a control
+	// character as well, and the name is the more useful answer.
+	named := key_for(record.virtual_key);
+	if (named != .Unknown) {
+		event.key = named;
+		return event, true;
+	}
+	if (unit != 0) {
+		event.key = .Character;
+		event.value = rune(int(unit));
+		return event, true;
+	}
+	event.key = .Unknown;
+	return event, true;
+}
+
+@(private)
+key_for :: proc(virtual_key: u16) -> Key {
+	code := int(virtual_key);
+	if (code == 8) { return .Backspace; }
+	if (code == 9) { return .Tab; }
+	if (code == 13) { return .Enter; }
+	if (code == 27) { return .Escape; }
+	if (code == 33) { return .Page_Up; }
+	if (code == 34) { return .Page_Down; }
+	if (code == 35) { return .End; }
+	if (code == 36) { return .Home; }
+	if (code == 37) { return .Left; }
+	if (code == 38) { return .Up; }
+	if (code == 39) { return .Right; }
+	if (code == 40) { return .Down; }
+	if (code == 45) { return .Insert; }
+	if (code == 46) { return .Delete; }
+	if (code >= 112 && code <= 123) {
+		return Key(int(Key.F1) + (code - 112));
+	}
+	return .Unknown;
+}
+
+} else {
+
+// No non-Windows backend yet; `LOKE_OS` is a fixed `.Windows`, so this branch is
+// never selected.
+@(private)
+standard_handle :: proc(stream: Stream) -> int { return 0; }
+
+}

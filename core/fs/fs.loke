@@ -1,0 +1,680 @@
+// Files, directories, and file metadata (standard-library-plan "`core:fs`").
+//
+// `design.md`'s "Library types assumed by this specification" once put `open`,
+// `close`, and `Handle` in `core:os`. They live here: `core:os` is *process*
+// state, and the package that owns the argument vector should not also own file
+// handles. There is no `os.open` alias — one spelling for opening a file is the
+// point of the move.
+//
+// Everything platform-specific in this package sits behind `when (LOKE_OS ==
+// .Windows)` in this one file, over a foreign block per platform. Public
+// signatures describe portable behavior and normalized `io.Code`s; a native
+// error number reaches a caller only through `io.native_code_of`.
+@(public)
+package fs;
+
+import "core:encoding/utf16";
+import "core:io";
+import "core:mem";
+// The lexical half lives in `core:path`; aliased because `path` is also the
+// name every procedure here gives its first parameter.
+import lexical "core:path";
+import "core:strings";
+import "core:unsafe";
+
+// ------------------------------------------------------------- open modes --
+
+Access :: enum {Read, Write, Read_Write}
+
+Disposition :: enum {
+	Open_Existing,
+	Open_Or_Create,
+	Create_New,
+	Create_Or_Truncate,
+	Truncate_Existing,
+}
+
+Open_Options :: struct {
+	access:      Access,
+	disposition: Disposition,
+	// Every write begins at the current end of the file. This is not a
+	// cross-process transaction: two appending processes do not interleave their
+	// writes atomically merely because both opened in this mode.
+	append:      bool,
+}
+
+Seek_Origin :: enum {Start, Current, End}
+
+Kind :: enum {File, Directory, Other}
+
+Metadata :: struct {
+	kind:     Kind,
+	size:     u64,
+	// Nanoseconds since the Unix epoch. `core:time` will give this a type; until
+	// then it is the one unit the whole library can agree on.
+	modified: i64,
+}
+
+// The safe owning wrapper around a native file handle. Its fields are private,
+// its zero value is closed, cloning is disabled, and `drop` closes a live
+// handle.
+//
+// `File` satisfies both `io.Reader` and `io.Writer`: structural satisfaction is
+// a property of the static type, so it has both slots whatever options a
+// particular instance was opened with. Using an unsupported direction returns
+// `Unsupported` at run time.
+File :: struct {
+	@(private) handle:    Handle,
+	@(private) access:    Access,
+	@(private) appending: bool,
+}
+
+impl File {
+	// A second owner would close the same handle twice.
+	try_clone :: ---;
+
+	// A best-effort close. It cannot report a failure — `close` is what a caller
+	// uses to observe one.
+	drop :: proc(self: inout File) {
+		if (self.handle != NO_HANDLE) {
+			close_handle(self.handle);
+			self.handle = NO_HANDLE;
+		}
+	}
+
+	// Idempotent: the value is left inert even when the close itself failed.
+	close :: proc(self: inout File) -> io.Error {
+		if (self.handle == NO_HANDLE) { return nil; }
+		handle := self.handle;
+		self.handle = NO_HANDLE;
+		return close_handle(handle);
+	}
+
+	is_open :: proc(self) -> bool { return self.handle != NO_HANDLE; }
+
+	read :: proc(self: inout File, destination: []mut u8) -> (int, io.Error) {
+		if (len(destination) == 0) { return 0, nil; }
+		if (self.handle == NO_HANDLE) {
+			return 0, io.make_error(.Invalid_Data, .Read);
+		}
+		if (self.access == .Write) {
+			return 0, io.make_error(.Unsupported, .Read);
+		}
+		return read_handle(self.handle, destination);
+	}
+
+	write :: proc(self: inout File, source: []u8) -> (int, io.Error) {
+		if (len(source) == 0) { return 0, nil; }
+		if (self.handle == NO_HANDLE) {
+			return 0, io.make_error(.Invalid_Data, .Write);
+		}
+		if (self.access == .Read) {
+			return 0, io.make_error(.Unsupported, .Write);
+		}
+		return write_handle(self.handle, source);
+	}
+
+	seek :: proc(self: inout File, offset: i64, origin: Seek_Origin) -> (u64, io.Error) {
+		if (self.handle == NO_HANDLE) {
+			return 0, io.make_error(.Invalid_Data, .Seek);
+		}
+		return seek_handle(self.handle, offset, origin);
+	}
+
+	flush :: proc(self: inout File) -> io.Error {
+		if (self.handle == NO_HANDLE) { return nil; }
+		return flush_handle(self.handle);
+	}
+}
+
+open :: proc(path: string_view, options: Open_Options) -> (File, io.Error) {
+	return open_native(path, options);
+}
+
+open_read :: proc(path: string_view) -> (File, io.Error) {
+	return open(path, Open_Options{.Read, .Open_Existing, false});
+}
+
+// Creates the file, or truncates an existing one.
+create :: proc(path: string_view) -> (File, io.Error) {
+	return open(path, Open_Options{.Write, .Create_Or_Truncate, false});
+}
+
+append :: proc(path: string_view) -> (File, io.Error) {
+	return open(path, Open_Options{.Write, .Open_Or_Create, true});
+}
+
+// -------------------------------------------------- whole-file convenience --
+
+// The whole file as owned bytes. The `limit` contract is `io.read_to_end`'s: a
+// nonzero limit that would be exceeded returns `Limit_Exceeded` and no partial
+// result.
+read_bytes :: proc(
+	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
+) -> ([dynamic]u8, io.Error) {
+	file, error := open_read(path);
+	if (error != nil) {
+		return {}, error;
+	}
+	bytes, read_error := io.read_to_end(inout file, allocator, limit);
+	closed := file.close();
+	if (read_error != nil) { return bytes, read_error; }
+	return bytes, closed;
+}
+
+// The whole file as text. The bytes are validated: a file that is not UTF-8 is
+// `Invalid_Data`, never silently repaired.
+read_text :: proc(
+	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
+) -> (string, io.Error) {
+	bytes, error := read_bytes(path, allocator, limit);
+	if (error != nil) { return "", error; }
+	view, valid := string_view(bytes[:]);
+	if (!valid) {
+		return "", io.make_error(.Invalid_Data, .Read);
+	}
+	text, allocation := strings.try_clone(view, allocator);
+	if (allocation != nil) {
+		return "", io.from_allocator_error(allocation, .Read);
+	}
+	return text, nil;
+}
+
+// Truncates an existing file only after the target has been opened. This is not
+// an atomic replacement; a `replace_atomic` with documented same-filesystem and
+// durability guarantees can be added later.
+write_bytes :: proc(path: string_view, data: []u8) -> io.Error {
+	file := create(path) or_return;
+	error := io.write_all(inout file, data);
+	closed := file.close();
+	return error if error != nil else closed;
+}
+
+write_text :: proc(path: string_view, text: string_view) -> io.Error {
+	return write_bytes(path, text.bytes());
+}
+
+append_bytes :: proc(path: string_view, data: []u8) -> io.Error {
+	file := append(path) or_return;
+	error := io.write_all(inout file, data);
+	closed := file.close();
+	return error if error != nil else closed;
+}
+
+append_text :: proc(path: string_view, text: string_view) -> io.Error {
+	return append_bytes(path, text.bytes());
+}
+
+// ---------------------------------------------------------- the filesystem --
+
+metadata :: proc(path: string_view) -> (Metadata, io.Error) {
+	return metadata_native(path);
+}
+
+// False only for a definite not-found answer. A permission failure or an I/O
+// failure is still an error, because "I could not tell" is not "it is not
+// there".
+exists :: proc(path: string_view) -> (bool, io.Error) {
+	_, error := metadata(path);
+	if (error == nil) { return true, nil; }
+	if (io.is(error, .Not_Found)) { return false, nil; }
+	return false, error;
+}
+
+remove :: proc(path: string_view) -> io.Error { return remove_native(path); }
+
+rename :: proc(old_path: string_view, new_path: string_view) -> io.Error {
+	return rename_native(old_path, new_path);
+}
+
+create_directory :: proc(path: string_view) -> io.Error {
+	return create_directory_native(path);
+}
+
+// Every missing parent, then the directory itself. An existing directory is not
+// a failure.
+//
+// Nothing at or above the volume is a directory anything can create — `C:` is a
+// drive and a UNC prefix is a share — so the walk starts past whatever
+// `path.volume` finds.
+create_directories :: proc(path: string_view) -> io.Error {
+	bytes := path.bytes();
+	at := len(lexical.volume(path));
+	for (; at < len(bytes); at += 1) {
+		if (!is_separator(bytes[at]) || at == 0) { continue; }
+		parent := path[0:at];
+		if (len(parent) == 0) { continue; }
+		if (error := create_directory(parent); error != nil && !io.is(error, .Already_Exists)) {
+			return error;
+		}
+	}
+	if (error := create_directory(path); error != nil && !io.is(error, .Already_Exists)) {
+		return error;
+	}
+	return nil;
+}
+
+remove_directory :: proc(path: string_view) -> io.Error {
+	return remove_directory_native(path);
+}
+
+// A **move-only streaming reader**, not an owning array.
+//
+// This is not a preference. A `[dynamic]Directory_Entry` whose entries own their
+// name cannot be iterated by value today: `foreach` over a managed element is
+// rejected (L0504). An owning array a caller cannot loop over is not the simpler
+// option, so the reader yields one entry at a time, and a caller that wants an
+// array collects one itself.
+read_directory :: proc(
+	path: string_view, allocator: Allocator = mem.default_allocator(),
+) -> (Directory_Reader, io.Error) {
+	return read_directory_native(path, allocator);
+}
+
+Directory_Entry :: struct {
+	// Borrowed from the reader, and valid only until the next `next`. Clone it to
+	// keep it.
+	name: string_view,
+	kind: Kind,
+}
+
+@(private)
+is_separator :: proc(value: u8) -> bool {
+	return value == u8('\\') || value == u8('/');
+}
+
+// ------------------------------------------------------------- the platform --
+
+when (LOKE_OS == .Windows) {
+
+foreign import kernel32 "system:kernel32.lib";
+
+// A `HANDLE` is pointer-sized; carrying it as an integer is what lets the
+// invalid value, which Windows spells as -1, be compared at all.
+@(private) Handle :: int;
+@(private) NO_HANDLE :: 0;
+@(private) INVALID_HANDLE :: -1;
+
+@(private) GENERIC_READ  :: 0x80000000;
+@(private) GENERIC_WRITE :: 0x40000000;
+@(private) FILE_APPEND_DATA :: 0x0004;
+@(private) SHARE_ALL :: 0x00000007;
+@(private) CREATE_NEW :: 1;
+@(private) CREATE_ALWAYS :: 2;
+@(private) OPEN_EXISTING :: 3;
+@(private) OPEN_ALWAYS :: 4;
+@(private) TRUNCATE_EXISTING :: 5;
+@(private) FILE_ATTRIBUTE_NORMAL :: 0x80;
+@(private) FILE_ATTRIBUTE_DIRECTORY :: 0x10;
+@(private) INVALID_FILE_ATTRIBUTES :: 0xFFFFFFFF;
+@(private) MOVEFILE_REPLACE_EXISTING :: 0x1;
+
+// The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
+@(private) FILETIME_UNIX_EPOCH :: 116444736000000000;
+
+foreign kernel32 {
+	@(link_name="CreateFileW")
+	rt_create_file :: proc "stdcall" (
+		path: [^]u16, access: u32, share: u32, security: rawptr,
+		disposition: u32, flags: u32, template: int,
+	) -> int ---;
+	@(link_name="ReadFile")
+	rt_read_file :: proc "stdcall" (
+		handle: int, buffer: [^]u8, count: u32, read: ^u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="WriteFile")
+	rt_write_file :: proc "stdcall" (
+		handle: int, buffer: [^]u8, count: u32, written: ^u32, overlapped: rawptr,
+	) -> i32 ---;
+	@(link_name="CloseHandle")
+	rt_close_handle :: proc "stdcall" (handle: int) -> i32 ---;
+	@(link_name="SetFilePointerEx")
+	rt_set_file_pointer :: proc "stdcall" (
+		handle: int, distance: i64, new_position: ^i64, method: u32,
+	) -> i32 ---;
+	@(link_name="FlushFileBuffers")
+	rt_flush :: proc "stdcall" (handle: int) -> i32 ---;
+	@(link_name="GetLastError")
+	rt_last_error :: proc "stdcall" () -> u32 ---;
+	@(link_name="DeleteFileW")
+	rt_delete_file :: proc "stdcall" (path: [^]u16) -> i32 ---;
+	@(link_name="MoveFileExW")
+	rt_move_file :: proc "stdcall" (from: [^]u16, to: [^]u16, flags: u32) -> i32 ---;
+	@(link_name="CreateDirectoryW")
+	rt_create_directory :: proc "stdcall" (path: [^]u16, security: rawptr) -> i32 ---;
+	@(link_name="RemoveDirectoryW")
+	rt_remove_directory :: proc "stdcall" (path: [^]u16) -> i32 ---;
+	@(link_name="GetFileAttributesExW")
+	rt_file_attributes :: proc "stdcall" (path: [^]u16, level: u32, data: rawptr) -> i32 ---;
+	@(link_name="FindFirstFileW")
+	rt_find_first :: proc "stdcall" (pattern: [^]u16, data: rawptr) -> int ---;
+	@(link_name="FindNextFileW")
+	rt_find_next :: proc "stdcall" (handle: int, data: rawptr) -> i32 ---;
+	@(link_name="FindClose")
+	rt_find_close :: proc "stdcall" (handle: int) -> i32 ---;
+}
+
+// `WIN32_FILE_ATTRIBUTE_DATA`: 36 bytes, alignment 4. Each `FILETIME` is two
+// `DWORD`s rather than a `u64`, which is what keeps the layout exact.
+@(private)
+File_Attribute_Data :: struct {
+	attributes:  u32,
+	created:     [2]u32,
+	accessed:    [2]u32,
+	written:     [2]u32,
+	size_high:   u32,
+	size_low:    u32,
+}
+
+// `WIN32_FIND_DATAW`: 592 bytes, alignment 4.
+@(private)
+Find_Data :: struct {
+	attributes:  u32,
+	created:     [2]u32,
+	accessed:    [2]u32,
+	written:     [2]u32,
+	size_high:   u32,
+	size_low:    u32,
+	reserved0:   u32,
+	reserved1:   u32,
+	name:        [260]u16,
+	alternate:   [14]u16,
+}
+
+// Every path crosses here exactly once: UTF-8 in, zero-terminated UTF-16 out.
+// A path that cannot be represented is `Invalid_Path` rather than a silently
+// changed name.
+@(private)
+wide_path :: proc(path: string_view, operation: io.Operation) -> ([dynamic]u16, io.Error) {
+	units, error := utf16.encode(path, mem.default_allocator());
+	if (error != nil) {
+		return units, io.make_error(.Out_Of_Memory, operation);
+	}
+	if (len(path) == 0) {
+		return units, io.make_error(.Invalid_Path, operation);
+	}
+	return units, nil;
+}
+
+// One place turns a Windows error number into a portable code, so no public
+// signature has to mention either.
+@(private)
+from_last_error :: proc(operation: io.Operation) -> io.Error {
+	native := rt_last_error();
+	code := io.Code.Other;
+	if (native == 2 || native == 3) { code = .Not_Found; }
+	else if (native == 5 || native == 19 || native == 32) { code = .Permission_Denied; }
+	else if (native == 80 || native == 183) { code = .Already_Exists; }
+	else if (native == 8 || native == 14) { code = .Out_Of_Memory; }
+	else if (native == 38) { code = .End_Of_Input; }
+	else if (native == 109 || native == 232) { code = .Broken_Pipe; }
+	else if (native == 112) { code = .Out_Of_Space; }
+	else if (native == 123 || native == 161 || native == 206) { code = .Invalid_Path; }
+	else if (native == 995) { code = .Interrupted; }
+	else if (native == 50 || native == 1) { code = .Unsupported; }
+	return io.make_error(code, operation, native);
+}
+
+@(private)
+open_native :: proc(path: string_view, options: Open_Options) -> (File, io.Error) {
+	wide, path_error := wide_path(path, .Open);
+	if (path_error != nil) { return File{}, path_error; }
+
+	access: u32 = 0;
+	if (options.access == .Read || options.access == .Read_Write) {
+		access |= u32(GENERIC_READ);
+	}
+	if (options.access == .Write || options.access == .Read_Write) {
+		// Append mode asks for the append right specifically: the file system
+		// then starts every write at the end, whatever the file pointer says.
+		access |= u32(FILE_APPEND_DATA) if options.append else u32(GENERIC_WRITE);
+	}
+	disposition: u32 = u32(OPEN_EXISTING);
+	if (options.disposition == .Open_Or_Create) { disposition = u32(OPEN_ALWAYS); }
+	else if (options.disposition == .Create_New) { disposition = u32(CREATE_NEW); }
+	else if (options.disposition == .Create_Or_Truncate) { disposition = u32(CREATE_ALWAYS); }
+	else if (options.disposition == .Truncate_Existing) { disposition = u32(TRUNCATE_EXISTING); }
+
+	handle := rt_create_file(
+		unsafe.raw_data(wide), access, u32(SHARE_ALL), nil,
+		disposition, u32(FILE_ATTRIBUTE_NORMAL), 0,
+	);
+	if (handle == INVALID_HANDLE) {
+		return File{}, from_last_error(.Open);
+	}
+	return File{handle, options.access, options.append}, nil;
+}
+
+@(private)
+close_handle :: proc(handle: Handle) -> io.Error {
+	if (rt_close_handle(handle) == 0) {
+		return from_last_error(.Close);
+	}
+	return nil;
+}
+
+@(private)
+read_handle :: proc(handle: Handle, destination: []mut u8) -> (int, io.Error) {
+	wanted := len(destination);
+	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
+	read: u32 = 0;
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &read, nil) == 0) {
+		error := from_last_error(.Read);
+		// A read that ends at the end of a pipe is the end of input, not a fault.
+		if (io.is(error, .Broken_Pipe)) {
+			return 0, io.make_error(.End_Of_Input, .Read);
+		}
+		return 0, error;
+	}
+	if (read == 0) {
+		return 0, io.make_error(.End_Of_Input, .Read);
+	}
+	return int(read), nil;
+}
+
+@(private)
+write_handle :: proc(handle: Handle, source: []u8) -> (int, io.Error) {
+	wanted := len(source);
+	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
+	written: u32 = 0;
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &written, nil) == 0) {
+		return 0, from_last_error(.Write);
+	}
+	return int(written), nil;
+}
+
+// One call moves at most this many bytes: the count is a `DWORD`, and a caller's
+// slice is not.
+@(private) MAX_CHUNK :: 0x3FFFFFFF;
+
+@(private)
+seek_handle :: proc(handle: Handle, offset: i64, origin: Seek_Origin) -> (u64, io.Error) {
+	method: u32 = 0;
+	if (origin == .Current) { method = 1; }
+	else if (origin == .End) { method = 2; }
+	position: i64 = 0;
+	if (rt_set_file_pointer(handle, offset, &position, method) == 0) {
+		return 0, from_last_error(.Seek);
+	}
+	return u64(position), nil;
+}
+
+@(private)
+flush_handle :: proc(handle: Handle) -> io.Error {
+	if (rt_flush(handle) == 0) {
+		return from_last_error(.Flush);
+	}
+	return nil;
+}
+
+@(private)
+metadata_native :: proc(path: string_view) -> (Metadata, io.Error) {
+	wide, path_error := wide_path(path, .Metadata);
+	if (path_error != nil) { return Metadata{}, path_error; }
+	data: File_Attribute_Data = {};
+	if (rt_file_attributes(unsafe.raw_data(wide), 0, &data) == 0) {
+		return Metadata{}, from_last_error(.Metadata);
+	}
+	return Metadata{
+		kind_of(data.attributes),
+		(u64(data.size_high) << 32) | u64(data.size_low),
+		unix_nanoseconds(data.written),
+	}, nil;
+}
+
+@(private)
+kind_of :: proc(attributes: u32) -> Kind {
+	if ((attributes & u32(FILE_ATTRIBUTE_DIRECTORY)) != 0) { return .Directory; }
+	return .File;
+}
+
+// A `FILETIME` counts 100-nanosecond ticks from 1601; the library's unit is
+// nanoseconds from 1970.
+@(private)
+unix_nanoseconds :: proc(time: [2]u32) -> i64 {
+	ticks := (i64(time[1]) << 32) | i64(time[0]);
+	return (ticks - FILETIME_UNIX_EPOCH) * 100;
+}
+
+@(private)
+remove_native :: proc(path: string_view) -> io.Error {
+	wide, path_error := wide_path(path, .Remove);
+	if (path_error != nil) { return path_error; }
+	if (rt_delete_file(unsafe.raw_data(wide)) == 0) {
+		return from_last_error(.Remove);
+	}
+	return nil;
+}
+
+@(private)
+rename_native :: proc(old_path: string_view, new_path: string_view) -> io.Error {
+	from, from_error := wide_path(old_path, .Rename);
+	if (from_error != nil) { return from_error; }
+	to, to_error := wide_path(new_path, .Rename);
+	if (to_error != nil) { return to_error; }
+	if (rt_move_file(unsafe.raw_data(from), unsafe.raw_data(to), u32(MOVEFILE_REPLACE_EXISTING)) == 0) {
+		return from_last_error(.Rename);
+	}
+	return nil;
+}
+
+@(private)
+create_directory_native :: proc(path: string_view) -> io.Error {
+	wide, path_error := wide_path(path, .Create_Directory);
+	if (path_error != nil) { return path_error; }
+	if (rt_create_directory(unsafe.raw_data(wide), nil) == 0) {
+		return from_last_error(.Create_Directory);
+	}
+	return nil;
+}
+
+@(private)
+remove_directory_native :: proc(path: string_view) -> io.Error {
+	wide, path_error := wide_path(path, .Remove);
+	if (path_error != nil) { return path_error; }
+	if (rt_remove_directory(unsafe.raw_data(wide)) == 0) {
+		return from_last_error(.Remove);
+	}
+	return nil;
+}
+
+// The search handle plus the record Windows fills. `pending` is the entry
+// `FindFirstFileW` already produced: the first `next` consumes it rather than
+// advancing, which is what makes the first entry visible at all.
+Directory_Reader :: struct {
+	@(private) handle:    Handle,
+	@(private) pending:   bool,
+	@(private) data:      Find_Data,
+	// The decoded name of the current entry, kept alive exactly as long as the
+	// borrowed view a caller holds is valid.
+	@(private) current:   string,
+	@(private) allocator: Allocator,
+}
+
+impl Directory_Reader {
+	try_clone :: ---;
+
+	drop :: proc(self: inout Directory_Reader) {
+		if (self.handle != NO_HANDLE && self.handle != INVALID_HANDLE) {
+			rt_find_close(self.handle);
+			self.handle = NO_HANDLE;
+		}
+	}
+
+	close :: proc(self: inout Directory_Reader) -> io.Error {
+		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) { return nil; }
+		handle := self.handle;
+		self.handle = NO_HANDLE;
+		if (rt_find_close(handle) == 0) {
+			return from_last_error(.Read_Directory);
+		}
+		return nil;
+	}
+
+	// The next entry, or `ok == false` at the end of the directory. `.` and `..`
+	// are skipped: they are an artefact of the platform's enumeration, not
+	// entries a program asked for.
+	//
+	// ponytail: one allocation per entry, because the name is decoded into an
+	// owned `string` whose view is handed out. Decoding straight into a reused
+	// byte buffer would avoid it, and needs a UTF-16 decoder that writes into a
+	// caller's buffer — worth doing when a directory walk is measured.
+	next :: proc(self: inout Directory_Reader) -> (Directory_Entry, bool, io.Error) {
+		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) {
+			return Directory_Entry{}, false, nil;
+		}
+		for (;;) {
+			if (!self.pending) {
+				if (rt_find_next(self.handle, &self.data) == 0) {
+					error := from_last_error(.Read_Directory);
+					// ERROR_NO_MORE_FILES is the ordinary end of a directory.
+					if (io.native_code_of(error) == 18) {
+						return Directory_Entry{}, false, nil;
+					}
+					return Directory_Entry{}, false, error;
+				}
+			}
+			self.pending = false;
+			// A slice, not a copy: the record is 592 bytes and the name alone is 520.
+			units := self.data.name[:];
+			count := utf16.length_of(units);
+			name, decode_error := utf16.decode(units[0:count], self.allocator);
+			if (decode_error != nil) {
+				return Directory_Entry{}, false, io.make_error(.Invalid_Data, .Read_Directory);
+			}
+			self.current = name;
+			if (self.current == "." || self.current == "..") { continue; }
+			return Directory_Entry{self.current, kind_of(self.data.attributes)}, true, nil;
+		}
+	}
+}
+
+@(private)
+read_directory_native :: proc(
+	path: string_view, allocator: Allocator,
+) -> (Directory_Reader, io.Error) {
+	// `FindFirstFileW` takes a pattern, not a directory.
+	pattern := strings.join([]string_view{path, "*"}, "\\", mem.default_allocator());
+	wide, path_error := wide_path(pattern, .Read_Directory);
+	if (path_error != nil) { return Directory_Reader{}, path_error; }
+
+	reader: Directory_Reader = {};
+	reader.allocator = allocator;
+	handle := rt_find_first(unsafe.raw_data(wide), &reader.data);
+	if (handle == INVALID_HANDLE) {
+		return Directory_Reader{}, from_last_error(.Read_Directory);
+	}
+	reader.handle = handle;
+	reader.pending = true;
+	return reader, nil;
+}
+
+} else {
+
+// No non-Windows backend exists yet: `LOKE_OS` is a fixed `.Windows`, so this
+// branch is never selected. It is here so that adding a target is a matter of
+// filling in one `when` arm rather than restructuring the package.
+@(private) Handle :: int;
+@(private) NO_HANDLE :: 0;
+
+}

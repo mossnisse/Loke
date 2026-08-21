@@ -1,0 +1,31 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:term";
+
+// The standard library's first-release acceptance program
+// (standard-library-plan "First-release acceptance program"): a command-line
+// program that reads a line, reads and writes a text file, and reports a
+// failure — with no compiler-specific I/O built-in anywhere in it.
+
+run :: proc() -> io.Error {
+	name := term.prompt("Name: ") or_return;
+
+	// The file does not exist on the first run, which is not a failure here.
+	old := "";
+	if (fs.exists("greetings.txt") or_return) {
+		old = fs.read_text("greetings.txt") or_return;
+	}
+
+	line := "Hello, " + name + "!\n";
+	fs.write_text("greetings.txt", old + line) or_return;
+	return nil;
+}
+
+main :: proc() {
+	if (error := run(); error != nil) {
+		fmt.eprintln("error:", error);
+	}
+}

@@ -1,0 +1,45 @@
+package main;
+
+import "core:fmt";
+import "core:io";
+import "core:term";
+
+// Raw key input with guaranteed terminal restoration (standard-library-plan
+// "Raw mode and key events"). Run it from a real console — redirected input is
+// `Not_A_Terminal`, on purpose.
+//
+// `raw` is an ordinary managed local, so its `drop` restores the previous
+// console mode on return, on `break`, and — in a build using the `unwind` panic
+// strategy — during panic unwinding. It is *not* a termination guarantee:
+// `os.exit` runs no cleanup at all. That is why `begin_raw` also registers a
+// console control handler, which restores the mode when the window is closed or
+// Ctrl+C ends the process.
+
+describe :: proc(event: term.Key_Event) {
+	if (event.control) { fmt.print("ctrl+"); }
+	if (event.alt) { fmt.print("alt+"); }
+	if (event.shift) { fmt.print("shift+"); }
+	if (event.key == .Character) {
+		fmt.println("char", int(event.value));
+		return;
+	}
+	fmt.println(event.key);
+}
+
+run :: proc() -> io.Error {
+	raw := term.begin_raw() or_return;
+	fmt.println("keys (escape quits)");
+	for (;;) {
+		event := raw.read_key() or_return;
+		describe(event);
+		if (event.key == .Escape) { break; }
+	}
+	// The explicit close is what reports a failed restore; `drop` cannot.
+	return raw.close();
+}
+
+main :: proc() {
+	if (error := run(); error != nil) {
+		fmt.eprintln("error:", error);
+	}
+}

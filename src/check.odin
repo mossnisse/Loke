@@ -1665,11 +1665,15 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			symbol.type = final
 			if d.kind == .Const {
 				folded, evaluated := require_const(k, value, "a constant initialiser", "L0311")
-				if evaluated {
-					symbol.const_value = folded
+				// The evaluator may declare symbols of its own - an instantiation, a
+				// synthesised iterator - and `c.symbols` is a dynamic array, so the
+				// pointer taken before the call can be stale after it. Re-fetch it
+				// rather than writing the folded value into freed storage.
+				if updated := symbol_of(k.c, symbol_id); updated != nil && evaluated {
+					updated.const_value = folded
 					// A type-valued constant is an alias, and names a type.
-					if symbol.const_value.kind == .Type {
-						symbol.type = TYPE_TYPE
+					if updated.const_value.kind == .Type {
+						updated.type = TYPE_TYPE
 					}
 				}
 			}

@@ -20,6 +20,7 @@ STD_META :: "base:meta"
 STD_MEM :: "core:mem"
 STD_UNSAFE :: "core:unsafe"
 STD_FMT :: "core:fmt"
+STD_STRINGS :: "core:strings"
 
 // Called once per package, right after its scope exists and before any of its
 // own declarations are collected, so a source declaration colliding with a
@@ -76,6 +77,23 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 		contribute_builtin(c, pkg, "stderr_writer", .Fmt_Stderr_Writer, public = false)
 		contribute_builtin(c, pkg, "write_bytes", .Fmt_Write_Bytes, public = false)
 		contribute_builtin(c, pkg, "format_any", .Fmt_Format_Any, public = false)
+		// `fmt.to_string(allocator, ...)` has to create a `string` in storage the
+		// *caller* chose, which is the same primitive `core:strings` gets below.
+		// It is contributed here rather than imported from there because
+		// `core:fmt` is in almost every program: importing `core:strings` for one
+		// call measured at 397 to 4923 lines of IR for hello-world, since the whole
+		// imported package is emitted.
+		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
+	case STD_STRINGS:
+		// The standard-library plan's one unexpressible bridge: a copy of
+		// known-valid UTF-8 into string storage taken from a *supplied* allocator,
+		// reporting failure instead of applying a policy. Every built-in text
+		// operation allocates from the default provider, so nothing else in Loke
+		// can answer `strings.clone(text, allocator)`.
+		//
+		// Package-private: `core:strings` wraps it in `clone`/`try_clone`, and the
+		// rest of the library goes through those.
+		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
 	case STD_META:
 		// The compile-time reflection descriptors M4b already owns. They remain
 		// compile-time-only types: naming them does not make them storable.

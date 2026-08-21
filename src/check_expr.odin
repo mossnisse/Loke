@@ -2403,6 +2403,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 		return
+	case .Strings_Allocate:
+		check_strings_allocate(k, v, ident)
+		return
 	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
 		check_fmt_builtin(k, v, ident, sym.builtin)
 		return
@@ -2758,7 +2761,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Cap, .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .None, .Assert, .Panic, .Hash, .Iter,
+	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		return
 	}
@@ -2913,7 +2916,8 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Make,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
-	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
+	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
+	     .Strings_Allocate:
 		return
 	}
 
@@ -4092,7 +4096,10 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		case .Integer, .Rune:
 			return float_const(bi_to_f64(c, value.integer), info.bits), true
 		}
-	case .Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
+	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
+		// design.md "Zero values": `nil` is the zero of "pointer, multi-pointer,
+		// `rawptr`, procedure" alike. A multi-pointer is one word like the others,
+		// so the null constant is its zero exactly as it is a `^T`'s.
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
@@ -4147,6 +4154,13 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if type_kind(c, to) == .Union && union_holds(c, to, from) {
 		return true
 	}
+	// design.md: conversion from a concrete value to `any_view` is implicit when
+	// an `any_view` destination is expected, and never allocates. This sits above
+	// the untyped branches because a constant reaches an `any_view` through its
+	// default type - which is what every `..any_view` variadic is given.
+	if to == TYPE_ANY_VIEW && any_view_accepts(c, from) {
+		return true
+	}
 	if from == TYPE_UNTYPED_STRING {
 		// design.md "From a string literal to X": a literal's bytes have static
 		// lifetime, so it initializes an owning `string`, a borrowed view, and a
@@ -4184,11 +4198,6 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		case .Pointer, .Multi_Pointer:
 			return true
 		}
-	}
-	// design.md: conversion from a concrete value to `any_view` is implicit when
-	// an `any_view` destination is expected, and never allocates.
-	if to == TYPE_ANY_VIEW && any_view_accepts(c, from) {
-		return true
 	}
 	return false
 }

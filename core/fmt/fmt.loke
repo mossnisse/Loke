@@ -85,6 +85,53 @@ format_to :: proc(w: Writer, args: ..any_view) {
 	emit(w, ..args);
 }
 
+// The same formatting, into memory instead of a stream.
+//
+// The allocator is a required *leading* parameter, not a defaulted trailing one:
+// a variadic absorbs the trailing arguments, so nothing after it can be supplied
+// and nothing defaulted before it can be omitted.
+//
+// Together with `io.write_string` this is the simple fallback for any sink:
+// format in memory, then write the result and handle that write's error. To
+// append to a `strings.String_Builder`, pass the result to its own `append` —
+// that one line is why this package does not import `core:strings` for an
+// `append_to` of its own. Almost every program imports `core:fmt`, an imported
+// package is emitted whole, and the measured cost of that import was hello
+// world's IR going from 397 lines to 4923.
+@(public)
+to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
+	sink, made := make([dynamic]u8, 0, 64, allocator);
+	if (made != nil) {
+		panic("formatting allocation failed");
+	}
+	collector := Collector{sink};
+	emit(Writer{collect, &collector}, ..args);
+	view, ok := string_view(collector.bytes[:]);
+	if (!ok) {
+		// Every formatter writes UTF-8; a `format` overload that does not is the
+		// one way here, and a wrong one.
+		panic("formatted output is not valid UTF-8");
+	}
+	// The compiler contributes `allocate_string`: a copy of known-valid UTF-8
+	// into string storage from a *supplied* allocator. `core:strings` wraps the
+	// same primitive as `clone`.
+	text, allocation := allocate_string(view, allocator);
+	if (allocation != nil) {
+		panic("formatting allocation failed");
+	}
+	return text;
+}
+
+@(private)
+Collector :: struct { bytes: [dynamic]u8 }
+
+@(private)
+collect :: proc(state: rawptr, bytes: [^]u8, count: int) {
+	if (count <= 0) { return; }
+	collector := (^Collector)(state);
+	collector^.bytes.append(..bytes[0:count]);
+}
+
 @(private)
 emit :: proc(w: Writer, args: ..any_view) {
 	first := true;

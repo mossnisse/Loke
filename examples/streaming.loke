@@ -1,0 +1,71 @@
+package main;
+
+import "core:fmt";
+import "core:fs";
+import "core:io";
+import "core:os";
+import "core:term";
+
+// The three habits the standard library expects of a program that reads files it
+// did not write (standard-library-plan "First-release acceptance program"):
+//
+//   1. a bounded read for untrusted input, so a huge file cannot exhaust memory;
+//   2. streaming through a fixed buffer, so size does not decide feasibility;
+//   3. an explicit `close`, so a flush failure is observed rather than dropped.
+//
+// Usage: streaming <path>
+
+// Whole-file, but never more than a megabyte. Exceeding the limit destroys the
+// partial result and reports `Limit_Exceeded`.
+LIMIT :: 1024 * 1024;
+
+summarize :: proc(path: string_view) -> io.Error {
+	bytes := fs.read_bytes(path, limit = LIMIT) or_return;
+	fmt.println("bytes:", len(bytes));
+	return nil;
+}
+
+// The same file again, this time without holding it in memory: one fixed buffer,
+// however large the file is.
+count_lines :: proc(path: string_view) -> (int, io.Error) {
+	file, error := fs.open_read(path);
+	if (error != nil) { return 0, error; }
+
+	lines := 0;
+	window: [4096]u8 = {};
+	for (;;) {
+		count, read_error := file.read(window[:]);
+		foreach (index in 0 ..< count) {
+			if (window[index] == u8('\n')) { lines += 1; }
+		}
+		if (read_error != nil) {
+			if (io.is(read_error, .End_Of_Input)) { break; }
+			// The close still runs: `file` is a managed local, and its `drop`
+			// closes a live handle on every path out of this procedure.
+			return lines, read_error;
+		}
+	}
+
+	// The explicit close is the one that can report. `drop` would run anyway, but
+	// it cannot tell anyone what it found.
+	return lines, file.close();
+}
+
+run :: proc() -> io.Error {
+	if (os.args.len() < 2) {
+		out := term.stderr();
+		return io.write_string(inout out, "usage: streaming <path>\n");
+	}
+	path := os.view_at(1);
+	summarize(path) or_return;
+	lines, error := count_lines(path);
+	fmt.println("lines:", lines);
+	return error;
+}
+
+main :: proc() {
+	if (error := run(); error != nil) {
+		fmt.eprintln("error:", error);
+		os.exit(1);
+	}
+}

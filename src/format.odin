@@ -130,7 +130,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
-	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
+	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Strings_Allocate:
 		v.type = INVALID_TYPE
 		return
 	}

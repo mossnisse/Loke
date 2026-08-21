@@ -1,0 +1,307 @@
+// UTF-8 algorithms and efficient construction (standard-library-plan
+// "`core:strings`").
+//
+// The built-in `string` already owns validation, byte and rune counts,
+// comparison, slicing, concatenation, rune iteration and the conversions. This
+// package adds what those primitives do not: search, trimming, splitting,
+// joining, and a builder that turns repeated appends into one allocation.
+//
+// Every index and length here is a **byte offset**. A name says `rune` when it
+// means a scalar value; nothing in this package counts graphemes.
+//
+// The compiler contributes one package-private primitive:
+//
+//   allocate_string(text: string_view, allocator: Allocator)
+//       -> (string, Allocator_Error)
+//
+// which copies known-valid UTF-8 into string storage from a *supplied*
+// allocator. Every built-in text operation allocates from the default provider,
+// so this is the one thing a library cannot express — `clone` and `try_clone`
+// below are its public face, and every string-returning procedure in the rest of
+// the standard library goes through them.
+@(public)
+package strings;
+
+import "core:mem";
+
+// ------------------------------------------------------------ allocation --
+
+// A copy of `text` in storage from `allocator`. Failure follows the allocator's
+// failure policy, like every other implicitly allocating operation.
+clone :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
+	owned, error := allocate_string(text, allocator);
+	if (error != nil) {
+		panic("string allocation failed");
+	}
+	return owned;
+}
+
+// The fallible half: an empty string and the error, with nothing allocated.
+try_clone :: proc(
+	text: string_view, allocator: Allocator = mem.default_allocator(),
+) -> (string, Allocator_Error) {
+	return allocate_string(text, allocator);
+}
+
+// --------------------------------------------------------------- queries --
+
+// All of these are byte offsets, and all of them are non-allocating.
+//
+// The empty needle matches at offset zero, `last_index` answers `len(text)`,
+// and `count` answers `len(text) + 1` — one match before every byte and one
+// after the last.
+
+contains :: proc(text: string_view, needle: string_view) -> bool {
+	_, found := index(text, needle);
+	return found;
+}
+
+starts_with :: proc(text: string_view, prefix: string_view) -> bool {
+	if (len(prefix) > len(text)) { return false; }
+	return matches_at(text.bytes(), 0, prefix.bytes());
+}
+
+ends_with :: proc(text: string_view, suffix: string_view) -> bool {
+	if (len(suffix) > len(text)) { return false; }
+	return matches_at(text.bytes(), len(text) - len(suffix), suffix.bytes());
+}
+
+// Searching compares **bytes**, never subranges: slicing a view at an offset
+// that splits a code point is a runtime failure, and a candidate offset is not
+// known to be a boundary until it matches. A match always is one, because UTF-8
+// is self-synchronising — no valid sequence begins with a continuation byte.
+@(private)
+matches_at :: proc(text: []u8, offset: int, needle: []u8) -> bool {
+	foreach (value, index in needle) {
+		if (text[offset + index] != value) { return false; }
+	}
+	return true;
+}
+
+// ponytail: a naive O(len(text) * len(needle)) scan. Every first-release caller
+// searches short needles in short lines; a two-way or Boyer-Moore search goes
+// here when a measurement asks for one, behind this same signature.
+index :: proc(text: string_view, needle: string_view) -> (int, bool) {
+	if (len(needle) == 0) { return 0, true; }
+	if (len(needle) > len(text)) { return -1, false; }
+	haystack, wanted := text.bytes(), needle.bytes();
+	last := len(text) - len(needle);
+	for (offset := 0; offset <= last; offset += 1) {
+		if (matches_at(haystack, offset, wanted)) {
+			return offset, true;
+		}
+	}
+	return -1, false;
+}
+
+last_index :: proc(text: string_view, needle: string_view) -> (int, bool) {
+	if (len(needle) == 0) { return len(text), true; }
+	if (len(needle) > len(text)) { return -1, false; }
+	haystack, wanted := text.bytes(), needle.bytes();
+	for (offset := len(text) - len(needle); offset >= 0; offset -= 1) {
+		if (matches_at(haystack, offset, wanted)) {
+			return offset, true;
+		}
+	}
+	return -1, false;
+}
+
+index_byte :: proc(text: string_view, value: u8) -> (int, bool) {
+	bytes := text.bytes();
+	foreach (b, offset in bytes) {
+		if (b == value) { return offset, true; }
+	}
+	return -1, false;
+}
+
+// The byte offset where the scalar value begins. A rune never matches a
+// continuation byte of another one, because the loop only visits boundaries.
+index_rune :: proc(text: string_view, value: rune) -> (int, bool) {
+	foreach (codepoint, offset in text) {
+		if (codepoint == value) { return offset, true; }
+	}
+	return -1, false;
+}
+
+// Non-overlapping occurrences, left to right.
+count :: proc(text: string_view, needle: string_view) -> int {
+	if (len(needle) == 0) { return len(text) + 1; }
+	total := 0;
+	rest := text;
+	for (; len(rest) >= len(needle); ) {
+		at, found := index(rest, needle);
+		if (!found) { break; }
+		total += 1;
+		rest = rest[at + len(needle):];
+	}
+	return total;
+}
+
+// ------------------------------------------------------------- trimming --
+
+// design.md's rule for this package: whitespace is Unicode White_Space, not only
+// the ASCII five.
+is_space :: proc(value: rune) -> bool {
+	if (value == 0x20 || (value >= 0x09 && value <= 0x0D)) { return true; }
+	if (value < 0x85) { return false; }
+	if (value == 0x85 || value == 0xA0 || value == 0x1680) { return true; }
+	if (value >= 0x2000 && value <= 0x200A) { return true; }
+	if (value == 0x2028 || value == 0x2029 || value == 0x202F) { return true; }
+	return value == 0x205F || value == 0x3000;
+}
+
+trim_left_space :: proc(text: string_view) -> string_view {
+	foreach (codepoint, offset in text) {
+		if (!is_space(codepoint)) { return text[offset:]; }
+	}
+	return text[len(text):];
+}
+
+// There is no reverse rune iteration, so the forward walk remembers where the
+// last non-space run ended. One pass either way.
+trim_right_space :: proc(text: string_view) -> string_view {
+	end := 0;
+	foreach (codepoint, offset in text) {
+		if (!is_space(codepoint)) {
+			end = offset + rune_size(codepoint);
+		}
+	}
+	return text[0:end];
+}
+
+trim_space :: proc(text: string_view) -> string_view {
+	return trim_left_space(trim_right_space(text));
+}
+
+// Trims any scalar value that appears in `cutset` from both ends.
+trim :: proc(text: string_view, cutset: string_view) -> string_view {
+	start := len(text);
+	end := 0;
+	foreach (codepoint, offset in text) {
+		if (!contains_rune(cutset, codepoint)) {
+			if (offset < start) { start = offset; }
+			end = offset + rune_size(codepoint);
+		}
+	}
+	if (start >= end) { return text[len(text):]; }
+	return text[start:end];
+}
+
+@(private)
+contains_rune :: proc(set: string_view, value: rune) -> bool {
+	_, found := index_rune(set, value);
+	return found;
+}
+
+// The UTF-8 length of one scalar value, which is what a byte offset must
+// advance by to reach the next boundary.
+@(private)
+rune_size :: proc(value: rune) -> int {
+	if (value < 0x80) { return 1; }
+	if (value < 0x800) { return 2; }
+	if (value < 0x10000) { return 3; }
+	return 4;
+}
+
+// ------------------------------------------------------------- splitting --
+
+// `before, after, ok` around the first occurrence of `separator`. When it does
+// not occur, `before` is the whole text and `ok` is false.
+cut :: proc(
+	text: string_view, separator: string_view,
+) -> (before: string_view, after: string_view, ok: bool) {
+	at, found := index(text, separator);
+	if (!found) {
+		return text, text[len(text):], false;
+	}
+	return text[0:at], text[at + len(separator):], true;
+}
+
+// ------------------------------------------------- allocating transforms --
+
+// Every one of these builds its result in a `String_Builder` and finishes it
+// with the supplied allocator, so one growing buffer becomes one string.
+//
+// They follow the allocator's failure policy. There is no `try_` twin: a caller
+// that must survive allocation failure builds the same result in a builder,
+// where `try_append` and `try_finish` report instead of panicking.
+
+join :: proc(
+	parts: []string_view,
+	separator: string_view = "",
+	allocator: Allocator = mem.default_allocator(),
+) -> string {
+	builder := init(allocator);
+	foreach (part, index in parts) {
+		if (index > 0) { builder.append(separator); }
+		builder.append(part);
+	}
+	return builder.finish();
+}
+
+repeat :: proc(
+	text: string_view, times: int, allocator: Allocator = mem.default_allocator(),
+) -> string {
+	if (times < 0) { panic("repeat count is negative"); }
+	builder := init(allocator);
+	builder.reserve(len(text) * times);
+	for (i := 0; i < times; i += 1) {
+		builder.append(text);
+	}
+	return builder.finish();
+}
+
+// Replaces up to `limit` non-overlapping occurrences, or every one when `limit`
+// is negative. An empty `old` matches nowhere, which keeps the result finite.
+replace :: proc(
+	text: string_view,
+	old: string_view,
+	new: string_view,
+	limit: int = -1,
+	allocator: Allocator = mem.default_allocator(),
+) -> string {
+	builder := init(allocator);
+	rest := text;
+	done := 0;
+	for (; len(old) > 0 && (limit < 0 || done < limit); ) {
+		at, found := index(rest, old);
+		if (!found) { break; }
+		builder.append(rest[0:at]);
+		builder.append(new);
+		rest = rest[at + len(old):];
+		done += 1;
+	}
+	builder.append(rest);
+	return builder.finish();
+}
+
+// ponytail: ASCII case only. Full Unicode case conversion needs the mapping
+// tables of a `core:unicode` package, and guessing a subset of them would be
+// worse than passing the rest through unchanged; every non-ASCII scalar value is
+// copied as it stands. The signature already returns owned storage, so the
+// tables can arrive without changing a caller.
+to_upper :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
+	builder := init(allocator);
+	builder.reserve(len(text));
+	foreach (codepoint in text) {
+		if (codepoint >= 'a' && codepoint <= 'z') {
+			builder.append(rune(int(codepoint) - 32));
+		} else {
+			builder.append(codepoint);
+		}
+	}
+	return builder.finish();
+}
+
+to_lower :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
+	builder := init(allocator);
+	builder.reserve(len(text));
+	foreach (codepoint in text) {
+		if (codepoint >= 'A' && codepoint <= 'Z') {
+			builder.append(rune(int(codepoint) + 32));
+		} else {
+			builder.append(codepoint);
+		}
+	}
+	return builder.finish();
+}

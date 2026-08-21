@@ -248,6 +248,39 @@ check_text_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_I
 	return true
 }
 
+// ----------------------------------------------------------- core:strings --
+
+// `allocate_string(text, allocator) -> (string, Allocator_Error)`, the
+// package-private primitive `core:strings` wraps. The bytes come from a
+// `string_view`, which already promises valid UTF-8, so this copies without
+// re-validating; the allocator is the caller's, which is the whole point.
+check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	if len(v.args) != 2 {
+		errorf(
+			k.c, v.span, "L0637",
+			"`%s` takes a `string_view` and an `Allocator`, found %d argument%s",
+			ident.name, len(v.args), len(v.args) == 1 ? "" : "s",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	bound := make([]Expr, 2, k.c.semantic_allocator)
+	for target, index in ([]Type_Id{TYPE_STRING_VIEW, TYPE_ALLOCATOR}) {
+		value, passed := check_argument_value(k, v.args[index].value, target)
+		bound[index] = value
+		if !passed {
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	v.bound = bound
+	results := make([]Type_Id, 2, k.c.semantic_allocator)
+	results[0], results[1] = TYPE_STRING, TYPE_ALLOCATOR_ERROR
+	v.result_types = results
+	v.type = TYPE_STRING
+}
+
 // ------------------------------------------------------------ core:unsafe --
 
 // design.md "unsafe.raw_data procedure":
@@ -290,7 +323,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
-	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
+	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any, .Strings_Allocate:
 		v.type = INVALID_TYPE
 
 	case .Unsafe_Raw_Data:

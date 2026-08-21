@@ -1,0 +1,66 @@
+// Owned zero-terminated buffers for foreign APIs (design.md "C string views",
+// standard-library-plan "`core:cstrings`").
+//
+// `cstring_view` from `string.to_c_view()` is valid only through the enclosing
+// expression. A foreign API that *retains* the pointer needs storage that
+// outlives the call, and that is what `C_String` is.
+//
+// Unlike `string`, it does not promise UTF-8: a foreign encoding is exactly the
+// case it exists for. It only promises that the bytes it owns end at the
+// terminator and contain no other zero.
+@(public)
+package cstrings;
+
+import "core:mem";
+import "core:unsafe";
+
+Fault :: enum {
+	// A Loke `string` may legitimately contain U+0000; a retained C string
+	// cannot, because the terminator would end it early.
+	Contains_Zero,
+	Out_Of_Memory,
+}
+
+Error :: union {Fault}
+
+C_String :: struct {
+	// The bytes *including* the terminator, so `view` never has to add one and
+	// the buffer is exactly what the foreign side sees.
+	@(private) data: [dynamic]u8,
+}
+
+from_string :: proc(
+	text: string_view, allocator: Allocator = mem.default_allocator(),
+) -> (C_String, Error) {
+	foreach (byte in text.bytes()) {
+		if (byte == 0) {
+			return C_String{}, Fault.Contains_Zero;
+		}
+	}
+	buffer, made := make([dynamic]u8, 0, len(text) + 1, allocator);
+	if (made != nil) {
+		return C_String{}, Fault.Out_Of_Memory;
+	}
+	if (buffer.try_append(..text.bytes()) != nil || buffer.try_append(0) != nil) {
+		return C_String{}, Fault.Out_Of_Memory;
+	}
+	return C_String{buffer}, nil;
+}
+
+impl C_String {
+	// design.md spells the accessor as a method, so the whole surface is one.
+	//
+	// The view borrows storage this value owns, which the compiler stops tracking
+	// at the `unsafe.` call: keeping the `C_String` alive for as long as the
+	// foreign side holds the pointer is the caller's obligation, and is the whole
+	// reason this type exists.
+	view :: proc(self) -> cstring_view {
+		if (len(self.data) == 0) { return ""; }
+		return unsafe.cstring_view(unsafe.raw_data(self.data));
+	}
+
+	// Excludes the terminator.
+	len :: proc(self) -> int {
+		return 0 if len(self.data) == 0 else len(self.data) - 1;
+	}
+}

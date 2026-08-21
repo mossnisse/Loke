@@ -347,12 +347,66 @@ directions:
   `-build-mode=obj` produces one relocatable object with no entry, whose runtime
   and foreign references its C host supplies at the final link.
 
+The **standard library** (`standard-library-plan.md`) is the first release of
+ordinary Loke code over that foundation. `base:` stays reserved for declarations
+that participate in the language or its runtime ABI; general-purpose code lives
+in `core:`, in small packages a program imports by name, with no prelude:
+
+```text
+core:strings          UTF-8 algorithms and String_Builder
+core:cstrings         owned zero-terminated buffers for foreign APIs
+core:strconv          scalar parsing
+core:fmt              value formatting and process diagnostics    (grown)
+core:io               byte stream protocols and buffered helpers
+core:encoding/utf16   UTF-8 to UTF-16 and back
+core:path             lexical path operations
+core:fs               files, directories, and file metadata
+core:term             standard streams and terminal key input
+core:os               arguments, exit, environment, process state (grown)
+```
+
+- **text.** `core:strings` adds search, trimming, splitting, joining and
+  `String_Builder` to what the built-in `string` already owns. Its zero value is
+  a usable, allocator-unbound builder; `finish` is one copy into string storage
+  and keeps the buffer for reuse. Searching compares bytes, never subranges,
+  because a view sliced through a code point is a runtime failure and a candidate
+  offset is not known to be a boundary until it matches;
+- **errors are values.** `core:io` owns one `Error` for `io`, `fs`, `term` and
+  fallible process I/O: a normalized `Code`, a closed `Operation`, and the native
+  number, all owned scalars, so an error never borrows a caller's path and never
+  allocates to report a failure. It is nil on success, composes with `or_return`,
+  and formats through its own package's `format`;
+- **streams.** `io.Reader` and `io.Writer` are `slot` interfaces, so a concrete
+  implementation is specialized and `dyn io.Writer` also exists — which is what
+  lets `io.write_formatted` present a `fmt.Writer` that latches the first real
+  write error instead of pretending a fallible file is an infallible sink;
+- **ownership is visible.** `fs.File`, `fs.Directory_Reader` and `term.Raw_Mode`
+  are move-only, have inert zero values, release themselves with `drop`, and
+  offer an idempotent `close` a caller can use to observe a failure. Because a
+  wedged terminal outlives the process that wedged it, `term.begin_raw` also
+  registers a console control handler — the one place the library pays for a
+  guarantee the language does not make, and nothing is registered until a caller
+  asks for raw mode;
+- **portable contract, platform implementation.** Windows x64 is the first
+  target. Every platform call sits behind `when (LOKE_OS == .Windows)` inside the
+  package that needs it, over `kernel32` foreign blocks; paths and environment
+  strings cross UTF-8 to UTF-16 in exactly one place, and a native name that is
+  not valid Unicode is reported as invalid data rather than silently changed.
+
+`examples/greeting.loke` is the release's acceptance program: it prompts, reads
+and writes a text file, and reports a failure, with no compiler-specific I/O
+built-in anywhere in it. `examples/streaming.loke` shows a bounded read, a
+fixed-buffer stream and an observed `close`; `examples/keys.loke` shows raw key
+input with terminal restoration.
+
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.
 
 ```
 odin build src -out:lokec.exe
 lokec.exe examples/hello.loke -o hello.exe && hello.exe
+lokec.exe examples/greeting.loke -o greeting.exe && greeting.exe   # the library
+lokec.exe examples/keys.loke -o keys.exe && keys.exe               # needs a console
 lokec.exe tests/pkg/diamond -o diamond.exe          # a directory is one package
 lokec.exe app -collection core=vendor/core -define:DEBUG=true
 lokec.exe app -opt=speed -o app.exe                 # -O2 on the one clang call

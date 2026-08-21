@@ -1,0 +1,103 @@
+// UTF-8 to UTF-16 and back (standard-library-plan "later packages", pulled
+// forward by stage 2).
+//
+// Windows is a wide-character operating system: every path, environment
+// variable, and console record it hands out is UTF-16. The library's public
+// contract is UTF-8, so exactly one place converts — this one — and no
+// platform-facing package grows its own copy.
+//
+// The plan lists `core:encoding/utf16` among the later packages. It arrives
+// early because `core:fs`, `core:term`, and `core:os` all need it on the first
+// target, and a duplicated surrogate decoder in three packages is worse than a
+// package that exists a milestone sooner.
+@(public)
+package utf16;
+
+import "core:mem";
+import "core:strings";
+
+Fault :: enum {
+	// An unpaired surrogate: valid UTF-16 has none, and no Unicode scalar value
+	// corresponds to one. A native name that cannot be represented is reported
+	// rather than silently changed.
+	Invalid_Data,
+	Out_Of_Memory,
+}
+
+Error :: union {Fault}
+
+// The text as zero-terminated UTF-16, ready for a wide operating-system call.
+// The terminator is part of the buffer but not of its length contract: callers
+// pass the data pointer, and `len(result) - 1` is the unit count.
+//
+// A `string_view` is valid UTF-8 by construction, so the only failure is
+// allocation.
+encode :: proc(
+	text: string_view, allocator: Allocator = mem.default_allocator(),
+) -> ([dynamic]u16, Error) {
+	units, made := make([dynamic]u16, 0, len(text) + 1, allocator);
+	if (made != nil) {
+		return units, Fault.Out_Of_Memory;
+	}
+	foreach (codepoint in text) {
+		value := int(codepoint);
+		if (value < 0x10000) {
+			if (units.try_append(u16(value)) != nil) {
+				return units, Fault.Out_Of_Memory;
+			}
+			continue;
+		}
+		rest := value - 0x10000;
+		high := u16(0xD800 + (rest >> 10));
+		low := u16(0xDC00 + (rest & 0x3FF));
+		if (units.try_append(high, low) != nil) {
+			return units, Fault.Out_Of_Memory;
+		}
+	}
+	if (units.try_append(0) != nil) {
+		return units, Fault.Out_Of_Memory;
+	}
+	return units, nil;
+}
+
+// The units as an owning UTF-8 `string`. A zero unit does not end the input:
+// pass the exact range to convert, which is what every Windows API that reports
+// a length gives.
+decode :: proc(
+	units: []u16, allocator: Allocator = mem.default_allocator(),
+) -> (string, Error) {
+	builder := strings.init(allocator);
+	at := 0;
+	for (; at < len(units); at += 1) {
+		value := int(units[at]);
+		if (value >= 0xD800 && value <= 0xDBFF) {
+			if (at + 1 >= len(units)) { return "", Fault.Invalid_Data; }
+			low := int(units[at + 1]);
+			if (low < 0xDC00 || low > 0xDFFF) { return "", Fault.Invalid_Data; }
+			combined := 0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00);
+			if (builder.try_append(rune(combined)) != nil) {
+				return "", Fault.Out_Of_Memory;
+			}
+			at += 1;
+			continue;
+		}
+		if (value >= 0xDC00 && value <= 0xDFFF) {
+			return "", Fault.Invalid_Data;
+		}
+		if (builder.try_append(rune(value)) != nil) {
+			return "", Fault.Out_Of_Memory;
+		}
+	}
+	text, allocation := builder.try_finish();
+	if (allocation != nil) { return "", Fault.Out_Of_Memory; }
+	return text, nil;
+}
+
+// The units up to the first zero, which is what a wide API returning a
+// terminated buffer gives.
+length_of :: proc(units: []u16) -> int {
+	foreach (unit, index in units) {
+		if (unit == 0) { return index; }
+	}
+	return len(units);
+}

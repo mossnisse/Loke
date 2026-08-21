@@ -1,0 +1,84 @@
+package main; import "core:fmt"; import "core:strconv";
+
+// `core:strconv` end to end (standard-library-plan stage 1, item 4).
+//
+// A failure prints its `Fault` ordinal: 0 invalid syntax, 1 invalid base,
+// 2 overflow, 3 trailing data.
+
+show_i64 :: proc(text: string_view, base: int = 0) {
+	value, error := strconv.parse_i64(text, base);
+	if (error != nil) {
+		fault := error.(strconv.Fault);
+		fmt.println(int(fault));
+		return;
+	}
+	fmt.println(value);
+}
+
+show_f64 :: proc(text: string_view) {
+	value, error := strconv.parse_f64(text);
+	if (error != nil) {
+		fault := error.(strconv.Fault);
+		fmt.println(int(fault));
+		return;
+	}
+	fmt.println(value);
+}
+
+main :: proc() {
+	// Booleans use the optional-ok convention: absent is the whole story.
+	yes, yes_ok := strconv.parse_bool(" true ");
+	fmt.println(yes);
+	fmt.println(yes_ok);
+	no, no_ok := strconv.parse_bool("0");
+	fmt.println(no);
+	fmt.println(no_ok);
+	_, bad_ok := strconv.parse_bool("yes");
+	fmt.println(bad_ok);
+
+	// Integers, with the language's own prefixes when the base is 0, and the
+	// lexer's own underscore rule.
+	show_i64("42");
+	show_i64("  -42  ");
+	show_i64("+7");
+	show_i64("0x_ff");
+	show_i64("0b1011");
+	show_i64("0o17");
+	show_i64("1_000_000");
+	show_i64("ff", 16);
+	show_i64("zz", 36);
+	show_i64("9223372036854775807");
+	show_i64("-9223372036854775808");
+
+	// And every documented failure.
+	show_i64("");
+	show_i64("-");
+	show_i64("12x");
+	show_i64("x12");
+	show_i64("2", 1);
+	show_i64("9223372036854775808");
+	show_i64("-9223372036854775809");
+
+	unsigned, unsigned_error := strconv.parse_u64("18446744073709551615");
+	fmt.println(unsigned);
+	fmt.println(unsigned_error == nil);
+	_, negative_error := strconv.parse_u64("-1");
+	fmt.println(negative_error != nil);
+
+	counted, _ := strconv.parse_int("123");
+	fmt.println(counted);
+	size, _ := strconv.parse_uint("123");
+	fmt.println(size);
+
+	// Floating point.
+	show_f64("0");
+	show_f64("1");
+	show_f64("-2.5");
+	show_f64("1e3");
+	show_f64("+0.125");
+	show_f64(" 100 ");
+	show_f64("");
+	show_f64("1.2.3");
+	show_f64("1e");
+	show_f64("abc");
+}

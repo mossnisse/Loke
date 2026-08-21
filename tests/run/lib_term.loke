@@ -1,0 +1,27 @@
+package main; import "core:fmt"; import "core:io"; import "core:term";
+
+// `core:term`'s output half (standard-library-plan stage 3, items 1 and 2).
+//
+// The harness captures standard output, so this is also the redirected-stream
+// case: `Output` writes through whatever handle the process was given, console
+// or pipe alike. Input is not read here — a corpus program has no terminal of
+// its own, and `examples/greeting.loke` is where a person drives that half.
+
+main :: proc() {
+	#assert(io.Writer(term.Output));
+	#assert(io.Reader(term.Input));
+
+	out := term.stdout();
+	fmt.println(io.write_string(inout out, "written through term.stdout\n") == nil);
+	fmt.println(io.write_formatted_line(inout out, "formatted:", 42, true) == nil);
+
+	// A zero-length write succeeds immediately and moves nothing.
+	empty: [0]u8 = {};
+	count, error := out.write(empty[:]);
+	fmt.println(count);
+	fmt.println(error == nil);
+
+	// Standard error is a second, independent handle.
+	problem := term.stderr();
+	fmt.println(io.write_string(inout problem, "") == nil);
+}

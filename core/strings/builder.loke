@@ -1,0 +1,159 @@
+// `String_Builder`: repeated appends into one growing buffer, finished as one
+// immutable `string` (design.md "string type", standard-library-plan
+// "`String_Builder`").
+@(public)
+package strings;
+
+import "core:mem";
+
+// design.md's own example is `builder: String_Builder = {};` followed by
+// `append`, so **the zero value is a usable, empty, allocator-unbound builder**.
+// It inherits that from the `[dynamic]u8` it wraps: the first growth binds the
+// default provider. `init` exists only to choose another allocator up front.
+//
+// The buffer holds valid UTF-8 at every public boundary. There is deliberately
+// no arbitrary byte append: it could break that invariant, and a caller with
+// bytes that are not text wants a `[dynamic]u8`, not this.
+String_Builder :: struct {
+	@(private) data: [dynamic]u8,
+	// nil until `init` selects one, which is what keeps the zero value a
+	// constant. `finish` resolves it the same way the container does.
+	@(private) allocator: Allocator,
+}
+
+// A builder whose buffer *and* finished string come from `allocator`.
+init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder {
+	made, error := make([dynamic]u8, 0, 0, allocator);
+	if (error != nil) {
+		panic("String_Builder allocation failed");
+	}
+	return String_Builder{made, allocator};
+}
+
+impl String_Builder {
+	// Bytes, not runes: this is the buffer's length, and it is what `len(builder)`
+	// resolves to.
+	len :: proc(self) -> int { return len(self.data); }
+	cap :: proc(self) -> int { return cap(self.data); }
+
+	// Room for `additional` more bytes, on top of what is already written.
+	reserve :: proc(self: inout String_Builder, additional: int) {
+		if (additional < 0) { panic("reserve count is negative"); }
+		wanted := len(self.data) + additional;
+		self.data.reserve(wanted);
+	}
+
+	try_reserve :: proc(self: inout String_Builder, additional: int) -> Allocator_Error {
+		if (additional < 0) { panic("reserve count is negative"); }
+		wanted := len(self.data) + additional;
+		return self.data.try_reserve(wanted);
+	}
+
+	append_text :: proc(self: inout String_Builder, text: string_view) {
+		self.data.append(..text.bytes());
+	}
+
+	append_rune :: proc(self: inout String_Builder, value: rune) {
+		encoded, count := encode_rune(value);
+		self.data.append(..encoded[0:count]);
+	}
+
+	// One ASCII byte. The name says `ascii` because that is the only byte a
+	// caller can add without knowing where a rune begins.
+	append_byte_ascii :: proc(self: inout String_Builder, value: u8) {
+		if (value >= 0x80) { panic("append_byte_ascii takes an ASCII byte"); }
+		self.data.append(value);
+	}
+
+	append :: proc{append_text, append_rune};
+
+	try_append_text :: proc(self: inout String_Builder, text: string_view) -> Allocator_Error {
+		return self.data.try_append(..text.bytes());
+	}
+
+	try_append_rune :: proc(self: inout String_Builder, value: rune) -> Allocator_Error {
+		encoded, count := encode_rune(value);
+		return self.data.try_append(..encoded[0:count]);
+	}
+
+	try_append_byte_ascii :: proc(self: inout String_Builder, value: u8) -> Allocator_Error {
+		if (value >= 0x80) { panic("try_append_byte_ascii takes an ASCII byte"); }
+		return self.data.try_append(value);
+	}
+
+	try_append :: proc{try_append_text, try_append_rune};
+
+	// Keeps the allocation, which is what makes a builder reusable across lines.
+	clear :: proc(self: inout String_Builder) { self.data.clear(); }
+
+	// design.md: a dynamic array owns raw element storage while a runtime string
+	// points past a reference-counted header, so the two are not
+	// storage-compatible and this is one linear copy. The buffer is retained for
+	// reuse afterwards.
+	finish :: proc(self: inout String_Builder) -> string {
+		text := self.clone_string(self.allocator);
+		self.data.clear();
+		return text;
+	}
+
+	// The same, reporting an allocation failure instead of applying a policy. The
+	// builder is left completely unchanged when it fails.
+	try_finish :: proc(self: inout String_Builder) -> (string, Allocator_Error) {
+		text, error := self.try_clone_string(self.allocator);
+		if (error != nil) {
+			return "", error;
+		}
+		self.data.clear();
+		return text, nil;
+	}
+
+	// A copy of what is written so far. The builder is not disturbed either way.
+	clone_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
+		text, error := self.try_clone_string(allocator);
+		if (error != nil) {
+			panic("String_Builder allocation failed");
+		}
+		return text;
+	}
+
+	try_clone_string :: proc(
+		self, allocator: Allocator = mem.default_allocator(),
+	) -> (string, Allocator_Error) {
+		view, ok := string_view(self.data[:]);
+		if (!ok) {
+			// Unreachable through the public surface, which never admits a partial
+			// rune. It is a guard, not a policy.
+			panic("String_Builder holds invalid UTF-8");
+		}
+		selected := mem.default_allocator() if allocator == nil else allocator;
+		return allocate_string(view, selected);
+	}
+}
+
+// UTF-8 encoding of one scalar value, and how many of the four bytes it used.
+// Rejecting a surrogate or an out-of-range value here is what keeps every buffer
+// in this package valid.
+@(private)
+encode_rune :: proc(value: rune) -> ([4]u8, int) {
+	v := int(value);
+	if (v < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) {
+		panic("not a Unicode scalar value");
+	}
+	if (v < 0x80) {
+		return [4]u8{u8(v), 0, 0, 0}, 1;
+	}
+	if (v < 0x800) {
+		return [4]u8{u8(0xC0 | (v >> 6)), u8(0x80 | (v & 0x3F)), 0, 0}, 2;
+	}
+	if (v < 0x10000) {
+		return [4]u8{
+			u8(0xE0 | (v >> 12)), u8(0x80 | ((v >> 6) & 0x3F)), u8(0x80 | (v & 0x3F)), 0,
+		}, 3;
+	}
+	return [4]u8{
+		u8(0xF0 | (v >> 18)),
+		u8(0x80 | ((v >> 12) & 0x3F)),
+		u8(0x80 | ((v >> 6) & 0x3F)),
+		u8(0x80 | (v & 0x3F)),
+	}, 4;
+}

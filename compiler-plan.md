@@ -920,6 +920,72 @@ than a gap M7 closes — and `Simd(T, N)`, which now names itself.
 
 ---
 
+### The standard library's demands on the compiler
+
+`standard-library-plan.md` is library work, not a milestone, but writing it
+exercised the language in a way no corpus program had and turned up five
+compiler defects and one missing primitive. All six are in the tree; the library
+itself is ordinary Loke.
+
+**One contributed primitive.** `allocate_string(text: string_view, allocator:
+Allocator) -> (string, Allocator_Error)` is contributed package-privately to
+`core:strings` and `core:fmt` (`Builtin_Kind.Strings_Allocate`, checked in
+`src/text.odin`, lowered in `src/emit_llvm.odin` onto the existing
+`loke_rt_v1_string_clone`). Every built-in text operation allocates from
+`RT_DEFAULT_ALLOCATOR`, so before this there was no way for a library procedure
+to honour an `allocator` argument *and* produce a `string` — which every
+string-returning procedure in `strings`, `fs`, `os`, and `term` has to do. It is
+contributed to `core:fmt` as well rather than imported from `core:strings`,
+because an imported package is emitted whole and that one import measured at 397
+to 4923 lines of IR for hello world.
+
+**Five defects.**
+
+- A **multi-result slot called through `dyn`** crashed the backend.
+  `emit_multi_value` had no arm for `is_dyn_call`, so a two-result slot call took
+  the ordinary call path, which has neither a callee symbol nor a callee value —
+  the thunk comes out of the witness table. `dyn io.Writer` with
+  `write -> (int, Error)` is the shape the formatting bridge needs.
+- **Generic inference required exactly one written argument per written
+  parameter.** A generic procedure could not be called with an omitted defaulted
+  argument, a named argument, or a variadic pack, which rules out every generic
+  library helper: `io.read_to_end(reader, limit = 5)`,
+  `io.write_formatted(writer, ..args)`. `infer_generic_arguments` now claims a
+  named argument for its own parameter, skips a parameter whose default the
+  instance's own signature already carries, and lets a variadic parameter take
+  every remaining argument. Ranking is still `build_candidate`'s job against the
+  substituted signature, so the runtime arguments keep their written order.
+- **An untyped constant did not rank against an `any_view` parameter.**
+  `assignable` returned false because the untyped branches preceded the
+  `any_view` rule, and `argument_rank` then asked `convert_const` whether the
+  constant was representable *as an `any_view`*, whose only constant is nil. A
+  constant reaches an `any_view` through its default type, and both places now
+  say so. Only a generic `..any_view` made this reachable — an ordinary call to
+  `fmt.println` never ranks.
+- **`nil` was not a multi-pointer constant**, though design.md lists
+  multi-pointers among the nil-able types. `convert_const` gained `.Multi_Pointer`
+  beside `.Pointer`. Passing `nil` for a `[^]u16` out-parameter is how a Windows
+  wide API is asked for a required size.
+- **A constant's folded value was written through a stale `^Symbol`.**
+  `check_declaration` took the pointer before `require_const`, and the
+  compile-time evaluator can declare symbols, which grows the `c.symbols`
+  dynamic array and moves every element. The write then landed in freed storage,
+  the constant kept an `.Invalid` value, and its use site reached the backend as
+  an identifier with no storage (`L0405`). Whether it corrupted anything depended
+  on how many symbols the program had, so it stayed invisible until one name was
+  added to `core:fmt`: `tests/run/m6b_compile_time.loke` began failing with no
+  source change of its own. The fix re-fetches the symbol after the call. The
+  same hazard applies to any `^Symbol` or `^Type_Info` held across checking, and
+  auditing the rest is tracked separately.
+
+**One asymmetry left as documented behaviour.** An `impl` member must be
+`@(public)` for a generic procedure in another package to call it, while
+structural interface satisfaction ignores visibility — so `#assert(io.Writer(T))`
+passes for a type whose `write` is package-private, and the instantiated body
+then fails to find the member. Whichever way it is resolved, satisfaction and
+lookup have to agree; the library documents the requirement rather than working
+around it.
+
 ## D. Out of scope for v1
 
 - **MIR and the no-LLVM debug backend** ([B13](#b13-lowering-to-mir)/[A4](#a-big-decisions))
@@ -930,13 +996,16 @@ than a gap M7 closes — and `Simd(T, N)`, which now names itself.
   `Type_Kind`, but nothing in the language, runtime, or standard packages depends
   on it, so it is the one piece of ABI surface that can be left out without
   leaving another feature half-built. M8.
-- **The library types design.md assumes** — `String_Builder`, `C_String`,
-  `Small_Array(T, N)`, `Bit_Set`/`Enum_Array`, `Complex`/`Quaternion`,
-  `Little_Endian`/`Big_Endian`, slice sorting, `Logger`/`core:log`, and
-  `shared(T)`/`weak(T)`/`Atomic(T)`/`core:sync`. All but the last group are
-  ordinary Loke source over facilities M6 already provides; that group needs
-  compiler atomic intrinsics, which want their own memory-model fixtures. M8.
-  `core:os` is the exception and stays in M7: the program model names `os.args`
+- **The library types design.md assumes** — `Small_Array(T, N)`,
+  `Bit_Set`/`Enum_Array`, `Complex`/`Quaternion`, `Little_Endian`/`Big_Endian`,
+  slice sorting, `Logger`/`core:log`, and
+  `shared(T)`/`weak(T)`/`Atomic(T)`/`core:sync`. `String_Builder` and `C_String`
+  have since shipped with `standard-library-plan.md`, along with `core:strings`,
+  `cstrings`, `strconv`, `io`, `encoding/utf16`, `path`, `fs` and `term`. The
+  rest are ordinary Loke source over facilities M6 already provides, except the
+  last group, which needs compiler atomic intrinsics and their own memory-model
+  fixtures. M8.
+  `core:os` began in M7 and grew with the library: the program model names `os.args`
   and `os.exit` normatively, and writing them over a foreign block is the proof
   that the foreign system works.
 

@@ -1,0 +1,56 @@
+package main; import "core:fmt"; import "core:path";
+
+// `core:path` end to end (standard-library-plan stage 2, item 6).
+//
+// Windows drive-relative, UNC, and extended-length paths get their own cases,
+// because those are exactly where a lexical rewrite goes wrong quietly.
+
+main :: proc() {
+	fmt.println(path.separator());
+
+	fmt.println(path.is_absolute("C:\\a\\b"));
+	fmt.println(path.is_absolute("c:/a"));
+	fmt.println(path.is_absolute("\\\\server\\share\\a"));
+	fmt.println(path.is_absolute("\\a"));
+	fmt.println(path.is_absolute("C:a"));
+	fmt.println(path.is_absolute("a\\b"));
+	fmt.println(path.is_absolute(""));
+
+	fmt.println(path.base("a\\b\\c.txt"));
+	fmt.println(path.base("a/b/"));
+	fmt.println(path.base("c.txt"));
+	fmt.println(path.base("C:\\"));
+
+	fmt.println(path.directory("a\\b\\c.txt"));
+	fmt.println(path.directory("c.txt"));
+	fmt.println(path.directory("\\a"));
+	fmt.println(path.directory("C:\\a"));
+	fmt.println(path.directory("C:\\"));
+
+	fmt.println(path.extension("a\\b.tar.gz"));
+	fmt.println(len(path.extension("a\\b")));
+	fmt.println(len(path.extension(".config")));
+	fmt.println(path.stem("a\\b.tar.gz"));
+	fmt.println(path.stem("plain"));
+
+	fmt.println(len(path.volume("C:\\a")));
+	fmt.println(len(path.volume("\\\\server\\share\\a")));
+	fmt.println(len(path.volume("a\\b")));
+
+	parts := [?]string_view{"a", "b", "c.txt"};
+	fmt.println(path.join(parts[:]));
+	empties := [?]string_view{"a", "", "b"};
+	fmt.println(path.join(empties[:]));
+	rooted := [?]string_view{"C:\\", "logs", "today.txt"};
+	fmt.println(path.join(rooted[:]));
+
+	fmt.println(path.clean("a//b/./c"));
+	fmt.println(path.clean("a/b/../c"));
+	fmt.println(path.clean("a/b/../../../c"));
+	fmt.println(path.clean("/a/b/../../../c"));
+	fmt.println(path.clean("C:\\a\\..\\b"));
+	fmt.println(path.clean(""));
+	fmt.println(path.clean("."));
+	fmt.println(path.clean("\\\\server\\share\\a\\..\\b"));
+	fmt.println(path.clean("\\\\?\\C:\\weird\\..\\path"));
+}
