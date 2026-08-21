@@ -1,0 +1,16 @@
+package widget_asm;
+
+// design.md "Build modes" (m7-plan step 5): an assembly import is built and
+// joined only by an `exe` build. An `obj` build is one relocatable module, so it
+// diagnoses the import with the instruction its final consumer needs (L0603).
+
+foreign import helper "helper.asm";
+
+foreign helper {
+	helper_value :: proc "c" () -> i32 ---;
+}
+
+@(export)
+widget_helper :: proc "c" () -> i32 {
+	return helper_value();
+}

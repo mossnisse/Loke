@@ -40,6 +40,12 @@ main :: proc() {
 	ov := Over{ b = true, n = 123 };
 	fmt.println(ov.n);
 
+	// A combined record's LLVM members are byte arrays, so equality reads each
+	// field through its address rather than by `extractvalue` (m7-plan step 6).
+	// Reflection and formatting stay on the ordinary field-GEP path.
+	fmt.println(b == Both{ x = 3, y = 77 }, b == Both{ x = 3, y = 78 });
+	fmt.println(ov == Over{ b = true, n = 123 });
+
 	// Runtime type info reports the packed size.
 	info := type_info_of(typeid_of(Packed));
 	if (info != nil) { fmt.println(info.size, info.align); }

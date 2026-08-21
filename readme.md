@@ -15,8 +15,9 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M6b, planned in
-[m6b-plan.md](m6b-plan.md), after M6a in [m6a-plan.md](m6a-plan.md), M5b in
+[compiler-plan.md](compiler-plan.md); the current milestone is M7, planned in
+[m7-plan.md](m7-plan.md), after M6b in
+[m6b-plan.md](m6b-plan.md), M6a in [m6a-plan.md](m6a-plan.md), M5b in
 [m5b-plan.md](m5b-plan.md), M5a in
 [m5a-plan.md](m5a-plan.md), M4b in [m4b-plan.md](m4b-plan.md), M4a in
 [m4a-plan.md](m4a-plan.md), M3 in
@@ -309,6 +310,42 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   empty one. What is deliberately unspecified at runtime is rejected rather than
   approximated: a map's iteration order, and a capacity, which is a property of an
   allocation that compile-time storage does not have.
+
+M7 makes the output a release build and opens the C boundary in both
+directions:
+
+- `-opt=none|minimal|size|speed|aggressive` selects the optimization level on
+  the one `clang` call that already consumed the generated IR. Behaviour is the
+  claim, so the whole `tests/run` and `tests/trap` corpus runs at every level and
+  must produce identical output. `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`,
+  `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_VENDOR` and
+  `LOKE_VERSION` are predeclared, so `when (LOKE_OS == .Windows)` needs no
+  import;
+- every attribute design.md defines is either implemented or diagnosed. One
+  table maps each to the positions it may appear in and the value it takes, so a
+  typo, an unknown namespace, a misplaced attribute, a duplicate and a wrong
+  value shape are each their own error rather than silence;
+- `@(packed)` and `@(align=N)` lay a record out byte-exactly, and `size_of`,
+  `align_of`, `offset_of` and runtime type info all agree with what LLVM
+  computes. Alignment is tracked per place, so a nested access through a packed
+  value stays unaligned and `&packed.field` is rejected while the whole value's
+  address stays valid;
+- `proc "c"` and `proc "stdcall"` use the Windows x64 C classification, verified
+  against clang rather than derived: a 1-, 2-, 4- or 8-byte aggregate in one
+  integer register, every other one behind a pointer, `sret` for a large result,
+  and `_Bool` as `i1 zeroext` with byte-sized storage. The `loke` convention is
+  untouched, because its lowering has no external partner to agree with;
+- `foreign import` and `foreign` blocks declare C procedures and globals.
+  Members are ordinary package symbols, so visibility, overloads and calls need
+  no special path; `@(link_name)` renames, `@(default_calling_convention)` sets
+  the block default, `@(by_ptr)` passes a pointer, and `@(c_vararg)` emits a real
+  varargs call with the C default promotions. Libraries, `system:` names and
+  `nasm`-assembled `.asm` inputs join the link, and a missing file, a missing
+  assembler and an unresolved link name are three different diagnostics;
+- `@(export)` emits a procedure or global under its own symbol for a C consumer,
+  with whole-program collision checking that names both declarations, and
+  `-build-mode=obj` produces one relocatable object with no entry, whose runtime
+  and foreign references its C host supplies at the final link.
 
 Requires Odin and LLVM (`winget install LLVM.LLVM`); `clang` is found through
 `LOKE_CLANG`, the standard Windows LLVM installation, or `PATH`.

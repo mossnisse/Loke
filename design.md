@@ -601,6 +601,8 @@ No source attribute or build flag silently changes indexing semantics. The expli
 
 ### SIMD vectors
 
+> **Not implemented in version 1.** `Simd(T, N)` is specified here and reserved in the public `Type_Kind`, but no version 1 language rule, runtime facility, or standard package depends on it. Writing it is an error naming it as specified-but-absent rather than as an unknown type. Use a fixed array, which the optimizer vectorizes on its own.
+
 `Simd(T, N)` is a predeclared generic type representing a fixed-width vector of `N` lanes of `T`. `N` must be a compile-time constant power of two, and `T` must be a built-in integer, floating-point, or boolean type.
 
 Arithmetic and bitwise operators apply **lane-wise** and produce a vector of the same shape. A scalar `T` implicitly converts to `Simd(T, N)` by splatting into every lane, so mixed scalar-vector expressions work without a written conversion:
@@ -5537,6 +5539,10 @@ foo :: proc() {
 This attribute emits a variable or procedure symbol into the object file. A C program or dynamic library can link to that symbol. [`@(public)`](#public) controls access from other Loke packages. These attributes are independent, and a declaration can need both.
 
 `@(export)` takes no argument. There is no enclosing export default. A foreign block or package clause can have `@(public)`, but it cannot have `@(export)`. To export conditionally, put the declaration in a `when` statement.
+
+An exported symbol crosses the same boundary an imported one does, so it carries the same requirements. An exported procedure must declare a [foreign calling convention](#calling-conventions) — the `loke` convention's lowering is implementation-defined and has no external partner to agree with — and its signature must be [foreign-ABI-safe](#foreign-abi-safe-types), as must an exported variable's type. A [generic](#generics) declaration has no ABI before instantiation and cannot be exported.
+
+The exported name is the declaration's own name, or the [`@(link_name)`](#link_namestring) it is given. It is the whole program's symbol rather than the package's, so two declarations claiming one name are a compile-time error naming both — a link-time collision reports neither. Names beginning `loke_rt_` are reserved for the runtime and cannot be claimed.
 
 #### `@(link_name=<string>)`
 

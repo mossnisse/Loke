@@ -1,0 +1,29 @@
+L0606
+unknown attribute `@(nonsense)`
+@7:3
+
+L0610
+`@(compiler.no_alias)` is an extension attribute; its `compiler` namespace is not enabled
+@10:3
+
+L0609
+`@(public)` is written more than once here
+@13:11
+
+L0607
+`@(packed)` cannot appear on a variable declaration
+@16:3
+
+L0608
+`@(deprecated)` needs a value
+@19:3
+
+L0608
+`@(public)` takes no value
+@22:3
+
+L0612
+the result of `h` must be used or discarded with `_ = ...`
+@33:2
+
+warning[L0611]: `g` is deprecated: use `g2` instead

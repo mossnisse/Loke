@@ -1,0 +1,42 @@
+package main;
+
+// m7-plan step 6: every construct that used to fall out of a dispatch arm into
+// L0350 "not compiled yet in this milestone" now says what is actually wrong.
+// None of these waits for a later milestone; each is a permanent answer.
+
+S :: struct { v: int }
+
+// design.md: "`---` is not a value or an initializer. It is declaration syntax
+// used for a foreign procedure with no Loke body". Outside a foreign block there
+// is nothing for it to declare.
+stray :: proc "c" (a: i32) -> i32 ---;
+
+takes_two :: proc(a: int, b: int) -> int { return a + b; }
+
+main :: proc() {
+	xs := [3]int{1, 2, 3};
+	s := S{1};
+
+	// design.md "Indexing and slicing": the comma form is reserved for a user
+	// `operator([])`, and a user type with no `operator([:])` cannot be sliced.
+	_ = xs[0, 1];
+	_ = s[0:1];
+
+	// A spread needs a variadic parameter to fill.
+	_ = takes_two(..xs);
+
+	// A built-in has no written signature to name a parameter of.
+	_ = size_of(inout xs);
+
+	// A sequence literal lists its elements positionally, once for the literal
+	// rather than once per element.
+	ys := [3]int{ 0 = 1, 1 = 2, 2 = 3 };
+
+	// A procedure value needs a body for the same reason a declaration does.
+	f := proc(a: int) -> int ---;
+
+	// design.md specifies `Simd(T, N)`, and version 1 leaves it out.
+	simd: Simd(f32, 4);
+
+	_ = ys; _ = f; _ = simd; _ = stray;
+}

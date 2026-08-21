@@ -358,6 +358,29 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 @(test)
 object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
+
+	// design.md "Build modes": one relocatable object cannot carry an assembled
+	// input, so an `obj` build that imports one says what its consumer must do
+	// (m7-plan step 5). This needs no toolchain, so it runs before the skip below.
+	asm_state, _, asm_stderr, asm_err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string {
+				compiler_path(), "tests/obj/asm_import.loke",
+				"-build-mode=obj", "-o", fmt.tprintf("%s/asm-import.obj", TMP),
+			},
+		},
+		context.allocator,
+	)
+	if testing.expectf(t, asm_err == nil, "cannot run %s", compiler_path()) {
+		testing.expectf(t, asm_state.exit_code != 0, "an `obj` build accepted an assembly import")
+		testing.expectf(
+			t,
+			strings.contains(string(asm_stderr), "L0603"),
+			"an `obj` build with an assembly import did not report L0603:\n%s",
+			string(asm_stderr),
+		)
+	}
+
 	clang, include_flags, found := host_toolchain()
 	if !found {
 		log.info("no clang or MSVC toolset found; skipping the object-build host link")

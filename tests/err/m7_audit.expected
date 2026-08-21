@@ -1,0 +1,31 @@
+L0630
+only a foreign declaration ends with `---`
+@12:10
+
+L0362
+`a[i, j]` is reserved for a user `operator([])`
+@22:6
+
+L0362
+`S` cannot be sliced; a user type needs an `operator([:])` overload
+@23:6
+
+L0371
+`..` needs a variadic parameter to spread into
+@26:16
+
+L0370
+a built-in takes value arguments only
+@29:14
+
+L0372
+a `[3]int` literal lists its elements positionally
+@33:16
+
+L0630
+a procedure value needs a body
+@36:7
+
+L0636
+`Simd(T, N)` is specified but not implemented in version 1
+@39:8

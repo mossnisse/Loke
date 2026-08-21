@@ -1300,9 +1300,10 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
 		// packed body cannot report) at once: each field becomes a byte array so a
 		// non-packed body neither re-pads nor drops the alignment, and a trailing
 		// zero-length aligned member forces the record's alignment and size.
-		// ponytail: byte-array fields make whole-value `extractvalue`/`insertvalue`
-		// ill-typed, so `==` and reflection over a combined packed+align struct are
-		// unsupported; add a memcmp/GEP path if such a struct ever needs them.
+		// Byte members make whole-value `extractvalue` ill-typed, so equality reads
+		// each field through its address instead (`emit_byte_member_struct_equal`,
+		// m7-plan step 6); field GEP indices are unchanged, which is what lets
+		// ordinary access, reflection, and formatting stay on their normal path.
 		strings.write_string(&b, "{")
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
@@ -4700,6 +4701,13 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		}
 		return result
 	case .Struct:
+		// A combined `@(packed, align=N)` record's LLVM members are byte arrays, so
+		// `extractvalue` yields `[k x i8]` where the field's own type is wanted.
+		// Reading each field through its address instead is the same GEP an ordinary
+		// field access already uses (m7-plan step 6).
+		if record_uses_byte_members(e, under, info) {
+			return emit_byte_member_struct_equal(e, under, info, lhs, rhs)
+		}
 		result := "true"
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
@@ -4762,6 +4770,54 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, same_tag, payloads)
 	return out
+}
+
+// Whether this record's LLVM members are byte arrays rather than the fields'
+// own types. That is the combined `@(packed, align=N)` body from `struct_body`:
+// tight packing needs an LLVM packed body, a raised alignment cannot be spelled
+// on one, and explicit byte members are what satisfy both at once.
+@(private = "file")
+record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> bool {
+	if !info.packed || len(info.fields) == 0 {
+		return false
+	}
+	type_size(e.c, type)
+	current := type_of(e.c, type)
+	return current != nil && current.align > record_natural_align(e.c, current)
+}
+
+// Field-wise equality read through addresses. The value is spilled once and each
+// field is loaded at its own type from the GEP the byte member occupies, so the
+// comparison is the ordinary one and only the way the operands are reached
+// differs (m7-plan step 6).
+@(private = "file")
+emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
+	llvm := llvm_type(e, type)
+	// ponytail: scratch for one comparison, `alloca`d at its use like the union
+	// spill and the composite-literal temporary beside it, so a `==` inside a loop
+	// allocates per iteration. See `emit_slice_literal` — hoisting any of them
+	// needs an entry-block seam every function emitter shares, and only
+	// `emit_proc` has one today.
+	left_slot, right_slot := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", left_slot, llvm)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, lhs, left_slot)
+	fmt.sbprintfln(&e.b, "  %s = alloca %s", right_slot, llvm)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, rhs, right_slot)
+
+	result := "true"
+	for field, index in info.fields {
+		symbol := symbol_of(e.c, field)
+		field_llvm := llvm_type(e, symbol.type)
+		left_ptr, right_ptr := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d", left_ptr, llvm, left_slot, index)
+		fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d", right_ptr, llvm, right_slot, index)
+		left, right := temp(e), temp(e)
+		// A packed field guarantees no more than byte alignment.
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align 1", left, field_llvm, left_ptr)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align 1", right, field_llvm, right_ptr)
+		result = combine_and(e, result, emit_equal(e, symbol.type, left, right))
+	}
+	return result
 }
 
 @(private = "file")

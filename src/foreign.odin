@@ -80,6 +80,14 @@ foreign_block_visibility :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> (pu
 check_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
 	block_requires := has_attribute(block.attributes, "require_results")
 	for member in block.members {
+		if _, recovered := member.(^Item_Error); recovered {
+			// The parser already said what it could not read here; L0622 below would
+			// be a second diagnostic for the same span (m7-plan step 6).
+			continue
+		}
+		// `parse_member_list` produces a `^Decl` or the recovery node above and
+		// nothing else, so this is an invariant guard rather than a reachable
+		// diagnostic (m7-plan step 6, "Audit").
 		d, ok := member.(^Decl)
 		if !ok {
 			errorf(k.c, item_span(member), "L0622", "a foreign block holds procedure and variable declarations only")

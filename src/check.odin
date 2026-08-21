@@ -1319,9 +1319,17 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 	return denoted
 }
 
-// M1 parses the whole grammar; this checker compiles the M2 subset. Reporting
-// from the dispatch's default arm — and not descending — is what keeps it to one
-// diagnostic per outer construct with no cascade.
+// M1 parses the whole grammar; the checker compiled a subset of it, and each
+// milestone retired part of the difference. After M7 the difference is empty:
+// every construct the grammar admits is either compiled or has a diagnostic of
+// its own that says what is actually wrong, so no call site below is reachable
+// from source (m7-plan step 6, "Audit").
+//
+// The calls are kept as invariant guards rather than deleted. Each one sits on a
+// dispatch arm whose union or token set is exhaustively handled above it, so
+// reaching one means a parser or resolver invariant broke — and a diagnostic
+// naming the span beats falling through with an unchecked node. The one type
+// design.md specifies and v1 leaves out, `Simd(T, N)`, reports L0636 instead.
 unsupported_construct :: proc(k: ^Checker, span: Span) {
 	errorf(
 		k.c,
@@ -1400,9 +1408,11 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 // own, and every position that requires a type says so here instead. Without
 // this the enclosing construct is gated as unimplemented, which names the wrong
 // problem and points at a milestone that will never fix it.
-@(private = "file")
 report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	if ident, is_ident := syntax.(^Expr_Ident); is_ident {
+		if report_deferred_type_name(k, ident.name, ident.span) {
+			return
+		}
 		if symbol_is_generic(k, lookup_symbol(k.scope, identifier_of(k.c, ident))) {
 			errorf(k.c, ident.span, "L0431", "`%s` is generic and needs its arguments, as in `%s(...)`", ident.name, ident.name)
 			return
@@ -1414,7 +1424,36 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 		errorf(k.c, poly.span, "L0437", "`$%s` is not bound here", poly.name.text)
 		return
 	}
+	// `Name(args)` in type position: a generic application whose head named
+	// nothing. The head is what is unknown, so it gets the same answer a bare name
+	// would rather than "not compiled yet" (m7-plan step 6).
+	if call, is_call := syntax.(^Expr_Call); is_call {
+		if head, head_is_ident := call.callee.(^Expr_Ident); head_is_ident {
+			if report_deferred_type_name(k, head.name, head.span) {
+				return
+			}
+			errorf(k.c, head.span, "L0306", "unknown type `%s`", head.name)
+			return
+		}
+	}
 	unsupported_construct(k, expr_span(syntax))
+}
+
+// design.md specifies `Simd(T, N)` and reserves it in the public `Type_Kind`,
+// but nothing in the language, runtime, or standard packages depends on it, so
+// it is the one piece of ABI surface v1 leaves out (compiler-plan D). It names a
+// real specified type, so it gets its own answer rather than "unknown type" or
+// "not compiled yet in this milestone" (m7-plan step 6).
+@(private = "file")
+report_deferred_type_name :: proc(k: ^Checker, name: string, span: Span) -> bool {
+	if name != "Simd" {
+		return false
+	}
+	errorf(
+		k.c, span, "L0636",
+		"`Simd(T, N)` is specified but not implemented in version 1; use a fixed array and let the optimizer vectorise",
+	)
+	return true
 }
 
 // ------------------------------------------------------- declarations --
@@ -1682,10 +1721,18 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 			return
 		}
 	}
-	// A `"c"`/`"stdcall"` procedure with a body compiles under the Windows x64
-	// classification (m7-plan step 3); a bodiless foreign declaration still waits
-	// for the foreign-block pass (step 4).
-	if literal.bodiless || signature == nil {
+	// design.md: "`---` is not a value or an initializer. It is declaration syntax
+	// used for a foreign procedure with no Loke body". A foreign block's members
+	// returned above, so a bodiless declaration reaching here is outside one — a
+	// permanent error rather than an unfinished milestone (m7-plan step 6).
+	if literal.bodiless {
+		errorf(
+			k.c, literal.span, "L0630",
+			"only a foreign declaration ends with `---`; a procedure declared here needs a body",
+		)
+		return
+	}
+	if signature == nil {
 		unsupported_construct(k, literal.span)
 		return
 	}

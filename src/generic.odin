@@ -173,6 +173,15 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 	}
 	literal := decl_proc_literal(d)
 	if literal != nil && literal.signature != nil && literal.signature.convention != "" {
+		// A foreign block's member inherited its convention from the block rather
+		// than writing one, and `check_foreign_block` already rejects it as L0624 —
+		// the answer that names the real mistake. Complaining about the inherited
+		// convention as well would be two diagnostics for one error (m7-plan step 6).
+		if len(d.symbols) > 0 {
+			if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
+				return
+			}
+		}
 		errorf(k.c, d.span, "L0438", "a generic procedure cannot use a foreign calling convention")
 	}
 }

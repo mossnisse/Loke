@@ -1,0 +1,34 @@
+package main;
+
+// design.md "Attributes" (m7-plan step 1): before M7 attributes were parsed and
+// mostly ignored, so a typo was silent. Every way of writing one wrongly is now
+// its own diagnostic, and the two that carry behaviour report at the use site.
+
+@(nonsense)
+a: int = 0;
+
+@(compiler.no_alias)
+b: int = 0;
+
+@(public, public)
+c: int = 0;
+
+@(packed)
+d: int = 0;
+
+@(deprecated)
+e :: proc() {}
+
+@(public = "yes")
+f: int = 0;
+
+@(deprecated = "use `g2` instead")
+g :: proc() -> int { return 1; }
+
+@(require_results)
+h :: proc() -> int { return 2; }
+
+main :: proc() {
+	g();
+	h();
+}

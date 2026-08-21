@@ -813,7 +813,15 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 			return
 		}
 		if indexable {
-			unsupported_construct(k, v.span)
+			// design.md "Indexing and slicing": the comma form "is reserved for a
+			// user-defined `operator([])` taking that many indices, and is a
+			// compile-time error on a built-in container" — permanently, not pending
+			// a milestone (m7-plan step 6).
+			errorf(
+				k.c, v.span, "L0362",
+				"`%s` takes one index; `a[i, j]` is reserved for a user `operator([])` taking that many",
+				type_name(k.c, operand),
+			)
 		} else {
 			errorf(k.c, v.span, "L0362", "`%s` cannot be indexed", type_name(k.c, operand))
 		}
@@ -1061,8 +1069,8 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: b
 	return true
 }
 
-// `operator([:])`. A built-in slice expression arrives with M5, so a type with
-// no `[:]` overload is still the deferred family it was.
+// `operator([:])`. A built-in carrier slices on its own; every other type needs
+// the overload, and a type without one simply cannot be sliced.
 @(private = "file")
 check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	v.value_category = .Value
@@ -1078,7 +1086,14 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	}
 	slicers := operator_candidates_for_receiver(k, "[:]", operand)
 	if len(slicers) == 0 {
-		unsupported_construct(k, v.span)
+		// design.md "Indexing and slicing": slicing a user type is an
+		// `operator([:])` overload and nothing else, so its absence is a permanent
+		// answer rather than a pending milestone (m7-plan step 6).
+		errorf(
+			k.c, v.span, "L0362",
+			"`%s` cannot be sliced; a user type needs an `operator([:])` overload",
+			type_name(k.c, operand),
+		)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -2418,7 +2433,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	bound := make([]Expr, len(sym.params), k.c.semantic_allocator)
 	for arg, index in v.args {
 		if arg.name.text != "" || arg.mode != .Value {
-			unsupported_construct(k, arg.span)
+			reject_builtin_argument_shape(k, arg)
 			continue
 		}
 		bound[index] = arg.value
@@ -2426,6 +2441,19 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	}
 	v.bound = bound
 	v.type = sym.type
+}
+
+// A built-in takes positional value arguments and nothing else: it has no
+// declaration to name a parameter, and no `inout`/`move`/spread position to
+// fill. Both are permanent properties rather than an unimplemented milestone
+// (m7-plan step 6).
+@(private = "file")
+reject_builtin_argument_shape :: proc(k: ^Checker, arg: Argument) {
+	if arg.name.text != "" {
+		errorf(k.c, arg.span, "L0371", "a built-in takes positional arguments only")
+		return
+	}
+	errorf(k.c, arg.span, "L0370", "a built-in takes value arguments only")
 }
 
 // `assert(condition[, message])` and `panic([message])`. Both produce no value
@@ -2452,7 +2480,7 @@ check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, ki
 	bound := make([]Expr, len(v.args), k.c.semantic_allocator)
 	for arg, index in v.args {
 		if arg.name.text != "" || arg.mode != .Value {
-			unsupported_construct(k, arg.span)
+			reject_builtin_argument_shape(k, arg)
 			continue
 		}
 		bound[index] = arg.value
@@ -2616,7 +2644,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	}
 	for arg in v.args {
 		if arg.name.text != "" || arg.mode != .Value {
-			unsupported_construct(k, arg.span)
+			reject_builtin_argument_shape(k, arg)
 			v.type = INVALID_TYPE
 			return
 		}
@@ -2789,7 +2817,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	}
 	for arg in v.args {
 		if arg.name.text != "" || arg.mode != .Value {
-			unsupported_construct(k, arg.span)
+			reject_builtin_argument_shape(k, arg)
 			v.type = INVALID_TYPE
 			return
 		}
@@ -2931,7 +2959,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	}
 	for arg in v.args {
 		if arg.name.text != "" || arg.mode != .Value {
-			unsupported_construct(k, arg.span)
+			reject_builtin_argument_shape(k, arg)
 			v.type = INVALID_TYPE
 			return
 		}
@@ -3120,7 +3148,10 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 
 	for arg, index in v.args {
 		if arg.mode == .Spread {
-			unsupported_construct(k, arg.span)
+			// design.md "Variadic parameters": a spread fills a variadic pack, and
+			// this callee has none — a permanent answer, not a pending milestone
+			// (m7-plan step 6).
+			errorf(k.c, arg.span, "L0371", "`..` needs a variadic parameter to spread into")
 			ok = false
 			continue
 		}
@@ -3417,7 +3448,17 @@ check_init_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, args: []Arg
 @(private = "file")
 check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	v.value_category = .Value
-	if v.bodiless || len(v.where_clauses) > 0 || v.signature == nil {
+	// design.md: `---` is foreign-declaration syntax, so a procedure *value* never
+	// ends with one — it has nothing to call (m7-plan step 6).
+	if v.bodiless {
+		errorf(
+			k.c, v.span, "L0630",
+			"only a foreign declaration ends with `---`; a procedure value needs a body",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	if len(v.where_clauses) > 0 || v.signature == nil {
 		unsupported_construct(k, v.span)
 		v.type = INVALID_TYPE
 		return
@@ -3461,7 +3502,11 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		// `[?]T` takes its length from the literal it types.
 		element := resolve_type_syntax(k, array.elem)
 		if element == INVALID_TYPE {
-			unsupported_construct(k, expr_span(v.type_expr))
+			// `resolve_type_syntax` stays silent so it can be used as a probe; the
+			// literal's written type is a position that requires one, so it says
+			// what is missing here — about the element, which is the failing part
+			// of `[?]T` (m7-plan step 6).
+			report_unresolved_type(k, array.elem)
 			v.type = INVALID_TYPE
 			return
 		}
@@ -3471,7 +3516,10 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	} else if v.type_expr != nil {
 		target = resolve_type_syntax(k, v.type_expr)
 		if target == INVALID_TYPE {
-			unsupported_construct(k, expr_span(v.type_expr))
+			// `resolve_type_syntax` stays silent so it can be used as a probe; the
+			// literal's written type is a position that requires one, so it says
+			// what is missing here (m7-plan step 6).
+			report_unresolved_type(k, v.type_expr)
 			v.type = INVALID_TYPE
 			return
 		}
@@ -3630,6 +3678,20 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 	fold_aggregate(k, v, target, values, info.fields)
 }
 
+// design.md's array, slice, and dynamic-array literals list their elements
+// positionally; only a struct literal names fields and only a map literal writes
+// `key = value`. A keyed element in a sequence literal is therefore a permanent
+// answer rather than an unimplemented milestone, and it is reported once for the
+// whole literal instead of once per element (m7-plan step 6).
+@(private = "file")
+reject_keyed_element :: proc(k: ^Checker, element: Element, target: Type_Id) {
+	errorf(
+		k.c, element.span, "L0372",
+		"a `%s` literal lists its elements positionally",
+		type_name(k.c, target),
+	)
+}
+
 @(private = "file")
 check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	count := int(info.count)
@@ -3637,7 +3699,9 @@ check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 	ok := true
 	for element, index in v.elements {
 		if element.key != nil {
-			unsupported_construct(k, element.span)
+			if ok {
+				reject_keyed_element(k, element, target)
+			}
 			ok = false
 			continue
 		}
@@ -3673,9 +3737,13 @@ check_dynamic_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, 
 	}
 	// Insertion clones a borrowed element, so its copy entry point has to exist.
 	contribute_lifecycle_members(k, info.element)
+	reported := false
 	for element, index in v.elements {
 		if element.key != nil {
-			unsupported_construct(k, element.span)
+			if !reported {
+				reject_keyed_element(k, element, target)
+				reported = true
+			}
 			continue
 		}
 		if !check_value_expr(k, element.value, info.element, "initialise") {

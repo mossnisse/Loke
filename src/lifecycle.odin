@@ -138,8 +138,16 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if v.args[1].mode != .Value || v.args[0].name.text != "" || v.args[1].name.text != "" {
-		unsupported_construct(k, v.span)
+	// `exchange` is a built-in with no written signature, so it has no parameter
+	// name to address and no second modal position — permanently, not pending a
+	// milestone (m7-plan step 6).
+	if v.args[0].name.text != "" || v.args[1].name.text != "" {
+		errorf(k.c, v.span, "L0505", "`exchange` takes positional arguments only")
+		v.type = INVALID_TYPE
+		return
+	}
+	if v.args[1].mode != .Value {
+		errorf(k.c, v.args[1].span, "L0505", "`exchange`'s replacement is passed by value")
 		v.type = INVALID_TYPE
 		return
 	}

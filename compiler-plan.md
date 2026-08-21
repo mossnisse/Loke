@@ -718,6 +718,202 @@ The reset-liveness gap recorded under step 5 was closed after the audit; see
 that step's record. M6b leaves nothing on its own list — what remains is the
 documented v1 trust-boundary set, unchanged.
 
+M7 steps 1–3 are implemented ([m7-plan.md](m7-plan.md)): release output, record
+layout, and the Windows x64 C ABI.
+
+`-opt=none|minimal|size|speed|aggressive` maps to one `-O` flag on the single
+`clang` invocation that already consumed the `.ll`; [A5](#a-big-decisions)'s
+separate `opt`/`llc` split is not taken, because clang runs the same pipeline on
+textual IR. The claim M7 makes about optimization is behaviour preservation, and
+that is a testing obligation rather than a pipeline one — `LOKE_TEST_FLAGS` runs
+the whole `tests/run` and `tests/trap` corpus at every level and requires
+identical output. Building the differential corpus immediately found a real
+defect it was meant to find: `zero_const` had no `.Typeid` case, so `x: typeid;`
+was left uninitialised and diverged at `-O2`.
+
+The `LOKE_*` constants are predeclared, but their enum *types* are allocated
+lazily, on first use of a `LOKE_*` constant. Eager allocation would shift every
+`Type_Id` after them and so renumber every `%struct.X.<id>` in the module, which
+is observable in `tests/ll` and would have made a program that never reads build
+config pay for one that does. They are deliberately not bound into `base:runtime`
+for the same reason: that would re-shift for any `core:fmt` importer.
+
+`@(packed)` and `@(align=N)` needed a representation choice, because an LLVM
+struct type cannot carry a requested ABI alignment. Storage-site `align` can
+guarantee a base address but cannot change a containing record's field offsets
+or an array's stride. So each attributed shape gets the body that is exact for
+it: packed-only is LLVM's own `<{ ... }>`; align-only is `{fields, [0 x iN]}`,
+where the trailing zero-length aligned member forces both the alignment and the
+tail padding, and containers and arrays then compose naturally with no
+transitive byte-exactness needed; combined `@(packed, align=N)` is explicit byte
+members plus that trailing member. Field GEP indices stay equal to the logical
+field index in every form, which is what lets ordinary access, reflection, and
+formatting stay on one path. Alignment is also tracked per *place*: entering a
+packed field lowers the effective guarantee to 1 for every nested access, so
+`packed.outer.inner` cannot accidentally regain the inner type's natural
+alignment. `&packed.field` is rejected (`L0614`); the whole value's address
+stays valid.
+
+The two ABI worlds are deliberate. The `loke` convention keeps LLVM's own
+first-class-aggregate lowering, unchanged and byte-identical to M6b's output,
+because design.md makes its classification implementation-defined and requires
+only that caller and callee compiled for one target agree — which one LLVM and
+one triple already guarantee. Only a foreign convention gets a compiler-written
+classification, because the C ABI is the only one with an external partner. That
+classification was verified against `clang --target=x86_64-pc-windows-msvc`
+rather than derived from the documents: an aggregate of size 1, 2, 4, or 8 passes
+in one integer register of that width, loaded byte-exact from a temporary —
+using the aggregate's *size*, so `{i32,i8}` is 8 and still a register; every
+other size passes as a pointer to caller-owned storage, with a hidden `sret`
+first argument for a result; a single-`f32` struct goes in an integer register,
+never `xmm`; and a direct C `_Bool` is `i1 zeroext` while its stored form stays
+one byte. One spelling detail cost a debugging cycle and is worth recording: an
+LLVM parameter attribute follows its type (`i1 zeroext %x`) while a return
+attribute precedes it (`zeroext i1`).
+
+M7 step 4 is implemented: foreign imports, blocks, and linking.
+
+The decisive choice is that a foreign block's members are collected as *ordinary
+package symbols*, in the same top-level pass as every other declaration. Name
+resolution, visibility, overload ranking, and call checking therefore need no
+foreign-specific path at all; what differs is only that a member has no body,
+carries a link name and a library, and emits a `declare` rather than a
+definition. The block supplies defaults its members may override — the calling
+convention (`@(default_calling_convention)`), the visibility, and
+`@(require_results)` — so collecting members as ordinary symbols does not lose
+the block-wide policy design.md promises.
+
+`@(by_ptr)` and `@(c_vararg)` moved here from step 3, where the plan had put
+them. Both are foreign-declaration-only in design.md, and a bodied `proc "c"`
+cannot consume varargs, so their real consumer is the foreign-import machinery
+and splitting them across two steps would have meant writing the call-site half
+against nothing. `@(c_vararg)` keeps `..any_view` notation but is a checker-only
+exception rather than permission to pass any Loke value: each concrete argument
+must satisfy the foreign-ABI predicate, the call emits a true LLVM varargs call
+with the C default promotions (`f32` → `double`; `bool`, enums, and narrow
+integers → `i32`), and a spread is rejected because it either erases the
+concrete types or has a runtime count LLVM call syntax cannot express.
+
+Three link failures are distinguished rather than folded into clang's exit code:
+a missing import file (`L0631`), a missing or failing assembler (`L0632`), and an
+unresolved link name (`L0633`). The last is detected by scanning clang's stderr
+*after* the link rather than before it — a deviation from the plan's letter,
+recorded because a pre-link check would mean reading every import library's
+symbol table, which is more machinery than one diagnostic is worth.
+
+M7 step 5 is implemented: exported symbols, object output, and `core:os`.
+
+`@(export)` replaces the mangled `@loke.p.<pkg>.<name>` with the written symbol,
+checked across the whole program. Two declarations agreeing on a name is
+otherwise a link-time failure with no source location, and the compiler owns the
+whole symbol table, so it says which two they were (`L0634`, with a note at the
+first). An exported procedure must declare a foreign calling convention
+(`L0629`), and neither an export nor a link name may claim the reserved
+`loke_rt_` prefix (`L0635`).
+
+`obj` mode is one relocatable compiler module, not a disguised final link. It
+accepts any root package, skips executable validation, emits no entry, and runs
+`clang -c` on the generated `.ll` alone; the object deliberately *retains* its
+runtime and foreign references, and its C consumer supplies the runtime sources
+and libraries at the final link. This avoids both a duplicate `main` and the
+impossible `clang -c a.ll runtime/*.c -o one.obj` shape, and it makes the runtime
+ABI dependency explicit rather than silently satisfied. An assembly import
+cannot ride along in a single relocatable object, so an `obj` build that has one
+is diagnosed with the instruction its consumer needs (`L0603`); the same import
+in an `exe` build reaches the assembler as before. The TLS teardown thunk moved
+out of the entry emitter in the process — every generated module supplies it,
+entry or no entry.
+
+`core:os` is the proof that the foreign system works, which is why it is a
+milestone exit rather than library work. Executable entry became `wmain`, so
+`runtime/args.c` converts the incoming UTF-16 argument vector to cached UTF-8
+before the initial thread attaches — surrogate pairs combined, unpaired ones
+replaced with U+FFFD — and Loke's UTF-8 invariant survives Windows. The library
+half is ordinary Loke source over one foreign block: `Args`, `args`, `len`,
+indexing, iteration, and `exit`. `os.exit` needs no compiler knowledge at all,
+because the process dies inside the call and no cleanup runs by construction.
+One shape had to differ from the plan: `Args.Element` is `string_view` rather
+than `string`, because by-value `foreach` over a managed element is rejected
+(`L0504`); indexing still returns an owning `string`, so the specified surface is
+unchanged for every use except the loop binding.
+
+One pre-existing defect surfaced and was fixed here rather than deferred, since
+`core:os` is the first package to hit it: `emit_address` treated every selector
+as a field GEP, so *any* cross-package global (`pkg.g`) failed with `L0405` "a
+resolved place has no storage".
+
+M7 step 6 is implemented: the audit.
+
+The audit's finding is that `L0350` — "this construct parses, but is not compiled
+yet in this milestone" — was still reachable from ordinary source in nine
+distinct ways, and in every one of them it named the wrong problem and pointed at
+a milestone that would never fix it. Each now answers what is actually wrong, and
+none of them waits for anything: `---` outside a foreign block, on a declaration
+or a procedure value (`L0630`); `a[i, j]` on a built-in container and slicing a
+type with no `operator([:])` (`L0362`); a spread with no variadic parameter to
+fill, and a named or modal argument to a built-in (`L0370`/`L0371`); a keyed
+element in a sequence literal (`L0372`, reported once for the literal rather than
+once per element); an unknown *generic* type application, which said "not
+compiled yet" where a bare unknown name said "unknown type" (`L0306`); and a
+literal whose written type does not resolve, which was gating the enclosing
+construct instead of reporting the type. `Simd(T, N)` gets its own answer
+(`L0636`) naming it as specified-but-absent in v1, rather than being an unknown
+name.
+
+Every remaining `unsupported_construct` call site sits on a dispatch arm whose
+union or token set is exhaustively handled above it — verified case by case
+against the parser: `Item_Block` and `Item_When` are flattened out of
+`active_items` before checking, `Item_Delegate` only ever appears inside an
+`impl`, `check_stmt` covers every `Stmt` variant, only `Caret` and `Or_Return`
+produce a postfix node, `Amp` is consumed by the address-of path before the unary
+switch, and `is_compound_assign` and `compound_operator` cover exactly the same
+eleven tokens. The calls are kept as invariant guards rather than deleted, since
+reaching one means a parser or resolver invariant broke and a diagnostic naming
+the span beats falling through with an unchecked node.
+
+Two cascades were collapsed, both cases of one mistake producing two
+diagnostics. A generic member of a foreign block reported `L0624` *and* `L0438`
+for the convention it had inherited from the block rather than written; the
+inherited convention is not a second error. And a member the parser could not
+read reported `L0206` and then `L0622`; the recovery node is now skipped, which
+leaves `L0622` an invariant guard like the ones above.
+
+One documented limitation was fixed rather than re-documented. Step 2 had
+recorded that `==` over a combined `@(packed, align=N)` record was unsupported,
+because byte members make whole-value `extractvalue` ill-typed. It was worse than
+recorded: it reached the backend and produced *invalid IR* that clang rejected,
+which is never an acceptable answer. Equality now reads each field through its
+address — the same GEP ordinary field access already uses — so the comparison is
+the ordinary one and only the way the operands are reached differs. Such a record
+now works as a map key and a container element as well.
+
+The audit also found that step 1's attribute discipline had no error fixture at
+all, despite being six diagnostics; `tests/err/m7_attributes` now proves one
+diagnostic per way of writing an attribute wrongly, plus the two that carry
+behaviour at the use site. All thirteen attributes design.md defines were checked
+to have behaviour outside the validation table, not merely a table row.
+
+The audit also found one defect it is deliberately *not* fixing, because doing so
+is a backend refactor rather than an M7 obligation. Several `alloca`s are emitted
+at their point of use rather than in the entry block — the composite-literal
+temporary, the slice-literal backing root, the union spill, and now the
+byte-member equality scratch. LLVM releases an `alloca` only when the function
+returns, so any of them reached inside a loop grows the stack per iteration: a
+two-million-iteration `==` against a struct literal exhausts the stack at
+`-opt=none`, and `-opt=speed` and above hide it because SROA promotes the slot.
+`emit_slice_literal` already carried a note saying to hoist "if a real program
+shows stack growth", which one now does. The fix needs an entry-block seam every
+function emitter shares, and `src/emit_llvm.odin` has twenty-one sites that write
+`define`+`entry:` while only `emit_proc` has such a seam; a first attempt that
+flushed hoisted allocas from `emit_unwind_prologue` was reverted, because the
+other twenty would have leaked theirs into whichever function's prologue ran
+next. It is recorded here and marked at each site rather than half-fixed.
+
+Otherwise M7 leaves nothing on its own list. What remains is the documented v1
+trust-boundary set, unchanged — retention of a pointer, `cstring_view`, or
+`inout` argument by foreign code is not checked, which is a v1 decision rather
+than a gap M7 closes — and `Simd(T, N)`, which now names itself.
+
 ---
 
 ## D. Out of scope for v1
