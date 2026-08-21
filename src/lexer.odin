@@ -150,10 +150,6 @@ lex :: proc(c: ^Compiler, file: u32) -> []Token {
 	return tokens[:]
 }
 
-token_text :: proc(c: ^Compiler, file: u32, t: Token) -> string {
-	return c.sources[file].text[t.lo:t.hi]
-}
-
 @(private = "file")
 at_end :: proc(l: ^Lexer) -> bool {
 	return int(l.pos) >= len(l.src)

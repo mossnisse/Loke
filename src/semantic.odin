@@ -773,7 +773,6 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.generic_templates = make(map[Symbol_Id]^Generic_Template, c.semantic_allocator)
 	c.generic_impls = make(map[Symbol_Id][dynamic]^Generic_Impl, c.semantic_allocator)
 	c.instances = make(map[string]^Instance, c.semantic_allocator)
-	c.instance_by_symbol = make(map[Symbol_Id]^Instance, c.semantic_allocator)
 	c.instantiation_stack = make([dynamic]Instantiation_Frame, 0, 8, c.semantic_allocator)
 	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
 	c.interfaces = make(map[Symbol_Id]^Interface_Info, c.semantic_allocator)
@@ -866,6 +865,20 @@ new_symbol :: proc(c: ^Compiler, value: Symbol) -> Symbol_Id {
 	id := Symbol_Id(len(c.symbols))
 	append(&c.symbols, value)
 	return id
+}
+
+// One field of a compiler-owned struct-shaped type — a slice, a container
+// header, `any_view`, a range. Every such type installs its fields the same way,
+// so they share one constructor rather than a private copy apiece.
+new_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int, public := false) -> Symbol_Id {
+	return new_symbol(c, Symbol {
+		name   = intern_identifier(c, name),
+		span   = no_span(),
+		kind   = .Field,
+		type   = type,
+		index  = u32(index),
+		public = public,
+	})
 }
 
 symbol_of :: proc(c: ^Compiler, id: Symbol_Id) -> ^Symbol {
@@ -1147,15 +1160,6 @@ type_is_pointer :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // (design.md "Arithmetic operators").
 type_is_numeric :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_is_integer(c, id) || type_is_float(c, id) || type_is_rune(c, id)
-}
-
-type_is_scalar :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
-	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum,
-	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil:
-		return true
-	}
-	return false
 }
 
 type_is_aggregate :: proc(c: ^Compiler, id: Type_Id) -> bool {

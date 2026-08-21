@@ -44,20 +44,6 @@ bi_from_u64 :: proc(c: ^Compiler, v: u64) -> Big_Int {
 	return r
 }
 
-bi_from_i128 :: proc(c: ^Compiler, v: i128) -> Big_Int {
-	context.allocator = arena(c)
-	r: Big_Int
-	big.int_set_from_integer(&r, v)
-	return r
-}
-
-bi_from_u128 :: proc(c: ^Compiler, v: u128) -> Big_Int {
-	context.allocator = arena(c)
-	r: Big_Int
-	big.int_set_from_integer(&r, v)
-	return r
-}
-
 // `2^power`, the building block of every width boundary below.
 bi_pow2 :: proc(c: ^Compiler, power: int) -> Big_Int {
 	context.allocator = arena(c)

@@ -199,6 +199,12 @@ int32_t loke_rt_v1_bytes_compare(
 	const uint8_t *a_data, int64_t a_len, const uint8_t *b_data, int64_t b_len);
 int64_t loke_rt_v1_cstring_len(const uint8_t *p);
 
+/* Encodes one scalar value into at most 4 bytes and answers how many it wrote,
+ * or 0 when `value` is not a scalar value. Shared between string building and
+ * `loke_rt_v1_fmt_rune`; generated code never calls it, which is why it carries
+ * no `v1` ABI version. */
+int64_t loke_rt_encode_rune(uint8_t *out, int32_t value);
+
 /* ------------------------------------------------------------ containers -- */
 
 /* m6b-plan decisions "Dynamic-array value ABI", "Map value ABI" and "Container

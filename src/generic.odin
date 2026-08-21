@@ -886,9 +886,6 @@ instantiate_generic :: proc(
 		instance.signature_ok = instantiate_procedure_signature(k, template, instance, name, report)
 	case .None:
 	}
-	if instance.signature_ok && instance.symbol != INVALID_SYMBOL {
-		k.c.instance_by_symbol[instance.symbol] = instance
-	}
 	// Failed bounds are negative cache entries. Reusing them avoids cloning a
 	// declaration and allocating semantic artifacts on every overload probe;
 	// `report_rejected_instance` can still replay the bound diagnostically.
@@ -1275,15 +1272,6 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance) {
 			name   = instance.mangled,
 		})
 	}
-}
-
-// The instance an already-resolved call selected, so the caller can promote it.
-instance_for_symbol :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> ^Instance {
-	sym := symbol_of(c, symbol_id)
-	if sym == nil || sym.instance_of == INVALID_SYMBOL {
-		return nil
-	}
-	return c.instance_by_symbol[symbol_id]
 }
 
 // ------------------------------------------------------------ where clauses --

@@ -10,6 +10,8 @@
 // `mem.Arena` uses.
 package lokec
 
+import "core:reflect"
+
 // The driver's whole-program build selections. Windows x64 is the only v1
 // target, so architecture, OS, endianness, and vendor are fixed.
 Opt_Mode :: enum {
@@ -41,15 +43,12 @@ opt_clang_flag :: proc(mode: Opt_Mode) -> string {
 LOKE_VERSION_STRING :: "0.7.0"
 
 // The synthesized enum types, created lazily and cached so the many
-// `build_universe` calls share one identity apiece.
+// `build_universe` calls share one identity apiece. Indexed by the constant that
+// names them, so the mapping has no second spelling to drift from. `.None`
+// indexes a zero entry, which is `INVALID_TYPE`.
 Build_Config :: struct {
-	ready:             bool,
-	arch:              Type_Id,
-	os:                Type_Id,
-	endian:            Type_Id,
-	build_mode:        Type_Id,
-	optimization_mode: Type_Id,
-	vendor:            Type_Id,
+	ready: bool,
+	types: [Build_Config_Enum]Type_Id,
 }
 
 @(private = "file")
@@ -76,23 +75,6 @@ synth_enum :: proc(c: ^Compiler, name: string, members: []string) -> Type_Id {
 	return type
 }
 
-build_config_types :: proc(c: ^Compiler) -> ^Build_Config {
-	bc := &c.build_config
-	if bc.ready {
-		return bc
-	}
-	bc.ready = true
-	bc.arch = synth_enum(c, "Arch", {"Amd64", "Arm64"})
-	bc.os = synth_enum(c, "Os", {"Windows", "Linux", "Darwin"})
-	bc.endian = synth_enum(c, "Endian", {"Little", "Big"})
-	bc.build_mode = synth_enum(c, "Build_Mode", {"Exe", "Obj"})
-	bc.optimization_mode = synth_enum(
-		c, "Optimization_Mode", {"None", "Minimal", "Size", "Speed", "Aggressive"},
-	)
-	bc.vendor = synth_enum(c, "Vendor", {"Loke"})
-	return bc
-}
-
 @(private = "file")
 enum_const :: proc(c: ^Compiler, which: Build_Config_Enum, index: int) -> Symbol {
 	// The enum `type` is left INVALID and filled in lazily on first use, so a
@@ -107,18 +89,27 @@ enum_const :: proc(c: ^Compiler, which: Build_Config_Enum, index: int) -> Symbol
 }
 
 // The enum `Type_Id` for one build-config constant, created on first demand.
+// Creation order fixes the type numbering, so the six stay in this order.
+//
+// `Build_Mode` and `Optimization_Mode` take their member names from the driver
+// enums the `LOKE_*` constants index with `int(c.build_mode)` and
+// `int(c.opt_mode)`. Spelling them out again would let a new mode land in one
+// list and not the other, and a stale list makes the constant name the wrong
+// member rather than fail to compile.
 build_config_enum_type :: proc(c: ^Compiler, which: Build_Config_Enum) -> Type_Id {
-	bc := build_config_types(c)
-	switch which {
-	case .None:              return INVALID_TYPE
-	case .Arch:              return bc.arch
-	case .Os:                return bc.os
-	case .Endian:            return bc.endian
-	case .Build_Mode:        return bc.build_mode
-	case .Optimization_Mode: return bc.optimization_mode
-	case .Vendor:            return bc.vendor
+	bc := &c.build_config
+	if !bc.ready {
+		bc.ready = true
+		bc.types[.Arch] = synth_enum(c, "Arch", {"Amd64", "Arm64"})
+		bc.types[.Os] = synth_enum(c, "Os", {"Windows", "Linux", "Darwin"})
+		bc.types[.Endian] = synth_enum(c, "Endian", {"Little", "Big"})
+		bc.types[.Build_Mode] = synth_enum(c, "Build_Mode", reflect.enum_field_names(Build_Mode))
+		bc.types[.Optimization_Mode] = synth_enum(
+			c, "Optimization_Mode", reflect.enum_field_names(Opt_Mode),
+		)
+		bc.types[.Vendor] = synth_enum(c, "Vendor", {"Loke"})
 	}
-	return INVALID_TYPE
+	return bc.types[which]
 }
 
 // Predeclares the eight `LOKE_*` constants into the universe scope. Their enum

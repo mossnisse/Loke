@@ -100,7 +100,6 @@ Compiler :: struct {
 	generic_templates:     map[Symbol_Id]^Generic_Template,
 	generic_impls:         map[Symbol_Id][dynamic]^Generic_Impl,
 	instances:             map[string]^Instance,
-	instance_by_symbol:    map[Symbol_Id]^Instance,
 	instantiation_stack:   [dynamic]Instantiation_Frame,
 	instantiation_count:   int,
 	instantiation_limit_hit: bool,
@@ -225,10 +224,6 @@ Compiler :: struct {
 	symbols:              [dynamic]Symbol,
 	packages:             [dynamic]Package,
 }
-
-// The old public name remains as a compatibility alias while callers migrate
-// to the more accurate compilation vocabulary.
-Compilation :: Compiler
 
 // Loads a file and registers it. Reports and returns false on failure, so the
 // caller never has to invent its own error text.

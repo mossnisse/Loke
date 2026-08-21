@@ -221,7 +221,7 @@ run :: proc() -> int {
 		return 2
 	}
 
-	c: Compilation
+	c: Compiler
 	defer destroy_compilation(&c)
 	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
 	c.panic_unwind = opts.panic_unwind

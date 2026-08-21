@@ -75,27 +75,16 @@ ensure_container_fields :: proc(c: ^Compiler, type: Type_Id) {
 		return
 	}
 	fields := make([]Symbol_Id, 4, c.semantic_allocator)
-	fields[CONTAINER_STORAGE] = new_container_field(c, storage, TYPE_RAWPTR, CONTAINER_STORAGE)
-	fields[CONTAINER_LEN] = new_container_field(c, "len", TYPE_INT, CONTAINER_LEN)
-	fields[CONTAINER_CAP] = new_container_field(c, "cap", TYPE_INT, CONTAINER_CAP)
+	fields[CONTAINER_STORAGE] = new_field(c, storage, TYPE_RAWPTR, CONTAINER_STORAGE)
+	fields[CONTAINER_LEN] = new_field(c, "len", TYPE_INT, CONTAINER_LEN)
+	fields[CONTAINER_CAP] = new_field(c, "cap", TYPE_INT, CONTAINER_CAP)
 	// design.md "Allocators": the header retains the provider its drop releases
 	// through, which is why a container can be dropped without its declaration in
 	// scope.
-	fields[CONTAINER_ALLOC] = new_container_field(c, "allocator", TYPE_ALLOCATOR, CONTAINER_ALLOC)
+	fields[CONTAINER_ALLOC] = new_field(c, "allocator", TYPE_ALLOCATOR, CONTAINER_ALLOC)
 	// The store may have grown while the field symbols were made.
 	info = type_of(c, type)
 	info.fields = fields
-}
-
-@(private = "file")
-new_container_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int) -> Symbol_Id {
-	return new_symbol(c, Symbol {
-		name  = intern_identifier(c, name),
-		span  = no_span(),
-		kind  = .Field,
-		type  = type,
-		index = u32(index),
-	})
 }
 
 type_is_dynamic_array :: proc(c: ^Compiler, id: Type_Id) -> bool {

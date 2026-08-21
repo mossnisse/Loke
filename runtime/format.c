@@ -35,22 +35,11 @@ static int64_t base_of(const loke_rt_options_v1 *o) {
 }
 
 /* Digits are produced least-significant first into a fixed buffer, then
- * reversed: 64 bits in base 2 is the widest case and fits in 64 digits. */
-static int64_t spell_unsigned(uint8_t *out, uint64_t value, int64_t base, int uppercase) {
-	const char *digits = uppercase ? "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	                               : "0123456789abcdefghijklmnopqrstuvwxyz";
-	uint8_t scratch[64];
-	int64_t used = 0;
-	do {
-		scratch[used++] = (uint8_t)digits[value % (uint64_t)base];
-		value /= (uint64_t)base;
-	} while (value != 0);
-	for (int64_t i = 0; i < used; i++) {
-		out[i] = scratch[used - 1 - i];
-	}
-	return used;
-}
-
+ * reversed: 128 bits in base 2 is the widest case and fits in 128 digits.
+ *
+ * ponytail: one 128-bit spelling serves every width, so a 64-bit value pays for
+ * a 128-bit divide per digit. Formatting is not a hot path; give `uint64_t` its
+ * own copy of this loop if it ever becomes one. */
 static int64_t spell_unsigned128(
 	uint8_t *out, unsigned __int128 value, int64_t base, int uppercase) {
 	const char *digits = uppercase ? "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -65,6 +54,10 @@ static int64_t spell_unsigned128(
 		out[i] = scratch[used - 1 - i];
 	}
 	return used;
+}
+
+static int64_t spell_unsigned(uint8_t *out, uint64_t value, int64_t base, int uppercase) {
+	return spell_unsigned128(out, (unsigned __int128)value, base, uppercase);
 }
 
 void loke_rt_v1_fmt_u64(const loke_rt_writer_v1 *w, uint64_t value, const loke_rt_options_v1 *o) {
@@ -135,30 +128,13 @@ void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value) {
  * it denotes rather than as its number. */
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value) {
 	uint8_t buffer[4];
-	uint32_t v = (uint32_t)value;
-	int64_t used;
-	if (value < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) {
+	/* `loke_rt_encode_rune` rejects exactly what cannot be printed — a negative
+	 * value, one past U+10FFFF, or a surrogate — so its 0 is the replacement
+	 * case. */
+	int64_t used = loke_rt_encode_rune(buffer, value);
+	if (used == 0) {
 		loke_rt_v1_fmt_bytes(w, (const uint8_t *)"\xEF\xBF\xBD", 3); /* U+FFFD */
 		return;
-	}
-	if (v < 0x80) {
-		buffer[0] = (uint8_t)v;
-		used = 1;
-	} else if (v < 0x800) {
-		buffer[0] = (uint8_t)(0xC0 | (v >> 6));
-		buffer[1] = (uint8_t)(0x80 | (v & 0x3F));
-		used = 2;
-	} else if (v < 0x10000) {
-		buffer[0] = (uint8_t)(0xE0 | (v >> 12));
-		buffer[1] = (uint8_t)(0x80 | ((v >> 6) & 0x3F));
-		buffer[2] = (uint8_t)(0x80 | (v & 0x3F));
-		used = 3;
-	} else {
-		buffer[0] = (uint8_t)(0xF0 | (v >> 18));
-		buffer[1] = (uint8_t)(0x80 | ((v >> 12) & 0x3F));
-		buffer[2] = (uint8_t)(0x80 | ((v >> 6) & 0x3F));
-		buffer[3] = (uint8_t)(0x80 | (v & 0x3F));
-		used = 4;
 	}
 	loke_rt_v1_fmt_bytes(w, buffer, used);
 }

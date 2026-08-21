@@ -2472,40 +2472,15 @@ emit_panic :: proc(e: ^Emitter, message: string) {
 	e.terminated = true
 }
 
-// The failures that bypass both strategies: an allocator whose policy is
-// `.Trap`, and a panic raised while one is already unwinding.
-@(private = "file")
-emit_abort :: proc(e: ^Emitter, message: string) {
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_abort(ptr %s)", message_global(e, message))
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-}
-
 // Panics when `cond` holds, and continues in a fresh block otherwise.
 @(private = "file")
 panic_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
-	guard_if(e, cond, prefix, message, emit_panic)
-}
-
-@(private = "file")
-abort_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
-	guard_if(e, cond, prefix, message, emit_abort)
-}
-
-@(private = "file")
-guard_if :: proc(
-	e: ^Emitter,
-	cond: string,
-	prefix: string,
-	message: string,
-	fail_with: proc(e: ^Emitter, message: string),
-) {
 	fail := new_label(e, prefix)
 	ok := new_label(e, "ok")
 	branch_if(e, cond, fail, ok)
 	fmt.sbprintfln(&e.b, "%s:", fail)
 	e.terminated = false
-	fail_with(e, message)
+	emit_panic(e, message)
 	fmt.sbprintfln(&e.b, "%s:", ok)
 	e.terminated = false
 }
@@ -4109,11 +4084,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	count := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
 
-	result := llvm_type(e, v.type)
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, result, start, SLICE_DATA)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, result, first, count, SLICE_LEN)
-	return out
+	return emit_slice_value(e, v.type, start, count)
 }
 
 // design.md "From string to X": `st[low:high]` is a subrange *view*. The bounds
@@ -4145,10 +4116,7 @@ emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", split, valid)
 	panic_if(e, split, "slice.utf8", "string slice bounds split a code point")
 
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, start, VIEW_DATA)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, STRING_VIEW_TYPE, first, count, VIEW_LEN)
-	return out
+	return emit_ptr_len(e, STRING_VIEW_TYPE, start, count)
 }
 
 // design.md "Multi-pointers": `x[:]`/`x[i:]` stay multi-pointers and carry no
@@ -4236,10 +4204,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		data, length := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, STRING_TYPE, value, STRING_DATA)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, STRING_TYPE, value, STRING_LEN)
-		first, out := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, data, VIEW_DATA)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, STRING_VIEW_TYPE, first, length, VIEW_LEN)
-		return out
+		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
 	if from := base.union_from; from != INVALID_TYPE {
 		target := base.type
@@ -4392,11 +4357,7 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite) -> string {
 		store(e, info.element, emit_expr(e, element.value), slot)
 	}
 
-	result := llvm_type(e, v.type)
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, result, root, SLICE_DATA)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %d, %d", out, result, first, len(v.elements), SLICE_LEN)
-	return out
+	return emit_slice_value(e, v.type, root, fmt.aprintf("%d", len(v.elements)))
 }
 
 @(private = "file")
@@ -6047,14 +6008,23 @@ emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 
 // ------------------------------------------------------------------- text --
 
-// `{ data, len }` for a slice type.
+// A `{ptr, i64}` view value, built field by field. A slice and a `string_view`
+// are the same shape, so one builder serves both; `storage` is the LLVM type
+// text and `length` an already-spelled operand.
+#assert(SLICE_DATA == VIEW_DATA && SLICE_LEN == VIEW_LEN)
+
 @(private = "file")
-emit_slice_value :: proc(e: ^Emitter, slice_type: Type_Id, data, length: string) -> string {
-	storage := llvm_type(e, slice_type)
+emit_ptr_len :: proc(e: ^Emitter, storage, data, length: string) -> string {
 	first, out := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, storage, data, SLICE_DATA)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, storage, first, length, SLICE_LEN)
 	return out
+}
+
+// `{ data, len }` for a slice type.
+@(private = "file")
+emit_slice_value :: proc(e: ^Emitter, slice_type: Type_Id, data, length: string) -> string {
+	return emit_ptr_len(e, llvm_type(e, slice_type), data, length)
 }
 
 // The data pointer and byte length of a `string` or `string_view` value, which
@@ -6235,9 +6205,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		kept_data, kept_len := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
-		first, view := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, kept_data, VIEW_DATA)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", view, STRING_VIEW_TYPE, first, kept_len, VIEW_LEN)
+		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
 		out := make([]string, 2)
 		out[0], out[1] = view, ok
 		return out
@@ -6311,9 +6279,7 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> [
 		kept_data, kept_len := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
-		first, view := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, STRING_VIEW_TYPE, kept_data, VIEW_DATA)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", view, STRING_VIEW_TYPE, first, kept_len, VIEW_LEN)
+		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
 		pair := make([]string, 2)
 		pair[0], pair[1] = view, ok
 		return pair
@@ -8586,9 +8552,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		storage, length := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", storage, source, CONTAINER_STORAGE)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", length, source, CONTAINER_LEN)
-		view, filled := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", view, view_type, storage, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", filled, view_type, view, length, SLICE_LEN)
+		filled := emit_ptr_len(e, view_type, storage, length)
 		first, out := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, view_type, filled, ITER_ARRAY_DATA)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, %d", out, iterator, first, ITER_ARRAY_INDEX)

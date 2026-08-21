@@ -69,22 +69,11 @@ ensure_slice_fields :: proc(c: ^Compiler, type: Type_Id) {
 		return
 	}
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[SLICE_DATA] = new_slice_field(c, "data", TYPE_RAWPTR, SLICE_DATA)
-	fields[SLICE_LEN] = new_slice_field(c, "len", TYPE_INT, SLICE_LEN)
+	fields[SLICE_DATA] = new_field(c, "data", TYPE_RAWPTR, SLICE_DATA)
+	fields[SLICE_LEN] = new_field(c, "len", TYPE_INT, SLICE_LEN)
 	// The store may have grown while the field symbols were made.
 	info = type_of(c, type)
 	info.fields = fields
-}
-
-@(private = "file")
-new_slice_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int) -> Symbol_Id {
-	return new_symbol(c, Symbol {
-		name  = intern_identifier(c, name),
-		span  = no_span(),
-		kind  = .Field,
-		type  = type,
-		index = u32(index),
-	})
 }
 
 type_is_slice :: proc(c: ^Compiler, id: Type_Id) -> bool {

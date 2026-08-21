@@ -36,22 +36,11 @@ ensure_any_view_fields :: proc(c: ^Compiler) {
 		return
 	}
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ANY_VIEW_DATA] = new_view_field(c, "data", TYPE_RAWPTR, ANY_VIEW_DATA)
-	fields[ANY_VIEW_ID] = new_view_field(c, "id", TYPE_TYPEID, ANY_VIEW_ID)
+	fields[ANY_VIEW_DATA] = new_field(c, "data", TYPE_RAWPTR, ANY_VIEW_DATA)
+	fields[ANY_VIEW_ID] = new_field(c, "id", TYPE_TYPEID, ANY_VIEW_ID)
 	info = type_of(c, TYPE_ANY_VIEW)
 	info.fields = fields
 	info.mangled = "any_view"
-}
-
-@(private = "file")
-new_view_field :: proc(c: ^Compiler, name: string, type: Type_Id, index: int) -> Symbol_Id {
-	return new_symbol(c, Symbol {
-		name  = intern_identifier(c, name),
-		span  = no_span(),
-		kind  = .Field,
-		type  = type,
-		index = u32(index),
-	})
 }
 
 // design.md: `any_view` may be a local variable or parameter, but not a result
@@ -172,8 +161,8 @@ dyn_type :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, span: 
 	name := intern_identifier(k.c, dyn_display_name(k.c, info, args))
 	type := new_type(k.c, Type_Info{kind = .Dyn, name = name, dyn_interface = info.symbol, dyn_args = args})
 	fields := make([]Symbol_Id, 2, k.c.semantic_allocator)
-	fields[DYN_DATA] = new_view_field(k.c, "data", TYPE_RAWPTR, DYN_DATA)
-	fields[DYN_WITNESS] = new_view_field(k.c, "witness", TYPE_RAWPTR, DYN_WITNESS)
+	fields[DYN_DATA] = new_field(k.c, "data", TYPE_RAWPTR, DYN_DATA)
+	fields[DYN_WITNESS] = new_field(k.c, "witness", TYPE_RAWPTR, DYN_WITNESS)
 	if stored := type_of(k.c, type); stored != nil {
 		stored.fields = fields
 		stored.mangled = fmt.aprintf("dyn.%s", llvm_safe(identifier_text(k.c, name)), allocator = k.c.semantic_allocator)

@@ -604,7 +604,3 @@ report_compile_time_only :: proc(k: ^Checker, type: Type_Id, span: Span) {
 		type_name(k.c, type),
 	)
 }
-
-descriptor_type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
-	return fmt.aprintf("%s", type_name(c, id), allocator = c.semantic_allocator)
-}

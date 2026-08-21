@@ -144,7 +144,7 @@ int64_t loke_rt_v1_rune_count(const uint8_t *data, int64_t len) {
 	return count;
 }
 
-static int64_t encode_rune(uint8_t *out, int32_t value) {
+int64_t loke_rt_encode_rune(uint8_t *out, int32_t value) {
 	uint32_t v = (uint32_t)value;
 	if (value < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) {
 		return 0;
@@ -235,7 +235,7 @@ int32_t loke_rt_v1_string_from_runes(
 	int64_t total = 0;
 	for (int64_t i = 0; i < count; i++) {
 		uint8_t scratch[4];
-		int64_t used = encode_rune(scratch, runes[i]);
+		int64_t used = loke_rt_encode_rune(scratch, runes[i]);
 		if (used == 0) {
 			return 0;
 		}
@@ -250,7 +250,7 @@ int32_t loke_rt_v1_string_from_runes(
 	}
 	int64_t cursor = 0;
 	for (int64_t i = 0; i < count; i++) {
-		cursor += encode_rune(bytes + cursor, runes[i]);
+		cursor += loke_rt_encode_rune(bytes + cursor, runes[i]);
 	}
 	return 1;
 }

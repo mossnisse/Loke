@@ -82,32 +82,15 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	name := intern_identifier(c, fmt.aprintf("Range(%s)", type_name(c, element), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_range = true})
 	fields := make([]Symbol_Id, 3, c.semantic_allocator)
-	fields[RANGE_LOW] = new_field_symbol(c, "low", element, RANGE_LOW)
-	fields[RANGE_HIGH] = new_field_symbol(c, "high", element, RANGE_HIGH)
-	fields[RANGE_CLOSED] = new_field_symbol(c, "closed", TYPE_BOOL, RANGE_CLOSED)
+	fields[RANGE_LOW] = new_field(c, "low", element, RANGE_LOW, public = true)
+	fields[RANGE_HIGH] = new_field(c, "high", element, RANGE_HIGH, public = true)
+	fields[RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, RANGE_CLOSED, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		info.mangled = fmt.aprintf("Range.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator)
 	}
 	c.range_types[element] = type
 	return type
-}
-
-type_is_range :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
-	return info != nil && info.is_range
-}
-
-@(private = "file")
-new_field_symbol :: proc(c: ^Compiler, name: string, type: Type_Id, index: int) -> Symbol_Id {
-	return new_symbol(c, Symbol {
-		name   = intern_identifier(c, name),
-		span   = no_span(),
-		kind   = .Field,
-		type   = type,
-		index  = u32(index),
-		public = true,
-	})
 }
 
 // ------------------------------------------------------- iterator types --
@@ -121,9 +104,9 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 	name := intern_identifier(c, fmt.aprintf("Range_Iterator(%s)", type_name(c, element), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 3, c.semantic_allocator)
-	fields[ITER_RANGE_CURRENT] = new_field_symbol(c, "current", element, ITER_RANGE_CURRENT)
-	fields[ITER_RANGE_HIGH] = new_field_symbol(c, "high", element, ITER_RANGE_HIGH)
-	fields[ITER_RANGE_CLOSED] = new_field_symbol(c, "closed", TYPE_BOOL, ITER_RANGE_CLOSED)
+	fields[ITER_RANGE_CURRENT] = new_field(c, "current", element, ITER_RANGE_CURRENT, public = true)
+	fields[ITER_RANGE_HIGH] = new_field(c, "high", element, ITER_RANGE_HIGH, public = true)
+	fields[ITER_RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, ITER_RANGE_CLOSED, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		info.mangled = fmt.aprintf("Range_Iterator.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator)
@@ -146,8 +129,8 @@ array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE)
 	name := intern_identifier(c, fmt.aprintf("Array_Iterator(%s)", type_name(c, array), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_ARRAY_DATA] = new_field_symbol(c, "data", stored, ITER_ARRAY_DATA)
-	fields[ITER_ARRAY_INDEX] = new_field_symbol(c, "index", TYPE_INT, ITER_ARRAY_INDEX)
+	fields[ITER_ARRAY_DATA] = new_field(c, "data", stored, ITER_ARRAY_DATA, public = true)
+	fields[ITER_ARRAY_INDEX] = new_field(c, "index", TYPE_INT, ITER_ARRAY_INDEX, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		info.mangled = fmt.aprintf("Array_Iterator.%s", llvm_safe(type_name(c, array)), allocator = c.semantic_allocator)
@@ -168,8 +151,8 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	name := intern_identifier(c, fmt.aprintf("Map_Iterator(%s)", type_name(c, subject), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ITER_MAP_TABLE] = new_field_symbol(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
-	fields[ITER_MAP_CURSOR] = new_field_symbol(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
+	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE, public = true)
+	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		// The map this walks. `next` needs its operation table, and the raw table
