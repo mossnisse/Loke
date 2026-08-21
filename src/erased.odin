@@ -261,7 +261,7 @@ dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Ar
 }
 
 type_is_dyn :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	return type_kind(c, type_underlying(c, id)) == .Dyn
+	return underlying_kind(c, id) == .Dyn
 }
 
 // --------------------------------------------------- dyn compatibility --
@@ -683,7 +683,7 @@ find_witness_slot :: proc(
 @(private = "file")
 slot_candidates_for_witness :: proc(k: ^Checker, concrete: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-	if info := type_of(k.c, type_underlying(k.c, concrete)); info != nil {
+	if info := underlying_info(k.c, concrete); info != nil {
 		for member in info.members {
 			if sym := symbol_of(k.c, member); sym != nil && sym.name == name {
 				append(&out, member)
@@ -735,7 +735,7 @@ witness_slot_matches :: proc(
 
 // The slot a `dyn` value's method call selects, and its index in the witness.
 dyn_slot_index :: proc(k: ^Checker, dyn: Type_Id, name: Identifier_Id) -> (int, Interface_Slot, bool) {
-	info := type_of(k.c, type_underlying(k.c, dyn))
+	info := underlying_info(k.c, dyn)
 	if info == nil || info.kind != .Dyn {
 		return 0, Interface_Slot{}, false
 	}
@@ -830,7 +830,7 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		materialize(k, v.args[0].value, TYPE_RAWPTR)
 		return
 	}
-	pointer := type_of(k.c, type_underlying(k.c, source))
+	pointer := underlying_info(k.c, source)
 	if pointer == nil || pointer.kind != .Pointer {
 		errorf(
 			k.c,
@@ -843,7 +843,7 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		return
 	}
 	concrete := pointer.element
-	dyn := type_of(k.c, type_underlying(k.c, target))
+	dyn := underlying_info(k.c, target)
 	info := interface_info_for(k, dyn.dyn_interface)
 	if info == nil {
 		v.type = INVALID_TYPE

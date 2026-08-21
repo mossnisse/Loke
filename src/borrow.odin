@@ -229,7 +229,7 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type_is_region_provider(c, type) {
 		return true
 	}
-	#partial switch type_kind(c, type_underlying(c, type)) {
+	#partial switch underlying_kind(c, type) {
 	case .Pointer, .Slice, .String_View, .CString_View, .Any_View, .Dyn:
 		// design.md "C string views": a view from `to_c_view()` is "valid for that
 		// complete expression" and "cannot be assigned, returned, or stored", which
@@ -248,7 +248,7 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type_is_region_provider(c, type) {
 		return true // it writes into the buffer it was given
 	}
-	#partial switch type_kind(c, type_underlying(c, type)) {
+	#partial switch underlying_kind(c, type) {
 	case .Pointer:
 		return true
 	case .Slice:
@@ -261,7 +261,7 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 	if type_is_region_provider(c, type) {
 		return "region"
 	}
-	#partial switch type_kind(c, type_underlying(c, type)) {
+	#partial switch underlying_kind(c, type) {
 	case .Pointer:     return "pointer"
 	case .Slice:       return "slice"
 	case .String_View:  return "string view"

@@ -564,7 +564,7 @@ slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owne
 	ensure_iteration_members(k, subject)
 	ensure_lifecycle_members(k, type_underlying(k.c, subject), name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-	if info := type_of(k.c, type_underlying(k.c, subject)); info != nil {
+	if info := underlying_info(k.c, subject); info != nil {
 		collect_slot_members(k, info.members, name, &out)
 	}
 	if pkg := package_of(k.c, owner_pkg); pkg != nil {

@@ -2519,7 +2519,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		check_exhaustive(k, s, subject, covered)
 		exhaustive := type_is_enum(k.c, subject)
 		if exhaustive {
-			if info := type_of(k.c, type_underlying(k.c, subject)); info != nil {
+			if info := underlying_info(k.c, subject); info != nil {
 				for member in info.fields {
 					if !covered[u32(member)] {
 						exhaustive = false
@@ -2600,7 +2600,7 @@ check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered
 		errorf(k.c, s.span, "L0366", "a switch over `%s` needs a default case", type_name(k.c, subject))
 		return
 	}
-	info := type_of(k.c, type_underlying(k.c, subject))
+	info := underlying_info(k.c, subject)
 	missing := ""
 	count := 0
 	for member in info.fields {
@@ -2627,7 +2627,7 @@ check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered
 
 @(private = "file")
 enum_member_by_value :: proc(c: ^Compiler, type: Type_Id, value: Const_Value) -> Symbol_Id {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil || value.kind != .Integer {
 		return INVALID_SYMBOL
 	}

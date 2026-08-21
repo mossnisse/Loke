@@ -1685,7 +1685,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result: int, result_
 	} else if v.callee != nil {
 		proc_type = expr_base(v.callee).type
 	}
-	info := type_of(c, type_underlying(c, proc_type))
+	info := underlying_info(c, proc_type)
 	for argument, index in v.bound {
 		if argument == nil {
 			continue
@@ -1909,7 +1909,7 @@ prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, boo
 		// the container is the root and every relocating operation on it ends the
 		// pointer. Which slot is unknowable once the storage can move, so the
 		// projection is the whole container.
-		#partial switch type_kind(c, type_underlying(c, expr_base(v.operand).type)) {
+		#partial switch underlying_kind(c, expr_base(v.operand).type) {
 		case .Array:
 			root, path, ok := prov_place_of(graph, v.operand)
 			if !ok {
@@ -1982,7 +1982,7 @@ prov_range_step :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> Proj_Step {
 	high, high_ok := i64(0), false
 	if v.hi != nil {
 		high, high_ok = prov_const_int(graph, v.hi)
-	} else if info := v.operand == nil ? nil : type_of(graph.k.c, type_underlying(graph.k.c, expr_base(v.operand).type));
+	} else if info := v.operand == nil ? nil : underlying_info(graph.k.c, expr_base(v.operand).type);
 	   info != nil && info.kind == .Array {
 		high, high_ok = i64(info.count), true
 	}
@@ -2066,7 +2066,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	// design.md "Dynamic arrays": "Indexing and slicing produce views into the
 	// current allocation", so a container lends from its own root too — that
 	// borrow is what every relocating operation on it then invalidates.
-	operand_kind := type_kind(graph.k.c, type_underlying(graph.k.c, expr_base(v.operand).type))
+	operand_kind := underlying_kind(graph.k.c, expr_base(v.operand).type)
 	array := operand_kind == .Array || operand_kind == .String || operand_kind == .Dynamic_Array
 	if root, path, ok := prov_place_of(graph, v.operand); ok && array {
 		prov_walk_subscripts(graph, v.operand)

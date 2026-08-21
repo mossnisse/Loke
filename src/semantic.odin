@@ -980,7 +980,7 @@ equal_reset_effects :: proc(a, b: []bool) -> bool {
 // Whether parameter `index` of this procedure type may reset the allocator
 // region it receives.
 proc_param_resets :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> bool {
-	info := type_of(c, type_underlying(c, proc_type))
+	info := underlying_info(c, proc_type)
 	return info != nil && index < len(info.param_resets) && info.param_resets[index]
 }
 
@@ -1103,6 +1103,19 @@ type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return current
 }
 
+// A type's own `Type_Info` and kind are almost never what a question is about —
+// a distinct type answers structural questions through what it wraps. These two
+// are that pairing, spelled once: `underlying_info` is nil for an invalid type
+// exactly as `type_of` is, and `underlying_kind` reports `.Invalid` for one
+// exactly as `type_kind` does.
+underlying_info :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
+	return type_of(c, type_underlying(c, id))
+}
+
+underlying_kind :: proc(c: ^Compiler, id: Type_Id) -> Type_Kind {
+	return type_kind(c, type_underlying(c, id))
+}
+
 type_is_untyped :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch type_kind(c, id) {
 	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
@@ -1113,7 +1126,7 @@ type_is_untyped :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 type_is_integer :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .Int, .Untyped_Int:
 		return true
 	}
@@ -1121,7 +1134,7 @@ type_is_integer :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 type_is_rune :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .Rune, .Untyped_Rune:
 		return true
 	}
@@ -1129,7 +1142,7 @@ type_is_rune :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 type_is_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .Float, .Untyped_Float:
 		return true
 	}
@@ -1137,7 +1150,7 @@ type_is_float :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 type_is_boolean :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .Bool, .Untyped_Bool:
 		return true
 	}
@@ -1145,11 +1158,11 @@ type_is_boolean :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 type_is_enum :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	return type_kind(c, type_underlying(c, id)) == .Enum
+	return underlying_kind(c, id) == .Enum
 }
 
 type_is_pointer :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .Pointer, .Raw_Pointer, .Proc:
 		return true
 	}
@@ -1163,7 +1176,7 @@ type_is_numeric :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 type_is_aggregate :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .Struct, .Array:
 		return true
 	}
@@ -1225,7 +1238,7 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune,
 	     .Untyped_String, .String, .String_View:
 		return true

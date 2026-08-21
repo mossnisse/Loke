@@ -178,7 +178,7 @@ arg_from_expr :: proc(k: ^Checker, e: Expr, mode := Argument_Mode.Value) -> Arg_
 // candidate has been chosen.
 @(private = "file")
 constant_conversion_preserves_kind :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
-	target := type_kind(c, type_underlying(c, to))
+	target := underlying_kind(c, to)
 	#partial switch type_kind(c, from) {
 	case .Untyped_Int:
 		return target == .Int

@@ -250,7 +250,7 @@ eval_elements :: proc(ev: ^Evaluator, count: int) -> ([]Eval_Value, bool) {
 // The declared type of one element of an aggregate type.
 @(private = "file")
 element_type_at :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil {
 		return INVALID_TYPE
 	}
@@ -714,7 +714,7 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 		eval_fail(ev, v.span, "L0341", "this literal has no compile-time value")
 		return Eval_Value{}, false
 	}
-	info := type_of(ev.k.c, type_underlying(ev.k.c, v.type))
+	info := underlying_info(ev.k.c, v.type)
 	if info == nil {
 		return Eval_Value{}, false
 	}

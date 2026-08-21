@@ -77,18 +77,17 @@ ensure_slice_fields :: proc(c: ^Compiler, type: Type_Id) {
 }
 
 type_is_slice :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
-	return info != nil && info.kind == .Slice
+	return underlying_kind(c, id) == .Slice
 }
 
 // The element type of a slice, or INVALID_TYPE.
 slice_element :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	return info != nil && info.kind == .Slice ? info.element : INVALID_TYPE
 }
 
 slice_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	return info != nil && info.kind == .Slice && info.mutable
 }
 
@@ -96,8 +95,8 @@ slice_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // read-only slice never converts to a mutable slice, including when its original
 // owner happens to be mutable."
 slice_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
-	from_info := type_of(c, type_underlying(c, from))
-	to_info := type_of(c, type_underlying(c, to))
+	from_info := underlying_info(c, from)
+	to_info := underlying_info(c, to)
 	if from_info == nil || to_info == nil {
 		return false
 	}

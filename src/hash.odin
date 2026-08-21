@@ -89,7 +89,7 @@ map_key_policy :: proc(k: ^Checker, key: Type_Id) -> Key_Policy {
 // the extending package instead), so the lookup is direct.
 @(private = "file")
 inherent_member_named :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
-	info := type_of(k.c, type_underlying(k.c, type))
+	info := underlying_info(k.c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
@@ -105,7 +105,7 @@ inherent_member_named :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbo
 
 @(private = "file")
 inherent_operator_named :: proc(k: ^Checker, type: Type_Id, symbol_text: string) -> Symbol_Id {
-	info := type_of(k.c, type_underlying(k.c, type))
+	info := underlying_info(k.c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}

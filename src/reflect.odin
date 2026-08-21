@@ -82,7 +82,7 @@ new_descriptor_type :: proc(c: ^Compiler, name: string, fields: []Descriptor_Fie
 }
 
 type_is_descriptor :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	return info != nil && info.descriptor
 }
 
@@ -111,7 +111,7 @@ string_view_const :: proc(text: string) -> Const_Value {
 // descriptor array formed inside the declaring package cannot leak members an
 // importer may not name.
 fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
-	info := type_of(k.c, type_underlying(k.c, subject))
+	info := underlying_info(k.c, subject)
 	if info == nil || info.kind != .Struct || info.descriptor {
 		return INVALID_TYPE, Const_Value{}, false
 	}
@@ -136,7 +136,7 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 }
 
 enum_values_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
-	info := type_of(k.c, type_underlying(k.c, subject))
+	info := underlying_info(k.c, subject)
 	if info == nil || info.kind != .Enum {
 		return INVALID_TYPE, Const_Value{}, false
 	}
@@ -172,7 +172,7 @@ aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) ->
 // design.md "Struct field tags": the tag a serialization library reads. Shared
 // with the runtime metadata table, which carries the same text.
 field_tag_text :: proc(c: ^Compiler, subject: Type_Id, field: ^Symbol) -> string {
-	info := type_of(c, type_underlying(c, subject))
+	info := underlying_info(c, subject)
 	if info == nil {
 		return ""
 	}
@@ -276,7 +276,7 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 	if info.kind == .Distinct {
 		consider(c, info.element)
 	}
-	under := type_of(c, type_underlying(c, type))
+	under := underlying_info(c, type)
 	if under == nil {
 		return
 	}
@@ -539,7 +539,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 		return true
 	}
 	operand_type := check_single_expr(k, v.args[0].value)
-	pointee := type_of(k.c, type_underlying(k.c, operand_type))
+	pointee := underlying_info(k.c, operand_type)
 	if pointee == nil || pointee.kind != .Pointer {
 		errorf(
 			k.c,
@@ -554,7 +554,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	}
 	// The descriptor and the value must describe the same type; a descriptor from
 	// another type would read at the wrong offset.
-	owner := type_of(k.c, type_underlying(k.c, pointee.element))
+	owner := underlying_info(k.c, pointee.element)
 	field := INVALID_SYMBOL
 	if owner != nil && int(field_index) < len(owner.fields) {
 		field = owner.fields[field_index]

@@ -207,7 +207,7 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 	if !evaluated {
 		return nil, INVALID_TYPE, false
 	}
-	info := type_of(k.c, type_underlying(k.c, type))
+	info := underlying_info(k.c, type)
 	if info == nil || info.kind != .Array {
 		errorf(
 			k.c,
@@ -229,7 +229,7 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 
 @(private = "file")
 enum_member_constants :: proc(k: ^Checker, enum_type: Type_Id) -> ([]Const_Value, Type_Id, bool) {
-	info := type_of(k.c, type_underlying(k.c, enum_type))
+	info := underlying_info(k.c, enum_type)
 	if info == nil {
 		return nil, INVALID_TYPE, false
 	}

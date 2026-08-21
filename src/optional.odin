@@ -227,7 +227,7 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 
 @(private = "file")
 status_is_nil_comparable :: proc(k: ^Checker, status: Type_Id) -> bool {
-	#partial switch type_kind(k.c, type_underlying(k.c, status)) {
+	#partial switch underlying_kind(k.c, status) {
 	case .Union, .Pointer, .Raw_Pointer, .Proc:
 		return true
 	}

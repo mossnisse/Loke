@@ -88,20 +88,18 @@ ensure_container_fields :: proc(c: ^Compiler, type: Type_Id) {
 }
 
 type_is_dynamic_array :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
-	return info != nil && info.kind == .Dynamic_Array
+	return underlying_kind(c, id) == .Dynamic_Array
 }
 
 type_is_map :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
-	return info != nil && info.kind == .Map
+	return underlying_kind(c, id) == .Map
 }
 
 // Either managed container. Both share one header shape, one operation-table
 // shape, and one allocator-binding policy, so most callers want this rather
 // than one of the two above.
 type_is_container :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	if info == nil {
 		return false
 	}
@@ -110,7 +108,7 @@ type_is_container :: proc(c: ^Compiler, id: Type_Id) -> bool {
 
 // The element (`[dynamic]T`'s `T`, `map[K]V`'s `V`), or INVALID_TYPE.
 container_element :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	if info == nil || (info.kind != .Dynamic_Array && info.kind != .Map) {
 		return INVALID_TYPE
 	}
@@ -119,7 +117,7 @@ container_element :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // A map's key type, or INVALID_TYPE for anything else.
 container_key :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	if info == nil || info.kind != .Map {
 		return INVALID_TYPE
 	}
@@ -468,7 +466,7 @@ type_accepts_via :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type_clone_disabled(c, type) {
 		return false
 	}
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil {
 		return false
 	}

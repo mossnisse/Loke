@@ -15,7 +15,7 @@ package lokec
 // Both directions, and only when the element types agree — a multi-pointer is a
 // slimmer view of the same storage, not a reinterpretation of it.
 multi_pointer_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
-	source, dest := type_of(c, type_underlying(c, from)), type_of(c, type_underlying(c, to))
+	source, dest := underlying_info(c, from), underlying_info(c, to)
 	if source == nil || dest == nil || source.element != dest.element {
 		return false
 	}
@@ -27,7 +27,7 @@ multi_pointer_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 
 // Whether a type is one of the three text carriers.
 type_is_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .String, .String_View, .CString_View:
 		return true
 	}
@@ -38,7 +38,7 @@ type_is_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // `cstring_view` is neither: design.md says it "does not promise UTF-8 because
 // foreign strings frequently use another encoding or arbitrary bytes".
 type_is_utf8_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, id)) {
+	#partial switch underlying_kind(c, id) {
 	case .String, .String_View:
 		return true
 	}
@@ -92,7 +92,7 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		return true
 	}
 
-	kind := type_kind(k.c, type_underlying(k.c, operand))
+	kind := underlying_kind(k.c, operand)
 	switch op {
 	case .None:
 		v.type = INVALID_TYPE
@@ -227,8 +227,8 @@ set_optional_ok_results :: proc(k: ^Checker, v: ^Expr_Call, value: Type_Id) {
 // Returns true when the pair was one of them, so the ordinary built-in
 // conversion table is not asked about it a second time.
 check_text_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) -> bool {
-	target_kind := type_kind(k.c, type_underlying(k.c, target))
-	source_kind := type_kind(k.c, type_underlying(k.c, source))
+	target_kind := underlying_kind(k.c, target)
+	source_kind := underlying_kind(k.c, source)
 	op := Text_Conversion.None
 	switch {
 	case target_kind == .String && source_kind == .Slice && slice_element(k.c, source) == TYPE_U8:
@@ -301,7 +301,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		case .Pointer:
 			// design.md: "For a nested fixed array, `unsafe.raw_data` exposes one
 			// array level at a time."
-			if pointee := type_of(k.c, type_underlying(k.c, info.element)); pointee != nil && pointee.kind == .Array {
+			if pointee := underlying_info(k.c, info.element); pointee != nil && pointee.kind == .Array {
 				element = pointee.element
 			}
 		case .String, .String_View, .CString_View:

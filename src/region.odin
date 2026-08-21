@@ -72,7 +72,7 @@ new_provider_type :: proc(c: ^Compiler, name: string) -> Type_Id {
 // Whether this type is one of the two local region providers. Asked by the
 // lifecycle classifier, the region lattice, and the backend's drop path.
 type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
-	info := type_of(c, type_underlying(c, id))
+	info := underlying_info(c, id)
 	return info != nil && info.provider
 }
 
@@ -81,7 +81,7 @@ type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // allocator and defaults to the program provider; `Arena(buffer)` remains the
 // fixed-storage overload.
 ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
-	info := type_of(k.c, type_underlying(k.c, type))
+	info := underlying_info(k.c, type)
 	if info == nil || !info.provider || .Container in info.contributed {
 		return
 	}

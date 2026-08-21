@@ -1052,7 +1052,7 @@ key_policy_member :: proc(c: ^Compiler, key: Type_Id, want_equal: bool) -> Symbo
 	if type_is_hashable(c, key) {
 		return INVALID_SYMBOL
 	}
-	info := type_of(c, type_underlying(c, key))
+	info := underlying_info(c, key)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
@@ -3825,7 +3825,7 @@ align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
 // unaligned (m7-plan decision "Alignment at use sites").
 @(private = "file")
 record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_address: string, field_type: Type_Id) {
-	base_info := type_of(e.c, type_underlying(e.c, base_type))
+	base_info := underlying_info(e.c, base_type)
 	base_align := place_align_of(e, base_address, base_type)
 	field_align := base_info != nil && base_info.packed ? u64(1) : min(base_align, type_align(e.c, field_type))
 	if field_align < type_align(e.c, field_type) {
@@ -3899,7 +3899,7 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		}
 		// design.md "Multi-pointers": "Indexing without bounds checking." There is
 		// no length to check against, which is exactly what the type says.
-		if operand_info := type_of(e.c, type_underlying(e.c, expr_base(v.operand).type));
+		if operand_info := underlying_info(e.c, expr_base(v.operand).type);
 		   operand_info != nil && operand_info.kind == .Multi_Pointer {
 			data := emit_expr(e, v.operand)
 			index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
@@ -3907,7 +3907,7 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 			return out
 		}
 		base_type, base_address := emit_base_address(e, v.operand)
-		info := type_of(e.c, type_underlying(e.c, base_type))
+		info := underlying_info(e.c, base_type)
 		index := emit_expr(e, v.indices[0])
 		index = emit_bounds_check(e, index, expr_base(v.indices[0]).type, info.count)
 		out := temp(e)
@@ -3993,7 +3993,7 @@ emit_slice_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 @(private = "file")
 emit_base_address :: proc(e: ^Emitter, operand: Expr) -> (Type_Id, string) {
 	type := expr_base(operand).type
-	info := type_of(e.c, type_underlying(e.c, type))
+	info := underlying_info(e.c, type)
 	if info != nil && info.kind == .Pointer {
 		pointer := emit_expr(e, operand)
 		emit_nil_check(e, pointer)
@@ -4015,7 +4015,7 @@ emit_nil_check :: proc(e: ^Emitter, pointer: string) {
 @(private = "file")
 emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	operand_type := expr_base(v.operand).type
-	info := type_of(e.c, type_underlying(e.c, operand_type))
+	info := underlying_info(e.c, operand_type)
 	element := info.element
 
 	data, length := "", ""
@@ -4108,7 +4108,7 @@ emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 // there a length to check against.
 @(private = "file")
 emit_multi_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
-	element := type_of(e.c, type_underlying(e.c, expr_base(v.operand).type)).element
+	element := underlying_info(e.c, expr_base(v.operand).type).element
 	data := emit_expr(e, v.operand)
 	low := "0"
 	if v.lo != nil {
@@ -4341,7 +4341,7 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 	if ok {
 		store(e, v.type, llvm_const(e, zero, v.type), address)
 	}
-	info := type_of(e.c, type_underlying(e.c, v.type))
+	info := underlying_info(e.c, v.type)
 	if info == nil {
 		return
 	}
@@ -4884,7 +4884,7 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 // takes the same route a union does.
 @(private = "file")
 type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	#partial switch type_kind(c, type_underlying(c, type)) {
+	#partial switch underlying_kind(c, type) {
 	case .Dyn, .Any_View, .Slice:
 		return true
 	}
@@ -5680,7 +5680,7 @@ emit_type_info_tables :: proc(e: ^Emitter) {
 
 @(private = "file")
 type_info_entry :: proc(e: ^Emitter, record, member, type: Type_Id) -> string {
-	shape := type_of(e.c, type_underlying(e.c, type))
+	shape := underlying_info(e.c, type)
 	members := type_info_members(e, member, type)
 
 	values := make(map[string]string)
@@ -5758,7 +5758,7 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 // declaration order.
 @(private = "file")
 type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
-	shape := type_of(e.c, type_underlying(e.c, type))
+	shape := underlying_info(e.c, type)
 	if shape == nil {
 		return "zeroinitializer"
 	}
@@ -5872,7 +5872,7 @@ enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: 
 // a silently wrong table.
 @(private = "file")
 named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]string) -> string {
-	info := type_of(e.c, type_underlying(e.c, record))
+	info := underlying_info(e.c, record)
 	if info == nil {
 		backend_fail(e, "a runtime metadata record has no fields")
 		return "zeroinitializer"
@@ -6154,7 +6154,7 @@ emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, leng
 emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
 	out := make([]string, 1)
 	out[0] = "null"
-	operand_kind := type_kind(e.c, type_underlying(e.c, expr_base(v.bound[0]).type))
+	operand_kind := underlying_kind(e.c, expr_base(v.bound[0]).type)
 	#partial switch kind {
 	case .Unsafe_Raw_Data:
 		#partial switch operand_kind {
@@ -6291,7 +6291,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 @(private = "file")
 emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	base := emit_expr(e, v.bound[0])
-	owner := type_of(e.c, type_underlying(e.c, expr_base(v.bound[0]).type))
+	owner := underlying_info(e.c, expr_base(v.bound[0]).type)
 	field := symbol_of(e.c, v.reflect_field)
 	address := gep_field(e, llvm_type(e, owner.element), base, int(field.index))
 	if v.reflect == .Field_Pointer {
@@ -6704,7 +6704,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	pointer := emit_expr(e, v.bound[0])
 	allocator := emit_allocator_operand(e, v, 1)
-	info := type_of(e.c, type_underlying(e.c, expr_base(v.bound[0]).type))
+	info := underlying_info(e.c, expr_base(v.bound[0]).type)
 	if info == nil || info.kind != .Pointer {
 		backend_fail(e, "`free` did not receive an allocation pointer")
 		return
@@ -6857,7 +6857,7 @@ emit_status_failed :: proc(e: ^Emitter, status_type: Type_Id, status: string) ->
 // Emits the call and returns one operand per result.
 @(private = "file")
 emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
-	callee_type := type_of(e.c, type_underlying(e.c, expr_base(v.callee).type))
+	callee_type := underlying_info(e.c, expr_base(v.callee).type)
 	symbol := symbol_of(e.c, v.resolution.symbol)
 
 	callee := ""
@@ -9139,7 +9139,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // The address of part `index`, which is a struct field or an array element.
 @(private = "file")
 element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -> string {
-	info := type_of(e.c, type_underlying(e.c, owner))
+	info := underlying_info(e.c, owner)
 	out := temp(e)
 	if info != nil && info.kind == .Array {
 		fmt.sbprintfln(
@@ -9276,7 +9276,7 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // The `try_clone` or `drop` a type answers to: a written one when the `impl`
 // block has it, and the contributed one otherwise.
 type_hook :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}

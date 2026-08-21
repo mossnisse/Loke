@@ -367,7 +367,7 @@ iteration_proc_matches :: proc(
 // protocol is inherent.
 iteration_member :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
 	ensure_iteration_members(k, type)
-	info := type_of(k.c, type_underlying(k.c, type))
+	info := underlying_info(k.c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
@@ -559,7 +559,7 @@ check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range)
 		return FLOWS
 	}
 	s.kind = .Range
-	s.element_type = type_of(k.c, type_underlying(k.c, element)).element
+	s.element_type = underlying_info(k.c, element).element
 	return check_foreach_body(k, s, s.element_type)
 }
 

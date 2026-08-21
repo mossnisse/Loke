@@ -1143,7 +1143,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 // and the high bound to the base's length.
 @(private = "file")
 check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bool {
-	info := type_of(k.c, type_underlying(k.c, operand))
+	info := underlying_info(k.c, operand)
 	if info == nil {
 		return false
 	}
@@ -1503,7 +1503,7 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		v.type = INVALID_TYPE
 		return
 	}
-	info := type_of(k.c, type_underlying(k.c, operand))
+	info := underlying_info(k.c, operand)
 	if info == nil || info.kind != .Pointer {
 		errorf(k.c, v.op_span, "L0355", "`^` needs a pointer, found `%s`", type_name(k.c, operand))
 		v.type = INVALID_TYPE
@@ -1869,7 +1869,7 @@ builtin_operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) ->
 	case .Plus:
 		// design.md "Concatenation": two `string`/`string_view` operands in either
 		// order produce an owning `string`.
-		#partial switch type_kind(c, type_underlying(c, type)) {
+		#partial switch underlying_kind(c, type) {
 		case .String, .String_View:
 			return true
 		}
@@ -2048,7 +2048,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 
-	info := type_of(k.c, type_underlying(k.c, callee_type))
+	info := underlying_info(k.c, callee_type)
 	if info == nil || info.kind != .Proc {
 		errorf(k.c, expr_span(v.callee), "L0320", "`%s` is not callable", type_name(k.c, callee_type))
 		v.type = INVALID_TYPE
@@ -2725,7 +2725,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Align_Of:
 		result = type_align(k.c, operand)
 	case .Len:
-		info := type_of(k.c, type_underlying(k.c, operand))
+		info := underlying_info(k.c, operand)
 		if info == nil || info.kind != .Array {
 			errorf(k.c, v.span, "L0386", "`len` needs a fixed array, found `%s`", type_name(k.c, operand))
 			v.type = INVALID_TYPE
@@ -3071,7 +3071,7 @@ set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
 // whether it has already been released, is root provenance (`src/borrow.odin`).
 @(private = "file")
 check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id) -> bool {
-	if type_kind(k.c, type_underlying(k.c, pointer)) != .Pointer {
+	if underlying_kind(k.c, pointer) != .Pointer {
 		errorf(k.c, expr_span(e), "L0493", "`free` takes an allocation pointer, found `%s`", type_name(k.c, pointer))
 		return false
 	}
@@ -3801,7 +3801,7 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, values:
 		if value == nil {
 			element_type := INVALID_TYPE
 			if fields == nil {
-				element_type = type_of(k.c, type_underlying(k.c, target)).element
+				element_type = underlying_info(k.c, target).element
 			} else {
 				element_type = symbol_of(k.c, fields[index]).type
 			}
@@ -3933,8 +3933,8 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	// design.md: "A `string` converts implicitly to a `string_view`" — a borrow
 	// that "costs nothing" and needs no validation, because a `string` is already
 	// valid UTF-8 by construction.
-	if type_kind(k.c, type_underlying(k.c, target)) == .String_View &&
-	   type_kind(k.c, type_underlying(k.c, base.type)) == .String {
+	if underlying_kind(k.c, target) == .String_View &&
+	   underlying_kind(k.c, base.type) == .String {
 		base.view_from = base.type
 		base.type = target
 		return true
@@ -4024,7 +4024,7 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 // `T(v)`, which truncates a float towards zero where an implicit conversion
 // requires an exact value.
 convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool) -> (Const_Value, bool) {
-	info := type_of(c, type_underlying(c, target))
+	info := underlying_info(c, target)
 	if info == nil {
 		return value, false
 	}
@@ -4128,7 +4128,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	if from == TYPE_UNTYPED_NIL {
-		#partial switch type_kind(c, type_underlying(c, to)) {
+		#partial switch underlying_kind(c, to) {
 		case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice,
 		     .String, .String_View, .CString_View,
 		     .Allocator, .Allocator_Error:
@@ -4151,7 +4151,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		// design.md "From a string literal to X": a literal's bytes have static
 		// lifetime, so it initializes an owning `string`, a borrowed view, and a
 		// zero-terminated C view alike.
-		#partial switch type_kind(c, type_underlying(c, to)) {
+		#partial switch underlying_kind(c, to) {
 		case .String, .String_View, .CString_View:
 			return true
 		}
@@ -4161,8 +4161,8 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	// `string_view`**... The conversion is a borrow of the string, it costs
 	// nothing, and it needs no validation because a `string` is already valid
 	// UTF-8 by construction." The conversion runs one way only.
-	if type_kind(c, type_underlying(c, from)) == .String &&
-	   type_kind(c, type_underlying(c, to)) == .String_View {
+	if underlying_kind(c, from) == .String &&
+	   underlying_kind(c, to) == .String_View {
 		return true
 	}
 	// design.md "Multi-pointers": "Implicit conversions between `^T` and `[^]T`."
@@ -4170,7 +4170,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true
 	}
 	if type_is_untyped(c, from) {
-		#partial switch type_kind(c, type_underlying(c, to)) {
+		#partial switch underlying_kind(c, to) {
 		case .Int, .Float, .Rune, .Bool, .Enum:
 			return true
 		}
@@ -4180,7 +4180,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	// needs one. design.md: a multi-pointer converts "to `rawptr`, like all
 	// pointers".
 	if to == TYPE_RAWPTR {
-		#partial switch type_kind(c, type_underlying(c, from)) {
+		#partial switch underlying_kind(c, from) {
 		case .Pointer, .Multi_Pointer:
 			return true
 		}
@@ -4267,7 +4267,7 @@ operand_mismatch :: proc(k: ^Checker, span: Span, lhs, rhs: Type_Id) {
 
 @(private = "file")
 pointee_of :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil || info.kind != .Pointer {
 		return INVALID_TYPE
 	}
@@ -4275,7 +4275,7 @@ pointee_of :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 }
 
 struct_field :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil || name == INVALID_IDENTIFIER {
 		return INVALID_SYMBOL
 	}

@@ -197,7 +197,7 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	}
 	// A record containing a move-only part is itself move-only: the generated
 	// field-wise clone would have no hook to call for that field.
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil {
 		return false
 	}
@@ -303,7 +303,7 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 // `clone_part` are the one pair every walk uses, so a struct and an array are
 // never indexed by two different conventions.
 clone_part_count :: proc(c: ^Compiler, type: Type_Id) -> int {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil {
 		return 0
 	}
@@ -317,7 +317,7 @@ clone_part_count :: proc(c: ^Compiler, type: Type_Id) -> int {
 }
 
 clone_part :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
-	info := type_of(c, type_underlying(c, type))
+	info := underlying_info(c, type)
 	if info == nil {
 		return INVALID_TYPE
 	}
