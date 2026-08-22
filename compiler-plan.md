@@ -389,7 +389,7 @@ actions newest-first, while `-panic=abort` registers nothing. Step 4 makes text 
 is a compile-time constant over static zero-terminated storage with the static
 bit set, and a runtime buffer carries a header holding an atomic handle count
 and the allocator that created it, so assignment retains, drop releases, the
-last handle frees through that allocator, and only `.clone()` allocates.
+last handle frees through that allocator, and only `.copy()` allocates.
 `string_view` is `{data, byte_len}` and `cstring_view` is one address; both are
 borrow carriers, so `src/borrow.odin` rejects an escaping subrange, `bytes()`
 result, or `to_c_view()` temporary with the same machinery it already applied to

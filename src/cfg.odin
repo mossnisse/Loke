@@ -2542,7 +2542,7 @@ prov_text_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 // owners; the views do not.
 @(private = "file")
 text_result_borrows :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
-	if v.text == .Clone || v.text == .From_Runes {
+	if v.text == .Copy || v.text == .From_Runes {
 		return false
 	}
 	#partial switch v.text_conversion {

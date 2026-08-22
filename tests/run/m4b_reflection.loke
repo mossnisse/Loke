@@ -2,7 +2,7 @@ package main; import "core:fmt";
 
 Point :: struct {
 	x: int,
-	y: i32 `json:"why"`,
+	y: i32,
 	on: bool,
 }
 

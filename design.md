@@ -57,7 +57,7 @@ A Loke source file is UTF-8 without a byte order mark (BOM).
 
 ## Code blocks
 
-A code block uses braces (`{}`) and creates a scope for its locals.
+A code block uses braces (`{}`) and creates a scope for its local variables.
 
 ### Statements
 
@@ -191,7 +191,7 @@ typeid   // runtime type identifier
 any_view // erased view of any value
 ```
 
-`bool` is the only boolean type and is one byte; there are no sized boolean types. A foreign boolean binds as its integer type and is converted to `bool` in a wrapper (see [Foreign system](#foreign-system)).
+`bool` is one byte; there are no sized boolean types. A foreign boolean binds as its integer type and is converted to `bool` in a wrapper (see [Foreign system](#foreign-system)).
 
 `int` and `uint` are the natural register size and never smaller than a pointer (`size_of(uint) >= size_of(uintptr)`); `uintptr` is pointer-sized. Use `int` for a general integer, and a fixed-size or unsigned type when you need a specific range or representation. Loke `int` is not C `int` (see [Foreign-ABI-safe types](#foreign-abi-safe-types)).
 
@@ -199,7 +199,7 @@ any_view // erased view of any value
 
 #### Zero values
 
-Every runtime value type has a zero value, written `{}`. A local receives it only with an explicit initializer (`x: T = {};`); omitting the initializer leaves the local dead. File-scope, `static`, and `thread_local` variables are zero-initialized when they have no initializer.
+Every runtime value type has a zero value, written `{}`. A local variable receives it only with an explicit initializer (`x: T = {};`); omitting the initializer leaves the local varible v marked as dead making it an compile error trying using the value. File-scope, `static`, and `thread_local` variables are zero-initialized when they have no initializer.
 
 The zero value is:
 
@@ -240,7 +240,7 @@ B :: true;    // unfixed boolean; converts to bool
 
 ### string type
 
-`string` is an immutable, owning UTF-8 value. It behaves like a simple local: it can be assigned, returned, and stored with no explicit construction, cleanup, or `defer`.
+`string` is an immutable, owning UTF-8 value. It behaves like a simple local variable: it can be assigned, returned, and stored with no explicit construction, cleanup, or `defer`.
 
 ```odin
 first := "hello";
@@ -263,7 +263,7 @@ bytes := text.bytes();           // read-only borrowed []u8
 
 `len(text)` is shorthand for `text.byte_len()` (constant time). A string cannot be indexed by integer, since a code point may span several bytes; use `text.bytes()[i]`, iteration, or Unicode procedures. Grapheme clusters are handled by the Unicode library, not the core string type.
 
-Repeated concatenation uses `String_Builder` from `core:strings`, a library type over `[dynamic]u8`. The compiler contributes one package-private primitive to that package — a copy of known-valid UTF-8 into string storage taken from a *supplied* allocator — because every built-in text operation allocates from the default provider and a library cannot otherwise honour `strings.clone(text, allocator)`. The UTF-8 algorithms, the growth policy, and the failure policy are ordinary Loke:
+Repeated concatenation uses `String_Builder` from `core:strings`, a library type over `[dynamic]u8`. The compiler contributes one package-private primitive to that package — a copy of known-valid UTF-8 into string storage taken from a *supplied* allocator — because every built-in text operation allocates from the default provider and a library cannot otherwise honour `strings.copy(text, allocator)`. The UTF-8 algorithms, the growth policy, and the failure policy are ordinary Loke:
 
 ```odin
 builder: String_Builder = {};
@@ -275,7 +275,7 @@ message := builder.finish(); // moves the buffer into an immutable string when p
 
 #### String iteration
 
-String iteration yields Unicode scalar values by default; byte iteration is explicit.
+String iteration yields Unicode scalar values (runes) by default; byte iteration is explicit.
 
 **The second loop variable is a byte offset, not a rune counter.** It is the byte index where the yielded code point begins, so it advances by 1–4 per step and the final offset is not `len(x) - 1`. This offset can be fed back into `x.bytes()`, a slice expression, or a low-level API; a rune ordinal cannot.
 
@@ -310,7 +310,7 @@ Low-level string indices are byte offsets throughout; Unicode procedures state t
 
 #### String format printing
 
-Formatting is a library protocol: a user type provides a visible `format(value, writer, options)` overload. Buffer handling and field tags belong to `core:fmt`, not this specification.
+Formatting is a library protocol: a user type provides a visible `format(value, writer, options)` overload. Buffer handling belongs to `core:fmt`, not this specification.
 
 Runtime formatting is **coherent per concrete `typeid`**: one type has one erased spelling program-wide. A `format` overload is eligible only when declared in the package that declares the value type; the compiler supplies one for every other printable type, and a second eligible declaration is rejected. A caller-local `extend` may declare and call its own `format`, but it does not change what `print` does, because an erased value carries only a pointer and a `typeid`. This is the same coherence rule [maps](#maps) place on `==` and `hash`.
 
@@ -344,7 +344,7 @@ n := byte_count(owned);       // implicit borrow, no copy
 m := byte_count(owned[5:]);   // a subrange view
 ```
 
-Use `string_view` to read text and `string` to store it. The conversion runs one way only: a `string_view` becomes a `string` with `.clone()`, which allocates because the result must own its bytes.
+Use `string_view` to read text and `string` to store it. The conversion runs one way only: a `string_view` becomes a `string` with `.copy()`, which allocates because the result must own its bytes.
 
 A validating conversion has [optional-ok semantics](#optional-ok-results): it produces `(value, ok: bool)`, with `value` the zero value and `ok` false on invalid input. Handle it with the comma-ok form or `or_else`:
 
@@ -378,7 +378,7 @@ Checked provenance follows a local `^T` and its copies until it is stored in an 
 | `string_view` | borrow, implicit | `view: string_view = st` |
 | `string_view` | borrow a subrange | `st[low:high]` |
 | `string` | share | `new_string := st` |
-| `string` | copy | `st.clone()` |
+| `string` | independent byte copy | `st.copy()` |
 | `cstring_view` | temporary borrow | `st.to_c_view()` |
 | `[]rune` | stream | `foreach (rune in st) { ... }` |
 | `[dynamic]rune` | copy | `st.to_runes()` |
@@ -438,7 +438,7 @@ p: ^int = nil;
 The `&` operator returns the address of an addressable operand:
 
 ```odin
-i := 123;
+i := 423;
 p := &i;
 ```
 
@@ -524,7 +524,7 @@ For a nested fixed array, `unsafe.raw_data` exposes one array level at a time. I
 
 ### Fixed arrays
 
-A fixed array contains a compile-time number of elements of one type. An array index can have an integer, character, or enumeration type.
+A fixed array contains a compile-time known number of elements of one type. An array index can have an integer, character, or enumeration type.
 
 This declaration constructs a fixed array:
 
@@ -700,14 +700,6 @@ a[:6]
 a[0:]
 a[:]
 
-When grabbing a chunk of a slice:
-
-a[offset:offset+length]
-
-can also be written:
-
-a[offset:][:length]
-
 #### Nil slices
 
 The zero value of a slice is nil. A nil slice has a length of 0 and does not point to any underlying memory. Slices can be compared against nil and nothing else.
@@ -744,11 +736,11 @@ x: [dynamic]int = {};
 x.append(10); // the zero value is immediately usable
 ```
 
-Along with `len`, dynamic arrays provide `cap` to report their current underlying capacity. Assignment creates an independent array, while `move` transfers its backing allocation:
+Along with `len`, dynamic arrays provide `cap` to report their current underlying capacity. Assignment creates an independent array by recursively cloning owned elements, while `move` transfers its backing allocation:
 
 ```odin
 x := [dynamic]int{1, 2, 3};
-y := x;       // deep copy
+y := x;       // independent ownership-recursive clone
 z := move(x); // allocation transfer; x becomes dead
 ```
 
@@ -1183,30 +1175,12 @@ Foo :: struct {
 
 Structs can be annotated with different memory layout and alignment requirements:
 
+```odin
 struct @(align=4)  {...} // require four-byte alignment
 struct @(packed)    {...} // remove padding between fields
+```
 
 These use the same attribute syntax as declarations and statements. Foreign layout uses the target ABI rules, equality optimizations require compiler proof, and validated construction uses an `init` procedure.
-
-#### Struct field tags
-
-A string literal after a struct field is a field tag. Runtime type information can read this metadata. Libraries usually use tags to specify how to encode, decode, or format a field. The language does not interpret the tag contents.
-
-```odin
-User :: struct {
-	flag: bool, // untagged field
-	age:  int    "custom whatever information",
-	name: string `json:"username" xml:"user-name" fmt:"q"`, // `core:reflect` layout
-}
-```
-
-Within Loke’s core library, the standard convention is to use a key that denotes the consuming package followed by a value. For example, `json` tags are processed by `core:encoding/json`, while `fmt` tags are processed by `core:fmt`.
-
-A package can define comma-separated options in its tag value. For example:
-
-```odin
-name: string `json:"username,omitempty"`,
-```
 
 ### Promoted struct fields
 
@@ -1499,7 +1473,6 @@ Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
 Member_Info :: struct {
 	kind:       Member_Kind,
 	name:       string_view,
-	tag:        string_view,
 	type:       typeid,
 	offset:     int,
 	value_low:  u64,
@@ -1540,8 +1513,8 @@ and `meta.Enum_Value`. Their names are exported by the compiler-defined
 `fields_of(T)` and `enum_values_of(T)` return compile-time fixed arrays of the
 corresponding descriptor type. Descriptors are opaque and cannot be forged. Names
 are constant `string_view` values, and a descriptor's `.type` member is a
-compile-time `type` value. A `meta.Field` also carries its declared
-[field tag](#struct-field-tags), which is what serialization libraries read.
+compile-time `type` value. A `meta.Field` also carries the field's physical
+declaration index.
 
 Both preserve source declaration order, after conditional `when` selection.
 Reflection observes only declarations visible from its lookup package. Thus
@@ -2064,7 +2037,7 @@ User records get field-wise `try_clone`, `clone`, `move`, and `drop` by default.
 
 The signatures are fixed: `drop` is `proc(self: inout T)`, and the canonical copy hook is `try_clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> (T, Allocator_Error)`. A custom `try_clone` must allocate all cloned storage through fallible operations on the supplied allocator and return any error without publishing a partial result. Generated field-wise cloning calls `try_clone` recursively for each owning field, destroys a partial temporary on failure, and returns zero plus the error.
 
-`clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> T` is generated from `try_clone` and not replaced independently. It calls `try_clone` once and, on failure, invokes the allocator's failure policy. `value.clone()` uses the program default; `value.clone(allocator)` selects one. Assignment and copy initialization call `try_clone` with the destination's bound allocator (or the destination's declared allocation policy when it is dead or allocator-unbound), invoking the failure policy only after cloning fails and before modifying the destination. A non-allocating `try_clone` ignores the allocator and returns a nil error.
+`clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> T` is generated from `try_clone` and not replaced independently. It calls `try_clone` once and, on failure, invokes the allocator's failure policy. `value.clone()` uses the program default; `value.clone(allocator)` selects one. For types governed by these lifecycle hooks, assignment and copy initialization call `try_clone` with the destination's bound allocator (or the destination's declared allocation policy when it is dead or allocator-unbound), invoking the failure policy only after cloning fails and before modifying the destination. A non-allocating `try_clone` ignores the allocator and returns a nil error. Built-in immutable `string` instead has the shared implicit-copy behavior described under [Assignment statements](#assignment-statements); its explicit independent byte-copy operation is `copy`.
 
 A custom `try_clone` may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations. This is enforced like the `hash`/equality coherence contract on map keys.
 
@@ -3056,11 +3029,11 @@ x:     = 123; // default type for an integer literal is `int`
 x := 123;
 ```
 
-Assignment has value semantics. Assignment of a mutable owning value creates an independent value. It does not create a hidden alias to the same allocation.
+Assignment has value semantics. Copying a mutable owning value creates an independent value by recursively cloning its owned storage. Copying an immutable or explicitly shared owning value, such as `string` or `shared(T)`, may retain shared storage. Copying a non-owning pointer, slice, or view preserves its reference semantics.
 
 ```odin
 a := [dynamic]int{1, 2, 3};
-b := a; // deep copy: modifying `b` does not modify `a`
+b := a; // independent clone: modifying `b` does not modify `a`
 b[0] = 99;
 assert(a[0] == 1);
 ```
@@ -3080,9 +3053,9 @@ The compiler may replace a copy with a move only for a type that has a trivial l
 
 The compiler does not silently move a dynamic array, map, runtime string, `shared(T)`, or type with a custom `try_clone`. This rule also applies at the last use of the source. Use `move(value)` to transfer ownership without a clone. Loke does not provide shallow aliases for mutable owning values. Use an explicit type such as `shared(T)` for shared ownership.
 
-Assignment of a mutable owner deep-copies rather than sharing its backing storage, so the value behaves like a simple one. Immutable `string` is the exception and may share immutable storage. Small inline values are cheap to copy; a large or allocating copy is flagged by the [copy-cost diagnostic](#copy-cost-diagnostics), which advises `move` to transfer ownership or a pointer or `shared(T)` to share.
+Assignment of a mutable owner recursively clones owned storage rather than sharing it, so the value behaves like a simple one. This ownership-recursive clone does not follow non-owning pointers, slices, or views, and an element of type `shared(T)` retains its explicitly shared payload. Immutable `string` values may likewise share immutable storage. Small inline values are cheap to copy; a large or allocating copy is flagged by the [copy-cost diagnostic](#copy-cost-diagnostics), which advises `move` to transfer ownership or a pointer or `shared(T)` to share.
 
-If assignment cloning needs storage, `try_clone` uses the live destination's allocator; a dead or allocator-unbound destination resolves its declaration allocation policy, loading `mem.default_allocator()` lazily when no `via` was written. On failure, the compiler invokes that allocator's [failure policy](#allocation-failure) and leaves a previously live destination unchanged. A non-allocating clone that shares immutable or reference-counted storage (`string`, `shared(T)`) keeps that allocation's allocator, so those types select their allocator at construction and cannot use `via`.
+If assignment cloning needs storage, `try_clone` uses the live destination's allocator; a dead or allocator-unbound destination resolves its declaration allocation policy, loading `mem.default_allocator()` lazily when no `via` was written. On failure, the compiler invokes that allocator's [failure policy](#allocation-failure) and leaves a previously live destination unchanged. A non-allocating implicit copy that shares immutable or reference-counted storage (`string`, `shared(T)`) keeps that allocation's allocator, so those types select their allocator at construction and cannot use `via`.
 
 ### Exchange
 
@@ -5142,7 +5115,7 @@ To see more uses of allocators and allocation-related procedures, please see pac
 
 ### Allocation failure
 
-Managed values allocate implicitly. A dynamic array grows on `append`, a string is built by concatenation, and an assignment clones its source. None of these have a place to return an error, so an implicit allocation failure never continues as if it had produced a value.
+Managed values allocate implicitly. A dynamic array grows on `append`, a string is built by concatenation, and copying a mutable owner may clone its storage. None of these have a place to return an error, so an implicit allocation failure never continues as if it had produced a value. Copying an immutable `string` only retains its existing storage and does not allocate.
 
 Each allocator carries one of two **failure policies**:
 
@@ -5203,7 +5176,7 @@ Loke adopts the C++20 atomic ordering model, excluding dependency-ordered `consu
 
 These rules intentionally match an established compiler memory model rather than defining a Loke-specific approximation. A compiler may map them to the corresponding LLVM or target atomic operations without strengthening or weakening their observable behavior.
 
-Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread, except for types such as immutable `string` and `shared(T)` whose documented clone operation shares thread-safe handle state. The compiler does not prove that a custom `drop`, a foreign resource, or an allocator may run on the receiving thread; transferring an owner asserts that its entire lifecycle is valid there. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There are no implicit `Send` or `Sync` interfaces.
+Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread, except for types such as immutable `string` and `shared(T)` whose documented copy semantics share thread-safe handle state. The compiler does not prove that a custom `drop`, a foreign resource, or an allocator may run on the receiving thread; transferring an owner asserts that its entire lifecycle is valid there. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There are no implicit `Send` or `Sync` interfaces.
 
 Threads and retained tasks receive only the arguments explicitly moved or copied
 into them. A request environment, logger, clock, scratch owner, or other service

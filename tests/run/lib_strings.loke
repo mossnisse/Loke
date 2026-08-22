@@ -76,7 +76,7 @@ main :: proc() {
 	fmt.println(strings.replace("a.b.c", ".", "/", 1));
 	fmt.println(strings.to_upper("hej å"));
 	fmt.println(strings.to_lower("HEJ Å"));
-	fmt.println(strings.clone(text));
+	fmt.println(strings.copy(text));
 
 	// The builder. Its zero value is usable and allocator-unbound.
 	builder: strings.String_Builder = {};
@@ -97,7 +97,7 @@ main :: proc() {
 	arena := mem.Arena();
 	scoped := strings.init(arena.allocator());
 	scoped.append("in the arena");
-	fmt.println(scoped.clone_string(mem.default_allocator()));
+	fmt.println(scoped.copy_string(mem.default_allocator()));
 
 	// The fallible surface reports instead of panicking.
 	fallible: strings.String_Builder = {};

@@ -176,7 +176,7 @@ clean_up :: proc(directory: string_view) {
 	for (;;) {
 		entry, present, next_error := reader.next();
 		if (next_error != nil || !present) { break; }
-		names.append(strings.clone(entry.name));
+		names.append(strings.copy(entry.name));
 	}
 	// The reader holds a search handle over the directory being emptied, so it is
 	// closed before anything is removed.

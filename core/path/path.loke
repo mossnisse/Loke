@@ -163,7 +163,7 @@ join :: proc(
 // `\\?\UNC\`, and belongs with whatever first needs it.
 clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator()) -> string {
 	if (strings.starts_with(path, "\\\\?\\")) {
-		return strings.clone(path, allocator);
+		return strings.copy(path, allocator);
 	}
 	volume := volume_length(path);
 	rest := path[volume:];

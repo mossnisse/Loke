@@ -10,7 +10,7 @@ import "base:runtime";
 
 Point :: struct {
 	@(public) x: int,
-	@(public) y: i32 `json:"why"`,
+	@(public) y: i32,
 }
 
 Colour :: enum { Red, Green = 5, Blue }

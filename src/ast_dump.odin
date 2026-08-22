@@ -642,9 +642,6 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 			fmt.sbprint(b, " ")
 			dump_names(b, field.names)
 			dump_child(b, field.type, depth)
-			if field.tag != "" {
-				fmt.sbprintf(b, " tag=%q", field.tag)
-			}
 			fmt.sbprint(b, ")")
 		}
 		for variant in node.variants {

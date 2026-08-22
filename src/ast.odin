@@ -192,7 +192,7 @@ Text_Op :: enum {
 	Byte_Len,   // O(1), and what `len(text)` is shorthand for
 	Rune_Count, // O(n) Unicode scalar values
 	Bytes,      // a read-only borrowed []u8
-	Clone,      // an independent managed copy
+	Copy,       // an independent managed byte copy
 	To_C_View,  // a zero-terminated borrow for the complete expression
 	To_Runes,   // `st.to_runes()`, a `[dynamic]rune` by copy
 	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
@@ -484,7 +484,6 @@ Field :: struct {
 	is_using:   bool,
 	names:    []Name,
 	type:     Expr,
-	tag:      string, // the tag literal's spelling, or ""
 	symbols:  []Symbol_Id,
 }
 

@@ -423,8 +423,8 @@ a later `core:unicode` package.
 ### Allocating transformations
 
 ```odin
-clone(text: string_view, allocator: Allocator = ...) -> string
-try_clone(text: string_view, allocator: Allocator = ...)
+copy(text: string_view, allocator: Allocator = ...) -> string
+try_copy(text: string_view, allocator: Allocator = ...)
 	-> (string, Allocator_Error)
 join(parts: []string_view, separator: string_view = "",
 	allocator: Allocator = ...) -> string
@@ -435,7 +435,7 @@ to_upper(text: string_view, allocator: Allocator = ...) -> string
 to_lower(text: string_view, allocator: Allocator = ...) -> string
 ```
 
-`clone` and `try_clone` are the public face of the compiler primitive below, and
+`copy` and `try_copy` are the public face of the compiler primitive below, and
 the identity case of this family. Every other string-returning procedure in the
 standard library goes through them, because they are the only way a library can
 create a `string` in storage the caller selected. `join` takes a slice for the
@@ -502,9 +502,9 @@ impl String_Builder {
 	finish       :: proc(self: inout String_Builder) -> string;
 	try_finish   :: proc(self: inout String_Builder)
 		-> (string, Allocator_Error);
-	clone_string :: proc(self, allocator: Allocator
+	copy_string :: proc(self, allocator: Allocator
 		= mem.default_allocator()) -> string;
-	try_clone_string :: proc(self, allocator: Allocator
+	try_copy_string :: proc(self, allocator: Allocator
 		= mem.default_allocator()) -> (string, Allocator_Error);
 }
 ```
@@ -515,7 +515,7 @@ reference-counted allocation header. `finish` therefore performs one linear copy
 into string storage and then clears the builder, retaining its allocation for
 reuse. `try_finish` has the same success behavior and leaves the builder
 unchanged if allocation fails; `finish` applies the builder allocator's failure
-policy. `clone_string` and `try_clone_string` do not change the builder.
+policy. `copy_string` and `try_copy_string` do not change the builder.
 
 The compiler contributes one package-private `core:strings` primitive that
 copies a known-valid `string_view` into string storage with a supplied allocator

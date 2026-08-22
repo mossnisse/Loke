@@ -54,7 +54,7 @@ Report :: interface($Self: type) {
 }
 
 Summary :: struct {
-	title:  int `json:"title"`,
+	title:  int,
 	weight: int,
 }
 

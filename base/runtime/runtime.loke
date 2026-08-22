@@ -29,8 +29,8 @@ Type_Kind :: enum u8 {
 @(public)
 Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
 
-// One member of an aggregate. Names and tags use static storage, so a
-// `Member_Info` owns nothing and needs no cleanup.
+// One member of an aggregate. Names use static storage, so a `Member_Info`
+// owns nothing and needs no cleanup.
 //
 // `value_low`/`value_high` carry an enum member's raw value in two words,
 // without narrowing a signed or unsigned 128-bit value; the owning type's
@@ -39,7 +39,6 @@ Member_Kind :: enum u8 { Field, Enum_Value, Union_Variant, Parameter, Result }
 Member_Info :: struct {
 	kind:       Member_Kind,
 	name:       string_view,
-	tag:        string_view,
 	type:       typeid,
 	offset:     int,
 	value_low:  u64,

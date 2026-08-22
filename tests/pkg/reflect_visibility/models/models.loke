@@ -5,7 +5,7 @@ package models;
 // reflection; `secret` opts back out.
 Record :: struct {
 	id:   int,
-	name: int `json:"name"`,
+	name: int,
 	@(private)
 	secret: int,
 }

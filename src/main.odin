@@ -80,7 +80,7 @@ runs none, a panic raised by a cleanup aborts at once, and an allocator's own
 
 Text is real. A string is an immutable owning UTF-8 value over shared,
 atomically counted storage; a literal is a constant over static zero-terminated
-bytes; assignment shares and only clone copies. string_view and cstring_view
+bytes; assignment shares and only copy duplicates the bytes. string_view and cstring_view
 borrow, and every borrow is checked by the same M5b analysis that follows
 slices. len, byte_len, rune_count, bytes, clone, to_c_view, subranges,
 concatenation, byte-wise comparison, rune iteration with byte offsets, and every

@@ -1,4 +1,4 @@
-// Covers: Type_Definition, Struct_Type, Field_List, Field, Field_Tag,
+// Covers: Type_Definition, Struct_Type, Field_List, Field,
 // Enum_Type, Enum_Field_List, Enum_Field, Union_Type, Union_Variants,
 // Generic_Parameters, Generic_Parameter, Generic_Name, Where_Clause,
 // Interface_Definition, Requirement, Requirement_Result, Bindings,
@@ -13,10 +13,10 @@ Point :: struct {
 	x, y: int,
 }
 
-Tagged :: struct {
+Fields :: struct {
 	@(align = 8)
-	id: int `json:"id"`,
-	name: string "tag",
+	id: int,
+	name: string,
 	using base: Base,
 	_: [4]u8,
 	nested: struct { a: int },

@@ -3741,7 +3741,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		return out
 	}
 	// design.md "string type": "cheap value copy; immutable backing storage may
-	// be shared". An implicit copy of a string retains a handle; only `.clone()`
+	// be shared". An implicit copy of a string retains a handle; only `.copy()`
 	// allocates, and that is a written call, not this path.
 	if entry.intrinsic {
 		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
@@ -5784,7 +5784,6 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			defer delete(values)
 			values["kind"] = "0" // Field
 			values["name"] = text_constant(e, Const_Value{kind = .String, text = identifier_text(e.c, sym.name)}, false)
-			values["tag"] = text_constant(e, Const_Value{kind = .String, text = field_tag_text(e.c, type, sym)}, false)
 			values["type"] = fmt.aprintf("%d", typeid_value(e.c, sym.type))
 			values["offset"] = fmt.aprintf("%d", type_field_offset(e.c, type, index))
 			append(&entries, named_field_constant(e, member, values))
@@ -5994,7 +5993,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		data, length := emit_text_parts(e, v.bound[0])
 		out[0] = emit_slice_value(e, v.type, data, length)
 
-	case .Clone:
+	case .Copy:
 		data, length := emit_text_parts(e, v.bound[0])
 		out[0] = emit_text_allocating_call(
 			e, "loke_rt_v1_string_clone",
@@ -6097,7 +6096,7 @@ emit_text_optional_ok :: proc(e: ^Emitter, callee, arguments: string) -> []strin
 	return out
 }
 
-// `strings.allocate_string(text, allocator)`: the same copy `.clone()` performs,
+// `strings.allocate_string(text, allocator)`: the same copy `.copy()` performs,
 // but into storage from the caller's allocator and reporting failure instead of
 // applying that allocator's policy. The bytes come from a `string_view` and are
 // already valid UTF-8, so `loke_rt_v1_string_clone` is the right entry — it

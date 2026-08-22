@@ -312,8 +312,7 @@ conversion syntax uses the existing parenthesised-type expression,
 ```
 Struct_Type = "struct" Generic_Parameters? Attributes? Where_Clause? "{" Field_List? "}"
 Field_List  = Field ("," Field)* ","?
-Field       = Attributes? "using"? Member_Name_List ":" Type Field_Tag?
-Field_Tag   = String_Literal | Raw_String_Literal
+Field       = Attributes? "using"? Member_Name_List ":" Type
 
 Enum_Type   = "enum" Type? "{" Enum_Field_List? "}"
 Enum_Field_List = Enum_Field ("," Enum_Field)* ","?

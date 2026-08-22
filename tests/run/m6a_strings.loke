@@ -5,7 +5,7 @@ package main; import "core:fmt";
 // design.md "string type": a `string` is an immutable, owning UTF-8 value that
 // "behaves like a simple local variable"; a literal uses static storage; a
 // runtime string owns a managed buffer; assignment shares that buffer and only
-// `.clone()` copies it. `string_view` is the borrowed half, and a `string`
+// `.copy()` copies it. `string_view` is the borrowed half, and a `string`
 // converts to one implicitly.
 
 byte_count :: proc(text: string_view) -> int { return len(text); }
@@ -26,9 +26,9 @@ main :: proc() {
 	fmt.println(len(joined));
 	fmt.println(joined.rune_count());
 
-	// Assignment shares the backing storage; `clone` does not.
+	// Assignment shares the backing storage; `copy` does not.
 	shared := joined;
-	copied := joined.clone();
+	copied := joined.copy();
 	fmt.println(1 if shared == joined else 0);
 	fmt.println(1 if copied == joined else 0);
 

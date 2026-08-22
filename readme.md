@@ -219,7 +219,7 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   managed thread-local storage, and a panic does not;
 - `string` is an immutable owning UTF-8 value over shared, atomically counted
   storage; a literal is a constant over static zero-terminated bytes; assignment
-  shares and only `clone` copies. `string_view` and `cstring_view` borrow, and
+  shares and only `copy` duplicates the bytes. `string_view` and `cstring_view` borrow, and
   the same M5b analysis that follows slices follows them. Byte and rune
   operations, subranges, concatenation, comparison, rune iteration with byte
   offsets, and the validating conversions with optional-ok results are all

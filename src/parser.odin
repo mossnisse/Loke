@@ -2776,9 +2776,6 @@ parse_field_list :: proc(p: ^Parser) -> []Field {
 		field.names = names[:]
 		expect(p, .Colon, "L0241", "`:` and the field's type")
 		field.type = parse_type(p)
-		if at(p, .String) || at(p, .Raw_String) {
-			field.tag = text_of(p, advance(p))
-		}
 		field.span = span_to_here(p, start)
 		append(&fields, field)
 

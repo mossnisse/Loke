@@ -91,7 +91,7 @@ impl String_Builder {
 	// storage-compatible and this is one linear copy. The buffer is retained for
 	// reuse afterwards.
 	finish :: proc(self: inout String_Builder) -> string {
-		text := self.clone_string(self.allocator);
+		text := self.copy_string(self.allocator);
 		self.data.clear();
 		return text;
 	}
@@ -99,7 +99,7 @@ impl String_Builder {
 	// The same, reporting an allocation failure instead of applying a policy. The
 	// builder is left completely unchanged when it fails.
 	try_finish :: proc(self: inout String_Builder) -> (string, Allocator_Error) {
-		text, error := self.try_clone_string(self.allocator);
+		text, error := self.try_copy_string(self.allocator);
 		if (error != nil) {
 			return "", error;
 		}
@@ -108,15 +108,15 @@ impl String_Builder {
 	}
 
 	// A copy of what is written so far. The builder is not disturbed either way.
-	clone_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
-		text, error := self.try_clone_string(allocator);
+	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
+		text, error := self.try_copy_string(allocator);
 		if (error != nil) {
 			panic("String_Builder allocation failed");
 		}
 		return text;
 	}
 
-	try_clone_string :: proc(
+	try_copy_string :: proc(
 		self, allocator: Allocator = mem.default_allocator(),
 	) -> (string, Allocator_Error) {
 		view, ok := string_view(self.data[:]);

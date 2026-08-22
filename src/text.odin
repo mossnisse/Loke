@@ -4,7 +4,7 @@
 //
 // These are compiler-defined operations rather than library members because
 // both their operand types and their result types are built in: `bytes()` on a
-// `string` produces the `[]u8` the slice machinery already owns, and `clone()`
+// `string` produces the `[]u8` the slice machinery already owns, and `copy()`
 // produces the managed carrier the lifecycle analysis already tracks. Writing
 // them as `core:strings` procedures would need a language feature that does not
 // exist — a method on a built-in type — and would change nothing about what
@@ -115,7 +115,7 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		// therefore `[]u8`; it cannot be converted to `[]mut u8`."
 		v.type = slice_of(k.c, TYPE_U8, mutable = false)
 
-	case .Clone:
+	case .Copy:
 		if !type_is_utf8_text(k.c, operand) {
 			text_operand_error(k, v, sel, operand)
 			return true
@@ -156,8 +156,8 @@ text_op_named :: proc(name: string) -> Text_Op {
 		return .Rune_Count
 	case "bytes":
 		return .Bytes
-	case "clone":
-		return .Clone
+	case "copy":
+		return .Copy
 	case "to_c_view":
 		return .To_C_View
 	case "to_runes":

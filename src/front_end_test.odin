@@ -535,7 +535,7 @@ parser_declaration_forms :: proc(t: ^testing.T) {
 
 Point :: struct {
 	x, y: int,
-	using base: Base "tag",
+	using base: Base,
 };
 
 Pair :: struct($K, $V: type) where Additive(K) {
@@ -573,7 +573,7 @@ callback: proc(a: int) -> int = a;
 
 	expected := `(file package="main"
   (const names=["Point"]
-    (struct (field ["x","y"] (ident "int")) (field using ["base"] (ident "Base") tag="\"tag\""))
+    (struct (field ["x","y"] (ident "int")) (field using ["base"] (ident "Base")))
   )
   (const names=["Pair"]
     (struct (generic ["K","V"] (type)) (where (call (ident "Additive") (ident "K"))) (field ["key"] (ident "K")))

@@ -145,7 +145,6 @@ clone_fields :: proc(c: ^Compiler, list: []Field) -> []Field {
 			is_using   = entry.is_using,
 			names      = entry.names,
 			type       = clone_expr(c, entry.type),
-			tag        = entry.tag,
 		}
 	}
 	return out

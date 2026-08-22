@@ -177,11 +177,15 @@ authoritative language definition.
 
 ## shorten dynamic array syntax
 
-change [dynamic] to [dyn]
+change [dynamic] to [dyn] or [+] [*]
 
 ## directives
 
 now when we have compile time procedures should some directives be changed to procedures?
+
+## numeric function
+
+should we add max and min value functions for numeric types?
 
 ## Added features compared to Odin
 
@@ -615,7 +619,7 @@ for every signature that reads text: an API taking `string` cannot accept a
 substring without allocating one, and an API taking `string_view` makes every
 caller holding a `string` write a conversion. The conversion is a borrow, costs
 nothing, and needs no validation, so the division is simply that `string_view`
-reads and `string` owns. It is one-way; going back allocates, via `.clone()`.
+reads and `string` owns. It is one-way; going back allocates, via `.copy()`.
 
 ### String ownership and concurrency
 

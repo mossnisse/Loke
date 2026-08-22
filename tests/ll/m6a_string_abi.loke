@@ -6,7 +6,7 @@ package main; import "core:fmt";
 // A `string` is three words — data, byte length, owner flags. A literal is a
 // compile-time constant over static, zero-terminated storage whose owner word is
 // the static bit, so it costs neither an allocation nor a handle update.
-// Assignment retains a handle and scope exit releases one; only `.clone()`
+// Assignment retains a handle and scope exit releases one; only `.copy()`
 // allocates an independent buffer.
 
 share :: proc(text: string) -> string {

@@ -3,7 +3,7 @@
  *
  * design.md "string type": a string is immutable, so "sharing their backing
  * storage is never observable as mutable aliasing" — assignment retains a handle
- * rather than copying bytes, and only `.clone()` allocates an independent
+ * rather than copying bytes, and only `.copy()` allocates an independent
  * buffer. The last handle deallocates through the allocator the string was
  * created with, which is why that allocator is part of the buffer's header
  * rather than something the caller has to remember.
@@ -190,7 +190,7 @@ int32_t loke_rt_v1_string_from_bytes(
 	return 1;
 }
 
-/* design.md "string type conversions": `.clone()` "allocates, because the result
+/* design.md "string type conversions": `.copy()` "allocates, because the result
  * must own its bytes". The source is already valid UTF-8, so this does not
  * re-validate it. */
 int32_t loke_rt_v1_string_clone(

@@ -19,8 +19,7 @@ import "core:strings"
 
 // ------------------------------------------------------- descriptor types --
 
-// `meta.Field`: name, declared type, declaration index, and the field tag a
-// serialization library reads.
+// `meta.Field`: name, declared type, and declaration index.
 meta_field_type :: proc(c: ^Compiler) -> Type_Id {
 	if c.meta_field_type != INVALID_TYPE {
 		return c.meta_field_type
@@ -29,7 +28,6 @@ meta_field_type :: proc(c: ^Compiler) -> Type_Id {
 		{"name", TYPE_STRING_VIEW},
 		{"type", TYPE_TYPE},
 		{"index", TYPE_INT},
-		{"tag", TYPE_STRING_VIEW},
 	})
 	return c.meta_field_type
 }
@@ -37,7 +35,6 @@ meta_field_type :: proc(c: ^Compiler) -> Type_Id {
 META_FIELD_NAME :: 0
 META_FIELD_TYPE :: 1
 META_FIELD_INDEX :: 2
-META_FIELD_TAG :: 3
 
 meta_enum_value_type :: proc(c: ^Compiler) -> Type_Id {
 	if c.meta_enum_value_type != INVALID_TYPE {
@@ -122,14 +119,13 @@ fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Cons
 		if sym == nil || !member_is_visible(k, sym) {
 			continue
 		}
-		values := make([]Const_Value, 4, k.c.semantic_allocator)
+		values := make([]Const_Value, 3, k.c.semantic_allocator)
 		values[META_FIELD_NAME] = string_view_const(identifier_text(k.c, sym.name))
 		values[META_FIELD_TYPE] = type_const(sym.type)
 		// A filtered descriptor still addresses the field's physical slot in the
 		// original record; its position in this compact descriptor array is not a
 		// storage index.
 		values[META_FIELD_INDEX] = int_const(k.c, i64(sym.index))
-		values[META_FIELD_TAG] = string_view_const(field_tag_text(k.c, subject, sym))
 		append(&elements, aggregate_const(k.c, descriptor, values))
 	}
 	return descriptor_array(k.c, descriptor, elements[:])
@@ -167,31 +163,6 @@ aggregate_const :: proc(c: ^Compiler, type: Type_Id, elements: []Const_Value) ->
 	aggregate.type = type
 	aggregate.elements = elements
 	return Const_Value{kind = .Aggregate, type_value = type, aggregate = aggregate}
-}
-
-// design.md "Struct field tags": the tag a serialization library reads. Shared
-// with the runtime metadata table, which carries the same text.
-field_tag_text :: proc(c: ^Compiler, subject: Type_Id, field: ^Symbol) -> string {
-	info := underlying_info(c, subject)
-	if info == nil {
-		return ""
-	}
-	sym := symbol_of(c, info.symbol)
-	if sym == nil || sym.decl == nil || len(sym.decl.values) != 1 {
-		return ""
-	}
-	record, is_record := sym.decl.values[0].(^Type_Record)
-	if !is_record {
-		return ""
-	}
-	for written in record.fields {
-		for binding in written.symbols {
-			if binding != INVALID_SYMBOL && symbol_of(c, binding) == field {
-				return written.tag
-			}
-		}
-	}
-	return ""
 }
 
 // ------------------------------------------------------------- typeid --
@@ -526,7 +497,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	}
 
 	aggregate := base.const_value.aggregate
-	if aggregate == nil || len(aggregate.elements) != 4 {
+	if aggregate == nil || len(aggregate.elements) != 3 {
 		return false
 	}
 	field_type := aggregate.elements[META_FIELD_TYPE].type_value

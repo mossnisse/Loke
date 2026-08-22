@@ -16,7 +16,7 @@
 //
 // which copies known-valid UTF-8 into string storage from a *supplied*
 // allocator. Every built-in text operation allocates from the default provider,
-// so this is the one thing a library cannot express — `clone` and `try_clone`
+// so this is the one thing a library cannot express — `copy` and `try_copy`
 // below are its public face, and every string-returning procedure in the rest of
 // the standard library goes through them.
 @(public)
@@ -28,7 +28,7 @@ import "core:mem";
 
 // A copy of `text` in storage from `allocator`. Failure follows the allocator's
 // failure policy, like every other implicitly allocating operation.
-clone :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
+copy :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
 	owned, error := allocate_string(text, allocator);
 	if (error != nil) {
 		panic("string allocation failed");
@@ -37,7 +37,7 @@ clone :: proc(text: string_view, allocator: Allocator = mem.default_allocator())
 }
 
 // The fallible half: an empty string and the error, with nothing allocated.
-try_clone :: proc(
+try_copy :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> (string, Allocator_Error) {
 	return allocate_string(text, allocator);

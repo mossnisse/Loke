@@ -89,9 +89,9 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 		// known-valid UTF-8 into string storage taken from a *supplied* allocator,
 		// reporting failure instead of applying a policy. Every built-in text
 		// operation allocates from the default provider, so nothing else in Loke
-		// can answer `strings.clone(text, allocator)`.
+		// can answer `strings.copy(text, allocator)`.
 		//
-		// Package-private: `core:strings` wraps it in `clone`/`try_clone`, and the
+		// Package-private: `core:strings` wraps it in `copy`/`try_copy`, and the
 		// rest of the library goes through those.
 		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
 	case STD_META:

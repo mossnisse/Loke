@@ -173,7 +173,7 @@ read_text :: proc(
 	if (!valid) {
 		return "", io.make_error(.Invalid_Data, .Read);
 	}
-	text, allocation := strings.try_clone(view, allocator);
+	text, allocation := strings.try_copy(view, allocator);
 	if (allocation != nil) {
 		return "", io.from_allocator_error(allocation, .Read);
 	}

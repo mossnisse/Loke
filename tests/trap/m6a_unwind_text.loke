@@ -21,7 +21,7 @@ deeper :: proc() {
 owner :: proc() {
 	first := "a" + "b";
 	middle := Witness{7};
-	second := first.clone();
+	second := first.copy();
 	fmt.println(second.byte_len());
 	deeper();
 }
