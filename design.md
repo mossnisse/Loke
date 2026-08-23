@@ -4886,14 +4886,14 @@ An **optional-ok expression** is a built-in producer with that shape, or a call 
 
 ### Status results
 
-A **status result** is a trailing result reporting whether the results before it are valid. Exactly two spellings are admissible:
+A **status result** is a trailing result reporting whether the results before it are valid. Exactly two forms are admissible:
 
-- a trailing `bool`, successful when `true`;
-- a trailing **union whose zero value is `nil`**, successful when `nil`.
+- a **`bool` status**, successful when `true`;
+- a **nil status**, successful when `nil`. A **union** — whose zero value is `nil` — and [`Allocator_Error`](#allocators) are the nil statuses.
 
 No other truthiness rule applies, and no other type is a status. In particular a pointer, multi-pointer, `rawptr`, slice, map, procedure, `typeid`, `string_view`, `cstring_view`, `any_view`, `dyn Interface`, `shared(T)`, or `weak(T)` result is **not** a status even though it compares against `nil`. A procedure returning `(int, ^Node)` returns two ordinary values, not a value and an error.
 
-[`Allocator_Error`](#allocators) is not a status either. Allocation failure is handled where it happens, with an explicit `err != nil` test and a stated policy, rather than propagated by an operator; wrap it in a union to carry it further.
+`Allocator_Error` being a nil status is what lets an allocating procedure propagate with `p := new(T) or_return`, or supply a value with `or_else`. It does not weaken the [failure policy](#allocators): propagating is a choice the calling procedure makes by declaring a final result the error is assignable to, and code that handles allocation failure where it happens still writes the explicit `err != nil` test.
 
 A **status expression** is an expression whose final result is a status result. Both error-handling operators take one and differ only in arity and in what they do with the status:
 

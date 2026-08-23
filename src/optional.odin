@@ -90,17 +90,21 @@ check_checked_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 
 // ---------------------------------------------------------- optional-ok --
 
-// design.md "Status results": exactly two spellings are admissible, a trailing
-// `bool` that succeeds on `true` or a trailing union that succeeds on `nil`. A
-// pointer, multi-pointer, `rawptr`, slice, map, procedure, `typeid`, view, or
-// `dyn` result compares against `nil` but is not a status, so a procedure
-// returning `(int, ^Node)` returns two ordinary values rather than a value and
-// an error.
+// design.md "Status results": exactly two forms are admissible, a `bool` status
+// that succeeds on `true` and a nil status that succeeds on `nil`. A union and
+// `Allocator_Error` are the nil statuses. A pointer, multi-pointer, `rawptr`,
+// slice, map, procedure, `typeid`, view, or `dyn` result compares against `nil`
+// but is not a status, so a procedure returning `(int, ^Node)` returns two
+// ordinary values rather than a value and an error.
 type_is_status :: proc(k: ^Checker, status: Type_Id) -> bool {
 	if type_is_boolean(k.c, status) {
 		return true
 	}
-	return underlying_kind(k.c, status) == .Union
+	#partial switch underlying_kind(k.c, status) {
+	case .Union, .Allocator_Error:
+		return true
+	}
+	return false
 }
 
 // design.md "Status results": an `or_else` operand is a status expression with
@@ -220,7 +224,7 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 			k.c,
 			v.op_span,
 			"L0429",
-			"`or_return` needs a `bool` or union final result, found `%s`",
+			"`or_return` needs a `bool`, union, or `Allocator_Error` final result, found `%s`",
 			type_name(k.c, status),
 		)
 		v.type = INVALID_TYPE

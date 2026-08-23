@@ -904,7 +904,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		walk_flow_expr(graph, v.operand)
 
 	case ^Expr_Postfix:
-		walk_flow_expr(graph, v.operand)
+		operand_loans := walk_flow_expr(graph, v.operand)
 		if v.op == .Or_Return {
 			entry := graph.current
 			resume := new_flow_block(graph)
@@ -914,6 +914,11 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			graph.current = failure
 			emit_cleanups(graph, 0)
 			graph.current = resume
+			// design.md "or_return operator": on success the expression yields the
+			// operand's values with the status removed, so whatever those values
+			// borrow or allocate travels out with them. Dropping the loans here
+			// would leave `p := new(T) or_return` with unknown provenance.
+			return operand_loans
 		}
 
 	case ^Expr_Selector:
@@ -1207,9 +1212,20 @@ prov_join :: proc(graph: ^Flow_Graph, a, b: []int) -> []int {
 	return out
 }
 
+// design.md "or_return operator": the operator removes the *final* status, so
+// every earlier result keeps its index and the per-result provenance of the
+// operand applies unchanged to the expression's own results.
+@(private = "file")
+prov_through_or_return :: proc(value: Expr) -> Expr {
+	if postfix, ok := value.(^Expr_Postfix); ok && postfix.op == .Or_Return {
+		return postfix.operand
+	}
+	return value
+}
+
 @(private = "file")
 prov_result_loans :: proc(graph: ^Flow_Graph, value: Expr, result: int, first: []int = nil) -> []int {
-	if call, ok := value.(^Expr_Call); ok {
+	if call, ok := prov_through_or_return(value).(^Expr_Call); ok {
 		if results, found := graph.call_results[call]; found && result < len(results) {
 			return results[result].loans
 		}
@@ -1219,7 +1235,7 @@ prov_result_loans :: proc(graph: ^Flow_Graph, value: Expr, result: int, first: [
 
 @(private = "file")
 prov_result_region :: proc(graph: ^Flow_Graph, value: Expr, result: int) -> Region_Set {
-	if call, ok := value.(^Expr_Call); ok {
+	if call, ok := prov_through_or_return(value).(^Expr_Call); ok {
 		if results, found := graph.call_results[call]; found && result < len(results) {
 			return results[result].region
 		}
@@ -1584,6 +1600,12 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		region_merge(&out, prov_region_of(graph, v.value))
 		region_merge(&out, prov_region_of(graph, v.fallback))
 		return out
+	case ^Expr_Postfix:
+		// Propagating a status does not change which region backs the value that
+		// travels through it.
+		if v.op == .Or_Return {
+			return prov_region_of(graph, v.operand)
+		}
 	case ^Expr_Composite:
 		// An owning aggregate keeps every region dependency of its owning fields.
 		out := prov_empty_region(graph)

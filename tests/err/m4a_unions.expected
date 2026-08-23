@@ -27,7 +27,7 @@ L0428
 `or_else` needs a status expression with a payload on its left
 L0429
 @52:20
-`or_return` needs a `bool` or union final result, found `int`
+`or_return` needs a `bool`, union, or `Allocator_Error` final result, found `int`
 L0429
 @54:19
-`or_return` needs a `bool` or union final result, found `^int`
+`or_return` needs a `bool`, union, or `Allocator_Error` final result, found `^int`

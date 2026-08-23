@@ -33,6 +33,29 @@ impl Counter {
 	}
 }
 
+// design.md "Status results": `Allocator_Error` is a nil status, so an
+// allocating call propagates with `or_return` rather than an explicit test.
+direct :: proc() -> (n: int, err: Allocator_Error) {
+	n = 0;
+	p := new(int) or_return;
+	p^ = 11;
+	n = p^;
+	free(p);
+	return;
+}
+
+// The same propagation into a union that carries the allocator's error.
+Boxed :: union { Allocator_Error }
+
+wrapped :: proc() -> (n: int, err: Boxed) {
+	n = 0;
+	p := new(int) or_return;
+	p^ = 12;
+	n = p^;
+	free(p);
+	return;
+}
+
 main :: proc() {
 	// `new` zero-initialises and reports failure explicitly.
 	p, err := new(int);
@@ -72,5 +95,21 @@ main :: proc() {
 	drop(h);
 	if (released == 1) {
 		fmt.println(1);
+	}
+
+	// `or_return` propagates an `Allocator_Error`, directly and through a union.
+	dn, derr := direct();
+	fmt.println(dn);
+	fmt.println(1 if derr == nil else 0);
+	wn, werr := wrapped();
+	fmt.println(wn);
+	fmt.println(1 if werr == nil else 0);
+
+	// `or_else` takes the same status and supplies a value instead of it.
+	s := new(int) or_else nil;
+	if (s != nil) {
+		s^ = 13;
+		fmt.println(s^);
+		free(s);
 	}
 }

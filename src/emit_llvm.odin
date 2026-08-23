@@ -6896,9 +6896,9 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 }
 
 // design.md "Status results": the status is successful when it is `true` for
-// `bool` or `nil` for a union, and nothing else is a status. There is therefore
-// no pointer or procedure form to compare against null; the checker has already
-// rejected those.
+// `bool` or `nil` for a union or an `Allocator_Error`, and nothing else is a
+// status. There is therefore no pointer or procedure form to compare against
+// null; the checker has already rejected those.
 @(private = "file")
 emit_status_failed :: proc(e: ^Emitter, status_type: Type_Id, status: string) -> string {
 	out := temp(e)
@@ -6906,6 +6906,12 @@ emit_status_failed :: proc(e: ^Emitter, status_type: Type_Id, status: string) ->
 		shape := union_layout(e.c, status_type)
 		tag := emit_union_tag(e, status_type, status)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i%d %s, 0", out, shape.tag_bytes * 8, tag)
+		return out
+	}
+	// An `Allocator_Error` is an integer code whose nil — and so its success — is
+	// zero, the same representation `err != nil` already tests.
+	if underlying_kind(e.c, status_type) == .Allocator_Error {
+		fmt.sbprintfln(&e.b, "  %s = icmp ne %s %s, 0", out, llvm_type(e, status_type), status)
 		return out
 	}
 	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, status)
