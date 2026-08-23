@@ -435,8 +435,10 @@ defaults. The expression is evaluated only when the caller omits that argument,
 as specified in `design.md`. It may reference the receiver and parameters
 declared to its left, but not itself or parameters to its right. Defaults belong
 to named declarations; a call through a procedure value supplies every
-parameter. A named result has no initializer form; it starts at
-its zero value. The `---` body marks a foreign declaration.
+parameter. A named result has no initializer form; like any other
+uninitialized local it starts **dead**, and `design.md` requires it to be
+definitely live before a bare `return` or an `or_return` reads it. The `---`
+body marks a foreign declaration.
 
 # Statements
 

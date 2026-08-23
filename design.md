@@ -939,6 +939,56 @@ x.append(1, 2, 3);
 fmt.println(len(x), cap(x)); // 3 8
 ```
 
+### Ranges
+
+The range operators [`..<` and `..=`](#other-operators) produce a value of the
+compiler-provided generic type written `Range(T)` here and in diagnostics:
+`a..<b` is half-open and excludes `b`, `a..=b` is closed and includes it. Both
+endpoints are unified to one type under the ordinary binary-operand rule, and
+`T` must be an integer or rune type. The spelling is notation for this
+specification; unlike [`Simd(T, N)`](#simd-vectors) the name is not in scope,
+for the reason given below.
+
+A range is an ordinary first-class value, not a piece of loop syntax. It may be
+bound to a variable, passed to a parameter, and inferred into a `$` parameter,
+and it keeps its half-open or closed kind wherever it travels:
+
+```odin
+half   := 0 ..< 3;      // Range(int)
+closed := 'a' ..= 'c';  // Range(rune)
+
+foreach (i in half) { fmt.println(i); }      // 0 1 2
+foreach (ch in closed) { fmt.println(ch); }  // a b c
+```
+
+`Range(T)` has three public fields — `low: T`, `high: T`, and `closed: bool` —
+so code that must inspect a range rather than walk it reads them directly. It
+satisfies [`Iterable`](#standard-interface-catalogue) with `Element` equal to
+`T`, which is what lets a range reach generic code written against that
+interface. It is not a [`Sequence`](#standard-interface-catalogue): a range
+stores no elements, so it has neither `len` nor indexing.
+
+The type is **inferred, never written**. `Range` is not a name in scope, so a
+range-typed declaration takes its type from its initializer (`r := 0 ..< 3;`)
+and a procedure receives one through a `$` parameter. This keeps the type an
+ordinary value without committing a spelling for it in version 1.
+
+The one thing that spelling would buy is a written result type, so a range is
+returnable only where the result type is itself inferred:
+
+```odin
+clamp_span :: proc(r: $R, limit: int) -> R { ... }   // OK: R is bound by the argument
+window :: proc(n: int) -> Range(int) { ... }         // ERROR: `Range` is not a name
+```
+
+A procedure that must hand a range back to a caller who did not supply one
+returns its endpoints, or a record of its own, instead.
+
+Ranges are also accepted, as syntax rather than as values, in [`switch` case
+lists](#switch-statement) and in [designated array
+initializers](#fixed-arrays). Those positions match endpoints against a subject
+or an index and never construct a `Range(T)`.
+
 ## Map types
 
 ### Maps
@@ -1327,6 +1377,31 @@ Foo :: enum u8 {A, B, C}; // Foo is 8 bits
 
 Enum members are named constants, not numbers with a name: they may have holes, and arithmetic on them is not defined. See [Arithmetic operators](#arithmetic-operators). Convert to the backing integer type when a numeric value is wanted, and use the library `Bit_Set(Enum)` for flag sets.
 
+#### Non-member values
+
+**Conversion between an enum and its backing integer type is unchecked in both
+directions.** `Foo(n)` reinterprets `n` as a `Foo` and `int(f)` reads the
+representation back; neither tests membership, and this holds for a constant
+operand as much as a runtime one. An enum type therefore ranges over every value
+its backing type can hold, and a value that names no declared member is an
+ordinary, representable value of that type — not undefined behavior.
+
+```odin
+Foo :: enum { A, B, C }
+
+n := 200;
+f := Foo(n);          // no check: `f` is a `Foo` naming no member
+assert(int(f) == 200);
+```
+
+This is deliberate: enum values arrive from foreign calls, files, and wire
+formats, and a conversion that trapped would make every such boundary a fallible
+operation. The cost is that "covers every member" is not "covers every value",
+which is what the [exhaustive switch](#exhaustive-switch) rule below is stated
+against. Code converting an untrusted integer should validate it — by comparing
+against the members, or by switching with an explicit `case:` — before treating
+it as a member.
+
 Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_Snake_Case`, and the core library follows suit. The convention is not compiler-enforced, but the spelling of a compiler-provided member is normative.
 
 #### Implicit selector expression
@@ -1652,11 +1727,15 @@ An `extend` block adds methods or operators to a type from another package:
 
 ```odin
 extend vendor.Vector2 {
-	to_string :: proc(self) -> string {
-		return fmt.tprint("({}, {})", self.x, self.y);
+	to_string :: proc(self, allocator: mem.Allocator = mem.default_allocator()) -> string {
+		return fmt.to_string(allocator, "(", self.x, ", ", self.y, ")");
 	}
 }
 ```
+
+A procedure returning an owning `string` names the allocator it builds with, by
+the [ordinary parameter convention](#default-values). There is no ambient
+temporary allocator to fall back on; see [Allocators](#allocators).
 
 An extension participates in lookup only inside the package that declares it, and follows ordinary declaration visibility (package-private by default, `@(public)`/`@(private)` to opt in or out).
 
@@ -2133,8 +2212,21 @@ The standard library recognizes ordinary overloadable procedures for common beha
 | `compare(left, right)` | Three-way ordering when useful |
 | `iter(value: T) -> T.Iterator` | Forward iteration using the type's associated iterator |
 | `iter_reverse(value)` | Reverse iteration when the type supplies it |
-| `clone(value, allocator := mem.default_allocator())` | Explicit independent copy |
-| `try_clone(value, allocator := mem.default_allocator())` | Fallible independent copy |
+| `clone(value, allocator := mem.default_allocator())` | Explicit ownership-recursive copy |
+| `try_clone(value, allocator := mem.default_allocator())` | Fallible ownership-recursive copy |
+
+**A clone is ownership-recursive, not deep.** It duplicates the storage the
+value *owns*, recursing into owning fields and elements. It does not follow a
+non-owning pointer, slice, or view, and a component whose own documented copy
+semantics share — immutable [`string`](#string-type) and
+[`shared(T)`](#shared-ownership) — shares rather than duplicates. So cloning a
+`[dynamic]string` produces an independent array of elements that still share
+their text, and cloning a record with a `^T` field produces a second record
+pointing at the same target. Independence therefore holds exactly as far as
+ownership does; `string`'s separate byte-copying operation is
+[`copy`](#string-type-conversions), spelled differently for this reason. This is
+the same rule [assignment](#assignment-statements) follows, because assignment
+of a copyable type is defined in terms of `try_clone`.
 
 These use normal overload groups and are written as free calls — `len(x)`, `hash(key, seed)`, `clone(value)` — which is canonical and always available. For lifecycle-enabled types the compiler contributes free `clone` and `try_clone` overloads forwarding to the fixed hooks; a user customizes copying by replacing `T.try_clone`, not by adding an unrelated free clone.
 
@@ -2345,7 +2437,7 @@ Growable_Sequence :: interface($Self: type) {
 
 `Cloneable` names the fallible `try_clone` hook, not the policy-following `clone`; it is satisfied by copyable owning built-ins and by records with generated or custom `try_clone`, and `try_clone :: ---` makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
 
-Formatting stays the `format(value, writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape (iterable over keys, not sequences), and UTF-8 text stays its concrete `string`/`string_view` type.
+Formatting stays the `format(value, writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its *value* type, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
 
 Built-in satisfaction follows the operations the language already defines:
 
@@ -2600,7 +2692,14 @@ or to a subplace rooted in such storage, is a compile-time error. Scope exit
 automatically drops a live managed lexical owner. It does not clean up a manual
 lexical owner.
 
-`drop`, like `move`, operates on a storage location naming a variable; it is a compiler special form, not an ordinary procedure, and marks its operand dead. It cannot operate directly on a field, element, or map entry — first move the owner out of the aggregate, or drop the whole aggregate. `drop` is a predeclared identifier, not a keyword, and a declaration can shadow it.
+`drop`, like `move`, operates on a storage location naming a variable; it is a compiler special form, not an ordinary procedure, and marks its operand dead. It cannot operate directly on a field, element, or map entry, because leaving a hole inside a live aggregate is exactly what the liveness analysis does not track. Neither can `move`, so "take the owner out first" is not available either. To release one field's storage while its aggregate stays live, use [`exchange`](#exchange), which hands back the old value and installs a live replacement in one operation:
+
+```odin
+old := exchange(inout record.buffer, {});  // `record` stays live throughout
+drop(old);                                 // now an ordinary local
+```
+
+Dropping the whole aggregate, which drops its fields in reverse declaration order, remains the other option. `drop` is a predeclared identifier, not a keyword, and a declaration can shadow it.
 
 The compiler performs dataflow analysis and classifies a lexical local as definitely
 live, definitely dead, or conditionally live at each program point. A use that
@@ -2927,20 +3026,27 @@ The condition may be a compile-time constant, in which case the result is also c
 - ..= - inclusive range
 - ..< - half open range
 
-The range operations ..= and ..< are only possible within certain contexts:
+`..=` and `..<` are ordinary binary operators producing a [`Range(T)`](#ranges)
+value, which may be iterated directly or stored first:
 
 ```odin
 foreach (x in a..<b) {}
 foreach (x in a..=b) {}
 
+span := a..=b;          // an ordinary Range value
+foreach (x in span) {}
+```
+
+Two positions accept the same spelling as *syntax* rather than as a value,
+matching endpoints against a subject or an index without constructing a range:
+
+```odin
 switch (x) {
 case a..<b:
 case c..=d:
 }
-```
 
-```odin
-foo := [?]int{0..=3 = 1}; // initialises as: [1, 1, 1, 1]
+foo := [?]int{0..=3 = 1};        // initialises as: [1, 1, 1, 1]
 bar := [?]int{0 = 0, 1..<3 = 1}; // initialises as: [0, 1, 1]
 ```
 
@@ -3501,6 +3607,28 @@ switch over a union must either cover every variant and nil, or include `case:`.
 The default may be empty; writing it is the explicit acknowledgement that the
 remaining cases are intentionally ignored.
 
+**Exhaustiveness is a check over declared members, not over values.** Because
+[conversion into an enum is unchecked](#non-member-values), a subject may hold a
+value that names no member and so matches no case. A switch whose cases do not
+match runs no case and falls through to the statement after it — the same thing
+a value switch with no matching case and no default does. This is defined
+behavior, not a gap, but it means a member-complete switch is silently a no-op
+for such a value:
+
+```odin
+switch (Foo(200)) {
+case .A: fmt.println("A");
+case .B: fmt.println("B");
+case .C: fmt.println("C");
+}
+// nothing runs, and control continues here
+```
+
+A switch over a value from outside the program should write `case:` and handle
+the unexpected value there. A type switch does not have this problem: a union's
+tag is written only by the language, so covering every variant and nil covers
+every value.
+
 ### defer statement
 
 A defer statement defers the execution of a statement until the end of the scope it is in. It is registered when execution reaches the `defer` statement and participates in the unified LIFO scope-exit ordering described under [Managed values and storage](#managed-values-and-storage).
@@ -3766,8 +3894,10 @@ process_owned(move(numbers));
 writes the inert representation to a lexical `x`, and marks it dead; it is
 equally usable in an assignment or a `return`. It cannot target static-duration
 storage. `inout x` is not an expression and produces no value; it selects a
-parameter mode and may appear only in an argument position, in an
-[`operator([])` result](#indexing-and-slicing), and where a mutable receiver is
+parameter mode and may appear only in an argument position, in a procedure
+[result](#inout-results) — of which an
+[`operator([])` overload](#indexing-and-slicing) is the common case — and where
+a mutable receiver is
 passed. Method-call syntax supplies an `inout` marker implicitly for its
 receiver: `numbers.sort()` may call an `inout self` method with no marker before
 the receiver — the one place call-site mode visibility yields to method syntax,
@@ -3822,6 +3952,51 @@ swap :: proc(x, y: int) -> (int, int) {
 a, b := swap(1, 2);
 fmt.println(a, b); // 2 1
 ```
+
+#### `inout` results
+
+A result may be declared `inout T`. The procedure then returns a **mutable
+borrow of a place** rather than a value, and the corresponding `return`
+expression is written `return inout place`. Any procedure may declare one;
+[`operator([])`](#indexing-and-slicing) is the common case rather than the only
+one, and it is what makes `grid[3, 2] = 1.0` and `&grid[3, 2]` work.
+
+```odin
+pick :: proc(xs: inout [4]int, index: int) -> inout int {
+	return inout xs[index];
+}
+
+values := [4]int{1, 2, 3, 4};
+pointer := &pick(inout values, 2);
+pointer^ = 99;                      // writes `values[2]`
+```
+
+The returned expression must denote an assignable place of exactly the declared
+type; there is no result conversion, and a value expression is rejected. A call
+whose result is `inout T` is itself a place: it may be assigned to, have its
+address taken, and be passed as an `inout` argument. It is not a first-class
+reference type — the mode may be written on a result, never on a variable,
+field, or container element.
+
+An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and
+its lifetime follows exactly the rules a returned `^T` follows under
+[Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries):
+it derives root provenance from the procedure's `inout` parameters, `inout`
+receiver, and other borrowed arguments, or from an allocation or static root.
+An ordinary `value: T` parameter is a callee-local binding, so a place projected
+out of one carries no caller provenance and the result cannot outlive the call
+expression.
+
+```odin
+escape :: proc() -> inout int {
+	local := [4]int{1, 2, 3, 4};
+	return inout local[0];   // no caller root: the result ends with the call
+}
+```
+
+Because the borrow is mutable, the caller's root is exclusively loaned for as
+long as any copy of the result is live, under [the one
+rule](#capabilities-and-the-one-rule).
 
 #### Named results
 
@@ -4031,8 +4206,8 @@ foo :: proc($N: $I, $T: type) -> (res: [N]T) {
 	// `N` is the constant value passed
 	// `I` is the type of `N`
 	// `T` is the type passed
-	fmt.printf("Generating an array of type %v from the value %v of type %v\n",
-			   typeid_of(type_of(res)), N, typeid_of(I));
+	fmt.println("Generating an array of type", typeid_of(type_of(res)),
+	            "from the value", N, "of type", typeid_of(I));
 	res = {};
 	foreach (i in 0..<N) {
 		res[i] = i*i;
@@ -4203,7 +4378,8 @@ root. The built-in carriers are:
 - `[]T` and `[]mut T`, immutable and mutable slices;
 - `string_view`, `cstring_view`, and `any_view`;
 - `dyn Interface` views and compiler-known iterators;
-- default and `inout` parameter access paths for the duration of a call.
+- default and `inout` parameter access paths for the duration of a call;
+- an [`inout` result](#inout-results), a mutable borrow returned to the caller.
 
 Copying a borrow carrier copies the view and its root provenance, never the pointee.
 It creates no cleanup obligation. The carrier variable owns only its own pointer,
@@ -4419,7 +4595,7 @@ the runtime ABI. Its meaning is transitive across direct calls and independent
 of declaration order, including forward and mutually recursive declarations.
 Each concrete generic instantiation has its own summary.
 
-An ordinary procedure value carries no such metadata. At a call through one, a returned pointer, slice, or view is conservatively derived from every borrowed argument (unknown root provenance if there is none), and an owning result retains the region provenance of every moved owner and allocator argument (unknown if none). Fresh-allocation root provenance is never preserved, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through indirect calls uses a move-only resource wrapper, not bare `^T`. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
+An ordinary procedure value carries no such metadata. At a call through one, a returned pointer, slice, view, or [`inout` result](#inout-results) is conservatively derived from every borrowed argument (unknown root provenance if there is none), and an owning result retains the region provenance of every moved owner and allocator argument (unknown if none). Fresh-allocation root provenance is never preserved, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through indirect calls uses a move-only resource wrapper, not bare `^T`. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
 
 Allocator-wide invalidation is the one effect propagated through arbitrary
 ordinary procedure wrappers. A parameter marked
