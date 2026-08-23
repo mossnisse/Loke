@@ -76,7 +76,7 @@ construct.
 | Generics, `$` parameters, `where`, interfaces, reflection, `any_view`, and `dyn` | M4 |
 | `string`, slices, `[dynamic]T`, maps, `via`, `static`/`thread_local`/`manual`, `move`, lifecycle hooks, and variadics | M5/M6 |
 | `import`, multi-file packages, and file/procedure-scope `when` | M3 |
-| Compile-time procedures, `size_of`, `len`, `offset_of`, `#assert`, `#config`, and `#location` | M3 |
+| Compile-time procedures, `size_of`, `len`, `offset_of`, `static_assert`, `build_config`, and `source_location()` | M3 |
 | `or_else`, `or_return`, and optional-ok | M4/M5 |
 | `[^]T`, unchecked pointer/container operations, foreign declarations, and foreign ABI behavior | M7 |
 

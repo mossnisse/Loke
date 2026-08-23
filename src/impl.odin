@@ -1,11 +1,11 @@
-// `impl`/`extend` blocks, methods, associated members, and `init` construction
+// `impl` blocks, methods, associated members, and `init` construction
 // (m4a-plan step 2).
 //
-// Storage follows the plan's "Method storage" decision: an `impl` block writes
-// inherent members onto the nominal `Type_Info`, an `extend` block writes into
-// its own package's extension table, and the two are never merged. Extension
-// visibility is package-scoped by design — an unused import must not change or
-// make ambiguous an existing expression.
+// Storage follows the plan's "Method storage" decision: an `impl` block in the
+// subject's own package writes inherent members onto the nominal `Type_Info`,
+// one elsewhere writes into its own package's extension table, and the two are
+// never merged. Extension visibility is package-scoped by design — an unused
+// import must not change or make ambiguous an existing expression.
 package lokec
 
 import "core:fmt"
@@ -50,29 +50,15 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	item.declared = true
 	item.subject = subject
 
+	// Inherent or extension is not written; it follows from where the subject is
+	// declared. A block in the subject's own package contributes inherent members
+	// to the nominal type, and one anywhere else — including on a built-in or
+	// foreign subject, which no package declares — is an extension confined to
+	// the package that writes it.
 	info := type_of(k.c, subject)
 	owner := info == nil ? nil : symbol_of(k.c, info.symbol)
 	own_package := owner != nil && owner.pkg == k.pkg
-	if item.kind == .Impl && !own_package {
-		errorf(
-			k.c,
-			expr_span(item.type),
-			"L0407",
-			"`impl` belongs with the package that declares `%s`; write `extend` here",
-			type_name(k.c, subject),
-		)
-		return
-	}
-	if item.kind == .Extend && own_package {
-		errorf(
-			k.c,
-			expr_span(item.type),
-			"L0407",
-			"`extend` is for a type from another package; `%s` is declared here, so write `impl`",
-			type_name(k.c, subject),
-		)
-		return
-	}
+	item.kind = own_package ? .Impl : .Extend
 
 	members := make([dynamic]Symbol_Id, 0, len(item.members), k.c.semantic_allocator)
 	existing := impl_member_table(k, item.kind, subject)

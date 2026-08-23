@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-DEBUG :: #config(DEBUG, false);
+DEBUG :: build_config(DEBUG, false);
 
 when (DEBUG) {
 	LEVEL :: 2;

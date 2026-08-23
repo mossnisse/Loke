@@ -38,9 +38,9 @@ sum_all :: proc(source: $S) -> int
 }
 
 main :: proc() {
-	#assert(interfaces.Iterable([3]int));
-	#assert(interfaces.Iterable(Countdown));
-	#assert(!interfaces.Iterable(int));
+	static_assert(interfaces.Iterable([3]int));
+	static_assert(interfaces.Iterable(Countdown));
+	static_assert(!interfaces.Iterable(int));
 
 	xs := [3]int{1, 2, 3};
 	a, a_ok := first(xs);
@@ -62,8 +62,8 @@ main :: proc() {
 	// m6b-plan step 4: the built-in containers contribute the same protocol
 	// members, so generic and direct iteration agree. A map's single `Element` is
 	// its value; the key is reachable only through the two-name loop form.
-	#assert(interfaces.Iterable([dynamic]int));
-	#assert(interfaces.Iterable(map[int]int));
+	static_assert(interfaces.Iterable([dynamic]int));
+	static_assert(interfaces.Iterable(map[int]int));
 	ys: [dynamic]int = {4, 5, 6};
 	fmt.println(sum_all(ys));
 	d, d_ok := first(ys);

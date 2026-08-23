@@ -15,7 +15,7 @@ take :: proc(a: mem.Allocator) -> runtime.Allocator { return a; }
 count :: proc($T: type) -> int {
 	total := 0;
 	foreach ($field in fields_of(T)) {
-		#assert(type_of(field) == meta.Field);
+		static_assert(type_of(field) == meta.Field);
 		total = total + field.index + 1;
 	}
 	return total;

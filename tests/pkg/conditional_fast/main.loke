@@ -3,7 +3,7 @@ package main; import "core:fmt";
 // The `-define:FAST=true` selection of `tests/pkg/conditional`; keep the two
 // trees in step.
 
-FAST :: #config(FAST, false);
+FAST :: build_config(FAST, false);
 
 // A conditional import: the selected branch extends the package graph, and the
 // discovery fixed point picks it up on the next round.

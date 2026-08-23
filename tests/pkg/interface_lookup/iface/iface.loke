@@ -9,6 +9,6 @@ Named :: interface($T: type) {
 	slot describe: proc(self) -> int;
 }
 
-extend shapes.Widget {
+impl shapes.Widget {
 	describe :: proc(self) -> int { return self.size * 2; }
 }

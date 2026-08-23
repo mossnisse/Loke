@@ -116,7 +116,7 @@ implementing it twice. This is the one part of M0 that is finished work.
   `thread_local`, `manual`) lex as plain identifiers — position is the parser's
   problem. Same for `nil`/`true`/`false` and the built-ins, which are
   predeclared identifiers and shadowable.
-- `#name` restricted to `#assert`, `#config`, `#location`, `#caller_location`;
+- `#name` restricted to `static_assert`, `build_config`, `source_location()`, `caller_location()`;
   anything else is a lexical error (grammar §Compile-time names).
 - Non-ASCII outside strings, comments and rune literals is an error.
 - Literals: `0b`/`0o`/`0x` and decimal with `_` separators (not leading), floats

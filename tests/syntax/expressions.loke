@@ -53,10 +53,10 @@ main :: proc() {
 	e33 := `a raw \ string`;
 	e34 := .Member;
 	e35 := move(owned);
-	e36 := #assert(a == b);
-	e37 := #config(NAME, 0);
-	e38 := #location;
-	e39 := #caller_location;
+	e36 := static_assert(a == b);
+	e37 := build_config(NAME, 0);
+	e38 := source_location;
+	e39 := caller_location();
 	e40 := (a + b);
 	e41 := (^u32)(&f);
 	e42 := proc(a: int) -> int { return a; };

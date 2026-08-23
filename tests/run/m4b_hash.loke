@@ -12,13 +12,13 @@ Hashable :: interface($T: type) {
 Colour :: enum { Red, Green }
 
 main :: proc() {
-	#assert(Hashable(int));
-	#assert(Hashable(bool));
-	#assert(Hashable(f64));
-	#assert(Hashable(rune));
-	#assert(Hashable(Colour));
-	#assert(Hashable([3]int));
-	#assert(Hashable(^int));
+	static_assert(Hashable(int));
+	static_assert(Hashable(bool));
+	static_assert(Hashable(f64));
+	static_assert(Hashable(rune));
+	static_assert(Hashable(Colour));
+	static_assert(Hashable([3]int));
+	static_assert(Hashable(^int));
 
 	// The folded and the computed hash agree.
 	FOLDED :: hash(7, uint(0));

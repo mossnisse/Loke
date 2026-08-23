@@ -55,7 +55,7 @@ M3 adds the compile-time engine and packages:
 - natural target layout, with `size_of`, `align_of`, `offset_of`, and fixed-array
   `len` folded to `int`. Their operands are inspected, never evaluated;
 - untyped compile-time strings — joined, compared, and measured — plus
-  `#assert(condition[, message])`, `#config(NAME, default)`, and
+  `static_assert(condition[, message])`, `build_config(NAME, default)`, and
   `-define:NAME=VALUE`;
 - `when` at file and procedure scope, as structural source selection: an
   unselected branch is parsed and nothing else;
@@ -76,10 +76,11 @@ M4a makes user-defined types as capable as built-in ones at concrete types:
   procedure groups, methods, operators, `init`, and indexing. An ambiguity lists
   every maximal candidate, its conversion vector, and the tie-breaker where
   selection failed;
-- `proc{...}` groups, `impl` and `extend` blocks, the three receiver forms,
-  associated constants and types, `Type.member` access, and field lookup taking
-  priority over method-call sugar. An `extend` block changes lookup only inside
-  its own package;
+- `proc{...}` groups, `impl` blocks, the three receiver forms, associated
+  constants and types, `Type.member` access, and field lookup taking priority
+  over method-call sugar. A block is inherent or an extension by where its
+  subject is declared, never by a keyword, and an extension block changes lookup
+  only inside its own package;
 - `init` overloads with the two-stage `T(...)` resolution — a built-in or
   `distinct` conversion first, `init` overloads otherwise — and `@(implicit)`
   one-argument conversions reachable only from an untyped constant;
@@ -95,8 +96,8 @@ M4a makes user-defined types as capable as built-in ones at concrete types:
 M4b makes those abstractions generic and erasable, completing M4:
 
 - `$` type and value parameters, inference, structural specialization
-  (`[]$E`, `[$N]E`, `^Table($K, $V)`), generic records, unions, and `impl`/
-  `extend` blocks, and `where` clauses evaluated per instantiation. Every
+  (`[]$E`, `[$N]E`, `^Table($K, $V)`), generic records, unions, and `impl`
+  blocks, and `where` clauses evaluated per instantiation. Every
   distinct argument vector is monomorphized into its own instance with its own
   emitted symbol; a runaway recursive instantiation is a diagnostic carrying its
   instantiation stack;
@@ -104,7 +105,7 @@ M4b makes those abstractions generic and erasable, completing M4:
   composition, and associated types. An application such as `Additive(int)` is a
   compile-time boolean, and a failure names the requirement line and the concrete
   type that failed it. A named slot is matched only by an inherent method or an
-  extension from the interface's own package, so a caller-local `extend` cannot
+  extension from the interface's own package, so a caller-local extension cannot
   make a requirement appear satisfied;
 - the standard interface catalogue as ordinary Loke source in
   [base/interfaces](base/interfaces), reached with `-collection base=base`,
@@ -231,7 +232,7 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   element escape;
 - `type_info_of` maps every live `typeid` to stable `runtime.Type_Info` metadata
   and returns nil for the zero id and for a forged one, and
-  `#location`/`#caller_location` produce constant `runtime.Source_Code_Location`
+  `source_location()`/`caller_location()` produce constant `runtime.Source_Code_Location`
   values;
 - formatting is coherent per concrete `typeid`: the compiler generates one
   formatter per printable type, a package may write `format` for a type it owns,
@@ -263,7 +264,7 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   index chains (`m["Dana"].x = 7` inserts a zero and assigns), the non-inserting
   `m.find(key)`, `try_insert`, `remove`, `clear`, `reserve` and `shrink` all
   run. A key needs a **coherent** `==` and `hash` pair that is either built in or
-  inherent to the key's own package: a caller-local `extend` never enters the
+  inherent to the key's own package: a caller-local extension never enters the
   frozen operation table, so one map keeps one policy in every package it travels
   through.
 

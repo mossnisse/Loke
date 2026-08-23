@@ -1054,7 +1054,7 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 }
 
 // The key type's own inherent `hash` or `operator(==)`, or INVALID_SYMBOL when
-// the compiler supplies the pair. An `extend` member is never one of these.
+// the compiler supplies the pair. An extension member is never one of these.
 @(private = "file")
 key_policy_member :: proc(c: ^Compiler, key: Type_Id, want_equal: bool) -> Symbol_Id {
 	if type_is_hashable(c, key) {
@@ -2938,10 +2938,10 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 
 	case ^Stmt_Expr:
 		for expr in s.exprs {
-			// `#assert` is checked and answered at compile time and has no runtime
-			// cost, so there is nothing here to emit.
+			// `static_assert` is checked and answered at compile time and has no
+			// runtime cost, so there is nothing here to emit.
 			if call, is_call := expr.(^Expr_Call); is_call {
-				if _, is_hash := call.callee.(^Expr_Hash); is_hash {
+				if call_builtin_kind(e, call) == .Static_Assert {
 					continue
 				}
 			}
@@ -4311,7 +4311,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	case ^Expr_Move:
 		return emit_move(e, v)
 
-	case ^Expr_Hash, ^Expr_Proc_Group, ^Expr_Operator,
+	case ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
@@ -6315,6 +6315,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			emit_region_reset(e, v)
 			return "0"
 		case .None, .Size_Of, .Align_Of, .Offset_Of,
+		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here
 			// would mean emitting a runtime call for a layout query.

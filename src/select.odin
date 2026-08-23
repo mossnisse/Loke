@@ -210,8 +210,20 @@ condition_ready :: proc(k: ^Checker, e: Expr) -> bool {
 	return first_unresolved_name(k, e) == ""
 }
 
+// Does this callee name the given built-in? Used where an argument is a token
+// rather than a lexical value, which only the built-in's identity can say.
+@(private = "file")
+callee_is_builtin :: proc(k: ^Checker, callee: Expr, kind: Builtin_Kind) -> bool {
+	ident, is_ident := callee.(^Expr_Ident)
+	if !is_ident {
+		return false
+	}
+	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	return sym != nil && sym.kind == .Builtin && sym.builtin == kind
+}
+
 // The first name in `e` that does not resolve, or "" when they all do. Only
-// value positions are visited: a selector's field and a `#config` name are
+// value positions are visited: a selector's field and a `build_config` key are
 // tokens, not lookups.
 first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	if e == nil {
@@ -265,20 +277,13 @@ first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 			}
 		}
 	case ^Expr_Call:
-		// `#config(NAME, default)` names a configuration key, not a binding.
-		if _, is_hash := v.callee.(^Expr_Hash); !is_hash {
-			if missing := first_unresolved_name(k, v.callee); missing != "" {
-				return missing
-			}
-			for argument in v.args {
-				if missing := first_unresolved_name(k, argument.value); missing != "" {
-					return missing
-				}
-			}
-			return ""
+		if missing := first_unresolved_name(k, v.callee); missing != "" {
+			return missing
 		}
+		// `build_config(NAME, default)` names a configuration key, not a binding.
+		skip := callee_is_builtin(k, v.callee, .Build_Config) ? 0 : -1
 		for argument, index in v.args {
-			if index == 0 && v.callee.(^Expr_Hash).name == "#config" {
+			if index == skip {
 				continue
 			}
 			if missing := first_unresolved_name(k, argument.value); missing != "" {

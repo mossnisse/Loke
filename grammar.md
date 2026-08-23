@@ -50,7 +50,7 @@ Reserved in every position:
 
 ```
 break       case       continue   defer      distinct   dyn        dynamic
-else        enum       extend     for        foreach   foreign
+else        enum       for        foreach    foreign
 if          impl       import     in         inout      interface  map
 move        mut        operator   or_else    or_return  package    proc
 return      struct     switch     type       union      via        when
@@ -62,10 +62,10 @@ Contextual keywords, reserved only in the positions given:
 | Word | Position |
 | --- | --- |
 | `static`, `thread_local`, `manual` | in the storage-modifier position of a declaration, after its `:` |
-| `self` | the first parameter name of a procedure declared in an `impl` or `extend` block, or of an interface `slot` |
+| `self` | the first parameter name of a procedure declared in an `impl` block, or of an interface `slot` |
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
-| `delegate` | at the start of an operator-delegation declaration in an `impl` or `extend` body |
+| `delegate` | at the start of an operator-delegation declaration in an `impl` body |
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords; they may be
 shadowed by a declaration like any other name. So are the built-in procedures,
@@ -73,12 +73,10 @@ including `transmute`, `drop`, `len`, `cap`, `new`, and `make`.
 
 ## Compile-time names
 
-```
-Hash_Name = "#" Identifier
-```
-
-The complete set is `#assert`, `#config`, `#location`, and
-`#caller_location`. An unrecognised `#name` is a lexical error.
+There is no `#name` lexical form. The compile-time built-ins — `static_assert`,
+`build_config`, `source_location`, and `caller_location` — are predeclared
+identifiers reached through the ordinary call suffix, exactly like `size_of`
+and `transmute`, and like those they may be shadowed by a declaration.
 
 ## Operators and punctuation
 
@@ -164,7 +162,6 @@ Top_Level_Item= Import_Decl
               | Foreign_Import_Decl
               | Foreign_Block
               | Impl_Block
-              | Extend_Block
               | Top_Level_When
               | Declaration
               | ";"                       // empty item
@@ -181,11 +178,16 @@ Foreign_Block = Attributes? "foreign" Identifier "{" Foreign_Decl* "}"
 Foreign_Decl  = Attributes? Identifier ":" ( ":" Proc_Literal | Type ) ";"
               | ";"
 
-Impl_Block    = Attributes? "impl"   Type "{" Impl_Member* "}"
-Extend_Block  = Attributes? "extend" Type "{" Impl_Member* "}"
+Impl_Block    = Attributes? "impl" Type "{" Impl_Member* "}"
 Impl_Member   = Declaration | Delegate_Decl | ";"
 Delegate_Decl = "delegate" "(" Operator_Symbol ("," Operator_Symbol)* ","? ")" ";"
 ```
+
+One block form serves both an *inherent* implementation and an *extension*.
+Which one a block is is not written: it follows from whether the subject type
+is declared by the package containing the block. A subject no package declares,
+such as `[]int`, is therefore always extended. This is a semantic rule, not a
+grammatical one.
 
 A procedure declared in a foreign block has no body and ends its signature with
 `---`; see [Procedures](#procedures).
@@ -419,11 +421,11 @@ Result_Type  = "inout"? Type
 ```
 
 A parameter with no type is legal only for the receiver `self`, whose type is
-inferred from the enclosing `impl` or `extend` block or from the subject
+inferred from the enclosing `impl` block or from the subject
 parameter of an interface `slot`. `Parameter_Names` would otherwise swallow that
 receiver: in `proc(self, allocator: Allocator)` the first name is the receiver
 and the written type belongs to the names after it, so a leading `self` inside an
-`impl`, `extend`, or `slot` ends its name list. The receiver keeps the immutable
+`impl` or `slot` ends its name list. The receiver keeps the immutable
 borrow mode of the untyped form whatever `Parameter_Mode` the rest of the group
 writes, and an omitted-argument default written for the group belongs to those
 parameters rather than to `self`. A receiver that wants another mode writes its
@@ -594,7 +596,6 @@ Primary_Expression =
      | "move" "(" Expression ")"
      | Composite_Literal
      | Proc_Literal
-     | Hash_Name
      | "(" Expression ")"
      | "(" Type ")"                                    // parenthesised type, as in (^u32)(&f)
 
@@ -666,7 +667,7 @@ The productions above use the following deterministic parsing rules:
 - After the first `:` of a declaration, `static`, `thread_local`, and `manual`
   are storage modifiers only when followed by another modifier, by a type-start
   token, or by `=`. Otherwise they are ordinary type names.
-- At the start of an `impl` or `extend` member, `delegate` is the contextual
+- At the start of an `impl` member, `delegate` is the contextual
   keyword only when followed by `(`; otherwise it remains an ordinary identifier
   that may begin a declaration.
 - `via` in a declaration consumes one unary expression. A larger allocator

@@ -70,7 +70,7 @@ main :: proc() {
 	fmt.println(m);
 
 	// A location is an ordinary record, so it prints like one.
-	fmt.println(#location().procedure, #location().line);
+	fmt.println(source_location().procedure, source_location().line);
 
 	// `eprint` goes to the error stream, which the corpus does not capture.
 	fmt.eprintln("to stderr");

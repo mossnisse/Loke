@@ -52,13 +52,13 @@ main :: proc() {
 
 	// `type_of` and `typeid_of` fold.
 	i := 3;
-	#assert(type_of(i) == int);
-	#assert(typeid_of(int) == typeid_of(type_of(i)));
-	#assert(typeid_of(int) != typeid_of(bool));
+	static_assert(type_of(i) == int);
+	static_assert(typeid_of(int) == typeid_of(type_of(i)));
+	static_assert(typeid_of(int) != typeid_of(bool));
 
 	// A descriptor name has type `string_view`.
 	foreach ($field in fields_of(Point)) {
-		#assert(type_of(field.name) == string_view);
+		static_assert(type_of(field.name) == string_view);
 	}
 
 	// `field.pointer` writes through the selected field.

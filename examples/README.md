@@ -12,7 +12,7 @@ different part of the language:
 - `arena_pipeline.loke` — allocators, `via`, local arena and scratch regions, and reusable reset.
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
 - `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, and lifecycle hooks.
-- `compile_time.loke` — ordinary procedures run during compilation, `#config`, `#assert`, `when`, static expansion over reflection, and folded layout.
+- `compile_time.loke` — ordinary procedures run during compilation, `build_config`, `static_assert`, `when`, static expansion over reflection, and folded layout.
 
 From the repository root, compile and run any example with:
 

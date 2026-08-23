@@ -82,7 +82,7 @@ main :: proc() {
 	fmt.println(int(runes.total()));
 
 	// The container satisfies the standard `Iterable` interface.
-	#assert(interfaces.Iterable(Stack(int, 4)));
+	static_assert(interfaces.Iterable(Stack(int, 4)));
 	seen := 0;
 	foreach (v in ints) { seen = seen + v; }
 	fmt.println(seen);

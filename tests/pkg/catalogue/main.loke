@@ -42,32 +42,32 @@ total :: proc(a, b: $T) -> T where interfaces.Numeric(T) {
 }
 
 main :: proc() {
-	#assert(interfaces.Equatable(int));
-	#assert(interfaces.Ordered(int));
-	#assert(interfaces.Ordered(f64));
-	#assert(interfaces.Hashable(int));
-	#assert(interfaces.Hashable(rune));
-	#assert(interfaces.Numeric(int));
-	#assert(interfaces.Numeric(f64));
-	#assert(interfaces.Integral(int));
+	static_assert(interfaces.Equatable(int));
+	static_assert(interfaces.Ordered(int));
+	static_assert(interfaces.Ordered(f64));
+	static_assert(interfaces.Hashable(int));
+	static_assert(interfaces.Hashable(rune));
+	static_assert(interfaces.Numeric(int));
+	static_assert(interfaces.Numeric(f64));
+	static_assert(interfaces.Integral(int));
 
 	// `Cloneable` is satisfied through whichever `try_clone` the record answers
 	// to, generated or written, and not at all once it is disabled.
-	#assert(interfaces.Cloneable(Opaque));
-	#assert(interfaces.Cloneable(Counted));
-	#assert(!interfaces.Cloneable(Move_Only));
-	#assert(!interfaces.Cloneable(Holds_Move_Only));
+	static_assert(interfaces.Cloneable(Opaque));
+	static_assert(interfaces.Cloneable(Counted));
+	static_assert(!interfaces.Cloneable(Move_Only));
+	static_assert(!interfaces.Cloneable(Holds_Move_Only));
 
-	#assert(!interfaces.Integral(f64));
-	#assert(!interfaces.Equatable(Opaque));
-	#assert(!interfaces.Numeric(bool));
+	static_assert(!interfaces.Integral(f64));
+	static_assert(!interfaces.Equatable(Opaque));
+	static_assert(!interfaces.Numeric(bool));
 
 	// A user `distinct` type satisfies the same catalogue entries through its
 	// own operators.
-	#assert(interfaces.Equatable(Meters));
-	#assert(interfaces.Ordered(Meters));
-	#assert(interfaces.Numeric(Meters));
-	#assert(!interfaces.Integral(Meters));
+	static_assert(interfaces.Equatable(Meters));
+	static_assert(interfaces.Ordered(Meters));
+	static_assert(interfaces.Numeric(Meters));
+	static_assert(!interfaces.Integral(Meters));
 
 	fmt.println(total(2, 3));
 	fmt.println(int(f64(total(Meters(1.5), Meters(2.5)))));

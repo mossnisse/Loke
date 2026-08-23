@@ -71,7 +71,7 @@ Generic_Param_Decl :: struct {
 	type_syntax: Expr,
 }
 
-// An `impl`/`extend` block written against a generic type, kept aside until an
+// An `impl` block written against a generic type, kept aside until an
 // instantiation of that type exists to install it on.
 Generic_Impl :: struct {
 	item:        ^Item_Impl,
@@ -111,7 +111,7 @@ Instantiation_Frame :: struct {
 	span:        Span,
 }
 
-// An instantiated `impl`/`extend` block waiting for its bodies to be checked.
+// An instantiated `impl` block waiting for its bodies to be checked.
 // Signatures are installed as soon as the instance exists, so a method is
 // callable from the code that created the instantiation; bodies wait until the
 // requesting package is finished, so a method may itself use the instance.
@@ -1446,7 +1446,7 @@ where_bound_text :: proc(c: ^Compiler, clause: Expr) -> string {
 
 // ------------------------------------------------- generic `impl` blocks --
 
-// An `impl`/`extend` block whose subject is a generic application is kept until
+// An `impl` block whose subject is a generic application is kept until
 // an instantiation of that type exists. Both `impl Table($K, $V)` and
 // `impl Table(string, int)` are registered here; the second simply matches
 // fewer instances.
@@ -1461,6 +1461,13 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 			return true // an earlier discovery round already registered it
 		}
 	}
+	// The same rule an ordinary block follows in `declare_impl_block`, decided
+	// here because a generic subject is registered before it resolves to a type:
+	// the template's own package makes the block inherent, anywhere else makes it
+	// an extension.
+	owner := symbol_of(k.c, template)
+	item.kind = owner != nil && owner.pkg == k.pkg ? .Impl : .Extend
+
 	written := make([]Expr, len(args), k.c.semantic_allocator)
 	specificity := 0
 	for arg, index in args {
@@ -1642,8 +1649,8 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 					sym.type = TYPE_VOID
 				}
 			}
-			// As for an ordinary `extend`, a public extension procedure also gets
-			// its plain package-qualified spelling.
+			// As for an ordinary extension block, a public extension procedure also
+			// gets its plain package-qualified spelling.
 			if item.kind == .Extend && public {
 				if pkg := package_of(k.c, block.pkg); pkg != nil && pkg.scope != nil {
 					if _, taken := pkg.scope.names[name_id]; !taken {

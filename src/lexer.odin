@@ -23,7 +23,6 @@ Token_Kind :: enum {
 	String,
 	Raw_String,
 	Rune,
-	Hash_Name,
 
 	// keywords, reserved in every position
 	Break,
@@ -35,7 +34,6 @@ Token_Kind :: enum {
 	Dynamic,
 	Else,
 	Enum,
-	Extend,
 	For,
 	Foreach,
 	Foreign,
@@ -121,9 +119,6 @@ Token :: struct {
 	lo:   u32,
 	hi:   u32,
 }
-
-// The complete set of compile-time names; anything else is a lexical error.
-HASH_NAMES :: [?]string{"#assert", "#config", "#location", "#caller_location"}
 
 @(private = "file")
 Lexer :: struct {
@@ -271,8 +266,6 @@ next_token :: proc(l: ^Lexer) -> Token {
 		return raw_string_literal(l)
 	case ch == '\'':
 		return rune_literal(l)
-	case ch == '#':
-		return hash_name(l)
 	case ch >= 0x80:
 		// Everything outside strings, comments and rune literals is ASCII.
 		l.pos += 1
@@ -322,8 +315,6 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Else
 	case "enum":
 		kind = .Enum
-	case "extend":
-		kind = .Extend
 	case "for":
 		kind = .For
 	case "foreach":
@@ -622,28 +613,6 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 	}
 	l.pos += 1
 	return Token{kind = .Rune, lo = lo, hi = l.pos}
-}
-
-@(private = "file")
-hash_name :: proc(l: ^Lexer) -> Token {
-	lo := l.pos
-	l.pos += 1
-	if !is_ident_start(peek(l)) {
-		errorf(l.c, span_from(l, lo), "L0109", "`#` must be followed by a name")
-		return Token{kind = .Error, lo = lo, hi = l.pos}
-	}
-	for !at_end(l) && is_ident_part(peek(l)) {
-		l.pos += 1
-	}
-
-	text := l.src[lo:l.pos]
-	for known in HASH_NAMES {
-		if text == known {
-			return Token{kind = .Hash_Name, lo = lo, hi = l.pos}
-		}
-	}
-	errorf(l.c, span_from(l, lo), "L0108", "unknown compile-time name `%s`", text)
-	return Token{kind = .Error, lo = lo, hi = l.pos}
 }
 
 // Longest match wins. `:` is never combined with anything: `::` and `:=` are

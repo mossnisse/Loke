@@ -99,7 +99,7 @@ impl _int {
 	read :: proc(self) -> i32 { return self.value; }
 }
 
-extend ^int {
+impl ^int {
 	read :: proc(self) -> int { return self^; }
 }
 

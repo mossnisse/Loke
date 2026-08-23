@@ -321,6 +321,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 
 	switch kind {
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
+	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
 	     .Clone, .Try_Clone,
@@ -399,21 +400,20 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 
 // ------------------------------------------------------- source locations --
 
-// design.md "`#location() or #location(<entity>)`": "Returns a
-// runtime.Source_Code_Location. Can be called with no parameters for current
-// location, or with a parameter for the location of the variable/proc
-// declaration."
+// design.md "`source_location()` or `source_location(<entity>)`": returns a
+// `runtime.Source_Code_Location`, for the current location with no arguments or
+// for the declaration of a named entity with one.
 //
 // Every field is known at compile time, so the whole thing folds to one
 // constant aggregate over static storage and costs nothing at run time.
-check_location :: proc(k: ^Checker, v: ^Expr_Call, hash: ^Expr_Hash) {
+check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
 	type, resolved := source_location_type(k)
 	if !resolved {
 		errorf(
 			k.c, v.span, "L0573",
 			"`%s` produces a `runtime.Source_Code_Location`; add `import \"base:runtime\"` to this file's package",
-			hash.name,
+			ident.name,
 		)
 		v.type = INVALID_TYPE
 		return
@@ -425,13 +425,13 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, hash: ^Expr_Hash) {
 		// The declaration span of the named entity, not the span of naming it.
 		declared, found := entity_declaration_span(k, v.args[0].value)
 		if !found {
-			errorf(k.c, expr_span(v.args[0].value), "L0573", "`#location` takes a declared name")
+			errorf(k.c, expr_span(v.args[0].value), "L0573", "`source_location` takes a declared name")
 			v.type = INVALID_TYPE
 			return
 		}
 		span = declared
 	case:
-		errorf(k.c, v.span, "L0573", "`#location` takes at most one name, found %d", len(v.args))
+		errorf(k.c, v.span, "L0573", "`source_location` takes at most one name, found %d", len(v.args))
 		v.type = INVALID_TYPE
 		return
 	}
@@ -503,18 +503,18 @@ entity_declaration_span :: proc(k: ^Checker, e: Expr) -> (Span, bool) {
 	return sym.span, true
 }
 
-// design.md "`#caller_location`": it "denotes the source location of the code
-// calling the procedure... It may appear only as the default value of a
-// procedure parameter, and it is evaluated at each call that omits that
-// argument, like any other default."
+// design.md "`caller_location()`": it denotes the source location of the code
+// calling the procedure. Its place is the default value of a procedure
+// parameter, where it is evaluated at each call that omits that argument, like
+// any other default.
 //
 // At the declaration it types the parameter and carries the declaration's own
 // span, which nothing observes: every call that omits the argument substitutes
 // its own location first.
-check_caller_location :: proc(k: ^Checker, v: ^Expr_Hash) {
+check_caller_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
-	if v.name != "#caller_location" {
-		errorf(k.c, v.span, "L0573", "`%s` is a call; write `%s()`", v.name, v.name)
+	if len(v.args) != 0 {
+		errorf(k.c, v.span, "L0573", "`caller_location` takes no arguments, found %d", len(v.args))
 		v.type = INVALID_TYPE
 		return
 	}
@@ -522,7 +522,7 @@ check_caller_location :: proc(k: ^Checker, v: ^Expr_Hash) {
 	if !resolved {
 		errorf(
 			k.c, v.span, "L0573",
-			"`#caller_location` produces a `runtime.Source_Code_Location`; add `import \"base:runtime\"` to this file's package",
+			"`caller_location` produces a `runtime.Source_Code_Location`; add `import \"base:runtime\"` to this file's package",
 		)
 		v.type = INVALID_TYPE
 		return
@@ -532,17 +532,21 @@ check_caller_location :: proc(k: ^Checker, v: ^Expr_Hash) {
 	v.const_value = source_location_const(k, type, v.span)
 }
 
-// One omitted argument whose default is `#caller_location`, replaced by a
+// One omitted argument whose default is `caller_location()`, replaced by a
 // constant for *this* call. Any other default is passed through untouched.
 substitute_caller_location :: proc(k: ^Checker, default: Expr, at: Span) -> Expr {
-	hash, is_hash := default.(^Expr_Hash)
-	if !is_hash || hash.name != "#caller_location" || hash.type == INVALID_TYPE {
+	call, is_call := default.(^Expr_Call)
+	if !is_call || call.type == INVALID_TYPE {
 		return default
 	}
-	substituted := new(Expr_Hash, k.c.semantic_allocator)
-	substituted^ = hash^
+	sym := symbol_of(k.c, call.resolution.symbol)
+	if sym == nil || sym.kind != .Builtin || sym.builtin != .Caller_Location {
+		return default
+	}
+	substituted := new(Expr_Call, k.c.semantic_allocator)
+	substituted^ = call^
 	substituted.span = at
-	substituted.const_value = source_location_const(k, hash.type, at)
+	substituted.const_value = source_location_const(k, call.type, at)
 	return substituted
 }
 

@@ -93,7 +93,7 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 @(private = "file")
 collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lifecycle) {
 	// Inherent members only: a lifecycle hook belongs with the type's own
-	// package, so an `extend` block never contributes one.
+	// package, so an extension block never contributes one.
 	for member in info.members {
 		sym := symbol_of(c, member)
 		// A generated hook is not a custom one: reading one back would make the
@@ -529,7 +529,7 @@ disabled_lifecycle_hook :: proc(k: ^Checker, d: ^Decl, index: int) -> bool {
 	if d.names[index].text != "try_clone" {
 		return false
 	}
-	// Only the declaring package may disable it; `extend` is rejected by
+	// Only the declaring package may disable it; an extension block is rejected by
 	// `validate_lifecycle_hook` with its own diagnostic.
 	return true
 }
@@ -550,7 +550,7 @@ validate_lifecycle_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^S
 			k.c,
 			sym.span,
 			"L0486",
-			"a lifecycle hook belongs with the package that declares `%s`; `extend` cannot add `%s`",
+			"a lifecycle hook belongs with the package that declares `%s`; an extension block cannot add `%s`",
 			type_name(k.c, subject),
 			name,
 		)

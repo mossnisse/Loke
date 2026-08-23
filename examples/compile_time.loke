@@ -7,13 +7,13 @@ import "base:runtime";
 // There is no second language here. Every procedure below is an ordinary one;
 // what decides whether it runs at compile time is the context it is used in. A
 // constant initializer, an array length, an enum value, a `when` condition and
-// a `#assert` all need an answer during compilation, so the compiler runs the
-// procedure. The same procedure called from `main` runs at run time, with the
+// a `static_assert` all need an answer during compilation, so the compiler
+// runs the procedure. The same procedure called from `main` runs at run time, with the
 // same semantics and the same result.
 
 // A build knob. `lokec examples/compile_time.loke -define:SIEVE_LIMIT=100`
 // changes every table below, including the array lengths.
-LIMIT :: #config(SIEVE_LIMIT, 50);
+LIMIT :: build_config(SIEVE_LIMIT, 50);
 
 // ---------------------------------------------------------------- tables --
 
@@ -96,11 +96,11 @@ print_record :: proc(value: ^$T) {
 main :: proc() {
 	// Proven during compilation. A false one is a compile error, not a test
 	// that has to be run.
-	#assert(PRIME_COUNT > 0);
-	#assert(PRIMES[0] == 2);
-	#assert(PRIMES[1] == 3);
-	#assert(type_of(PRIME_COUNT) == int);
-	#assert(len(PRIMES) == PRIME_COUNT);
+	static_assert(PRIME_COUNT > 0);
+	static_assert(PRIMES[0] == 2);
+	static_assert(PRIMES[1] == 3);
+	static_assert(type_of(PRIME_COUNT) == int);
+	static_assert(len(PRIMES) == PRIME_COUNT);
 
 	fmt.println("limit:", LIMIT);
 	fmt.println("primes below limit:", PRIME_COUNT);
@@ -133,6 +133,6 @@ main :: proc() {
 	print_record(&sample);
 
 	// Source position is a compile-time value, so this costs nothing to ask.
-	here := #location();
+	here := source_location();
 	fmt.println("printed from line", here.line, "of", here.file);
 }

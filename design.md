@@ -66,7 +66,7 @@ Most statements end with a semicolon (`;`). A statement omits the semicolon when
 - `if`, `for`, `foreach`, `switch`, and `when`
 - a block or deferred block
 - procedure, record, interface, procedure-group, and brace-bodied operator definitions
-- top-level `impl`, `extend`, and `foreign` blocks
+- top-level `impl` and `foreign` blocks
 
 An expression statement always needs a semicolon, including when it ends in a composite literal like `Point{1, 2}` — those braces are part of a value, not a block.
 
@@ -312,7 +312,7 @@ Low-level string indices are byte offsets throughout; Unicode procedures state t
 
 Formatting is a library protocol: a user type provides a visible `format(value, writer, options)` overload. Buffer handling belongs to `core:fmt`, not this specification.
 
-Runtime formatting is **coherent per concrete `typeid`**: one type has one erased spelling program-wide. A `format` overload is eligible only when declared in the package that declares the value type; the compiler supplies one for every other printable type, and a second eligible declaration is rejected. A caller-local `extend` may declare and call its own `format`, but it does not change what `print` does, because an erased value carries only a pointer and a `typeid`. This is the same coherence rule [maps](#maps) place on `==` and `hash`.
+Runtime formatting is **coherent per concrete `typeid`**: one type has one erased spelling program-wide. A `format` overload is eligible only when declared in the package that declares the value type; the compiler supplies one for every other printable type, and a second eligible declaration is rejected. A caller-local extension may declare and call its own `format`, but it does not change what `print` does, because an erased value carries only a pointer and a `typeid`. This is the same coherence rule [maps](#maps) place on `==` and `hash`.
 
 ### C string views
 
@@ -587,7 +587,7 @@ The built-in `len` procedure returns the array length.
 
 ```odin
 x: [5]int = {};
-#assert(len(x) == 5);
+static_assert(len(x) == 5);
 ```
 
 Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a multi-pointer:
@@ -1099,7 +1099,7 @@ A type alias gives another name to a type:
 
 ```odin
 My_Int :: int;
-#assert(My_Int == int);
+static_assert(My_Int == int);
 ```
 
 ### Distinct types
@@ -1108,7 +1108,7 @@ A distinct type is a new type with the same representation as its underlying typ
 
 ```odin
 My_Int :: distinct int;
-#assert(My_Int != int);
+static_assert(My_Int != int);
 ```
 
 A distinct type may define its own methods, operators, constructors, conversions, interfaces, formatting, and lifecycle hooks. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form below.
@@ -1117,7 +1117,7 @@ Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
 
 ```odin
 Foo :: struct {};
-#assert(Foo != struct{});
+static_assert(Foo != struct{});
 ```
 
 #### Delegating operators
@@ -1132,7 +1132,7 @@ impl Meters {
 }
 ```
 
-but a numeric newtype needs that same line for every operator it wants. `delegate` generates those forwarding overloads from a list of operator symbols, parsed exactly as [`operator(...)`](#operator-declarations), inside an `impl` or `extend` block for a distinct type:
+but a numeric newtype needs that same line for every operator it wants. `delegate` generates those forwarding overloads from a list of operator symbols, parsed exactly as [`operator(...)`](#operator-declarations), inside an `impl` block for a distinct type:
 
 ```odin
 Meters :: distinct f64;
@@ -1294,7 +1294,7 @@ takes no arguments, and cannot be replaced by an overload.
 ```odin
 value: Value = "hello";
 
-#assert(type_of(value) == Value);                 // static type
+static_assert(type_of(value) == Value);                 // static type
 assert(typeid_of(Value) != value.active_typeid());
 assert(value.active_typeid() == typeid_of(string)); // active runtime variant
 
@@ -1315,16 +1315,16 @@ value: Value = ...;
 switch (av in value) {
 case string:
 	// `av` is a new binding whose static type is narrowed to `string`.
-	#assert(type_of(av) == string)
+	static_assert(type_of(av) == string)
 
 case bool:
 	// `type_of` reports that narrowed static type; it is not reading the tag.
-	#assert(type_of(av) == bool)
+	static_assert(type_of(av) == bool)
 
 case i32, f32:
 	// This case allows for multiple types, therefore we cannot know which type to use
 	// `av` remains the original union value
-	#assert(type_of(av) == Value)
+	static_assert(type_of(av) == Value)
 case:
 	// Default case
 	// In this case, it is `nil`
@@ -1723,15 +1723,25 @@ Vector2.length_squared(v);
 
 A plain `self` is an immutable borrow, `self: inout Type` a mutable borrow, and `self: move Type` consumes the receiver. Members without `self` are accessed through the type name.
 
-An `extend` block adds methods or operators to a type from another package:
+The same block form adds methods or operators to a type from another package:
 
 ```odin
-extend vendor.Vector2 {
+impl vendor.Vector2 {
 	to_string :: proc(self, allocator: mem.Allocator = mem.default_allocator()) -> string {
 		return fmt.to_string(allocator, "(", self.x, ", ", self.y, ")");
 	}
 }
 ```
+
+**A block is inherent or an extension by where its subject is declared, not by a
+keyword.** A block in the subject's own package contributes *inherent* members to
+the type itself; a block anywhere else is an *extension*, confined to the package
+that writes it. A subject no package declares — a built-in type such as `[]int`,
+or a foreign one — is therefore always extended. Nothing is written either way,
+and the qualified subject in `impl vendor.Vector2` already shows which case it is.
+
+The distinction is real and every rule below turns on it; it just isn't a second
+syntax.
 
 A procedure returning an owning `string` names the allocator it builds with, by
 the [ordinary parameter convention](#default-values). There is no ambient
@@ -1772,7 +1782,7 @@ A first parameter declared `self: ^Type` is **not** a receiver: it is an ordinar
 
 #### Generic types
 
-An `impl` or `extend` block may name a generic type by writing its shape, binding parameters with `$` as a [specialized](#specialization) procedure parameter does. The bound names are in scope throughout the block:
+An `impl` block may name a generic type by writing its shape, binding parameters with `$` as a [specialized](#specialization) procedure parameter does. The bound names are in scope throughout the block:
 
 ```odin
 Table :: struct($Key, $Value: type) {
@@ -2230,7 +2240,7 @@ of a copyable type is defined in terms of `try_clone`.
 
 These use normal overload groups and are written as free calls — `len(x)`, `hash(key, seed)`, `clone(value)` — which is canonical and always available. For lifecycle-enabled types the compiler contributes free `clone` and `try_clone` overloads forwarding to the fixed hooks; a user customizes copying by replacing `T.try_clone`, not by adding an unrelated free clone.
 
-**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible `extend` block, or a built-in container operation such as `append`, `remove`, `reserve`, or `sort`. Loke does not rewrite `f(x)` as `x.f()`.
+**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible extension block, or a built-in container operation such as `append`, `remove`, `reserve`, or `sort`. Loke does not rewrite `f(x)` as `x.f()`.
 
 A type may declare one of the procedures above as a method:
 
@@ -2551,7 +2561,7 @@ partially initialize a dead aggregate.
 
 Liveness is not required in an **unevaluated operand**. `type_of(expression)`,
 the expression forms of `size_of` and `align_of`, and the entity operand of
-`#location` inspect only a declaration or static type. Their operands must
+`source_location` inspect only a declaration or static type. Their operands must
 resolve and type-check, but they do not read storage, create a borrow, or require
 the named local to be live.
 
@@ -2873,7 +2883,7 @@ reported with the compile-time call stack. Implementations may impose documented
 step, recursion, and memory limits, but exceeding one must be diagnosed rather
 than silently moving the call to runtime.
 
-Compile-time evaluation is hermetic: it receives target and project information only through language constants and [`#config`](#configidentifier-default), and does not acquire ambient access to the build machine. For identical source, configuration, and target it must produce the same result. An operation whose runtime answer is deliberately unspecified is rejected on an executed compile-time path rather than approximated, so a folded constant cannot differ from the runtime computation. Map iteration is one such operation (maps remain available for keyed lookup and working storage); `cap` is another, being a property of an allocation compile-time storage lacks, while `len` is an ordinary compile-time fact.
+Compile-time evaluation is hermetic: it receives target and project information only through language constants and [`build_config`](#build_configidentifier-default), and does not acquire ambient access to the build machine. For identical source, configuration, and target it must produce the same result. An operation whose runtime answer is deliberately unspecified is rejected on an executed compile-time path rather than approximated, so a folded constant cannot differ from the runtime computation. Map iteration is one such operation (maps remain available for keyed lookup and working storage); `cap` is another, being a property of an allocation compile-time storage lacks, while `len` is an ordinary compile-time fact.
 
 # 4. Expressions & Operators
 
@@ -3718,7 +3728,7 @@ foo :: proc() -> (n: int) {
 - An initial statement is not allowed in a `when` statement.
 - `when` statements are allowed at file scope.
 
-The contents of a `when` branch match its location. Inside a procedure, a selected branch contains ordinary statements. At file scope, it contains top-level items, so it may conditionally provide imports, foreign declarations, `impl` or `extend` blocks, and declarations, but not executable expression statements. In either location the braces used by `when` do not introduce a scope; the selected contents behave as if they had appeared directly at the surrounding location.
+The contents of a `when` branch match its location. Inside a procedure, a selected branch contains ordinary statements. At file scope, it contains top-level items, so it may conditionally provide imports, foreign declarations, `impl` blocks, and declarations, but not executable expression statements. In either location the braces used by `when` do not introduce a scope; the selected contents behave as if they had appeared directly at the surrounding location.
 
 Example:
 
@@ -4091,7 +4101,7 @@ data, err := files.read_file("data.bin");
 scratch_data, scratch_err := files.read_file("scratch.bin", allocator=scratch);
 ```
 
-The compiler-provided [`#caller_location`](#caller_location) expression is also
+The compiler-provided [`caller_location()`](#caller_location) expression is also
 valid as a default and denotes the source location of the call. Defaults exist
 only for parameters; a [named result](#named-results) has no initializer syntax
 and starts dead.
@@ -4315,14 +4325,14 @@ fmt.println(cross_3d(x, y));
 ```odin
 foo :: proc(x: [$N]int) -> bool
 	where N > 2 {
-	fmt.println(#location().procedure, "was called with the parameter", x);
+	fmt.println(source_location().procedure, "was called with the parameter", x);
 	return true;
 }
 
 bar :: proc(x: [$N]int) -> bool
 	where 0 < N,
 	      N <= 2 {
-	fmt.println(#location().procedure, "was called with the parameter", x);
+	fmt.println(source_location().procedure, "was called with the parameter", x);
 	return false;
 }
 
@@ -4349,7 +4359,7 @@ Foo :: struct($T: type, $N: int)
 T :: i32;
 N :: 5;
 f: Foo(T, N);
-#assert(size_of(f) == (N+N-2)*size_of(T));
+static_assert(size_of(f) == (N+N-2)*size_of(T));
 ```
 
 # 7. Ownership & Lifetimes
@@ -4841,9 +4851,9 @@ produces a compilation diagnostic with the evaluator call stack. `-no-assert`
 may remove runtime assertions, but it never removes an assertion reached during
 required compile-time evaluation.
 
-[`#assert`](#assertboolean) independently requires its operand and check at
+[`static_assert`](#static_assertboolean) independently requires its operand and check at
 compile time, even when it appears inside code that otherwise executes at
-runtime. `#assert(false, message)` is therefore the compile-time
+runtime. `static_assert(false, message)` is therefore the compile-time
 unconditional-failure form. Neither spelling silently changes phase.
 
 `move`, `drop`, and `exchange` operate on a **place** rather than only on values.
@@ -5533,17 +5543,17 @@ The compiler provides a small set of constants in every compilation:
 | `LOKE_VENDOR` | Compiler implementation identifier; the official compiler uses `"loke"`. |
 | `LOKE_VERSION` | Compiler version string. |
 
-Additional project values are supplied by the build system and read with `#config`.
+Additional project values are supplied by the build system and read with `build_config`.
 
 ### Build configuration
 
 Build configuration defines compile-time values for the complete project.
 
-The build system may provide integer, boolean, or string configuration values. Source code reads them with `#config`, always supplying a default:
+The build system may provide integer, boolean, or string configuration values. Source code reads them with `build_config`, always supplying a default:
 
 ```odin
-FOO :: #config(FOO, false); // defines `FOO` as a constant with the default value of false
-BAR :: #config(BAR_DEBUG, true); // name can be different compared to the constant 
+FOO :: build_config(FOO, false); // defines `FOO` as a constant with the default value of false
+BAR :: build_config(BAR_DEBUG, true); // name can be different compared to the constant 
 
 when (FOO) {
 	// only evaluated when `FOO` is true
@@ -5566,22 +5576,31 @@ A [foreign thread](#threads) that calls into an object build must attach and det
 
 ## Compile-time built-ins
 
-### `#assert(<boolean>)`
+These four are **ordinary predeclared identifiers**, reached through the ordinary
+call suffix exactly like `size_of` and `transmute`, and shadowable by a
+declaration exactly like those. The language has no separate lexical category of
+directives: there is no `#name` form at all, and a `#` in source outside a
+comment or literal is an invalid character.
 
-`#assert` requires its condition and check at compile time regardless of the surrounding phase. It takes an optional constant message and breaks compilation if the condition is false, with no runtime cost. An ordinary `assert` instead runs in the phase of the call that reaches it — runtime normally, compile time when that call is already being evaluated for a compile-time context.
+Each one answers entirely at compile time and leaves nothing for the backend to
+emit.
+
+### `static_assert(<boolean>)`
+
+`static_assert` requires its condition and check at compile time regardless of the surrounding phase. It takes an optional constant message and breaks compilation if the condition is false, with no runtime cost. An ordinary `assert` instead runs in the phase of the call that reaches it — runtime normally, compile time when that call is already being evaluated for a compile-time context.
 
 ```odin
-#assert(SOME_CONST_CONDITION);
-#assert(N > 0, "N must be positive");
+static_assert(SOME_CONST_CONDITION);
+static_assert(N > 0, "N must be positive");
 ```
 
-### `#config(<identifier>, default)`
+### `build_config(<identifier>, default)`
 
 Checks if an identifier is defined through the command line, or gives a default value instead.
 
 Values can be set with the -define:NAME=VALUE command line flag.
 
-### `#location() or #location(<entity>)`
+### `source_location() or source_location(<entity>)`
 
 Returns a runtime.Source_Code_Location. Can be called with no parameters for current location, or with a parameter for the location of the variable/proc declaration.
 
@@ -5590,18 +5609,20 @@ foo :: proc() {};
 
 main :: proc() {
     n: int;
-    fmt.println(#location());
-    fmt.println(#location(foo));
-    fmt.println(#location(n));
+    fmt.println(source_location());
+    fmt.println(source_location(foo));
+    fmt.println(source_location(n));
 }
 ```
 
-### `#caller_location`
+### `caller_location()`
 
-`#caller_location` denotes the source location of the code calling the
-procedure, as a `runtime.Source_Code_Location`. It may appear only as the
-default value of a procedure parameter, and it is evaluated at each call that
-omits that argument, like any other [default](#default-values).
+`caller_location()` denotes the source location of the code calling the
+procedure, as a `runtime.Source_Code_Location`. Its place is the default value
+of a procedure parameter, where it is evaluated at each call that omits that
+argument, like any other [default](#default-values). Written anywhere else it
+has nothing to name but its own site, and yields the same location
+`source_location()` does.
 
 `Source_Code_Location` is public, belongs to `base:runtime`, and is a constant:
 
@@ -5621,9 +5642,9 @@ package example_caller_location;
 
 import "core:fmt";
 
-print_caller_location :: proc(loc := #caller_location) {
+print_caller_location :: proc(loc := caller_location()) {
 	fmt.println(loc);
-	fmt.println(#location().procedure, "called by", loc.procedure);
+	fmt.println(source_location().procedure, "called by", loc.procedure);
 }
 
 main :: proc() {
@@ -5633,9 +5654,9 @@ main :: proc() {
 }
 ```
 
-These four — `#assert`, `#config`, `#location`, and `#caller_location` — are the
-complete set of `#name` forms in the language. Every one is a compile-time value
-or compile-time procedure; none is an annotation.
+These four are the complete set of compile-time built-ins. Every one is a
+compile-time value or compile-time procedure; none is an annotation. Annotations
+are [attributes](#attributes), spelled `@(...)`, and the two never overlap.
 
 ## Attributes
 
@@ -5847,7 +5868,7 @@ Portable source must not depend on extension attributes for parsing, type identi
 
 ### Layout and ABI attributes
 
-Layout and ABI annotations use the same `@(...)` syntax as declaration attributes. Loke has no separate category of hash-prefixed directives. Every `#name` form in the language is a compile-time value or compile-time procedure — never an annotation. The complete set is `#assert`, `#config`, `#location`, and `#caller_location`. SIMD uses the ordinary predeclared generic type [`Simd(T, N)`](#simd-vectors).
+Layout and ABI annotations use the same `@(...)` syntax as declaration attributes. `@(...)` is the language's only annotation syntax: there is no hash-prefixed directive category, and the [compile-time built-ins](#compile-time-built-ins) — `static_assert`, `build_config`, `source_location`, `caller_location` — are predeclared identifiers rather than a second one. SIMD uses the ordinary predeclared generic type [`Simd(T, N)`](#simd-vectors).
 
 #### Record layout attributes
 
@@ -5877,7 +5898,7 @@ Bar :: union @(align=4) {
 
 #### Procedure parameter attributes
 
-[`#caller_location`](#caller_location) also appears in a parameter list, but it
+[`caller_location()`](#caller_location) also appears in a parameter list, but it
 is a compile-time value rather than an attribute and is specified with the other
 `#name` forms.
 
@@ -6058,7 +6079,7 @@ Several types, interfaces, and a few core procedures are used in normative text 
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | [allocators](#allocators), fallible operations | `core:mem` / `base:runtime`. The final build selects the provider behind `mem.default_allocator()`. |
 | `Logger` | [build-selected providers](#build-selected-providers) | Ordinary service handle supplied by `core:log`; the final build selects the backend used by the package-level logging procedures. |
 | `Trace_Span`, `Time` | [explicit runtime environments](#explicit-runtime-environments) | Representative runtime handles supplied by tracing and time libraries; they have no compiler-known propagation. |
-| `Source_Code_Location` | `#caller_location`, `#location` | `base:runtime`. |
+| `Source_Code_Location` | `caller_location()`, `source_location()` | `base:runtime`. |
 | `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | flag sets and [enum iteration](#iterating-an-enumeration) | Generic library containers. Hardware register layouts use integer masks and explicit accessors in version 1. |
 | `Complex(T)`, `Quaternion(T)` | [library numeric types](#library-numeric-types) | Deliberately not primitive. |
 | `shared(T)`, `weak(T)` | [shared ownership](#shared-ownership) | Library records with custom lifecycle hooks and an atomic control block. |

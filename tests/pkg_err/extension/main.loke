@@ -3,14 +3,14 @@ package main; import "core:fmt";
 import "./vendor";
 import "./adapter";
 
-// `impl` belongs with the type's own package.
+// A block on a type from another package is an extension, local to this one.
 impl vendor.Vector2 {
 	tripled :: proc(self) -> i32 { return self.x * 3; }
 }
 
 main :: proc() {
 	v := vendor.Vector2{3, 4};
-	// The `extend` block in `adapter` does not reach implicit lookup here.
+	// The extension block in `adapter` does not reach implicit lookup here.
 	fmt.println(int(v.doubled()));
 	fmt.println(int(vendor.Vector2.doubled(v)));
 	// Private inherent members do not leak through a public type.

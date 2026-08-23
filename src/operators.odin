@@ -85,7 +85,7 @@ resolve_operator_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operato
 	}
 
 	// Every operator declaration also joins its package's set, which is what an
-	// `extend` block and a file-scope declaration are found through.
+	// extension block and a file-scope declaration are found through.
 	pkg := package_of(k.c, k.pkg)
 	set, found := pkg.operators[value.symbol]
 	if !found {
@@ -154,7 +154,7 @@ arity_text :: proc(shape: Operator_Shape) -> string {
 
 // Every overload of `symbol` this expression may use: the inherent operators of
 // each operand type, plus the operator set of the lookup package — which holds
-// this package's own file-scope and `extend`-block declarations, and nothing an
+// this package's own file-scope and extension-block declarations, and nothing an
 // import brought in.
 operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)

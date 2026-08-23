@@ -61,9 +61,9 @@ main :: proc() {
 	wide   := Rectangle{4.0, 1.0};
 
 	// The interface is a compile-time question, answerable at compile time.
-	#assert(Shape(Circle));
-	#assert(Shape(Rectangle));
-	#assert(!Shape(int));
+	static_assert(Shape(Circle));
+	static_assert(Shape(Rectangle));
+	static_assert(!Shape(int));
 
 	// Specialized per type: two instantiations, two direct calls.
 	fmt.println("circle compactness:", compactness(unit));

@@ -3,12 +3,12 @@ package main; import "core:fmt";
 // The same source as the defaults case in `m3_strings.loke`, compiled with the
 // overrides in `m3_config.flags`: an override must be representable as the
 // default's kind, and it changes the constant everywhere the name is used.
-MODE :: #config(MODE, "debug");
-LIMIT :: #config(LIMIT, 10);
-VERBOSE :: #config(VERBOSE, false);
+MODE :: build_config(MODE, "debug");
+LIMIT :: build_config(LIMIT, 10);
+VERBOSE :: build_config(VERBOSE, false);
 
 main :: proc() {
-	#assert(LIMIT == 42, "the override did not reach `#config`");
+	static_assert(LIMIT == 42, "the override did not reach `build_config`");
 	fmt.println(LIMIT);
 	fmt.println(1 if VERBOSE else 0);
 	fmt.println(len(MODE));

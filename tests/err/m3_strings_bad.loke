@@ -1,13 +1,13 @@
 package main; import "core:fmt";
 
-BUDGET :: #config(BUDGET, 5);
-LABEL :: #config(LABEL, "x");
+BUDGET :: build_config(BUDGET, 5);
+LABEL :: build_config(LABEL, "x");
 
 main :: proc() {
 	// A false static assertion breaks compilation, message and all.
-	#assert(BUDGET > 100, "the budget shrank");
-	#assert(LABEL == "y");
-	// design.md: `#location` produces a `runtime.Source_Code_Location`, so the
+	static_assert(BUDGET > 100, "the budget shrank");
+	static_assert(LABEL == "y");
+	// design.md: `source_location` produces a `runtime.Source_Code_Location`, so the
 	// file's package has to be able to name that type.
-	fmt.println(#location().line);
+	fmt.println(source_location().line);
 }

@@ -73,7 +73,6 @@ Expr :: union {
 	^Expr_Or_Else,
 	^Expr_Cond,
 	^Expr_Move,
-	^Expr_Hash,
 	^Expr_Composite,
 	^Expr_Proc,
 	^Expr_Proc_Group,
@@ -309,13 +308,6 @@ Expr_Cond :: struct {
 Expr_Move :: struct {
 	using base: Expr_Base,
 	value:      Expr,
-}
-
-// `#assert`, `#config`, `#location`, `#caller_location`. Arguments arrive
-// through the ordinary call suffix.
-Expr_Hash :: struct {
-	using base: Expr_Base,
-	name:       string,
 }
 
 // `Element`. A nil `key` is an unkeyed element.
@@ -593,8 +585,6 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 	case ^Expr_Cond:
 		return &v.base
 	case ^Expr_Move:
-		return &v.base
-	case ^Expr_Hash:
 		return &v.base
 	case ^Expr_Composite:
 		return &v.base
@@ -1020,13 +1010,17 @@ Item_Foreign_Block :: struct {
 	members:    []Item,
 }
 
+// Whether an `impl` block is *inherent* to its subject or *extends* a subject
+// from elsewhere. Not written: `declare_impl_block` derives it from whether the
+// subject's declaring package is this one, so a built-in or foreign subject is
+// always an extension. Until then it is `.Unresolved`.
 Impl_Kind :: enum {
+	Unresolved,
 	Impl,
 	Extend,
 }
 
-// `impl T { ... }` and `extend T { ... }`: one node, since they differ only in
-// the keyword.
+// `impl T { ... }`, whether `T` is declared here or elsewhere.
 Item_Impl :: struct {
 	using base: Node_Base,
 	kind:       Impl_Kind,
@@ -1039,7 +1033,7 @@ Item_Impl :: struct {
 	declared:   bool,
 }
 
-// `delegate(+, -);` inside an `impl` or `extend` body.
+// `delegate(+, -);` inside an `impl` body.
 Item_Delegate :: struct {
 	using base: Node_Base,
 	symbols:    []string,

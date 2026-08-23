@@ -4,7 +4,7 @@ package adapter;
 import "../vendor";
 
 // An extension is visible for method lookup only inside this package.
-extend vendor.Vector2 {
+impl vendor.Vector2 {
 	doubled :: proc(self) -> i32 { return (self.x + self.y) * 2; }
 
 	// A private member opts out of the file-level public default and must not
@@ -15,7 +15,7 @@ extend vendor.Vector2 {
 
 // Private members belong to their subject's namespace, so the same ordinary
 // member name is valid on another extended type.
-extend vendor.Other {
+impl vendor.Other {
 	@(private)
 	init :: proc(x: i32) -> vendor.Other { return {x}; }
 }

@@ -48,7 +48,7 @@ The normative sections for this half are
 | Variadics | Ordinary `..T`, zero or more explicit arguments, one or more `..slice` spreads, forwarding, procedure-type compatibility, overload ranking, managed-element cleanup, and the special call-scoped `..any_view` form |
 | Runtime reflection | Frozen public `runtime.Type_Kind`, `runtime.Member_Info`, `runtime.Type_Info`, a dense table keyed by frozen `typeid`, safe invalid-ID behavior, and `type_info_of` |
 | Formatting and output | Coherent formatter selection, compiler-generated formatter thunks, `core:fmt` writers/options plus `print`/`println`/`eprint`/`eprintln`, and retirement of `print_int` |
-| Locations | `runtime.Source_Code_Location`, `#location`, and `#caller_location` |
+| Locations | `runtime.Source_Code_Location`, `source_location()`, and `caller_location()` |
 
 ### Deferred to M6b
 
@@ -203,8 +203,8 @@ same types.
 - Add runtime thread attach/detach, use it around the initial thread, and move
   normal managed-TLS teardown behind detach. Do not run TLS teardown during
   panic termination.
-- Implement location forms from source-manager spans. `#location(entity)` uses
-  the declaration span; `#caller_location` is substituted at each omitted call
+- Implement location forms from source-manager spans. `source_location(entity)` uses
+  the declaration span; `caller_location()` is substituted at each omitted call
   argument before ordinary default checking.
 - Extend `tests/trap` with `.flags` and optional expected stdout. Add nested-frame
   unwind/abort pairs, partial initialization, cleanup-order, double-panic, each
@@ -320,7 +320,7 @@ Milestone spot checks:
   member types, and returns nil for zero and forged out-of-range ids.
 - Two packages cannot give one concrete type different erased formatting;
   explicit extension calls remain possible and do not change `fmt.println`.
-- `#location`, `#location(entity)`, and omitted `#caller_location` produce the
+- `source_location()`, `source_location(entity)`, and omitted `caller_location()` produce the
   documented declaration or call spans.
 - A package imports `core:fmt` and `base:runtime` with no collection flags; the
   existing explicit `-collection base=base` catalogue case still passes.
@@ -338,7 +338,7 @@ Milestone spot checks:
 | `typeid` has identity but no metadata lookup | Dense static runtime metadata and checked `type_info_of` |
 | `print_int` is the output stand-in | Coherent `core:fmt` over compiler-generated formatter thunks |
 | No implicit standard collections | Bundled `base:`/`core:` roots with explicit override |
-| `#location`/`#caller_location` are gated | Runtime source-location values with call-site substitution |
+| `source_location()`/`caller_location()` are gated | Runtime source-location values with call-site substitution |
 | Main-thread-only managed TLS teardown | Runtime thread attach/detach and normal-return teardown |
 
 ### Shortcuts retained after M6a

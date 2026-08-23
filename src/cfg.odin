@@ -996,7 +996,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		walk_flow_expr(graph, v.lo)
 		walk_flow_expr(graph, v.hi)
 
-	case ^Expr_Literal, ^Expr_Hash, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator,
+	case ^Expr_Literal, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Expr_Error,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,

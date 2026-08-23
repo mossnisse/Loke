@@ -469,6 +469,14 @@ Builtin_Kind :: enum {
 	None,
 	Assert,
 	Panic,
+	// design.md "Compile-time built-ins". Ordinary predeclared identifiers like
+	// every other built-in: `static_assert` forces the compile-time phase that
+	// plain `assert` inherits from its caller, `build_config` reads a `-define`
+	// key, and the two location forms fold to a `runtime.Source_Code_Location`.
+	Static_Assert,
+	Build_Config,
+	Source_Location,
+	Caller_Location,
 	Size_Of,
 	Align_Of,
 	Offset_Of,

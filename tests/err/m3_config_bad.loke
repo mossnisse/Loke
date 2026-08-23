@@ -2,10 +2,10 @@ package main; import "core:fmt";
 
 // The override says a string; the default is an integer, so the two disagree
 // about what this name means.
-BUDGET :: #config(BUDGET, 5);
-NARROW :: #config(NARROW, u8(1));
+BUDGET :: build_config(BUDGET, 5);
+NARROW :: build_config(NARROW, u8(1));
 
 main :: proc() {
 	fmt.println(BUDGET + int(NARROW));
-	fmt.println(#config(1, 2));
+	fmt.println(build_config(1, 2));
 }

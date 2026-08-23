@@ -360,7 +360,7 @@ sync_to_boundary :: proc(p: ^Parser, mode: Sync_Context, stop_after_brace: bool)
 			}
 			if mode == .Item && consumed {
 				#partial switch t.kind {
-				case .Import, .Foreign, .Impl, .Extend, .When, .Package:
+				case .Import, .Foreign, .Impl, .When, .Package:
 					return
 				}
 			}
@@ -488,7 +488,7 @@ parse_top_level_item :: proc(p: ^Parser) -> (Item, bool) {
 		return parse_import(p, attributes, start), true
 	case .Foreign:
 		return parse_foreign(p, attributes, start), true
-	case .Impl, .Extend:
+	case .Impl:
 		return parse_impl(p, attributes, start), true
 	case .When:
 		return parse_top_level_when(p, attributes, start), true
@@ -577,14 +577,14 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 	return item
 }
 
-// `Impl_Block` and `Extend_Block`: one node, since they differ only in keyword.
+// `Impl_Block`. Whether the block is inherent or an extension is not written:
+// `declare_impl_block` derives it from the subject's declaring package.
 @(private = "file")
 parse_impl :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
-	keyword := advance(p) // `impl` or `extend`
+	advance(p) // `impl`
 
 	item := ast_new(p, Item_Impl)
 	item.attributes = attributes
-	item.kind = keyword.kind == .Extend ? .Extend : .Impl
 	item.type = parse_type(p)
 	_, opened := expect(p, .Lbrace, "L0252", "`{` to open the block")
 	item.members = parse_member_list(p, .Impl)
@@ -2138,12 +2138,6 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		e := new_expr(p, Expr_Move, t.lo)
 		e.value = value
 		e.has_error = !opened || expr_has_error(value)
-		return e
-
-	case .Hash_Name:
-		advance(p)
-		e := new_expr(p, Expr_Hash, t.lo)
-		e.name = text_of(p, t)
 		return e
 
 	case .Lbrace:

@@ -41,15 +41,15 @@ sum3 :: proc(a, b, c: $T) -> T where Additive(T) {
 }
 
 main :: proc() {
-	#assert(Additive(int));
-	#assert(Additive(f64));
-	#assert(!Additive(bool));
-	#assert(Ordered(int));
-	#assert(!Ordered(Flag));
-	#assert(Source(Byte_Source));
-	#assert(!Source(Flag));
-	#assert(Named(Byte_Source));
-	#assert(!Named(Flag));
+	static_assert(Additive(int));
+	static_assert(Additive(f64));
+	static_assert(!Additive(bool));
+	static_assert(Ordered(int));
+	static_assert(!Ordered(Flag));
+	static_assert(Source(Byte_Source));
+	static_assert(!Source(Flag));
+	static_assert(Named(Byte_Source));
+	static_assert(!Named(Flag));
 	fmt.println(sum3(1, 2, 3));
 	check_more();
 }
@@ -67,8 +67,8 @@ describe_twice :: proc(value: $T) -> int where Named(T) {
 }
 
 check_more :: proc() {
-	#assert(Reversed(Byte_Source));
-	#assert(!Reversed(Flag));
+	static_assert(Reversed(Byte_Source));
+	static_assert(!Reversed(Flag));
 	b: Byte_Source = {3};
 	fmt.println(describe_twice(b));
 }

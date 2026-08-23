@@ -315,11 +315,6 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.value = clone_expr(c, v.value)
 		return n
 
-	case ^Expr_Hash:
-		n := new_clone(c, Expr_Hash, &v.base)
-		n.name = v.name
-		return n
-
 	case ^Expr_Composite:
 		n := new_clone(c, Expr_Composite, &v.base)
 		n.type_expr = clone_expr(c, v.type_expr)

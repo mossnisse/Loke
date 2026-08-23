@@ -3,7 +3,7 @@ package main; import "core:fmt";
 // The other selection of `m3_when.loke`, driven by `m3_when_debug.flags`. Only
 // the selected branch is declared, checked, and emitted, so the branch not
 // taken here is free to be nonsense.
-DEBUG :: #config(DEBUG, false);
+DEBUG :: build_config(DEBUG, false);
 
 when (DEBUG) {
 	LEVEL :: 2;

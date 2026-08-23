@@ -104,7 +104,7 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 
 	case ^Item_Impl:
 		dump_indent(b, depth)
-		fmt.sbprint(b, node.kind == .Extend ? "(extend" : "(impl")
+		fmt.sbprint(b, "(impl")
 		dump_attributes(b, node.attributes)
 		dump_child(b, node.type, depth)
 		fmt.sbprintln(b)
@@ -507,9 +507,6 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, "(move")
 		dump_child(b, node.value, depth)
 		fmt.sbprint(b, ")")
-
-	case ^Expr_Hash:
-		fmt.sbprintf(b, "(hash %q)", node.name)
 
 	case ^Expr_Composite:
 		fmt.sbprint(b, "(composite")

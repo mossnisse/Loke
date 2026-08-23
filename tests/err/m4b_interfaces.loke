@@ -25,7 +25,7 @@ main :: proc() {
 	f: Flag = {true};
 	fmt.println(sum3(f, f, f));
 	b: Boxed(Flag) = {};
-	#assert(Additive(int, f64));
+	static_assert(Additive(int, f64));
 	// A record or union needs its own coherent equality and hash pair.
 	fmt.println(int(hash(f, uint(0))));
 }

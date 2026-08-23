@@ -5,7 +5,7 @@
 `compiler-plan.md` defines M3 as the compile-time engine milestone (B10). M3
 replaces M2's compile-time shortcut with one typed-AST interpreter, then uses it
 for compile-time procedure calls, `when`, conditional import discovery, array
-lengths, enum values, `#assert`, and `#config`.
+lengths, enum values, `static_assert`, and `build_config`.
 
 M2 deliberately left three seams for this milestone:
 
@@ -31,9 +31,9 @@ matching `-collection name=path` option.
 | Area | Contents |
 |---|---|
 | Evaluator (B10) | Tree-walking interpreter over the typed AST: explicit frames, locals, mutation, `if`, `for`, `switch`, `defer`, `return`, recursion, direct and indirect calls, phase-neutral `assert`/`panic`, limits, sandboxing, and compile-time call-stack diagnostics |
-| Compile-time contexts | Constant initializers, file-scope variable initializers, fixed-array lengths, enum values, `when` conditions, and `#assert` operands, all routed through `require_const` |
+| Compile-time contexts | Constant initializers, file-scope variable initializers, fixed-array lengths, enum values, `when` conditions, and `static_assert` operands, all routed through `require_const` |
 | Built-ins | `size_of`, `align_of`, `offset_of`, and `len` for fixed arrays and compile-time strings |
-| `#name` forms | `#assert(condition[, message])` and `#config(NAME, default)`, with `-define:NAME=VALUE` |
+| `#name` forms | `static_assert(condition[, message])` and `build_config(NAME, default)`, with `-define:NAME=VALUE` |
 | Strings | Untyped compile-time string constants: concatenation, comparisons, `len`, configuration values, assertion/panic messages, and `when` conditions |
 | `when` | Procedure and file scope, `else when`/`else`, no initializer, no introduced scope, and semantic checking/emission of only the selected branch |
 | Packages (B5) | Directory packages, multi-file packages, relative imports, collection prefixes, import DAG and cycle paths, deterministic order, public/package visibility, and qualified selection |
@@ -44,7 +44,7 @@ matching `-collection name=path` option.
 
 | Deferred | Goes to |
 |---|---|
-| `#location`, `#caller_location`, and `runtime.Source_Code_Location` | M6, when runtime `string` and the seed runtime exist |
+| `source_location()`, `caller_location()`, and `runtime.Source_Code_Location` | M6, when runtime `string` and the seed runtime exist |
 | Runtime string bindings, fields, parameters, and results | M6 |
 | Temporary managed evaluator values such as dynamic arrays and maps | M5/M6 |
 | `static foreach`, reflection, `where`, `$` parameters, `type_of`, and `typeid_of` | M4 |
@@ -81,7 +81,7 @@ matching `-collection name=path` option.
 | Package-owned backend state | Move hoisted procedure literals from compiler-global reset-on-check storage to `Package.hoisted_procs`. Emit and name them with their owning package. Keep other package-specific selected/emission state on `Package` or `File`, not in a singleton overwritten by the next package. | `check_package` currently recreates `c.hoisted_procs`; checking a second package would otherwise discard literals from the first. |
 | Symbol mangling | Derive a stable package key from the logical canonical import identity (root-relative or collection-relative), never an import alias or absolute host path. Mangle every user symbol and hoisted literal with that key. Only the selected root package entry receives the fixed executable entry name. Escape or hash characters that LLVM identifiers cannot safely carry. | Declared package names need not match paths and may collide. Absolute paths would make builds non-reproducible. |
 | Multi-package emission | Emit one LLVM module in deterministic dependency order. Name all procedures before emitting any body, then emit types, constants/globals, procedures, and package-owned hoisted literals from `active_items`; emit the root entry wrapper last. | Cross-package direct calls and procedure values need final names before bodies are written. |
-| Configuration | Parse `-define:NAME=VALUE` as boolean, integer, or string and reject duplicate definitions. `#config` requires an identifier token plus a constant default of one of those kinds; an override must be representable as the default's type/kind. Seed the project-wide immutable table before package discovery. | Configuration must be available to the first file-scope `when` round and mean the same thing in every package. |
+| Configuration | Parse `-define:NAME=VALUE` as boolean, integer, or string and reject duplicate definitions. `build_config` requires an identifier token plus a constant default of one of those kinds; an override must be representable as the default's type/kind. Seed the project-wide immutable table before package discovery. | Configuration must be available to the first file-scope `when` round and mean the same thing in every package. |
 | Diagnostics | Reserve `L0327`–`L0339` for packages/imports/visibility, `L0340`–`L0349` for evaluation, and `L0386` onward for M3 builtins/`when`, after auditing current use. | Exact ranges keep fixtures stable and separate discovery from evaluator failures. |
 | Package corpora | Add `tests/pkg/<case>/` and `tests/pkg_err/<case>/`; each case directory is passed as one root and may contain imported subdirectories. Extend `tests/corpus_test.odin` to enumerate case directories deterministically. | Multi-file/import behavior cannot be represented by the one-file corpus. |
 
@@ -131,17 +131,17 @@ side-effecting expression passed to `size_of` is not evaluated, a dead local is
 accepted as an unevaluated operand, and `offset_of` does not resolve its field as
 a lexical variable.
 
-### 3. Compile-time strings, `#assert`, and `#config`
+### 3. Compile-time strings, `static_assert`, and `build_config`
 
 - Fold untyped string concatenation, comparisons, and `len`; add evaluator
   string values without enabling runtime string storage.
-- Check and evaluate `#assert(condition[, message])` in every surrounding phase.
+- Check and evaluate `static_assert(condition[, message])` in every surrounding phase.
 - Parse project-wide `-define:NAME=VALUE`, validate names/types/duplicates, and
-  implement `#config(NAME, default)`.
-- Give `#location` and `#caller_location` a specific deferred diagnostic that
+  implement `build_config(NAME, default)`.
+- Give `source_location()` and `caller_location()` a specific deferred diagnostic that
   points to M6 rather than the generic M2 gate.
 
-**Exit:** defaults and overrides select different constants; false `#assert`
+**Exit:** defaults and overrides select different constants; false `static_assert`
 reports its message; compile-time strings work in expressions and diagnostics;
 attempted runtime string storage remains one `L0350`.
 
@@ -220,7 +220,7 @@ Milestone spot checks:
   `assert`/`panic` take their correct paths.
 - `size_of`/`align_of`/`offset_of` agree with executed LLVM-derived values, and
   expression operands remain unevaluated.
-- `#config` overridden by `-define` selects a different `when` branch.
+- `build_config` overridden by `-define` selects a different `when` branch.
 - An unselected branch containing type errors is not diagnosed or emitted.
 - A selected procedure `when` affects flow/defer exactly as its in-place
   statements would.

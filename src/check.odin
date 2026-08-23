@@ -20,7 +20,7 @@ Checker :: struct {
 	// The package whose method, operator, and extension tables the declaration
 	// being checked may use. Usually `pkg`; `delegate` freezes its own.
 	lookup_pkg: Package_Id,
-	// The `impl`/`extend` subject whose block is being checked, which is what an
+	// The `impl` subject whose block is being checked, which is what an
 	// untyped `self` receiver takes its type from.
 	impl_type:  Type_Id,
 	// Set while the callee of a call is being checked, so a method selector knows
@@ -118,7 +118,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 			}
 		}
 	}
-	// Aliases first: an `extend vendor.Vector2` block names its subject through
+	// Aliases first: an `impl vendor.Vector2` block names its subject through
 	// one, so the alias has to exist before the block can resolve it.
 	bind_import_aliases(k, pkg)
 	for file in pkg.files {
@@ -741,7 +741,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		}
 		if parameter.type == nil {
 			// design.md "Receiver forms": a parameter with no type is the receiver
-			// `self`, whose type comes from the enclosing `impl`/`extend` block.
+			// `self`, whose type comes from the enclosing `impl` block.
 			if position == 0 && k.impl_type != INVALID_TYPE {
 				parameter_type = k.impl_type
 			} else {

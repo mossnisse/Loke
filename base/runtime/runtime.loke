@@ -67,8 +67,8 @@ Type_Info :: struct {
 	members: []Member_Info,
 }
 
-// design.md: `#location` and `#caller_location` produce one of these. Line and
-// column are one-based, and both views point at static storage.
+// design.md: `source_location` and `caller_location` produce one of these.
+// Line and column are one-based, and both views point at static storage.
 @(public)
 Source_Code_Location :: struct {
 	file:      string_view,

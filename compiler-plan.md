@@ -53,10 +53,10 @@ to defer. Each is a candidate for its own implementation plan.
 ### Front end
 
 #### B1. Driver & build config
-CLI, resolve target/`#config`, seed package discovery from the root, drive the
+CLI, resolve target/`build_config`, seed package discovery from the root, drive the
 iterative front-end phases, own the top-level arena and exit codes.
 - **In:** command line, a root package dir. **Out:** a compiled artifact or diagnostics.
-- **Loke-specific:** `#config` values are language constants visible to
+- **Loke-specific:** `build_config` values are language constants visible to
   compile-time eval — the driver seeds them, it doesn't inject source. Build
   config is *not* source tags (design §Build configuration).
 - **Defer:** watch mode, parallel jobs, caching.
@@ -162,7 +162,7 @@ requirements + named `slot`s), monomorphization with an instantiation cache,
 #### B10. Compile-time evaluation engine
 Tree-walking interpreter over the typed AST. Serves constant initializers,
 `when`, `where`, array lengths, enum values, `$`/generic value args, `static
-foreach` iterables, reflection, `#assert`/`#config`/`#location`/`#caller_location`.
+foreach` iterables, reflection, `static_assert`/`build_config`/`source_location()`/`caller_location()`.
 Hermetic sandbox: on the *executed* path forbid runtime/foreign/atomic/IO/address
 observation; compiler-owned storage for temp managed values; documented
 step/recursion/memory limits that **diagnose** rather than fall back to runtime.
@@ -271,7 +271,7 @@ as each milestone starts.
 | **M0** | **Vertical slice.** Driver + source mgr + diagnostics skeleton + lexer + parser for a tiny subset (`main`, int vars, arithmetic, a builtin print) + trivial type check + **a running Windows exe via the LLVM textual path** ([A5](#a-big-decisions) — least code to a first exe). | `main :: proc(){ ... }` compiles and prints. The whole spine and the backend seam exist. |
 | **M1** | **Full front end.** Complete lexer + parser for *all* of grammar.md with error recovery + a parser/lexer test corpus. | Every grammar construct parses; malformed inputs give good, recovering diagnostics. |
 | **M2** | **Static core semantics.** Universe/name resolution, built-in type checking and constant folding, plus typed LLVM widening for the non-generic, non-managed core: numeric/Boolean/rune scalars, raw and typed pointers, fixed arrays, structs, enums, distinct and procedure types; assignment, control flow, `defer`, procedures, and procedure values. User-defined operators and unions remain gated. | Programs in the precisely bounded [M2 subset](m2-plan.md#scope) type-check, fold, compile, and run through the textual-LLVM path; deferred outer constructs still produce one non-cascading gate diagnostic. |
-| **M3** | **Compile-time engine and packages** ([B5](#b5-package-loading--import-graph)/[B10](#b10-compile-time-evaluation-engine)). Retain the checker's contextual leaf/operator folding as the shared value core and add the typed interpreter for procedure evaluation; add file- and procedure-scope `when`, staged conditional imports, multi-file packages, untyped compile-time strings, `#assert`/`#config` with `-define`, phase-neutral `assert`/`panic`, and natural-layout `size_of`/`align_of`/`offset_of`/`len`. Collection prefixes resolve through `-collection name=path`, with no implicit `core:` root. `#location`/`#caller_location` move to M6a with runtime `string` and `Source_Code_Location`; packed/foreign layout remains M7. | Compile-time `proc` evaluation works from every required M3 context; discarded `when` branches are neither checked nor emitted; the conditional package graph reaches a stable DAG; multi-package code emits collision-free symbols; layout agrees with executed LLVM-derived values (`-check-layout`); and sandbox/limit failures are diagnosed with the compile-time stack. |
+| **M3** | **Compile-time engine and packages** ([B5](#b5-package-loading--import-graph)/[B10](#b10-compile-time-evaluation-engine)). Retain the checker's contextual leaf/operator folding as the shared value core and add the typed interpreter for procedure evaluation; add file- and procedure-scope `when`, staged conditional imports, multi-file packages, untyped compile-time strings, `static_assert`/`build_config` with `-define`, phase-neutral `assert`/`panic`, and natural-layout `size_of`/`align_of`/`offset_of`/`len`. Collection prefixes resolve through `-collection name=path`, with no implicit `core:` root. `source_location()`/`caller_location()` move to M6a with runtime `string` and `Source_Code_Location`; packed/foreign layout remains M7. | Compile-time `proc` evaluation works from every required M3 context; discarded `when` branches are neither checked nor emitted; the conditional package graph reaches a stable DAG; multi-package code emits collision-free symbols; layout agrees with executed LLVM-derived values (`-check-layout`); and sandbox/limit failures are diagnosed with the compile-time stack. |
 | **M4a** | **User abstractions** ([B8](#b8-type-checking--overload-resolution)), planned in [m4a-plan.md](m4a-plan.md). One overload-resolution engine — viability, conversion-rank vectors, tie-breakers — shared by procedure groups, `impl`/`extend` methods, user operators, `delegate`, indexing, and `init` conversions including `@(implicit)`; unions with assertions, type switches, `or_else`, and `or_return`. Concrete types only: nothing here instantiates a declaration. | User operators, methods, and `init` conversion work at concrete types; an ambiguous call lists every maximal candidate with its vector and failing tie-breaker; an `extend` block changes lookup only in its own package; unions round-trip, assertions trap or yield comma-ok by position, and `or_return` propagates through named results with `defer` in order. |
 | **M4b** | **Generics, interfaces & erased views** ([B9](#b9-generics-interfaces--specialization)), planned in [m4b-plan.md](m4b-plan.md). Declaration cloning, `$`/inference, specialization, `where`, and monomorphization; interfaces with per-requirement diagnostics and the unmanaged portion of the catalogue as ordinary Loke source; reflection and static `foreach`; `foreach` over ranges, fixed arrays, and the user iteration protocol; `typeid`, `any_view`, and `dyn` witnesses. Reflection filters struct fields by package/public visibility at its lookup package. Ordinary field access and construction temporarily retain M4a behavior and remain unfiltered until M5a. Managed types remain absent, so `Cloneable`, iteration over slices/maps/strings, `..any_view`, and lifecycle hooks stay with the milestone that introduces their dependencies. | A generic container instantiated twice yields independent instances with distinct symbols; a failed interface bound names the requirement line and the concrete type; a caller-local `extend` cannot reach into an instantiation; cross-package reflection omits package-visible fields and static expansion type-checks a different field type per visible copy; `any_view` and `dyn` obey their representation and dispatch rules, with borrow/escape checking deferred to M5b and the boundary stated. |
 | **M5a** *(implemented)* | **Visibility, slices, and lifecycle** ([B11](#b11-ownership-move--lifecycle-analysis)), planned in [m5a-plan.md](m5a-plan.md). Apply one package/public rule to reflection, ordinary field reads/writes, `offset_of`, and aggregate construction. Add complete slice value/capability behavior and constant materialization; fixed lifecycle hooks, ownership/move/deep-copy, parameter/result transfer, drop insertion, storage modifiers, copy-cost diagnostics, allocator semantic types, and a minimal default-CRT `new`/`new_clone`/safe-direct-`free` path. Full provenance, copied-root `free`, and region reset remain M5b. | Reflection and ordinary access agree across package boundaries; slices, literals, iteration, and read-only materialization run; a resource drops exactly once on every normal exit in one LIFO order with `defer`; move kills its source, conditional liveness cleans up correctly, deep copy preserves a live destination on failure, all four copy sites are diagnosed, and `Cloneable` compiles against real lifecycle and allocator types. |
@@ -395,8 +395,8 @@ borrow carriers, so `src/borrow.odin` rejects an escaping subrange, `bytes()`
 result, or `to_c_view()` temporary with the same machinery it already applied to
 slices. `src/text.odin` holds the checking side of the operations and
 conversions, `[^]T` indexes without a bound and slices into either shape,
-`core:unsafe` publishes `raw_data`/`string_view`/`cstring_view`, and `#location`
-and `#caller_location` fold to constant `runtime.Source_Code_Location`
+`core:unsafe` publishes `raw_data`/`string_view`/`cstring_view`, and `source_location()`
+and `caller_location()` fold to constant `runtime.Source_Code_Location`
 aggregates.
 
 Step 5 adds the erased half. A `..T` parameter is one read-only `[]T`: a sole
@@ -435,7 +435,7 @@ containers and `via`. `L0551` and `L0561`–`L0575` are live.
 
 Five deviations from the M6a plan's letter are worth stating. The frozen
 `Type_Kind`/`Member_Info`/`Type_Info`/`Source_Code_Location` declarations, and
-with them `#location`/`#caller_location`, landed in step 4 rather than step 2:
+with them `source_location()`/`caller_location()`, landed in step 4 rather than step 2:
 every one of those layouts has a `string_view` field, so declaring them earlier
 would have declared a package that cannot compile. Every local is published into
 the unwind env rather than only those a cleanup names, which trades one store
@@ -444,7 +444,7 @@ Two of step 1's listed checks — a failed `resize` preserving the old allocatio
 and an unsupported provider reset failing at run time — have no source-level
 operand until M6b's dynamic arrays and arenas exist, so they are enforced in the
 C runtime and left untested from Loke, exactly as the plan already defers the
-arena-backed `free_all` fixtures. And `#location`/`#caller_location` require the
+arena-backed `free_all` fixtures. And `source_location()`/`caller_location()` require the
 file's package to import `base:runtime`, because that package owns the one
 `Source_Code_Location` identity and the compiler does not force it into a
 program that never asked for it; the diagnostic says so. `type_info_of` requires
@@ -980,7 +980,7 @@ to 4923 lines of IR for hello world.
 
 **One asymmetry left as documented behaviour.** An `impl` member must be
 `@(public)` for a generic procedure in another package to call it, while
-structural interface satisfaction ignores visibility — so `#assert(io.Writer(T))`
+structural interface satisfaction ignores visibility — so `static_assert(io.Writer(T))`
 passes for a type whose `write` is package-private, and the instantiated body
 then fails to find the member. Whichever way it is resolved, satisfaction and
 lookup have to agree; the library documents the requirement rather than working

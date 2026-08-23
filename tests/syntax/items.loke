@@ -39,11 +39,11 @@ impl Table(string, int) {
 	get :: proc(self, key: string) -> int { }
 }
 
-extend []int {
+impl []int {
 	sum :: proc(self) -> int { }
 }
 
-extend geometry.Point {
+impl geometry.Point {
 	scaled :: proc(self, by: int) -> geometry.Point { }
 }
 

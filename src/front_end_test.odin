@@ -240,17 +240,17 @@ default_output_keeps_a_dotted_directory_name :: proc(t: ^testing.T) {
 
 @(test)
 lexer_golden :: proc(t: ^testing.T) {
-	text := `name 123 1.5 "text" ` + "`raw`" + ` 'x' #assert
-break case continue defer distinct dyn dynamic else enum extend for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return struct switch type union via when where
+	text := `name 123 1.5 "text" ` + "`raw`" + ` 'x'
+break case continue defer distinct dyn dynamic else enum for foreach foreign if impl import in inout interface map move mut operator or_else or_return package proc return struct switch type union via when where
 static self slot using delegate thread_local manual
 + - * / % & &~ | ~ << >> && || ! == != < <= > >= = += -= *= /= %= |= ~= &= &~= <<= >>= : ; , . .. ..= ..< -> --- ? $ ^ @ ( ) [ ] { }
 /* nested /* block */ comment */`
 	c := test_compiler(text)
 	tokens := lex(&c, 0)
 	expected := []Token_Kind {
-		.Ident, .Int, .Float, .String, .Raw_String, .Rune, .Hash_Name,
+		.Ident, .Int, .Float, .String, .Raw_String, .Rune,
 		.Break, .Case, .Continue, .Defer, .Distinct, .Dyn, .Dynamic, .Else,
-		.Enum, .Extend, .For, .Foreach, .Foreign, .If, .Impl, .Import, .In,
+		.Enum, .For, .Foreach, .Foreign, .If, .Impl, .Import, .In,
 		.Inout, .Interface, .Map, .Move, .Mut, .Operator, .Or_Else, .Or_Return,
 		.Package, .Proc, .Return, .Struct, .Switch, .Type, .Union, .Via, .When, .Where,
 		.Ident, .Ident, .Ident, .Ident, .Ident, .Ident, .Ident,
@@ -442,7 +442,7 @@ main :: proc() {
 	post := p^.field.(int)[1][2:3] or_return;
 	args := f(a, name = b, inout c, ..d);
 	comp := Foo{1, key = 2};
-	lits := g(1.5, "s", 'c', .Member, move(a), #assert(b));
+	lits := g(1.5, "s", 'c', .Member, move(a), static_assert(b), caller_location());
 	types: map[string][]mut Foo(int) = a;
 }
 `
@@ -477,7 +477,7 @@ main :: proc() {
           (composite (ident "Foo") (int "1") (= (ident "key") (int "2")))
         )
         (var names=["lits"]
-          (call (ident "g") (float "1.5") (string "\"s\"") (rune "'c'") (selector _ "Member") (move (ident "a")) (call (hash "#assert") (ident "b")))
+          (call (ident "g") (float "1.5") (string "\"s\"") (rune "'c'") (selector _ "Member") (move (ident "a")) (call (ident "static_assert") (ident "b")) (call (ident "caller_location")))
         )
         (var names=["types"] type=(map (ident "string") (slice mut (call (ident "Foo") (ident "int"))))
           (ident "a")
@@ -785,7 +785,7 @@ impl Point {
 	delegate :: proc(self) { }
 }
 
-extend []int {
+impl []int {
 	sum :: proc(self) -> int { }
 }
 
@@ -843,7 +843,7 @@ main :: proc() {
       )
     )
   )
-  (extend (slice (ident "int"))
+  (impl (slice (ident "int"))
     (const names=["sum"]
       (proc (proc-type (param ["self"] _) (result (ident "int")))
         (block

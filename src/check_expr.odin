@@ -81,14 +81,6 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	case ^Expr_Proc:
 		check_proc_literal(k, v)
 
-	case ^Expr_Hash:
-		// A `#name` outside a call. Only `#caller_location` means anything here:
-		// design.md says it "may appear only as the default value of a procedure
-		// parameter, and it is evaluated at each call that omits that argument".
-		// This checks the declaration; `substitute_caller_location` is what
-		// replaces it per call site.
-		check_caller_location(k, v)
-
 	case ^Expr_Range:
 		check_range(k, v)
 
@@ -1954,13 +1946,6 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	v.value_category = .Value
 
-	// `#assert(...)` and `#config(...)` arrive through the ordinary call suffix,
-	// and their callee is not a value at all.
-	if hash, is_hash := v.callee.(^Expr_Hash); is_hash {
-		check_hash_call(k, v, hash)
-		return
-	}
-
 	// A built-in is not a value, so it is recognised before the callee is
 	// checked as one.
 	if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
@@ -2406,6 +2391,18 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Assert, .Panic:
 		check_assert_or_panic(k, v, ident, sym.builtin)
 		return
+	case .Static_Assert:
+		check_static_assert(k, v)
+		return
+	case .Build_Config:
+		check_config(k, v)
+		return
+	case .Source_Location:
+		check_location(k, v, ident)
+		return
+	case .Caller_Location:
+		check_caller_location(k, v, ident)
+		return
 	case .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap:
 		check_layout_builtin(k, v, ident, sym.builtin)
 		return
@@ -2537,65 +2534,49 @@ check_assert_or_panic :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, ki
 	v.bound = bound
 }
 
-// `#assert(condition[, message])` and `#config(NAME, default)`. Both are
-// compile-time-only forms, so each produces its answer here and nothing is left
-// for the backend.
+// `static_assert(condition[, message])`. It requires its condition at compile
+// time whatever phase surrounds it, so it answers here and leaves nothing for
+// the backend.
 @(private = "file")
-check_hash_call :: proc(k: ^Checker, v: ^Expr_Call, hash: ^Expr_Hash) {
-	hash.type = TYPE_VOID
-	switch hash.name {
-	case "#assert":
-		v.type = TYPE_VOID
-		v.value_category = .Value
-		if len(v.args) < 1 || len(v.args) > 2 {
-			errorf(k.c, v.span, "L0387", "`#assert` takes a condition and an optional message")
-			v.type = INVALID_TYPE
-			return
-		}
-		check_condition(k, v.args[0].value)
-		message := ""
-		if len(v.args) == 2 {
-			check_message_arg(k, v.args[1].value)
-			if base := expr_base(v.args[1].value); base != nil && base.const_value.kind == .String {
-				message = concat(k.c, ": ", base.const_value.text)
-			}
-		}
-		folded, evaluated := require_const(k, v.args[0].value, "a `#assert` condition", "L0387")
-		if !evaluated {
-			v.type = INVALID_TYPE
-			return
-		}
-		if folded.kind == .Boolean && !folded.boolean {
-			errorf(k.c, v.span, "L0387", "static assertion failed%s", message)
-		}
-
-	case "#config":
-		check_config(k, v)
-
-	case "#location":
-		check_location(k, v, hash)
-
-	case:
-		// `#caller_location` is only meaningful as a parameter default, where it is
-		// substituted at each omitted argument before ordinary default checking.
-		errorf(k.c, v.span, "L0573", "`%s` is not a call", hash.name)
+check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
+	v.type = TYPE_VOID
+	v.value_category = .Value
+	if len(v.args) < 1 || len(v.args) > 2 {
+		errorf(k.c, v.span, "L0387", "`static_assert` takes a condition and an optional message")
 		v.type = INVALID_TYPE
+		return
+	}
+	check_condition(k, v.args[0].value)
+	message := ""
+	if len(v.args) == 2 {
+		check_message_arg(k, v.args[1].value)
+		if base := expr_base(v.args[1].value); base != nil && base.const_value.kind == .String {
+			message = concat(k.c, ": ", base.const_value.text)
+		}
+	}
+	folded, evaluated := require_const(k, v.args[0].value, "a `static_assert` condition", "L0387")
+	if !evaluated {
+		v.type = INVALID_TYPE
+		return
+	}
+	if folded.kind == .Boolean && !folded.boolean {
+		errorf(k.c, v.span, "L0387", "static assertion failed%s", message)
 	}
 }
 
-// `#config(NAME, default)`: the name is a token, not a lexical value, and the
-// default fixes both the result's type and what an override may say.
+// `build_config(NAME, default)`: the name is a token, not a lexical value, and
+// the default fixes both the result's type and what an override may say.
 @(private = "file")
 check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.value_category = .Value
 	if len(v.args) != 2 {
-		errorf(k.c, v.span, "L0388", "`#config` takes a name and a default value")
+		errorf(k.c, v.span, "L0388", "`build_config` takes a name and a default value")
 		v.type = INVALID_TYPE
 		return
 	}
 	name, is_ident := v.args[0].value.(^Expr_Ident)
 	if !is_ident {
-		errorf(k.c, expr_span(v.args[0].value), "L0388", "`#config` needs a name")
+		errorf(k.c, expr_span(v.args[0].value), "L0388", "`build_config` needs a name")
 		v.type = INVALID_TYPE
 		return
 	}
@@ -2603,7 +2584,7 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 		v.type = INVALID_TYPE
 		return
 	}
-	fallback, evaluated := require_const(k, v.args[1].value, "a `#config` default", "L0388")
+	fallback, evaluated := require_const(k, v.args[1].value, "a `build_config` default", "L0388")
 	if !evaluated {
 		v.type = INVALID_TYPE
 		return
@@ -2611,7 +2592,7 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 	#partial switch fallback.kind {
 	case .Boolean, .Integer, .String:
 	case:
-		errorf(k.c, expr_span(v.args[1].value), "L0388", "a `#config` default must be a boolean, an integer, or a string")
+		errorf(k.c, expr_span(v.args[1].value), "L0388", "a `build_config` default must be a boolean, an integer, or a string")
 		v.type = INVALID_TYPE
 		return
 	}
@@ -2628,7 +2609,7 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 			k.c,
 			v.span,
 			"L0388",
-			"`-define:%s=` gives %s, but this `#config` defaults to %s",
+			"`-define:%s=` gives %s, but this `build_config` defaults to %s",
 			name.name,
 			const_kind_name(override.kind),
 			const_kind_name(fallback.kind),
@@ -2794,7 +2775,8 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.symbol = field
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
-	case .Cap, .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
+	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
+	     .Cap, .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter,
@@ -2950,6 +2932,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Make,
+	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,

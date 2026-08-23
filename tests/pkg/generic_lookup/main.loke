@@ -6,7 +6,7 @@ import "./container";
 // existing instantiation means (m4b-plan decision "Definition-site lookup").
 blend :: proc(a, b: int) -> int { return 999; }
 
-extend container.Pair(int) {
+impl container.Pair(int) {
 	@(public)
 	label :: proc(self) -> int { return 42; }
 }

@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-FAST :: #config(FAST, false);
+FAST :: build_config(FAST, false);
 
 // A conditional import: the selected branch extends the package graph, and the
 // discovery fixed point picks it up on the next round.

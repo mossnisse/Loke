@@ -49,7 +49,7 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // that extension's package would succeed".
 //
 // So this asks only two questions: does the compiler supply the pair, or does
-// the key type's *own* package declare both? An `extend` block never enters the
+// the key type's *own* package declare both? An extension block never enters the
 // answer, which is what makes one `map[K]V` use one policy in every package it
 // travels through.
 Key_Policy :: struct {
@@ -84,7 +84,7 @@ map_key_policy :: proc(k: ^Checker, key: Type_Id) -> Key_Policy {
 	return Key_Policy{hash = hash, equal = equal}
 }
 
-// An `impl` member of the type's own package, never an `extend` one. `members`
+// An inherent member of the type's own package, never an extension one. `members`
 // on the type is exactly the inherent set (`src/impl.odin` keeps extensions in
 // the extending package instead), so the lookup is direct.
 @(private = "file")

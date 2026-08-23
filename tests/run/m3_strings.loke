@@ -9,15 +9,15 @@ ESCAPED :: "tab:\there\x21\n";
 
 // Configuration is project-wide and immutable, and a default fixes both the
 // result's type and what an override may say.
-MODE :: #config(MODE, "debug");
-LIMIT :: #config(LIMIT, 10);
-VERBOSE :: #config(VERBOSE, false);
+MODE :: build_config(MODE, "debug");
+LIMIT :: build_config(LIMIT, 10);
+VERBOSE :: build_config(VERBOSE, false);
 
 main :: proc() {
-	#assert(len(FULL) == 11, "the greeting changed shape");
-	#assert(FULL == "hello, loke");
-	#assert(GREETING < NAME);
-	#assert(len(ESCAPED) == 11);
+	static_assert(len(FULL) == 11, "the greeting changed shape");
+	static_assert(FULL == "hello, loke");
+	static_assert(GREETING < NAME);
+	static_assert(len(ESCAPED) == 11);
 
 	fmt.println(len(FULL));
 	fmt.println(len(ESCAPED));

@@ -464,7 +464,8 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.is_const = true
 		v.const_value = value
 
-	case .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
+	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
+	     .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate,

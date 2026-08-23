@@ -73,9 +73,9 @@ reader_over :: proc(text: string_view, most: int) -> Short_Reader {
 }
 
 main :: proc() {
-	#assert(io.Reader(Short_Reader));
-	#assert(io.Writer(Short_Writer));
-	#assert(!io.Reader(Short_Writer));
+	static_assert(io.Reader(Short_Reader));
+	static_assert(io.Writer(Short_Writer));
+	static_assert(!io.Reader(Short_Writer));
 
 	// write_all loops over partial writes.
 	sink: Short_Writer = {};

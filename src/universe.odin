@@ -84,6 +84,25 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	define(c, universe, "assert", Symbol{kind = .Builtin, builtin = .Assert, type = TYPE_VOID, proc_type = no_args})
 	define(c, universe, "panic",  Symbol{kind = .Builtin, builtin = .Panic,  type = TYPE_VOID, proc_type = no_args})
 
+	// design.md "Compile-time built-ins". Each one answers entirely in the
+	// checker and leaves nothing for the backend, but none of them is a separate
+	// syntactic category: they are predeclared, shadowable identifiers like
+	// `size_of` and `transmute`.
+	compile_time := []struct{name: string, kind: Builtin_Kind} {
+		{"static_assert", .Static_Assert},
+		{"build_config", .Build_Config},
+		{"source_location", .Source_Location},
+		{"caller_location", .Caller_Location},
+	}
+	for entry in compile_time {
+		define(c, universe, entry.name, Symbol {
+			kind      = .Builtin,
+			builtin   = entry.kind,
+			type      = TYPE_VOID,
+			proc_type = no_args,
+		})
+	}
+
 	// The layout and length queries. Their operands are inspected, not evaluated
 	// (m3-plan decision "Unevaluated layout operands"), so `check_builtin_call`
 	// binds them itself rather than through the ordinary argument path.

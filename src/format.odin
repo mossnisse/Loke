@@ -11,7 +11,7 @@
 //   - a built-in type gets a compiler-generated formatter;
 //   - a user type gets its own `format` when that `format` is declared in the
 //     type's owning package, and a compiler-generated field-wise one otherwise;
-//   - a caller-local `extend`'s `format` stays callable explicitly and never
+//   - a caller-local extension's `format` stays callable explicitly and never
 //     changes what `print` does.
 //
 // The dispatch table is private and parallel to the type-info table. The public
@@ -56,9 +56,9 @@ formatter_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 
 // design.md's coherence rule, resolved once for the whole program: an `impl`
 // block in the type's own package supplies its formatter, and a caller-local
-// `extend` never does — an `any_view` carries only a pointer and a `typeid`, so
+// an extension never does — an `any_view` carries only a pointer and a `typeid`, so
 // a callee has no way to see a call-site-specific overload. `Package.extensions`
-// is where an `extend` member lives, and nothing here reads it.
+// is where an extension member lives, and nothing here reads it.
 discover_formatters :: proc(c: ^Compiler) {
 	if !c.format_requested {
 		return
@@ -128,6 +128,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 			k.c.format_requested = true
 		}
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
+	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Strings_Allocate,

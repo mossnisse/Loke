@@ -23,12 +23,12 @@ named arguments, multiple results and procedure values.
 M3 adds the compile-time engine and packages: an ordinary procedure may be
 evaluated to supply a constant, an array length or an enum value; assert and
 panic work in either phase; size_of, align_of, offset_of and len fold to int;
-compile-time strings, #assert and #config are available; when selects source at
+compile-time strings, static_assert and build_config are available; when selects source at
 file and procedure scope; and a directory is a package, with imports, an acyclic
 import graph, and @(public) visibility.
 
 M4a makes user types as capable as built-in ones at concrete types: procedure
-groups and one overload-resolution engine; impl and extend blocks with the three
+groups and one overload-resolution engine; impl blocks, inherent and extending, with the three
 receiver forms, associated constants and types; init construction, conversion
 and @(implicit) from untyped constants; user operators, indexing, slicing and
 delegate on distinct types; and unions with checked extractions, type switches,
@@ -86,7 +86,7 @@ slices. len, byte_len, rune_count, bytes, clone, to_c_view, subranges,
 concatenation, byte-wise comparison, rune iteration with byte offsets, and every
 validating conversion with optional-ok results are available, as are
 multi-pointers and the core:unsafe raw_data/string_view/cstring_view surface.
-#location and #caller_location produce constant runtime.Source_Code_Location
+source_location() and caller_location() produce constant runtime.Source_Code_Location
 values.
 
 A procedure takes ..T and receives one read-only slice, built from any mix of
@@ -112,7 +112,7 @@ storage. A map runs an open-addressed table with an opaque per-table seed:
 literals, m[key] reads that never insert, the comma-ok form, key in m, inserting
 places through field and index chains, find, try_insert, remove, clear, reserve
 and shrink. Its key needs a coherent == and hash pair that is built in or
-inherent to the key's own package - a caller-local extend never enters the
+inherent to the key's own package - a caller-local extension never enters the
 frozen operation table. Both iterate - a map two-name loop binds the key and the
 value, and map iteration order is unspecified - and both contribute the same
 Element/Iterator/iter/next members a user type declares by hand, so generic and
@@ -162,7 +162,7 @@ options:
                   from the directories beside the compiler, and an explicit
                   entry replaces one of those
     -define:NAME=VALUE
-                  set a project-wide #config value: true, false, an integer,
+                  set a project-wide build_config value: true, false, an integer,
                   or a string
     -copy-cost=N  warn at a copy site duplicating N or more inline bytes, or
                   whose lifecycle clone may allocate (default 512; "off"
@@ -415,7 +415,7 @@ default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 }
 
 // `-define:NAME=VALUE`. The value is a boolean, an integer, or — failing both —
-// a string, which is what `#config` then requires its default to match.
+// a string, which is what `build_config` then requires its default to match.
 @(private = "file")
 seed_defines :: proc(c: ^Compiler, defines: []string) -> bool {
 	init_semantic_stores(c)

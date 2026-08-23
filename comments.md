@@ -293,7 +293,7 @@ observable cleanup happens on the way down.
 
 ### Methods, interfaces, and operator overloading
 
-Methods and `impl`/`extend` blocks let libraries attach behavior to records and
+Methods and `impl` blocks let libraries attach behavior to records and
 other types without embedding procedure declarations in every type definition.
 An extension affects implicit lookup only in its declaring package. A public
 extension procedure is an ordinary export of that package, so importers call it
@@ -674,7 +674,7 @@ language where a written type does not describe the value.
 
 ### No uniform call syntax
 
-`x.f()` resolves only to a `self` receiver declared in an `impl` or `extend`
+`x.f()` resolves only to a `self` receiver declared in an `impl`
 block, or to a built-in container operation. There is no rule rewriting `f(x)`
 as `x.f()`. Free procedures therefore never acquire a method spelling by
 accident, at the cost of `len(x)` and `x.append(v)` reading differently — which

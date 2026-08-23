@@ -126,7 +126,7 @@ is ungated in a step that does not also install its checking.
   member propagation behind the foreign-block gate until step 4.
 
 **Exit:** every optimization level produces identical program output over the
-whole corpus; `when (LOKE_OS == .Windows)` and `#config` coexist with no import;
+whole corpus; `when (LOKE_OS == .Windows)` and `build_config` coexist with no import;
 an unknown, misplaced, duplicated, or badly shaped attribute is one exact
 diagnostic; a deprecated procedure warns on calls and value uses; and a
 discarded required result errors whether the policy came from the procedure,
@@ -259,7 +259,7 @@ Milestone spot checks:
 - The whole `tests/run` and `tests/trap` corpus produces identical observable
   results at `-opt=none`, `minimal`, `size`, `speed`, and `aggressive`; the last
   mode is `-O3`, never `-Ofast`.
-- Every `LOKE_*` constant is readable from `when` and from `#config`-free source
+- Every `LOKE_*` constant is readable from `when` and from `build_config`-free source
   with no import, and each reports the selected target/build value;
   `LOKE_DEBUG` is always false because M7 accepts no debug build.
 - A packed struct's fields load and store unaligned, its field address is
