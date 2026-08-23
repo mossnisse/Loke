@@ -136,6 +136,22 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// free call in the `Iterable` requirement resolves for both.
 	define(c, universe, "iter", Symbol{kind = .Builtin, builtin = .Iter, type = TYPE_VOID, proc_type = no_args})
 
+	// design.md "Standard customization procedures": the free-call spelling of the
+	// two copy entry points, forwarding to whichever hook the subject's type owns.
+	// Their result types come from that hook, so the interned type carries none.
+	copies := []struct{name: string, kind: Builtin_Kind} {
+		{"clone", .Clone},
+		{"try_clone", .Try_Clone},
+	}
+	for entry in copies {
+		define(c, universe, entry.name, Symbol {
+			kind      = .Builtin,
+			builtin   = entry.kind,
+			type      = TYPE_VOID,
+			proc_type = no_args,
+		})
+	}
+
 	// design.md "Allocators": the explicitly fallible primitives. Their operand
 	// types and arity are checked by `check_builtin_call`, so the interned type
 	// carries none.

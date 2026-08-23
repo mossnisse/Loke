@@ -1,0 +1,89 @@
+package main; import "core:fmt"; import "core:mem"; import "base:interfaces";
+
+// design.md "standard interface catalogue": "copyable owning built-ins such as
+// `string`, dynamic arrays, maps ... satisfy `Cloneable`". They carry the same
+// `try_clone`/`clone` members a record does; only the emitted body differs — a
+// retain for `string`, the versioned helper for a container.
+//
+// The other half of this fixture is the reason those members had to exist: a
+// generated field-wise `try_clone` used to skip any part whose clone could not
+// *fail*, which silently handed back a second owner of one string allocation
+// with the count still at 1.
+
+is_cloneable :: proc($T: type) -> bool { return interfaces.Cloneable(T); }
+
+Holder :: struct {
+	text:  string,
+	count: int,
+}
+
+Movable :: struct { id: int }
+impl Movable { try_clone :: ---; }
+
+main :: proc() {
+	// A container clone is independent.
+	xs := [dynamic]int{1, 2, 3};
+	ys := xs.clone();
+	ys[0] = 99;
+	fmt.println(xs[0]);
+	fmt.println(ys[0]);
+
+	// The fallible half reports success through its error result.
+	zs, error := xs.try_clone();
+	fmt.println(len(zs));
+	fmt.println(1 if error == nil else 0);
+
+	// Maps clone through the same path.
+	m := map[string]int{"a" = 1, "b" = 2};
+	fmt.println(len(m.clone()));
+
+	// A string clone shares storage; the bytes survive because the handle is
+	// retained rather than aliased. `copy` is the independent-bytes operation.
+	original := "hej" + " då";
+	shared_text := original.clone();
+	fmt.println(shared_text);
+	fmt.println(original.copy());
+
+	// A record with a string field clones ownership-recursively: the record is
+	// independent, the string handle is retained. Both drop at scope exit, so a
+	// missing retain shows up as a release of storage that is still live.
+	holder := Holder{original, 7};
+	duplicate := holder.clone();
+	fmt.println(duplicate.text);
+	fmt.println(duplicate.count);
+
+	// Nested containers clone all the way down.
+	grid := [dynamic][dynamic]int{};
+	row := [dynamic]int{7};
+	grid.append(move(row));
+	other := grid.clone();
+	other[0][0] = 42;
+	fmt.println(grid[0][0]);
+	fmt.println(other[0][0]);
+
+	// design.md "Standard customization procedures": the same two operations are
+	// "written as free calls ... which is canonical and always available". A free
+	// call resolves to the very hook the method call does, for a built-in and a
+	// record alike, and takes the same optional allocator.
+	fmt.println(len(clone(xs)));
+	fmt.println(len(xs.clone()));
+	freed, free_error := try_clone(xs);
+	fmt.println(len(freed));
+	fmt.println(1 if free_error == nil else 0);
+	fmt.println(clone(original));
+	fmt.println(clone(holder).text);
+	arena := mem.Arena();
+	fmt.println(len(clone(xs, arena.allocator())));
+
+	// Satisfaction follows what a type actually owns.
+	fmt.println(1 if is_cloneable(string) else 0);
+	fmt.println(1 if is_cloneable([dynamic]int) else 0);
+	fmt.println(1 if is_cloneable(map[string]int) else 0);
+	fmt.println(1 if is_cloneable(Holder) else 0);
+	// A borrow owns nothing, a region provider is move-only, and a disabled
+	// hook fails the interface it names.
+	fmt.println(1 if is_cloneable([]int) else 0);
+	fmt.println(1 if is_cloneable(mem.Arena) else 0);
+	fmt.println(1 if is_cloneable(Movable) else 0);
+	fmt.println(1 if is_cloneable(int) else 0);
+}

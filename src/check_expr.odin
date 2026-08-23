@@ -2418,6 +2418,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Iter:
 		check_iter_builtin(k, v, ident)
 		return
+	case .Clone, .Try_Clone:
+		check_clone_builtin(k, v, ident, sym.builtin)
+		return
 	case .Make:
 		check_make_builtin(k, v, ident)
 		return
@@ -2795,7 +2798,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
+	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Clone, .Try_Clone:
 		return
 	}
 	v.is_const = true
@@ -2950,7 +2953,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate:
+	     .Strings_Allocate, .Clone, .Try_Clone:
 		return
 	}
 

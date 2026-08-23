@@ -6274,6 +6274,11 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			// this arm is only reachable if that failed.
 			backend_fail(e, "an `iter` call has no chosen overload")
 			return "0"
+		case .Clone, .Try_Clone:
+			// Same rewrite: a free `clone(x)` names the type's own hook by the time
+			// it reaches emission, exactly as `x.clone()` does.
+			backend_fail(e, "a free `clone` call has no chosen hook")
+			return "0"
 		case .Len, .Cap:
 			// A slice and the two containers reach here; every other `len` folded.
 			// Both headers keep the length in the same word a slice does, so the
@@ -9176,10 +9181,36 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "entry:")
 	e.terminated = false
 
-	if !type_clone_is_fallible(e.c, subject) {
+	// A trivial value is its own clone. `type_clone_is_fallible` is the wrong
+	// question here: a `string` part clones infallibly but still has to retain its
+	// handle, so asking about failure alone would hand back a second owner of one
+	// allocation with the count still at 1.
+	if !type_is_managed(e.c, subject) {
 		first, out := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %%arg0, 0", first, pair, value_type)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, 1", out, pair, first)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, out)
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+
+	// design.md "standard interface catalogue": the copyable owning built-ins
+	// satisfy `Cloneable`, so `string`, `[dynamic]T` and `map[K]V` carry the same
+	// `try_clone` member a record does. Its body is the one intrinsic copy the
+	// implicit paths already use — a retain, or the versioned container helper.
+	if lifecycle_of(e.c, subject).intrinsic {
+		self, built := alloca(e, value_type), alloca(e, value_type)
+		fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
+		// A failed container clone leaves the destination untouched, so the zero
+		// value is what travels back beside the error.
+		fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, built)
+		ok := emit_try_clone_into(e, subject, built, self, "%arg1")
+		value := load(e, value_type, built)
+		error := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 1", error, ok)
+		first, out := temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, value_type, value)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, 1", out, pair, first, error)
 		fmt.sbprintfln(&e.b, "  ret %s %s", pair, out)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -9199,9 +9230,16 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		part := clone_part(e.c, subject, index)
 		source := element_address(e, subject, self, index)
 		destination := element_address(e, subject, out, index)
-		if !type_clone_is_fallible(e.c, part) {
+		if !type_is_managed(e.c, part) {
 			loaded := load(e, llvm_type(e, part), source)
 			store(e, part, loaded, destination)
+			continue
+		}
+		// Managed but infallible — a `string` handle, or a record of them. There is
+		// no error to branch on, but there is real copy work to do.
+		if !type_clone_is_fallible(e.c, part) {
+			loaded := load(e, llvm_type(e, part), source)
+			store(e, part, emit_clone_value(e, part, loaded, "%arg1"), destination)
 			continue
 		}
 		cloned, error := emit_part_clone(e, part, source)

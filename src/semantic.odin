@@ -490,6 +490,12 @@ Builtin_Kind :: enum {
 	// `Iterable` requirement, so it has to resolve for a built-in and for a user
 	// type's own `impl` member alike.
 	Iter,
+	// design.md "Standard customization procedures": `clone(value)` and
+	// `try_clone(value)` are "written as free calls ... which is canonical and
+	// always available". Both forward to the type's own fixed hook, so the free
+	// call and `value.clone()` select one procedure.
+	Clone,
+	Try_Clone,
 	// design.md "Allocators" and "Allocation failure". The explicitly fallible
 	// primitives always return an error and never invoke a failure policy;
 	// `free` returns no status. `free_all` lowers to the provider's reset entry
