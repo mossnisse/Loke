@@ -438,7 +438,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		dump_child(b, node.operand, depth)
 		fmt.sbprintf(b, " %q)", node.name.text)
 
-	case ^Expr_Type_Assert:
+	case ^Expr_Checked_Extract:
 		fmt.sbprint(b, "(assert")
 		dump_child(b, node.operand, depth)
 		dump_child(b, node.target, depth)

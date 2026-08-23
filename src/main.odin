@@ -31,14 +31,14 @@ M4a makes user types as capable as built-in ones at concrete types: procedure
 groups and one overload-resolution engine; impl and extend blocks with the three
 receiver forms, associated constants and types; init construction, conversion
 and @(implicit) from untyped constants; user operators, indexing, slicing and
-delegate on distinct types; and unions with type assertions, type switches,
+delegate on distinct types; and unions with checked extractions, type switches,
 or_else and or_return.
 
 M4b makes those abstractions generic and erasable: $ type and value parameters,
 inference, structural specialization, generic records and impl blocks, where
 clauses, and monomorphization; interface declarations with slot, expression and
 validity requirements, composition and associated types; compile-time reflection
-with fields_of, enum_values_of, type_of, typeid_of and static foreach; runtime
+with fields_of, enum_values_of, type_of, typeid_of, union active_typeid and static foreach; runtime
 foreach over ranges, fixed arrays and the iter/next protocol; and the erased
 views typeid, any_view and dyn Interface with witness dispatch.
 

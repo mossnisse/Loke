@@ -1767,8 +1767,8 @@ parse_postfix :: proc(p: ^Parser) -> Expr {
 			advance(p)
 			if allow(p, .Lparen) {
 				target := parse_type(p)
-				_, closed := expect(p, .Rparen, "L0224", "`)` to close the type assertion")
-				a := new_expr(p, Expr_Type_Assert, lo)
+				_, closed := expect(p, .Rparen, "L0224", "`)` to close the checked extraction")
+				a := new_expr(p, Expr_Checked_Extract, lo)
 				a.operand = e
 				a.target = target
 				a.has_error = !closed || expr_has_error(e) || expr_has_error(target)

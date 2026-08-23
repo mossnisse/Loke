@@ -5,10 +5,10 @@ L0514
 @19:2
 `free` releases an allocation from `new` or `new_clone`; this pointer may designate local
 L0498
-@24:2
+@24:7
 cannot be applied to `static` storage, which is always live
 L0497
-@26:2
+@26:7
 names a variable; move the owner out of the aggregate first
 L0500
 @31:20

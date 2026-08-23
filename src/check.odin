@@ -2029,7 +2029,7 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	}
 
 	// `a, b = f()` and `a, ok = v.(T)`: one expression filling several
-	// destinations. The comma-ok shape is what puts an assertion in its
+	// destinations. The comma-ok shape is what puts an extraction in its
 	// optional-ok phase, so the marking happens before the operand is checked.
 	if len(s.rhs) == 1 && len(s.lhs) > 1 {
 		mark_optional_ok(s.rhs[0])

@@ -245,8 +245,8 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.name = v.name
 		return n
 
-	case ^Expr_Type_Assert:
-		n := new_clone(c, Expr_Type_Assert, &v.base)
+	case ^Expr_Checked_Extract:
+		n := new_clone(c, Expr_Checked_Extract, &v.base)
 		n.operand = clone_expr(c, v.operand)
 		n.target = clone_expr(c, v.target)
 		n.optional = v.optional

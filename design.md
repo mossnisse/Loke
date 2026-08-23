@@ -1184,7 +1184,7 @@ These use the same attribute syntax as declarations and statements. Foreign layo
 
 ### Promoted struct fields
 
-A struct field declared with `using` promotes that field's members for selector lookup on the containing value. This is the only use of `using`; it does not import packages or inject names from parameters, locals, enum types, or arbitrary values into lexical scope.
+A struct field declared with `using` promotes that field's members for selector lookup on the containing value.
 
 ```odin
 Vector3 :: struct{x, y, z: f32};
@@ -1221,45 +1221,71 @@ Value :: union {
 	string,
 }
 v: Value;
-v = "Hellope";
+v = "Hello";
 
-// type assert that `v` is a `string` and panic otherwise
+// Extract the `string` payload and panic if another variant is active.
 s1 := v.(string);
 
-// Type assertion with an explicit Boolean check. This does not panic.
+// Checked extraction with an explicit Boolean result. This does not panic.
 s2, ok := v.(string);
 ```
 
-A type assertion is single-valued where the asserted type is the only expected result, and it panics if the union does not currently hold that variant. In a comma-ok destination or as the left operand of `or_else` it instead has [optional-ok semantics](#optional-ok-results), producing `(T, bool)` and never panicking.
+A **checked extraction** tests the union's active variant and extracts its payload. It is single-valued where the requested type is the only expected result, and it panics if the union does not currently hold that variant. In a comma-ok destination or as the left operand of `or_else` it instead has [optional-ok semantics](#optional-ok-results), producing `(T, bool)` and never panicking.
 
-A type assertion must name the asserted type; the compiler does not infer it from context.
+A checked extraction must name the requested type; the compiler does not infer it from context.
 
-#### Type assertions are always checked
+Checked extractions are always checked, although the optimizer may remove the runtime test when the active variant is provable.
 
-No attribute, build flag, or `core:unsafe` operation removes the tag check from `v.(T)`. Code that already knows the active variant still uses the ordinary assertion; the optimizer may remove the check when that fact is provable.
+Every union also has the compiler-provided `active_typeid()` method. It returns
+the runtime `typeid` of the active variant without extracting its payload, or
+the nil `typeid` when the union is nil. The method evaluates its receiver once,
+takes no arguments, and cannot be replaced by an overload.
+
+```odin
+value: Value = "hello";
+
+#assert(type_of(value) == Value);                 // static type
+assert(typeid_of(Value) != value.active_typeid());
+assert(value.active_typeid() == typeid_of(string)); // active runtime variant
+
+value = nil;
+assert(value.active_typeid() == nil);
+```
+
+`active_typeid()` is for runtime inspection when only the identity is needed.
+Use a checked extraction when one expected payload type is known, or a type
+switch when code must branch and use the payload.
 
 #### Type switch statement
 
-A type switch is a construct that allows several type assertions in series. A type switch is like a regular switch statement, but the cases are types (not values). For a union, the only case types allowed are that of the union.
+A type switch dispatches on the active variant and extracts its payload when a case names exactly one type. It is like a regular switch statement, but its cases are types rather than values. For a union, each case type must be one of the union's variants.
 
 ```odin
 value: Value = ...;
-switch (v in value) {
+switch (av in value) {
 case string:
-	#assert(type_of(v) == string)
+	// `av` is a new binding whose static type is narrowed to `string`.
+	#assert(type_of(av) == string)
 
 case bool:
-	#assert(type_of(v) == bool)
+	// `type_of` reports that narrowed static type; it is not reading the tag.
+	#assert(type_of(av) == bool)
 
 case i32, f32:
 	// This case allows for multiple types, therefore we cannot know which type to use
-	// `v` remains the original union value
-	#assert(type_of(v) == Value)
+	// `av` remains the original union value
+	#assert(type_of(av) == Value)
 case:
 	// Default case
 	// In this case, it is `nil`
 }
 ```
+
+The switch reads `value`'s runtime tag. In a case naming one variant, its binding
+is a new value with that variant's static type. `type_of(value)` remains `Value`
+everywhere, while `type_of(av)` reflects the case binding's static narrowing. A
+case naming several variants cannot choose one static payload type, so its
+binding remains the original union type.
 
 #### Union alignment
 
@@ -1451,6 +1477,9 @@ info = type_info_of(id);
 ```
 
 `typeid_of(T)` maps a compile-time `type` value to its runtime `typeid` constant.
+For a union expression, `type_of(value)` still denotes the union's static type
+and `typeid_of(type_of(value))` therefore identifies the union itself. Use
+`value.active_typeid()` to obtain the active variant's runtime identity.
 `type_info_of(id)` accepts a runtime `typeid` and returns runtime metadata. It
 does not recover a compile-time `type`, because runtime information cannot flow
 back into specialization. A `typeid` is an ordinary scalar and can be forged, so
@@ -1540,8 +1569,7 @@ visit_fields :: proc(value: ^$T, visitor: inout $Visitor) {
 `field.get(value)` accepts `^T`, reads the selected field, and has type
 `field.type` after expansion. `field.pointer(value)` also accepts `^T` and
 returns `^field.type`. Both take a pointer so that one expansion body can use
-either without restructuring its parameter. The
-normal visibility, packed-field, borrow, copy, and mutation rules still apply;
+either without restructuring its parameter. The  normal visibility, packed-field, borrow, copy, and mutation rules still apply;
 `pointer` is rejected for a packed field. There is no string-based field lookup.
 
 Reflection values may be inspected, compared for identity, passed to `$`
@@ -1565,7 +1593,7 @@ The slice and its elements borrow the caller's temporary arguments and live only
 
 No other operation produces `[]any_view`; there is no `any_view` array, dynamic array, or slice local, so this is a calling form, not a container type. [`@(c_vararg)`](#c_vararg) is separate signature notation, passing the original concrete arguments with the C default argument promotions.
 
-Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime type assertions and type switches.
+Conversion from a concrete value to `any_view` is implicit when an `any_view` parameter or local destination is expected, and it never allocates. It supports runtime checked extractions and type switches.
 
 ```odin
 print_value :: proc(value: any_view) { ... }
@@ -1652,7 +1680,14 @@ There are three receiver modes:
 | `self: inout Type` | Exclusive mutable borrow of the caller's variable |
 | `self: move Type` | Consumes the receiver |
 
-All three are reached through `value.method()`, with the `inout` or `move` marker supplied implicitly (see [Parameter semantics](#parameter-semantics-and-abi-lowering)). A `move self` method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. The immutable receiver may be written `self: Type` when clearer; it is the same mode.
+The first two are reached through `value.method()`, with the `inout` marker supplied implicitly: that borrow ends with the call and leaves the source usable. A consuming method is reached through `move(value).method()`. The marker is written for the same reason it is written at any other call site (see [Parameter semantics](#parameter-semantics-and-abi-lowering)) — the call leaves the source dead, and a reader must see where a value is given away. Writing `move(...)` also selects: it reaches only `move self` overloads, and a bare receiver reaches only the other two.
+
+A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. The immutable receiver may be written `self: Type` when clearer; it is the same mode.
+
+```odin
+counter.bump();          // `inout self`, marker implicit
+total := move(counter).consume();  // `move self`, transfer written
+```
 
 A first parameter declared `self: ^Type` is **not** a receiver: it is an ordinary pointer parameter with no method-call sugar, called as `Type.method(pointer)`. Mutating methods use `inout self`, not pointer receivers.
 
@@ -1930,7 +1965,7 @@ An iterable type has one default `Element`/`Iterator` pair; a type needing anoth
 
 Two built-in types are exceptions, because their second name carries information a counter could not reconstruct:
 
-- **Maps.** `foreach (key, value in m)` yields two values from the map's iteration; `value` is an element, not a counter.
+- **Maps.** `foreach (key, value in m)` yields two values from the map's iteration; `value` is an element, not a counter. One name binds the value, matching `foreach (&value in m)` and making `map[K]V`'s associated `Element` its value type; the key is reachable only through the two-name form. A map is therefore the one container whose *first* name is not its `Element`.
 - **Strings.** `foreach (codepoint, offset in s)` yields a [byte offset](#string-iteration), which indexes back into the string.
 
 A user type wanting a key/value loop returns a record from `next` and is iterated with one name:
@@ -2039,7 +2074,17 @@ The signatures are fixed: `drop` is `proc(self: inout T)`, and the canonical cop
 
 `clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> T` is generated from `try_clone` and not replaced independently. It calls `try_clone` once and, on failure, invokes the allocator's failure policy. `value.clone()` uses the program default; `value.clone(allocator)` selects one. For types governed by these lifecycle hooks, assignment and copy initialization call `try_clone` with the destination's bound allocator (or the destination's declared allocation policy when it is dead or allocator-unbound), invoking the failure policy only after cloning fails and before modifying the destination. A non-allocating `try_clone` ignores the allocator and returns a nil error. Built-in immutable `string` instead has the shared implicit-copy behavior described under [Assignment statements](#assignment-statements); its explicit independent byte-copy operation is `copy`.
 
-A custom `try_clone` may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations. This is enforced like the `hash`/equality coherence contract on map keys.
+A custom `try_clone` may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations.
+
+The division of labour here is the same one the `hash`/equality contract on map keys draws, and it is worth stating plainly, because "enforced" means two different things on either side of it.
+
+The compiler enforces what it can see: a hook's fixed signature, that a hook is declared by the type that owns it, and that operation lookup is coherent — one `try_clone`, one `drop`, one `==`/`hash` pair per type, across every package.
+
+The programmer holds the rest as a contract: allocator discipline inside a hook, publishing only ownership that is actually valid, and equal values producing equal hashes. Nothing checks these, and breaking one is not the same kind of event:
+
+- A `try_clone` that panics follows ordinary [panic semantics](#panics-and-unwinding). It is a fault, not a hole.
+- Publishing invalid ownership — returning a clone that shares an allocation it does not own, or a `drop` that leaves a live alias behind — violates the lifecycle invariants the rest of the language is built on, and the resulting behavior is undefined.
+- Breaking the hash laws voids the map's logical guarantees: lookups may miss, iteration may repeat or skip. It does not by itself authorize memory corruption, and an implementation must not treat it as licence for unchecked access.
 
 ```odin
 // This is the shape `core:fs` uses for its own `File`.
@@ -2309,7 +2354,7 @@ Built-in satisfaction follows the operations the language already defines:
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, `Simd`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`. A `Simd(T, N)` satisfies either interface when all of the listed operations exist for that lane domain;
 - copyable owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, plus recursively copyable owning aggregates, satisfy `Cloneable`;
-- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map key;
+- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's value type;
 - fixed arrays, slices, and dynamic arrays satisfy `Sequence`; fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Sequence` when supplied as mutable places; dynamic arrays satisfy `Growable_Sequence`. The standard `Small_Array(T, N)` library type supplies the same associated members and satisfies all three sequence interfaces.
 
 No nominal `implements` list is involved; the catalogue records capability boundaries, not a requirement that every built-in belong to an interface.
@@ -2370,7 +2415,7 @@ The conversion allocates nothing and copies no value; it creates a compiler-reco
 
 Converting a nil concrete pointer yields the nil dynamic view and retains no witness. The zero value of every `dyn Interface` is nil; copying one copies only the view when the borrow rules permit the alias, and calling a slot on nil panics. Dynamic interface values are comparable only with `nil`.
 
-Dynamic interfaces do not support type assertions or type switches in version 1: a `dyn` value is a borrowed view and Loke has no read-only pointer type to represent a safe downcast. Add a slot for the required behavior, or pass an `any_view` for runtime type inspection.
+Dynamic interfaces do not support checked extractions or type switches in version 1: a `dyn` value is a borrowed view and Loke has no read-only pointer type to represent a safe downcast. Add a slot for the required behavior, or pass an `any_view` for runtime type inspection.
 
 `dyn I` itself satisfies `I` through compiler-provided forwarding slots — the bridge between static and runtime polymorphism:
 
@@ -2843,7 +2888,7 @@ For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x`. The operand 
 - an index of a mutable slice, dynamic array, or addressable fixed array
 - a visible [`operator([])` that returns `inout T`](#indexing-and-slicing)
 - a field of an addressable, non-packed struct
-- a type assertion of an addressable union
+- a checked extraction from an addressable union
 - a composite literal
 
 An `any_view` is not addressable. An element reached through `[]T` is not addressable. An individual field of an `@(packed)` struct is not addressable.
@@ -2949,7 +2994,7 @@ x or_else y or_else z         // x or_else (y or_else z)
 
 The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be an [optional-ok expression](#optional-ok-results), and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
 
-The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, type assertion `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().(T) or_else c` is `(a.b().(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
+The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().(T) or_else c` is `(a.b().(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
 
 ### Integer operators
 
@@ -3204,8 +3249,8 @@ foreach (value in some_dynamic_array) {
 }
 
 some_map := map[string]int{"A" = 1, "C" = 9, "B" = 4};
-foreach (key in some_map) {
-	fmt.println(key);
+foreach (value in some_map) {
+	fmt.println(value);
 }
 ```
 
@@ -3723,11 +3768,13 @@ equally usable in an assignment or a `return`. It cannot target static-duration
 storage. `inout x` is not an expression and produces no value; it selects a
 parameter mode and may appear only in an argument position, in an
 [`operator([])` result](#indexing-and-slicing), and where a mutable receiver is
-passed. Method-call syntax supplies an `inout` or `move` marker implicitly for
-its receiver: `numbers.sort()` may call an `inout self` method, and a consuming
-method may move its receiver, with no marker before the receiver — the one place
-call-site mode visibility yields to method syntax. Non-receiver arguments get no
-such exception. See [Borrows and lifetimes](#borrows-and-lifetimes) for the
+passed. Method-call syntax supplies an `inout` marker implicitly for its
+receiver: `numbers.sort()` may call an `inout self` method with no marker before
+the receiver — the one place call-site mode visibility yields to method syntax,
+and it yields only for a borrow that ends with the call. A [consuming
+receiver](#receiver-forms) is written `move(value).method()` like any other
+transfer, because it leaves the source dead. Non-receiver arguments get no
+exception at all. See [Borrows and lifetimes](#borrows-and-lifetimes) for the
 complete rule.
 
 #### Shadowing parameters
@@ -4654,7 +4701,7 @@ Unlike that cast, `transmute` needs no addressable operand. It cannot reinterpre
 
 The common absence protocol is a value followed by a `bool` named `ok`: `(T, bool)`, or more generally `(A, B, ..., bool)`. `ok` is `true` when the preceding results are present. Built-in producers return the zero values of those results when `ok` is false; `or_else` and iteration do not observe the failed values. User procedures using this shape should follow the same convention.
 
-An **optional-ok expression** is a built-in producer with that shape, or a call with at least two results whose final result is `bool` — so it always has one or more payload results before the status. A comma-ok destination receives every result; `or_else` consumes the final `bool` and yields the payloads or evaluates its fallback. A procedure returning only `bool` is a status expression (usable by `or_return` or control flow) but not an optional-ok expression, and cannot be the left operand of `or_else`. Single-value behavior is per-producer: a missing map lookup yields zero, while a failed single-value union assertion panics.
+An **optional-ok expression** is a built-in producer with that shape, or a call with at least two results whose final result is `bool` — so it always has one or more payload results before the status. A comma-ok destination receives every result; `or_else` consumes the final `bool` and yields the payloads or evaluates its fallback. A procedure returning only `bool` is a status expression (usable by `or_return` or control flow) but not an optional-ok expression, and cannot be the left operand of `or_else`. Single-value behavior is per-producer: a missing map lookup yields zero, while a failed single-value checked extraction panics.
 
 ### or_else expression
 
@@ -4674,7 +4721,7 @@ i = m["hellope"] or_else 123;
 assert(i == 123);
 ```
 
-`or_else` can be used with type assertions too, as they have optional-ok semantics.
+`or_else` can be used with checked extractions too, as they have optional-ok semantics.
 
 ```odin
 v: union{int, f64} = nil;
@@ -4683,7 +4730,7 @@ i = v.(int) or_else 123;
 assert(i == 123);
 ```
 
-`or_else` works with any optional-ok expression, so it applies equally to a map index, a validating conversion, a type assertion, and a procedure returning `(T, bool)`:
+`or_else` works with any optional-ok expression, so it applies equally to a map index, a validating conversion, a checked extraction, and a procedure returning `(T, bool)`:
 
 ```odin
 n := numbers.pop() or_else 0;
@@ -4819,7 +4866,7 @@ runtime panic in runtime execution:
 - a call through a nil `dyn` view
 - integer division or remainder by zero
 - an out-of-range built-in index
-- a failed checked type assertion, `v.(T)`
+- a failed single-value checked extraction, `v.(T)`
 - an allocation failure when the allocator policy is [`.Panic`](#allocation-failure)
 
 Version 1 has no `recover`, `try`, or catch construct. Loke code cannot observe or resume a panic. With the `unwind` strategy, the thread runs its registered cleanup before the program stops. The `abort` strategy does not guarantee cleanup.
@@ -5776,7 +5823,7 @@ defer {
 
 #### Optional results
 
-A procedure that can have no value returns `(T, bool)`. This is the [optional-ok form](#optional-ok-results). Map indexing, validating conversions, type assertions, `pop`, and the [iteration protocol](#iteration-protocol) use the same form. The language and core library do not define `Option`, `Maybe`, or `Result` types.
+A procedure that can have no value returns `(T, bool)`. This is the [optional-ok form](#optional-ok-results). Map indexing, validating conversions, checked extractions, `pop`, and the [iteration protocol](#iteration-protocol) use the same form. The language and core library do not define `Option`, `Maybe`, or `Result` types.
 
 ```odin
 halve :: proc(n: int) -> (int, bool) {

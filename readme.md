@@ -118,7 +118,7 @@ M4b makes those abstractions generic and erasable, completing M4:
   `iter`/`next` protocol, with first-class `Range(T)` values that keep their
   half-open or closed kind after being stored or passed;
 - erased views: `typeid` as a deterministic runtime identity, `any_view` with
-  its position rules, assertions, and type switch, and `dyn Interface` with
+  its position rules, checked extractions, `active_typeid()`, and type switch, and `dyn Interface` with
   witness dispatch, dyn-compatibility diagnostics, and forwarding slots that let
   `dyn I` satisfy `I`.
 

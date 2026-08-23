@@ -32,7 +32,7 @@ impl Bag {
 }
 
 // design.md: "Copying a borrow carrier copies the view and its root provenance",
-// so an `any_view` may be copied, asserted and switched on freely while its
+// so an `any_view` may be copied, extracted and switched on freely while its
 // subject is untouched.
 erased_copies :: proc() {
 	value := 7;

@@ -21,9 +21,9 @@ stale_allocation_root :: proc() {
 
 invalid_receivers :: proc() {
 	static_value: static = Res{1};
-	static_value.consume();
+	move(static_value).consume();
 	box := Box{Res{2}};
-	box.item.consume();
+	move(box.item).consume();
 }
 
 dead_deferred_use :: proc() {

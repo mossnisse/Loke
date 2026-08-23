@@ -1,4 +1,4 @@
-// Unions: variants, layout, assertions, and the type switch (m4a-plan step 4).
+// Unions: variants, layout, checked extractions, and the type switch (m4a-plan step 4).
 //
 // Representation (m4a-plan decision "Union representation"): a payload region
 // carrying the widest variant's ABI alignment — or the validated `@(align=N)` —
@@ -9,6 +9,51 @@
 // offset. The emitter builds a storage type whose LLVM-reported layout matches
 // those cached facts rather than asking LLVM to infer one.
 package lokec
+
+// `value.active_typeid()` exposes the active runtime variant without extracting
+// its payload. The nil union maps to the nil `typeid` (zero); every concrete
+// variant maps to the same deterministic id as `typeid_of(Variant)`.
+check_union_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+	if sel.name.text != "active_typeid" {
+		return false
+	}
+	// Keep an ordinary method with this name available on non-union types without
+	// checking its receiver twice.
+	if ident, is_ident := sel.operand.(^Expr_Ident); is_ident {
+		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+		if sym != nil && sym.kind != .Type && !type_is_union(k.c, sym.type) {
+			return false
+		}
+	}
+
+	operand := check_single_expr(k, sel.operand)
+	if operand == INVALID_TYPE || !type_is_union(k.c, operand) {
+		return false
+	}
+
+	v.value_category = .Value
+	v.union_op = .Active_Typeid
+	v.resolution = Resolution{kind = .Builtin_Operator}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = sel.operand
+	v.bound = bound
+	if len(v.args) != 0 {
+		errorf(k.c, v.span, "L0425", "`active_typeid` takes no arguments, found %d", len(v.args))
+		v.type = INVALID_TYPE
+		return true
+	}
+
+	info := type_of(k.c, operand)
+	if info == nil {
+		v.type = INVALID_TYPE
+		return true
+	}
+	for variant in info.variants {
+		request_typeid(k.c, variant)
+	}
+	v.type = TYPE_TYPEID
+	return true
+}
 
 // design.md "Unions": a discriminated union whose zero value is nil.
 resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {

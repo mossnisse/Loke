@@ -66,13 +66,13 @@ inout_self_invalidates_a_borrow :: proc() {
 	fmt.println(pointer^);
 }
 
-// design.md: "Method-call syntax supplies an `inout` or `move` marker implicitly
-// for its receiver", so a `move self` call invalidates the caller's borrows
-// before the source is killed.
+// design.md: "A consuming method is reached through `move(value).method()`", so
+// a `move self` call invalidates the caller's borrows before the source is
+// killed, exactly as the bare `move(c)` transfer would.
 move_self_invalidates_a_borrow :: proc() {
 	c := Cell{1};
 	pointer := &c.value;
-	total := c.take();
+	total := move(c).take();
 	fmt.println(pointer^ + total);
 }
 

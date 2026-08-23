@@ -54,8 +54,8 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	case ^Expr_Slice:
 		check_slice(k, v, place)
 
-	case ^Expr_Type_Assert:
-		check_type_assert(k, v)
+	case ^Expr_Checked_Extract:
+		check_checked_extract(k, v)
 
 	case ^Expr_Or_Else:
 		check_or_else(k, v, expected)
@@ -715,6 +715,19 @@ method_candidates :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -
 	return out[:]
 }
 
+// Whether `move(...)` is the only spelling that can reach any of these. An
+// overload group mixing consuming and borrowing receivers has no such advice to
+// give: the written form simply selects between them.
+@(private = "file")
+all_candidates_consume :: proc(k: ^Checker, candidates: []Symbol_Id) -> bool {
+	for candidate in candidates {
+		if sym := symbol_of(k.c, candidate); sym == nil || sym.receiver != .Move {
+			return false
+		}
+	}
+	return len(candidates) > 0
+}
+
 // `alias.name`. Only the target package's own scope is searched — never its
 // parents — and only a `@(public)` declaration is visible from outside.
 check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Ident, alias: Symbol_Id) {
@@ -996,6 +1009,20 @@ check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, container
 	// the address-of place position is excluded here rather than at the `&`.
 	v.map_inserts = place && k.insert_position
 	v.type = info.element
+	// A place position that does not insert is the address-of one, and a key
+	// that is not there has no address to give. design.md: "`&` is always
+	// single-valued: every addressable operand yields exactly one pointer. A
+	// container whose lookup may fail supplies a method instead, as the built-in
+	// map does with `m.find(key)`."
+	if place && !k.insert_position {
+		errorf(
+			k.c, v.span, "L0638",
+			"a map element has no address, because the key may be absent and `&` never inserts one",
+		)
+		add_notef(k.c, v.span, "use `m.find(key)`, which returns `(^V, bool)`")
+		v.type = INVALID_TYPE
+		return
+	}
 	if place {
 		// An inserting place is a location: assignable, and addressable so a
 		// field or index chain rooted in it works.
@@ -2003,10 +2030,12 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	// a descriptor constant, whose result type follows that descriptor. Only a
 	// name bound to one qualifies, which is what a `$field` binding is, so no
 	// other callee is checked twice looking for it.
-	// `text.byte_len()`, `text.bytes()`, `string.from_runes(...)`: compiler-defined
-	// operations on the built-in text carriers, whose operands and results are
-	// both built-in types (m6a-plan step 4).
+	// `text.byte_len()`, `text.bytes()`, `string.from_runes(...)`, and
+	// `union.active_typeid()`: compiler-defined operations on built-in carriers.
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
+		if check_union_operation(k, v, sel) {
+			return
+		}
 		if check_text_operation(k, v, sel) {
 			return
 		}
@@ -2249,9 +2278,9 @@ associated_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	return INVALID_SYMBOL
 }
 
-// `value.method(args)`. The receiver is argument zero and carries its mode
-// implicitly, which is what makes `inout self` and `move self` reachable through
-// one spelling (design.md "Receiver forms").
+// `value.method(args)`. The receiver is argument zero. An `inout` receiver
+// carries its mode implicitly; a consuming one is written `move(value).method()`
+// (design.md "Receiver forms").
 @(private = "file")
 check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expected: Type_Id) {
 	receiver := sel.operand
@@ -2259,6 +2288,17 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	candidates := method_candidates(k, receiver_base.type, intern_identifier(k.c, sel.name.text))
 	written, args_ok := collect_call_arguments(k, v.args)
 	if !args_ok {
+		v.type = INVALID_TYPE
+		return
+	}
+	// Every candidate consumes, and the transfer is not written: say so here
+	// rather than through a no-overload-matches report of the same fact.
+	if _, moved := receiver.(^Expr_Move); !moved && all_candidates_consume(k, candidates) {
+		errorf(
+			k.c, expr_span(receiver), "L0501",
+			"`%s` consumes its receiver, so the call is written `move(...).%s(...)`",
+			sel.name.text, sel.name.text,
+		)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -2274,18 +2314,11 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
-	// An exclusive mutable borrow, or a consuming receiver, needs a mutable place.
-	if chosen.receiver == .Inout || chosen.receiver == .Move {
-		if !receiver_base.assignable {
-			report_not_assignable(k, receiver_base, "the receiver of a mutating method")
-			v.type = INVALID_TYPE
-			return
-		}
-	}
-	// Method syntax supplies a consuming receiver's marker implicitly, but it
-	// does not relax `move`'s storage rule. In particular a field/element cannot
-	// be partially moved, and static-duration storage must remain live.
-	if chosen.receiver == .Move && !require_lexical_owner(k, receiver, "move") {
+	// An exclusive mutable borrow needs a mutable place. A consuming receiver is
+	// an `^Expr_Move` by the rank filter above, and `check_move` has already held
+	// it to `move`'s storage rule -- no partial move, no static-duration source.
+	if chosen.receiver == .Inout && !receiver_base.assignable {
+		report_not_assignable(k, receiver_base, "the receiver of a mutating method")
 		v.type = INVALID_TYPE
 		return
 	}
@@ -4096,6 +4129,12 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		case .Integer, .Rune:
 			return float_const(bi_to_f64(c, value.integer), info.bits), true
 		}
+	case .Typeid:
+		// `typeid` is a runtime scalar, but its reserved zero value is still written
+		// `nil`, just like the zero id returned for a nil union.
+		if value.kind == .Nil {
+			return type_const(INVALID_TYPE), true
+		}
 	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
 		// design.md "Zero values": `nil` is the zero of "pointer, multi-pointer,
 		// `rawptr`, procedure" alike. A multi-pointer is one word like the others,
@@ -4136,11 +4175,11 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch underlying_kind(c, to) {
-		case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice,
+		case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice, .Typeid,
 		     .String, .String_View, .CString_View,
 		     .Allocator, .Allocator_Error:
-			// The zero value of every erased view is nil, and so is a slice's
-			// (design.md "Nil slices"). A nil `Allocator_Error` is success.
+			// The zero value of every erased view and `typeid` is nil, and so is a
+			// slice's (design.md "Nil slices"). A nil `Allocator_Error` is success.
 			return true
 		}
 		return false

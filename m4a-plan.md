@@ -5,7 +5,7 @@
 `compiler-plan.md` splits M4 into two shippable halves. **M4a** makes
 user-defined types as capable as built-in ones at concrete types: one overload
 resolution engine, `impl`/`extend` methods, user operators, `init` construction
-and conversion, and unions with their assertion and error protocol.
+and conversion, and unions with their extraction and error protocol.
 [M4b](m4b-plan.md) then adds generics, interfaces, reflection, iteration, and
 erased views on top of it.
 
@@ -47,9 +47,9 @@ dynamic arrays, and runtime `string` remain absent.
 | Methods (B6/B8) | `impl` and `extend` blocks, the three receiver forms, associated constants and types, `Type.member` access, field-lookup priority, package-scoped extension visibility, and the per-declaration lookup package |
 | Construction and conversion | `init` overload groups, the two-stage `T(...)` resolution order, and `@(implicit)` one-argument conversion from untyped constants |
 | Operators | `operator(sym)` declarations and groups, the `!=` and compound-assignment fallbacks, `operator([])`/`([]=)`/`([:])` with place-position selection, `delegate(...)` on `distinct` types, and the unshadowable built-in rule |
-| Unions | Tagged representation and layout, `@(align=N)`, nil zero value and nil comparison, `v.(T)`, comma-ok assertion, and the type switch |
+| Unions | Tagged representation and layout, `@(align=N)`, nil zero value and nil comparison, single-value and comma-ok checked extraction with `v.(T)`, and the type switch |
 | Error protocol | Optional-ok result shape, `or_else`, and `or_return` including its definite-initialization requirement on named results |
-| Backend | Method and operator symbols, union tag/payload lowering, trapping and comma-ok assertions, type-switch dispatch, `or_else` branches, and `or_return`'s branch through the existing cleanup stack |
+| Backend | Method and operator symbols, union tag/payload lowering, trapping and comma-ok extractions, type-switch dispatch, `or_else` branches, and `or_return`'s branch through the existing cleanup stack |
 
 ### Deferred to M4b
 
@@ -81,7 +81,7 @@ dynamic arrays, and runtime `string` remain absent.
 | Lookup package | Every declaration records the package whose method, operator, and extension tables its body may use, separate from the checker's current package. | This is what `delegate` freezes at its declaration, and what M4b's definition-site lookup needs for instantiations. Adding it later would mean revisiting every candidate-formation call site. |
 | Receiver lowering | Immutable `self` uses M2's private by-value convention; `inout self` reuses M2's `inout` pointer alias; `move self` is a value transfer in M4a. A first parameter typed `^T` is not a receiver and gets no method sugar. | The receiver ABI is not frozen before M7 (B15), and no managed type exists yet, so a move of a copyable value is a copy. Liveness and dead-source marking arrive with M5. |
 | Union representation | A named LLVM storage type with a payload region, an `iN` tag, and explicit padding. The payload member must carry the widest variant's ABI alignment (or the validated `@(align=N)` alignment); a raw `[payload_size x i8]` member alone is not sufficient because LLVM would align it to one byte. Tag 0 is nil; variants are numbered in declaration order. `layout.odin` computes the payload size/alignment, tag offset, tail padding, and total stride, and the emitter constructs a type whose LLVM-reported layout matches those cached facts before reading the payload through a typed pointer. | One layout module remains the source of truth without asking LLVM to infer a conflicting alignment. An alignment-carrying storage type is required so unions remain correctly aligned when allocated directly, nested in a struct, or used as array elements. |
-| Assertion phases | One `Expr_Type_Assert` node with a context flag set by the checker: a single-value position traps on mismatch; a comma-ok destination or `or_else` left operand yields `(T, bool)` with a zeroed payload and never traps. M4b's `any_view` assertions reuse the same rule. | design.md gives one construct two result shapes chosen by context, not two constructs. |
+| Extraction phases | One `Expr_Checked_Extract` node with a context flag set by the checker: a single-value position traps on mismatch; a comma-ok destination or `or_else` left operand yields `(T, bool)` with a zeroed payload and never traps. M4b's `any_view` extractions reuse the same rule. | design.md gives one construct two result shapes chosen by context, not two constructs. |
 | `or_return` lowering | Check it as an expression with a flow effect: it contributes to `Flow_Info`, requires named results when the procedure has several, and runs a definite-initialization pass over the earlier named results. The emitter branches to the epilogue through M2's existing cleanup stack. | No AST rewriting is needed, and reusing the cleanup stack keeps `defer` ordering in one implementation. |
 | Diagnostics | Reserve `L0391`–`L0399` and `L0406`–`L0430`: `L0391`–`L0399` overloads and groups, `L0406`–`L0415` `impl`/`extend`/`init`, `L0416`–`L0421` operators and indexing, `L0422`–`L0430` unions and the error protocol. `L0400` and the audited gaps below `L0390` are left unused; `L0401`–`L0405` are already the driver and backend I/O codes in `emit_llvm.odin` and are not reassigned. `L0431`–`L0470` are reserved for M4b. | Fixed ranges keep fixtures stable and keep each family's failures separable across both halves. Skipping the live `L0401`–`L0405` block costs one unused code and leaves each family contiguous. |
 | Corpora | Reuse `tests/run`, `tests/err`, `tests/ll`, and `tests/trap`. Extension visibility gets directory cases under `tests/pkg` and `tests/pkg_err`. | The existing corpora already cover single-file and directory cases; M4a adds no new corpus kind. |
@@ -159,7 +159,7 @@ a grid supports read, place-position write, and `[:]`; a delegating `distinct`
 type gets `+`, `+=`, and `<` without a hand-written overload; `z + 2.0` reaches
 the constant-only `init` conversion while `z + runtime_f64` is rejected.
 
-### 4. Unions, assertions, type switches, and the error protocol
+### 4. Unions, checked extractions, type switches, and the error protocol
 
 - Resolve union variants, reject duplicates and unrepresentable variant sets,
   validate `@(align=N)`, compute the payload alignment, tag offset, total size,
@@ -173,10 +173,10 @@ the constant-only `init` conversion while `z + runtime_f64` is rejected.
 - Implement optional-ok recognition, `or_else` with single and multiple payload
   fallbacks, and `or_return` with its named-result and definite-initialization
   rules, its ban inside deferred statements, and its cleanup ordering.
-- Lower union storage, tag tests, trapping and comma-ok assertions, the type
+- Lower union storage, tag tests, trapping and comma-ok extractions, the type
   switch, `or_else` branches, and `or_return`'s branch to the epilogue.
 
-**Exit:** a union round-trips every variant; a failed single-value assertion
+**Exit:** a union round-trips every variant; a failed single-value extraction
 traps while the comma-ok form yields `false` and a zeroed payload; `or_else`
 supplies a fallback without evaluating it on success; an `or_return` chain over
 an `Error` union propagates through named results with `defer` running in order.
@@ -225,7 +225,7 @@ Milestone spot checks:
   expression in an importing package is unchanged.
 - `T(x)` picks the built-in conversion where one exists and an `init` overload
   otherwise; `@(implicit)` applies to a constant and not to a runtime value.
-- A `union` round-trips its variants; a failed single-value assertion traps while
+- A `union` round-trips its variants; a failed single-value extraction traps while
   the comma-ok form does not.
 - A type switch with a multiple-type case keeps the binding at the union type.
 - `or_return` propagates through named results with `defer` cleanup in order, and
@@ -240,7 +240,7 @@ Milestone spot checks:
 | Calls resolve against one declaration; no candidate set | One shared overload engine for groups, methods, operators, `init`, and indexing |
 | Built-in operator table only | User operators, `delegate`, and the unshadowable built-in rule stated as its own predicate |
 | `T(v)` is a built-in conversion | The two-stage `T(...)` resolution with `init` overloads and `@(implicit)` |
-| Gated `union` | Real tagged representation, layout, assertions, and type switches |
+| Gated `union` | Real tagged representation, layout, checked extractions, and type switches |
 
 ### Narrowings taken while implementing M4a
 

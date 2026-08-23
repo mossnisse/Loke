@@ -7,7 +7,7 @@ package main; import "core:fmt";
 
 count :: proc(args: ..any_view) -> int { return len(args); }
 
-// Type assertions still work on an erased element, because an `any_view` is a
+// Checked extractions still work on an erased element, because an `any_view` is a
 // pointer plus a `typeid` however it was formed.
 ints :: proc(args: ..any_view) -> int {
 	total := 0;

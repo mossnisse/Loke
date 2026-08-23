@@ -35,7 +35,7 @@ L0465
 is not a concrete type an `any_view` can hold
 L0466
 @66:7
-has no type assertion
+has no checked extraction
 L0466
 @67:15
 has no type switch

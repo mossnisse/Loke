@@ -210,8 +210,15 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		return RANK_NONE, INVALID_SYMBOL
 	}
 	// A parameter mode is part of the match, not a conversion. A receiver carries
-	// its mode implicitly, so the call syntax has already supplied it.
-	if !arg.is_receiver {
+	// its `inout` mode implicitly, so the call syntax has already supplied it --
+	// but a consuming receiver is written `move(value).method()`, so that written
+	// form is part of the match too, in both directions.
+	if arg.is_receiver {
+		_, moved := arg.expr.(^Expr_Move)
+		if moved != (mode == .Move) {
+			return RANK_NONE, INVALID_SYMBOL
+		}
+	} else {
 		want_inout := mode == .Inout
 		if want_inout != (arg.mode == .Inout) {
 			return RANK_NONE, INVALID_SYMBOL
@@ -364,6 +371,15 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		}
 		rank, via := argument_rank(k, arg, want, mode)
 		if rank == RANK_NONE {
+			// A receiver form that does not match is not a type mismatch: the
+			// ordinary sentence would name one type twice and explain nothing.
+			if _, moved := arg.expr.(^Expr_Move); arg.is_receiver && moved != (mode == .Move) {
+				cand.reason = "it borrows its receiver, so `move(...)` gives away more than it takes"
+				if mode == .Move {
+					cand.reason = "it consumes its receiver, which is written `move(...)`"
+				}
+				return cand
+			}
 			cand.reason = fmt.aprintf(
 				"argument %d is `%s` where `%s` is wanted",
 				index + 1,

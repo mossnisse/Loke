@@ -1,0 +1,50 @@
+package main; import "core:fmt";
+
+// design.md "Parameter semantics": "Both non-default modes are required at the
+// call site, not just at the declaration." Method syntax supplies an `inout`
+// receiver's marker, because that borrow ends with the call. A consuming
+// receiver leaves the source dead, so it is written `move(value).method()` like
+// every other transfer.
+
+Res :: struct { id: int }
+
+impl Res {
+	init :: proc(id: int) -> Res { return Res{id}; }
+	drop :: proc(self: inout Res) { self.id = 0; }
+
+	peek    :: proc(self) -> int { return self.id; }
+	bump    :: proc(self: inout Res) { self.id += 1; }
+	consume :: proc(self: move Res) -> int { return self.id; }
+}
+
+// The whole point: a bare receiver cannot select `move self`.
+bare_receiver_cannot_consume :: proc() {
+	r := Res.init(1);
+	fmt.println(r.consume());
+}
+
+// And the marker is not decoration: `move(...)` selects only a consuming
+// overload, so it cannot reach the borrowing ones.
+moved_receiver_cannot_borrow :: proc() {
+	r := Res.init(2);
+	fmt.println(move(r).peek());
+}
+
+moved_receiver_cannot_mutate :: proc() {
+	r := Res.init(3);
+	move(r).bump();
+}
+
+// The transfer is still a transfer: the source is dead afterwards.
+consumed_source_is_dead :: proc() {
+	r := Res.init(4);
+	fmt.println(move(r).consume());
+	fmt.println(r.peek());
+}
+
+main :: proc() {
+	bare_receiver_cannot_consume();
+	moved_receiver_cannot_borrow();
+	moved_receiver_cannot_mutate();
+	consumed_source_is_dead();
+}

@@ -879,15 +879,15 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	v.dyn_witness = witness
 }
 
-// ------------------------------------------------- any_view assertions --
+// ---------------------------------------- any_view checked extractions --
 
-// design.md: `any_view` supports runtime type assertions and type switches, and
-// M4a's context-flagged `Expr_Type_Assert` already gives one construct its two
+// design.md: `any_view` supports runtime checked extractions and type switches,
+// and M4a's context-flagged `Expr_Checked_Extract` already gives one construct its two
 // result shapes.
-check_any_view_assert :: proc(k: ^Checker, v: ^Expr_Type_Assert) {
+check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	target := resolve_type_syntax(k, v.target)
 	if target == INVALID_TYPE {
-		errorf(k.c, expr_span(v.target), "L0465", "a type assertion names the asserted type")
+		errorf(k.c, expr_span(v.target), "L0465", "a checked extraction names the requested type")
 		v.type = INVALID_TYPE
 		return
 	}

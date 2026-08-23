@@ -1,0 +1,37 @@
+package main; import "core:fmt";
+
+// design.md "Maps": "`&` is a place position but never creates an element; a
+// container wanting a non-inserting address supplies a method, as the map does
+// with `m.find(key)`." So there is no address to hand back for a key that may be
+// absent, and asking for one is a compile-time error rather than a pointer into
+// a slot that does not exist.
+
+Point :: struct { x: int, y: int }
+
+direct :: proc() {
+	m := map[string]int{"a" = 1};
+	slot := &m["b"];
+	fmt.println(slot^);
+}
+
+// The same answer through a field chain: `&` reached the map index, and that is
+// where the missing key would have been inserted if `&` inserted anything.
+through_a_field :: proc() {
+	m := map[string]Point{"a" = Point{1, 2}};
+	slot := &m["b"].x;
+	fmt.println(slot^);
+}
+
+// An inserting place is still a place: this one is not an error, and keeps the
+// diagnostic above from being a blanket ban on map places.
+insertion_still_works :: proc() {
+	m := map[string]Point{};
+	m["a"].x = 7;
+	fmt.println(m["a"].x);
+}
+
+main :: proc() {
+	direct();
+	through_a_field();
+	insertion_still_works();
+}

@@ -572,7 +572,7 @@ Unary_Expression = ("+" | "-" | "!" | "~" | "&") Unary_Expression
 Postfix_Expression = Primary_Expression Suffix*
 Suffix = "^"                                          // dereference
        | "." Member_Name                              // selector
-       | "." "(" Type ")"                             // type assertion
+       | "." "(" Type ")"                             // checked extraction
        | "(" Argument_List? ")"                       // call or conversion
        | "[" Index_Or_Slice "]"
        | "or_return"

@@ -544,14 +544,14 @@ actual integer representation and are converted in a wrapper. This also handles
 encodings such as `VARIANT_BOOL`, whose true value is `-1`, without pretending
 that every foreign boolean is just a differently sized Loke `bool`.
 
-### Unchecked union assertions
+### Unchecked union extractions
 
-Union assertions are always checked. Unchecked multi-pointer indexing in
-`core:unsafe` does not weaken a union assertion performed elsewhere.
+Union extractions are always checked. Unchecked multi-pointer indexing in
+`core:unsafe` does not weaken a checked extraction performed elsewhere.
 Interpreting the wrong payload as an owning type can manufacture a container
 header from unrelated bits and later pass an invalid pointer to `drop`.
 `transmute` and raw storage in `core:unsafe` remain available for explicit
-low-level work, but an unchecked ordinary assertion would bypass the lifecycle
+low-level work, but an unchecked ordinary extraction would bypass the lifecycle
 restrictions placed on those features.
 
 ## Changed features

@@ -519,7 +519,7 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (Eval_Value, bool) {
 	case ^Expr_Proc:
 		return Eval_Value{kind = .Nil, type = v.type, proc_value = v.symbol}, true
 
-	case ^Expr_Error, ^Expr_Literal, ^Expr_Type_Assert, ^Expr_Slice, ^Expr_Range,
+	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract, ^Expr_Slice, ^Expr_Range,
 	     ^Expr_Or_Else, ^Expr_Move, ^Expr_Hash, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,

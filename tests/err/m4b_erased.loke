@@ -51,7 +51,7 @@ main :: proc() {
 	m: dyn Consuming;
 	r: dyn Returning;
 
-	// A dynamic interface has no type assertion and no type switch.
+	// A dynamic interface has no checked extraction and no type switch.
 	view := (dyn Drawable)(&c);
 	// An interface has no slot by that name, and an `any_view` holds concrete
 	// types only.

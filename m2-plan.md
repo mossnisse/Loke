@@ -71,7 +71,7 @@ construct.
 | Deferred | Goes to |
 |---|---|
 | `impl`/`extend`, methods, `operator(...)`, `proc{...}` groups, user conversions, and conversion-vector ranking | M4 |
-| `union`, type assertion `x.(T)`, and type switch | M4 |
+| `union`, checked extraction `x.(T)`, and type switch | M4 |
 | Runtime and `static foreach`, plus the iteration protocol | M4 |
 | Generics, `$` parameters, `where`, interfaces, reflection, `any_view`, and `dyn` | M4 |
 | `string`, slices, `[dynamic]T`, maps, `via`, `static`/`thread_local`/`manual`, `move`, lifecycle hooks, and variadics | M5/M6 |

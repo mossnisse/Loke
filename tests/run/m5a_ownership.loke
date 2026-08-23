@@ -96,7 +96,7 @@ transferred :: proc() {
 	a := make_res(12);
 	fmt.println(consuming(move(a)));
 	b := make_res(13);
-	fmt.println(b.consume());
+	fmt.println(move(b).consume());
 }
 
 // A borrowed managed parameter owns nothing it could move out, so returning it

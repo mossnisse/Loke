@@ -184,8 +184,10 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 // design.md "Parameter semantics": "Both non-default modes are required at the
 // call site, not just at the declaration ... an argument to a `move` parameter
 // must be written `move(expr)`. Omitting the marker is an error naming the
-// parameter and the mode it needs." Method-call syntax supplies the marker for
-// its own receiver, which is the one documented exception.
+// parameter and the mode it needs." Method-call syntax supplies an `inout`
+// receiver's marker, because that borrow ends with the call and leaves the
+// source usable. A consuming receiver does not: it leaves the source dead, so
+// it is written `move(value).method()` like every other transfer.
 require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symbol_Id) {
 	sym := symbol_of(k.c, declaration)
 	if sym == nil {
@@ -196,8 +198,8 @@ require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symb
 		return
 	}
 	first := 0
-	if sym.has_receiver {
-		first = 1 // the receiver's marker is implicit in method-call syntax
+	if sym.has_receiver && sym.receiver != .Move {
+		first = 1 // an `inout` receiver's marker is implicit in method-call syntax
 	}
 	for slot in first ..< len(v.bound) {
 		if slot >= len(info.param_modes) || info.param_modes[slot] != .Move {

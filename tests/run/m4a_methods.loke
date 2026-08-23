@@ -56,7 +56,7 @@ main :: proc() {
 	fmt.println(int(Vector2.dot(v, v)));
 	v.scale(2);
 	fmt.println(int(v.x));
-	fmt.println(int(v.consume()));
+	fmt.println(int(move(v).consume()));
 
 	origin := Vector2.zero;
 	fmt.println(int(origin.x));

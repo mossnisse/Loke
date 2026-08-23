@@ -1,4 +1,4 @@
-// Type assertions, the type switch, and the optional-ok error protocol
+// Checked extractions, the type switch, and the optional-ok error protocol
 // (m4a-plan step 4).
 //
 // design.md gives `v.(T)` one construct with two result shapes chosen by
@@ -7,23 +7,23 @@
 // set by whoever owns the destination, before the node is checked.
 package lokec
 
-// ----------------------------------------------------------- assertions --
+// -------------------------------------------------- checked extractions --
 
-// A comma-ok destination is what puts a type assertion in its optional-ok
+// A comma-ok destination is what puts a checked extraction in its optional-ok
 // phase. Called before the operand is checked, because the phase decides the
 // node's own result shape.
 mark_optional_ok :: proc(e: Expr) {
-	if assertion, is_assert := e.(^Expr_Type_Assert); is_assert {
-		assertion.optional = true
+	if extraction, is_extract := e.(^Expr_Checked_Extract); is_extract {
+		extraction.optional = true
 	}
 	// design.md "Maps": "`elem, ok := m[key]`" is "the **comma-ok** form". The
-	// phase decides the node's result shape, exactly as it does for an assertion.
+	// phase decides the node's result shape, exactly as it does for an extraction.
 	if index, is_index := e.(^Expr_Index); is_index {
 		index.map_optional = true
 	}
 }
 
-check_type_assert :: proc(k: ^Checker, v: ^Expr_Type_Assert) {
+check_checked_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	v.value_category = .Value
 	operand := check_single_expr(k, v.operand)
 	if operand == INVALID_TYPE {
@@ -31,22 +31,22 @@ check_type_assert :: proc(k: ^Checker, v: ^Expr_Type_Assert) {
 		return
 	}
 	// design.md: a dynamic interface is a borrowed view and supports no type
-	// assertion; add a slot for required behavior, or pass an `any_view`.
+	// checked extraction; add a slot for required behavior, or pass an `any_view`.
 	if type_is_dyn(k.c, operand) {
 		errorf(
 			k.c,
 			v.span,
 			"L0466",
-			"`%s` is a borrowed view and has no type assertion; add a slot for the behavior, or pass an `any_view`",
+			"`%s` is a borrowed view and has no checked extraction; add a slot for the behavior, or pass an `any_view`",
 			type_name(k.c, operand),
 		)
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md "any_view type": it supports runtime type assertions and type
+	// design.md "any_view type": it supports runtime checked extractions and type
 	// switches. One construct, two result shapes, exactly as for a union.
 	if operand == TYPE_ANY_VIEW {
-		check_any_view_assert(k, v)
+		check_any_view_extract(k, v)
 		return
 	}
 	if !type_is_union(k.c, operand) {
@@ -54,17 +54,17 @@ check_type_assert :: proc(k: ^Checker, v: ^Expr_Type_Assert) {
 			k.c,
 			v.span,
 			"L0425",
-			"`%s` is not a union, so it has no variant to assert",
+			"`%s` is not a union, so it has no variant to extract",
 			type_name(k.c, operand),
 		)
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md: a type assertion must name the asserted type; the compiler does
+	// design.md: a checked extraction must name the requested type; the compiler does
 	// not infer it from context.
 	target := resolve_type_syntax(k, v.target)
 	if target == INVALID_TYPE {
-		errorf(k.c, expr_span(v.target), "L0425", "a type assertion names the asserted type")
+		errorf(k.c, expr_span(v.target), "L0425", "a checked extraction names the requested type")
 		v.type = INVALID_TYPE
 		return
 	}

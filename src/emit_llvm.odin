@@ -1652,7 +1652,7 @@ emit_union_store_tag :: proc(e: ^Emitter, union_type: Type_Id, slot: string, tag
 	fmt.sbprintfln(&e.b, "  store i%d %d, ptr %s", shape.tag_bytes * 8, tag, address)
 }
 
-// The tag of a union *value*, which is what every assertion and type switch
+// The tag of a union *value*, which is what every extraction and type switch
 // tests.
 @(private = "file")
 emit_union_tag :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
@@ -4288,7 +4288,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		out := load(e, llvm_type(e, base.type), result)
 		return out
 
-	case ^Expr_Type_Assert, ^Expr_Or_Else:
+	case ^Expr_Checked_Extract, ^Expr_Or_Else:
 		return emit_multi_value(e, expr)[0]
 
 	case ^Expr_Composite:
@@ -6246,6 +6246,9 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	if v.reflect != .None {
 		return emit_descriptor_operation(e, v)
 	}
+	if v.union_op != .None {
+		return emit_union_operation(e, v)
+	}
 	if v.text != .None {
 		return emit_text_operation(e, v)[0]
 	}
@@ -6463,8 +6466,8 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 	return emit_binary_op(e, op, underlying, underlying, lhs, rhs)
 }
 
-// Every result of an expression that produces several: a call, a comma-ok type
-// assertion, an `or_else`, or an `or_return`.
+// Every result of an expression that produces several: a call, a comma-ok
+// extraction, an `or_else`, or an `or_return`.
 @(private = "file")
 emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 	#partial switch v in expr {
@@ -6509,8 +6512,8 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		single := make([]string, 1)
 		single[0] = emit_expr(e, expr)
 		return single
-	case ^Expr_Type_Assert:
-		return emit_type_assert(e, v)
+	case ^Expr_Checked_Extract:
+		return emit_checked_extract(e, v)
 	case ^Expr_Or_Else:
 		return emit_or_else(e, v)
 	case ^Expr_Postfix:
@@ -6757,13 +6760,13 @@ emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	)
 }
 
-// design.md "Type assertions are always checked": a single-value assertion traps
-// on a mismatch, and the comma-ok form yields a zeroed payload with `false`.
+// design.md "Checked extractions": a single-value extraction traps on a
+// mismatch, and the comma-ok form yields a zeroed payload with `false`.
 @(private = "file")
-emit_type_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
+emit_checked_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string {
 	union_type := expr_base(v.operand).type
 	if union_type == TYPE_ANY_VIEW {
-		return emit_any_view_assert(e, v)
+		return emit_any_view_extract(e, v)
 	}
 	shape := union_layout(e.c, union_type)
 	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
@@ -6780,7 +6783,7 @@ emit_type_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
 	if !v.optional {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
-		panic_if(e, failed, "assert.variant", "type assertion failed")
+		panic_if(e, failed, "extract.variant", "checked extraction failed")
 		out := make([]string, 1)
 		out[0] = emit_union_payload(e, union_type, v.type, slot)
 		return out
@@ -7813,6 +7816,39 @@ assemble_nasm :: proc(c: ^Compiler, source, exe_path: string, span: Span) -> (ob
 		return "", false
 	}
 	return obj, true
+}
+
+// `union.active_typeid()`: translate the compact union discriminant to the
+// deterministic program-wide `typeid` assigned to that variant. Tag zero is
+// the nil union and therefore remains the nil `typeid`.
+@(private = "file")
+emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	if v.union_op != .Active_Typeid || len(v.bound) != 1 {
+		backend_fail(e, "a union call has no active-type operation")
+		return "0"
+	}
+	union_type := expr_base(v.bound[0]).type
+	info := type_of(e.c, union_type)
+	if info == nil || info.kind != .Union {
+		backend_fail(e, "active_typeid did not receive a union")
+		return "0"
+	}
+	value := emit_expr(e, v.bound[0])
+	tag := emit_union_tag(e, union_type, value)
+	shape := union_layout(e.c, union_type)
+	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+	result := "0"
+	for variant, index in info.variants {
+		matched := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", matched, tag_llvm, tag, index + 1)
+		next := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = select i1 %s, i64 %d, i64 %s",
+			next, matched, typeid_value(e.c, variant), result,
+		)
+		result = next
+	}
+	return result
 }
 
 // Two packages may each import `helper.asm`. NASM runs before the final clang
@@ -9412,11 +9448,11 @@ emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> 
 	return out
 }
 
-// An assertion against an `any_view`: compare the stored `typeid`, then read the
-// data pointer as the asserted type. A single-value position traps on a
+// A checked extraction from an `any_view`: compare the stored `typeid`, then
+// read the data pointer as the requested type. A single-value position traps on a
 // mismatch; the comma-ok form yields a zeroed payload and `false`.
 @(private = "file")
-emit_any_view_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
+emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string {
 	view := emit_expr(e, v.operand)
 	storage := llvm_type(e, TYPE_ANY_VIEW)
 	data := extract(e, storage, view, ANY_VIEW_DATA)
@@ -9428,7 +9464,7 @@ emit_any_view_assert :: proc(e: ^Emitter, v: ^Expr_Type_Assert) -> []string {
 	if !v.optional {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
-		panic_if(e, failed, "anyview.mismatch", "type assertion failed")
+		panic_if(e, failed, "anyview.mismatch", "checked extraction failed")
 		out := load(e, target, data)
 		single := make([]string, 1)
 		single[0] = out

@@ -62,7 +62,7 @@ Expr :: union {
 	^Expr_Literal,
 	^Expr_Ident,
 	^Expr_Selector,
-	^Expr_Type_Assert,
+	^Expr_Checked_Extract,
 	^Expr_Index,
 	^Expr_Slice,
 	^Expr_Call,
@@ -127,7 +127,7 @@ Expr_Selector :: struct {
 // `x.(T)`. One construct with two result shapes chosen by context: a
 // single-value position traps on a mismatch, while a comma-ok destination or an
 // `or_else` left operand yields `(T, bool)` and never traps.
-Expr_Type_Assert :: struct {
+Expr_Checked_Extract :: struct {
 	using base: Expr_Base,
 	operand:    Expr,
 	target:     Expr,
@@ -198,6 +198,14 @@ Text_Op :: enum {
 	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
 }
 
+// The compiler-defined operation available on every union value. It is kept
+// separate from ordinary method lookup so a union cannot replace the meaning
+// of runtime variant inspection.
+Union_Op :: enum {
+	None,
+	Active_Typeid,
+}
+
 // design.md "string type conversions": the conversions that validate their
 // input, and therefore have optional-ok results rather than a plain value.
 Text_Conversion :: enum {
@@ -222,6 +230,8 @@ Expr_Call :: struct {
 	reflect_field: Symbol_Id,
 	// `text.byte_len()`, `text.bytes()`, and the rest of the text surface.
 	text:            Text_Op,
+	// `value.active_typeid()` on a union.
+	union_op:        Union_Op,
 	// A validating text conversion, which has optional-ok results.
 	text_conversion: Text_Conversion,
 	// design.md "Variadic parameters". `variadic_slot` is the packed parameter's
@@ -562,7 +572,7 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 		return &v.base
 	case ^Expr_Selector:
 		return &v.base
-	case ^Expr_Type_Assert:
+	case ^Expr_Checked_Extract:
 		return &v.base
 	case ^Expr_Index:
 		return &v.base

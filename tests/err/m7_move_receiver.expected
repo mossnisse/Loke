@@ -1,0 +1,12 @@
+L0501
+@23:14
+`consume` consumes its receiver, so the call is written `move(...).consume(...)`
+L0392
+@30:14
+no overload of method `peek` applies to these arguments
+L0392
+@35:2
+no overload of method `bump` applies to these arguments
+L0500
+@42:14
+cannot be used here: it has already been moved, dropped, or released

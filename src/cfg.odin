@@ -987,8 +987,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		graph.current = merge
 		return prov_join(graph, value_loans, fallback_loans)
 
-	case ^Expr_Type_Assert:
-		// design.md: an assertion out of `any_view` or a union preserves the
+	case ^Expr_Checked_Extract:
+		// design.md: an extraction from `any_view` or a union preserves the
 		// source root; only the static type narrows.
 		return walk_flow_expr(graph, v.operand)
 
@@ -1041,6 +1041,14 @@ report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call, consumed: int)
 
 @(private = "file")
 walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	// A union's active type query reads its receiver once and returns a scalar;
+	// it neither consumes the union nor carries provenance into the result.
+	if v.union_op != .None {
+		if len(v.bound) == 1 {
+			walk_flow_expr(graph, v.bound[0])
+		}
+		return nil
+	}
 	if graph.mode != .Lifecycle {
 		return prov_call(graph, v)
 	}
@@ -1088,22 +1096,17 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			return nil
 		}
 	}
-	walk_flow_expr(graph, v.callee)
-	// design.md: "Method-call syntax supplies an `inout` or `move` marker
-	// implicitly for its receiver", so a `move self` call kills the caller's
-	// source with no written marker.
-	consumed := -1
-	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym != nil && sym.receiver == .Move && len(v.bound) > 0 {
-		if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
-			if slot, tracked := slot_of(graph, ident.symbol); tracked {
-				emit(graph, Flow_Event{kind = .Kill, slot = slot, span = v.span, name = ident.name})
-				consumed = 0
-			}
-		}
+	// A method call's receiver is `bound[0]` *and* the callee selector's operand:
+	// one expression reached two ways. Walk it once, as an argument, so that a
+	// consuming receiver written `move(value).method()` kills its source exactly
+	// once. It needs no exemption from `report_argument_copies` either: a `move`
+	// parameter is not a `.Value` one, and a `move` expression is not a place.
+	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym == nil || !sym.has_receiver {
+		walk_flow_expr(graph, v.callee)
 	}
-	report_argument_copies(graph, v, consumed)
-	for argument, index in v.bound {
-		if argument != nil && index != consumed {
+	report_argument_copies(graph, v, -1)
+	for argument in v.bound {
+		if argument != nil {
 			walk_flow_expr(graph, argument)
 		}
 	}

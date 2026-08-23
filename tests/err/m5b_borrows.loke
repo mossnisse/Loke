@@ -56,7 +56,7 @@ dynamic_index_overlaps :: proc(i: int) {
 	fmt.println(view[0]);
 }
 
-// A union variant assertion reads the whole subject, so it overlaps too.
+// A checked union extraction reads the whole subject, so it overlaps too.
 union_variant_overlaps :: proc() {
 	c: Choice = 1;
 	pointer := &c;
