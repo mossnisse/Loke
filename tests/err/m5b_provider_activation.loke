@@ -22,7 +22,7 @@ bad_view :: proc() -> []int {
 Buffer :: struct { id: int }
 
 impl Buffer {
-	drop :: proc(self: inout Buffer) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Buffer) { self.id = 0; }
 }
 
 make_buffer :: proc(allocator: Allocator) -> Buffer {

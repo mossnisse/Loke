@@ -37,6 +37,7 @@ Token_Kind :: enum {
 	For,
 	Foreach,
 	Foreign,
+	Hook,
 	If,
 	Impl,
 	Import,
@@ -45,6 +46,7 @@ Token_Kind :: enum {
 	Interface,
 	Map,
 	Move,
+	Move_Only,
 	Mut,
 	Operator,
 	Or_Else,
@@ -321,6 +323,8 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Foreach
 	case "foreign":
 		kind = .Foreign
+	case "hook":
+		kind = .Hook
 	case "if":
 		kind = .If
 	case "impl":
@@ -337,6 +341,8 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 		kind = .Map
 	case "move":
 		kind = .Move
+	case "move_only":
+		kind = .Move_Only
 	case "mut":
 		kind = .Mut
 	case "operator":

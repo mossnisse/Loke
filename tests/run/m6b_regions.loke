@@ -14,7 +14,7 @@ package main; import "core:fmt"; import "core:mem";
 // over a local fixed buffer puts a dynamic array's storage in this frame.
 in_frame :: proc() {
 	buffer: [4096]u8 = {};
-	arena := mem.Arena(buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[:]);
 	data: [dynamic]int via arena.allocator() = {};
 	data.append(1, 2, 3);
 	fmt.println(len(data));
@@ -23,7 +23,7 @@ in_frame :: proc() {
 
 // design.md's own example, verbatim.
 scratch_storage :: proc() {
-	scratch := mem.Scratch();
+	scratch := mem.Scratch.init();
 	temporary: [dynamic]int via scratch.allocator() = {};
 	temporary.reserve(64);
 	fmt.println(cap(temporary) >= 64);
@@ -32,7 +32,7 @@ scratch_storage :: proc() {
 // A reset this body is allowed to perform, because it created the region. It
 // ends every allocation and leaves the region usable.
 reusable_reset :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	{
 		temporary: [dynamic]u8 via arena.allocator() = {};
 		temporary.append(1, 2, 3);
@@ -48,7 +48,7 @@ reusable_reset :: proc() {
 // design.md: a handle "remains valid for the reset control", so using one after
 // the reset is not a surviving dependant.
 handle_survives_reset :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	handle := arena.allocator();
 	free_all(handle);
 	xs: [dynamic]u8 via handle = {};
@@ -64,7 +64,7 @@ release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
 }
 
 reset_through_wrapper :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	{
 		scratch: [dynamic]u8 via arena.allocator() = {};
 		scratch.append(1, 2, 3);
@@ -81,7 +81,7 @@ reset_through_wrapper :: proc() {
 // longer blocks reset." Scope presence cannot answer that; M5a's definite
 // liveness can, and does.
 dropped_owner_permits_reset :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	raw: manual [dynamic]u8 via arena.allocator();
 	raw.append(1, 2, 3);
 	fmt.println(len(raw));
@@ -103,8 +103,8 @@ dropped_owner_permits_reset :: proc() {
 
 // Two providers are two regions, so one reset is not the other's business.
 distinct_regions :: proc() {
-	a := mem.Arena();
-	b := mem.Arena();
+	a := mem.Arena.init();
+	b := mem.Arena.init();
 	xs: [dynamic]u8 via a.allocator() = {};
 	xs.append(1, 2);
 	free_all(b.allocator());
@@ -113,7 +113,7 @@ distinct_regions :: proc() {
 
 // The region grows past its first block, so the block chain is exercised.
 grows :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	{
 		xs: [dynamic]int via arena.allocator() = {};
 		for (i := 0; i < 2000; i += 1) {
@@ -131,7 +131,7 @@ grows :: proc() {
 Holder :: struct { arena: mem.Arena }
 
 moved :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	xs: [dynamic]int via arena.allocator() = {};
 	xs.append(7);
 	holder := Holder{move(arena)};
@@ -144,10 +144,10 @@ moved :: proc() {
 // Nested regions: a provider whose parent is the program default, and a fixed
 // arena laid over storage the outer region supplied.
 nested :: proc() {
-	outer := mem.Arena();
+	outer := mem.Arena.init();
 	room: [dynamic]u8 via outer.allocator() = {};
 	room.resize(2048);
-	inner := mem.Arena(room[:]);
+	inner := mem.Arena.from_buffer(room[:]);
 	xs: [dynamic]int via inner.allocator() = {};
 	xs.append(1, 2, 3, 4);
 	fmt.println(len(xs));
@@ -169,15 +169,15 @@ in_a_record :: proc(env: inout Request_Env) -> int {
 }
 
 environment :: proc() {
-	env := Request_Env{mem.Scratch(), 21};
+	env := Request_Env{mem.Scratch.init(), 21};
 	fmt.println(in_a_record(inout env));
 }
 
 // Provider-backed children use the written parent allocator. Dropping the
 // child ends that dependency, after which the parent can be reset and reused.
 parented :: proc() {
-	outer := mem.Arena();
-	inner := mem.Arena(outer.allocator());
+	outer := mem.Arena.init();
+	inner := mem.Arena.init(outer.allocator());
 	xs: [dynamic]int via inner.allocator() = {};
 	xs.append(7, 8, 9);
 	fmt.println(xs[2]);
@@ -195,8 +195,8 @@ parented :: proc() {
 
 // A wrapper transfers a fresh provider owner rather than leaking only its
 // allocator handle.
-make_scratch :: proc() -> mem.Scratch { return mem.Scratch(); }
-make_child :: proc(parent: Allocator) -> mem.Scratch { return mem.Scratch(parent); }
+make_scratch :: proc() -> mem.Scratch { return mem.Scratch.init(); }
+make_child :: proc(parent: Allocator) -> mem.Scratch { return mem.Scratch.init(parent); }
 
 wrapped_provider :: proc() {
 	scratch := make_scratch();
@@ -210,7 +210,7 @@ wrapped_provider :: proc() {
 // initial block requested by a child.
 fallible_provider :: proc() {
 	buffer: [4096]u8 = {};
-	parent := mem.Arena(buffer[:]);
+	parent := mem.Arena.from_buffer(buffer[:]);
 	a, a_err := mem.try_arena(parent.allocator());
 	s, s_err := mem.try_scratch(parent.allocator());
 	fmt.println(a_err != nil);

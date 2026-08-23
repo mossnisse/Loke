@@ -1,16 +1,16 @@
-// Lifecycle hooks and the managed-type classification (m5a-plan step 3).
+// Semantic lifecycle hooks and the managed-type classification.
 //
 // design.md "Lifecycle hooks and resource types": user records receive
 // field-wise `try_clone`, `clone`, `move`, and `drop` behavior by default, and
-// an `impl` block may replace the canonical `try_clone` or `drop` for a type
+// an `impl` block may bind `hook(copy)` or `hook(drop)` for a type
 // that owns a resource. The signatures are fixed by the type, so they are
 // validated rather than inferred:
 //
-//   drop      :: proc(self: inout T)
-//   try_clone :: proc(self, allocator: Allocator) -> (T, Allocator_Error)
+//   hook(drop): proc(self: inout T)
+//   hook(copy): proc(self, allocator: Allocator) -> (T, Allocator_Error)
 //
-// `try_clone :: ---;` disables both copy entry points, making the type
-// move-only. `clone` is generated from `try_clone` and is never written by hand.
+// `move_only struct` disables both copy entry points. `clone` and `try_clone`
+// remain generated public operations and are never implementation hook names.
 //
 // Narrowing: design.md gives the canonical hook a default argument of
 // `mem.default_allocator()`, and that default is fixed by the language rather
@@ -25,11 +25,10 @@ package lokec
 Lifecycle :: struct {
 	custom_drop:      Symbol_Id,
 	custom_try_clone: Symbol_Id,
-	// `try_clone :: ---`: neither the fallible nor the policy-following entry
-	// point exists, so the type is move-only.
+	// An explicit `move_only struct`: neither public copy entry point exists.
 	clone_disabled:   bool,
-	// design.md: a record is managed when it has a custom `drop`, a custom or
-	// disabled `try_clone`, or a recursively managed field. A managed value is
+	// A record is managed when it has a drop/copy hook, is move-only, or has a
+	// recursively managed field. A managed value is
 	// what scope exit cleans up and what assignment clones.
 	managed:          bool,
 	// design.md "string type": a `string` is managed, but its clone and drop are
@@ -74,11 +73,11 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 		collect_hooks(c, under, info, entry)
 		// design.md: assignment of a `string` shares immutable backing storage and
 		// the last drop deallocates through the string's bound allocator, so a
-		// string is an owner exactly like a record with a written `drop`.
+		// string is an owner exactly like a record with `hook(drop)`.
 		entry.container = info.kind == .Dynamic_Array || info.kind == .Map
 		entry.provider = info.provider
 		entry.intrinsic = info.kind == .String || entry.container || entry.provider
-		entry.clone_disabled ||= entry.provider
+		entry.clone_disabled ||= entry.provider || info.move_only
 		entry.managed =
 			entry.intrinsic ||
 			entry.custom_drop != INVALID_SYMBOL ||
@@ -101,15 +100,12 @@ collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lif
 		if sym == nil || sym.synth != .None {
 			continue
 		}
-		switch identifier_text(c, sym.name) {
-		case "drop":
+		switch sym.hook {
+		case .Drop:
 			entry.custom_drop = member
-		case "try_clone":
-			if sym.decl != nil && len(sym.decl.values) == 1 && sym.decl.values[0] == nil {
-				entry.clone_disabled = true
-			} else {
-				entry.custom_try_clone = member
-			}
+		case .Copy:
+			entry.custom_try_clone = member
+		case .Convert, .None:
 		}
 	}
 }
@@ -185,7 +181,7 @@ type_contains_managed_union_inner :: proc(c: ^Compiler, type: Type_Id, seen: ^ma
 	return false
 }
 
-// design.md: a move-only type — `try_clone :: ---` — has neither copy entry
+// A `move_only` type has neither copy entry
 // point, so assignment, copy initialization, and a borrowed-parameter return all
 // have to say so rather than silently producing a shallow copy.
 type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
@@ -284,15 +280,16 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	info.contributed += {.Lifecycle}
 
 	entry := lifecycle_of(k.c, type)
-	// `try_clone :: ---` disables both entry points, and a record holding a
-	// move-only part has no hook to call for it.
+	// A move-only declaration, or a record holding a move-only part, has no copy
+	// entry point to contribute.
 	if entry.clone_disabled || type_clone_disabled(k.c, type) {
 		return
 	}
 	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-	if entry.custom_try_clone == INVALID_SYMBOL {
-		append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
-	}
+	// Always contribute the public fallible wrapper. With a custom `hook(copy)`
+	// its emitted body forwards to that hook; otherwise it performs the generated
+	// field-wise operation.
+	append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
 	// design.md: `clone` is generated for a user record. A fixed array is reached
 	// only as a part of one, and is not itself a record.
 	if info.kind == .Struct {
@@ -354,7 +351,7 @@ clone_part :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 	return sym == nil ? INVALID_TYPE : sym.type
 }
 
-// Can cloning this type actually fail? Only a custom `try_clone` returns a real
+// Can cloning this type actually fail? Only a custom copy hook returns a real
 // error; a generated one is fallible exactly when some part of it reaches one.
 // This is what keeps a generated body a plain copy for the ordinary case
 // instead of a chain of error branches that can never be taken.
@@ -402,8 +399,8 @@ generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kin
 // method call on one type are one emitted call, not two entry points that could
 // drift.
 //
-// A user customizes copying by replacing `T.try_clone`; there is deliberately no
-// way to answer this call with an unrelated free procedure.
+// A user customizes copying with `hook(copy)`; there is deliberately no way to
+// answer this call with an unrelated free procedure.
 check_clone_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, builtin: Builtin_Kind) {
 	name := builtin == .Clone ? "clone" : "try_clone"
 	v.value_category = .Value
@@ -427,7 +424,7 @@ check_clone_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, buil
 		return
 	}
 
-	// The same lookup a member call performs, so a disabled `try_clone :: ---`
+	// The same lookup a member call performs, so a move-only declaration
 	// reports the type as move-only here too rather than silently missing.
 	ensure_lifecycle_members(k, subject, intern_identifier(k.c, name))
 	chosen := INVALID_SYMBOL
@@ -440,7 +437,7 @@ check_clone_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, buil
 			k.c,
 			expr_span(v.args[0].value),
 			"L0363",
-			"`%s` has no `%s`: it owns nothing to copy, or its `try_clone` is disabled",
+			"`%s` has no `%s`: it owns nothing to copy, or it is move-only",
 			type_name(k.c, subject),
 			name,
 		)
@@ -515,33 +512,52 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 
 // ------------------------------------------------------------ validation --
 
-// `try_clone :: ---;` inside an `impl` block. design.md: "No signature is
-// written, because the signature of a lifecycle hook is fixed by the type." It
-// is the one `---` that needs no declared type, and it disables both copy entry
-// points rather than leaving storage uninitialised.
-disabled_lifecycle_hook :: proc(k: ^Checker, d: ^Decl, index: int) -> bool {
-	if d.kind != .Const || !d.top_level || index >= len(d.names) {
-		return false
+// Resolves the ordinary procedure nested in `hook(role)` while retaining the
+// role as semantic metadata rather than deriving it from the declaration name.
+resolve_hook_declaration :: proc(k: ^Checker, d: ^Decl, value: ^Expr_Operator) {
+	if len(d.symbols) != 1 || d.symbols[0] == INVALID_SYMBOL {
+		return
 	}
+	symbol_id := d.symbols[0]
+	sym := symbol_of(k.c, symbol_id)
+	if sym == nil {
+		return
+	}
+	sym.hook = value.hook
+	literal, ok := value.value.(^Expr_Proc)
+	if !ok {
+		return
+	}
+	sym.kind = .Proc
+	literal.symbol = symbol_id
+	resolve_proc_signature(k, literal, symbol_id)
+	if sym = symbol_of(k.c, symbol_id); sym != nil {
+		sym.hook = value.hook
+	}
+	apply_proc_metadata(k, d, symbol_id)
 	if k.impl_type == INVALID_TYPE {
-		return false
+		errorf(k.c, sym.span, "L0488", "`hook(%s)` is a type role and must be declared as an inherent `impl` member", hook_name(value.hook))
 	}
-	if d.names[index].text != "try_clone" {
-		return false
-	}
-	// Only the declaring package may disable it; an extension block is rejected by
-	// `validate_lifecycle_hook` with its own diagnostic.
-	return true
 }
 
-// The fixed signatures. Called once per `impl` member, after its signature is
-// resolved, so the shape is checked where it is written rather than at a use.
-validate_lifecycle_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Symbol, symbol_id: Symbol_Id) {
+// The fixed hook signatures, checked once where each inherent declaration is
+// written. Ordinary names such as `init` and `drop` have no bearing here.
+validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Symbol, symbol_id: Symbol_Id) {
 	name := identifier_text(k.c, sym.name)
-	if name != "drop" && name != "try_clone" && name != "clone" {
+	if sym.hook == .None {
+		if name == "clone" || name == "try_clone" {
+			errorf(k.c, sym.span, "L0487", "`%s` is a compiler-generated copy operation; bind custom behavior with `hook(copy)`", name)
+		}
 		return
 	}
 	subject := item.subject
+	if sym.hook != .Convert {
+		info := type_of(k.c, subject)
+		if info == nil || info.kind != .Struct {
+			errorf(k.c, sym.span, "L0488", "`hook(%s)` is a record lifecycle role; `%s` is not a record type", hook_name(sym.hook), type_name(k.c, subject))
+			return
+		}
+	}
 
 	// design.md: a lifecycle hook replaces behavior the compiler generates for
 	// the type, so it belongs with the type's own package.
@@ -550,39 +566,68 @@ validate_lifecycle_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^S
 			k.c,
 			sym.span,
 			"L0486",
-			"a lifecycle hook belongs with the package that declares `%s`; an extension block cannot add `%s`",
+			"a semantic hook belongs with the package that declares `%s`; an extension block cannot add `hook(%s)`",
 			type_name(k.c, subject),
-			name,
+			hook_name(sym.hook),
 		)
-		return
-	}
-	if name == "clone" {
-		errorf(
-			k.c,
-			sym.span,
-			"L0487",
-			"`clone` is generated from `try_clone` and cannot be written; customise `try_clone` instead",
-		)
-		return
-	}
-	// `try_clone :: ---` writes no signature, because the signature of a
-	// lifecycle hook is fixed by the type.
-	if d != nil && len(d.values) == 1 && d.values[0] == nil {
 		return
 	}
 	if sym.kind != .Proc {
-		errorf(k.c, sym.span, "L0488", "`%s` must be a procedure with its fixed lifecycle signature", name)
+		errorf(k.c, sym.span, "L0488", "`hook(%s)` must be a procedure with its fixed signature", hook_name(sym.hook))
 		return
 	}
-	if name == "drop" {
+	// Lifecycle roles are unique per type. Conversion is overloadable, but a
+	// source/target pair must still identify exactly one implementation.
+	if info := underlying_info(k.c, subject); info != nil {
+		for other_id in info.members {
+			if other_id == symbol_id {
+				continue
+			}
+			// Report the later declaration once; symbol ids follow declaration order.
+			if other_id > symbol_id {
+				continue
+			}
+			other := symbol_of(k.c, other_id)
+			if other == nil || other.synth != .None || other.hook != sym.hook {
+				continue
+			}
+			conflict := sym.hook != .Convert
+			if sym.hook == .Convert && len(sym.params) == 1 && len(other.params) == 1 {
+				conflict = sym.params[0] == other.params[0]
+			}
+			if conflict {
+				errorf(
+					k.c,
+					sym.span,
+					"L0488",
+					"duplicate `hook(%s)` for `%s`%s",
+					hook_name(sym.hook),
+					type_name(k.c, subject),
+					sym.hook == .Convert ? " and this source type" : "",
+				)
+				return
+			}
+		}
+	}
+	switch sym.hook {
+	case .Drop:
 		require_hook_shape(k, sym, subject, "drop", "proc(self: inout T)", 1, 0, .Inout)
-		return
+	case .Copy:
+		if info := type_of(k.c, subject); info != nil && info.move_only {
+			errorf(k.c, sym.span, "L0488", "a `move_only` type cannot also declare `hook(copy)`")
+			return
+		}
+		require_hook_shape(k, sym, subject, "copy", "proc(self, allocator: Allocator) -> (T, Allocator_Error)", 2, 2, .Value)
+	case .Convert:
+		if sym.has_receiver || len(sym.params) != 1 || len(sym.results) != 1 || sym.results[0] != subject {
+			errorf(k.c, sym.span, "L0411", "`hook(convert)` takes one value without a receiver and returns `%s`", type_name(k.c, subject))
+			return
+		}
+		if convertible(k.c, sym.params[0], subject) {
+			errorf(k.c, sym.span, "L0411", "`%s` already has a built-in conversion to `%s`; a conversion hook for that pair would be unreachable", type_name(k.c, sym.params[0]), type_name(k.c, subject))
+		}
+	case .None:
 	}
-	require_hook_shape(
-		k, sym, subject, "try_clone",
-		"proc(self, allocator: Allocator) -> (T, Allocator_Error)",
-		2, 2, .Value,
-	)
 }
 
 @(private = "file")
@@ -606,7 +651,7 @@ require_hook_shape :: proc(
 	if !bad && sym.params[0] != subject {
 		bad = true
 	}
-	if !bad && name == "try_clone" {
+	if !bad && name == "copy" {
 		if sym.params[1] != TYPE_ALLOCATOR || sym.results[0] != subject || sym.results[1] != TYPE_ALLOCATOR_ERROR {
 			bad = true
 		}
@@ -626,7 +671,7 @@ require_hook_shape :: proc(
 	// The design's default argument names `mem.default_allocator()`, which is
 	// fixed for every implementation, so the compiler supplies it instead of
 	// re-checking a written copy of it.
-	if name == "try_clone" && len(sym.param_defaults) > 1 {
+	if name == "copy" && len(sym.param_defaults) > 1 {
 		if sym.param_defaults[1] != nil {
 			errorf(
 				k.c,

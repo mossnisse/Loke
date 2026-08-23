@@ -44,7 +44,7 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 		if pkg.key == STD_MEM {
 			// design.md: an `Allocator` "is obtained by the ordinary runtime default
 			// expression `mem.default_allocator()`". This is the *same* symbol the
-			// generated default argument of a lifecycle hook names, so an omitted
+			// generated default argument of a public copy operation names, so an omitted
 			// allocator and a written `mem.default_allocator()` are one call through
 			// one provider.
 			contribute_symbol(c, pkg, "default_allocator", c.default_allocator_symbol)

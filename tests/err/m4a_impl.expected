@@ -1,48 +1,54 @@
+L0413
+@21:2
+`@(implicit)` needs a `hook(convert)` whose parameter is a built-in numeric, boolean, rune, or string type
+L0413
+@25:2
+`@(implicit)` needs a `hook(convert)` whose parameter is a built-in numeric, boolean, rune, or string type
 L0406
-@29:2
+@28:2
 an `impl` member is a constant, a procedure, or an associated type
 L0409
-@32:2
+@31:2
 `Complex` already has a member `length`
-L0408
-@40:15
-a parameter needs a type; only the receiver `self` may omit one
-L0306
-@83:25
-unknown type `Element`
-L0411
-@11:2
-an `init` overload takes no receiver and returns `Complex`
-L0413
-@22:2
-`@(implicit)` needs a one-argument `init` overload whose parameter is a built-in numeric, boolean, rune, or string type
-L0413
-@26:2
-`@(implicit)` needs a one-argument `init` overload whose parameter is a built-in numeric, boolean, rune, or string type
 L0424
-@37:17
+@36:17
 a file-scope union starts at nil; assign the variant in `main`
+L0408
+@39:15
+a parameter needs a type; only the receiver `self` may omit one
+L0488
+@41:1
+`hook(convert)` is a type role and must be declared as an inherent `impl` member
 L0310
-@49:28
+@50:28
 cannot pass `Complex` with `f64`
+L0412
+@54:12
+`from_scalar` implements `hook(convert)` and is not directly accessible; use `T(value)`
+L0412
+@55:16
+`from_scalar` implements `hook(convert)` and is not directly accessible; use `T(value)`
 L0363
-@53:2
+@57:2
 `Complex` has no field or member `bump`
 L0358
-@55:2
+@59:2
 a constant cannot be the receiver of a mutating method
 L0408
-@57:7
+@61:7
 `length` is a method and must be called
 L0410
-@59:7
-`Point` has no `init` overload to construct it
+@63:7
+a conversion to `Point` takes exactly one plain value argument
 L0408
-@61:7
+@65:7
 `Complex` has no member `magnitude`
 L0391
-@62:29
-implicit `init` for `Ambiguous` is ambiguous here
-candidate `from_i8` with conversion vector (2)
-candidate `from_i16` with conversion vector (2)
-selection failed at tie-breaker 4
+@66:29
+implicit conversion to `Ambiguous` is ambiguous here: 2 candidates are equally good
+L0411
+@82:2
+`i32` already has a built-in conversion to `Builtin_Wrapped`; a conversion hook for that pair would be unreachable
+L0306
+@95:25
+unknown type `Element`

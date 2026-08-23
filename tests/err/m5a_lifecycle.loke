@@ -4,7 +4,7 @@ R :: struct { x: int }
 
 impl R {
 	// Every hook has a signature fixed by the type.
-	drop :: proc(self) { }
+	release :: hook(drop) proc(self) { }
 	// `clone` is generated from `try_clone` and is never written.
 	clone :: proc(self, allocator: Allocator) -> R { return self; }
 }
@@ -12,7 +12,7 @@ impl R {
 S :: struct { y: int }
 
 impl S {
-	try_clone :: proc(self) -> S { return self; }
+	copy_owned :: hook(copy) proc(self) -> S { return self; }
 }
 
 T :: struct { w: int }
@@ -20,21 +20,32 @@ T :: struct { w: int }
 impl T {
 	// The allocator default is supplied by the compiler until `core:mem` is
 	// nameable in M6, so a written one is rejected.
-	try_clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> (T, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator = mem.default_allocator()) -> (T, Allocator_Error) {
 		return self, nil;
 	}
 }
 
-Move_Only :: struct { z: int }
+Move_Only :: move_only struct { z: int }
 
 impl Move_Only {
-	try_clone :: ---;
+	copy_anyway :: hook(copy) proc(self, allocator: Allocator) -> (Move_Only, Allocator_Error) {
+		return Move_Only{}, nil;
+	}
+}
+
+Resource :: struct { live: bool }
+
+impl Resource {
+	release :: hook(drop) proc(self: inout Resource) { self.live = false; }
+	release_again :: hook(drop) proc(self: inout Resource) { self.live = false; }
 }
 
 main :: proc() {
 	// A move-only value has no copy entry point to allocate through.
 	m := Move_Only{1};
 	bad, berr := new_clone(m);
+	r := Resource{true};
+	r.release();
 
 	// Arity and operand shape of the allocation built-ins and `drop`.
 	bad_new := new(int, a, a);

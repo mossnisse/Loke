@@ -246,7 +246,11 @@ create_nominal_type_shell :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	symbol.kind = .Type
-	symbol.type = new_type(k.c, Type_Info{kind = kind, name = symbol.name, symbol = d.symbols[0]})
+	move_only := false
+	if record, ok := d.values[0].(^Type_Record); ok {
+		move_only = record.move_only
+	}
+	symbol.type = new_type(k.c, Type_Info{kind = kind, name = symbol.name, symbol = d.symbols[0], move_only = move_only})
 	if base := expr_base(d.values[0]); base != nil {
 		base.denoted_type = symbol.type
 		base.resolution = Resolution{kind = .Type, symbol = d.symbols[0]}
@@ -567,7 +571,11 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		resolve_group_members(k, d.symbols[0], value)
 		apply_proc_metadata(k, d, d.symbols[0])
 	case ^Expr_Operator:
-		resolve_operator_declaration(k, d, value)
+		if value.hook != .None {
+			resolve_hook_declaration(k, d, value)
+		} else {
+			resolve_operator_declaration(k, d, value)
+		}
 	case ^Type_Distinct:
 		underlying := resolve_type_syntax(k, value.elem)
 		if info := type_of(k.c, symbol.type); info != nil {
@@ -1171,7 +1179,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 	case ^Type_Record:
 		if value.denoted_type == INVALID_TYPE {
 			if value.kind == .Struct {
-				value.denoted_type = new_type(k.c, Type_Info{kind = .Struct})
+				value.denoted_type = new_type(k.c, Type_Info{kind = .Struct, move_only = value.move_only})
 				resolve_struct_fields(k, value.denoted_type, value)
 			} else {
 				value.denoted_type = new_type(k.c, Type_Info{kind = .Union})
@@ -1595,13 +1603,8 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		symbol_id := i < len(d.symbols) ? d.symbols[i] : INVALID_SYMBOL
 
 		// `---` is uninitialised storage, not a zero value, and needs a written
-		// type to have any shape at all. The one exception is a disabled lifecycle
-		// hook: design.md says "No signature is written, because the signature of
-		// a lifecycle hook is fixed by the type."
+		// type to have any shape at all.
 		if value == nil {
-			if disabled_lifecycle_hook(k, d, i) {
-				continue
-			}
 			if declared == INVALID_TYPE {
 				errorf(k.c, d.span, "L0381", "`---` needs an explicitly written type")
 			} else if d.kind == .Const {

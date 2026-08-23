@@ -357,7 +357,7 @@ bind_operator_operands :: proc(k: ^Checker, cand: Candidate, args: []Arg_Info) -
 		slot := cand.slots[index]
 		value := arg.expr
 		if cand.ranks[index] == RANK_IMPLICIT && cand.via[index] == INVALID_SYMBOL {
-			implicit_init_overload(k, arg, sym.params[slot], report = true)
+			implicit_conversion_overload(k, arg, sym.params[slot], report = true)
 			ok = false
 			continue
 		} else if cand.via[index] != INVALID_SYMBOL {

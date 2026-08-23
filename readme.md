@@ -73,7 +73,7 @@ M4a makes user-defined types as capable as built-in ones at concrete types:
 
 - one overload-resolution engine — viability filtering, per-argument conversion
   ranks, vector partial ordering, and the four tie-breakers — shared by named
-  procedure groups, methods, operators, `init`, and indexing. An ambiguity lists
+  procedure groups, methods, operators, conversion hooks, and indexing. An ambiguity lists
   every maximal candidate, its conversion vector, and the tie-breaker where
   selection failed;
 - `proc{...}` groups, `impl` blocks, the three receiver forms, associated
@@ -81,9 +81,9 @@ M4a makes user-defined types as capable as built-in ones at concrete types:
   over method-call sugar. A block is inherent or an extension by where its
   subject is declared, never by a keyword, and an extension block changes lookup
   only inside its own package;
-- `init` overloads with the two-stage `T(...)` resolution — a built-in or
-  `distinct` conversion first, `init` overloads otherwise — and `@(implicit)`
-  one-argument conversions reachable only from an untyped constant;
+- conversion-only `T(value)`: a non-overridable built-in conversion or an
+  inherent `hook(convert)` on the target; construction uses literals and named
+  procedures, and `@(implicit)` conversions are reachable only from an untyped constant;
 - `operator(sym)` declarations and groups, the `!=` and compound-assignment
   fallbacks, `operator([])`/`([]=)`/`([:])` with place-position selection, and
   `delegate(...)` on `distinct` types. A built-in operation on built-in operands
@@ -109,9 +109,8 @@ M4b makes those abstractions generic and erasable, completing M4:
   make a requirement appear satisfied;
 - the standard interface catalogue as ordinary Loke source in
   [base/interfaces](base/interfaces), reached with `-collection base=base`,
-  `Cloneable` included: a record satisfies it through the `try_clone` its `impl`
-  block writes or the field-wise one the compiler generates, and
-  `try_clone :: ---` fails it;
+  `Cloneable` included: a record satisfies it through the public field-wise
+  `try_clone` the compiler generates, while `move_only struct` fails it;
 - compile-time reflection: `fields_of`, `enum_values_of`, `field.get`,
   `field.pointer`, `type_of`, `typeid_of`, and static `foreach` expansion, which
   type-checks one copy of its body per element;
@@ -134,8 +133,8 @@ M5a adds managed values — visibility, slices, and lifecycle:
   iteration members that let generic code accept one. A constant a runtime index
   or slice needs storage for materializes once into a shared read-only global,
   while a constant index still folds;
-- lifecycle hooks: a record customizes `drop`, customizes or disables
-  `try_clone`, and receives a generated recursive field-wise `try_clone` that
+- lifecycle hooks: a record binds explicit `hook(drop)` and `hook(copy)` roles,
+  `move_only struct` removes copying, and every copyable record receives a generated recursive field-wise `try_clone` that
   cleans up a partially built temporary in reverse order, plus a `clone`
   generated from it;
 - ownership as dataflow over a per-procedure control-flow view. Every managed
@@ -288,10 +287,10 @@ next to the compiler unless `-runtime=<dir>` replaces it:
 - `mem.Arena` and `mem.Scratch` are local allocator regions. The control block
   is address-stable, so moving the owner never changes its record address or its
   region identity — a provider is move-only for the same reason. An `Arena` may
-  be laid over a caller's fixed buffer (`mem.Arena(buffer[:])`), which puts a
+  be laid over a caller's fixed buffer (`mem.Arena.from_buffer(buffer[:])`), which puts a
   dynamic array's backing storage in the current frame and makes the arena a
   borrow of that buffer for as long as it lives. The provider-backed
-  `mem.Arena(parent)` and `mem.Scratch(parent)` forms default their parent to
+  `mem.Arena.init(parent)` and `mem.Scratch.init(parent)` forms default their parent to
   `mem.default_allocator()`; `mem.try_arena` and `mem.try_scratch` report parent
   allocation failure explicitly. A child provider keeps its parent region live.
   `free_all` on a region this body

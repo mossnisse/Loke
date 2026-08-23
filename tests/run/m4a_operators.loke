@@ -73,8 +73,7 @@ Complex :: struct { real, imaginary: f64 }
 
 impl Complex {
 	@(implicit)
-	from_scalar :: proc(value: f64) -> Complex { return {value, 0}; }
-	init :: proc{from_scalar};
+	from_scalar :: hook(convert) proc(value: f64) -> Complex { return {value, 0}; }
 	add :: operator(+) proc(a, b: Complex) -> Complex {
 		return {a.real + b.real, a.imaginary + b.imaginary};
 	}
@@ -84,10 +83,9 @@ Scalar :: struct { value: i32 }
 
 impl Scalar {
 	@(implicit)
-	from_i32 :: proc(value: i32) -> Scalar { return {value}; }
+	from_i32 :: hook(convert) proc(value: i32) -> Scalar { return {value}; }
 	@(implicit)
-	from_f32 :: proc(value: f32) -> Scalar { return {i32(value) + 100}; }
-	init :: proc{from_i32, from_f32};
+	from_f32 :: hook(convert) proc(value: f32) -> Scalar { return {i32(value) + 100}; }
 }
 
 scalar_value :: proc(value: Scalar) -> i32 { return value.value; }

@@ -10,7 +10,7 @@ Huge :: struct { pad: [4611686018427387904]u8 }
 Failing :: struct { id: int }
 
 impl Failing {
-	try_clone :: proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
 		p, err := new(Huge, allocator);
 		if (err != nil) {
 			return Failing{0}, err;
@@ -19,7 +19,7 @@ impl Failing {
 		return Failing{self.id}, nil;
 	}
 
-	drop :: proc(self: inout Failing) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Failing) { self.id = 0; }
 }
 
 main :: proc() {

@@ -11,7 +11,7 @@ package main; import "core:fmt";
 Witness :: struct { id: int }
 
 impl Witness {
-	drop :: proc(self: inout Witness) { fmt.println(self.id); }
+	release :: hook(drop) proc(self: inout Witness) { fmt.println(self.id); }
 }
 
 deeper :: proc() {

@@ -9,12 +9,12 @@ package main; import "core:fmt"; import "core:mem";
 // design.md "How root and region provenance compose", verbatim:
 //
 //   bad_view :: proc() -> []u8 {
-//   	arena := mem.Arena();
+//   	arena := mem.Arena.init();
 //   	bytes: [dynamic]u8 via arena.allocator() = {};
 //   	return bytes[:]; // ERROR: borrow outlives the local root `bytes`
 //   }
 bad_view :: proc() -> []u8 {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
 	return bytes[:];
 }
@@ -23,12 +23,12 @@ bad_view :: proc() -> []u8 {
 // borrow of it, outlives the region.
 //
 //   bad_owner :: proc() -> [dynamic]u8 {
-//   	arena := mem.Arena();
+//   	arena := mem.Arena.init();
 //   	bytes: [dynamic]u8 via arena.allocator() = {};
 //   	return move(bytes); // ERROR: owner outlives allocator region `arena`
 //   }
 bad_owner :: proc() -> [dynamic]u8 {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
 	return move(bytes);
 }
@@ -37,7 +37,7 @@ bad_owner :: proc() -> [dynamic]u8 {
 // failure, because "returning a managed local ... transfers that owned value
 // into result storage without cloning".
 bad_buffer :: proc() -> [dynamic]u8 {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
 	bytes.append(1, 2, 3);
 	return bytes;
@@ -46,7 +46,7 @@ bad_buffer :: proc() -> [dynamic]u8 {
 // design.md: "A wrapper may return a provider owner and transfer its fresh
 // root, but may not return only a handle to that root."
 leaked_handle :: proc() -> Allocator {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	return arena.allocator();
 }
 
@@ -54,7 +54,7 @@ leaked_handle :: proc() -> Allocator {
 // outlive it either.
 leaked_fixed :: proc() -> mem.Arena {
 	buffer: [4096]u8 = {};
-	return mem.Arena(buffer[:]);
+	return mem.Arena.from_buffer(buffer[:]);
 }
 
 // design.md: "release_scratch(arena.allocator()); // ERROR while `scratch` or
@@ -64,7 +64,7 @@ release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
 }
 
 surviving_owner :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	scratch: [dynamic]u8 via arena.allocator() = {};
 	scratch.append(1);
 	release_scratch(arena.allocator());
@@ -75,7 +75,7 @@ surviving_owner :: proc() {
 // cleanup on an outgoing path". Dropped on one path only, it may still require
 // cleanup on the other, so it keeps blocking — `Conditional` is not `Dead`.
 conditionally_dropped :: proc(flag: bool) {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	xs: [dynamic]u8 via arena.allocator() = {};
 	xs.append(1);
 	if (flag) {
@@ -89,7 +89,7 @@ conditionally_dropped :: proc(flag: bool) {
 held: [dynamic]u8;
 
 escaping_owner :: proc() {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
 	held = move(bytes);
 }
@@ -101,8 +101,8 @@ main :: proc() {
 // A provider-backed child requires its parent to stay live until the child is
 // dropped, just like an ordinary owner allocated in that parent region.
 surviving_child :: proc() {
-	parent := mem.Arena();
-	child := mem.Scratch(parent.allocator());
+	parent := mem.Arena.init();
+	child := mem.Scratch.init(parent.allocator());
 	free_all(parent.allocator());
 	drop(child);
 }

@@ -1,4 +1,4 @@
-// `impl` blocks, methods, associated members, and `init` construction
+// `impl` blocks, methods, associated members, and semantic hooks
 // (m4a-plan step 2).
 //
 // Storage follows the plan's "Method storage" decision: an `impl` block in the
@@ -124,6 +124,7 @@ declare_impl_member :: proc(
 			owner_type = item.subject,
 			public     = declaration_is_public(k, d),
 			implicit   = has_attribute(d.attributes, "implicit"),
+			hook       = decl_hook_kind(d),
 			kind       = decl_proc_literal(d) != nil ? Symbol_Kind.Proc : Symbol_Kind.Const,
 		}
 		if sym.kind == .Proc {
@@ -240,69 +241,27 @@ check_impl_block :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 }
 
-// The rules that need the member's resolved signature: a receiver's owner, and
-// what `@(implicit)` may be written on.
+// The rules that need the member's resolved signature: receiver ownership and
+// the closed semantic-hook shapes.
 @(private = "file")
 check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
-	init_name := intern_identifier(k.c, "init")
 	for symbol_id in d.symbols {
 		sym := symbol_of(k.c, symbol_id)
 		if sym == nil {
 			continue
 		}
-		// design.md "Lifecycle hooks and resource types": the signatures are fixed
-		// by the type, so they are checked where they are written.
-		validate_lifecycle_hook(k, item, d, sym, symbol_id)
-		// design.md "Construction and conversions": an `init` overload constructs
-		// the type, so it takes no receiver and produces exactly that type.
-		if sym.name == init_name {
-			if sym.kind == .Proc {
-				check_init_shape(k, item, symbol_id)
-			} else if sym.kind == .Proc_Group {
-				for member in sym.members {
-					check_init_shape(k, item, member)
-				}
-			}
-		}
+		validate_semantic_hook(k, item, d, sym, symbol_id)
 		if !sym.implicit {
 			continue
 		}
-		if !implicit_conversion_is_valid(k, sym) || !implicit_init_member(k, item.subject, symbol_id) {
+		if sym.hook != .Convert || !implicit_conversion_is_valid(k, sym) {
 			errorf(
 				k.c,
 				sym.span,
 				"L0413",
-				"`@(implicit)` needs a one-argument `init` overload whose parameter is a built-in numeric, boolean, rune, or string type",
+				"`@(implicit)` needs a `hook(convert)` whose parameter is a built-in numeric, boolean, rune, or string type",
 			)
 		}
-	}
-}
-
-@(private = "file")
-implicit_init_member :: proc(k: ^Checker, target: Type_Id, member: Symbol_Id) -> bool {
-	init_name := intern_identifier(k.c, "init")
-	for candidate in member_candidates(k, target, init_name) {
-		if candidate == member {
-			return true
-		}
-	}
-	return false
-}
-
-@(private = "file")
-check_init_shape :: proc(k: ^Checker, item: ^Item_Impl, symbol_id: Symbol_Id) {
-	sym := symbol_of(k.c, symbol_id)
-	if sym == nil || sym.kind != .Proc {
-		return
-	}
-	if sym.has_receiver || len(sym.results) != 1 || sym.results[0] != item.subject {
-		errorf(
-			k.c,
-			sym.span,
-			"L0411",
-			"an `init` overload takes no receiver and returns `%s`",
-			type_name(k.c, item.subject),
-		)
 	}
 }
 
@@ -448,17 +407,40 @@ has_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> bool {
 	return find_member(k, type, name) != INVALID_SYMBOL
 }
 
+// ------------------------------------------------------ semantic hooks --
+
+// Every inherent hook of one role. Hook labels are not lookup names: conversion
+// overloads with different descriptive names form one candidate set by role.
+hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symbol_Id {
+	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	info := type_of(k.c, target)
+	if info == nil {
+		return out[:]
+	}
+	for member in info.members {
+		sym := symbol_of(k.c, member)
+		if sym != nil && sym.decl != nil && sym.decl.sig_state == .Unchecked {
+			resolve_symbol_signature_in_place(k, member, target)
+			sym = symbol_of(k.c, member)
+		}
+		if sym != nil && sym.hook == role {
+			append(&out, member)
+		}
+	}
+	return out[:]
+}
+
 // ------------------------------------------- implicit constant conversions --
 
-// The `@(implicit)` one-argument `init` overload on `target` that an untyped
+// The `@(implicit)` conversion hook on `target` that an untyped
 // constant argument can reach, or INVALID_SYMBOL. Ranked below every built-in
 // conversion, so a constant always prefers a compatible built-in destination.
-implicit_init_overload :: proc(k: ^Checker, arg: Arg_Info, target: Type_Id, report := false) -> (Symbol_Id, bool) {
+implicit_conversion_overload :: proc(k: ^Checker, arg: Arg_Info, target: Type_Id, report := false) -> (Symbol_Id, bool) {
 	if !arg.is_const || !type_is_untyped(k.c, arg.type) {
 		return INVALID_SYMBOL, false
 	}
 	usable := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-	for candidate in member_candidates(k, target, intern_identifier(k.c, "init")) {
+	for candidate in hook_candidates(k, target, .Convert) {
 		sym := symbol_of(k.c, candidate)
 		if sym == nil || !sym.implicit || !implicit_conversion_is_valid(k, sym) {
 			continue
@@ -477,7 +459,7 @@ implicit_init_overload :: proc(k: ^Checker, arg: Arg_Info, target: Type_Id, repo
 	if len(usable) == 0 {
 		return INVALID_SYMBOL, false
 	}
-	description := fmt.aprintf("implicit `init` for `%s`", type_name(k.c, target), allocator = k.c.semantic_allocator)
+	description := fmt.aprintf("implicit conversion to `%s`", type_name(k.c, target), allocator = k.c.semantic_allocator)
 	args := []Arg_Info{arg}
 	cand, resolved := resolve_overload(k, arg.span, description, usable[:], args, target, report)
 	return resolved ? cand.symbol : INVALID_SYMBOL, true

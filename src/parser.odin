@@ -956,14 +956,12 @@ finish_variable :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 @(private = "file")
 parse_constant_value :: proc(p: ^Parser) -> Expr {
 	#partial switch current(p).kind {
-	case .Struct, .Union, .Enum, .Interface, .Proc:
+	case .Struct, .Union, .Enum, .Interface, .Proc, .Move_Only:
 		return parse_type(p) // the braced forms all live in the type grammar
 	case .Operator:
 		return parse_operator(p)
-	case .Uninit:
-		// `---` disables a generated lifecycle hook.
-		advance(p)
-		return nil
+	case .Hook:
+		return parse_hook(p)
 	}
 	// A written type *is* the value here: `My_Int :: int` and
 	// `Meters :: distinct int` are type aliases (design.md "Advanced types").
@@ -2203,7 +2201,7 @@ literal_kind :: proc(kind: Token_Kind) -> Literal_Kind {
 @(private = "file")
 starts_type :: proc(kind: Token_Kind) -> bool {
 	#partial switch kind {
-	case .Caret, .Lbracket, .Map, .Distinct, .Dyn, .Type, .Dollar:
+	case .Caret, .Lbracket, .Map, .Distinct, .Dyn, .Type, .Dollar, .Move_Only:
 		return true
 	case .Proc, .Struct, .Enum, .Union, .Interface:
 		// Parsed in slice 2; recognised here so they get a real message.
@@ -2288,6 +2286,19 @@ parse_type :: proc(p: ^Parser) -> Expr {
 
 	case .Struct, .Union:
 		return parse_record(p)
+
+	case .Move_Only:
+		keyword := advance(p)
+		if !at(p, .Struct) {
+			parse_error(p, span_of(p, current(p)), "L0210", fmt_found(p, current(p)), "`move_only` must be followed by `struct`")
+			return error_expr(p, span_of(p, keyword))
+		}
+		record := parse_record(p)
+		if value, ok := record.(^Type_Record); ok {
+			value.move_only = true
+			value.span.lo = keyword.lo
+		}
+		return record
 
 	case .Enum:
 		return parse_enum(p)
@@ -2966,6 +2977,48 @@ parse_operator :: proc(p: ^Parser) -> Expr {
 	e.symbol_span = symbol_span
 	e.value = value
 	e.has_error = !opened || !closed || expr_has_error(value)
+	return e
+}
+
+// `hook(convert|copy|drop) proc ...`. Hooks deliberately accept one procedure,
+// not a procedure group: conversion overloads are collected by role, while the
+// two lifecycle roles are coherent singletons.
+@(private = "file")
+parse_hook :: proc(p: ^Parser) -> Expr {
+	keyword := advance(p) // `hook`
+	lo := keyword.lo
+	_, opened := expect(p, .Lparen, "L0243", "`(` before the hook role")
+	role_token, has_role := expect(p, .Ident, "L0243", "one of `convert`, `copy`, or `drop`")
+	role := Hook_Kind.None
+	role_text := ""
+	role_span := span_of(p, role_token)
+	if has_role {
+		role_text = text_of(p, role_token)
+		switch role_text {
+		case "convert": role = .Convert
+		case "copy":    role = .Copy
+		case "drop":    role = .Drop
+		case:
+			parse_error(p, role_span, "L0243", role_text, "expected one of `convert`, `copy`, or `drop`")
+		}
+	}
+	_, closed := expect(p, .Rparen, "L0243", "`)` after the hook role")
+
+	value: Expr
+	if at(p, .Proc) {
+		value = parse_proc(p)
+	} else {
+		t := current(p)
+		parse_error(p, span_of(p, t), "L0243", fmt_found(p, t), "expected a procedure for this hook")
+		value = error_expr(p, span_of(p, t))
+	}
+
+	e := new_expr(p, Expr_Operator, lo)
+	e.symbol = role_text
+	e.symbol_span = role_span
+	e.hook = role
+	e.value = value
+	e.has_error = !opened || !closed || role == .None || expr_has_error(value)
 	return e
 }
 

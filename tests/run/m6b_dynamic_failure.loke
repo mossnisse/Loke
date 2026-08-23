@@ -18,8 +18,8 @@ Huge :: struct { pad: [4611686018427387904]u8 }
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { self.id = 0; }
-	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
 		if (self.id == 3) {
 			p, err := new(Huge, allocator);
 			if (err != nil) {

@@ -24,26 +24,32 @@ impl Vector2 {
 	dot :: proc(self, other: Vector2) -> i32 { return self.x*other.x + self.y*other.y; }
 	shifted :: proc(self, by: i32 = 10) -> i32 { return self.x + by; }
 
-	init_components :: proc(x, y: i32) -> Vector2 { return {x, y}; }
-	init_splat :: proc(value: i32) -> Vector2 { return {value, value}; }
-	init :: proc{init_components, init_splat};
+	components :: proc(x, y: i32) -> Vector2 { return {x, y}; }
+	splat :: proc(value: i32) -> Vector2 { return {value, value}; }
 }
 
 Complex :: struct { real, imaginary: f64 }
 
 impl Complex {
-	init_components :: proc(real, imaginary: f64) -> Complex { return {real, imaginary}; }
+	components :: proc(real, imaginary: f64) -> Complex { return {real, imaginary}; }
 
 	@(implicit)
-	from_scalar :: proc(value: f64) -> Complex { return {value, 0}; }
-
-	init :: proc{init_components, from_scalar};
+	from_scalar :: hook(convert) proc(value: f64) -> Complex { return {value, 0}; }
 
 	// A first parameter typed `^T` is not a receiver: no method sugar.
 	bump :: proc(self: ^Complex) { self.real = self.real + 1.0; }
 }
 
 magnitude2 :: proc(z: Complex) -> f64 { return z.real*z.real + z.imaginary*z.imaginary; }
+
+Meters :: distinct f64;
+Kilometers :: distinct f64;
+
+impl Kilometers {
+	from_meters :: hook(convert) proc(value: Meters) -> Kilometers {
+		return Kilometers(f64(value) / 1000.0);
+	}
+}
 
 main :: proc() {
 	v := Vector2{3, 4};
@@ -63,12 +69,12 @@ main :: proc() {
 	e: Vector2.Element = 9;
 	fmt.println(int(e));
 
-	a := Vector2(1, 2);
+	a := Vector2{1, 2};
 	fmt.println(int(a.y));
-	b := Vector2(5);
+	b := Vector2.splat(5);
 	fmt.println(int(b.x) + int(b.y));
 
-	z := Complex(3.0, 4.0);
+	z := Complex.components(3.0, 4.0);
 	fmt.println(int(magnitude2(z)));
 	// `2.0` is an untyped float constant, so `@(implicit)` applies.
 	fmt.println(int(magnitude2(2.0)));
@@ -76,4 +82,6 @@ main :: proc() {
 	fmt.println(int(magnitude2(Complex(scale))));
 	Complex.bump(&z);
 	fmt.println(int(z.real));
+	distance := Kilometers(Meters(2000.0));
+	fmt.println(int(f64(distance)));
 }

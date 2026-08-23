@@ -657,7 +657,7 @@ bind_variadic_arguments :: proc(
 		if type_clone_disabled(k.c, element) {
 			errorf(
 				k.c, v.span, "L0503",
-				"a `%s` variadic pack must clone borrowed elements, but `try_clone` is disabled",
+				"a `%s` variadic pack must clone borrowed elements, but the element type is move-only",
 				type_name(k.c, element),
 			)
 			ok = false

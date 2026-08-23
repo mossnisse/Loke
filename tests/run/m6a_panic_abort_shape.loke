@@ -8,7 +8,7 @@ package main; import "core:fmt";
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { fmt.println(self.id); }
+	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
 }
 
 main :: proc() {

@@ -286,7 +286,7 @@ read_console_line :: proc(
 // wedged terminal outlives the process that wedged it, `begin_raw` also
 // registers a console control handler, so Ctrl+C, Ctrl+Break, and closing the
 // window restore the mode without depending on Loke cleanup running at all.
-Raw_Mode :: struct {
+Raw_Mode :: move_only struct {
 	@(private) handle:   int,
 	@(private) previous: u32,
 	@(private) live:     bool,
@@ -351,9 +351,7 @@ begin_raw :: proc(
 
 impl Raw_Mode {
 	// One owner of a terminal mode; a second would restore it twice, out of order.
-	try_clone :: ---;
-
-	drop :: proc(self: inout Raw_Mode) {
+	release :: hook(drop) proc(self: inout Raw_Mode) {
 		if (self.live) {
 			rt_set_console_mode(self.handle, self.previous);
 			self.live = false;

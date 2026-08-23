@@ -1,48 +1,48 @@
 L0502
-@30:9
-disables `try_clone`, so a borrowed value of it cannot be returned by value
+@29:9
+`Only` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 L0499
-@36:7
-so this body does not own it
-L0497
-@56:7
-names a variable; move the owner out of the aggregate first
-L0498
-@59:7
-cannot be applied to file-scope storage, which is always live
-L0501
-@65:19
-is a `move` parameter, so this argument is written `move(...)`
-L0504
-@75:11
-copies a managed element, which M5a does not clean up per iteration
-L0505
-@82:16
-`exchange` replaces the destination, so it is written `exchange(inout place, replacement)`
-L0498
-@90:7
-cannot be applied to `static` storage, which is always live
-L0498
-@91:12
-cannot be applied to `thread_local` storage, which is always live
-L0506
-@92:18
-initialised once, before any code runs, so its initialiser must be a compile-time constant
-L0503
-@69:7
-so this binding cannot copy it; write `move(...)` to transfer ownership instead
-L0503
-@70:6
-so this assignment cannot copy it; write `move(...)` to transfer ownership instead
+@35:7
+`drop` borrows `value`, so this body does not own it; `move` at the call site is what transfers ownership
 L0500
-@44:14
+@43:14
 `a` cannot be used here: it has already been moved, dropped, or released
 L0500
-@48:2
+@47:2
 `c` cannot be dropped here: it has already been moved, dropped, or released
+L0497
+@55:7
+`drop` names a variable; move the owner out of the aggregate first, or drop the whole value
+L0498
+@58:7
+`drop` cannot be applied to file-scope storage, which is always live
+L0501
+@64:19
+`value` is a `move` parameter, so this argument is written `move(...)`
+L0503
+@68:7
+`Only` is move-only, so this binding cannot copy it; write `move(...)` to transfer ownership instead
+L0503
+@69:6
+`Only` is move-only, so this assignment cannot copy it; write `move(...)` to transfer ownership instead
+L0504
+@74:11
+a by-value `foreach` over `Res` copies a managed element, which M5a does not clean up per iteration; iterate `&value` over a `[]mut Res`, or index the sequence
+L0505
+@81:16
+`exchange` replaces the destination, so it is written `exchange(inout place, replacement)`
 L0500
-@84:7
+@83:7
 `h` cannot be exchanged here: it has already been moved, dropped, or released
+L0498
+@89:7
+`drop` cannot be applied to `static` storage, which is always live
+L0498
+@90:12
+`move` cannot be applied to `thread_local` storage, which is always live
+L0506
+@91:18
+a `static` declaration is initialised once, before any code runs, so its initialiser must be a compile-time constant
 L0500
-@99:14
+@98:14
 `d` cannot be used here: it is live on only some of the paths that reach this point

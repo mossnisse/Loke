@@ -94,7 +94,7 @@ main :: proc() {
 	fmt.println(builder.finish());
 
 	// An explicit allocator reaches both the buffer and the finished string.
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	scoped := strings.init(arena.allocator());
 	scoped.append("in the arena");
 	fmt.println(scoped.copy_string(mem.default_allocator()));

@@ -454,6 +454,11 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.const_value = type_const(sym.type)
 
 	case .Proc:
+		if sym.hook != .None && !k.in_callee {
+			reject_direct_hook_call(k, v.span, symbol_id)
+			v.type = INVALID_TYPE
+			return
+		}
 		// A named procedure is a value with its interned procedure type; a call
 		// obtains its results from the type, not from a single result field.
 		// A signature the current phase has not reached yet is resolved on
@@ -2078,6 +2083,10 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 			declaration = named
 		}
 	}
+	if reject_direct_hook_call(k, v.span, declaration) {
+		v.type = INVALID_TYPE
+		return
+	}
 	v.resolution = Resolution{kind = .Call, symbol = declaration, chosen_overload = declaration}
 
 	if !bind_arguments(k, v, info, declaration) {
@@ -2299,6 +2308,10 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
+	if reject_direct_hook_call(k, v.span, cand.symbol) {
+		v.type = INVALID_TYPE
+		return
+	}
 	// An exclusive mutable borrow needs a mutable place. A consuming receiver is
 	// an `^Expr_Move` by the rank filter above, and `check_move` has already held
 	// it to `move`'s storage rule -- no partial move, no static-duration source.
@@ -2323,6 +2336,23 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = chosen.results[0]
 		v.result_types = chosen.results
 	}
+}
+
+@(private = "file")
+reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -> bool {
+	sym := symbol_of(k.c, symbol_id)
+	if sym == nil || sym.hook == .None {
+		return false
+	}
+	operation := "the corresponding language operation"
+	switch sym.hook {
+	case .Convert: operation = "`T(value)`"
+	case .Copy:    operation = "`clone(value)` or `try_clone(value)`"
+	case .Drop:    operation = "`drop(value)`"
+	case .None:
+	}
+	errorf(k.c, span, "L0412", "`%s` implements `hook(%s)` and is not directly accessible; use %s", identifier_text(k.c, sym.name), hook_name(sym.hook), operation)
+	return true
 }
 
 // A call through a group: check every argument once, rank the members, then bind
@@ -2897,7 +2927,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 				k.c,
 				expr_span(v.args[0].value),
 				"L0491",
-				"`%s` disables `try_clone`, so it cannot be cloned into a new allocation",
+				"`%s` is move-only, so it cannot be cloned into a new allocation",
 				type_name(k.c, value),
 			)
 		}
@@ -3124,7 +3154,7 @@ check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id) -> (Expr, bo
 	}
 	if type_is_untyped(k.c, type) && !assignable(k.c, type, target) {
 		arg := arg_from_expr(k, e)
-		overload, applicable := implicit_init_overload(k, arg, target, report = true)
+		overload, applicable := implicit_conversion_overload(k, arg, target, report = true)
 		if overload != INVALID_SYMBOL {
 			return wrap_implicit_conversion(k, e, overload), true
 		}
@@ -3340,58 +3370,32 @@ bind_c_vararg_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info) ->
 	return ok
 }
 
-// `T(...)`, in the two stages design.md "Resolving `T(...)`" fixes: a built-in
-// or `distinct` conversion first, and `init` overloads otherwise. Resolution
-// stops at the first stage that produces a match, so `int(x)` cannot change
-// meaning based on imports.
+// `T(value)` is conversion only. Built-in source/target pairs are reserved;
+// every other pair may be supplied by an inherent `hook(convert)` on T.
 @(private = "file")
 check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	if !gate_type(k, target, v.span) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if conversion_target_is_builtin(k, target) &&
-	   len(v.args) == 1 && v.args[0].name.text == "" && v.args[0].mode == .Value {
-		source := check_single_expr(k, v.args[0].value, target)
-		if source == INVALID_TYPE {
-			v.type = INVALID_TYPE
-			return
-		}
-		if builtin_conversion(k, v, target, source) {
-			return
-		}
-		one := make([]Arg_Info, 1, k.c.semantic_allocator)
-		one[0] = arg_from_expr(k, v.args[0].value)
-		check_init_call(k, v, target, one, source)
-		return
-	}
-	args, ok := collect_call_arguments(k, v.args)
-	if !ok {
+	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+		errorf(k.c, v.span, "L0410", "a conversion to `%s` takes exactly one plain value argument", type_name(k.c, target))
 		v.type = INVALID_TYPE
 		return
 	}
-	// Unwrapping a distinct value is a built-in conversion even when its
-	// underlying target is an aggregate. Keep this after argument collection so
-	// ordinary aggregate construction still reaches `init` overloads.
-	if len(args) == 1 && args[0].name == INVALID_IDENTIFIER && args[0].mode == .Value &&
-	   type_kind(k.c, args[0].type) == .Distinct &&
-	   type_underlying(k.c, args[0].type) == target &&
-	   builtin_conversion(k, v, target, args[0].type) {
+	// The operand is checked without the destination as expression context. The
+	// conversion node, not a nested binary operator, owns that destination.
+	source := check_single_expr(k, v.args[0].value)
+	if source == INVALID_TYPE {
+		v.type = INVALID_TYPE
 		return
 	}
-	check_init_call(k, v, target, args, INVALID_TYPE)
-}
-
-// Stage 1's predicate. A `distinct` type is grouped with the built-ins here —
-// and only here: for operator lookup it is an ordinary user type
-// (m4a-plan decision "Built-in priority").
-@(private = "file")
-conversion_target_is_builtin :: proc(k: ^Checker, target: Type_Id) -> bool {
-	#partial switch type_kind(k.c, target) {
-	case .Struct, .Union, .Interface, .Dyn, .Invalid:
-		return false
+	if builtin_conversion(k, v, target, source) {
+		return
 	}
-	return true
+	args := make([]Arg_Info, 1, k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, v.args[0].value)
+	check_conversion_hook_call(k, v, target, args, source)
 }
 
 // The built-in half of `T(v)`, including pointer and `distinct` conversions.
@@ -3406,6 +3410,12 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		return true
 	}
 	base := expr_base(v.args[0].value)
+	// Constant folding must not reintroduce a representation-only conversion
+	// that runtime values do not have. Two distinct identities meet only through
+	// an explicit target hook, even when the operand happens to be constant.
+	if type_kind(k.c, source) == .Distinct && type_kind(k.c, target) == .Distinct && source != target {
+		return false
+	}
 	converted: Const_Value
 	if base.is_const {
 		fits: bool
@@ -3428,35 +3438,17 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 	return true
 }
 
-// Stage 2: the visible `init` overloads for `T`, resolved by the ordinary
-// engine. `attempted` is the source type stage 1 rejected, so a target with no
-// `init` at all still reports the conversion failure the user wrote.
+// User conversion hooks are inherent to the target, so imports and extension
+// packages cannot alter an existing `T(value)` expression.
 @(private = "file")
-check_init_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, args: []Arg_Info, attempted: Type_Id) {
-	usable := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-	for candidate in member_candidates(k, target, intern_identifier(k.c, "init")) {
-		sym := symbol_of(k.c, candidate)
-		if sym != nil && !sym.has_receiver && len(sym.results) == 1 && sym.results[0] == target {
-			append(&usable, candidate)
-		}
-	}
+check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, args: []Arg_Info, attempted: Type_Id) {
+	usable := hook_candidates(k, target, .Convert)
 	if len(usable) == 0 {
-		if attempted != INVALID_TYPE {
-			errorf(
-				k.c,
-				expr_span(v.args[0].value),
-				"L0373",
-				"`%s` cannot be converted to `%s`",
-				type_name(k.c, attempted),
-				type_name(k.c, target),
-			)
-		} else {
-			errorf(k.c, v.span, "L0410", "`%s` has no `init` overload to construct it", type_name(k.c, target))
-		}
+		errorf(k.c, expr_span(v.args[0].value), "L0373", "`%s` cannot be converted to `%s`", type_name(k.c, attempted), type_name(k.c, target))
 		v.type = INVALID_TYPE
 		return
 	}
-	description := concat(k.c, "`", concat(k.c, type_name(k.c, target), "`'s `init`"))
+	description := concat(k.c, "conversion to `", concat(k.c, type_name(k.c, target), "`"))
 	cand, resolved := resolve_overload(k, v.span, description, usable[:], args, target)
 	if !resolved {
 		v.type = INVALID_TYPE
@@ -4234,6 +4226,12 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	source := type_underlying(c, from)
 	dest := type_underlying(c, to)
+	// Two distinct types with the same representation are not a built-in
+	// conversion pair. Their semantic relationship is exactly what
+	// `hook(convert)` declares.
+	if type_kind(c, from) == .Distinct && type_kind(c, to) == .Distinct && from != to {
+		return false
+	}
 	if source == dest {
 		return true // between a distinct type and what it wraps, either way
 	}

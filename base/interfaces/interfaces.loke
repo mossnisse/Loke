@@ -44,7 +44,7 @@ Integral :: interface($T: type) {
 
 // A record satisfies this through whichever `try_clone` it answers to: the one
 // its `impl` block writes, or the field-wise one the compiler generates.
-// `try_clone :: ---` removes the member, so a move-only type fails it.
+// `move_only struct` removes the member, so a move-only type fails it.
 Cloneable :: interface($T: type) {
 	slot try_clone: proc(self, allocator: Allocator) -> (T, Allocator_Error);
 }

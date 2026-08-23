@@ -10,7 +10,7 @@ Res :: struct { id: int }
 
 impl Res {
 	init :: proc(id: int) -> Res { return Res{id}; }
-	drop :: proc(self: inout Res) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 
 	peek    :: proc(self) -> int { return self.id; }
 	bump    :: proc(self: inout Res) { self.id += 1; }

@@ -9,7 +9,7 @@ package main; import "core:fmt";
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) {
+	release :: hook(drop) proc(self: inout Res) {
 		fmt.println(self.id);
 		if (self.id == 2) {
 			panic("a cleanup panicked");

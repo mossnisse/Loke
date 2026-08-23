@@ -9182,6 +9182,15 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "entry:")
 	e.terminated = false
 
+	// A user `hook(copy)` is the fallible primitive. The public generated
+	// `try_clone` member is a stable wrapper around it.
+	if hook := lifecycle_of(e.c, subject).custom_try_clone; hook != INVALID_SYMBOL {
+		fmt.sbprintfln(&e.b, "  %%custom = call %s %s(%s %%arg0, ptr %%arg1)", pair, e.names[hook], value_type)
+		fmt.sbprintfln(&e.b, "  ret %s %%custom", pair)
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+
 	// A trivial value is its own clone. `type_clone_is_fallible` is the wrong
 	// question here: a `string` part clones infallibly but still has to retain its
 	// handle, so asking about failure alone would hand back a second owner of one

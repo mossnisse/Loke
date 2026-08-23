@@ -256,7 +256,7 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 			k.c,
 			expr_span(value.expr),
 			"L0502",
-			"`%s` disables `try_clone`, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
+			"`%s` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead",
 			type_name(k.c, result),
 		)
 		return
@@ -298,7 +298,7 @@ expression_is_borrowed_place :: proc(c: ^Compiler, e: Expr) -> bool {
 }
 
 // design.md: "The compiler does not silently move a dynamic array, map, runtime
-// string, `shared(T)`, or type with a custom `try_clone`. This rule also applies
+// string, `shared(T)`, or type with a custom copy hook. This rule also applies
 // at the last use of the source."
 @(private = "file")
 classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> bool {
@@ -310,7 +310,7 @@ classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> 
 			k.c,
 			expr_span(value),
 			"L0503",
-			"`%s` disables `try_clone`, so this %s cannot copy it; write `move(...)` to transfer ownership instead",
+			"`%s` is move-only, so this %s cannot copy it; write `move(...)` to transfer ownership instead",
 			type_name(k.c, type),
 			site,
 		)

@@ -5,11 +5,11 @@ package main; import "core:fmt";
 Res :: struct { id: int }
 
 impl Res {
-	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
 		return Res{self.id + 100}, nil;
 	}
 
-	drop :: proc(self: inout Res) {
+	release :: hook(drop) proc(self: inout Res) {
 		if (self.id != 0) { fmt.println(self.id); }
 		self.id = 0;
 	}

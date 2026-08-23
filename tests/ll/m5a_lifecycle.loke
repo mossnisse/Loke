@@ -9,11 +9,11 @@ Plain :: struct { x: int, y: int }
 Res :: struct { id: int }
 
 impl Res {
-	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
 		return Res{self.id}, nil;
 	}
 
-	drop :: proc(self: inout Res) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 }
 
 Group :: struct {

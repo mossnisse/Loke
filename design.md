@@ -209,7 +209,7 @@ The zero value is:
 - an empty, immediately usable value for `[dynamic]T` and `map[K]V`: `len` and `cap` are 0, and appending or inserting needs no prior construction. Without a `via` declaration it is allocator-unbound until its first allocating operation
 - `nil` for pointer, multi-pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, union, `any_view`, every `dyn Interface`, `shared(T)`, and `weak(T)` type. A nil slice or view has length 0; a nil union holds no variant
 
-Aggregate zero values are built recursively from their fields. A type with a custom `drop` hook must have an inert zero value on which `drop` does nothing; a resource that uses zero for a live handle must instead carry a separate validity field or forbid a zero owning value.
+Aggregate zero values are built recursively from their fields. A type with `hook(drop)` must have an inert zero value on which dropping does nothing; a resource that uses zero for a live handle must instead carry a separate validity field or forbid a zero owning value.
 
 Compile-time-only `type` and reflection descriptors have no zero value.
 
@@ -768,7 +768,7 @@ fill(inout scratch);                              // continues using the bound a
 
 ```odin
 buffer: [4096]u8 = {};                            // a live value in this frame
-arena := mem.Arena(buffer[:]);
+arena := mem.Arena.from_buffer(buffer[:]);
 data: [dynamic]int via arena.allocator() = {};    // runtime length, backing is in `buffer`
 data.append(1, 2, 3);                             // no heap allocation
 ```
@@ -868,7 +868,7 @@ c.resize(6);            // len(c) == 6; new elements are zero
 c.reserve(32);          // capacity is at least 32
 
 // with an explicit allocator:
-scratch := mem.Scratch();
+scratch := mem.Scratch.init();
 temporary: [dynamic]int via scratch.allocator() = {};
 temporary.reserve(64);
 ```
@@ -1111,7 +1111,7 @@ My_Int :: distinct int;
 static_assert(My_Int != int);
 ```
 
-A distinct type may define its own methods, operators, constructors, conversions, interfaces, formatting, and lifecycle hooks. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form below.
+A distinct type may define its own methods, operators, named constructors, conversion hooks, interfaces, and formatting. It does not inherit the underlying type's operations: `Meters :: distinct f64` supports no arithmetic until it is given some. Operations are brought over either one at a time, with an ordinary forwarding declaration that unwraps to the underlying type, or in bulk with the [`delegate`](#delegating-operators) form below. Copy and drop hooks are record lifecycle roles; a resource-bearing distinct type wraps a record that owns the lifecycle.
 
 Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
 
@@ -1230,7 +1230,7 @@ struct @(align=4)  {...} // require four-byte alignment
 struct @(packed)    {...} // remove padding between fields
 ```
 
-These use the same attribute syntax as declarations and statements. Foreign layout uses the target ABI rules, equality optimizations require compiler proof, and validated construction uses an `init` procedure.
+These use the same attribute syntax as declarations and statements. Foreign layout uses the target ABI rules, equality optimizations require compiler proof, and validated construction uses an ordinary named procedure.
 
 ### Promoted struct fields
 
@@ -2071,66 +2071,70 @@ By-reference `foreach` is a built-in-container facility in version 1: mutable fi
 
 A user collection needing mutable traversal exposes a mutable slice, an indexed `inout` operation, or a method that performs the traversal.
 
+### Compiler semantic hooks
+
+The compiler-recognized semantic surface is a small closed set of explicit roles: `hook(convert)`, `hook(copy)`, and `hook(drop)`. The role, never the declaration name, activates compiler behavior. Hook implementations have fixed signatures, belong to the subject type's own package, and are invoked only through their language operation (`T(value)`, copying, or `drop(value)`), not by calling the implementation declaration directly.
+
+This mechanism is intentionally not a general protocol system. Names such as `hash`, `format`, `iter`, and `next` remain ordinary members selected by their documented structural protocols; named constructors are ordinary procedures. Stable public operations such as `clone` and `try_clone` are compiler-generated wrappers over the copy role. Consequently a name like `init`, `drop`, or `try_clone` never acquires hidden behavior merely by being spelled that way.
+
 ### Construction and conversions
 
-Struct literals are the simplest construction. An `init` overload adds validated, computed, or overloaded construction through type-call syntax:
+Construction is deliberately separate from conversion. Struct literals are the simplest construction; validated or computed construction uses ordinary named procedures:
 
 ```odin
 impl Vector2 {
-	init_components :: proc(x, y: f32) -> Vector2 {
+	from_components :: proc(x, y: f32) -> Vector2 {
 		return {x, y};
 	}
 
-	init_splat :: proc(value: f32) -> Vector2 {
+	splat :: proc(value: f32) -> Vector2 {
 		return {value, value};
 	}
-
-	init :: proc{init_components, init_splat};
 }
 
-a := Vector2(1, 2);
-b := Vector2(5);
+a := Vector2{1, 2};
+b := Vector2.splat(5);
 ```
 
-Explicit user-defined conversion uses the same `init` mechanism: a one-argument `init` overload on the target type participates in `Target(value)`:
+`init` has no reserved semantic role. A procedure named `init` is an ordinary named constructor, called as `T.init(...)`; names such as `splat`, `polar`, `parse`, and `open` are preferred when they communicate the construction invariant.
+
+Explicit user-defined conversion is a compiler semantic hook on the target type. The declaration name is descriptive and ordinary; `hook(convert)` supplies the role:
 
 ```odin
 Meters :: distinct f64;
 Kilometers :: distinct f64;
 
 impl Kilometers {
-	from_meters :: proc(value: Meters) -> Kilometers {
+	from_meters :: hook(convert) proc(value: Meters) -> Kilometers {
 		return Kilometers(f64(value) / 1000.0);
 	}
-
-	init :: proc{from_meters};
 }
 
 distance_m := Meters(1500);
 distance_k := Kilometers(distance_m); // explicit user conversion
 ```
 
+A conversion hook takes exactly one value, has no receiver, and returns its target type. It must be inherent to the target's package; an extension cannot change conversion meaning from another package. Conversion hooks may overload by source type, but a source/target pair has exactly one hook. A built-in conversion pair cannot also have a hook, so `int(x)` and other built-in conversions never change meaning based on declarations or imports. The hook implementation is reached through `Target(value)`, not called directly by its declaration name.
+
 #### Implicit conversion from constants
 
-Adding `@(implicit)` to a one-argument `init` overload lets it apply without being written, **but only when the argument is an unfixed constant**; a runtime value of the same type always requires the explicit form.
+Adding `@(implicit)` to a `hook(convert)` declaration lets it apply without being written, **but only when the argument is an unfixed constant**; a runtime value of the same type always requires the explicit form.
 
 The parameter type must be a built-in numeric, boolean, rune, or string type, so an unfixed constant kind can reach it. The constant must convert to that parameter type under the ordinary [unfixed-constant rule](#unfixed-constants). So an unfixed floating constant can reach an `@(implicit)` conversion whose parameter is floating-point, but not one whose parameter is an integer.
 
 ```odin
 impl Complex_F64 {
-	init_components :: proc(real, imaginary: f64) -> Complex_F64 {
+	from_components :: proc(real, imaginary: f64) -> Complex_F64 {
 		return {real, imaginary};
 	}
 
 	@(implicit)
-	from_scalar :: proc(value: f64) -> Complex_F64 {
+	from_scalar :: hook(convert) proc(value: f64) -> Complex_F64 {
 		return {value, 0};
 	}
-
-	init :: proc{init_components, from_scalar};
 }
 
-z := Complex_F64(1, 2);
+z := Complex_F64.from_components(1, 2);
 w := z*z + 2.0;              // OK: `2.0` is an unfixed float constant
 
 scale: f64 = read_scale();
@@ -2146,46 +2150,39 @@ Restricting the rule to constants keeps [library numeric types](#library-numeric
 
 #### Resolving `T(...)`
 
-`T(...)` can mean a built-in conversion or an `init` overload, so resolution has a fixed order:
+`T(value)` means conversion only and takes exactly one plain value argument. The compiler first applies a non-overridable built-in conversion when the source/target pair has one. Otherwise it resolves the target type's inherent `hook(convert)` declarations with the ordinary overload rules. Equal-ranked hooks are ambiguous rather than ordered by declaration.
 
-1. **Built-in conversion.** With exactly one argument, this applies when `T` is a built-in or `distinct` type and the argument has a built-in conversion to `T`, or the argument is a `distinct` value explicitly unwrapped to its underlying type (even an aggregate one, so `Vec(distinct_vec)` needs no `Vec.init`). Decided first and not overridable, so `int(x)` cannot change meaning based on imports.
-2. **`init` overloads.** Otherwise, visible `init` overloads for `T` are resolved normally, including zero- and multi-argument forms.
-
-Resolution stops at the first stage that matches; within a stage, equal-ranked matches are ambiguous rather than ordered by declaration, and the diagnostic lists only that stage's candidates.
-
-A single-argument `init` on a `distinct` type over a built-in cannot be reached through `T(x)` when `x` has the underlying type, because stage 1 claims it; call it by name or give it a distinguishing parameter. `@(implicit)` only adds a constant-only path; it does not affect explicit `T(x)` resolution.
+Zero- and multi-argument type calls are invalid. Use a composite literal or named constructor. This single rule also removes the former staged-resolution corner case for one-argument constructors on `distinct` types.
 
 ### Lifecycle hooks and resource types
 
-User records get field-wise `try_clone`, `clone`, `move`, and `drop` by default. An `impl` block may replace the `try_clone` hook or the `drop` hook for a type that owns a resource.
+User records get field-wise `try_clone`, `clone`, `move`, and `drop` behavior by default. An `impl` block may replace the implementation of copying or dropping with `hook(copy)` or `hook(drop)`. As with conversion hooks, the declaration's own name is descriptive and has no hidden meaning.
 
-The signatures are fixed: `drop` is `proc(self: inout T)`, and the canonical copy hook is `try_clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> (T, Allocator_Error)`. A custom `try_clone` must allocate all cloned storage through fallible operations on the supplied allocator and return any error without publishing a partial result. Generated field-wise cloning calls `try_clone` recursively for each owning field, destroys a partial temporary on failure, and returns zero plus the error.
+The signatures are fixed: `hook(drop)` is `proc(self: inout T)`, and `hook(copy)` is `proc(self, allocator: Allocator) -> (T, Allocator_Error)`. A custom copy hook must allocate all cloned storage through fallible operations on the supplied allocator and return any error without publishing a partial result. Generated field-wise cloning calls the public `try_clone` operation recursively for each owning field, destroys a partial temporary on failure, and returns zero plus the error.
 
-`clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> T` is generated from `try_clone` and not replaced independently. It calls `try_clone` once and, on failure, invokes the allocator's failure policy. `value.clone()` uses the program default; `value.clone(allocator)` selects one. For types governed by these lifecycle hooks, assignment and copy initialization call `try_clone` with the destination's bound allocator (or the destination's declared allocation policy when it is dead or allocator-unbound), invoking the failure policy only after cloning fails and before modifying the destination. A non-allocating `try_clone` ignores the allocator and returns a nil error. Built-in immutable `string` instead has the shared implicit-copy behavior described under [Assignment statements](#assignment-statements); its explicit independent byte-copy operation is `copy`.
+`try_clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> (T, Allocator_Error)` and `clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> T` are compiler-generated public operations; neither name is a hook and user code cannot replace either declaration. `try_clone` delegates to `hook(copy)` when one exists. `clone` calls `try_clone` once and, on failure, invokes the allocator's failure policy. `value.clone()` uses the program default; `value.clone(allocator)` selects one. For types governed by these lifecycle hooks, assignment and copy initialization call `try_clone` with the destination's bound allocator (or the destination's declared allocation policy when it is dead or allocator-unbound), invoking the failure policy only after cloning fails and before modifying the destination. A non-allocating copy hook ignores the allocator and returns a nil error. Built-in immutable `string` instead has the shared implicit-copy behavior described under [Assignment statements](#assignment-statements); its explicit independent byte-copy operation is `copy`.
 
-A custom `try_clone` may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations.
+A custom copy hook may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations.
 
 The division of labour here is the same one the `hash`/equality contract on map keys draws, and it is worth stating plainly, because "enforced" means two different things on either side of it.
 
-The compiler enforces what it can see: a hook's fixed signature, that a hook is declared by the type that owns it, and that operation lookup is coherent — one `try_clone`, one `drop`, one `==`/`hash` pair per type, across every package.
+The compiler enforces what it can see: a hook's fixed signature, that a hook is declared by the type that owns it, and that operation lookup is coherent — one copy hook, one drop hook, one `==`/`hash` pair per type, across every package.
 
 The programmer holds the rest as a contract: allocator discipline inside a hook, publishing only ownership that is actually valid, and equal values producing equal hashes. Nothing checks these, and breaking one is not the same kind of event:
 
-- A `try_clone` that panics follows ordinary [panic semantics](#panics-and-unwinding). It is a fault, not a hole.
-- Publishing invalid ownership — returning a clone that shares an allocation it does not own, or a `drop` that leaves a live alias behind — violates the lifecycle invariants the rest of the language is built on, and the resulting behavior is undefined.
+- A copy hook that panics follows ordinary [panic semantics](#panics-and-unwinding). It is a fault, not a hole.
+- Publishing invalid ownership — returning a clone that shares an allocation it does not own, or a drop hook that leaves a live alias behind — violates the lifecycle invariants the rest of the language is built on, and the resulting behavior is undefined.
 - Breaking the hash laws voids the map's logical guarantees: lookups may miss, iteration may repeat or skip. It does not by itself authorize memory corruption, and an implementation must not treat it as licence for unchecked access.
 
 ```odin
 // This is the shape `core:fs` uses for its own `File`.
-File :: struct {
+File :: move_only struct {
 	handle: int,
 	valid:  bool,
 }
 
 impl File {
-	try_clone :: ---; // neither fallible nor policy-following clone exists
-
-	drop :: proc(self: inout File) {
+	release :: hook(drop) proc(self: inout File) {
 		if (self.valid) {
 			close_handle(self.handle);
 			self.valid = false;
@@ -2194,7 +2191,7 @@ impl File {
 }
 ```
 
-`try_clone :: ---;` disables both generated copy entry points, making `File` move-only; no signature is written, since a hook's signature is fixed by the type. `move(value)` transfers the representation, writes the inert zero representation to a lexical source, and marks it dead. `drop(value)` invokes the user hook when present, writes the inert representation, and marks a lexical variable dead. Direct move and drop are forbidden for static-duration storage; `exchange` installs a live replacement while returning the previous value. Fields are dropped in reverse declaration order after the containing type's drop hook returns.
+`move_only struct` removes both generated copy entry points. It also propagates structurally: a record containing a move-only field is move-only. `move(value)` transfers the representation, writes the inert zero representation to a lexical source, and marks it dead. `drop(value)` invokes the drop hook when present, writes the inert representation, and marks a lexical variable dead. Direct move and drop are forbidden for static-duration storage; `exchange` installs a live replacement while returning the previous value. Fields are dropped in reverse declaration order after the containing type's drop hook returns.
 
 A `drop` hook runs **exactly once per completed initialization** that is not transferred or already consumed. Ownership is tracked by the compiler (with runtime state only where control flow requires it, see [Managed values and storage](#managed-values-and-storage)), never inferred by comparing against the zero value. The hook must still accept the type's inert zero value, since `{}` initialization and zero-initialized static storage are completed initializations. In the `File` example, `valid` distinguishes a live zero value from a descriptor whose handle may legitimately be zero.
 
@@ -2238,7 +2235,7 @@ ownership does; `string`'s separate byte-copying operation is
 the same rule [assignment](#assignment-statements) follows, because assignment
 of a copyable type is defined in terms of `try_clone`.
 
-These use normal overload groups and are written as free calls — `len(x)`, `hash(key, seed)`, `clone(value)` — which is canonical and always available. For lifecycle-enabled types the compiler contributes free `clone` and `try_clone` overloads forwarding to the fixed hooks; a user customizes copying by replacing `T.try_clone`, not by adding an unrelated free clone.
+These use normal overload groups and are written as free calls — `len(x)`, `hash(key, seed)`, `clone(value)` — which is canonical and always available. For lifecycle-enabled types the compiler contributes free `clone` and `try_clone` overloads forwarding to generated public members; a user customizes their implementation with `hook(copy)`, not by adding an unrelated free clone.
 
 **Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible extension block, or a built-in container operation such as `append`, `remove`, `reserve`, or `sort`. Loke does not rewrite `f(x)` as `x.f()`.
 
@@ -2266,7 +2263,7 @@ Complex_F64 :: struct {
 }
 
 impl Complex_F64 {
-	init_components :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
+	from_components :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
 		return {real, imaginary};
 	}
 
@@ -2282,18 +2279,16 @@ impl Complex_F64 {
 	}
 
 	@(implicit)
-	from_scalar :: proc(value: f64) -> Complex_F64 {
+	from_scalar :: hook(convert) proc(value: f64) -> Complex_F64 {
 		return {value, 0};
 	}
-
-	init :: proc{init_components, from_scalar};
 }
 
-z := Complex_F64(1, 2);
+z := Complex_F64.from_components(1, 2);
 w := z*z + 2.0;               // `2.0` is a constant, so `from_scalar` applies
 ```
 
-The standard library may offer generic `Complex(T)` and `Quaternion(T)` families with no special compiler relationship. A scalar *constant* is promoted by an `@(implicit)` one-argument `init`; a scalar *variable* is promoted explicitly, `Complex_F64(x)`. The same facilities suffice for third-party fixed-point, decimal, rational, dual, interval, and unit-aware numeric types, and for the vector, matrix, and swizzle types built on [`Simd(T, N)`](#simd-vectors).
+The standard library may offer generic `Complex(T)` and `Quaternion(T)` families with no special compiler relationship. A scalar *constant* is promoted by an `@(implicit)` conversion hook; a scalar *variable* is promoted explicitly, `Complex_F64(x)`. The same facilities suffice for third-party fixed-point, decimal, rational, dual, interval, and unit-aware numeric types, and for the vector, matrix, and swizzle types built on [`Simd(T, N)`](#simd-vectors).
 
 ## Interfaces and polymorphism
 
@@ -2445,7 +2440,7 @@ Growable_Sequence :: interface($Self: type) {
 
 `Ordered` means the `<` operation is available; it does not promise a mathematical total order, so floating-point types satisfy it with IEEE-754 comparisons. An algorithm needing a total or strict-weak order states that precondition or takes a comparator. `Numeric` deliberately does not compose `Ordered`, so SIMD values and complex numbers can satisfy it without an ordering.
 
-`Cloneable` names the fallible `try_clone` hook, not the policy-following `clone`; it is satisfied by copyable owning built-ins and by records with generated or custom `try_clone`, and `try_clone :: ---` makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
+`Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by copyable owning built-ins and records, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
 
 Formatting stays the `format(value, writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its *value* type, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
 
@@ -3212,7 +3207,7 @@ a = [dynamic]int{7, 8}; // a full assignment revives `a`
 
 The compiler may replace a copy with a move only for a type that has a trivial lifecycle. The replacement must not change allocator selection, call or suppress user code, or remove a possible failure.
 
-The compiler does not silently move a dynamic array, map, runtime string, `shared(T)`, or type with a custom `try_clone`. This rule also applies at the last use of the source. Use `move(value)` to transfer ownership without a clone. Loke does not provide shallow aliases for mutable owning values. Use an explicit type such as `shared(T)` for shared ownership.
+The compiler does not silently move a dynamic array, map, runtime string, `shared(T)`, or type with a custom copy hook. This rule also applies at the last use of the source. Use `move(value)` to transfer ownership without a clone. Loke does not provide shallow aliases for mutable owning values. Use an explicit type such as `shared(T)` for shared ownership.
 
 Assignment of a mutable owner recursively clones owned storage rather than sharing it, so the value behaves like a simple one. This ownership-recursive clone does not follow non-owning pointers, slices, or views, and an element of type `shared(T)` retains its explicitly shared payload. Immutable `string` values may likewise share immutable storage. Small inline values are cheap to copy; a large or allocating copy is flagged by the [copy-cost diagnostic](#copy-cost-diagnostics), which advises `move` to transfer ownership or a pointer or `shared(T)` to share.
 
@@ -4458,13 +4453,13 @@ For example, the two rejected returns below fail for different reasons:
 
 ```odin
 bad_view :: proc() -> []u8 {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
 	return bytes[:]; // ERROR: borrow outlives the local root `bytes`
 }
 
 bad_owner :: proc() -> [dynamic]u8 {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
 	return move(bytes); // ERROR: owner outlives allocator region `arena`
 }
@@ -4813,7 +4808,7 @@ nil   // unfixed nil value used for certain values
 ```
 
 `---` is not a value or an initializer. It is declaration syntax used for a
-foreign procedure with no Loke body and for explicitly disabled lifecycle hooks.
+foreign procedure with no Loke body.
 Uninitialized lexical storage is requested by omitting a local initializer and
 is governed by definite-initialization analysis rather than undefined behavior.
 
@@ -4862,7 +4857,7 @@ spellings but are equally compiler special forms, as described under
 [Managed values and storage](#managed-values-and-storage) and
 [Exchange](#exchange). Every other built-in listed here is an ordinary call.
 
-`transmute(T, value)` is a bit cast conversion between two types of the same size. Both the source and destination must have a **trivial lifecycle**: they have no custom `try_clone` or `drop`, contain no managed owner, and are recursively bitwise-copyable. This prevents a bit cast from duplicating an owning representation or manufacturing a value whose cleanup invariant was never established.
+`transmute(T, value)` is a bit cast conversion between two types of the same size. Both the source and destination must have a **trivial lifecycle**: they have no copy or drop hook, contain no managed owner, and are recursively bitwise-copyable. This prevents a bit cast from duplicating an owning representation or manufacturing a value whose cleanup invariant was never established.
 
 ```odin
 f := f32(123);
@@ -5186,7 +5181,7 @@ Dynamic arrays, maps, runtime strings, and other managed containers remember the
 Immutable `string` and `shared(T)` are different because assignment may retain an existing shared allocation rather than create destination-owned backing storage. They select an allocator in the operation that creates that allocation: string-producing procedures accept a conventional `allocator` argument when selection is needed, and `shared` has the constructor argument described below. Applying `via` to either type is a compile-time error.
 
 ```odin
-scratch := mem.Scratch();
+scratch := mem.Scratch.init();
 bytes: [dynamic]u8 via scratch.allocator() = {};
 bytes.reserve(4096);
 ```
@@ -5223,9 +5218,9 @@ error. A provider-backed child must be dropped before its parent region is reset
 or ended.
 
 ```odin
-fixed := mem.Arena(buffer[:]);
-arena := mem.Arena(parent_allocator);
-scratch := mem.Scratch();
+fixed := mem.Arena.from_buffer(buffer[:]);
+arena := mem.Arena.init(parent_allocator);
+scratch := mem.Scratch.init();
 maybe, err := mem.try_scratch(parent_allocator);
 ```
 
@@ -5261,7 +5256,7 @@ For example, returning `bytes` below is rejected because moving the array into r
 
 ```odin
 bad_buffer :: proc() -> [dynamic]u8 {
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	bytes: [dynamic]u8 via arena.allocator() = {};
 	bytes.append(1, 2, 3);
 	return bytes; // ERROR: `bytes` cannot outlive `arena`
@@ -5275,7 +5270,7 @@ release_scratch :: proc(@(allocator_reset) allocator: Allocator) {
 	free_all(allocator);
 }
 
-arena := mem.Arena();
+arena := mem.Arena.init();
 scratch: [dynamic]u8 via arena.allocator() = {};
 view := scratch[:];
 release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
@@ -5409,7 +5404,7 @@ Loke adopts the C++20 atomic ordering model, excluding dependency-ordered `consu
 
 These rules intentionally match an established compiler memory model rather than defining a Loke-specific approximation. A compiler may map them to the corresponding LLVM or target atomic operations without strengthening or weakening their observable behavior.
 
-Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread, except for types such as immutable `string` and `shared(T)` whose documented copy semantics share thread-safe handle state. The compiler does not prove that a custom `drop`, a foreign resource, or an allocator may run on the receiving thread; transferring an owner asserts that its entire lifecycle is valid there. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There are no implicit `Send` or `Sync` interfaces.
+Moving an ordinary owning value to another thread transfers that owner and is allowed when no checked borrow remains in the sending thread. Copying creates the same independent value it would create within one thread, except for types such as immutable `string` and `shared(T)` whose documented copy semantics share thread-safe handle state. The compiler does not prove that a custom drop hook, a foreign resource, or an allocator may run on the receiving thread; transferring an owner asserts that its entire lifecycle is valid there. Raw pointers, stored borrows, foreign handles, and unchecked views may also be transferred, but the compiler does not prove that their pointees remain alive or race-free. There are no implicit `Send` or `Sync` interfaces.
 
 Threads and retained tasks receive only the arguments explicitly moved or copied
 into them. A request environment, logger, clock, scratch owner, or other service
@@ -5728,9 +5723,9 @@ These attributes specify linkage or visibility. They specify the symbol that a d
 
 #### `@(implicit)`
 
-`@(implicit)` permits an implicit call to a one-argument overload in the target type's `init` group. The argument must be an unfixed constant. The parameter type must be a built-in numeric, Boolean, rune, or string type. A runtime value requires the explicit `Target(value)` form. See [Implicit conversion from constants](#implicit-conversion-from-constants).
+`@(implicit)` permits an implicit use of a target type's one-argument `hook(convert)`. The argument must be an unfixed constant. The parameter type must be a built-in numeric, Boolean, rune, or string type. A runtime value requires the explicit `Target(value)` form. See [Implicit conversion from constants](#implicit-conversion-from-constants).
 
-`@(implicit)` on a procedure that is not a one-argument `init` overload is an error.
+`@(implicit)` on a declaration that is not an appropriately typed `hook(convert)` is an error.
 
 #### `@(default_calling_convention=<string>)`
 

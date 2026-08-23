@@ -17,7 +17,7 @@ release :: proc(@(allocator_reset) allocator: Allocator) {
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 }
 
 kept :: proc() -> int {

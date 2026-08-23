@@ -162,6 +162,10 @@ Type_Info :: struct {
 	// design.md "@(packed)": this struct removes inter-field padding and has a
 	// natural alignment of 1 (an `@(align=N)` may still raise it). (m7-plan step 2)
 	packed:        bool,
+	// `move_only struct` suppresses the generated ownership-copy operations.
+	// Containing records inherit the property recursively through lifecycle
+	// classification; this bit records an explicit leaf declaration.
+	move_only:     bool,
 	// Inherent members written by `impl`: methods, associated constants, and
 	// associated types. `extend` never writes here — its members are package-scoped
 	// and live in `Package.extensions` (m4a-plan decision "Method storage").
@@ -603,9 +607,12 @@ Symbol :: struct {
 	// receiver, so it leaves this false and gets no method-call sugar.
 	has_receiver: bool,
 	receiver:     Param_Mode,
-	// `@(implicit)` on a one-argument `init` overload: reachable from an untyped
+	// `@(implicit)` on a `hook(convert)` declaration: reachable from an untyped
 	// constant without being written.
 	implicit:     bool,
+	// A closed compiler-controlled semantic role. Ordinary procedure names have
+	// no hook meaning; operators continue to use the symbolic field below.
+	hook:         Hook_Kind,
 	// Which container operation a contributed member is (`src/container.odin`).
 	container_op: Container_Op,
 	// Which region-provider operation it is (`src/region.odin`).

@@ -8,8 +8,8 @@ Huge :: struct { pad: [4611686018427387904]u8 }
 Key :: struct { id: int }
 
 impl Key {
-	drop :: proc(self: inout Key) { self.id = 0; }
-	try_clone :: proc(self, allocator: Allocator) -> (Key, Allocator_Error) {
+	release :: hook(drop) proc(self: inout Key) { self.id = 0; }
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Key, Allocator_Error) {
 		if (self.id == 99) {
 			p, err := new(Huge, allocator);
 			if (err != nil) { return Key{0}, err; }
@@ -24,8 +24,8 @@ impl Key {
 Value :: struct { id: int }
 
 impl Value {
-	drop :: proc(self: inout Value) { self.id = 0; }
-	try_clone :: proc(self, allocator: Allocator) -> (Value, Allocator_Error) {
+	release :: hook(drop) proc(self: inout Value) { self.id = 0; }
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Value, Allocator_Error) {
 		if (self.id == 99) {
 			p, err := new(Huge, allocator);
 			if (err != nil) { return Value{0}, err; }

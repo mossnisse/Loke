@@ -51,10 +51,10 @@ Reserved in every position:
 ```
 break       case       continue   defer      distinct   dyn        dynamic
 else        enum       for        foreach    foreign
-if          impl       import     in         inout      interface  map
-move        mut        operator   or_else    or_return  package    proc
-return      struct     switch     type       union      via        when
-where
+hook        if         impl       import     in         inout      interface
+map         move       move_only  mut        operator   or_else    or_return
+package     proc       return     struct     switch     type       union
+via         when       where
 ```
 
 Contextual keywords, reserved only in the positions given:
@@ -219,10 +219,11 @@ Braced_Constant_Value = Type_Definition
                       | Proc_Definition
                       | Proc_Group
                       | Operator_Definition
+                      | Hook_Definition
 
 Semicolon_Constant_Value = Operator_Declaration
+                         | Hook_Declaration
                          | Expression
-                         | "---"                       // disable a generated lifecycle hook
 ```
 
 `x: T;` declares a zero-initialized variable, `x: T = e;` and `x: = e;` add an
@@ -273,6 +274,7 @@ Type = "^" Type                                          // pointer
      | "[" Expression "]" Type                           // fixed array
      | "map" "[" Type "]" Type
      | "distinct" Type
+     | Move_Only_Struct_Type
      | "dyn" Type_Name Type_Arguments?                  // borrowed dynamic interface
      | "type"                                           // compile-time-only type of types
      | Proc_Type
@@ -284,7 +286,7 @@ Type_Name      = Identifier ("." Identifier)?            // optionally package-q
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ")"
 Generic_Argument = Type | Expression                     // type or compile-time value
 
-Type_Definition = Struct_Type | Enum_Type | Union_Type
+Type_Definition = Struct_Type | Move_Only_Struct_Type | Enum_Type | Union_Type
 
 Proc_Type = "proc" Calling_Convention? Signature
 Calling_Convention = String_Literal                      // portable: "loke", "c", "stdcall"
@@ -313,6 +315,7 @@ conversion syntax uses the existing parenthesised-type expression,
 
 ```
 Struct_Type = "struct" Generic_Parameters? Attributes? Where_Clause? "{" Field_List? "}"
+Move_Only_Struct_Type = "move_only" Struct_Type
 Field_List  = Field ("," Field)* ","?
 Field       = Attributes? "using"? Member_Name_List ":" Type
 
@@ -393,6 +396,11 @@ Operator_Decl       = Operator_Definition | Operator_Declaration
 Operator_Definition = "operator" "(" Operator_Symbol ")" (Proc_Definition | Proc_Group)
 Operator_Declaration= "operator" "(" Operator_Symbol ")" Proc_Declaration
 
+Hook_Decl        = Hook_Definition | Hook_Declaration
+Hook_Definition  = "hook" "(" Hook_Role ")" Proc_Definition
+Hook_Declaration = "hook" "(" Hook_Role ")" Proc_Declaration
+Hook_Role        = "convert" | "copy" | "drop"
+
 Operator_Symbol = "+" | "-" | "*" | "/" | "%"
                 | "|" | "~" | "&" | "&~" | "<<" | ">>"
                 | "==" | "!=" | "<" | "<=" | ">" | ">=" | "!"
@@ -441,6 +449,12 @@ parameter. A named result has no initializer form; like any other
 uninitialized local it starts **dead**, and `design.md` requires it to be
 definitely live before a bare `return` or an `or_return` reads it. The `---`
 body marks a foreign declaration.
+
+`convert`, `copy`, and `drop` are contextual only inside `hook(...)`; elsewhere
+they remain identifiers. A semantic hook is legal only as an inherent `impl`
+member and its role determines the fixed signature described in `design.md`.
+The procedure's declaration name remains ordinary metadata and does not select
+the role.
 
 # Statements
 

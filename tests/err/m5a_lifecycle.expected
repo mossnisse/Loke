@@ -3,22 +3,31 @@ L0488
 `drop` has a fixed signature for `R`: `proc(self: inout T)`
 L0487
 @9:2
-`clone` is generated from `try_clone` and cannot be written
+`clone` is a compiler-generated copy operation; bind custom behavior with `hook(copy)`
 L0488
 @15:2
-`try_clone` has a fixed signature for `S`
+`copy` has a fixed signature for `S`: `proc(self, allocator: Allocator) -> (T, Allocator_Error)`
 L0489
-@23:49
-a lifecycle hook takes no written default
+@23:61
+a lifecycle hook takes no written default; the compiler supplies `mem.default_allocator()`
+L0488
+@31:2
+a `move_only` type cannot also declare `hook(copy)`
+L0488
+@40:2
+duplicate `hook(drop)` for `Resource`
 L0491
-@37:25
-disables `try_clone`, so it cannot be cloned into a new allocation
+@46:25
+`Move_Only` is move-only, so it cannot be cloned into a new allocation
+L0412
+@48:2
+`release` implements `hook(drop)` and is not directly accessible; use `drop(value)`
 L0490
-@40:13
+@51:13
 `new` takes an operand and an optional allocator
 L0490
-@41:12
+@52:12
 `default_allocator` takes no arguments
 L0496
-@42:2
+@53:2
 `drop` takes one argument, the variable being cleaned up

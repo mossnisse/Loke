@@ -3,7 +3,7 @@ L0416
 `operator(==)` produces `bool`
 L0391
 @23:14
-`integer_widths` is ambiguous here
+`integer_widths` is ambiguous here: 2 candidates are equally good
 L0408
 @26:7
 `length` is a method and must be called
@@ -15,4 +15,4 @@ L0427
 this type switch over `Value` does not cover bool
 L0410
 @36:7
-`Vec` has no `init` overload to construct it
+a conversion to `Vec` takes exactly one plain value argument

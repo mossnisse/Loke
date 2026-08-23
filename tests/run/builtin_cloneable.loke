@@ -17,8 +17,7 @@ Holder :: struct {
 	count: int,
 }
 
-Movable :: struct { id: int }
-impl Movable { try_clone :: ---; }
+Movable :: move_only struct { id: int }
 
 main :: proc() {
 	// A container clone is independent.
@@ -72,7 +71,7 @@ main :: proc() {
 	fmt.println(1 if free_error == nil else 0);
 	fmt.println(clone(original));
 	fmt.println(clone(holder).text);
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	fmt.println(len(clone(xs, arena.allocator())));
 
 	// Satisfaction follows what a type actually owns.

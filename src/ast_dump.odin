@@ -546,7 +546,11 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Expr_Operator:
-		fmt.sbprintf(b, "(operator %q", node.symbol)
+		if node.hook != .None {
+			fmt.sbprintf(b, "(hook %s", hook_name(node.hook))
+		} else {
+			fmt.sbprintf(b, "(operator %q", node.symbol)
+		}
 		dump_child(b, node.value, depth)
 		fmt.sbprint(b, ")")
 
@@ -622,7 +626,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Type_Record:
-		fmt.sbprint(b, node.kind == .Union ? "(union" : "(struct")
+		fmt.sbprint(b, node.kind == .Union ? "(union" : node.move_only ? "(move-only-struct" : "(struct")
 		dump_attributes(b, node.attributes)
 		dump_generic_params(b, node.generic_params, depth)
 		for clause in node.where_clauses {

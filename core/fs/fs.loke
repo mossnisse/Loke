@@ -63,19 +63,16 @@ Metadata :: struct {
 // a property of the static type, so it has both slots whatever options a
 // particular instance was opened with. Using an unsupported direction returns
 // `Unsupported` at run time.
-File :: struct {
+File :: move_only struct {
 	@(private) handle:    Handle,
 	@(private) access:    Access,
 	@(private) appending: bool,
 }
 
 impl File {
-	// A second owner would close the same handle twice.
-	try_clone :: ---;
-
 	// A best-effort close. It cannot report a failure — `close` is what a caller
 	// uses to observe one.
-	drop :: proc(self: inout File) {
+	release :: hook(drop) proc(self: inout File) {
 		if (self.handle != NO_HANDLE) {
 			close_handle(self.handle);
 			self.handle = NO_HANDLE;
@@ -588,7 +585,7 @@ remove_directory_native :: proc(path: string_view) -> io.Error {
 // The search handle plus the record Windows fills. `pending` is the entry
 // `FindFirstFileW` already produced: the first `next` consumes it rather than
 // advancing, which is what makes the first entry visible at all.
-Directory_Reader :: struct {
+Directory_Reader :: move_only struct {
 	@(private) handle:    Handle,
 	@(private) pending:   bool,
 	@(private) data:      Find_Data,
@@ -599,9 +596,7 @@ Directory_Reader :: struct {
 }
 
 impl Directory_Reader {
-	try_clone :: ---;
-
-	drop :: proc(self: inout Directory_Reader) {
+	release :: hook(drop) proc(self: inout Directory_Reader) {
 		if (self.handle != NO_HANDLE && self.handle != INVALID_HANDLE) {
 			rt_find_close(self.handle);
 			self.handle = NO_HANDLE;

@@ -1128,7 +1128,7 @@ instantiate_record_body :: proc(
 		instance_of = template.symbol,
 		def_scope   = instance.scope,
 	})
-	type := new_type(k.c, Type_Info{kind = kind, name = name_id, symbol = symbol_id})
+	type := new_type(k.c, Type_Info{kind = kind, name = name_id, symbol = symbol_id, move_only = record.move_only})
 	if sym := symbol_of(k.c, symbol_id); sym != nil {
 		sym.type = type
 	}

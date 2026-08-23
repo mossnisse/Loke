@@ -7,18 +7,17 @@ package main; import "core:fmt";
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 }
 
 Pair :: struct { first: Res, second: Res }
 
 global: Res;
 
-Only :: struct { id: int }
+Only :: move_only struct { id: int }
 
 impl Only {
-	try_clone :: ---;
-	drop :: proc(self: inout Only) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Only) { self.id = 0; }
 }
 
 take :: proc(value: move Res) -> int {

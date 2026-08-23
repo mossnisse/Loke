@@ -61,7 +61,7 @@ main :: proc() {
 	fmt.println(low_first != nil);
 
 	// An explicit allocator reaches the decoded string.
-	arena := mem.Arena();
+	arena := mem.Arena.init();
 	scoped, scoped_error := utf16.decode(units[0:3], arena.allocator());
 	fmt.println(scoped_error == nil);
 	fmt.println(scoped);

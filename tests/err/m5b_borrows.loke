@@ -12,7 +12,7 @@ Choice :: union { int, bool }
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 }
 
 // A mutable borrow excludes every competing access, including a read.

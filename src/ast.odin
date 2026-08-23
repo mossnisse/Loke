@@ -462,12 +462,30 @@ Expr_Proc_Group :: struct {
 	names:      []Name,
 }
 
-// `operator(+) proc ...`. The symbol is canonical text because `[]=` and `[:]`
-// are several tokens.
+Hook_Kind :: enum {
+	None,
+	Convert,
+	Copy,
+	Drop,
+}
+
+hook_name :: proc(kind: Hook_Kind) -> string {
+	switch kind {
+	case .Convert: return "convert"
+	case .Copy:    return "copy"
+	case .Drop:    return "drop"
+	case .None:    return ""
+	}
+	return ""
+}
+
+// `operator(+) proc ...` or `hook(convert) proc ...`. The wrapper keeps the
+// ordinary named procedure separate from the semantic role attached to it.
 Expr_Operator :: struct {
 	using base:  Expr_Base,
 	symbol:      string,
 	symbol_span: Span,
+	hook:        Hook_Kind,
 	value:       Expr,
 }
 
@@ -532,6 +550,7 @@ Record_Kind :: enum {
 Type_Record :: struct {
 	using base:     Expr_Base,
 	kind:           Record_Kind,
+	move_only:      bool,
 	generic_params: []Generic_Param,
 	attributes:     []Attribute,
 	where_clauses:  []Expr,
@@ -966,6 +985,16 @@ decl_proc_literal :: proc(d: ^Decl) -> ^Expr_Proc {
 		}
 	}
 	return nil
+}
+
+decl_hook_kind :: proc(d: ^Decl) -> Hook_Kind {
+	if d == nil || d.kind != .Const || len(d.values) != 1 {
+		return .None
+	}
+	if wrapper, ok := d.values[0].(^Expr_Operator); ok {
+		return wrapper.hook
+	}
+	return .None
 }
 
 // Top-level syntax has its own union so `Decl` never becomes a catch-all.

@@ -29,8 +29,8 @@ import graph, and @(public) visibility.
 
 M4a makes user types as capable as built-in ones at concrete types: procedure
 groups and one overload-resolution engine; impl blocks, inherent and extending, with the three
-receiver forms, associated constants and types; init construction, conversion
-and @(implicit) from untyped constants; user operators, indexing, slicing and
+receiver forms, associated constants and types; named construction, explicit
+conversion hooks and @(implicit) from untyped constants; user operators, indexing, slicing and
 delegate on distinct types; and unions with checked extractions, type switches,
 or_else and or_return.
 
@@ -46,7 +46,7 @@ M5a adds managed values: one package/public rule for reflection, field reads and
 writes, offset_of and aggregate construction alike; slices with both
 capabilities, literals, reslicing, bounds and iteration, and one read-only
 materialization per constant a runtime index or slice needs storage for; fixed
-try_clone and drop hooks with generated recursive clones; ownership dataflow that
+copy and drop hooks with generated recursive clones; ownership dataflow that
 drops every managed local exactly once on fallthrough, return, break and
 continue, in one reverse order with defer; move, exchange, manual, static and
 thread_local; Allocator and Allocator_Error with new, new_clone and free over the

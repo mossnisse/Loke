@@ -555,7 +555,7 @@ add :: proc(a: int, $T: type, values: ..T, b: int = 1) -> (ok: bool, int) { }
 extern_call :: proc "c" (a: ^u8) ---;
 group :: proc { add, sub }
 element_set :: operator([]=) proc(a: int) ---;
-disabled :: ---;
+Move_Only :: move_only struct { id: int }
 
 counter: static manual int = 0;
 inferred: thread_local = 1;
@@ -602,8 +602,8 @@ callback: proc(a: int) -> int = a;
   (const names=["element_set"]
     (operator "[]=" (proc (proc-type (param ["a"] (ident "int"))) ---))
   )
-  (const names=["disabled"]
-    (uninit)
+  (const names=["Move_Only"]
+    (move-only-struct (field ["id"] (ident "int")))
   )
   (var names=["counter"] static manual type=(ident "int")
     (int "0")
@@ -1238,7 +1238,7 @@ ownership_worklist_converges_past_sixty_four_back_edges :: proc(t: ^testing.T) {
 	strings.builder_init(&b)
 	fmt.sbprintln(&b, "package main;")
 	fmt.sbprintln(&b, "Box :: struct { value: int }")
-	fmt.sbprintln(&b, "impl Box { drop :: proc(self: inout Box) {} }")
+	fmt.sbprintln(&b, "impl Box { release :: hook(drop) proc(self: inout Box) {} }")
 	fmt.sbprintln(&b, "main :: proc() {")
 	fmt.sbprintln(&b, "x := Box{1};")
 	for _ in 0 ..< 70 {

@@ -3,7 +3,7 @@ package main; import "core:fmt";
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 	consume :: proc(self: move Res) -> int { return self.id; }
 }
 

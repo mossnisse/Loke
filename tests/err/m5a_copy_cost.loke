@@ -20,18 +20,17 @@ Pair :: struct { a: int, b: int }
 Res :: struct { id: int }
 
 impl Res {
-	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
 		return Res{self.id}, nil;
 	}
 
-	drop :: proc(self: inout Res) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Res) { self.id = 0; }
 }
 
-Only :: struct { id: int }
+Only :: move_only struct { id: int }
 
 impl Only {
-	try_clone :: ---;
-	drop :: proc(self: inout Only) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Only) { self.id = 0; }
 }
 
 // A trivial aggregate parameter is a copy site.

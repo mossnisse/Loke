@@ -17,7 +17,7 @@ package mem;
 //   default_allocator  the build-selected default provider
 //
 // `default_allocator` is the same symbol the generated default argument of a
-// lifecycle hook names, so an omitted allocator and a written
+// generated copy operations, so an omitted allocator and a written
 // `mem.default_allocator()` select one provider through one call.
 //
 //   Arena              a local bump region, optionally over a caller's buffer
@@ -27,9 +27,9 @@ package mem;
 // not merely call them: a region created here is one this body may reset without
 // a promise, and one no owner may outlive.
 //
-//   arena := mem.Arena();               // blocks from the default provider
-//   arena := mem.Arena(buffer[:]);      // the caller's storage, no allocation
-//   scratch := mem.Scratch();
+//   arena := mem.Arena.init();               // blocks from the default provider
+//   arena := mem.Arena.from_buffer(buffer[:]); // caller storage, no allocation
+//   scratch := mem.Scratch.init();
 //   xs: [dynamic]int via arena.allocator() = {};
 //   free_all(arena.allocator());        // reusable: the region stays usable
 //

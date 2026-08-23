@@ -4,18 +4,18 @@ package main; import "core:mem"; import "core:fmt";
 // explicitly fallible primitives always return their error and never invoke a
 // failure policy, and `free` returns no status.
 
-Handle :: struct {
+Handle :: move_only struct {
 	id:    int,
 	valid: bool,
 }
 
-impl Handle {
-	// A move-only resource: `try_clone :: ---` disables both copy entry points.
-	try_clone :: ---;
+released: int;
 
-	drop :: proc(self: inout Handle) {
+impl Handle {
+	release :: hook(drop) proc(self: inout Handle) {
 		if (self.valid) {
 			self.valid = false;
+			released += 1;
 		}
 	}
 }
@@ -28,7 +28,7 @@ impl Counter {
 	// The canonical fallible hook, written with the fixed signature. The
 	// allocator default is supplied by the compiler until `core:mem` is nameable
 	// in M6.
-	try_clone :: proc(self, allocator: Allocator) -> (Counter, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Counter, Allocator_Error) {
 		return Counter{self.count + 1}, nil;
 	}
 }
@@ -60,17 +60,17 @@ main :: proc() {
 		free(r);
 	}
 
-	// A custom `try_clone` is an ordinary call returning its error.
+	// The public `try_clone` wrapper returns the copy hook's error.
 	one := Counter{5};
 	two, cerr := one.try_clone(a);
 	if (cerr == nil) {
 		fmt.println(two.count);
 	}
 
-	// A `drop` hook is an ordinary member until step 4 inserts implicit calls.
+	// The implementation hook is hidden behind the public `drop` operation.
 	h := Handle{1, true};
-	h.drop();
-	if (!h.valid) {
+	drop(h);
+	if (released == 1) {
 		fmt.println(1);
 	}
 }

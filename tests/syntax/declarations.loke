@@ -39,7 +39,7 @@ Name :: "loke";
 Computed :: 1 << 4 | 3;
 Alias :: Point;
 Applied :: Table(string, int);
-Disabled :: ---;
+Move_Only :: move_only struct { id: int }
 Empty :: struct { }
 Body :: proc() { }
 Bodiless :: proc() ---;

@@ -7,7 +7,6 @@ import "base:interfaces";
 Meters :: distinct f64;
 
 impl Meters {
-	init :: proc(v: f64) -> Meters { return Meters(v); }
 	add :: operator(+) proc(a, b: Meters) -> Meters { return Meters(f64(a) + f64(b)); }
 	sub :: operator(-) proc(a, b: Meters) -> Meters { return Meters(f64(a) - f64(b)); }
 	mul :: operator(*) proc(a, b: Meters) -> Meters { return Meters(f64(a) * f64(b)); }
@@ -18,22 +17,17 @@ impl Meters {
 
 Opaque :: struct { value: int }
 
-// design.md "Lifecycle hooks and resource types": a record receives its copy
-// hooks by default, an `impl` block may replace `try_clone`, and
-// `try_clone :: ---` removes both entry points.
+// design.md "Lifecycle hooks and resource types": records receive public copy
+// operations by default, while `hook(copy)` replaces their implementation.
 Counted :: struct { n: int }
 
 impl Counted {
-	try_clone :: proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
 		return Counted{self.n}, nil;
 	}
 }
 
-Move_Only :: struct { handle: int }
-
-impl Move_Only {
-	try_clone :: ---;
-}
+Move_Only :: move_only struct { handle: int }
 
 Holds_Move_Only :: struct { inner: Move_Only }
 

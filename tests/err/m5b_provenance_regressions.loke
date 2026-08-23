@@ -61,7 +61,7 @@ second_result_borrow :: proc() {
 Buffer :: struct { id: int }
 
 impl Buffer {
-	drop :: proc(self: inout Buffer) { self.id = 0; }
+	release :: hook(drop) proc(self: inout Buffer) { self.id = 0; }
 }
 
 make_buffer :: proc(value: int, allocator: Allocator) -> Buffer {

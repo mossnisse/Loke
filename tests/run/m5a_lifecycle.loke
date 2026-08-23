@@ -19,14 +19,14 @@ Res :: struct { id: int }
 impl Res {
 	// A non-allocating hook accepts and ignores the allocator, and returns a nil
 	// error.
-	try_clone :: proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
 		return Res{self.id + 100}, nil;
 	}
 
 	// The observable half of cleanup: an implicit drop is a step 4 site, but the
 	// partial-clone cleanup below already has to run this exactly once per part
 	// it managed to build.
-	drop :: proc(self: inout Res) {
+	release :: hook(drop) proc(self: inout Res) {
 		fmt.println(self.id);
 		self.id = 0;
 	}
@@ -35,7 +35,7 @@ impl Res {
 Failing :: struct { id: int }
 
 impl Failing {
-	try_clone :: proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
 		p, err := new(Huge, allocator);
 		if (err != nil) {
 			return Failing{0}, err;

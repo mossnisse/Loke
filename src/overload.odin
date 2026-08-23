@@ -249,7 +249,7 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		// Rank 4 sits below every built-in conversion, so a constant always
 		// prefers a compatible built-in destination.
 		if arg.is_const {
-			overload, applicable := implicit_init_overload(k, arg, param)
+			overload, applicable := implicit_conversion_overload(k, arg, param)
 			if applicable {
 				return RANK_IMPLICIT, overload
 			}
@@ -773,7 +773,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 		slot := cand.slots[index]
 		value := arg.expr
 		if cand.ranks[index] == RANK_IMPLICIT && cand.via[index] == INVALID_SYMBOL {
-			implicit_init_overload(k, arg, sym.params[slot], report = true)
+			implicit_conversion_overload(k, arg, sym.params[slot], report = true)
 			ok = false
 			continue
 		} else if cand.via[index] != INVALID_SYMBOL {

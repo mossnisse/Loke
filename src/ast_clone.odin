@@ -342,7 +342,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 
 	case ^Expr_Operator:
 		n := new_clone(c, Expr_Operator, &v.base)
-		n.symbol, n.symbol_span = v.symbol, v.symbol_span
+		n.symbol, n.symbol_span, n.hook = v.symbol, v.symbol_span, v.hook
 		n.value = clone_expr(c, v.value)
 		return n
 
@@ -409,6 +409,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 	case ^Type_Record:
 		n := new_clone(c, Type_Record, &v.base)
 		n.kind = v.kind
+		n.move_only = v.move_only
 		n.generic_params = clone_generic_params(c, v.generic_params)
 		n.attributes = clone_attributes(c, v.attributes)
 		n.where_clauses = clone_exprs(c, v.where_clauses)

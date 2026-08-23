@@ -13,7 +13,7 @@ package main; import "core:fmt";
 Res :: struct { id: int }
 
 impl Res {
-	drop :: proc(self: inout Res) {
+	release :: hook(drop) proc(self: inout Res) {
 		if (self.id != 0) {
 			fmt.println(self.id);
 		}
@@ -128,11 +128,11 @@ Counted :: struct { id: int }
 impl Counted {
 	// A custom hook makes the copy observable: a clone adds 100, a bitwise copy
 	// would not.
-	try_clone :: proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
 		return Counted{self.id + 100}, nil;
 	}
 
-	drop :: proc(self: inout Counted) {
+	release :: hook(drop) proc(self: inout Counted) {
 		if (self.id != 0) {
 			fmt.println(self.id);
 		}

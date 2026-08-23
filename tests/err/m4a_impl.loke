@@ -5,11 +5,10 @@ Point :: struct { x: int }
 
 impl Complex {
 	@(implicit)
-	from_scalar :: proc(value: f64) -> Complex { return {value, 0}; }
+	from_scalar :: hook(convert) proc(value: f64) -> Complex { return {value, 0}; }
 
-	// An `init` overload has to produce the type it constructs.
+	// `init` is an ordinary member, so this return type has no special meaning.
 	init_wrong :: proc(v: int) -> int { return v; }
-	init :: proc{from_scalar, init_wrong};
 
 	// `^T` keeps the name but is not a receiver.
 	bump :: proc(self: ^Complex) { self.real = self.real + 1.0; }
@@ -19,9 +18,9 @@ impl Complex {
 
 	// `@(implicit)` needs a built-in parameter type.
 	@(implicit)
-	from_point :: proc(p: Point) -> Complex { return {0, 0}; }
+	from_point :: hook(convert) proc(p: Point) -> Complex { return {0, 0}; }
 
-	// A correctly shaped annotated procedure still has to belong to `init`.
+	// `@(implicit)` applies only to conversion hooks, not ordinary procedures.
 	@(implicit)
 	orphan_scalar :: proc(value: i32) -> Complex { return {f64(value), 0}; }
 
@@ -39,6 +38,8 @@ global: Maybe = 3;
 // `self` is only a receiver inside an `impl` or `extend` block.
 loose :: proc(self) -> int { return 1; }
 
+loose_conversion :: hook(convert) proc(value: i32) -> Complex { return {f64(value), 0}; }
+
 CONST :: Complex{1.0, 0.0};
 
 magnitude :: proc(z: Complex) -> f64 { return z.real; }
@@ -49,13 +50,16 @@ main :: proc() {
 	fmt.println(int(magnitude(scale)));
 
 	z := Complex(1.0);
+	// Hook implementations are invoked through conversion syntax, not as methods.
+	direct := Complex.from_scalar(1.0);
+	hook_value := Complex.from_scalar;
 	// No method sugar for a pointer parameter.
 	z.bump();
 	// A mutating receiver needs a mutable place.
 	CONST.grow();
 	// A method must be called.
 	f := z.length;
-	// `Point` has no `init`.
+	// A type conversion takes exactly one argument; construction uses `{}`.
 	p := Point(1, 2);
 	// `Complex` has no member `magnitude`.
 	q := Complex.magnitude;
@@ -66,10 +70,18 @@ Ambiguous :: struct { value: int }
 
 impl Ambiguous {
 	@(implicit)
-	from_i8 :: proc(value: i8) -> Ambiguous { return {int(value)}; }
+	from_i8 :: hook(convert) proc(value: i8) -> Ambiguous { return {int(value)}; }
 	@(implicit)
-	from_i16 :: proc(value: i16) -> Ambiguous { return {int(value)}; }
-	init :: proc{from_i8, from_i16};
+	from_i16 :: hook(convert) proc(value: i16) -> Ambiguous { return {int(value)}; }
+}
+
+Builtin_Wrapped :: distinct i32;
+
+impl Builtin_Wrapped {
+	// The built-in i32 -> distinct conversion is non-overridable.
+	bad_builtin_pair :: hook(convert) proc(value: i32) -> Builtin_Wrapped {
+		return Builtin_Wrapped(value);
+	}
 }
 
 take_ambiguous :: proc(value: Ambiguous) -> int { return value.value; }

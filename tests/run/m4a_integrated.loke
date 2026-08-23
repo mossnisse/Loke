@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// One program using methods, operators, `init` conversion, a union result, and
+// One program using methods, operators, named construction, a union result, and
 // `or_return` together.
 
 Money :: distinct i64;
@@ -18,9 +18,8 @@ Account :: struct {
 }
 
 impl Account {
-	init_open :: proc(balance: Money) -> Account { return {balance, true}; }
-	init_closed :: proc() -> Account { return {Money(0), false}; }
-	init :: proc{init_open, init_closed};
+	open_account :: proc(balance: Money) -> Account { return {balance, true}; }
+	closed :: proc() -> Account { return {Money(0), false}; }
 
 	total :: proc(self) -> Money { return self.balance; }
 
@@ -64,8 +63,8 @@ describe :: proc(err: Error) -> int {
 }
 
 main :: proc() {
-	a := Account(Money(100));
-	b := Account();
+	a := Account.open_account(Money(100));
+	b := Account.closed();
 
 	fmt.println(int(i64(a.total())));
 	fmt.println(1 if b.open else 0);

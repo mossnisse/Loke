@@ -17,7 +17,7 @@ main :: proc() {
 	fmt.println(os.set_environment(name, value) == nil);
 
 	room: [160]u8 = {};
-	arena := mem.Arena(room[:]);
+	arena := mem.Arena.from_buffer(room[:]);
 	_, present, error := os.get_environment(name, arena.allocator());
 	fmt.println(present);
 	fmt.println(io.is(error, .Out_Of_Memory));

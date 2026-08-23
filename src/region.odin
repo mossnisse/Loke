@@ -26,9 +26,9 @@ PROVIDER_CONTROL :: 0
 // Which contributed operation one provider member is.
 Provider_Op :: enum {
 	None,
-	// Provider-backed `mem.Arena(parent)` and `mem.Scratch(parent)`.
+	// Provider-backed `mem.Arena.init(parent)` and `mem.Scratch.init(parent)`.
 	Open,
-	// `mem.Arena(buffer)`, whose storage and control block live in the buffer.
+	// `mem.Arena.from_buffer(buffer)`, whose storage and control block live in the buffer.
 	Open_Fixed,
 	// Fallible package procedures `mem.try_arena(parent)` and
 	// `mem.try_scratch(parent)`.
@@ -88,14 +88,14 @@ ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 	info.contributed += {.Container}
 
 	// design.md "The allocator selects the location of backing storage":
-	// `arena := mem.Arena(buffer[:])` puts a dynamic array's backing storage in
+	// `arena := mem.Arena.from_buffer(buffer[:])` puts a dynamic array's backing storage in
 	// the current stack frame. The buffer is written into, so it is `[]mut u8`.
 	// `mem.Scratch` is always provider-backed.
 	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
 	if type == k.c.arena_type {
 		buffer := slice_of(k.c, TYPE_U8, mutable = true)
 		append(&members, provider_member(
-			k.c, type, "init", .Open_Fixed,
+			k.c, type, "from_buffer", .Open_Fixed,
 			[]Type_Id{buffer}, []Param_Mode{.Value}, []Type_Id{type}, has_receiver = false,
 		))
 	}
