@@ -3,14 +3,11 @@ package main; import "core:fmt";
 Value :: union { bool, i32, f64 }
 Error_Code :: enum { Something_Bad, Something_Worse }
 Error :: union { Error_Code }
-Pointer_Error :: union { ^i32 }
 
 // The natural layout, and the same variants under a written alignment.
 Narrow :: union { bool, i16 }
 Wide_Aligned :: union @(align=8) { bool, i16 }
 Holder :: struct { flag: bool, value: Wide_Aligned }
-
-failure_marker: i32 = 99;
 
 caller_1 :: proc() -> Error { return nil; }
 caller_2 :: proc() -> (int, Error) { return 123, nil; }
@@ -35,17 +32,18 @@ bad :: proc() -> (n: int, err: Error) {
 
 ok_status :: proc() -> (n: int, ok: bool) { return 3, true; }
 
-pointer_status :: proc(fail: bool) -> (int, ^i32) {
-	if (fail) { return 0, &failure_marker; }
+// An `or_else` operand whose status is a union rather than a `bool`.
+fetch :: proc(fail: bool) -> (int, Error) {
+	if (fail) { return 0, Error_Code.Something_Worse; }
 	return 8, nil;
 }
 
-propagate_pointer :: proc(fail: bool) -> (n: int, err: Pointer_Error) {
-	n = 6;
-	x := pointer_status(fail) or_return;
-	n = x;
-	return;
+labelled :: proc(fail: bool) -> (int, string, Error) {
+	if (fail) { return 0, "", Error_Code.Something_Bad; }
+	return 4, "live", nil;
 }
+
+fallback_pair :: proc() -> (int, string) { return -2, "gone"; }
 
 branch_result :: proc(flag: bool) -> (n: int, err: Error) {
 	if (flag) { n = 10; } else { n = 20; }
@@ -114,9 +112,6 @@ main :: proc() {
 	fmt.println(n2);
 	fmt.println(1 if e2 == nil else 0);
 	fmt.println(1 if status_user() else 0);
-	pn, pe := propagate_pointer(true);
-	fmt.println(pn);
-	fmt.println(1 if pe != nil else 0);
 	bn, be := branch_result(false);
 	fmt.println(bn);
 	fmt.println(1 if be == nil else 0);
@@ -124,6 +119,16 @@ main :: proc() {
 	// `or_else` supplies a fallback without evaluating it on success.
 	fmt.println(int(a.(i32) or_else i32(123)));
 	fmt.println(int(a.(f64) or_else 4.0));
+
+	// The same operator over a union status, which it discards.
+	fmt.println(fetch(false) or_else -1);
+	fmt.println(fetch(true) or_else -1);
+	ln, ll := labelled(false) or_else fallback_pair();
+	fmt.println(ln);
+	fmt.println(ll);
+	fn, fl := labelled(true) or_else fallback_pair();
+	fmt.println(fn);
+	fmt.println(fl);
 
 	// `@(align=N)` raises the payload's alignment, which `tests/layout` can only
 	// confirm agrees with LLVM — the values themselves belong here.

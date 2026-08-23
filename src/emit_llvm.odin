@@ -6814,7 +6814,9 @@ emit_checked_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string 
 @(private = "file")
 emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	values := emit_multi_value(e, v.value)
-	ok := values[len(values) - 1]
+	types := expr_base(v.value).result_types
+	status := values[len(values) - 1]
+	status_type := types[len(types) - 1]
 	payloads := values[:len(values) - 1]
 
 	entry := new_label(e, "orelse.entry")
@@ -6823,10 +6825,19 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	branch(e, entry)
 	fmt.sbprintfln(&e.b, "%s:", entry)
 	e.terminated = false
-	branch_if(e, ok, done, fallback_label)
+	// The same status test `or_return` uses, so a `bool` and a union status take
+	// one implementation.
+	failed := emit_status_failed(e, status_type, status)
+	branch_if(e, failed, fallback_label, done)
 
 	fmt.sbprintfln(&e.b, "%s:", fallback_label)
 	e.terminated = false
+	// design.md "or_else expression": the status is discarded, and a failing union
+	// status runs its drop hook before the fallback is evaluated. No drop is
+	// emitted because no status reaching here owns anything: a `bool` is trivial,
+	// and naming a managed union is rejected as L0494 (`type_contains_managed_union`
+	// in check.odin) until tag-aware drop lowering exists. That lowering has to add
+	// the drop here.
 	fallback := emit_multi_value(e, v.fallback)
 	fallback_exit := new_label(e, "orelse.fallback.exit")
 	branch(e, fallback_exit)
@@ -6837,7 +6848,6 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	fmt.sbprintfln(&e.b, "%s:", done)
 	e.terminated = false
 	out := make([]string, len(payloads))
-	types := expr_base(v.value).result_types
 	for index in 0 ..< len(payloads) {
 		joined := temp(e)
 		fmt.sbprintfln(
@@ -6885,23 +6895,20 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	return values[:len(values) - 1]
 }
 
-// The status is successful when it is `true` for `bool`, or `nil` for a
-// nil-comparable type. No other truthiness rules apply.
+// design.md "Status results": the status is successful when it is `true` for
+// `bool` or `nil` for a union, and nothing else is a status. There is therefore
+// no pointer or procedure form to compare against null; the checker has already
+// rejected those.
 @(private = "file")
 emit_status_failed :: proc(e: ^Emitter, status_type: Type_Id, status: string) -> string {
 	out := temp(e)
 	if type_is_union(e.c, status_type) {
 		shape := union_layout(e.c, status_type)
 		tag := emit_union_tag(e, status_type, status)
-		result := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i%d %s, 0", result, shape.tag_bytes * 8, tag)
-		return result
-	}
-	if type_is_boolean(e.c, status_type) {
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, status)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i%d %s, 0", out, shape.tag_bytes * 8, tag)
 		return out
 	}
-	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", out, status)
+	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, status)
 	return out
 }
 

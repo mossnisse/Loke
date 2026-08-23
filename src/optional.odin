@@ -90,23 +90,36 @@ check_checked_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 
 // ---------------------------------------------------------- optional-ok --
 
-// design.md "Optional-ok results": an expression with at least two logical
-// results whose final result is `bool`. A procedure returning only `bool` is a
-// status expression, not an optional-ok one.
-optional_ok_payloads :: proc(k: ^Checker, e: Expr) -> ([]Type_Id, bool) {
+// design.md "Status results": exactly two spellings are admissible, a trailing
+// `bool` that succeeds on `true` or a trailing union that succeeds on `nil`. A
+// pointer, multi-pointer, `rawptr`, slice, map, procedure, `typeid`, view, or
+// `dyn` result compares against `nil` but is not a status, so a procedure
+// returning `(int, ^Node)` returns two ordinary values rather than a value and
+// an error.
+type_is_status :: proc(k: ^Checker, status: Type_Id) -> bool {
+	if type_is_boolean(k.c, status) {
+		return true
+	}
+	return underlying_kind(k.c, status) == .Union
+}
+
+// design.md "Status results": an `or_else` operand is a status expression with
+// at least one payload result. The `bool` case is the optional-ok shape a
+// built-in producer uses; a union status is the error shape. A procedure
+// returning only a status is an `or_return` operand, not an `or_else` one.
+status_payloads :: proc(k: ^Checker, e: Expr) -> ([]Type_Id, bool) {
 	base := expr_base(e)
 	if base == nil || len(base.result_types) < 2 {
 		return nil, false
 	}
-	last := base.result_types[len(base.result_types) - 1]
-	if !type_is_boolean(k.c, last) {
+	if !type_is_status(k, base.result_types[len(base.result_types) - 1]) {
 		return nil, false
 	}
 	return base.result_types[:len(base.result_types) - 1], true
 }
 
 // design.md "or_else expression": the fallback produces exactly the payload
-// results and is evaluated only when `ok` is false.
+// results and is evaluated only when the status is a failure.
 check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 	v.value_category = .Value
 	mark_optional_ok(v.value)
@@ -114,9 +127,14 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	payloads, is_optional := optional_ok_payloads(k, v.value)
-	if !is_optional {
-		errorf(k.c, expr_span(v.value), "L0428", "`or_else` needs an optional-ok expression on its left")
+	payloads, has_payloads := status_payloads(k, v.value)
+	if !has_payloads {
+		errorf(
+			k.c,
+			expr_span(v.value),
+			"L0428",
+			"`or_else` needs a status expression with a payload on its left",
+		)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -195,14 +213,14 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		results = single
 	}
 	status := results[len(results) - 1]
-	// The status is successful when it is `true` for `bool`, or `nil` for a
-	// nil-comparable type. No other truthiness rules apply.
-	if !type_is_boolean(k.c, status) && !status_is_nil_comparable(k, status) {
+	// design.md "Status results": unlike `or_else` this places no lower bound on
+	// the payload results, so an operand that returns only a status is admissible.
+	if !type_is_status(k, status) {
 		errorf(
 			k.c,
 			v.op_span,
 			"L0429",
-			"`or_return` needs a `bool` or nil-comparable final result, found `%s`",
+			"`or_return` needs a `bool` or union final result, found `%s`",
 			type_name(k.c, status),
 		)
 		v.type = INVALID_TYPE
@@ -223,15 +241,6 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		v.type = payloads[0]
 		v.result_types = payloads
 	}
-}
-
-@(private = "file")
-status_is_nil_comparable :: proc(k: ^Checker, status: Type_Id) -> bool {
-	#partial switch underlying_kind(k.c, status) {
-	case .Union, .Pointer, .Raw_Pointer, .Proc:
-		return true
-	}
-	return false
 }
 
 // The enclosing procedure's side of the contract, including the

@@ -46,8 +46,12 @@ main :: proc() {
 	case i32:
 		fmt.println(1);
 	}
-	// `or_else` needs an optional-ok expression on its left.
+	// `or_else` needs a status expression with a payload on its left.
 	b := not_optional() or_else true;
-	// A status has to be `bool` or nil-comparable.
+	// A status has to be a `bool` or a union.
 	c := two_values() or_return;
+	// A pointer compares against `nil` but is not a status.
+	d := find_node() or_return;
 }
+
+find_node :: proc() -> (int, ^int) { return 0, nil; }

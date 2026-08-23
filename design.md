@@ -3103,7 +3103,7 @@ a if c1 else b if c2 else d   // a if c1 else (b if c2 else d)
 x or_else y or_else z         // x or_else (y or_else z)
 ```
 
-The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be an [optional-ok expression](#optional-ok-results), and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
+The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be a [status expression](#status-results) with at least one payload result, and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
 
 The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().(T) or_else c` is `(a.b().(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
 
@@ -4882,11 +4882,33 @@ Unlike that cast, `transmute` needs no addressable operand. It cannot reinterpre
 
 The common absence protocol is a value followed by a `bool` named `ok`: `(T, bool)`, or more generally `(A, B, ..., bool)`. `ok` is `true` when the preceding results are present. Built-in producers return the zero values of those results when `ok` is false; `or_else` and iteration do not observe the failed values. User procedures using this shape should follow the same convention.
 
-An **optional-ok expression** is a built-in producer with that shape, or a call with at least two results whose final result is `bool` — so it always has one or more payload results before the status. A comma-ok destination receives every result; `or_else` consumes the final `bool` and yields the payloads or evaluates its fallback. A procedure returning only `bool` is a status expression (usable by `or_return` or control flow) but not an optional-ok expression, and cannot be the left operand of `or_else`. Single-value behavior is per-producer: a missing map lookup yields zero, while a failed single-value checked extraction panics.
+An **optional-ok expression** is a built-in producer with that shape, or a call with at least two results whose final result is `bool` — so it always has one or more payload results before the status. A comma-ok destination receives every result; `or_else` consumes the final `bool` and yields the payloads or evaluates its fallback. A procedure returning only `bool` is a [status expression](#status-results) (usable by `or_return` or control flow) but not an optional-ok expression, and cannot be the left operand of `or_else`. Single-value behavior is per-producer: a missing map lookup yields zero, while a failed single-value checked extraction panics.
+
+### Status results
+
+A **status result** is a trailing result reporting whether the results before it are valid. Exactly two spellings are admissible:
+
+- a trailing `bool`, successful when `true`;
+- a trailing **union whose zero value is `nil`**, successful when `nil`.
+
+No other truthiness rule applies, and no other type is a status. In particular a pointer, multi-pointer, `rawptr`, slice, map, procedure, `typeid`, `string_view`, `cstring_view`, `any_view`, `dyn Interface`, `shared(T)`, or `weak(T)` result is **not** a status even though it compares against `nil`. A procedure returning `(int, ^Node)` returns two ordinary values, not a value and an error.
+
+[`Allocator_Error`](#allocators) is not a status either. Allocation failure is handled where it happens, with an explicit `err != nil` test and a stated policy, rather than propagated by an operator; wrap it in a union to carry it further.
+
+A **status expression** is an expression whose final result is a status result. Both error-handling operators take one and differ only in arity and in what they do with the status:
+
+| | payload results required | status on failure |
+| --- | --- | --- |
+| [`or_else`](#or_else-expression) | one or more | discarded |
+| [`or_return`](#or_return-operator) | zero or more | propagated to the caller |
+
+An [optional-ok expression](#optional-ok-results) is the `bool`-status case of an `or_else` operand — the shape the built-in producers use.
 
 ### or_else expression
 
-`or_else` is an infix binary operator that supplies fallback values for an [optional-ok expression](#optional-ok-results). If the left operand has logical results `(A, B, ..., bool)`, the fallback expression must produce exactly `(A, B, ...)`, with each value assignable to the corresponding payload type. A single-payload fallback is any ordinary expression. A multiple-payload fallback must be a multiple-result call; Loke has no tuple literal that would provide a second spelling. The fallback is evaluated only when `ok` is false.
+`or_else` is an infix binary operator that supplies fallback values for a [status expression](#status-results) with at least one payload result: every [optional-ok expression](#optional-ok-results), and equally a procedure whose final result is an error union. If the left operand has logical results `(A, B, ..., status)`, the fallback expression must produce exactly `(A, B, ...)`, with each value assignable to the corresponding payload type. A single-payload fallback is any ordinary expression. A multiple-payload fallback must be a multiple-result call; Loke has no tuple literal that would provide a second spelling. The fallback is evaluated only when the status is a failure.
+
+`or_else` **discards** the status on both paths. A failing union status is therefore swallowed rather than propagated, and its drop hook runs before the fallback is evaluated. `or_else` has no form that binds the status to a name; code needing the error value uses `or_return` or an ordinary `if`.
 
 ```odin
 m: map[string]int = {};
@@ -4911,11 +4933,14 @@ i = v.(int) or_else 123;
 assert(i == 123);
 ```
 
-`or_else` works with any optional-ok expression, so it applies equally to a map index, a validating conversion, a checked extraction, and a procedure returning `(T, bool)`:
+`or_else` works with any status expression that has a payload, so it applies equally to a map index, a validating conversion, a checked extraction, a procedure returning `(T, bool)`, and a procedure returning `(T, Error)`:
 
 ```odin
 n := numbers.pop() or_else 0;
 text := string(bytes) or_else "";
+
+// read_file :: proc(path: string, allocator := ...) -> ([]byte, Error)
+data := files.read_file("data.bin") or_else []byte{};
 
 fallback_pair :: proc() -> (int, string) { return 0, ""; }
 number, label := parse_pair(input) or_else fallback_pair();
@@ -4923,7 +4948,7 @@ number, label := parse_pair(input) or_else fallback_pair();
 
 ### or_return operator
 
-`or_return` is an error-propagation operator for an expression whose final result is a status value. The operand is evaluated exactly once. The status is successful when it is `true` for `bool`, or `nil` for a nil-comparable type; no other truthiness rules apply.
+`or_return` is an error-propagation operator for a [status expression](#status-results). Unlike `or_else` it places no lower bound on the payload results, so an operand that returns only a status is admissible. The operand is evaluated exactly once.
 
 On success, `or_return` removes the final status and yields the preceding result values. A single-valued operand therefore yields no value and may only be used as a statement. On failure, control returns from the innermost enclosing procedure:
 

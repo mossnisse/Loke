@@ -24,7 +24,10 @@ L0427
 this type switch over `Value` does not cover bool
 L0428
 @50:7
-`or_else` needs an optional-ok expression on its left
+`or_else` needs a status expression with a payload on its left
 L0429
 @52:20
-`or_return` needs a `bool` or nil-comparable final result, found `int`
+`or_return` needs a `bool` or union final result, found `int`
+L0429
+@54:19
+`or_return` needs a `bool` or union final result, found `^int`
