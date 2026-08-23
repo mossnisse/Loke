@@ -48,7 +48,7 @@ dynamic arrays, and runtime `string` remain absent.
 | Construction and conversion | `init` overload groups, the two-stage `T(...)` resolution order, and `@(implicit)` one-argument conversion from untyped constants |
 | Operators | `operator(sym)` declarations and groups, the `!=` and compound-assignment fallbacks, `operator([])`/`([]=)`/`([:])` with place-position selection, `delegate(...)` on `distinct` types, and the unshadowable built-in rule |
 | Unions | Tagged representation and layout, `@(align=N)`, nil zero value and nil comparison, single-value and comma-ok checked extraction with `v.(T)`, and the type switch |
-| Error protocol | Optional-ok result shape, `or_else`, and `or_return` including its definite-initialization requirement on named results |
+| Error protocol | One status-result definition — a `bool` status, or a union as the nil status — shared by `or_else` and `or_return`; the optional-ok result shape as its `bool` case; and `or_return`'s definite-initialization requirement on named results |
 | Backend | Method and operator symbols, union tag/payload lowering, trapping and comma-ok extractions, type-switch dispatch, `or_else` branches, and `or_return`'s branch through the existing cleanup stack |
 
 ### Deferred to M4b
@@ -170,16 +170,20 @@ the constant-only `init` conversion while `z + runtime_f64` is rejected.
 - Implement `v.(T)` in both phases, the type switch with its multiple-type case
   keeping the union-typed binding, the default case, and exhaustiveness
   reporting for unions.
-- Implement optional-ok recognition, `or_else` with single and multiple payload
-  fallbacks, and `or_return` with its named-result and definite-initialization
-  rules, its ban inside deferred statements, and its cleanup ordering.
+- Implement one status-result test shared by both operators; `or_else` over
+  either status with single and multiple payload fallbacks, discarding the
+  status; and `or_return` with its named-result and definite-initialization
+  rules, its ban inside deferred statements, and its cleanup ordering. The two
+  operators differ only in arity — `or_else` requires a payload, `or_return`
+  does not — so a nil-comparable pointer or slice is a status for neither.
 - Lower union storage, tag tests, trapping and comma-ok extractions, the type
   switch, `or_else` branches, and `or_return`'s branch to the epilogue.
 
 **Exit:** a union round-trips every variant; a failed single-value extraction
 traps while the comma-ok form yields `false` and a zeroed payload; `or_else`
-supplies a fallback without evaluating it on success; an `or_return` chain over
-an `Error` union propagates through named results with `defer` running in order.
+supplies a fallback without evaluating it on success, over a `bool` status and a
+union status alike; and an `or_return` chain over an `Error` union propagates
+through named results with `defer` running in order.
 
 ### 5. Gate, diagnostic, backend, and documentation audit
 
