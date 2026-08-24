@@ -1,0 +1,39 @@
+L0459
+@29:14
+is not a record, so a `foreach` over it binds one name
+L0459
+@30:22
+for a rune ordinal write `.indexed()`, and for a byte offset `.rune_offsets()`
+L0459
+@33:14
+`Point` has 2 fields, so a `foreach` over it binds 1 or 2 names, not 3
+L0457
+@36:15
+the index binding is a counter and cannot be taken by reference
+L0460
+@39:22
+`indexed()` numbers the traversal it wraps, so it comes last and only once
+L0460
+@42:19
+`keys()` is not a traversal of `[3]int`
+L0460
+@43:22
+`reversed()` is not a traversal of `map[int]int`
+L0460
+@44:21
+`reversed()` is not a traversal of `string`
+L0460
+@45:19
+`rune_offsets()` is not a traversal of `[3]int`
+L0460
+@48:2
+an adapter yields values, so it cannot be iterated by reference
+L0456
+@51:21
+is a type, so it is not iterable; write `.values()` for its members
+L0456
+@54:16
+`Plain` is not iterable
+L0454
+@58:16
+has 2 fields, so a static `foreach` over it binds 1 or 2 names, not 3

@@ -56,8 +56,16 @@ Iterator :: interface($Self, $Element: type) {
 Iterable :: interface($Self: type) {
 	Self.Element -> type;
 	Self.Iterator -> type;
-	(value: Self) iter(value) -> Self.Iterator;
+	slot iter: proc(self) -> Self.Iterator;
 	Iterator(Self.Iterator, Self.Element);
+}
+
+// Reverse traversal, which `reversed()` asks for. It yields the same `Element`
+// through the same `Iterator`; a traversal needing another representation is an
+// ordinary adapter value with its own pair.
+Reverse_Iterable :: interface($Self: type) {
+	Iterable(Self);
+	slot iter_reverse: proc(self) -> Self.Iterator;
 }
 
 Sequence :: interface($Self: type) {

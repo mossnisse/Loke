@@ -275,14 +275,14 @@ message := builder.finish(); // moves the buffer into an immutable string when p
 
 #### String iteration
 
-String iteration yields Unicode scalar values (runes) by default; byte iteration is explicit.
+String iteration yields Unicode scalar values (runes) by default; byte iteration is explicit. A string's `Element` is `rune`, so a plain loop binds exactly one name.
 
-**The second loop variable is a byte offset, not a rune counter.** It is the byte index where the yielded code point begins, so it advances by 1–4 per step and the final offset is not `len(x) - 1`. This offset can be fed back into `x.bytes()`, a slice expression, or a low-level API; a rune ordinal cannot.
+**A byte offset comes from `rune_offsets()`, never from a second binding.** The offset is the byte index where the yielded code point begins, so it advances by 1–4 per step and the final offset is not `len(x) - 1`. This offset can be fed back into `x.bytes()`, a slice expression, or a low-level API; a rune ordinal cannot. The two units are therefore separate [adapters](#iteration-adapters) rather than one binding whose meaning depends on the receiver.
 
 ```odin
-// by runes: `offset` is a byte offset into the string
+// by runes with byte offsets: `Element` is `struct{value: rune, offset: int}`
 x := "AÅ✓";
-foreach (codepoint, offset in x) {
+foreach (codepoint, offset in x.rune_offsets()) {
 	fmt.println(offset, codepoint);
 	// 0 A     (1 byte)
 	// 1 Å     (2 bytes)
@@ -291,18 +291,19 @@ foreach (codepoint, offset in x) {
 assert(len(x) == 6);
 
 // by bytes: `index` is an ordinary slice index
-foreach (byte, index in x.bytes()) {
+foreach (byte, index in x.bytes().indexed()) {
 	fmt.println(index, byte);
 }
 ```
 
-Code needing a running rune ordinal counts it itself:
+Code needing a running rune ordinal asks for one; `indexed()` counts the elements it is applied to, which for a string are runes:
 
 ```odin
-ordinal := 0;
-foreach (codepoint, offset in x) {
-	fmt.println(ordinal, offset, codepoint);
-	ordinal += 1;
+foreach (codepoint, ordinal in x.indexed()) {
+	fmt.println(ordinal, codepoint);
+	// 0 A
+	// 1 Å
+	// 2 ✓
 }
 ```
 
@@ -1430,14 +1431,14 @@ case .C:
 
 #### Iterating an enumeration
 
-An enum *type* can be iterated directly, yielding its declared members in declaration order. This supports tasks such as printing every member or populating a library-defined `Enum_Array(Enum, T)`.
+Every enum type has a compiler-provided `values()`, a constant fixed array of its declared members in declaration order. This supports tasks such as printing every member or populating a library-defined `Enum_Array(Enum, T)`.
 
-This is a compiler special case, not the [iteration protocol](#iteration-protocol): that protocol runs over runtime values via `iter(value)`, while a `type` exists only at compile time and has no `impl`. The compiler recognizes an enum type in a `foreach` header and lowers it directly; it is the only type accepted there, so `foreach (x in int)` or `foreach (x in Some_Struct)` is an error.
+`values()` is the only way to iterate an enumeration. A *type* is never accepted in a `foreach` header — `foreach (x in Direction)`, `foreach (x in int)`, and `foreach (x in Some_Struct)` are all errors — so iteration always runs over a value through the ordinary [iteration protocol](#iteration-protocol), and every [adapter](#iteration-adapters) applies to an enum as it does to any other array.
 
 ```odin
 Direction :: enum{North, East, South, West};
 
-foreach (direction, index in Direction) {
+foreach (direction, index in Direction.values().indexed()) {
 	fmt.println(index, direction);
 	// 0 North
 	// 1 East
@@ -1445,6 +1446,8 @@ foreach (direction, index in Direction) {
 	// 3 West
 }
 ```
+
+`values()` is an ordinary constant expression, not a loop form: the array is a compile-time constant of type `[N]Direction`, so it also serves a static `foreach`, a `$` argument, `len`, and indexing. Its constness is what keeps this out of the iteration protocol entirely — there is nothing for the compiler to special-case in a `foreach` header.
 
 ## Procedure and meta types
 
@@ -1998,9 +2001,11 @@ Values are not made callable through operator overloading; a callable object exp
 
 ### Iteration protocol
 
-Iteration uses the standard [`Iterable`](#standard-interface-catalogue) and `Iterator` interfaces. A value is iterable when its type provides associated `Element` and `Iterator` types, `iter(value)` returns that iterator, and the iterator has `next(self: inout Iterator) -> (Element, bool)`. `next` has [optional-ok semantics](#optional-ok-results): a false `bool` ends the loop with the first result unobserved.
+Iteration uses the standard [`Iterable`](#standard-interface-catalogue) and `Iterator` interfaces. A value is iterable when its type provides associated `Element` and `Iterator` types, a `self`-receiver `iter` returning that iterator, and an iterator with `next(self: inout Iterator) -> (Element, bool)`. `next` has [optional-ok semantics](#optional-ok-results): a false `bool` ends the loop with the first result unobserved.
 
-Built-in iterables use the same interface: the compiler contributes associated members, an `iter` overload, and an opaque iterator type for ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps, without exposing the iterator representation. Enum *types* remain the compile-time-only exception described under [Iterating an Enumeration](#iterating-an-enumeration).
+`iter` takes a receiver so that the whole traversal surface — `iter()`, `indexed()`, `reversed()`, `entries()`, `bytes()` — is spelled one way. It stays a [standard customization procedure](#standard-customization-procedures), so the free call `iter(source)` remains available exactly as `len(x)` does for a type that declares `len` with a receiver. A visible [extension block](#methods-and-implementation-blocks) satisfies the requirement inside the package that declares it, which is how a foreign type becomes iterable.
+
+Built-in iterables use the same interface: the compiler contributes associated members, an `iter` method, and an opaque iterator type for ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps, without exposing the iterator representation. An enum *type* is not iterable; its members are a value, [`Enum.values()`](#iterating-an-enumeration).
 
 ```odin
 Countdown :: struct {
@@ -2041,35 +2046,64 @@ The associated `Element` makes a generic loop's element type available without a
 ```odin
 first :: proc(source: $S) -> (S.Element, bool)
 	where interfaces.Iterable(S) {
-	iterator := iter(source);
+	iterator := source.iter();
 	return iterator.next();
 }
 ```
 
-An iterable type has one default `Element`/`Iterator` pair; a type needing another traversal exposes an adapter value with its own pair (byte iteration over text, filtered or enumerated iteration). `iter_reverse` supports reverse iteration. An iterator from a collection borrows that collection, so mutating the collection while iterating is rejected under [Borrows and lifetimes](#borrows-and-lifetimes).
+An iterator from a collection borrows that collection, so mutating the collection while iterating is rejected under [Borrows and lifetimes](#borrows-and-lifetimes).
 
-#### Two-name loops over user types
+#### Element bindings
 
-`next` yields one value per step. In `foreach (value, index in x)` over a user type, `index` is a zero-based `int` counter maintained by the loop, incremented per successful `next` — the same meaning the second name has for built-in arrays and slices.
-
-Two built-in types are exceptions, because their second name carries information a counter could not reconstruct:
-
-- **Maps.** `foreach (key, value in m)` yields two values from the map's iteration; `value` is an element, not a counter. One name binds the value, matching `foreach (&value in m)` and making `map[K]V`'s associated `Element` its value type; the key is reachable only through the two-name form. A map is therefore the one container whose *first* name is not its `Element`.
-- **Strings.** `foreach (codepoint, offset in s)` yields a [byte offset](#string-iteration), which indexes back into the string.
-
-A user type wanting a key/value loop returns a record from `next` and is iterated with one name:
+**A `foreach` binds exactly the `Element` its iterator yields.** One binding names the whole element. Two or more bindings require an `Element` that is a record with exactly that many directly declared fields, every one of them visible at the loop, and bind them positionally in declaration order. The count must match exactly, and promoted members of an embedded record are not flattened — the same rule [positional construction](#struct-literals) follows. Any binding may be `_`.
 
 ```odin
 foreach (entry in table) {
 	fmt.println(entry.key, entry.value);
 }
+
+foreach (key, value in table) {   // `Element` is a two-field record
+	fmt.println(key, value);
+}
 ```
+
+This is the language's only destructuring form. Bindings are flat, do not nest, and do not appear outside a `foreach` header. Value bindings are immutable locals. The element is produced whole even when every binding is `_`; destructuring moves its fields into the bindings without a second copy and disposes of the remainder normally.
+
+No binding is ever a counter, a key, or an offset supplied by the loop itself. An index, a byte offset, or a key is information the *iterable* carries, and reaches the body as a field of the element an adapter yields.
+
+#### Iteration adapters
+
+An iterable type has one default `Element`/`Iterator` pair; another traversal is an adapter value with its own pair. Two adapters are contributed by the compiler to every `Iterable`, built-in or user-declared:
+
+| Adapter | `Element` |
+| --- | --- |
+| `source.indexed()` | `struct{value: Element, index: int}`, zero-based |
+| `source.reversed()` | the source `Element`, in reverse order |
+
+`indexed()` advances its counter only after a successful `next`, so the index counts the elements actually yielded. It numbers whatever traversal precedes it, and is therefore written last and once: `source.reversed().indexed()` numbers the reversed walk from zero. `reversed()` requires the type to satisfy [`Reverse_Iterable`](#standard-interface-catalogue) by supplying `iter_reverse` with a receiver; applying it to a forward-only iterable is a compile-time error rather than a buffering fallback, because an adapter never allocates. `iter_reverse` returns the type's one `Iterator`, so a traversal needing a different iterator representation is an ordinary adapter with its own `Element`/`Iterator` pair instead. Both preserve the provenance of the iterator they wrap: an adapter over a borrow is a borrow, holding the same whole-loop loan the bare iterable would.
+
+**An adapter is a header form.** `indexed()`, `reversed()`, and the container views below are recognized in a `foreach` header, where they choose the traversal the loop performs — `source.indexed()` over a built-in sequence is the same index loop the bare form lowers to, with no iterator object built. Their names are therefore reserved in that position: a `foreach` over `x.values()` is the container view, whatever else `x` may declare. Version 1 does not bind an adapter to a variable or pass one to a procedure; a traversal that must travel is a type of its own with its own `Element`/`Iterator` pair.
+
+Built-in containers contribute further views of storage they already hold. None copies or allocates:
+
+| Adapter | `Element` |
+| --- | --- |
+| `map.entries()` | `struct{key: K, value: V}` — the map's own `Element` |
+| `map.keys()` | `K` |
+| `map.values()` | `V` |
+| `text.runes()` | `rune` — the string's own `Element` |
+| `text.rune_offsets()` | `struct{value: rune, offset: int}` |
+| `text.bytes()` | `u8` |
+
+A `map[K]V`'s `Element` is therefore its entry record, and every container's first binding is its `Element` with no exceptions. A user type wanting a key/value loop needs nothing special: it returns a two-field record from `next`, and `foreach (key, value in table)` destructures it.
 
 #### By-reference iteration
 
 By-reference `foreach` is a built-in-container facility in version 1: mutable fixed arrays, mutable slices, dynamic arrays, and map values support `foreach (&value in collection)`. The `Iterable` protocol has only value-producing `next`; there is no `next_ref` method.
 
 A user collection needing mutable traversal exposes a mutable slice, an indexed `inout` operation, or a method that performs the traversal.
+
+**A place loop is not an element binding.** `foreach (&value, index in sequence)` and `foreach (key, &value in map)` project storage the container already owns; their names are fixed by the container, not read off an `Element` record, and an adapter cannot yield a place. So the place forms keep the loop-supplied `index` and `key` that value loops give up, and this is the one place the two loop shapes read differently. A value loop that wants an index says `sequence.indexed()`; the diagnostic for `foreach (value, index in sequence)` over a non-record element says exactly that.
 
 ### Compiler semantic hooks
 
@@ -2217,8 +2251,8 @@ The standard library recognizes ordinary overloadable procedures for common beha
 | `hash(value, seed: uint) -> uint` | Hashing for maps and sets |
 | `format(value, writer, options)` | Formatting and printing |
 | `compare(left, right)` | Three-way ordering when useful |
-| `iter(value: T) -> T.Iterator` | Forward iteration using the type's associated iterator |
-| `iter_reverse(value)` | Reverse iteration when the type supplies it |
+| `iter(self) -> T.Iterator` | Forward iteration using the type's associated iterator |
+| `iter_reverse(self)` | Reverse iteration when the type supplies it |
 | `clone(value, allocator := mem.default_allocator())` | Explicit ownership-recursive copy |
 | `try_clone(value, allocator := mem.default_allocator())` | Fallible ownership-recursive copy |
 
@@ -2252,6 +2286,8 @@ m := buffer.len();       // also valid: `Ring_Buffer` declared it with `self`
 ```
 
 For built-in containers, `len(x)` and `cap(x)` are free calls (the queries generic code makes on a type parameter, via `(c: T) len(c) -> int`), while mutators such as `x.append(v)` are receiver methods.
+
+`iter` and `iter_reverse` are the two entries the [`Iterable`](#iteration-protocol) requirement states in receiver form, because iteration is a receiver operation like `append` and because every adapter that continues from it — `indexed()`, `entries()`, `bytes()` — is a method. Declaring them still contributes to the overload group, so `iter(x)` also works.
 
 ### Library numeric types
 
@@ -2417,8 +2453,13 @@ Iterator :: interface($Self, $Element: type) {
 Iterable :: interface($Self: type) {
 	Self.Element -> type;
 	Self.Iterator -> type;
-	(value: Self) iter(value) -> Self.Iterator;
+	slot iter: proc(self) -> Self.Iterator;
 	Iterator(Self.Iterator, Self.Element);
+}
+
+Reverse_Iterable :: interface($Self: type) {
+	Iterable(Self);
+	slot iter_reverse: proc(self) -> Self.Iterator;
 }
 
 Sequence :: interface($Self: type) {
@@ -2442,7 +2483,7 @@ Growable_Sequence :: interface($Self: type) {
 
 `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by copyable owning built-ins and records, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
 
-Formatting stays the `format(value, writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its *value* type, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
+Formatting stays the `format(value, writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `struct{key: K, value: V}` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
 
 Built-in satisfaction follows the operations the language already defines:
 
@@ -2451,7 +2492,7 @@ Built-in satisfaction follows the operations the language already defines:
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, `Simd`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`. A `Simd(T, N)` satisfies either interface when all of the listed operations exist for that lane domain;
 - copyable owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, plus recursively copyable owning aggregates, satisfy `Cloneable`;
-- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's value type;
+- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; a map does not, because its order is unspecified, and text does not, because a backward decoder is not part of version 1;
 - fixed arrays, slices, and dynamic arrays satisfy `Sequence`; fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Sequence` when supplied as mutable places; dynamic arrays satisfy `Growable_Sequence`. The standard `Small_Array(T, N)` library type supplies the same associated members and satisfies all three sequence interfaces.
 
 No nominal `implements` list is involved; the catalogue records capability boundaries, not a requirement that every built-in belong to an interface.
@@ -3360,32 +3401,40 @@ foreach (value in some_dynamic_array) {
 }
 
 some_map := map[string]int{"A" = 1, "C" = 9, "B" = 4};
-foreach (value in some_map) {
+foreach (entry in some_map) {
+	fmt.println(entry.key, entry.value);
+}
+```
+
+A type is never accepted in a `foreach` header; an enumeration is iterated through [`Enum.values()`](#iterating-an-enumeration).
+
+Every binding list names the fields of one [`Element`](#element-bindings), so a second binding exists only when the element is a two-field record. An index, a key, or an offset comes from an [adapter](#iteration-adapters):
+
+```odin
+foreach (character, ordinal in some_string.indexed()) {
+	fmt.println(ordinal, character);
+}
+foreach (character, offset in some_string.rune_offsets()) {
+	fmt.println(offset, character);
+}
+foreach (value, index in some_array.indexed()) {
+	fmt.println(index, value);
+}
+foreach (value, index in some_slice.indexed()) {
+	fmt.println(index, value);
+}
+foreach (value, index in some_dynamic_array.indexed()) {
+	fmt.println(index, value);
+}
+foreach (key, value in some_map) {         // the map's element is `{key, value}`
+	fmt.println(key, value);
+}
+foreach (value in some_map.values()) {     // values alone, no entry record
 	fmt.println(value);
 }
 ```
 
-An enum *type* is also accepted in a `foreach` header, as a compiler special case that yields its members; see [Iterating an enumeration](#iterating-an-enumeration).
-
-A second binding receives an index, or a map value:
-
-```odin
-foreach (character, index in some_string) {
-	fmt.println(index, character);
-}
-foreach (value, index in some_array) {
-	fmt.println(index, value);
-}
-foreach (value, index in some_slice) {
-	fmt.println(index, value);
-}
-foreach (value, index in some_dynamic_array) {
-	fmt.println(index, value);
-}
-foreach (key, value in some_map) {
-	fmt.println(key, value);
-}
-```
+`foreach (value, index in some_array)` is an error unless the array's element is a two-field record, in which case it destructures that record. Element bindings are positional and mean nothing else, so a loop over `[dynamic]Point` binds `x` and `y`, not a value and an index.
 
 By default, each iterated value is a copy. Assignment to the copy does not modify the source.
 
@@ -3444,15 +3493,15 @@ runtime loop:
 
 ```odin
 print_record :: proc(value: ^$T) {
-	foreach ($field, $index in fields_of(T)) {
+	foreach ($field, $index in fields_of(T).indexed()) {
 		fmt.println(index, field.name, field.get(value));
 	}
 }
 ```
 
-The iterable must be compile-time known, finite, and produce compile-time values (fixed arrays, evaluator-owned arrays and slices, enum types, ranges, reflection descriptor arrays; not a runtime iterator). The compiler instantiates and type-checks one copy of the body per element, substituting constants for `field` and `index`. The copies run at runtime in iterable order, which is what lets `field.get(value)` have a different static result type in each.
+The iterable must be compile-time known, finite, and produce compile-time values (fixed arrays, evaluator-owned arrays and slices, `Enum.values()`, ranges, reflection descriptor arrays; not a runtime iterator). `indexed()` and `reversed()` over such an iterable are themselves compile-time evaluable, so a static expansion binds elements by the same [element rule](#element-bindings) a runtime loop uses. The compiler instantiates and type-checks one copy of the body per element, substituting constants for `field` and `index`. The copies run at runtime in iterable order, which is what lets `field.get(value)` have a different static result type in each.
 
-Both bindings use `$`; mixing runtime and compile-time bindings in one header is an error. Static bindings are immutable and cannot use `&`. The body is parsed once but checked after substitution, and an empty iterable instantiates no body. Diagnostics inside an expansion must show the element and its source descriptor or index.
+Every binding uses `$`; mixing runtime and compile-time bindings in one header is an error. Static bindings are immutable and cannot use `&`. The body is parsed once but checked after substitution, and an empty iterable instantiates no body. Diagnostics inside an expansion must show the element and its source descriptor or index.
 
 `break` and `continue` cannot target a static expansion. Ordinary runtime loops
 inside its body may use them normally. Static `foreach` is a statement inside a
@@ -3461,15 +3510,21 @@ and does not expose tokens or an abstract syntax tree to compile-time code.
 
 #### Reverse iteration
 
-Reverse traversal is an ordinary iterator adapter rather than control-flow syntax. The core iterator library's `reverse` procedure uses `iter_reverse` when the value provides it:
+Reverse traversal is an ordinary [iterator adapter](#iteration-adapters) rather than control-flow syntax. `reversed()` iterates through the type's `iter_reverse`:
 
 ```odin
 array := [?]int { 10, 20, 30, 40, 50 };
 
-foreach (x in reverse(array)) {
+foreach (x in array.reversed()) {
 	fmt.println(x); // 50 40 30 20 10
 }
+
+foreach (x, i in array.reversed().indexed()) {
+	fmt.println(i, x); // 0 50, 1 40, ...
+}
 ```
+
+Fixed arrays, slices, dynamic arrays, and ranges reverse. A map does not, because its order is unspecified, and neither does a string: walking UTF-8 backwards is `text.to_runes()` and a reversed loop over that.
 
 Loop unrolling is an optimizer decision or a namespaced compiler-extension attribute, with no base-language directive.
 
@@ -4151,7 +4206,7 @@ Prefix a parameter name with `$` to require a compile-time argument. The followi
 ```odin
 make_f32_array :: proc($N: int, $val: f32) -> (res: [N]f32) {
 	res = {};
-	foreach (_, i in res) {
+	foreach (i in 0..<N) {
 		res[i] = val*val;
 	}
 	return;
@@ -4222,7 +4277,7 @@ foo :: proc($N: $I, $T: type) -> (res: [N]T) {
 
 T :: int;
 array := foo(4, T);
-foreach (v, i in array) {
+foreach (v, i in array.indexed()) {
 	assert(v == T(i*i));
 }
 ```
@@ -5995,28 +6050,40 @@ Foo :: struct {
 foos: [dynamic]Foo = {};
 foos.resize(num);
 
-// By-value foreach loop, with implicit indexing
-foreach (v, j in foos) {
+// By-value foreach loop over whole elements
+foreach (v in foos) {
+	fmt.println(v, v.f, v.i);
+}
+
+// `Foo` has exactly two visible fields, so two bindings destructure it
+foreach (f, i in foos) {
+	fmt.println(f, i); // the fields, not a value and an index
+}
+
+// By-value foreach loop, with indexing
+foreach (v, j in foos.indexed()) {
 	fmt.println(j, v, v.f, v.i);
 }
 
 // By-value foreach loop, with explicit indexing
-foreach (_, j in foos) {
+foreach (_, j in foos.indexed()) {
 	foo := foos[j]; // copy
 	fmt.println(j, foo, foo.f, foo.i);
 }
 
 // By-reference foreach loop with explicit indexing
-foreach (_, j in foos) {
+foreach (_, j in foos.indexed()) {
 	foo := &foos[j]; // pointer; writes through `foo` are visible outside this scope
 	fmt.println(j, foo, foo.f, foo.i);
 }
 
-// By-reference foreach loop through a pointer
+// By-reference foreach loop through a pointer: a place loop, so `j` is the index
 foreach (&v, j in foos) {
 	fmt.println(j, v, v.f, v.i);
 }
 ```
+
+The second and third loops are the reason a value binding never means an index: `foos.indexed()` says which traversal is wanted, while `foreach (f, i in foos)` says which fields are wanted.
 
 #### defer if
 
@@ -6093,7 +6160,7 @@ Several types, interfaces, and a few core procedures are used in normative text 
 | `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `len(builder)` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> (string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
 | `C_String` | [C string views](#c-string-views) | `core:cstrings`. Owned zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. It does not promise UTF-8, and its constructor rejects an interior zero, so the view it hands out is never shorter than the data it owns. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |
-| `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |
+| `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Reverse_Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |
 | `Little_Endian(T)`, `Big_Endian(T)` | [basic types](#basic-types) | Distinct storage wrappers supplied by binary-format libraries. |
 | `meta.Field`, `meta.Enum_Value` | [compile-time reflection](#compile-time-reflection) | Opaque compile-time-only descriptors exported through `base:meta` and constructed only by compiler reflection built-ins. |
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | [allocators](#allocators), fallible operations | `core:mem` / `base:runtime`. The final build selects the provider behind `mem.default_allocator()`. |

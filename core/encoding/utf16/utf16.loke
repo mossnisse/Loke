@@ -96,7 +96,7 @@ decode :: proc(
 // The units up to the first zero, which is what a wide API returning a
 // terminated buffer gives.
 length_of :: proc(units: []u16) -> int {
-	foreach (unit, index in units) {
+	foreach (unit, index in units.indexed()) {
 		if (unit == 0) { return index; }
 	}
 	return len(units);

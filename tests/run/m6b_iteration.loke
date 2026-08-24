@@ -2,8 +2,8 @@ package main; import "core:fmt";
 
 // Container iteration (m6b-plan step 4, first half).
 //
-// design.md: a dynamic array iterates value-and-index like a slice; a map is the
-// two-name exception — the first of two names is the key, not a counter — and
+// design.md: a dynamic array's value traversal yields its Element, while
+// `indexed()` carries an index. A map's Element is its key/value entry and
 // "**Iteration order is unspecified.**" So nothing here prints a map in table
 // order; every map result is order-independent.
 //
@@ -18,7 +18,7 @@ main :: proc() {
 	fmt.println(total);
 
 	weighted := 0;
-	foreach (v, i in xs) { weighted += v * i; }
+	foreach (v, i in xs.indexed()) { weighted += v * i; }
 	fmt.println(weighted);
 
 	// `&value` names the element in place.
@@ -33,12 +33,12 @@ main :: proc() {
 	fmt.println(some_map["C"]);
 	fmt.println(some_map["B"]);
 
-	// One name binds the value.
+	// `values()` is the value-only traversal.
 	sum := 0;
-	foreach (v in some_map) { sum += v; }
+	foreach (v in some_map.values()) { sum += v; }
 	fmt.println(sum);
 
-	// Two names bind key and value; a managed key is borrowed, not copied.
+	// Two names destructure the `{key, value}` entry; a managed key is borrowed.
 	measured := 0;
 	foreach (k, v in some_map) { measured += len(k) * v; }
 	fmt.println(measured);

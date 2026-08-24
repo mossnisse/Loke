@@ -28,9 +28,11 @@ RANGE_CLOSED :: 2
 ITER_RANGE_CURRENT :: 0
 ITER_RANGE_HIGH :: 1
 ITER_RANGE_CLOSED :: 2
+ITER_RANGE_REVERSED :: 3
 
 ITER_ARRAY_DATA :: 0
 ITER_ARRAY_INDEX :: 1
+ITER_ARRAY_REVERSED :: 2
 
 ITER_MAP_TABLE :: 0
 ITER_MAP_CURSOR :: 1
@@ -41,8 +43,10 @@ ITER_MAP_CURSOR :: 1
 Synth_Kind :: enum {
 	None,
 	Range_Iter,
+	Range_Iter_Reverse,
 	Range_Next,
 	Array_Iter,
+	Array_Iter_Reverse,
 	Array_Next,
 	// A slice iterates through the same `{ data, index }` shape as an array; only
 	// the bound differs, because a slice carries its length rather than having it
@@ -54,6 +58,7 @@ Synth_Kind :: enum {
 	// an iterator is a borrow, and a managed field in it would be followed by a
 	// drop that has no business running.
 	Dynamic_Iter,
+	Dynamic_Iter_Reverse,
 	// design.md "Maps": `{ table, cursor }`, walked by the runtime's slot scan.
 	Map_Iter,
 	Map_Next,
@@ -93,6 +98,78 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return type
 }
 
+// ------------------------------------------------------- element records --
+
+// The two-field records a loop can bind whole or destructure. They are ordinary
+// public-field structs built the way `Range(T)` is, so `entry.key` and a
+// two-name header are the same element seen two ways (design.md "Element
+// bindings").
+
+ELEMENT_FIRST :: 0
+ELEMENT_SECOND :: 1
+
+// A map's `Element`: `struct{key: K, value: V}` (design.md "Iteration adapters").
+map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
+	if existing, found := c.entry_types[subject]; found {
+		return existing
+	}
+	info := type_of(c, subject)
+	key, value := info.key, info.element
+	type := element_record(
+		c,
+		fmt.aprintf("Map_Entry(%s)", type_name(c, subject), allocator = c.semantic_allocator),
+		fmt.aprintf("Map_Entry.%s", llvm_safe(type_name(c, subject)), allocator = c.semantic_allocator),
+		"key", key, "value", value,
+	)
+	c.entry_types[subject] = type
+	return type
+}
+
+// `indexed()`'s `Element`: `struct{value: E, index: int}`.
+indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+	if existing, found := c.indexed_types[element]; found {
+		return existing
+	}
+	type := element_record(
+		c,
+		fmt.aprintf("Indexed(%s)", type_name(c, element), allocator = c.semantic_allocator),
+		fmt.aprintf("Indexed.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator),
+		"value", element, "index", TYPE_INT,
+	)
+	c.indexed_types[element] = type
+	return type
+}
+
+// `rune_offsets()`'s `Element`: `struct{value: rune, offset: int}`. The offset is
+// the byte index the code point begins at, which is why it is a separate adapter
+// from `indexed()`'s rune ordinal (design.md "String iteration").
+rune_offset_type :: proc(c: ^Compiler) -> Type_Id {
+	if c.rune_offset_type != INVALID_TYPE {
+		return c.rune_offset_type
+	}
+	type := element_record(c, "Rune_Offset", "Rune_Offset", "value", TYPE_RUNE, "offset", TYPE_INT)
+	c.rune_offset_type = type
+	return type
+}
+
+@(private = "file")
+element_record :: proc(
+	c: ^Compiler,
+	name, mangled: string,
+	first_name: string, first: Type_Id,
+	second_name: string, second: Type_Id,
+) -> Type_Id {
+	type := new_type(c, Type_Info{kind = .Struct, name = intern_identifier(c, name)})
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[ELEMENT_FIRST] = new_field(c, first_name, first, ELEMENT_FIRST, public = true)
+	fields[ELEMENT_SECOND] = new_field(c, second_name, second, ELEMENT_SECOND, public = true)
+	if info := type_of(c, type); info != nil {
+		info.fields = fields
+		info.mangled = mangled
+	}
+	return type
+}
+
 // ------------------------------------------------------- iterator types --
 
 @(private = "file")
@@ -103,10 +180,11 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 	element := type_of(c, range).element
 	name := intern_identifier(c, fmt.aprintf("Range_Iterator(%s)", type_name(c, element), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
-	fields := make([]Symbol_Id, 3, c.semantic_allocator)
+	fields := make([]Symbol_Id, 4, c.semantic_allocator)
 	fields[ITER_RANGE_CURRENT] = new_field(c, "current", element, ITER_RANGE_CURRENT, public = true)
 	fields[ITER_RANGE_HIGH] = new_field(c, "high", element, ITER_RANGE_HIGH, public = true)
 	fields[ITER_RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, ITER_RANGE_CLOSED, public = true)
+	fields[ITER_RANGE_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_RANGE_REVERSED, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		info.mangled = fmt.aprintf("Range_Iterator.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator)
@@ -128,9 +206,10 @@ array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE)
 	element := type_of(c, array).element
 	name := intern_identifier(c, fmt.aprintf("Array_Iterator(%s)", type_name(c, array), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields := make([]Symbol_Id, 3, c.semantic_allocator)
 	fields[ITER_ARRAY_DATA] = new_field(c, "data", stored, ITER_ARRAY_DATA, public = true)
 	fields[ITER_ARRAY_INDEX] = new_field(c, "index", TYPE_INT, ITER_ARRAY_INDEX, public = true)
+	fields[ITER_ARRAY_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_ARRAY_REVERSED, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		info.mangled = fmt.aprintf("Array_Iterator.%s", llvm_safe(type_name(c, array)), allocator = c.semantic_allocator)
@@ -147,7 +226,7 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	if existing, found := c.iterator_types[subject]; found {
 		return existing
 	}
-	element := type_of(c, subject).element
+	element := map_entry_type(c, subject)
 	name := intern_identifier(c, fmt.aprintf("Map_Iterator(%s)", type_name(c, subject), allocator = c.semantic_allocator))
 	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
@@ -180,44 +259,62 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	iterator := INVALID_TYPE
 	element := INVALID_TYPE
 	iter_kind := Synth_Kind.None
+	reverse_kind := Synth_Kind.None
 	next_kind := Synth_Kind.None
 	switch {
 	case info.is_range:
 		element = info.element
 		iterator = range_iterator_type(k.c, under)
-		iter_kind, next_kind = .Range_Iter, .Range_Next
+		iter_kind, reverse_kind, next_kind = .Range_Iter, .Range_Iter_Reverse, .Range_Next
 	case info.kind == .Array:
 		element = info.element
 		iterator = array_iterator_type(k.c, under)
-		iter_kind, next_kind = .Array_Iter, .Array_Next
+		iter_kind, reverse_kind, next_kind = .Array_Iter, .Array_Iter_Reverse, .Array_Next
 	case info.kind == .Slice:
 		// The iterator holds the slice by value, so `iter` is the array one
 		// verbatim: `{ data, 0 }`. Only `next`'s bound is different.
 		element = info.element
 		iterator = array_iterator_type(k.c, under)
-		iter_kind, next_kind = .Array_Iter, .Slice_Next
+		iter_kind, reverse_kind, next_kind = .Array_Iter, .Array_Iter_Reverse, .Slice_Next
 	case info.kind == .Dynamic_Array:
 		// design.md "Dynamic arrays": iteration views the current allocation and
 		// stops at the length. That is exactly a slice, so the protocol members are
 		// the slice ones with a different `iter`.
 		element = info.element
 		iterator = array_iterator_type(k.c, under, slice_of(k.c, info.element, mutable = false))
-		iter_kind, next_kind = .Dynamic_Iter, .Slice_Next
+		iter_kind, reverse_kind, next_kind = .Dynamic_Iter, .Dynamic_Iter_Reverse, .Slice_Next
 	case info.kind == .Map:
-		// design.md "Maps": one name binds the value, so the protocol's single
-		// `Element` is the value type. The key is reachable only through the
-		// two-name loop form, which is direct iteration rather than the protocol.
-		element = info.element
+		// design.md "Iteration adapters": a map's `Element` is its `{key, value}`
+		// entry, so a one-name loop binds the whole entry and a two-name loop
+		// destructures it. `values()` and `keys()` name the other two traversals.
+		element = map_entry_type(k.c, under)
 		iterator = map_iterator_type(k.c, under)
 		iter_kind, next_kind = .Map_Iter, .Map_Next
 	case:
 		return
 	}
 
-	members := make([]Symbol_Id, 3, k.c.semantic_allocator)
+	member_count := reverse_kind == .None ? 3 : 4
+	members := make([]Symbol_Id, member_count, k.c.semantic_allocator)
 	members[0] = new_associated_type(k.c, "Element", element, under)
 	members[1] = new_associated_type(k.c, "Iterator", iterator, under)
+	// design.md "Iteration protocol": `iter` takes a receiver, so `source.iter()`
+	// is the protocol spelling and the free `iter(source)` overload still finds it.
 	members[2] = synth_proc(k.c, "iter", iter_kind, under, []Type_Id{under}, []Param_Mode{.Value}, []Type_Id{iterator})
+	if sym := symbol_of(k.c, members[2]); sym != nil {
+		sym.has_receiver = true
+		sym.receiver = .Value
+	}
+	if reverse_kind != .None {
+		members[3] = synth_proc(
+			k.c, "iter_reverse", reverse_kind, under,
+			[]Type_Id{under}, []Param_Mode{.Value}, []Type_Id{iterator},
+		)
+		if sym := symbol_of(k.c, members[3]); sym != nil {
+			sym.has_receiver = true
+			sym.receiver = .Value
+		}
+	}
 	add_members(k.c, under, members)
 
 	// `next(self: inout Iterator) -> (Element, bool)` — the optional-ok shape the
@@ -363,15 +460,11 @@ iteration_proc_matches :: proc(
 	return true
 }
 
-// One named member of an iterable, looked up without the extension table: the
-// protocol is inherent.
+// One named protocol member, using the declaration's frozen lookup package.
+// This admits an inherent member or an extension visible where the loop/free
+// `iter` call is defined, without consulting an instantiating caller's methods.
 iteration_member :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
-	ensure_iteration_members(k, type)
-	info := underlying_info(k.c, type)
-	if info == nil {
-		return INVALID_SYMBOL
-	}
-	return member_named_in(k.c, info.members, intern_identifier(k.c, name))
+	return find_member(k, type, intern_identifier(k.c, name))
 }
 
 // The associated type a member names, or INVALID_TYPE.
@@ -398,9 +491,84 @@ associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id 
 
 // -------------------------------------------------------- runtime foreach --
 
+// design.md "Iteration adapters": the names a `foreach` header recognizes as an
+// alternative traversal of its iterable. They are the compiler-contributed
+// surface, so inside a header they always mean the adapter.
+@(private = "file")
+foreach_adapter_named :: proc(name: string) -> (Foreach_Adapter, bool) {
+	switch name {
+	case "indexed":
+		return .None, true
+	case "reversed":
+		return .Reversed, false
+	case "entries":
+		return .Entries, false
+	case "keys":
+		return .Keys, false
+	case "values":
+		return .Values, false
+	case "runes":
+		return .Runes, false
+	case "rune_offsets":
+		return .Rune_Offsets, false
+	}
+	return .None, false
+}
+
+// Rewrites `source.adapter()` in the header to `source`, recording which
+// traversal was asked for. The adapter selects the lowering; it never builds an
+// iterator object of its own. Adapters compose, so this peels a chain: one
+// traversal, with `indexed()` numbering it from the outside.
+peel_foreach_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> (Foreach_Adapter, Name) {
+	adapter := Foreach_Adapter.None
+	reported: Name
+	for {
+		call, is_call := s.iterable.(^Expr_Call)
+		if !is_call || len(call.args) != 0 {
+			break
+		}
+		selector, is_selector := call.callee.(^Expr_Selector)
+		if !is_selector || selector.operand == nil {
+			break
+		}
+		peeled, is_indexed := foreach_adapter_named(selector.name.text)
+		if peeled == .None && !is_indexed {
+			break
+		}
+		// `Enum.values()` is the members array, not a map's value view: it is an
+		// ordinary constant expression and the loop iterates its result.
+		if peeled == .Values && type_is_enum(k.c, resolve_type_syntax(k, selector.operand)) {
+			break
+		}
+		// A rejected chain is still consumed, so the header reports once rather
+		// than failing again on the leftover call.
+		if is_indexed {
+			if s.indexed || adapter != .None {
+				errorf(
+					k.c, selector.name.span, "L0460",
+					"`indexed()` numbers the traversal it wraps, so it comes last and only once",
+				)
+			}
+			s.indexed = true
+		} else {
+			if adapter != .None {
+				errorf(
+					k.c, selector.name.span, "L0460",
+					"a `foreach` takes one traversal, and `%s()` is a second one",
+					selector.name.text,
+				)
+			}
+			adapter = peeled
+		}
+		reported = selector.name
+		s.iterable = selector.operand
+	}
+	return adapter, reported
+}
+
 check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
-	if len(s.bindings) == 0 || len(s.bindings) > 2 {
-		errorf(k.c, s.span, "L0456", "a `foreach` binds one or two names")
+	if len(s.bindings) == 0 {
+		errorf(k.c, s.span, "L0456", "a `foreach` binds at least one name")
 		return FLOWS
 	}
 
@@ -408,10 +576,25 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
+	adapter, adapter_name := peel_foreach_adapter(k, s)
+	s.adapter = adapter
+
 	// A written range keeps its endpoints: the direct lowering never builds a
 	// `Range(T)` value for it.
 	if written, is_range := s.iterable.(^Expr_Range); is_range {
-		return check_range_foreach(k, s, written)
+		return check_range_foreach(k, s, written, adapter_name)
+	}
+
+	// design.md: a *type* is never an iterable, so an enum name in the header is
+	// the members array with its `.values()` left off.
+	if named := resolve_type_syntax(k, s.iterable); named != INVALID_TYPE {
+		errorf(
+			k.c, expr_span(s.iterable), "L0456",
+			"`%s` is a type, so it is not iterable%s",
+			type_name(k.c, named),
+			type_is_enum(k.c, named) ? "; write `.values()` for its members" : "",
+		)
+		return FLOWS
 	}
 
 	subject := check_single_expr(k, s.iterable)
@@ -427,37 +610,109 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	switch {
 	case info.kind == .Array:
 		s.kind = .Array
-		s.element_type = info.element
 		s.count = info.count
 	case info.kind == .Slice:
 		s.kind = .Slice
-		s.element_type = info.element
 	case info.kind == .Dynamic_Array:
 		s.kind = .Dynamic
-		s.element_type = info.element
 	case info.kind == .Map:
-		// Map values can be iterated by-reference, but map keys are immutable and
-		// cannot be (design.md). One name binds the value; two bind the key and the
-		// value, which is the exception to "value, index".
 		s.kind = .Map
-		s.element_type = info.element
-		s.key_type = info.key
 	case info.kind == .String || info.kind == .String_View:
 		// String iteration yields Unicode scalar values by default; byte iteration
-		// is explicit (design.md) — `foreach (b, i in text.bytes())`.
+		// is explicit (design.md) — `foreach (b, i in text.bytes().indexed())`.
 		s.kind = .Text
-		s.element_type = TYPE_RUNE
 	case info.is_range:
 		s.kind = .Stored_Range
-		s.element_type = info.element
 	case:
 		return check_protocol_foreach(k, s, subject)
 	}
 
-	// The index binding is a counter (design.md). A map is the exception — its
-	// second name is the *value*, and that is the one a `&` may take.
-	if len(s.bindings) == 2 && s.bindings[1].is_ref && s.kind != .Map {
-		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
+	if !check_adapter_applies(k, s, subject, adapter_name) {
+		return FLOWS
+	}
+	if foreach_is_place_loop(s) {
+		return check_place_foreach(k, s, subject, info)
+	}
+	s.element_type = foreach_element_type(k, s, under, info)
+	return check_foreach_body(k, s)
+}
+
+// design.md "By-reference iteration": a `&` anywhere in the header makes this a
+// place loop, which projects the container's own storage instead of binding an
+// `Element`. Classified before the binding semantics are checked, because the
+// two shapes read their names differently.
+foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
+	for binding in s.bindings {
+		if binding.is_ref {
+			return true
+		}
+	}
+	return false
+}
+
+// The `Element` this loop yields, after the header's adapter.
+@(private = "file")
+foreach_element_type :: proc(k: ^Checker, s: ^Stmt_Foreach, under: Type_Id, info: ^Type_Info) -> Type_Id {
+	yielded := s.kind == .Text ? TYPE_RUNE : info.element
+	traversed := yielded
+	#partial switch s.adapter {
+	case .Rune_Offsets:
+		traversed = rune_offset_type(k.c)
+	case .Keys:
+		traversed = info.key
+	case .Values:
+		traversed = info.element
+	case:
+		if s.kind == .Map {
+			traversed = map_entry_type(k.c, under)
+		}
+	}
+	// `indexed()` numbers whatever traversal precedes it, so it wraps last.
+	return s.indexed ? indexed_element_type(k.c, traversed) : traversed
+}
+
+// design.md "Iteration adapters": `indexed()` and `reversed()` are contributed to
+// every iterable, and the rest are views of one container's own storage.
+@(private = "file")
+check_adapter_applies :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, name: Name) -> bool {
+	ok := false
+	#partial switch s.adapter {
+	case .None:
+		return true
+	case .Reversed:
+		// A map's order is unspecified, and walking UTF-8 backwards needs a decoder
+		// the version 1 runtime does not have.
+		ok = s.kind == .Array || s.kind == .Slice || s.kind == .Dynamic ||
+		     s.kind == .Range || s.kind == .Stored_Range
+	case .Entries, .Keys, .Values:
+		ok = s.kind == .Map
+	case .Runes, .Rune_Offsets:
+		ok = s.kind == .Text
+	}
+	if !ok {
+		errorf(
+			k.c, name.span, "L0460",
+			"`%s()` is not a traversal of `%s`",
+			name.text, type_name(k.c, subject),
+		)
+	}
+	return ok
+}
+
+// design.md "By-reference iteration": the built-in place forms, unchanged. Their
+// names are fixed by the container — a value and an index, or a key and a value —
+// rather than read off an `Element` record.
+@(private = "file")
+check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, info: ^Type_Info) -> Flow_Info {
+	if s.adapter != .None || s.indexed {
+		errorf(
+			k.c, s.span, "L0460",
+			"an adapter yields values, so it cannot be iterated by reference; drop the `&`",
+		)
+		return FLOWS
+	}
+	if len(s.bindings) > 2 {
+		errorf(k.c, s.bindings[2].name.span, "L0459", "a by-reference `foreach` binds one or two names")
 		return FLOWS
 	}
 	if s.kind == .Map {
@@ -472,17 +727,47 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 			return FLOWS
 		}
 		value_binding := len(s.bindings) == 2 ? 1 : 0
-		if s.bindings[value_binding].is_ref && !expr_base(s.iterable).assignable {
+		if !s.bindings[value_binding].is_ref {
+			errorf(
+				k.c, s.bindings[value_binding].name.span, "L0459",
+				"a by-reference `foreach` over a map binds `&value`, or `key, &value`",
+			)
+			return FLOWS
+		}
+		if !expr_base(s.iterable).assignable {
 			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
 			return FLOWS
 		}
-		return check_map_foreach_body(k, s)
+		s.element_type = info.element
+		if !gate_type(k, info.key, expr_span(s.iterable)) ||
+		   !gate_type(k, s.element_type, expr_span(s.iterable)) {
+			return FLOWS
+		}
+		if key_binding >= 0 {
+			// An immutable key binding is a *borrow* of the stored key rather than a
+			// copy — which is what lets `map[string]V` be iterated at all, and why no
+			// per-iteration clone or drop is needed for it. The loop's whole-container
+			// loan is what keeps that borrow valid across the back-edge.
+			s.bindings[key_binding].symbol = bind_loop_name(k, s.bindings[key_binding], info.key, false)
+		}
+		s.bindings[value_binding].symbol = bind_loop_name(k, s.bindings[value_binding], s.element_type, true)
+		return check_foreach_block(k, s)
 	}
-	// Element assignment and iteration by reference require `[]mut T` (design.md
-	// "Slices"). The capability is the slice's own, not whether the variable
-	// holding it can be rebound.
-	if s.kind == .Slice {
-		if s.bindings[0].is_ref && !info.mutable {
+	// The index binding is the loop's own counter, so it is never a place.
+	if len(s.bindings) == 2 && s.bindings[1].is_ref {
+		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
+		return FLOWS
+	}
+	if !s.bindings[0].is_ref {
+		errorf(k.c, s.bindings[0].name.span, "L0459", "a by-reference `foreach` binds `&value`, or `&value, index`")
+		return FLOWS
+	}
+	switch s.kind {
+	case .Slice:
+		// Element assignment and iteration by reference require `[]mut T` (design.md
+		// "Slices"). The capability is the slice's own, not whether the variable
+		// holding it can be rebound.
+		if !info.mutable {
 			errorf(
 				k.c,
 				s.bindings[0].name.span,
@@ -493,81 +778,68 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 			)
 			return FLOWS
 		}
-	} else if s.kind != .Text && s.bindings[0].is_ref && !expr_base(s.iterable).assignable {
-		report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
-		return FLOWS
-	}
-	if s.kind == .Stored_Range && s.bindings[0].is_ref {
+	case .Range, .Stored_Range:
 		errorf(k.c, s.bindings[0].name.span, "L0457", "a range produces values, so it cannot be iterated by reference")
 		return FLOWS
-	}
-	if s.kind == .Text && s.bindings[0].is_ref {
+	case .Text:
 		errorf(
 			k.c, s.bindings[0].name.span, "L0564",
 			"a string yields decoded code points, so it cannot be iterated by reference",
 		)
 		return FLOWS
-	}
-	return check_foreach_body(k, s, s.element_type)
-}
-
-// design.md's example is `foreach (key, &value in some_map)`. The first of two
-// names is the key, not a counter, so the ordinary body binder cannot be reused
-// as is.
-@(private = "file")
-check_map_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
-	if len(s.bindings) == 1 {
-		return check_foreach_body(k, s, s.element_type)
-	}
-	if !gate_type(k, s.key_type, expr_span(s.iterable)) ||
-	   !gate_type(k, s.element_type, expr_span(s.iterable)) {
+	case .Array, .Dynamic:
+		if !expr_base(s.iterable).assignable {
+			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
+			return FLOWS
+		}
+	case .Unresolved, .Static, .Map, .Protocol:
 		return FLOWS
 	}
-	// Map values can be iterated by-reference, but map keys are immutable and
-	// cannot be (design.md). An immutable key binding is therefore a
-	// *borrow* of the stored key rather than a copy — which is what lets
-	// `map[string]V` be iterated at all, and why no per-iteration clone or drop
-	// is needed for it. The loop's whole-container loan is what keeps that
-	// borrow valid across the back-edge.
-	if !s.bindings[1].is_ref && type_is_managed(k.c, s.element_type) {
-		errorf(
-			k.c, s.bindings[1].name.span, "L0504",
-			"a by-value `foreach` over `%s` copies a managed value, which M5a does not clean up per iteration; write `&%s`",
-			type_name(k.c, s.element_type),
-			s.bindings[1].name.text,
-		)
+	s.element_type = info.element
+	if !gate_type(k, s.element_type, expr_span(s.iterable)) {
 		return FLOWS
 	}
-	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], s.key_type, false)
-	s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], s.element_type, s.bindings[1].is_ref)
-
-	incoming := clone_result_assignments(k.c, k.assigned_results)
-	k.loop_depth += 1
-	body := check_scoped_block(k, s.body)
-	k.loop_depth -= 1
-	k.assigned_results = incoming
-	return Flow_Info{can_fall_through = true, returns = body.returns}
+	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], s.element_type, true)
+	if len(s.bindings) == 2 {
+		s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], TYPE_INT, false)
+	}
+	return check_foreach_block(k, s)
 }
 
 @(private = "file")
-check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range) -> Flow_Info {
+check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range, adapter_name: Name) -> Flow_Info {
 	element := check_single_expr(k, written)
 	if element == INVALID_TYPE {
+		return FLOWS
+	}
+	s.kind = .Range
+	if !check_adapter_applies(k, s, element, adapter_name) {
 		return FLOWS
 	}
 	if s.bindings[0].is_ref {
 		errorf(k.c, s.bindings[0].name.span, "L0457", "a range produces values, so it cannot be iterated by reference")
 		return FLOWS
 	}
-	s.kind = .Range
-	s.element_type = underlying_info(k.c, element).element
-	return check_foreach_body(k, s, s.element_type)
+	endpoint := underlying_info(k.c, element).element
+	s.element_type = s.indexed ? indexed_element_type(k.c, endpoint) : endpoint
+	return check_foreach_body(k, s)
 }
 
 // design.md "Iteration protocol": associated `Element` and `Iterator`,
-// `iter(value)`, and `next(self: inout Iterator) -> (Element, bool)`.
+// `value.iter()`, and `next(self: inout Iterator) -> (Element, bool)`.
 @(private = "file")
 check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
+	// Only `indexed()` and `reversed()` are contributed to a user iterable; the
+	// container views belong to one built-in's storage.
+	#partial switch s.adapter {
+	case .Entries, .Keys, .Values, .Runes, .Rune_Offsets:
+		errorf(
+			k.c, expr_span(s.iterable), "L0460",
+			"that traversal belongs to a built-in container, not to `%s`",
+			type_name(k.c, subject),
+		)
+		return FLOWS
+	}
 	if s.bindings[0].is_ref {
 		// design.md "By-reference iteration": by-reference `foreach` is a
 		// built-in-container facility, and the protocol has only value-producing
@@ -596,8 +868,23 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		)
 		return FLOWS
 	}
-	// Bare `foreach` never selects `iter_reverse`: only `iter` is consulted here,
-	// and a user `iter_reverse` stays an ordinary callable overload.
+	// Bare `foreach` never selects `iter_reverse`; `reversed()` is what asks for
+	// it, and it produces the same `Iterator` (design.md "Iteration adapters").
+	if s.adapter == .Reversed {
+		reverse := iteration_member(k, subject, "iter_reverse")
+		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Value, []Type_Id{iterator}) {
+			errorf(
+				k.c,
+				expr_span(s.iterable),
+				"L0460",
+				"`%s` cannot be reversed: it needs `iter_reverse :: proc(self) -> %s`",
+				type_name(k.c, subject),
+				type_name(k.c, iterator),
+			)
+			return FLOWS
+		}
+		iter = reverse
+	}
 	next := iteration_member(k, iterator, "next")
 	next_sym := symbol_of(k.c, next)
 	if !iteration_proc_matches(k, next_sym, iterator, .Inout, []Type_Id{element, TYPE_BOOL}) {
@@ -614,37 +901,131 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	}
 
 	s.kind = .Protocol
-	s.element_type = element
+	s.element_type = s.indexed ? indexed_element_type(k.c, element) : element
 	s.iterator_type = iterator
 	s.iter_symbol = iter
 	s.next_symbol = next
-	return check_foreach_body(k, s, element)
+	return check_foreach_body(k, s)
+}
+
+// design.md "Element bindings": one binding names the whole `Element`; two or
+// more require a record `Element` with exactly that many visible fields and bind
+// them positionally. This is the one binder every value loop goes through,
+// whatever lowering produced the element.
+@(private = "file")
+check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
+	element := s.element_type
+	if !gate_type(k, element, expr_span(s.iterable)) {
+		return FLOWS
+	}
+	if len(s.bindings) == 1 {
+		if !bind_element_field(k, s, 0, element, borrowed = foreach_field_borrowed(s, 0)) {
+			return FLOWS
+		}
+		return check_foreach_block(k, s)
+	}
+	info := underlying_info(k.c, element)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(s.bindings) {
+		report_arity_mismatch(k, s, element, info)
+		return FLOWS
+	}
+	for binding, index in s.bindings {
+		field := symbol_of(k.c, info.fields[index])
+		if field == nil {
+			return FLOWS
+		}
+		if !require_visible_field(k, binding.name.span, element, info.fields[index], "L0459", "bound by a `foreach`") {
+			return FLOWS
+		}
+		if !bind_element_field(k, s, index, field.type, borrowed = foreach_field_borrowed(s, index)) {
+			return FLOWS
+		}
+	}
+	return check_foreach_block(k, s)
+}
+
+// A field bound in place rather than copied: a map's key, which is immutable and
+// therefore borrows the stored key. That is what lets `map[string]V` be iterated
+// without a per-iteration clone and drop.
+@(private = "file")
+foreach_field_borrowed :: proc(s: ^Stmt_Foreach, index: int) -> bool {
+	if s.kind != .Map || s.indexed {
+		return false
+	}
+	#partial switch s.adapter {
+	case .Keys:
+		return true
+	case .None, .Entries:
+		return len(s.bindings) > 1 && index == 0
+	}
+	return false
 }
 
 @(private = "file")
-check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> Flow_Info {
-	if !gate_type(k, element, expr_span(s.iterable)) {
-		return FLOWS
+bind_element_field :: proc(
+	k: ^Checker,
+	s: ^Stmt_Foreach,
+	index: int,
+	type: Type_Id,
+	borrowed: bool,
+) -> bool {
+	binding := s.bindings[index]
+	if binding.is_ref {
+		errorf(
+			k.c, binding.name.span, "L0457",
+			"a value binding names a copy of the element, so it cannot take `&`",
+		)
+		return false
 	}
 	// By default each iterated value is a copy (design.md). A managed element
 	// would therefore need a per-iteration clone and a per-iteration drop, which
 	// is loop-body cleanup the M5a CFG does not place yet.
-	if !s.bindings[0].is_ref && type_is_managed(k.c, element) {
+	if !borrowed && type_is_managed(k.c, type) {
 		errorf(
 			k.c,
-			s.bindings[0].name.span,
+			binding.name.span,
 			"L0504",
 			"a by-value `foreach` over `%s` copies a managed element, which M5a does not clean up per iteration; iterate `&value` over a `[]mut %s`, or index the sequence",
-			type_name(k.c, element),
-			type_name(k.c, element),
+			type_name(k.c, type),
+			type_name(k.c, type),
 		)
-		return FLOWS
+		return false
 	}
-	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], element, s.bindings[0].is_ref)
-	if len(s.bindings) == 2 {
-		s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], TYPE_INT, false)
+	if !gate_type(k, type, expr_span(s.iterable)) {
+		return false
 	}
+	s.bindings[index].symbol = bind_loop_name(k, binding, type, false)
+	return true
+}
 
+@(private = "file")
+report_arity_mismatch :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id, info: ^Type_Info) {
+	span := s.bindings[1].name.span
+	if info != nil && info.kind == .Struct {
+		errorf(
+			k.c, span, "L0459",
+			"`%s` has %d fields, so a `foreach` over it binds 1 or %d names, not %d",
+			type_name(k.c, element), len(info.fields), len(info.fields), len(s.bindings),
+		)
+		return
+	}
+	errorf(
+		k.c, span, "L0459",
+		"`%s` is not a record, so a `foreach` over it binds one name",
+		type_name(k.c, element),
+	)
+	// The index a loop used to supply is now the iterable's own (design.md
+	// "Element bindings"), so point at the traversal that carries it.
+	#partial switch s.kind {
+	case .Text:
+		add_notef(k.c, span, "for a rune ordinal write `.indexed()`, and for a byte offset `.rune_offsets()`")
+	case .Array, .Slice, .Dynamic, .Range, .Stored_Range, .Protocol:
+		add_notef(k.c, span, "for an index write `.indexed()`")
+	}
+}
+
+@(private = "file")
+check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	incoming := clone_result_assignments(k.c, k.assigned_results)
 	k.loop_depth += 1
 	body := check_scoped_block(k, s.body)

@@ -113,8 +113,8 @@ literals, m[key] reads that never insert, the comma-ok form, key in m, inserting
 places through field and index chains, find, try_insert, remove, clear, reserve
 and shrink. Its key needs a coherent == and hash pair that is built in or
 inherent to the key's own package - a caller-local extension never enters the
-frozen operation table. Both iterate - a map two-name loop binds the key and the
-value, and map iteration order is unspecified - and both contribute the same
+frozen operation table. Both iterate - a map's Element is its key/value entry,
+and map iteration order is unspecified - and both contribute the same
 Element/Iterator/iter/next members a user type declares by hand, so generic and
 direct iteration agree. A loop holds a whole-container loan for its entire
 duration, including across the back edge, so nothing inside the body may write

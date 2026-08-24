@@ -503,7 +503,7 @@ For_Statement  = "for" "(" For_Header ")" Block
 For_Header     = (Init_Statement | ";") Expression? ";" Simple_Statement?
                | Expression
 
-Foreach_Statement = "foreach" "(" Binding ("," Binding)? "in" Expression ")" Block
+Foreach_Statement = "foreach" "(" Binding ("," Binding)* "in" Expression ")" Block
 Binding         = "$"? "&"? (Identifier | "_")
 
 When_Statement = Attributes? "when" "(" Expression ")" Block
@@ -520,6 +520,10 @@ Branch_Statement = ("break" | "continue") ";"
 
 `for (;;)` is the three-part header with every part empty. `for (cond)` is the
 condition-only form.
+
+A binding list has any length: it names the fields of the element the iterable
+yields, so the arity a header may use is a semantic property of that element's
+type, not a syntactic limit.
 
 A `foreach` whose bindings carry `$` is a **static expansion**: it requires a
 compile-time iterable and expands its block once per element. The two forms share

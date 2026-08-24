@@ -45,7 +45,7 @@ main :: proc() {
 	nothing(&e);
 
 	// Two indices and a descriptor name.
-	foreach ($member, $index in enum_values_of(Colour)) {
+	foreach ($member, $index in enum_values_of(Colour).indexed()) {
 		fmt.println(index);
 		fmt.println(int(member.value));
 	}

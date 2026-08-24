@@ -8,7 +8,7 @@ impl Countdown {
 	Iterator :: Countdown_Iterator;
 	iter :: proc(self) -> Countdown_Iterator { return {self.start}; }
 
-	// An ordinary callable overload. Bare `foreach` never selects it.
+	// `reversed()` selects this one; a bare `foreach` never does.
 	iter_reverse :: proc(self) -> Countdown_Iterator { return {1}; }
 }
 

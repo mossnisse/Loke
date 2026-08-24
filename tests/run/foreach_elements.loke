@@ -1,0 +1,162 @@
+package main; import "core:fmt";
+
+// Element bindings and iteration adapters (design.md "Element bindings",
+// "Iteration adapters").
+//
+// A `foreach` binds exactly the `Element` its iterator yields: one name takes it
+// whole, and several destructure a record element positionally. Nothing the loop
+// itself supplies is bindable, so an index, a byte offset, or a key comes from
+// the iterable through an adapter.
+
+Point :: struct {
+	x: int,
+	y: int,
+}
+
+Triple :: struct {
+	a: int,
+	b: int,
+	c: int,
+}
+
+Countdown :: struct {
+	start: int,
+}
+
+Countdown_Iterator :: struct {
+	current: int,
+	up:      bool,
+}
+
+impl Countdown {
+	Element  :: int;
+	Iterator :: Countdown_Iterator;
+
+	iter :: proc(self) -> Countdown_Iterator { return {self.start, false}; }
+
+	// `reversed()` asks for this one, and yields the same `Element`.
+	iter_reverse :: proc(self) -> Countdown_Iterator { return {1, true}; }
+}
+
+impl Countdown_Iterator {
+	next :: proc(self: inout Countdown_Iterator) -> (int, bool) {
+		if (self.up) {
+			if (self.current > 3) { return 0, false; }
+			value := self.current;
+			self.current += 1;
+			return value, true;
+		}
+		if (self.current <= 0) { return 0, false; }
+		value := self.current;
+		self.current -= 1;
+		return value, true;
+	}
+}
+
+Colour :: enum{Red, Green, Blue};
+STATIC_INTS :: [3]int{1, 2, 3};
+STATIC_TRIPLES :: [1]Triple{{7, 8, 9}};
+
+static_values :: proc() -> [dynamic]int {
+	values: [dynamic]int;
+	values.append(4, 5, 6);
+	return values;
+}
+
+main :: proc() {
+	// A record element destructures positionally; one name takes it whole.
+	points := [2]Point{{1, 2}, {3, 4}};
+	foreach (x, y in points) { fmt.println(x*10 + y); }
+	foreach (p in points) { fmt.println(p.x + p.y); }
+	foreach (_, y in points) { fmt.println(y); }
+
+	triples := [1]Triple{{7, 8, 9}};
+	foreach (a, b, c in triples) { fmt.println(a + b + c); }
+
+	// `indexed()` over each built-in sequence, and over a range.
+	xs := [3]int{10, 20, 30};
+	foreach (v, i in xs.indexed()) { fmt.println(i*100 + v); }
+	slice: []int = xs[:];
+	foreach (v, i in slice.indexed()) { fmt.println(i*100 + v); }
+	nums: [dynamic]int = {4, 5};
+	foreach (v, i in nums.indexed()) { fmt.println(i*10 + v); }
+	foreach (v, i in (5 ..< 8).indexed()) { fmt.println(i*10 + v); }
+
+	// One name over `indexed()` binds the whole `{value, index}` pair.
+	foreach (pair in nums.indexed()) { fmt.println(pair.index*10 + pair.value); }
+
+	// `reversed()` walks backwards; composing it numbers the reversed traversal.
+	foreach (v in xs.reversed()) { fmt.println(v); }
+	foreach (v, i in xs.reversed().indexed()) { fmt.println(i*100 + v); }
+	foreach (v in (0 ..= 3).reversed()) { fmt.println(v); }
+	foreach (v in (0 ..< 3).reversed()) { fmt.println(v); }
+	foreach (v in nums.reversed()) { fmt.println(v); }
+
+	// Text: runes by default, rune ordinals from `indexed()`, byte offsets from
+	// `rune_offsets()`.
+	text := "AÅ✓";
+	foreach (codepoint in text) { fmt.println(codepoint); }
+	foreach (codepoint in text.runes()) { fmt.println(codepoint); }
+	foreach (codepoint, ordinal in text.indexed()) { fmt.println(ordinal); fmt.println(codepoint); }
+	foreach (codepoint, offset in text.rune_offsets()) { fmt.println(offset); fmt.println(codepoint); }
+	foreach (b, index in text.bytes().indexed()) { fmt.println(index*1000 + int(b)); }
+
+	// A map's `Element` is its `{key, value}` entry.
+	table: map[int]int;
+	table[2] = 20;
+	sum := 0;
+	foreach (key, value in table) { sum += key*100 + value; }
+	fmt.println(sum);
+	foreach (entry in table) { fmt.println(entry.key + entry.value); }
+	foreach (k in table.keys()) { fmt.println(k); }
+	foreach (v in table.values()) { fmt.println(v); }
+	foreach (entry, i in table.indexed()) { fmt.println(i*1000 + entry.value); }
+
+	// A managed key is borrowed rather than copied, so it destructures freely.
+	named: map[string]int;
+	named["only"] = 5;
+	foreach (key, value in named) { fmt.println(len(key)*10 + value); }
+	foreach (key in named.keys()) { fmt.println(len(key)); }
+
+	// The place forms are unchanged: their names are the container's, not an
+	// element record's.
+	foreach (&v in nums) { v = v*2; }
+	foreach (v, i in nums.indexed()) { fmt.println(i*100 + v); }
+	foreach (&v, i in nums) { v = v + i; }
+	foreach (v in nums) { fmt.println(v); }
+	foreach (key, &value in named) { value += 1; }
+	fmt.println(named["only"]);
+
+	// A user iterable needs only `Element`, `Iterator`, `iter`, and `next`.
+	foreach (v in Countdown{3}) { fmt.println(v); }
+	foreach (v, i in Countdown{3}.indexed()) { fmt.println(i*10 + v); }
+	foreach (v in Countdown{3}.reversed()) { fmt.println(v); }
+
+	// An enumeration's members are a value.
+	foreach (colour in Colour.values()) { fmt.println(colour); }
+	foreach (colour, index in Colour.values().indexed()) { fmt.println(index); fmt.println(colour); }
+	foreach ($member, $index in Colour.values().indexed()) { fmt.println(index); }
+
+	// Empty iterables run zero times.
+	steps := 0;
+	empty: [dynamic]int;
+	none: map[int]int;
+	foreach (v, i in empty.indexed()) { steps += 1; }
+	foreach (k, v in none) { steps += 1; }
+	foreach (v in empty.reversed()) { steps += 1; }
+	blank: string = "";
+	foreach (v in blank) { steps += 1; }
+	foreach (v, i in blank.rune_offsets()) { steps += 1; }
+	fmt.println(steps);
+
+	// Static expansion applies adapters to the effective element, in traversal
+	// order. In particular, indexed(Triple) is a two-field pair rather than the
+	// three fields of Triple leaking through the wrapper.
+	foreach ($v in STATIC_INTS.reversed()) { fmt.println(v); }
+	foreach ($v, $i in (2 ..< 5).reversed().indexed()) { fmt.println(i*10 + v); }
+	foreach ($triple, $i in STATIC_TRIPLES.indexed()) {
+		fmt.println(triple.a + triple.b + triple.c + i);
+	}
+	foreach ($v in static_values().reversed()) { fmt.println(v); }
+	foreach ($v in STATIC_INTS[1:].reversed()) { fmt.println(v); }
+}

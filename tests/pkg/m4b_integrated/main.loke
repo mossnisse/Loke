@@ -21,7 +21,7 @@ impl Stack($T, $N) {
 
 	total :: proc(self) -> T where interfaces.Numeric(T) {
 		sum := T(0);
-		foreach (v, i in self.items) {
+		foreach (v, i in self.items.indexed()) {
 			if (i < self.count) { sum = sum + v; }
 		}
 		return sum;

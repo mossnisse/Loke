@@ -1,0 +1,12 @@
+package main; import "core:fmt";
+
+// `indexed()` must keep the direct index-loop lowering: it selects a traversal,
+// it does not build an iterator object (design.md "Iteration adapters").
+
+main :: proc() {
+	xs := [3]int{1, 2, 3};
+	foreach (v, i in xs.indexed()) { fmt.println(i + v); }
+	foreach (v in xs.reversed()) { fmt.println(v); }
+	values: []int = xs[:];
+	foreach (v, i in values.indexed()) { fmt.println(i + v); }
+}

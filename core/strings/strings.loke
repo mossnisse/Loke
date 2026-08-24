@@ -72,7 +72,7 @@ ends_with :: proc(text: string_view, suffix: string_view) -> bool {
 // is self-synchronising — no valid sequence begins with a continuation byte.
 @(private)
 matches_at :: proc(text: []u8, offset: int, needle: []u8) -> bool {
-	foreach (value, index in needle) {
+	foreach (value, index in needle.indexed()) {
 		if (text[offset + index] != value) { return false; }
 	}
 	return true;
@@ -108,7 +108,7 @@ last_index :: proc(text: string_view, needle: string_view) -> (int, bool) {
 
 index_byte :: proc(text: string_view, value: u8) -> (int, bool) {
 	bytes := text.bytes();
-	foreach (b, offset in bytes) {
+	foreach (b, offset in bytes.indexed()) {
 		if (b == value) { return offset, true; }
 	}
 	return -1, false;
@@ -117,7 +117,7 @@ index_byte :: proc(text: string_view, value: u8) -> (int, bool) {
 // The byte offset where the scalar value begins. A rune never matches a
 // continuation byte of another one, because the loop only visits boundaries.
 index_rune :: proc(text: string_view, value: rune) -> (int, bool) {
-	foreach (codepoint, offset in text) {
+	foreach (codepoint, offset in text.rune_offsets()) {
 		if (codepoint == value) { return offset, true; }
 	}
 	return -1, false;
@@ -151,7 +151,7 @@ is_space :: proc(value: rune) -> bool {
 }
 
 trim_left_space :: proc(text: string_view) -> string_view {
-	foreach (codepoint, offset in text) {
+	foreach (codepoint, offset in text.rune_offsets()) {
 		if (!is_space(codepoint)) { return text[offset:]; }
 	}
 	return text[len(text):];
@@ -161,7 +161,7 @@ trim_left_space :: proc(text: string_view) -> string_view {
 // last non-space run ended. One pass either way.
 trim_right_space :: proc(text: string_view) -> string_view {
 	end := 0;
-	foreach (codepoint, offset in text) {
+	foreach (codepoint, offset in text.rune_offsets()) {
 		if (!is_space(codepoint)) {
 			end = offset + rune_size(codepoint);
 		}
@@ -177,7 +177,7 @@ trim_space :: proc(text: string_view) -> string_view {
 trim :: proc(text: string_view, cutset: string_view) -> string_view {
 	start := len(text);
 	end := 0;
-	foreach (codepoint, offset in text) {
+	foreach (codepoint, offset in text.rune_offsets()) {
 		if (!contains_rune(cutset, codepoint)) {
 			if (offset < start) { start = offset; }
 			end = offset + rune_size(codepoint);
@@ -232,7 +232,7 @@ join :: proc(
 	allocator: Allocator = mem.default_allocator(),
 ) -> string {
 	builder := init(allocator);
-	foreach (part, index in parts) {
+	foreach (part, index in parts.indexed()) {
 		if (index > 0) { builder.append(separator); }
 		builder.append(part);
 	}

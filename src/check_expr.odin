@@ -2032,6 +2032,9 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		if check_text_operation(k, v, sel) {
 			return
 		}
+		if check_enum_values(k, v, sel) {
+			return
+		}
 	}
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && callee_is_descriptor(k, sel.operand) {
 		check_single_expr(k, sel.operand)

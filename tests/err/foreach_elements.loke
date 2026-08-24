@@ -1,0 +1,59 @@
+package main; import "core:fmt";
+
+// Element-binding and adapter diagnostics (design.md "Element bindings",
+// "Iteration adapters").
+
+Point :: struct {
+	x: int,
+	y: int,
+}
+
+Triple :: struct { a: int, b: int, c: int }
+
+Colour :: enum{Red, Green, Blue};
+
+Plain :: struct {
+	value: int,
+}
+
+BAD_TRIPLES :: [1]Triple{{1, 2, 3}};
+
+main :: proc() {
+	xs := [3]int{1, 2, 3};
+	points := [1]Point{{1, 2}};
+	text: string = "hi";
+	table: map[int]int;
+
+	// A scalar element has no fields to bind, and the note names the traversal
+	// that carries what the second name used to mean.
+	foreach (v, i in xs) { fmt.println(v); }
+	foreach (codepoint, offset in text) { fmt.println(codepoint); }
+
+	// Exact arity: not too few, not too many.
+	foreach (x, y, z in points) { fmt.println(x); }
+
+	// A place loop's index is the loop's own counter, never a place.
+	foreach (x, &y in points) { fmt.println(x); }
+
+	// `indexed()` numbers a traversal, so it comes last and only once.
+	foreach (v, i in xs.indexed().indexed()) { fmt.println(v); }
+
+	// An adapter that is not a traversal of this iterable.
+	foreach (k in xs.keys()) { fmt.println(k); }
+	foreach (v in table.reversed()) { fmt.println(v); }
+	foreach (v in text.reversed()) { fmt.println(v); }
+	foreach (v in xs.rune_offsets()) { fmt.println(v); }
+
+	// An adapter yields values, so it has no place form.
+	foreach (&v, i in xs.indexed()) { fmt.println(v); }
+
+	// A type is not an iterable; an enumeration's members are a value.
+	foreach (colour in Colour) { fmt.println(colour); }
+
+	// A user type has neither the protocol nor a container view.
+	foreach (v in Plain{1}) { fmt.println(v); }
+
+	// indexed(Triple) has the two fields `value` and `index`; the wrapped
+	// record's own arity must not leak through the adapter.
+	foreach ($a, $b, $c in BAD_TRIPLES.indexed()) { fmt.println(a); }
+}

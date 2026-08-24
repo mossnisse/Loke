@@ -498,9 +498,8 @@ Builtin_Kind :: enum {
 	Typeid_Of,
 	Fields_Of,
 	Enum_Values_Of,
-	// design.md "Iteration protocol": `iter(value)` is a free call in the
-	// `Iterable` requirement, so it has to resolve for a built-in and for a user
-	// type's own `impl` member alike.
+	// design.md "Iteration protocol": `iter` is a receiver method which also
+	// contributes to the free overload group, for built-ins and user types alike.
 	Iter,
 	// `clone(value)` and `try_clone(value)` are written as free calls, which is
 	// the canonical, always-available form (design.md "Standard customization
@@ -810,6 +809,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.typeid_values = make(map[Type_Id]u64, c.semantic_allocator)
 	c.range_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
+	c.entry_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
+	c.indexed_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
 	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)

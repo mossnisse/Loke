@@ -267,11 +267,11 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   frozen operation table, so one map keeps one policy in every package it travels
   through.
 
-- both containers iterate. A dynamic array yields value-and-index like a slice
-  and `&value` names the element in place; a map is design.md's two-name
-  exception, where the first of two names is the key, not a counter — a key
-  binding borrows the stored key rather than copying it, and `&key` is rejected
-  because map keys are immutable. Both contribute the same
+- both containers iterate. A dynamic array yields its elements, `indexed()`
+  numbers them, and `&value` names the element in place; a map's `Element` is its
+  `{key, value}` entry, which two names destructure — a key binding borrows the
+  stored key rather than copying it, and `&key` is rejected because map keys are
+  immutable. Both contribute the same
   `Element`/`Iterator`/`iter`/`next` members a user type declares by hand, so
   generic code sees exactly what direct iteration does. A loop holds a
   whole-container loan for its entire duration *including across the back edge*,

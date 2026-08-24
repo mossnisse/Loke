@@ -11,7 +11,7 @@ L0455
 cannot target a static expansion
 L0454
 @17:19
-both bindings carry `$`
+every binding carries `$`
 L0454
 @19:13
 a static binding is immutable and cannot use `&`

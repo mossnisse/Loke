@@ -1366,16 +1366,9 @@ parse_foreach :: proc(p: ^Parser) -> Stmt {
 			break
 		}
 	}
-	if len(bindings) > 2 {
-		parse_error(
-			p,
-			bindings[2].name.span,
-			"L0247",
-			"at most two",
-			"a `foreach` header binds a value and optionally an index",
-		)
-		bad_bindings = true
-	}
+	// A binding list has any length: it names the fields of the element the
+	// iterable yields, so its arity is a property of that element's type
+	// (design.md "Element bindings") rather than a syntactic limit.
 
 	_, has_in := expect(p, .In, "L0247", "`in` and the iterable")
 	iterable := parse_expr(p)

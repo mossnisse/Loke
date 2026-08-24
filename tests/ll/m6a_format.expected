@@ -4,7 +4,7 @@
 define private void @loke.f.1(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.2(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.3(ptr %data, ptr %w, ptr %o) {
-call void @loke.p.Money.format(%struct.Money.37 %t407, %struct.Writer.38 %t408, %struct.Options.39 %t409)
+call void @loke.p.Money.format(%struct.Money.37 %t422, %struct.Writer.38 %t423, %struct.Options.39 %t424)
 %t258 = load i64, ptr @.loke.fmt_thunks.count
 %t263 = getelementptr inbounds ptr, ptr @.loke.fmt_thunks, i64 %t262
 declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)

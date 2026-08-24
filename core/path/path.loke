@@ -188,7 +188,7 @@ clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator())
 	builder := strings.init(allocator);
 	builder.append(path[0:volume]);
 	if (rooted) { builder.append(SEPARATOR); }
-	foreach (element, index in elements) {
+	foreach (element, index in elements.indexed()) {
 		if (index > 0) { builder.append(SEPARATOR); }
 		builder.append(element);
 	}

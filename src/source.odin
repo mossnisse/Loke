@@ -127,9 +127,15 @@ Compiler :: struct {
 	// Iteration (`src/iterate.odin`). Range and iterator types are interned per
 	// element type, and the contributed procedures are emitted once for the whole
 	// compilation rather than per package.
-	range_types:    map[Type_Id]Type_Id,
-	iterator_types: map[Type_Id]Type_Id,
-	synth_procs:    [dynamic]Symbol_Id,
+	range_types:        map[Type_Id]Type_Id,
+	iterator_types:     map[Type_Id]Type_Id,
+	// The record `Element` types: a map's `struct{key, value}` entry, keyed by the
+	// map, and `indexed()`'s `struct{value, index}` pair, keyed by the value type
+	// (design.md "Iteration adapters").
+	entry_types:        map[Type_Id]Type_Id,
+	indexed_types:      map[Type_Id]Type_Id,
+	rune_offset_type: Type_Id,
+	synth_procs:        [dynamic]Symbol_Id,
 
 	// Erased views (`src/erased.odin`). A witness is compilation-global, so it is
 	// keyed and emitted once for the whole program.

@@ -37,7 +37,7 @@ main :: proc() {
 	// A fixed array, by value and with an index.
 	xs := [3]int{10, 20, 30};
 	foreach (v in xs) { fmt.println(v); }
-	foreach (v, i in xs) { fmt.println(i); fmt.println(v); }
+	foreach (v, i in xs.indexed()) { fmt.println(i); fmt.println(v); }
 
 	// By reference over a mutable array.
 	foreach (&v in xs) { v = v + 1; }
@@ -57,7 +57,7 @@ main :: proc() {
 
 	// A user iterable through the protocol, with the loop's own counter.
 	foreach (v in Countdown{3}) { fmt.println(v); }
-	foreach (v, i in Countdown{2}) { fmt.println(i); fmt.println(v); }
+	foreach (v, i in Countdown{2}.indexed()) { fmt.println(i); fmt.println(v); }
 
 	// Inclusive ranges terminate after the maximum representable endpoint,
 	// both in direct lowering and through the synthesized iterator protocol.
@@ -74,8 +74,8 @@ main :: proc() {
 	if (done) { fmt.println(0); } else { fmt.println(1); }
 }
 
-// A user `iter_reverse` is an ordinary callable overload and does not change
-// what a bare `foreach` iterates.
+// `iter_reverse` is what `reversed()` asks for, and it does not change what a
+// bare `foreach` iterates.
 impl Countdown {
 	iter_reverse :: proc(self) -> Countdown_Iterator { return {1}; }
 }

@@ -24,8 +24,17 @@ impl Countdown_Iterator {
 // another inferred generic parameter.
 first :: proc(source: $S) -> (S.Element, bool)
 	where interfaces.Iterable(S) {
-	iterator := iter(source);
+	iterator := source.iter();
 	return iterator.next();
+}
+
+sum_entries :: proc(source: $S) -> int
+	where interfaces.Iterable(S) {
+	total := 0;
+	foreach (entry in source) {
+		total += entry.value;
+	}
+	return total;
 }
 
 sum_all :: proc(source: $S) -> int
@@ -37,10 +46,22 @@ sum_all :: proc(source: $S) -> int
 	return total;
 }
 
+digits_reversed :: proc(source: $S) -> int
+	where interfaces.Reverse_Iterable(S) {
+	total := 0;
+	foreach (v in source.reversed()) {
+		total = total*10 + v;
+	}
+	return total;
+}
+
 main :: proc() {
 	static_assert(interfaces.Iterable([3]int));
 	static_assert(interfaces.Iterable(Countdown));
 	static_assert(!interfaces.Iterable(int));
+	static_assert(interfaces.Reverse_Iterable([3]int));
+	static_assert(interfaces.Reverse_Iterable([]int));
+	static_assert(interfaces.Reverse_Iterable([dynamic]int));
 
 	xs := [3]int{1, 2, 3};
 	a, a_ok := first(xs);
@@ -60,8 +81,8 @@ main :: proc() {
 	fmt.println(sum_all(Countdown{3}));
 
 	// m6b-plan step 4: the built-in containers contribute the same protocol
-	// members, so generic and direct iteration agree. A map's single `Element` is
-	// its value; the key is reachable only through the two-name loop form.
+	// members, so generic and direct iteration agree. A map's `Element` is its
+	// `{key, value}` entry, which one name binds whole.
 	static_assert(interfaces.Iterable([dynamic]int));
 	static_assert(interfaces.Iterable(map[int]int));
 	ys: [dynamic]int = {4, 5, 6};
@@ -71,5 +92,12 @@ main :: proc() {
 	m: map[int]int;
 	m[1] = 10;
 	m[2] = 20;
-	fmt.println(sum_all(m));
+	fmt.println(sum_entries(m));
+
+	// Built-ins expose real `iter_reverse` members, so generic interface
+	// constraints and the protocol lowering agree with direct loops.
+	fmt.println(digits_reversed(xs));
+	fmt.println(digits_reversed(xs[:]));
+	fmt.println(digits_reversed(ys));
+	fmt.println(digits_reversed(half));
 }

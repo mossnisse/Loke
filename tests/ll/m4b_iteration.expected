@@ -3,8 +3,8 @@
 %t299 = insertvalue %struct.Range.int.64 %t298, i1 true, 2
 %t310 = select i1 %t304, i1 %t312, i1 %t311
 br i1 %t291, label %foreach.done.276, label %foreach.step.292
-%t457 = select i1 %t456, i64 %t444, i64 %t454
-%t458 = select i1 %t456, i1 false, i1 %t448
+%t484 = select i1 %t483, i64 %t467, i64 %t481
+%t485 = select i1 %t483, i1 false, i1 %t471
 foreach.head.
 foreach.post.
 foreach.done.

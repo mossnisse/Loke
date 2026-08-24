@@ -1,0 +1,6 @@
+getelementptr inbounds [3 x i64], ptr
+getelementptr inbounds i64, ptr
+foreach.head.
+foreach.post.
+foreach.done.
+sub i64 3, 1

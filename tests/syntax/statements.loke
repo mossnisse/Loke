@@ -52,10 +52,10 @@ main :: proc() {
 
 	// `foreach`: one or two bindings, `&` and `$` and `_`.
 	foreach (value in items) { }
-	foreach (value, index in items) { }
+	foreach (value, index in items.indexed()) { }
 	foreach (&value in items) { }
 	foreach (&value, index in items) { }
-	foreach (_, index in items) { }
+	foreach (_, index in items.indexed()) { }
 	foreach ($member in fields_of(T)) { }
 
 	// `when` is a statement as well as a top-level item.

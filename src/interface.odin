@@ -386,7 +386,7 @@ check_one_requirement :: proc(
 	application_pkg: Package_Id,
 ) -> (Requirement_Failure, bool) {
 	if requirement.kind == .Slot {
-		return check_slot_requirement(k, info, requirement, args)
+		return check_slot_requirement(k, info, requirement, args, application_pkg)
 	}
 
 	// Composition: a bare interface application must hold, not merely compile.
@@ -515,6 +515,7 @@ check_slot_requirement :: proc(
 	info: ^Interface_Info,
 	requirement: Requirement,
 	args: []Generic_Arg,
+	application_pkg: Package_Id,
 ) -> (Requirement_Failure, bool) {
 	subject := len(args) > 0 && args[0].is_type ? args[0].type : INVALID_TYPE
 	if subject == INVALID_TYPE {
@@ -529,7 +530,15 @@ check_slot_requirement :: proc(
 	if name == INVALID_IDENTIFIER {
 		name = intern_identifier(k.c, requirement.name.text)
 	}
+	// The slot's *candidates* are the interface package's business, but a
+	// `Self.Assoc` written in its signature names the subject's own member. That
+	// is an inherent member, whose visibility answers to the application site, so
+	// the signature resolves there — otherwise `Iterable` would demand that every
+	// iterable publish its `Iterator`.
+	slot_pkg := k.lookup_pkg
+	k.lookup_pkg = application_pkg
 	wanted_params, wanted_modes, wanted_results, wanted_inout, shape_ok := slot_signature(k, signature, subject)
+	k.lookup_pkg = slot_pkg
 	if !shape_ok {
 		return Requirement_Failure{span = requirement.span, reason = "its slot signature does not resolve"}, false
 	}

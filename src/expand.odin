@@ -12,8 +12,20 @@ import "core:fmt"
 // An empty iterable expands to nothing, just as an unselected `when` branch has
 // no checked contents.
 check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
-	if len(s.bindings) == 0 || len(s.bindings) > 2 {
-		errorf(k.c, s.span, "L0454", "a `foreach` binds one or two names")
+	if len(s.bindings) == 0 {
+		errorf(k.c, s.span, "L0454", "a `foreach` binds at least one name")
+		return FLOWS
+	}
+	// An expansion binds the same `Element` a runtime loop does, so it reads the
+	// same adapter (design.md "Static `foreach` expansion").
+	adapter, adapter_name := peel_foreach_adapter(k, s)
+	s.adapter = adapter
+	if adapter != .None && adapter != .Reversed {
+		errorf(
+			k.c, adapter_name.span, "L0454",
+			"`%s()` is not a compile-time traversal; a static `foreach` takes `indexed()` or `reversed()`",
+			adapter_name.text,
+		)
 		return FLOWS
 	}
 	// design.md: mixing a runtime and a compile-time binding in one header is an
@@ -24,7 +36,7 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 				k.c,
 				binding.name.span,
 				"L0454",
-				"`%s` is a runtime binding in a static expansion; both bindings carry `$`",
+				"`%s` is a runtime binding in a static expansion; every binding carries `$`",
 				binding.name.text,
 			)
 			return FLOWS
@@ -48,8 +60,9 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 
 	blocks := make([dynamic]^Block, 0, len(elements), k.c.semantic_allocator)
 	flow := FLOWS
-	for element, index in elements {
-		copy_block, copy_flow, ok := expand_one_element(k, s, element, element_type, index)
+	for index in 0 ..< len(elements) {
+		at := s.adapter == .Reversed ? len(elements) - 1 - index : index
+		copy_block, copy_flow, ok := expand_one_element(k, s, elements[at], element_type, index)
 		if ok {
 			append(&blocks, copy_block)
 			flow.returns ||= copy_flow.returns
@@ -76,9 +89,8 @@ expand_one_element :: proc(
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
-	bind_static(k, s.bindings[0], element, element_type)
-	if len(s.bindings) == 2 {
-		bind_static(k, s.bindings[1], int_const(k.c, i64(index)), TYPE_INT)
+	if !bind_static_element(k, s, element, element_type, index) {
+		return copy_block, FLOWS, false
 	}
 
 	// A diagnostic inside an expansion must show the element and its source
@@ -100,7 +112,58 @@ expand_one_element :: proc(
 	return copy_block, flow, true
 }
 
+// design.md "Element bindings": one binding names the whole element and several
+// name its fields, in an expansion exactly as in a loop. The only difference is
+// that every value here is a constant.
 @(private = "file")
+bind_static_element :: proc(
+	k: ^Checker,
+	s: ^Stmt_Foreach,
+	element: Const_Value,
+	element_type: Type_Id,
+	index: int,
+) -> bool {
+	effective_value := element
+	effective_type := element_type
+	if s.indexed {
+		aggregate := new(Const_Aggregate, k.c.semantic_allocator)
+		aggregate.type = indexed_element_type(k.c, element_type)
+		aggregate.elements = make([]Const_Value, 2, k.c.semantic_allocator)
+		aggregate.elements[ELEMENT_FIRST] = element
+		aggregate.elements[ELEMENT_SECOND] = int_const(k.c, i64(index))
+		effective_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
+		effective_type = aggregate.type
+	}
+
+	if len(s.bindings) == 1 {
+		bind_static(k, s.bindings[0], effective_value, effective_type)
+		return true
+	}
+	// Several names over one record element.
+	info := underlying_info(k.c, effective_type)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(s.bindings) {
+		count := info != nil && info.kind == .Struct ? len(info.fields) : 0
+		errorf(
+			k.c, s.bindings[1].name.span, "L0454",
+			"`%s` has %d fields, so a static `foreach` over it binds 1 or %d names, not %d",
+			type_name(k.c, effective_type), count, count, len(s.bindings),
+		)
+		return false
+	}
+	for binding, slot in s.bindings {
+		field := symbol_of(k.c, info.fields[slot])
+		if !require_visible_field(k, binding.name.span, effective_type, info.fields[slot], "L0454", "bound by a `foreach`") {
+			return false
+		}
+		value: Const_Value
+		if effective_value.aggregate != nil && slot < len(effective_value.aggregate.elements) {
+			value = effective_value.aggregate.elements[slot]
+		}
+		bind_static(k, binding, value, field.type)
+	}
+	return true
+}
+
 bind_static :: proc(k: ^Checker, binding: Foreach_Binding, value: Const_Value, type: Type_Id) {
 	if binding.name.text == "_" || binding.name.text == "" {
 		return
@@ -179,22 +242,20 @@ expansion_has_branch :: proc(k: ^Checker, block: ^Block) -> bool {
 // ---------------------------------------------------------- the iterable --
 
 // The iterable must be compile-time known, finite, and produce compile-time
-// values; fixed arrays, evaluator-owned arrays and slices, enum types, ranges,
+// values; fixed arrays, evaluator-owned dynamic arrays, `Enum.values()`, ranges,
 // and reflection descriptor arrays qualify (design.md).
 @(private = "file")
 fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Type_Id, bool) {
-	// An enum *type* expands to its members, which is what makes
-	// `foreach ($member in Colour)` mean something.
-	if enum_type := resolve_type_syntax(k, iterable); enum_type != INVALID_TYPE {
-		if type_is_enum(k.c, enum_type) {
-			return enum_member_constants(k, enum_type)
-		}
+	// design.md: a *type* is never an iterable. An enumeration's members are a
+	// value, `Enum.values()`, which folds to an ordinary constant array.
+	if named := resolve_type_syntax(k, iterable); named != INVALID_TYPE {
 		errorf(
 			k.c,
 			expr_span(iterable),
 			"L0454",
-			"`%s` is a type, and only an enum type expands element by element",
-			type_name(k.c, enum_type),
+			"`%s` is a type, so it is not iterable%s",
+			type_name(k.c, named),
+			type_is_enum(k.c, named) ? "; write `.values()` for its members" : "",
 		)
 		return nil, INVALID_TYPE, false
 	}
@@ -203,23 +264,35 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 	if type == INVALID_TYPE {
 		return nil, INVALID_TYPE, false
 	}
+	if written, is_range := iterable.(^Expr_Range); is_range {
+		return fold_static_range(k, written, type)
+	}
+	if written, is_slice := iterable.(^Expr_Slice); is_slice {
+		return fold_static_slice(k, written, type)
+	}
+	info := underlying_info(k.c, type)
+	if info != nil && info.kind == .Dynamic_Array {
+		elements, evaluated := evaluate_static_elements(k, iterable, "a static `foreach` iterable", "L0454")
+		return elements, info.element, evaluated
+	}
 	folded, evaluated := require_const(k, iterable, "a static `foreach` iterable", "L0454")
 	if !evaluated {
 		return nil, INVALID_TYPE, false
 	}
-	info := underlying_info(k.c, type)
+	info = underlying_info(k.c, type)
 	if info == nil || info.kind != .Array {
 		errorf(
 			k.c,
 			expr_span(iterable),
 			"L0454",
-			"a static `foreach` needs a compile-time array, enum type, or descriptor array, found `%s`",
+			"a static `foreach` needs a compile-time array or slice, `Enum.values()`, range, or descriptor array, found `%s`",
 			type_name(k.c, type),
 		)
 		return nil, INVALID_TYPE, false
 	}
-	elements := make([]Const_Value, int(info.count), k.c.semantic_allocator)
-	for index in 0 ..< int(info.count) {
+	count := int(info.count)
+	elements := make([]Const_Value, count, k.c.semantic_allocator)
+	for index in 0 ..< count {
 		if folded.aggregate != nil && index < len(folded.aggregate.elements) {
 			elements[index] = folded.aggregate.elements[index]
 		}
@@ -228,10 +301,112 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 }
 
 @(private = "file")
-enum_member_constants :: proc(k: ^Checker, enum_type: Type_Id) -> ([]Const_Value, Type_Id, bool) {
+fold_static_range :: proc(k: ^Checker, written: ^Expr_Range, type: Type_Id) -> ([]Const_Value, Type_Id, bool) {
+	lo, lo_ok := require_const(k, written.lo, "a static `foreach` range endpoint", "L0454")
+	hi, hi_ok := require_const(k, written.hi, "a static `foreach` range endpoint", "L0454")
+	if !lo_ok || !hi_ok {
+		return nil, INVALID_TYPE, false
+	}
+	element := underlying_info(k.c, type).element
+	distance := bi_sub(k.c, hi.integer, lo.integer)
+	count := distance
+	if written.op == .Range_Incl {
+		count = bi_add(k.c, count, bi_from_i64(k.c, 1))
+	}
+	if bi_sign(count) <= 0 {
+		return []Const_Value{}, element, true
+	}
+	n, fits := bi_to_i64(k.c, count)
+	if !fits || n > EVAL_MAX_STEPS {
+		errorf(k.c, written.op_span, "L0454", "a static `foreach` range expands to too many elements")
+		return nil, INVALID_TYPE, false
+	}
+	elements := make([]Const_Value, int(n), k.c.semantic_allocator)
+	current := lo.integer
+	kind := type_is_rune(k.c, element) ? Const_Kind.Rune : Const_Kind.Integer
+	for index in 0 ..< int(n) {
+		elements[index] = Const_Value{kind = kind, integer = current}
+		current = bi_add(k.c, current, bi_from_i64(k.c, 1))
+	}
+	return elements, element, true
+}
+
+@(private = "file")
+fold_static_slice :: proc(k: ^Checker, written: ^Expr_Slice, type: Type_Id) -> ([]Const_Value, Type_Id, bool) {
+	elements, _, folded := fold_static_iterable(k, written.operand)
+	if !folded {
+		return nil, INVALID_TYPE, false
+	}
+	lo, hi := i64(0), i64(len(elements))
+	if written.lo != nil {
+		value, ok := require_const(k, written.lo, "a static `foreach` slice endpoint", "L0454")
+		if !ok {
+			return nil, INVALID_TYPE, false
+		}
+		lo, ok = bi_to_i64(k.c, value.integer)
+		if !ok {
+			errorf(k.c, expr_span(written.lo), "L0454", "a static `foreach` slice endpoint does not fit in `int`")
+			return nil, INVALID_TYPE, false
+		}
+	}
+	if written.hi != nil {
+		value, ok := require_const(k, written.hi, "a static `foreach` slice endpoint", "L0454")
+		if !ok {
+			return nil, INVALID_TYPE, false
+		}
+		hi, ok = bi_to_i64(k.c, value.integer)
+		if !ok {
+			errorf(k.c, expr_span(written.hi), "L0454", "a static `foreach` slice endpoint does not fit in `int`")
+			return nil, INVALID_TYPE, false
+		}
+	}
+	if lo < 0 || hi < lo || hi > i64(len(elements)) {
+		errorf(k.c, written.span, "L0454", "a static `foreach` slice is out of bounds")
+		return nil, INVALID_TYPE, false
+	}
+	out := make([]Const_Value, int(hi-lo), k.c.semantic_allocator)
+	copy(out, elements[int(lo):int(hi)])
+	return out, underlying_info(k.c, type).element, true
+}
+
+// design.md "Iterating an enumeration": `Enum.values()` is the declaration-ordered
+// fixed array of its members, and the only way to iterate an enumeration. It is a
+// constant, so it serves a runtime loop, a static expansion, and a `$` argument
+// through the ordinary array paths rather than a `foreach` special case.
+check_enum_values :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+	if sel.name.text != "values" {
+		return false
+	}
+	subject := resolve_type_syntax(k, sel.operand)
+	if subject == INVALID_TYPE || !type_is_enum(k.c, subject) {
+		return false
+	}
+	v.value_category = .Value
+	v.resolution = Resolution{kind = .Builtin_Operator}
+	if len(v.args) != 0 {
+		errorf(k.c, v.span, "L0460", "`%s.values` takes no arguments", type_name(k.c, subject))
+		v.type = INVALID_TYPE
+		return true
+	}
+	members, ok := enum_member_constants(k, subject)
+	if !ok {
+		v.type = INVALID_TYPE
+		return true
+	}
+	aggregate := new(Const_Aggregate, k.c.semantic_allocator)
+	aggregate.type = array_of(k.c, subject, u64(len(members)))
+	aggregate.elements = members
+	v.type = aggregate.type
+	v.is_const = true
+	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
+	v.immutable = .Constant
+	return true
+}
+
+enum_member_constants :: proc(k: ^Checker, enum_type: Type_Id) -> ([]Const_Value, bool) {
 	info := underlying_info(k.c, enum_type)
 	if info == nil {
-		return nil, INVALID_TYPE, false
+		return nil, false
 	}
 	out := make([]Const_Value, len(info.fields), k.c.semantic_allocator)
 	for member, index in info.fields {
@@ -239,5 +414,5 @@ enum_member_constants :: proc(k: ^Checker, enum_type: Type_Id) -> ([]Const_Value
 			out[index] = sym.const_value
 		}
 	}
-	return out, enum_type, true
+	return out, true
 }

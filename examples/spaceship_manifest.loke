@@ -46,7 +46,7 @@ main :: proc() {
 	ship.fuel = clamp(ship.fuel - 12.75, 0.0, 100.0);
 	fmt.println(int(ship.fuel));
 
-	foreach ($member, $index in enum_values_of(Mission)) {
+	foreach ($member, $index in enum_values_of(Mission).indexed()) {
 		fmt.println(index + 1);
 		fmt.println(len(member.name));
 		fmt.println(int(member.value));

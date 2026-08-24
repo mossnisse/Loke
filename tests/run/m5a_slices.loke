@@ -79,7 +79,7 @@ main :: proc() {
 	fmt.println(weakened[1]);
 
 	// Index binding.
-	foreach (value, index in readable) {
+	foreach (value, index in readable.indexed()) {
 		fmt.println(value * 10 + index);
 	}
 

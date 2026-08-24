@@ -1,0 +1,7 @@
+@(public)
+package vendor;
+
+Numbers :: struct {
+	@(public)
+	values: [3]int,
+}

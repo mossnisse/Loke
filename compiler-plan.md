@@ -562,9 +562,9 @@ M6b step 4 is implemented: container iteration. A dynamic array reuses the
 existing index-loop lowering with the header's length word as its bound; a map
 walks slots through one runtime `map_scan` that hands back a cursor, so the
 controls, seed, and slot count stay entirely inside the C helper and iteration
-order is unspecified by construction. design.md's two-name exception is real —
-the first of two names is the key — and a key binding *borrows* the stored key in
-place rather than copying it, which is what lets `map[string]V` be iterated at
+order is unspecified by construction. A map's `Element` is its `{key, value}`
+entry, so two names destructure it, and the key binding *borrows* the stored key
+in place rather than copying it, which is what lets `map[string]V` be iterated at
 all without a per-iteration clone and drop. `L0591` rejects `&key`.
 
 One defect found on the way is fixed here rather than left: a program that
@@ -596,9 +596,9 @@ dynamic array's iterator deliberately holds the `{data, len}` view rather than
 the container header: an iterator is a borrow, and a managed field inside one
 would be followed by a drop with no business running. That also makes
 `Slice_Next` its `next` verbatim. A map's iterator is `{table, cursor}` over the
-same runtime slot scan the direct loop uses, and its single `Element` is the
-value — the key is reachable only through the two-name loop form, which is
-direct iteration rather than the protocol.
+same runtime slot scan the direct loop uses, and its `Element` is the
+`{key, value}` entry record the direct loop destructures, so the two paths agree
+element for element.
 
 Formatting is the slice formatter for a dynamic array and a `[key = value]` slot
 walk for a map, both recursive through M6a's table, so a map of dynamic arrays

@@ -763,13 +763,26 @@ Foreach_Kind :: enum {
 	// design.md "Dynamic arrays": an index loop over the current allocation,
 	// bounded by the header's length word rather than a static count.
 	Dynamic,
-	// A slot walk; map iteration order is unspecified (design.md "Maps"). The
-	// two-name form binds the key and the value rather than a value and an index.
+	// A slot walk; map iteration order is unspecified (design.md "Maps"). Its
+	// `Element` is the `struct{key, value}` entry, which two bindings destructure.
 	Map,
-	// Yields Unicode scalar values; the second name in a string loop is a byte
-	// offset, not a rune counter (design.md "String iteration").
+	// Yields Unicode scalar values (design.md "String iteration"). A byte offset
+	// comes from `rune_offsets()`, never from a second binding.
 	Text,
 	Protocol,
+}
+
+// design.md "Iteration adapters": an alternative traversal of the same iterable.
+// Recognized in the `foreach` header, where it selects the traversal the loop
+// lowers to rather than building an iterator object.
+Foreach_Adapter :: enum {
+	None,
+	Reversed,
+	Entries,
+	Keys,
+	Values,
+	Runes,
+	Rune_Offsets,
 }
 
 Stmt_Foreach :: struct {
@@ -779,9 +792,14 @@ Stmt_Foreach :: struct {
 	body:       ^Block,
 	// Semantic result, written by the checker and read by the backend.
 	kind:          Foreach_Kind,
+	adapter:       Foreach_Adapter,
+	// `indexed()`, which numbers whatever traversal precedes it and so is always
+	// the outermost adapter.
+	indexed:       bool,
+	// The complete `Element` one binding names: a record for a map entry, an
+	// `indexed()` pair, or a `rune_offsets()` pair, and the yielded value itself
+	// otherwise.
 	element_type:  Type_Id,
-	// A map's key type, bound by the first of two names.
-	key_type:      Type_Id,
 	count:         u64,       // a fixed array's length
 	iterator_type: Type_Id,   // the protocol path's opaque iterator
 	iter_symbol:   Symbol_Id,

@@ -1,0 +1,42 @@
+package main; import "core:fmt";
+
+import "./vendor";
+
+Numbers_Iterator :: struct {
+	values:  [3]int,
+	current: int,
+	step:    int,
+}
+
+// This is an extension because Numbers belongs to another package. Its
+// associated members and traversal methods are visible to the protocol here.
+impl vendor.Numbers {
+	Element  :: int;
+	Iterator :: Numbers_Iterator;
+
+	iter :: proc(self) -> Numbers_Iterator {
+		return {self.values, 0, 1};
+	}
+
+	iter_reverse :: proc(self) -> Numbers_Iterator {
+		return {self.values, 2, -1};
+	}
+}
+
+impl Numbers_Iterator {
+	next :: proc(self: inout Numbers_Iterator) -> (int, bool) {
+		if (self.current < 0 || self.current >= 3) { return 0, false; }
+		value := self.values[self.current];
+		self.current += self.step;
+		return value, true;
+	}
+}
+
+main :: proc() {
+	values: vendor.Numbers = {{1, 2, 3}};
+	foreach (value in values) { fmt.println(value); }
+	foreach (value in values.reversed()) { fmt.println(value); }
+	iterator := values.iter();
+	first, ok := iterator.next();
+	fmt.println(first);
+}

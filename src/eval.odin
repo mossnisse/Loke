@@ -116,6 +116,46 @@ require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (C
 	return frozen, true
 }
 
+// Static `foreach` may consume a finite evaluator-owned array without asking
+// the container itself to escape evaluation. Each yielded element is frozen
+// independently into semantic storage while the evaluator arena is still live.
+evaluate_static_elements :: proc(
+	k: ^Checker,
+	e: Expr,
+	what: string,
+	code := "L0454",
+) -> ([]Const_Value, bool) {
+	ev := Evaluator {
+		k      = k,
+		frames = make([dynamic]^Eval_Frame, 0, 8, context.temp_allocator),
+		origin = expr_span(e),
+		what   = what,
+	}
+	if err := virtual.arena_init_growing(&ev.arena); err != nil {
+		errorf(k.c, expr_span(e), "L0342", "cannot reserve compile-time scratch memory")
+		return nil, false
+	}
+	ev.alloc = virtual.arena_allocator(&ev.arena)
+	defer virtual.arena_destroy(&ev.arena)
+
+	value, ok := eval_expr(&ev, e)
+	if !ok {
+		if !ev.failed {
+			eval_fail(&ev, expr_span(e), code, "%s must be compile-time evaluable", what)
+		}
+		return nil, false
+	}
+	out := make([]Const_Value, len(value.elements), k.c.semantic_allocator)
+	for element, index in value.elements {
+		frozen, froze := freeze(&ev, element)
+		if !froze {
+			return nil, false
+		}
+		out[index] = frozen
+	}
+	return out, true
+}
+
 // Checks a procedure's signature and body on demand, so an array length or enum
 // value may call a procedure the ordinary phase order has not reached yet
 // (m3-plan decision "Evaluation readiness").

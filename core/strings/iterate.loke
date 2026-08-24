@@ -59,7 +59,7 @@ impl Fields_Iterator {
 
 	next :: proc(self: inout Fields_Iterator) -> (string_view, bool) {
 		start := len(self.rest);
-		foreach (codepoint, offset in self.rest) {
+		foreach (codepoint, offset in self.rest.rune_offsets()) {
 			if (!is_space(codepoint)) {
 				start = offset;
 				break;
@@ -71,7 +71,7 @@ impl Fields_Iterator {
 			return "", false;
 		}
 		end := len(rest);
-		foreach (codepoint, offset in rest) {
+		foreach (codepoint, offset in rest.rune_offsets()) {
 			if (is_space(codepoint)) {
 				end = offset;
 				break;
