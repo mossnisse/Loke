@@ -74,8 +74,8 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		alignment = size
 
 	case .String_View:
-		// design.md: "an immutable, validated UTF-8 borrow represented by a pointer
-		// and a byte length".
+		// An immutable, validated UTF-8 borrow: a pointer plus a byte length
+		// (design.md).
 		alignment = u64(c.target.pointer_bits) / 8
 		size = 2 * alignment
 

@@ -42,15 +42,15 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 		// numbering. Nothing in M7 needs `runtime.Os` by name; a later milestone
 		// that does can bind it lazily. (m7-plan step 1)
 		if pkg.key == STD_MEM {
-			// design.md: an `Allocator` "is obtained by the ordinary runtime default
-			// expression `mem.default_allocator()`". This is the *same* symbol the
+			// An `Allocator` is obtained by the ordinary runtime default expression
+			// `mem.default_allocator()` (design.md). This is the *same* symbol the
 			// generated default argument of a public copy operation names, so an omitted
 			// allocator and a written `mem.default_allocator()` are one call through
 			// one provider.
 			contribute_symbol(c, pkg, "default_allocator", c.default_allocator_symbol)
-			// design.md "Allocators": "there is no ambient temporary allocator …
-			// code creates a `mem.Scratch` or `mem.Arena` owner and passes its
-			// allocator explicitly". Both are compiler-owned because the region
+			// There is no ambient temporary allocator; code creates a `mem.Scratch`
+			// or `mem.Arena` owner and passes its allocator explicitly (design.md
+			// "Allocators"). Both are compiler-owned because the region
 			// lattice has to recognise them, not merely call them.
 			contribute_type(c, pkg, "Arena", arena_type(c))
 			contribute_type(c, pkg, "Scratch", scratch_type(c))
@@ -58,8 +58,8 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 			contribute_symbol(c, pkg, "try_scratch", provider_try_proc(c, scratch_type(c), "try_scratch"))
 		}
 	case STD_UNSAFE:
-		// design.md "unsafe.raw_data procedure": these make "the loss of bounds and
-		// borrow capability visible at the call site", which is the whole reason
+		// These make the loss of bounds and borrow capability visible at the call
+		// site (design.md "unsafe.raw_data procedure"), which is the whole reason
 		// they are spelled `unsafe.` rather than being implicit conversions.
 		contribute_builtin(c, pkg, "raw_data", .Unsafe_Raw_Data)
 		contribute_builtin(c, pkg, "string_view", .Unsafe_String_View)

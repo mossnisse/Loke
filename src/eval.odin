@@ -409,9 +409,9 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	if type_is_pointer(ev.k.c, type) {
 		return Eval_Value{kind = .Nil, type = type}, true
 	}
-	// design.md: a container's zero value is "empty, allocator-unbound, constant,
-	// and immediately usable". Here that is simply no elements: the four-word
-	// header models an allocation, and compile-time evaluation has none.
+	// A container's zero value is empty, allocator-unbound, constant, and
+	// immediately usable (design.md). Here that is simply no elements: the
+	// four-word header models an allocation, and compile-time evaluation has none.
 	if type_is_container(ev.k.c, type) {
 		return Eval_Value{kind = .Aggregate, type = type}, true
 	}
@@ -609,7 +609,7 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
 		eval_fail(ev, v.op_span, "L0341", "a user operator has no compile-time meaning yet")
 		return Eval_Value{}, false
 	}
-	// design.md "Maps": "`ok := key in m`" -- the right operand settles the key's
+	// `ok := key in m` (design.md "Maps") -- the right operand settles the key's
 	// type, so this is not an ordinary unified binary operation.
 	if v.op == .In {
 		return eval_map_membership(ev, v)
@@ -1088,8 +1088,8 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> ([]
 		return fallible ? results(ev, no_error) : none, true
 
 	case .Map_Find:
-		// design.md: `find` "returns a pointer to the existing value and `true`, or
-		// `nil` and `false`. It does not insert."
+		// `find` returns a pointer to the existing value and `true`, or `nil` and
+		// `false` — it never inserts (design.md).
 		key, key_ok := argument(ev, v, 1)
 		if !key_ok {
 			return nil, false
@@ -1145,8 +1145,8 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> ([]
 	return nil, false
 }
 
-// design.md "Maps": "Reading a key that is not present yields the zero value.
-// It does not insert." The comma-ok form adds whether it was there.
+// Reading a key that is not present yields the zero value and does not insert
+// (design.md "Maps"). The comma-ok form adds whether it was there.
 @(private = "file")
 eval_map_read :: proc(ev: ^Evaluator, v: ^Expr_Index, m: ^Eval_Value) -> (Eval_Value, bool) {
 	key, key_ok := eval_expr(ev, v.indices[0])
@@ -1579,9 +1579,9 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}, true
 
 	case .Drop:
-		// design.md: `drop` "runs the cleanup operation, writes the inert zero
-		// representation, and marks the variable dead". The evaluator has no
-		// storage to release, so what is left is the zero representation.
+		// `drop` runs the cleanup operation, writes the inert zero representation,
+		// and marks the variable dead (design.md). The evaluator has no storage to
+		// release, so what is left is the zero representation.
 		slot, ok := eval_place(ev, v.bound[0])
 		if !ok {
 			return Eval_Value{}, false
@@ -1751,7 +1751,7 @@ eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 		return flow
 
 	case ^Stmt_Foreach:
-		// design.md "Maps": "**Iteration order is unspecified.**" The evaluator has
+		// Map iteration order is unspecified (design.md "Maps"). The evaluator has
 		// one definite order — insertion — and exposing it would make a
 		// compile-time answer depend on something the language refuses to promise,
 		// and disagree with the same loop at run time. Rejected by its own reason

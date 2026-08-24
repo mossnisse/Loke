@@ -46,10 +46,11 @@ slice_of :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 	return type
 }
 
-// design.md: "Both types have the same runtime representation. Mutability is a
-// static capability and does not change the ABI." The backend therefore gives
-// both capabilities one LLVM type, which is what makes weakening a no-op at the
-// value level instead of a copy through a second shape.
+// A mutable and a read-only slice share one runtime representation; mutability
+// is a static capability that leaves the ABI unchanged (design.md). The backend
+// therefore gives both capabilities one LLVM type, which is what makes
+// weakening a no-op at the value level instead of a copy through a second
+// shape.
 slice_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	under := type_underlying(c, id)
 	info := type_of(c, under)
@@ -91,9 +92,9 @@ slice_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return info != nil && info.kind == .Slice && info.mutable
 }
 
-// design.md: "A mutable slice implicitly weakens to a read-only slice. A
-// read-only slice never converts to a mutable slice, including when its original
-// owner happens to be mutable."
+// A mutable slice implicitly weakens to a read-only one; a read-only slice
+// never converts to mutable, even when its original owner was mutable
+// (design.md).
 slice_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
 	from_info := underlying_info(c, from)
 	to_info := underlying_info(c, to)

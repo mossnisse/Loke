@@ -1,7 +1,7 @@
 // User operator declarations, lookup, and `delegate` (m4a-plan step 3).
 //
 // Ranking is the engine in `src/overload.odin` — design.md ranks operator
-// overloads "using the same algorithm as named procedure overloads", so there is
+// overloads using the same algorithm as named procedure overloads, so there is
 // no second implementation here, only candidate formation.
 //
 // The unshadowable built-in rule lives in `builtin_binary_defined` and its unary
@@ -221,9 +221,9 @@ append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
 
 // -------------------------------------------------- the built-in priority --
 
-// design.md: "**Built-in operations cannot be shadowed.** If every operand of an
-// expression is a built-in type *and a built-in operation is defined for that
-// operator on those operands*, the built-in operation always wins."
+// design.md: built-in operations cannot be shadowed. If every operand of an
+// expression is a built-in type and a built-in operation is defined for that
+// operator on those operands, the built-in operation always wins.
 //
 // A `distinct` type is not a built-in type for this rule, even when what it
 // wraps is.

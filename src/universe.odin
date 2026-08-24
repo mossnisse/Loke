@@ -208,10 +208,10 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		proc_type = no_args,
 	})
 
-	// design.md "Storage modifiers": `drop(value)` "explicitly cleans up a
-	// definitely live lexical owning variable ... It is a compiler special form,
-	// not an ordinary procedure", and "a declaration can shadow it and make the
-	// special form unavailable in that scope" — which an ordinary universe symbol
+	// `drop(value)` explicitly cleans up a definitely live lexical owning
+	// variable; it's a compiler special form, not an ordinary procedure, and a
+	// declaration can shadow it to make the special form unavailable in that
+	// scope (design.md "Storage modifiers") — which an ordinary universe symbol
 	// already gives it.
 	define(c, universe, "drop", Symbol{kind = .Builtin, builtin = .Drop, type = TYPE_VOID, proc_type = no_args})
 

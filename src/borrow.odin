@@ -209,10 +209,9 @@ Prov_Slot :: struct {
 	name:   string,
 	span:   Span,
 	// The loan this expression temporary was created with, if it holds a fresh
-	// borrow. design.md: "A mutable slice implicitly weakens to a read-only
-	// slice", and that conversion is written at the destination, not at the
-	// slicing expression, so the capability is settled once the destination is
-	// known.
+	// borrow. A mutable slice implicitly weakens to a read-only one (design.md),
+	// and that conversion is written at the destination, not at the slicing
+	// expression, so the capability is settled once the destination is known.
 	fresh_loan: Loan_Id,
 }
 
@@ -231,9 +230,9 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	}
 	#partial switch underlying_kind(c, type) {
 	case .Pointer, .Slice, .String_View, .CString_View, .Any_View, .Dyn:
-		// design.md "C string views": a view from `to_c_view()` is "valid for that
-		// complete expression" and "cannot be assigned, returned, or stored", which
-		// is exactly what following it as a carrier enforces. One received from
+		// design.md "C string views": a view from `to_c_view()` lives only for that
+		// one expression and may not be assigned, returned, or stored, which is
+		// exactly what following it as a carrier enforces. One received from
 		// foreign code has no owner the compiler knows, so it simply carries no
 		// loan — the documented trust boundary, not a second rule.
 		return true
@@ -241,8 +240,8 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// design.md "Capabilities and the one rule": "`^T`, `[]mut T`, and `inout` are
-// mutable borrows", while `[]T`, `string_view` and ordinary parameter access are
+// design.md "Capabilities and the one rule": `^T`, `[]mut T`, and `inout` are
+// mutable borrows, while `[]T`, `string_view` and ordinary parameter access are
 // immutable ones.
 carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type_is_region_provider(c, type) {
@@ -274,15 +273,15 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 
 // ---------------------------------------------------------- regions --
 
-// design.md "Allocator regions and region provenance": "Allocator values have a
-// region identity in addition to their allocation procedures and failure
-// policy." What the analysis needs from that identity is where it came from: a
+// design.md "Allocator regions and region provenance": an allocator value has a
+// region identity separate from its allocation procedures and failure policy.
+// What the analysis needs from that identity is where it came from: a
 // parameter of this body, the process-wide default provider, or somewhere it
 // cannot see.
 //
-// design.md also settles the precision question: "When compile-time
+// design.md also settles the precision question: when compile-time
 // region-identity analysis cannot prove two allocator values distinct, the
-// lifetime check conservatively treats their regions as possibly identical." M5
+// lifetime check conservatively treats their regions as possibly identical. M5
 // has no source-level provider that creates a region, so no two identities are
 // ever proven distinct and a reset must assume it ends every tracked region.
 //
@@ -314,9 +313,9 @@ region_has_local :: proc(set: Region_Set) -> bool {
 	return set.locals != 0 || set.crowded
 }
 
-// A region this body created and nothing outside it can name. design.md: "A
-// procedure may reset a region it created locally, because no caller-owned value
-// can belong to it."
+// A region this body created and nothing outside it can name. A procedure may
+// reset a region it created locally, because no caller-owned value can belong
+// to it (design.md).
 region_is_local_only :: proc(set: Region_Set) -> bool {
 	return region_has_local(set) && !set.default && !set.unknown && !region_is_parameter_backed(set)
 }
@@ -368,10 +367,10 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) {
 
 // ------------------------------------------------------- result summaries --
 
-// design.md "Temporaries and procedure boundaries": "For a direct call to a
+// design.md "Temporaries and procedure boundaries": for a direct call to a
 // named Loke declaration or generic instantiation, the compiler records a
-// result-provenance summary with the declaration. For each result it records two
-// independent components when applicable."
+// result-provenance summary with the declaration, tracking up to two
+// independent components per result.
 //
 // This is the root component; the region component joins it in m5b-plan step 3.
 // Every field is a *possibility*, so the join is a union and the lattice is
@@ -388,9 +387,9 @@ Result_Provenance :: struct {
 	// component exists so a caller does not silently believe the result.
 	local:   bool,
 	unknown: bool,
-	// design.md: "an owning result constructed with an allocator parameter
-	// derives its region provenance from that allocator argument at the call
-	// site." The region component is independent of the root component above:
+	// An owning result constructed with an allocator parameter derives its
+	// region provenance from that allocator argument at the call site
+	// (design.md). The region component is independent of the root component above:
 	// passing one rule does not waive the other.
 	region:  Region_Set,
 }
@@ -822,8 +821,9 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, inv
 }
 
 // Backward: which carrier slots have a later use, and where that use is. A loan
-// is live exactly where a slot that may hold it is, which is design.md's
-// "creation to its last use", including the last use of every copy.
+// is live exactly where a slot that may hold it is, matching design.md's rule
+// that a loan lives from its creation to its last use, including the last use
+// of every copy.
 @(private = "file")
 solve_loan_liveness :: proc(state: ^Prov_State) {
 	graph := state.graph
@@ -969,8 +969,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			}
 		}
 	case .Escape:
-		// design.md's `bad_owner`, the region half of a return: an owner "backed by
-		// a region created in the current procedure may not be returned". The
+		// design.md's `bad_owner`, the region half of a return: an owner backed by
+		// a region created in the current procedure may not be returned. The
 		// region ends with the frame, so moving the owner into result storage would
 		// hand the caller a value whose backing storage is already gone.
 		if region_has_local(event.region) {
@@ -988,7 +988,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			}
 			return
 		}
-		// design.md: "A borrow derived from a local root cannot be returned."
+		// A borrow derived from a local root cannot be returned (design.md).
 		// Static, materialized and freshly allocated roots are all still there
 		// when the caller resumes, and unknown provenance is not evidence of a
 		// failure -- only an operation that needs a proof rejects it.
@@ -1020,9 +1020,9 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 	case .Reset:
 		check_region_reset(state, event, live, uses)
 	case .Region_Escape:
-		// design.md: an owner "backed by a region created in the current
-		// procedure may not be ... assigned to `static`, `thread_local`, or
-		// file-scope storage". A bare pointer, slice or view stored the same way
+		// design.md: an owner backed by a region created in the current
+		// procedure may not be assigned to `static`, `thread_local`, or
+		// file-scope storage. A bare pointer, slice or view stored the same way
 		// is the documented v1 trust boundary and is deliberately not checked.
 		if region_has_local(event.region) {
 			errorf(
@@ -1045,8 +1045,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		)
 	case .Free:
 		if roots, ok := check_free_provenance(state, event); ok {
-			// design.md: `free` "invalidates every locally tracked pointer or view
-			// of that allocation", so a surviving alias is the error, not the
+			// `free` invalidates every locally tracked pointer or view of that
+			// allocation (design.md), so a surviving alias is the error, not the
 			// dangling read it would later perform.
 			for root in roots {
 				report_live_dependants(state, root, event.span, live, uses, "released")
@@ -1056,14 +1056,14 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 }
 
 
-// design.md: "The compiler rejects `free_all`, or any call carrying the same
+// design.md: the compiler rejects `free_all`, or any call carrying the same
 // allocator-reset effect, while a live owning value (managed or manual) or
-// borrow still refers to storage from that allocator."
+// borrow still refers to storage from that allocator.
 //
 // Two independent questions. First, may this body reset this region at all --
-// design.md: "It may not hide a reset of a global or other pre-existing
-// allocator: such an allocator is taken through an `@(allocator_reset)`
-// parameter instead." Second, would anything survive the reset.
+// design.md says it may not hide a reset of a global or other pre-existing
+// allocator; such an allocator must be taken through an `@(allocator_reset)`
+// parameter instead. Second, would anything survive the reset.
 @(private = "file")
 check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
 	graph := state.graph
@@ -1234,9 +1234,9 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 	add_notef(k.c, loan.span, "the %s is created here", loan.what)
 }
 
-// design.md: "The diagnostic must name the root, the borrow's creation, the
-// conflicting or invalidating operation, and the later use that keeps the borrow
-// live." The operation itself is the primary span.
+// The diagnostic must name the root, the borrow's creation, the conflicting
+// or invalidating operation, and the later use that keeps the borrow live
+// (design.md). The operation itself is the primary span.
 @(private = "file")
 add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, later: Span) {
 	k := state.k
@@ -1258,8 +1258,8 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 	}
 }
 
-// design.md: `free` "ends the allocation root designated by a checked base
-// pointer from `new` or `new_clone`". M5a accepted only a direct result binding;
+// `free` ends the allocation root designated by a checked base pointer from
+// `new` or `new_clone` (design.md). M5a accepted only a direct result binding;
 // propagated provenance replaces that narrowing with the real question.
 @(private = "file")
 check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> ([]Root_Id, bool) {

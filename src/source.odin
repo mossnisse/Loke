@@ -146,8 +146,8 @@ Compiler :: struct {
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
-	// design.md "Copy-cost diagnostics": "The threshold is target-specific and is
-	// not part of the language semantics", so it is an option rather than a rule.
+	// The threshold is target-specific, not part of the language semantics
+	// (design.md "Copy-cost diagnostics"), so it is an option rather than a rule.
 	// A copy site reports when it duplicates at least this many inline bytes, or
 	// whenever its lifecycle clone may allocate.
 	copy_cost_threshold: u64,
@@ -183,9 +183,9 @@ Compiler :: struct {
 	// a forward or mutually recursive callee already has its result summary
 	// (m5b-plan decision "Analysis scheduling").
 	checked_bodies: [dynamic]Checked_Body,
-	// design.md "Temporaries and procedure boundaries": the result-provenance
-	// summary "is compile-time declaration metadata, is emitted for cross-package
-	// checking, and does not change the runtime ABI". Keyed per concrete
+	// The result-provenance summary is compile-time declaration metadata, emitted
+	// for cross-package checking, and it does not change the runtime ABI
+	// (design.md "Temporaries and procedure boundaries"). Keyed per concrete
 	// declaration or generic instance, so two instances may differ.
 	result_summaries: map[Symbol_Id]^Proc_Summary,
 	// Direct summary dependencies, discovered while building each body's first
@@ -204,8 +204,8 @@ Compiler :: struct {
 	default_allocator_arg:    Expr,
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,
-	// design.md: "An explicitly dropped manual owner is dead and no longer blocks
-	// reset." M5a's liveness answers that, one pass and one graph earlier than the
+	// An explicitly dropped manual owner is dead and no longer blocks reset
+	// (design.md). M5a's liveness answers that, one pass and one graph earlier than the
 	// reset check, so the definitely-dead owners at each reset call are recorded
 	// here (`src/lifecycle.odin`, `src/cfg.odin`).
 	reset_dead:               map[^Expr_Call][]Symbol_Id,
@@ -310,7 +310,7 @@ errorf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..a
 }
 
 // A diagnostic that does not fail the compilation. design.md keeps size out of
-// type correctness — "Size is never a type error" — so the copy-cost report is a
+// type correctness — size is never a type error — so the copy-cost report is a
 // warning and leaves `error_count` alone.
 warnf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..any) {
 	append(

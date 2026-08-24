@@ -172,8 +172,8 @@ dyn_type :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, span: 
 	return type
 }
 
-// design.md: "`dyn I` itself satisfies `I` by compiler-provided forwarding
-// slots. This is the bridge between static and runtime polymorphism." Each
+// `dyn I` satisfies `I` itself, through compiler-provided forwarding slots —
+// the bridge between static and runtime polymorphism (design.md). Each
 // forwarder is an ordinary method on the view whose body calls through the
 // view's own witness, so `Drawable(dyn Drawable)` holds and generic code
 // constrained by `I` accepts a `dyn I`.

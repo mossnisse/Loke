@@ -62,8 +62,8 @@ Synth_Kind :: enum {
 	// (m5a-plan step 3).
 	Try_Clone,
 	Clone,
-	// design.md: "`dyn I` itself satisfies `I` by compiler-provided forwarding
-	// slots." Each one calls through the view's own witness.
+	// `dyn I` satisfies `I` through compiler-provided forwarding slots (design.md).
+	// Each one calls through the view's own witness.
 	Dyn_Forward,
 	// design.md "Dynamic arrays" and "Maps": one contributed container operation.
 	// Which one is `Symbol.container_op` (m6b-plan step 2).
@@ -298,7 +298,7 @@ synth_proc :: proc(
 
 // ---------------------------------------------------------- the `iter` call --
 
-// design.md: "The compiler contributes ... an `iter` overload". A user type
+// The compiler contributes the `iter` overload (design.md). A user type
 // declares `iter` as an ordinary `impl` member, and this is what makes the free
 // call in the `Iterable` requirement — and in generic code — find it.
 check_iter_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
@@ -436,15 +436,15 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		s.kind = .Dynamic
 		s.element_type = info.element
 	case info.kind == .Map:
-		// design.md: "Map values can be iterated by-reference, but their keys
-		// cannot since map keys are immutable." One name binds the value; two bind
-		// the key and the value, which is the exception to "value, index".
+		// Map values can be iterated by-reference, but map keys are immutable and
+		// cannot be (design.md). One name binds the value; two bind the key and the
+		// value, which is the exception to "value, index".
 		s.kind = .Map
 		s.element_type = info.element
 		s.key_type = info.key
 	case info.kind == .String || info.kind == .String_View:
-		// design.md: "String iteration yields Unicode scalar values by default.
-		// Byte iteration is explicit" — `foreach (b, i in text.bytes())`.
+		// String iteration yields Unicode scalar values by default; byte iteration
+		// is explicit (design.md) — `foreach (b, i in text.bytes())`.
 		s.kind = .Text
 		s.element_type = TYPE_RUNE
 	case info.is_range:
@@ -454,15 +454,15 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		return check_protocol_foreach(k, s, subject)
 	}
 
-	// design.md: "the index binding is a counter". A map is the exception — its
+	// The index binding is a counter (design.md). A map is the exception — its
 	// second name is the *value*, and that is the one a `&` may take.
 	if len(s.bindings) == 2 && s.bindings[1].is_ref && s.kind != .Map {
 		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
 		return FLOWS
 	}
 	if s.kind == .Map {
-		// design.md: "Map values can be iterated by-reference, but their keys
-		// cannot since map keys are immutable."
+		// Map values can be iterated by-reference, but map keys are immutable and
+		// cannot be (design.md).
 		key_binding := len(s.bindings) == 2 ? 0 : -1
 		if key_binding >= 0 && s.bindings[key_binding].is_ref {
 			errorf(
@@ -478,8 +478,8 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		}
 		return check_map_foreach_body(k, s)
 	}
-	// design.md "Slices": "Element assignment and iteration by reference require
-	// `[]mut T`." The capability is the slice's own, not whether the variable
+	// Element assignment and iteration by reference require `[]mut T` (design.md
+	// "Slices"). The capability is the slice's own, not whether the variable
 	// holding it can be rebound.
 	if s.kind == .Slice {
 		if s.bindings[0].is_ref && !info.mutable {
@@ -511,8 +511,9 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return check_foreach_body(k, s, s.element_type)
 }
 
-// design.md: "`foreach (key, &value in some_map)`". The first of two names is
-// the key, not a counter, so the ordinary body binder cannot be reused as is.
+// design.md's example is `foreach (key, &value in some_map)`. The first of two
+// names is the key, not a counter, so the ordinary body binder cannot be reused
+// as is.
 @(private = "file")
 check_map_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if len(s.bindings) == 1 {
@@ -522,8 +523,8 @@ check_map_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	   !gate_type(k, s.element_type, expr_span(s.iterable)) {
 		return FLOWS
 	}
-	// design.md: "Map values can be iterated by-reference, but their keys cannot
-	// since map keys are immutable." An immutable key binding is therefore a
+	// Map values can be iterated by-reference, but map keys are immutable and
+	// cannot be (design.md). An immutable key binding is therefore a
 	// *borrow* of the stored key rather than a copy — which is what lets
 	// `map[string]V` be iterated at all, and why no per-iteration clone or drop
 	// is needed for it. The loop's whole-container loan is what keeps that
@@ -625,7 +626,7 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> F
 	if !gate_type(k, element, expr_span(s.iterable)) {
 		return FLOWS
 	}
-	// design.md: "By default each iterated value is a copy." A managed element
+	// By default each iterated value is a copy (design.md). A managed element
 	// would therefore need a per-iteration clone and a per-iteration drop, which
 	// is loop-body cleanup the M5a CFG does not place yet.
 	if !s.bindings[0].is_ref && type_is_managed(k.c, element) {

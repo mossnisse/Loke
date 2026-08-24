@@ -963,10 +963,7 @@ parse_constant_value :: proc(p: ^Parser) -> Expr {
 	case .Hook:
 		return parse_hook(p)
 	}
-	// A written type *is* the value here: `My_Int :: int` and
-	// `Meters :: distinct int` are type aliases (design.md "Advanced types").
-	// The first `parse_postfix` consumes the flag, so it neither leaks into the
-	// operands of a larger expression nor past this declaration.
+	// Sets `type_value` (see the field doc) so `My_Int :: int` parses as a value.
 	p.type_value = true
 	defer p.type_value = false
 	return parse_expr(p)

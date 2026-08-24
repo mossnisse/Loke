@@ -8,6 +8,7 @@ Should import paths encode package versions, and should a package declaration re
 
 ## package header files
 
+I am not happy with the package level encapsulation, one idea is
 An files containing all public signature and what is reachable from the outside.
 Should be optional but if it exists it should be checked by the compiler that it's correct.
 A way to improve encapsulation and make it easier to see what an package can do both for humans and LLM's.
@@ -119,6 +120,12 @@ generation is eventually required, it should preserve lexical name resolution,
 hygiene, incremental compilation, and readable diagnostics rather than exposing
 an untyped token macro system by default.
 
+## Compile time
+
+Make more stuff work at compile time
+file handling?
+fail load, can the programmer easily see what is going to run at compile time
+
 ## Recoverable panics
 
 Version 1 makes a panic unrecoverable: unwinding runs `defer`s and managed
@@ -142,11 +149,6 @@ Not required by anything in this document.
 
 How to add some suport to go even more low level and use SIMD efficiently, Intrinsic or inline assembly?
 
-## Compile time
-
-file handling?
-fail load, can the programmer easily see what is going to run at compile time
-
 ## abstraction over SOA
 
 Is it the programers responsibility to abstract ove the right thing or does the language need some help with that?
@@ -169,23 +171,19 @@ Could the compiler move a large fixed-size local variables to the heap? Does it 
 
 I think the default allocator and logger should be choosen in the source code in the main package, is that an good idea and what effect does that have? So must be befor the import statements
 
+## shorten dynamic array syntax
+
+change [dynamic] to [dyn] or [+] [*]
+
+## numeric function
+
+should we add max and min value functions for numeric types?
+
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why
 some larger design choices were made. [`design.md`](design.md) remains the
 authoritative language definition.
-
-## shorten dynamic array syntax
-
-change [dynamic] to [dyn] or [+] [*]
-
-## directives
-
-now when we have compile time procedures should some directives be changed to procedures?
-
-## numeric function
-
-should we add max and min value functions for numeric types?
 
 ## Added features compared to Odin
 

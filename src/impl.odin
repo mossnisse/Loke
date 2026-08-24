@@ -330,11 +330,11 @@ member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 	return sym != nil && (sym.pkg == lookup_package(k) || sym.public)
 }
 
-// design.md "Exported names": "Code in the declaring package may read, write,
-// and initialize package-visible fields; importing packages may do so only for
-// public fields." Ordinary selection, `offset_of`, and both aggregate literal
-// forms route through here so they agree with each other and with reflection
-// (m5a-plan step 1).
+// The declaring package may read, write, and initialize package-visible
+// fields; importing packages may do so only for public fields (design.md
+// "Exported names"). Ordinary selection, `offset_of`, and both aggregate
+// literal forms route through here so they agree with each other and with
+// reflection (m5a-plan step 1).
 require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: Symbol_Id, code: string, action: string) -> bool {
 	sym := symbol_of(k.c, field)
 	if member_is_visible(k, sym) {

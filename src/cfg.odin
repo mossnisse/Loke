@@ -41,10 +41,10 @@ Flow_Event_Kind :: enum {
 	Use,
 	Cleanup,
 	// An allocator-region reset, noted only so the *later* provenance pass can
-	// ask which owners were definitely dead at it. design.md: "An explicitly
-	// dropped manual owner is dead and no longer blocks reset." The two passes
-	// run over separate graphs, so the answer is recorded against the call node
-	// both of them walk (m6b-plan step 5).
+	// ask which owners were definitely dead at it. An explicitly dropped manual
+	// owner no longer blocks a reset (design.md). The two passes run over
+	// separate graphs, so the answer is recorded against the call node both of
+	// them walk (m6b-plan step 5).
 	Reset_Point,
 }
 
@@ -227,10 +227,10 @@ Flow_Graph :: struct {
 	// Direct callees whose result summaries this graph reads. Populated only in
 	// summary mode and copied into compilation metadata before the graph dies.
 	summary_callees: [dynamic]Symbol_Id,
-	// design.md: "A value temporary lives until the end of its complete
-	// expression", extended to the complete statement inside a `foreach` iterable,
-	// a `switch` subject, or an `if`/`for`/`switch` initial statement. One list
-	// per statement is exactly that boundary.
+	// A value temporary lives until the end of its complete expression
+	// (design.md), extended to the complete statement inside a `foreach`
+	// iterable, a `switch` subject, or an `if`/`for`/`switch` initial statement.
+	// One list per statement is exactly that boundary.
 	temp_roots:     [dynamic]Root_Id,
 	// design.md "Allocator regions and region provenance". One entry per
 	// allocator binding and per region-backed owner; `owners_in_scope` is what a
@@ -446,7 +446,7 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 			continue
 		}
 		if action.kind == .Prov_Root {
-			// design.md: a borrow "may be used only while its root is live". The
+			// A borrow may be used only while its root is live (design.md). The
 			// storage ends here, so every loan of it does too.
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
 			continue
@@ -462,10 +462,10 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 	}
 }
 
-// design.md: an ordinary temporary root "lives until the end of its complete
-// expression", and one in a control-flow header until that complete statement
-// ends. A header's initial statement therefore does not release its own
-// temporaries: `extend` keeps them on the enclosing statement's list.
+// An ordinary temporary root lives until the end of its complete expression,
+// and one in a control-flow header until that complete statement ends
+// (design.md). A header's initial statement therefore does not release its
+// own temporaries: `extend` keeps them on the enclosing statement's list.
 @(private = "file")
 walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	mark := len(graph.temp_roots)
@@ -542,9 +542,9 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 			return
 		}
 		for value in s.values {
-			// design.md: returning a managed local, named result, temporary, or
-			// `move` parameter "transfers that owned value into result storage
-			// without cloning", so the source is dead afterwards and scope exit
+			// Returning a managed local, named result, temporary, or `move`
+			// parameter transfers that owned value into result storage without
+			// cloning (design.md), so the source is dead afterwards and scope exit
 			// must not drop it.
 			if value.clone_on_return {
 				report_copy_cost(
@@ -614,17 +614,17 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		if !type_is_managed(graph.k.c, sym.type) {
 			continue
 		}
-		// design.md: static-duration storage "is always live after this
-		// initialization" and "The compiler does not automatically drop these
-		// values", so there is no state to follow and no scope-exit obligation.
+		// Static-duration storage is always live after initialization and the
+		// compiler never drops it automatically (design.md), so there is no state
+		// to follow and no scope-exit obligation.
 		if sym.duration != .None {
 			continue
 		}
 		// ponytail: `manual` disables automatic cleanup, but it is still gated at
 		// the declaration, so there is nothing here to exempt yet.
-		// design.md: "Scope exit automatically drops a live managed lexical owner.
-		// It does not clean up a manual lexical owner." A `manual` owner is still
-		// followed, so `drop(x)` and use-after-drop both work on it.
+		// Scope exit automatically drops a live managed lexical owner but not a
+		// manual one (design.md). A `manual` owner is still followed, so `drop(x)`
+		// and use-after-drop both work on it.
 		slot, already_tracked := slot_of(graph, id)
 		if !already_tracked {
 			append(&graph.tracked, Tracked_Local {
@@ -639,8 +639,8 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		// declaration's state slot, but register the runtime activation in each
 		// expanded cleanup path.
 		append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
-		// design.md: the implicit action is placed "at the declaration point",
-		// which is where initialization completes. `---` leaves storage
+		// The implicit action is placed at the declaration point, where
+		// initialization completes (design.md). `---` leaves storage
 		// uninitialised and so registers nothing.
 		if len(d.values) == 1 && d.values[0] == nil {
 			continue
@@ -766,9 +766,9 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	link(graph, graph.current, head)
 	done := new_flow_block(graph)
 	link(graph, head, done)
-	// design.md lists compiler-known iterators among the borrow carriers, and
-	// "conversion to a built-in view and compiler-known iteration preserve the
-	// source root". The read happens once per iteration, so the loan has to be
+	// design.md lists compiler-known iterators among the borrow carriers: both
+	// conversion to a built-in view and compiler-known iteration preserve the
+	// source root. The read happens once per iteration, so the loan has to be
 	// live through the body, not only where the iterable was written.
 	if len(iterated) > 0 {
 		graph.current = head
@@ -861,8 +861,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Move:
 		if prov {
-			// design.md: "Moving, dropping, freeing, fully assigning, or exchanging
-			// a root invalidates borrows of its previous value."
+			// Moving, dropping, freeing, fully assigning, or exchanging a root
+			// invalidates borrows of its previous value (design.md).
 			prov_invalidate(graph, v.value, v.span, "moved")
 			return nil
 		}
@@ -896,8 +896,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		}
 
 	case ^Expr_Unary:
-		// design.md: "`&place` creates a checked mutable `^T` borrow of the root
-		// containing `place`."
+		// `&place` creates a checked mutable `^T` borrow of the root containing
+		// `place` (design.md).
 		if prov && v.op == .Amp {
 			return prov_address_of(graph, v)
 		}
@@ -1010,10 +1010,10 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	return nil
 }
 
-// design.md: "a trivial aggregate copied into a `value: T` parameter" is a copy
-// site, while "An ordinary `value: T` parameter borrows a managed owner and is
-// not a copy site." Passing a temporary hands over a value nothing else holds,
-// so only a place duplicates anything.
+// A trivial aggregate copied into a `value: T` parameter is a copy site, while
+// an ordinary `value: T` parameter that borrows a managed owner is not
+// (design.md). Passing a temporary hands over a value nothing else holds, so
+// only a place duplicates anything.
 @(private = "file")
 report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call, consumed: int) {
 	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
@@ -1059,13 +1059,13 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	}
 	// `drop(x)` reads the value, runs its hook, and kills the binding. Its
 	// operand is in `bound` rather than `args` by the time this runs.
-	// design.md: `free` "ends the allocation root designated by a checked base
-	// pointer ... It consumes the operand binding". Step 3 checked the operand's
+	// `free` ends the allocation root designated by a checked base pointer and
+	// consumes the operand binding (design.md). Step 3 checked the operand's
 	// form; requiring it definitely live is the half that needed this graph.
 	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
 		#partial switch sym.builtin {
 		case .Exchange:
-			// design.md: `exchange` "replaces a definitely live value". It leaves a
+			// `exchange` replaces a definitely live value (design.md). It leaves a
 			// completed live replacement, so the destination survives the operation
 			// and this is a use rather than a kill.
 			if len(v.bound) == 2 {
@@ -1291,8 +1291,8 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 			kind = .Static
 		}
 	case .Parameter:
-		// design.md: "An `inout` parameter aliases the caller's root". The default
-		// parameter binding is instead "a callee-local read-only value".
+		// An `inout` parameter aliases the caller's root, while the default
+		// parameter binding is a callee-local read-only value (design.md).
 		if sym.mode == .Inout {
 			kind = .Param
 		}
@@ -1354,9 +1354,9 @@ prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
 	return len(graph.prov_slots) - 1
 }
 
-// design.md: "A mutable slice implicitly weakens to a read-only slice." The
-// conversion is written at the destination, so a borrow created by an expression
-// takes its final capability from what receives it.
+// A mutable slice implicitly weakens to a read-only slice (design.md). The
+// conversion is written at the destination, so a borrow created by an
+// expression takes its final capability from what receives it.
 @(private = "file")
 prov_weaken :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id) {
 	if !type_is_carrier(graph.k.c, destination) || carrier_is_mutable(graph.k.c, destination) {
@@ -1452,9 +1452,9 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			if sym == nil {
 				continue
 			}
-			// design.md: an allocator value's region identity is what lets the
-			// compiler recognise two values as the same region, and what an
-			// `@(allocator_reset)` promise is written about.
+			// An allocator value's region identity is what lets the compiler
+			// recognise two values as the same region, and what an
+			// `@(allocator_reset)` promise is written about (design.md).
 			if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
 				set := prov_empty_region(graph)
 				set.params[index] = true
@@ -1486,8 +1486,8 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 
 
 
-// design.md: "Conversion to a built-in view and compiler-known iteration
-// preserve the source root." An `any_view` reads its subject and never writes
+// Conversion to a built-in view and compiler-known iteration preserve the
+// source root (design.md). An `any_view` reads its subject and never writes
 // it, so the loan is a read-only one and other reads stay legal.
 @(private = "file")
 prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
@@ -1622,8 +1622,8 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 			return set
 		}
 		// `arena.allocator()`: the handle names the provider's own region, and
-		// design.md's "copying an allocator value preserves that identity" then
-		// carries it through every copy of the handle for free.
+		// copying an allocator value preserves that identity (design.md), so it
+		// carries through every copy of the handle for free.
 		if set, ok := prov_handle_region(graph, v); ok {
 			return set
 		}
@@ -1770,7 +1770,7 @@ prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
 	return nil
 }
 
-// design.md: a reset "may end every allocation root in that allocator region",
+// A reset may end every allocation root in that allocator region (design.md),
 // so it is checked both for the promise it needs and for what would survive it.
 @(private = "file")
 prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool, at: ^Expr_Call) {
@@ -1780,8 +1780,8 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		// merely because they are not this body's parameters.
 		covered = true
 	}
-	// design.md: "A procedure may reset a region it created locally, because no
-	// caller-owned value can belong to it." No promise is needed, and none could
+	// A procedure may reset a region it created locally, because no caller-owned
+	// value can belong to it (design.md). No promise is needed, and none could
 	// be written -- the region does not exist outside this body.
 	if region_is_local_only(set) {
 		covered, unmarked = true, ""
@@ -1800,10 +1800,10 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	// business, which is the whole point of giving each local provider a token.
 	//
 	//
-	// design.md: "an owner is live when it may be used later or still requires
-	// cleanup on an outgoing path. An explicitly dropped manual owner is dead and
-	// no longer blocks reset." Scope presence cannot answer that, so the answer is
-	// M5a's, recorded at this same call node one pass earlier.
+	// An owner is live when it may be used later or still requires cleanup on an
+	// outgoing path; an explicitly dropped manual owner is dead and no longer
+	// blocks reset (design.md). Scope presence cannot answer that, so the answer
+	// is M5a's, recorded at this same call node one pass earlier.
 	dead := graph.k.c.reset_dead[at]
 	for id in graph.owners_in_scope {
 		owner := symbol_of(graph.k.c, id)
@@ -1849,8 +1849,8 @@ symbol_in :: proc(list: []Symbol_Id, id: Symbol_Id) -> bool {
 	return false
 }
 
-// design.md: an owner backed by a region the procedure received "may not be
-// returned, assigned to `static`, `thread_local`, or file-scope storage".
+// An owner backed by a region the procedure received may not be returned,
+// assigned to `static`, `thread_local`, or file-scope storage (design.md).
 @(private = "file")
 prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr, result := 0) {
 	ident, is_ident := target.(^Expr_Ident)
@@ -1870,10 +1870,10 @@ prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr, result
 	if storage == "" {
 		return
 	}
-	// design.md: "an allocating clone receives the destination allocator's region
-	// provenance". Assigning a place *copies* it, so the destination is built with
-	// its own allocator and inherits nothing; only a `move`, a call result, or a
-	// constructed aggregate carries a region into the destination.
+	// An allocating clone receives the destination allocator's region provenance
+	// (design.md). Assigning a place *copies* it, so the destination is built
+	// with its own allocator and inherits nothing; only a `move`, a call result,
+	// or a constructed aggregate carries a region into the destination.
 	if type_is_managed(graph.k.c, expr_base(value).type) && expression_is_borrowed_place(graph.k.c, value) {
 		return
 	}
@@ -1948,8 +1948,8 @@ prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, boo
 			}
 			return root, prov_extend(graph, path, proj_wild()), true
 		case .Map:
-			// design.md "Maps": "Insertion may reallocate the map, so the index is a
-			// mutable borrow of `m` for the duration of the statement." Rehashing
+			// design.md "Maps": insertion may reallocate the map, so the index is a
+			// mutable borrow of `m` for the duration of the statement. Rehashing
 			// moves every slot, so no narrower projection would be true.
 			root, path, ok := prov_place_of(graph, v.operand)
 			if !ok {
@@ -2050,8 +2050,8 @@ prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 		if len(loans) > 0 || !prov_expr_is_temporary(v.operand) {
 			return loans
 		}
-		// design.md: a borrow of a value temporary "may be used during that
-		// expression, including by a called procedure, but cannot escape it".
+		// A borrow of a value temporary may be used during that expression,
+		// including by a called procedure, but cannot escape it (design.md).
 		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, true, v.span, "pointer")
 	}
 	prov_walk_subscripts(graph, v.operand)
@@ -2062,8 +2062,8 @@ prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 @(private = "file")
 prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	if len(v.bound) > 0 {
-		// design.md: "A selected `operator([:])` result is a borrow of the receiver
-		// unless its result type is owning." M4a deliberately postponed this
+		// A selected `operator([:])` result is a borrow of the receiver unless
+		// its result type is owning (design.md). M4a deliberately postponed this
 		// relationship because it needed provenance.
 		receiver_loans := walk_flow_expr(graph, v.bound[0])
 		for index in 1 ..< len(v.bound) {
@@ -2086,10 +2086,10 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	// Only a fixed array is sliced out of a root's own inline storage. Slicing a
 	// slice, a pointer or a string view reslices the carrier, so the loans it
 	// already holds are what the result borrows.
-	// design.md: `st[low:high]` borrows "a subrange view" of the string's own
-	// storage, exactly as slicing a fixed array borrows the array's.
-	// design.md "Dynamic arrays": "Indexing and slicing produce views into the
-	// current allocation", so a container lends from its own root too — that
+	// `st[low:high]` borrows a subrange view of the string's own storage,
+	// exactly as slicing a fixed array borrows the array's (design.md).
+	// design.md "Dynamic arrays": indexing and slicing produce views into the
+	// current allocation, so a container lends from its own root too — that
 	// borrow is what every relocating operation on it then invalidates.
 	operand_kind := underlying_kind(graph.k.c, expr_base(v.operand).type)
 	array := operand_kind == .Array || operand_kind == .String || operand_kind == .Dynamic_Array
@@ -2118,8 +2118,8 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	if len(source) > 0 {
 		return source
 	}
-	// design.md: a slice literal borrows a hidden array, which "follows the
-	// surrounding lexical scope"; any other temporary ends with its statement.
+	// A slice literal borrows a hidden array, which follows the surrounding
+	// lexical scope (design.md); any other temporary ends with its statement.
 	if _, is_literal := v.operand.(^Expr_Composite); is_literal {
 		root := prov_new_root(graph, .Slice_Literal, expr_span(v.operand), "this slice literal")
 		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = expr_span(v.operand)})
@@ -2242,7 +2242,7 @@ prov_declare_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symbol, ini
 		return
 	}
 	set := prov_empty_region(graph)
-	// design.md: "An explicit `via` allocator is bound at the declaration." That
+	// An explicit `via` allocator is bound at the declaration (design.md). That
 	// binding, not the initialiser, is what decides an owner's region -- a literal
 	// `{}` names no region at all, and `via arena.allocator()` names one exactly.
 	if written := symbol_via_allocator(graph.k.c, id); written != nil {
@@ -2264,8 +2264,8 @@ prov_declare_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, sym: ^Symbol, ini
 			})
 		}
 	}
-	// design.md: resetting a region is rejected "while a live owning value
-	// (managed or manual) ... still refers to storage from that allocator". All
+	// Resetting a region is rejected while a live owning value, managed or
+	// manual, still refers to storage from that allocator (design.md). All
 	// lexical owners register once; the flow-insensitive region map may learn a
 	// dependency from a later assignment.
 	if sym.duration == .None {
@@ -2311,8 +2311,8 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					graph.region_of[ident.symbol] = existing
 				}
 			}
-			// design.md: "Moving, dropping, freeing, fully assigning, or exchanging
-			// a root invalidates borrows of its previous value."
+			// Moving, dropping, freeing, fully assigning, or exchanging a root
+			// invalidates borrows of its previous value (design.md).
 			prov_invalidate(graph, target, expr_span(target), "assigned")
 			if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
 				prov_weaken(graph, sources, expr_base(target).type)
@@ -2402,8 +2402,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 					walk_flow_expr(graph, argument)
 				}
 			}
-			// design.md: `new` "creates a new allocation root and returns a checked
-			// pointer to its first value".
+			// `new` creates a new allocation root and returns a checked pointer to
+			// its first value (design.md).
 			root := prov_new_root(graph, .Allocation, v.span, "this allocation")
 			graph.roots[int(root)].symbol = INVALID_SYMBOL
 			return prov_borrow(graph, root, nil, true, v.span, "pointer")
@@ -2479,8 +2479,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			prov_invalidate(graph, argument, v.span, "moved")
 			continue
 		}
-		// design.md: "any user operation whose `self` parameter is `inout`" also
-		// invalidates element and view borrows of the receiver.
+		// Any user operation whose `self` parameter is `inout` also invalidates
+		// element and view borrows of the receiver (design.md).
 		if index == 0 && receiver == .Inout {
 			prov_invalidate(graph, argument, v.span, "modified")
 			if root, path, ok := prov_place_of(graph, argument); ok {
@@ -2493,8 +2493,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			if root, path, ok := prov_place_of(graph, argument); ok {
 				prov_walk_subscripts(graph, argument)
 				prov_access(graph, root, path, .Write, expr_span(argument))
-				// design.md: "An `inout` parameter aliases the caller's root, so a
-				// borrow returned from it is derived from that root."
+				// An `inout` parameter aliases the caller's root, so a borrow returned
+				// from it is derived from that root (design.md).
 				actuals[index] = prov_borrow(graph, root, path, true, expr_span(argument), "borrow")
 				borrowed = prov_join(graph, borrowed, actuals[index])
 				continue
@@ -2605,8 +2605,8 @@ prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]
 // provenance is erased -- which is what keeps an indirect result away from
 // checked `free`.
 
-// design.md: "Allocator-wide invalidation is the one effect propagated through
-// arbitrary ordinary procedure wrappers", and it survives an indirect call
+// Allocator-wide invalidation is the one effect propagated through arbitrary
+// ordinary procedure wrappers (design.md), and it survives an indirect call
 // because the attribute is part of the procedure type.
 @(private = "file")
 prov_call_resets :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {

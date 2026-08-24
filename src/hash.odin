@@ -42,11 +42,11 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return false
 }
 
-// design.md "Maps": a key needs "a **coherent** `==` and
-// `hash(value, seed: uint) -> uint`", and for a user-defined key "both
-// operations must be inherent implementations belonging to the key type;
-// caller-local extensions do not qualify even if an ordinary interface check in
-// that extension's package would succeed".
+// A map key needs a coherent `==` and `hash(value, seed: uint) -> uint`; for
+// a user-defined key, both must be inherent implementations belonging to the
+// key type, since a caller-local extension doesn't qualify even when an
+// ordinary interface check in that extension's package would pass
+// (design.md "Maps").
 //
 // So this asks only two questions: does the compiler supply the pair, or does
 // the key type's *own* package declare both? An extension block never enters the

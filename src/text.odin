@@ -11,7 +11,7 @@
 // they lower to.
 package lokec
 
-// design.md "Multi-pointers": "Implicit conversions between `^T` and `[^]T`."
+// `^T` and `[^]T` implicitly convert to each other (design.md "Multi-pointers").
 // Both directions, and only when the element types agree — a multi-pointer is a
 // slimmer view of the same storage, not a reinterpretation of it.
 multi_pointer_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
@@ -35,8 +35,8 @@ type_is_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 // The two carriers that promise valid UTF-8 and carry a byte length. A
-// `cstring_view` is neither: design.md says it "does not promise UTF-8 because
-// foreign strings frequently use another encoding or arbitrary bytes".
+// `cstring_view` is neither: foreign strings often use another encoding or
+// arbitrary bytes, so it makes no UTF-8 promise (design.md).
 type_is_utf8_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch underlying_kind(c, id) {
 	case .String, .String_View:
@@ -111,8 +111,8 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 			text_operand_error(k, v, sel, operand)
 			return true
 		}
-		// design.md "string type conversions": "A view obtained from a `string` is
-		// therefore `[]u8`; it cannot be converted to `[]mut u8`."
+		// A view obtained from a `string` is `[]u8`, not `[]mut u8` — it cannot be
+		// converted to the mutable form (design.md "string type conversions").
 		v.type = slice_of(k.c, TYPE_U8, mutable = false)
 
 	case .Copy:
@@ -207,8 +207,8 @@ check_from_runes :: proc(k: ^Checker, v: ^Expr_Call) {
 	set_optional_ok_results(k, v, TYPE_STRING)
 }
 
-// design.md "Optional-ok results": a validating conversion "produces `(value,
-// ok: bool)`. On invalid input, `value` is the zero value and `ok` is false."
+// A validating conversion produces `(value, ok: bool)`; on invalid input,
+// `value` is the zero value and `ok` is false (design.md "Optional-ok results").
 set_optional_ok_results :: proc(k: ^Checker, v: ^Expr_Call, value: Type_Id) {
 	results := make([]Type_Id, 2, k.c.semantic_allocator)
 	results[0], results[1] = value, TYPE_BOOL
@@ -217,8 +217,8 @@ set_optional_ok_results :: proc(k: ^Checker, v: ^Expr_Call, value: Type_Id) {
 }
 
 // The validating conversions of design.md's conversion tables. Each has
-// optional-ok semantics: "On invalid input, `value` is the zero value and `ok`
-// is false."
+// optional-ok semantics: on invalid input, `value` is the zero value and `ok`
+// is false (design.md).
 //
 //   string(bytes)        []u8         validate and copy
 //   string_view(bytes)   []u8         validate and borrow
@@ -334,15 +334,15 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		case .Slice:
 			element = info.element
 		case .Pointer:
-			// design.md: "For a nested fixed array, `unsafe.raw_data` exposes one
-			// array level at a time."
+			// For a nested fixed array, `unsafe.raw_data` exposes one array level
+			// at a time (design.md).
 			if pointee := underlying_info(k.c, info.element); pointee != nil && pointee.kind == .Array {
 				element = pointee.element
 			}
 		case .String, .String_View, .CString_View:
 			element = TYPE_U8
 		case .Dynamic_Array:
-			// design.md: the result "carries neither a length nor an owner", so it
+			// The result carries neither a length nor an owner (design.md), so it
 			// crosses the unsafe boundary exactly as a slice's does. The container
 			// may relocate its storage at any later operation and nothing here
 			// records that -- which is the point of the boundary.
@@ -360,8 +360,8 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = multi_pointer_to(k.c, element)
 
 	case .Unsafe_String_View:
-		// design.md "From [^]u8 and length int to string": "unsafe validate and
-		// borrow, optional-ok". The pointer's owner is unknown to the compiler, so
+		// An unsafe validate-and-borrow, with optional-ok semantics (design.md
+		// "From [^]u8 and length int to string"). The pointer's owner is unknown to the compiler, so
 		// keeping the storage alive is the programmer's responsibility — but the
 		// bytes are still validated, because the resulting type promises UTF-8.
 		if info == nil || info.kind != .Multi_Pointer || info.element != TYPE_U8 {
@@ -703,9 +703,9 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 
 // ------------------------------------------------------ runtime metadata --
 
-// design.md "`type` and `typeid`": `type_info_of(id)` "accepts a runtime
-// `typeid` and returns runtime metadata. It does not recover a compile-time
-// `type`, because runtime information cannot flow back into specialization."
+// `type_info_of(id)` accepts a runtime `typeid` and returns runtime metadata.
+// It does not recover a compile-time `type`, because runtime information
+// cannot flow back into specialization (design.md "`type` and `typeid`").
 //
 // The result is a `^runtime.Type_Info`, which is nil for the nil `typeid` and
 // for any id this program has no entry for — a `typeid` is an ordinary scalar

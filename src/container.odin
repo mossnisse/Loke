@@ -267,9 +267,9 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	none := []Type_Id{}
 	fails := []Type_Id{TYPE_ALLOCATOR_ERROR}
 
-	// design.md: `find` "returns a pointer to the existing value and `true`, or
-	// `nil` and `false`. It does not insert." The receiver is `inout` because the
-	// pointer it hands back grants mutation of the stored value.
+	// `find` returns a pointer to the existing value and `true`, or `nil` and
+	// `false` — it never inserts (design.md). The receiver is `inout` because
+	// the pointer it hands back grants mutation of the stored value.
 	append(&members, container_member(
 		k, type, "find", .Map_Find,
 		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
@@ -307,10 +307,10 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	add_members(k.c, type, members[:])
 }
 
-// design.md "Maps": "Any type can be a map key when it satisfies the operations
-// of `interfaces.Hashable`, with a **coherent** `==` and `hash(value, seed:
-// uint) -> uint`", and a user key's pair must be inherent. Checked where the map
-// type is named rather than at each operation, so one map reports once.
+// Any type can be a map key if it satisfies `interfaces.Hashable` with a
+// coherent `==` and `hash(value, seed: uint) -> uint` (design.md "Maps"), and
+// a user key's pair must be inherent. Checked where the map type is named
+// rather than at each operation, so one map reports once.
 require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	key := container_key(k.c, type)
 	if key == INVALID_TYPE {
@@ -397,8 +397,8 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	}
 	// Rejected *before* the expression is checked: a runtime allocator call is
 	// not a constant initialiser, so a static-duration declaration could not run
-	// it at all. design.md: such a container "begins in the constant
-	// allocator-unbound zero state".
+	// it at all. Such a container begins in the constant, allocator-unbound
+	// zero state (design.md).
 	if d.top_level || d.duration != .None {
 		storage_kind :=
 			d.duration == .Thread_Local ? "`thread_local` storage" :

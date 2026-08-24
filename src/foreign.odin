@@ -7,10 +7,9 @@ package lokec
 // resolution, visibility, and overload ranking need no foreign-specific path —
 // only signature checking, emission, and the ABI-safety rule do.
 
-// design.md: "The default calling convention is `loke`, unless a declaration is
-// within a foreign block, where it is `c`." A block-wide
-// `@(default_calling_convention)` changes that default; a member's own
-// convention still wins.
+// The default calling convention is `loke`, except inside a foreign block
+// where it is `c` (design.md). A block-wide `@(default_calling_convention)`
+// changes that default; a member's own convention still wins.
 foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> string {
 	if value, ok := attribute_string_value(k.c, block.attributes, "default_calling_convention"); ok {
 		return value

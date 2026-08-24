@@ -62,9 +62,9 @@ TYPE_UNTYPED_NIL   :: Type_Id(29)
 TYPE_UNTYPED_STRING :: Type_Id(30)
 
 // A borrowed view over UTF-8 text: a pointer and a byte length, and no
-// allocator. design.md "string type conversions": it "has the same byte, rune,
-// and iteration operations as `string`, but it has no allocator and does not own
-// or terminate its storage".
+// allocator. It supports the same byte, rune, and iteration operations as
+// `string`, but owns and terminates nothing (design.md "string type
+// conversions").
 TYPE_STRING_VIEW :: Type_Id(31)
 
 // design.md "Allocators" and "Allocation failure". `core:mem` and `base:runtime`
@@ -177,9 +177,9 @@ Type_Info :: struct {
 	contributed: bit_set[Contribution],
 	parameters: []Type_Id,
 	param_modes: []Param_Mode,
-	// design.md "Procedure types": "`@(allocator_reset)` is part of the
-	// parameter's procedure type: a reset-capable procedure cannot be stored in a
-	// procedure value whose type hides that effect."
+	// `@(allocator_reset)` is part of the parameter's procedure type: a
+	// reset-capable procedure cannot be stored in a procedure value whose type
+	// hides that effect (design.md "Procedure types").
 	param_resets: []bool,
 	// Foreign ABI adapters are part of procedure type identity. Erasing either
 	// one changes the LLVM function type at an indirect call site.
@@ -502,9 +502,9 @@ Builtin_Kind :: enum {
 	// `Iterable` requirement, so it has to resolve for a built-in and for a user
 	// type's own `impl` member alike.
 	Iter,
-	// design.md "Standard customization procedures": `clone(value)` and
-	// `try_clone(value)` are "written as free calls ... which is canonical and
-	// always available". Both forward to the type's own fixed hook, so the free
+	// `clone(value)` and `try_clone(value)` are written as free calls, which is
+	// the canonical, always-available form (design.md "Standard customization
+	// procedures"). Both forward to the type's own fixed hook, so the free
 	// call and `value.clone()` select one procedure.
 	Clone,
 	Try_Clone,
@@ -525,23 +525,23 @@ Builtin_Kind :: enum {
 	// is compiler-owned and `core:mem` binds it, so a generated default argument
 	// and a written call are one call.
 	Default_Allocator,
-	// design.md "Storage modifiers": "`drop` is a predeclared identifier, not a
-	// keyword" — a compiler special form over a storage location, which is why it
-	// is a built-in rather than an ordinary procedure (m5a-plan step 4).
+	// `drop` is a predeclared identifier, not a keyword (design.md "Storage
+	// modifiers") — a compiler special form over a storage location, which is
+	// why it is a built-in rather than an ordinary procedure (m5a-plan step 4).
 	Drop,
 	// design.md "Exchange": replaces a definitely live value and returns the
 	// previous one without cloning it. Also a special form, because no ordinary
 	// signature can express "moves both ways with nothing observable between".
 	Exchange,
-	// design.md "unsafe.raw_data procedure" and "string type conversions": the
-	// `core:unsafe` surface, where "the loss of bounds and borrow capability
-	// [is] visible at the call site". Each takes an operand whose shape the
+	// The `core:unsafe` surface, where losing bounds and borrow capability is
+	// visible right at the call site (design.md "unsafe.raw_data procedure",
+	// "string type conversions"). Each takes an operand whose shape the
 	// ordinary signature language cannot spell, so each is a built-in.
 	Unsafe_Raw_Data,
 	Unsafe_String_View,
 	Unsafe_C_String_View,
-	// design.md "`type` and `typeid`": `type_info_of(id)` "accepts a runtime
-	// `typeid` and returns runtime metadata". A `typeid` is an ordinary scalar and
+	// `type_info_of(id)` takes a runtime `typeid` and returns runtime metadata
+	// (design.md "`type` and `typeid`"). A `typeid` is an ordinary scalar and
 	// can be forged, so the lookup is checked rather than an unchecked index.
 	Type_Info_Of,
 	// design.md "String format printing": the compiler-owned half of `core:fmt`.
@@ -551,8 +551,8 @@ Builtin_Kind :: enum {
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
 	Fmt_Format_Any,
-	// design.md "Allocators": "string-producing procedures accept a conventional
-	// `allocator` argument when selection is needed". Every built-in text
+	// String-producing procedures accept a conventional `allocator` argument
+	// when selection is needed (design.md "Allocators"). Every built-in text
 	// operation allocates from the default provider instead, so this is the one
 	// bridge a library needs to honour a caller's allocator. It is contributed
 	// package-privately to `core:strings`, which publishes it as `copy` and
@@ -646,18 +646,18 @@ Symbol :: struct {
 	// be ended by a successful call. The promise is verified in the body and
 	// carried in the procedure type.
 	allocator_reset: bool,
-	// design.md "Managed values and storage": "A managed local declaration places
-	// an implicit conditional `defer drop(value)` at the declaration point."
-	// `src/lifecycle.odin` decides both from the CFG: whether scope exit drops
-	// this local at all, and whether the state it exits in is the same on every
-	// path. A definite state needs no runtime flag (m5a-plan decision
-	// "Conditional liveness").
+	// A managed local declaration places an implicit conditional
+	// `defer drop(value)` at the declaration point (design.md "Managed values
+	// and storage"). `src/lifecycle.odin` decides both from the CFG: whether
+	// scope exit drops this local at all, and whether the state it exits in is
+	// the same on every path. A definite state needs no runtime flag (m5a-plan
+	// decision "Conditional liveness").
 	drop_at_exit:     bool,
 	drop_conditional: bool,
 	cleanup_slot:     int,
-	// design.md "Storage modifiers": "`manual` disables automatic cleanup. Use it
-	// for arenas, foreign ownership, custom containers, and low-level allocator
-	// code." The value is still tracked — an explicit `drop` and use-after-drop
+	// `manual` disables automatic cleanup, for arenas, foreign ownership, custom
+	// containers, and low-level allocator code (design.md "Storage modifiers").
+	// The value is still tracked — an explicit `drop` and use-after-drop
 	// both need its liveness — it simply has no scope-exit obligation.
 	manual:           bool,
 	// design.md "Allocators": the `via` allocator expression this declaration
@@ -1060,7 +1060,7 @@ pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	)
 }
 
-// design.md "Multi-pointers": "`[^]T` is a multi-pointer to T value(s)", an
+// `[^]T` is a multi-pointer to T value(s) (design.md "Multi-pointers"), an
 // address with neither a length nor a read-only capability.
 multi_pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return intern_type(
@@ -1225,8 +1225,8 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
 		return true
-	// design.md: "`string` and `string_view` values are comparable and ordered,
-	// lexically byte-wise." A `cstring_view` is not: it promises no encoding and
+	// `string` and `string_view` values are comparable and ordered, lexically
+	// byte-wise (design.md). A `cstring_view` is not: it promises no encoding and
 	// carries no length, so comparing two of them would compare addresses.
 	case .String, .String_View:
 		return true
@@ -1271,8 +1271,8 @@ type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	case .Int, .Float, .Rune, .Enum, .Untyped_Int, .Untyped_Float, .Untyped_Rune,
 	     .Untyped_String, .String, .String_View:
 		return true
-	// design.md: "Ordering compares the addresses as unsigned `uintptr` values,
-	// producing a total order within one execution."
+	// Ordering compares the addresses as unsigned `uintptr` values, producing a
+	// total order within one execution (design.md).
 	case .Pointer, .Multi_Pointer, .Raw_Pointer:
 		return true
 	}
@@ -1343,9 +1343,9 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 		// restricted here.
 		return true
 	case .Multi_Pointer:
-		// design.md "Multi-pointers": a multi-pointer "carries neither a length nor
-		// a read-only capability, and its lifetime is no longer checked after
-		// conversion" — a documented trust boundary, not an unsupported type.
+		// A multi-pointer carries neither a length nor a read-only capability, and
+		// its lifetime is no longer checked after conversion (design.md
+		// "Multi-pointers") — a documented trust boundary, not an unsupported type.
 		return type_is_supported_depth(c, info.element, depth + 1)
 	case .Interface:
 		return false

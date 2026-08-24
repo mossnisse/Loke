@@ -506,9 +506,9 @@ composed_arguments :: proc(k: ^Checker, call: ^Expr_Call, composed: ^Interface_I
 	return out, true
 }
 
-// design.md: "requirement checking must select one matching inherent method or an
-// extension method from the interface's own package. Parameter modes, results,
-// calling convention, and type-level effects match exactly."
+// Requirement checking selects one matching inherent method or an extension
+// method from the interface's own package, matching parameter modes, results,
+// calling convention, and type-level effects exactly (design.md).
 @(private = "file")
 check_slot_requirement :: proc(
 	k: ^Checker,
@@ -586,7 +586,7 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 			resolve_declaration_signature(k, sym.decl)
 			sym = symbol_of(k.c, member)
 		}
-		// design.md: "runtime witness members are never overload groups", so a
+		// Runtime witness members are never overload groups (design.md), so a
 		// group's members are the candidates rather than the group itself.
 		if sym.kind == .Proc_Group {
 			for nested in sym.members {

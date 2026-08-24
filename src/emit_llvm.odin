@@ -772,9 +772,9 @@ VIEW_LEN :: 1
 // address of a runtime buffer's header.
 STRING_STATIC :: 1
 
-// One zero-terminated static constant per distinct literal. design.md: "A string
-// literal uses static storage", and its bytes are already zero-terminated, which
-// is what lets the same global initialize a `cstring_view`.
+// One zero-terminated static constant per distinct literal. A string literal
+// uses static storage (design.md), and its bytes are already zero-terminated,
+// which is what lets the same global initialize a `cstring_view`.
 @(private = "file")
 text_literal_global :: proc(e: ^Emitter, text: string) -> string {
 	if existing, found := e.literals[text]; found {
@@ -795,7 +795,7 @@ text_literal_global :: proc(e: ^Emitter, text: string) -> string {
 @(private = "file")
 text_constant :: proc(e: ^Emitter, value: Const_Value, owning: bool) -> string {
 	if value.kind != .String || value.text == "" {
-		// design.md: "The empty value is all zero", and a nil view has length 0 and
+		// The empty value is all zero (design.md), and a nil view has length 0 and
 		// points at no storage.
 		return "zeroinitializer"
 	}
@@ -1171,8 +1171,8 @@ emit_allocator_operand :: proc(e: ^Emitter, v: ^Expr_Call, index: int) -> string
 	return RT_DEFAULT_ALLOCATOR
 }
 
-// design.md: `free_all` "frees every allocation in the allocator's region. Not
-// all allocators support this procedure." It is one call through the provider's
+// `free_all` frees every allocation in the allocator's region, and not every
+// allocator supports it (design.md). It is one call through the provider's
 // reset callback, never a guessed sequence of `free` calls: only the provider
 // knows what its region contains. A provider that answers "no region" fails at
 // run time — a different thing from the compile-time rejection when a dependant
@@ -1733,10 +1733,10 @@ emit_result_is_inout :: proc(e: ^Emitter, index: int) -> bool {
 
 // ---------------------------------------------------------------- globals --
 
-// design.md "Storage modifiers": a `static` local "creates one instance for the
-// life of the process" and a `thread_local` one "for each thread", so neither
-// lives in the frame. The checker recorded them in declaration order, which is
-// also the order design.md gives thread-local teardown.
+// A `static` local has one instance for the process's whole life, and a
+// `thread_local` one has one per thread (design.md "Storage modifiers"), so
+// neither lives in the frame. The checker recorded them in declaration order,
+// which is also the order design.md gives thread-local teardown.
 @(private = "file")
 emit_static_locals :: proc(e: ^Emitter) {
 	for symbol_id, index in e.c.static_locals {
@@ -1848,8 +1848,8 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		return "null"
 	case .CString_View:
-		// design.md: "A string literal may initialize a `cstring_view` because its
-		// zero-terminated bytes have static lifetime."
+		// A string literal can initialize a `cstring_view` because its
+		// zero-terminated bytes have static lifetime (design.md).
 		return value.kind == .String ? text_literal_global(e, value.text) : "null"
 	case .String, .String_View:
 		return text_constant(e, value, info.kind == .String)
@@ -3060,9 +3060,9 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 	}
 }
 
-// design.md: "A managed local declaration places an implicit conditional
-// `defer drop(value)` at the declaration point." Registration is what fixes its
-// position in the one reverse order every exit replays.
+// A managed local declaration places an implicit conditional
+// `defer drop(value)` at the declaration point (design.md). Registration is
+// what fixes its position in the one reverse order every exit replays.
 @(private = "file")
 register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	sym := symbol_of(e.c, symbol_id)
@@ -3118,8 +3118,8 @@ kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	}
 }
 
-// design.md "Storage modifiers": `drop(value)` "runs the cleanup operation,
-// writes the inert zero representation, and marks the variable dead".
+// `drop(value)` runs the cleanup operation, writes the inert zero
+// representation, and marks the variable dead (design.md "Storage modifiers").
 @(private = "file")
 emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 	ident, is_ident := v.bound[0].(^Expr_Ident)
@@ -3158,12 +3158,11 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	emit_drop_place(e, base.type, slot)
 }
 
-// design.md "Exchange": "The compiler evaluates the destination place once and
-// then evaluates `replacement` completely before modifying the destination. If
-// evaluation or construction of the replacement fails or panics, the destination
-// remains unchanged. Once the replacement is ready, the compiler moves the old
-// value into result storage and moves the replacement into the destination as one
-// lifecycle operation."
+// design.md "Exchange": the destination place is evaluated once, then
+// `replacement` is evaluated completely before the destination is touched — a
+// failure or panic during that leaves the destination unchanged. Once the
+// replacement is ready, the compiler moves the old value into result storage
+// and moves the replacement into the destination as one lifecycle operation.
 //
 // So the order below is the specification: address, replacement, load, store. No
 // hook runs between the two moves — the old value is handed back rather than
@@ -3177,9 +3176,9 @@ emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	return previous
 }
 
-// design.md "Assignment statements": `move` "transfers the representation,
-// writes the inert zero representation to a lexical source, and marks that
-// source dead".
+// `move` transfers the representation, writes the inert zero representation to
+// a lexical source, and marks that source dead (design.md "Assignment
+// statements").
 @(private = "file")
 emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
 	value := emit_expr(e, v.value)
@@ -3740,9 +3739,9 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		out := load(e, CONTAINER_TYPE, destination)
 		return out
 	}
-	// design.md "string type": "cheap value copy; immutable backing storage may
-	// be shared". An implicit copy of a string retains a handle; only `.copy()`
-	// allocates, and that is a written call, not this path.
+	// A string copy is cheap and its immutable backing storage may be shared
+	// (design.md "string type"). An implicit copy of a string retains a handle;
+	// only `.copy()` allocates, and that is a written call, not this path.
 	if entry.intrinsic {
 		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_retain(i64 %s)", owner)
@@ -3907,8 +3906,9 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 			address, _ := emit_map_read_address(e, v)
 			return address
 		}
-		// design.md "Multi-pointers": "Indexing without bounds checking." There is
-		// no length to check against, which is exactly what the type says.
+		// A multi-pointer indexes without bounds checking (design.md
+		// "Multi-pointers"). There is no length to check against, which is exactly
+		// what the type says.
 		if operand_info := underlying_info(e.c, expr_base(v.operand).type);
 		   operand_info != nil && operand_info.kind == .Multi_Pointer {
 			data := emit_expr(e, v.operand)
@@ -3953,8 +3953,8 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 }
 
 // `xs[i]`: the element's address inside the container's current allocation,
-// bounds-checked against the header's length word. design.md: "Indexing and
-// slicing produce views into the current allocation", so this address is exactly
+// bounds-checked against the header's length word. Indexing and slicing
+// produce views into the current allocation (design.md), so this address is exactly
 // as long-lived as that allocation — which is what the M5b invalidation events
 // registered by every relocating operation are there to enforce.
 @(private = "file")
@@ -4246,8 +4246,8 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Selector, ^Expr_Index:
-		// design.md "Maps": a read does not insert, and a missing key "returns the
-		// zero value". The address of that zero is a temporary of this frame.
+		// A read does not insert, and a missing key returns the zero value
+		// (design.md "Maps"). The address of that zero is a temporary of this frame.
 		if index, is_index := expr.(^Expr_Index); is_index && !index.map_inserts &&
 		   index.operand != nil && type_is_map(e.c, expr_base(index.operand).type) {
 			return emit_map_lookup(e, index)[0]
@@ -4322,9 +4322,9 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	return "0"
 }
 
-// design.md "Slice literals": "The backing array of a slice literal is a hidden
-// fixed-array owner in the surrounding lexical scope, so the slice remains valid
-// until that scope exits." The hidden root is filled, then viewed whole.
+// The backing array of a slice literal is a hidden fixed-array owner in the
+// surrounding lexical scope, so the slice stays valid until that scope exits
+// (design.md "Slice literals"). The hidden root is filled, then viewed whole.
 @(private = "file")
 emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite) -> string {
 	backing := v.backing
@@ -4574,9 +4574,9 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	return emit_binary_op(e, v.op, v.type, expr_base(v.rhs).type, lhs, rhs)
 }
 
-// design.md "Concatenation": "the operation allocates from
-// `mem.default_allocator()` and follows its failure policy". Both operands are
-// already valid UTF-8, so the result needs no validation.
+// Concatenation allocates from `mem.default_allocator()` and follows its
+// failure policy (design.md "Concatenation"). Both operands are already valid
+// UTF-8, so the result needs no validation.
 @(private = "file")
 emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	left_data, left_len := emit_text_parts(e, v.lhs)
@@ -4739,8 +4739,8 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 }
 
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
-	// design.md: "`string` and `string_view` values are comparable and ordered,
-	// lexically byte-wise." One runtime call answers all six operators.
+	// `string` and `string_view` values are comparable and ordered, lexically
+	// byte-wise (design.md). One runtime call answers all six operators.
 	if type_is_utf8_text(e.c, type) {
 		storage := llvm_type(e, type_underlying(e.c, type))
 		left_data := extract(e, storage, lhs, STRING_DATA)
@@ -5330,7 +5330,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	}
 }
 
-// design.md "Unions": "tag 0 is nil", and a union prints as whatever it is
+// Tag 0 is nil (design.md "Unions"), and a union prints as whatever it is
 // currently holding — the same thing a type switch would see. The chain is over
 // variants for the same reason the enum one is: the tag is not an index into
 // anything the formatter can address.
@@ -5363,8 +5363,8 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	place_label(e, done)
 }
 
-// design.md: `type_info_of` "accepts a runtime `typeid` and returns runtime
-// metadata", and that metadata carries the type's name — so a `typeid` prints as
+// `type_info_of` accepts a runtime `typeid` and returns runtime metadata
+// (design.md), and that metadata carries the type's name — so a `typeid` prints as
 // the name of what it identifies. An id with no entry, including the nil one and
 // a forged one, has no name to print and falls back to its numeric identity.
 @(private = "file")
@@ -5397,8 +5397,8 @@ emit_format_type_name :: proc(e: ^Emitter, id: string) {
 	place_label(e, done)
 }
 
-// design.md: an enum's members "are named constants that need not be
-// contiguous", so the spelling is a chain of comparisons rather than an index.
+// An enum's members are named constants that need not be contiguous
+// (design.md), so the spelling is a chain of comparisons rather than an index.
 @(private = "file")
 emit_format_enum :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -5460,7 +5460,7 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string,
 	emit_format_literal(e, "]")
 }
 
-// design.md "Maps": "**Iteration order is unspecified.**" A printed map is
+// Map iteration order is unspecified (design.md "Maps"). A printed map is
 // therefore `[key = value, ...]` in whatever order the slot walk finds, which is
 // the same walk `foreach` performs. Both halves go through their own thunks, so
 // a map of maps prints.
@@ -5853,8 +5853,8 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 	return strings.to_string(slice)
 }
 
-// design.md: enum values use "the two raw words without narrowing signed or
-// unsigned 128-bit values".
+// Enum values use the two raw words without narrowing signed or unsigned
+// 128-bit values (design.md).
 //
 // ponytail: the low word carries the value and the high word its sign
 // extension. Every enum backing this compiler accepts fits in 64 bits today; a
@@ -5977,8 +5977,8 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		backend_fail(e, "a text call has no operation")
 
 	case .Byte_Len:
-		// design.md: "`len(text)` is shorthand for `text.byte_len()` so that it
-		// remains a constant-time operation."
+		// `len(text)` is shorthand for `text.byte_len()` so that it stays a
+		// constant-time operation (design.md).
 		_, length := emit_text_parts(e, v.bound[0])
 		out[0] = length
 
@@ -6134,8 +6134,8 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		)
 
 	case .View_From_Bytes:
-		// design.md "From []u8 to X": "validate and borrow". No allocation and no
-		// copy — the view points into the slice's own root, and `src/borrow.odin`
+		// This conversion validates and borrows (design.md "From []u8 to X"). No
+		// allocation and no copy — the view points into the slice's own root, and `src/borrow.odin`
 		// is what keeps it from outliving that root.
 		data, length := emit_byte_slice_parts(e, v.bound[0])
 		valid, ok := temp(e), temp(e)
@@ -6150,8 +6150,8 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		return out
 
 	case .String_From_C_View:
-		// design.md "C string views": "Converting it to `string` scans for the
-		// terminator, validates UTF-8, and copies into owned storage."
+		// Converting a C string view to `string` scans for the terminator,
+		// validates UTF-8, and copies into owned storage (design.md "C string views").
 		pointer := emit_expr(e, v.bound[0])
 		length := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, pointer)
@@ -6176,9 +6176,9 @@ emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, leng
 	return data, length
 }
 
-// design.md "unsafe.raw_data procedure": "A multi-pointer carries neither a
-// length nor a read-only capability, and its lifetime is no longer checked after
-// conversion." So each of these is an address extraction and nothing more —
+// A multi-pointer carries neither a length nor a read-only capability, and its
+// lifetime is no longer checked after conversion (design.md "unsafe.raw_data
+// procedure"). So each of these is an address extraction and nothing more —
 // except `unsafe.string_view`, which still validates, because the type it
 // produces promises valid UTF-8.
 @(private = "file")
@@ -6541,15 +6541,15 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 	return sym != nil && sym.kind == .Builtin ? sym.builtin : Builtin_Kind.None
 }
 
-// design.md "Allocation failure": `new` and `new_clone` "always return an error
-// and do not invoke the allocator failure policy". So there is no branch on
-// failure here — the caller receives a null pointer and a non-nil error and
-// decides.
+// `new` and `new_clone` always return an error rather than invoking the
+// allocator failure policy (design.md "Allocation failure"). So there is no
+// branch on failure here — the caller receives a null pointer and a non-nil
+// error and decides.
 //
 @(private = "file")
 emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
-	// design.md: `new_clone` "creates a new allocation root containing a clone of
-	// the value", so a record whose clone can fail goes through its hook rather
+	// `new_clone` creates a new allocation root containing a clone of the value
+	// (design.md), so a record whose clone can fail goes through its hook rather
 	// than through a shallow store of the representation.
 	if kind == .New_Clone && type_clone_is_fallible(e.c, v.alloc_type) {
 		return emit_new_clone_hook(e, v)
@@ -6741,8 +6741,8 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	return out
 }
 
-// design.md: "Deallocation operations such as `free` and `drop` return no
-// status." The checker has already restricted the operand to a binding holding a
+// Deallocation operations such as `free` and `drop` return no status (design.md).
+// The checker has already restricted the operand to a binding holding a
 // fresh allocation base, so the pointee type supplies the size and alignment the
 // provider was given at `new`.
 //
@@ -8058,9 +8058,9 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	emit_indexed_foreach(e, s)
 }
 
-// design.md "String iteration": the loop yields decoded code points, and the
-// second name is "the index at which the yielded code point begins, so it
-// advances by 1 to 4 per step and the loop's final offset is not `len(x) - 1`".
+// The loop yields decoded code points, and the second name is the byte index
+// where the yielded code point begins — advancing by 1 to 4 per step, so the
+// loop's final offset is not `len(x) - 1` (design.md "String iteration").
 // That is the unit that can be fed back into `bytes()` or a subrange.
 @(private = "file")
 emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
@@ -8118,9 +8118,9 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	place_label(e, done)
 }
 
-// design.md "Maps": a slot walk, and "**Iteration order is unspecified.**" The
-// cursor is one integer the runtime hands back; the table's controls, seed, and
-// slot count stay entirely inside `runtime/container.c`.
+// A slot walk over a map; iteration order is unspecified (design.md "Maps").
+// The cursor is one integer the runtime hands back; the table's controls, seed,
+// and slot count stay entirely inside `runtime/container.c`.
 //
 // One name binds the value; two bind the key and the value. Either value binding
 // may be written `&`, in which case it names the stored slot rather than a copy.
@@ -8669,8 +8669,8 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// The map half of `next`. design.md "Maps": "**Iteration order is
-// unspecified.**" The cursor is the runtime's own slot position, so the walk is
+// The map half of `next`. Iteration order is unspecified (design.md "Maps").
+// The cursor is the runtime's own slot position, so the walk is
 // the same one a direct `foreach` performs; the protocol's single `Element` is
 // the value, and the key is reachable only through the two-name loop form.
 @(private = "file")
@@ -8915,8 +8915,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		)
 
 	case .Map_Find:
-		// design.md: "It returns a pointer to the existing value and `true`, or
-		// `nil` and `false`. It does not insert."
+		// Returns a pointer to the existing value and `true`, or `nil` and `false`;
+		// never inserts (design.md).
 		slot := value_storage(e, container_key(e.c, container), "%arg1")
 		found, ok := temp(e), temp(e)
 		fmt.sbprintfln(
@@ -9070,9 +9070,9 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	return out
 }
 
-// `m[key]` in a place position. design.md: "If the key is absent, the zero value
-// of the element type is inserted first and the resulting slot is the location."
-// The insertion allocates, and a place has nowhere to report a failure, so the
+// `m[key]` in a place position. If the key is absent, the zero value of the
+// element type is inserted first and the resulting slot is the location
+// (design.md). The insertion allocates, and a place has nowhere to report a failure, so the
 // provider's own policy decides.
 @(private = "file")
 emit_map_place :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
@@ -9101,8 +9101,8 @@ emit_map_place :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 }
 
 // The address a non-inserting read of `m[key]` produces: the existing slot, or a
-// zeroed temporary of this frame. design.md: "A lookup of a missing key returns
-// the zero value", and reading one must not create an entry.
+// zeroed temporary of this frame. A lookup of a missing key returns the zero
+// value (design.md), and reading one must not create an entry.
 @(private = "file")
 emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
 	container := expr_base(v.operand).type
@@ -9176,9 +9176,9 @@ clone_pair_type :: proc(value: string) -> string {
 	return strings.to_string(b)
 }
 
-// design.md: "Compiler-generated field-wise cloning calls `try_clone`
-// recursively for every owning field, destroys a partially completed temporary
-// on failure, and returns zero plus the error."
+// Compiler-generated field-wise cloning calls `try_clone` recursively for every
+// owning field, destroys a partially completed temporary on failure, and
+// returns zero plus the error (design.md).
 //
 // A type no part of which reaches a custom hook cannot fail, so its generated
 // body is the copy the representation already is. The branchy shape below exists
@@ -9245,7 +9245,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
 	fmt.sbprintfln(&e.b, "  %s = alloca %s", out, value_type)
-	// design.md: "every hook must handle the inert zero value", and a cleanup that
+	// Every hook must handle the inert zero value (design.md), and a cleanup that
 	// runs before a part is written must see that zero rather than garbage.
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, out)
 
@@ -9385,8 +9385,8 @@ emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, co
 	place_label(e, done)
 }
 
-// design.md: "`clone` ... calls `try_clone` once and, on failure, invokes the
-// supplied allocator's failure policy."
+// `clone` calls `try_clone` once and, on failure, invokes the supplied
+// allocator's failure policy (design.md).
 //
 // ponytail: M5a's fixed fallback is a non-unwinding trap; M6's allocator-selected
 // `.Panic`/`.Trap` dispatch replaces the trap block, not the shape.
@@ -9443,9 +9443,9 @@ type_hook :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
 	return member_named_in(c, info.members, intern_identifier(c, name))
 }
 
-// design.md: "`drop(value)` invokes the user hook when present" and "Fields are
-// dropped in reverse declaration order after the containing type's drop hook
-// returns." Used by partial-clone cleanup now; step 4's scope-exit cleanup is
+// `drop(value)` invokes the user hook when present, and fields are dropped in
+// reverse declaration order after the containing type's drop hook returns
+// (design.md). Used by partial-clone cleanup now; step 4's scope-exit cleanup is
 // the same walk from a different caller.
 emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if !type_is_managed(e.c, type) {

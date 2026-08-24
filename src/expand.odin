@@ -81,8 +81,8 @@ expand_one_element :: proc(
 		bind_static(k, s.bindings[1], int_const(k.c, i64(index)), TYPE_INT)
 	}
 
-	// design.md: "Diagnostics inside an expansion must show the element and its
-	// source descriptor or index."
+	// A diagnostic inside an expansion must show the element and its source
+	// descriptor or index (design.md).
 	before := len(k.c.diagnostics)
 	outer_loop, outer_switch := k.loop_depth, k.switch_depth
 	k.loop_depth, k.switch_depth = 0, 0
@@ -178,9 +178,9 @@ expansion_has_branch :: proc(k: ^Checker, block: ^Block) -> bool {
 
 // ---------------------------------------------------------- the iterable --
 
-// design.md: "The iterable must be compile-time known, finite, and produce
-// compile-time values. Fixed arrays, evaluator-owned arrays and slices, enum
-// types, ranges, and reflection descriptor arrays qualify."
+// The iterable must be compile-time known, finite, and produce compile-time
+// values; fixed arrays, evaluator-owned arrays and slices, enum types, ranges,
+// and reflection descriptor arrays qualify (design.md).
 @(private = "file")
 fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Type_Id, bool) {
 	// An enum *type* expands to its members, which is what makes

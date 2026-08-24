@@ -763,11 +763,11 @@ Foreach_Kind :: enum {
 	// design.md "Dynamic arrays": an index loop over the current allocation,
 	// bounded by the header's length word rather than a static count.
 	Dynamic,
-	// design.md "Maps": a slot walk. "**Iteration order is unspecified.**" The
+	// A slot walk; map iteration order is unspecified (design.md "Maps"). The
 	// two-name form binds the key and the value rather than a value and an index.
 	Map,
-	// design.md "String iteration": yields Unicode scalar values, and "the second
-	// name in a string loop is a byte offset, not a rune counter".
+	// Yields Unicode scalar values; the second name in a string loop is a byte
+	// offset, not a rune counter (design.md "String iteration").
 	Text,
 	Protocol,
 }
@@ -847,10 +847,10 @@ Return_Value :: struct {
 	span:     Span,
 	is_inout: bool,
 	expr:     Expr,
-	// design.md "Parameter semantics": "Returning such a borrowed managed
-	// parameter by value performs a logical clone, because the callee owns
-	// nothing it could move out." Returning an owned local, named result,
-	// temporary, or `move` parameter transfers instead (m5a-plan step 4).
+	// Returning a borrowed managed parameter by value clones it, since the callee
+	// owns nothing it could move out (design.md "Parameter semantics"). Returning
+	// an owned local, named result, temporary, or `move` parameter transfers
+	// instead (m5a-plan step 4).
 	clone_on_return: bool,
 }
 

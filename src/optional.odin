@@ -16,8 +16,8 @@ mark_optional_ok :: proc(e: Expr) {
 	if extraction, is_extract := e.(^Expr_Checked_Extract); is_extract {
 		extraction.optional = true
 	}
-	// design.md "Maps": "`elem, ok := m[key]`" is "the **comma-ok** form". The
-	// phase decides the node's result shape, exactly as it does for an extraction.
+	// `elem, ok := m[key]` is the comma-ok form (design.md "Maps"). The phase
+	// decides the node's result shape, exactly as it does for an extraction.
 	if index, is_index := e.(^Expr_Index); is_index {
 		index.map_optional = true
 	}

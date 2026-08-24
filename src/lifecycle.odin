@@ -1,15 +1,11 @@
 // Ownership: `move`, explicit `drop`, and the liveness that decides where the
-// compiler drops a managed local (m5a-plan step 4).
+// compiler drops a managed local (m5a-plan step 4), per the dataflow rules in
+// design.md "Managed values and storage".
 //
-// design.md "Managed values and storage": "The compiler performs dataflow
-// analysis and classifies a lexical local as definitely live, definitely dead,
-// or conditionally live at each program point. A use that requires a value is
-// valid only in the definitely-live state."
-//
-// Both halves of that live here. `move` and `drop` are compiler special forms
-// over a storage location rather than ordinary calls, so they are checked as
-// syntax; the classification itself runs once per concrete body over the
-// `src/cfg.odin` view, after the body is checked and every node has its type.
+// `move` and `drop` are compiler special forms over a storage location rather
+// than ordinary calls, so they are checked as syntax; the classification
+// itself runs once per concrete body over the `src/cfg.odin` view, after the
+// body is checked and every node has its type.
 //
 // The analysis writes two facts back onto each local's symbol: whether scope
 // exit drops it at all, and whether it reaches its scope exits in the same
@@ -22,9 +18,8 @@ import "core:mem"
 
 // ------------------------------------------------------ the special forms --
 
-// design.md "Assignment statements": "`move(value)` transfers ownership without
-// a copy. The operation writes the inert zero representation to the lexical
-// source and marks it dead until a later full assignment."
+// `move(value)` transfers ownership without a copy, zeroing the source and
+// marking it dead (design.md "Assignment statements").
 check_move :: proc(k: ^Checker, v: ^Expr_Move) {
 	v.value_category = .Value
 	operand := check_single_expr(k, v.value)
@@ -38,8 +33,8 @@ check_move :: proc(k: ^Checker, v: ^Expr_Move) {
 	}
 }
 
-// design.md "Storage modifiers": `drop(value)` "runs the cleanup operation,
-// writes the inert zero representation, and marks the variable dead".
+// `drop(value)` runs the cleanup operation, zeroes the value, and marks the
+// variable dead (design.md "Storage modifiers").
 check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.type = TYPE_VOID
 	v.value_category = .Value
@@ -61,11 +56,9 @@ check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound = bound
 }
 
-// design.md: "The operand of `drop` must name a variable. Like `move`, `drop`
-// operates on a storage location", it "cannot operate directly on a field, an
-// element, or a map entry", and applying either "to file-scope, `static`, or
-// `thread_local` storage, or to a subplace rooted in such storage, is a
-// compile-time error".
+// `move` and `drop` both operate on a lexical storage location — never a
+// field, element, or map entry, nor file-scope/`static`/`thread_local`
+// storage or a subplace of it (design.md, `drop`'s operand rules).
 require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 	ident, is_ident := e.(^Expr_Ident)
 	sym := is_ident ? symbol_of(k.c, ident.symbol) : nil
@@ -80,10 +73,9 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		)
 		return false
 	}
-	// design.md: "A binding with static storage duration is always live after
-	// this initialization. `move` and explicit `drop` are forbidden on it and on
-	// a subplace rooted in it; otherwise one procedure could make the binding dead
-	// while another procedure accessed it."
+	// A static-duration binding is always live once initialized; `move`/`drop`
+	// on it (or a subplace of it) is forbidden, or one procedure could make it
+	// dead while another still accessed it (design.md).
 	if (sym.decl != nil && sym.decl.top_level) || sym.duration != .None {
 		errorf(
 			k.c,
@@ -97,9 +89,9 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		add_notef(k.c, sym.span, "declared here; `exchange` replaces a static-duration value instead")
 		return false
 	}
-	// design.md "Parameter semantics": an ordinary `value: T` parameter is a
-	// non-owning immutable borrow. Consuming one is the caller's `move` at the
-	// call site, not this body's.
+	// An ordinary `value: T` parameter is a non-owning immutable borrow
+	// (design.md "Parameter semantics"); consuming it is the caller's `move`
+	// at the call site, not this body's.
 	if sym.kind == .Parameter && sym.mode != .Inout {
 		errorf(
 			k.c,
@@ -116,10 +108,10 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 }
 
 
-// design.md "Exchange": `exchange(inout destination, replacement)` "replaces a
-// definitely live value and returns its previous value without cloning it". The
-// destination's type supplies the context for the replacement, which is why the
-// built-in has no written signature.
+// `exchange(inout destination, replacement)` replaces a definitely live value
+// and returns its previous value without cloning (design.md "Exchange"). The
+// destination's type supplies the context for the replacement, which is why
+// the built-in has no written signature.
 check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
 	if len(v.args) != 2 {
@@ -181,13 +173,12 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 
 // ------------------------------------------------- ownership at the call --
 
-// design.md "Parameter semantics": "Both non-default modes are required at the
-// call site, not just at the declaration ... an argument to a `move` parameter
-// must be written `move(expr)`. Omitting the marker is an error naming the
-// parameter and the mode it needs." Method-call syntax supplies an `inout`
-// receiver's marker, because that borrow ends with the call and leaves the
-// source usable. A consuming receiver does not: it leaves the source dead, so
-// it is written `move(value).method()` like every other transfer.
+// A `move` argument must be marked at the call site too, not just at the
+// declaration (design.md "Parameter semantics"). Method-call syntax supplies
+// an `inout` receiver's marker, because that borrow ends with the call and
+// leaves the source usable. A consuming receiver does not: it leaves the
+// source dead, so it is written `move(value).method()` like every other
+// transfer.
 require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symbol_Id) {
 	sym := symbol_of(k.c, declaration)
 	if sym == nil {
@@ -228,10 +219,10 @@ require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symb
 	}
 }
 
-// design.md: "Returning such a borrowed managed parameter by value performs a
-// logical clone, because the callee owns nothing it could move out. ... In
-// contrast, returning a managed local, named result, temporary, or `move`
-// parameter transfers that owned value into result storage without cloning."
+// Returning a borrowed managed parameter by value performs a logical clone,
+// since the callee owns nothing it could move out; returning a managed local,
+// named result, temporary, or `move` parameter transfers ownership into
+// result storage instead (design.md).
 classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id) {
 	if value.is_inout || !type_is_managed(k.c, result) {
 		return
@@ -282,9 +273,8 @@ place_root_symbol :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 
 // -------------------------------------------------------------- copy sites --
 
-// design.md "Assignment statements": "Assignment has value semantics.
-// Assignment of a mutable owning value creates an independent value. It does not
-// create a hidden alias to the same allocation."
+// Assignment has value semantics: it creates an independent value, never a
+// hidden alias to the same allocation (design.md "Assignment statements").
 //
 // So the question at a binding or an assignment is only whether the source
 // already owns what it produces. A call result, a literal, a conversion, and
@@ -297,9 +287,9 @@ expression_is_borrowed_place :: proc(c: ^Compiler, e: Expr) -> bool {
 	return place_root_symbol(c, e) != INVALID_SYMBOL
 }
 
-// design.md: "The compiler does not silently move a dynamic array, map, runtime
-// string, `shared(T)`, or type with a custom copy hook. This rule also applies
-// at the last use of the source."
+// The compiler never silently moves a dynamic array, map, runtime string,
+// `shared(T)`, or type with a custom copy hook — including at the source's
+// last use (design.md).
 @(private = "file")
 classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> bool {
 	if value == nil || !type_is_managed(k.c, type) || !expression_is_borrowed_place(k.c, value) {
@@ -401,11 +391,10 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 
 // --------------------------------------------------------- storage duration --
 
-// design.md "Storage modifiers": "File-scope, `static`, and `thread_local`
-// declarations use constant initialization. The initializer must be a
-// compile-time constant. If there is no initializer, the declaration uses the
-// zero value." A local with either duration also needs module-level storage,
-// which is what this records.
+// File-scope, `static`, and `thread_local` declarations use constant
+// initialization: the initializer must be a compile-time constant, or the
+// zero value is used (design.md "Storage modifiers"). A local with either
+// duration also needs module-level storage, which is what this records.
 record_static_local :: proc(k: ^Checker, d: ^Decl) {
 	for symbol_id, index in d.symbols {
 		sym := symbol_of(k.c, symbol_id)
@@ -428,9 +417,9 @@ record_static_local :: proc(k: ^Checker, d: ^Decl) {
 
 // ------------------------------------------------------- copy-cost report --
 
-// design.md "Copy-cost diagnostics": "A **copy site** is a point that duplicates
-// a value instead of moving or borrowing it", and the four of them are a trivial
-// aggregate copied into a `value: T` parameter, a binding, an assignment, and the
+// A copy site is a point that duplicates a value instead of moving or
+// borrowing it (design.md "Copy-cost diagnostics"): a trivial aggregate
+// copied into a `value: T` parameter, a binding, an assignment, or the
 // return of a borrowed managed owner by value.
 //
 // Size is never a type error, so this is a warning and the threshold is an
@@ -499,9 +488,9 @@ report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr,
 	if in_loop {
 		add_notef(k.c, no_span(), "this runs on every iteration of the enclosing loop")
 	}
-	// design.md: the advice is transfer or sharing. It "must not recommend
-	// `inout` solely as an optimization, because `inout` grants mutation rights
-	// and changes which aliases are legal".
+	// The advice is transfer or sharing only — never `inout` as an optimization,
+	// since `inout` grants mutation rights and changes which aliases are legal
+	// (design.md).
 	if name != "" && site != .Return {
 		add_notef(k.c, no_span(), "write `move(%s)` if `%s` is no longer needed", name, name)
 	}
@@ -688,9 +677,9 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 	}
 }
 
-// design.md: "For this rule, an owner is live when it may be used later or still
-// requires cleanup on an outgoing path. An explicitly dropped manual owner is
-// dead and no longer blocks reset."
+// An owner is live when it may be used later or still requires cleanup on an
+// outgoing path; an explicitly dropped manual owner is dead and no longer
+// blocks reset (design.md).
 //
 // That is exactly this analysis's `.Dead`, and only `.Dead`: a conditionally
 // live owner may still need its cleanup on one path, so it keeps blocking. The
@@ -735,10 +724,10 @@ report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness) {
 	)
 }
 
-// design.md: "A managed local declaration places an implicit conditional
-// `defer drop(value)` at the declaration point." The slot joins the same
-// registration order every explicit `defer` uses, so cleanup replays one
-// reverse order rather than two.
+// A managed local declaration places an implicit conditional
+// `defer drop(value)` at the declaration point (design.md). The slot joins
+// the same registration order every explicit `defer` uses, so cleanup
+// replays one reverse order rather than two.
 @(private = "file")
 assign_cleanup_slots :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	for local in graph.tracked {

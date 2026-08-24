@@ -788,9 +788,9 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				// for the group belongs to the parameters, not to `self`.
 				name_type, mode, default = k.impl_type, .Value, nil
 			}
-			// design.md "`@(allocator_reset)`": the attribute states that a
-			// successful call "may end every allocation root in that allocator
-			// region", so it is meaningless anywhere but on an `Allocator`.
+			// design.md "`@(allocator_reset)`": a successful call can end every
+			// allocation root within that allocator's region, so the attribute only
+			// makes sense on an `Allocator`.
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
 				!(split && name_index == 0)
 			if resets && type_underlying(k.c, name_type) != TYPE_ALLOCATOR {
@@ -1729,8 +1729,8 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 			return
 		}
 	}
-	// design.md: "`---` is not a value or an initializer. It is declaration syntax
-	// used for a foreign procedure with no Loke body". A foreign block's members
+	// `---` isn't a value or an initializer; it's declaration syntax for a
+	// foreign procedure with no Loke body (design.md). A foreign block's members
 	// returned above, so a bodiless declaration reaching here is outside one — a
 	// permanent error rather than an unfinished milestone (m7-plan step 6).
 	if literal.bodiless {
@@ -1999,8 +1999,8 @@ check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
 	return FLOWS
 }
 
-// A call, or a single-valued `or_return` over one — which design.md says "may
-// only be used as a statement".
+// A call, or a single-valued `or_return` over one — the only expressions
+// design.md allows as a standalone statement.
 @(private = "file")
 expression_statement_has_effect :: proc(e: Expr) -> bool {
 	#partial switch v in e {
@@ -2181,9 +2181,9 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	}
 }
 
-// design.md: "A compound assignment falls back to the corresponding binary
-// operator followed by ordinary assignment. A direct compound overload can avoid
-// a temporary or allocation."
+// A compound assignment falls back to the corresponding binary operator plus
+// an ordinary assignment; a direct compound overload can skip the temporary
+// or allocation that implies (design.md).
 @(private = "file")
 check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: Type_Id) -> bool {
 	rhs_type := check_single_expr(k, s.rhs[0])

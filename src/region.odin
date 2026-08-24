@@ -1,16 +1,16 @@
 // Local allocator regions: `mem.Arena` and `mem.Scratch` (m6b-plan step 5).
 //
-// design.md "Allocators": "There is no ambient temporary allocator. Temporary
+// design.md "Allocators": there is no ambient temporary allocator. Temporary
 // storage has a reset boundary and runtime identity, so code creates a
-// `mem.Scratch` or `mem.Arena` owner and passes its allocator explicitly."
+// `mem.Scratch` or `mem.Arena` owner and passes its allocator explicitly.
 //
 // Both are the same thing: one pointer to an address-stable control block in
 // `runtime/arena.c`. Two nominal types because design.md publishes two names and
 // gives them different constructors — an `Arena` may be laid over a caller's
 // fixed buffer, a `Scratch` is always provider-backed.
 //
-// Address stability is the whole point. design.md: "Copying an allocator value
-// preserves that identity, and every allocation records it." Here the identity
+// Address stability is the whole point. Copying an allocator value preserves
+// that identity, and every allocation records it (design.md). Here the identity
 // *is* the control block's address, so moving the owner cannot change it, and
 // the region check has one fact to follow rather than a per-copy tag.
 //

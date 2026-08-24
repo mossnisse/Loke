@@ -351,8 +351,8 @@ poly_array_length :: proc(k: ^Checker, poly: ^Type_Poly) -> (u64, bool) {
 	return u64(length), true
 }
 
-// design.md tie-breaker 4: "a structural specialization beats an unspecialized
-// parameter". A `$T` pins nothing down; every written layer of structure counts.
+// design.md tie-breaker 4: a structural specialization beats an unspecialized
+// parameter. A `$T` pins nothing down; every written layer of structure counts.
 pattern_specificity :: proc(e: Expr) -> int {
 	if e == nil {
 		return 0

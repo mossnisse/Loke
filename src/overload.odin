@@ -1,8 +1,8 @@
 // Overload resolution (m4a-plan step 1, decision "One candidate engine").
 //
 // One engine, used by named procedure groups, methods, operators, `init`
-// construction, and indexing. design.md ranks operator overloads "using the same
-// algorithm as named procedure overloads": two implementations would drift, and
+// construction, and indexing. Operator overloads rank using the same algorithm
+// as named procedure overloads (design.md): two implementations would drift, and
 // the error-quality requirement — list every maximal candidate, its conversion
 // vector, and the tie-breaker where selection failed — wants one place that can
 // print them.
@@ -675,8 +675,8 @@ report_no_match :: proc(k: ^Checker, span: Span, description: string, all: []Can
 	}
 }
 
-// design.md: "The compiler diagnostic must list every maximal candidate, its
-// conversion vector, and the tie-breaker at which selection failed."
+// The ambiguity diagnostic must list every maximal candidate, its conversion
+// vector, and the tie-breaker at which selection failed (design.md).
 @(private = "file")
 report_ambiguity :: proc(k: ^Checker, span: Span, description: string, all: []Candidate, maximal: []int) {
 	errorf(k.c, span, "L0391", "%s is ambiguous here: %d candidates are equally good", description, len(maximal))

@@ -50,7 +50,7 @@ Lifecycle :: struct {
 	state:            Size_State,
 }
 
-// design.md: "`drop` is `proc(self: inout T)`."
+// `drop` has the signature `proc(self: inout T)` (design.md).
 lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 	under := type_underlying(c, type)
 	if existing, found := c.lifecycles[under]; found {
@@ -110,8 +110,8 @@ collect_hooks :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info, entry: ^Lif
 	}
 }
 
-// design.md: "Fixed arrays inherit their element lifecycle." A struct is managed
-// when any field is.
+// A fixed array inherits its element's lifecycle (design.md). A struct is
+// managed when any field is.
 @(private = "file")
 has_managed_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
 	#partial switch info.kind {
@@ -218,10 +218,10 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // ------------------------------------------------- generated copy members --
 
-// design.md: "User-defined records receive field-wise `try_clone`, `clone`,
-// `move`, and `drop` behavior by default", and "`clone` is generated from
-// `try_clone`; user code does not replace it independently." Both copy entry
-// points are therefore real members with real emitted bodies, so `value.clone()`,
+// A user-defined record gets field-wise `try_clone`, `clone`, `move`, and
+// `drop` by default, and `clone` is generated from `try_clone` — user code
+// never replaces it independently (design.md). Both copy entry points are
+// therefore real members with real emitted bodies, so `value.clone()`,
 // generic code, and the catalogue's `Cloneable` find them exactly where a
 // hand-written hook would be (m5a-plan step 3).
 //
@@ -251,9 +251,10 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	if info == nil || info.descriptor || .Lifecycle in info.contributed {
 		return
 	}
-	// design.md "standard interface catalogue": "copyable owning built-ins such as
-	// `string`, dynamic arrays, maps ... satisfy `Cloneable`". That interface names
-	// the `try_clone` slot, so those types need the member as much as a record
+	// Copyable owning built-ins such as `string`, dynamic arrays, and maps
+	// satisfy `Cloneable` (design.md "standard interface catalogue"). That
+	// interface names the `try_clone` slot, so those types need the member as
+	// much as a record
 	// does — the difference is only what its body lowers to, which
 	// `emit_synth_try_clone` decides from `Lifecycle.intrinsic`.
 	#partial switch info.kind {
@@ -391,10 +392,10 @@ generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kin
 	return id
 }
 
-// design.md "Standard customization procedures": `clone(value)` and
-// `try_clone(value)` "are written as free calls ... which is canonical and
-// always available", and "the compiler contributes free `clone` and `try_clone`
-// overloads forwarding to the fixed hooks". So this resolves to the very member
+// `clone(value)` and `try_clone(value)` are written as free calls, which is
+// canonical and always available, and the compiler contributes free `clone`
+// and `try_clone` overloads that forward to the fixed hooks (design.md
+// "Standard customization procedures"). So this resolves to the very member
 // `value.clone()` would, and rewrites the callee to name it — a free call and a
 // method call on one type are one emitted call, not two entry points that could
 // drift.
