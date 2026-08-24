@@ -263,10 +263,13 @@ Expr_Postfix :: struct {
 	operand:    Expr,
 }
 
+// `mutable` is `&mut place`: the exclusive borrow form. It is meaningful only
+// when `op` is `.Amp`.
 Expr_Unary :: struct {
 	using base: Expr_Base,
 	op:         Token_Kind,
 	op_span:    Span,
+	mutable:    bool,
 	operand:    Expr,
 }
 
@@ -337,8 +340,10 @@ Expr_Composite :: struct {
 	via:        Expr,
 }
 
+// `^T` is a read-only borrow, `^mut T` a mutable one.
 Type_Pointer :: struct {
 	using base: Expr_Base,
+	mutable:    bool,
 	elem:       Expr,
 }
 
@@ -379,8 +384,10 @@ Type_Distinct :: struct {
 }
 
 // `dyn Interface(args...)`; `interface_expr` carries the name and its arguments.
+// `dyn I` is a read-only view, `dyn mut I` a mutable one.
 Type_Dyn :: struct {
 	using base:     Expr_Base,
+	mutable:        bool,
 	interface_expr: Expr,
 }
 

@@ -1,0 +1,75 @@
+// design.md "Borrowed dynamic interface values": `dyn I` is a read-only view and
+// `dyn mut I` a mutable one, over one representation and one witness table.
+package main; import "core:fmt";
+
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+// A mixed interface: one immutable slot and one that mutates its subject.
+Mixed :: interface($Self: type) {
+	slot size: proc(self) -> int;
+	slot bump: proc(self: inout Self) ;
+}
+
+// Composition keeps the capability of the view it is reached through.
+Described :: interface($Self: type) {
+	Sized(Self);
+	slot label: proc(self) -> int;
+}
+
+Counter :: struct { value: int }
+impl Counter {
+	size  :: proc(self) -> int { return self.value; }
+	label :: proc(self) -> int { return self.value * 10; }
+	bump  :: proc(self: inout Counter) { self.value += 1; }
+}
+
+observe :: proc(view: dyn Mixed) -> int { return view.size(); }
+modify :: proc(view: dyn mut Mixed) -> int { view.bump(); return view.size(); }
+
+// `dyn mut I` satisfies `I`; `dyn I` satisfies it only when nothing mutates.
+generic_bump :: proc(target: inout $T) -> int where Mixed(T) {
+	target.bump();
+	return target.size();
+}
+
+generic_size :: proc(target: $T) -> int where Sized(T) { return target.size(); }
+
+main :: proc() {
+	c := Counter{1};
+
+	// A mutable view calls both kinds of slot.
+	m := (dyn mut Mixed)(&mut c);
+	m.bump();
+	fmt.println(m.size());
+
+	// It weakens to a read-only view, which keeps the immutable slots.
+	weakened: dyn Mixed = m;
+	fmt.println(weakened.size());
+
+	// A read-only view is built straight from `&`.
+	fmt.println(observe((dyn Mixed)(&c)));
+
+	// And a mutable one from `&mut`, including through a parameter.
+	fmt.println(modify((dyn mut Mixed)(&mut c)));
+
+	// `dyn mut I` satisfies `I` through the forwarding slots; erasing one again
+	// is the nested case.
+	nested := (dyn mut Mixed)(&mut c);
+	fmt.println(generic_bump(inout nested));
+
+	// A read-only view satisfies an all-immutable interface.
+	view := (dyn Sized)(&c);
+	fmt.println(generic_size(view));
+
+	// Composed interfaces reach the base slots through either capability.
+	described := (dyn Described)(&c);
+	fmt.println(described.size() + described.label());
+
+	// The zero value of both capabilities is nil.
+	absent: dyn Mixed = nil;
+	missing: dyn mut Mixed = nil;
+	fmt.println(1 if absent == nil else 0);
+	fmt.println(1 if missing == nil else 0);
+}

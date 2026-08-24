@@ -273,7 +273,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	append(&members, container_member(
 		k, type, "find", .Map_Find,
 		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
-		[]Type_Id{pointer_to(k.c, value), TYPE_BOOL}, 0,
+		[]Type_Id{pointer_to(k.c, value, true), TYPE_BOOL}, 0,
 	))
 	append(&members, container_member(
 		k, type, "try_insert", .Map_Try_Insert,

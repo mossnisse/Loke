@@ -35,16 +35,16 @@ write_under_a_read_only_borrow :: proc(values: []int) {
 // Two mutable borrows of the same field overlap.
 overlapping_borrows :: proc() {
 	p := Pair{1, 2};
-	one := &p.a;
-	two := &p.a;
+	one := &mut p.a;
+	two := &mut p.a;
 	fmt.println(one^ + two^);
 }
 
 // A prefix overlaps everything below it.
 whole_root_overlaps_a_field :: proc() {
 	p := Pair{1, 2};
-	field := &p.a;
-	whole := &p;
+	field := &mut p.a;
+	whole := &mut p;
 	fmt.println(field^ + whole.b);
 }
 
@@ -59,7 +59,7 @@ dynamic_index_overlaps :: proc(i: int) {
 // A checked union extraction reads the whole subject, so it overlaps too.
 union_variant_overlaps :: proc() {
 	c: Choice = 1;
-	pointer := &c;
+	pointer := &mut c;
 	fmt.println(c.(int));
 	fmt.println(pointer^.(int));
 }
@@ -107,7 +107,7 @@ borrow_outlives_its_root :: proc() {
 // `free` needs the base pointer of a fresh allocation.
 free_of_a_lexical_root :: proc() {
 	value := 1;
-	pointer := &value;
+	pointer := &mut value;
 	free(pointer);
 }
 

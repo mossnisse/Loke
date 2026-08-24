@@ -324,17 +324,17 @@ foreign kernel32 {
 	) -> int ---;
 	@(link_name="ReadFile")
 	rt_read_file :: proc "stdcall" (
-		handle: int, buffer: [^]u8, count: u32, read: ^u32, overlapped: rawptr,
+		handle: int, buffer: [^]u8, count: u32, read: ^mut u32, overlapped: rawptr,
 	) -> i32 ---;
 	@(link_name="WriteFile")
 	rt_write_file :: proc "stdcall" (
-		handle: int, buffer: [^]u8, count: u32, written: ^u32, overlapped: rawptr,
+		handle: int, buffer: [^]u8, count: u32, written: ^mut u32, overlapped: rawptr,
 	) -> i32 ---;
 	@(link_name="CloseHandle")
 	rt_close_handle :: proc "stdcall" (handle: int) -> i32 ---;
 	@(link_name="SetFilePointerEx")
 	rt_set_file_pointer :: proc "stdcall" (
-		handle: int, distance: i64, new_position: ^i64, method: u32,
+		handle: int, distance: i64, new_position: ^mut i64, method: u32,
 	) -> i32 ---;
 	@(link_name="FlushFileBuffers")
 	rt_flush :: proc "stdcall" (handle: int) -> i32 ---;
@@ -462,7 +462,7 @@ read_handle :: proc(handle: Handle, destination: []mut u8) -> (int, io.Error) {
 	wanted := len(destination);
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	read: u32 = 0;
-	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &read, nil) == 0) {
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, nil) == 0) {
 		error := from_last_error(.Read);
 		// A read that ends at the end of a pipe is the end of input, not a fault.
 		if (io.is(error, .Broken_Pipe)) {
@@ -481,7 +481,7 @@ write_handle :: proc(handle: Handle, source: []u8) -> (int, io.Error) {
 	wanted := len(source);
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	written: u32 = 0;
-	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &written, nil) == 0) {
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
 		return 0, from_last_error(.Write);
 	}
 	return int(written), nil;
@@ -497,7 +497,7 @@ seek_handle :: proc(handle: Handle, offset: i64, origin: Seek_Origin) -> (u64, i
 	if (origin == .Current) { method = 1; }
 	else if (origin == .End) { method = 2; }
 	position: i64 = 0;
-	if (rt_set_file_pointer(handle, offset, &position, method) == 0) {
+	if (rt_set_file_pointer(handle, offset, &mut position, method) == 0) {
 		return 0, from_last_error(.Seek);
 	}
 	return u64(position), nil;
@@ -516,7 +516,7 @@ metadata_native :: proc(path: string_view) -> (Metadata, io.Error) {
 	wide, path_error := wide_path(path, .Metadata);
 	if (path_error != nil) { return Metadata{}, path_error; }
 	data: File_Attribute_Data = {};
-	if (rt_file_attributes(unsafe.raw_data(wide), 0, &data) == 0) {
+	if (rt_file_attributes(unsafe.raw_data(wide), 0, &mut data) == 0) {
 		return Metadata{}, from_last_error(.Metadata);
 	}
 	return Metadata{
@@ -627,7 +627,7 @@ impl Directory_Reader {
 		}
 		for (;;) {
 			if (!self.pending) {
-				if (rt_find_next(self.handle, &self.data) == 0) {
+				if (rt_find_next(self.handle, &mut self.data) == 0) {
 					error := from_last_error(.Read_Directory);
 					// ERROR_NO_MORE_FILES is the ordinary end of a directory.
 					if (io.native_code_of(error) == 18) {
@@ -662,7 +662,7 @@ read_directory_native :: proc(
 
 	reader: Directory_Reader = {};
 	reader.allocator = allocator;
-	handle := rt_find_first(unsafe.raw_data(wide), &reader.data);
+	handle := rt_find_first(unsafe.raw_data(wide), &mut reader.data);
 	if (handle == INVALID_HANDLE) {
 		return Directory_Reader{}, from_last_error(.Read_Directory);
 	}

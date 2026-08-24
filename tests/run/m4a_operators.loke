@@ -124,7 +124,7 @@ main :: proc() {
 	g: Grid;
 	g[1, 2] = 7;
 	fmt.println(int(g[1, 2]));
-	p := &g[0, 0];
+	p := &mut g[0, 0];
 	p^ = 5;
 	fmt.println(int(g[0, 0]));
 	fmt.println(int(g[0:7]));

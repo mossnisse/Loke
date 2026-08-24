@@ -1082,7 +1082,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if element == INVALID_TYPE {
 			return INVALID_TYPE
 		}
-		value.denoted_type = pointer_to(k.c, element)
+		value.denoted_type = pointer_to(k.c, element, value.mutable)
 		value.resolution.kind = .Type
 		return value.denoted_type
 
@@ -2322,6 +2322,12 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 		errorf(k.c, base.span, "L0359", "`_` cannot be %s", what)
 	case .Read_Only:
 		errorf(k.c, base.span, "L0478", "this is read-only storage and cannot be %s", what)
+	case .Through_Pointer:
+		errorf(
+			k.c, base.span, "L0640",
+			"this place is reached through a read-only `^T` and cannot be %s; borrow it with `&mut` for a `^mut T`",
+			what,
+		)
 	case .None, .Not_A_Place:
 		errorf(k.c, base.span, "L0359", "this expression cannot be %s", what)
 	}

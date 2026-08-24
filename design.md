@@ -365,11 +365,22 @@ Legend:
 - stream = get individual values from the string, without allocation
 - st = the input string
 
-The language has no `const` qualifier. Slice capability is in the type: `[]T` is read-only, `[]mut T` permits element mutation. A view from a `string` is thus `[]u8` and cannot become `[]mut u8`. Other read-only storage — a [materialized constant](#materialization) — is read-only by how it was declared.
+The language has no `const` qualifier. **Capability is in the carrier's type, spelled `mut`, and it is the same axis for every checked borrow:**
 
-**Pointers carry no read-only capability: there is no `^const T`.** A `^T` from `&` is a checked mutable borrow. Read-only access to a sequence is `[]T`; read-only access to a single value is an ordinary `value: T` parameter (already an immutable borrow for a managed owner), and `inout T` opts into mutation.
+| | read-only | mutable |
+| --- | --- | --- |
+| a single value | `^T` | `^mut T` |
+| a sequence | `[]T` | `[]mut T` |
+| an erased view | `dyn I` | `dyn mut I` |
+| forming one | `&place` | `&mut place` |
 
-Checked provenance follows a local `^T` and its copies until it is stored in an untracked place or converted through `core:unsafe`. A `^T` loaded from such a place or received from foreign code is an unchecked address.
+A view from a `string` is thus `[]u8` and cannot become `[]mut u8`. Other read-only storage — a [materialized constant](#materialization) — is read-only by how it was declared.
+
+`inout T` remains a distinct mode rather than a spelling of `^mut T`: it is non-null, bound to the call, marked at the call site, and may invalidate the whole owner it names. An interior `^mut T` may not.
+
+`[^]T` stays outside this axis. It is unchecked and always mutable, and converting to it visibly crosses the `core:unsafe` boundary.
+
+Checked provenance follows a local pointer and its copies until it is stored in an untracked place or converted through `core:unsafe`. A pointer loaded from such a place or received from foreign code is an unchecked address.
 
 #### From string to X
 
@@ -430,25 +441,34 @@ Checked provenance follows a local `^T` and its copies until it is stored in an 
 
 ### Pointers
 
-A pointer contains the memory address of a value. `^T` is a pointer to `T`. Its zero value is `nil`.
+A pointer contains the memory address of a value. `^T` is a read-only pointer to `T` and `^mut T` a mutable one. The zero value of both is `nil`, and both are one machine address: the capability is static and changes no layout, no ABI, and no calling convention.
 
 ```odin
 p: ^int = nil;
+q: ^mut int = nil;
 ```
 
-The `&` operator returns the address of an addressable operand:
+`&` returns a read-only borrow of a readable addressable operand, and `&mut` an exclusive mutable borrow of one this body may write:
 
 ```odin
 i := 423;
-p := &i;
+reader := &i;      // ^int
+writer := &mut i;  // ^mut int
 ```
 
-The postfix `^` operator dereferences a pointer:
+`&` reaches every place that can be read: a local, a value parameter, an element of a `[]T`, and a [materialized constant](#materialization). `&mut` additionally requires that the place be assignable, so a value parameter, a `[]T` element, and a constant all reject it. Neither reaches a [packed](#packed) field or an `any_view`.
+
+The postfix `^` operator dereferences a pointer. Dereferencing either capability yields a place with an address; only `^mut T` yields one that may be written:
 
 ```odin
-fmt.println(p^); // read `i` through the pointer `p`
-p^ = 1337;       // write `i` through the pointer `p`
+fmt.println(writer^); // read `i` through the pointer
+writer^ = 1337;       // write `i` through the pointer
+reader^ = 1337;       // ERROR: `^int` is a read-only borrow
 ```
+
+The same rule carries through implicit pointer field selection, indexing, method receivers, and nested projections: a place reached through a `^T` is readable and not assignable, and a mutating method may not be called on it.
+
+A `^mut T` implicitly weakens to a `^T`. A `^T` never strengthens, even when the storage it names is a mutable local — see [Capabilities and the one rule](#capabilities-and-the-one-rule).
 
 Loke uses `^` for pointer types and pointer dereference:
 
@@ -1601,7 +1621,8 @@ Type_Info :: struct {
 }
 ```
 
-Every view and slice above points at static storage, so a `^Type_Info` owns
+Every view and slice above points at shared static storage, so `type_info_of`
+hands back a read-only `^runtime.Type_Info` and a `^Type_Info` owns
 nothing and needs no cleanup. Aggregate member tables expose public fields only,
 procedure entries keep written parameter and result order, union variants keep
 declaration order, and unused scalar, relation, and member fields are zero. An
@@ -1644,9 +1665,10 @@ visit_fields :: proc(value: ^$T, visitor: inout $Visitor) {
 }
 ```
 
-`field.get(value)` accepts `^T`, reads the selected field, and has type
-`field.type` after expansion. `field.pointer(value)` also accepts `^T` and
-returns `^field.type`. Both take a pointer so that one expansion body can use
+`field.get(value)` accepts a pointer of either capability, reads the selected
+field, and has type `field.type` after expansion. `field.pointer(value)` also
+accepts either and projects the capability through: a `^mut T` subject yields
+`^mut field.type`, a `^T` subject yields `^field.type`. Both take a pointer so that one expansion body can use
 either without restructuring its parameter. The  normal visibility, packed-field, borrow, copy, and mutation rules still apply;
 `pointer` is rejected for a packed field. There is no string-based field lookup.
 
@@ -2539,23 +2561,29 @@ These rules exclude constructors, `Self`-returning methods, consuming methods, g
 
 `dyn Interface(arguments...)` is a fixed-size, non-owning view: a data pointer plus a pointer to the interface's coherent implementation for the erased type. The subject argument is omitted, being the erased type. For example, `dyn interfaces.Iterator(u8)` may hold a borrow of any concrete value for which `interfaces.Iterator(Concrete, u8)` is satisfied.
 
-The interface's receiver modes set the view's borrow capability. If every slot uses immutable `self`, the dyn type is an immutable borrow; if any slot uses `inout self`, it is an exclusive mutable borrow, subject to the same use-based exclusivity rule as other borrows (no second `dyn mut` spelling).
+The view's capability is written, not inferred from the interface: `dyn I` is an immutable borrow and `dyn mut I` an exclusive mutable one, subject to the same use-based exclusivity rule as every other borrow. The two are distinct types with distinct names and type identities over one representation — the same data pointer and the same witness — so `dyn mut I` weakens to `dyn I` with no cast and no copy, and `dyn I` never strengthens.
 
-Conversion is an ordinary explicit conversion from a pointer to the concrete subject:
+For an interface mixing receiver modes, the capability decides which slots the view exposes. `dyn I` exposes only the slots taking an immutable `self`; `dyn mut I` exposes every slot. Both keep the full witness table, so calling a mutating slot through a `dyn I` is a capability error naming `dyn mut I` — never a missing member. A mutating slot may be called directly on any `dyn mut I` value, however the value itself is held: the capability belongs to the view type and the call mutates the erased referent, not the view header.
+
+Conversion is an ordinary explicit conversion from a pointer to the concrete subject. `&` builds a read-only view and `&mut` a mutable one; a mutable view requires `^mut Concrete`, while building a `dyn I` from a `^mut Concrete` is ordinary weakening:
 
 ```odin
 circle := Circle{...};
 drawable := (dyn Drawable)(&circle);
 drawable.draw(inout canvas); // indirect call through the witness
+
+counter := Counter{0};
+bumpable := (dyn mut Bumpable)(&mut counter);
+bumpable.bump();             // a mutating slot, through a mutable view
 ```
 
 The conversion allocates nothing and copies no value; it creates a compiler-recognized borrow whose provenance derives from the pointed-to source and materializes or reuses its witness. A pointer from a temporary may form a `dyn` value only for that complete expression. A local `dyn` value participates in ordinary use-based borrow analysis; storing one has the same unchecked-lifetime boundary as storing a slice. A `dyn` parameter or result follows the same coarse root-provenance rule as a slice.
 
 Converting a nil concrete pointer yields the nil dynamic view and retains no witness. The zero value of every `dyn Interface` is nil; copying one copies only the view when the borrow rules permit the alias, and calling a slot on nil panics. Dynamic interface values are comparable only with `nil`.
 
-Dynamic interfaces do not support checked extractions or type switches in version 1: a `dyn` value is a borrowed view and Loke has no read-only pointer type to represent a safe downcast. Add a slot for the required behavior, or pass an `any_view` for runtime type inspection.
+Dynamic interfaces do not support checked extractions or type switches in version 1: the view header is a data pointer and a witness pointer and carries no `typeid`, so a checked downcast would need a third word and a different representation. Add a slot for the required behavior, or pass an `any_view` for runtime type inspection.
 
-`dyn I` itself satisfies `I` through compiler-provided forwarding slots — the bridge between static and runtime polymorphism:
+A dyn view satisfies its own interface through compiler-provided forwarding slots — the bridge between static and runtime polymorphism. `dyn mut I` satisfies `I` whatever its receiver modes; `dyn I` satisfies `I` only when every required receiver is immutable, because those are the only slots it exposes. Converting to a composed base interface keeps the capability it was reached through.
 
 ```odin
 paint :: proc(value: ^$T, canvas: inout Canvas)
@@ -2809,7 +2837,7 @@ main :: proc() {
 }
 ```
 
-Materialized storage is read-only: assigning through it is rejected and a slice of it is `[]T`, never `[]mut T`. Taking the address of a constant or a place within its storage is a compile-time error, since pointers carry no read-only capability. Low-level code needing a foreign pointer takes a read-only slice first and uses `unsafe.raw_data`, making the capability loss explicit.
+Materialized storage is read-only: assigning through it is rejected and a slice of it is `[]T`, never `[]mut T`. `&C` and `&C.field` are permitted and yield a `^T` addressing that shared object, so every `&C` in the program compares equal; `&mut` of it is rejected. A generic instantiation holds its own constant symbol and so gets its own object. Low-level code needing a mutable foreign pointer still takes a slice first and uses `unsafe.raw_data`, making the capability loss explicit.
 
 Because the storage is static, a borrow of a materialized constant outlives every scope, exactly like [a slice over a string literal](#slices). It may be returned, stored in a global, or sent to another thread.
 
@@ -3027,18 +3055,21 @@ Eager arithmetic and bitwise operations have a compound-assignment shorthand suc
 
 ### Address operator
 
-For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x`. The operand must be addressable. The following operands are addressable:
+For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x` and `&mut x` a `^mut T`. The operand must be addressable. The following operands are addressable:
 
 - a variable or pointer dereference
-- an index of a mutable slice, dynamic array, or addressable fixed array
+- an index of a slice, dynamic array, or addressable fixed array
 - a visible [`operator([])` that returns `inout T`](#indexing-and-slicing)
 - a field of an addressable, non-packed struct
 - a checked extraction from an addressable union
 - a composite literal
+- a value parameter, and a [materialized constant](#materialization) or a place within one
 
-An `any_view` is not addressable. An element reached through `[]T` is not addressable. An individual field of an `@(packed)` struct is not addressable.
+`&mut` additionally requires that the operand be assignable, so it is rejected for a value parameter, an element reached through a `[]T` or a `^T`, and a materialized constant — each of which `&` still reaches.
 
-`&` is always single-valued: every addressable operand yields exactly one pointer. A container whose lookup may fail supplies a method instead, as the built-in map does with [`m.find(key)`](#maps).
+An `any_view` is not addressable. An individual field of an `@(packed)` struct is not addressable.
+
+Both forms are always single-valued: every addressable operand yields exactly one pointer. A container whose lookup may fail supplies a method instead, as the built-in map does with [`m.find(key)`](#maps).
 
 For an operand `x` of pointer type `^T`, `x^` denotes the `T` pointed to. Explicit `x^` and implicit dereferences such as `x.field` test for nil and raise a runtime panic before accessing memory; an implementation may use a hardware fault only if it preserves the same observable behavior. Dereferencing a non-nil address that is dangling, misaligned, or otherwise invalid is undefined behavior, and can arise only through an unchecked lifetime hole, raw-pointer manipulation, or foreign code.
 
@@ -4218,7 +4249,7 @@ array := make_f32_array(3, 2);
 Types can also be explicitly passed through a `$` parameter of compile-time-only type `type`:
 
 ```odin
-my_new :: proc($T: type) -> ^T {
+my_new :: proc($T: type) -> ^mut T {
 	ptr, err := new(T);
 	if (err != nil) { panic("allocation failed"); }
 	return ptr;
@@ -4434,10 +4465,10 @@ in exactly the same way.
 A **borrow carrier** is a value that refers to another root without owning that
 root. The built-in carriers are:
 
-- `^T`, a mutable single-value pointer;
+- `^T` and `^mut T`, immutable and mutable single-value pointers;
 - `[]T` and `[]mut T`, immutable and mutable slices;
 - `string_view`, `cstring_view`, and `any_view`;
-- `dyn Interface` views and compiler-known iterators;
+- `dyn Interface` and `dyn mut Interface` views, and compiler-known iterators;
 - default and `inout` parameter access paths for the duration of a call;
 - an [`inout` result](#inout-results), a mutable borrow returned to the caller.
 
@@ -4449,14 +4480,15 @@ Root provenance is compile-time metadata, not part of a value's layout or
 ABI. It identifies the root and the capability through which it is accessed.
 The following operations preserve root provenance:
 
-- `&place` creates a checked mutable `^T` borrow of the root containing `place`;
+- `&place` creates a checked immutable `^T` borrow of the root containing
+  `place`, and `&mut place` an exclusive `^mut T` one;
 - slicing creates a checked `[]T` or `[]mut T` borrow of the sliced root;
 - conversion to a built-in view and compiler-known iteration preserve the
   source root;
 - a borrow returned from a Loke procedure derives root provenance from its borrowed
   arguments as described below;
-- `new` and `new_clone` create a new allocation root and return a checked `^T`
-  pointer to its first value.
+- `new` and `new_clone` create a new allocation root and return a checked
+  `^mut T` pointer to its first value, which is the capability `free` requires.
 
 #### How root and region provenance compose
 
@@ -4535,20 +4567,49 @@ analysis as described under [What is not checked](#what-is-not-checked).
 
 ### Capabilities and the one rule
 
-An immutable borrow permits reads only. `[]T`, `string_view`, and ordinary
-read-only parameter access are immutable borrows. While one is live, the root
-may be read through compatible paths, but it may not be written, moved, dropped,
-freed, or invalidated.
+An immutable borrow permits reads only. `^T`, `[]T`, `dyn I`, `string_view`, and
+ordinary read-only parameter access are immutable borrows. While one is live, the
+root may be read through compatible paths — including through other immutable
+borrows of the same place, of which any number may be live at once — but it may
+not be written, moved, dropped, freed, or invalidated.
 
-A mutable borrow permits reads and writes through that borrow. `^T`, `[]mut T`,
-and `inout` are mutable borrows. While one is live, the root cannot be accessed
-through a competing name or overlap another live borrow. An `inout` borrow of
-the complete owner may update its header and invalidate its previous contents;
-an interior `^T` or `[]mut T` borrow cannot.
+A mutable borrow permits reads and writes through that borrow. `^mut T`,
+`[]mut T`, `dyn mut I`, and `inout` are mutable borrows. While one is live, the
+root cannot be accessed through a competing name or overlap another live borrow.
+An `inout` borrow of the complete owner may update its header and invalidate its
+previous contents; an interior `^mut T` or `[]mut T` borrow cannot.
 
 > A checked borrow may be used only while its root is live, and every access to
 > the root while the borrow is live must be compatible with the borrow's
 > capability.
+
+#### Weakening and read-only reborrows
+
+A mutable carrier implicitly weakens to the read-only carrier of the same shape.
+The reverse never happens: a read-only carrier does not strengthen, whatever the
+storage behind it was declared as.
+
+Where the weakening happens decides what it costs. A **fresh** borrow — `&mut x`
+written straight into a `^T`, or `xs[0:2]` into a `[]T` — is simply created
+read-only; the destination settles a capability the borrowing expression never
+committed to, and nothing is suspended.
+
+Weakening an **existing** mutable carrier is a read-only reborrow of it. While
+the reborrow is live, the carrier it was taken from is suspended and may not be
+used; after the reborrow's last use, the source is usable again. Without this a
+mutable alias could write behind the reborrow's back:
+
+```odin
+source := numbers[0:2];      // []mut int
+reborrow: []int = source;    // a read-only reborrow of `source`
+fmt.println(reborrow[0]);
+source[0] = 50;              // ERROR: `source` is suspended here
+fmt.println(reborrow[1]);    // ... because this keeps the reborrow live
+```
+
+Moving the last use of `reborrow` above the write makes the same program legal.
+The diagnostic names both ends: where the reborrow was taken, and the later use
+that keeps it live.
 
 #### Places and overlap
 
@@ -4883,7 +4944,7 @@ For the full list, see the documentation for package `builtin`. The compiler-def
 | `offset_of(T, field)` | Byte offset of a field; a compile-time constant |
 | `type_of(expr)` | The compile-time [`type`](#type-and-typeid) of an expression |
 | `typeid_of(T)` | The runtime [`typeid`](#type-and-typeid) constant for a compile-time type |
-| `type_info_of(id)` | `^runtime.Type_Info` for a `typeid` |
+| `type_info_of(id)` | read-only `^runtime.Type_Info` for a `typeid`; the table is shared static storage |
 | `fields_of(T)`, `enum_values_of(T)` | Typed [compile-time reflection](#compile-time-reflection) descriptor arrays |
 | `assert(condition, message := "")` | Phase-neutral check; failure panics at runtime or diagnoses a required compile-time evaluation |
 | `panic(message)` | Panics at runtime or diagnoses the currently evaluated compile-time call |
@@ -5358,7 +5419,7 @@ release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
 
 The following low-level procedures are built in and are also available in package `mem` with enforced allocator errors. Normal managed strings, arrays, and maps do not need them.
 
-- `new(T, allocator=mem.default_allocator()) -> (^T, Allocator_Error)` creates a new allocation root containing a zero-initialized value. On success the pointer has root provenance identifying that fresh allocation, and the allocation root has region provenance identifying its allocator region; the pointer is nil on failure. The allocation is manual: the pointer itself has no `drop` hook and the program must eventually pass the allocation root to `free`, reset its allocator region, or transfer responsibility to an ordinary resource wrapper.
+- `new(T, allocator=mem.default_allocator()) -> (^mut T, Allocator_Error)` creates a new allocation root containing a zero-initialized value. On success the pointer has root provenance identifying that fresh allocation, and the allocation root has region provenance identifying its allocator region; the pointer is nil on failure. The allocation is manual: the pointer itself has no `drop` hook and the program must eventually pass the allocation root to `free`, reset its allocator region, or transfer responsibility to an ordinary resource wrapper.
 
 ```odin
 ptr, err := new(int);
@@ -5367,11 +5428,11 @@ ptr^ = 123;
 x: int = ptr^;
 ```
 
-- `new_clone(value, allocator=mem.default_allocator()) -> (^T, Allocator_Error)` creates a new allocation root containing a clone of the value. Its pointer and allocation root receive the same respective root and region provenance and manual release rule as `new`; the pointer is nil on failure.
+- `new_clone(value, allocator=mem.default_allocator()) -> (^mut T, Allocator_Error)` creates a new allocation root containing a clone of the value. Its pointer and allocation root receive the same respective root and region provenance and manual release rule as `new`; the pointer is nil on failure.
 
 ```odin
 x: int = 123;
-ptr: ^int;
+ptr: ^mut int;
 err: Allocator_Error;
 ptr, err = new_clone(x);
 if (err != nil) { panic("clone allocation failed"); }
@@ -5398,7 +5459,7 @@ managed_array, err5 = make([dynamic]int, 32);
 // Each error must be handled or explicitly discarded.
 ```
 
-- `free` ends the allocation root designated by a checked base pointer from `new` or `new_clone`. It consumes the operand binding and invalidates every locally tracked pointer or view of that allocation. A pointer obtained with `&` is not an allocation root and cannot be passed to `free`. The program must use the allocator that created the allocation; releasing an unchecked or foreign allocation crosses the `core:unsafe` or foreign-allocator boundary.
+- `free` ends the allocation root designated by a checked base pointer from `new` or `new_clone`. It consumes the operand binding and invalidates every locally tracked pointer or view of that allocation. `free` needs the write capability, so its operand is a `^mut T`; a `^T` weakened from an allocation may still read it but not end it. A pointer obtained with `&` or `&mut` is not an allocation root and cannot be passed to `free` at all. The program must use the allocator that created the allocation; releasing an unchecked or foreign allocation crosses the `core:unsafe` or foreign-allocator boundary.
 
 ```odin
 ptr, err := new(int);
@@ -5529,6 +5590,8 @@ Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_
 The base language has no overlapping-record or C-union type. Portable bindings pass a C union as `rawptr` and expose typed wrapper accessors. A binding generator may use a target-specific extension for a union passed by value, but that representation is not portable Loke source.
 
 A default foreign parameter is passed by value. `p: inout T` lowers to `T *`, while `@(by_ptr) p: T` lowers to `T const *`. Foreign parameters cannot use the `move` mode: a C call does not implicitly acquire Loke cleanup responsibility. Exported Loke procedures follow the same restrictions and must declare the foreign calling convention expected by their callers.
+
+At a foreign boundary the pointer capability is documentation, not enforcement: `^T` says the callee only reads through the pointer and `^mut T` that it writes, while both lower to the same address and receive no additional LLVM parameter attributes. Declare an out-parameter as `^mut T` — the Win32 `read: ^mut u32` shape in `core:fs` and `core:term` is the pattern — so a call site must write `&mut` and the intent is visible where the storage is lent.
 
 These rules define representation, not lifetime. A pointer, `cstring_view`, or `inout` argument is borrowed only for the call as far as the compiler can see. Foreign code that retains it crosses the trust boundary described under [What is not checked](#what-is-not-checked); the programmer must keep the storage alive and synchronize access. Returning a pointer likewise transfers no ownership unless the binding wraps it in an explicitly documented Loke resource type.
 

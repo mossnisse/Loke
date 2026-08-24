@@ -19,10 +19,12 @@ has no storage to slice; bind it to a variable first
 L0477
 @33:14
 a slice bound must be an integer, found `bool`
-L0357
-@37:10
-L0357
-@38:11
+L0478
+@37:15
+this is read-only storage and cannot be borrowed with `&mut`
+L0358
+@38:16
+a constant cannot be borrowed with `&mut`
 L0478
 @40:2
 L0479

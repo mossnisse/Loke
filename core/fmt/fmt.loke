@@ -105,7 +105,7 @@ to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
 		panic("formatting allocation failed");
 	}
 	collector := Collector{sink};
-	emit(Writer{collect, &collector}, ..args);
+	emit(Writer{collect, &mut collector}, ..args);
 	view, ok := string_view(collector.bytes[:]);
 	if (!ok) {
 		// Every formatter writes UTF-8; a `format` overload that does not is the
@@ -128,7 +128,7 @@ Collector :: struct { bytes: [dynamic]u8 }
 @(private)
 collect :: proc(state: rawptr, bytes: [^]u8, count: int) {
 	if (count <= 0) { return; }
-	collector := (^Collector)(state);
+	collector := (^mut Collector)(state);
 	collector^.bytes.append(..bytes[0:count]);
 }
 

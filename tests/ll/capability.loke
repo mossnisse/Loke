@@ -1,0 +1,31 @@
+// Capability is static: `^T` and `^mut T` are one machine address, and both
+// capabilities of one dyn interface application share one LLVM struct, so
+// weakening emits no cast and no copy.
+package main; import "core:fmt";
+
+Mixed :: interface($Self: type) {
+	slot size: proc(self) -> int;
+	slot bump: proc(self: inout Self) ;
+}
+
+Counter :: struct { value: int }
+impl Counter {
+	size :: proc(self) -> int { return self.value; }
+	bump :: proc(self: inout Counter) { self.value += 1; }
+}
+
+reads :: proc(p: ^int) -> int { return p^; }
+writes :: proc(p: ^mut int) -> int { p^ = p^ + 1; return p^; }
+
+observe :: proc(view: dyn Mixed) -> int { return view.size(); }
+modify :: proc(view: dyn mut Mixed) -> int { view.bump(); return view.size(); }
+
+main :: proc() {
+	value := 1;
+	fmt.println(writes(&mut value));
+	fmt.println(reads(&value));
+
+	c := Counter{1};
+	fmt.println(observe((dyn Mixed)(&c)));
+	fmt.println(modify((dyn mut Mixed)(&mut c)));
+}

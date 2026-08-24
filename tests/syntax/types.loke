@@ -5,7 +5,10 @@ package main;
 
 // Every type constructor, in a position that takes a type.
 pointer: ^int;
+mutable_pointer: ^mut int;
 pointer_to_pointer: ^^int;
+nested_mutable_pointer: ^mut ^mut int;
+mixed_pointer: ^mut []mut int;
 multi_pointer: [^]u8;
 slice: []int;
 mutable_slice: []mut int;
@@ -17,11 +20,14 @@ dictionary: map[string]int;
 map_of_slices: map[string][]int;
 new_type: distinct int;
 borrowed: dyn Sequence;
+mutable_borrowed: dyn mut Sequence;
 borrowed_generic: dyn Sequence(int);
+mutable_borrowed_generic: dyn mut Sequence(int);
 qualified: geometry.Point;
 applied: Table(string, int);
 applied_value: Matrix(f32, 4);
 applied_pattern: ^Table($Key, $Value);
+mutable_applied_pattern: ^mut Table($Key, $Value);
 compound: map[string][]mut Table(int);
 
 // `type` and specialization bindings appear as parameter types.

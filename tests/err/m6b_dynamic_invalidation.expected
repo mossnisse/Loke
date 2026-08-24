@@ -3,7 +3,7 @@ L0512
 `xs` cannot be modified here: a mutable slice of it is still in use
 L0512
 @21:2
-`xs` cannot be modified here: a mutable pointer of it is still in use
+`xs` cannot be modified here: a read-only pointer of it is still in use
 L0512
 @28:2
 L0512

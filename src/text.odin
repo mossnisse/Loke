@@ -750,7 +750,9 @@ check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = v.args[0].value
 	v.bound = bound
-	v.type = pointer_to(k.c, record)
+	// Reflection metadata lives in a shared static table, so `type_info_of`
+	// hands back a read-only `^runtime.Type_Info`.
+	v.type = pointer_to(k.c, record, false)
 }
 
 // A type declared by a `base:runtime` this package imports. One identity, owned

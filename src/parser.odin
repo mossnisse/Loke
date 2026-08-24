@@ -1711,10 +1711,14 @@ parse_unary :: proc(p: ^Parser) -> Expr {
 			return depth_exceeded(p)
 		}
 		advance(p)
+		// `&mut place` only: `mut` after any other unary operator is not a form,
+		// and `mut` in the binary `&` position falls through to "expected a type".
+		mutable := t.kind == .Amp && allow(p, .Mut)
 		operand := parse_unary(p)
 		e := new_expr(p, Expr_Unary, t.lo)
 		e.op = t.kind
 		e.op_span = span_of(p, t)
+		e.mutable = mutable
 		e.operand = operand
 		e.has_error = expr_has_error(operand)
 		return e
@@ -2212,8 +2216,10 @@ parse_type :: proc(p: ^Parser) -> Expr {
 	#partial switch t.kind {
 	case .Caret:
 		advance(p)
+		mutable := allow(p, .Mut)
 		elem := parse_type(p)
 		n := new_expr(p, Type_Pointer, lo)
+		n.mutable = mutable
 		n.elem = elem
 		n.has_error = expr_has_error(elem)
 		return n
@@ -2246,8 +2252,10 @@ parse_type :: proc(p: ^Parser) -> Expr {
 
 	case .Dyn:
 		advance(p)
+		mutable := allow(p, .Mut)
 		iface := parse_type_name(p)
 		n := new_expr(p, Type_Dyn, lo)
+		n.mutable = mutable
 		n.interface_expr = iface
 		n.has_error = expr_has_error(iface)
 		return n

@@ -20,7 +20,8 @@
 //
 //   operation                       root   region  note
 //   ------------------------------- ------ ------- ---------------------------
-//   `&place`                        yes            mutable loan of the place
+//   `&place` / `&mut place`         yes            loan of the place, capability
+//                                                  from the operator
 //   slicing a place                 yes            capability from the result
 //   reslicing a carrier             yes            keeps the source loans
 //   slicing a value temporary       yes            hidden array, lexical scope
@@ -209,10 +210,40 @@ Prov_Slot :: struct {
 	name:   string,
 	span:   Span,
 	// The loan this expression temporary was created with, if it holds a fresh
-	// borrow. A mutable slice implicitly weakens to a read-only one (design.md),
-	// and that conversion is written at the destination, not at the slicing
+	// borrow. A mutable carrier implicitly weakens to a read-only one (design.md),
+	// and that conversion is written at the destination, not at the borrowing
 	// expression, so the capability is settled once the destination is known.
 	fresh_loan: Loan_Id,
+	// Where that fresh borrow's own `.Access` on its root was emitted. Weakening
+	// has to downgrade the access as well as the loan: `xs[0:2]` can only spell
+	// the mutable capability, so without this `ro: []int = xs[0:2]` would register
+	// a *write* of `xs` and collide with a second read-only view of the same root.
+	// `fresh_access_index` is -1 when the slot emitted no such access.
+	fresh_access_block: Block_Id,
+	fresh_access_index: int,
+}
+
+// A slot holding no fresh borrow of its own: whatever it holds came from an
+// expression that made its own temporary slot. The sentinels matter — zero
+// would name loan 0 and event 0.
+empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
+	return Prov_Slot {
+		symbol             = symbol,
+		fresh_loan         = NO_LOAN,
+		fresh_access_block = NO_BLOCK,
+		fresh_access_index = -1,
+	}
+}
+
+// Weakening an *existing* mutable carrier is a read-only reborrow of it: while
+// the reborrow is live the source is suspended, and after its last use the
+// source is usable again (design.md "Capabilities and the one rule"). A fresh
+// borrow needs none of this — it simply becomes read-only at its destination —
+// so only a carrier that already held its loans is recorded here.
+Prov_Reborrow :: struct {
+	source:  int,
+	derived: int,
+	span:    Span,
 }
 
 // design.md "Storage roots and borrow carriers" lists the built-in carriers.
@@ -240,18 +271,20 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// design.md "Capabilities and the one rule": `^T`, `[]mut T`, and `inout` are
-// mutable borrows, while `[]T`, `string_view` and ordinary parameter access are
-// immutable ones.
+// design.md "Capabilities and the one rule": `^mut T`, `[]mut T`, `dyn mut I`
+// and `inout` are mutable borrows, while `^T`, `[]T`, `dyn I`, `string_view`
+// and ordinary parameter access are immutable ones.
 carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type_is_region_provider(c, type) {
 		return true // it writes into the buffer it was given
 	}
-	#partial switch underlying_kind(c, type) {
-	case .Pointer:
-		return true
-	case .Slice:
-		return slice_is_mutable(c, type)
+	info := underlying_info(c, type)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Pointer, .Slice, .Dyn:
+		return info.mutable
 	}
 	return false
 }
@@ -951,6 +984,19 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				return
 			}
 		}
+	case .Live:
+		// A read-only reborrow suspends the carrier it was taken from until its
+		// own last use (design.md). Using the suspended name meanwhile would let
+		// a mutable alias act behind the reborrow's back.
+		for source in event.sources {
+			for reborrow in graph.reborrows {
+				if reborrow.source != source || !live[reborrow.derived] {
+					continue
+				}
+				report_suspended_reborrow(state, event, reborrow, uses[reborrow.derived])
+				return
+			}
+		}
 	case .Root_End:
 		for slot in 0 ..< state.slots {
 			if !live[slot] {
@@ -1210,6 +1256,34 @@ report_borrow_conflict :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov
 		)
 	}
 	add_borrow_notes(state, root, loan, later)
+}
+
+// The diagnostic names both ends of the suspension: where the reborrow was
+// taken, and the later use of it that keeps the source suspended. Without the
+// second, the fix — move the last use of the reborrow earlier — is invisible.
+@(private = "file")
+report_suspended_reborrow :: proc(
+	state: ^Prov_State,
+	event: Prov_Event,
+	reborrow: Prov_Reborrow,
+	later: Span,
+) {
+	k := state.k
+	source := state.graph.prov_slots[reborrow.source]
+	derived := state.graph.prov_slots[reborrow.derived]
+	errorf(
+		k.c,
+		event.span,
+		"L0641",
+		"`%s` cannot be used here: a read-only reborrow of it is still in use",
+		source.name,
+	)
+	if derived.name != "" {
+		add_notef(k.c, reborrow.span, "`%s` reborrows it read-only here", derived.name)
+	} else {
+		add_notef(k.c, reborrow.span, "the read-only reborrow is taken here")
+	}
+	add_notef(k.c, later, "and is still used here, which keeps the reborrow live")
 }
 
 @(private = "file")

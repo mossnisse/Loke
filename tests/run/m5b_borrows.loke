@@ -19,8 +19,8 @@ sum :: proc(values: []int) -> int {
 // pointers into one root can be live at the same time.
 disjoint_fields :: proc() {
 	p := Pair{1, 2};
-	first := &p.a;
-	second := &p.b;
+	first := &mut p.a;
+	second := &mut p.b;
 	first^ = 10;
 	second^ = 20;
 	fmt.println(p.a + p.b);
@@ -28,8 +28,8 @@ disjoint_fields :: proc() {
 
 nested_fields :: proc() {
 	n := Nested{Pair{1, 2}, Pair{3, 4}};
-	left := &n.left.a;
-	right := &n.right.b;
+	left := &mut n.left.a;
+	right := &mut n.right.b;
 	fmt.println(left^ + right^);
 }
 
@@ -95,7 +95,7 @@ invalidation_after_last_use :: proc() {
 	fmt.println(xs[0]);
 
 	p := Pair{1, 2};
-	pointer := &p.a;
+	pointer := &mut p.a;
 	fmt.println(pointer^);
 	p = Pair{3, 4};
 	fmt.println(p.a);
@@ -115,7 +115,7 @@ free_through_a_copy :: proc() {
 
 // A parameter is a borrow of the caller's storage, and reading it here conflicts
 // with nothing the callee can see.
-borrowed_parameter :: proc(values: []int, target: ^int) -> int {
+borrowed_parameter :: proc(values: []int, target: ^mut int) -> int {
 	target^ = values[0];
 	return sum(values) + target^;
 }
@@ -134,5 +134,5 @@ main :: proc() {
 
 	xs := [3]int{5, 6, 7};
 	out := 0;
-	fmt.println(borrowed_parameter(xs[:], &out));
+	fmt.println(borrowed_parameter(xs[:], &mut out));
 }

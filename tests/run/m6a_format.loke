@@ -38,7 +38,7 @@ impl Money {
 // A writer is one procedure and its state, so a counting sink is an ordinary
 // value of the same type the standard ones have.
 count_bytes :: proc(state: rawptr, bytes: [^]u8, count: int) {
-	total := (^int)(state);
+	total := (^mut int)(state);
 	total^ = total^ + count;
 }
 
@@ -77,7 +77,7 @@ main :: proc() {
 
 	// A writer the program supplies itself.
 	total := 0;
-	sink := fmt.Writer{count_bytes, rawptr(&total)};
+	sink := fmt.Writer{count_bytes, rawptr(&mut total)};
 	fmt.format_to(sink, 1, 22, 333);
 	fmt.println(total);
 

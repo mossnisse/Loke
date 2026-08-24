@@ -555,7 +555,10 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	if op == .Field_Get {
 		v.type = field_type
 	} else {
-		v.type = pointer_to(k.c, field_type)
+		// `field.pointer` projects the subject pointer, so it carries the
+		// subject's capability through: a `^mut T` yields a writable field
+		// pointer, a `^T` a read-only one.
+		v.type = pointer_to(k.c, field_type, pointee.mutable)
 		v.value_category = .Value
 	}
 	return true

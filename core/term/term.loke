@@ -143,25 +143,25 @@ foreign kernel32 {
 	rt_std_handle :: proc "stdcall" (which: u32) -> int ---;
 	@(link_name="ReadFile")
 	rt_read_file :: proc "stdcall" (
-		handle: int, buffer: [^]u8, count: u32, read: ^u32, overlapped: rawptr,
+		handle: int, buffer: [^]u8, count: u32, read: ^mut u32, overlapped: rawptr,
 	) -> i32 ---;
 	@(link_name="WriteFile")
 	rt_write_file :: proc "stdcall" (
-		handle: int, buffer: [^]u8, count: u32, written: ^u32, overlapped: rawptr,
+		handle: int, buffer: [^]u8, count: u32, written: ^mut u32, overlapped: rawptr,
 	) -> i32 ---;
 	@(link_name="GetLastError")
 	rt_last_error :: proc "stdcall" () -> u32 ---;
 	@(link_name="GetConsoleMode")
-	rt_get_console_mode :: proc "stdcall" (handle: int, mode: ^u32) -> i32 ---;
+	rt_get_console_mode :: proc "stdcall" (handle: int, mode: ^mut u32) -> i32 ---;
 	@(link_name="SetConsoleMode")
 	rt_set_console_mode :: proc "stdcall" (handle: int, mode: u32) -> i32 ---;
 	@(link_name="ReadConsoleW")
 	rt_read_console :: proc "stdcall" (
-		handle: int, buffer: [^]u16, count: u32, read: ^u32, control: rawptr,
+		handle: int, buffer: [^]u16, count: u32, read: ^mut u32, control: rawptr,
 	) -> i32 ---;
 	@(link_name="ReadConsoleInputW")
 	rt_read_console_input :: proc "stdcall" (
-		handle: int, records: rawptr, count: u32, read: ^u32,
+		handle: int, records: rawptr, count: u32, read: ^mut u32,
 	) -> i32 ---;
 	@(link_name="SetConsoleCtrlHandler")
 	rt_set_ctrl_handler :: proc "stdcall" (
@@ -196,7 +196,7 @@ standard_handle :: proc(stream: Stream) -> int {
 @(private)
 is_console :: proc(handle: int) -> bool {
 	mode: u32 = 0;
-	return rt_get_console_mode(handle, &mode) != 0;
+	return rt_get_console_mode(handle, &mut mode) != 0;
 }
 
 @(private)
@@ -214,7 +214,7 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 @(private)
 read_handle :: proc(handle: int, destination: []mut u8) -> (int, io.Error) {
 	read: u32 = 0;
-	if (rt_read_file(handle, unsafe.raw_data(destination), u32(len(destination)), &read, nil) == 0) {
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(len(destination)), &mut read, nil) == 0) {
 		error := from_last_error(.Read);
 		if (io.is(error, .Broken_Pipe)) {
 			return 0, io.make_error(.End_Of_Input, .Read);
@@ -230,7 +230,7 @@ read_handle :: proc(handle: int, destination: []mut u8) -> (int, io.Error) {
 @(private)
 write_handle :: proc(handle: int, source: []u8) -> (int, io.Error) {
 	written: u32 = 0;
-	if (rt_write_file(handle, unsafe.raw_data(source), u32(len(source)), &written, nil) == 0) {
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(len(source)), &mut written, nil) == 0) {
 		return 0, from_last_error(.Write);
 	}
 	return int(written), nil;
@@ -247,7 +247,7 @@ read_console_line :: proc(
 	total := 0;
 	for (;;) {
 		read: u32 = 0;
-		if (rt_read_console(handle, unsafe.raw_data(units[:]), 512, &read, nil) == 0) {
+		if (rt_read_console(handle, unsafe.raw_data(units[:]), 512, &mut read, nil) == 0) {
 			return "", from_last_error(.Read_Line);
 		}
 		if (read == 0) {
@@ -324,7 +324,7 @@ begin_raw :: proc(
 		return Raw_Mode{}, io.make_error(.Already_Exists, .Terminal_Mode);
 	}
 	previous: u32 = 0;
-	if (rt_get_console_mode(input.handle, &previous) == 0) {
+	if (rt_get_console_mode(input.handle, &mut previous) == 0) {
 		return Raw_Mode{}, io.make_error(.Not_A_Terminal, .Terminal_Mode);
 	}
 	wanted := previous & ~u32(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
@@ -384,7 +384,7 @@ impl Raw_Mode {
 		record: Input_Record = {};
 		for (;;) {
 			read: u32 = 0;
-			if (rt_read_console_input(self.handle, &record, 1, &read) == 0) {
+			if (rt_read_console_input(self.handle, &mut record, 1, &mut read) == 0) {
 				return Key_Event{}, from_last_error(.Read_Key);
 			}
 			if (read == 0) {

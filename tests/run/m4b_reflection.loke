@@ -64,7 +64,7 @@ main :: proc() {
 	// `field.pointer` writes through the selected field.
 	foreach ($field in fields_of(Point)) {
 		when (type_of(field.get(&p)) == int) {
-			slot := field.pointer(&p);
+			slot := field.pointer(&mut p);
 			slot^ = 42;
 		}
 	}

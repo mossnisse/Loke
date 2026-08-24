@@ -44,7 +44,7 @@ erased_subject_assigned :: proc() {
 erased_subject_borrowed :: proc() {
 	value := 1;
 	view: any_view = value;
-	pointer := &value;
+	pointer := &mut value;
 	pointer^ = 3;
 	fmt.println(view.(int));
 }

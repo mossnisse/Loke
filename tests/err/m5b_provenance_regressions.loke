@@ -37,7 +37,7 @@ call_argument_overlap :: proc() {
 // admitted; one heap path cannot excuse the stack path.
 conditional_free :: proc(use_heap: bool) {
 	local := 7;
-	pointer := &local;
+	pointer := &mut local;
 	if (use_heap) {
 		allocated, err := new(int);
 		if (err != nil) { return; }

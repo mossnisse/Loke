@@ -528,6 +528,13 @@ match_type_pattern :: proc(
 		if info.kind != .Pointer {
 			return false
 		}
+		// A `^mut E` argument reaches a `^$E` parameter through capability
+		// weakening; a `^E` argument cannot reach a `^mut $E` parameter. The same
+		// rule slices use, so one helper written on the read-only spelling serves
+		// both capabilities.
+		if v.mutable && !info.mutable {
+			return false
+		}
 		return match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Type_Multi_Pointer:

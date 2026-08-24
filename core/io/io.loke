@@ -140,8 +140,9 @@ impl Error_Info {
 // The two protocols. Both are declared with `slot` requirements: an expression
 // requirement's result is a single type and there is no tuple type, so
 // `-> (int, Error)` is not expressible that way — and `slot` is also what
-// dyn-compatibility needs, which is what makes `dyn Writer` exist for the
-// formatting adapter below.
+// dyn-compatibility needs, which is what makes `dyn mut Writer` exist for the
+// formatting adapter below. Both slots take `inout self`, so both views are
+// mutable ones.
 //
 // The contracts are:
 //
@@ -350,14 +351,14 @@ read_line :: proc(
 // is valid only for the enclosing call: it is constructed, used, and discarded
 // inside these bodies, and the raw pointer is never a value a caller holds.
 write_formatted :: proc(writer: inout $W, args: ..any_view) -> Error where Writer(W) {
-	latch := Latch{(dyn Writer)(&writer), nil};
-	fmt.format_to(fmt.Writer{latch_sink, &latch}, ..args);
+	latch := Latch{(dyn mut Writer)(&mut writer), nil};
+	fmt.format_to(fmt.Writer{latch_sink, &mut latch}, ..args);
 	return latch.error;
 }
 
 write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Error where Writer(W) {
-	latch := Latch{(dyn Writer)(&writer), nil};
-	adapter := fmt.Writer{latch_sink, &latch};
+	latch := Latch{(dyn mut Writer)(&mut writer), nil};
+	adapter := fmt.Writer{latch_sink, &mut latch};
 	fmt.format_to(adapter, ..args);
 	fmt.format_to(adapter, "\n");
 	return latch.error;
@@ -365,13 +366,13 @@ write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Error where 
 
 @(private)
 Latch :: struct {
-	writer: dyn Writer,
+	writer: dyn mut Writer,
 	error:  Error,
 }
 
 @(private)
 latch_sink :: proc(state: rawptr, bytes: [^]u8, count: int) {
-	latch := (^Latch)(state);
+	latch := (^mut Latch)(state);
 	// The first failure wins and every later callback does nothing, so a
 	// half-formatted value cannot turn into a second, more confusing error.
 	if (latch^.error != nil || count <= 0) { return; }

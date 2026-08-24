@@ -34,10 +34,10 @@ Windows executable:
   `uintptr`, `byte`, `f16`/`f32`/`f64`, `rune`, `rawptr` — with exact
   arbitrary-precision constant folding, so `u128`'s maximum and `i128`'s minimum
   are ordinary constants;
-- `struct`, `enum`, `[N]T`, `^T`, `distinct`, procedure types, and type aliases,
+- `struct`, `enum`, `[N]T`, `^T`/`^mut T`, `distinct`, procedure types, and type aliases,
   including aggregate constants and recursive structural equality;
 - every built-in operator, conversions `T(v)`, `x if c else y`, indexing, field
-  selection, `&`/`^`, and composite literals;
+  selection, `&`/`&mut`/`^`, and composite literals;
 - assignment in all its forms, `if`/`for`/`switch`, `break`, `continue`,
   `defer`, and `return`;
 - procedures with value and `inout` parameters, defaults, named arguments,
@@ -157,8 +157,9 @@ M5b adds the two provenance analyses that consume those lifecycle facts. They
 share one control-flow view and one event stream, but answer different questions
 and fail with different diagnostics:
 
-- root provenance follows every borrow carrier — `^T`, `[]T`, `[]mut T`,
-  `any_view`, `dyn`, and parameter access — from its creation to the last use of
+- root provenance follows every borrow carrier — `^T`, `^mut T`, `[]T`,
+  `[]mut T`, `any_view`, `dyn`, `dyn mut`, and parameter access — from its
+  creation to the last use of
   any copy, across branches and through an overwrite that ends only the value
   that was overwritten. A place is a root plus a normalized projection path, so
   distinct struct fields and provably distinct constant ranges carry independent

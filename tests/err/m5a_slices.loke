@@ -32,10 +32,10 @@ main :: proc() {
 	flag := true;
 	bad := data[flag:];
 
-	// Materialised storage is read-only, and no pointer may be taken into it.
+	// Materialised storage is read-only, so no mutable pointer reaches into it.
 	index := runtime_index();
-	slot := &TABLE[index];
-	whole := &TABLE;
+	slot := &mut TABLE[index];
+	whole := &mut TABLE;
 	view := TABLE[:];
 	view[0] = 4;
 

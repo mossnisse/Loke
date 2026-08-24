@@ -33,7 +33,7 @@ constant_view :: proc() -> []int {
 // design.md: "A checked pointer to an allocation root created by `new` or
 // `new_clone` may be returned because the allocation is not callee-local
 // storage."
-allocate :: proc(value: int) -> ^int {
+allocate :: proc(value: int) -> ^mut int {
 	pointer, err := new(int);
 	if (err != nil) { panic("allocation failed"); }
 	pointer^ = value;
@@ -42,8 +42,8 @@ allocate :: proc(value: int) -> ^int {
 
 // design.md: "An `inout` parameter aliases the caller's root, so a borrow
 // returned from it is derived from that root."
-inout_borrow :: proc(target: inout int) -> ^int {
-	return &target;
+inout_borrow :: proc(target: inout int) -> ^mut int {
+	return &mut target;
 }
 
 // Forward and mutually recursive declarations settle to the same summaries

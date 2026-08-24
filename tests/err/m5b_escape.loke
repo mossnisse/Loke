@@ -40,7 +40,7 @@ returns_a_substituted_local :: proc() -> []int {
 
 // design.md: "Fresh-allocation root provenance is never preserved through an
 // ordinary procedure value, so its result cannot be passed to checked `free`."
-indirect_allocation :: proc(make_one: proc() -> ^int) {
+indirect_allocation :: proc(make_one: proc() -> ^mut int) {
 	pointer := make_one();
 	free(pointer);
 }

@@ -30,7 +30,7 @@ slice_of :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 	// from having to create a type while it walks the type store.
 	readonly := intern_type(
 		c,
-		Type_Key{kind = .Slice, element = element, count = 0},
+		Type_Key{kind = .Slice, element = element, mutable = false},
 		Type_Info{kind = .Slice, element = element, mutable = false},
 	)
 	ensure_slice_fields(c, readonly)
@@ -39,25 +39,30 @@ slice_of :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 	}
 	type := intern_type(
 		c,
-		Type_Key{kind = .Slice, element = element, count = 1},
+		Type_Key{kind = .Slice, element = element, mutable = true},
 		Type_Info{kind = .Slice, element = element, mutable = true},
 	)
 	ensure_slice_fields(c, type)
 	return type
 }
 
-// A mutable and a read-only slice share one runtime representation; mutability
-// is a static capability that leaves the ABI unchanged (design.md). The backend
-// therefore gives both capabilities one LLVM type, which is what makes
-// weakening a no-op at the value level instead of a copy through a second
-// shape.
+// The one backend type a carrier's two capabilities share. Mutability is a
+// static capability that leaves the ABI unchanged (design.md), so weakening is
+// a no-op at the value level rather than a copy through a second shape.
+carrier_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
+	if underlying_kind(c, id) == .Dyn {
+		return dyn_abi_type(c, id)
+	}
+	return slice_abi_type(c, id)
+}
+
 slice_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	under := type_underlying(c, id)
 	info := type_of(c, under)
 	if info == nil || info.kind != .Slice || !info.mutable {
 		return under
 	}
-	readonly, found := lookup_type(c, Type_Key{kind = .Slice, element = info.element, count = 0})
+	readonly, found := lookup_type(c, Type_Key{kind = .Slice, element = info.element, mutable = false})
 	return found ? readonly : under
 }
 
@@ -92,17 +97,24 @@ slice_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return info != nil && info.kind == .Slice && info.mutable
 }
 
-// A mutable slice implicitly weakens to a read-only one; a read-only slice
-// never converts to mutable, even when its original owner was mutable
-// (design.md).
-slice_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
+// A mutable carrier implicitly weakens to a read-only one of the same shape; a
+// read-only carrier never strengthens, even when its original owner was mutable
+// (design.md). Slices, pointers, and dyn views share the rule, and all three
+// share one representation per shape, so weakening emits nothing.
+carrier_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
 	from_info := underlying_info(c, from)
 	to_info := underlying_info(c, to)
 	if from_info == nil || to_info == nil {
 		return false
 	}
-	if from_info.kind != .Slice || to_info.kind != .Slice {
+	if from_info.kind != to_info.kind || !from_info.mutable || to_info.mutable {
 		return false
 	}
-	return from_info.mutable && !to_info.mutable && from_info.element == to_info.element
+	#partial switch from_info.kind {
+	case .Slice, .Pointer:
+		return from_info.element == to_info.element
+	case .Dyn:
+		return dyn_same_application(from_info, to_info)
+	}
+	return false
 }

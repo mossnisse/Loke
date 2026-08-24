@@ -220,6 +220,7 @@ Flow_Graph :: struct {
 	roots:          [dynamic]Prov_Root,
 	loans:          [dynamic]Prov_Loan,
 	prov_slots:     [dynamic]Prov_Slot,
+	reborrows:      [dynamic]Prov_Reborrow,
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
@@ -896,8 +897,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		}
 
 	case ^Expr_Unary:
-		// `&place` creates a checked mutable `^T` borrow of the root containing
-		// `place` (design.md).
+		// `&place` creates a checked read-only `^T` borrow of the root containing
+		// `place`, and `&mut place` a mutable `^mut T` one (design.md).
 		if prov && v.op == .Amp {
 			return prov_address_of(graph, v)
 		}
@@ -1334,15 +1335,10 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 	if sym.duration != .None || (sym.decl != nil && sym.decl.top_level) {
 		return 0, false
 	}
-	append(&graph.prov_slots, Prov_Slot {
-		symbol     = id,
-		name       = identifier_text(graph.k.c, sym.name),
-		span       = sym.span,
-		// A declared slot holds no *fresh* borrow of its own: whatever it holds
-		// came from an expression that made its own temporary slot. Leaving this
-		// at the zero value would make `prov_weaken` read loan 0 instead.
-		fresh_loan = NO_LOAN,
-	})
+	entry := empty_prov_slot(id)
+	entry.name = identifier_text(graph.k.c, sym.name)
+	entry.span = sym.span
+	append(&graph.prov_slots, entry)
 	slot := len(graph.prov_slots) - 1
 	graph.slot_by_symbol[id] = slot
 	return slot, true
@@ -1350,23 +1346,47 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 
 @(private = "file")
 prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
-	append(&graph.prov_slots, Prov_Slot{symbol = INVALID_SYMBOL, fresh_loan = NO_LOAN})
+	append(&graph.prov_slots, empty_prov_slot(INVALID_SYMBOL))
 	return len(graph.prov_slots) - 1
 }
 
-// A mutable slice implicitly weakens to a read-only slice (design.md). The
+// A mutable carrier implicitly weakens to a read-only one (design.md). The
 // conversion is written at the destination, so a borrow created by an
-// expression takes its final capability from what receives it.
+// expression takes its final capability from what receives it — both the loan
+// and the access the borrow registered on its root.
+// `into` is the slot receiving the weakened value, or -1 where the destination
+// has no slot of its own — a call argument, whose reborrow cannot outlive the
+// call and so can suspend nothing.
 @(private = "file")
-prov_weaken :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id) {
+prov_weaken :: proc(graph: ^Flow_Graph, slots: []int, destination: Type_Id, into := -1, span := Span{}) {
 	if !type_is_carrier(graph.k.c, destination) || carrier_is_mutable(graph.k.c, destination) {
 		return
 	}
 	for slot in slots {
-		if loan := graph.prov_slots[slot].fresh_loan; loan != NO_LOAN {
-			graph.loans[int(loan)].mutable = false
+		entry := graph.prov_slots[slot]
+		if entry.fresh_loan != NO_LOAN {
+			graph.loans[int(entry.fresh_loan)].mutable = false
+			if entry.fresh_access_index >= 0 {
+				graph.blocks[entry.fresh_access_block].prov[entry.fresh_access_index].access = .Read
+			}
+			continue
 		}
+		// No fresh loan: this slot already held its loans, so the weakening is a
+		// reborrow of a carrier rather than the settling of a new one.
+		if into < 0 || !prov_slot_is_mutable_carrier(graph, slot) {
+			continue
+		}
+		append(&graph.reborrows, Prov_Reborrow{source = slot, derived = into, span = span})
 	}
+}
+
+// Whether a slot names a mutable carrier. Only a slot bound to a declared name
+// has a type to ask; an expression temporary that reached here without a fresh
+// loan is left alone rather than guessed at.
+@(private = "file")
+prov_slot_is_mutable_carrier :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	sym := symbol_of(graph.k.c, graph.prov_slots[slot].symbol)
+	return sym != nil && carrier_is_mutable(graph.k.c, sym.type)
 }
 
 @(private = "file")
@@ -1393,15 +1413,22 @@ prov_borrow :: proc(
 	mutable: bool,
 	span: Span,
 	what: string,
+	access_block := NO_BLOCK,
+	access_index := -1,
 ) -> []int {
 	loan := prov_new_loan(graph, root, path, mutable, span, what)
 	slot := prov_temp_slot(graph)
 	graph.prov_slots[slot].fresh_loan = loan
+	graph.prov_slots[slot].fresh_access_block = access_block
+	graph.prov_slots[slot].fresh_access_index = access_index
 	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = loan, span = span})
 	return prov_one(graph, slot)
 }
 
 @(private = "file")
+// Returns where the event landed, so a caller that may have to revise it — a
+// fresh borrow whose capability the destination settles — can find it again.
+// `index` is -1 when nothing was emitted.
 prov_access :: proc(
 	graph: ^Flow_Graph,
 	root: Root_Id,
@@ -1409,9 +1436,9 @@ prov_access :: proc(
 	kind: Access_Kind,
 	span: Span,
 	verb := "",
-) {
+) -> (block: Block_Id, index: int) {
 	if root == NO_ROOT {
-		return
+		return NO_BLOCK, -1
 	}
 	prov_emit(graph, Prov_Event {
 		kind   = .Access,
@@ -1421,6 +1448,10 @@ prov_access :: proc(
 		span   = span,
 		verb   = verb,
 	})
+	if graph.current == NO_BLOCK {
+		return NO_BLOCK, -1
+	}
+	return graph.current, len(graph.blocks[graph.current].prov) - 1
 }
 
 @(private = "file")
@@ -2044,6 +2075,9 @@ prov_invalidate :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: strin
 
 @(private = "file")
 prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
+	// `&place` is an immutable loan and `&mut place` an exclusive one: several
+	// `&` borrows of one place may be live together, while a `&mut` excludes
+	// every competing name (design.md "Capabilities and the one rule").
 	root, path, ok := prov_place_of(graph, v.operand)
 	if !ok {
 		loans := walk_flow_expr(graph, v.operand)
@@ -2052,11 +2086,11 @@ prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 		}
 		// A borrow of a value temporary may be used during that expression,
 		// including by a called procedure, but cannot escape it (design.md).
-		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, true, v.span, "pointer")
+		return prov_borrow(graph, prov_temp_root(graph, expr_span(v.operand)), nil, v.mutable, v.span, "pointer")
 	}
 	prov_walk_subscripts(graph, v.operand)
-	prov_access(graph, root, path, .Write, v.span)
-	return prov_borrow(graph, root, path, true, v.span, "pointer")
+	access_block, access_index := prov_access(graph, root, path, v.mutable ? .Write : .Read, v.span)
+	return prov_borrow(graph, root, path, v.mutable, v.span, "pointer", access_block, access_index)
 }
 
 @(private = "file")
@@ -2102,8 +2136,11 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 			walk_flow_expr(graph, v.hi)
 		}
 		full := prov_extend(graph, path, prov_range_step(graph, v))
-		prov_access(graph, root, full, mutable ? .Write : .Read, v.span)
-		return prov_borrow(graph, root, full, mutable, v.span, carrier_noun(graph.k.c, v.type))
+		access_block, access_index := prov_access(graph, root, full, mutable ? .Write : .Read, v.span)
+		return prov_borrow(
+			graph, root, full, mutable, v.span, carrier_noun(graph.k.c, v.type),
+			access_block, access_index,
+		)
 	}
 	// Reslicing a carrier keeps the loans it already holds. Composing the two
 	// ranges could only narrow the result, so the source loans are both the
@@ -2202,7 +2239,7 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 				sources = value_loans[symbol_index]
 			}
 		}
-		prov_weaken(graph, sources, sym.type)
+		prov_weaken(graph, sources, sym.type, slot, sym.span)
 		prov_emit(graph, Prov_Event {
 			kind    = .Def,
 			slot    = slot,
@@ -2315,7 +2352,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			// invalidates borrows of its previous value (design.md).
 			prov_invalidate(graph, target, expr_span(target), "assigned")
 			if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
-				prov_weaken(graph, sources, expr_base(target).type)
+				prov_weaken(graph, sources, expr_base(target).type, slot, expr_span(target))
 				prov_emit(graph, Prov_Event {
 					kind    = .Def,
 					slot    = slot,

@@ -1,0 +1,12 @@
+L0643
+@26:2
+slot `bump` mutates its subject, so it needs `dyn mut Mixed`
+L0642
+@33:26
+`dyn mut Mixed` needs `^mut Concrete`, found `^Counter`
+L0310
+@41:26
+cannot initialise `dyn mut Mixed` with `dyn Mixed`
+L0444
+@49:14
+`dyn Mixed` does not satisfy `Mixed(dyn Mixed)`

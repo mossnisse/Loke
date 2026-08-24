@@ -1383,6 +1383,12 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 		}
 		ensure_slice_fields(e.c, type)
 		info = type_of(e.c, type)
+	} else if info.kind == .Dyn {
+		// The same for a dyn view: one struct per interface application, named by
+		// the read-only variant, whatever capabilities the program spells.
+		if dyn_abi_type(e.c, type) != type {
+			return
+		}
 	} else if info.kind == .Any_View {
 		// A program that imports `core:fmt` without formatting anything never asks
 		// for an `any_view` value, so its two members are still uninstalled when
@@ -1517,9 +1523,9 @@ struct_dependency :: proc(c: ^Compiler, type: Type_Id) -> Type_Id {
 
 @(private = "file")
 struct_name :: proc(e: ^Emitter, raw: Type_Id) -> string {
-	// Both slice capabilities share one backend type, so `[]mut T` weakening to
-	// `[]T` is the no-op the design says it is.
-	type := slice_abi_type(e.c, raw)
+	// Both capabilities of a carrier share one backend type, so `[]mut T` and
+	// `dyn mut I` weakening is the no-op the design says it is.
+	type := carrier_abi_type(e.c, raw)
 	if name, ok := e.struct_names[type]; ok {
 		return name
 	}

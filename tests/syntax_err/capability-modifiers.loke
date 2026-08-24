@@ -1,0 +1,15 @@
+// `mut` is a capability modifier on `^`, `[]`, and `dyn` only. Everywhere else
+// it is an ordinary keyword and must not be swallowed.
+package main;
+
+multi_pointer_capability: [^]mut u8;
+pointer_without_element: ^mut;
+dyn_without_interface: dyn mut;
+
+main :: proc() {
+	a := 1;
+	b := a & mut a;
+	c := -mut a;
+}
+
+sentinel :: proc() { }

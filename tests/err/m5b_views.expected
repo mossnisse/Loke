@@ -9,10 +9,10 @@ L0513
 this view is used after `inner`, the local it borrows, has ended
 L0512
 @65:2
-`c` cannot be modified here: a mutable pointer of it is still in use
+`c` cannot be modified here: a read-only pointer of it is still in use
 L0512
 @75:11
-`c` cannot be moved here: a mutable pointer of it is still in use
+`c` cannot be moved here: a read-only pointer of it is still in use
 L0547
 @82:10
 this `operator([:])` yields `[]mut int`, which is an exclusive borrow, so its `self` parameter must be `inout`

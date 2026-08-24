@@ -1,0 +1,86 @@
+// design.md "Capabilities and the one rule": `^T` is a read-only borrow and
+// `^mut T` a mutable one, `&` and `&mut` are the two formation operators, and
+// the two lower to the same machine address.
+package main; import "core:fmt";
+
+Point :: struct { x: int, y: int }
+
+TABLE :: [4]int{10, 20, 30, 40};
+ORIGIN :: Point{7, 8};
+
+reads :: proc(p: ^int) -> int { return p^; }
+writes :: proc(p: ^mut int) { p^ = p^ + 1; }
+
+reads_point :: proc(p: ^Point) -> int { return p.x + p.y; }
+
+// A read-only parameter accepts both capabilities, so one helper serves both.
+generic_read :: proc(p: ^$T) -> int { return int(p^); }
+
+main :: proc() {
+	// Reading through `^T`, writing through `^mut T`.
+	value := 1;
+	writes(&mut value);
+	fmt.println(value);
+	fmt.println(reads(&value));
+
+	// A mutable borrow weakens to a read-only one at its destination.
+	fresh: ^int = &mut value;
+	fmt.println(fresh^);
+
+	// Several read-only borrows of one place may be live at the same time: `&`
+	// is a shared loan, unlike `&mut`.
+	first := &value;
+	second := &value;
+	fmt.println(first^ + second^);
+
+	// Projection through a pointer keeps the pointer's capability.
+	pt := Point{2, 3};
+	mutable := &mut pt;
+	mutable.x = 30;
+	fmt.println(mutable.x + mutable.y);
+	fmt.println(reads_point(&pt));
+
+	// A value parameter and a `[]T` element are readable places, so `&` reaches
+	// both even though neither may be written.
+	fmt.println(addressed(21));
+	numbers := [4]int{5, 6, 7, 8};
+	readable: []int = numbers[:];
+	element := &readable[2];
+	fmt.println(element^);
+
+	// A named constant materializes one shared read-only object, so `&C` and
+	// `&C.field` have addresses and every `&C` names the same one.
+	whole := &TABLE;
+	fmt.println(whole[1]);
+	fmt.println(reads(&ORIGIN.y));
+	again := &TABLE;
+	fmt.println(1 if whole == again else 0);
+
+	// `new` hands back `^mut T`; `free` needs that capability.
+	allocated, err := new(int);
+	if (err != nil) { panic("allocation failed"); }
+	allocated^ = 99;
+	fmt.println(allocated^);
+	free(allocated);
+
+	// Both capabilities are one machine address, and both compare with nil.
+	empty: ^int = nil;
+	fmt.println(1 if empty == nil else 0);
+	fmt.println(size_of(^int) == size_of(^mut int));
+
+	// A `^$T` pattern accepts either capability (the slice rule, for pointers).
+	fmt.println(generic_read(&value) + generic_read(&mut value));
+
+	// A read-only reborrow of an existing mutable carrier releases it again
+	// after its own last use.
+	source := numbers[0:2];
+	reborrow: []int = source;
+	fmt.println(reborrow[0] + reborrow[1]);
+	source[0] = 50;
+	fmt.println(source[0]);
+}
+
+addressed :: proc(value: int) -> int {
+	p := &value;
+	return p^ + 1;
+}

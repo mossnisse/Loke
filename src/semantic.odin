@@ -230,11 +230,16 @@ Size_State :: enum {
 	Cyclic,
 }
 
+// `mutable` is the borrow capability, and it is part of a carrier's identity:
+// `[]T` and `[]mut T`, `^T` and `^mut T`, are distinct types over one
+// representation. It is a field of its own rather than a spare bit of `count`
+// so that a capability question never has to be asked of array metadata.
 Type_Key :: struct {
 	kind:    Type_Kind,
 	element: Type_Id,
 	key:     Type_Id,
 	count:   u64,
+	mutable: bool,
 }
 
 // The one target M2 compiles for. Checker and emitter read the same widths, so
@@ -441,8 +446,12 @@ Immutable_Reason :: enum {
 	Not_A_Place,
 	// A place in read-only storage: an element of a `[]T`, or anything inside a
 	// materialised constant. It is a real place — it has an address the backend
-	// can read — but no operation may write it or hand out a `^T` to it.
+	// can read, and `&` may borrow it — but no operation may write it or hand
+	// out a `^mut T` to it.
 	Read_Only,
+	// The same, reached by dereferencing or projecting a `^T`. Kept apart from
+	// `Read_Only` only so the diagnostic can name the fix, which is `^mut`.
+	Through_Pointer,
 }
 
 Resolution :: struct {
@@ -1053,12 +1062,21 @@ lookup_type :: proc(c: ^Compiler, key: Type_Key) -> (Type_Id, bool) {
 	return id, ok
 }
 
-pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+// `^T` is a read-only borrow of one value and `^mut T` a mutable one. Both are
+// one machine address with one LLVM type: the capability is static, so
+// weakening a `^mut T` to a `^T` emits nothing (design.md "Capabilities and the
+// one rule").
+pointer_to :: proc(c: ^Compiler, element: Type_Id, mutable: bool) -> Type_Id {
 	return intern_type(
 		c,
-		Type_Key{kind = .Pointer, element = element},
-		Type_Info{kind = .Pointer, element = element, bits = c.target.pointer_bits},
+		Type_Key{kind = .Pointer, element = element, mutable = mutable},
+		Type_Info{kind = .Pointer, element = element, mutable = mutable, bits = c.target.pointer_bits},
 	)
+}
+
+pointer_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	info := underlying_info(c, id)
+	return info != nil && info.kind == .Pointer && info.mutable
 }
 
 // `[^]T` is a multi-pointer to T value(s) (design.md "Multi-pointers"), an
@@ -1475,7 +1493,7 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 	}
 	#partial switch info.kind {
 	case .Pointer:
-		return fmt.aprintf("^%s", type_name(c, info.element), allocator = c.semantic_allocator)
+		return fmt.aprintf("^%s%s", info.mutable ? "mut " : "", type_name(c, info.element), allocator = c.semantic_allocator)
 	case .Multi_Pointer:
 		return fmt.aprintf("[^]%s", type_name(c, info.element), allocator = c.semantic_allocator)
 	case .Array:

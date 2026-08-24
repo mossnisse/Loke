@@ -23,6 +23,11 @@ main :: proc() {
 	// Unary, which stacks.
 	e8 := -+!~&a;
 
+	// `&mut` is one borrow form, and stacks like `&`.
+	e8a := &mut a;
+	e8b := &mut a.field[0];
+	e8c := & &mut a;
+
 	// Every suffix, composed.
 	e9 := p^;
 	e10 := p.field.inner;
@@ -59,6 +64,7 @@ main :: proc() {
 	e39 := caller_location();
 	e40 := (a + b);
 	e41 := (^u32)(&f);
+	e41a := (^mut u32)(&mut f);
 	e42 := proc(a: int) -> int { return a; };
 
 	// Composite literals: every composite type, keyed and positional elements.

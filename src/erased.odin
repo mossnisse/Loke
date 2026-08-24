@@ -140,7 +140,14 @@ any_view_source_type :: proc(c: ^Compiler, from: Type_Id) -> Type_Id {
 
 // `dyn Interface(args...)`: the data pointer plus the coherent witness for the
 // erased type. The subject argument is omitted because it is what is erased.
-dyn_type :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, span: Span, report: bool) -> Type_Id {
+dyn_type :: proc(
+	k: ^Checker,
+	info: ^Interface_Info,
+	args: []Generic_Arg,
+	span: Span,
+	mutable: bool,
+	report: bool,
+) -> Type_Id {
 	if !dyn_compatible(k, info) {
 		if report {
 			errorf(
@@ -154,12 +161,23 @@ dyn_type :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg, span: 
 		}
 		return INVALID_TYPE
 	}
-	key := dyn_key(k.c, info.symbol, args)
+	key := dyn_key(k.c, info.symbol, args, mutable)
 	if existing, found := k.c.dyn_types[key]; found {
 		return existing
 	}
-	name := intern_identifier(k.c, dyn_display_name(k.c, info, args))
-	type := new_type(k.c, Type_Info{kind = .Dyn, name = name, dyn_interface = info.symbol, dyn_args = args})
+	// The read-only variant always exists, because it is the ABI type both
+	// capabilities share (`dyn_abi_type`), exactly as `[]T` is for slices.
+	if mutable {
+		dyn_type(k, info, args, span, false, report)
+	}
+	name := intern_identifier(k.c, dyn_display_name(k.c, info, args, mutable))
+	type := new_type(k.c, Type_Info {
+		kind          = .Dyn,
+		name          = name,
+		mutable       = mutable,
+		dyn_interface = info.symbol,
+		dyn_args      = args,
+	})
 	fields := make([]Symbol_Id, 2, k.c.semantic_allocator)
 	fields[DYN_DATA] = new_field(k.c, "data", TYPE_RAWPTR, DYN_DATA)
 	fields[DYN_WITNESS] = new_field(k.c, "witness", TYPE_RAWPTR, DYN_WITNESS)
@@ -187,6 +205,7 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 	flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
 	interface_slots(k, info, full, &flattened)
 
+	dyn_mutable := dyn_is_mutable(k.c, dyn)
 	members := make([]Symbol_Id, len(flattened), k.c.semantic_allocator)
 	saved_scope := k.scope
 	for entry, index in flattened {
@@ -205,6 +224,13 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 		params, modes, results, result_inout, ok := slot_signature(k, entry.type, dyn)
 		k.scope = saved_scope
 		if !ok {
+			continue
+		}
+		// A `dyn I` exposes only the slots an immutable `self` reaches. The
+		// witness still carries every slot — what the view type decides is which
+		// of them this capability may call, so the hole here is what makes the
+		// mutable-slot call a capability error rather than a missing member.
+		if !dyn_mutable && len(modes) > 0 && modes[0] == .Inout {
 			continue
 		}
 		id := new_symbol(k.c, Symbol {
@@ -232,10 +258,9 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 	}
 }
 
-@(private = "file")
-dyn_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, args: []Generic_Arg) -> string {
+dyn_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, args: []Generic_Arg, mutable: bool) -> string {
 	b := strings.builder_make(c.semantic_allocator)
-	fmt.sbprintf(&b, "%d", u32(interface_symbol))
+	fmt.sbprintf(&b, "%d%s", u32(interface_symbol), mutable ? "m" : "")
 	for arg in args {
 		fmt.sbprintf(&b, "|%d", u32(arg.type))
 	}
@@ -243,9 +268,9 @@ dyn_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, args: []Generic_Arg) 
 }
 
 @(private = "file")
-dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Arg) -> string {
+dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Arg, mutable: bool) -> string {
 	b := strings.builder_make(c.semantic_allocator)
-	strings.write_string(&b, "dyn ")
+	strings.write_string(&b, mutable ? "dyn mut " : "dyn ")
 	strings.write_string(&b, identifier_text(c, symbol_of(c, info.symbol).name))
 	if len(args) > 0 {
 		strings.write_string(&b, "(")
@@ -262,6 +287,38 @@ dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Ar
 
 type_is_dyn :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return underlying_kind(c, id) == .Dyn
+}
+
+dyn_is_mutable :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	info := underlying_info(c, id)
+	return info != nil && info.kind == .Dyn && info.mutable
+}
+
+// A mutable and a read-only dyn view share one runtime representation — the
+// same data pointer and the same witness — so the backend gives both one LLVM
+// type and weakening emits no cast and no copy.
+dyn_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
+	under := type_underlying(c, id)
+	info := type_of(c, under)
+	if info == nil || info.kind != .Dyn || !info.mutable {
+		return under
+	}
+	readonly, found := c.dyn_types[dyn_key(c, info.dyn_interface, info.dyn_args, false)]
+	return found ? readonly : under
+}
+
+// The same interface applied to the same arguments, whatever the capability:
+// what `dyn mut I(T)` and `dyn I(T)` have in common and `dyn I(U)` does not.
+dyn_same_application :: proc(a, b: ^Type_Info) -> bool {
+	if a.dyn_interface != b.dyn_interface || len(a.dyn_args) != len(b.dyn_args) {
+		return false
+	}
+	for arg, index in a.dyn_args {
+		if arg.type != b.dyn_args[index].type || arg.is_type != b.dyn_args[index].is_type {
+			return false
+		}
+	}
+	return true
 }
 
 // --------------------------------------------------- dyn compatibility --
@@ -800,7 +857,7 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 		}
 		bound[index] = Generic_Arg{is_type = true, type = denoted}
 	}
-	return dyn_type(k, info, bound, v.span, report = true)
+	return dyn_type(k, info, bound, v.span, v.mutable, report = true)
 }
 
 // design.md: conversion is an ordinary explicit conversion from a pointer to the
@@ -837,6 +894,21 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 			expr_span(v.args[0].value),
 			"L0464",
 			"a `dyn` conversion takes `^Concrete`, found `%s`",
+			type_name(k.c, source),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	// A mutable view may only be built from a mutable pointer: the view's
+	// capability is the referent's, and the conversion is where it is claimed.
+	// The other direction is ordinary weakening and needs nothing.
+	if dyn_is_mutable(k.c, target) && !pointer.mutable {
+		errorf(
+			k.c,
+			expr_span(v.args[0].value),
+			"L0642",
+			"`%s` needs `^mut Concrete`, found `%s`",
+			type_name(k.c, target),
 			type_name(k.c, source),
 		)
 		v.type = INVALID_TYPE
@@ -940,6 +1012,21 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	k.scope = saved
 	if !ok {
 		errorf(k.c, v.span, "L0467", "`%s`'s signature does not resolve here", sel.name.text)
+		v.type = INVALID_TYPE
+		return true
+	}
+	// The slot exists on the witness whatever the view's capability, so calling a
+	// mutating one through a read-only view is a capability error and must not be
+	// reported as a missing member (design.md).
+	if !dyn_is_mutable(k.c, dyn) && len(modes) > 0 && modes[0] == .Inout {
+		errorf(
+			k.c,
+			v.span,
+			"L0643",
+			"slot `%s` mutates its subject, so it needs `dyn mut %s`",
+			sel.name.text,
+			identifier_text(k.c, symbol_of(k.c, owner.symbol).name),
+		)
 		v.type = INVALID_TYPE
 		return true
 	}

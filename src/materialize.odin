@@ -1,14 +1,14 @@
 // Constant materialization (m5a-plan step 2).
 //
 // design.md "Materialization": a constant is a value, not a variable, and an
-// ordinary use is substituted with no storage involved. Two uses need storage
-// anyway — indexing by a non-constant index, and a slice expression — and
-// **all uses of that constant share one backing object**.
+// ordinary use is substituted with no storage involved. Three uses need storage
+// anyway — indexing by a non-constant index, a slice expression, and `&C` —
+// and **all uses of that constant share one backing object**.
 //
-// That object is read-only. Assigning through it is rejected, a slice of it is
-// `[]T` and never `[]mut T`, and `&C` / `&C[i]` are compile-time errors: a
-// pointer carries no read-only capability, so permitting one would let an
-// ordinary `^T` parameter write into read-only storage.
+// That object is read-only. Assigning through it is rejected and a slice of it
+// is `[]T` and never `[]mut T`. `&C`, `&C[i]`, and `&C.field` are permitted and
+// yield a `^T`; `&mut` of any of them is not, which is what keeps a writable
+// pointer out of read-only storage.
 //
 // Identity is the resolved constant symbol. M4b clones each generic declaration
 // before checking it, so two specializations already hold two symbols and get
@@ -41,6 +41,28 @@ constant_symbol_of :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 		return constant_symbol(c, v.resolution.symbol)
 	}
 	return INVALID_SYMBOL
+}
+
+// The named constant a place expression is rooted in, and the sub-expression
+// that names it. `&C`, `&C[i]`, and `&C.field` all root in `C`, and one shared
+// object serves all three; anything else roots in ordinary storage and returns
+// INVALID_SYMBOL.
+constant_root_of :: proc(c: ^Compiler, e: Expr) -> (Expr, Symbol_Id) {
+	current := e
+	for current != nil {
+		if symbol := constant_symbol_of(c, current); symbol != INVALID_SYMBOL {
+			return current, symbol
+		}
+		#partial switch v in current {
+		case ^Expr_Selector:
+			current = v.operand
+		case ^Expr_Index:
+			current = v.operand
+		case:
+			return nil, INVALID_SYMBOL
+		}
+	}
+	return nil, INVALID_SYMBOL
 }
 
 @(private = "file")

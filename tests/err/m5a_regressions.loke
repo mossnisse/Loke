@@ -15,7 +15,7 @@ stale_allocation_root :: proc() {
 	if (err != nil) { return; }
 	free(p);
 	x := 42;
-	p = &x;
+	p = &mut x;
 	free(p);
 }
 

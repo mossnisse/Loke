@@ -1,0 +1,25 @@
+(file package="main"
+  (var names=["read_only"] type=(ptr (ident "int")))
+  (var names=["mutable"] type=(ptr mut (ident "int")))
+  (var names=["nested"] type=(ptr mut (ptr (ident "int"))))
+  (var names=["view"] type=(dyn (ident "Sequence")))
+  (var names=["mutable_view"] type=(dyn mut (call (ident "Sequence") (ident "int"))))
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["a"]
+          (unary Amp (ident "x"))
+        )
+        (var names=["b"]
+          (unary Amp mut (ident "x"))
+        )
+        (var names=["c"]
+          (unary Amp mut (index (selector (ident "x") "field") (int "0")))
+        )
+        (var names=["d"]
+          (unary Amp (unary Amp mut (ident "x")))
+        )
+      )
+    )
+  )
+)

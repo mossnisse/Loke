@@ -120,9 +120,9 @@ more :: proc() {
 	// An inout dyn slot works directly and when `dyn I` itself is erased as I,
 	// which exercises the compiler-provided forwarding procedure's pointer ABI.
 	counter := Counter{0};
-	mutable := (dyn Bumpable)(&counter);
+	mutable := (dyn mut Bumpable)(&mut counter);
 	mutable.bump();
-	nested := (dyn Bumpable)(&mutable);
+	nested := (dyn mut Bumpable)(&mut mutable);
 	nested.bump();
 	fmt.println(counter.value);
 }

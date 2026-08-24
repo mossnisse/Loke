@@ -14,43 +14,43 @@ allocate_after_reset :: proc(@(allocator_reset) allocator: Allocator) {
 
 // Written in the adverse order for summary propagation. This chain is longer
 // than the removed 32-round cutoff and still preserves the leaf's fresh root.
-deep_00 :: proc(value: int) -> ^int { return deep_01(value); }
-deep_01 :: proc(value: int) -> ^int { return deep_02(value); }
-deep_02 :: proc(value: int) -> ^int { return deep_03(value); }
-deep_03 :: proc(value: int) -> ^int { return deep_04(value); }
-deep_04 :: proc(value: int) -> ^int { return deep_05(value); }
-deep_05 :: proc(value: int) -> ^int { return deep_06(value); }
-deep_06 :: proc(value: int) -> ^int { return deep_07(value); }
-deep_07 :: proc(value: int) -> ^int { return deep_08(value); }
-deep_08 :: proc(value: int) -> ^int { return deep_09(value); }
-deep_09 :: proc(value: int) -> ^int { return deep_10(value); }
-deep_10 :: proc(value: int) -> ^int { return deep_11(value); }
-deep_11 :: proc(value: int) -> ^int { return deep_12(value); }
-deep_12 :: proc(value: int) -> ^int { return deep_13(value); }
-deep_13 :: proc(value: int) -> ^int { return deep_14(value); }
-deep_14 :: proc(value: int) -> ^int { return deep_15(value); }
-deep_15 :: proc(value: int) -> ^int { return deep_16(value); }
-deep_16 :: proc(value: int) -> ^int { return deep_17(value); }
-deep_17 :: proc(value: int) -> ^int { return deep_18(value); }
-deep_18 :: proc(value: int) -> ^int { return deep_19(value); }
-deep_19 :: proc(value: int) -> ^int { return deep_20(value); }
-deep_20 :: proc(value: int) -> ^int { return deep_21(value); }
-deep_21 :: proc(value: int) -> ^int { return deep_22(value); }
-deep_22 :: proc(value: int) -> ^int { return deep_23(value); }
-deep_23 :: proc(value: int) -> ^int { return deep_24(value); }
-deep_24 :: proc(value: int) -> ^int { return deep_25(value); }
-deep_25 :: proc(value: int) -> ^int { return deep_26(value); }
-deep_26 :: proc(value: int) -> ^int { return deep_27(value); }
-deep_27 :: proc(value: int) -> ^int { return deep_28(value); }
-deep_28 :: proc(value: int) -> ^int { return deep_29(value); }
-deep_29 :: proc(value: int) -> ^int { return deep_30(value); }
-deep_30 :: proc(value: int) -> ^int { return deep_31(value); }
-deep_31 :: proc(value: int) -> ^int { return deep_32(value); }
-deep_32 :: proc(value: int) -> ^int { return deep_33(value); }
-deep_33 :: proc(value: int) -> ^int { return deep_34(value); }
-deep_34 :: proc(value: int) -> ^int { return deep_leaf(value); }
+deep_00 :: proc(value: int) -> ^mut int { return deep_01(value); }
+deep_01 :: proc(value: int) -> ^mut int { return deep_02(value); }
+deep_02 :: proc(value: int) -> ^mut int { return deep_03(value); }
+deep_03 :: proc(value: int) -> ^mut int { return deep_04(value); }
+deep_04 :: proc(value: int) -> ^mut int { return deep_05(value); }
+deep_05 :: proc(value: int) -> ^mut int { return deep_06(value); }
+deep_06 :: proc(value: int) -> ^mut int { return deep_07(value); }
+deep_07 :: proc(value: int) -> ^mut int { return deep_08(value); }
+deep_08 :: proc(value: int) -> ^mut int { return deep_09(value); }
+deep_09 :: proc(value: int) -> ^mut int { return deep_10(value); }
+deep_10 :: proc(value: int) -> ^mut int { return deep_11(value); }
+deep_11 :: proc(value: int) -> ^mut int { return deep_12(value); }
+deep_12 :: proc(value: int) -> ^mut int { return deep_13(value); }
+deep_13 :: proc(value: int) -> ^mut int { return deep_14(value); }
+deep_14 :: proc(value: int) -> ^mut int { return deep_15(value); }
+deep_15 :: proc(value: int) -> ^mut int { return deep_16(value); }
+deep_16 :: proc(value: int) -> ^mut int { return deep_17(value); }
+deep_17 :: proc(value: int) -> ^mut int { return deep_18(value); }
+deep_18 :: proc(value: int) -> ^mut int { return deep_19(value); }
+deep_19 :: proc(value: int) -> ^mut int { return deep_20(value); }
+deep_20 :: proc(value: int) -> ^mut int { return deep_21(value); }
+deep_21 :: proc(value: int) -> ^mut int { return deep_22(value); }
+deep_22 :: proc(value: int) -> ^mut int { return deep_23(value); }
+deep_23 :: proc(value: int) -> ^mut int { return deep_24(value); }
+deep_24 :: proc(value: int) -> ^mut int { return deep_25(value); }
+deep_25 :: proc(value: int) -> ^mut int { return deep_26(value); }
+deep_26 :: proc(value: int) -> ^mut int { return deep_27(value); }
+deep_27 :: proc(value: int) -> ^mut int { return deep_28(value); }
+deep_28 :: proc(value: int) -> ^mut int { return deep_29(value); }
+deep_29 :: proc(value: int) -> ^mut int { return deep_30(value); }
+deep_30 :: proc(value: int) -> ^mut int { return deep_31(value); }
+deep_31 :: proc(value: int) -> ^mut int { return deep_32(value); }
+deep_32 :: proc(value: int) -> ^mut int { return deep_33(value); }
+deep_33 :: proc(value: int) -> ^mut int { return deep_34(value); }
+deep_34 :: proc(value: int) -> ^mut int { return deep_leaf(value); }
 
-deep_leaf :: proc(value: int) -> ^int {
+deep_leaf :: proc(value: int) -> ^mut int {
 	pointer, err := new(int);
 	if (err != nil) { panic("allocation failed"); }
 	pointer^ = value;

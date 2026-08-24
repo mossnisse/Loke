@@ -604,12 +604,15 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		return
 	}
 
-	// `p.field` through one pointer is the same selection as `p^.field`.
+	// `p.field` through one pointer is the same selection as `p^.field`, and it
+	// inherits the pointer's capability the same way.
 	base_type := type_underlying(k.c, operand)
 	through_pointer := false
+	pointer_mutable := false
 	if info := type_of(k.c, base_type); info != nil && info.kind == .Pointer {
 		base_type = type_underlying(k.c, info.element)
 		through_pointer = true
+		pointer_mutable = info.mutable
 	}
 	info := type_of(k.c, base_type)
 	field := INVALID_SYMBOL
@@ -637,8 +640,8 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	v.value_category = .Place
 	if through_pointer {
 		v.addressable = true
-		v.assignable = true
-		v.immutable = .None
+		v.assignable = pointer_mutable
+		v.immutable = pointer_mutable ? .None : .Through_Pointer
 	} else {
 		v.addressable = operand_base.addressable
 		v.assignable = operand_base.assignable
@@ -781,9 +784,11 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	base_type := type_underlying(k.c, operand)
 	operand_base := expr_base(v.operand)
 	through_pointer := false
+	pointer_mutable := false
 	if info := type_of(k.c, base_type); info != nil && info.kind == .Pointer {
 		base_type = type_underlying(k.c, info.element)
 		through_pointer = true
+		pointer_mutable = info.mutable
 	}
 	info := type_of(k.c, base_type)
 	// A multi-pointer indexes without bounds checking (design.md "Multi-pointers").
@@ -859,7 +864,8 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	v.value_category = .Place
 	if through_pointer {
 		v.addressable = true
-		v.assignable = true
+		v.assignable = pointer_mutable
+		v.immutable = pointer_mutable ? .None : .Through_Pointer
 	} else {
 		v.addressable = operand_base.addressable
 		v.assignable = operand_base.assignable
@@ -933,9 +939,9 @@ check_slice_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, operand
 	v.type = info.element
 	v.value_category = .Place
 	// Element assignment and iteration by reference both require `[]mut T`
-	// (design.md). A `[]T` element is a readable place and nothing more, so no
-	// `^T` can be taken to it either.
-	v.addressable = info.mutable
+	// (design.md). A `[]T` element is a readable place: `&` reaches it and yields
+	// a `^T`, while `&mut` and assignment do not.
+	v.addressable = true
 	v.assignable = info.mutable
 	v.immutable = info.mutable ? .None : .Read_Only
 }
@@ -1366,8 +1372,28 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			return
 		}
 		operand_base := expr_base(v.operand)
+		// design.md "Materialization": a place rooted in a named constant has an
+		// address once the shared read-only object is registered. Marked here for
+		// `&mut` too, so that form is rejected as a constant rather than as
+		// something with no address at all.
 		if !operand_base.addressable {
-			errorf(k.c, v.op_span, "L0357", "`&` needs an addressable operand")
+			if root, symbol := constant_root_of(k.c, v.operand); symbol != INVALID_SYMBOL {
+				if request_materialization(k, root) {
+					operand_base.addressable = true
+				}
+			}
+		}
+		if !operand_base.addressable {
+			errorf(k.c, v.op_span, "L0357", "`%s` needs an addressable operand", v.mutable ? "&mut" : "&")
+			v.type = INVALID_TYPE
+			return
+		}
+		// `&` borrows readable storage; `&mut` needs storage this body may write.
+		// The distinction is the whole point of the capability: a value parameter,
+		// a `[]T` element, and a materialized constant are all readable places
+		// that no `^mut T` may reach (design.md "Capabilities and the one rule").
+		if v.mutable && !operand_base.assignable {
+			report_not_assignable(k, operand_base, "borrowed with `&mut`")
 			v.type = INVALID_TYPE
 			return
 		}
@@ -1382,7 +1408,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			v.type = INVALID_TYPE
 			return
 		}
-		v.type = pointer_to(k.c, operand)
+		v.type = pointer_to(k.c, operand, v.mutable)
 		return
 	}
 
@@ -1538,8 +1564,12 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 	}
 	v.type = info.element
 	v.value_category = .Place
+	// Dereferencing either capability yields a real place with an address. Only
+	// `^mut T` yields one this body may write (design.md "Capabilities and the
+	// one rule").
 	v.addressable = true
-	v.assignable = true
+	v.assignable = info.mutable
+	v.immutable = info.mutable ? .None : .Through_Pointer
 }
 
 // ----------------------------------------------------------------- binary --
@@ -2901,7 +2931,9 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			return
 		}
 		v.alloc_type = element
-		set_allocation_results(k, v, pointer_to(k.c, element))
+		// A fresh allocation is the caller's to write and to free, so `new` and
+		// `new_clone` hand back `^mut T`.
+		set_allocation_results(k, v, pointer_to(k.c, element, true))
 
 	case .New_Clone:
 		value := check_single_expr(k, v.args[0].value)
@@ -2928,7 +2960,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		// The result shape is settled before the copyability complaint, so a
 		// `p, err := new_clone(x)` destructuring still knows its arity and the
 		// failure is reported once.
-		set_allocation_results(k, v, pointer_to(k.c, value))
+		set_allocation_results(k, v, pointer_to(k.c, value, true))
 		if type_clone_disabled(k.c, value) {
 			errorf(
 				k.c,
@@ -3133,6 +3165,16 @@ set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
 check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id) -> bool {
 	if underlying_kind(k.c, pointer) != .Pointer {
 		errorf(k.c, expr_span(e), "L0493", "`free` takes an allocation pointer, found `%s`", type_name(k.c, pointer))
+		return false
+	}
+	// Releasing storage is the strongest write there is, so it needs the write
+	// capability. A `^T` weakened from an allocation still reads the allocation;
+	// it does not get to end it.
+	if !pointer_is_mutable(k.c, pointer) {
+		errorf(
+			k.c, expr_span(e), "L0639",
+			"`free` needs a mutable allocation pointer, found `%s`", type_name(k.c, pointer),
+		)
 		return false
 	}
 	return true
@@ -4170,9 +4212,9 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		}
 		return false
 	}
-	// A mutable slice implicitly weakens to a read-only slice; a read-only slice
-	// never converts to a mutable one (design.md).
-	if slice_weakens_to(c, from, to) {
+	// A mutable carrier implicitly weakens to a read-only one; a read-only
+	// carrier never converts to a mutable one (design.md).
+	if carrier_weakens_to(c, from, to) {
 		return true
 	}
 	// design.md "Unions": a union is assignable from any variant it can hold.

@@ -37,7 +37,7 @@ impl Complex {
 	from_scalar :: hook(convert) proc(value: f64) -> Complex { return {value, 0}; }
 
 	// A first parameter typed `^T` is not a receiver: no method sugar.
-	bump :: proc(self: ^Complex) { self.real = self.real + 1.0; }
+	bump :: proc(self: ^mut Complex) { self.real = self.real + 1.0; }
 }
 
 magnitude2 :: proc(z: Complex) -> f64 { return z.real*z.real + z.imaginary*z.imaginary; }
@@ -80,7 +80,7 @@ main :: proc() {
 	fmt.println(int(magnitude2(2.0)));
 	scale: f64 = 5.0;
 	fmt.println(int(magnitude2(Complex(scale))));
-	Complex.bump(&z);
+	Complex.bump(&mut z);
 	fmt.println(int(z.real));
 	distance := Kilometers(Meters(2000.0));
 	fmt.println(int(f64(distance)));

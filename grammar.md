@@ -266,7 +266,7 @@ an explicit `via` expression is evaluated and recorded at the declaration.
 # Types
 
 ```
-Type = "^" Type                                          // pointer
+Type = "^" "mut"? Type                                   // pointer
      | "[" "^" "]" Type                                  // multi-pointer
      | "[" "]" "mut"? Type                               // slice
      | "[" "dynamic" "]" Type                            // dynamic array
@@ -275,7 +275,7 @@ Type = "^" Type                                          // pointer
      | "map" "[" Type "]" Type
      | "distinct" Type
      | Move_Only_Struct_Type
-     | "dyn" Type_Name Type_Arguments?                  // borrowed dynamic interface
+     | "dyn" "mut"? Type_Name Type_Arguments?           // borrowed dynamic interface
      | "type"                                           // compile-time-only type of types
      | Proc_Type
      | Type_Definition
@@ -292,8 +292,11 @@ Proc_Type = "proc" Calling_Convention? Signature
 Calling_Convention = String_Literal                      // portable: "loke", "c", "stdcall"
 ```
 
-`[?]T` is valid only as the type of a composite literal. `[]mut T` is a slice
-with mutable elements; `[]T` is read-only. `Type_Arguments` also carries
+`[?]T` is valid only as the type of a composite literal. `mut` is the capability
+modifier, written on a slice, a pointer, a `dyn` view, or a unary `&`; `[]mut T`
+is a slice with mutable elements and `[]T` is read-only. design.md "Capabilities
+and the one rule" defines what each carrier's capability permits.
+`Type_Arguments` also carries
 specialization patterns, as in `^Table($Key, $Value)`, because `$Name` is itself
 a `Type`. A value parameter accepts any constant expression, so `Matrix(f32, 4)`
 is valid when the second record parameter has type `int`. A bare identifier in a
@@ -588,7 +591,7 @@ Level_6      = Level_7 (("+" | "-" | "|" | "~") Level_7)*                       
 Level_7      = Unary_Expression
                (("*" | "/" | "%" | "&" | "&~" | "<<" | ">>") Unary_Expression)*  // 7
 
-Unary_Expression = ("+" | "-" | "!" | "~" | "&") Unary_Expression
+Unary_Expression = ("+" | "-" | "!" | "~" | "&" | "&" "mut") Unary_Expression
                  | Postfix_Expression
 
 Postfix_Expression = Primary_Expression Suffix*

@@ -1,0 +1,17 @@
+// Rule 16: `mut` after `^`, `[]`, `dyn`, or a unary `&` is the capability
+// modifier and binds to that constructor. Nowhere else does it start a type or
+// an expression, so a binary `&` never absorbs a following `mut`.
+package main;
+
+read_only: ^int;
+mutable: ^mut int;
+nested: ^mut ^int;
+view: dyn Sequence;
+mutable_view: dyn mut Sequence(int);
+
+main :: proc() {
+	a := &x;
+	b := &mut x;
+	c := &mut x.field[0];
+	d := & &mut x;
+}

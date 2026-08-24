@@ -11,7 +11,7 @@ impl Complex {
 	init_wrong :: proc(v: int) -> int { return v; }
 
 	// `^T` keeps the name but is not a receiver.
-	bump :: proc(self: ^Complex) { self.real = self.real + 1.0; }
+	bump :: proc(self: ^mut Complex) { self.real = self.real + 1.0; }
 
 	length :: proc(self) -> f64 { return self.real; }
 	grow :: proc(self: inout Complex) { self.real = self.real + 1.0; }

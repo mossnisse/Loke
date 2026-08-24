@@ -473,7 +473,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Expr_Unary:
-		fmt.sbprintf(b, "(unary %v", node.op)
+		fmt.sbprintf(b, node.mutable ? "(unary %v mut" : "(unary %v", node.op)
 		dump_child(b, node.operand, depth)
 		fmt.sbprint(b, ")")
 
@@ -555,7 +555,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Type_Pointer:
-		fmt.sbprint(b, "(ptr")
+		fmt.sbprint(b, node.mutable ? "(ptr mut" : "(ptr")
 		dump_child(b, node.elem, depth)
 		fmt.sbprint(b, ")")
 
@@ -596,7 +596,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Type_Dyn:
-		fmt.sbprint(b, "(dyn")
+		fmt.sbprint(b, node.mutable ? "(dyn mut" : "(dyn")
 		dump_child(b, node.interface_expr, depth)
 		fmt.sbprint(b, ")")
 

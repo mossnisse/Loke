@@ -21,13 +21,13 @@ L0512
 `xs` cannot be assigned here: a mutable slice of it is still in use
 L0512
 @79:11
-`r` cannot be moved here: a mutable pointer of it is still in use
+`r` cannot be moved here: a read-only pointer of it is still in use
 L0512
 @86:2
-`r` cannot be dropped here: a mutable pointer of it is still in use
+`r` cannot be dropped here: a read-only pointer of it is still in use
 L0512
 @93:9
-`value` cannot be exchanged here: a mutable pointer of it is still in use
+`value` cannot be exchanged here: a read-only pointer of it is still in use
 L0513
 @104:14
 this slice is used after `local`, the local it borrows, has ended
@@ -45,4 +45,4 @@ L0512
 this allocation cannot be released here: a pointer of it is still in use
 L0512
 @136:2
-`value` cannot be assigned here: a mutable pointer of it is still in use
+`value` cannot be assigned here: a read-only pointer of it is still in use

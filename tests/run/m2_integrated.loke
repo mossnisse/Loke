@@ -76,7 +76,7 @@ main :: proc() {
 	fmt.println(p.x);
 
 	// pointers
-	r := &p;
+	r := &mut p;
 	r.x = 99;
 	fmt.println(p.x);
 

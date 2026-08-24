@@ -280,6 +280,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 	case ^Expr_Unary:
 		n := new_clone(c, Expr_Unary, &v.base)
 		n.op, n.op_span = v.op, v.op_span
+		n.mutable = v.mutable
 		n.operand = clone_expr(c, v.operand)
 		return n
 
@@ -348,6 +349,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 
 	case ^Type_Pointer:
 		n := new_clone(c, Type_Pointer, &v.base)
+		n.mutable = v.mutable
 		n.elem = clone_expr(c, v.elem)
 		return n
 
@@ -387,6 +389,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 
 	case ^Type_Dyn:
 		n := new_clone(c, Type_Dyn, &v.base)
+		n.mutable = v.mutable
 		n.interface_expr = clone_expr(c, v.interface_expr)
 		return n
 

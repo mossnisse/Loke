@@ -1,0 +1,79 @@
+// Every way a capability can be claimed that the program does not hold.
+package main; import "core:fmt";
+
+Point :: struct { x: int, y: int }
+TABLE :: [4]int{1, 2, 3, 4};
+
+reads :: proc(p: ^int) -> int { return p^; }
+
+// A read-only pointer is a place, but not an assignable one.
+writes_through_a_reader :: proc() {
+	value := 1;
+	p := &value;
+	p^ = 2;
+	fmt.println(p^);
+}
+
+projects_through_a_reader :: proc() {
+	pt := Point{1, 2};
+	p := &pt;
+	p.x = 9;
+	fmt.println(p.y);
+}
+
+// `&mut` needs storage this body may write.
+borrows_a_value_parameter :: proc(value: int) -> int {
+	p := &mut value;
+	return p^;
+}
+
+borrows_a_read_only_element :: proc(xs: []int) -> int {
+	p := &mut xs[0];
+	return p^;
+}
+
+borrows_a_constant :: proc() -> int {
+	p := &mut TABLE;
+	return p[0];
+}
+
+// A read-only carrier never strengthens, whatever its owner was.
+strengthens :: proc() {
+	value := 1;
+	weak := &value;
+	strong: ^mut int = weak;
+	fmt.println(strong^);
+}
+
+// Releasing storage is a write, so `free` needs the write capability.
+frees_a_reader :: proc() {
+	allocated, err := new(int);
+	if (err != nil) { return; }
+	reader: ^int = allocated;
+	fmt.println(reader^);
+	free(reader);
+}
+
+// A read-only reborrow suspends the carrier it was taken from until its own
+// last use.
+uses_a_suspended_carrier :: proc() {
+	xs := [4]int{1, 2, 3, 4};
+	source := xs[0:2];
+	reborrow: []int = source;
+	fmt.println(reborrow[0]);
+	source[0] = 9;
+	fmt.println(reborrow[1]);
+}
+
+main :: proc() {
+	writes_through_a_reader();
+	projects_through_a_reader();
+	fmt.println(borrows_a_value_parameter(1));
+	numbers := [2]int{1, 2};
+	view: []int = numbers[:];
+	fmt.println(borrows_a_read_only_element(view));
+	fmt.println(borrows_a_constant());
+	strengthens();
+	frees_a_reader();
+	uses_a_suspended_carrier();
+}

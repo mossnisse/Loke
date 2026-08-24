@@ -1,0 +1,23 @@
+L0640
+@13:2
+this place is reached through a read-only `^T` and cannot be an assignment destination
+L0640
+@20:2
+L0358
+@26:12
+a value parameter is immutable and cannot be borrowed with `&mut`
+L0478
+@31:12
+this is read-only storage and cannot be borrowed with `&mut`
+L0358
+@36:12
+a constant cannot be borrowed with `&mut`
+L0310
+@44:21
+cannot initialise `^mut int` with `^int`
+L0639
+@54:7
+`free` needs a mutable allocation pointer, found `^int`
+L0641
+@64:2
+`source` cannot be used here: a read-only reborrow of it is still in use

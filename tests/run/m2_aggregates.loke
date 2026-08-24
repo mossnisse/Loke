@@ -73,7 +73,7 @@ main :: proc() {
 
 	// Pointers: address-of, dereference, and field access through one hop.
 	q := Point{11, 12};
-	r := &q;
+	r := &mut q;
 	fmt.println(r.x);
 	r^ = Point{13, 14};
 	fmt.println((r^).x);
