@@ -45,7 +45,7 @@ views typeid, any_view and dyn Interface with witness dispatch.
 M5a adds managed values: one package/public rule for reflection, field reads and
 writes, offset_of and aggregate construction alike; slices with both
 capabilities, literals, reslicing, bounds and iteration, and one read-only
-materialization per constant a runtime index or slice needs storage for; fixed
+materialization per constant a runtime index, slice, or address-of needs storage for; fixed
 copy and drop hooks with generated recursive clones; ownership dataflow that
 drops every managed local exactly once on fallthrough, return, break and
 continue, in one reverse order with defer; move, exchange, manual, static and

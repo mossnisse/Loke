@@ -12,6 +12,10 @@ Mixed :: interface($Self: type) {
 	slot bump: proc(self: inout Self) ;
 }
 
+Tagged :: interface($Self: type, $Tag: type) {
+	slot tag: proc(self) -> int;
+}
+
 // Composition keeps the capability of the view it is reached through.
 Described :: interface($Self: type) {
 	Sized(Self);
@@ -23,6 +27,7 @@ impl Counter {
 	size  :: proc(self) -> int { return self.value; }
 	label :: proc(self) -> int { return self.value * 10; }
 	bump  :: proc(self: inout Counter) { self.value += 1; }
+	tag   :: proc(self) -> int { return self.value; }
 }
 
 observe :: proc(view: dyn Mixed) -> int { return view.size(); }
@@ -35,6 +40,10 @@ generic_bump :: proc(target: inout $T) -> int where Mixed(T) {
 }
 
 generic_size :: proc(target: $T) -> int where Sized(T) { return target.size(); }
+
+// Structural dyn patterns bind their non-subject interface arguments, and a
+// read-only pattern accepts either view capability.
+generic_tag :: proc(view: dyn Tagged($T)) -> int { return view.tag(); }
 
 main :: proc() {
 	c := Counter{1};
@@ -58,6 +67,8 @@ main :: proc() {
 	// is the nested case.
 	nested := (dyn mut Mixed)(&mut c);
 	fmt.println(generic_bump(inout nested));
+	tagged := (dyn mut Tagged(int))(&mut c);
+	fmt.println(generic_tag(tagged));
 
 	// A read-only view satisfies an all-immutable interface.
 	view := (dyn Sized)(&c);

@@ -235,6 +235,8 @@ type_syntax_has_poly :: proc(e: Expr) -> bool {
 		return type_syntax_has_poly(v.elem)
 	case ^Type_Distinct:
 		return type_syntax_has_poly(v.elem)
+	case ^Type_Dyn:
+		return type_syntax_has_poly(v.interface_expr)
 	case ^Type_Array:
 		return type_syntax_has_poly(v.length) || type_syntax_has_poly(v.elem)
 	case ^Type_Map:
@@ -370,6 +372,8 @@ pattern_specificity :: proc(e: Expr) -> int {
 		return 1 + pattern_specificity(v.elem)
 	case ^Type_Distinct:
 		return 1 + pattern_specificity(v.elem)
+	case ^Type_Dyn:
+		return 1 + pattern_specificity(v.interface_expr)
 	case ^Type_Array:
 		return 1 + pattern_specificity(v.length) + pattern_specificity(v.elem)
 	case ^Type_Map:
@@ -565,6 +569,36 @@ match_type_pattern :: proc(
 			return false
 		}
 		return match_type_pattern(k, v.elem, info.element, scope, out)
+
+	case ^Type_Dyn:
+		if info.kind != .Dyn || (v.mutable && !info.mutable) {
+			return false
+		}
+		callee := v.interface_expr
+		args: []Argument
+		if call, is_call := callee.(^Expr_Call); is_call {
+			args = call.args
+			callee = call.callee
+		}
+		if named_callee_symbol(k, callee) != info.dyn_interface || len(args) != len(info.dyn_args) {
+			return false
+		}
+		for arg, index in args {
+			bound := info.dyn_args[index]
+			if poly, is_poly := arg.value.(^Type_Poly); is_poly {
+				if !bind_pattern_name(k, poly.name, bound, scope, out) {
+					return false
+				}
+				continue
+			}
+			if !type_syntax_has_poly(arg.value) {
+				continue // a written argument; equality is checked by ranking
+			}
+			if !bound.is_type || !match_type_pattern(k, arg.value, bound.type, scope, out) {
+				return false
+			}
+		}
+		return true
 
 	case ^Type_Map:
 		if info.kind != .Map {

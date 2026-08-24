@@ -192,8 +192,9 @@ steps_overlap :: proc(a, b: Proj_Step) -> bool {
 // ---------------------------------------------------------------- loans --
 
 // One borrow. `mutable` is the capability design.md gives the carrier's type:
-// `^T`, `[]mut T` and `inout` exclude competing access, while `[]T`,
-// `string_view` and ordinary parameter access permit compatible reads.
+// `^mut T`, `[]mut T`, `dyn mut I` and `inout` exclude competing access, while
+// `^T`, `[]T`, `dyn I`, `string_view` and ordinary parameter access permit
+// compatible reads.
 Prov_Loan :: struct {
 	root:    Root_Id,
 	path:    []Proj_Step,
@@ -990,7 +991,9 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		// a mutable alias act behind the reborrow's back.
 		for source in event.sources {
 			for reborrow in graph.reborrows {
-				if reborrow.source != source || !live[reborrow.derived] {
+				if reborrow.source != source ||
+				   !live[reborrow.derived] ||
+				   !reborrow_values_overlap(state, reborrow) {
 					continue
 				}
 				report_suspended_reborrow(state, event, reborrow, uses[reborrow.derived])
@@ -1099,6 +1102,23 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			}
 		}
 	}
+}
+
+// A reborrow record names carrier slots, but overwriting either carrier ends
+// that particular relationship. Reaching-loan identity is the value-sensitive
+// part: the source is suspended only while both current slot values still carry
+// at least one same valid loan. This also does the right thing through branches,
+// where a lexical "clear the pair on assignment" would lose path information.
+@(private = "file")
+reborrow_values_overlap :: proc(state: ^Prov_State, reborrow: Prov_Reborrow) -> bool {
+	source := reach_row(state, state.reach, reborrow.source)
+	derived := reach_row(state, state.reach, reborrow.derived)
+	for held, index in source {
+		if held && derived[index] && !state.invalid[index] {
+			return true
+		}
+	}
+	return false
 }
 
 

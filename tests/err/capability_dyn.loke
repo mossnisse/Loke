@@ -8,16 +8,23 @@ Mixed :: interface($Self: type) {
 	slot bump: proc(self: inout Self) ;
 }
 
+Tagged :: interface($Self: type, $Tag: type) {
+	slot tag: proc(self) -> int;
+}
+
 Counter :: struct { value: int }
 impl Counter {
 	size :: proc(self) -> int { return self.value; }
 	bump :: proc(self: inout Counter) { self.value += 1; }
+	tag  :: proc(self) -> int { return self.value; }
 }
 
 generic_bump :: proc(target: inout $T) -> int where Mixed(T) {
 	target.bump();
 	return target.size();
 }
+
+generic_mut_tag :: proc(view: dyn mut Tagged($T)) -> int { return view.tag(); }
 
 // The slot is on the witness; the view is what refuses to call it.
 mutating_slot_through_a_reader :: proc() {
@@ -49,9 +56,16 @@ reader_does_not_satisfy_a_mixed_interface :: proc() {
 	fmt.println(generic_bump(inout view));
 }
 
+reader_does_not_match_a_mutable_dyn_pattern :: proc() {
+	c := Counter{1};
+	reader := (dyn Tagged(int))(&c);
+	fmt.println(generic_mut_tag(reader));
+}
+
 main :: proc() {
 	mutating_slot_through_a_reader();
 	mutable_view_from_a_reader();
 	strengthens();
 	reader_does_not_satisfy_a_mixed_interface();
+	reader_does_not_match_a_mutable_dyn_pattern();
 }

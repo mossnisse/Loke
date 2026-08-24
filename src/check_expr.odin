@@ -609,7 +609,9 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	base_type := type_underlying(k.c, operand)
 	through_pointer := false
 	pointer_mutable := false
+	pointee_type := INVALID_TYPE
 	if info := type_of(k.c, base_type); info != nil && info.kind == .Pointer {
+		pointee_type = info.element
 		base_type = type_underlying(k.c, info.element)
 		through_pointer = true
 		pointer_mutable = info.mutable
@@ -621,7 +623,14 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	}
 	// A field always wins over method-call sugar with the same name (design.md).
 	if field == INVALID_SYMBOL {
+		// A pointer may declare inherent methods of its own. Preserve that lookup
+		// first; implicit dereference is the fallback when the pointer type itself
+		// has no matching receiver.
 		if select_method(k, v, operand, callee_position) {
+			return
+		}
+		if through_pointer && select_method(k, v, pointee_type, callee_position) {
+			v.operand = implicit_pointer_deref(k, v.operand, pointee_type, pointer_mutable)
 			return
 		}
 		errorf(k.c, v.span, "L0363", "`%s` has no field or member `%s`", type_name(k.c, operand), v.name.text)
@@ -656,6 +665,31 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			v.immutable = .Constant
 		}
 	}
+}
+
+// Method syntax through a pointer uses the same implicit dereference as field
+// selection. Materialising that adjustment in the typed AST lets overload
+// binding, provenance, and emission all see the real receiver place, including
+// the read-only capability that rejects an `inout self` method with L0640.
+@(private = "file")
+implicit_pointer_deref :: proc(
+	k: ^Checker,
+	operand: Expr,
+	pointee: Type_Id,
+	mutable: bool,
+) -> Expr {
+	base := expr_base(operand)
+	n := new(Expr_Postfix, k.c.semantic_allocator)
+	n.span = base.span
+	n.type = pointee
+	n.value_category = .Place
+	n.addressable = true
+	n.assignable = mutable
+	n.immutable = mutable ? .None : .Through_Pointer
+	n.op = .Caret
+	n.op_span = base.span
+	n.operand = operand
+	return n
 }
 
 // `Type.member`: an associated constant, an associated type, or a procedure
@@ -4306,6 +4340,17 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	if pointerish(source_kind) && pointerish(dest_kind) {
+		// Crossing through `rawptr` or `[^]T` is the explicit unchecked boundary,
+		// but a direct checked-pointer conversion must preserve capability. Without
+		// this guard `(^mut T)(reader)` would silently strengthen a `^T` and make
+		// the read-only spelling writable.
+		if source_kind == .Pointer && dest_kind == .Pointer {
+			source_info := type_of(c, source)
+			dest_info := type_of(c, dest)
+			if source_info != nil && dest_info != nil && !source_info.mutable && dest_info.mutable {
+				return false
+			}
+		}
 		return true
 	}
 	return false

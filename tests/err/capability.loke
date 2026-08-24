@@ -2,6 +2,9 @@
 package main; import "core:fmt";
 
 Point :: struct { x: int, y: int }
+impl Point {
+	bump :: proc(self: inout Point) { self.x += 1; }
+}
 TABLE :: [4]int{1, 2, 3, 4};
 
 reads :: proc(p: ^int) -> int { return p^; }
@@ -19,6 +22,12 @@ projects_through_a_reader :: proc() {
 	p := &pt;
 	p.x = 9;
 	fmt.println(p.y);
+}
+
+calls_a_mutating_method_through_a_reader :: proc() {
+	pt := Point{1, 2};
+	p := &pt;
+	p.bump();
 }
 
 // `&mut` needs storage this body may write.
@@ -45,6 +54,13 @@ strengthens :: proc() {
 	fmt.println(strong^);
 }
 
+casts_away_read_only :: proc() {
+	value := 1;
+	reader := &value;
+	writer := (^mut int)(reader);
+	fmt.println(writer^);
+}
+
 // Releasing storage is a write, so `free` needs the write capability.
 frees_a_reader :: proc() {
 	allocated, err := new(int);
@@ -68,12 +84,14 @@ uses_a_suspended_carrier :: proc() {
 main :: proc() {
 	writes_through_a_reader();
 	projects_through_a_reader();
+	calls_a_mutating_method_through_a_reader();
 	fmt.println(borrows_a_value_parameter(1));
 	numbers := [2]int{1, 2};
 	view: []int = numbers[:];
 	fmt.println(borrows_a_read_only_element(view));
 	fmt.println(borrows_a_constant());
 	strengthens();
+	casts_away_read_only();
 	frees_a_reader();
 	uses_a_suspended_carrier();
 }

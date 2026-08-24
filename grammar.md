@@ -591,7 +591,7 @@ Level_6      = Level_7 (("+" | "-" | "|" | "~") Level_7)*                       
 Level_7      = Unary_Expression
                (("*" | "/" | "%" | "&" | "&~" | "<<" | ">>") Unary_Expression)*  // 7
 
-Unary_Expression = ("+" | "-" | "!" | "~" | "&" | "&" "mut") Unary_Expression
+Unary_Expression = ("+" | "-" | "!" | "~" | "&" "mut"?) Unary_Expression
                  | Postfix_Expression
 
 Postfix_Expression = Primary_Expression Suffix*

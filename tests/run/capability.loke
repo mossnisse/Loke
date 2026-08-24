@@ -4,6 +4,10 @@
 package main; import "core:fmt";
 
 Point :: struct { x: int, y: int }
+impl Point {
+	total :: proc(self) -> int { return self.x + self.y; }
+	bump  :: proc(self: inout Point) { self.x += 1; }
+}
 
 TABLE :: [4]int{10, 20, 30, 40};
 ORIGIN :: Point{7, 8};
@@ -38,7 +42,12 @@ main :: proc() {
 	mutable := &mut pt;
 	mutable.x = 30;
 	fmt.println(mutable.x + mutable.y);
+	mutable.bump();
+	fmt.println(mutable.total());
 	fmt.println(reads_point(&pt));
+	other := Point{4, 5};
+	reader := &other;
+	fmt.println(reader.total());
 
 	// A value parameter and a `[]T` element are readable places, so `&` reaches
 	// both even though neither may be written.
@@ -78,6 +87,22 @@ main :: proc() {
 	fmt.println(reborrow[0] + reborrow[1]);
 	source[0] = 50;
 	fmt.println(source[0]);
+
+	// Reassigning either side ends that particular reborrow relation. The slot
+	// names may stay live, but their current values no longer alias.
+	left := [2]int{1, 2};
+	right := [2]int{3, 4};
+	changing_source := left[:];
+	old_reader: []int = changing_source;
+	changing_source = right[:];
+	changing_source[0] = 8;
+	fmt.println(old_reader[0]);
+
+	stable_source := left[:];
+	changing_reader: []int = stable_source;
+	changing_reader = right[:];
+	stable_source[0] = 9;
+	fmt.println(changing_reader[0]);
 }
 
 addressed :: proc(value: int) -> int {

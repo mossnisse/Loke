@@ -1,12 +1,15 @@
 L0643
-@26:2
+@33:2
 slot `bump` mutates its subject, so it needs `dyn mut Mixed`
 L0642
-@33:26
+@40:26
 `dyn mut Mixed` needs `^mut Concrete`, found `^Counter`
 L0310
-@41:26
+@48:26
 cannot initialise `dyn mut Mixed` with `dyn Mixed`
 L0444
-@49:14
+@56:14
 `dyn Mixed` does not satisfy `Mixed(dyn Mixed)`
+L0392
+@62:14
+no overload of `generic_mut_tag` applies to these arguments

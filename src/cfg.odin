@@ -1299,8 +1299,8 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 		}
 	case .Result:
 	case .Const:
-		// design.md "Materialization": a constant a runtime index or slice needs
-		// storage for gets one read-only object for the whole program.
+		// design.md "Materialization": a constant reached by a runtime index,
+		// slice, or `&` gets one read-only object for the whole program.
 		kind = .Materialized
 	case:
 		return NO_ROOT

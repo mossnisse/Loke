@@ -6196,9 +6196,10 @@ The convention is that the `bool` comes last and is named `ok`, and that the val
 
 Loke is strongly typed. The following list contains all built-in implicit conversions. The only user-defined implicit conversion applies to an unfixed constant. An import cannot add other implicit conversions. Thus, conversion behavior does not depend on the imported packages.
 
-- ^T -> rawptr
-- [^]T -> rawptr
-- [^]T <-> ^T
+- `^mut T` -> `^T`, `[]mut T` -> `[]T`, and `dyn mut I` -> `dyn I`
+- `^T` / `^mut T` -> `rawptr`
+- `[^]T` -> `rawptr`
+- `[^]T` <-> `^T` / `^mut T`
 - Concrete values to `any_view` when an `any_view` parameter or local destination is expected; the result is a checked non-escaping borrow
 - `dyn Derived` -> `dyn Base` when `Derived` composes `Base`; the result keeps the same data borrow and selects the base witness
 - Any of its variants to the union
