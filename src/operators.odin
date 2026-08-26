@@ -585,6 +585,27 @@ install_delegated_operator :: proc(
 	}
 }
 
+// The binary operator a compound assignment applies, or `.EOF` when the kind is
+// not a compound assignment at all. The checker uses that answer to reject the
+// statement, so by the time the evaluator or the backend asks, the result is
+// always one of the eleven.
+compound_operator :: proc(op: Token_Kind) -> Token_Kind {
+	#partial switch op {
+	case .Plus_Eq:      return .Plus
+	case .Minus_Eq:     return .Minus
+	case .Star_Eq:      return .Star
+	case .Slash_Eq:     return .Slash
+	case .Percent_Eq:   return .Percent
+	case .Pipe_Eq:      return .Pipe
+	case .Tilde_Eq:     return .Tilde
+	case .Amp_Eq:       return .Amp
+	case .Amp_Tilde_Eq: return .Amp_Tilde
+	case .Shl_Eq:       return .Shl
+	case .Shr_Eq:       return .Shr
+	}
+	return .EOF
+}
+
 // The token a canonical operator symbol stands for, or `.EOF` for the index
 // forms, which have no single token.
 operator_token :: proc(symbol: string) -> Token_Kind {

@@ -2306,35 +2306,6 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 }
 
 @(private = "file")
-compound_operator :: proc(op: Token_Kind) -> Token_Kind {
-	#partial switch op {
-	case .Plus_Eq:
-		return .Plus
-	case .Minus_Eq:
-		return .Minus
-	case .Star_Eq:
-		return .Star
-	case .Slash_Eq:
-		return .Slash
-	case .Percent_Eq:
-		return .Percent
-	case .Pipe_Eq:
-		return .Pipe
-	case .Tilde_Eq:
-		return .Tilde
-	case .Amp_Eq:
-		return .Amp
-	case .Amp_Tilde_Eq:
-		return .Amp_Tilde
-	case .Shl_Eq:
-		return .Shl
-	case .Shr_Eq:
-		return .Shr
-	}
-	return .EOF
-}
-
-@(private = "file")
 compound_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
 	if type_kind(c, type) == .Distinct {
 		return false

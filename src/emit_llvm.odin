@@ -3312,38 +3312,9 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	address := emit_address(e, target)
 	current := load(e, llvm_type(e, type), address)
 	rhs := emit_expr(e, s.rhs[0])
-	op := compound_op(s.op)
+	op := compound_operator(s.op)
 	result := emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
 	store(e, type, result, address)
-}
-
-@(private = "file")
-compound_op :: proc(op: Token_Kind) -> Token_Kind {
-	#partial switch op {
-	case .Plus_Eq:
-		return .Plus
-	case .Minus_Eq:
-		return .Minus
-	case .Star_Eq:
-		return .Star
-	case .Slash_Eq:
-		return .Slash
-	case .Percent_Eq:
-		return .Percent
-	case .Pipe_Eq:
-		return .Pipe
-	case .Tilde_Eq:
-		return .Tilde
-	case .Amp_Eq:
-		return .Amp
-	case .Amp_Tilde_Eq:
-		return .Amp_Tilde
-	case .Shl_Eq:
-		return .Shl
-	case .Shr_Eq:
-		return .Shr
-	}
-	return .Plus
 }
 
 @(private = "file")

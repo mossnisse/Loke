@@ -1997,7 +1997,7 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	if !operand_ok {
 		return .Fail
 	}
-	op := eval_compound_operator(s.op)
+	op := compound_operator(s.op)
 	type := slot.type
 	#partial switch op {
 	case .Shl, .Shr:
@@ -2017,24 +2017,6 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	}
 	slot^ = scalar(folded, type)
 	return .Normal
-}
-
-@(private = "file")
-eval_compound_operator :: proc(op: Token_Kind) -> Token_Kind {
-	#partial switch op {
-	case .Plus_Eq:      return .Plus
-	case .Minus_Eq:     return .Minus
-	case .Star_Eq:      return .Star
-	case .Slash_Eq:     return .Slash
-	case .Percent_Eq:   return .Percent
-	case .Pipe_Eq:      return .Pipe
-	case .Tilde_Eq:     return .Tilde
-	case .Amp_Eq:       return .Amp
-	case .Amp_Tilde_Eq: return .Amp_Tilde
-	case .Shl_Eq:       return .Shl
-	case .Shr_Eq:       return .Shr
-	}
-	return .EOF
 }
 
 @(private = "file")
