@@ -15,6 +15,18 @@ package lokec
 
 // ------------------------------------------------------------------ helpers --
 
+// Storage for a cloned list, which every `clone_*` list helper opens with. An
+// empty list clones to nil rather than to a zero-length allocation, so a source
+// that wrote nothing and a clone of it stay indistinguishable. The caller fills
+// the result; the loop that does so is a no-op when this returns nil.
+@(private = "file")
+clone_slice :: proc(c: ^Compiler, list: []$T) -> []T {
+	if len(list) == 0 {
+		return nil
+	}
+	return make([]T, len(list), c.semantic_allocator)
+}
+
 @(private = "file")
 clone_base :: proc(dst: ^Expr_Base, src: ^Expr_Base) {
 	dst.span = src.span
@@ -36,10 +48,7 @@ new_clone :: proc(c: ^Compiler, $T: typeid, src: ^Expr_Base) -> ^T {
 }
 
 clone_attributes :: proc(c: ^Compiler, list: []Attribute) -> []Attribute {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Attribute, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Attribute {
 			span  = entry.span,
@@ -51,10 +60,7 @@ clone_attributes :: proc(c: ^Compiler, list: []Attribute) -> []Attribute {
 }
 
 clone_exprs :: proc(c: ^Compiler, list: []Expr) -> []Expr {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Expr, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = clone_expr(c, entry)
 	}
@@ -63,10 +69,7 @@ clone_exprs :: proc(c: ^Compiler, list: []Expr) -> []Expr {
 
 @(private = "file")
 clone_arguments :: proc(c: ^Compiler, list: []Argument) -> []Argument {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Argument, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Argument {
 			span  = entry.span,
@@ -80,10 +83,7 @@ clone_arguments :: proc(c: ^Compiler, list: []Argument) -> []Argument {
 
 @(private = "file")
 clone_elements :: proc(c: ^Compiler, list: []Element) -> []Element {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Element, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Element {
 			span  = entry.span,
@@ -98,10 +98,7 @@ clone_elements :: proc(c: ^Compiler, list: []Element) -> []Element {
 // instance's own storage: a clone starts with none.
 @(private = "file")
 clone_params :: proc(c: ^Compiler, list: []Parameter) -> []Parameter {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Parameter, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Parameter {
 			span       = entry.span,
@@ -117,10 +114,7 @@ clone_params :: proc(c: ^Compiler, list: []Parameter) -> []Parameter {
 
 @(private = "file")
 clone_results :: proc(c: ^Compiler, list: []Result) -> []Result {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Result, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Result {
 			span     = entry.span,
@@ -134,10 +128,7 @@ clone_results :: proc(c: ^Compiler, list: []Result) -> []Result {
 
 @(private = "file")
 clone_fields :: proc(c: ^Compiler, list: []Field) -> []Field {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Field, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Field {
 			span       = entry.span,
@@ -152,10 +143,7 @@ clone_fields :: proc(c: ^Compiler, list: []Field) -> []Field {
 
 @(private = "file")
 clone_enum_fields :: proc(c: ^Compiler, list: []Enum_Field) -> []Enum_Field {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Enum_Field, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Enum_Field {
 			span  = entry.span,
@@ -168,10 +156,7 @@ clone_enum_fields :: proc(c: ^Compiler, list: []Enum_Field) -> []Enum_Field {
 
 @(private = "file")
 clone_generic_params :: proc(c: ^Compiler, list: []Generic_Param) -> []Generic_Param {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Generic_Param, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Generic_Param {
 			span  = entry.span,
@@ -184,10 +169,7 @@ clone_generic_params :: proc(c: ^Compiler, list: []Generic_Param) -> []Generic_P
 
 @(private = "file")
 clone_bindings :: proc(c: ^Compiler, list: []Binding_Group) -> []Binding_Group {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Binding_Group, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Binding_Group {
 			span     = entry.span,
@@ -200,10 +182,7 @@ clone_bindings :: proc(c: ^Compiler, list: []Binding_Group) -> []Binding_Group {
 }
 
 clone_requirements :: proc(c: ^Compiler, list: []Requirement) -> []Requirement {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Requirement, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = Requirement {
 			span         = entry.span,
@@ -670,10 +649,7 @@ clone_item :: proc(c: ^Compiler, item: Item) -> Item {
 }
 
 clone_items :: proc(c: ^Compiler, list: []Item) -> []Item {
-	if len(list) == 0 {
-		return nil
-	}
-	out := make([]Item, len(list), c.semantic_allocator)
+	out := clone_slice(c, list)
 	for entry, index in list {
 		out[index] = clone_item(c, entry)
 	}
