@@ -2,7 +2,7 @@
 
 ## Context
 
-[M5b](m5b-plan.md) built the two lifetime analyses design.md specifies, and
+M5b built the two lifetime analyses design.md specifies, and
 `src/borrow.odin` implements them over `src/cfg.odin`'s provenance event stream.
 Both follow *carriers*: `type_is_carrier` answers yes for `^T`, `[]T`,
 `string_view`, `cstring_view`, `any_view`, `dyn`, and region providers, and no

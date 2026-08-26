@@ -15,14 +15,8 @@ The normative language specification is in [design.md](design.md), and its gramm
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
-[compiler-plan.md](compiler-plan.md); the current milestone is M7, planned in
-[m7-plan.md](m7-plan.md), after M6b in
-[m6b-plan.md](m6b-plan.md), M6a in [m6a-plan.md](m6a-plan.md), M5b in
-[m5b-plan.md](m5b-plan.md), M5a in
-[m5a-plan.md](m5a-plan.md), M4b in [m4b-plan.md](m4b-plan.md), M4a in
-[m4a-plan.md](m4a-plan.md), M3 in
-[m3-plan.md](m3-plan.md), M2 in [m2-plan.md](m2-plan.md), M1 in
-[m1-plan.md](m1-plan.md) and M0 in [m0-plan.md](m0-plan.md).
+[compiler-plan.md](compiler-plan.md), which records what each milestone M0–M6b
+delivered; the current milestone is M7, planned in [m7-plan.md](m7-plan.md).
 
 M1 completed the front end: every construct in [grammar.md](grammar.md) lexes and
 parses, so `-parse-only` and `-dump-ast` accept any valid program.

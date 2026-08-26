@@ -2,7 +2,7 @@
 
 ## Context
 
-[M6b](m6b-plan.md) is implemented. Every language construct design.md defines
+M6b is implemented. Every language construct design.md defines
 now compiles and runs, over a versioned C runtime, through one textual-LLVM
 path that ends in a single `clang` invocation. **M7** is the last v1 milestone:
 it makes that output a *release* build, completes the layout and ABI surface
