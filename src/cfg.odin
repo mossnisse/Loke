@@ -1841,7 +1841,7 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		if owner == nil {
 			continue
 		}
-		if symbol_in(dead, id) {
+		if slice.contains(dead, id) {
 			continue
 		}
 		if type_is_region_provider(graph.k.c, owner.type) {
@@ -1868,16 +1868,6 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		break
 	}
 	prov_emit(graph, event)
-}
-
-@(private = "file")
-symbol_in :: proc(list: []Symbol_Id, id: Symbol_Id) -> bool {
-	for entry in list {
-		if entry == id {
-			return true
-		}
-	}
-	return false
 }
 
 // An owner backed by a region the procedure received may not be returned,

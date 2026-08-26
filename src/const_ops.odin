@@ -107,7 +107,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (boo
 			return false, false
 		}
 		// Byte order, which is what `<` on a compile-time string means.
-		order = compare_strings(a.text, b.text)
+		order = strings.compare(a.text, b.text)
 	case a.kind == .Float || b.kind == .Float:
 		x := a.kind == .Float ? a.float : bi_to_f64(c, a.integer)
 		y := b.kind == .Float ? b.float : bi_to_f64(c, b.integer)
@@ -164,20 +164,6 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (boo
 		return order >= 0, true
 	}
 	return false, false
-}
-
-@(private = "file")
-compare_strings :: proc(a, b: string) -> int {
-	limit := min(len(a), len(b))
-	for i in 0 ..< limit {
-		if a[i] != b[i] {
-			return a[i] < b[i] ? -1 : 1
-		}
-	}
-	if len(a) == len(b) {
-		return 0
-	}
-	return len(a) < len(b) ? -1 : 1
 }
 
 @(private = "file")

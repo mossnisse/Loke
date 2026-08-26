@@ -408,7 +408,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 // constant aggregate over static storage and costs nothing at run time.
 check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
-	type, resolved := source_location_type(k)
+	type, resolved := runtime_type_named(k, "Source_Code_Location")
 	if !resolved {
 		errorf(
 			k.c, v.span, "L0573",
@@ -440,28 +440,10 @@ check_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.const_value = source_location_const(k, type, span)
 }
 
-// The `Source_Code_Location` declared by a `base:runtime` this package imports.
-// Looking it up rather than owning a second copy is what keeps one identity
-// between the compiler, the seed runtime, and the library.
-source_location_type :: proc(k: ^Checker) -> (Type_Id, bool) {
-	pkg := package_of(k.c, k.pkg)
-	if pkg == nil {
-		return INVALID_TYPE, false
-	}
-	for edge in pkg.imports {
-		target := package_of(k.c, edge.target)
-		if target == nil || target.key != STD_RUNTIME || target.scope == nil {
-			continue
-		}
-		symbol := symbol_of(k.c, target.scope.names[intern_identifier(k.c, "Source_Code_Location")])
-		if symbol != nil && symbol.kind == .Type && symbol.type != INVALID_TYPE {
-			return symbol.type, true
-		}
-	}
-	return INVALID_TYPE, false
-}
-
-// `{file, procedure: string_view, line, column: int}`, all four constant.
+// `{file, procedure: string_view, line, column: int}`, all four constant. The
+// type itself comes from the `base:runtime` this package imports, looked up
+// rather than owned a second time, which is what keeps one identity between the
+// compiler, the seed runtime, and the library.
 source_location_const :: proc(k: ^Checker, type: Type_Id, span: Span) -> Const_Value {
 	file, line, column := "", 0, 0
 	if span.file != NO_FILE && int(span.file) < len(k.c.sources) {
@@ -518,7 +500,7 @@ check_caller_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		v.type = INVALID_TYPE
 		return
 	}
-	type, resolved := source_location_type(k)
+	type, resolved := runtime_type_named(k, "Source_Code_Location")
 	if !resolved {
 		errorf(
 			k.c, v.span, "L0573",

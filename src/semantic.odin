@@ -699,11 +699,12 @@ Symbol :: struct {
 	// after overload selection (m7-plan step 1).
 	require_results:    bool,
 	// design.md "Foreign system" (m7-plan step 4): a foreign declaration has no
-	// body. It names an external symbol in `foreign_library` under `link_name`
-	// (its own written name unless `@(link_name)` renamed it), and the backend
-	// emits a `declare`/`external global` rather than a definition.
+	// body. It names an external symbol under `link_name` (its own written name
+	// unless `@(link_name)` renamed it), and the backend emits a
+	// `declare`/`external global` rather than a definition. The library it comes
+	// from is not recorded: every foreign block links against the one image, so
+	// nothing downstream ever asked which block a symbol was written in.
 	is_foreign:         bool,
-	foreign_library:    string,
 	link_name:          string,
 	// design.md "@(export)" (m7-plan step 5): the declaration emits its symbol into
 	// the object under `link_name` (its written name unless `@(link_name)` renamed

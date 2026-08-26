@@ -49,7 +49,6 @@ declare_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
 				continue
 			}
 			sym.is_foreign = true
-			sym.foreign_library = library
 			// A member's own `@(public)`/`@(private)` wins; otherwise the block's
 			// default applies, and failing that the visibility declare_all computed.
 			if !own_public && !own_private && block_sets_visibility {
