@@ -4552,23 +4552,34 @@ emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	)
 }
 
+// The LLVM instruction each arithmetic operator lowers to. An empty column is a
+// combination that never arrives: integer `/` and `%` route through
+// `emit_divrem` before this is consulted, and a float has no bitwise operators.
+@(private = "file")
+Arith_Mnemonic :: struct {
+	integer, float: string,
+}
+
+@(private = "file")
+arith_mnemonic :: proc(op: Token_Kind) -> Arith_Mnemonic {
+	#partial switch op {
+	case .Plus:  return {"add", "fadd"}
+	case .Minus: return {"sub", "fsub"}
+	case .Star:  return {"mul", "fmul"}
+	case .Slash: return {"",    "fdiv"}
+	case .Amp:   return {"and", ""}
+	case .Pipe:  return {"or",  ""}
+	case .Tilde: return {"xor", ""}
+	}
+	return {}
+}
+
 @(private = "file")
 emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Type_Id, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
 	if type_is_float(e.c, type) {
 		out := temp(e)
-		name := ""
-		#partial switch op {
-		case .Plus:
-			name = "fadd"
-		case .Minus:
-			name = "fsub"
-		case .Star:
-			name = "fmul"
-		case .Slash:
-			name = "fdiv"
-		}
-		fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, name, llvm, lhs, rhs)
+		fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, arith_mnemonic(op).float, llvm, lhs, rhs)
 		return out
 	}
 
@@ -4585,23 +4596,8 @@ emit_binary_op :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, rhs_type: Typ
 		fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", out, llvm, lhs, complement)
 		return out
 	}
-	name := ""
-	#partial switch op {
-	case .Plus:
-		name = "add"
-	case .Minus:
-		name = "sub"
-	case .Star:
-		name = "mul"
-	case .Amp:
-		name = "and"
-	case .Pipe:
-		name = "or"
-	case .Tilde:
-		name = "xor"
-	}
 	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, name, llvm, lhs, rhs)
+	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, arith_mnemonic(op).integer, llvm, lhs, rhs)
 	return out
 }
 
@@ -4696,6 +4692,27 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 	return out
 }
 
+// The LLVM predicate each comparison lowers to, per operand class. The float
+// column is ordered, so a NaN operand compares false — except `!=`, which is
+// `une` and so is true whenever the operands are unordered.
+@(private = "file")
+Compare_Predicate :: struct {
+	signed, unsigned, float: string,
+}
+
+@(private = "file")
+compare_predicate :: proc(op: Token_Kind) -> Compare_Predicate {
+	#partial switch op {
+	case .Eq_Eq:  return {"eq",  "eq",  "oeq"}
+	case .Not_Eq: return {"ne",  "ne",  "une"}
+	case .Lt:     return {"slt", "ult", "olt"}
+	case .Lt_Eq:  return {"sle", "ule", "ole"}
+	case .Gt:     return {"sgt", "ugt", "ogt"}
+	case .Gt_Eq:  return {"sge", "uge", "oge"}
+	}
+	return {}
+}
+
 emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: string) -> string {
 	// `string` and `string_view` values are comparable and ordered, lexically
 	// byte-wise (design.md). One runtime call answers all six operators.
@@ -4710,23 +4727,9 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 			&e.b, "  %s = call i32 @loke_rt_v1_bytes_compare(ptr %s, i64 %s, ptr %s, i64 %s)",
 			order, left_data, left_len, right_data, right_len,
 		)
-		name := ""
-		#partial switch op {
-		case .Eq_Eq:
-			name = "eq"
-		case .Not_Eq:
-			name = "ne"
-		case .Lt:
-			name = "slt"
-		case .Lt_Eq:
-			name = "sle"
-		case .Gt:
-			name = "sgt"
-		case .Gt_Eq:
-			name = "sge"
-		}
+		// The runtime hands back a signed i32 ordering, so this is the signed column.
 		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp %s i32 %s, 0", out, name, order)
+		fmt.sbprintfln(&e.b, "  %s = icmp %s i32 %s, 0", out, compare_predicate(op).signed, order)
 		return out
 	}
 	if type_is_aggregate(e.c, type) || type_is_union(e.c, type) || type_is_erased_view(e.c, type) {
@@ -4741,42 +4744,12 @@ emit_compare :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, lhs, rhs: strin
 	llvm := llvm_type(e, type)
 	out := temp(e)
 	if type_is_float(e.c, type) {
-		// Ordered comparisons, so a NaN operand compares false — except `!=`,
-		// which is true whenever the operands are unordered.
-		name := ""
-		#partial switch op {
-		case .Eq_Eq:
-			name = "oeq"
-		case .Not_Eq:
-			name = "une"
-		case .Lt:
-			name = "olt"
-		case .Lt_Eq:
-			name = "ole"
-		case .Gt:
-			name = "ogt"
-		case .Gt_Eq:
-			name = "oge"
-		}
-		fmt.sbprintfln(&e.b, "  %s = fcmp %s %s %s, %s", out, name, llvm, lhs, rhs)
+		fmt.sbprintfln(&e.b, "  %s = fcmp %s %s %s, %s", out, compare_predicate(op).float, llvm, lhs, rhs)
 		return out
 	}
+	predicate := compare_predicate(op)
 	signed := type_signed(e.c, type) || type_is_rune(e.c, type)
-	name := ""
-	#partial switch op {
-	case .Eq_Eq:
-		name = "eq"
-	case .Not_Eq:
-		name = "ne"
-	case .Lt:
-		name = signed ? "slt" : "ult"
-	case .Lt_Eq:
-		name = signed ? "sle" : "ule"
-	case .Gt:
-		name = signed ? "sgt" : "ugt"
-	case .Gt_Eq:
-		name = signed ? "sge" : "uge"
-	}
+	name := signed ? predicate.signed : predicate.unsigned
 	fmt.sbprintfln(&e.b, "  %s = icmp %s %s %s, %s", out, name, llvm, lhs, rhs)
 	return out
 }
