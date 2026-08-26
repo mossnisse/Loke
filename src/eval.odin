@@ -1374,6 +1374,12 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	if callee != nil && callee.kind == .Builtin {
 		return eval_builtin(ev, v, callee)
 	}
+	// Standard built-in customization members likewise have compiler-written
+	// bodies. Execute the operation directly during compile-time evaluation.
+	if chosen := symbol_of(ev.k.c, v.resolution.chosen_overload); chosen != nil &&
+	   (chosen.synth == .Standard_Len || chosen.synth == .Standard_Cap || chosen.synth == .Standard_Hash) {
+		return eval_standard_customization(ev, v, chosen)
+	}
 	// A contributed container operation has no body to walk: the backend writes
 	// one and the evaluator performs one, from the same `container_op`.
 	if chosen := symbol_of(ev.k.c, v.resolution.chosen_overload); chosen != nil && chosen.synth == .Container_Op {
@@ -1400,6 +1406,40 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		return Eval_Value{kind = .Invalid, type = TYPE_VOID}, true
 	}
 	return results[0], true
+}
+
+@(private = "file")
+eval_standard_customization :: proc(ev: ^Evaluator, v: ^Expr_Call, chosen: ^Symbol) -> (Eval_Value, bool) {
+	#partial switch chosen.synth {
+	case .Standard_Len:
+		subject, ok := eval_expr(ev, v.bound[0])
+		if !ok { return Eval_Value{}, false }
+		count := len(subject.elements)
+		if subject.kind == .String {
+			count = len(subject.text)
+		} else if type_is_map(ev.k.c, subject.type) {
+			count /= 2
+		}
+		return Eval_Value{kind = .Integer, type = TYPE_INT, integer = bi_from_i64(ev.k.c, i64(count))}, true
+
+	case .Standard_Cap:
+		eval_fail(ev, v.span, "L0595", "`cap` has no compile-time meaning: a capacity is a property of an allocation, and there is none here")
+		return Eval_Value{}, false
+
+	case .Standard_Hash:
+		value, value_ok := eval_expr(ev, v.bound[0])
+		seed, seed_ok := eval_expr(ev, v.bound[1])
+		if !value_ok || !seed_ok { return Eval_Value{}, false }
+		frozen_value, froze_value := freeze(ev, value)
+		frozen_seed, froze_seed := freeze(ev, seed)
+		if !froze_value || !froze_seed { return Eval_Value{}, false }
+		start, _ := bi_to_u64(ev.k.c, bi_wrap(ev.k.c, frozen_seed.integer, 64, false))
+		mixed := hash_const(ev.k.c, frozen_value, expr_base(v.bound[0]).type, start)
+		return Eval_Value{kind = .Integer, type = TYPE_UINT, integer = bi_from_u64(ev.k.c, mixed)}, true
+
+	case:
+		return Eval_Value{}, false
+	}
 }
 
 // Resolve direct and indirect calls through one path. Multi-result contexts use

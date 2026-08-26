@@ -1,0 +1,6 @@
+package main;
+
+main :: proc() {
+	values := [dynamic]int{1, 2, 3};
+	append(values, 4); // mutators remain method-only: `values.append(4)`
+}

@@ -311,9 +311,9 @@ Low-level string indices are byte offsets throughout; Unicode procedures state t
 
 #### String format printing
 
-Formatting is a library protocol: a user type provides a visible `format(value, writer, options)` overload. Buffer handling belongs to `core:fmt`, not this specification.
+Printing uses the library protocol `value.format(writer, options)`. A type may define how it is printed by declaring an inherent `format` method in the same package as the type. The standard free alias `format(value, writer, options)` selects that same method.
 
-Runtime formatting is **coherent per concrete `typeid`**: one type has one erased spelling program-wide. A `format` overload is eligible only when declared in the package that declares the value type; the compiler supplies one for every other printable type, and a second eligible declaration is rejected. A caller-local extension may declare and call its own `format`, but it does not change what `print` does, because an erased value carries only a pointer and a `typeid`. This is the same coherence rule [maps](#maps) place on `==` and `hash`.
+Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides the format for other printable types. An extension in another package may declare and call its own `format` method, but `print` does not use it.
 
 ### C string views
 
@@ -618,7 +618,7 @@ p := unsafe.raw_data(&x);
 p[n] = 123; // unchecked; the programmer proves that n is valid
 ```
 
-No source attribute or build flag silently changes indexing semantics. The explicit unchecked conversion should be limited to small scopes where the bounds argument is locally evident.
+The explicit unchecked conversion should be limited to small scopes where the bounds argument is locally evident.
 
 ### SIMD vectors
 
@@ -1018,7 +1018,7 @@ A map maps keys to values. Its zero value is empty and immediately usable. Like 
 
 **Iteration order is unspecified.** It can differ between iterations of one unmodified map, between maps with the same entries, and between program runs. To get a stable order, collect and sort the keys. Map iteration is not valid on an executed [compile-time path](#compile-time-procedure-evaluation), because compile-time results must be reproducible.
 
-Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `hash(value, seed: uint) -> uint` (equal values produce equal hashes). Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
+Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `value.hash(seed: uint) -> uint` (equal values produce equal hashes). The standard free alias `hash(value, seed)` selects that same method. Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
 
 ```odin
 m: map[string]int = {};
@@ -1173,7 +1173,7 @@ For each listed symbol, `delegate` generates the underlying type's overloads of 
 
 Delegation is selective by design. `Meters` delegates `+` and `-` but not `*` or `/`: two lengths add to a length but multiply to an area, a different type. A mixed-operand operator such as `Meters * f64 -> Meters` is written by hand. Listing a symbol the underlying type does not define is an error, and delegating one already declared explicitly in the same block is a redeclaration.
 
-`delegate` has no meaning for a non-`distinct` type. Non-operator behavior — a method, or a `hash`, `compare`, or `format` overload — is re-exported by an ordinary one-line procedure that unwraps, calls, and where relevant wraps; these are rarer and need no bulk form.
+`delegate` has no meaning for a non-`distinct` type. Non-operator behavior — including a `hash`, `compare`, or `format` method — is re-exported by an ordinary one-line receiver method that unwraps, calls, and where relevant wraps; these are rarer and need no bulk form.
 
 ### Structs
 
@@ -1294,23 +1294,29 @@ Value :: union {
 v: Value;
 v = "Hello";
 
-// Extract the `string` payload and panic if another variant is active.
+// Single-value checked extraction: panic if another variant is active.
 s1 := v.(string);
 
-// Checked extraction with an explicit Boolean result. This does not panic.
+// Comma-ok checked extraction: report a mismatch without panicking.
 s2, ok := v.(string);
 ```
 
-A **checked extraction** tests the union's active variant and extracts its payload. It is single-valued where the requested type is the only expected result, and it panics if the union does not currently hold that variant. In a comma-ok destination or as the left operand of `or_else` it instead has [optional-ok semantics](#optional-ok-results), producing `(T, bool)` and never panicking.
+A **checked extraction** `v.(T)` tests whether the union's active variant is `T`
+and, if so, extracts its payload. Every form performs this check; the context
+determines how a mismatch is handled:
+
+- In a single-value context, it produces `T` or panics on a mismatch.
+- In a comma-ok destination, it has [optional-ok semantics](#optional-ok-results):
+  it produces the payload followed by `true` on a match, or the zero value of
+  `T` followed by `false` on a mismatch.
+- As the left operand of `or_else`, it yields the payload on a match or
+  evaluates the fallback on a mismatch.
+
+The comma-ok and `or_else` forms never panic because of a variant mismatch.
 
 A checked extraction must name the requested type; the compiler does not infer it from context.
 
-Checked extractions are always checked, although the optimizer may remove the runtime test when the active variant is provable.
-
-Every union also has the compiler-provided `active_typeid()` method. It returns
-the runtime `typeid` of the active variant without extracting its payload, or
-the nil `typeid` when the union is nil. The method evaluates its receiver once,
-takes no arguments, and cannot be replaced by an overload.
+Every union also has the compiler-provided `active_typeid()` method. It returns the runtime `typeid` of the active variant without extracting its payload, or the nil `typeid` when the union is nil. The method evaluates its receiver once, takes no arguments, and cannot be replaced by an overload.
 
 ```odin
 value: Value = "hello";
@@ -1322,10 +1328,6 @@ assert(value.active_typeid() == typeid_of(string)); // active runtime variant
 value = nil;
 assert(value.active_typeid() == nil);
 ```
-
-`active_typeid()` is for runtime inspection when only the identity is needed.
-Use a checked extraction when one expected payload type is known, or a type
-switch when code must branch and use the payload.
 
 #### Type switch statement
 
@@ -1352,11 +1354,7 @@ case:
 }
 ```
 
-The switch reads `value`'s runtime tag. In a case naming one variant, its binding
-is a new value with that variant's static type. `type_of(value)` remains `Value`
-everywhere, while `type_of(av)` reflects the case binding's static narrowing. A
-case naming several variants cannot choose one static payload type, so its
-binding remains the original union type.
+The switch reads `value`'s runtime tag. In a case naming one variant, its binding is a new value with that variant's static type. `type_of(value)` remains `Value` everywhere, while `type_of(av)` reflects the case binding's static narrowing. A case naming several variants cannot choose one static payload type, so its binding remains the original union type.
 
 #### Union alignment
 
@@ -1403,9 +1401,7 @@ Enum members are named constants, not numbers with a name: they may have holes, 
 **Conversion between an enum and its backing integer type is unchecked in both
 directions.** `Foo(n)` reinterprets `n` as a `Foo` and `int(f)` reads the
 representation back; neither tests membership, and this holds for a constant
-operand as much as a runtime one. An enum type therefore ranges over every value
-its backing type can hold, and a value that names no declared member is an
-ordinary, representable value of that type — not undefined behavior.
+operand as much as a runtime one. An enum type therefore ranges over every value its backing type can hold, and a value that names no declared member is an ordinary, representable value of that type — not undefined behavior.
 
 ```odin
 Foo :: enum { A, B, C }
@@ -1416,12 +1412,7 @@ assert(int(f) == 200);
 ```
 
 This is deliberate: enum values arrive from foreign calls, files, and wire
-formats, and a conversion that trapped would make every such boundary a fallible
-operation. The cost is that "covers every member" is not "covers every value",
-which is what the [exhaustive switch](#exhaustive-switch) rule below is stated
-against. Code converting an untrusted integer should validate it — by comparing
-against the members, or by switching with an explicit `case:` — before treating
-it as a member.
+formats, and a conversion that trapped would make every such boundary a fallible operation. The cost is that "covers every member" is not "covers every value", which is what the [exhaustive switch](#exhaustive-switch) rule below is stated against. Code converting an untrusted integer should validate it — by comparing against the members, or by switching with an explicit `case:` — before treating it as a member.
 
 Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_Snake_Case`, and the core library follows suit. The convention is not compiler-enforced, but the spelling of a compiler-provided member is normative.
 
@@ -1542,9 +1533,7 @@ constant, used as a `$` parameter, or returned by a procedure whose every call
 is evaluated at compile time. It cannot be the type of a variable, ordinary
 non-`$` parameter, record field, container element, foreign declaration, or
 runtime procedure value; compiler-defined reflection descriptors are the only
-records allowed to carry it internally. A procedure whose signature contains `type` or a
-compile-time reflection descriptor is itself compile-time-only and cannot be
-exported or stored in a procedure value.
+records allowed to carry it internally. A procedure whose signature contains `type` or a compile-time reflection descriptor is itself compile-time-only and cannot be exported or stored in a procedure value.
 
 Two `type` values support `==` and `!=` during compilation; equality means the
 same Loke type identity after aliases are resolved. They have no ordering and
@@ -2023,11 +2012,26 @@ Values are not made callable through operator overloading; a callable object exp
 
 ### Iteration protocol
 
-Iteration uses the standard [`Iterable`](#standard-interface-catalogue) and `Iterator` interfaces. A value is iterable when its type provides associated `Element` and `Iterator` types, a `self`-receiver `iter` returning that iterator, and an iterator with `next(self: inout Iterator) -> (Element, bool)`. `next` has [optional-ok semantics](#optional-ok-results): a false `bool` ends the loop with the first result unobserved.
+`foreach` uses the standard [`Iterable`](#standard-interface-catalogue) and
+`Iterator` interfaces. An iterable type provides:
 
-`iter` takes a receiver so that the whole traversal surface — `iter()`, `indexed()`, `reversed()`, `entries()`, `bytes()` — is spelled one way. It stays a [standard customization procedure](#standard-customization-procedures), so the free call `iter(source)` remains available exactly as `len(x)` does for a type that declares `len` with a receiver. A visible [extension block](#methods-and-implementation-blocks) satisfies the requirement inside the package that declares it, which is how a foreign type becomes iterable.
+- an `Element` type;
+- an `Iterator` type;
+- `iter(self) -> Iterator`;
+- `next(self: inout Iterator) -> (Element, bool)` on its iterator.
 
-Built-in iterables use the same interface: the compiler contributes associated members, an `iter` method, and an opaque iterator type for ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps, without exposing the iterator representation. An enum *type* is not iterable; its members are a value, [`Enum.values()`](#iterating-an-enumeration).
+Each successful call to `next` returns an element and `true`. Returning `false`
+ends the loop, and the element result is ignored. This is the
+[optional-ok form](#optional-ok-results).
+
+The free alias `iter(source)` selects the same method as `source.iter()`. A
+visible [extension block](#methods-and-implementation-blocks) can make a foreign
+type iterable within the package that declares the extension.
+
+Ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps
+all follow this protocol. The compiler supplies their associated types, `iter`
+method, and opaque iterator type. An enum type itself is not iterable; use
+[`Enum.values()`](#iterating-an-enumeration) to visit its members.
 
 ```odin
 Countdown :: struct {
@@ -2063,21 +2067,14 @@ foreach (value in Countdown{3}) {
 }
 ```
 
-The associated `Element` makes a generic loop's element type available without an extra inferred parameter:
-
-```odin
-first :: proc(source: $S) -> (S.Element, bool)
-	where interfaces.Iterable(S) {
-	iterator := source.iter();
-	return iterator.next();
-}
-```
-
-An iterator from a collection borrows that collection, so mutating the collection while iterating is rejected under [Borrows and lifetimes](#borrows-and-lifetimes).
+Generic code refers to the yielded type as `S.Element`. An iterator over a
+collection borrows that collection, so the collection cannot be mutated while
+the iterator is in use; the normal [borrow rules](#borrows-and-lifetimes) apply.
 
 #### Element bindings
 
-**A `foreach` binds exactly the `Element` its iterator yields.** One binding names the whole element. Two or more bindings require an `Element` that is a record with exactly that many directly declared fields, every one of them visible at the loop, and bind them positionally in declaration order. The count must match exactly, and promoted members of an embedded record are not flattened — the same rule [positional construction](#struct-literals) follows. Any binding may be `_`.
+One `foreach` binding receives the whole `Element`. Two or more bindings
+destructure a record element by declaration order:
 
 ```odin
 foreach (entry in table) {
@@ -2089,24 +2086,52 @@ foreach (key, value in table) {   // `Element` is a two-field record
 }
 ```
 
-This is the language's only destructuring form. Bindings are flat, do not nest, and do not appear outside a `foreach` header. Value bindings are immutable locals. The element is produced whole even when every binding is `_`; destructuring moves its fields into the bindings without a second copy and disposes of the remainder normally.
+For destructuring, the element must be a record with exactly the same number of
+directly declared, visible fields. Bindings are flat and cannot nest; promoted
+fields are not flattened. Any binding may be `_`. This is the language's only
+destructuring form, and it appears only in a `foreach` header. Value bindings are
+immutable locals.
 
-No binding is ever a counter, a key, or an offset supplied by the loop itself. An index, a byte offset, or a key is information the *iterable* carries, and reaches the body as a field of the element an adapter yields.
+The iterator still produces the whole element when fields are ignored.
+Destructuring moves its fields into the bindings without another copy and
+disposes of anything left over normally.
+
+A value loop never invents an index, key, or byte offset. To receive that
+information, use an iterable or adapter whose `Element` contains it.
 
 #### Iteration adapters
 
-An iterable type has one default `Element`/`Iterator` pair; another traversal is an adapter value with its own pair. Two adapters are contributed by the compiler to every `Iterable`, built-in or user-declared:
+Every iterable has one default `Element` and `Iterator`. An adapter selects a
+different traversal and has its own pair. The compiler provides these adapters
+for every iterable:
 
 | Adapter | `Element` |
 | --- | --- |
 | `source.indexed()` | `struct{value: Element, index: int}`, zero-based |
 | `source.reversed()` | the source `Element`, in reverse order |
 
-`indexed()` advances its counter only after a successful `next`, so the index counts the elements actually yielded. It numbers whatever traversal precedes it, and is therefore written last and once: `source.reversed().indexed()` numbers the reversed walk from zero. `reversed()` requires the type to satisfy [`Reverse_Iterable`](#standard-interface-catalogue) by supplying `iter_reverse` with a receiver; applying it to a forward-only iterable is a compile-time error rather than a buffering fallback, because an adapter never allocates. `iter_reverse` returns the type's one `Iterator`, so a traversal needing a different iterator representation is an ordinary adapter with its own `Element`/`Iterator` pair instead. Both preserve the provenance of the iterator they wrap: an adapter over a borrow is a borrow, holding the same whole-loop loan the bare iterable would.
+`indexed()` starts at zero and advances only after `next` succeeds. It numbers
+the traversal before it, so it may appear only once and must be last:
+`source.reversed().indexed()` numbers the reversed traversal from zero.
 
-**An adapter is a header form.** `indexed()`, `reversed()`, and the container views below are recognized in a `foreach` header, where they choose the traversal the loop performs — `source.indexed()` over a built-in sequence is the same index loop the bare form lowers to, with no iterator object built. Their names are therefore reserved in that position: a `foreach` over `x.values()` is the container view, whatever else `x` may declare. Version 1 does not bind an adapter to a variable or pass one to a procedure; a traversal that must travel is a type of its own with its own `Element`/`Iterator` pair.
+`reversed()` requires [`Reverse_Iterable`](#standard-interface-catalogue) and a
+receiver method named `iter_reverse`. A forward-only iterable is rejected;
+reversal never buffers or allocates. `iter_reverse` returns the type's declared
+`Iterator`. A reverse traversal that needs another iterator representation must
+instead be a separate adapter with its own `Element` and `Iterator`.
 
-Built-in containers contribute further views of storage they already hold. None copies or allocates:
+Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps
+the same collection borrowed for the whole loop.
+
+In version 1, adapters and the container views below are `foreach` header forms.
+They cannot be stored in variables or passed to procedures. Their names are
+reserved in a loop header, so `foreach` treats `x.values()` as the container view
+even if `x` declares another member with that name. For built-in containers the
+compiler may lower the selected traversal directly without creating an iterator
+object. A traversal that must be stored or passed is an ordinary user-defined
+iterable type.
+
+Built-in containers also provide these non-copying, non-allocating views:
 
 | Adapter | `Element` |
 | --- | --- |
@@ -2117,15 +2142,33 @@ Built-in containers contribute further views of storage they already hold. None 
 | `text.rune_offsets()` | `struct{value: rune, offset: int}` |
 | `text.bytes()` | `u8` |
 
-A `map[K]V`'s `Element` is therefore its entry record, and every container's first binding is its `Element` with no exceptions. A user type wanting a key/value loop needs nothing special: it returns a two-field record from `next`, and `foreach (key, value in table)` destructures it.
+A map's default `Element` is its `{key, value}` entry. A user type gets the same
+two-binding syntax by returning any visible two-field record from `next`.
 
 #### By-reference iteration
 
-By-reference `foreach` is a built-in-container facility in version 1: mutable fixed arrays, mutable slices, dynamic arrays, and map values support `foreach (&value in collection)`. The `Iterable` protocol has only value-producing `next`; there is no `next_ref` method.
+In version 1, only built-in containers support iteration by reference. Mutable
+fixed arrays, mutable slices, dynamic arrays, and map values allow:
 
-A user collection needing mutable traversal exposes a mutable slice, an indexed `inout` operation, or a method that performs the traversal.
+```odin
+foreach (&value in collection) { ... }
+```
 
-**A place loop is not an element binding.** `foreach (&value, index in sequence)` and `foreach (key, &value in map)` project storage the container already owns; their names are fixed by the container, not read off an `Element` record, and an adapter cannot yield a place. So the place forms keep the loop-supplied `index` and `key` that value loops give up, and this is the one place the two loop shapes read differently. A value loop that wants an index says `sequence.indexed()`; the diagnostic for `foreach (value, index in sequence)` over a non-record element says exactly that.
+These loops project places from the container's storage; they do not call a
+`next_ref` protocol. A user collection instead exposes a mutable slice, an
+indexed `inout` operation, or a method that performs the traversal.
+
+Place loops may also receive information supplied by the container:
+
+```odin
+foreach (&value, index in sequence) { ... }
+foreach (key, &value in map) { ... }
+```
+
+These fixed forms are separate from `Element` destructuring, and adapters cannot
+yield places. A value loop uses `sequence.indexed()` to request an index. If a
+value loop tries `foreach (value, index in sequence)` with a non-record element,
+the diagnostic points to `indexed()`.
 
 ### Compiler semantic hooks
 
@@ -2264,19 +2307,19 @@ destination = move(temporary);
 
 ### Standard customization procedures
 
-The standard library recognizes ordinary overloadable procedures for common behavior:
+Receiver-shaped common behavior is defined canonically as methods. The language reserves a closed set of standard free aliases for the immutable operations in this table:
 
-| Procedure | Purpose |
+| Free alias | Canonical method and purpose |
 | --- | --- |
-| `len(value)` | Number of logical elements or bytes, as defined by the type |
-| `cap(value)` | Current capacity when meaningful |
-| `hash(value, seed: uint) -> uint` | Hashing for maps and sets |
-| `format(value, writer, options)` | Formatting and printing |
-| `compare(left, right)` | Three-way ordering when useful |
-| `iter(self) -> T.Iterator` | Forward iteration using the type's associated iterator |
-| `iter_reverse(self)` | Reverse iteration when the type supplies it |
-| `clone(value, allocator := mem.default_allocator())` | Explicit ownership-recursive copy |
-| `try_clone(value, allocator := mem.default_allocator())` | Fallible ownership-recursive copy |
+| `len(value)` | `value.len()` — number of logical elements or bytes |
+| `cap(value)` | `value.cap()` — current capacity when meaningful |
+| `hash(value, seed)` | `value.hash(seed)` — hashing for maps and sets |
+| `format(value, writer, options)` | `value.format(writer, options)` — formatting and printing |
+| `compare(left, right)` | `left.compare(right)` — three-way ordering when useful |
+| `iter(value)` | `value.iter()` — forward iteration using the associated iterator |
+| `iter_reverse(value)` | `value.iter_reverse()` — reverse iteration when supplied |
+| `clone(value, allocator := mem.default_allocator())` | `value.clone(allocator)` — explicit ownership-recursive copy |
+| `try_clone(value, allocator := mem.default_allocator())` | `value.try_clone(allocator)` — fallible ownership-recursive copy |
 
 **A clone is ownership-recursive, not deep.** It duplicates the storage the
 value *owns*, recursing into owning fields and elements. It does not follow a
@@ -2291,11 +2334,11 @@ ownership does; `string`'s separate byte-copying operation is
 the same rule [assignment](#assignment-statements) follows, because assignment
 of a copyable type is defined in terms of `try_clone`.
 
-These use normal overload groups and are written as free calls — `len(x)`, `hash(key, seed)`, `clone(value)` — which is canonical and always available. For lifecycle-enabled types the compiler contributes free `clone` and `try_clone` overloads forwarding to generated public members; a user customizes their implementation with `hook(copy)`, not by adding an unrelated free clone.
+Each alias performs receiver lookup and resolves to the same declaration as its method spelling; it contributes no independent candidates and cannot disagree with the method. Built-in types receive compiler-defined receiver members for the operations they support. For lifecycle-enabled types the compiler-generated public `clone` and `try_clone` members remain the definition sites; a user customizes their implementation with `hook(copy)`, not by adding an unrelated free clone.
 
-**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible extension block, or a built-in container operation such as `append`, `remove`, `reserve`, or `sort`. Loke does not rewrite `f(x)` as `x.f()`.
+**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible extension block, or a compiler-defined receiver operation. Ordinary `f(x)` remains an ordinary lexical call. Only the closed aliases above perform receiver lookup, and only for immutable receivers; mutators such as `append`, `remove`, `reserve`, and `sort` remain method-only so their implicit receiver borrow cannot hide inside free-call syntax.
 
-A type may declare one of the procedures above as a method:
+A type declares one of these customization operations as a method:
 
 ```odin
 impl Ring_Buffer {
@@ -2303,13 +2346,13 @@ impl Ring_Buffer {
 }
 
 buffer: Ring_Buffer = {};
-n := len(buffer);        // always valid: the overload group
-m := buffer.len();       // also valid: `Ring_Buffer` declared it with `self`
+n := len(buffer);        // standard alias for the method below
+m := buffer.len();       // selects the same declaration
 ```
 
-For built-in containers, `len(x)` and `cap(x)` are free calls (the queries generic code makes on a type parameter, via `(c: T) len(c) -> int`), while mutators such as `x.append(v)` are receiver methods.
+Built-in containers receive compiler-defined `len` and `cap` methods, so their method and free-alias spellings also select one operation. Mutators such as `x.append(v)` are receiver methods and have no free aliases.
 
-`iter` and `iter_reverse` are the two entries the [`Iterable`](#iteration-protocol) requirement states in receiver form, because iteration is a receiver operation like `append` and because every adapter that continues from it — `indexed()`, `entries()`, `bytes()` — is a method. Declaring them still contributes to the overload group, so `iter(x)` also works.
+`iter` and `iter_reverse` are the two entries the [`Iterable`](#iteration-protocol) requirement states in receiver form, because every adapter that continues from them — `indexed()`, `entries()`, `bytes()` — is a method. Their standard free aliases select those methods without creating overload groups.
 
 ### Library numeric types
 
@@ -2350,9 +2393,19 @@ The standard library may offer generic `Complex(T)` and `Quaternion(T)` families
 
 ## Interfaces and polymorphism
 
-### Interfaces and generic operators
+### Interfaces as reusable constraints
 
-An `interface` names a set of compile-time structural requirements. A type satisfies it implicitly when every requirement holds; no `implements` declaration is needed. An interface is compile-time metadata, not a runtime value type; runtime polymorphism is requested explicitly with [`dyn Interface`](#borrowed-dynamic-interface-values).
+An `interface` gives a name to a reusable compile-time predicate over types. An
+application such as `Additive(T)` is a constant `bool`: it is true exactly when
+the substituted requirements hold. It can therefore appear anywhere a
+compile-time Boolean is accepted, including a [`where`](#where-clauses) clause
+or `static_assert`.
+
+Satisfaction is structural. A type satisfies an interface when its operations
+and members meet the requirements; no `implements` declaration is consulted.
+The interface declaration is compile-time metadata rather than a runtime value
+type. Runtime polymorphism is requested explicitly with
+[`dyn Interface`](#borrowed-dynamic-interface-values).
 
 ```odin
 Additive :: interface($T: type) {
@@ -2372,7 +2425,7 @@ sum :: proc(values: []$T) -> T
 
 #### Interface bodies
 
-An interface body is a semicolon-terminated list of requirements ([`Requirement` grammar](grammar.md#interfaces)). A requirement may be preceded by a **binding list** introducing names for values or explicit `inout` places. There are three forms:
+An interface body is a semicolon-terminated list of requirements ([`Requirement` grammar](grammar.md#interfaces)). Every requirement denotes a compile-time proposition, but its written expression need not itself be a Boolean or be executable at compile time. A requirement may be preceded by a **binding list** introducing names for hypothetical values or explicit `inout` places. There are three forms:
 
 - **expression form** — `expr -> Type;`
 - **validity form** — `expr;`
@@ -2392,7 +2445,12 @@ Mutable_Indexable :: interface($T: type, $Element: type) {
 
 Only `inout` is admitted in a binding list. A consuming operation can be required as a named slot with a `move self` receiver, but there is no hypothetical `move` binding, since checking a capability must not consume the evidence used for the remaining requirements.
 
-**Validity form** `expr;` requires only that the expression compiles.
+**Validity form** `expr;` requires only that the expression compiles. It does
+not test the expression's value. In particular, `false;` is a satisfied validity
+requirement because `false` is well-formed. A truth-valued restriction belongs
+in the consuming declaration's `where` clause; giving reusable interfaces their
+own value predicates would require a distinct truth-requirement form rather
+than changing the meaning of existing validity requirements.
 
 An associated constant is an ordinary expression requirement: `T.ZERO -> Element;` asks for a member `ZERO` on `T` whose value converts to `Element`. When the required result is `type`, the member must evaluate to a compile-time type; it is then an **associated type** usable in later requirements and in constrained generic code:
 
@@ -2419,11 +2477,26 @@ Associated types need no separate grammar, since types are compile-time values a
 
 **Named slot form** `slot name: proc(...);` declares a method requirement. Its first parameter must be the receiver `self` in one of the three [receiver modes](#receiver-forms); a pointer parameter merely named `self` is not a receiver. In an interface eligible for runtime use, only immutable `self` and `self: inout Subject` are allowed. After substituting the interface arguments, checking selects one matching inherent or same-package extension method, matching modes, results, and calling convention exactly; default arguments do not participate. A slot is both a static callable requirement and a potential [witness](#runtime-polymorphism) entry, and is available through method syntax in constrained generic code. Slot names must be unique across the interface and everything it composes; witness members are never overload groups.
 
-Method and operator requirements are written as ordinary calls on bound values; lifecycle requirements name the hook (the standard [`Cloneable`](#standard-interface-catalogue) requires the fixed `try_clone` slot). Interfaces compose by naming one another, and an interface application in `where` is a compile-time boolean.
+Method and operator requirements are written as ordinary calls on bound values; lifecycle requirements name the hook (the standard [`Cloneable`](#standard-interface-catalogue) requires the fixed `try_clone` slot). Interfaces compose by naming one another. A bare interface application in an interface body is a composition requirement: the application must evaluate to true, not merely compile. This is the deliberate exception to ordinary validity-form checking.
 
 Requirement checking is non-recursive at the point of use and does not prove requirements about types that do not yet exist. An interface application like `Ordered(T)` is a compile-time predicate; the declaration alone is not a runtime type and cannot be a variable, field, parameter, or result type. `dyn Ordered` is a separate erased type, valid only when the interface is dyn-compatible.
 
-A failed requirement must be reported as the specific interface-body line that did not hold and the concrete type that failed it. A diagnostic reading only "constraint not satisfied" is a defect.
+Evaluating an interface application as an ordinary Boolean may simply produce
+false. When the program positively requires it to hold — as a bare `where`
+bound, a direct `static_assert`, or a conversion to `dyn Interface` — a failure
+must report the concrete application and the specific interface-body line that
+did not hold. A diagnostic reading only "constraint not satisfied" or "static
+assertion failed" is a defect.
+
+Because satisfaction is implicit, declaring a type does not cause it to be
+checked against every interface in scope. A misspelled or incorrectly typed
+operation is diagnosed only when some checked declaration actually requires
+that interface application. An explicit, declaration-site conformance claim
+would be useful for documenting intent and moving that diagnostic next to the
+type, but it is not part of the current language. Adding such a checked claim is
+separate from making interface satisfaction nominal: the former can assert a
+structural fact, while the latter would change which programs satisfy a
+constraint.
 
 #### Standard interface catalogue
 
@@ -2441,7 +2514,7 @@ Ordered :: interface($T: type) {
 
 Hashable :: interface($T: type) {
 	Equatable(T);
-	(value: T, seed: uint) hash(value, seed) -> uint;
+	(value: T, seed: uint) value.hash(seed) -> uint;
 }
 
 Numeric :: interface($T: type) {
@@ -2486,7 +2559,7 @@ Reverse_Iterable :: interface($Self: type) {
 
 Sequence :: interface($Self: type) {
 	Iterable(Self);
-	(value: Self) len(value) -> int;
+	(value: Self) value.len() -> int;
 	(value: Self, index: int) value[index] -> Self.Element;
 }
 
@@ -2505,7 +2578,7 @@ Growable_Sequence :: interface($Self: type) {
 
 `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by copyable owning built-ins and records, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
 
-Formatting stays the `format(value, writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `struct{key: K, value: V}` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
+Formatting stays the `value.format(writer, options)` protocol in `core:fmt`, with its standard free alias. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `struct{key: K, value: V}` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
 
 Built-in satisfaction follows the operations the language already defines:
 
@@ -2519,15 +2592,23 @@ Built-in satisfaction follows the operations the language already defines:
 
 No nominal `implements` list is involved; the catalogue records capability boundaries, not a requirement that every built-in belong to an interface.
 
-#### Choosing between interfaces, `where`, and specialization
+#### Choosing between `where` constraints and specialization
 
-Three mechanisms constrain a generic parameter:
+Two mechanisms determine whether a generic declaration is applicable:
 
-- **`interface`** — what a type *can do*: operators, methods, lifecycle hooks, named members.
-- **[`where` clauses](#where-clauses)** — predicates over *values*, such as `N > 2`. A `where intrinsics.type_is_numeric(E)` is better written as an interface.
-- **[Specialization](#specialization)** — structural shape, written in the parameter type (`values: []$E`, `table: ^Table($Key, $Value)`), to *destructure* a type rather than test it.
+- **[`where` clauses](#where-clauses)** filter an otherwise matched declaration
+  with compile-time Boolean expressions. `N > 2` and `Additive(T)` are the same
+  kind of bound. An interface declaration does not add a third constraint
+  mechanism; it defines a named, reusable Boolean predicate whose failure can
+  identify an individual structural requirement.
+- **[Specialization](#specialization)** matches and destructures structural
+  shape in a parameter type, as in `values: []$E` or
+  `table: ^Table($Key, $Value)`. Because it binds parts and participates in
+  overload specificity, it is not merely another predicate.
 
-A constraint that could be written any of the three ways should be written as an interface, because only an interface gives the per-requirement diagnostic.
+Use an interface when a capability is reused, when constrained code needs its
+members or slots, or when a per-requirement diagnostic is valuable. Use a
+direct `where` expression for a local value relation such as `N > 2`.
 
 ### Runtime polymorphism
 
@@ -2610,14 +2691,14 @@ x: int; // declares an uninitialized `int`; `x` starts dead
 y, z: int; // both variables start dead
 ```
 
-A lexical local without an initializer starts **dead and uninitialized**. Its
+A lexical local variable without an initializer starts **dead and uninitialized**. Its
 declaration reserves storage but does not write a value to that storage. A full
 assignment completes its initialization and makes it live. An explicit
 initializer, including `{}` when the zero value is wanted, makes the variable
 live at its declaration.
 
 An ordinary expression may read, borrow, take the address of, move, or drop a
-local only where the compiler can prove that the local is live on every path to
+local variable only where the compiler can prove that the local is live on every path to
 that expression. Otherwise the use is a compile-time error; ordinary Loke code
 never evaluates an uninitialized value. A dead local may be named only as the
 destination of a full assignment. Field and element assignments do not

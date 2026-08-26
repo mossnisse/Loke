@@ -392,96 +392,15 @@ generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kin
 	return id
 }
 
-// `clone(value)` and `try_clone(value)` are written as free calls, which is
-// canonical and always available, and the compiler contributes free `clone`
-// and `try_clone` overloads that forward to the fixed hooks (design.md
-// "Standard customization procedures"). So this resolves to the very member
-// `value.clone()` would, and rewrites the callee to name it — a free call and a
-// method call on one type are one emitted call, not two entry points that could
-// drift.
+// `clone(value)` and `try_clone(value)` are standard aliases for the generated
+// receiver members (design.md "Standard customization procedures"). This
+// resolves to the very member `value.clone()` would and rewrites the callee to
+// name it — one emitted call, not two entry points that could drift.
 //
 // A user customizes copying with `hook(copy)`; there is deliberately no way to
-// answer this call with an unrelated free procedure.
-check_clone_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, builtin: Builtin_Kind) {
-	name := builtin == .Clone ? "clone" : "try_clone"
-	v.value_category = .Value
-	if len(v.args) < 1 || len(v.args) > 2 {
-		errorf(k.c, v.span, "L0322", "`%s` takes 1 or 2 arguments, found %d", name, len(v.args))
-		v.type = INVALID_TYPE
-		return
-	}
-	for arg in v.args {
-		if arg.mode != .Value {
-			// The subject is borrowed and the allocator is an ordinary value, so
-			// neither slot has a mode to write.
-			errorf(k.c, arg.span, "L0322", "`%s` takes plain arguments", name)
-			v.type = INVALID_TYPE
-			return
-		}
-	}
-	subject := check_single_expr(k, v.args[0].value)
-	if subject == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-
-	// The same lookup a member call performs, so a move-only declaration
-	// reports the type as move-only here too rather than silently missing.
-	ensure_lifecycle_members(k, subject, intern_identifier(k.c, name))
-	chosen := INVALID_SYMBOL
-	if info := underlying_info(k.c, subject); info != nil {
-		chosen = member_named_in(k.c, info.members, intern_identifier(k.c, name))
-	}
-	sym := symbol_of(k.c, chosen)
-	if sym == nil {
-		errorf(
-			k.c,
-			expr_span(v.args[0].value),
-			"L0363",
-			"`%s` has no `%s`: it owns nothing to copy, or it is move-only",
-			type_name(k.c, subject),
-			name,
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-
-	// An omitted allocator is the hook's own default, so `clone(x)` and
-	// `x.clone()` load the program provider at the same point.
-	allocator := default_allocator_arg(k.c)
-	if len(v.args) == 2 {
-		supplied := check_single_expr(k, v.args[1].value, TYPE_ALLOCATOR)
-		if supplied == INVALID_TYPE {
-			v.type = INVALID_TYPE
-			return
-		}
-		if supplied != TYPE_ALLOCATOR {
-			errorf(
-				k.c,
-				expr_span(v.args[1].value),
-				"L0310",
-				"`%s`'s second argument is an `Allocator`, found `%s`",
-				name,
-				type_name(k.c, supplied),
-			)
-			v.type = INVALID_TYPE
-			return
-		}
-		allocator = v.args[1].value
-	}
-
-	bound := make([]Expr, 2, k.c.semantic_allocator)
-	bound[0] = v.args[0].value
-	bound[1] = allocator
-	v.bound = bound
-	annotate_chosen_callee(k, v, chosen)
-	v.resolution = Resolution{kind = .Call, symbol = chosen, chosen_overload = chosen}
-	v.type = sym.results[0]
-	// `try_clone` is `(T, Allocator_Error)`; `clone` applies the failure policy
-	// and yields the value alone.
-	if len(sym.results) > 1 {
-		v.result_types = sym.results
-	}
+// answer the alias with an unrelated free procedure.
+check_clone_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, expected: Type_Id) {
+	check_standard_alias(k, v, ident, expected)
 }
 
 // The call expression the compiler supplies for an omitted hook allocator. One

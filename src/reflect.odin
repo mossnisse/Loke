@@ -470,7 +470,7 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate,
 	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash, .Type_Of, .Iter,
-	     .Clone, .Try_Clone:
+	     .Clone, .Try_Clone, .Standard_Alias:
 		unreachable()
 	}
 }

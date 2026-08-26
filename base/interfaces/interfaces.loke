@@ -1,9 +1,10 @@
 // The standard interface catalogue (design.md "Standard interface catalogue").
 //
 // These are ordinary Loke declarations, not compiler predicates. The compiler's
-// contribution is to make built-in operations and associated members visible to
-// the same structural checks a user type goes through — `hash` for the built-in
-// `Hashable` types, and the iteration members for ranges and fixed arrays.
+// contribution is to make built-in receiver operations and associated members
+// visible to the same structural checks a user type goes through — `hash` for
+// the built-in `Hashable` types, and the iteration members for ranges and fixed
+// arrays. Standard free spellings resolve to these same receiver members.
 //
 @(public)
 package interfaces;
@@ -19,7 +20,7 @@ Ordered :: interface($T: type) {
 
 Hashable :: interface($T: type) {
 	Equatable(T);
-	(value: T, seed: uint) hash(value, seed) -> uint;
+	(value: T, seed: uint) value.hash(seed) -> uint;
 }
 
 Numeric :: interface($T: type) {
@@ -70,7 +71,7 @@ Reverse_Iterable :: interface($Self: type) {
 
 Sequence :: interface($Self: type) {
 	Iterable(Self);
-	(value: Self) len(value) -> int;
+	(value: Self) value.len() -> int;
 	(value: Self, index: int) value[index] -> Self.Element;
 }
 

@@ -42,6 +42,11 @@ ITER_MAP_CURSOR :: 1
 // shape (the same seam `delegate` uses for its forwarding overloads).
 Synth_Kind :: enum {
 	None,
+	// Compiler-owned canonical receiver methods for the built-in `len`, `cap`,
+	// and `hash` operations. Their free spellings resolve to these same symbols.
+	Standard_Len,
+	Standard_Cap,
+	Standard_Hash,
 	Range_Iter,
 	Range_Iter_Reverse,
 	Range_Next,
@@ -395,44 +400,11 @@ synth_proc :: proc(
 
 // ---------------------------------------------------------- the `iter` call --
 
-// The compiler contributes the `iter` overload (design.md). A user type
-// declares `iter` as an ordinary `impl` member, and this is what makes the free
-// call in the `Iterable` requirement — and in generic code — find it.
-check_iter_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
-	v.value_category = .Value
-	if len(v.args) != 1 {
-		errorf(k.c, v.span, "L0322", "`iter` takes 1 argument, found %d", len(v.args))
-		v.type = INVALID_TYPE
-		return
-	}
-	subject := check_single_expr(k, v.args[0].value)
-	if subject == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	ensure_iteration_members(k, subject)
-	chosen := iteration_member(k, subject, "iter")
-	sym := symbol_of(k.c, chosen)
-	iterator := associated_type_of(k, subject, "Iterator")
-	if iterator == INVALID_TYPE || !iteration_proc_matches(k, sym, subject, .Value, []Type_Id{iterator}) {
-		errorf(
-			k.c,
-			expr_span(v.args[0].value),
-			"L0456",
-			"`%s` is not iterable: it needs associated `Element` and `Iterator` members and an `iter` procedure",
-			type_name(k.c, subject),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = v.args[0].value
-	v.bound = bound
-	// Rewrite the callee to name the selected procedure, so every later phase —
-	// the backend included — sees an ordinary direct call.
-	annotate_chosen_callee(k, v, chosen)
-	v.resolution = Resolution{kind = .Call, symbol = chosen, chosen_overload = chosen}
-	v.type = sym.results[0]
+// `iter(source)` is the closed standard alias for `source.iter()`. Protocol
+// validation belongs to `Iterable`/`foreach`; a direct alias call performs the
+// same overload selection as direct method syntax and rewrites to that member.
+check_iter_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, expected: Type_Id) {
+	check_standard_alias(k, v, ident, expected)
 }
 
 @(private = "file")

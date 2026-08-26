@@ -1,0 +1,71 @@
+// Canonical receiver members and the closed standard free-alias set.
+//
+// `value.f(args)` is the definition-site operation. A standard free spelling
+// such as `len(value)` or `hash(value, seed)` resolves to that same member; it
+// never forms an independent overload group. Ordinary free procedures keep
+// ordinary lexical lookup, and mutating methods are deliberately absent from
+// this alias set so their receiver remains visibly method syntax.
+package lokec
+
+// Built-in operations must satisfy the same receiver-form interface
+// requirements as user types. Install their canonical `len`, `cap`, and `hash`
+// members lazily, alongside the existing iteration and lifecycle contributors.
+ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
+	under := type_underlying(k.c, type)
+	info := type_of(k.c, under)
+	if info == nil || .Standard_Customization in info.contributed {
+		return
+	}
+	info.contributed += {.Standard_Customization}
+
+	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
+	if standard_len_type(k.c, under) {
+		append(&members, standard_receiver_member(k.c, "len", .Standard_Len, under, []Type_Id{under}, []Type_Id{TYPE_INT}))
+	}
+	if type_is_container(k.c, under) {
+		append(&members, standard_receiver_member(k.c, "cap", .Standard_Cap, under, []Type_Id{under}, []Type_Id{TYPE_INT}))
+	}
+	if standard_hash_type(k.c, under) {
+		append(&members, standard_receiver_member(
+			k.c, "hash", .Standard_Hash, under,
+			[]Type_Id{under, TYPE_UINT}, []Type_Id{TYPE_UINT},
+		))
+	}
+	add_members(k.c, under, members[:])
+}
+
+@(private = "file")
+standard_len_type :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	#partial switch underlying_kind(c, type) {
+	case .Array, .Slice, .Dynamic_Array, .Map, .String, .String_View:
+		return true
+	}
+	return false
+}
+
+@(private = "file")
+standard_hash_type :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	// Untyped constants materialize before a free `hash` call and have no stable
+	// receiver type on which a method could live.
+	if type_is_untyped(c, type) {
+		return false
+	}
+	return type_is_hashable(c, type)
+}
+
+@(private = "file")
+standard_receiver_member :: proc(
+	c: ^Compiler,
+	name: string,
+	kind: Synth_Kind,
+	owner: Type_Id,
+	params, results: []Type_Id,
+) -> Symbol_Id {
+	modes := make([]Param_Mode, len(params), c.semantic_allocator)
+	id := synth_proc(c, name, kind, owner, params, modes, results)
+	if sym := symbol_of(c, id); sym != nil {
+		sym.has_receiver = true
+		sym.receiver = .Value
+	}
+	return id
+}

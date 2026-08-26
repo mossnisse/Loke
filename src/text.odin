@@ -324,7 +324,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
-	     .Clone, .Try_Clone,
+	     .Clone, .Try_Clone, .Standard_Alias,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any, .Strings_Allocate:
 		v.type = INVALID_TYPE
 

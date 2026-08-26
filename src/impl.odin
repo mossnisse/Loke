@@ -296,6 +296,10 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 // inherent members, plus the extensions the lookup package declares. Groups are
 // expanded, so the overload engine sees one flat candidate set.
 member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+	// Built-in query and hashing operations are real receiver members. The
+	// standard free spellings select these same symbols rather than maintaining a
+	// second overload group.
+	ensure_standard_customization_members(k, type)
 	// A built-in iterable's associated members and `iter` are contributed on
 	// demand, so interface checking and generic code see exactly what a user type
 	// declares by hand (design.md "Iteration protocol").
@@ -377,6 +381,7 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 // One named member, without expanding a group: what an associated constant, an
 // associated type, or a directly named procedure resolves to.
 find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	ensure_standard_customization_members(k, type)
 	ensure_iteration_members(k, type)
 	ensure_lifecycle_members(k, type, name)
 	ensure_container_members(k, type)

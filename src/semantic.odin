@@ -130,6 +130,9 @@ Type_Kind :: enum {
 Contribution :: enum u8 {
 	Iteration,
 	Lifecycle,
+	// The compiler-owned receiver members behind the closed standard free-alias
+	// set: `len`, `cap`, and `hash` on the built-in types that provide them.
+	Standard_Customization,
 	// design.md "Dynamic arrays" and "Maps": the operation set the compiler
 	// contributes to a container type, so `xs.append(1)` is an ordinary method
 	// call and generic code finds the same members (m6b-plan step 2).
@@ -507,13 +510,16 @@ Builtin_Kind :: enum {
 	Typeid_Of,
 	Fields_Of,
 	Enum_Values_Of,
-	// design.md "Iteration protocol": `iter` is a receiver method which also
-	// contributes to the free overload group, for built-ins and user types alike.
+	// design.md "Iteration protocol": `iter` is a receiver method whose standard
+	// free alias selects the same member, for built-ins and user types alike.
 	Iter,
-	// `clone(value)` and `try_clone(value)` are written as free calls, which is
-	// the canonical, always-available form (design.md "Standard customization
-	// procedures"). Both forward to the type's own fixed hook, so the free
-	// call and `value.clone()` select one procedure.
+	// Closed standard aliases whose implementation is always a receiver method.
+	// Unlike an ordinary free procedure, these symbols contribute no overloads
+	// of their own: the checker rewrites the call to the selected member.
+	Standard_Alias,
+	// `clone(value)` and `try_clone(value)` are standard free aliases for the
+	// type's generated receiver members (design.md "Standard customization
+	// procedures"). Both spellings select one procedure.
 	Clone,
 	Try_Clone,
 	// design.md "Allocators" and "Allocation failure". The explicitly fallible

@@ -16,6 +16,6 @@ L0444
 L0443
 @28:16
 takes 1 argument, found 2
-L0445
+L0363
 @30:23
-no compiler-supplied `hash`
+has no immutable `hash` method for the standard free alias

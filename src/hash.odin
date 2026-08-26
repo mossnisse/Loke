@@ -3,8 +3,8 @@
 // design.md's standard catalogue promises that booleans, integers, floats,
 // runes, pointers, enums, `typeid`, and recursively hashable fixed arrays
 // satisfy `Hashable`. `Hashable` is ordinary Loke source with an ordinary
-// `hash(value, seed) -> uint` requirement, so the compiler has to supply an
-// operation for those types rather than special-casing the interface.
+// `value.hash(seed) -> uint` requirement, so the compiler has to supply a
+// receiver member for those types rather than special-casing the interface.
 //
 // The mix is 64-bit FNV-1a's step, applied once per scalar and folded over an
 // aggregate's elements. It is not a cryptographic hash and makes no stability
@@ -42,7 +42,7 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return false
 }
 
-// A map key needs a coherent `==` and `hash(value, seed: uint) -> uint`; for
+// A map key needs a coherent `==` and `value.hash(seed: uint) -> uint`; for
 // a user-defined key, both must be inherent implementations belonging to the
 // key type, since a caller-local extension doesn't qualify even when an
 // ordinary interface check in that extension's package would pass
@@ -72,7 +72,7 @@ map_key_policy :: proc(k: ^Checker, key: Type_Id) -> Key_Policy {
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
 		return Key_Policy{
 			hash = INVALID_SYMBOL, equal = INVALID_SYMBOL,
-			reason = "needs an inherent `==` and `hash(value, seed: uint) -> uint` pair in its own package",
+			reason = "needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package",
 		}
 	}
 	if hash == INVALID_SYMBOL {
@@ -120,14 +120,13 @@ inherent_operator_named :: proc(k: ^Checker, type: Type_Id, symbol_text: string)
 
 // ------------------------------------------------------------- checking --
 
-check_hash_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+check_hash_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, expected: Type_Id) {
 	v.value_category = .Value
 	if len(v.args) != 2 {
 		errorf(k.c, v.span, "L0322", "`hash` takes 2 arguments, found %d", len(v.args))
 		v.type = INVALID_TYPE
 		return
 	}
-	bound := make([]Expr, 2, k.c.semantic_allocator)
 	value_type := check_single_expr(k, v.args[0].value)
 	if value_type == INVALID_TYPE {
 		v.type = INVALID_TYPE
@@ -142,25 +141,10 @@ check_hash_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 			return
 		}
 	}
-	if !type_is_hashable(k.c, value_type) {
-		errorf(
-			k.c,
-			expr_span(v.args[0].value),
-			"L0445",
-			"`%s` has no compiler-supplied `hash`; a record or union needs its own coherent equality and hash pair",
-			type_name(k.c, value_type),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	bound[0] = v.args[0].value
-	bound[1] = v.args[1].value
-	if !check_value_expr(k, v.args[1].value, TYPE_UINT, "pass") {
-		v.type = INVALID_TYPE
-		return
-	}
-	v.bound = bound
-	v.type = TYPE_UINT
+	// The built-in types own compiler-contributed `hash` methods; records and
+	// unions use the method in their inherent `impl`. The free spelling selects
+	// that one member in both cases.
+	check_standard_alias(k, v, ident, expected, receiver_checked = true)
 }
 
 // --------------------------------------------------------- compile time --

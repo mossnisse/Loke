@@ -2,14 +2,15 @@
 // decision "Coherent formatting").
 //
 // design.md makes formatting a library protocol: a value type provides a
-// `format(value, writer, options)` procedure. What the compiler owns is the
+// `value.format(writer, options)` method, and the standard free spelling aliases
+// it. What the compiler owns is the
 // *erased* half. `fmt.println(a, b, c)` receives `..any_view`, and an
 // `any_view` carries only a pointer and a `typeid` — so a callee cannot recover
 // a call-site-specific visible overload. Runtime formatting therefore has one
 // formatter per concrete `typeid`:
 //
 //   - a built-in type gets a compiler-generated formatter;
-//   - a user type gets its own `format` when that `format` is declared in the
+//   - a user type gets its own `format` when that method is declared in the
 //     type's owning package, and a compiler-generated field-wise one otherwise;
 //   - a caller-local extension's `format` stays callable explicitly and never
 //     changes what `print` does.
@@ -132,7 +133,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Strings_Allocate,
-	     .Clone, .Try_Clone:
+	     .Clone, .Try_Clone, .Standard_Alias:
 		v.type = INVALID_TYPE
 		return
 	}

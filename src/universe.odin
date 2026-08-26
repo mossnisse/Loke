@@ -155,9 +155,22 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// free call in the `Iterable` requirement resolves for both.
 	define(c, universe, "iter", Symbol{kind = .Builtin, builtin = .Iter, type = TYPE_VOID, proc_type = no_args})
 
-	// design.md "Standard customization procedures": the free-call spelling of the
-	// two copy entry points, forwarding to whichever hook the subject's type owns.
-	// Their result types come from that hook, so the interned type carries none.
+	// Receiver-shaped standard customization operations have one definition site:
+	// the method. These predeclared names are closed aliases which the checker
+	// rewrites to that method; they are not a parallel free overload group.
+	standard_aliases := []string{"iter_reverse", "format", "compare"}
+	for name in standard_aliases {
+		define(c, universe, name, Symbol {
+			kind      = .Builtin,
+			builtin   = .Standard_Alias,
+			type      = TYPE_VOID,
+			proc_type = no_args,
+		})
+	}
+
+	// design.md "Standard customization procedures": the standard aliases for the
+	// two generated copy members. Their result types follow the receiver type, so
+	// the interned type carries none.
 	copies := []struct{name: string, kind: Builtin_Kind} {
 		{"clone", .Clone},
 		{"try_clone", .Try_Clone},
@@ -220,9 +233,9 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// `check_exchange_builtin` settles both.
 	define(c, universe, "exchange", Symbol{kind = .Builtin, builtin = .Exchange, type = TYPE_VOID, proc_type = no_args})
 
-	// design.md: `hash(value, seed: uint) -> uint` over the built-in types the
-	// standard catalogue promises satisfy `Hashable`. Its operand types are
-	// checked by `check_builtin_call`, so the interned type carries none.
+	// The standard free `hash(value, seed)` alias for the canonical receiver
+	// method over the built-in types promised by `Hashable`. Its operand types
+	// are checked by `check_builtin_call`, so the interned type carries none.
 	define(c, universe, "hash", Symbol {
 		kind      = .Builtin,
 		builtin   = .Hash,

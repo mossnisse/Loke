@@ -2023,7 +2023,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	if ident, is_ident := v.callee.(^Expr_Ident); is_ident {
 		symbol_id := lookup_symbol(k.scope, identifier_of(k.c, ident))
 		if sym := symbol_of(k.c, symbol_id); sym != nil && sym.kind == .Builtin {
-			check_builtin_call(k, v, ident, symbol_id)
+			check_builtin_call(k, v, ident, symbol_id, expected)
 			return
 		}
 	}
@@ -2032,7 +2032,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	// symbol, so it collapses to the identical call rather than to a wrapper
 	// (m6a-plan decision "Compiler-owned names").
 	if symbol_id := callee_package_builtin(k, v.callee); symbol_id != INVALID_SYMBOL {
-		check_builtin_call(k, v, qualify_builtin_callee(k, v), symbol_id)
+		check_builtin_call(k, v, qualify_builtin_callee(k, v), symbol_id, expected)
 		return
 	}
 
@@ -2406,6 +2406,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = chosen.results[0]
 		v.result_types = chosen.results
 	}
+	fold_standard_customization_call(k, v, chosen)
 }
 
 @(private = "file")
@@ -2462,6 +2463,22 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 	}
 }
 
+// A fixed array's length is a property of its type and does not evaluate the
+// receiver. Preserve that rule through both the method and free-alias spellings
+// even though both now resolve to a real compiler-contributed member.
+@(private = "file")
+fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
+	if chosen == nil || chosen.synth != .Standard_Len || len(chosen.params) == 0 {
+		return
+	}
+	info := underlying_info(k.c, chosen.params[0])
+	if info == nil || info.kind != .Array {
+		return
+	}
+	v.is_const = true
+	v.const_value = int_const(k.c, i64(info.count))
+}
+
 // Rewrites the callee to name the selected overload, so every later phase — the
 // backend included — sees an ordinary call to one procedure.
 annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
@@ -2478,7 +2495,7 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 }
 
 @(private = "file")
-check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbol_id: Symbol_Id) {
+check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbol_id: Symbol_Id, expected: Type_Id) {
 	sym := symbol_of(k.c, symbol_id)
 	ident.symbol = symbol_id
 	ident.resolution = Resolution{kind = .Value, symbol = symbol_id}
@@ -2504,19 +2521,22 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_caller_location(k, v, ident)
 		return
 	case .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap:
-		check_layout_builtin(k, v, ident, sym.builtin)
+		check_layout_builtin(k, v, ident, sym.builtin, expected)
 		return
 	case .Hash:
-		check_hash_builtin(k, v, ident)
+		check_hash_builtin(k, v, ident, expected)
 		return
 	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
 		return
 	case .Iter:
-		check_iter_builtin(k, v, ident)
+		check_iter_builtin(k, v, ident, expected)
+		return
+	case .Standard_Alias:
+		check_standard_alias(k, v, ident, expected)
 		return
 	case .Clone, .Try_Clone:
-		check_clone_builtin(k, v, ident, sym.builtin)
+		check_clone_builtin(k, v, ident, expected)
 		return
 	case .Make:
 		check_make_builtin(k, v, ident)
@@ -2582,6 +2602,101 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	}
 	v.bound = bound
 	v.type = sym.type
+}
+
+// A closed standard free alias such as `format(value, writer, options)` selects
+// exactly the receiver method that `value.format(writer, options)` selects. The
+// alias owns no candidates, and only immutable receivers qualify: mutating and
+// consuming operations remain method-only so ordinary call-site mode markers do
+// not disappear.
+//
+// `receiver_checked` is used by `len`/`cap`/`hash`, whose built-in path must
+// inspect the receiver before it knows whether to fall back to its method.
+check_standard_alias :: proc(
+	k: ^Checker,
+	v: ^Expr_Call,
+	ident: ^Expr_Ident,
+	expected := INVALID_TYPE,
+	receiver_checked := false,
+) {
+	v.value_category = .Value
+	if len(v.args) == 0 {
+		errorf(k.c, v.span, "L0322", "`%s` needs a receiver argument", ident.name)
+		v.type = INVALID_TYPE
+		return
+	}
+	first := v.args[0]
+	if first.name.text != "" || first.mode != .Value {
+		errorf(k.c, first.span, "L0322", "`%s`'s receiver is its first plain positional argument", ident.name)
+		v.type = INVALID_TYPE
+		return
+	}
+	if !receiver_checked && check_single_expr(k, first.value) == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	receiver_base := expr_base(first.value)
+	if receiver_base == nil || receiver_base.type == INVALID_TYPE || receiver_base.value_category == .Type {
+		errorf(k.c, expr_span(first.value), "L0322", "`%s` needs a value as its receiver", ident.name)
+		v.type = INVALID_TYPE
+		return
+	}
+
+	args := make([]Arg_Info, len(v.args), k.c.semantic_allocator)
+	args[0] = arg_from_expr(k, first.value)
+	args[0].is_receiver = true
+	if len(v.args) > 1 {
+		tail, ok := collect_call_arguments(k, v.args[1:])
+		if !ok {
+			v.type = INVALID_TYPE
+			return
+		}
+		copy(args[1:], tail)
+	}
+
+	all := method_candidates(k, receiver_base.type, intern_identifier(k.c, ident.name))
+	candidates := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
+	for candidate in all {
+		if sym := symbol_of(k.c, candidate); sym != nil && sym.receiver == .Value {
+			append(&candidates, candidate)
+		}
+	}
+	if len(candidates) == 0 {
+		errorf(
+			k.c, expr_span(first.value), "L0363",
+			"`%s` has no immutable `%s` method for the standard free alias",
+			type_name(k.c, receiver_base.type), ident.name,
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+
+	description := concat(k.c, "standard alias `", concat(k.c, ident.name, "`"))
+	cand, resolved := resolve_overload(k, v.span, description, candidates[:], args, expected)
+	if !resolved {
+		v.type = INVALID_TYPE
+		return
+	}
+	if reject_direct_hook_call(k, v.span, cand.symbol) {
+		v.type = INVALID_TYPE
+		return
+	}
+	annotate_chosen_callee(k, v, cand.symbol)
+	if !bind_chosen_call(k, v, cand, args) {
+		v.type = INVALID_TYPE
+		return
+	}
+	chosen := symbol_of(k.c, cand.symbol)
+	switch len(chosen.results) {
+	case 0:
+		v.type = TYPE_VOID
+	case 1:
+		v.type = chosen.results[0]
+	case:
+		v.type = chosen.results[0]
+		v.result_types = chosen.results
+	}
+	fold_standard_customization_call(k, v, chosen)
 }
 
 // A built-in takes positional value arguments and nothing else: it has no
@@ -2750,7 +2865,7 @@ const_kind_name :: proc(kind: Const_Kind) -> string {
 // operand is resolved and type-checked, never read, and never required to be
 // live (m3-plan decision "Unevaluated layout operands").
 @(private = "file")
-check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
+check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind, expected: Type_Id) {
 	v.type = TYPE_INT
 	arity := kind == .Offset_Of ? 2 : 1
 	if len(v.args) != arity {
@@ -2783,43 +2898,6 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = INVALID_TYPE
 		return
 	}
-	// A slice's length is a runtime value (design.md "Slices"), so this one does
-	// not fold — it reads the slice's second word.
-	if kind == .Len && type_is_slice(k.c, operand) {
-		bound := make([]Expr, 1, k.c.semantic_allocator)
-		bound[0] = v.args[0].value
-		v.bound = bound
-		v.type = TYPE_INT
-		return
-	}
-	// design.md "Dynamic arrays" and "Maps": `len` and `cap` are O(1) reads of the
-	// container header's own words, so neither folds.
-	if (kind == .Len || kind == .Cap) && type_is_container(k.c, operand) {
-		bound := make([]Expr, 1, k.c.semantic_allocator)
-		bound[0] = v.args[0].value
-		v.bound = bound
-		v.type = TYPE_INT
-		return
-	}
-	if kind == .Cap {
-		errorf(
-			k.c, v.span, "L0386",
-			"`cap` needs a `[dynamic]T` or a `map[K]V`, found `%s`", type_name(k.c, operand),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	// `len(text)` is shorthand for `text.byte_len()`, kept a constant-time
-	// operation (design.md).
-	if kind == .Len && type_is_utf8_text(k.c, operand) {
-		bound := make([]Expr, 1, k.c.semantic_allocator)
-		bound[0] = v.args[0].value
-		v.bound = bound
-		v.text = .Byte_Len
-		v.resolution = Resolution{kind = .Builtin_Operator}
-		v.type = TYPE_INT
-		return
-	}
 	// A compile-time string has a length but no runtime type to gate, so it is
 	// answered before the type is inspected.
 	if kind == .Len && operand == TYPE_UNTYPED_STRING {
@@ -2831,6 +2909,13 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		}
 		v.is_const = true
 		v.const_value = int_const(k.c, i64(len(base.const_value.text)))
+		return
+	}
+	// `len` and `cap` are standard aliases once their receiver is a runtime type.
+	// Built-in carriers own compiler-contributed methods; user types own the
+	// method they declared. Both spellings therefore select one symbol.
+	if kind == .Len || kind == .Cap {
+		check_standard_alias(k, v, ident, expected, receiver_checked = true)
 		return
 	}
 	if !gate_type(k, operand, expr_span(v.args[0].value)) {
@@ -2845,13 +2930,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Align_Of:
 		result = type_align(k.c, operand)
 	case .Len:
-		info := underlying_info(k.c, operand)
-		if info == nil || info.kind != .Array {
-			errorf(k.c, v.span, "L0386", "`len` needs a fixed array, found `%s`", type_name(k.c, operand))
-			v.type = INVALID_TYPE
-			return
-		}
-		result = info.count
+		return // handled by the canonical receiver method above
 	case .Offset_Of:
 		// The second operand is a member name, not a lexical value expression:
 		// resolving it as one would find an unrelated variable of the same name.
@@ -2879,7 +2958,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	     .Cap, .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter,
+	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter, .Standard_Alias,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Clone, .Try_Clone:
 		return
 	}
@@ -3039,7 +3118,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .Clone, .Try_Clone:
+	     .Strings_Allocate, .Clone, .Try_Clone, .Standard_Alias:
 		return
 	}
 

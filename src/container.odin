@@ -308,7 +308,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 }
 
 // Any type can be a map key if it satisfies `interfaces.Hashable` with a
-// coherent `==` and `hash(value, seed: uint) -> uint` (design.md "Maps"), and
+// coherent `==` and `value.hash(seed: uint) -> uint` (design.md "Maps"), and
 // a user key's pair must be inherent. Checked where the map type is named
 // rather than at each operation, so one map reports once.
 require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {

@@ -6320,7 +6320,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		case .Free_All:
 			emit_region_reset(e, v)
 			return "0"
-		case .None, .Size_Of, .Align_Of, .Offset_Of,
+		case .None, .Size_Of, .Align_Of, .Offset_Of, .Standard_Alias,
 		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here
@@ -8642,6 +8642,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		e.terminated = false
 		name := e.names[symbol_id]
 		switch symbol.synth {
+		case .Standard_Len, .Standard_Cap, .Standard_Hash:
+			emit_synth_standard_customization(e, symbol, name)
 		case .Range_Iter, .Range_Iter_Reverse,
 		     .Array_Iter, .Array_Iter_Reverse,
 		     .Dynamic_Iter, .Dynamic_Iter_Reverse, .Map_Iter:
@@ -8668,6 +8670,46 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		}
 		fmt.sbprintln(&e.b, "")
 	}
+}
+
+@(private = "file")
+emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	result := llvm_type(e, symbol.results[0])
+	fmt.sbprintf(&e.b, "define %s %s(", result, name)
+	for parameter, index in symbol.params {
+		if index > 0 { fmt.sbprint(&e.b, ", ") }
+		fmt.sbprintf(&e.b, "%s %%arg%d", llvm_type(e, parameter), index)
+	}
+	fmt.sbprintln(&e.b, ") {")
+	fmt.sbprintln(&e.b, "entry:")
+
+	#partial switch symbol.synth {
+	case .Standard_Len:
+		info := underlying_info(e.c, symbol.params[0])
+		if info.kind == .Array {
+			fmt.sbprintfln(&e.b, "  ret %s %d", result, info.count)
+		} else {
+			field := info.kind == .Dynamic_Array || info.kind == .Map ? CONTAINER_LEN :
+			         info.kind == .String || info.kind == .String_View ? STRING_LEN : SLICE_LEN
+			length := extract(e, llvm_type(e, symbol.params[0]), "%arg0", field)
+			fmt.sbprintfln(&e.b, "  ret %s %s", result, length)
+		}
+
+	case .Standard_Cap:
+		capacity := extract(e, llvm_type(e, symbol.params[0]), "%arg0", CONTAINER_CAP)
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, capacity)
+
+	case .Standard_Hash:
+		mixed := emit_hash_value(e, symbol.params[0], "%arg0", "%arg1")
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, mixed)
+
+	case:
+		backend_fail(e, "unknown standard customization member")
+		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
+	}
+	fmt.sbprintln(&e.b, "}")
 }
 
 @(private = "file")

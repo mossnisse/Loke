@@ -60,10 +60,9 @@ main :: proc() {
 	fmt.println(grid[0][0]);
 	fmt.println(other[0][0]);
 
-	// design.md "Standard customization procedures": the same two operations are
-	// "written as free calls ... which is canonical and always available". A free
-	// call resolves to the very hook the method call does, for a built-in and a
-	// record alike, and takes the same optional allocator.
+	// design.md "Standard customization procedures": the free aliases resolve to
+	// the very members the method calls do, for a built-in and a record alike,
+	// and take the same optional allocator.
 	fmt.println(len(clone(xs)));
 	fmt.println(len(xs.clone()));
 	freed, free_error := try_clone(xs);

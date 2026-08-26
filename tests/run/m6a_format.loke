@@ -1,10 +1,10 @@
 package main;
 
-// design.md "String format printing": formatting is a library protocol over
-// `format(value, writer, options)`, and runtime formatting is coherent per
-// concrete `typeid`. The compiler supplies a formatter for every printable
-// built-in; a package may write one for a type it declares, and that one wins
-// for erased printing too.
+// design.md "String format printing": formatting is a receiver-method protocol.
+// The standard `format(value, writer, options)` spelling aliases that method,
+// and runtime formatting is coherent per concrete `typeid`. The compiler
+// supplies a formatter for every printable built-in; a package may write one
+// for a type it declares, and that one wins for erased printing too.
 
 import "core:fmt";
 import "base:runtime";

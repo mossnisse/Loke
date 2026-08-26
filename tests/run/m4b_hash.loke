@@ -6,7 +6,7 @@ Equatable :: interface($T: type) {
 
 Hashable :: interface($T: type) {
 	Equatable(T);
-	(value: T, seed: uint) hash(value, seed) -> uint;
+	(value: T, seed: uint) value.hash(seed) -> uint;
 }
 
 Colour :: enum { Red, Green }
