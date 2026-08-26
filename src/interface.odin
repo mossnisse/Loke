@@ -1,4 +1,4 @@
-// Interfaces and requirement checking (m4b-plan step 2).
+// Interfaces and requirement checking.
 //
 // An interface is compile-time metadata: a list of structural requirements over
 // its generic parameters. A type satisfies it implicitly, and an application
@@ -44,7 +44,7 @@ Interface_Info :: struct {
 	type:      Type_Id,
 	checked:   bool,
 	// Dyn compatibility is a property of the declaration, so it is computed once
-	// and carries the rule that disqualified it (m4b-plan step 5).
+	// and carries the rule that disqualified it.
 	dyn_computed: bool,
 	dyn_ok:       bool,
 	dyn_reason:   string,

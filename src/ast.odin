@@ -19,9 +19,9 @@ Expr_Base :: struct {
 	is_const:      bool,
 	resolution:    Resolution,
 	value_category: Value_Category,
-	// Independent place facts (m2-plan decision "Place model"). A value
-	// parameter is addressable and not assignable; a composite literal is
-	// addressable temporary storage; `_` is neither. One bit cannot say that.
+	// Independent place facts. A value parameter is addressable and not
+	// assignable; a composite literal is addressable temporary storage; `_`
+	// is neither. One bit cannot say that.
 	addressable:  bool,
 	assignable:   bool,
 	immutable:    Immutable_Reason,
@@ -184,8 +184,7 @@ Reflect_Op :: enum {
 
 // design.md "string type" and "string type conversions": the operations a text
 // carrier answers to. They are compiler-defined rather than library members
-// because their operand types are built in and their results follow the carrier
-// (m6a-plan step 4).
+// because their operand types are built in and their results follow the carrier.
 Text_Op :: enum {
 	None,
 	Byte_Len,   // O(1), and what `len(text)` is shorthand for
@@ -251,7 +250,7 @@ Expr_Call :: struct {
 	is_dyn_call:   bool,
 	// `new(T)` / `new_clone(value)`: the allocated element type. The backend
 	// needs its size, and the checker records it so the pointee is not
-	// re-derived from the result type (m5a-plan step 3).
+	// re-derived from the result type.
 	alloc_type:    Type_Id,
 }
 
@@ -333,10 +332,10 @@ Expr_Composite :: struct {
 	// literal's own `type` is the slice; this is the `[N]T` the backend gives
 	// storage and then slices. INVALID_TYPE for every other literal.
 	backing:    Type_Id,
-	// m6b-plan decision "Allocator binding": "A container literal initializing or
-	// replacing a known destination constructs directly with that destination's
-	// selected allocator rather than allocating a default-backed temporary
-	// first." This is that destination's written `via`, or nil.
+	// Allocator binding: "A container literal initializing or replacing a
+	// known destination constructs directly with that destination's selected
+	// allocator rather than allocating a default-backed temporary first."
+	// This is that destination's written `via`, or nil.
 	via:        Expr,
 }
 
@@ -720,7 +719,7 @@ Stmt_Assign :: struct {
 	// design.md "Assignment statements": assigning a managed owner deep-copies,
 	// and the destination's previous value is dropped once the clone succeeded.
 	// One entry per right side, and the destination's liveness at this statement,
-	// filled by `src/lifecycle.odin` (m5a-plan step 4).
+	// filled by `src/lifecycle.odin`.
 	rhs_clones:       []bool,
 	destination_live: []Liveness,
 	// A user compound assignment: either a direct `+=` overload, or the binary
@@ -819,8 +818,7 @@ Stmt_Foreach :: struct {
 }
 
 // Structural source selection, not a constant `if`: only the selected branch is
-// declared, checked, and emitted, and it introduces no scope of its own
-// (m3-plan decision "Selected source representation").
+// declared, checked, and emitted, and it introduces no scope of its own.
 Stmt_When :: struct {
 	using base: Node_Base,
 	cond:       Expr,
@@ -875,7 +873,7 @@ Return_Value :: struct {
 	// Returning a borrowed managed parameter by value clones it, since the callee
 	// owns nothing it could move out (design.md "Parameter semantics"). Returning
 	// an owned local, named result, temporary, or `move` parameter transfers
-	// instead (m5a-plan step 4).
+	// instead.
 	clone_on_return: bool,
 }
 
@@ -975,7 +973,7 @@ Decl :: struct {
 	top_level:     bool,
 	// Signature resolution and body checking have separate readiness states: the
 	// compile-time evaluator may need a procedure's body before the phase that
-	// would ordinarily check it (m3-plan decision "Evaluation readiness").
+	// would ordinarily check it.
 	sig_state:     Check_State,
 	check_state:   Check_State,
 }
@@ -1152,8 +1150,8 @@ File :: struct {
 	items:        []Item,
 	// The compilation-owned selected view: `items` with every selected `when`
 	// branch and every `Item_Block` flattened in place, in original source order.
-	// Every semantic consumer iterates this, never `items` (m3-plan decision
-	// "Selected source representation"). `-dump-ast` still prints `items`.
+	// Every semantic consumer iterates this, never `items`. `-dump-ast` still
+	// prints `items`.
 	active_items: []Item,
 }
 

@@ -1,5 +1,4 @@
-// A disposable per-procedure control-flow view (m5a-plan decision "Analysis
-// placement").
+// A disposable per-procedure control-flow view.
 //
 // Blocks reference the typed AST rather than replacing it: this is a lightweight
 // analysis view, not MIR: the backend receives annotated AST, and a real MIR is
@@ -24,7 +23,7 @@ Block_Id :: distinct int
 // the provenance modes rebuild the same block topology read-only, so replaying
 // copy classification, copy-cost reports, lifecycle-member contribution, cleanup
 // slots or annotation writes cannot duplicate a diagnostic or disturb a settled
-// annotation (m5b-plan decision "CFG purity").
+// annotation.
 Flow_Mode :: enum u8 {
 	Lifecycle,
 	Prov_Summary,
@@ -44,7 +43,7 @@ Flow_Event_Kind :: enum {
 	// ask which owners were definitely dead at it. An explicitly dropped manual
 	// owner no longer blocks a reset (design.md). The two passes run over
 	// separate graphs, so the answer is recorded against the call node both of
-	// them walk (m6b-plan step 5).
+	// them walk.
 	Reset_Point,
 }
 
@@ -90,8 +89,7 @@ Flow_Block :: struct {
 
 // The event vocabulary the root and region lattices read. It is deliberately
 // separate from the lifecycle events above: the two analyses share the block
-// topology and the source order, not the facts they record (m5b-plan decision
-// "One provenance event stream").
+// topology and the source order, not the facts they record.
 Prov_Kind :: enum u8 {
 	// A carrier slot receives a value: the union of its source slots plus one
 	// freshly created loan.
@@ -243,8 +241,8 @@ Flow_Graph :: struct {
 	provider_parents: map[Symbol_Id]Region_Set,
 	owners_in_scope: [dynamic]Symbol_Id,
 	param_count:     int,
-	// One bit per local `mem.Arena`/`mem.Scratch` in this body (m6b-plan step 5).
-	// The list is what a diagnostic names the region by.
+	// One bit per local `mem.Arena`/`mem.Scratch` in this body. The list is what
+	// a diagnostic names the region by.
 	provider_bits:    map[Symbol_Id]u64,
 	provider_symbols: [dynamic]Symbol_Id,
 	// A body may borrow nothing at all and still reset a region or let an owner

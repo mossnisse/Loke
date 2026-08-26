@@ -1,11 +1,10 @@
-// `impl` blocks, methods, associated members, and semantic hooks
-// (m4a-plan step 2).
+// `impl` blocks, methods, associated members, and semantic hooks.
 //
-// Storage follows the plan's "Method storage" decision: an `impl` block in the
-// subject's own package writes inherent members onto the nominal `Type_Info`,
-// one elsewhere writes into its own package's extension table, and the two are
-// never merged. Extension visibility is package-scoped by design — an unused
-// import must not change or make ambiguous an existing expression.
+// Storage: an `impl` block in the subject's own package writes inherent
+// members onto the nominal `Type_Info`, one elsewhere writes into its own
+// package's extension table, and the two are never merged. Extension
+// visibility is package-scoped by design — an unused import must not change
+// or make ambiguous an existing expression.
 package lokec
 
 import "core:fmt"
@@ -338,7 +337,7 @@ member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
 // fields; importing packages may do so only for public fields (design.md
 // "Exported names"). Ordinary selection, `offset_of`, and both aggregate
 // literal forms route through here so they agree with each other and with
-// reflection (m5a-plan step 1).
+// reflection.
 require_visible_field :: proc(k: ^Checker, span: Span, subject: Type_Id, field: Symbol_Id, code: string, action: string) -> bool {
 	sym := symbol_of(k.c, field)
 	if member_is_visible(k, sym) {

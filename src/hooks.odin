@@ -16,8 +16,8 @@
 // `mem.default_allocator()`, and that default is fixed by the language rather
 // than chosen per type. A custom hook is therefore written with a plain
 // `allocator: Allocator` parameter and the compiler supplies the default at
-// every call site that omits it (m5a-plan step 3). Writing a default on a
-// lifecycle hook is rejected — including the one the design spells.
+// every call site that omits it. Writing a default on a lifecycle hook is
+// rejected — including the one the design spells.
 package lokec
 
 // What a type's lifecycle is, cached per nominal type. Resolved lazily because a
@@ -34,12 +34,12 @@ Lifecycle :: struct {
 	// design.md "string type": a `string` is managed, but its clone and drop are
 	// the runtime's shared-storage retain and release rather than anything a
 	// package could write. There is no hook symbol to find, so the emitter
-	// recognises this flag instead of looking one up (m6a-plan step 4).
+	// recognises this flag instead of looking one up.
 	//
 	// The same is true of `[dynamic]T` and `map[K]V`, whose clone and drop are
-	// the versioned C helpers driven by a generated operation table (m6b-plan
-	// step 1). `container` tells the two apart, because a string's implicit copy
-	// is a retain while a container's is a real deep clone that can fail.
+	// the versioned C helpers driven by a generated operation table. `container`
+	// tells the two apart, because a string's implicit copy is a retain while
+	// a container's is a real deep clone that can fail.
 	intrinsic:        bool,
 	container:        bool,
 	// A local allocator-region provider (`src/region.odin`). Managed, and
@@ -223,7 +223,7 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // never replaces it independently (design.md). Both copy entry points are
 // therefore real members with real emitted bodies, so `value.clone()`,
 // generic code, and the catalogue's `Cloneable` find them exactly where a
-// hand-written hook would be (m5a-plan step 3).
+// hand-written hook would be.
 //
 // The contribution is keyed on the name being looked up rather than running for
 // every member query. `lifecycle_of` caches its answer, so asking before the
@@ -364,7 +364,7 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return true
 	}
 	// A container's clone duplicates its storage, so it allocates and can fail
-	// whatever its element is (m6b-plan decision "Element lifecycle").
+	// whatever its element is.
 	if lifecycle_of(c, type).container {
 		return true
 	}

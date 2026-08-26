@@ -1,4 +1,4 @@
-// Natural target layout (m3-plan step 2, decision "Layout ownership").
+// Natural target layout.
 //
 // One model, cached on `Type_Info`, read by the checker's layout built-ins and
 // by the backend. Target-specific scalar and pointer widths come from
@@ -80,9 +80,9 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		size = 2 * alignment
 
 	case .String:
-		// m6a-plan decision "Runtime string representation": data pointer, byte
-		// length, and the owner flags that tell a static literal from a runtime
-		// buffer and identify that buffer's header.
+		// A runtime string is a data pointer, byte length, and the owner flags
+		// that tell a static literal from a runtime buffer and identify that
+		// buffer's header.
 		alignment = u64(c.target.pointer_bits) / 8
 		size = 3 * alignment
 
@@ -110,9 +110,8 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 
 	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
 		// A slice's two words are ordinary fields, so it lays out here rather than
-		// carrying a second hand-written shape (m5a-plan decision "Slice
-		// representation"). The two container headers are the same idea with four
-		// words (m6b-plan decisions "Dynamic-array value ABI", "Map value ABI").
+		// carrying a second hand-written shape. The two container headers are the
+		// same idea with four words.
 		ensure_slice_fields(c, type)
 		ensure_container_fields(c, type)
 		info = type_of(c, type)

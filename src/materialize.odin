@@ -1,4 +1,4 @@
-// Constant materialization (m5a-plan step 2).
+// Constant materialization.
 //
 // design.md "Materialization": a constant is a value, not a variable, and an
 // ordinary use is substituted with no storage involved. Three uses need storage

@@ -1,5 +1,5 @@
 // Constant-value operations, shared by the checker and the compile-time
-// evaluator (m3-plan decision "Fold ownership").
+// evaluator.
 //
 // Nothing here knows about `Checker`: leaf and operator folding stay in
 // `check_expr.odin`, but the *value* semantics — one operator table, one

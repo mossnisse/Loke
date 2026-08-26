@@ -1,5 +1,4 @@
-// Installation-relative discovery (m6a-plan decision "Runtime language and
-// discovery" and "Package-root precedence").
+// Installation-relative discovery.
 //
 // The seed runtime and the bundled `base`/`core` roots ship beside the
 // compiler, so they are resolved from the canonical `lokec.exe` path rather

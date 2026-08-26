@@ -1,4 +1,4 @@
-// The compiler-contributed `hash` operation (m4b-plan step 2).
+// The compiler-contributed `hash` operation.
 //
 // design.md's standard catalogue promises that booleans, integers, floats,
 // runes, pointers, enums, `typeid`, and recursively hashable fixed arrays
@@ -34,7 +34,7 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		return true
 	case .String, .String_View, .Untyped_String:
 		// design.md's catalogue lists both text carriers. Their `==` is already
-		// byte-wise, so a byte-wise hash is the coherent partner (m6b-plan step 3).
+		// byte-wise, so a byte-wise hash is the coherent partner.
 		return true
 	case .Array:
 		return type_is_hashable(c, info.element)

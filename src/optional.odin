@@ -1,5 +1,4 @@
-// Checked extractions, the type switch, and the optional-ok error protocol
-// (m4a-plan step 4).
+// Checked extractions, the type switch, and the optional-ok error protocol.
 //
 // design.md gives `v.(T)` one construct with two result shapes chosen by
 // context: a single-value position traps on a mismatch, a comma-ok destination

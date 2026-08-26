@@ -1,5 +1,4 @@
-// Coherent runtime formatting (design.md "String format printing", m6a-plan
-// decision "Coherent formatting").
+// Coherent runtime formatting (design.md "String format printing").
 //
 // design.md makes formatting a library protocol: a value type provides a
 // `value.format(writer, options)` method, and the standard free spelling aliases

@@ -1,4 +1,4 @@
-// Erased views: `any_view` and `dyn Interface` (m4b-plan step 5).
+// Erased views: `any_view` and `dyn Interface`.
 //
 // Both are two-word non-owning views, and both are compiler-owned struct types
 // so they reuse the existing layout, parameter-passing, and emission paths:

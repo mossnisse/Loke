@@ -57,8 +57,7 @@ TYPE_UNTYPED_RUNE  :: Type_Id(28)
 TYPE_UNTYPED_NIL   :: Type_Id(29)
 // A compile-time string. It may be concatenated, compared, measured, and used
 // as a configuration value or diagnostic message. It is not a runtime carrier:
-// where a value is wanted it defaults to `string` (m3-plan decision
-// "Strings").
+// where a value is wanted it defaults to `string`.
 TYPE_UNTYPED_STRING :: Type_Id(30)
 
 // A borrowed view over UTF-8 text: a pointer and a byte length, and no
@@ -70,8 +69,7 @@ TYPE_STRING_VIEW :: Type_Id(31)
 // design.md "Allocators" and "Allocation failure". `core:mem` and `base:runtime`
 // export exactly these identities rather than declaring their own: the
 // catalogue's `Cloneable` and the fixed lifecycle signatures spell them
-// unqualified, so they stay predeclared as well (m6a-plan decision
-// "Compiler-owned names").
+// unqualified, so they stay predeclared as well.
 //
 // `Allocator` is a one-word nominal handle pointing at the seed runtime's
 // provider record. Per-expression region identity is semantic metadata in
@@ -135,7 +133,7 @@ Contribution :: enum u8 {
 	Standard_Customization,
 	// design.md "Dynamic arrays" and "Maps": the operation set the compiler
 	// contributes to a container type, so `xs.append(1)` is an ordinary method
-	// call and generic code finds the same members (m6b-plan step 2).
+	// call and generic code finds the same members.
 	Container,
 }
 
@@ -155,7 +153,7 @@ Type_Info :: struct {
 	// its own type, index, and (for an enum member) discriminant.
 	fields:     []Symbol_Id,
 	// A union's variants, in declaration order. Variant 0 is the first written
-	// one; tag 0 is nil (m4a-plan decision "Union representation").
+	// one; tag 0 is nil.
 	variants:   []Type_Id,
 	// A validated `union @(align=N)` or `struct @(align=N)`, or 0. Kept apart from
 	// `align`, which the layout pass overwrites with the computed result:
@@ -171,7 +169,7 @@ Type_Info :: struct {
 	move_only:     bool,
 	// Inherent members written by `impl`: methods, associated constants, and
 	// associated types. `extend` never writes here — its members are package-scoped
-	// and live in `Package.extensions` (m4a-plan decision "Method storage").
+	// and live in `Package.extensions`.
 	members:    []Symbol_Id,
 	// Which compiler-contributed member sets are already installed. More than one
 	// contributor appends here — iteration for a range, array, or slice, and the
@@ -196,7 +194,7 @@ Type_Info :: struct {
 	size_state: Size_State,
 	// A monomorphized instance of a generic record: the template it came from,
 	// and the argument vector that produced it. Structural specialization matches
-	// against these (m4b-plan step 1).
+	// against these.
 	instance_of:   Symbol_Id,
 	instance_args: []Generic_Arg,
 	// The backend spelling of an instance, kept apart from `name`, which is the
@@ -207,8 +205,7 @@ Type_Info :: struct {
 	dyn_interface: Symbol_Id,
 	dyn_args:      []Generic_Arg,
 	// A compiler-owned `Range(T)` value: low endpoint, high endpoint, and the
-	// closed/half-open flag, so `..<` and `..=` survive being stored or passed
-	// (m4b-plan decision "Runtime range representation").
+	// closed/half-open flag, so `..<` and `..=` survive being stored or passed.
 	is_range:      bool,
 	// A compiler-owned reflection descriptor. Its values are ordinary constant
 	// aggregates, and this is the marker that forbids materializing one into
@@ -438,8 +435,7 @@ Value_Category :: enum {
 
 // Why a readable place cannot be assigned to. A value parameter is addressable
 // but immutable; a composite literal is addressable temporary storage; neither
-// fact follows from the other, so the checker records both plus this reason
-// (m2-plan decision "Place model").
+// fact follows from the other, so the checker records both plus this reason.
 Immutable_Reason :: enum {
 	None,
 	Constant,
@@ -480,7 +476,7 @@ Symbol_Kind :: enum {
 
 // Which built-in a `Symbol_Kind.Builtin` symbol is. One shared `Builtin` kind
 // with no identity would leave every built-in call indistinguishable at the
-// point that has to lower it (m3-plan decision "Phase-neutral `assert`/`panic`").
+// point that has to lower it.
 Builtin_Kind :: enum {
 	None,
 	Assert,
@@ -533,7 +529,7 @@ Builtin_Kind :: enum {
 	// design.md "Dynamic arrays" and "Maps": `make` creates a container bound to
 	// the selected allocator, with an optional initial length and capacity. Its
 	// first operand is a *type*, which no ordinary signature can spell, so it is
-	// a built-in (m6b-plan step 1).
+	// a built-in.
 	Make,
 	// The default provider handle, spelled `mem.default_allocator()`. The symbol
 	// is compiler-owned and `core:mem` binds it, so a generated default argument
@@ -541,7 +537,7 @@ Builtin_Kind :: enum {
 	Default_Allocator,
 	// `drop` is a predeclared identifier, not a keyword (design.md "Storage
 	// modifiers") — a compiler special form over a storage location, which is
-	// why it is a built-in rather than an ordinary procedure (m5a-plan step 4).
+	// why it is a built-in rather than an ordinary procedure.
 	Drop,
 	// design.md "Exchange": replaces a definitely live value and returns the
 	// previous one without cloning it. Also a special form, because no ordinary
@@ -603,11 +599,11 @@ Symbol :: struct {
 	// The package whose method, operator, and extension tables this declaration's
 	// body may use, which is not always the package being checked: `delegate`
 	// freezes it at its declaration, and M4b's instantiations look up at their
-	// definition site (m4a-plan decision "Lookup package").
+	// definition site.
 	lookup_pkg:  Package_Id,
 	// The `impl`/`extend` subject this member belongs to, or INVALID_TYPE.
 	owner_type:  Type_Id,
-	// Generics (m4b-plan step 1). `generic` marks a template, which has no
+	// Generics. `generic` marks a template, which has no
 	// signature and no runtime representation until it is instantiated;
 	// `instance_of` names the template an instance came from. `def_scope` is the
 	// declaration's own lexical scope, which is what definition-site lookup hangs
@@ -664,8 +660,7 @@ Symbol :: struct {
 	// `defer drop(value)` at the declaration point (design.md "Managed values
 	// and storage"). `src/lifecycle.odin` decides both from the CFG: whether
 	// scope exit drops this local at all, and whether the state it exits in is
-	// the same on every path. A definite state needs no runtime flag (m5a-plan
-	// decision "Conditional liveness").
+	// the same on every path. A definite state needs no runtime flag.
 	drop_at_exit:     bool,
 	drop_conditional: bool,
 	cleanup_slot:     int,
@@ -675,15 +670,15 @@ Symbol :: struct {
 	// both need its liveness — it simply has no scope-exit obligation.
 	manual:           bool,
 	// design.md "Allocators": the `via` allocator expression this declaration
-	// wrote, or nil for the lazy default binding. m6b-plan decision "Allocator
-	// binding" keeps this on the *declaration*: it survives drop and move and is
-	// what a later revival selects, while the handle a live value currently holds
-	// travels in the value itself.
+	// wrote, or nil for the lazy default binding. This is kept on the
+	// *declaration*: it survives drop and move and is what a later revival
+	// selects, while the handle a live value currently holds travels in the
+	// value itself.
 	via:              Expr,
 	// design.md "Storage modifiers": `static` exists for the life of the process
 	// and `thread_local` for the life of its thread. Either one makes a *local*
 	// declaration name storage outside the frame, so the backend gives it a
-	// global rather than an `alloca` (m5a-plan step 4).
+	// global rather than an `alloca`.
 	duration:         Duration,
 	// design.md "Build configuration": which `LOKE_*` enum this predeclared
 	// constant belongs to, or `.None`. Its enum type is allocated lazily on first
@@ -757,8 +752,8 @@ Package :: struct {
 	// The logical canonical import identity — root-relative, or
 	// `collection:relative/path` — which is what every user symbol is mangled
 	// with. Never an alias and never a host absolute path, so a build is
-	// reproducible and two same-named packages cannot collide
-	// (m3-plan decision "Symbol mangling"). The root package's key is "".
+	// reproducible and two same-named packages cannot collide.
+	// The root package's key is "".
 	key:            string,
 	files:          [dynamic]^File,
 	scope:          ^Scope,
@@ -770,7 +765,7 @@ Package :: struct {
 	imports:        [dynamic]Package_Import,
 	// Procedure literals lifted out of expression position, owned by the package
 	// that declared them: a compiler-global list would be discarded by the next
-	// package checked (m3-plan decision "Package-owned backend state").
+	// package checked.
 	hoisted_procs:  [dynamic]^Expr_Proc,
 	// Generic instances defined by this package, in deterministic instantiation
 	// order. Named and emitted after the package's own items, so a cross-package
@@ -1360,7 +1355,7 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // Does this milestone compile a value of this type at all? Composite deferred
 // syntax still resolves to a real `Type_Id`, so this walks rather than looking
-// for absence (m2-plan decision "Deferred types").
+// for absence.
 //
 // Nothing is deferred after M6b. `interface` as a runtime type is the one
 // rejection left here, and it is not a deferral: an interface is deliberately

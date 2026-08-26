@@ -1,5 +1,5 @@
-// The syntax corpora (m1-plan step 7). These run in-process rather than through
-// the CLI because spans and token streams are what they assert, and neither is
+// The syntax corpora. These run in-process rather than through the CLI
+// because spans and token streams are what they assert, and neither is
 // visible from stdout.
 //
 //   tests/syntax/*.loke             valid syntax: no diagnostics, dumpable

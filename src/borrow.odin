@@ -1,6 +1,5 @@
 // Root and region provenance: the two lifetime analyses design.md specifies
-// under "Borrows and lifetimes" and "Allocator regions and region provenance"
-// (m5b-plan steps 1-4).
+// under "Borrows and lifetimes" and "Allocator regions and region provenance".
 //
 // The analyses share `src/cfg.odin`'s control-flow view and its provenance event
 // stream, but answer different questions and keep separate lattices:
@@ -12,11 +11,10 @@
 //
 // Both run after every package body is checked, over a disposable graph rebuilt
 // in a read-only provenance mode: replaying M5a's lifecycle actions would
-// duplicate its diagnostics and overwrite settled annotations (m5b-plan decision
-// "CFG purity").
+// duplicate its diagnostics and overwrite settled annotations.
 //
-// Which lattice each operation reaches, and why the other one does not
-// (m5b-plan step 5). A blank column is a claim, not an omission.
+// Which lattice each operation reaches, and why the other one does not.
+// A blank column is a claim, not an omission.
 //
 //   operation                       root   region  note
 //   ------------------------------- ------ ------- ---------------------------
@@ -123,7 +121,7 @@ Prov_Root :: struct {
 	span:   Span,
 	name:   string,
 	// `Param`: the borrowed parameter this root arrived through, which is what a
-	// direct call substitutes an actual argument into (m5b-plan step 2).
+	// direct call substitutes an actual argument into.
 	param_index: int,
 }
 
@@ -255,7 +253,7 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	}
 	// design.md "The allocator selects the location of backing storage": an arena
 	// laid over a caller's fixed buffer holds that buffer for as long as the arena
-	// lives, so a provider is a borrow carrier like any other (m6b-plan step 5).
+	// lives, so a provider is a borrow carrier like any other.
 	// A provider-backed one borrows nothing and simply carries no loan.
 	if type_is_region_provider(c, type) {
 		return true
@@ -332,7 +330,7 @@ Region_Set :: struct {
 	// design.md "Allocator regions and region provenance": a region *created in
 	// this procedure*, by a local `mem.Arena` or `mem.Scratch`. One bit per local
 	// provider, because these are the regions a body may reset without a promise
-	// and the ones an owner may not outlive (m6b-plan step 5).
+	// and the ones an owner may not outlive.
 	//
 	// A word rather than a slice: a body with more than 64 local providers is not
 	// a thing, and the overflow bit degrades to the conservative answer instead of
@@ -406,7 +404,7 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) {
 // result-provenance summary with the declaration, tracking up to two
 // independent components per result.
 //
-// This is the root component; the region component joins it in m5b-plan step 3.
+// This is the root component; the region component joins it separately.
 // Every field is a *possibility*, so the join is a union and the lattice is
 // finite, which is what makes the whole-program fixed point below terminate.
 Result_Provenance :: struct {

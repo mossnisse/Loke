@@ -81,7 +81,7 @@ Compiler :: struct {
 
 	// Project-wide `-define:NAME=VALUE` configuration, seeded before package
 	// discovery so the first file-scope `when` round already sees it and every
-	// package agrees on what a name means (m3-plan decision "Configuration").
+	// package agrees on what a name means.
 	defines:     map[string]Const_Value,
 
 	// Package discovery (`src/packages.odin`). `package_by_dir` is keyed by the
@@ -186,8 +186,7 @@ Compiler :: struct {
 
 	// Every concrete procedure body that finished checking, in checking order.
 	// design.md's two provenance analyses run after the whole program settles, so
-	// a forward or mutually recursive callee already has its result summary
-	// (m5b-plan decision "Analysis scheduling").
+	// a forward or mutually recursive callee already has its result summary.
 	checked_bodies: [dynamic]Checked_Body,
 	// The result-provenance summary is compile-time declaration metadata, emitted
 	// for cross-package checking, and it does not change the runtime ABI
@@ -200,7 +199,7 @@ Compiler :: struct {
 
 	// Static-duration locals, in declaration order. They need module-level
 	// storage, which cannot be written inside a function body, so the checker
-	// records them and `emit_globals` walks the list (m5a-plan step 4).
+	// records them and `emit_globals` walks the list.
 	static_locals: [dynamic]Symbol_Id,
 
 	// The `default_allocator` builtin, and the one call expression the compiler

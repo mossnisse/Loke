@@ -1,4 +1,4 @@
-// The compile-time engine (compiler-plan B10, m3-plan step 1).
+// The compile-time engine (compiler-plan B10).
 //
 // One tree-walking interpreter over the *typed* AST. It is not a second
 // checker: every node it visits has already been name-resolved, typed, and — in
@@ -7,8 +7,8 @@
 // locals, mutation, loops, `defer`, and calls.
 //
 // Values are evaluator-owned and mutable while a procedure runs, then frozen
-// into immutable compilation-arena `Const_Value`s on the way back into semantic
-// state (m3-plan decision "Evaluator values").
+// into immutable compilation-arena `Const_Value`s on the way back into
+// semantic state.
 package lokec
 
 import "core:fmt"
@@ -16,7 +16,7 @@ import "core:mem"
 import "core:mem/virtual"
 
 // Documented ceilings. Exceeding one is a diagnostic, never a silent fallback
-// to generating runtime code (m3-plan decision "Limits").
+// to generating runtime code.
 EVAL_MAX_STEPS  :: 1_000_000
 EVAL_MAX_DEPTH  :: 256
 EVAL_MAX_MEMORY :: 64 * 1024 * 1024
@@ -50,7 +50,7 @@ Eval_Value :: struct {
 }
 
 // One explicit call frame. Recursion and the call-stack notes are limits on
-// this stack, not on Odin's (m3-plan decision "Frames").
+// this stack, not on Odin's.
 Eval_Frame :: struct {
 	symbol:       Symbol_Id,
 	site:         Span,
@@ -69,7 +69,7 @@ Evaluator :: struct {
 	bytes:  int,
 	failed: bool,
 	// The compile-time-required context that forced this evaluation, and how to
-	// name it. The primary diagnostic points here (m3-plan "Failure origin").
+	// name it. The primary diagnostic points here.
 	origin: Span,
 	what:   string,
 }
@@ -157,8 +157,7 @@ evaluate_static_elements :: proc(
 }
 
 // Checks a procedure's signature and body on demand, so an array length or enum
-// value may call a procedure the ordinary phase order has not reached yet
-// (m3-plan decision "Evaluation readiness").
+// value may call a procedure the ordinary phase order has not reached yet.
 ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || symbol.kind != .Proc {
@@ -790,7 +789,7 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 
 // -------------------------------------------------------------- containers --
 
-// design.md's containers, at compile time (m6b-plan step 6).
+// design.md's containers, at compile time.
 //
 // A compile-time container is its live contents and nothing else: a `[dynamic]T`
 // holds its elements in order, and a `map[K]V` holds alternating key/value pairs

@@ -1,4 +1,4 @@
-// User operator declarations, lookup, and `delegate` (m4a-plan step 3).
+// User operator declarations, lookup, and `delegate`.
 //
 // Ranking is the engine in `src/overload.odin` — design.md ranks operator
 // overloads using the same algorithm as named procedure overloads, so there is

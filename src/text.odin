@@ -1,6 +1,6 @@
 // Runtime text: the operations a `string`, `string_view`, or `cstring_view`
 // answers to (design.md "string type", "string type conversions", "C string
-// views"; m6a-plan step 4).
+// views").
 //
 // These are compiler-defined operations rather than library members because
 // both their operand types and their result types are built in: `bytes()` on a
@@ -554,7 +554,7 @@ variadic_parameter_index :: proc(info: ^Type_Info) -> int {
 // `receiver` is the method-call receiver, which is parameter 0 and is not one of
 // the written arguments; it is nil for a free call. Without it a variadic
 // method would rank its first written argument against its own receiver's type
-// (m6b-plan step 2: the contributed `append` is exactly such a method).
+// (the contributed `append` is exactly such a method).
 bind_variadic_arguments :: proc(
 	k: ^Checker,
 	v: ^Expr_Call,

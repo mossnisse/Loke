@@ -1,7 +1,7 @@
-// The two managed containers: `[dynamic]T` and `map[K]V` (m6b-plan step 1).
+// The two managed containers: `[dynamic]T` and `map[K]V`.
 //
 // design.md "Dynamic arrays" and "Maps". Both are owning values with deep copy
-// semantics, and m6b-plan freezes both as four words:
+// semantics, and both are frozen as four words:
 //
 //   [dynamic]T   { rawptr data,  int len, int cap, Allocator allocator }
 //   map[K]V      { rawptr table, int len, int cap, Allocator allocator }
@@ -161,7 +161,7 @@ Container_Op :: enum {
 // makes the same operations reachable from generic code constrained by the
 // standard catalogue, and it reuses overload ranking, `..T` packing, default
 // arguments, and the `inout`-receiver place rule instead of growing a second
-// call path beside them (m6b-plan step 2).
+// call path beside them.
 //
 // The `..T` pack a variadic receives *is* a read-only slice, so `append` clones
 // each element into the container through its selected allocator. A move-only
@@ -378,19 +378,19 @@ zero_int_arg :: proc(c: ^Compiler) -> Expr {
 // ------------------------------------------------------- allocator policy --
 
 // design.md "Allocators": a declaration may select the provider its value is
-// built with by writing `T via expression`. m6b-plan decision "Allocator
-// binding" separates the two facts this creates: the *policy* belongs to the
-// declaration and survives drop and move, while the *handle* belongs to the
-// current live value and travels with it.
+// built with by writing `T via expression`. This separates the two facts it
+// creates: the *policy* belongs to the declaration and survives drop and
+// move, while the *handle* belongs to the current live value and travels
+// with it.
 //
 // So `via` is recorded on the symbol and is what a later revival, an implicit
 // copy into this destination, and a container literal constructed here all
 // select. It is not consulted for a destination that is already live: design.md
 // says a live destination keeps the allocator its value was built with.
 //
-// m6b-plan decision "`via` applicability": allowed on lexical allocator-binding
-// owners whose canonical clone accepts a destination allocator, and rejected on
-// everything with no destination allocation to select.
+// `via` is allowed on lexical allocator-binding owners whose canonical clone
+// accepts a destination allocator, and rejected on everything with no
+// destination allocation to select.
 check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	if d.via == nil {
 		return true
@@ -455,10 +455,9 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	return true
 }
 
-// m6b-plan decision "`via` applicability". A trivial or borrowed value owns no
-// allocation; a move-only value has no clone to pass an allocator to; an
-// immutable `string` shares storage through a retain rather than allocating into
-// a destination.
+// A trivial or borrowed value owns no allocation; a move-only value has no
+// clone to pass an allocator to; an immutable `string` shares storage through
+// a retain rather than allocating into a destination.
 type_accepts_via :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE || !type_is_managed(c, type) {
 		return false
@@ -477,10 +476,10 @@ type_accepts_via :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return true
 }
 
-// m6b-plan decision "Allocator binding": "A container literal initializing or
-// replacing a known destination constructs directly with that destination's
-// selected allocator rather than allocating a default-backed temporary first."
-// So a literal whose destination has a written policy carries that policy, and
+// Allocator binding: "A container literal initializing or replacing a known
+// destination constructs directly with that destination's selected allocator
+// rather than allocating a default-backed temporary first." So a literal
+// whose destination has a written policy carries that policy, and
 // the backend writes it into the header before the first reservation.
 bind_literal_allocator :: proc(c: ^Compiler, value: Expr, destination: Symbol_Id) {
 	written := symbol_via_allocator(c, destination)

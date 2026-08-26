@@ -21,7 +21,7 @@ import "core:strings"
 // One registered cleanup action. design.md gives explicit `defer` and the
 // implicit drop of a managed local one reverse registration order, so they share
 // one entry and one stack rather than the second mechanism a parallel list would
-// be (m5a-plan decision "Drop/defer ordering").
+// be.
 //
 // `flag` is empty when the CFG proved the slot reached unconditionally: no
 // source or ABI rule requires a flag, so a definite state does not get one.
@@ -54,8 +54,7 @@ Deferred :: struct {
 	slot: int,
 }
 
-// One procedure's runtime-visible cleanup registration (m6a-plan decision
-// "Logical panic unwind").
+// One procedure's runtime-visible cleanup registration.
 //
 // design.md gives a panic no way to resume, so the runtime never unwinds the
 // native stack: it calls back into each still-live frame through a generated
@@ -165,7 +164,7 @@ Emitter :: struct {
 	fmt_options: string,
 	// One operation table per concrete container type, keyed by that type so a
 	// `[dynamic]int` reached from ten places shares one table and one set of
-	// element thunks (m6b-plan decision "Container runtime boundary").
+	// element thunks.
 	container_ops: map[Type_Id]string,
 	// The element and key thunks those tables point at, keyed by generated name:
 	// one part type reached from two container types is one thunk.
@@ -524,7 +523,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 	}
 	// Instantiations are named with their own package's symbols, in deterministic
 	// instantiation order, so a cross-package generic call has a final name
-	// before any body is written (m4b-plan decision "Emission order").
+	// before any body is written.
 	for instance in pkg.instances {
 		e.names[instance.symbol] = llvm_proc_name(pkg, llvm_safe(instance.name))
 	}
@@ -710,10 +709,10 @@ emit_preamble :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "")
 }
 
-// The seed runtime's allocator surface (m6a-plan decision "Allocator handle
-// ABI"). An `Allocator` value is a pointer to a `loke_rt_allocator_v1` record
-// and nothing else, so copying a handle preserves the provider's state, its
-// canonical region identity, and its failure policy without any per-copy tag.
+// The seed runtime's allocator surface. An `Allocator` value is a pointer to
+// a `loke_rt_allocator_v1` record and nothing else, so copying a handle
+// preserves the provider's state, its canonical region identity, and its
+// failure policy without any per-copy tag.
 //
 // The record's own fields are never loaded here: dispatch goes through the
 // runtime helpers, which keeps the layout to one reader and lets the record grow
@@ -848,9 +847,8 @@ emit_text_declarations :: proc(e: ^Emitter) {
 
 // ============================================================= containers ==
 
-// m6b-plan decisions "Dynamic-array value ABI", "Map value ABI" and "Container
-// runtime boundary". One four-word header serves both containers, and the raw
-// storage behind it belongs to `runtime/container.c`.
+// One four-word header serves both containers, and the raw storage behind it
+// belongs to `runtime/container.c`.
 CONTAINER_TYPE :: "%loke.container"
 CONTAINER_OPS_TYPE :: "%loke.container_ops"
 
@@ -981,8 +979,8 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	return name
 }
 
-// m6b-plan decision "Map algorithm and coherence": the concrete operation table
-// *freezes* the key's `==`/`hash` selection, so a map that travels between
+// The concrete operation table *freezes* the key's `==`/`hash` selection, so
+// a map that travels between
 // packages keeps one policy. The checker has already rejected a key with no
 // coherent inherent pair, so this only has to emit whichever pair it settled on.
 @(private = "file")
@@ -1086,7 +1084,7 @@ key_policy_member :: proc(c: ^Compiler, key: Type_Id, want_equal: bool) -> Symbo
 // returns its own error, and everything else has a clone that cannot fail.
 //
 // On failure `out` is left untouched, which is what lets the caller destroy
-// exactly the prefix it did build (m6b-plan decision "Atomic mutation").
+// exactly the prefix it did build.
 @(private = "file")
 emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: string) -> string {
 	if lifecycle_of(e.c, type).container {
@@ -1151,9 +1149,9 @@ emit_eager_via_binding :: proc(e: ^Emitter, symbol_id: Symbol_Id, address: strin
 }
 
 // The provider a construction into one destination selects: the declaration's
-// written `via`, or the default when it has no policy (m6b-plan decision
-// "Allocator binding"). The policy belongs to the declaration, so this is the
-// destination's own symbol rather than anything the source value carries.
+// written `via`, or the default when it has no policy. The policy belongs to
+// the declaration, so this is the destination's own symbol rather than
+// anything the source value carries.
 @(private = "file")
 emit_destination_allocator :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 	written := symbol_via_allocator(e.c, symbol_id)
@@ -1198,7 +1196,7 @@ Layout_Probe :: struct {
 // results with the checker's cached layout.
 //
 // Executing LLVM-derived values tests the actual target backend rather than a
-// second copy of the checker's formula (m3-plan decision "Layout agreement").
+// second copy of the checker's formula.
 check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 	e := Emitter {
 		c            = c,
@@ -1592,9 +1590,8 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 	case .String_View:
 		return STRING_VIEW_TYPE
 	case .Dynamic_Array, .Map:
-		// m6b-plan decisions "Dynamic-array value ABI" and "Map value ABI": both
-		// headers are the same four words, so they share one backend type exactly
-		// as the two slice capabilities do.
+		// Both headers are the same four words, so they share one backend type
+		// exactly as the two slice capabilities do.
 		return CONTAINER_TYPE
 	case .Array:
 		return fmt.aprintf("[%d x %s]", info.count, llvm_type(e, info.element))
@@ -1697,8 +1694,8 @@ union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
 }
 
 // The internal convention for several results: one anonymous literal struct,
-// used consistently by caller and callee. This is not the frozen Loke or C ABI
-// (m2-plan shortcut table); M7 replaces it.
+// used consistently by caller and callee. This is not the frozen Loke or C
+// ABI; M7 replaces it.
 @(private = "file")
 llvm_result_type :: proc(e: ^Emitter, results: []Type_Id, inout: []bool = nil) -> string {
 	// An `inout` result is a place, so it travels as its address.
@@ -2344,10 +2341,9 @@ emit_entry :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "define i32 @wmain(i32 %argc, ptr %argv) {")
 	fmt.sbprintln(&e.b, "entry:")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_args_init(i32 %argc, ptr %argv)")
-	// design.md "Threads" and m6a-plan decision "Thread runtime": the initial
-	// thread attaches like any other, and the same detach that drops managed TLS
-	// on a normal return is simply never reached when a panic terminates the
-	// process instead.
+	// design.md "Threads": the initial thread attaches like any other, and the
+	// same detach that drops managed TLS on a normal return is simply never
+	// reached when a panic terminates the process instead.
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
 	fmt.sbprintfln(&e.b, "  call void %s()", e.names[entry_symbol(e.c)] or_else "@loke.p.main")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
@@ -3671,8 +3667,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 // so a failure never reaches a half-written destination.
 //
 // `allocator` is the destination's selected provider: its written `via`, or the
-// default when the declaration has no policy (m6b-plan decision "Allocator
-// binding").
+// default when the declaration has no policy.
 @(private = "file")
 emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator := RT_DEFAULT_ALLOCATOR) -> string {
 	entry := lifecycle_of(e.c, type)
@@ -4987,8 +4982,8 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond) -> string {
 
 // ================================================== coherent formatting ==
 
-// design.md "String format printing" and m6a-plan decision "Coherent
-// formatting": runtime formatting has one formatter per concrete `typeid`. The
+// design.md "String format printing": runtime formatting has one formatter
+// per concrete `typeid`. The
 // table is private and parallel to the type-info table, because the public
 // `Type_Info` layout deliberately exposes no code pointers — that is what keeps
 // `base:runtime` from having to know `core:fmt` exists.
@@ -6588,7 +6583,7 @@ emit_allocation :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> strin
 // The header is built in storage and published complete: the provider handle is
 // written first, because the reserve below allocates *through* it, and a failed
 // reserve leaves an empty container bound to that same provider rather than
-// something half-built (m6b-plan decision "Atomic mutation").
+// something half-built.
 @(private = "file")
 emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	is_map := type_is_map(e.c, v.alloc_type)
@@ -7475,8 +7470,8 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 
 // Every user symbol carries its package's logical key, so two packages with the
 // same declared name and the same source-level symbols still emit distinct
-// working symbols (m3-plan decision "Symbol mangling"). The root package's key
-// is empty, which is what keeps its entry procedure at a fixed name.
+// working symbols. The root package's key is empty, which is what keeps its
+// entry procedure at a fixed name.
 @(private = "file")
 llvm_global_name :: proc(pkg: ^Package, name: string) -> string {
 	return fmt.aprintf("@loke.g.%s%s", mangled_key(pkg), name)
@@ -7559,9 +7554,9 @@ replace_ext :: proc(path: string, ext: string) -> string {
 // VCToolsInstallDir unless it is run from a developer prompt — so the CRT
 // import libraries are located here.
 //
-// The seed runtime's C sources join the same invocation (m6a-plan decision
-// "Runtime language and discovery"): one object-and-link seam already existed,
-// and compiling the runtime here keeps it in step with the module beside it.
+// The seed runtime's C sources join the same invocation: one object-and-link
+// seam already existed, and compiling the runtime here keeps it in step with
+// the module beside it.
 @(private = "file")
 link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> int {
 	clang := find_clang()
@@ -7910,7 +7905,7 @@ optional_pair_type :: proc(element: string) -> string {
 
 // `a ..< b` and `a ..= b` as a stored value: the endpoints plus the closed flag,
 // so a range keeps its kind after being assigned or passed to a generic
-// procedure (m4b-plan decision "Runtime range representation").
+// procedure.
 @(private = "file")
 emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range) -> string {
 	info := type_of(e.c, v.type)

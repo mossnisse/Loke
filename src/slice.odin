@@ -1,4 +1,4 @@
-// Slices: `[]T` and `[]mut T` (m5a-plan step 2).
+// Slices: `[]T` and `[]mut T`.
 //
 // design.md "Slices": a slice is a non-owning view of a sequence whose runtime
 // value is a pointer and a length. Both capabilities share one representation —
@@ -13,7 +13,7 @@
 // A slice is a *borrow*: it has no allocator, no cleanup, and cannot be a
 // `manual` owner. Its value, layout, bounds and capability behavior are here;
 // the root it borrows, its last use, and what may touch that root meanwhile are
-// `src/borrow.odin`'s (m5b-plan step 1).
+// `src/borrow.odin`'s.
 package lokec
 
 SLICE_DATA :: 0

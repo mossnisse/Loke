@@ -1,9 +1,9 @@
-// Unions: variants, layout, checked extractions, and the type switch (m4a-plan step 4).
+// Unions: variants, layout, checked extractions, and the type switch.
 //
-// Representation (m4a-plan decision "Union representation"): a payload region
-// carrying the widest variant's ABI alignment — or the validated `@(align=N)` —
-// followed by an `iN` tag and explicit padding. Tag 0 is nil; variants are
-// numbered in declaration order, so variant `i` has tag `i + 1`.
+// Representation: a payload region carrying the widest variant's ABI
+// alignment — or the validated `@(align=N)` — followed by an `iN` tag and
+// explicit padding. Tag 0 is nil; variants are numbered in declaration
+// order, so variant `i` has tag `i + 1`.
 //
 // `layout.odin` remains the source of truth for size, alignment, and the tag's
 // offset. The emitter builds a storage type whose LLVM-reported layout matches

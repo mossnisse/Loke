@@ -1,5 +1,4 @@
-// Compiler-contributed members of the bundled standard packages (m6a-plan step
-// 2, decision "Compiler-owned names").
+// Compiler-contributed members of the bundled standard packages.
 //
 // `Allocator`, `Allocator_Error`, `meta.Field` and `meta.Enum_Value` already
 // have one identity apiece — the universe's, and the descriptor types M4b

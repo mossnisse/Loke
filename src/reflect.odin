@@ -1,5 +1,4 @@
-// Compile-time reflection, `type_of`/`typeid_of`, and the `typeid` freeze pass
-// (m4b-plan step 3).
+// Compile-time reflection, `type_of`/`typeid_of`, and the `typeid` freeze pass.
 //
 // `meta.Field` and `meta.Enum_Value` are compiler-owned nominal struct types
 // whose values are ordinary `Const_Aggregate`s. Reusing the existing constant
@@ -196,7 +195,7 @@ freeze_typeids :: proc(c: ^Compiler) {
 	// and result types, so every one of them has to be resolvable through
 	// `type_info_of` too. Closing the set here — before the ids are assigned —
 	// is what makes a recursive walk of the metadata terminate at a real entry
-	// rather than at nil (m6a-plan decision "Type-info lookup").
+	// rather than at nil.
 	if c.type_info_requested || c.format_requested {
 		for index := 0; index < len(c.typeid_order); index += 1 {
 			request_referenced_typeids(c, c.typeid_order[index])

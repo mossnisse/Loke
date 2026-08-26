@@ -1,4 +1,4 @@
-// Expressions, conversions, and constant folding (m2-plan steps 2 and 4).
+// Expressions, conversions, and constant folding.
 //
 // `check.odin` owns declarations and statements; everything that produces a
 // value lives here. Expression checking is contextual: an expected type flows
@@ -224,7 +224,7 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 		}
 		// Compile-time only: `TYPE_STRING` stays gated, so this value can be
 		// concatenated, compared, measured, and used as a message or a
-		// configuration value, but never stored (m3-plan decision "Strings").
+		// configuration value, but never stored.
 		v.type = TYPE_UNTYPED_STRING
 		v.is_const = true
 		v.const_value = Const_Value{kind = .String, text = text}
@@ -383,9 +383,9 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 	}
 	v.symbol = symbol_id
 
-	// A nested procedure literal has no closure in M2 (m2-plan decision
-	// "Procedure values"), so a name that lives in an enclosing procedure's
-	// frame is rejected here rather than silently miscompiled.
+	// A nested procedure literal has no closure in M2, so a name that lives in
+	// an enclosing procedure's frame is rejected here rather than silently
+	// miscompiled.
 	if owner != nil && owner.owner_proc != nil && owner.owner_proc != k.proc_literal {
 		if sym.kind == .Var || sym.kind == .Parameter || sym.kind == .Result {
 			errorf(
@@ -558,7 +558,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 
 	// Package resolution comes before enum, type, and value field selection: a
 	// package alias is not a value, so checking the operand as one would reject
-	// it first (m3-plan decision "Import symbols").
+	// it first.
 	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
 		alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
 		if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
@@ -2029,8 +2029,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	}
 	// The same built-in reached through the standard package that publishes it —
 	// `mem.default_allocator()`. The qualified spelling names the identical
-	// symbol, so it collapses to the identical call rather than to a wrapper
-	// (m6a-plan decision "Compiler-owned names").
+	// symbol, so it collapses to the identical call rather than to a wrapper.
 	if symbol_id := callee_package_builtin(k, v.callee); symbol_id != INVALID_SYMBOL {
 		check_builtin_call(k, v, qualify_builtin_callee(k, v), symbol_id, expected)
 		return
@@ -2863,7 +2862,7 @@ const_kind_name :: proc(kind: Const_Kind) -> string {
 // `size_of`, `align_of`, `offset_of`, and `len`. Every one of these inspects
 // static type or declaration information, so nothing here is evaluated: the
 // operand is resolved and type-checked, never read, and never required to be
-// live (m3-plan decision "Unevaluated layout operands").
+// live.
 @(private = "file")
 check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind, expected: Type_Id) {
 	v.type = TYPE_INT
@@ -3150,7 +3149,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 //   make(map[K]V, reservation: int = 0, allocator = default)
 //       -> (map[K]V, Allocator_Error)
 //
-// m6b-plan decision "Allocator binding": the result is bound to the selected
+// Allocator binding: the result is bound to the selected
 // allocator "even when empty", so `make` is also how a program chooses a
 // provider for a container it then fills. The counts are ordinary runtime `int`
 // expressions; `len > cap` and a negative count are program faults, not
@@ -3724,7 +3723,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	}
 	v.type = target
 	// A composite literal is addressable temporary storage, and is never itself
-	// an assignment destination (m2-plan decision "Place model").
+	// an assignment destination.
 	v.addressable = true
 	v.assignable = false
 	v.immutable = .Temporary

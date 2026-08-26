@@ -1,5 +1,5 @@
 // Generics: templates, inference, specialization, `where`, and the
-// monomorphization cache (m4b-plan step 1).
+// monomorphization cache.
 //
 // Decision A2 is monomorphization: every distinct argument vector produces its
 // own instance, its own symbol, and its own emitted body. Because type

@@ -1,5 +1,4 @@
-// Arbitrary-precision integer constants (m2-plan step 1, decision "Integer
-// constants").
+// Arbitrary-precision integer constants.
 //
 // Untyped folding is exact: an intermediate is never rejected merely because no
 // runtime integer type could hold it. `bi_fits` and `bi_wrap` are where a value

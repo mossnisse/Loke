@@ -1,4 +1,4 @@
-// Overload resolution (m4a-plan step 1, decision "One candidate engine").
+// Overload resolution.
 //
 // One engine, used by named procedure groups, methods, operators, `init`
 // construction, and indexing. Operator overloads rank using the same algorithm

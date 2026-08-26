@@ -1,12 +1,10 @@
-// Package discovery and the program-level fixed point (compiler-plan B5,
-// m3-plan steps 5 and 6).
+// Package discovery and the program-level fixed point (compiler-plan B5).
 //
 // A round alternates discovery, collection, and selection: import the edges
 // that are active now, collect what the newly active items declare, answer the
 // `when` conditions that have become answerable, and repeat while anything
 // changed. Package state is persistent and monotonic, so re-running a round
-// never re-declares what an earlier one already established
-// (m3-plan decision "Package phase model").
+// never re-declares what an earlier one already established.
 //
 // There is no built-in `core:` root. A collection prefix resolves only when the
 // driver was given a matching `-collection name=path`.

@@ -94,7 +94,7 @@ run :: proc() -> int {
 	c.panic_unwind = opts.panic_unwind
 	c.opt_mode, c.build_mode = opts.opt_mode, opts.build_mode
 	// Configuration is project-wide and immutable, and must be in place before
-	// the first condition is evaluated (m3-plan decision "Configuration").
+	// the first condition is evaluated.
 	if !seed_defines(&c, opts.defines[:]) {
 		report(&c)
 		return 1
@@ -141,8 +141,7 @@ run :: proc() -> int {
 	}
 
 	// Every requested concrete type gets its deterministic `typeid` before any
-	// body is emitted, so traversal order cannot change an observable ID
-	// (m4b-plan decision "`typeid`").
+	// body is emitted, so traversal order cannot change an observable ID.
 	freeze_typeids(&c)
 	// design.md's formatter coherence is decided once the requested type set is
 	// closed, so "one formatter per concrete type" is a whole-program answer
@@ -332,7 +331,7 @@ is_config_name :: proc(name: string) -> bool {
 }
 
 // `-collection name=path`, over the `base:` and `core:` roots bundled beside the
-// compiler (m6a-plan decision "Package-root precedence").
+// compiler.
 //
 // The seeds go in first and an explicit entry replaces one outright, so a
 // project can substitute its own standard tree. Duplicate *explicit* entries

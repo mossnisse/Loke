@@ -1,6 +1,6 @@
 // Ownership: `move`, explicit `drop`, and the liveness that decides where the
-// compiler drops a managed local (m5a-plan step 4), per the dataflow rules in
-// design.md "Managed values and storage".
+// compiler drops a managed local, per the dataflow rules in design.md
+// "Managed values and storage".
 //
 // `move` and `drop` are compiler special forms over a storage location rather
 // than ordinary calls, so they are checked as syntax; the classification
@@ -685,7 +685,7 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 // live owner may still need its cleanup on one path, so it keeps blocking. The
 // reset check itself runs in a later pass over a different graph, so the answer
 // is recorded against the call node both passes walk, in the compilation arena
-// rather than this analysis's own (m6b-plan step 5).
+// rather than this analysis's own.
 @(private = "file")
 record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event, state: []Liveness) {
 	if event.call == nil {

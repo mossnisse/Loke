@@ -1,4 +1,4 @@
-// Local allocator regions: `mem.Arena` and `mem.Scratch` (m6b-plan step 5).
+// Local allocator regions: `mem.Arena` and `mem.Scratch`.
 //
 // design.md "Allocators": there is no ambient temporary allocator. Temporary
 // storage has a reset boundary and runtime identity, so code creates a

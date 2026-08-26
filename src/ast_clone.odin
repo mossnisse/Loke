@@ -1,4 +1,4 @@
-// Deep syntax cloning (m4b-plan decision "Instantiation representation").
+// Deep syntax cloning.
 //
 // Type annotations live on the AST nodes themselves (decision A1), so a second
 // instantiation of a generic declaration — or a second copy of a static

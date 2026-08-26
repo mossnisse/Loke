@@ -1,4 +1,4 @@
-// The predeclared scope (m2-plan step 1, decision "Universe").
+// The predeclared scope.
 //
 // Every predeclared name is a real, shadowable symbol in a real scope. Nothing
 // downstream compares an identifier against a hard-coded string to decide
@@ -45,8 +45,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"cstring_view", TYPE_CSTRING_VIEW},
 		// design.md "Allocators": `core:mem` and `base:runtime` export these very
 		// identities, and they stay predeclared as well because the fixed lifecycle
-		// signatures and the catalogue's `Cloneable` spell them unqualified
-		// (m6a-plan decision "Compiler-owned names").
+		// signatures and the catalogue's `Cloneable` spell them unqualified.
 		{"Allocator", TYPE_ALLOCATOR},
 		{"Allocator_Error", TYPE_ALLOCATOR_ERROR},
 	}
@@ -87,8 +86,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	builtins := []struct{name: string, kind: Builtin_Kind, type: Type_Id} {
 		// `assert` and `panic` are ordinary calls whose phase is chosen by execution:
 		// the evaluator diagnoses them, and a runtime occurrence takes the program's
-		// panic strategy like every other defined failure
-		// (m3-plan decision "Phase-neutral `assert`/`panic`").
+		// panic strategy like every other defined failure.
 		{"assert", .Assert, TYPE_VOID},
 		{"panic", .Panic, TYPE_VOID},
 
@@ -101,9 +99,9 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"source_location", .Source_Location, TYPE_VOID},
 		{"caller_location", .Caller_Location, TYPE_VOID},
 
-		// The layout and length queries. Their operands are inspected, not evaluated
-		// (m3-plan decision "Unevaluated layout operands"), so `check_builtin_call`
-		// binds them itself rather than through the ordinary argument path.
+		// The layout and length queries. Their operands are inspected, not evaluated,
+		// so `check_builtin_call` binds them itself rather than through the ordinary
+		// argument path.
 		{"size_of", .Size_Of, TYPE_INT},
 		{"align_of", .Align_Of, TYPE_INT},
 		{"offset_of", .Offset_Of, TYPE_INT},

@@ -66,7 +66,7 @@ Checker :: struct {
 
 // What a statement can do to control flow. A single "terminates" boolean cannot
 // answer missing-return, unreachable emission, loop exit, and cleanup routing at
-// once (m2-plan decision "Flow analysis").
+// once.
 Flow_Info :: struct {
 	can_fall_through: bool,
 	returns:          bool,
@@ -78,8 +78,7 @@ FLOWS :: Flow_Info{can_fall_through = true}
 
 // Scope, declarations, nominal shells, and import aliases, for whatever is
 // active so far. Every step guards against repeating itself, so a later
-// discovery round only does what a newly selected branch added
-// (m3-plan decision "Package phase model").
+// discovery round only does what a newly selected branch added.
 prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	pkg := package_of(k.c, package_id)
 	if pkg == nil {
@@ -806,7 +805,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			// design.md "Variadic parameters": `nums: ..int` is one read-only
 			// `[]int` in the callee, which is what makes `foreach (n in nums)`
 			// ordinary slice iteration and the ABI shared with a written slice
-			// parameter (m6a-plan decision "Ordinary variadics").
+			// parameter.
 			if mode == .Variadic && name_type != INVALID_TYPE {
 				if !variadic_position_ok(k, literal, position, name_index, parameter.span) {
 					mode = .Value
@@ -1481,7 +1480,7 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 	// Static-duration locals need module-level storage, and their initialisers
 	// have to be constant. Both are settled here rather than inside, because
 	// `check_decl_inner` returns from several places and every one of them still
-	// declared the storage (m5a-plan step 4). `check_state` makes this run once.
+	// declared the storage. `check_state` makes this run once.
 	if d.duration != .None && !d.top_level && d.kind == .Var {
 		record_static_local(k, d)
 	}
@@ -1542,7 +1541,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	// declaration's value is built with. The policy is settled here, before the
 	// initialiser, because a container literal initialising this destination
 	// constructs with the selected allocator rather than through a
-	// default-backed temporary (m6b-plan decision "Allocator binding").
+	// default-backed temporary.
 	if !check_via_policy(k, d, declared) {
 		return
 	}
@@ -1653,7 +1652,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 
 		// Every compile-time-required context goes through one funnel, so a
 		// constant initialiser may call a procedure and still get the same
-		// diagnostics as a folded one (m3-plan decision "Constant entry point").
+		// diagnostics as a folded one.
 		if d.top_level && d.kind == .Var {
 			folded, evaluated := require_const(k, value, "a file-scope initializer", "L0325")
 			// A union's tag is written by code, and a file-scope initialiser has
@@ -1837,7 +1836,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	flow := check_block(k, literal.body)
 	// design.md "Managed values and storage": ownership is dataflow over the
 	// finished body, so it runs once every node has its type and every `defer`
-	// has its slot. Implicit drops take the slots that follow (m5a-plan step 4).
+	// has its slot. Implicit drops take the slots that follow.
 	analyze_ownership(k, literal)
 	// Root and region provenance need every body's result summary settled, so
 	// this one only joins the queue the post-checking passes walk.

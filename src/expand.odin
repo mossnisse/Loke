@@ -1,5 +1,4 @@
-// Static `foreach` expansion (m4b-plan step 3, design.md "Static `foreach`
-// expansion").
+// Static `foreach` expansion (design.md "Static `foreach` expansion").
 //
 // This is expansion, not a loop: the iterable is folded to a compile-time value,
 // one copy of the body is cloned and checked per element, and the copies run in

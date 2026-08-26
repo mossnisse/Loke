@@ -1,4 +1,4 @@
-// Runtime `foreach` and the iteration protocol (m4b-plan step 4).
+// Runtime `foreach` and the iteration protocol.
 //
 // design.md requires built-ins to *satisfy* the same static `Iterable` interface
 // a user type does, not to be implemented through it. So there are two paths and
@@ -68,18 +68,17 @@ Synth_Kind :: enum {
 	Map_Iter,
 	Map_Next,
 	// design.md "Lifecycle hooks and resource types": a record that writes no
-	// `try_clone` still has one, and `clone` is always generated from it
-	// (m5a-plan step 3).
+	// `try_clone` still has one, and `clone` is always generated from it.
 	Try_Clone,
 	Clone,
 	// `dyn I` satisfies `I` through compiler-provided forwarding slots (design.md).
 	// Each one calls through the view's own witness.
 	Dyn_Forward,
 	// design.md "Dynamic arrays" and "Maps": one contributed container operation.
-	// Which one is `Symbol.container_op` (m6b-plan step 2).
+	// Which one is `Symbol.container_op`.
 	Container_Op,
 	// design.md "Allocators": one `mem.Arena`/`mem.Scratch` operation. Which one
-	// is `Symbol.provider_op` (m6b-plan step 5).
+	// is `Symbol.provider_op`.
 	Provider_Op,
 }
 
