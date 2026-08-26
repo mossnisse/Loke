@@ -75,133 +75,103 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		const_value = nil_const(),
 	})
 
-	// `assert` and `panic` are ordinary calls whose phase is chosen by execution:
-	// the evaluator diagnoses them, and a runtime occurrence takes the program's
-	// panic strategy like every other defined failure
-	// (m3-plan decision "Phase-neutral `assert`/`panic`"). Their arity is checked
-	// by `check_builtin_call`, so the interned type carries no parameters.
+	// The signature every built-in shares: none. `check_builtin_call` settles
+	// arity and operand types for all of them, so an interned signature would
+	// only be a second place for those rules to disagree.
 	no_args := intern_proc_type(c, nil, nil, nil, nil, "")
-	define(c, universe, "assert", Symbol{kind = .Builtin, builtin = .Assert, type = TYPE_VOID, proc_type = no_args})
-	define(c, universe, "panic",  Symbol{kind = .Builtin, builtin = .Panic,  type = TYPE_VOID, proc_type = no_args})
+	// Every predeclared built-in: one name, the kind that selects its checking,
+	// and the type the checker starts from. All of them share `no_args`, because
+	// arity and operand types are settled by `check_builtin_call` rather than by
+	// an interned signature. Order is irrelevant here - the names are distinct, so
+	// none shadows another.
+	builtins := []struct{name: string, kind: Builtin_Kind, type: Type_Id} {
+		// `assert` and `panic` are ordinary calls whose phase is chosen by execution:
+		// the evaluator diagnoses them, and a runtime occurrence takes the program's
+		// panic strategy like every other defined failure
+		// (m3-plan decision "Phase-neutral `assert`/`panic`").
+		{"assert", .Assert, TYPE_VOID},
+		{"panic", .Panic, TYPE_VOID},
 
-	// design.md "Compile-time built-ins". Each one answers entirely in the
-	// checker and leaves nothing for the backend, but none of them is a separate
-	// syntactic category: they are predeclared, shadowable identifiers like
-	// `size_of` and `transmute`.
-	compile_time := []struct{name: string, kind: Builtin_Kind} {
-		{"static_assert", .Static_Assert},
-		{"build_config", .Build_Config},
-		{"source_location", .Source_Location},
-		{"caller_location", .Caller_Location},
-	}
-	for entry in compile_time {
-		define(c, universe, entry.name, Symbol {
-			kind      = .Builtin,
-			builtin   = entry.kind,
-			type      = TYPE_VOID,
-			proc_type = no_args,
-		})
-	}
+		// design.md "Compile-time built-ins". Each one answers entirely in the
+		// checker and leaves nothing for the backend, but none of them is a separate
+		// syntactic category: they are predeclared, shadowable identifiers like
+		// `size_of` and `transmute`.
+		{"static_assert", .Static_Assert, TYPE_VOID},
+		{"build_config", .Build_Config, TYPE_VOID},
+		{"source_location", .Source_Location, TYPE_VOID},
+		{"caller_location", .Caller_Location, TYPE_VOID},
 
-	// The layout and length queries. Their operands are inspected, not evaluated
-	// (m3-plan decision "Unevaluated layout operands"), so `check_builtin_call`
-	// binds them itself rather than through the ordinary argument path.
-	layout := []struct{name: string, kind: Builtin_Kind} {
-		{"size_of", .Size_Of},
-		{"align_of", .Align_Of},
-		{"offset_of", .Offset_Of},
-		{"len", .Len},
-		{"cap", .Cap},
-	}
-	for entry in layout {
-		define(c, universe, entry.name, Symbol {
-			kind      = .Builtin,
-			builtin   = entry.kind,
-			type      = TYPE_INT,
-			proc_type = no_args,
-		})
-	}
+		// The layout and length queries. Their operands are inspected, not evaluated
+		// (m3-plan decision "Unevaluated layout operands"), so `check_builtin_call`
+		// binds them itself rather than through the ordinary argument path.
+		{"size_of", .Size_Of, TYPE_INT},
+		{"align_of", .Align_Of, TYPE_INT},
+		{"offset_of", .Offset_Of, TYPE_INT},
+		{"len", .Len, TYPE_INT},
+		{"cap", .Cap, TYPE_INT},
 
-	// design.md "`type` and `typeid`" and "Compile-time reflection". Their
-	// operands are inspected rather than evaluated, so `check_builtin_call` binds
-	// them itself.
-	reflection := []struct{name: string, kind: Builtin_Kind} {
-		{"type_of", .Type_Of},
-		{"typeid_of", .Typeid_Of},
-		{"fields_of", .Fields_Of},
-		{"enum_values_of", .Enum_Values_Of},
-	}
-	for entry in reflection {
-		define(c, universe, entry.name, Symbol {
-			kind      = .Builtin,
-			builtin   = entry.kind,
-			type      = TYPE_TYPE,
-			proc_type = no_args,
-		})
-	}
+		// design.md "`type` and `typeid`" and "Compile-time reflection". Their
+		// operands are inspected rather than evaluated, so `check_builtin_call` binds
+		// them itself.
+		{"type_of", .Type_Of, TYPE_TYPE},
+		{"typeid_of", .Typeid_Of, TYPE_TYPE},
+		{"fields_of", .Fields_Of, TYPE_TYPE},
+		{"enum_values_of", .Enum_Values_Of, TYPE_TYPE},
 
-	// design.md "`type` and `typeid`": the runtime half of reflection. Its operand
-	// is an ordinary runtime `typeid`, so unlike the compile-time forms above it
-	// is evaluated rather than inspected.
-	define(c, universe, "type_info_of", Symbol {
-		kind      = .Builtin,
-		builtin   = .Type_Info_Of,
-		type      = TYPE_VOID,
-		proc_type = no_args,
-	})
+		// design.md "`type` and `typeid`": the runtime half of reflection. Its operand
+		// is an ordinary runtime `typeid`, so unlike the compile-time forms above it
+		// is evaluated rather than inspected.
+		{"type_info_of", .Type_Info_Of, TYPE_VOID},
 
-	// design.md "Iteration protocol": the compiler contributes an `iter` overload
-	// for built-in iterables and finds a user type's own `iter` member, so the
-	// free call in the `Iterable` requirement resolves for both.
-	define(c, universe, "iter", Symbol{kind = .Builtin, builtin = .Iter, type = TYPE_VOID, proc_type = no_args})
+		// design.md "Iteration protocol": the compiler contributes an `iter` overload
+		// for built-in iterables and finds a user type's own `iter` member, so the
+		// free call in the `Iterable` requirement resolves for both.
+		{"iter", .Iter, TYPE_VOID},
 
-	// Receiver-shaped standard customization operations have one definition site:
-	// the method. These predeclared names are closed aliases which the checker
-	// rewrites to that method; they are not a parallel free overload group.
-	standard_aliases := []string{"iter_reverse", "format", "compare"}
-	for name in standard_aliases {
-		define(c, universe, name, Symbol {
-			kind      = .Builtin,
-			builtin   = .Standard_Alias,
-			type      = TYPE_VOID,
-			proc_type = no_args,
-		})
-	}
+		// Receiver-shaped standard customization operations have one definition site:
+		// the method. These predeclared names are closed aliases which the checker
+		// rewrites to that method; they are not a parallel free overload group.
+		{"iter_reverse", .Standard_Alias, TYPE_VOID},
+		{"format", .Standard_Alias, TYPE_VOID},
+		{"compare", .Standard_Alias, TYPE_VOID},
 
-	// design.md "Standard customization procedures": the standard aliases for the
-	// two generated copy members. Their result types follow the receiver type, so
-	// the interned type carries none.
-	copies := []struct{name: string, kind: Builtin_Kind} {
-		{"clone", .Clone},
-		{"try_clone", .Try_Clone},
-	}
-	for entry in copies {
-		define(c, universe, entry.name, Symbol {
-			kind      = .Builtin,
-			builtin   = entry.kind,
-			type      = TYPE_VOID,
-			proc_type = no_args,
-		})
-	}
+		// design.md "Standard customization procedures": the standard aliases for the
+		// two generated copy members. Their result types follow the receiver type, so
+		// the interned type carries none.
+		{"clone", .Clone, TYPE_VOID},
+		{"try_clone", .Try_Clone, TYPE_VOID},
 
-	// design.md "Allocators": the explicitly fallible primitives. Their operand
-	// types and arity are checked by `check_builtin_call`, so the interned type
-	// carries none.
-	allocation := []struct{name: string, kind: Builtin_Kind} {
-		{"new", .New},
-		{"new_clone", .New_Clone},
-		{"free", .Free},
-		{"free_all", .Free_All},
+		// design.md "Allocators": the explicitly fallible primitives.
+		{"new", .New, TYPE_VOID},
+		{"new_clone", .New_Clone, TYPE_VOID},
+		{"free", .Free, TYPE_VOID},
+		{"free_all", .Free_All, TYPE_VOID},
 		// design.md "Dynamic arrays" and "Maps": `make` names a container *type*
 		// and binds the result to the selected allocator. No ordinary signature can
 		// spell a type-valued first operand, so it joins the built-ins here.
-		{"make", .Make},
+		{"make", .Make, TYPE_VOID},
+
+		// `drop(value)` explicitly cleans up a definitely live lexical owning
+		// variable; it's a compiler special form, not an ordinary procedure, and a
+		// declaration can shadow it to make the special form unavailable in that
+		// scope (design.md "Storage modifiers") - which an ordinary universe symbol
+		// already gives it.
+		{"drop", .Drop, TYPE_VOID},
+
+		// design.md "Exchange": `exchange(inout destination, replacement)`. Its result
+		// type is the destination's, so the interned type carries none and
+		// `check_exchange_builtin` settles both.
+		{"exchange", .Exchange, TYPE_VOID},
+
+		// The standard free `hash(value, seed)` alias for the canonical receiver
+		// method over the built-in types promised by `Hashable`.
+		{"hash", .Hash, TYPE_UINT},
 	}
-	for entry in allocation {
+	for entry in builtins {
 		define(c, universe, entry.name, Symbol {
 			kind      = .Builtin,
 			builtin   = entry.kind,
-			type      = TYPE_VOID,
+			type      = entry.type,
 			proc_type = no_args,
 		})
 	}
@@ -218,28 +188,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		name      = intern_identifier(c, "default_allocator"),
 		span      = no_span(),
 		type      = TYPE_ALLOCATOR,
-		proc_type = no_args,
-	})
-
-	// `drop(value)` explicitly cleans up a definitely live lexical owning
-	// variable; it's a compiler special form, not an ordinary procedure, and a
-	// declaration can shadow it to make the special form unavailable in that
-	// scope (design.md "Storage modifiers") — which an ordinary universe symbol
-	// already gives it.
-	define(c, universe, "drop", Symbol{kind = .Builtin, builtin = .Drop, type = TYPE_VOID, proc_type = no_args})
-
-	// design.md "Exchange": `exchange(inout destination, replacement)`. Its result
-	// type is the destination's, so the interned type carries none and
-	// `check_exchange_builtin` settles both.
-	define(c, universe, "exchange", Symbol{kind = .Builtin, builtin = .Exchange, type = TYPE_VOID, proc_type = no_args})
-
-	// The standard free `hash(value, seed)` alias for the canonical receiver
-	// method over the built-in types promised by `Hashable`. Its operand types
-	// are checked by `check_builtin_call`, so the interned type carries none.
-	define(c, universe, "hash", Symbol {
-		kind      = .Builtin,
-		builtin   = .Hash,
-		type      = TYPE_UINT,
 		proc_type = no_args,
 	})
 
