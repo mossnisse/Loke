@@ -2519,11 +2519,9 @@ panic_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
 	fail := new_label(e, prefix)
 	ok := new_label(e, "ok")
 	branch_if(e, cond, fail, ok)
-	fmt.sbprintfln(&e.b, "%s:", fail)
-	e.terminated = false
+	place_label(e, fail)
 	emit_panic(e, message)
-	fmt.sbprintfln(&e.b, "%s:", ok)
-	e.terminated = false
+	place_label(e, ok)
 }
 
 // ---------------------------------------------------------- panic unwind --
@@ -2886,12 +2884,10 @@ run_cleanups :: proc(e: ^Emitter, down_to: int) {
 			run := new_label(e, "defer.run")
 			skip := new_label(e, "defer.skip")
 			branch_if(e, flag, run, skip)
-			fmt.sbprintfln(&e.b, "%s:", run)
-			e.terminated = false
+			place_label(e, run)
 			run_one_cleanup(e, entry)
 			branch(e, skip)
-			fmt.sbprintfln(&e.b, "%s:", skip)
-			e.terminated = false
+			place_label(e, skip)
 		}
 	}
 }
@@ -3368,19 +3364,16 @@ emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 	done_label := new_label(e, "if.done")
 	branch_if(e, cond, then_label, s.otherwise == nil ? done_label : else_label)
 
-	fmt.sbprintfln(&e.b, "%s:", then_label)
-	e.terminated = false
+	place_label(e, then_label)
 	emit_scoped_block(e, s.then)
 	branch(e, done_label)
 
 	if s.otherwise != nil {
-		fmt.sbprintfln(&e.b, "%s:", else_label)
-		e.terminated = false
+		place_label(e, else_label)
 		emit_stmt(e, s.otherwise)
 		branch(e, done_label)
 	}
-	fmt.sbprintfln(&e.b, "%s:", done_label)
-	e.terminated = false
+	place_label(e, done_label)
 	pop_scope(e)
 }
 
@@ -3415,20 +3408,17 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 		branch(e, body)
 	}
 
-	fmt.sbprintfln(&e.b, "%s:", body)
-	e.terminated = false
+	place_label(e, body)
 	emit_scoped_block(e, s.body)
 	branch(e, post)
 
-	fmt.sbprintfln(&e.b, "%s:", post)
-	e.terminated = false
+	place_label(e, post)
 	if s.post != nil {
 		emit_stmt(e, s.post)
 	}
 	branch(e, head)
 
-	fmt.sbprintfln(&e.b, "%s:", done)
-	e.terminated = false
+	place_label(e, done)
 	pop_scope(e)
 }
 
@@ -3481,8 +3471,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 
 	branch(e, len(order) > 0 ? tests[order[0]] : fallback)
 	for case_index, position in order {
-		fmt.sbprintfln(&e.b, "%s:", tests[case_index])
-		e.terminated = false
+		place_label(e, tests[case_index])
 		next := position + 1 < len(order) ? tests[order[position + 1]] : fallback
 		matched := ""
 		for value in s.cases[case_index].values {
@@ -3499,8 +3488,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	}
 
 	for entry, index in s.cases {
-		fmt.sbprintfln(&e.b, "%s:", bodies[index])
-		e.terminated = false
+		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
 		for stmt in entry.stmts {
 			if e.terminated {
@@ -3513,8 +3501,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		branch(e, done)
 	}
 
-	fmt.sbprintfln(&e.b, "%s:", done)
-	e.terminated = false
+	place_label(e, done)
 	pop_scope(e)
 }
 
@@ -3578,8 +3565,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 
 	branch(e, len(order) > 0 ? tests[order[0]] : fallback)
 	for case_index, position in order {
-		fmt.sbprintfln(&e.b, "%s:", tests[case_index])
-		e.terminated = false
+		place_label(e, tests[case_index])
 		next := position + 1 < len(order) ? tests[order[position + 1]] : fallback
 		matched := ""
 		for variant_expr in s.cases[case_index].values {
@@ -3599,8 +3585,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	}
 
 	for entry, index in s.cases {
-		fmt.sbprintfln(&e.b, "%s:", bodies[index])
-		e.terminated = false
+		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
 		emit_type_case_binding(e, entry, union_type, value, slot, erased)
 		for stmt in entry.stmts {
@@ -3614,8 +3599,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		branch(e, done)
 	}
 
-	fmt.sbprintfln(&e.b, "%s:", done)
-	e.terminated = false
+	place_label(e, done)
 	pop_scope(e)
 }
 
@@ -4681,18 +4665,15 @@ emit_divrem :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, lh
 	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", is_overflow, is_min, is_neg_one)
 	branch_if(e, is_overflow, special_label, normal_label)
 
-	fmt.sbprintfln(&e.b, "%s:", special_label)
-	e.terminated = false
+	place_label(e, special_label)
 	branch(e, done_label)
 
-	fmt.sbprintfln(&e.b, "%s:", normal_label)
-	e.terminated = false
+	place_label(e, normal_label)
 	normal_value := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", normal_value, op == .Slash ? "sdiv" : "srem", llvm, lhs, rhs)
 	branch(e, done_label)
 
-	fmt.sbprintfln(&e.b, "%s:", done_label)
-	e.terminated = false
+	place_label(e, done_label)
 	out := temp(e)
 	special_value := op == .Slash ? minimum : "0"
 	fmt.sbprintfln(
@@ -5009,25 +4990,21 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	// The incoming edge needs a name of its own for the phi, and the left
 	// operand may itself have created blocks.
 	branch(e, entry_label)
-	fmt.sbprintfln(&e.b, "%s:", entry_label)
-	e.terminated = false
+	place_label(e, entry_label)
 	if v.op == .And_And {
 		branch_if(e, lhs, rhs_label, done_label)
 	} else {
 		branch_if(e, lhs, done_label, rhs_label)
 	}
 
-	fmt.sbprintfln(&e.b, "%s:", rhs_label)
-	e.terminated = false
+	place_label(e, rhs_label)
 	rhs := emit_expr(e, v.rhs)
 	rhs_exit := new_label(e, "sc.rhs.exit")
 	branch(e, rhs_exit)
-	fmt.sbprintfln(&e.b, "%s:", rhs_exit)
-	e.terminated = false
+	place_label(e, rhs_exit)
 	branch(e, done_label)
 
-	fmt.sbprintfln(&e.b, "%s:", done_label)
-	e.terminated = false
+	place_label(e, done_label)
 	out := temp(e)
 	short := v.op == .And_And ? "false" : "true"
 	fmt.sbprintfln(
@@ -5046,26 +5023,21 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond) -> string {
 	done_label := new_label(e, "cond.done")
 	branch_if(e, cond, then_label, else_label)
 
-	fmt.sbprintfln(&e.b, "%s:", then_label)
-	e.terminated = false
+	place_label(e, then_label)
 	then_value := emit_expr(e, v.then)
 	then_exit := new_label(e, "cond.then.exit")
 	branch(e, then_exit)
-	fmt.sbprintfln(&e.b, "%s:", then_exit)
-	e.terminated = false
+	place_label(e, then_exit)
 	branch(e, done_label)
 
-	fmt.sbprintfln(&e.b, "%s:", else_label)
-	e.terminated = false
+	place_label(e, else_label)
 	else_value := emit_expr(e, v.otherwise)
 	else_exit := new_label(e, "cond.else.exit")
 	branch(e, else_exit)
-	fmt.sbprintfln(&e.b, "%s:", else_exit)
-	e.terminated = false
+	place_label(e, else_exit)
 	branch(e, done_label)
 
-	fmt.sbprintfln(&e.b, "%s:", done_label)
-	e.terminated = false
+	place_label(e, done_label)
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b,
@@ -6032,13 +6004,11 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
 		fail, done := new_label(e, "runes.failed"), new_label(e, "ok")
 		branch_if(e, failed, fail, done)
-		fmt.sbprintfln(&e.b, "%s:", fail)
-		e.terminated = false
+		place_label(e, fail)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
 		fmt.sbprintln(&e.b, "  unreachable")
 		e.terminated = true
-		fmt.sbprintfln(&e.b, "%s:", done)
-		e.terminated = false
+		place_label(e, done)
 		value := load(e, CONTAINER_TYPE, slot)
 		out[0] = value
 
@@ -6078,13 +6048,11 @@ emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments: string, fail_i
 		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
 		fail, done := new_label(e, "text.failed"), new_label(e, "ok")
 		branch_if(e, failed, fail, done)
-		fmt.sbprintfln(&e.b, "%s:", fail)
-		e.terminated = false
+		place_label(e, fail)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
 		fmt.sbprintln(&e.b, "  unreachable")
 		e.terminated = true
-		fmt.sbprintfln(&e.b, "%s:", done)
-		e.terminated = false
+		place_label(e, done)
 	}
 	out := load(e, STRING_TYPE, slot)
 	return out
@@ -6829,15 +6797,13 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	fallback_label := new_label(e, "orelse.fallback")
 	done := new_label(e, "orelse.done")
 	branch(e, entry)
-	fmt.sbprintfln(&e.b, "%s:", entry)
-	e.terminated = false
+	place_label(e, entry)
 	// The same status test `or_return` uses, so a `bool` and a union status take
 	// one implementation.
 	failed := emit_status_failed(e, status_type, status)
 	branch_if(e, failed, fallback_label, done)
 
-	fmt.sbprintfln(&e.b, "%s:", fallback_label)
-	e.terminated = false
+	place_label(e, fallback_label)
 	// design.md "or_else expression": the status is discarded, and a failing union
 	// status runs its drop hook before the fallback is evaluated. No drop is
 	// emitted because no status reaching here owns anything: a `bool` is trivial,
@@ -6847,12 +6813,10 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	fallback := emit_multi_value(e, v.fallback)
 	fallback_exit := new_label(e, "orelse.fallback.exit")
 	branch(e, fallback_exit)
-	fmt.sbprintfln(&e.b, "%s:", fallback_exit)
-	e.terminated = false
+	place_label(e, fallback_exit)
 	branch(e, done)
 
-	fmt.sbprintfln(&e.b, "%s:", done)
-	e.terminated = false
+	place_label(e, done)
 	out := make([]string, len(payloads))
 	for index in 0 ..< len(payloads) {
 		joined := temp(e)
@@ -6884,8 +6848,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	ok_label := new_label(e, "orreturn.ok")
 	branch_if(e, failed, fail_label, ok_label)
 
-	fmt.sbprintfln(&e.b, "%s:", fail_label)
-	e.terminated = false
+	place_label(e, fail_label)
 	last := len(e.result_slots) - 1
 	if last >= 0 {
 		target := e.result_types[last]
@@ -6896,8 +6859,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	}
 	emit_epilogue(e)
 
-	fmt.sbprintfln(&e.b, "%s:", ok_label)
-	e.terminated = false
+	place_label(e, ok_label)
 	return values[:len(values) - 1]
 }
 
@@ -8450,15 +8412,13 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	}
 	branch_if(e, test, body, done)
 
-	fmt.sbprintfln(&e.b, "%s:", body)
-	e.terminated = false
+	place_label(e, body)
 	numbered := counter == "" ? current : load(e, "i64", counter)
 	bind_indexed_value(e, s, current, array_slot, element, limit, floor, closed, numbered)
 	emit_scoped_block(e, s.body)
 	branch(e, post)
 
-	fmt.sbprintfln(&e.b, "%s:", post)
-	e.terminated = false
+	place_label(e, post)
 	if s.kind != .Array && s.kind != .Slice && s.kind != .Dynamic {
 		// An inclusive range whose high endpoint is the integer maximum cannot
 		// represent high+1. Finish directly after yielding high instead.
@@ -8478,8 +8438,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	}
 	branch(e, head)
 
-	fmt.sbprintfln(&e.b, "%s:", done)
-	e.terminated = false
+	place_label(e, done)
 }
 
 @(private = "file")
@@ -8594,23 +8553,20 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	ok := extract(e, pair_type, pair, 1)
 	branch_if(e, ok, body, done)
 
-	fmt.sbprintfln(&e.b, "%s:", body)
-	e.terminated = false
+	place_label(e, body)
 	fields := []Foreach_Field{{type = yielded, value = value}}
 	numbered := counter == "" ? "" : load(e, "i64", counter)
 	bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	emit_scoped_block(e, s.body)
 	branch(e, post)
 
-	fmt.sbprintfln(&e.b, "%s:", post)
-	e.terminated = false
+	place_label(e, post)
 	if counter != "" {
 		step_counter(e, counter, "i64")
 	}
 	branch(e, head)
 
-	fmt.sbprintfln(&e.b, "%s:", done)
-	e.terminated = false
+	place_label(e, done)
 }
 
 // An array the loop indexes: its own storage when it has any, and a spill
@@ -9089,13 +9045,11 @@ emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, control)
 	fail, done := new_label(e, "arena.failed"), new_label(e, "ok")
 	branch_if(e, failed, fail, done)
-	fmt.sbprintfln(&e.b, "%s:", fail)
-	e.terminated = false
+	place_label(e, fail)
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
 	fmt.sbprintln(&e.b, "  unreachable")
 	e.terminated = true
-	fmt.sbprintfln(&e.b, "%s:", done)
-	e.terminated = false
+	place_label(e, done)
 }
 
 // ------------------------------------------------------ container bodies --
@@ -9721,13 +9675,11 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// that policy off the handle the clone was given.
 	fail, ok := new_label(e, "clone.failed"), new_label(e, "ok")
 	branch_if(e, failed, fail, ok)
-	fmt.sbprintfln(&e.b, "%s:", fail)
-	e.terminated = false
+	place_label(e, fail)
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %arg1)")
 	fmt.sbprintln(&e.b, "  unreachable")
 	e.terminated = true
-	fmt.sbprintfln(&e.b, "%s:", ok)
-	e.terminated = false
+	place_label(e, ok)
 	fmt.sbprintfln(&e.b, "  ret %s %s", value_type, cloned)
 	fmt.sbprintln(&e.b, "}")
 }
@@ -9839,8 +9791,7 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string
 	loaded := load(e, target, data)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", target, loaded, slot)
 	branch(e, done_label)
-	fmt.sbprintfln(&e.b, "%s:", done_label)
-	e.terminated = false
+	place_label(e, done_label)
 	payload := load(e, target, slot)
 	pair := make([]string, 2)
 	pair[0], pair[1] = payload, matched
