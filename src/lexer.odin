@@ -681,6 +681,19 @@ OPERATORS :: [?]struct {
 	{"}", .Rbrace},
 }
 
+// The canonical text a punctuation operator is written with, and "" for every
+// kind the table has no spelling for — the keyword operators (`in`, `or_else`)
+// among them. `OPERATORS` stays the one place a spelling is written down, so a
+// new operator cannot lex and then print as something else.
+operator_spelling :: proc(kind: Token_Kind) -> string {
+	for op in OPERATORS {
+		if op.kind == kind {
+			return op.text
+		}
+	}
+	return ""
+}
+
 @(private = "file")
 operator :: proc(l: ^Lexer) -> Token {
 	lo := l.pos

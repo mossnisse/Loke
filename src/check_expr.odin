@@ -4431,48 +4431,9 @@ const_value_of :: proc(e: Expr) -> Const_Value {
 	return base == nil ? Const_Value{} : base.const_value
 }
 
+// An operator as it appears in a diagnostic. `?` stands in for a kind with no
+// punctuation spelling, which is what a keyword operator reaching here would be.
 operator_text :: proc(op: Token_Kind) -> string {
-	#partial switch op {
-	case .Plus:
-		return "+"
-	case .Minus:
-		return "-"
-	case .Star:
-		return "*"
-	case .Slash:
-		return "/"
-	case .Percent:
-		return "%"
-	case .Amp:
-		return "&"
-	case .Pipe:
-		return "|"
-	case .Tilde:
-		return "~"
-	case .Amp_Tilde:
-		return "&~"
-	case .Shl:
-		return "<<"
-	case .Shr:
-		return ">>"
-	case .And_And:
-		return "&&"
-	case .Or_Or:
-		return "||"
-	case .Not:
-		return "!"
-	case .Eq_Eq:
-		return "=="
-	case .Not_Eq:
-		return "!="
-	case .Lt:
-		return "<"
-	case .Lt_Eq:
-		return "<="
-	case .Gt:
-		return ">"
-	case .Gt_Eq:
-		return ">="
-	}
-	return "?"
+	text := operator_spelling(op)
+	return text != "" ? text : "?"
 }

@@ -2192,7 +2192,9 @@ check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: 
 	}
 	operands := []Type_Id{type, rhs_type}
 
-	compound := compound_symbol(s.op)
+	// `compound_operator` above already rejected anything but the eleven compound
+	// kinds, so this is always their `+=`-style spelling, never "".
+	compound := operator_spelling(s.op)
 	direct_args := make([]Arg_Info, 2, k.c.semantic_allocator)
 	direct_args[0] = arg_from_expr(k, s.lhs[0], .Inout)
 	direct_args[1] = arg_from_expr(k, s.rhs[0])
@@ -2241,36 +2243,6 @@ check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: 
 	s.lhs[0], s.rhs[0] = bound[0], bound[1]
 	s.operator, s.operator_direct = chosen, false
 	return true
-}
-
-// `+=` and friends as canonical operator text.
-@(private = "file")
-compound_symbol :: proc(op: Token_Kind) -> string {
-	#partial switch op {
-	case .Plus_Eq:
-		return "+="
-	case .Minus_Eq:
-		return "-="
-	case .Star_Eq:
-		return "*="
-	case .Slash_Eq:
-		return "/="
-	case .Percent_Eq:
-		return "%="
-	case .Pipe_Eq:
-		return "|="
-	case .Tilde_Eq:
-		return "~="
-	case .Amp_Eq:
-		return "&="
-	case .Amp_Tilde_Eq:
-		return "&~="
-	case .Shl_Eq:
-		return "<<="
-	case .Shr_Eq:
-		return ">>="
-	}
-	return ""
 }
 
 // The destination half of an assignment. A `_` on the left is a discard, which
