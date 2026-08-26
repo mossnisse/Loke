@@ -3,7 +3,9 @@
 // visible from stdout.
 //
 //   tests/syntax/*.loke             valid syntax: no diagnostics, dumpable
-//   tests/syntax/ambiguity/*.loke   exact dump goldens for the resolved rules
+//   tests/syntax/ambiguity/*.loke   exact dump goldens: the resolved rules, and
+//                                   the expression, declaration, statement and
+//                                   item forms
 //   tests/syntax/*.loke, mutated    the fuzzer's input corpus
 //
 // tests/syntax_err/ is checked by the CLI harness in tests/corpus_test.odin,
@@ -65,7 +67,8 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 	}
 }
 
-// Shape is the assertion for the resolved ambiguities, so these are exact.
+// Shape is the assertion for the resolved ambiguities and the parser's form
+// coverage, so these are exact.
 @(test)
 ambiguity_goldens :: proc(t: ^testing.T) {
 	paths := corpus(t, "tests/syntax/ambiguity/*.loke")

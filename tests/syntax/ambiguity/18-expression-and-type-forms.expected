@@ -1,0 +1,32 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["prec"]
+          (binary Or_Or (ident "a") (binary And_And (ident "b") (binary Eq_Eq (ident "c") (binary Plus (ident "d") (binary Star (ident "e") (ident "f"))))))
+        )
+        (var names=["cond"]
+          (cond (ident "a") (ident "b") (or_else (ident "c") (ident "d")))
+        )
+        (var names=["rng"]
+          (range Range_Incl (int "1") (int "2"))
+        )
+        (var names=["post"]
+          (postfix Or_Return (slice-of (index (assert (selector (postfix Caret (ident "p")) "field") (ident "int")) (int "1")) (int "2") (int "3")))
+        )
+        (var names=["args"]
+          (call (ident "f") (ident "a") (arg "name" (ident "b")) (arg inout (ident "c")) (arg .. (ident "d")))
+        )
+        (var names=["comp"]
+          (composite (ident "Foo") (int "1") (= (ident "key") (int "2")))
+        )
+        (var names=["lits"]
+          (call (ident "g") (float "1.5") (string "\"s\"") (rune "'c'") (selector _ "Member") (move (ident "a")) (call (ident "static_assert") (ident "b")) (call (ident "caller_location")))
+        )
+        (var names=["types"] type=(map (ident "string") (slice mut (call (ident "Foo") (ident "int"))))
+          (ident "a")
+        )
+      )
+    )
+  )
+)

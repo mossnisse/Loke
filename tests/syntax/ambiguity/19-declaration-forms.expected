@@ -1,0 +1,51 @@
+(file package="main"
+  (const names=["Point"]
+    (struct (field ["x","y"] (ident "int")) (field using ["base"] (ident "Base")))
+  )
+  (const names=["Pair"]
+    (struct (generic ["K","V"] (type)) (where (call (ident "Additive") (ident "K"))) (field ["key"] (ident "K")))
+  )
+  (const names=["Color"]
+    (enum (ident "u8") (member "Red") (member "Green" (int "3")))
+  )
+  (const names=["Value"]
+    (union (ident "int") (ident "string"))
+  )
+  (const names=["Sequence"]
+    (interface (generic ["Self"] (type)) (req (binding ["s"] inout (ident "Self")) (index (ident "s") (int "0")) (-> inout (ident "Item"))) (slot "next" (proc-type (param ["self"] (ident "Self")) (result (ident "Item")))))
+  )
+  (const names=["add"]
+    (proc (proc-type (param ["a"] (ident "int")) (param ["$T"] (type)) (param .. ["values"] (ident "T")) (param ["b"] (ident "int") (default (int "1"))) (result ["ok"] (ident "bool")) (result (ident "int")))
+      (block
+      )
+    )
+  )
+  (const names=["extern_call"]
+    (proc (proc-type "c" (param ["a"] (ptr (ident "u8")))) ---)
+  )
+  (const names=["group"]
+    (proc-group ["add","sub"])
+  )
+  (const names=["element_set"]
+    (operator "[]=" (proc (proc-type (param ["a"] (ident "int"))) ---))
+  )
+  (const names=["Move_Only"]
+    (move-only-struct (field ["id"] (ident "int")))
+  )
+  (var names=["counter"] static manual type=(ident "int")
+    (int "0")
+  )
+  (var names=["inferred"] thread_local
+    (int "1")
+  )
+  (var names=["not_a_modifier"] type=(ident "static"))
+  (var names=["buffer"] type=(dyn-array (ident "u8")) via=(call (selector (ident "arena") "allocator"))
+    (ident "a")
+  )
+  (var names=["blank"] type=(array (int "4") (ident "int"))
+    (uninit)
+  )
+  (var names=["callback"] type=(proc-type (param ["a"] (ident "int")) (result (ident "int")))
+    (ident "a")
+  )
+)

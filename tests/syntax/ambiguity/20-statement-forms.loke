@@ -1,0 +1,31 @@
+package main;
+
+main :: proc() {
+	a, b = b, a;
+	x += 1;
+	if (y := next(); y < 0) {
+		f();
+	} else {
+		g();
+	}
+	for (i := 0; i < 10; i += 1) { }
+	for (;;) { }
+	for (running) { }
+	foreach (&value, i in items) { }
+	foreach ($member in fields_of(T)) { }
+	when (WINDOWS) { } else { }
+	defer close(handle);
+	switch (value) {
+	case 1, 2 ..= 9:
+		f();
+	case:
+	}
+	switch (tag := kind(); shape in tag) {
+	case Circle, ^Square:
+		break;
+	}
+	switch ((x in set)) {
+	case true:
+	}
+	return;
+}

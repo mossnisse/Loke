@@ -1,0 +1,32 @@
+package main;
+
+Point :: struct {
+	x, y: int,
+	using base: Base,
+};
+
+Pair :: struct($K, $V: type) where Additive(K) {
+	key: K,
+}
+
+Color :: enum u8 { Red, Green = 3 }
+
+Value :: union { int, string }
+
+Sequence :: interface($Self: type) {
+	(s: inout Self) s[0] -> inout Item;
+	slot next: proc(self: Self) -> Item;
+}
+
+add :: proc(a: int, $T: type, values: ..T, b: int = 1) -> (ok: bool, int) { }
+extern_call :: proc "c" (a: ^u8) ---;
+group :: proc { add, sub }
+element_set :: operator([]=) proc(a: int) ---;
+Move_Only :: move_only struct { id: int }
+
+counter: static manual int = 0;
+inferred: thread_local = 1;
+not_a_modifier: static;
+buffer: [dynamic]u8 via arena.allocator() = a;
+blank: [4]int = ---;
+callback: proc(a: int) -> int = a;

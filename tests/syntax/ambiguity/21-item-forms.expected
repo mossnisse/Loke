@@ -1,0 +1,77 @@
+(file package="main" @[compiler.no_alias,version=(int "2")]
+  (import "core:fmt")
+  (import alias="strings" "core:strings")
+  (foreign-import "raylib" "raylib.lib")
+  (foreign "raylib"
+    (const names=["init_window"] @[link_name=(string "\"InitWindow\"")]
+      (proc (proc-type "c" (param ["width"] (ident "int"))) ---)
+    )
+    (var names=["frame_count"] type=(ident "int"))
+  )
+  (impl (ident "Point")
+    (const names=["length"]
+      (proc (proc-type (param ["self"] _) (result (ident "int")))
+        (block
+        )
+      )
+    )
+    (delegate "+" "[]=")
+    (const names=["delegate"]
+      (proc (proc-type (param ["self"] _))
+        (block
+        )
+      )
+    )
+  )
+  (impl (slice (ident "int"))
+    (const names=["sum"]
+      (proc (proc-type (param ["self"] _) (result (ident "int")))
+        (block
+        )
+      )
+    )
+  )
+  (when
+    (cond (ident "WINDOWS"))
+    (items
+      (var names=["handle"] type=(ident "int")
+        (int "0")
+      )
+      (import "core:sys/windows")
+    )
+    (else
+      (when
+        (cond (ident "LINUX"))
+        (items
+          (var names=["handle"] @[private] type=(ident "int")
+            (int "1")
+          )
+        )
+        (else
+          (items
+            (var names=["handle"] type=(ident "int")
+              (int "2")
+            )
+          )
+        )
+      )
+    )
+  )
+  (var names=["counter"] @[export] type=(ident "int")
+    (int "0")
+  )
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (block @[cold]
+          (call (ident "f"))
+        )
+        (when @[hot]
+          (cond (ident "DEBUG"))
+          (block
+          )
+        )
+      )
+    )
+  )
+)

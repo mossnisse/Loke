@@ -1,0 +1,8 @@
+package main;
+
+N :: 3;
+main :: proc() {
+	x := N + 1;
+	sink(x);
+	return;
+}

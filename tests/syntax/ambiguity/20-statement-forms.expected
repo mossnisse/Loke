@@ -1,0 +1,87 @@
+(file package="main"
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (assign Assign (lhs (ident "a") (ident "b")) (rhs (ident "b") (ident "a")))
+        (assign Plus_Eq (lhs (ident "x")) (rhs (int "1")))
+        (if
+          (var names=["y"]
+            (call (ident "next"))
+          )
+          (cond (binary Lt (ident "y") (int "0")))
+          (block
+            (call (ident "f"))
+          )
+          (else
+            (block
+              (call (ident "g"))
+            )
+          )
+        )
+        (for
+          (var names=["i"]
+            (int "0")
+          )
+          (cond (binary Lt (ident "i") (int "10")))
+          (assign Plus_Eq (lhs (ident "i")) (rhs (int "1")))
+          (block
+          )
+        )
+        (for
+          (block
+          )
+        )
+        (for cond-only
+          (cond (ident "running"))
+          (block
+          )
+        )
+        (foreach ["&value","i"]
+          (in (ident "items"))
+          (block
+          )
+        )
+        (foreach ["$member"]
+          (in (call (ident "fields_of") (ident "T")))
+          (block
+          )
+        )
+        (when
+          (cond (ident "WINDOWS"))
+          (block
+          )
+          (else
+            (block
+            )
+          )
+        )
+        (defer
+          (call (ident "close") (ident "handle"))
+        )
+        (switch value
+          (subject (ident "value"))
+          (case (int "1") (range Range_Incl (int "2") (int "9"))
+            (call (ident "f"))
+          )
+          (case
+          )
+        )
+        (switch type "shape"
+          (var names=["tag"]
+            (call (ident "kind"))
+          )
+          (subject (ident "tag"))
+          (case (ident "Circle") (ptr (ident "Square"))
+            (break)
+          )
+        )
+        (switch value
+          (subject (binary In (ident "x") (ident "set")))
+          (case (ident "true")
+          )
+        )
+        (return)
+      )
+    )
+  )
+)

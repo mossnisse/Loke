@@ -1,0 +1,12 @@
+package main;
+
+main :: proc() {
+	prec := a || b && c == d + e * f;
+	cond := a if b else c or_else d;
+	rng := 1 ..= 2;
+	post := p^.field.(int)[1][2:3] or_return;
+	args := f(a, name = b, inout c, ..d);
+	comp := Foo{1, key = 2};
+	lits := g(1.5, "s", 'c', .Member, move(a), static_assert(b), caller_location());
+	types: map[string][]mut Foo(int) = a;
+}

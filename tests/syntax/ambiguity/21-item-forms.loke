@@ -1,0 +1,44 @@
+@(compiler.no_alias, version = 2)
+package main;
+
+import "core:fmt";
+import strings "core:strings";
+foreign import raylib "raylib.lib";
+
+foreign raylib {
+	@(link_name = "InitWindow")
+	init_window :: proc "c" (width: int) ---;
+	frame_count: int;
+}
+
+impl Point {
+	length :: proc(self) -> int { }
+	delegate(+, []=);
+	delegate :: proc(self) { }
+}
+
+impl []int {
+	sum :: proc(self) -> int { }
+}
+
+when (WINDOWS) {
+	handle: int = 0;
+	import "core:sys/windows";
+} else when (LINUX) {
+	@(private)
+	handle: int = 1;
+} else {
+	handle: int = 2;
+}
+
+@(export)
+counter: int = 0;
+
+main :: proc() {
+	@(cold)
+	{
+		f();
+	}
+	@(hot)
+	when (DEBUG) { }
+}

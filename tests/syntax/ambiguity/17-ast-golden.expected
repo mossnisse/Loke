@@ -1,0 +1,16 @@
+(file package="main"
+  (const names=["N"]
+    (int "3")
+  )
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["x"]
+          (binary Plus (ident "N") (int "1"))
+        )
+        (call (ident "sink") (ident "x"))
+        (return)
+      )
+    )
+  )
+)
