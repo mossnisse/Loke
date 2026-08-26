@@ -1042,12 +1042,8 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 		return
 	}
 	name := generic_instance_name(k.c, template.symbol, instance.bindings)
-	saved := k.scope
-	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal, saved_generic := k.proc_literal, k.generic_depth
-	defer leave_instance(k, saved, saved_pkg, saved_lookup, saved_impl, saved_file, saved_node, saved_literal, saved_generic)
-	enter_instance(k, template, instance.scope)
+	saved := enter_instance(k, template, instance.scope)
+	defer leave_instance(k, saved)
 
 	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
 	defer pop(&k.c.instantiation_stack)
@@ -1108,12 +1104,33 @@ note_instantiation_stack :: proc(k: ^Checker) {
 // Runs `body` with the checker positioned at an instance: its own scope, the
 // definition's package for method, operator, and extension lookup, and the
 // definition's file for visibility defaults.
+// The checker state an instance displaces, named rather than positional: `pkg`
+// and `lookup` are both `Package_Id`, and `file` and `generic` are both
+// integers, so a positional restore had two pairs that could be swapped without
+// the compiler noticing.
 @(private = "file")
-enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) -> (^Scope, Package_Id, Package_Id, Type_Id, u32, ^File, ^Expr_Proc, int) {
-	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal := k.proc_literal
-	saved_generic := k.generic_depth
+Instance_Context :: struct {
+	scope:       ^Scope,
+	pkg, lookup: Package_Id,
+	impl:        Type_Id,
+	file:        u32,
+	node:        ^File,
+	literal:     ^Expr_Proc,
+	generic:     int,
+}
+
+@(private = "file")
+enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) -> Instance_Context {
+	saved := Instance_Context {
+		scope   = k.scope,
+		pkg     = k.pkg,
+		lookup  = k.lookup_pkg,
+		impl    = k.impl_type,
+		file    = k.file,
+		node    = k.file_node,
+		literal = k.proc_literal,
+		generic = k.generic_depth,
+	}
 	k.scope = scope
 	k.pkg = template.pkg
 	k.lookup_pkg = template.lookup_pkg
@@ -1123,24 +1140,15 @@ enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) 
 	if template.file_node != nil {
 		k.file, k.file_node = template.file, template.file_node
 	}
-	return saved_scope, saved_pkg, saved_lookup, saved_impl, saved_file, saved_node, saved_literal, saved_generic
+	return saved
 }
 
 @(private = "file")
-leave_instance :: proc(
-	k: ^Checker,
-	scope: ^Scope,
-	pkg, lookup: Package_Id,
-	impl: Type_Id,
-	file: u32,
-	node: ^File,
-	literal: ^Expr_Proc,
-	generic: int,
-) {
-	k.scope, k.pkg, k.lookup_pkg = scope, pkg, lookup
-	k.impl_type, k.file, k.file_node = impl, file, node
-	k.proc_literal = literal
-	k.generic_depth = generic
+leave_instance :: proc(k: ^Checker, saved: Instance_Context) {
+	k.scope, k.pkg, k.lookup_pkg = saved.scope, saved.pkg, saved.lookup
+	k.impl_type, k.file, k.file_node = saved.impl, saved.file, saved.node
+	k.proc_literal = saved.literal
+	k.generic_depth = saved.generic
 }
 
 // ------------------------------------------------------- record instances --
@@ -1180,12 +1188,8 @@ instantiate_record_body :: proc(
 	}
 	instance.symbol = symbol_id
 	instance.type = type
-	saved := k.scope
-	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal, saved_generic := k.proc_literal, k.generic_depth
-	defer leave_instance(k, saved, saved_pkg, saved_lookup, saved_impl, saved_file, saved_node, saved_literal, saved_generic)
-	enter_instance(k, template, instance.scope)
+	saved := enter_instance(k, template, instance.scope)
+	defer leave_instance(k, saved)
 
 	before := len(k.c.diagnostics)
 	if record.kind == .Struct {
@@ -1351,12 +1355,8 @@ instantiate_procedure_signature :: proc(
 	clone.symbols[0] = symbol_id
 	literal.symbol = symbol_id
 
-	saved := k.scope
-	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal, saved_generic := k.proc_literal, k.generic_depth
-	defer leave_instance(k, saved, saved_pkg, saved_lookup, saved_impl, saved_file, saved_node, saved_literal, saved_generic)
-	enter_instance(k, template, instance.scope)
+	saved := enter_instance(k, template, instance.scope)
+	defer leave_instance(k, saved)
 
 	before := k.c.error_count
 	clone.sig_state = .Checked
@@ -1389,12 +1389,8 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance) {
 		return
 	}
 
-	saved := k.scope
-	saved_pkg, saved_lookup := k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal, saved_generic := k.proc_literal, k.generic_depth
-	defer leave_instance(k, saved, saved_pkg, saved_lookup, saved_impl, saved_file, saved_node, saved_literal, saved_generic)
-	enter_instance(k, template, instance.scope)
+	saved := enter_instance(k, template, instance.scope)
+	defer leave_instance(k, saved)
 
 	append(&k.c.instantiation_stack, Instantiation_Frame {
 		description = identifier_text(k.c, symbol_of(k.c, instance.symbol).name),
