@@ -2919,10 +2919,16 @@ emit_block_statements :: proc(e: ^Emitter, b: ^Block) {
 	if b == nil {
 		return
 	}
-	for stmt in b.stmts {
+	emit_statements(e, b.stmts)
+}
+
+// Unreachable code still needs a block to live in, or LLVM rejects the
+// instructions that follow a terminator. A switch case body has the same
+// problem as a block, so both go through here.
+@(private = "file")
+emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
+	for stmt in stmts {
 		if e.terminated {
-			// Unreachable code still needs a block to live in, or LLVM rejects
-			// the instructions that follow a terminator.
 			fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
 			e.terminated = false
 		}
@@ -3461,13 +3467,7 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	for entry, index in s.cases {
 		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
-		for stmt in entry.stmts {
-			if e.terminated {
-				fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
-				e.terminated = false
-			}
-			emit_stmt(e, stmt)
-		}
+		emit_statements(e, entry.stmts)
 		pop_scope(e)
 		branch(e, done)
 	}
@@ -3559,13 +3559,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
 		emit_type_case_binding(e, entry, union_type, value, slot, erased)
-		for stmt in entry.stmts {
-			if e.terminated {
-				fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
-				e.terminated = false
-			}
-			emit_stmt(e, stmt)
-		}
+		emit_statements(e, entry.stmts)
 		pop_scope(e)
 		branch(e, done)
 	}
