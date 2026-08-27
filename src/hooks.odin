@@ -25,6 +25,10 @@ package lokec
 Lifecycle :: struct {
 	custom_drop:      Symbol_Id,
 	custom_try_clone: Symbol_Id,
+	// Canonical public copy entry points, recorded when contributed. Emission
+	// must not rediscover these by searching for the strings "clone"/"try_clone".
+	clone:           Symbol_Id,
+	try_clone:       Symbol_Id,
 	// An explicit `move_only struct`: neither public copy entry point exists.
 	clone_disabled:   bool,
 	// A record is managed when it has a drop/copy hook, is move-only, or has a
@@ -48,6 +52,67 @@ Lifecycle :: struct {
 	// generated and then trapped at run time.
 	provider:         bool,
 	state:            Size_State,
+}
+
+// Emission reads a finalized value snapshot, not the checker's lazy cache.
+// Fallibility is transitive through record fields and nonempty fixed arrays.
+Lifecycle_Operations :: struct {
+	using facts: Lifecycle,
+	clone_fallible: bool,
+}
+
+finalize_lifecycle_operations :: proc(c: ^Compiler) -> bool {
+	if c.lifecycle_operations_ready { return true }
+	if c.error_count != 0 { return false }
+	if c.speculation_depth != 0 {
+		return emission_contract_error(c, "lifecycle operations cannot be finalized during speculation")
+	}
+	// This pass makes no types, symbols, or generated procedures. All contributed
+	// entry points must already exist; unused types need facts, not new bodies.
+	for index in 1 ..< len(c.types) {
+		if !finalize_type_lifecycle(c, Type_Id(index)) { return false }
+	}
+	c.lifecycle_operations_ready = true
+	return true
+}
+
+@(private = "file")
+finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	under := type_underlying(c, type)
+	if existing, found := c.lifecycle_operations[under]; found {
+		if existing.state == .Finite { return true }
+		return emission_contract_error(c, "a lifecycle dependency contains a by-value cycle")
+	}
+	if under == INVALID_TYPE { return true }
+	facts := lifecycle_of(c, under)^
+	operations := Lifecycle_Operations{facts = facts}
+	operations.state = .Checking
+	operations.clone_fallible = facts.custom_try_clone != INVALID_SYMBOL || facts.container
+	c.lifecycle_operations[under] = operations
+	info := type_of(c, under)
+	if info != nil {
+		// One array element is enough, regardless of the array's length. Walking
+		// every index here would make metadata finalization proportional to size.
+		parts: []Type_Id
+		if info.kind == .Array && info.count > 0 {
+			parts = []Type_Id{info.element}
+		} else if info.kind == .Struct {
+			parts = make([]Type_Id, len(info.fields), context.temp_allocator)
+			for field, index in info.fields { parts[index] = symbol_of(c, field).type }
+		}
+		for part in parts {
+			if !finalize_type_lifecycle(c, part) { return false }
+			operations.clone_fallible ||= c.lifecycle_operations[type_underlying(c, part)].clone_fallible
+		}
+	}
+	operations.state = .Finite
+	c.lifecycle_operations[under] = operations
+	return true
+}
+
+resolved_lifecycle_operations :: proc(c: ^Compiler, type: Type_Id) -> (Lifecycle_Operations, bool) {
+	operations, found := c.lifecycle_operations[type_underlying(c, type)]
+	return operations, c.lifecycle_operations_ready && found && operations.state == .Finite
 }
 
 // `drop` has the signature `proc(self: inout T)` (design.md).
@@ -243,12 +308,20 @@ ensure_lifecycle_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 // fixed array's included, which is why this is not restricted to records even
 // though only a record receives the `clone` entry point.
 // Keyed on the underlying type, exactly as `lifecycle_of` is: a `distinct` name
-// shares its underlying record's lifecycle, and `type_hook` resolves through the
-// same step, so both halves agree on where one type's hooks live.
+// shares its underlying record's lifecycle and canonical copy procedures.
 contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	type := type_underlying(k.c, written)
 	info := type_of(k.c, type)
 	if info == nil || info.descriptor || .Lifecycle in info.contributed {
+		return
+	}
+	#partial switch info.kind {
+	case .Struct, .Array, .Dynamic_Array, .Map, .String:
+	case:
+		return
+	}
+	if k.c.lifecycle_operations_ready {
+		emission_contract_error(k.c, "lifecycle members were requested after finalization")
 		return
 	}
 	// Copyable owning built-ins such as `string`, dynamic arrays, and maps
@@ -389,6 +462,8 @@ generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kin
 		sym.receiver = .Value
 		sym.param_defaults[1] = default_allocator_arg(k.c)
 	}
+	entry := lifecycle_of(k.c, type)
+	if kind == .Try_Clone { entry.try_clone = id } else { entry.clone = id }
 	return id
 }
 

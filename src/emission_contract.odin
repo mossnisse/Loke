@@ -66,6 +66,44 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			return emission_contract_error(c, "a resolved map key operation has no checked procedure")
 		}
 	}
+	if !c.lifecycle_operations_ready {
+		return emission_contract_error(c, "lifecycle operations must be finalized before emission")
+	}
+	synthesized := make(map[Symbol_Id]bool, context.temp_allocator)
+	for id in c.synth_procs { synthesized[id] = true }
+	for index in 1 ..< len(c.types) {
+		type := type_underlying(c, Type_Id(index))
+		if type == INVALID_TYPE { continue }
+		operations, resolved := resolved_lifecycle_operations(c, type)
+		if !resolved {
+			return emission_contract_error(c, "a type has no finalized lifecycle operations")
+		}
+		for target in ([]Symbol_Id{operations.custom_drop, operations.custom_try_clone}) {
+			if target != INVALID_SYMBOL && !emission_procedure_available(c, target) {
+				return emission_contract_error(c, "a lifecycle hook has no checked procedure")
+			}
+		}
+		for target, slot in ([]Symbol_Id{operations.clone, operations.try_clone}) {
+			if target == INVALID_SYMBOL { continue }
+			symbol := symbol_of(c, target)
+			expected: Synth_Kind = slot == 0 ? .Clone : .Try_Clone
+			if !emission_procedure_available(c, target) || !synthesized[target] ||
+			   symbol.synth != expected || type_underlying(c, symbol.owner_type) != type {
+				return emission_contract_error(c, "a lifecycle copy operation has no registered procedure")
+			}
+		}
+	}
+	// Check the reverse edge too: removing an operation ID must not make a
+	// contributed wrapper appear to be an unused type with no copy operations.
+	for id in c.synth_procs {
+		symbol := symbol_of(c, id)
+		if symbol == nil || (symbol.synth != .Clone && symbol.synth != .Try_Clone) { continue }
+		operations, _ := resolved_lifecycle_operations(c, symbol.owner_type)
+		target := symbol.synth == .Clone ? operations.clone : operations.try_clone
+		if target != id {
+			return emission_contract_error(c, "a contributed lifecycle procedure has no recorded operation")
+		}
+	}
 	for witness in c.witness_order {
 		if witness == nil || witness.name == "" || type_of(c, witness.concrete) == nil {
 			return emission_contract_error(c, "a witness has no concrete type or global name")

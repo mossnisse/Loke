@@ -18,6 +18,15 @@ builtin pair from an inherent hash/equality pair; the latter stores exact
 record is an internal contract error, not a request to repeat member lookup.
 Failed lookups are not cached while discovery is still installing declarations.
 
+Lifecycle operations follow the same boundary. Checking records the canonical
+`clone` and `try_clone` symbol IDs when it contributes them. After formatter
+discovery, `finalize_lifecycle_operations` copies classification and hook IDs
+into value records and computes transitive copy fallibility. It visits each
+type once and only one element of a nonempty fixed array, without creating types
+or procedures. Unused types receive facts without acquiring new copy bodies.
+LLVM reads these records instead of searching members or populating the
+checker's lazy lifecycle cache. Late lifecycle contributions are rejected.
+
 Speculative interface and overload checks may annotate cloned syntax and cache
 signatures, but do not commit generic bodies or register runtime artifacts.
 Actually executing a CTFE helper is a real use: its persistent body is checked
@@ -31,6 +40,8 @@ Before allocating an emitter, `validate_emission_dependencies` checks:
 - Checking is outside speculation and typeids are frozen, complete, and unique.
 - Committed generic bodies are checked and enrolled in their packages.
 - Synthesized map bodies have resolved key policies and operation targets.
+- Every type has finalized lifecycle facts; recorded copy procedures are
+  registered, and contributed copy procedures have matching operation IDs.
 - Witness targets and materialized constant definitions are present.
 
 This validates the registries, not every AST annotation. Local lowering checks
@@ -80,8 +91,8 @@ add a boundary check when it introduces a new runtime dependency. Keep ABI
 classification in `abi.odin` and layout in `layout.odin`; backend files translate
 those decisions into LLVM spelling.
 
-This refactor establishes the pattern for map policies. Other paths, including
-lifecycle hook lookup and some builtin dispatch, still deserve the same audit.
+Map policies and lifecycle operations now use this pattern. Some builtin
+dispatch and other semantic queries still deserve the same audit.
 The backend components also still share one mutable emitter. Further separation
 can proceed one operation or state owner at a time without replacing the AST.
 

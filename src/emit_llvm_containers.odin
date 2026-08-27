@@ -80,7 +80,7 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 // C loop out of the way entirely for a `[dynamic]int`.
 @(private = "file")
 container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
-	if part == INVALID_TYPE || !type_is_managed(e.c, part) {
+	if part == INVALID_TYPE || !emit_lifecycle(e, part).managed {
 		return "null"
 	}
 	name := fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part)))
@@ -108,7 +108,7 @@ container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 // is, so the C helper memcpys the whole run instead of calling back per element.
 @(private = "file")
 container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
-	if part == INVALID_TYPE || !type_is_managed(e.c, part) {
+	if part == INVALID_TYPE || !emit_lifecycle(e, part).managed {
 		return "null"
 	}
 	name := fmt.aprintf("@loke.cclone.%d", int(type_underlying(e.c, part)))
@@ -623,7 +623,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		)
 		staged := alloca(e, element_llvm)
 		cloned := "true"
-		if type_is_managed(e.c, element) {
+		if emit_lifecycle(e, element).managed {
 			source := value_storage(e, element, "%arg2")
 			cloned = emit_try_clone_into(e, element, staged, source, allocator)
 		} else {

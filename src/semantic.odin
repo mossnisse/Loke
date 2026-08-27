@@ -831,6 +831,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.materialized = make(map[Symbol_Id]^Materialized, c.semantic_allocator)
 	c.materialized_order = make([dynamic]^Materialized, 0, 4, c.semantic_allocator)
 	c.lifecycles = make(map[Type_Id]^Lifecycle, c.semantic_allocator)
+	c.lifecycle_operations = make(map[Type_Id]Lifecycle_Operations, c.semantic_allocator)
 	c.runtime_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.formatters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
 	c.result_summary_dependencies = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)

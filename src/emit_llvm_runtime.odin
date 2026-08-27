@@ -212,7 +212,7 @@ emit_thread_local_teardown :: proc(e: ^Emitter) {
 		if sym == nil || sym.duration != .Thread_Local || sym.manual {
 			continue // the runtime does not drop a manual TLS owner
 		}
-		if !type_is_managed(e.c, sym.type) {
+		if !emit_lifecycle(e, sym.type).managed {
 			continue
 		}
 		emit_drop_place(e, sym.type, e.names[symbol_id])

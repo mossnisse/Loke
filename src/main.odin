@@ -147,6 +147,9 @@ run :: proc() -> int {
 	// closed, so "one formatter per concrete type" is a whole-program answer
 	// rather than a per-call-site one.
 	discover_formatters(&c)
+	// Copy/drop lowering consumes a closed snapshot after all checked helpers
+	// have had the opportunity to contribute their lifecycle dependencies.
+	finalize_lifecycle_operations(&c)
 	if c.error_count > 0 {
 		report(&c)
 		return 1

@@ -105,7 +105,8 @@ Cleanup_Scope :: struct {
 // exactly the prefix it did build.
 @(private)
 emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: string) -> string {
-	if lifecycle_of(e.c, type).container {
+	operations := emit_lifecycle(e, type)
+	if operations.container {
 		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_clone" : "loke_rt_v1_dyn_clone"
 		status, ok := temp(e), temp(e)
 		fmt.sbprintfln(
@@ -116,11 +117,11 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 		return ok
 	}
 	value := load(e, llvm_type(e, type), src)
-	if !type_clone_is_fallible(e.c, type) {
+	if !operations.clone_fallible {
 		store(e, type, emit_clone_value(e, type, value, allocator), out)
 		return "true"
 	}
-	hook := type_hook(e.c, type, "try_clone")
+	hook := operations.try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a fallible container element has no `try_clone` member")
 		return "false"
@@ -615,7 +616,7 @@ emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 @(private)
 emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 	base := expr_base(expr)
-	if base == nil || !type_is_managed(e.c, base.type) {
+	if base == nil || !emit_lifecycle(e, base.type).managed {
 		return
 	}
 	// A place names storage someone else owns; only an owned temporary is ours
@@ -637,7 +638,7 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 // default when the declaration has no policy.
 @(private)
 emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator := RT_DEFAULT_ALLOCATOR) -> string {
-	entry := lifecycle_of(e.c, type)
+	entry := emit_lifecycle(e, type)
 	// design.md "Dynamic arrays"/"Maps": a container's copy is a deep clone, so
 	// an implicit copy duplicates the storage through the C helper and applies
 	// the allocator's failure policy — there is nowhere here to return an error.
@@ -664,7 +665,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_retain(i64 %s)", owner)
 		return value
 	}
-	hook := type_hook(e.c, type, "clone")
+	hook := entry.clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, fmt.aprintf("an implicit copy of `%s` has no `clone` member", type_name(e.c, type)))
 		return "0"
@@ -730,6 +731,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
+	operations := emit_lifecycle(e, subject)
 	value_type := llvm_type(e, subject)
 	pair := clone_pair_type(value_type)
 	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, value_type)
@@ -739,18 +741,18 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	// A user `hook(copy)` is the fallible primitive. The public generated
 	// `try_clone` member is a stable wrapper around it.
-	if hook := lifecycle_of(e.c, subject).custom_try_clone; hook != INVALID_SYMBOL {
+	if hook := operations.custom_try_clone; hook != INVALID_SYMBOL {
 		fmt.sbprintfln(&e.b, "  %%custom = call %s %s(%s %%arg0, ptr %%arg1)", pair, e.names[hook], value_type)
 		fmt.sbprintfln(&e.b, "  ret %s %%custom", pair)
 		fmt.sbprintln(&e.b, "}")
 		return
 	}
 
-	// A trivial value is its own clone. `type_clone_is_fallible` is the wrong
+	// A trivial value is its own clone. Copy fallibility is the wrong
 	// question here: a `string` part clones infallibly but still has to retain its
 	// handle, so asking about failure alone would hand back a second owner of one
 	// allocation with the count still at 1.
-	if !type_is_managed(e.c, subject) {
+	if !operations.managed {
 		first, out := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %%arg0, 0", first, pair, value_type)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, 1", out, pair, first)
@@ -763,7 +765,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// satisfy `Cloneable`, so `string`, `[dynamic]T` and `map[K]V` carry the same
 	// `try_clone` member a record does. Its body is the one intrinsic copy the
 	// implicit paths already use — a retain, or the versioned container helper.
-	if lifecycle_of(e.c, subject).intrinsic {
+	if operations.intrinsic {
 		self, built := alloca(e, value_type), alloca(e, value_type)
 		fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
 		// A failed container clone leaves the destination untouched, so the zero
@@ -793,16 +795,17 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	for index in 0 ..< clone_part_count(e.c, subject) {
 		part := clone_part(e.c, subject, index)
+		part_operations := emit_lifecycle(e, part)
 		source := element_address(e, subject, self, index)
 		destination := element_address(e, subject, out, index)
-		if !type_is_managed(e.c, part) {
+		if !part_operations.managed {
 			loaded := load(e, llvm_type(e, part), source)
 			store(e, part, loaded, destination)
 			continue
 		}
 		// Managed but infallible — a `string` handle, or a record of them. There is
 		// no error to branch on, but there is real copy work to do.
-		if !type_clone_is_fallible(e.c, part) {
+		if !part_operations.clone_fallible {
 			loaded := load(e, llvm_type(e, part), source)
 			store(e, part, emit_clone_value(e, part, loaded, "%arg1"), destination)
 			continue
@@ -862,9 +865,10 @@ element_address :: proc(e: ^Emitter, owner: Type_Id, base: string, index: int) -
 // value only on the success path.
 @(private = "file")
 emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, string) {
-	// A container part has no `try_clone` member: its fallible clone is the
-	// versioned C helper, driven by this type's generated operation table.
-	if lifecycle_of(e.c, part).container {
+	operations := emit_lifecycle(e, part)
+	// A container part uses the versioned C helper directly, driven by this
+	// type's generated operation table.
+	if operations.container {
 		destination := alloca(e, CONTAINER_TYPE)
 		ok := emit_try_clone_into(e, part, destination, source, "%arg1")
 		cloned := load(e, CONTAINER_TYPE, destination)
@@ -872,9 +876,9 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 1", error, ok)
 		return cloned, error
 	}
-	hook := type_hook(e.c, part, "try_clone")
+	hook := operations.try_clone
 	if hook == INVALID_SYMBOL {
-		// `type_clone_is_fallible` said this part reaches a custom hook, so the
+		// The checked facts say this part reaches a custom hook, so the
 		// contribution pass owed it one.
 		backend_fail(e, "a fallible clone part has no `try_clone` member")
 		return "0", "1"
@@ -944,7 +948,7 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "entry:")
 	e.terminated = false
 
-	hook := type_hook(e.c, subject, "try_clone")
+	hook := emit_lifecycle(e, subject).try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a generated `clone` has no `try_clone` member")
 		return
@@ -973,14 +977,17 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// The `try_clone` or `drop` a type answers to: a written one when the `impl`
-// block has it, and the contributed one otherwise.
-type_hook :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
-	info := underlying_info(c, type)
-	if info == nil {
-		return INVALID_SYMBOL
+// All lifecycle decisions come from the completed semantic snapshot. Returning
+// an inert value after failure lets lowering unwind without repairing the cache.
+@(private)
+emit_lifecycle :: proc(e: ^Emitter, type: Type_Id) -> Lifecycle_Operations {
+	if type == INVALID_TYPE { return Lifecycle_Operations{} }
+	operations, resolved := resolved_lifecycle_operations(e.c, type)
+	if !resolved {
+		backend_fail(e, "lifecycle operations were not finalized during checking")
+		return Lifecycle_Operations{}
 	}
-	return member_named_in(c, info.members, intern_identifier(c, name))
+	return operations
 }
 
 // `drop(value)` invokes the user hook when present, and fields are dropped in
@@ -988,14 +995,15 @@ type_hook :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
 // (design.md). Used by partial-clone cleanup now; step 4's scope-exit cleanup is
 // the same walk from a different caller.
 emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
-	if !type_is_managed(e.c, type) {
+	operations := emit_lifecycle(e, type)
+	if !operations.managed {
 		return
 	}
 	// design.md "Dynamic arrays"/"Maps": container drop destroys every live
 	// element exactly once, releases the raw storage through the bound provider,
 	// and writes the inert all-zero representation. The all-zero value has no
 	// storage and no provider, so dropping one is already a no-op in the helper.
-	if lifecycle_of(e.c, type).container {
+	if operations.container {
 		helper := type_is_map(e.c, type) ? "loke_rt_v1_map_drop" : "loke_rt_v1_dyn_drop"
 		fmt.sbprintfln(&e.b, "  call void @%s(ptr %s, ptr %s)", helper, address, container_ops_global(e, type))
 		return
@@ -1003,7 +1011,7 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	// design.md "Allocators": ending a local region releases every block it
 	// handed out. The zero (or moved-from) control pointer drops to nothing,
 	// which is what makes a moved-out provider safe to leave behind.
-	if lifecycle_of(e.c, type).provider {
+	if operations.provider {
 		control := load(e, "ptr", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_arena_drop(ptr %s)", control)
 		fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", address)
@@ -1012,25 +1020,20 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	// design.md "string type": the drop releases one handle, and the last one
 	// deallocates through the allocator the string was created with. A static
 	// literal and the empty value are both no-ops the runtime recognises.
-	if lifecycle_of(e.c, type).intrinsic {
+	if operations.intrinsic {
 		value := load(e, STRING_TYPE, address)
 		owner := extract(e, STRING_TYPE, value, STRING_OWNER)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_release(i64 %s)", owner)
 		return
 	}
-	if hook := custom_drop_of(e.c, type); hook != INVALID_SYMBOL {
+	if hook := operations.custom_drop; hook != INVALID_SYMBOL {
 		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", e.names[hook], address)
 	}
 	for index := clone_part_count(e.c, type) - 1; index >= 0; index -= 1 {
 		part := clone_part(e.c, type, index)
-		if !type_is_managed(e.c, part) {
+		if !emit_lifecycle(e, part).managed {
 			continue
 		}
 		emit_drop_place(e, part, element_address(e, type, address, index))
 	}
-}
-
-@(private = "file")
-custom_drop_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
-	return lifecycle_of(c, type).custom_drop
 }

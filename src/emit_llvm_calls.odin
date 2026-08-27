@@ -330,7 +330,7 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 	// `new_clone` creates a new allocation root containing a clone of the value
 	// (design.md), so a record whose clone can fail goes through its hook rather
 	// than through a shallow store of the representation.
-	if kind == .New_Clone && type_clone_is_fallible(e.c, v.alloc_type) {
+	if kind == .New_Clone && emit_lifecycle(e, v.alloc_type).clone_fallible {
 		return emit_new_clone_hook(e, v)
 	}
 	// `new(T)` binds only an allocator; `new_clone(v)` binds the value first.
@@ -401,7 +401,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	branch_if(e, no_memory, done_label, clone_label)
 
 	place_label(e, clone_label)
-	hook := type_hook(e.c, v.alloc_type, "try_clone")
+	hook := emit_lifecycle(e, v.alloc_type).try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a fallible `new_clone` has no `try_clone` member")
 		failed := make([]string, 2)
@@ -753,7 +753,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 		// 0 and points at no storage.
 		return Variadic_Pack{value = "zeroinitializer"}
 	}
-	managed := type_is_managed(e.c, element)
+	managed := emit_lifecycle(e, element).managed
 
 	// Managed explicit operands first enter fixed staging storage. That storage
 	// is already registered while later operands are evaluated, so a panic cannot

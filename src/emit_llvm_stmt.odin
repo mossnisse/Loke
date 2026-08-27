@@ -271,7 +271,7 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 emit_replace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string) {
 	target := s.lhs[index]
 	type := expr_base(target).type
-	if !type_is_managed(e.c, type) {
+	if !emit_lifecycle(e, type).managed {
 		return
 	}
 	state := index < len(s.destination_live) ? s.destination_live[index] : Liveness.Live
@@ -658,7 +658,7 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 				continue
 			}
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
-				if sym := symbol_of(e.c, ident.symbol); sym != nil && type_is_managed(e.c, sym.type) {
+				if sym := symbol_of(e.c, ident.symbol); sym != nil && emit_lifecycle(e, sym.type).managed {
 					kill_place(e, ident.symbol)
 				}
 			}

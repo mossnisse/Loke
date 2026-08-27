@@ -156,6 +156,10 @@ Compiler :: struct {
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
+	// Final value snapshots consumed by emission; no lazy classification or
+	// member selection is allowed through this interface.
+	lifecycle_operations:       map[Type_Id]Lifecycle_Operations,
+	lifecycle_operations_ready: bool,
 	// The threshold is target-specific, not part of the language semantics
 	// (design.md "Copy-cost diagnostics"), so it is an option rather than a rule.
 	// A copy site reports when it duplicates at least this many inline bytes, or
