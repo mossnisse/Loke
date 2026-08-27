@@ -1055,27 +1055,8 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 // the compiler supplies the pair. An extension member is never one of these.
 @(private = "file")
 key_policy_member :: proc(c: ^Compiler, key: Type_Id, want_equal: bool) -> Symbol_Id {
-	if type_is_hashable(c, key) {
-		return INVALID_SYMBOL
-	}
-	info := underlying_info(c, key)
-	if info == nil {
-		return INVALID_SYMBOL
-	}
-	for member in info.members {
-		sym := symbol_of(c, member)
-		if sym == nil {
-			continue
-		}
-		if want_equal && sym.operator == "==" {
-			return member
-		}
-		if !want_equal && sym.operator == "" && sym.kind == .Proc &&
-		   identifier_text(c, sym.name) == "hash" {
-			return member
-		}
-	}
-	return INVALID_SYMBOL
+	policy := map_key_policy(c, key)
+	return want_equal ? policy.equal : policy.hash
 }
 
 // Deep-copy the value at `src` into the storage at `out`, answering an `i1` that
@@ -1836,7 +1817,11 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	case .Typeid:
 		// Symbolic during checking, numeric here: `freeze_typeids` has assigned a
 		// deterministic value to every requested type before any body is emitted.
-		return fmt.aprintf("%d", typeid_value(e.c, value.type_value))
+		id := typeid_value(e.c, value.type_value)
+		if value.type_value != INVALID_TYPE && id == 0 {
+			backend_fail(e, "a typeid constant was not registered before freezing")
+		}
+		return fmt.aprintf("%d", id)
 	case .Bool:
 		return value.boolean ? "true" : "false"
 	case .Int, .Enum, .Rune:

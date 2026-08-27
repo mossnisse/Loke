@@ -10,6 +10,7 @@
 // again at that width, and no untyped value ever reaches the backend.
 package lokec
 
+import "core:mem"
 import "core:strconv"
 import "core:strings"
 import "core:unicode/utf8"
@@ -4199,7 +4200,8 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 // Converts a constant to a target type. `explicit` is set for a written
 // `T(v)`, which truncates a float towards zero where an implicit conversion
 // requires an exact value.
-convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool) -> (Const_Value, bool) {
+convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, allocator: mem.Allocator = {}) -> (Const_Value, bool) {
+	storage := value_allocator(c, allocator)
 	info := underlying_info(c, target)
 	if info == nil {
 		return value, false
@@ -4214,7 +4216,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			return value, true
 		}
 		if value.kind == .Integer || value.kind == .Rune {
-			return float_const(bi_to_f64(c, value.integer), 64), true
+			return float_const(bi_to_f64(storage, value.integer), 64), true
 		}
 	case .Untyped_Bool:
 		if value.kind == .Boolean {
@@ -4239,16 +4241,16 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		bits, signed := type_bits(c, target), type_signed(c, target)
 		#partial switch value.kind {
 		case .Integer, .Rune:
-			if !bi_fits(c, value.integer, bits, signed) {
+			if !bi_fits(storage, value.integer, bits, signed) {
 				return value, false
 			}
 			return Const_Value{kind = .Integer, integer = value.integer}, true
 		case .Float:
-			truncated, exact, ok := bi_from_f64_trunc(c, value.float)
+			truncated, exact, ok := bi_from_f64_trunc(storage, value.float)
 			if !ok || (!explicit && !exact) {
 				return value, false
 			}
-			if !bi_fits(c, truncated, bits, signed) {
+			if !bi_fits(storage, truncated, bits, signed) {
 				return value, false
 			}
 			return Const_Value{kind = .Integer, integer = truncated}, true
@@ -4256,7 +4258,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 	case .Rune:
 		#partial switch value.kind {
 		case .Integer, .Rune:
-			if !bi_fits(c, value.integer, 32, true) {
+			if !bi_fits(storage, value.integer, 32, true) {
 				return value, false
 			}
 			return Const_Value{kind = .Rune, integer = value.integer}, true
@@ -4266,7 +4268,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		case .Float:
 			return float_const(value.float, info.bits), true
 		case .Integer, .Rune:
-			return float_const(bi_to_f64(c, value.integer), info.bits), true
+			return float_const(bi_to_f64(storage, value.integer), info.bits), true
 		}
 	case .Typeid:
 		// `typeid` is a runtime scalar, but its reserved zero value is still written

@@ -84,6 +84,38 @@ deep_typeids_are_request_order_independent :: proc(t: ^testing.T) {
 }
 
 @(test)
+generic_probes_do_not_commit_bodies :: proc(t: ^testing.T) {
+	source := `package main;
+identity :: proc(value: $T) -> typeid { return typeid_of(T); }
+Probe :: interface($T: type) { (value: T) identity(value) -> typeid; }
+known :: proc($T: type) -> bool { return typeid_of(T) == typeid_of(T); }
+bounded :: proc(value: $T) -> int where known(T) { return 1; }
+main :: proc() {
+    static_assert(Probe(i8));
+    static_assert(Probe(int));
+    assert(identity(1) != nil);
+    assert(bounded(true) == 1);
+}`
+	c := test_compiler(source)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name, "<probe-test>")
+	add_package_file(&c, id, &f)
+	check_one_package(&c, id)
+	if !testing.expectf(t, c.error_count == 0, "probe checking produced %d errors", c.error_count) {
+		report(&c)
+		return
+	}
+	freeze_typeids(&c)
+	testing.expect(t, typeid_value(&c, TYPE_I8) == 0, "a hypothetical call registered its unexecuted body")
+	testing.expect(t, typeid_value(&c, TYPE_INT) != 0, "a real call lost the probed body's dependencies")
+	testing.expect(t, typeid_value(&c, TYPE_BOOL) != 0, "an executed generic bound lost its dependencies")
+}
+
+@(test)
 foreign_abi_walk_defers_by_value_cycles_to_size_check :: proc(t: ^testing.T) {
 	c: Compiler
 	defer destroy_compilation(&c)

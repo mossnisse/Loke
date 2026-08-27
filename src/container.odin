@@ -316,7 +316,7 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if key == INVALID_TYPE {
 		return true
 	}
-	policy := map_key_policy(k, key)
+	policy := map_key_policy(k.c, key)
 	if policy.reason == "" {
 		return true
 	}

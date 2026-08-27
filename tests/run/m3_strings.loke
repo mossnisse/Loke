@@ -5,6 +5,12 @@ package main; import "core:fmt";
 GREETING :: "hello";
 NAME :: "loke";
 FULL :: GREETING + ", " + NAME;
+FROZEN :: joined();
+joined :: proc() -> string {
+	text := "hello";
+	text = text + ", loke";
+	return text;
+}
 ESCAPED :: "tab:\there\x21\n";
 
 // Configuration is project-wide and immutable, and a default fixes both the
@@ -14,6 +20,8 @@ LIMIT :: build_config(LIMIT, 10);
 VERBOSE :: build_config(VERBOSE, false);
 
 main :: proc() {
+	static_assert(FROZEN == FULL);
+	assert(FROZEN == FULL);
 	static_assert(len(FULL) == 11, "the greeting changed shape");
 	static_assert(FULL == "hello, loke");
 	static_assert(GREETING < NAME);

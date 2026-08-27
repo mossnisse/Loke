@@ -3,6 +3,26 @@ package lokec
 import "core:testing"
 
 @(test)
+unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
+	c := test_compiler("package main; main :: proc() { zero: typeid; id := typeid_of(int); }")
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name, "<typeid-contract-test>")
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_one_package(&c, id)
+	freeze_typeids(&c)
+	_, valid := emit_llvm_module(&c, id)
+	testing.expect(t, valid && c.error_count == 0, "registered and nil typeids must both emit")
+	delete_key(&c.typeid_values, TYPE_INT)
+	_, missing := emit_llvm_module(&c, id)
+	testing.expect(t, !missing && c.error_count == 1, "a missing dependency silently became the nil typeid")
+}
+
+@(test)
 artifact_extension_ignores_dotted_parent_directories :: proc(t: ^testing.T) {
 	actual := replace_ext(`C:\release.v2\program`, ".ll")
 	testing.expectf(t, actual == `C:\release.v2\program.ll`, "unexpected artifact path %q", actual)

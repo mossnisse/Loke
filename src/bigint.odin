@@ -5,10 +5,10 @@
 // meets a width — the range check when materialising a constant, the modulo-2^n
 // projection when folding a typed operation.
 //
-// The arithmetic is core:math/big. Every value published into a `Const_Value`
-// is allocated from the compilation's semantic arena and is immutable
-// afterwards: an operation always builds a new value, so sharing the digit
-// backing between copies of a `Const_Value` is safe.
+// The arithmetic is core:math/big. Values are immutable: operations always
+// build new digit buffers. Checking uses the compilation's semantic arena;
+// evaluation uses bounded scratch storage and clones escaping constants into
+// the semantic arena before releasing that scratch storage.
 package lokec
 
 import big "core:math/big"
@@ -17,26 +17,43 @@ import "core:strings"
 
 Big_Int :: big.Int
 
-// Every wrapper routes its allocations to the semantic arena, including the
-// ones core:math/big makes internally out of `context.allocator`.
+// Checking uses compilation storage; execution supplies its bounded scratch
+// allocator explicitly. Neither mode changes the other's allocation lifetime.
+Value_Storage :: union { ^Compiler, mem.Allocator }
 @(private = "file")
-arena :: proc(c: ^Compiler) -> mem.Allocator {
-	init_semantic_stores(c)
-	return c.semantic_allocator
+arena :: proc(c: Value_Storage) -> mem.Allocator {
+	switch storage in c {
+	case ^Compiler:
+		init_semantic_stores(storage)
+		return storage.semantic_allocator
+	case mem.Allocator:
+		return storage
+	}
+	return context.allocator
 }
 
-bi_zero :: proc(c: ^Compiler) -> Big_Int {
+bi_zero :: proc(c: Value_Storage) -> Big_Int {
 	return bi_from_i64(c, 0)
 }
 
-bi_from_i64 :: proc(c: ^Compiler, v: i64) -> Big_Int {
+// Publish an evaluator result without retaining its scratch digit buffer (or
+// the allocator pointer stored in that buffer).
+bi_clone :: proc(storage: Value_Storage, value: Big_Int) -> Big_Int {
+	context.allocator = arena(storage)
+	value := value
+	result: Big_Int
+	big.int_copy(&result, &value)
+	return result
+}
+
+bi_from_i64 :: proc(c: Value_Storage, v: i64) -> Big_Int {
 	context.allocator = arena(c)
 	r: Big_Int
 	big.int_set_from_integer(&r, v)
 	return r
 }
 
-bi_from_u64 :: proc(c: ^Compiler, v: u64) -> Big_Int {
+bi_from_u64 :: proc(c: Value_Storage, v: u64) -> Big_Int {
 	context.allocator = arena(c)
 	r: Big_Int
 	big.int_set_from_integer(&r, v)
@@ -44,7 +61,7 @@ bi_from_u64 :: proc(c: ^Compiler, v: u64) -> Big_Int {
 }
 
 // `2^power`, the building block of every width boundary below.
-bi_pow2 :: proc(c: ^Compiler, power: int) -> Big_Int {
+bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 	context.allocator = arena(c)
 	r: Big_Int
 	big.power_of_two(&r, power)
@@ -55,7 +72,7 @@ bi_pow2 :: proc(c: ^Compiler, power: int) -> Big_Int {
 // prefix, with `_` allowed as a separator anywhere but the first character.
 // Unlike M0's `parse_int_text` this cannot overflow, so `ok` is false only for
 // a spelling the lexer would not have produced.
-bi_parse_int_literal :: proc(c: ^Compiler, text: string) -> (value: Big_Int, ok: bool) {
+bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int, ok: bool) {
 	context.allocator = arena(c)
 	radix := i8(10)
 	digits := text
@@ -70,7 +87,7 @@ bi_parse_int_literal :: proc(c: ^Compiler, text: string) -> (value: Big_Int, ok:
 		}
 	}
 	if strings.contains(digits, "_") {
-		digits, _ = strings.replace_all(digits, "_", "", c.semantic_allocator)
+		digits, _ = strings.replace_all(digits, "_", "", arena(c))
 	}
 	if digits == "" {
 		return bi_zero(c), false
@@ -82,10 +99,10 @@ bi_parse_int_literal :: proc(c: ^Compiler, text: string) -> (value: Big_Int, ok:
 	return r, true
 }
 
-bi_text :: proc(c: ^Compiler, v: Big_Int) -> string {
+bi_text :: proc(c: Value_Storage, v: Big_Int) -> string {
 	context.allocator = arena(c)
 	v := v
-	text, err := big.int_itoa_string(&v, 10, false, c.semantic_allocator)
+	text, err := big.int_itoa_string(&v, 10, false, arena(c))
 	if err != nil {
 		return "<big>"
 	}
@@ -104,20 +121,20 @@ bi_is_zero :: proc(v: Big_Int) -> bool {
 	return v.used == 0
 }
 
-bi_cmp :: proc(c: ^Compiler, a, b: Big_Int) -> int {
+bi_cmp :: proc(c: Value_Storage, a, b: Big_Int) -> int {
 	context.allocator = arena(c)
 	a, b := a, b
 	result, _ := big.int_compare(&a, &b)
 	return result
 }
 
-bi_eq_i64 :: proc(c: ^Compiler, a: Big_Int, b: i64) -> bool {
+bi_eq_i64 :: proc(c: Value_Storage, a: Big_Int, b: i64) -> bool {
 	return bi_cmp(c, a, bi_from_i64(c, b)) == 0
 }
 
 @(private = "file")
 bi_binary :: proc(
-	c: ^Compiler,
+	c: Value_Storage,
 	a, b: Big_Int,
 	op: proc(dest, x, y: ^Big_Int, allocator := context.allocator) -> big.Error,
 ) -> Big_Int {
@@ -128,14 +145,14 @@ bi_binary :: proc(
 	return r
 }
 
-bi_add :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_add) }
-bi_sub :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_sub) }
-bi_mul :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_mul) }
-bi_and :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_and) }
-bi_or :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_or) }
-bi_xor :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_xor) }
+bi_add :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_add) }
+bi_sub :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_sub) }
+bi_mul :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_mul) }
+bi_and :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_and) }
+bi_or :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_or) }
+bi_xor :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int { return bi_binary(c, a, b, big.int_bit_xor) }
 
-bi_neg :: proc(c: ^Compiler, a: Big_Int) -> Big_Int {
+bi_neg :: proc(c: Value_Storage, a: Big_Int) -> Big_Int {
 	context.allocator = arena(c)
 	a := a
 	r: Big_Int
@@ -144,7 +161,7 @@ bi_neg :: proc(c: ^Compiler, a: Big_Int) -> Big_Int {
 }
 
 // `~x`, which on a two's-complement integer of any width is `-x - 1`.
-bi_not :: proc(c: ^Compiler, a: Big_Int) -> Big_Int {
+bi_not :: proc(c: Value_Storage, a: Big_Int) -> Big_Int {
 	context.allocator = arena(c)
 	a := a
 	r: Big_Int
@@ -152,14 +169,14 @@ bi_not :: proc(c: ^Compiler, a: Big_Int) -> Big_Int {
 	return r
 }
 
-bi_and_not :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int {
+bi_and_not :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	return bi_and(c, a, bi_not(c, b))
 }
 
 // Truncated quotient and remainder (design.md "Integer operators": `x = q*y + r`
 // with `|r| < |y|`, `q` truncated towards zero). The caller has already rejected
 // a zero divisor.
-bi_quo :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int {
+bi_quo :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	context.allocator = arena(c)
 	a, b := a, b
 	q, r: Big_Int
@@ -167,7 +184,7 @@ bi_quo :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int {
 	return q
 }
 
-bi_rem :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int {
+bi_rem :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	context.allocator = arena(c)
 	a, b := a, b
 	q, r: Big_Int
@@ -175,7 +192,7 @@ bi_rem :: proc(c: ^Compiler, a, b: Big_Int) -> Big_Int {
 	return r
 }
 
-bi_shl :: proc(c: ^Compiler, a: Big_Int, count: int) -> Big_Int {
+bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	context.allocator = arena(c)
 	a := a
 	r: Big_Int
@@ -192,7 +209,7 @@ bi_shl :: proc(c: ^Compiler, a: Big_Int, count: int) -> Big_Int {
 // `src - 1` whatever the count. The negative case is derived here instead from
 // the logical shift, through `x >> n == ~(~x >> n)` — `~x` is non-negative
 // exactly when `x` is negative, so the inner shift never sees a sign.
-bi_shr :: proc(c: ^Compiler, a: Big_Int, count: int) -> Big_Int {
+bi_shr :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	context.allocator = arena(c)
 	if bi_sign(a) < 0 {
 		return bi_not(c, bi_shr_logical(c, bi_not(c, a), count))
@@ -201,7 +218,7 @@ bi_shr :: proc(c: ^Compiler, a: Big_Int, count: int) -> Big_Int {
 }
 
 @(private = "file")
-bi_shr_logical :: proc(c: ^Compiler, a: Big_Int, count: int) -> Big_Int {
+bi_shr_logical :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	context.allocator = arena(c)
 	a := a
 	r: Big_Int
@@ -210,7 +227,7 @@ bi_shr_logical :: proc(c: ^Compiler, a: Big_Int, count: int) -> Big_Int {
 }
 
 // Number of bits in the magnitude; 0 for zero.
-bi_magnitude_bits :: proc(c: ^Compiler, v: Big_Int) -> int {
+bi_magnitude_bits :: proc(c: Value_Storage, v: Big_Int) -> int {
 	context.allocator = arena(c)
 	v := v
 	count, _ := big.count_bits(&v)
@@ -218,7 +235,7 @@ bi_magnitude_bits :: proc(c: ^Compiler, v: Big_Int) -> int {
 }
 
 // Does the value fit a two's-complement integer of this width?
-bi_fits :: proc(c: ^Compiler, v: Big_Int, bits: int, signed: bool) -> bool {
+bi_fits :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> bool {
 	if bits <= 0 {
 		return false
 	}
@@ -241,7 +258,7 @@ bi_fits :: proc(c: ^Compiler, v: Big_Int, bits: int, signed: bool) -> bool {
 
 // The modulo-2^n projection every typed integer operation ends with
 // (design.md "Integer overflow").
-bi_wrap :: proc(c: ^Compiler, v: Big_Int, bits: int, signed: bool) -> Big_Int {
+bi_wrap :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> Big_Int {
 	if bits <= 0 {
 		return bi_zero(c)
 	}
@@ -256,7 +273,7 @@ bi_wrap :: proc(c: ^Compiler, v: Big_Int, bits: int, signed: bool) -> Big_Int {
 // Saturating extraction for the places that need a machine integer: an array
 // length, a shift count, an enum discriminant. `ok` is false when the value is
 // outside the requested range, and the caller has a diagnostic for that.
-bi_to_i64 :: proc(c: ^Compiler, v: Big_Int) -> (value: i64, ok: bool) {
+bi_to_i64 :: proc(c: Value_Storage, v: Big_Int) -> (value: i64, ok: bool) {
 	if !bi_fits(c, v, 64, true) {
 		return 0, false
 	}
@@ -266,7 +283,7 @@ bi_to_i64 :: proc(c: ^Compiler, v: Big_Int) -> (value: i64, ok: bool) {
 	return result, err == nil
 }
 
-bi_to_u64 :: proc(c: ^Compiler, v: Big_Int) -> (value: u64, ok: bool) {
+bi_to_u64 :: proc(c: Value_Storage, v: Big_Int) -> (value: u64, ok: bool) {
 	if !bi_fits(c, v, 64, false) {
 		return 0, false
 	}
@@ -276,7 +293,7 @@ bi_to_u64 :: proc(c: ^Compiler, v: Big_Int) -> (value: u64, ok: bool) {
 	return result, err == nil
 }
 
-bi_to_f64 :: proc(c: ^Compiler, v: Big_Int) -> f64 {
+bi_to_f64 :: proc(c: Value_Storage, v: Big_Int) -> f64 {
 	context.allocator = arena(c)
 	v := v
 	result, err := big.int_get_float(&v)
@@ -290,7 +307,7 @@ bi_to_f64 :: proc(c: ^Compiler, v: Big_Int) -> f64 {
 // result through a machine integer. This is needed for conversions to i128 and
 // u128, and `exact` implements the implicit-constant rule: `1.0` is exactly an
 // integer while `1.5` is not.
-bi_from_f64_trunc :: proc(c: ^Compiler, value: f64) -> (result: Big_Int, exact, ok: bool) {
+bi_from_f64_trunc :: proc(c: Value_Storage, value: f64) -> (result: Big_Int, exact, ok: bool) {
 	pattern := transmute(u64)value
 	exponent_bits := int((pattern >> 52) & 0x7ff)
 	fraction := pattern & 0x000f_ffff_ffff_ffff

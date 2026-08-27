@@ -16,6 +16,8 @@
 // which is what a hash-flooding defence needs, is not derived here.
 package lokec
 
+import "core:mem"
+
 // The 64-bit FNV prime.
 HASH_MULTIPLIER :: u64(1099511628211)
 
@@ -60,15 +62,15 @@ Key_Policy :: struct {
 	reason:    string,
 }
 
-map_key_policy :: proc(k: ^Checker, key: Type_Id) -> Key_Policy {
+map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> Key_Policy {
 	if key == INVALID_TYPE {
 		return Key_Policy{reason = "is not a type"}
 	}
-	if type_is_hashable(k.c, key) {
+	if type_is_hashable(c, key) {
 		return Key_Policy{builtin = true, hash = INVALID_SYMBOL, equal = INVALID_SYMBOL}
 	}
-	hash := inherent_member_named(k, key, "hash")
-	equal := inherent_operator_named(k, key, "==")
+	hash := inherent_member_named(c, key, "hash")
+	equal := inherent_operator_named(c, key, "==")
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
 		return Key_Policy{
 			hash = INVALID_SYMBOL, equal = INVALID_SYMBOL,
@@ -88,14 +90,14 @@ map_key_policy :: proc(k: ^Checker, key: Type_Id) -> Key_Policy {
 // on the type is exactly the inherent set (`src/impl.odin` keeps extensions in
 // the extending package instead), so the lookup is direct.
 @(private = "file")
-inherent_member_named :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
-	info := underlying_info(k.c, type)
+inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
+	info := underlying_info(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
-	wanted := intern_identifier(k.c, name)
+	wanted := intern_identifier(c, name)
 	for member in info.members {
-		sym := symbol_of(k.c, member)
+		sym := symbol_of(c, member)
 		if sym != nil && sym.name == wanted && sym.kind == .Proc && sym.operator == "" {
 			return member
 		}
@@ -104,13 +106,13 @@ inherent_member_named :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbo
 }
 
 @(private = "file")
-inherent_operator_named :: proc(k: ^Checker, type: Type_Id, symbol_text: string) -> Symbol_Id {
-	info := underlying_info(k.c, type)
+inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> Symbol_Id {
+	info := underlying_info(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
 	for member in info.members {
-		sym := symbol_of(k.c, member)
+		sym := symbol_of(c, member)
 		if sym != nil && sym.operator == symbol_text {
 			return member
 		}
@@ -151,7 +153,7 @@ check_hash_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, expec
 
 // The integer image of one scalar, which is what the mix consumes. `+0` and `-0`
 // hash identically because they compare equal.
-hash_scalar_bits :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> u64 {
+hash_scalar_bits :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, allocator: mem.Allocator = {}) -> u64 {
 	under := type_underlying(c, type)
 	#partial switch type_kind(c, under) {
 	case .Bool, .Untyped_Bool:
@@ -170,12 +172,13 @@ hash_scalar_bits :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> u64
 	case .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc:
 		return 0 // the only compile-time pointer constant is nil
 	}
-	wrapped := bi_wrap(c, value.integer, 64, false)
-	bits, _ := bi_to_u64(c, wrapped)
+	storage := value_allocator(c, allocator)
+	wrapped := bi_wrap(storage, value.integer, 64, false)
+	bits, _ := bi_to_u64(storage, wrapped)
 	return bits
 }
 
-hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64) -> u64 {
+hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64, allocator: mem.Allocator = {}) -> u64 {
 	under := type_underlying(c, type)
 	info := type_of(c, under)
 	#partial switch type_kind(c, under) {
@@ -194,9 +197,9 @@ hash_const :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, seed: u64) -
 			if value.aggregate != nil && index < len(value.aggregate.elements) {
 				element = value.aggregate.elements[index]
 			}
-			result = hash_const(c, element, info.element, result)
+			result = hash_const(c, element, info.element, result, allocator)
 		}
 		return result
 	}
-	return (seed ~ hash_scalar_bits(c, value, type)) * HASH_MULTIPLIER
+	return (seed ~ hash_scalar_bits(c, value, type, allocator)) * HASH_MULTIPLIER
 }

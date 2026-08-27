@@ -100,6 +100,7 @@ Compiler :: struct {
 	generic_templates:     map[Symbol_Id]^Generic_Template,
 	generic_impls:         map[Symbol_Id][dynamic]^Generic_Impl,
 	instances:             map[string]^Instance,
+	procedure_instances:   map[Symbol_Id]^Instance,
 	instantiation_stack:   [dynamic]Instantiation_Frame,
 	instantiation_count:   int,
 	instantiation_limit_hit: bool,

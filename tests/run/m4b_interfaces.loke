@@ -41,6 +41,10 @@ sum3 :: proc(a, b, c: $T) -> T where Additive(T) {
 }
 
 main :: proc() {
+	// A hypothetical call must not commit an instance with its typeid request
+	// suppressed. No other expression requests this record's runtime identity.
+	static_assert(Has_Identity(Identity_Record));
+	assert(identity(Identity_Record{1}) != nil);
 	static_assert(Additive(int));
 	static_assert(Additive(f64));
 	static_assert(!Additive(bool));
@@ -52,6 +56,12 @@ main :: proc() {
 	static_assert(!Named(Flag));
 	fmt.println(sum3(1, 2, 3));
 	check_more();
+}
+
+Identity_Record :: struct { value: int }
+identity :: proc(value: $T) -> typeid { return typeid_of(T); }
+Has_Identity :: interface($T: type) {
+	(value: T) identity(value) -> typeid;
 }
 
 // Requirement order is irrelevant: an associated member required later in the

@@ -1352,6 +1352,7 @@ instantiate_procedure_signature :: proc(
 	})
 	instance.symbol = symbol_id
 	clone.symbols = make([]Symbol_Id, 1, k.c.semantic_allocator)
+	k.c.procedure_instances[symbol_id] = instance
 	clone.symbols[0] = symbol_id
 	literal.symbol = symbol_id
 
@@ -1376,7 +1377,10 @@ instantiate_procedure_signature :: proc(
 // Checks a selected instance's body exactly once, and queues it for emission
 // with its defining package's items.
 promote_generic_instance :: proc(k: ^Checker, instance: ^Instance) {
-	if instance == nil || instance.body_checked || !instance.signature_ok {
+	// An interface requirement asks whether the call is well-typed, not whether
+	// its body executes. Committing here would cache a body whose dependencies
+	// were suppressed by the speculative registry gates.
+	if k.c.speculation_depth > 0 || instance == nil || instance.body_checked || !instance.signature_ok {
 		return
 	}
 	instance.body_checked = true

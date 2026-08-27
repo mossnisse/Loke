@@ -3,7 +3,7 @@ package main; import "core:fmt";
 spin :: proc() -> int {
 	x := 0;
 	for (;;) {
-		x += 1;
+		assert(true); // Exercise the step limit without exhausting storage first.
 	}
 	return x;
 }
@@ -12,4 +12,25 @@ N :: spin();
 
 main :: proc() {
 	fmt.println(N);
+}
+
+TEXT :: grow_text();
+grow_text :: proc() -> int {
+	text := "x";
+	for (i := 0; i < 26; i += 1) { text = text + text; }
+	return len(text);
+}
+
+INTEGER :: grow_integer();
+grow_integer :: proc() -> int {
+	x := 0;
+	for (;;) { x += 1; }
+	return x;
+}
+
+ARRAY :: grow_array();
+grow_array :: proc() -> int {
+	xs: [dynamic]int;
+	xs.resize(1000000);
+	return len(xs);
 }

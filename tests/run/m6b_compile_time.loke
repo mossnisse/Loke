@@ -97,6 +97,8 @@ copied :: proc() -> int {
 }
 
 main :: proc() {
+	static_assert(CUSTOM_KEYS == 7);
+	assert(custom_keys() == CUSTOM_KEYS);
 	fmt.println(SUM);
 	fmt.println(POPPED);
 	fmt.println(REMOVED);
@@ -105,3 +107,29 @@ main :: proc() {
 	fmt.println(REVIVED);
 	fmt.println(COPIED);
 }
+
+// Equality deliberately ignores the annotation: structural comparison gives
+// different answers for lookup, duplicate literals, replacement and removal.
+Annotated_Key :: struct { id, annotation: int }
+impl Annotated_Key {
+	hash :: proc(self, seed: uint) -> uint { return hash(self.id, seed); }
+	equal :: operator(==) proc(a, b: Annotated_Key) -> bool { return equal_ids(a.id, b.id); }
+}
+
+CUSTOM_KEYS :: custom_keys();
+custom_keys :: proc() -> int {
+	m := map[Annotated_Key]int{Annotated_Key{1, 10} = 3, Annotated_Key{1, 20} = 7};
+	if (len(m) != 1 || m[Annotated_Key{1, 30}] != 7) { return -1; }
+	if (!(Annotated_Key{1, 40} in m)) { return -2; }
+	m[Annotated_Key{1, 50}] = 8;
+	{
+		p, ok := m.find(Annotated_Key{1, 60});
+		if (!ok || p^ != 8) { return -3; }
+	}
+	err := m.try_insert(Annotated_Key{1, 70}, 7);
+	if (err != nil || len(m) != 1) { return -4; }
+	value, removed := m.remove(Annotated_Key{1, 80});
+	if (!removed || len(m) != 0) { return -5; }
+	return value;
+}
+equal_ids :: proc(a, b: int) -> bool { return a == b; }

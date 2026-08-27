@@ -7,7 +7,12 @@
 // develop a second, subtly different arithmetic.
 package lokec
 
+import "core:mem"
 import "core:strings"
+
+value_allocator :: proc(c: ^Compiler, requested: mem.Allocator) -> mem.Allocator {
+	return requested.procedure == nil ? c.semantic_allocator : requested
+}
 
 fold_arithmetic :: proc(
 	c: ^Compiler,
@@ -15,7 +20,9 @@ fold_arithmetic :: proc(
 	op_span: Span,
 	a, b: Const_Value,
 	type: Type_Id,
+	allocator: mem.Allocator = {},
 ) -> (Const_Value, bool) {
+	storage := value_allocator(c, allocator)
 	if a.kind == .String || b.kind == .String {
 		// design.md: `+` joins two compile-time strings, and nothing else applies
 		// to them. Runtime text operations belong to `string`, not to this.
@@ -23,8 +30,8 @@ fold_arithmetic :: proc(
 			errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 			return Const_Value{}, false
 		}
-		joined := strings.concatenate({a.text, b.text}, c.semantic_allocator)
-		return Const_Value{kind = .String, text = joined}, true
+		joined, err := strings.concatenate({a.text, b.text}, storage)
+		return Const_Value{kind = .String, text = joined}, err == nil
 	}
 
 	if a.kind == .Float || b.kind == .Float {
@@ -60,35 +67,35 @@ fold_arithmetic :: proc(
 	result: Big_Int
 	#partial switch op {
 	case .Plus:
-		result = bi_add(c, x, y)
+		result = bi_add(storage, x, y)
 	case .Minus:
-		result = bi_sub(c, x, y)
+		result = bi_sub(storage, x, y)
 	case .Star:
-		result = bi_mul(c, x, y)
+		result = bi_mul(storage, x, y)
 	case .Slash:
-		result = bi_quo(c, x, y)
+		result = bi_quo(storage, x, y)
 	case .Percent:
-		result = bi_rem(c, x, y)
+		result = bi_rem(storage, x, y)
 	case .Amp:
-		result = bi_and(c, x, y)
+		result = bi_and(storage, x, y)
 	case .Pipe:
-		result = bi_or(c, x, y)
+		result = bi_or(storage, x, y)
 	case .Tilde:
-		result = bi_xor(c, x, y)
+		result = bi_xor(storage, x, y)
 	case .Amp_Tilde:
-		result = bi_and_not(c, x, y)
+		result = bi_and_not(storage, x, y)
 	case:
 		errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 		return Const_Value{}, false
 	}
-	return Const_Value{kind = a.kind, integer = wrap_to_type(c, result, type)}, true
+	return Const_Value{kind = a.kind, integer = wrap_to_type(c, result, type, storage)}, true
 }
 
 // A typed integer operation is computed exactly and then projected modulo its
 // own width, which is what makes folding agree with the wrapping arithmetic the
 // backend emits (design.md "Integer overflow"). An untyped operation keeps its
 // exact value.
-wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id) -> Big_Int {
+wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> Big_Int {
 	if type_is_untyped(c, type) {
 		return value
 	}
@@ -96,10 +103,11 @@ wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id) -> Big_Int {
 	if bits <= 0 {
 		return value
 	}
-	return bi_wrap(c, value, bits, type_signed(c, type))
+	return bi_wrap(value_allocator(c, allocator), value, bits, type_signed(c, type))
 }
 
-fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (bool, bool) {
+fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocator: mem.Allocator = {}) -> (bool, bool) {
+	storage := value_allocator(c, allocator)
 	order := 0
 	switch {
 	case a.kind == .String || b.kind == .String:
@@ -109,8 +117,8 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (boo
 		// Byte order, which is what `<` on a compile-time string means.
 		order = strings.compare(a.text, b.text)
 	case a.kind == .Float || b.kind == .Float:
-		x := a.kind == .Float ? a.float : bi_to_f64(c, a.integer)
-		y := b.kind == .Float ? b.float : bi_to_f64(c, b.integer)
+		x := a.kind == .Float ? a.float : bi_to_f64(storage, a.integer)
+		y := b.kind == .Float ? b.float : bi_to_f64(storage, b.integer)
 		// NaN compares false against everything, including itself.
 		if x != x || y != y {
 			return op == .Not_Eq, true
@@ -120,7 +128,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (boo
 		if b.kind != .Integer && b.kind != .Rune {
 			return false, false
 		}
-		order = bi_cmp(c, a.integer, b.integer)
+		order = bi_cmp(storage, a.integer, b.integer)
 	case a.kind == .Boolean:
 		if b.kind != .Boolean {
 			return false, false
@@ -143,7 +151,7 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (boo
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false
 		}
-		equal := aggregate_equal(c, a.aggregate, b.aggregate)
+		equal := aggregate_equal(c, a.aggregate, b.aggregate, storage)
 		return equal == (op == .Eq_Eq), true
 	case:
 		return false, false
@@ -167,12 +175,12 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value) -> (boo
 }
 
 @(private = "file")
-aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate) -> bool {
+aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.Allocator = {}) -> bool {
 	if a == nil || b == nil || len(a.elements) != len(b.elements) {
 		return false
 	}
 	for element, index in a.elements {
-		equal, ok := fold_comparison(c, .Eq_Eq, element, b.elements[index])
+		equal, ok := fold_comparison(c, .Eq_Eq, element, b.elements[index], allocator)
 		if !ok || !equal {
 			return false
 		}
