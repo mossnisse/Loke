@@ -104,7 +104,7 @@ named results.
 **A nonempty parenthesized type is a record if and only if it is labelled.** Otherwise
 `-> (x: int)` is ambiguous between a one-field record and a parenthesized
 single result — exactly the position where the combined product migration
-(section 12) removes the old named-result spelling. So: `(name: T, ...)` is
+(section 13) removes the old named-result spelling. So: `(name: T, ...)` is
 always a record type at any arity, including one; `(T)` is always grouping;
 there is no unlabelled anonymous record type.
 
@@ -989,7 +989,224 @@ unsafe.forget(move(socket)); // visibly unsafe: compiler can't prove the handoff
   modifier grammar to one axis and makes it more orthogonal — see section
   6.1 — so `static` and `thread_local` should not move to attributes.
 
-## 10. Rejected alternatives
+## 10. Mechanism inventory
+
+This is the systematic add/delete accounting the refinement strategy's decision
+process requires (see
+[`language-refinement-strategy.md`](language-refinement-strategy.md),
+"Mechanism inventory"). It generalizes the named-variant cost note in section
+4.4 to the whole proposal, and exists to answer one question under the
+strategy's design law 5: does this proposal delete more independent semantic
+rules than it adds? It is organized by the strategy's nine inventory axes.
+
+### How to read this
+
+Two attribution rules keep the tally honest:
+
+1. **Pre-committed provenance is not charged to this proposal.** "Wrapping a
+   checked borrow preserves its obligations" is already an acceptance criterion
+   and initial decision of the refinement strategy, and its Phase 4a/4b own it
+   *regardless of whether this proposal is adopted*. So the section 5.8
+   aggregate-provenance and retention rules are marked **[P4]** and excluded from
+   the proposal's net. Only the ownership rules that exist *because* a new
+   construct exists (destructure, switch binding, `or_else`/`or_return`) are
+   charged here.
+2. **Declining a pending proposal counts as an avoided add, not a delete.** The
+   tuple family and compiler-owned `Option`/`Result` do not exist today —
+   `design.md` states `Option` is an ordinary union that "no language construct
+   is aware of." Rejecting them (section 11) is scored as **avoided add**, not
+   deletion, so the ledger never takes credit for removing something that was
+   never there.
+
+Net symbols: **−** proposal deletes a rule · **+** proposal adds one ·
+**=** wash · **[P4]** pre-committed, excluded · **⊘** avoided add.
+
+### Axis 1 — grammar and contextual parsing
+
+| Baseline rule | Proposal | |
+| --- | --- | --- |
+| Named-result list `-> (x: T, y: T)` as multiple results | deleted; spelling repurposed | − |
+| Named-result locals + bare `return;` | deleted (section 3) | − |
+| `manual` storage modifier; modifier grammar has two axes | deleted; grammar reduced to one axis (duration) (section 6.1) | − |
+| `union { T, U }` — type-list variants only | retained as the anonymous form | = |
+| — | anonymous record type `(name: T, …)` at every arity, with "labelled iff record" disambiguation (section 1.2) | + |
+| — | named-variant production `Member_Name ":" Type?`, all-named-or-all-anonymous, mandatory colon (section 4.2) | + |
+| — | general destructuring in decl/assign/`foreach` (section 1.4) | + |
+| — | `()` unit-type spelling (section 1.2) | + |
+
+**Net: wash (≈ −3 / +4).** This axis does *not* net-delete. The adds are more
+regular (one record production reused across type/literal/destructure/result
+positions), but design law 5 is about rule count, and here it is roughly even.
+Do not claim grammar simplification as a win; claim regularity instead.
+
+### Axis 2 — type and value categories
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| "Multiple results" as a special result category (not a value) | deleted → one record value (section 3) | − |
+| Separate positional tuple family | not introduced (section 11) | ⊘ |
+| Compiler-owned `Option`/`Result` type family | not introduced (section 5.1, section 11) | ⊘ |
+| Anonymous union with type-discriminated variants | retained | = |
+| — | anonymous structural record category (identity = ordered name+type) (section 1.2) | + |
+| `Option`/`Result` | added as **library unions** — no new category (section 5.1) | +0 |
+| Named-variant union | extends the union category — no new category (section 4.2) | +0 |
+| — | `()` unit type — new zero-sized category *or* empty-struct alias (open decision 5) | +? |
+
+**Net: −1 category, +1 category (structural record), +1 unit question.** The
+decisive win here is what is *avoided*: `Option`/`Result` and named variants add
+**zero** new type categories by reusing unions. That is the proposal's strongest
+design-law-5 argument and it lives on this axis, not on grammar.
+
+### Axis 3 — name / member lookup
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| Variant extraction by payload type `.(T)` / `.as(T)` | retained for anonymous unions (section 4.4) | = |
+| Enum member implicit selector `.name` | generalized to union variants (section 4.3) | + |
+| — | per-union variant-name namespace; switch cases resolve by name (section 4.3) | + |
+
+**Net: +1 lookup rule** (variant-name → variant), built on the *existing* enum
+implicit-selector infrastructure, so no new resolution *engine* (per the
+acceptance criterion that named variants add no lookup path beyond the existing
+implicit selector). Because type-based extraction is kept alongside, the lookup
+surface grows; it shrinks only if open decision 1 collapses to one union model.
+
+### Axis 4 — argument / literal matching
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| Call argument matching (positional/named/defaults/variadic) | folded into one shared **slot matcher** (section 2.1) | − |
+| Record-literal field matching (separate) | folded into the same slot matcher (section 2.1) | − |
+| — | one policy split on the shared step: defaults (calls) vs zero-fill (records) | + |
+
+**Net: clear net-delete (2 matchers → 1 + 1 policy note).** Cleanest
+consolidation in the proposal. Section 2.2's "a call is not an argument record"
+preserves parameter modes/ABI without materialization — that is a *retained*
+distinction, not a second matcher.
+
+### Axis 5 — lifetime / ownership analysis
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| named-result × definite-init × multiple-results × `or_return` interaction | deleted (section 3) | − |
+| `manual` cleanup-suppression declaration state | deleted (section 6) | − |
+| "nil means success" / `E`-must-be-nil-status constraint | deleted (section 5.1) | − |
+| — | consume-vs-clone destructure by operand category (section 1.4) | + |
+| — | switch-binding borrow/consume rules (section 4.3) | + |
+| — | `or_else`/`or_return` ownership matrix — operand × operator × Option/Result (section 5.7) | + |
+| — | constructor payload ownership (place clones, temp/move transfers) (section 4.3) | + |
+| — | `unsafe.forget` semantics; `into_raw` convention (sections 6.3–6.4) | + |
+| — | aggregate borrow provenance; container-op dependency table; retention-into-`inout`/static contracts (section 5.8) | **[P4]** |
+
+**Net (proposal-attributable): −3 / +5.** This axis is add-heavy — but the
+*largest* additions (section 5.8) are **[P4]** pre-committed provenance the
+language owes whether or not this proposal ships, so they are excluded from the
+proposal's charge. What the proposal genuinely adds is the ownership *matrix for
+its own new constructs* (destructure / switch / operators / constructors). That
+is real new analysis and the ledger should not pretend otherwise: **this proposal
+is a net lifetime-rule ADD, and the honest defense is "each added rule is the
+ownership semantics of a construct that deletes an older special case
+elsewhere," not "fewer lifetime rules."**
+
+### Axis 6 — compile-time evaluation
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| — | implicit-selector construction requires complete expected type at CT (section 5.2) | + |
+| — | constructor/destructure checked in generic + CT code (verification table) | + |
+
+**Net: +2 minor rules.** Both are consequences of the selector/record adds, not
+independent mechanisms.
+
+### Axis 7 — runtime representation / ABI
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| Multiple results → one `loke`-CC LLVM aggregate | unchanged; "one value" is source-level, backend still multi-register (section 3) | = |
+| `(T, bool)` status aggregate | superseded by union layout | − |
+| — | `Option`/`Result` layout = ordinary union (tag + max payload), no boxing (acceptance criteria) | +0 |
+| — | named-variant layout must be measured vs an equivalent anonymous union (acceptance criteria) | + obligation |
+| — | `()` ABI status (open decision 5); C-ABI for Option/Result payloads (open decision 12) | +? |
+
+**Net: no new representation mechanism; two open ABI questions + measurement
+obligations.** Reuses union layout; the cost is verification, not new machinery.
+
+### Axis 8 — diagnostics
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| Contextual "which result is status" for `or_else`/`or_return` | deleted — operates on a value (section 5.3) | − |
+| copy-cost diagnostic | reused for cloning destructure (sections 1.4, 8.3) | = |
+| — | destructure clone-vs-consume diagnostic (section 1.4) | + |
+| — | `@(require_results)` on a type → discard diagnostics (section 9) | + |
+| — | provenance rejection diagnostics | **[P4]** |
+
+**Net: −1 / +2.** Roughly even; the deleted contextual rule is the valuable one
+(it was a design-law-1 violation — meaning changed by destination).
+
+### Axis 9 — library / compiler special cases
+
+| Baseline | Proposal | |
+| --- | --- | --- |
+| named-result special handling | deleted | − |
+| multiple-results special handling | deleted | − |
+| `manual` special handling | deleted | − |
+| `E`-must-be-nil-status special constraint | deleted (section 5.1) | − |
+| `try_`/non-`try_` container API duplication | targeted for removal (section 9 — flagged, not decided) | −? |
+| `Option` deliberately unknown to compiler (0 special cases today) | — | — |
+| — | compiler recognizes `or_else`/`or_return` roles (open decision 2) | + |
+| — | `@(require_results)` as a type attribute (section 9) | + |
+
+**Net: −4 (firm) / +1–2.** Strongest net-delete axis — *if* open decision 2
+resolves **structural** (a recognized two-variant protocol = one general rule).
+If it resolves **by-name**, the `+` becomes "two special-cased library types,"
+weakening this axis toward −4 / +2 and re-creating exactly the kind of
+privileged-type special case the strategy warns against (its Phase 1b requires
+operator recognition to identify the intended protocol explicitly, not turn any
+unrelated two-variant union into an error result).
+
+### Net tally
+
+| Axis | Proposal-attributable net | Verdict |
+| --- | --- | --- |
+| 1. Grammar | ≈ −3 / +4 | **wash** — sell regularity, not deletion |
+| 2. Type/value categories | −1 / +1, **+0 for Option/Result & variants** | **win** (reuse, no new category) |
+| 3. Lookup | +1 (reuses selector infra) | small add |
+| 4. Matching | −2 / +1 | **clear win** |
+| 5. Lifetime/ownership | −3 / +5 (excl. [P4]) | **net add** — defensible, not deniable |
+| 6. Compile-time | +2 minor | small add |
+| 7. Representation/ABI | no new mechanism; open questions | neutral |
+| 8. Diagnostics | −1 / +2 | wash |
+| 9. Special cases | −4 / +1–2 | **win if decision 2 is structural** |
+
+### Conclusion
+
+The proposal **passes design law 5 on the axes it claims to** — matching (4),
+special cases (9), and type categories (2, via reuse). It does **not** net-delete
+on grammar (1) or lifetime analysis (5); on those it trades old special cases for
+new *regular* rules. The correct claim is therefore **semantic compression, not
+rule-count reduction** — which is what the strategy privileges (its rule that
+semantic compression matters more than token compression).
+
+Do not write "the proposal removes more than it adds" without qualification. The
+true statement is: **it removes several destination-sensitive special cases and
+one whole matcher, and reuses unions/records to add `Option`/`Result`, named
+variants, and structural products with zero new type categories — at the cost of
+a larger ownership-rule surface, most of whose weight (section 5.8) is provenance
+work the language already owes independently.**
+
+### Two decisions that move the ledger
+
+- **Open decision 1 (one union model vs two).** Collapsing to one named model
+  turns axis 3 from `+1` toward a delete (removes type-based extraction + nil
+  state) and removes the "two semantic forms" cost on axis 2. Retaining both —
+  this draft's concrete choice — is the ledger's biggest un-booked liability.
+- **Open decision 2 (`or_else`/`or_return` by-name vs structural).** Structural
+  keeps axis 9 a clean net-delete; by-name re-introduces privileged-type special
+  cases. This single choice is the difference between the proposal's headline
+  claim holding and not holding.
+
+## 11. Rejected alternatives
 
 - **`Option`/`Result` as products with a validity flag.** Constrains `E` to
   nil-status types, keeps an inactive payload alive, needs guard-then-trap
@@ -1031,7 +1248,7 @@ unsafe.forget(move(socket)); // visibly unsafe: compiler can't prove the handoff
   helper signatures would produce incompatible types, and an anonymous
   result would be hard to reproduce outside its declaration.
 
-## 11. Open decisions
+## 12. Open decisions
 
 These are adoption decisions, not permission for an implementation to choose
 different behavior silently. Until a decision changes the text, the concrete
@@ -1068,7 +1285,7 @@ sections before implementation:
 12. What exact ABI guarantee should `Option`/`Result` make for C-compatible
     payloads and exported Loke procedures?
 
-## 12. Proposed migration order
+## 13. Proposed migration order
 
 The refinement strategy governs adoption. Named variants can be prototyped
 without anonymous records, but changing a producer to return a wrapper is not
