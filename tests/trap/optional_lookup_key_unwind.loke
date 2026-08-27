@@ -1,0 +1,17 @@
+package main; import "core:fmt";
+
+Resource :: struct { id: int }
+impl Resource {
+	release :: hook(drop) proc(self: inout Resource) { if (self.id != 0) { fmt.println("drop", self.id); } }
+}
+make_map :: proc() -> map[int]Resource {
+	m: map[int]Resource;
+	m[1] = Resource{1};
+	return m;
+}
+key :: proc() -> int { panic("key evaluation failed"); return 1; }
+main :: proc() {
+	// The receiver is owned before the next argument begins evaluation.
+	value, ok := make_map().lookup_value(key());
+	fmt.println("unexpected return", value.id, ok);
+}

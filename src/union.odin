@@ -55,6 +55,63 @@ check_union_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -
 	return true
 }
 
+// design.md "Checked extractions": `value.as(T)` is the optional spelling. It
+// is written with selector/call syntax but is not a call — it resolves to the
+// same `Expr_Checked_Extract` `value.(T)` produces, so the flow graph, the
+// evaluator, and the emitter keep one extraction path rather than two.
+//
+// `as` is a name users choose, so the receiver's *type* decides which meaning
+// applies: a union or `any_view` takes the built-in, and every other type keeps
+// its declared member. Resolving the receiver first is what makes that true for
+// `f().as(T)`, `a.b.as(T)`, and `xs[0].as(T)` as well as for a plain name.
+check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+	if sel.name.text != "as" {
+		return false
+	}
+	// A package selector names a declaration, not a value receiver.
+	if ident, ok := sel.operand.(^Expr_Ident); ok {
+		if sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident))); sym != nil &&
+		   sym.kind == .Package_Alias {
+			return false
+		}
+	}
+	operand := check_single_expr(k, sel.operand)
+	if operand != TYPE_ANY_VIEW && !type_is_union(k.c, operand) {
+		return false
+	}
+
+	v.value_category = .Value
+	v.union_op = .Extract
+	v.resolution = Resolution{kind = .Builtin_Operator}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = sel.operand
+	v.bound = bound
+
+	// Exactly one positional type argument, which is the extraction's target.
+	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value ||
+	   v.args[0].value == nil {
+		errorf(
+			k.c, v.span, "L0425",
+			"`as` names the requested type as its one positional argument, found %d argument%s",
+			len(v.args), len(v.args) == 1 ? "" : "s",
+		)
+		v.type = INVALID_TYPE
+		return true
+	}
+
+	extract := new(Expr_Checked_Extract, k.c.semantic_allocator)
+	extract.span = v.span
+	extract.operand = sel.operand
+	extract.target = v.args[0].value
+	extract.mode = .Optional
+	v.extract = extract
+
+	check_extract_of(k, extract, operand)
+	v.type = extract.type
+	v.result_types = extract.result_types
+	return true
+}
+
 // design.md "Unions": a discriminated union whose zero value is nil.
 resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	variants := make([dynamic]Type_Id, 0, len(value.variants), k.c.semantic_allocator)

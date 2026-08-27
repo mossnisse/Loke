@@ -1,30 +1,22 @@
 // Checked extractions, the type switch, and the optional-ok error protocol.
 //
-// design.md gives `v.(T)` one construct with two result shapes chosen by
-// context: a single-value position traps on a mismatch, a comma-ok destination
-// or an `or_else` left operand yields `(T, bool)` and never traps. The flag is
-// set by whoever owns the destination, before the node is checked.
+// design.md gives extraction two spellings with one result shape each: `v.(T)`
+// traps on a mismatch and produces `T`, `v.as(T)` never traps and produces
+// `(T, bool)`. The mode belongs to the spelling, so nothing about a destination
+// can change what a producer returns.
 package lokec
 
 // -------------------------------------------------- checked extractions --
 
-// A comma-ok destination is what puts a checked extraction in its optional-ok
-// phase. Called before the operand is checked, because the phase decides the
-// node's own result shape.
-mark_optional_ok :: proc(e: Expr) {
-	if extraction, is_extract := e.(^Expr_Checked_Extract); is_extract {
-		extraction.optional = true
-	}
-	// `elem, ok := m[key]` is the comma-ok form (design.md "Maps"). The phase
-	// decides the node's result shape, exactly as it does for an extraction.
-	if index, is_index := e.(^Expr_Index); is_index {
-		index.map_optional = true
-	}
+check_checked_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
+	check_extract_of(k, v, check_single_expr(k, v.operand))
 }
 
-check_checked_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
+// The shared half, entered with the operand already resolved. `.as(T)` resolves
+// its receiver first — that is what decides whether it is the built-in at all —
+// so it must not be checked a second time here.
+check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id) {
 	v.value_category = .Value
-	operand := check_single_expr(k, v.operand)
 	if operand == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
@@ -80,11 +72,17 @@ check_checked_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 		return
 	}
 	v.type = target
-	if v.optional {
-		results := make([]Type_Id, 2, k.c.semantic_allocator)
-		results[0], results[1] = target, TYPE_BOOL
-		v.result_types = results
+	set_extract_results(k, v, target)
+}
+
+// `.as(T)` always produces `(T, bool)`; `.(T)` always produces `T`.
+set_extract_results :: proc(k: ^Checker, v: ^Expr_Checked_Extract, target: Type_Id) {
+	if v.mode != .Optional {
+		return
 	}
+	results := make([]Type_Id, 2, k.c.semantic_allocator)
+	results[0], results[1] = target, TYPE_BOOL
+	v.result_types = results
 }
 
 // ---------------------------------------------------------- optional-ok --
@@ -121,11 +119,26 @@ status_payloads :: proc(k: ^Checker, e: Expr) -> ([]Type_Id, bool) {
 	return base.result_types[:len(base.result_types) - 1], true
 }
 
+// The two producers that used to grow a second result from their destination.
+// Neither does any more, so a use that wanted the optional shape is told which
+// operation now spells it.
+note_optional_replacement :: proc(k: ^Checker, e: Expr) {
+	#partial switch v in e {
+	case ^Expr_Checked_Extract:
+		if v.mode == .Trap {
+			add_notef(k.c, expr_span(e), "`value.(T)` traps on a mismatch; `value.as(T)` yields `(T, bool)`")
+		}
+	case ^Expr_Index:
+		if v.operand != nil && type_is_map(k.c, expr_base(v.operand).type) && !v.map_inserts {
+			add_notef(k.c, expr_span(e), "`m[key]` reads one value; `m.lookup_value(key)` yields `(V, bool)`")
+		}
+	}
+}
+
 // design.md "or_else expression": the fallback produces exactly the payload
 // results and is evaluated only when the status is a failure.
 check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 	v.value_category = .Value
-	mark_optional_ok(v.value)
 	if check_expr(k, v.value, expected) == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
@@ -138,6 +151,7 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 			"L0428",
 			"`or_else` needs a status expression with a payload on its left",
 		)
+		note_optional_replacement(k, v.value)
 		v.type = INVALID_TYPE
 		return
 	}

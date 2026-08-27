@@ -228,7 +228,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n := new_clone(c, Expr_Checked_Extract, &v.base)
 		n.operand = clone_expr(c, v.operand)
 		n.target = clone_expr(c, v.target)
-		n.optional = v.optional
+		n.mode = v.mode
 		return n
 
 	case ^Expr_Index:

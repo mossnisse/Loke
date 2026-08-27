@@ -24,7 +24,7 @@ main :: proc() {
 	fmt.println(int((v + v).x));
 
 	e: Error = i32(4);
-	value, ok := e.(i32);
+	value, ok := e.as(i32);
 	fmt.println(int(value) + (1 if ok else 0));
 
 	switch (t in e) {

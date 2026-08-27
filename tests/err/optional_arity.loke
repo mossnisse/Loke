@@ -1,0 +1,65 @@
+package main; import "core:fmt";
+
+// design.md: a destination never changes what a producer returns. `v.(T)` is
+// always single-valued and `m[key]` is always a single-value read; the `(T, bool)`
+// shapes are the separate operations `v.as(T)` and `m.lookup_value(key)`.
+
+Value :: union { bool, i32 }
+
+Plain :: struct { n: int }
+
+// `lookup_value` copies the element out, which a move-only element has no way
+// to do. `find` still borrows one.
+Token :: move_only struct { id: int }
+
+main :: proc() {
+	v: Value = i32(1);
+	m: map[string]int;
+
+	// The obsolete optional uses of the old syntax.
+	a, ok := v.(i32);
+	b := v.(i32) or_else i32(2);
+	c, present := m["x"];
+	d := m["x"] or_else 3;
+
+	// The new operations are never single-valued.
+	e := v.as(i32);
+	f := m.lookup_value("x");
+
+	// `as` takes exactly one positional type argument.
+	g := v.as();
+	h := v.as(i32, bool);
+	i := v.as(t = i32);
+	j := v.as(f64);
+
+	// `lookup_value` does not exist on anything but a map.
+	p := Plain{1};
+	q := p.lookup_value("x");
+
+	// A move-only element cannot be copied out, and the arity survives the error.
+	tokens: map[int]Token;
+	r, r_ok := tokens.lookup_value(1);
+	_, borrowed := tokens.find(1);
+
+	fmt.println(a, ok, b, c, present, d, e, f, g, h, i, j, q, r.id, r_ok, borrowed);
+}
+
+// Neither extraction spelling has a compile-time meaning yet, and both say so
+// explicitly rather than failing as an unresolved call.
+TRAPPING :: trapping();
+trapping :: proc() -> int {
+	u: Value = i32(1);
+	return int(u.(i32));
+}
+
+OPTIONAL :: optional_extract();
+optional_extract :: proc() -> int {
+	u: Value = i32(1);
+	n, ok := u.as(i32);
+	return int(n) if ok else 0;
+}
+
+erased_move_only :: proc(view: any_view) {
+	value, ok := view.as(Token);
+	trapped := view.(Token);
+}

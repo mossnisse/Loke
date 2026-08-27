@@ -313,7 +313,13 @@ table[key]              // ordinary indexing; no optional second result
 table.lookup_value(key) // value plus status; missing key does not trap
 ```
 
-These are illustrative names, not the borrowed lookup API proposed in Phase 5a.
+**Implemented.** These are the names as landed, not illustrative ones. `as`
+takes exactly one positional type argument and resolves on the receiver's type,
+so a declared member named `as` on any other type is unaffected;
+`lookup_value` is a contributed map member with an immutable receiver that
+performs exactly one clone of a managed payload, inside the operation. Neither
+is the borrowed lookup API proposed in Phase 5a, which may still rename the
+pairing with `find`.
 Phase 1a changes result arity and mismatch/absence handling, not copying,
 allocator failure, or map insertion policy. A payload copy or user hook can
 still fail under its existing contract; "non-trapping lookup" must not promise
@@ -332,6 +338,12 @@ Exit conditions:
 - validating conversions retain their fixed result shape and single-value
   arity diagnostic; and
 - the per-producer paragraph is deleted from `design.md` rather than reworded.
+
+All four hold. One defect was fixed as a consequence rather than preserved: the
+old comma-ok map read loaded the element without cloning it while still
+registering it for drop, so a managed payload was freed twice. `lookup_value`
+clones inside the operation, which makes the two-name form own its payload for
+the same reason the one-name form already did.
 
 #### Phase 1b — decide whether absence becomes a type
 

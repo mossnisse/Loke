@@ -502,7 +502,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if index > 0 {
 			fmt.sbprint(&e.b, ", ")
 		}
-		type := index == 0 ? "ptr" : llvm_type(e, parameter)
+		// A mutating receiver arrives as the header's address; an immutable one
+		// arrives by value, like every other `value:` parameter.
+		type := index == 0 && symbol.receiver == .Inout ? "ptr" : llvm_type(e, parameter)
 		fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
 	}
 	fmt.sbprintln(&e.b, ") {")
@@ -537,9 +539,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i64 1)",
 			status, ops, slot,
 		)
-		// The argument was a borrowed copy of the caller's value and the helper
-		// cloned from it, so this frame still owns it.
-		emit_drop_place(e, element, slot)
+		// Value parameters are borrowed; their caller owns any temporary cleanup.
 
 	case .Pop:
 		out := alloca(e, element_llvm)
@@ -599,11 +599,53 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %%arg0, ptr %s, ptr %s)", found, ops, slot,
 		)
-		emit_drop_place(e, container_key(e.c, container), slot)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", ok, found)
 		pair, first, built := optional_pair_type("ptr"), temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, 0", first, pair, found)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, 1", built, pair, first, ok)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, built)
+		fmt.sbprintln(&e.b, "}")
+		return
+
+	case .Map_Lookup_Value:
+		// design.md "Maps": one probe, no insertion, and an independently owned
+		// payload on a hit. The receiver arrives by value, so it is spilled to give
+		// the C probe an address to read; nothing here writes through it.
+		key_type := container_key(e.c, container)
+		header := alloca(e, CONTAINER_TYPE)
+		fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", CONTAINER_TYPE, header)
+		key_slot := value_storage(e, key_type, "%arg1")
+		found := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
+		)
+		present := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", present, found)
+
+		// The result is built the same way whether the caller keeps it or not, and
+		// the clone happens *here* — exactly once, on the hit path only, so the map
+		// keeps its own storage and the destination must not copy again.
+		out := alloca(e, element_llvm)
+		fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", element_llvm, out)
+		if zero, zeroed := zero_const(e.c, element); zeroed {
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element_llvm, llvm_const(e, zero, element), out)
+		}
+		hit_label, done_label := new_label(e, "mlookup.hit"), new_label(e, "mlookup.done")
+		branch_if(e, present, hit_label, done_label)
+		place_label(e, hit_label)
+		stored := load(e, element_llvm, found)
+		if emit_lifecycle(e, element).managed {
+			stored = emit_clone_value(e, element, stored)
+		}
+		store(e, element, stored, out)
+		branch(e, done_label)
+		place_label(e, done_label)
+		e.terminated = false
+
+		value := load(e, element_llvm, out)
+		pair, first, built := optional_pair_type(element_llvm), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, element_llvm, value)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, 1", built, pair, first, present)
 		fmt.sbprintfln(&e.b, "  ret %s %s", pair, built)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -638,7 +680,6 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		place_label(e, clone_ready)
 		key_slot := value_storage(e, key_type, "%arg1")
 		place := emit_map_entry(e, ops, "%arg0", key_slot)
-		emit_drop_place(e, key_type, key_slot)
 		missing, ok_label, failed_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.failed")
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
 		branch_if(e, missing, failed_label, ok_label)
@@ -667,7 +708,6 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call i32 @loke_rt_v1_map_remove(ptr %%arg0, ptr %s, ptr %s, ptr %s)",
 			found, ops, key_slot, out,
 		)
-		emit_drop_place(e, key_type, key_slot)
 		value := load(e, element_llvm, out)
 		ok := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
@@ -738,11 +778,15 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	value := emit_expr(e, v.lhs)
 	key_slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, key_slot)
+	cleanup := Deferred{slot = -1}
+	if type_is_managed(e.c, key) && !expression_is_borrowed_place(e.c, v.lhs) {
+		cleanup = begin_temporary_drop(e, key, key_slot)
+	}
 	found, out := temp(e), temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
 	)
-	emit_drop_place(e, key, key_slot)
+	drop_temporary_value(e, cleanup)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", out, found)
 	return out
 }
@@ -756,9 +800,9 @@ emit_map_place :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	container := expr_base(v.operand).type
 	ops := container_ops_global(e, container)
 	header := emit_address(e, v.operand)
-	key_slot := emit_map_key_slot(e, v, container)
+	key_slot, cleanup := emit_map_key_slot(e, v, container)
 	place := emit_map_entry(e, ops, header, key_slot)
-	emit_drop_place(e, container_key(e.c, container), key_slot)
+	drop_temporary_value(e, cleanup)
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, place)
 	fail_label, done_label := new_label(e, "mplace.fail"), new_label(e, "mplace.done")
@@ -787,13 +831,13 @@ emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
 	element_llvm := llvm_type(e, element)
 	ops := container_ops_global(e, container)
 	header := emit_address(e, v.operand)
-	key_slot := emit_map_key_slot(e, v, container)
+	key_slot, cleanup := emit_map_key_slot(e, v, container)
 
 	found := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
 	)
-	emit_drop_place(e, container_key(e.c, container), key_slot)
+	drop_temporary_value(e, cleanup)
 	zero_slot := alloca(e, element_llvm)
 	if zero, ok := zero_const(e.c, element); ok {
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element_llvm, llvm_const(e, zero, element), zero_slot)
@@ -804,27 +848,28 @@ emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
 	return source, present
 }
 
-// `m[key]` as a read, in both its single-value and comma-ok shapes.
+// `m[key]` as a read. Always one value: `m.lookup_value(key)` is the `(V, bool)`
+// form, and it is a call rather than an index.
 @(private)
-emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> []string {
+emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	element_llvm := llvm_type(e, container_element(e.c, expr_base(v.operand).type))
-	source, present := emit_map_read_address(e, v)
-	value := load(e, element_llvm, source)
-	out := make([]string, 2)
-	out[0], out[1] = value, present
-	return out
+	source, _ := emit_map_read_address(e, v)
+	return load(e, element_llvm, source)
 }
 
-// The key, spilled so the C helper can read it through a pointer. The value is
-// this frame's, so a managed key is dropped by the caller once the probe is
-// done.
+// The C helper borrows the spilled key. Only an owned temporary needs cleanup;
+// spilling a borrowed place does not transfer its ownership to the probe.
 @(private = "file")
-emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> string {
+emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> (string, Deferred) {
 	key := container_key(e.c, container)
 	value := emit_expr(e, v.indices[0])
 	slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, slot)
-	return slot
+	cleanup := Deferred{slot = -1}
+	if type_is_managed(e.c, key) && !expression_is_borrowed_place(e.c, v.indices[0]) {
+		cleanup = begin_temporary_drop(e, key, slot)
+	}
+	return slot, cleanup
 }
 
 // design.md "Maps": an inserting place. The slot is found or created with the

@@ -1372,7 +1372,7 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	}
 	// design.md "Maps": the key's coherent `==`/`hash` pair is settled where the
 	// map type is named, so one map reports once rather than once per operation.
-	if type_is_map(k.c, type) && !require_map_key_policy(k, type, span) {
+	if !require_nested_map_key_policies(k, type, span) {
 		return false
 	}
 	// A named region provider gets its constructors and `allocator` here, for the
@@ -1573,7 +1573,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	// `a, b := f()`: one call filling several names, checked before arity so the
 	// single call is not mistaken for a missing initialiser.
 	if len(d.values) == 1 && len(d.names) > 1 && d.values[0] != nil {
-		mark_optional_ok(d.values[0])
 		check_expr(k, d.values[0])
 		if base := expr_base(d.values[0]); base != nil && len(base.result_types) == len(d.names) {
 			for symbol_id, index in d.symbols {
@@ -1596,6 +1595,9 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			len(d.values),
 			len(d.values) == 1 ? "" : "s",
 		)
+		if len(d.values) == 1 && len(d.names) > 1 {
+			note_optional_replacement(k, d.values[0])
+		}
 	}
 
 	for value, i in d.values {
@@ -2030,11 +2032,10 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		return
 	}
 
-	// `a, b = f()` and `a, ok = v.(T)`: one expression filling several
-	// destinations. The comma-ok shape is what puts an extraction in its
-	// optional-ok phase, so the marking happens before the operand is checked.
+	// `a, b = f()` and `a, ok = v.as(T)`: one expression filling several
+	// destinations. Its result count is its own — a destination never changes
+	// what a producer returns.
 	if len(s.rhs) == 1 && len(s.lhs) > 1 {
-		mark_optional_ok(s.rhs[0])
 		check_expr(k, s.rhs[0])
 		if base := expr_base(s.rhs[0]); base != nil && len(base.result_types) == len(s.lhs) {
 			for target, index in s.lhs {
@@ -2055,6 +2056,9 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			len(s.rhs),
 			len(s.rhs) == 1 ? "" : "s",
 		)
+		if len(s.rhs) == 1 && len(s.lhs) > 1 {
+			note_optional_replacement(k, s.rhs[0])
+		}
 		return
 	}
 	for target, index in s.lhs {

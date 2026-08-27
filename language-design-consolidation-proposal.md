@@ -535,6 +535,13 @@ iterator.next() // Option(Element)
 Validating conversions return `Option(T)` when invalidity carries no useful
 information, `Result(T, E)` when it does.
 
+Strategy Phase 1a has shipped the arity half of this table under the existing
+status protocol: `value.as(T)` and `table.lookup_value(key)` exist today and
+return `(T, bool)` rather than `Option(T)`. Adopting this proposal would change
+their result *type*, not their names or their trapping behavior — except for
+`get`/`lookup_value`, where the shipped name is `lookup_value` and this table's
+`get` remains a proposal.
+
 **`find` is unresolved** (open decision 8). `Option(^mut V)` trades a place
 result for a nullable, storable address — the same trade section 7 declines
 for `inout`. `Option(inout V)` isn't available either, since a mode can't be
@@ -1298,7 +1305,11 @@ ownership, and caller migration are gates.
    aggregate boundary as baseline cases, not guarantees to retain.
 2. Complete the bounded producer-spelling migration in strategy Phase 1a under
    the existing status protocol. This can ship without adopting this proposal;
-   keep validating conversions unchanged during that phase.
+   keep validating conversions unchanged during that phase. **Done.** `value.(T)`
+   is permanently trapping and single-valued, `value.as(T)` is the optional
+   `(T, bool)` spelling, `table[key]` is a single-value read, and
+   `table.lookup_value(key)` is its `(V, bool)` form. Validating conversions are
+   unchanged, and nothing here adopts this proposal.
 3. Establish aggregate provenance with existing records and unions (Phase 4a),
    and usable call/retention contracts for affected public and indirect APIs
    (Phase 4b). This work can proceed alongside step 2. It must pass the

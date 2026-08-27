@@ -3,6 +3,39 @@ package lokec
 import "core:testing"
 
 @(test)
+maps_declared_only_in_fields_have_key_policies :: proc(t: ^testing.T) {
+	c := test_compiler(`package main;
+Key :: struct { id: int }
+impl Key {
+    hash :: proc(self, seed: uint) -> uint { return seed; }
+    equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+}
+Grid :: struct { entries: map[string]f32, nested: [1]map[Key]int, next: ^Grid }
+main :: proc() {
+    g: Grid;
+    p, ok := g.entries.find("a");
+    value, found := g.entries.lookup_value("a");
+    g.nested[0][{1}] = 7;
+    n, present := g.nested[0].lookup_value(key = {1});
+}
+`)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name, "<field-map-test>")
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_one_package(&c, id)
+	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	freeze_typeids(&c)
+	finalize_lifecycle_operations(&c)
+	_, valid := emit_llvm_module(&c, id)
+	testing.expect(t, valid && c.error_count == 0, "field-only map types must reach emission with resolved key policies")
+}
+
+@(test)
 unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
 	c := test_compiler("package main; main :: proc() { zero: typeid; id := typeid_of(int); }")
 	defer destroy_compilation(&c)

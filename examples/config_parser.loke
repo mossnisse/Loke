@@ -86,7 +86,7 @@ main :: proc() {
 	settings: map[string_view]int;
 
 	{
-		reader := Reader("settings.ini");
+		reader := Reader.init("settings.ini");
 		good := [?]string_view{ "width=1280", "height=720", "depth=32" };
 		err := load(inout reader, good[:], inout settings);
 		fmt.println("error:", describe(err));
@@ -94,7 +94,7 @@ main :: proc() {
 	} // `reader` is closed here, at the brace
 
 	{
-		reader := Reader("broken.ini");
+		reader := Reader.init("broken.ini");
 		defer fmt.println("leaving the broken load");
 
 		bad := [?]string_view{ "colour=blue", "height=1080" };
@@ -106,14 +106,14 @@ main :: proc() {
 
 	// A missing key reads as zero, which is often not the answer you want. The
 	// optional-ok form distinguishes "absent" from "present and zero".
-	depth, present := settings["depth"];
+	depth, present := settings.lookup_value("depth");
 	fmt.println("depth:", depth, "present:", present);
 
-	_, missing := settings["colour"];
+	_, missing := settings.lookup_value("colour");
 	fmt.println("colour present:", missing);
 
 	// `or_else` supplies a fallback for an optional-ok expression, and evaluates
 	// it only when the value is absent.
-	fmt.println("depth or 8:", settings["depth"] or_else 8);
-	fmt.println("colour or 8:", settings["colour"] or_else 8);
+	fmt.println("depth or 8:", settings.lookup_value("depth") or_else 8);
+	fmt.println("colour or 8:", settings.lookup_value("colour") or_else 8);
 }

@@ -679,7 +679,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		// (design.md "Maps"). The address of that zero is a temporary of this frame.
 		if index, is_index := expr.(^Expr_Index); is_index && !index.map_inserts &&
 		   index.operand != nil && type_is_map(e.c, expr_base(index.operand).type) {
-			return emit_map_lookup(e, index)[0]
+			return emit_map_lookup(e, index)
 		}
 		// A user `operator([])`. A value overload produces the element; an `inout`
 		// overload produces its address, which is then read through.

@@ -237,5 +237,51 @@ result arity.
   L0507 copy-cost warning on `one := m["a"]` reports "this binding clones `m`" and
   advises `move(m)`. It names the place root rather than the element being cloned,
   and the suggested fix would move the map. Fix it separately.
-- The baseline has not yet been rerun; executing and recording it is the first
-  implementation step.
+
+## Verification record — 2026-08-27
+
+The review compared the implementation with pristine revision
+`0ab7fd29165d1214bbfca62539b537b535f61f54`. Both passed 46 compiler tests and all
+14 baseline integration suites. Those initial optimization sweeps were stopped
+during `minimal` after the review established the defects; they are not recorded
+as complete matrices.
+
+The follow-up fixes cover borrowed managed keys, discarded owned results,
+temporary receiver cleanup (including panic paths), package functions named `as`,
+discarded extraction calls, owned lookup regions, compile-time temporary
+receivers, and named key arguments. The two reported older map defects are also
+fixed: maps nested in struct fields receive key policies, and member calls supply
+the known key type to typeless composite arguments. Managed `any_view`
+extractions now clone on a match and reject move-only targets; extracted
+allocator handles retain conservative region tracking. Locally tracked map
+carrier results retain the map borrow, including when passed through
+`any_view` conversion. This does not implement aggregate provenance.
+
+Regression coverage extends the existing map, extraction, compile-time, package,
+diagnostic, and compiler emission suites. Three dedicated trap fixtures cover
+lookup clone failure, key evaluation failure, and a temporary key's drop hook
+panicking after a result has been produced.
+
+Toolchain: Odin `dev-2025-09-nightly:42c2cb8`, Clang `22.1.8`, Windows x64.
+The complete `test-all.ps1` run exited successfully:
+
+| Check | Result |
+|---|---|
+| Compiler unit tests | 47/47 passed |
+| Baseline integration suites | 14/14 passed |
+| Run/trap corpus at `minimal` | Both suites passed |
+| Run/trap corpus at `size` | Both suites passed |
+| Run/trap corpus at `speed` | Both suites passed |
+| Run/trap corpus at `aggressive` | Both suites passed |
+
+Each run/trap pass covers 95 runtime fixtures and 29 trap fixtures. The focused
+map and managed-extraction runtime suites also pass with `-panic=abort`.
+The `Sparse_Grid` pattern runs with typeless keys in indexing, `lookup_value`,
+and `find`; its explicit `[2]int{...}` spelling is no longer needed as a
+workaround. `git diff --check` is clean. The full matrix log is retained in
+`tests/tmp/phase1a-review/fix-test-all.log`.
+
+Deletion audit: no `mark_optional_ok` or `map_optional` references remain in
+`src`. Extraction mode comes from its spelling (`.(T)` or `.as(T)`); map reads
+and `lookup_value` keep their distinct fixed arities. Ordinary multiple-result
+expansion and text conversion status results remain in place.

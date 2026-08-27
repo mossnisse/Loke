@@ -597,7 +597,7 @@ Unary_Expression = ("+" | "-" | "!" | "~" | "&" "mut"?) Unary_Expression
 Postfix_Expression = Primary_Expression Suffix*
 Suffix = "^"                                          // dereference
        | "." Member_Name                              // selector
-       | "." "(" Type ")"                             // checked extraction
+       | "." "(" Type ")"                             // trapping checked extraction
        | "(" Argument_List? ")"                       // call or conversion
        | "[" Index_Or_Slice "]"
        | "or_return"
@@ -668,6 +668,13 @@ The left operand of `or_else` must have at least one payload result followed by
 `bool`; a single-result `bool` call is not eligible. For multiple payloads, the
 fallback expression must itself produce the same number of results, as specified
 in the normative design.
+
+The optional extraction `value.as(T)` has no suffix of its own: it is written
+with the selector and call suffixes above. Its receiver's type is what makes it
+the built-in — a union or an `any_view` — so a declared member named `as` on any
+other type is reached by exactly the same syntax. `m.lookup_value(key)` is an
+ordinary member call in the same way. Neither result count depends on the
+destination, which is why `.(T)` and `m[key]` are always single-valued.
 
 `move(x)` is a primary form rather than a call because `move` is a keyword — it
 is also a [parameter mode](#procedures), so it has to be reserved anyway.

@@ -123,14 +123,21 @@ Expr_Selector :: struct {
 	name:       Name,
 }
 
-// `x.(T)`. One construct with two result shapes chosen by context: a
-// single-value position traps on a mismatch, while a comma-ok destination or an
-// `or_else` left operand yields `(T, bool)` and never traps.
+// The two extraction spellings share one semantic description: a source, a
+// resolved target type, and a mode fixed by the spelling rather than by the
+// destination. `x.(T)` is always `.Trap` and produces one value; `x.as(T)` is
+// always `.Optional` and produces `(T, bool)`.
+Extract_Mode :: enum {
+	Trap,
+	Optional,
+}
+
+// `x.(T)`, and the node `x.as(T)` resolves to.
 Expr_Checked_Extract :: struct {
 	using base: Expr_Base,
 	operand:    Expr,
 	target:     Expr,
-	optional:   bool,
+	mode:       Extract_Mode,
 }
 
 // `x[a]`, and the user-defined comma form `x[a, b]`.
@@ -145,8 +152,6 @@ Expr_Index :: struct {
 	// when the key is absent, while a read of the same syntax does not. Which one
 	// this occurrence is comes from its position, so the checker records it.
 	map_inserts: bool,
-	// A comma-ok destination, which gives `m[key]` its `(V, bool)` shape.
-	map_optional: bool,
 }
 
 // `x[lo:hi]`; either endpoint may be nil.
@@ -202,6 +207,8 @@ Text_Op :: enum {
 Union_Op :: enum {
 	None,
 	Active_Typeid,
+	// `value.as(T)`, whose semantics live in the `extract` node below.
+	Extract,
 }
 
 // design.md "string type conversions": the conversions that validate their
@@ -230,6 +237,10 @@ Expr_Call :: struct {
 	text:            Text_Op,
 	// `value.active_typeid()` on a union.
 	union_op:        Union_Op,
+	// `value.as(T)`: the optional extraction this call resolved to. Downstream
+	// phases delegate to it rather than treating the call as a call, which is
+	// what keeps `.(T)` and `.as(T)` on one flow, evaluation, and lowering path.
+	extract:         ^Expr_Checked_Extract,
 	// A validating text conversion, which has optional-ok results.
 	text_conversion: Text_Conversion,
 	// design.md "Variadic parameters". `variadic_slot` is the packed parameter's

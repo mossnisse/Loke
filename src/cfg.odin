@@ -936,6 +936,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				for index in v.indices {
 					walk_flow_expr(graph, index)
 				}
+				if underlying_kind(graph.k.c, expr_base(v.operand).type) == .Map && type_is_carrier(graph.k.c, v.type) {
+					return prov_borrow(graph, root, path, carrier_is_mutable(graph.k.c, v.type), v.span, "map value")
+				}
 				return nil
 			}
 		}
@@ -992,9 +995,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		return prov_join(graph, value_loans, fallback_loans)
 
 	case ^Expr_Checked_Extract:
-		// design.md: an extraction from `any_view` or a union preserves the
-		// source root; only the static type narrows.
-		return walk_flow_expr(graph, v.operand)
+		// Carrier results retain the source root. An owning extraction clones
+		// into independent storage instead of retaining the erased borrow.
+		loans := walk_flow_expr(graph, v.operand)
+		if type_is_carrier(graph.k.c, v.type) {
+			return loans
+		}
+		return nil
 
 	case ^Expr_Range:
 		walk_flow_expr(graph, v.lo)
@@ -1045,6 +1052,11 @@ report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call, consumed: int)
 
 @(private = "file")
 walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	// `value.as(T)` is an extraction wearing call syntax. Walking the node it
+	// resolved to is what preserves the source root, exactly as `value.(T)` does.
+	if v.union_op == .Extract && v.extract != nil {
+		return walk_flow_expr(graph, v.extract)
+	}
 	// A union's active type query reads its receiver once and returns a scalar;
 	// it neither consumes the union nor carries provenance into the result.
 	if v.union_op != .None {
@@ -1521,14 +1533,16 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 @(private = "file")
 prov_erase :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	span := expr_span(e)
+	// Erasing a carrier borrows both its representation and the storage it
+	// already refers to. Otherwise erasure (including a formatting argument)
+	// hides a use of a previously invalidated view.
+	loans := walk_flow_expr_erased(graph, e)
 	if root, path, ok := prov_place_of(graph, e); ok {
-		prov_walk_subscripts(graph, e)
-		prov_access(graph, root, path, .Read, span)
-		return prov_borrow(graph, root, path, false, span, "view")
+		return prov_join(graph, loans, prov_borrow(graph, root, path, false, span, "view"))
 	}
 	// A carrier erased into a view keeps the loans it already held; anything else
 	// is a temporary whose hidden storage ends with its statement.
-	if loans := walk_flow_expr_erased(graph, e); len(loans) > 0 {
+	if len(loans) > 0 {
 		return loans
 	}
 	// The storage the compiler creates to erase a value is a frame slot, not a
@@ -1550,9 +1564,10 @@ prov_hidden_root :: proc(graph: ^Flow_Graph, span: Span, name: string) -> Root_I
 // to the node's ordinary meaning without recursing into itself.
 @(private = "file")
 walk_flow_expr_erased :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
-	saved := expr_base(e).erased_from
-	expr_base(e).erased_from = INVALID_TYPE
-	defer expr_base(e).erased_from = saved
+	base := expr_base(e)
+	saved, saved_type := base.erased_from, base.type
+	base.erased_from, base.type = INVALID_TYPE, saved
+	defer { base.erased_from, base.type = saved, saved_type }
 	return walk_flow_expr(graph, e)
 }
 
@@ -1701,6 +1716,10 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result: int, result_
 	out := prov_empty_region(graph)
 	allocator_result := type_underlying(c, result_type) == TYPE_ALLOCATOR
 	if !type_is_managed(c, result_type) && !allocator_result {
+		return out
+	}
+	if v.union_op == .Extract && type_is_managed(c, result_type) {
+		out.default = true
 		return out
 	}
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Default_Allocator {
@@ -2460,8 +2479,10 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	}
 	receiver := Param_Mode.Value
 	has_receiver := false
+	map_value_borrow := false
 	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.has_receiver {
 		receiver, has_receiver = sym.receiver, true
+		map_value_borrow = sym.synth == .Container_Op && sym.container_op == .Map_Lookup_Value && type_is_carrier(c, sym.results[0])
 	}
 	// Method-call syntax puts the receiver in `bound[0]`; walking the callee
 	// selector as well would count one access twice.
@@ -2526,6 +2547,16 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			}
 		}
 		actuals[index] = walk_flow_expr(graph, argument)
+		if index == 0 && map_value_borrow {
+			// A map is an owner, so reading its identifier carries no loans.
+			// A borrowed payload nevertheless depends on its current contents.
+			if root, path, ok := prov_place_of(graph, argument); ok {
+				actuals[index] = prov_borrow(graph, root, prov_extend(graph, path, proj_wild()), carrier_is_mutable(c, v.type), v.span, "map value")
+			} else if prov_expr_is_temporary(argument) {
+				root := prov_temp_root(graph, expr_span(argument))
+				actuals[index] = prov_borrow(graph, root, nil, carrier_is_mutable(c, v.type), v.span, "map value")
+			}
+		}
 		prov_weaken(graph, actuals[index], prov_parameter_type(graph, v, index))
 		borrowed = prov_join(graph, borrowed, actuals[index])
 	}

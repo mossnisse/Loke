@@ -46,3 +46,7 @@ this allocation cannot be released here: a pointer of it is still in use
 L0512
 @136:2
 `value` cannot be assigned here: a read-only pointer of it is still in use
+L0512
+`m` cannot be modified here: a read-only map value of it is still in use
+L0512
+`m` cannot be modified here: a read-only map value of it is still in use

@@ -1,4 +1,5 @@
 package main; import "core:fmt";
+import "core:mem";
 
 // Maps end to end (m6b-plan step 3).
 //
@@ -22,7 +23,32 @@ impl Id {
 	}
 }
 
+// design.md "Maps": `lookup_value` copies rather than borrows, so its receiver
+// is immutable and an ordinary `value:` parameter can be read through it.
+borrowed_len :: proc(m: map[string][dynamic]int) -> int {
+	held, ok := m.lookup_value("a");
+	return len(held) if ok else -1;
+}
+
+built :: proc() -> map[string]int {
+	out: map[string]int;
+	out["k"] = 42;
+	return out;
+}
+
+// Receiver before key, each evaluated exactly once.
+noisy_map :: proc() -> map[string]int {
+	fmt.println("receiver");
+	return built();
+}
+noisy_key :: proc() -> string {
+	fmt.println("key");
+	return "k";
+}
+
 main :: proc() {
+	lookup_regressions();
+	lookup_regions();
 	// A literal writes each entry `key = value`.
 	m := map[string]Test{
 		"Bob" = { 0, 0 },
@@ -44,14 +70,20 @@ main :: proc() {
 	fmt.println(m["nobody"].x);
 	fmt.println(len(m));
 
-	// The three membership forms.
-	entry, ok := m["Bob"];
+	// The three membership forms. `lookup_value` is the `(V, bool)` read: it
+	// never inserts, and its payload is an independently owned value rather than
+	// a pointer into the table.
+	entry, ok := m.lookup_value("Bob");
 	fmt.println(entry.x);
 	fmt.println(ok);
-	_, missing := m["nobody"];
+	_, missing := m.lookup_value("nobody");
 	fmt.println(missing);
+	fmt.println(len(m));
 	fmt.println("Chloe" in m);
 	fmt.println("nobody" in m);
+	// `or_else` over the same producer.
+	fmt.println((m.lookup_value("Bob") or_else Test{5, 5}).x);
+	fmt.println((m.lookup_value("nobody") or_else Test{5, 5}).x);
 
 	// `find` never inserts and hands back a pointer to the stored value.
 	slot, found := m.find("Chloe");
@@ -104,6 +136,44 @@ main :: proc() {
 	names["one"] = "replaced";
 	fmt.println(names["one"]);
 	fmt.println(len(names));
+
+	// A managed payload read through `lookup_value` is cloned exactly once,
+	// inside the operation: the result owns its own storage, the map keeps its
+	// own, and neither frees the other's. One clone, not zero and not two.
+	owned: map[string][dynamic]int;
+	first: [dynamic]int;
+	first.append(1);
+	first.append(2);
+	owned["a"] = move(first);
+	copied, copied_ok := owned.lookup_value("a");
+	fmt.println(copied_ok);
+	fmt.println(len(copied));
+	copied.append(3);
+	fmt.println(len(copied));
+	fmt.println(len(owned["a"]));
+	vacant, vacant_ok := owned.lookup_value("b");
+	fmt.println(vacant_ok);
+	fmt.println(len(vacant));
+	// The source map survives the result's cleanup.
+	fmt.println(len(owned));
+	// An immutable parameter and a temporary receiver both read without `inout`.
+	fmt.println(borrowed_len(owned));
+	fmt.println(built().lookup_value("k") or_else -1);
+	fmt.println(built().lookup_value("gone") or_else -1);
+	// Receiver, then key, each once.
+	loud, loud_ok := noisy_map().lookup_value(noisy_key());
+	fmt.println(loud);
+	fmt.println(loud_ok);
+
+	// A carrier payload still borrows through the map, exactly as the index it
+	// replaces does: `lookup_value` trades no place provenance for `unknown`.
+	views: map[int]string_view;
+	views[1] = "borrowed";
+	fmt.println(views[1]);
+	seen, seen_ok := views.lookup_value(1);
+	fmt.println(seen);
+	fmt.println(seen_ok);
+
 	names.clear();
 	fmt.println(len(names));
 
@@ -124,4 +194,94 @@ main :: proc() {
 	fmt.println(len(wide));
 	fmt.println(wide[3]);
 	fmt.println(0 in wide);
+}
+
+key_copies, key_drops, value_copies, value_drops: int;
+Tracked_Key :: struct { id: int }
+Tracked_Value :: struct { id: int }
+impl Tracked_Key {
+	hash :: proc(self, seed: uint) -> uint { return hash(self.id, seed); }
+	equal :: operator(==) proc(a, b: Tracked_Key) -> bool { return a.id == b.id; }
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Tracked_Key, Allocator_Error) {
+		key_copies += 1;
+		return Tracked_Key{self.id}, nil;
+	}
+	release :: hook(drop) proc(self: inout Tracked_Key) { if (self.id != 0) { key_drops += 1; } }
+}
+impl Tracked_Value {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Tracked_Value, Allocator_Error) {
+		value_copies += 1;
+		return Tracked_Value{self.id}, nil;
+	}
+	release :: hook(drop) proc(self: inout Tracked_Value) { if (self.id != 0) { value_drops += 1; } }
+}
+
+tracked_map :: proc() -> map[int]Tracked_Value {
+	m: map[int]Tracked_Value;
+	m[1] = Tracked_Value{2};
+	return m;
+}
+
+lookup_regressions :: proc() {
+	{
+		key := Tracked_Key{1};
+		m: map[Tracked_Key]Tracked_Value;
+		m[key] = Tracked_Value{1};
+		assert(key_copies == 1 && key_drops == 0);
+		assert(value_copies == 0 && value_drops == 0);
+		{
+			held, ok := m.lookup_value(key = key);
+			assert(ok && held.id == 1 && key.id == 1);
+			assert(value_copies == 1 && value_drops == 0 && key_drops == 0);
+		}
+		assert(value_drops == 1);
+		_, ok := m.lookup_value(key);
+		assert(ok && value_copies == 2 && value_drops == 2);
+		_, ok = m.lookup_value(key);
+		assert(ok && value_copies == 3 && value_drops == 3);
+		m.lookup_value(key);
+		_, _ = m.lookup_value(key);
+		assert(value_copies == 5 && value_drops == 5);
+		_, missing := m.lookup_value({9});
+		assert(!missing && value_copies == 5 && value_drops == 5 && key_drops == 1);
+		_, found := m.find(key = key);
+		assert(found && key_drops == 1);
+		assert(key in m);
+		assert(m[key].id == 1 && key_drops == 1);
+		_, found = m.find({1});
+		assert(found && key_drops == 2);
+		assert(Tracked_Key{1} in m);
+		assert(m[Tracked_Key{1}].id == 1 && key_drops == 4);
+		{
+			taken, removed := m.remove(key);
+			assert(removed && taken.id == 1 && key_drops == 5);
+		}
+		assert(value_drops == 6 && key.id == 1);
+	}
+	assert(key_drops == 6);
+	{
+		held, ok := tracked_map().lookup_value(1);
+		assert(ok && held.id == 2 && value_copies == 6 && value_drops == 7);
+	}
+	assert(value_drops == 8);
+	_, ok := tracked_map().lookup_value(9);
+	assert(!ok && value_copies == 6 && value_drops == 9);
+
+	// The formal key type supplies context to positional and named literals.
+	grid: map[[2]int]int;
+	grid[{1, 2}] = 17;
+	value, present := grid.lookup_value(key = {1, 2});
+	assert(present && value == 17);
+	ptr, exists := grid.find({1, 2});
+	assert(exists && ptr^ == 17);
+}
+
+lookup_regions :: proc() {
+	arena := mem.Arena.init();
+	m: map[int][dynamic]int via arena.allocator();
+	m[1] = {9};
+	held, ok := m.lookup_value(1);
+	drop(m);
+	free_all(arena.allocator());
+	assert(ok && len(held) == 1 && held[0] == 9);
 }

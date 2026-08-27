@@ -85,8 +85,9 @@ M4a makes user-defined types as capable as built-in ones at concrete types:
   fallbacks, `operator([])`/`([]=)`/`([:])` with place-position selection, and
   `delegate(...)` on `distinct` types. A built-in operation on built-in operands
   cannot be shadowed: `int + int` keeps its meaning in every file;
-- `union` with a tagged representation, `@(align=N)`, a nil zero value, `v.(T)`
-  in both its trapping and comma-ok phases, the type switch with exhaustiveness
+- `union` with a tagged representation, `@(align=N)`, a nil zero value, the two
+  extraction spellings — trapping `v.(T)` and optional `v.as(T)` — each with one
+  fixed result shape, the type switch with exhaustiveness
   reporting, and the error protocol — optional-ok results, `or_else`, and
   `or_return` with its named-result and definite-initialization rules.
 
@@ -256,11 +257,11 @@ next to the compiler unless `-runtime=<dir>` replaces it:
   out ends at the first operation that may move its storage.
 
 - a map is an open-addressed table with an opaque per-table seed, so iteration
-  order is unspecified by construction. Literals, a read of `m[key]` that never
-  inserts, the comma-ok form, `key in m`, an inserting place through field and
-  index chains (`m["Dana"].x = 7` inserts a zero and assigns), the non-inserting
-  `m.find(key)`, `try_insert`, `remove`, `clear`, `reserve` and `shrink` all
-  run. A key needs a **coherent** `==` and `hash` pair that is either built in or
+  order is unspecified by construction. Literals, a single-value read of `m[key]` that never
+  inserts, the copying `m.lookup_value(key)`, `key in m`, an inserting place
+  through field and index chains (`m["Dana"].x = 7` inserts a zero and assigns),
+  the non-inserting `m.find(key)`, `try_insert`, `remove`, `clear`, `reserve` and
+  `shrink` all run. A key needs a **coherent** `==` and `hash` pair that is either built in or
   inherent to the key's own package: a caller-local extension never enters the
   frozen operation table, so one map keeps one policy in every package it travels
   through.

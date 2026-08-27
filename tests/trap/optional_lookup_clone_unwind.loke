@@ -1,0 +1,29 @@
+package main; import "core:fmt";
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+Failing :: struct { id: int }
+impl Failing {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
+		p, err := new(Huge, allocator);
+		if (err != nil) { return Failing{0}, err; }
+		free(p);
+		return Failing{self.id}, nil;
+	}
+	release :: hook(drop) proc(self: inout Failing) { if (self.id != 0) { fmt.println("drop", self.id); } }
+}
+
+make_map :: proc() -> map[int]Failing {
+	m: map[int]Failing;
+	m[1] = Failing{1};
+	return m;
+}
+
+main :: proc() {
+	destination := Failing{2};
+	ok := false;
+	defer fmt.println("destination", destination.id);
+	// A failed payload clone must unwind the temporary map and leave the old
+	// assignment destination live. Neither the result nor the map may leak.
+	destination, ok = make_map().lookup_value(1);
+	fmt.println("unexpected return", ok);
+}

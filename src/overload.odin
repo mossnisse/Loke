@@ -138,7 +138,7 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 // Checks every written argument once, with no destination type. An untyped
 // constant therefore stays untyped until a candidate is chosen, which is exactly
 // what rank 2 needs to see.
-collect_call_arguments :: proc(k: ^Checker, args: []Argument) -> ([]Arg_Info, bool) {
+collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symbol_Id = nil, offset := 0) -> ([]Arg_Info, bool) {
 	out := make([]Arg_Info, len(args), k.c.semantic_allocator)
 	ok := true
 	for arg, index in args {
@@ -151,7 +151,14 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument) -> ([]Arg_Info, bo
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
 		k.place_position, k.insert_position = arg.mode == .Inout, arg.mode == .Inout
-		info.type = check_single_expr(k, arg.value)
+		// A typeless aggregate needs context before it can be checked at all.
+		// Supply it only when every candidate agrees; scalar constants keep their
+		// untyped conversion ranks and ambiguous overloads gain no preference.
+		expected := INVALID_TYPE
+		if literal, composite := arg.value.(^Expr_Composite); composite && literal.type_expr == nil {
+			expected = common_argument_type(k, candidates, info.name, index + offset)
+		}
+		info.type = check_single_expr(k, arg.value, expected)
 		k.place_position = false
 		if info.type == INVALID_TYPE {
 			ok = false
@@ -162,6 +169,30 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument) -> ([]Arg_Info, bo
 		out[index] = info
 	}
 	return out, ok
+}
+
+@(private = "file")
+common_argument_type :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identifier_Id, position: int) -> Type_Id {
+	common := INVALID_TYPE
+	for candidate in candidates {
+		sym := symbol_of(k.c, candidate)
+		if sym == nil || sym.generic { return INVALID_TYPE }
+		slot := position
+		if name != INVALID_IDENTIFIER {
+			slot = -1
+			for binding, index in sym.param_symbols {
+				if param := symbol_of(k.c, binding); param != nil && param.name == name {
+					slot = index
+					break
+				}
+			}
+		}
+		if slot < 0 || slot >= len(sym.params) { continue }
+		type := sym.params[slot]
+		if common != INVALID_TYPE && common != type { return INVALID_TYPE }
+		common = type
+	}
+	return common
 }
 
 // An already-checked expression as one argument, for the operator and method

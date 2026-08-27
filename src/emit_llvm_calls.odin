@@ -9,6 +9,9 @@ import "core:fmt"
 
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	if v.union_op == .Extract && v.extract != nil {
+		return emit_checked_extract(e, v.extract)[0]
+	}
 	if v.is_dyn_call {
 		results := emit_dyn_slot_call(e, v)
 		return len(results) == 0 ? "0" : results[0]
@@ -257,6 +260,10 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 	#partial switch v in expr {
 	case ^Expr_Call:
+		// `value.as(T)`: one extraction lowering, reached through call syntax.
+		if v.union_op == .Extract && v.extract != nil {
+			return emit_checked_extract(e, v.extract)
+		}
 		// A slot call has no callee symbol and no callee value — the thunk comes
 		// out of the witness table — so it can never take the ordinary call path
 		// below, whatever its result count is.
@@ -285,14 +292,6 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		}
 		if len(v.result_types) > 1 {
 			return emit_multi_call(e, v)
-		}
-		single := make([]string, 1)
-		single[0] = emit_expr(e, expr)
-		return single
-	case ^Expr_Index:
-		// `elem, ok := m[key]`, the comma-ok form of a non-inserting read.
-		if v.operand != nil && type_is_map(e.c, expr_base(v.operand).type) && !v.map_inserts {
-			return emit_map_lookup(e, v)
 		}
 		single := make([]string, 1)
 		single[0] = emit_expr(e, expr)
@@ -565,7 +564,7 @@ emit_checked_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string 
 		"  %s = icmp eq %s %s, %d",
 		matched, tag_llvm, tag, union_variant_tag(e.c, union_type, v.type),
 	)
-	if !v.optional {
+	if v.mode == .Trap {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
 		panic_if(e, failed, "extract.variant", "checked extraction failed")
@@ -971,6 +970,8 @@ emit_bound_call :: proc(
 		pack = call_node.variadic_slot
 	}
 	pack_cleanup := Deferred{slot = -1}
+	argument_cleanups := make([dynamic]Deferred)
+	defer delete(argument_cleanups)
 	for argument, index in bound {
 		if index == pack {
 			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index])
@@ -983,6 +984,13 @@ emit_bound_call :: proc(
 			operands[index] = emit_address(e, argument)
 		} else {
 			operands[index] = emit_expr(e, argument)
+		}
+		// Container members borrow value parameters. Only the caller knows
+		// whether an argument is an owned temporary or somebody else's place.
+		if symbol != nil && symbol.synth == .Container_Op && mode == .Value &&
+		   !expression_is_borrowed_place(e.c, argument) {
+			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
+			if entry.place != "" { append(&argument_cleanups, entry) }
 		}
 		// design.md: method-call syntax supplies the receiver's `move` marker
 		// implicitly, so the source is read and then killed here rather than by an
@@ -1026,18 +1034,24 @@ emit_bound_call :: proc(
 		unwind_clear(e, pack_cleanup.slot)
 	}
 
-	switch len(callee_type.results) {
-	case 0:
-		return nil
-	case 1:
-		single := make([]string, 1)
-		single[0] = call
-		return single
-	}
 	results := make([]string, len(callee_type.results))
 	for index in 0 ..< len(callee_type.results) {
-		out := extract(e, result_type, call, index)
-		results[index] = out
+		results[index] = len(results) == 1 ? call : extract(e, result_type, call, index)
+	}
+	if len(argument_cleanups) > 0 {
+		// A drop hook can panic after the call has produced an owned result.
+		// Protect those results until all borrowed argument temporaries are gone.
+		guards := make([]Deferred, len(results))
+		defer delete(guards)
+		for value, index in results {
+			guards[index] = hold_temporary_value(e, callee_type.results[index], value)
+		}
+		for index := len(argument_cleanups) - 1; index >= 0; index -= 1 {
+			drop_temporary_value(e, argument_cleanups[index])
+		}
+		for guard in guards {
+			if guard.place != "" { finish_temporary_drop(e, guard) }
+		}
 	}
 	return results
 }

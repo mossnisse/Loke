@@ -67,6 +67,7 @@ paint :: proc(target: dyn Drawable, canvas: inout Canvas) -> int {
 }
 
 main :: proc() {
+	owned_extraction();
 	fmt.println(describe(7));
 	fmt.println(describe(true));
 	fmt.println(describe(Circle{5}));
@@ -74,7 +75,7 @@ main :: proc() {
 
 	// A temporary converted for a call stays valid through the call.
 	view: any_view = 42;
-	n, ok := view.(int);
+	n, ok := view.as(int);
 	fmt.println(n);
 	fmt.println(view.(int));
 
@@ -125,4 +126,39 @@ more :: proc() {
 	nested := (dyn mut Bumpable)(&mut mutable);
 	nested.bump();
 	fmt.println(counter.value);
+}
+
+erased_copies, erased_drops: int;
+Owned :: struct { id: int }
+impl Owned {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Owned, Allocator_Error) {
+		erased_copies += 1;
+		return Owned{self.id + 100}, nil;
+	}
+	release :: hook(drop) proc(self: inout Owned) { if (self.id != 0) { erased_drops += 1; } }
+}
+
+owned_extraction :: proc() {
+	{
+		source := Owned{1};
+		view: any_view = source;
+		{
+			held, ok := view.as(Owned);
+			assert(ok && held.id == 101 && source.id == 1 && erased_copies == 1);
+		}
+		assert(erased_drops == 1);
+		_, ok := view.as(Owned);
+		assert(ok && erased_copies == 2 && erased_drops == 2);
+		{
+			held := view.(Owned);
+			assert(held.id == 101 && erased_copies == 3);
+		}
+		assert(erased_drops == 3);
+		view.as(Owned);
+		assert(erased_copies == 4 && erased_drops == 4);
+		other: any_view = 42;
+		missing, absent := other.as(Owned);
+		assert(!absent && missing.id == 0 && erased_copies == 4);
+	}
+	assert(erased_drops == 5);
 }

@@ -1,0 +1,7 @@
+lookup_value(%loke.container %arg0
+call ptr @loke_rt_v1_map_find(ptr
+mlookup.hit
+mlookup.done
+call i32 @loke_rt_v1_dyn_clone(ptr
+cclone.fail
+extract.variant

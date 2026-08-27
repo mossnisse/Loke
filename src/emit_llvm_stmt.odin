@@ -53,8 +53,13 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 					continue
 				}
 			}
-			value := emit_expr(e, expr)
-			emit_discarded_temporary(e, expr, value)
+			if base := expr_base(expr); base != nil && len(base.result_types) > 0 {
+				values := emit_multi_value(e, expr)
+				discard_owned_values(e, base.result_types, values)
+			} else {
+				value := emit_expr(e, expr)
+				emit_discarded_temporary(e, expr, value)
+			}
 		}
 
 	case ^Stmt_Assign:
@@ -127,6 +132,12 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 				if slot != "" {
 					store(e, base.result_types[index], results[index], slot)
 					register_implicit_drop(e, symbol_id)
+				}
+			}
+			// Bind retained results before any discarded payload's drop can panic.
+			for symbol_id, index in d.symbols {
+				if symbol_id == INVALID_SYMBOL {
+					drop_temporary_value(e, hold_temporary_value(e, base.result_types[index], results[index]))
 				}
 			}
 			return
@@ -224,7 +235,6 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		emit_operator_call(e, s.place_setter, s.setter_bound)
 		return
 	}
-
 	values: []string
 	types: []Type_Id
 	if len(s.rhs) == 1 && len(s.lhs) > 1 {
@@ -256,6 +266,13 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	}
 	for target, index in s.lhs {
 		if addresses[index] == "" || index >= len(values) {
+			if is_discard(target) && index < len(values) {
+				if len(s.rhs) == 1 && len(s.lhs) > 1 {
+					drop_temporary_value(e, hold_temporary_value(e, types[index], values[index]))
+				} else {
+					emit_discarded_temporary(e, s.rhs[index], values[index])
+				}
+			}
 			continue
 		}
 		emit_replace_place(e, s, index, addresses[index])

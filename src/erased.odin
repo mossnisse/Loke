@@ -954,8 +954,8 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 // ---------------------------------------- any_view checked extractions --
 
 // design.md: `any_view` supports runtime checked extractions and type switches,
-// and M4a's context-flagged `Expr_Checked_Extract` already gives one construct its two
-// result shapes.
+// through the same two spellings a union has — trapping `.(T)` and optional
+// `.as(T)` — on the same `Expr_Checked_Extract` node.
 check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	target := resolve_type_syntax(k, v.target)
 	if target == INVALID_TYPE {
@@ -974,13 +974,14 @@ check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 		v.type = INVALID_TYPE
 		return
 	}
-	request_typeid(k.c, target)
 	v.type = target
-	if v.optional {
-		results := make([]Type_Id, 2, k.c.semantic_allocator)
-		results[0], results[1] = target, TYPE_BOOL
-		v.result_types = results
+	set_extract_results(k, v, target)
+	if type_clone_disabled(k.c, target) {
+		errorf(k.c, v.span, "L0503", "`%s` is move-only, so a checked extraction cannot copy it from an `any_view`", type_name(k.c, target))
+		return
 	}
+	contribute_lifecycle_members(k, target)
+	request_typeid(k.c, target)
 }
 
 // --------------------------------------------------------- slot calls --

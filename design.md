@@ -1044,10 +1044,10 @@ To remove an element:
 m.remove(key);
 ```
 
-A lookup of a missing key returns the zero value. Use the optional-ok result or the `in` operator to test whether the key exists:
+A lookup of a missing key returns the zero value. Use `lookup_value` or the `in` operator to test whether the key exists:
 
 ```odin
-elem, ok := m[key]; // `ok` is true if the element for that key exists
+elem, ok := m.lookup_value(key); // `ok` is true if the element for that key exists
 ```
 
 or
@@ -1056,7 +1056,16 @@ or
 ok := key in m; // `ok` is true if the element for that key exists
 ```
 
-The first form is the **comma-ok** form.
+`m.lookup_value(key)` has [optional-ok semantics](#optional-ok-results): it
+produces the element followed by `true`, or the zero value of the element type
+followed by `false`. It never inserts, evaluates its receiver before its key,
+performs exactly one lookup, and produces an independently owned element — a
+managed payload is cloned once, inside the operation, so the map keeps its own
+storage. Its receiver is immutable, so an immutable parameter or a temporary map
+can be read through it without `inout`.
+
+`m[key]` as a read is always single-valued, so a comma-ok destination or an
+`or_else` left operand takes `lookup_value` instead.
 
 A map literal initializes a map:
 
@@ -1111,6 +1120,7 @@ The built-in map supports these container operations:
 - `some_map.reserve(capacity)` reserves capacity for at least the requested number of entries.
 - `some_map.shrink()` removes excess capacity.
 - `some_map.find(key)` returns `(^V, bool)`. It returns a pointer to the existing value and `true`, or `nil` and `false`. It does not insert.
+- `some_map.lookup_value(key)` returns `(V, bool)`. It returns an independently owned copy of the existing value and `true`, or the zero value and `false`. It does not insert, and its receiver is immutable.
 
 ## Structured and algebraic types
 
@@ -1294,25 +1304,31 @@ Value :: union {
 v: Value;
 v = "Hello";
 
-// Single-value checked extraction: panic if another variant is active.
+// Trapping checked extraction: panic if another variant is active.
 s1 := v.(string);
 
-// Comma-ok checked extraction: report a mismatch without panicking.
-s2, ok := v.(string);
+// Optional checked extraction: report a mismatch without panicking.
+s2, ok := v.as(string);
 ```
 
-A **checked extraction** `v.(T)` tests whether the union's active variant is `T`
-and, if so, extracts its payload. Every form performs this check; the context
-determines how a mismatch is handled:
+A **checked extraction** tests whether the union's active variant is `T` and, if
+so, extracts its payload. It has two spellings, and each has one result shape:
 
-- In a single-value context, it produces `T` or panics on a mismatch.
-- In a comma-ok destination, it has [optional-ok semantics](#optional-ok-results):
-  it produces the payload followed by `true` on a match, or the zero value of
-  `T` followed by `false` on a mismatch.
-- As the left operand of `or_else`, it yields the payload on a match or
-  evaluates the fallback on a mismatch.
+- `v.(T)` produces `T`, and panics on a mismatch.
+- `v.as(T)` has [optional-ok semantics](#optional-ok-results): it produces the
+  payload followed by `true` on a match, or the zero value of `T` followed by
+  `false` on a mismatch. It never panics because of a variant mismatch, and it is
+  therefore also what the left operand of `or_else` is written with.
 
-The comma-ok and `or_else` forms never panic because of a variant mismatch.
+The spelling decides the mode, not the destination. `v.(T)` is always
+single-valued, so a comma-ok destination or an `or_else` left operand rejects it;
+`v.as(T)` always produces two results, so a single-value destination rejects it.
+
+`as` applies to a union and to an [`any_view`](#any_view-type), using their
+existing extraction eligibility rules. It takes exactly one positional type
+argument and is not a conversion. It adds no keyword: which meaning `x.as(T)`
+has follows from the *type* of `x`, so an ordinary member named `as` declared on
+any other type is unaffected and is reached by the same syntax.
 
 A checked extraction must name the requested type; the compiler does not infer it from context.
 
@@ -1983,7 +1999,7 @@ Sparse_Grid :: struct {
 
 impl Sparse_Grid {
 	get :: operator([]) proc(self: Sparse_Grid, x, y: int) -> f32 {
-		return self.entries[{x, y}] or_else 0;
+		return self.entries.lookup_value([2]int{x, y}) or_else 0;
 	}
 
 	// No `inout` overload exists: a zero is not stored, so there is no slot
@@ -3142,7 +3158,7 @@ For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x` and `&mut x` 
 - an index of a slice, dynamic array, or addressable fixed array
 - a visible [`operator([])` that returns `inout T`](#indexing-and-slicing)
 - a field of an addressable, non-packed struct
-- a checked extraction from an addressable union
+- a trapping checked extraction `x.(T)` from an addressable union; `x.as(T)` produces a value rather than a place
 - a composite literal
 - a value parameter, and a [materialized constant](#materialization) or a place within one
 
@@ -3258,7 +3274,7 @@ x or_else y or_else z         // x or_else (y or_else z)
 
 The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be a [status expression](#status-results) with at least one payload result, and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
 
-The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().(T) or_else c` is `(a.b().(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
+The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, trapping checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().as(T) or_else c` is `(a.b().as(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
 
 ### Integer operators
 
@@ -5079,7 +5095,9 @@ Unlike that cast, `transmute` needs no addressable operand. It cannot reinterpre
 
 The common absence protocol is a value followed by a `bool` named `ok`: `(T, bool)`, or more generally `(A, B, ..., bool)`. `ok` is `true` when the preceding results are present. Built-in producers return the zero values of those results when `ok` is false; `or_else` and iteration do not observe the failed values. User procedures using this shape should follow the same convention.
 
-An **optional-ok expression** is a built-in producer with that shape, or a call with at least two results whose final result is `bool` — so it always has one or more payload results before the status. A comma-ok destination receives every result; `or_else` consumes the final `bool` and yields the payloads or evaluates its fallback. A procedure returning only `bool` is a [status expression](#status-results) (usable by `or_return` or control flow) but not an optional-ok expression, and cannot be the left operand of `or_else`. Single-value behavior is per-producer: a missing map lookup yields zero, while a failed single-value checked extraction panics.
+An **optional-ok expression** is a built-in producer with that shape, or a call with at least two results whose final result is `bool` — so it always has one or more payload results before the status. A comma-ok destination receives every result; `or_else` consumes the final `bool` and yields the payloads or evaluates its fallback. A procedure returning only `bool` is a [status expression](#status-results) (usable by `or_return` or control flow) but not an optional-ok expression, and cannot be the left operand of `or_else`.
+
+A producer's result count is its own: a destination never adds a `bool` to it. Where two behaviors are wanted they are two operations, and the single-value one is what the older spelling keeps: `v.(T)` panics on a mismatch and `v.as(T)` reports it, `m[key]` reads the zero value for a missing key and `m.lookup_value(key)` reports its absence.
 
 ### Status results
 
@@ -5112,25 +5130,25 @@ m: map[string]int = {};
 i: int;
 ok: bool;
 
-if (i, ok = m["hellope"]; !ok) {
+if (i, ok = m.lookup_value("hellope"); !ok) {
 	i = 123;
 }
 // The above can be mapped to `or_else`
-i = m["hellope"] or_else 123;
+i = m.lookup_value("hellope") or_else 123;
 
 assert(i == 123);
 ```
 
-`or_else` can be used with checked extractions too, as they have optional-ok semantics.
+`or_else` can be used with the optional checked extraction too, as it has optional-ok semantics. The trapping spelling `v.(T)` is single-valued and is not an `or_else` operand.
 
 ```odin
 v: union{int, f64} = nil;
 i: int;
-i = v.(int) or_else 123;
+i = v.as(int) or_else 123;
 assert(i == 123);
 ```
 
-`or_else` works with any status expression that has a payload, so it applies equally to a map index, a validating conversion, a checked extraction, a procedure returning `(T, bool)`, and a procedure returning `(T, Error)`:
+`or_else` works with any status expression that has a payload, so it applies equally to `lookup_value`, a validating conversion, an optional checked extraction, a procedure returning `(T, bool)`, and a procedure returning `(T, Error)`:
 
 ```odin
 n := numbers.pop() or_else 0;
@@ -5269,7 +5287,7 @@ runtime panic in runtime execution:
 - a call through a nil `dyn` view
 - integer division or remainder by zero
 - an out-of-range built-in index
-- a failed single-value checked extraction, `v.(T)`
+- a failed trapping checked extraction, `v.(T)`
 - an allocation failure when the allocator policy is [`.Panic`](#allocation-failure)
 
 Version 1 has no `recover`, `try`, or catch construct. Loke code cannot observe or resume a panic. With the `unwind` strategy, the thread runs its registered cleanup before the program stops. The `abort` strategy does not guarantee cleanup.
@@ -6251,7 +6269,7 @@ defer {
 
 #### Optional results
 
-A procedure that can have no value returns `(T, bool)`. This is the [optional-ok form](#optional-ok-results). Map indexing, validating conversions, checked extractions, `pop`, and the [iteration protocol](#iteration-protocol) use the same form. The language and core library do not define `Option`, `Maybe`, or `Result` types.
+A procedure that can have no value returns `(T, bool)`. This is the [optional-ok form](#optional-ok-results). `map.lookup_value`, validating conversions, the optional checked extraction `v.as(T)`, `pop`, and the [iteration protocol](#iteration-protocol) use the same form. The language and core library do not define `Option`, `Maybe`, or `Result` types.
 
 ```odin
 halve :: proc(n: int) -> (int, bool) {

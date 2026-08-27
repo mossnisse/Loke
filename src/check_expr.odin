@@ -1032,8 +1032,8 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 //
 // As an assignment target, `m[key]` inserts: an absent key gets the zero
 // value of the element type first, and the resulting slot is the location. A
-// read does not insert and returns the zero value for a missing key;
-// `elem, ok := m[key]` is the comma-ok form of that read.
+// read does not insert, returns the zero value for a missing key, and is always
+// single-valued; `m.lookup_value(key)` is the `(V, bool)` form of that read.
 //
 // Insertion may reallocate the map, so the index is a mutable borrow of `m`
 // for the duration of the statement — which is what the receiver access
@@ -1080,11 +1080,6 @@ check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, container
 	v.value_category = .Value
 	v.addressable = false
 	v.assignable = false
-	if v.map_optional {
-		results := make([]Type_Id, 2, k.c.semantic_allocator)
-		results[0], results[1] = info.element, TYPE_BOOL
-		v.result_types = results
-	}
 }
 
 // design.md "Indexing and slicing": in a place position the `inout` overload is
@@ -2093,6 +2088,9 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		if check_union_operation(k, v, sel) {
 			return
 		}
+		if check_union_extract(k, v, sel) {
+			return
+		}
 		if check_text_operation(k, v, sel) {
 			return
 		}
@@ -2350,7 +2348,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	receiver := sel.operand
 	receiver_base := expr_base(receiver)
 	candidates := method_candidates(k, receiver_base.type, intern_identifier(k.c, sel.name.text))
-	written, args_ok := collect_call_arguments(k, v.args)
+	written, args_ok := collect_call_arguments(k, v.args, candidates, 1)
 	if !args_ok {
 		v.type = INVALID_TYPE
 		return
@@ -2405,6 +2403,19 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	case:
 		v.type = chosen.results[0]
 		v.result_types = chosen.results
+	}
+	// `lookup_value` produces an owned copy of the stored element, so a move-only
+	// element has nothing for it to produce. Reported after the result shape is
+	// settled, so a `v, ok :=` destructuring still knows its arity.
+	if chosen.container_op == .Map_Lookup_Value {
+		element := container_element(k.c, chosen.params[0])
+		if type_clone_disabled(k.c, element) {
+			errorf(
+				k.c, v.span, "L0491",
+				"`%s` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows",
+				type_name(k.c, element),
+			)
+		}
 	}
 	fold_standard_customization_call(k, v, chosen)
 }

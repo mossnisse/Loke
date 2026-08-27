@@ -12,7 +12,7 @@ count :: proc(args: ..any_view) -> int { return len(args); }
 ints :: proc(args: ..any_view) -> int {
 	total := 0;
 	foreach (a in args) {
-		if (n, ok := a.(int); ok) { total = total + n; }
+		if (n, ok := a.as(int); ok) { total = total + n; }
 	}
 	return total;
 }

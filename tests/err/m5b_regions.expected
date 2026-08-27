@@ -25,3 +25,5 @@ L0539
 L0310
 @78:32
 cannot initialise `proc(Allocator)` with `proc(@(allocator_reset) Allocator)`
+L0537
+this reset would end the region backing `xs`, which is still live here

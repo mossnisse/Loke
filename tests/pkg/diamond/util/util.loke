@@ -8,3 +8,7 @@ double :: proc(n: int) -> int {
 	f := proc(n: int) -> int { return n * 2; };
 	return f(n);
 }
+
+// A package-qualified function is not a built-in extraction receiver.
+@(public)
+as :: proc(n: int) -> int { return double(n); }

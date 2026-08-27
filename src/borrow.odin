@@ -430,6 +430,27 @@ Proc_Summary :: struct {
 	results: []Result_Provenance,
 }
 
+// A compiler-contributed member has no body for the fixed point to walk, so its
+// summary is written directly. A carrier result borrows through `param`; an
+// owned result is cloned with the default allocator, not the receiver's region.
+set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int, param: int) {
+	sym := symbol_of(c, declaration)
+	if sym == nil || result >= len(sym.results) || param >= len(sym.params) {
+		return
+	}
+	summary := new(Proc_Summary, c.semantic_allocator)
+	summary.results = make([]Result_Provenance, len(sym.results), c.semantic_allocator)
+	for index in 0 ..< len(summary.results) {
+		summary.results[index].params = make([]bool, len(sym.params), c.semantic_allocator)
+		summary.results[index].region.params = make([]bool, len(sym.params), c.semantic_allocator)
+	}
+	summary.results[result].params[param] = type_is_carrier(c, sym.results[result])
+	if type_is_managed(c, sym.results[result]) {
+		summary.results[result].region.default = true
+	}
+	c.result_summaries[declaration] = summary
+}
+
 result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Result_Provenance, bool) {
 	summary, found := c.result_summaries[declaration]
 	if !found || result >= len(summary.results) {

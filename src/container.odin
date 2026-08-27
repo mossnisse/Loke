@@ -147,6 +147,7 @@ Container_Op :: enum {
 	// The map half. `find` never inserts; `m[key] = v` and every chain rooted in
 	// one are places rather than calls, so they are not members.
 	Map_Find,
+	Map_Lookup_Value,
 	Map_Try_Insert,
 	Map_Remove,
 	Map_Clear,
@@ -275,6 +276,22 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
 		[]Type_Id{pointer_to(k.c, value, true), TYPE_BOOL}, 0,
 	))
+	// design.md "Maps": the `(V, bool)` read. Unlike `find` it hands back an
+	// independently owned value rather than a pointer into the table, so its
+	// receiver is immutable and an immutable parameter or a temporary map can be
+	// read through it.
+	lookup := container_member(
+		k, type, "lookup_value", .Map_Lookup_Value,
+		[]Type_Id{type, key}, []Param_Mode{.Value, .Value},
+		[]Type_Id{value, TYPE_BOOL}, 0, .Value,
+	)
+	// A synthesised member has no body, so without a written summary a carrier
+	// payload would fall through to `.Unknown` storage and lose the provenance the
+	// map index it replaces already carried. The payload's provenance is exactly
+	// the receiver's: an owned managed value depends on nothing, while a
+	// `map[K]string_view` payload still borrows through the map.
+	set_synth_result_summary(k.c, lookup, 0, 0)
+	append(&members, lookup)
 	append(&members, container_member(
 		k, type, "try_insert", .Map_Try_Insert,
 		[]Type_Id{type, key, value}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
@@ -336,6 +353,50 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	return false
 }
 
+// A map named through a field, pointer, container element or signature needs
+// the same settled key policy as a directly declared map. Walk after signature
+// resolution (from gate_type), when inherent key operations are available.
+require_nested_map_key_policies :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
+	seen := make(map[Type_Id]bool)
+	defer delete(seen)
+	return require_nested_map_key_policies_inner(k, type, span, &seen)
+}
+
+@(private = "file")
+require_nested_map_key_policies_inner :: proc(k: ^Checker, type: Type_Id, span: Span, seen: ^map[Type_Id]bool) -> bool {
+	if type == INVALID_TYPE || seen[type] { return true }
+	seen[type] = true
+	info := type_of(k.c, type)
+	if info == nil { return true }
+	// Keep a value snapshot: resolving an operation can grow the type store.
+	shape := info^
+	#partial switch shape.kind {
+	case .Map:
+		if !require_map_key_policy(k, type, span) { return false }
+		if !require_nested_map_key_policies_inner(k, shape.key, span, seen) { return false }
+		return require_nested_map_key_policies_inner(k, shape.element, span, seen)
+	case .Array, .Dynamic_Array, .Slice, .Pointer, .Multi_Pointer, .Distinct:
+		return require_nested_map_key_policies_inner(k, shape.element, span, seen)
+	case .Struct:
+		for field in shape.fields {
+			if sym := symbol_of(k.c, field); sym != nil &&
+			   !require_nested_map_key_policies_inner(k, sym.type, span, seen) { return false }
+		}
+	case .Union:
+		for variant in shape.variants {
+			if !require_nested_map_key_policies_inner(k, variant, span, seen) { return false }
+		}
+	case .Proc:
+		for parameter in shape.parameters {
+			if !require_nested_map_key_policies_inner(k, parameter, span, seen) { return false }
+		}
+		for result in shape.results {
+			if !require_nested_map_key_policies_inner(k, result, span, seen) { return false }
+		}
+	}
+	return true
+}
+
 // `defaulted` is the first parameter position that takes the constant zero, or
 // 0 when every parameter is required.
 @(private = "file")
@@ -348,15 +409,25 @@ container_member :: proc(
 	modes: []Param_Mode,
 	results: []Type_Id,
 	defaulted: int,
+	receiver := Param_Mode.Inout,
 ) -> Symbol_Id {
 	id := synth_proc(k.c, name, .Container_Op, owner, params, modes, results)
 	if sym := symbol_of(k.c, id); sym != nil {
 		sym.has_receiver = true
-		sym.receiver = .Inout
+		sym.receiver = receiver
 		sym.container_op = op
 		if defaulted > 0 {
 			sym.param_defaults[defaulted] = zero_int_arg(k.c)
 		}
+	}
+	// Synthesized members participate in ordinary named-argument binding too.
+	#partial switch op {
+	case .Map_Find, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove:
+		key_symbol := new_symbol(k.c, Symbol{
+			name = intern_identifier(k.c, "key"), kind = .Parameter,
+			type = params[1], mode = modes[1],
+		})
+		symbol_of(k.c, id).param_symbols[1] = key_symbol
 	}
 	return id
 }

@@ -1277,8 +1277,8 @@ emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> 
 }
 
 // A checked extraction from an `any_view`: compare the stored `typeid`, then
-// read the data pointer as the requested type. A single-value position traps on a
-// mismatch; the comma-ok form yields a zeroed payload and `false`.
+// read the data pointer as the requested type. `.(T)` traps on a mismatch;
+// `.as(T)` yields a zeroed payload and `false`.
 @(private)
 emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string {
 	view := emit_expr(e, v.operand)
@@ -1289,22 +1289,29 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", matched, id, typeid_value(e.c, v.type))
 
 	target := llvm_type(e, v.type)
-	if !v.optional {
+	if v.mode == .Trap {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
 		panic_if(e, failed, "anyview.mismatch", "checked extraction failed")
 		out := load(e, target, data)
+		if type_is_managed(e.c, v.type) {
+			out = emit_clone_value(e, v.type, out)
+		}
 		single := make([]string, 1)
 		single[0] = out
 		return single
 	}
 
 	slot := alloca(e, target)
-	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", target, slot)
+	zero, _ := zero_const(e.c, v.type)
+	store(e, v.type, llvm_const(e, zero, v.type), slot)
 	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", matched, then_label, done_label)
 	fmt.sbprintfln(&e.b, "%s:", then_label)
 	loaded := load(e, target, data)
+	if type_is_managed(e.c, v.type) {
+		loaded = emit_clone_value(e, v.type, loaded)
+	}
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", target, loaded, slot)
 	branch(e, done_label)
 	place_label(e, done_label)

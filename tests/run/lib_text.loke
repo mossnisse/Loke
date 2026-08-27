@@ -34,7 +34,7 @@ main :: proc() {
 	fmt.println(len(text));
 	_, rejected := cstrings.from_string(text);
 	fmt.println(rejected != nil);
-	fault, present := rejected.(cstrings.Fault);
+	fault, present := rejected.as(cstrings.Fault);
 	fmt.println(present);
 	fmt.println(int(fault));
 

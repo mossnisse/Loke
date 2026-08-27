@@ -100,22 +100,22 @@ from_allocator_error :: proc(error: Allocator_Error, operation: Operation) -> Er
 }
 
 is :: proc(error: Error, code: Code) -> bool {
-	info, present := error.(Error_Info);
+	info, present := error.as(Error_Info);
 	return present && info.code == code;
 }
 
 code_of :: proc(error: Error) -> Code {
-	info, present := error.(Error_Info);
+	info, present := error.as(Error_Info);
 	return info.code if present else .Other;
 }
 
 operation_of :: proc(error: Error) -> Operation {
-	info, present := error.(Error_Info);
+	info, present := error.as(Error_Info);
 	return info.operation if present else .Other;
 }
 
 native_code_of :: proc(error: Error) -> u32 {
-	info, present := error.(Error_Info);
+	info, present := error.as(Error_Info);
 	return info.native_code if present else 0;
 }
 

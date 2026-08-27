@@ -1047,17 +1047,25 @@ map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Ev
 	return &m.elements[len(m.elements) - 1], true
 }
 
-// One contributed container operation. The receiver is `inout`, so it is a place
-// in every case; what differs is what each one does to the contents.
+// Mutating container operations need a place; immutable receivers can also be
+// procedure results, constants, and other temporary values.
 @(private = "file")
 eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: []Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
 	if len(v.bound) == 0 || v.bound[0] == nil {
 		return nil, false
 	}
-	self, ok := eval_place(ev, v.bound[0])
-	if !ok {
-		return nil, false
+	self: ^Eval_Value
+	if symbol.receiver == .Inout {
+		place, ok := eval_place(ev, v.bound[0])
+		if !ok { return nil, false }
+		self = place
+	} else {
+		value, ok := eval_expr(ev, v.bound[0])
+		if !ok { return nil, false }
+		place, allocated := eval_slot(ev, value)
+		if !allocated { return nil, false }
+		self = place
 	}
 	element := container_element(ev.k.c, self.type)
 	no_error := Eval_Value{kind = .Nil, type = TYPE_ALLOCATOR_ERROR}
@@ -1227,6 +1235,30 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		return fallible ? results(ev, no_error) : none, true
+
+	case .Map_Lookup_Value:
+		// The copying read: one probe, no insertion, and an independently owned
+		// payload on a hit — the same single clone the backend performs.
+		key, key_ok := argument(ev, v, 1)
+		if !key_ok {
+			return nil, false
+		}
+		at, found_ok := map_find(ev, self, key)
+		if !found_ok {
+			return nil, false
+		}
+		if at < 0 {
+			zero, zeroed := zero_value(ev, element)
+			if !zeroed {
+				return nil, false
+			}
+			return results(ev, zero, no), true
+		}
+		copied, copied_ok := copy_value(ev, self.elements[at + MAP_ENTRY_VALUE])
+		if !copied_ok {
+			return nil, false
+		}
+		return results(ev, copied, yes), true
 
 	case .Map_Find:
 		// `find` returns a pointer to the existing value and `true`, or `nil` and
@@ -1471,6 +1503,12 @@ eval_aggregate_place :: proc(ev: ^Evaluator, operand: Expr) -> (^Eval_Value, boo
 eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	if v.resolution.kind == .Conversion {
 		return eval_conversion(ev, v)
+	}
+	// `value.as(T)` is an extraction, and an extraction has no compile-time
+	// meaning yet. Say so here rather than treating it as an unresolved call.
+	if v.union_op == .Extract {
+		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
+		return Eval_Value{}, false
 	}
 	callee := symbol_of(ev.k.c, v.resolution.symbol)
 	if callee != nil && callee.kind == .Builtin {
@@ -2025,6 +2063,12 @@ bind_local :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol_id: Symbol_Id, val
 
 @(private = "file")
 eval_call_results :: proc(ev: ^Evaluator, call: ^Expr_Call) -> ([]Eval_Value, bool) {
+	// `n, ok := v.as(T)` is an extraction, which has no compile-time meaning yet.
+	// Say so here as well as in `eval_call`, so both arities report it.
+	if call.union_op == .Extract {
+		eval_fail(ev, call.span, "L0341", "this expression has no compile-time meaning")
+		return nil, false
+	}
 	// `taken, removed := xs.remove(0)` reaches the operation the same way a
 	// single-value call does.
 	if chosen := symbol_of(ev.k.c, call.resolution.chosen_overload); chosen != nil && chosen.synth == .Container_Op {

@@ -38,6 +38,25 @@ fetch :: proc(fail: bool) -> (int, Error) {
 	return 8, nil;
 }
 
+// An ordinary member named `as`, which the built-in extraction must not shadow.
+Counter :: struct { n: int }
+impl Counter {
+	as :: proc(self, step: int) -> int { return self.n + step; }
+}
+Pair :: struct { first: Counter }
+fresh_counter :: proc() -> Counter { return Counter{1}; }
+
+// Union receivers that are not identifiers, which is where the name-collision
+// guard has to consult the type rather than the spelling.
+Boxed :: struct { value: Value }
+carry :: proc(v: Value) -> Boxed { return Boxed{v}; }
+unions :: proc() -> [1]Value {
+	out: [1]Value;
+	out[0] = i32(2);
+	return out;
+}
+same :: proc(v: Value) -> Value { return v; }
+
 labelled :: proc(fail: bool) -> (int, string, Error) {
 	if (fail) { return 0, "", Error_Code.Something_Bad; }
 	return 4, "live", nil;
@@ -72,6 +91,12 @@ describe :: proc(v: Value) -> int {
 }
 
 main :: proc() {
+	// Discarding the pair still evaluates the extraction, without trapping.
+	discarded: Value = i32(7);
+	discarded.as(i32);
+	discarded.as(bool);
+	_, _ = discarded.as(i32);
+	assert(extract_as(discarded, i32) == 7);
 	// The zero value of a union is nil.
 	v: Value;
 	fmt.println(1 if v == nil else 0);
@@ -93,10 +118,31 @@ main :: proc() {
 	fmt.println(1 if a != c else 0);
 	fmt.println(1 if a == nil else 0);
 
-	// The comma-ok form never traps.
-	m, ok := a.(f64);
+	// `as` is the optional spelling and never traps; `.(T)` is the trapping one.
+	m, ok := a.as(f64);
 	fmt.println(1 if ok else 0);
 	fmt.println(int(m));
+	hit, hit_ok := a.as(i32);
+	fmt.println(1 if hit_ok else 0);
+	fmt.println(int(hit));
+	// A nil union matches no variant.
+	nothing: Value;
+	_, none := nothing.as(i32);
+	fmt.println(1 if none else 0);
+
+	// `as` is a name users choose, so the *receiver's type* decides the meaning.
+	// A declared member wins on every non-union receiver, whatever its form.
+	c1 := Counter{10};
+	pair := Pair{Counter{20}};
+	row := [?]Counter{Counter{30}};
+	fmt.println(c1.as(1));
+	fmt.println(fresh_counter().as(1));
+	fmt.println(pair.first.as(1));
+	fmt.println(row[0].as(1));
+	// And the built-in wins on a union reached through those same forms.
+	fmt.println(int(carry(a).value.as(i32) or_else i32(-1)));
+	fmt.println(int(unions()[0].as(i32) or_else i32(-1)));
+	fmt.println(int(same(a).as(i32) or_else i32(-1)));
 
 	fmt.println(describe(a));
 	fmt.println(describe(c));
@@ -117,8 +163,8 @@ main :: proc() {
 	fmt.println(1 if be == nil else 0);
 
 	// `or_else` supplies a fallback without evaluating it on success.
-	fmt.println(int(a.(i32) or_else i32(123)));
-	fmt.println(int(a.(f64) or_else 4.0));
+	fmt.println(int(a.as(i32) or_else i32(123)));
+	fmt.println(int(a.as(f64) or_else 4.0));
 
 	// The same operator over a union status, which it discards.
 	fmt.println(fetch(false) or_else -1);
@@ -138,4 +184,10 @@ main :: proc() {
 	fmt.println(align_of(Wide_Aligned));
 	fmt.println(size_of(Holder));
 	fmt.println(offset_of(Holder, value));
+}
+
+extract_as :: proc(value: Value, $T: type) -> T {
+	result, ok := value.as(T);
+	assert(ok);
+	return result;
 }

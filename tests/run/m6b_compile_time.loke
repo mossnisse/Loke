@@ -62,6 +62,21 @@ mapped :: proc() -> int {
 	return m["a"] * 10000 + m["b"] * 1000 + missing * 100 + present * 10 + absent + len(m);
 }
 
+// The copying read agrees with its runtime lowering: one probe, no insertion,
+// and an independently owned payload on a hit.
+LOOKED_UP :: looked_up();
+looked_up :: proc() -> int {
+	m: map[string][dynamic]int;
+	m["a"] = {4};
+	held, ok := m.lookup_value("a");
+	if (!ok) { return -1; }
+	held.append(5);
+	_, absent := m.lookup_value("zz");
+	if (absent) { return -2; }
+	// The clone is independent, and the read inserted nothing.
+	return len(held) * 100 + len(m["a"]) * 10 + len(m);
+}
+
 FOUND :: found();
 found :: proc() -> int {
 	m := map[int]int{1 = 10, 2 = 20, 1 = 30};
@@ -97,12 +112,16 @@ copied :: proc() -> int {
 }
 
 main :: proc() {
+	static_assert(TEMP_LOOKUP == 73);
+	assert(temporary_lookup() == TEMP_LOOKUP);
 	static_assert(CUSTOM_KEYS == 7);
 	assert(custom_keys() == CUSTOM_KEYS);
 	fmt.println(SUM);
 	fmt.println(POPPED);
 	fmt.println(REMOVED);
 	fmt.println(MAPPED);
+	fmt.println(LOOKED_UP);
+	fmt.println(looked_up());
 	fmt.println(FOUND);
 	fmt.println(REVIVED);
 	fmt.println(COPIED);
@@ -133,3 +152,14 @@ custom_keys :: proc() -> int {
 	return value;
 }
 equal_ids :: proc(a, b: int) -> bool { return a == b; }
+
+temporary_map :: proc() -> map[[2]int]int {
+	m: map[[2]int]int;
+	m[{1, 2}] = 73;
+	return m;
+}
+TEMP_LOOKUP :: temporary_lookup();
+temporary_lookup :: proc() -> int {
+	value, ok := temporary_map().lookup_value(key = {1, 2});
+	return value if ok else -1;
+}

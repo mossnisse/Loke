@@ -82,3 +82,16 @@ hidden_effect :: proc() {
 main :: proc() {
 	fmt.println(1);
 }
+
+// Extracting an allocator handle does not create default-backed owned storage.
+// Its erased region must remain conservative, not bypass a local arena reset.
+erased_allocator_region :: proc() {
+	arena := mem.Arena.init();
+	allocator := arena.allocator();
+	view: any_view = allocator;
+	restored, ok := view.as(Allocator);
+	xs: [dynamic]int via restored;
+	xs.append(1);
+	free_all(allocator);
+	fmt.println(xs[0], ok);
+}

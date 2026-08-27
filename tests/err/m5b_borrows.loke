@@ -140,3 +140,19 @@ all_trivial_body :: proc() {
 main :: proc() {
 	fmt.println(1);
 }
+
+map_lookup_carrier :: proc() {
+	m: map[int]string_view;
+	m[1] = "hello";
+	value, ok := m.lookup_value(1);
+	m.clear();
+	fmt.println(value, ok);
+}
+
+map_index_carrier :: proc() {
+	m: map[int]string_view;
+	m[1] = "hello";
+	value := m[1];
+	m.clear();
+	fmt.println(value);
+}

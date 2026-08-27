@@ -1,0 +1,25 @@
+package main; import "core:fmt";
+
+// The lowering of the two optional operations (consolidation phase 1a).
+//
+// `v.as(T)` is the same extraction node `v.(T)` is, so it emits one tag compare
+// and selects a zeroed payload instead of trapping. `m.lookup_value(key)` is a
+// contributed member: one `map_find` probe, no insertion, and exactly one clone
+// of a managed payload inside the operation.
+
+Value :: union { bool, i32 }
+
+main :: proc() {
+	v: Value = i32(4);
+	n, ok := v.as(i32);
+	fmt.println(int(n) + (1 if ok else 0));
+	// The trapping spelling still traps, and is still single-valued.
+	fmt.println(int(v.(i32)));
+
+	m: map[string][dynamic]int;
+	xs: [dynamic]int;
+	xs.append(1);
+	m["a"] = move(xs);
+	held, found := m.lookup_value("a");
+	fmt.println(len(held) + (1 if found else 0));
+}

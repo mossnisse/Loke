@@ -435,6 +435,36 @@ finish_temporary_drop :: proc(e: ^Emitter, entry: Deferred) {
 	unwind_clear(e, entry.slot)
 }
 
+// A completed owned value can be borrowed by an operation without transferring
+// its cleanup responsibility. Register it before evaluating later arguments.
+@(private)
+hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> Deferred {
+	if !emit_lifecycle(e, type).managed { return Deferred{slot = -1} }
+	place := alloca(e, llvm_type(e, type))
+	store(e, type, value, place)
+	return begin_temporary_drop(e, type, place)
+}
+
+@(private)
+drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
+	if entry.place == "" { return }
+	// Clear before invoking a user drop hook, which can itself panic.
+	finish_temporary_drop(e, entry)
+	emit_drop_place(e, entry.type, entry.place)
+}
+
+@(private)
+discard_owned_values :: proc(e: ^Emitter, types: []Type_Id, values: []string) {
+	guards := make([]Deferred, len(values))
+	defer delete(guards)
+	for value, index in values {
+		guards[index] = hold_temporary_value(e, types[index], value)
+	}
+	for index := len(guards) - 1; index >= 0; index -= 1 {
+		drop_temporary_value(e, guards[index])
+	}
+}
+
 // -------------------------------------------------------------- cleanups --
 
 @(private)
