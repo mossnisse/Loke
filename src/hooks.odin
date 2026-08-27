@@ -303,10 +303,9 @@ ensure_lifecycle_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 	contribute_lifecycle_members(k, type)
 }
 
-// The recursion behind that. A generated body calls `try_clone` on every part
-// whose own clone can fail, so those parts need their hook installed too — a
-// fixed array's included, which is why this is not restricted to records even
-// though only a record receives the `clone` entry point.
+// Generated bodies copy every managed part, including infallible ones. Their
+// dependencies must be contributed too: records use `clone`, fixed arrays use
+// `try_clone`, and strings retain their backing storage directly.
 // Keyed on the underlying type, exactly as `lifecycle_of` is: a `distinct` name
 // shares its underlying record's lifecycle and canonical copy procedures.
 contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
@@ -371,9 +370,12 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	}
 	add_members(k.c, type, members[:])
 
-	for index in 0 ..< clone_part_count(k.c, type) {
+	// All elements of a fixed array have the same operation dependencies.
+	part_count := clone_part_count(k.c, type)
+	if info.kind == .Array && part_count > 1 { part_count = 1 }
+	for index in 0 ..< part_count {
 		part := clone_part(k.c, type, index)
-		if type_clone_is_fallible(k.c, part) {
+		if type_is_managed(k.c, part) {
 			contribute_lifecycle_members(k, part)
 		}
 	}

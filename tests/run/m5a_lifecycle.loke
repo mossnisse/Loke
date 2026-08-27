@@ -50,7 +50,56 @@ Group :: struct {
 	tail:  Failing,
 }
 
+empty_copies, empty_drops: int;
+Empty_Element :: struct {}
+impl Empty_Element {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Empty_Element, Allocator_Error) {
+		empty_copies += 1;
+		return Empty_Element{}, nil;
+	}
+	release :: hook(drop) proc(self: inout Empty_Element) { empty_drops += 1; }
+}
+Empty_Arrays :: struct { items: [0]Empty_Element, nested: [2][0]Empty_Element, marker: int }
+Empty_Wrapper :: struct { value: Empty_Arrays }
+
+copy_empty_borrow :: proc(value: Empty_Arrays) -> Empty_Arrays { return value; }
+
+empty_array_copies :: proc() {
+	// An empty managed array has no element hooks to call, even when its
+	// element has a custom (potentially failing) copy. Keep the other fields.
+	value: Empty_Arrays;
+	value.marker = 7;
+	fallible, error := value.try_clone();
+	assert(error == nil && fallible.marker == 7);
+	explicit := value.clone();
+	implicit := value;
+	replacement: Empty_Arrays;
+	replacement = implicit;
+	borrowed := copy_empty_borrow(value);
+	assert(explicit.marker == 7 && replacement.marker == 7 && borrowed.marker == 7);
+
+	// Copy dependencies are recursive even when no part can fail.
+	wrapper := Empty_Wrapper{move(value)};
+	wrapper_copy := wrapper.clone();
+	assert(wrapper_copy.value.marker == 7);
+	items: [0]Empty_Element;
+	items_copy := items;
+	items_copy = items;
+	assert(empty_copies == 0 && empty_drops == 0);
+}
+
 main :: proc() {
+	empty_array_copies();
+	assert(empty_copies == 0 && empty_drops == 0);
+	// Zero inline size alone does not mean trivial: a *present* element must
+	// still run its hooks. The empty-array handling must not erase these calls.
+	{
+		present: [1]Empty_Element;
+		present_copy := present;
+		assert(empty_copies == 1);
+	}
+	assert(empty_drops == 2);
+
 	// A record no part of which reaches a custom hook clones by copying its
 	// representation, and the generated `clone` is reached with no allocator
 	// written: the compiler supplies the default until `core:mem` is nameable.

@@ -17,6 +17,9 @@ Holder :: struct {
 	count: int,
 }
 
+Text_Cell :: struct { text: string }
+Text_Row :: struct { cells: [2]Text_Cell }
+
 Movable :: move_only struct { id: int }
 
 main :: proc() {
@@ -50,6 +53,17 @@ main :: proc() {
 	duplicate := holder.clone();
 	fmt.println(duplicate.text);
 	fmt.println(duplicate.count);
+
+	// Infallible managed parts still need recursive copy operations. Neither
+	// Text_Cell nor its fixed array is cloned explicitly elsewhere in the file.
+	{
+		first: string = "first";
+		second: string = "second";
+		text_row := Text_Row{[2]Text_Cell{Text_Cell{first.copy()}, Text_Cell{second.copy()}}};
+		row_copy := text_row.clone();
+		drop(text_row);
+		assert(row_copy.cells[0].text == first && row_copy.cells[1].text == second);
+	}
 
 	// Nested containers clone all the way down.
 	grid := [dynamic][dynamic]int{};

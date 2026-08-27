@@ -140,12 +140,13 @@ impl Resource {
     }
     release :: hook(drop) proc(self: inout Resource) { self.value = 0; }
 }
-Nested :: struct { parts: [2]Resource, text: string }
-// Unused types still need facts, without contributing new copy bodies.
+Nested :: struct { parts: [2]Resource, empty: [0]Resource, text: string }
 Empty :: struct { parts: [0]Resource }
 main :: proc() {
     x: Nested;
     y := x.clone();
+    z: Empty;
+    w := z.clone();
 }
 `)
 	defer destroy_compilation(&c)

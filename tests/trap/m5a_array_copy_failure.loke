@@ -1,0 +1,25 @@
+package main; import "core:fmt";
+
+// Array copies use their fallible generated operation before publishing into
+// an existing destination. A failed later element drops the copied prefix,
+// then the allocator's panic policy unwinds the still-unchanged destination.
+Huge :: struct { pad: [4611686018427387904]u8 }
+Res :: struct { id: int }
+impl Res {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+		if (self.id == 2) {
+			p, error := new(Huge, allocator);
+			if (error != nil) { return Res{}, error; }
+			free(p);
+		}
+		return Res{self.id + 100}, nil;
+	}
+	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
+}
+
+main :: proc() {
+	source := [2]Res{Res{1}, Res{2}};
+	destination := [2]Res{Res{10}, Res{20}};
+	destination = source;
+	fmt.println(999);
+}

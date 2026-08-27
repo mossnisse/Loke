@@ -665,6 +665,13 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_string_retain(i64 %s)", owner)
 		return value
 	}
+	// Fixed arrays have a generated `try_clone`, but no public `clone` member.
+	// Use its field-wise copy and the same policy as a record's clone wrapper.
+	// In particular, an empty array copies successfully without visiting an
+	// element, regardless of the element type's lifecycle.
+	if info := underlying_info(e.c, type); info != nil && info.kind == .Array {
+		return emit_clone_with_policy(e, type, value, allocator)
+	}
 	hook := entry.clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, fmt.aprintf("an implicit copy of `%s` has no `clone` member", type_name(e.c, type)))
@@ -933,30 +940,37 @@ emit_drop_flagged_array :: proc(e: ^Emitter, element: Type_Id, buffer, flags, co
 
 // `clone` calls `try_clone` once and, on failure, invokes the supplied
 // allocator's failure policy (design.md).
-//
-// ponytail: M5a's fixed fallback is a non-unwinding trap; M6's allocator-selected
-// `.Panic`/`.Trap` dispatch replaces the trap block, not the shape.
 @(private)
 emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
 	value_type := llvm_type(e, subject)
-	pair := clone_pair_type(value_type)
 	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", value_type, name, value_type)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
 	e.terminated = false
 
+	cloned := emit_clone_with_policy(e, subject, "%arg0", "%arg1")
+	fmt.sbprintfln(&e.b, "  ret %s %s", value_type, cloned)
+	fmt.sbprintln(&e.b, "}")
+}
+
+// Shared by public record wrappers and implicit array copies. The fallible
+// operation owns partial-copy cleanup; only a complete result is published.
+@(private = "file")
+emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: string) -> string {
+	value_type := llvm_type(e, subject)
+	pair := clone_pair_type(value_type)
 	hook := emit_lifecycle(e, subject).try_clone
 	if hook == INVALID_SYMBOL {
-		backend_fail(e, "a generated `clone` has no `try_clone` member")
-		return
+		backend_fail(e, "a policy-following copy has no `try_clone` operation")
+		return "0"
 	}
 	returned := temp(e)
 	fmt.sbprintfln(
-		&e.b, "  %s = call %s %s(%s %%arg0, ptr %%arg1)",
-		returned, pair, e.names[hook], value_type,
+		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
+		returned, pair, e.names[hook], value_type, value, allocator,
 	)
 	cloned := extract(e, pair, returned, 0)
 	error := extract(e, pair, returned, 1)
@@ -969,12 +983,11 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fail, ok := new_label(e, "clone.failed"), new_label(e, "ok")
 	branch_if(e, failed, fail, ok)
 	place_label(e, fail)
-	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %arg1)")
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
 	fmt.sbprintln(&e.b, "  unreachable")
 	e.terminated = true
 	place_label(e, ok)
-	fmt.sbprintfln(&e.b, "  ret %s %s", value_type, cloned)
-	fmt.sbprintln(&e.b, "}")
+	return cloned
 }
 
 // All lifecycle decisions come from the completed semantic snapshot. Returning
