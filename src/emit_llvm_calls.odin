@@ -1,0 +1,1118 @@
+// Resolved calls, argument packing, conversions, and allocation builtins.
+//
+// Part of the textual LLVM backend; see compiler-architecture.md.
+package lokec
+
+import "core:fmt"
+
+// ------------------------------------------------------------------- calls --
+
+@(private)
+emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	if v.is_dyn_call {
+		results := emit_dyn_slot_call(e, v)
+		return len(results) == 0 ? "0" : results[0]
+	}
+	if v.resolution.kind == .Conversion && type_is_dyn(e.c, v.type) {
+		return emit_dyn_value(e, v)
+	}
+	if v.text_conversion != .None {
+		return emit_text_conversion(e, v)[0]
+	}
+	if v.resolution.kind == .Conversion {
+		return emit_conversion(e, v)
+	}
+	if v.reflect != .None {
+		return emit_descriptor_operation(e, v)
+	}
+	if v.union_op != .None {
+		return emit_union_operation(e, v)
+	}
+	if v.text != .None {
+		return emit_text_operation(e, v)[0]
+	}
+	symbol := symbol_of(e.c, v.resolution.symbol)
+	if symbol != nil && symbol.kind == .Builtin {
+		switch symbol.builtin {
+		case .Assert:
+			// The runtime half of a phase-neutral built-in. design.md makes the
+			// message a compile-time string, so it is a module global here and the
+			// failure takes the program's panic strategy like every other one.
+			cond := emit_expr(e, v.bound[0])
+			failed := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, cond)
+			panic_if(e, failed, "assert.failed", panic_message_text(e, v, 1, "assertion failed"))
+			return "0"
+		case .Panic:
+			emit_panic(e, panic_message_text(e, v, 0, "explicit panic"))
+			return "0"
+		case .Hash:
+			return emit_hash(e, v.bound[0], v.bound[1])
+		case .Iter:
+			// The checker rewrote the call to name the chosen `iter` overload, so
+			// this arm is only reachable if that failed.
+			backend_fail(e, "an `iter` call has no chosen overload")
+			return "0"
+		case .Clone, .Try_Clone:
+			// Same rewrite: a free `clone(x)` names the type's own hook by the time
+			// it reaches emission, exactly as `x.clone()` does.
+			backend_fail(e, "a free `clone` call has no chosen hook")
+			return "0"
+		case .Len, .Cap:
+			// A slice and the two containers reach here; every other `len` folded.
+			// Both headers keep the length in the same word a slice does, so the
+			// only difference is which one is read.
+			source := emit_expr(e, v.bound[0])
+			word := symbol.builtin == .Cap ? CONTAINER_CAP : SLICE_LEN
+			out := extract(e, llvm_type(e, expr_base(v.bound[0]).type), source, word)
+			return out
+		case .Default_Allocator:
+			// design.md "Build-selected providers": the default provider is fixed at
+			// build time, so the handle is the runtime's own record.
+			return RT_DEFAULT_ALLOCATOR
+		case .New, .New_Clone:
+			return emit_allocation(e, v, symbol.builtin)
+		case .Make:
+			return emit_make_container(e, v)[0]
+		case .Drop:
+			emit_explicit_drop(e, v)
+			return "0"
+		case .Exchange:
+			return emit_exchange(e, v)
+		case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
+			return emit_unsafe_builtin(e, v, symbol.builtin)[0]
+		case .Type_Info_Of:
+			return emit_type_info_of(e, v)
+		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
+			return emit_fmt_builtin(e, v, symbol.builtin)
+		case .Strings_Allocate:
+			return emit_strings_allocate(e, v)[0]
+		case .Free:
+			emit_free(e, v)
+			return "0"
+		case .Free_All:
+			emit_region_reset(e, v)
+			return "0"
+		case .None, .Size_Of, .Align_Of, .Offset_Of, .Standard_Alias,
+		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
+		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
+			// These fold to a constant in every reachable case; arriving here
+			// would mean emitting a runtime call for a layout query.
+			backend_fail(e, "an unfrozen compile-time built-in reached emission")
+			return "0"
+		}
+	}
+	results := emit_multi_call(e, v)
+	return len(results) == 0 ? "0" : results[0]
+}
+
+// `field.get(value)` and `field.pointer(value)`. The descriptor selected one
+// field at check time, so both are an ordinary member address, plus a load for
+// `get`.
+@(private = "file")
+emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	base := emit_expr(e, v.bound[0])
+	owner := underlying_info(e.c, expr_base(v.bound[0]).type)
+	field := symbol_of(e.c, v.reflect_field)
+	address := gep_field(e, llvm_type(e, owner.element), base, int(field.index))
+	if v.reflect == .Field_Pointer {
+		return address
+	}
+	out := load(e, llvm_type(e, field.type), address)
+	return out
+}
+
+// The runtime half of the compiler-contributed `hash`. It spells the same two
+// steps `hash_const` folds, so a constant hash and a computed one agree.
+@(private = "file")
+emit_hash :: proc(e: ^Emitter, value_expr, seed_expr: Expr) -> string {
+	value := emit_expr(e, value_expr)
+	seed := emit_expr(e, seed_expr)
+	return emit_hash_value(e, expr_base(value_expr).type, value, seed)
+}
+
+emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
+	under := type_underlying(e.c, type)
+	info := type_of(e.c, under)
+	if info != nil && info.kind == .Array {
+		current := seed
+		for index in 0 ..< int(info.count) {
+			element := extract(e, llvm_type(e, under), value, index)
+			current = emit_hash_value(e, info.element, element, current)
+		}
+		return current
+	}
+	// design.md: `string` and `string_view` hash byte-wise, which is the coherent
+	// partner of the byte-wise `==` they already have.
+	if type_is_utf8_text(e.c, under) {
+		storage := llvm_type(e, under)
+		data := extract(e, storage, value, STRING_DATA)
+		length := extract(e, storage, value, STRING_LEN)
+		out := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call i64 @loke_rt_v1_hash_bytes(ptr %s, i64 %s, i64 %s)",
+			out, data, length, seed,
+		)
+		return out
+	}
+	bits := emit_hash_bits(e, under, value)
+	mixed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = xor i64 %s, %s", mixed, seed, bits)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", out, mixed, HASH_MULTIPLIER)
+	return out
+}
+
+// One scalar's 64-bit integer image.
+@(private = "file")
+emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
+	info := type_of(e.c, under)
+	out := temp(e)
+	#partial switch info.kind {
+	case .Bool:
+		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out, value)
+	case .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc:
+		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to i64", out, value)
+	case .Float:
+		// design.md: `+0` and `-0` hash identically because they compare equal.
+		llvm := llvm_type(e, under)
+		pattern := temp(e)
+		width := int(info.bits)
+		fmt.sbprintfln(&e.b, "  %s = bitcast %s %s to i%d", pattern, llvm, value, width)
+		widened := pattern
+		if width < 64 {
+			widened = temp(e)
+			fmt.sbprintfln(&e.b, "  %s = zext i%d %s to i64", widened, width, pattern)
+		}
+		zero := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = fcmp oeq %s %s, 0.0", zero, llvm, value)
+		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", out, zero, widened)
+	case:
+		width := type_bits(e.c, under)
+		if info.kind == .Rune {
+			width = 32
+		}
+		switch {
+		case width == 64:
+			return value
+		case width > 64:
+			fmt.sbprintfln(&e.b, "  %s = trunc i%d %s to i64", out, width, value)
+		case type_signed(e.c, under) || info.kind == .Rune:
+			fmt.sbprintfln(&e.b, "  %s = sext i%d %s to i64", out, width, value)
+		case:
+			fmt.sbprintfln(&e.b, "  %s = zext i%d %s to i64", out, width, value)
+		}
+	}
+	return out
+}
+
+// An operator, index, or slice call. Operator lookup has already chosen one
+// named procedure, so this is an ordinary direct call — except for a `delegate`
+// overload, which has no body and applies the underlying type's operation to the
+// unwrapped operands instead.
+@(private)
+emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr) -> string {
+	symbol := symbol_of(e.c, symbol_id)
+	if symbol == nil {
+		return "0"
+	}
+	if symbol.delegated {
+		return emit_delegated(e, symbol, bound)
+	}
+	info := type_of(e.c, symbol.proc_type)
+	results := emit_bound_call(e, symbol_id, e.names[symbol_id] or_else "null", info, bound)
+	return len(results) == 0 ? "0" : results[0]
+}
+
+// A `distinct` newtype's forwarding overload: unwrap, apply the underlying
+// operation, and let the wrap back into the distinct type be the no-op it is —
+// the two share a representation.
+@(private = "file")
+emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
+	// The underlying type's own overload takes the operands as they stand: a
+	// distinct type and what it wraps lower to one LLVM type, so unwrapping is
+	// the no-op the representation already makes it.
+	if symbol.delegate_target != INVALID_SYMBOL {
+		return emit_operator_call(e, symbol.delegate_target, bound)
+	}
+	op := operator_token(symbol.operator)
+	underlying := symbol.delegate_underlying
+	if len(bound) == 1 {
+		out := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, emit_expr(e, bound[0]))
+		return out
+	}
+	lhs := emit_expr(e, bound[0])
+	rhs := emit_expr(e, bound[1])
+	#partial switch op {
+	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+		return emit_compare(e, op, underlying, lhs, rhs)
+	}
+	return emit_binary_op(e, op, underlying, underlying, lhs, rhs)
+}
+
+// Every result of an expression that produces several: a call, a comma-ok
+// extraction, an `or_else`, or an `or_return`.
+@(private)
+emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
+	#partial switch v in expr {
+	case ^Expr_Call:
+		// A slot call has no callee symbol and no callee value — the thunk comes
+		// out of the witness table — so it can never take the ordinary call path
+		// below, whatever its result count is.
+		if v.is_dyn_call {
+			return emit_dyn_slot_call(e, v)
+		}
+		// A conversion and a built-in are calls in syntax only, and each has its
+		// own lowering; `emit_call` is what knows the difference.
+		if kind := call_builtin_kind(e, v); kind == .New || kind == .New_Clone {
+			return emit_allocation_pair(e, v, kind)
+		}
+		if call_builtin_kind(e, v) == .Make {
+			return emit_make_container(e, v)
+		}
+		if v.text != .None {
+			return emit_text_operation(e, v)
+		}
+		if v.text_conversion != .None {
+			return emit_text_conversion(e, v)
+		}
+		if kind := call_builtin_kind(e, v); kind == .Unsafe_String_View {
+			return emit_unsafe_builtin(e, v, kind)
+		}
+		if call_builtin_kind(e, v) == .Strings_Allocate {
+			return emit_strings_allocate(e, v)
+		}
+		if len(v.result_types) > 1 {
+			return emit_multi_call(e, v)
+		}
+		single := make([]string, 1)
+		single[0] = emit_expr(e, expr)
+		return single
+	case ^Expr_Index:
+		// `elem, ok := m[key]`, the comma-ok form of a non-inserting read.
+		if v.operand != nil && type_is_map(e.c, expr_base(v.operand).type) && !v.map_inserts {
+			return emit_map_lookup(e, v)
+		}
+		single := make([]string, 1)
+		single[0] = emit_expr(e, expr)
+		return single
+	case ^Expr_Checked_Extract:
+		return emit_checked_extract(e, v)
+	case ^Expr_Or_Else:
+		return emit_or_else(e, v)
+	case ^Expr_Postfix:
+		if v.op == .Or_Return {
+			return emit_or_return(e, v)
+		}
+	}
+	single := make([]string, 1)
+	single[0] = emit_expr(e, expr)
+	return single
+}
+
+@(private)
+call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
+	if v.resolution.kind == .Conversion || v.reflect != .None {
+		return .None
+	}
+	sym := symbol_of(e.c, v.resolution.symbol)
+	return sym != nil && sym.kind == .Builtin ? sym.builtin : Builtin_Kind.None
+}
+
+// `new` and `new_clone` always return an error rather than invoking the
+// allocator failure policy (design.md "Allocation failure"). So there is no
+// branch on failure here — the caller receives a null pointer and a non-nil
+// error and decides.
+//
+@(private = "file")
+emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
+	// `new_clone` creates a new allocation root containing a clone of the value
+	// (design.md), so a record whose clone can fail goes through its hook rather
+	// than through a shallow store of the representation.
+	if kind == .New_Clone && type_clone_is_fallible(e.c, v.alloc_type) {
+		return emit_new_clone_hook(e, v)
+	}
+	// `new(T)` binds only an allocator; `new_clone(v)` binds the value first.
+	allocator := emit_allocator_operand(e, v, kind == .New ? 0 : 1)
+	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
+	pointer := temp(e)
+	if kind == .New {
+		// design.md: `new` zero-initialises.
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_alloc_zeroed(ptr %s, i64 %d, i64 %d)",
+			pointer, allocator, size, align,
+		)
+	} else {
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
+			pointer, allocator, size, align,
+		)
+	}
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, pointer)
+
+	if kind == .New_Clone {
+		// A failed allocation has nothing to clone into, so the copy is guarded.
+		// Nothing is partially built on that path: this arm only runs for a value
+		// whose clone is the copy its representation already is.
+		store_label, done_label := new_label(e, "newclone.store"), new_label(e, "newclone.done")
+		fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", failed, done_label, store_label)
+		place_label(e, store_label)
+		store(e, v.alloc_type, emit_expr(e, v.bound[0]), pointer)
+		branch(e, done_label)
+		place_label(e, done_label)
+		e.terminated = false
+	}
+
+	error := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 1, i64 0", error, failed)
+	out := make([]string, 2)
+	out[0], out[1] = pointer, error
+	return out
+}
+
+// The clone-through-a-hook half of `new_clone`, and the only path with a
+// partially cloned allocation to destroy: the hook already cleaned its own
+// temporary, so what is left is the block it was going to be published into.
+// The result travels through storage rather than phi nodes, so the three exits
+// do not need their predecessor labels tracked.
+@(private = "file")
+emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	value_type := llvm_type(e, v.alloc_type)
+	value := emit_expr(e, v.bound[0])
+	allocator := emit_allocator_operand(e, v, 1)
+	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
+
+	pointer_slot := alloca(e, "ptr")
+	error_slot := alloca(e, "i64")
+	fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", pointer_slot)
+	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
+
+	pointer := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call ptr @loke_rt_v1_alloc(ptr %s, i64 %d, i64 %d)",
+		pointer, allocator, size, align,
+	)
+	no_memory := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", no_memory, pointer)
+	clone_label := new_label(e, "newclone.clone")
+	done_label := new_label(e, "newclone.done")
+	branch_if(e, no_memory, done_label, clone_label)
+
+	place_label(e, clone_label)
+	hook := type_hook(e.c, v.alloc_type, "try_clone")
+	if hook == INVALID_SYMBOL {
+		backend_fail(e, "a fallible `new_clone` has no `try_clone` member")
+		failed := make([]string, 2)
+		failed[0], failed[1] = "null", "1"
+		return failed
+	}
+	pair := clone_pair_type(value_type)
+	returned := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
+		returned, pair, e.names[hook], value_type, value, allocator,
+	)
+	cloned := extract(e, pair, returned, 0)
+	error := extract(e, pair, returned, 1)
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
+	release_label, publish_label := new_label(e, "newclone.release"), new_label(e, "newclone.publish")
+	branch_if(e, failed, release_label, publish_label)
+
+	place_label(e, release_label)
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
+		allocator, pointer, size, align,
+	)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", error, error_slot)
+	branch(e, done_label)
+
+	place_label(e, publish_label)
+	store(e, v.alloc_type, cloned, pointer)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", pointer, pointer_slot)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", error_slot)
+	branch(e, done_label)
+
+	place_label(e, done_label)
+	e.terminated = false
+	out := make([]string, 2)
+	out[0], out[1] = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", out[0], pointer_slot)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", out[1], error_slot)
+	return out
+}
+
+@(private = "file")
+emit_allocation :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
+	return emit_allocation_pair(e, v, kind)[0]
+}
+
+// `make(T, counts..., allocator)`. The checker bound the counts in written
+// order followed by the allocator, so this only has to run them.
+//
+// The header is built in storage and published complete: the provider handle is
+// written first, because the reserve below allocates *through* it, and a failed
+// reserve leaves an empty container bound to that same provider rather than
+// something half-built.
+@(private = "file")
+emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	is_map := type_is_map(e.c, v.alloc_type)
+	counts := is_map ? 1 : 2
+	values := make([]string, counts)
+	for index in 0 ..< counts {
+		values[index] = v.bound[index] == nil ? "" : emit_expr(e, v.bound[index])
+	}
+	allocator := v.bound[counts] == nil ? RT_DEFAULT_ALLOCATOR : emit_expr(e, v.bound[counts])
+
+	header := alloca(e, CONTAINER_TYPE)
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", CONTAINER_TYPE, header)
+	provider := gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", allocator, provider)
+
+	// design.md: `cap` defaults to `len`, and a `len > cap` relationship is an
+	// ordinary program fault rather than an allocation failure.
+	length := values[0] == "" ? "0" : values[0]
+	capacity := length
+	if !is_map && len(values) > 1 && values[1] != "" {
+		capacity = values[1]
+		bad := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, %s", bad, length, capacity)
+		panic_if(e, bad, "make.len_gt_cap", "a container's length cannot exceed its capacity")
+	}
+	negative := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, length)
+	panic_if(e, negative, "make.negative", "a container's length cannot be negative")
+
+	helper := is_map ? "loke_rt_v1_map_reserve" : "loke_rt_v1_dyn_reserve"
+	status := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i32 @%s(ptr %s, ptr %s, i64 %s)",
+		status, helper, header, container_ops_global(e, v.alloc_type), capacity,
+	)
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	fill_label, done_label := new_label(e, "make.fill"), new_label(e, "make.done")
+	branch_if(e, failed, done_label, fill_label)
+
+	// A dynamic array's initial length is `len` zero values. Every Loke zero
+	// value is all-zero bits, so this is one memset rather than a per-element
+	// loop, and dropping those zeros is the no-op every hook must already handle.
+	place_label(e, fill_label)
+	if !is_map {
+		element := container_element(e.c, v.alloc_type)
+		data := load(e, "ptr", header)
+		bytes := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, length, type_size(e.c, element))
+		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", data, bytes)
+		count_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, count_slot)
+	}
+	branch(e, done_label)
+	place_label(e, done_label)
+	e.terminated = false
+
+	out := make([]string, 2)
+	out[0], out[1] = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out[0], CONTAINER_TYPE, header)
+	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out[1], failed)
+	return out
+}
+
+// Deallocation operations such as `free` and `drop` return no status (design.md).
+// The checker has already restricted the operand to a binding holding a
+// fresh allocation base, so the pointee type supplies the size and alignment the
+// provider was given at `new`.
+//
+// ponytail: `free` names no allocator, and design.md makes matching the creating
+// one the program's obligation, so this uses the default record. An allocation
+// made from an arena is released by that region's reset instead; write the
+// allocator argument to `free` when the two must match exactly. Carrying the
+// provider in the allocation itself is the upgrade if that becomes common.
+@(private = "file")
+emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
+	pointer := emit_expr(e, v.bound[0])
+	allocator := emit_allocator_operand(e, v, 1)
+	info := underlying_info(e.c, expr_base(v.bound[0]).type)
+	if info == nil || info.kind != .Pointer {
+		backend_fail(e, "`free` did not receive an allocation pointer")
+		return
+	}
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
+		allocator, pointer, type_size(e.c, info.element), type_align(e.c, info.element),
+	)
+}
+
+// design.md "Checked extractions": a single-value extraction traps on a
+// mismatch, and the comma-ok form yields a zeroed payload with `false`.
+@(private = "file")
+emit_checked_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string {
+	union_type := expr_base(v.operand).type
+	if union_type == TYPE_ANY_VIEW {
+		return emit_any_view_extract(e, v)
+	}
+	shape := union_layout(e.c, union_type)
+	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+	value := emit_expr(e, v.operand)
+	slot := emit_union_spill(e, union_type, value)
+	tag := emit_union_tag(e, union_type, value)
+
+	matched := temp(e)
+	fmt.sbprintfln(
+		&e.b,
+		"  %s = icmp eq %s %s, %d",
+		matched, tag_llvm, tag, union_variant_tag(e.c, union_type, v.type),
+	)
+	if !v.optional {
+		failed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
+		panic_if(e, failed, "extract.variant", "checked extraction failed")
+		out := make([]string, 1)
+		out[0] = emit_union_payload(e, union_type, v.type, slot)
+		return out
+	}
+	// The zeroed payload is selected by address, so no aggregate has to be
+	// selected and nothing out of bounds is ever read.
+	llvm := llvm_type(e, v.type)
+	zero_slot := alloca(e, llvm)
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, zero_slot)
+	payload := gep_field(e, llvm_type(e, union_type), slot, 0)
+	chosen := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", chosen, matched, payload, zero_slot)
+	loaded := load(e, llvm, chosen)
+
+	out := make([]string, 2)
+	out[0], out[1] = loaded, matched
+	return out
+}
+
+// design.md "or_else expression": the fallback is evaluated only when `ok` is
+// false, which is why it lives in its own block.
+@(private = "file")
+emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
+	values := emit_multi_value(e, v.value)
+	types := expr_base(v.value).result_types
+	status := values[len(values) - 1]
+	status_type := types[len(types) - 1]
+	payloads := values[:len(values) - 1]
+
+	entry := new_label(e, "orelse.entry")
+	fallback_label := new_label(e, "orelse.fallback")
+	done := new_label(e, "orelse.done")
+	branch(e, entry)
+	place_label(e, entry)
+	// The same status test `or_return` uses, so a `bool` and a union status take
+	// one implementation.
+	failed := emit_status_failed(e, status_type, status)
+	branch_if(e, failed, fallback_label, done)
+
+	place_label(e, fallback_label)
+	// design.md "or_else expression": the status is discarded, and a failing union
+	// status runs its drop hook before the fallback is evaluated. No drop is
+	// emitted because no status reaching here owns anything: a `bool` is trivial,
+	// and naming a managed union is rejected as L0494 (`type_contains_managed_union`
+	// in check.odin) until tag-aware drop lowering exists. That lowering has to add
+	// the drop here.
+	fallback := emit_multi_value(e, v.fallback)
+	fallback_exit := new_label(e, "orelse.fallback.exit")
+	branch(e, fallback_exit)
+	place_label(e, fallback_exit)
+	branch(e, done)
+
+	place_label(e, done)
+	out := make([]string, len(payloads))
+	for index in 0 ..< len(payloads) {
+		joined := temp(e)
+		fmt.sbprintfln(
+			&e.b,
+			"  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
+			joined, llvm_type(e, types[index]), payloads[index], entry, fallback[index], fallback_exit,
+		)
+		out[index] = joined
+	}
+	return out
+}
+
+// design.md "or_return operator": on failure the status is assigned to the final
+// result and control leaves through the ordinary epilogue, so `defer` ordering
+// stays in one implementation.
+@(private = "file")
+emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
+	values := emit_multi_value(e, v.operand)
+	operand := expr_base(v.operand)
+	status_type := operand.type
+	if len(operand.result_types) > 0 {
+		status_type = operand.result_types[len(operand.result_types) - 1]
+	}
+	status := values[len(values) - 1]
+	failed := emit_status_failed(e, status_type, status)
+
+	fail_label := new_label(e, "orreturn.fail")
+	ok_label := new_label(e, "orreturn.ok")
+	branch_if(e, failed, fail_label, ok_label)
+
+	place_label(e, fail_label)
+	last := len(e.result_slots) - 1
+	if last >= 0 {
+		target := e.result_types[last]
+		if target != status_type && type_is_union(e.c, target) && union_holds(e.c, target, status_type) {
+			status = emit_union_value(e, target, status_type, status)
+		}
+		store(e, target, status, e.result_slots[last])
+	}
+	emit_epilogue(e)
+
+	place_label(e, ok_label)
+	return values[:len(values) - 1]
+}
+
+// design.md "Status results": the status is successful when it is `true` for
+// `bool` or `nil` for a union or an `Allocator_Error`, and nothing else is a
+// status. There is therefore no pointer or procedure form to compare against
+// null; the checker has already rejected those.
+@(private = "file")
+emit_status_failed :: proc(e: ^Emitter, status_type: Type_Id, status: string) -> string {
+	out := temp(e)
+	if type_is_union(e.c, status_type) {
+		shape := union_layout(e.c, status_type)
+		tag := emit_union_tag(e, status_type, status)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i%d %s, 0", out, shape.tag_bytes * 8, tag)
+		return out
+	}
+	// An `Allocator_Error` is an integer code whose nil — and so its success — is
+	// zero, the same representation `err != nil` already tests.
+	if underlying_kind(e.c, status_type) == .Allocator_Error {
+		fmt.sbprintfln(&e.b, "  %s = icmp ne %s %s, 0", out, llvm_type(e, status_type), status)
+		return out
+	}
+	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, status)
+	return out
+}
+
+// Emits the call and returns one operand per result.
+@(private = "file")
+emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+	callee_type := underlying_info(e.c, expr_base(v.callee).type)
+	symbol := symbol_of(e.c, v.resolution.symbol)
+
+	callee := ""
+	if symbol != nil && symbol.kind == .Proc {
+		callee = e.names[v.resolution.symbol] or_else "null"
+	} else {
+		callee = emit_expr(e, v.callee)
+		// A procedure value may be nil; the call takes the same trap seam every
+		// other defined runtime failure does.
+		is_nil := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", is_nil, callee)
+		panic_if(e, is_nil, "nil.call", "call through a nil procedure value")
+	}
+
+	return emit_bound_call(e, v.resolution.symbol, callee, callee_type, v.bound, v)
+}
+
+// design.md "Variadic parameters": the callee always receives one read-only
+// slice, so the caller either forwards a compatible spread as-is or builds
+// compiler-owned contiguous storage and hands over a slice of it.
+//
+// The storage is a stack buffer: fixed-size when the element count is static,
+// and a checked dynamic `alloca` when a spread makes it runtime-sized. A pack is
+// a borrow of that buffer, so it never involves a dynamic array.
+@(private = "file")
+Variadic_Pack :: struct {
+	value:   string,
+	cleanup: Deferred,
+}
+
+@(private = "file")
+checked_variadic_total :: proc(e: ^Emitter, total, added: string) -> string {
+	negative := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, 0", negative, added)
+	panic_if(e, negative, "variadic.length", "invalid variadic spread length")
+	sum := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", sum, total, added)
+	overflow := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", overflow, sum, total)
+	panic_if(e, overflow, "variadic.size", "variadic argument pack is too large")
+	return sum
+}
+
+@(private = "file")
+emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Variadic_Pack {
+	// A sole compatible spread forwards its slice directly, which is what makes
+	// `println(..args)` inside a variadic procedure cost nothing.
+	if v.variadic_forwards {
+		return Variadic_Pack{value = emit_expr(e, v.bound[v.variadic_slot])}
+	}
+	element := slice_element(e.c, pack_type)
+	element_llvm := llvm_type(e, element)
+	static_count := len(v.variadic_elements)
+	if len(v.variadic_spreads) == 0 && static_count == 0 {
+		// design.md's `sum()` case: an empty pack is a nil slice, which has length
+		// 0 and points at no storage.
+		return Variadic_Pack{value = "zeroinitializer"}
+	}
+	managed := type_is_managed(e.c, element)
+
+	// Managed explicit operands first enter fixed staging storage. That storage
+	// is already registered while later operands are evaluated, so a panic cannot
+	// strand an owned temporary before the runtime-sized final buffer exists.
+	staging, staging_flags, staging_count := "", "", ""
+	staging_cleanup := Deferred{slot = -1}
+	if managed && static_count > 0 {
+		staging, staging_flags, staging_count = temp(e), temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca [%d x %s]", staging, static_count, element_llvm)
+		fmt.sbprintfln(&e.b, "  %s = alloca [%d x i1]", staging_flags, static_count)
+		fmt.sbprintfln(
+			&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
+			staging_flags, static_count,
+		)
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", staging_count)
+		fmt.sbprintfln(&e.b, "  store i64 %d, ptr %s", static_count, staging_count)
+		staging_cleanup = register_variadic_cleanup(e, element, staging, staging_flags, staging_count)
+	}
+
+	// Every operand is evaluated once, in written order, before any storage is
+	// formed: a spread's length is part of the size the buffer needs.
+	elements := make([]string, static_count)
+	spreads := make([]string, len(v.variadic_spreads))
+	spread_data := make([]string, len(v.variadic_spreads))
+	spread_len := make([]string, len(v.variadic_spreads))
+	next_element, next_spread := 0, 0
+	total := fmt.aprintf("%d", static_count)
+	for is_spread in v.variadic_order {
+		if is_spread {
+			expr := v.variadic_spreads[next_spread]
+			spreads[next_spread] = emit_expr(e, expr)
+			storage := llvm_type(e, expr_base(expr).type)
+			data := extract(e, storage, spreads[next_spread], SLICE_DATA)
+			length := extract(e, storage, spreads[next_spread], SLICE_LEN)
+			spread_data[next_spread], spread_len[next_spread] = data, length
+			total = checked_variadic_total(e, total, length)
+			next_spread += 1
+			continue
+		}
+		expr := v.variadic_elements[next_element]
+		value := emit_expr(e, expr)
+		// A borrowed owner is cloned; a temporary or move already owns the value
+		// transferred into staging.
+		if managed && expression_is_borrowed_place(e.c, expr) {
+			value = emit_clone_value(e, element, value)
+		}
+		elements[next_element] = value
+		if managed {
+			slot, flag := temp(e), temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %d",
+				slot, static_count, element_llvm, staging, next_element,
+			)
+			store(e, element, value, slot)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", flag, staging_flags, next_element)
+			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+		}
+		next_element += 1
+	}
+
+	buffer := temp(e)
+	if len(v.variadic_spreads) == 0 {
+		fmt.sbprintfln(&e.b, "  %s = alloca [%d x %s]", buffer, static_count, element_llvm)
+	} else {
+		limit := u64(max(i64)) / max(type_size(e.c, element), 1)
+		too_large := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, total, limit)
+		panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
+		fmt.sbprintfln(&e.b, "  %s = alloca %s, i64 %s", buffer, element_llvm, total)
+	}
+	final_flags, final_count := "", ""
+	cleanup := Deferred{slot = -1}
+	if managed {
+		final_flags, final_count = temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca i1, i64 %s", final_flags, total)
+		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", final_flags, total)
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", final_count)
+		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", total, final_count)
+		cleanup = register_variadic_cleanup(e, element, buffer, final_flags, final_count)
+	}
+
+	cursor := "0"
+	cursor_slot := ""
+	if managed {
+		cursor_slot = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor_slot)
+		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor_slot)
+	}
+	next_element, next_spread = 0, 0
+	for is_spread in v.variadic_order {
+		if managed {
+			if is_spread {
+				index_slot := alloca(e, "i64")
+				fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
+				head, body, done := new_label(e, "vararg.copy.head"), new_label(e, "vararg.copy.body"), new_label(e, "vararg.copy.done")
+				branch(e, head)
+				place_label(e, head)
+				index := load(e, "i64", index_slot)
+				more := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", more, index, spread_len[next_spread])
+				branch_if(e, more, body, done)
+				place_label(e, body)
+				source := gep_at(e, element_llvm, spread_data[next_spread], index)
+				loaded := load(e, element_llvm, source)
+				cloned := emit_clone_value(e, element, loaded)
+				position := load(e, "i64", cursor_slot)
+				destination := gep_at(e, element_llvm, buffer, position)
+				store(e, element, cloned, destination)
+				flag := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", flag, final_flags, position)
+				fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+				next_index, next_position := temp(e), temp(e)
+				fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next_index, index)
+				fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_index, index_slot)
+				fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next_position, position)
+				fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_position, cursor_slot)
+				branch(e, head)
+				place_label(e, done)
+				next_spread += 1
+				continue
+			}
+			position := load(e, "i64", cursor_slot)
+			destination := gep_at(e, element_llvm, buffer, position)
+			source := temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = getelementptr inbounds [%d x %s], ptr %s, i64 0, i64 %d",
+				source, static_count, element_llvm, staging, next_element,
+			)
+			loaded := load(e, element_llvm, source)
+			store(e, element, loaded, destination)
+			final_flag, staging_flag := temp(e), temp(e)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %s", final_flag, final_flags, position)
+			fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", final_flag)
+			fmt.sbprintfln(&e.b, "  %s = getelementptr i1, ptr %s, i64 %d", staging_flag, staging_flags, next_element)
+			fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", staging_flag)
+			next_position := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next_position, position)
+			fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_position, cursor_slot)
+			next_element += 1
+			continue
+		}
+		slot := gep_at(e, element_llvm, buffer, cursor)
+		if is_spread {
+			bytes := temp(e)
+			fmt.sbprintfln(
+				&e.b, "  %s = mul i64 %s, %d",
+				bytes, spread_len[next_spread], type_size(e.c, element),
+			)
+			fmt.sbprintfln(
+				&e.b, "  call void @llvm.memcpy.p0.p0.i64(ptr %s, ptr %s, i64 %s, i1 false)",
+				slot, spread_data[next_spread], bytes,
+			)
+			advanced := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = add i64 %s, %s", advanced, cursor, spread_len[next_spread])
+			cursor = advanced
+			next_spread += 1
+			continue
+		}
+		store(e, element, elements[next_element], slot)
+		advanced := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", advanced, cursor)
+		cursor = advanced
+		next_element += 1
+	}
+	if staging_cleanup.array_cleanup {
+		unwind_clear(e, staging_cleanup.slot)
+	}
+	return Variadic_Pack{value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup}
+}
+
+// The call side of the Windows x64 classification (m7-plan step 3). Operands are
+// already evaluated; this materializes each into its ABI register or caller-owned
+// temporary, emits the call, and reconstructs the aggregate result the loke
+// caller consumes. `loke`-convention calls never reach here.
+@(private)
+param_is_by_ptr :: proc(info: ^Type_Info, index: int) -> bool {
+	return info != nil && index < len(info.param_by_ptr) && info.param_by_ptr[index]
+}
+
+@(private)
+proc_result_is_inout :: proc(info: ^Type_Info, index: int) -> bool {
+	return info != nil && index < len(info.result_inout) && info.result_inout[index]
+}
+
+// The shared call sequence: bind the operands left to right, emit the call, and
+// hand back one operand per result.
+@(private = "file")
+emit_bound_call :: proc(
+	e: ^Emitter,
+	symbol_id: Symbol_Id,
+	callee: string,
+	callee_type: ^Type_Info,
+	bound: []Expr,
+	call_node: ^Expr_Call = nil,
+) -> []string {
+	symbol := symbol_of(e.c, symbol_id)
+	if callee_type == nil {
+		return nil
+	}
+	// Arguments are bound left to right. A default that names a parameter to its
+	// left reads the value bound a moment ago, which is why this map exists.
+	outer_params := e.param_values
+	e.param_values = make(map[Symbol_Id]string)
+	defer {
+		delete(e.param_values)
+		e.param_values = outer_params
+	}
+
+	operands := make([]string, len(bound))
+	// design.md "Variadic parameters": the pack is materialised where it appears
+	// in the argument order, so the explicit arguments and the spreads are
+	// evaluated exactly once, left to right, together with the fixed ones.
+	pack := -1
+	if call_node != nil && call_node.is_variadic {
+		pack = call_node.variadic_slot
+	}
+	pack_cleanup := Deferred{slot = -1}
+	for argument, index in bound {
+		if index == pack {
+			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index])
+			operands[index] = packed.value
+			pack_cleanup = packed.cleanup
+			continue
+		}
+		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		if mode == .Inout {
+			operands[index] = emit_address(e, argument)
+		} else {
+			operands[index] = emit_expr(e, argument)
+		}
+		// design.md: method-call syntax supplies the receiver's `move` marker
+		// implicitly, so the source is read and then killed here rather than by an
+		// `Expr_Move` the caller wrote.
+		if index == 0 && symbol != nil && symbol.receiver == .Move {
+			if ident, is_ident := argument.(^Expr_Ident); is_ident {
+				kill_place(e, ident.symbol)
+			}
+		}
+		if symbol != nil && index < len(symbol.param_symbols) && symbol.param_symbols[index] != INVALID_SYMBOL {
+			e.param_values[symbol.param_symbols[index]] = operands[index]
+		}
+	}
+
+	if convention_is_foreign(callee_type.convention) {
+		return emit_foreign_call(e, callee, callee_type, operands, symbol, bound)
+	}
+
+	result_type := llvm_result_type(e, callee_type.results, callee_type.result_inout)
+	call := ""
+	if len(callee_type.results) > 0 {
+		call = temp(e)
+		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, callee)
+	} else {
+		fmt.sbprintf(&e.b, "  call void %s(", callee)
+	}
+	for operand, index in operands {
+		if index > 0 {
+			fmt.sbprint(&e.b, ", ")
+		}
+		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
+		type := mode == .Inout ? "ptr" : llvm_type(e, callee_type.parameters[index])
+		fmt.sbprintf(&e.b, "%s %s", type, operand)
+	}
+	fmt.sbprintln(&e.b, ")")
+	if pack_cleanup.array_cleanup {
+		emit_drop_flagged_array(
+			e, pack_cleanup.type, pack_cleanup.array_buffer,
+			pack_cleanup.array_flags, pack_cleanup.array_count,
+		)
+		unwind_clear(e, pack_cleanup.slot)
+	}
+
+	switch len(callee_type.results) {
+	case 0:
+		return nil
+	case 1:
+		single := make([]string, 1)
+		single[0] = call
+		return single
+	}
+	results := make([]string, len(callee_type.results))
+	for index in 0 ..< len(callee_type.results) {
+		out := extract(e, result_type, call, index)
+		results[index] = out
+	}
+	return results
+}
+
+@(private = "file")
+emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	if v.text_conversion != .None {
+		return emit_text_conversion(e, v)[0]
+	}
+	source_expr := v.bound[0]
+	source := expr_base(source_expr).type
+	target := v.type
+	value := emit_expr(e, source_expr)
+
+	from := type_underlying(e.c, source)
+	to := type_underlying(e.c, target)
+	if llvm_type(e, from) == llvm_type(e, to) {
+		return value
+	}
+
+	from_float := type_is_float(e.c, from)
+	to_float := type_is_float(e.c, to)
+	from_bits, to_bits := type_bits(e.c, from), type_bits(e.c, to)
+	from_signed := type_signed(e.c, from) || type_is_rune(e.c, from)
+	to_signed := type_signed(e.c, to) || type_is_rune(e.c, to)
+
+	operation := ""
+	switch {
+	case from_float && to_float:
+		operation = from_bits > to_bits ? "fptrunc" : "fpext"
+	case from_float:
+		operation = to_signed ? "fptosi" : "fptoui"
+	case to_float:
+		operation = from_signed ? "sitofp" : "uitofp"
+	case from_bits > to_bits:
+		operation = "trunc"
+	case from_bits < to_bits:
+		operation = from_signed ? "sext" : "zext"
+	case:
+		return value
+	}
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, operation, llvm_type(e, from), value, llvm_type(e, to))
+	return out
+}
+
+// `union.active_typeid()`: translate the compact union discriminant to the
+// deterministic program-wide `typeid` assigned to that variant. Tag zero is
+// the nil union and therefore remains the nil `typeid`.
+@(private = "file")
+emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	if v.union_op != .Active_Typeid || len(v.bound) != 1 {
+		backend_fail(e, "a union call has no active-type operation")
+		return "0"
+	}
+	union_type := expr_base(v.bound[0]).type
+	info := type_of(e.c, union_type)
+	if info == nil || info.kind != .Union {
+		backend_fail(e, "active_typeid did not receive a union")
+		return "0"
+	}
+	value := emit_expr(e, v.bound[0])
+	tag := emit_union_tag(e, union_type, value)
+	shape := union_layout(e.c, union_type)
+	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
+	result := "0"
+	for variant, index in info.variants {
+		matched := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", matched, tag_llvm, tag, index + 1)
+		next := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = select i1 %s, i64 %d, i64 %s",
+			next, matched, typeid_value(e.c, variant), result,
+		)
+		result = next
+	}
+	return result
+}

@@ -111,6 +111,9 @@ Compiler :: struct {
 
 	// Interface declarations (`src/interface.odin`), keyed by their symbol.
 	interfaces:            map[Symbol_Id]^Interface_Info,
+	// Checked map key operations, keyed by the underlying key type. Consumers
+	// must use these IDs rather than selecting members again.
+	map_key_policies:      map[Type_Id]Key_Policy,
 
 	// Compile-time reflection (`src/reflect.odin`). The descriptor types are
 	// created on first use; `typeid` identity is symbolic during checking and

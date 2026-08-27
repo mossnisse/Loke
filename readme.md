@@ -18,6 +18,9 @@ The normative language specification is in [design.md](design.md), and its gramm
 [compiler-plan.md](compiler-plan.md), which records what each milestone M0–M6b
 delivered; the current milestone is M7, planned in [m7-plan.md](m7-plan.md).
 
+The current phase contracts, allocation ownership, and backend component map are
+described in [compiler-architecture.md](compiler-architecture.md).
+
 M1 completed the front end: every construct in [grammar.md](grammar.md) lexes and
 parses, so `-parse-only` and `-dump-ast` accept any valid program.
 

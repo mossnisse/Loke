@@ -316,14 +316,18 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if key == INVALID_TYPE {
 		return true
 	}
-	policy := map_key_policy(k.c, key)
-	if policy.reason == "" {
+	if resolved_map_key_policy(k.c, key).kind != .Unresolved { return true }
+	policy, reason := resolve_map_key_policy(k.c, key)
+	if reason == "" {
+		// Selecting semantic IDs is safe even for a hypothetical signature. It
+		// does not commit bodies, typeids, materializations, or witness globals.
+		k.c.map_key_policies[type_underlying(k.c, key)] = policy
 		return true
 	}
 	errorf(
 		k.c, span, "L0586",
 		"`%s` cannot be a map key: it %s",
-		type_name(k.c, key), policy.reason,
+		type_name(k.c, key), reason,
 	)
 	add_notef(
 		k.c, no_span(),

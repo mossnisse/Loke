@@ -1000,8 +1000,11 @@ map_find :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (int, bool)
 @(private = "file")
 eval_map_key_equal :: proc(ev: ^Evaluator, map_type: Type_Id, a, b: Eval_Value) -> (bool, bool) {
 	if !eval_step(ev, ev.origin) { return false, false }
-	policy := map_key_policy(ev.k.c, container_key(ev.k.c, map_type))
-	if policy.builtin {
+	policy := resolved_map_key_policy(ev.k.c, container_key(ev.k.c, map_type))
+	if policy.kind == .Unresolved {
+		return false, eval_fail(ev, ev.origin, "L0405", "a map key operation was not resolved during checking")
+	}
+	if policy.kind == .Builtin {
 		return eval_compare(ev, .Eq_Eq, a, b)
 	}
 	if policy.equal == INVALID_SYMBOL || !ensure_proc_typed_for_eval(ev.k, policy.equal) {

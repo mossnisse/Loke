@@ -54,36 +54,43 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // the key type's *own* package declare both? An extension block never enters the
 // answer, which is what makes one `map[K]V` use one policy in every package it
 // travels through.
+Key_Policy_Kind :: enum { Unresolved, Builtin, Inherent }
+
+// A checked operation choice, shared by CTFE and every backend. This record
+// contains semantic IDs only; no lookup or code generation happens when read.
 Key_Policy :: struct {
-	builtin:   bool,
+	kind:      Key_Policy_Kind,
 	hash:      Symbol_Id,
 	equal:     Symbol_Id,
-	// Why the type does not qualify, for the diagnostic. Empty when it does.
-	reason:    string,
 }
 
-map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> Key_Policy {
+// Checking is the only phase allowed to select a policy. Failed lookups are not
+// cached: discovery may still be installing inherent members.
+resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, string) {
 	if key == INVALID_TYPE {
-		return Key_Policy{reason = "is not a type"}
+		return Key_Policy{}, "is not a type"
 	}
 	if type_is_hashable(c, key) {
-		return Key_Policy{builtin = true, hash = INVALID_SYMBOL, equal = INVALID_SYMBOL}
+		return Key_Policy{kind = .Builtin}, ""
 	}
 	hash := inherent_member_named(c, key, "hash")
 	equal := inherent_operator_named(c, key, "==")
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
-		return Key_Policy{
-			hash = INVALID_SYMBOL, equal = INVALID_SYMBOL,
-			reason = "needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package",
-		}
+		return Key_Policy{}, "needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package"
 	}
 	if hash == INVALID_SYMBOL {
-		return Key_Policy{hash = INVALID_SYMBOL, equal = INVALID_SYMBOL, reason = "has an inherent `==` but no inherent `hash`"}
+		return Key_Policy{}, "has an inherent `==` but no inherent `hash`"
 	}
 	if equal == INVALID_SYMBOL {
-		return Key_Policy{hash = INVALID_SYMBOL, equal = INVALID_SYMBOL, reason = "has an inherent `hash` but no inherent `==`"}
+		return Key_Policy{}, "has an inherent `hash` but no inherent `==`"
 	}
-	return Key_Policy{hash = hash, equal = equal}
+	return Key_Policy{kind = .Inherent, hash = hash, equal = equal}, ""
+}
+
+// A missing choice is a broken phase contract, never permission to repeat
+// overload/member lookup or silently substitute structural equality.
+resolved_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> Key_Policy {
+	return c.map_key_policies[type_underlying(c, key)]
 }
 
 // An inherent member of the type's own package, never an extension one. `members`

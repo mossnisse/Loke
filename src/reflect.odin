@@ -179,6 +179,10 @@ request_typeid :: proc(c: ^Compiler, type: Type_Id) {
 	if _, seen := c.typeid_requested[type]; seen {
 		return
 	}
+	if c.typeid_frozen {
+		emission_contract_error(c, "a new typeid was requested after freezing")
+		return
+	}
 	c.typeid_requested[type] = true
 	append(&c.typeid_order, type)
 }
