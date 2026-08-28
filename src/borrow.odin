@@ -310,6 +310,64 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
+// ---------------------------------------------------- retention targets --
+
+// consolidation-provenance-plan.md step 8: where a stored borrow has to still
+// be valid. Process and thread are different questions — a `thread_local`
+// destination is satisfied by thread storage, a `static` one is not — and
+// caller-owned storage is a third, answered by the argument's contract.
+Retain_Kind :: enum u8 {
+	None,
+	Process,
+	Thread,
+	Caller,
+}
+
+// Whether a root's storage is still valid at a destination of this kind. The
+// deliberate answers, in order of how often they are asked:
+//
+//   - a local, a temporary, or a hidden literal array ends with the frame, so it
+//     satisfies none of them;
+//   - static and materialized storage satisfies all three;
+//   - thread storage satisfies a thread destination and the caller, and not the
+//     process: sending it to another thread is the error design.md already names;
+//   - an allocation lives until it is released, which the release rules already
+//     police, so storing one is ordinary rather than proof of anything;
+//   - the caller's storage needs the parameter's own written contract, which is
+//     why this predicate does not answer for `Param`; and
+//   - unknown provenance is not a proof of anything, which is the whole point of
+//     tracking it.
+root_satisfies_retention :: proc(kind: Root_Kind, into: Retain_Kind) -> bool {
+	#partial switch kind {
+	case .Local, .Slice_Literal, .Temporary:
+		return false
+	case .Static, .Materialized, .Allocation:
+		return true
+	case .Thread_Local:
+		return into != .Process
+	}
+	return false // `Param` is answered by its contract; `Unknown` proves nothing
+}
+
+retain_kind_text :: proc(kind: Retain_Kind) -> string {
+	switch kind {
+	case .Process: return "storage that outlives the process"
+	case .Thread:  return "storage that outlives the thread"
+	case .Caller:  return "storage the caller owns"
+	case .None:    return "storage"
+	}
+	return "storage"
+}
+
+// The level a parameter must be written at to be stored in this kind of place.
+retain_kind_level :: proc(kind: Retain_Kind) -> Escape_Level {
+	#partial switch kind {
+	case .Process, .Thread:
+		return .Static
+	}
+	return .Stored
+}
+
 // ------------------------------------------------------- escape levels --
 
 // consolidation-provenance-plan.md step 2. What a call may leave behind that
@@ -1641,6 +1699,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				return
 			}
 		}
+	case .Retain:
+		check_retention(state, event)
 	case .Reset:
 		check_region_reset(state, event, live, uses)
 	case .Region_Escape:
@@ -1927,6 +1987,92 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 	if later.file != NO_FILE {
 		add_notef(k.c, later, "and is still used here, which keeps it live")
 	}
+}
+
+// consolidation-provenance-plan.md step 8: what is stored where it outlives the
+// statement that stored it must still be valid there. A parameter answers with
+// its own written `@(escape=...)` level, because the caller is the only one who
+// knows how long its storage lives; every other root answers from its kind.
+@(private = "file")
+check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
+	graph := state.graph
+	for source in event.sources {
+		row := reach_row(state, state.reach, source)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.invalid[index] {
+				continue
+			}
+			loan := graph.loans[index]
+			root := graph.roots[int(loan.root)]
+			// A root trivially outlives itself: a value stored into its own
+			// storage — a view of one of the receiver's fields written into
+			// another — is not retention at all, and the two end together. A
+			// parameter has one root for its entry loan and one for its places,
+			// so this compares the name rather than the identity.
+			destination := Prov_Root{symbol = INVALID_SYMBOL}
+			if event.root != NO_ROOT {
+				destination = graph.roots[int(event.root)]
+			}
+			if loan.root == event.root ||
+			   (root.symbol != INVALID_SYMBOL && root.symbol == destination.symbol) {
+				continue
+			}
+			if root.kind == .Param {
+				if parameter_allows_retention(state, root, event.retain) {
+					continue
+				}
+				errorf(
+					state.k.c,
+					event.span,
+					"L0646",
+					"this %s borrows %s, which is not written `@(escape=%s)`, so it cannot reach %s",
+					loan.what,
+					root_phrase(state.k.c, root),
+					escape_level_name(retain_kind_level(event.retain)),
+					retain_destination(state, event),
+				)
+			} else {
+				if root_satisfies_retention(root.kind, event.retain) {
+					continue
+				}
+				errorf(
+					state.k.c,
+					event.span,
+					"L0647",
+					"this %s borrows %s, which does not outlive %s: %s",
+					loan.what,
+					root_phrase(state.k.c, root),
+					retain_destination(state, event),
+					retain_kind_text(event.retain),
+				)
+			}
+			if root.symbol != INVALID_SYMBOL && root.span.file != NO_FILE {
+				add_notef(state.k.c, root.span, "%s is declared here", root_label(state.k.c, root))
+			}
+			add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
+			return
+		}
+	}
+}
+
+// How a diagnostic names where the borrow was going: a place this body wrote,
+// or the callee parameter that may keep it.
+@(private = "file")
+retain_destination :: proc(state: ^Prov_State, event: Prov_Event) -> string {
+	if event.root == NO_ROOT {
+		return event.verb
+	}
+	return fmt.aprintf("`%s`", event.verb, allocator = state.k.c.semantic_allocator)
+}
+
+// A borrowed parameter may be retained only as far as its own contract allows.
+@(private = "file")
+parameter_allows_retention :: proc(state: ^Prov_State, root: Prov_Root, into: Retain_Kind) -> bool {
+	sym := symbol_of(state.k.c, root.symbol)
+	if sym == nil {
+		return false
+	}
+	return sym.escape >= retain_kind_level(into)
 }
 
 // `free` ends the allocation root designated by a checked base pointer from

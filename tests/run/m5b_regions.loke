@@ -53,12 +53,13 @@ reset_after_an_owner_ends :: proc(@(allocator_reset) allocator: Allocator) -> in
 // may be kept in file-scope storage.
 global_buffer: Buffer;
 
-// design.md "What is not checked": "storing a pointer, slice, iterator, or other
-// view in a record field, global, container, callback state, or service object"
-// remains the programmer's responsibility, so this compiles.
+// Storing a view in a global used to be the programmer's responsibility. It is
+// checked now: the parameter says how long its storage must live, and the
+// caller is held to it (consolidation-provenance-plan.md step 8).
 global_view: []int;
+KEPT_NUMBERS :: [3]int{4, 5, 6};
 
-store_a_view :: proc(values: []int) {
+store_a_view :: proc(@(escape=static) values: []int) {
 	global_view = values;
 }
 
@@ -68,7 +69,8 @@ main :: proc() {
 	global_buffer = make_buffer(1, mem.default_allocator());
 	fmt.println(global_buffer.id);
 
-	numbers := [3]int{4, 5, 6};
-	store_a_view(numbers[:]);
-	fmt.println(numbers[0]);
+	// The contract is on the parameter, so the caller has to pass storage that
+	// really outlives the process.
+	store_a_view(KEPT_NUMBERS[:]);
+	fmt.println(KEPT_NUMBERS[0]);
 }

@@ -24,7 +24,7 @@ unwrap :: proc(holder: Holder) -> []int {
 // stores is another of the caller's arguments, which is the obligation an
 // importer has to be told about.
 @(public)
-retain :: proc(destination: inout Holder, values: []int) {
+retain :: proc(destination: inout Holder, @(escape=stored) values: []int) {
 	destination.view = values;
 }
 

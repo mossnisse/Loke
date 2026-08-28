@@ -10,7 +10,7 @@ package main; import "core:fmt";
 //             acceptance is recorded, not required; moving it to a rejection
 //             fixture is the intended outcome, not a regression.
 //
-// Steps 5 and 6 moved the wrapping and container cases out: a borrow now travels through a record
+// Steps 5, 6 and 8 moved the wrapping, container and retention cases out: a borrow now travels through a record
 // field, a union alternative, and a call, so those GAPs are rejections and live
 // in tests/err/m5b_aggregate_wrapping.loke. What is left here either must keep
 // compiling or waits for containers (step 6), retention contracts (step 7), or
@@ -23,8 +23,6 @@ Holder :: struct { view: []int }
 Pair :: struct { left: []int, right: []int }
 Choice :: union { Holder, int }
 Owner :: struct { numbers: [dynamic]int, view: []int }
-
-global_holder: Holder;
 
 // --- wrapping ---------------------------------------------------------------
 
@@ -113,31 +111,19 @@ alloc_wrapped :: proc() {
 
 // --- retention --------------------------------------------------------------
 
-// POSITIVE. The retained view is one of the caller's own arguments, so the
-// caller can be given an obligation it is able to meet.
-retain_into_inout :: proc(destination: inout Holder, values: []int) {
+// POSITIVE. The retained view is one of the caller's own arguments, and the
+// parameter says so, which is the obligation the caller is held to.
+retain_into_inout :: proc(destination: inout Holder, @(escape=stored) values: []int) {
 	destination.view = values;
 }
 
-// GAP. The retained view is callee-local storage. No contract the caller could
-// be given makes this valid.
-retain_local_into_inout :: proc(destination: inout Holder) {
-	local := [3]int{1, 2, 3};
-	destination.view = local[:];
-}
+// POSITIVE. The same for process storage, written at the stronger level. The
+// caller is held to it, so what it passes has to outlive the process too.
+KEPT :: [4]int{5, 6, 7, 8};
+promised_global: Holder;
 
-// GAP, and today a documented trust boundary rather than an oversight: nothing
-// tells the caller that `values` must outlive the process.
-set_global :: proc(values: []int) {
-	global_holder = Holder{values};
-}
-
-// GAP. Thread storage outlives every frame on its own thread and nothing on
-// another one; neither half of that is checked here.
-store_in_thread_local :: proc(values: []int) {
-	held: thread_local Holder;
-	held.view = values;
-	fmt.println(len(held.view));
+set_promised_global :: proc(@(escape=static) values: []int) {
+	promised_global = Holder{values};
 }
 
 // POSITIVE since step 5. A user `operator([:])` whose receiver field is itself a
@@ -197,6 +183,7 @@ main :: proc() {
 
 	holder: Holder;
 	retain_into_inout(inout holder, others[:]);
+	set_promised_global(KEPT[:]);
 	fmt.println(holder.view[0]);
 	fmt.println(reslice_a_stored_view());
 	fmt.println(substituted_field_only());

@@ -16,9 +16,11 @@ global_view: []int;
 global_pointer: ^int;
 global_holder: Holder;
 
-// 1. Storing a pointer, slice, iterator, or other view in a record field, a
-//    global, or service-object state.
-store_in_a_global :: proc(values: []int, target: ^int) {
+// 1. Storing a pointer, slice, iterator, or other view in a record field is
+//    still the programmer's responsibility. Storing one in a global is not: the
+//    parameter says how long its storage must live, and step 8 holds the caller
+//    to it. The unconstrained forms moved to tests/err/m5b_retention.loke.
+store_in_a_global :: proc(@(escape=static) values: []int, @(escape=static) target: ^int) {
 	global_view = values;
 	global_pointer = target;
 }
@@ -27,9 +29,9 @@ store_in_a_record_field :: proc(values: []int) -> Holder {
 	return Holder{values};
 }
 
-// 2. A procedure retaining a borrowed argument after it returns. Nothing here
-//    tells the caller that `values` outlived the call.
-retain_an_argument :: proc(values: []int) {
+// 2. A procedure retaining a borrowed argument after it returns. The contract
+//    is what tells the caller that `values` must outlive the call.
+retain_an_argument :: proc(@(escape=static) values: []int) {
 	global_holder = Holder{values};
 }
 
@@ -52,9 +54,10 @@ alias_without_a_conflict :: proc() -> int {
 	return h.target^;
 }
 
-// 5. A borrow that leaves through a callback's state. The procedure value
-//    carries a code pointer only, so what it closes over is not visible here.
-run_with :: proc(action: proc(values: []int), values: []int) {
+// 5. A borrow that leaves through a callback's state. The callback's own
+//    parameter carries the contract, so the caller of `run_with` is held to
+//    whatever the callback promises rather than to nothing.
+run_with :: proc(action: proc(@(escape=static) values: []int), @(escape=static) values: []int) {
 	action(values);
 }
 
@@ -68,24 +71,29 @@ supply_one :: proc() -> ^int {
 	return pointer;
 }
 
+// The callers now have to hold up their end, so what they pass has to be storage
+// that really does outlive the process.
+KEPT :: [3]int{4, 5, 6};
+kept_target: static int = 0;
+
 main :: proc() {
-	numbers := [3]int{4, 5, 6};
+	numbers := KEPT;
 	target := 0;
-	store_in_a_global(numbers[:], &target);
+	store_in_a_global(KEPT[:], &mut kept_target);
 	fmt.println(global_view[0] + global_pointer^);
 
 	holder := store_in_a_record_field(numbers[:]);
 	fmt.println(holder.view[1]);
 
-	retain_an_argument(numbers[:]);
+	retain_an_argument(KEPT[:]);
 	fmt.println(global_holder.view[2]);
 
 	fmt.println(deref_unknown_provenance(supply_one));
 	fmt.println(alias_without_a_conflict());
-	run_with(store_a_view, numbers[:]);
+	run_with(store_a_view, KEPT[:]);
 	fmt.println(global_view[0]);
 }
 
-store_a_view :: proc(values: []int) {
+store_a_view :: proc(@(escape=static) values: []int) {
 	global_view = values;
 }

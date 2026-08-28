@@ -1,0 +1,27 @@
+L0647
+@23:2
+this slice borrows `local`, which does not outlive `global_view`: storage that outlives the process
+L0647
+@29:2
+this slice borrows `local`, which does not outlive `global_holder`: storage that outlives the process
+L0646
+@34:2
+this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `global_view`
+L0646
+@35:2
+this pointer borrows `target`, which is not written `@(escape=static)`, so it cannot reach `global_pointer`
+L0646
+@39:2
+this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `global_holder`
+L0647
+@45:2
+this slice borrows `tls_view`, which does not outlive `global_view`: storage that outlives the process
+L0646
+@51:2
+this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `held`
+L0647
+@59:2
+this slice borrows `local`, which does not outlive `destination`: storage the caller owns
+L0646
+@64:2
+this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`

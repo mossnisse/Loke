@@ -1,0 +1,70 @@
+package main; import "core:fmt";
+
+// consolidation-provenance-plan.md step 8: storing a borrow where it outlives
+// the statement that stored it. design.md listed all of this as unchecked; it is
+// checked now, and what makes a case valid is the parameter's own written
+// `@(escape=...)` level, since only the caller knows how long its storage lives.
+//
+// These came out of tests/run/m5b_aggregate_baseline.loke and
+// tests/run/m5b_trust_boundary.loke, where they were labelled as gaps.
+
+Holder :: struct { view: []int }
+
+global_view: []int;
+global_pointer: ^int;
+global_holder: Holder;
+tls_view: thread_local []int;
+
+TABLE :: [4]int{1, 2, 3, 4};
+
+// A local does not outlive the process.
+local_to_global :: proc() {
+	local := [3]int{1, 2, 3};
+	global_view = local[:];
+}
+
+// Nor does it reach a global through a field.
+local_to_global_field :: proc() {
+	local := [3]int{1, 2, 3};
+	global_holder.view = local[:];
+}
+
+// An unconstrained parameter proves nothing about its caller's storage.
+store_in_a_global :: proc(values: []int, target: ^int) {
+	global_view = values;
+	global_pointer = target;
+}
+
+retain_an_argument :: proc(values: []int) {
+	global_holder = Holder{values};
+}
+
+// Thread storage outlives its own thread and nothing else, so it does not
+// satisfy a process-duration destination.
+tls_to_process :: proc() {
+	global_view = tls_view;
+}
+
+// Nor does a local reach thread storage.
+local_to_thread_local :: proc(values: []int) {
+	held: thread_local Holder;
+	held.view = values;
+	fmt.println(len(held.view));
+}
+
+// Callee-local storage retained in a destination the caller owns. No contract
+// the caller could be given makes this one valid.
+retain_local_into_inout :: proc(destination: inout Holder) {
+	local := [3]int{1, 2, 3};
+	destination.view = local[:];
+}
+
+// And an unconstrained parameter retained the same way.
+retain_argument_into_inout :: proc(destination: inout Holder, values: []int) {
+	destination.view = values;
+}
+
+main :: proc() {
+	global_view = TABLE[:];
+	fmt.println(global_view[0]);
+}

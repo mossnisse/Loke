@@ -14,6 +14,7 @@
 // per cleanup point instead of reconstructing which scopes an abrupt jump left.
 package lokec
 
+import "core:fmt"
 import "core:mem"
 import "core:slice"
 
@@ -106,6 +107,10 @@ Prov_Kind :: enum u8 {
 	Escape,
 	// `free`, which needs an allocation base and ends that allocation root.
 	Free,
+	// A borrow is stored where it outlives the statement that stored it: in
+	// process or thread storage, or in storage the caller owns
+	// (consolidation-provenance-plan.md step 8). `retain` says which.
+	Retain,
 	// An allocator region reset: `free_all`, or a call through a parameter marked
 	// `@(allocator_reset)`.
 	Reset,
@@ -134,6 +139,9 @@ Prov_Event :: struct {
 	access:  Access_Kind,
 	verb:    string,
 	name:    string,
+	// `Retain`: what kind of storage the destination is. `name` is how a
+	// diagnostic spells it and `verb` names the destination.
+	retain: Retain_Kind,
 	// `Escape`: which result of the enclosing procedure this value becomes, and
 	// the allocator region an owning result carries with it.
 	result:  int,
@@ -2163,6 +2171,40 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	prov_emit(graph, event)
 }
 
+// consolidation-provenance-plan.md step 8: a borrow stored where it outlives the
+// statement that stored it. The destination is resolved as a place, so a field,
+// a nested container element, and a write through a tracked alias are all seen,
+// not only a bare identifier. Only a destination that actually receives a borrow
+// is reported, so ordinary global data costs nothing.
+@(private = "file")
+prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int) {
+	if len(sources) == 0 {
+		return
+	}
+	root, _, ok := prov_place_of(graph, target)
+	if !ok {
+		return
+	}
+	descriptor := graph.roots[int(root)]
+	into := Retain_Kind.None
+	#partial switch descriptor.kind {
+	case .Static:       into = .Process
+	case .Thread_Local: into = .Thread
+	case .Param:        into = .Caller
+	}
+	if into == .None {
+		return
+	}
+	prov_emit(graph, Prov_Event {
+		kind    = .Retain,
+		span    = expr_span(target),
+		sources = sources,
+		root    = root,
+		retain  = into,
+		verb    = descriptor.name,
+	})
+}
+
 // An owner backed by a region the procedure received may not be returned,
 // assigned to `static`, `thread_local`, or file-scope storage (design.md).
 @(private = "file")
@@ -2348,6 +2390,22 @@ prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind) -
 		sources := prov_one(graph, slot)
 		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = v.span})
 		return sources
+	}
+	// Reading a carrier that lives in static or thread storage yields a borrow of
+	// that storage, which is what lets a later store ask whether it outlives its
+	// destination — a `thread_local` view does not outlive the process
+	// (consolidation-provenance-plan.md step 8).
+	if sym := symbol_of(graph.k.c, v.symbol); sym != nil && sym.duration != .None {
+		if type_is_carrier(graph.k.c, sym.type) {
+			if root := prov_root_for_symbol(graph, v.symbol); root != NO_ROOT {
+				return prov_borrow(
+					graph, root, nil,
+					carrier_is_mutable(graph.k.c, sym.type),
+					v.span,
+					carrier_noun(graph.k.c, sym.type),
+				)
+			}
+		}
 	}
 	// Reading a whole aggregate reads everything it holds.
 	if content := prov_content_slots(graph, v.symbol); len(content) > 0 {
@@ -2647,6 +2705,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					graph.region_of[ident.symbol] = existing
 				}
 			}
+			prov_retain_escape(graph, target, sources)
 			// Moving, dropping, freeing, fully assigning, or exchanging a root
 			// invalidates borrows of its previous value (design.md).
 			prov_invalidate(graph, target, expr_span(target), "assigned")
@@ -2666,6 +2725,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			continue
 		}
 		// A write through a field or an element touches only that path.
+		prov_retain_escape(graph, target, sources)
 		if root, path, ok := prov_place_of(graph, target); ok {
 			prov_walk_subscripts(graph, target)
 			prov_access(graph, root, path, .Write, expr_span(target))
@@ -2900,11 +2960,56 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		borrowed = prov_join(graph, borrowed, actuals[index])
 	}
 	prov_call_resets(graph, v)
+	prov_call_retention(graph, v, actuals)
 	prov_container_content(graph, v, container_op, actuals)
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
 	return prov_store_call_results(graph, v, actuals, borrowed)
+}
+
+// The caller's half of `@(escape=static)`: a parameter the callee may keep in
+// process storage needs an argument that is still there, and the callee's body
+// check alone would leave the promise unenforced at the only place that knows.
+// `stored` is not checked here — its destinations are other arguments of the
+// same call, and proving one caller value outlives another is not this step's.
+@(private = "file")
+prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
+	proc_type := prov_call_proc_type(graph, v)
+	if type_of(graph.k.c, proc_type) == nil {
+		return
+	}
+	for slots, index in actuals {
+		if len(slots) == 0 || proc_param_escape(graph.k.c, proc_type, index) != .Static {
+			continue
+		}
+		prov_emit(graph, Prov_Event {
+			kind    = .Retain,
+			span    = v.span,
+			sources = slots,
+			root    = NO_ROOT,
+			retain  = .Process,
+			verb    = prov_parameter_label(graph, v, index),
+		})
+	}
+}
+
+@(private = "file")
+prov_parameter_label :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> string {
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	if sym == nil || index >= len(sym.param_symbols) {
+		return "a parameter this call may keep"
+	}
+	bound := symbol_of(graph.k.c, sym.param_symbols[index])
+	if bound == nil {
+		return "a parameter this call may keep"
+	}
+	return fmt.aprintf(
+		"`%s`, which `%s` may keep",
+		identifier_text(graph.k.c, bound.name),
+		identifier_text(graph.k.c, sym.name),
+		allocator = graph.k.c.semantic_allocator,
+	)
 }
 
 // consolidation-provenance-plan.md step 6. A container operation is resolved

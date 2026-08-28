@@ -561,6 +561,8 @@ not complete this step.
 
 ### 8. Enforce retention into static and caller-owned storage
 
+Done, together with step 7's retention half; see the verification record.
+
 - Generalize `prov_region_escape` and assignment destination resolution beyond
   simple identifiers and managed types. Check bare carriers, aggregate fields,
   nested containers, `exchange`, and writes through tracked aliases to
@@ -1150,3 +1152,68 @@ Adding the attribute changed nothing in the corpus: every `tests/err`,
 `tests/run`, `tests/trap`, `tests/pkg`, and `tests/pkg_err` case produced
 identical output before and after. `odin test src` 56 tests, `odin test tests` 14
 tests, and all four optimization levels pass.
+
+### Step 8 — retention into static, thread, and caller-owned storage
+
+Implemented on 2026-08-28, and with it step 7's retention half. This is the step
+that turns design.md's longest "what is not checked" bullet into a checked rule.
+
+**One event, three destinations.** `prov_retain_escape` fires on an assignment
+whose destination resolves to a root with process duration, thread duration, or a
+caller's storage, and carries the source loans to a `.Retain` check.  The
+destination is resolved as a *place*, so a field of a global, a nested container
+element, and a write through a tracked alias are all seen — not only the bare
+identifier `prov_region_escape` was limited to. Nothing is reported unless the
+destination actually receives a borrow, so ordinary global data costs nothing.
+
+**Who satisfies what.** `root_satisfies_retention` answers from the root's kind:
+a local, temporary, or hidden literal array satisfies nothing; static and
+materialized storage satisfies everything; **thread storage satisfies a thread
+destination and not the process**, which is step 0's duration split finally doing
+work; an allocation is ordinary rather than proof of anything, since the release
+rules already police it; and unknown provenance proves nothing, which is the
+whole point of tracking it. A `Param` root is not answered by kind at all — only
+its written `@(escape=...)` level can answer, because only the caller knows how
+long its storage lives.
+
+**Reading a static or thread carrier yields a borrow of that storage**, which is
+what makes `global_view = tls_view` diagnosable at all. Without it a `thread_local`
+view was simply invisible.
+
+**The caller's half.** A body check alone would leave `@(escape=static)` as a
+promise nobody is held to, so `prov_call_retention` emits the same check at the
+call: an argument passed to a `static` parameter must itself outlive the process.
+That is what makes `store_in_a_global(numbers[:], &target)` in
+[m5b_trust_boundary.loke](tests/run/m5b_trust_boundary.loke) fail where `numbers`
+is a local of `main`, and the fixture now passes storage that really does
+outlive the process. `run_with` was reassessed as the plan required rather than
+grandfathered: its own parameter must carry the contract its callback demands.
+
+**A false rejection found by the corpus and fixed.** Modelling retention lit up
+eight standard-library programs with `this string view borrows 'self' … cannot be
+stored in 'self'` — an iterator advancing `self.rest = self.rest[n:]`. A root
+trivially outlives itself, so storing a value into its own storage is not
+retention. The comparison is by *symbol*, not by root identity: a parameter has
+one root for its entry loan and another for its places, so identity alone missed
+it.
+
+**Still open, deliberately.** `@(escape=stored)`'s caller-side obligation is not
+checked: its destinations are other arguments of the same call, and proving one
+caller value outlives another needs scope reasoning this step does not have. So
+`stored` is enforced in the body — a local cannot be retained into a caller's
+storage, and an unconstrained parameter cannot either — but the caller is not yet
+held to the ordering. That is the remaining half of L0646 and the honest limit of
+this milestone's Phase 4b.
+
+Corpus migration: the retention gaps left in
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke) and the three
+in `m5b_trust_boundary.loke` became
+[m5b_retention.loke](tests/err/m5b_retention.loke), nine rejections covering
+local-to-global, local-to-global through a field, unconstrained parameters,
+TLS-to-process, local-to-TLS, and both caller-owned cases. Their positive
+counterparts — the same procedures with the contract written — stayed in the run
+corpus, along with the imported `wrapping.retain`, which now says
+`@(escape=stored)`.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.
