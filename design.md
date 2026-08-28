@@ -4887,8 +4887,10 @@ A borrow written into storage that outlives the statement writing it is
 
 A destination is a place, not a name: a field of a global, a container element,
 and a write through a pointer are all destinations. Where the place is reached
-through a carrier — `p^.view`, `d[0].view` — the storage it names is whatever
-that carrier borrows, so the question is asked of every root it may point at.
+through a carrier — `p^.view`, `d[0].view` — the storage it names is whatever that
+carrier borrows, so both the question and the borrow reach every root the carrier
+may point at. What is written lands where the pointer points, not in the pointer,
+and takes the destination's own capability as any other assignment does.
 
 What a root proves depends on where it lives. A local, a value temporary, or a
 literal's hidden array ends with the frame and satisfies none of the three.
@@ -4946,11 +4948,7 @@ responsibility:
 - aliases hidden by foreign code, and what a foreign procedure retains of a
   borrowed argument after it returns;
 - transferring borrows or unchecked addresses between threads, and keeping a
-  `thread_local` borrow past the end of its thread;
-- what a call leaves in a destination reached through a pointer held in a
-  variable: `keep(&mut held, view)` records that `held` was given the borrow,
-  while `p := &mut held; keep(p, view)` records it only against `p`. The
-  contract on the destination's storage is still checked in both.
+  `thread_local` borrow past the end of its thread.
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use
 `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.

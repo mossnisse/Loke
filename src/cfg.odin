@@ -117,6 +117,12 @@ Prov_Kind :: enum u8 {
 	// An owner backed by a received allocator region is stored somewhere that
 	// outlives that region.
 	Region_Escape,
+	// A value is written into whatever a carrier points at: `p^.view = values`,
+	// or an argument the callee may keep. Which storage that is depends on the
+	// carrier's own loans, so unlike `Def` the destination slots are resolved
+	// while solving. It joins rather than replaces, because the carrier may name
+	// more than one root and the write reaches only one of them.
+	Publish,
 }
 
 // design.md "Capabilities and the one rule". A read is compatible with a
@@ -2795,6 +2801,23 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		}
 		// A write through a field or an element touches only that path.
 		prov_retain_escape(graph, target, sources, expr_span(target))
+		if _, _, ok := prov_place_of(graph, target); !ok && s.op == .Assign && len(sources) > 0 {
+			// The destination is reached through a carrier, so what it names is
+			// solved rather than written out.
+			if through := prov_retain_through_carrier(graph, target); len(through) > 0 {
+				// The destination's own type still decides the capability, exactly
+				// as it would if the place had been written out: a fresh mutable
+				// borrow written into a read-only field is simply created
+				// read-only (design.md "Weakening and read-only reborrows").
+				prov_weaken(graph, sources, expr_base(target).type)
+				prov_emit(graph, Prov_Event {
+					kind    = .Publish,
+					span    = expr_span(target),
+					sources = sources,
+					into    = through,
+				})
+			}
+		}
 		if root, path, ok := prov_place_of(graph, target); ok {
 			prov_walk_subscripts(graph, target)
 			prov_access(graph, root, path, .Write, expr_span(target))
@@ -3135,9 +3158,10 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Ty
 // storage needs a source that outlives it — and the flow is the assignment's
 // too, joined rather than replaced because the callee may also leave it alone.
 //
-// `carrier` is the argument's own loans, which answer for a destination written
-// through a pointer or slice, where the root is not a syntactic property of the
-// argument expression.
+// Which storage the argument names depends on how it was passed. An `inout`
+// argument *is* the destination place. A `^mut`/`[]mut` argument is a carrier
+// pointing at the destination, so both halves go through its loans instead:
+// `carrier` is what it borrows, and the solver reads the roots off it.
 @(private = "file")
 prov_retain_into_argument :: proc(
 	graph: ^Flow_Graph,
@@ -3150,33 +3174,30 @@ prov_retain_into_argument :: proc(
 	if argument == nil {
 		return
 	}
+	if !prov_argument_is_place(graph, v, index) {
+		if len(carrier) == 0 {
+			return
+		}
+		prov_emit(graph, Prov_Event {
+			kind    = .Retain,
+			span    = v.span,
+			sources = sources,
+			root    = NO_ROOT,
+			into    = carrier,
+		})
+		prov_emit(graph, Prov_Event {
+			kind    = .Publish,
+			span    = v.span,
+			sources = sources,
+			into    = carrier,
+		})
+		return
+	}
 	root, path, ok := prov_place_of(graph, argument)
 	if !ok {
-		// A `^mut`/`[]mut` destination: the roots it may name are its loans.
-		if len(carrier) > 0 {
-			prov_emit(graph, Prov_Event {
-				kind    = .Retain,
-				span    = v.span,
-				sources = sources,
-				root    = NO_ROOT,
-				into    = carrier,
-			})
-		}
-		// `&mut place` is the spelling that still says which place, so the flow
-		// follows it. A pointer reaching the call in a variable does not, and the
-		// contract check above is what covers that case.
-		unary, is_unary := argument.(^Expr_Unary)
-		if !is_unary || unary.op != .Amp {
-			return
-		}
-		root, path, ok = prov_place_of(graph, unary.operand)
-		if !ok {
-			return
-		}
-		argument = unary.operand
-	} else {
-		prov_retain_escape(graph, argument, sources, v.span)
+		return
 	}
+	prov_retain_escape(graph, argument, sources, v.span)
 	slots := prov_content_at(graph, root, path)
 	if len(slots) == 0 {
 		ident, is_ident := argument.(^Expr_Ident)
@@ -3192,6 +3213,17 @@ prov_retain_into_argument :: proc(
 	for slot in slots {
 		prov_define_one_content(graph, slot, prov_join(graph, prov_one(graph, slot), sources), v.span)
 	}
+}
+
+// Whether this argument names the destination itself rather than pointing at it.
+@(private = "file")
+prov_argument_is_place :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> bool {
+	if index == 0 {
+		if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym != nil && sym.has_receiver {
+			return sym.receiver == .Inout
+		}
+	}
+	return prov_argument_is_inout(graph, v, index)
 }
 
 @(private = "file")

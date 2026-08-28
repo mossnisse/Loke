@@ -49,3 +49,9 @@ this slice borrows `values`, which is not written `@(escape=stored)`, so it cann
 L0647
 @132:2
 this slice borrows `numbers`, which does not outlive `global_holder`: storage that outlives the process
+L0513
+@145:9
+this slice is used after `numbers`, the local it borrows, has ended
+L0513
+@155:9
+this slice is used after `numbers`, the local it borrows, has ended

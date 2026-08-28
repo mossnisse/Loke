@@ -1419,3 +1419,50 @@ names that.
 
 `odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
 levels pass.
+
+### Follow-up — publishing through a pointer
+
+Implemented on 2026-08-28, closing the precision limit the previous entry
+recorded. With it, every part of the retention contract holds through a pointer,
+not only the half that could be answered syntactically.
+
+**A destination the solver resolves needs a definition the solver applies.**
+`Def` writes into a slot chosen when the graph is built, which is why a write
+through a pointer had nowhere to go: the destination is whatever the pointer
+borrows. `Publish` is the same operation with the destination read off the
+carrier's reaching loans while solving — join, not replace, because one carrier
+may name several roots and the write reaches one of them. Joining bits into a row
+is monotone, so the fixed point still settles, and it resolves only slots that
+already exist: a destination nothing ever reads has no slot, and nothing is lost
+by not recording it.
+
+Both spellings now behave the same way. `p^.view = numbers[:]` publishes into
+what `p` points at, and so does `keep(p, numbers[:])` where the parameter is
+`^mut Holder`. Leaving the source's scope and reading the destination afterwards
+is **L0513** in both, exactly as the direct `held.view = numbers[:]` already was.
+
+**The call-site dispatch was wrong and the fixture found it.** A `^mut Holder`
+argument is a place — the variable `p` — so the place branch published into `p`'s
+own slot rather than into what `p` points at, recording the borrow in the pointer.
+Which destination an argument names is decided by how it was passed, not by
+whether a place resolves: `prov_argument_is_place` now separates the `inout`
+argument, which *is* the destination, from the carrier argument, which points at
+it.
+
+**A false rejection the new flow introduced, and its fix.** Publishing skipped
+the weakening every assignment does, so a fresh `[]mut int` written into a `[]int`
+field through a pointer stayed mutable and conflicted with the read-only borrow
+already published there. `prov_weaken` at the publish site restores design.md's
+rule that a fresh borrow settles at its destination's capability. The case is in
+the run corpus: `HEAD` rejects it with L0511, and the fixture is the positive that
+says it must not.
+
+Corpus: two rejections added to
+[m5b_retention.loke](tests/err/m5b_retention.loke) — the write and the call, both
+through a pointer variable — and one positive to
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke). An A/B of
+both compilers over every corpus reports no other difference, which also says the
+standard library writes through pointers exactly as before.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.

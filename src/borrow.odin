@@ -1436,6 +1436,24 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 			bit_mark(state.merged, int(event.loan))
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
+	case .Publish:
+		// Where this lands is what the carrier borrows, which is a solved fact
+		// rather than a syntactic one. Joining into every root it may name is
+		// conservative in the rejecting direction, and monotone, so the fixed
+		// point still settles.
+		mem.zero_slice(state.merged)
+		for source in event.sources {
+			words_or(state.merged, reach_row(state, reach, source))
+		}
+		for slot in event.into {
+			row := reach_row(state, reach, slot)
+			for index in 0 ..< state.loans {
+				if !bit_get(row, index) || invalid[index] {
+					continue
+				}
+				publish_into_loan(state, reach, graph.loans[index])
+			}
+		}
 	case .Live:
 		// Only a loop head's re-read sets this. The loan was created once, before
 		// the loop, but it is re-established every iteration, so an invalidation
@@ -1540,6 +1558,26 @@ solve_loan_liveness :: proc(state: ^Prov_State) {
 				append(&queue, predecessor)
 				queued[int(predecessor)] = true
 			}
+		}
+	}
+}
+
+// The slots holding what one loan's storage contains. Only slots that already
+// exist: the solver runs after the graph is built, and a destination with no
+// slot of its own is one nothing ever reads, so there is nothing to record.
+@(private = "file")
+publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan: Prov_Loan) {
+	graph := state.graph
+	root := graph.roots[int(loan.root)]
+	if root.symbol == INVALID_SYMBOL {
+		return
+	}
+	for slot, index in graph.prov_slots {
+		if slot.symbol != root.symbol || index >= state.slots {
+			continue
+		}
+		if paths_overlap(slot.path, loan.path) {
+			words_or(reach_row(state, reach, index), state.merged)
 		}
 	}
 }

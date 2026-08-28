@@ -140,6 +140,18 @@ local_through_a_pointer :: proc() -> int {
 	return held.view[0];
 }
 
+// POSITIVE. The same through a pointer held in a variable, where what the
+// destination names is solved rather than written out. Everything here lives to
+// the same point, so the borrow that travels into `held` is still valid.
+local_through_a_pointer_variable :: proc() -> int {
+	numbers := [4]int{5, 4, 3, 2};
+	held: Holder;
+	p := &mut held;
+	retain_through_a_pointer(p, numbers[:]);
+	p^.view = numbers[1:];
+	return held.view[0];
+}
+
 // POSITIVE. A destination that cannot hold a borrow is not a destination, so a
 // `stored` argument asks nothing of it.
 count_into :: proc(total: inout int, @(escape=stored) values: []int) {
@@ -221,6 +233,7 @@ main :: proc() {
 	fmt.println(reslice_a_stored_view());
 	fmt.println(substituted_field_only());
 	fmt.println(local_through_a_pointer());
+	fmt.println(local_through_a_pointer_variable());
 
 	total := 0;
 	forward_a_count(inout total, KEPT[:]);

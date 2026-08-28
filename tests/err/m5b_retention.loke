@@ -132,6 +132,29 @@ caller_points_at_a_global :: proc() {
 	keep_through_a_pointer(&mut global_holder, numbers[:]);
 }
 
+// A pointer says which storage it names only once its own borrows are solved,
+// so what is written through it lands where it points rather than in the
+// pointer. Both the write and the call are the same question.
+write_through_a_pointer_variable :: proc() -> int {
+	held: Holder;
+	p := &mut held;
+	{
+		numbers := [3]int{1, 2, 3};
+		p^.view = numbers[:];
+	}
+	return held.view[0];
+}
+
+call_through_a_pointer_variable :: proc() -> int {
+	held: Holder;
+	{
+		numbers := [3]int{1, 2, 3};
+		p := &mut held;
+		keep_through_a_pointer(p, numbers[:]);
+	}
+	return held.view[0];
+}
+
 main :: proc() {
 	global_view = TABLE[:];
 	fmt.println(global_view[0]);
