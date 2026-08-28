@@ -24,8 +24,12 @@ wrapped_allocation_base :: proc() {
 
 // The callback's result borrows `input` and never `scratch`, but an indirect
 // call has no result contract, so every borrowed argument is assumed to be a
-// possible source of the result. Step 2 selects the contract that lets this
-// signature say which input the result depends on; step 7 enforces it.
+// possible source of the result. Step 2 chose the contract that fixes this: the
+// callback parameter's type becomes
+//
+//     proc(input: []int, @(escape=none) scratch: []int) -> []int
+//
+// and step 7 enforces `@(escape=none)` in `pick`'s body and at the assignment.
 pick :: proc(input: []int, scratch: []int) -> []int {
 	fmt.println(scratch[0]);
 	return input;

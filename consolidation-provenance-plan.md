@@ -187,42 +187,162 @@ judged. No language change ships in this step.
 
 ### 2. Settle the result and retention contract representation
 
-This is a decision gate on paper, taken against step 1's examples and before any
-solver work, because the summary representation the later steps produce *is* the
-contract. Deciding it after building those summaries means rebuilding them.
-
-Compare portable inferred summaries with a small explicit
-declaration/procedure-type contract. Inference can remain the default for bodies;
-it wins alone only if an abstract callback signature can express the needed
-contract without knowing the eventual callee or consulting its body at each
-caller. Otherwise prototype the smallest explicit form using the existing
-attribute/signature machinery.
-
-Record the selected syntax or metadata representation, default for an omitted
-contract, compatibility rules, diagnostics, and conservative rejections before
-changing `design.md` or `grammar.md`. This is a bounded decision within this
-milestone, not permission to silently choose a lifetime language. Shipping Phase
-4b is blocked until it has a concrete usable answer.
-
-The selected contract must describe:
-
-- result-path dependencies on input paths, distinguishing borrowed content from
-  addresses of input storage, plus regions and known allocation-base relationships;
-- which input paths may be retained in which mutable destination paths, including
-  `inout` parameters and receivers;
-- input lifetime requirements for retention into process/TLS storage; and
-- any proven replacement/clear effect used to remove old facts. A may-retain
-  effect alone only adds possibilities and cannot justify killing a dependency.
-
-Identity is whole-program for now. Use the indices the whole-program checker
-already has rather than designing a portable encoding with no reader; record that
-a private `Symbol_Id` or transient graph index cannot survive serialization, so a
-future separate-compilation system must republish the contract through package
-metadata. Do not build that system here.
-
-**Exit:** a recorded representation, default, compatibility rule, and diagnostic
-shape that steps 4–8 implement without renegotiation. No compiler change ships in
+Decided; the rest of this section is the record. This was a decision gate on
+paper, taken against step 1's examples and before any solver work, because the
+summary representation the later steps produce *is* the contract. Deciding it
+after building those summaries means rebuilding them. No compiler change ships in
 this step.
+
+#### Why inference alone loses
+
+Step 1's callback fixture settles it. `run_pick` passes `input` and a local
+`scratch` to a `proc(input: []int, scratch: []int) -> []int` parameter and
+returns the result. The result borrows `input` and never `scratch`, but at an
+indirect call there is no body to infer from, so the fallback assumes every
+borrowed argument is a possible source and rejects the program for returning
+`scratch`. No amount of summary precision fixes this: the callee is not known at
+the call. An explicit form is required at procedure-type boundaries.
+
+Inference still wins everywhere a body is visible, and it keeps the path,
+region, and allocation-base precision an annotation cannot carry. So the answer
+is a hybrid, and the sentence that makes it coherent is:
+
+> **A declared level is an upper bound; inference computes the precise effect
+> below it.** Direct calls to a visible body use the inferred detail. Indirect,
+> foreign, and interface calls use the declared level.
+
+#### The selected form: one ordered parameter attribute
+
+`@(escape=<level>)` on a parameter or receiver, in a procedure declaration, a
+written procedure type, a `foreign` declaration, or an interface requirement.
+Four levels, totally ordered by what may outlive the call:
+
+| Level | The call may leave behind |
+|---|---|
+| `@(escape=none)` | nothing that depends on this parameter — not even a result |
+| *absent*, or `@(escape=result)` | a result that borrows it; nothing else | 
+| `@(escape=stored)` | also a borrow held in one of this call's own mutable destinations (`inout` parameters, receiver) |
+| `@(escape=static)` | also a borrow held in process-duration storage |
+
+The default is `result` because that is the overwhelmingly common case and is
+already today's behavior at both direct and indirect calls, so unannotated code
+keeps compiling. Retention defaults to *none* because it is rare, and today
+entirely unchecked; making it visible at the boundary is the point of Phase 4b.
+The two defaults sit at opposite ends deliberately: each is set to its own common
+case, which is what keeps annotations off almost every signature.
+
+`thread_local` is the reserved fifth level, between `stored` and `static`. It is
+not defined now because no case in the corpus needs it — step 0 already split the
+root kinds, so adding it later is a level, not a redesign.
+
+#### Caller obligations, by level
+
+- `none` — no obligation, and the caller may treat the argument as untouched
+  after the call. This is what lets `scratch` stay local.
+- `result` — the result's dependencies include the argument, exactly as an
+  inferred summary would say at a direct call.
+- `stored` — every mutable destination of the call must be outlived by this
+  argument. The contract does not name *which* destination, so the caller proves
+  it against all of them.
+- `static` — the argument must outlive the process.
+
+#### Compatibility
+
+One comparison, in one direction: a procedure is assignable to a procedure type,
+passable as an argument of it, and returnable as it, iff for every parameter
+`level(procedure) <= level(type)`. A callee may promise more than the type asks;
+it may never promise less. The same rule covers conditional choices of callee,
+wrapper procedures, and generic substitution, and it is the reason a single
+ordered level was chosen over separate result and retention marks.
+
+Levels participate in procedure type identity the way `param_resets` already
+does in `intern_proc_type`, so an indirect call cannot launder an effect by
+passing through a type that hides it.
+
+#### Machinery this reuses
+
+Nothing here is new mechanism. `@(allocator_reset)` is the precedent in every
+respect: a parameter attribute, validated in `attributes.odin`'s one table,
+resolved for both declarations and written procedure types in `check.odin`,
+carried in `Type_Info.param_resets`, and part of interning. `escape` adds
+`specs["escape"] = {{.Parameter}, .Value_Required}`, a `[]Escape_Level` beside
+`param_resets`, and a level accessor next to `attribute_string_value` —
+`Attribute.value` is a general `Expr`, so the bare identifier in
+`@(escape=none)` needs no parser change.
+
+Identity is whole-program for now: use the indices the checker already has rather
+than designing a portable encoding with no reader. A private `Symbol_Id` or
+transient graph index cannot survive serialization, so a future
+separate-compilation system must republish levels through package metadata. The
+attribute form is already the portable half; do not build the rest here.
+
+#### Diagnostics
+
+Reserve L0644–L0655 for steps 4–8. Allocated now:
+
+| Code | Reported when |
+|---|---|
+| L0644 | a body's inferred effect exceeds the level its declaration states |
+| L0645 | a procedure value, argument, return, or generic substitution supplies a callee whose level exceeds the receiving type's |
+| L0646 | an argument to `@(escape=stored)` does not outlive a mutable destination of the call |
+| L0647 | an argument to `@(escape=static)` is not process-duration storage |
+| L0648 | `@(escape=...)` names an unknown level or marks a parameter that carries no borrow |
+
+Each names the parameter, the level required, and the level found; L0646 and
+L0647 additionally name the source root and the destination, as step 8 requires.
+
+#### Conservative rejections and boundaries
+
+- A parameter whose type is not a carrier cannot escape, so `@(escape)` on one is
+  a mistake rather than a no-op — L0648, following `@(allocator_reset)`'s L0539.
+- A procedure value whose type states no level carries `result`. That is a real
+  contract, not an absence: an unannotated procedure type promises that the call
+  retains nothing, and every Loke body assigned to it is checked against that
+  promise. This is what makes `run_with` in
+  [m5b_trust_boundary.loke](tests/run/m5b_trust_boundary.loke) fail in step 9
+  rather than being grandfathered: the callback it is given does retain.
+- A `foreign` declaration has no body to check, so its level is an audited
+  programmer promise, exactly like every other foreign claim. The compiler cannot
+  verify foreign retention and does not pretend to.
+- Generic instantiation substitutes levels unchanged; the level belongs to the
+  parameter, not to the type argument.
+- Interface requirements carry levels like any other procedure type.
+  `interface-plan.md` still owns lookup; this adds no second mechanism.
+
+#### What this deliberately cannot express
+
+The level is coarse at the boundary, and each coarsening has the same escape
+valve — inference is precise wherever a body is visible:
+
+- It does not distinguish a borrow of the parameter's *content* from a borrow of
+  the parameter's *storage*, nor name paths or regions. Any finer boundary
+  language is the lifetime language this milestone is forbidden to choose
+  silently.
+- `stored` does not name which destination, so the caller proves the argument
+  outlives all of them.
+- It cannot express a proven replacement or clear effect, and must not: a level
+  is a may-effect that only adds possibilities. Killing a caller's dependency
+  needs a proven must-effect, which only inference over a visible body can
+  supply. The representation being unable to state it is the safeguard, not a
+  gap.
+
+If step 7's measurement shows ordinary code failing on the `stored` coarsening or
+on the missing content/storage distinction, refine then, against a measured case.
+Do not widen the language on speculation.
+
+#### What steps 4–8 must implement
+
+Step 5 extends `Result_Provenance`/`Proc_Summary` with the inferred detail below
+the level. Step 7 adds `[]Escape_Level` to procedure types and interning, checks
+bodies against their declared level (L0644), checks assignability (L0645), and
+substitutes obligations at calls (L0646). Step 8 consumes `static` (L0647) using
+step 0's duration split. Step 9 documents `@(escape=...)` in `design.md` and
+`grammar.md` — now that a form is selected, that update is required, not
+speculative.
+
+**Exit met:** representation, defaults, compatibility rule, diagnostics, and
+conservative rejections are recorded above, and steps 4–8 implement them without
+renegotiation.
 
 ### 3. Widen the reaching lattice before adding slots
 
@@ -402,13 +522,16 @@ was not finished.
 - Reuse the `@(allocator_reset)` compatibility path without conflating resetting
   a region with retaining a value backed by it. Contracts remain compile-time
   metadata; procedure values keep their current runtime representation and ABI.
-- An absent contract must not mean "retains nothing." Specify conservative
-  behavior for unknown callees and foreign boundaries, and test it. Blanket
-  all-inputs-to-all-mutable-outputs retention is a fallback to measure, not the
-  accepted semantics for every procedure value. Account for possible retention
-  into global state too: the absence of a mutable argument is not proof of
-  non-retention. Audited foreign contracts remain programmer promises; the
-  compiler cannot verify foreign retention.
+- An absent level means `result` — "retains nothing beyond the result" — which
+  step 2 chose over the conservative default this plan originally required. That
+  reversal is only sound because the promise is *enforced*: every Loke body
+  assigned to such a type is checked against it (L0644, L0645), so the absence is
+  a real contract rather than missing information. Two residues of the original
+  concern survive and must be tested. A `foreign` declaration has no body, so its
+  level is an audited programmer promise and the compiler must not present it as
+  verified. And the `stored` level's blanket all-arguments-outlive-all-mutable-
+  destinations obligation is a coarsening to measure, not a proof of precision:
+  record what it falsely rejects.
 
 **Exit:** the input/scratch callback and retaining helper work with the same
 documented contract directly, generically, across a package, and through an
@@ -634,3 +757,35 @@ Unrelated defect found while writing the fixtures, not fixed here: the checker
 accepts an explicit union conversion `Choice(Holder{...})` that LLVM emission
 then rejects with a type mismatch. Implicit injection is unaffected, which is
 what the fixture uses.
+
+### Step 2 — contract representation decided
+
+Decided on 2026-08-28; the record is step 2 itself, and this entry notes only
+what the decision changed elsewhere and what it cost.
+
+Selected: `@(escape=<level>)`, one ordered parameter attribute with four levels
+(`none` < `result` (default) < `stored` < `static`), a declared upper bound that
+inference refines below wherever a body is visible. It was chosen over separate
+result-flow and retention marks because a total order collapses assignability to
+one comparison in one direction, and over a path- or region-level boundary
+language because that is the lifetime language this milestone may not choose
+silently.
+
+Implementation cost was checked against the source, not assumed.
+`@(allocator_reset)` is the precedent at every layer — `attributes.odin`'s spec
+table, `check.odin`'s separate declaration and `^Type_Proc` paths,
+`Type_Info.param_resets`, and `intern_proc_type` — so the mechanism exists and
+`escape` extends it. `Attribute.value` is a general `Expr`, so the bare
+identifier in `@(escape=none)` parses today; only a level accessor beside
+`attribute_string_value` is new. No parser change.
+
+One earlier constraint in this plan was reversed by the decision and rewritten
+rather than quietly dropped: step 7's "an absent contract must not mean 'retains
+nothing'". An absent level now means `result`, which is sound only because the
+promise is enforced on every Loke body. The two parts of that constraint that
+survive — foreign declarations are audited promises, and `stored`'s blanket
+obligation is a coarsening to measure — are recorded in step 7 as testable
+requirements.
+
+No compiler change, so no test run beyond re-checking the fixture whose comment
+now names the selected form.

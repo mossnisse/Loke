@@ -2,5 +2,5 @@ L0514
 @22:2
 `free` needs a pointer whose allocation root the compiler can see
 L0526
-@36:9
+@40:9
 this slice cannot be returned: `scratch` ends when this procedure returns
