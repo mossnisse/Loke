@@ -106,6 +106,32 @@ caller_through_a_value :: proc() -> int {
 	return held.view[0];
 }
 
+// A destination written through a pointer or a slice element names its root only
+// once that carrier's own loans are solved, but it is the same obligation: what
+// the callee may leave in the caller's storage.
+through_a_pointer :: proc(destination: ^mut Holder, values: []int) {
+	destination^.view = values;
+}
+
+through_an_auto_deref :: proc(destination: ^mut Holder, values: []int) {
+	destination.view = values;
+}
+
+through_a_slice_element :: proc(destination: []mut Holder, values: []int) {
+	destination[0].view = values;
+}
+
+// And at the caller, where the destination argument is a pointer to process
+// storage rather than a place written out.
+keep_through_a_pointer :: proc(destination: ^mut Holder, @(escape=stored) values: []int) {
+	destination^.view = values;
+}
+
+caller_points_at_a_global :: proc() {
+	numbers := [3]int{1, 2, 3};
+	keep_through_a_pointer(&mut global_holder, numbers[:]);
+}
+
 main :: proc() {
 	global_view = TABLE[:];
 	fmt.println(global_view[0]);

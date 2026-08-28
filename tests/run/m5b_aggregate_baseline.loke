@@ -125,6 +125,31 @@ forward_retention :: proc(destination: inout Holder, @(escape=stored) values: []
 	retain_into_inout(inout destination, values);
 }
 
+// POSITIVE. The same obligation through a pointer, where the destination's root
+// is what the pointer's loans say rather than a place written out.
+retain_through_a_pointer :: proc(destination: ^mut Holder, @(escape=stored) values: []int) {
+	destination.view = values;
+}
+
+// POSITIVE. A destination that is this body's own local needs no contract: the
+// borrow travels into it and both end together.
+local_through_a_pointer :: proc() -> int {
+	numbers := [4]int{9, 8, 7, 6};
+	held: Holder;
+	retain_through_a_pointer(&mut held, numbers[:]);
+	return held.view[0];
+}
+
+// POSITIVE. A destination that cannot hold a borrow is not a destination, so a
+// `stored` argument asks nothing of it.
+count_into :: proc(total: inout int, @(escape=stored) values: []int) {
+	total = total + len(values);
+}
+
+forward_a_count :: proc(total: inout int, values: []int) {
+	count_into(inout total, values);
+}
+
 // POSITIVE. The same for process storage, written at the stronger level. The
 // caller is held to it, so what it passes has to outlive the process too.
 KEPT :: [4]int{5, 6, 7, 8};
@@ -195,4 +220,9 @@ main :: proc() {
 	fmt.println(holder.view[0]);
 	fmt.println(reslice_a_stored_view());
 	fmt.println(substituted_field_only());
+	fmt.println(local_through_a_pointer());
+
+	total := 0;
+	forward_a_count(inout total, KEPT[:]);
+	fmt.println(total);
 }

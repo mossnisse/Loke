@@ -4882,8 +4882,13 @@ A borrow written into storage that outlives the statement writing it is
 
 - `static` and file-scope storage, which outlives the process;
 - `thread_local` storage, which outlives its thread;
-- storage the caller owns, reached through an `inout` parameter or a pointer the
-  call received.
+- storage the caller owns, reached through an `inout` parameter, or through a
+  `^mut T` or `[]mut T` the call received.
+
+A destination is a place, not a name: a field of a global, a container element,
+and a write through a pointer are all destinations. Where the place is reached
+through a carrier — `p^.view`, `d[0].view` — the storage it names is whatever
+that carrier borrows, so the question is asked of every root it may point at.
 
 What a root proves depends on where it lives. A local, a value temporary, or a
 literal's hidden array ends with the frame and satisfies none of the three.
@@ -4901,8 +4906,10 @@ call site is checked against the argument actually supplied.
 
 At a call, a parameter written `stored` or `static` is treated as the assignment
 the callee is permitted to make: the argument's borrows reach every destination
-the call can write — an `inout` parameter or receiver — and each of those asks the
-same question the assignment would. A destination in static or thread storage
+the call can write — an `inout` parameter or receiver, or a mutable carrier whose
+pointee or element could hold the borrow — and each of those asks the same
+question the assignment would. A destination that cannot hold a borrow at all,
+such as `inout int`, is not one. A destination in static or thread storage
 needs a source that outlives it; a destination the caller merely passes on needs
 the caller's own parameter to carry the contract; and a destination that is one of
 the caller's own locals needs no contract at all, because the borrow simply
@@ -4940,9 +4947,10 @@ responsibility:
   borrowed argument after it returns;
 - transferring borrows or unchecked addresses between threads, and keeping a
   `thread_local` borrow past the end of its thread;
-- what a call retains through a parameter it can write but which is not `inout`:
-  a `^mut T` or `[]mut T` parameter is a destination neither the body check nor
-  the call site recognises.
+- what a call leaves in a destination reached through a pointer held in a
+  variable: `keep(&mut held, view)` records that `held` was given the borrow,
+  while `p := &mut held; keep(p, view)` records it only against `p`. The
+  contract on the destination's storage is still checked in both.
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use
 `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.

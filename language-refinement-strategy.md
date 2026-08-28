@@ -666,8 +666,9 @@ the argument's borrows travel into the destination and the existing scope rules
 answer the rest without proving one local outlives another. Two limits remain:
 procedure-value compatibility is level equality rather than the intended
 ordering, so a stricter callee is currently a mismatch; and a destination reached
-through a `^mut T` or `[]mut T` parameter is recognised by neither the body check
-nor the call site, so only an `inout` destination carries the contract.
+through a pointer held in a variable records the borrow against the pointer
+rather than against what it points at, so the contract is checked there but the
+flow is not.
 
 #### Phase 4c — reconsider reference types only with evidence
 

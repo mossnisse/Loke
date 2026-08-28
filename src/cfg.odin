@@ -142,6 +142,11 @@ Prov_Event :: struct {
 	// `Retain`: what kind of storage the destination is. `name` is how a
 	// diagnostic spells it and `verb` names the destination.
 	retain: Retain_Kind,
+	// `Retain`: the carrier the destination was written through, when the place
+	// left lexical storage — `p^.view`, `d[0].view`, a `^mut` argument. Its
+	// reaching loans name the destination roots, which only the solver knows, so
+	// `retain` and `root` are answered there instead of here.
+	into: []int,
 	// `Escape`: which result of the enclosing procedure this value becomes, and
 	// the allocator region an owning result carries with it.
 	result:  int,
@@ -2183,15 +2188,21 @@ prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, spa
 	}
 	root, _, ok := prov_place_of(graph, target)
 	if !ok {
+		// The place left lexical storage through a carrier, so which root it
+		// names is a solved question rather than a syntactic one.
+		if through := prov_retain_through_carrier(graph, target); len(through) > 0 {
+			prov_emit(graph, Prov_Event {
+				kind    = .Retain,
+				span    = span,
+				sources = sources,
+				root    = NO_ROOT,
+				into    = through,
+			})
+		}
 		return
 	}
 	descriptor := graph.roots[int(root)]
-	into := Retain_Kind.None
-	#partial switch descriptor.kind {
-	case .Static:       into = .Process
-	case .Thread_Local: into = .Thread
-	case .Param:        into = .Caller
-	}
+	into := retain_kind_for_root(descriptor.kind)
 	if into == .None {
 		return
 	}
@@ -2203,6 +2214,56 @@ prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, spa
 		retain  = into,
 		verb    = descriptor.name,
 	})
+}
+
+// The carrier a destination place was written through, as the slots holding it.
+// `p^.view` and `d[0].view` are writes into whatever `p` and `d` point at, which
+// is what the carrier's loans say; a chain that never leaves lexical storage has
+// no carrier and is answered by `prov_place_of` instead.
+@(private = "file")
+prov_retain_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> []int {
+	c := graph.k.c
+	#partial switch v in place {
+	case ^Expr_Postfix:
+		if v.op == .Caret {
+			return prov_carrier_slots(graph, v.operand)
+		}
+	case ^Expr_Selector:
+		if v.resolution.kind != .Field || v.operand == nil {
+			return nil
+		}
+		if type_is_pointer(c, expr_base(v.operand).type) {
+			return prov_carrier_slots(graph, v.operand) // an auto-deref
+		}
+		return prov_retain_through_carrier(graph, v.operand)
+	case ^Expr_Index:
+		if len(v.bound) > 0 || v.operand == nil {
+			return nil // user-defined addressing
+		}
+		#partial switch underlying_kind(c, expr_base(v.operand).type) {
+		case .Array, .Dynamic_Array, .Map:
+			// An owner's element is a place in the owner, so the chain has not
+			// left lexical storage yet.
+			return prov_retain_through_carrier(graph, v.operand)
+		}
+		return prov_carrier_slots(graph, v.operand)
+	}
+	return nil
+}
+
+// The slots holding a carrier value, without reading it: a bare carrier has its
+// own slot, and one inside a value has the content slot for its path.
+@(private = "file")
+prov_carrier_slots :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
+	if ident, is_ident := e.(^Expr_Ident); is_ident {
+		if slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol); is_carrier {
+			return prov_one(graph, slot)
+		}
+	}
+	if root, path, ok := prov_place_of(graph, e); ok {
+		return prov_content_at(graph, root, path)
+	}
+	return prov_retain_through_carrier(graph, e)
 }
 
 // An owner backed by a region the procedure received may not be returned,
@@ -3012,34 +3073,57 @@ prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int)
 			continue
 		}
 		if destinations == nil {
-			destinations = prov_writable_arguments(graph, v)
+			destinations = prov_writable_arguments(graph, v, proc_type)
 		}
 		for target in destinations {
 			if target != index {
-				prov_retain_into_argument(graph, v, target, slots)
+				prov_retain_into_argument(graph, v, target, actuals[target], slots)
 			}
 		}
 	}
 }
 
 // The arguments a call can write through, which is where a `stored` parameter
-// may end up. These are the same destinations the body check recognises — an
-// `inout` parameter or receiver — so caller and callee agree on the set.
+// may end up: an `inout` parameter or receiver, and a mutable carrier whose
+// pointee or element could hold the borrow. These are the destinations the body
+// check recognises, so caller and callee agree on the set.
+//
+// A destination that cannot hold a borrow at all is not one: `inout int` names
+// caller storage, but nothing a call retains can land in it.
 @(private = "file")
-prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call, proc_type: Type_Id) -> []int {
+	c := graph.k.c
 	out := make([dynamic]int, 0, len(v.bound), graph.alloc)
-	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	sym := symbol_of(c, v.resolution.chosen_overload)
 	// A receiver is `bound[0]` and answers with its own mode; an ordinary
 	// parameter answers with the procedure type's.
 	start := 0
 	if sym != nil && sym.has_receiver {
 		start = 1
-		if sym.receiver == .Inout && len(v.bound) > 0 {
-			append(&out, 0)
+		if sym.receiver == .Inout && len(v.bound) > 0 && v.bound[0] != nil {
+			if type_carries_borrow(c, expr_base(v.bound[0]).type).any {
+				append(&out, 0)
+			}
 		}
 	}
+	info := type_of(c, proc_type)
 	for index in start ..< len(v.bound) {
+		if info == nil || index >= len(info.parameters) {
+			break
+		}
 		if prov_argument_is_inout(graph, v, index) {
+			if type_carries_borrow(c, info.parameters[index]).any {
+				append(&out, index)
+			}
+			continue
+		}
+		// Writing through the parameter itself: `p^.view = values`. What can be
+		// retained is what the pointee or element holds, not the pointer.
+		if !carrier_is_mutable(c, info.parameters[index]) {
+			continue
+		}
+		element := underlying_info(c, info.parameters[index])
+		if element != nil && type_carries_borrow(c, element.element).any {
 			append(&out, index)
 		}
 	}
@@ -3050,17 +3134,49 @@ prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 // the assignment's — a destination in static, thread, or the caller's own
 // storage needs a source that outlives it — and the flow is the assignment's
 // too, joined rather than replaced because the callee may also leave it alone.
+//
+// `carrier` is the argument's own loans, which answer for a destination written
+// through a pointer or slice, where the root is not a syntactic property of the
+// argument expression.
 @(private = "file")
-prov_retain_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, sources: []int) {
+prov_retain_into_argument :: proc(
+	graph: ^Flow_Graph,
+	v: ^Expr_Call,
+	index: int,
+	carrier: []int,
+	sources: []int,
+) {
 	argument := v.bound[index]
 	if argument == nil {
 		return
 	}
 	root, path, ok := prov_place_of(graph, argument)
 	if !ok {
-		return
+		// A `^mut`/`[]mut` destination: the roots it may name are its loans.
+		if len(carrier) > 0 {
+			prov_emit(graph, Prov_Event {
+				kind    = .Retain,
+				span    = v.span,
+				sources = sources,
+				root    = NO_ROOT,
+				into    = carrier,
+			})
+		}
+		// `&mut place` is the spelling that still says which place, so the flow
+		// follows it. A pointer reaching the call in a variable does not, and the
+		// contract check above is what covers that case.
+		unary, is_unary := argument.(^Expr_Unary)
+		if !is_unary || unary.op != .Amp {
+			return
+		}
+		root, path, ok = prov_place_of(graph, unary.operand)
+		if !ok {
+			return
+		}
+		argument = unary.operand
+	} else {
+		prov_retain_escape(graph, argument, sources, v.span)
 	}
-	prov_retain_escape(graph, argument, sources, v.span)
 	slots := prov_content_at(graph, root, path)
 	if len(slots) == 0 {
 		ident, is_ident := argument.(^Expr_Ident)

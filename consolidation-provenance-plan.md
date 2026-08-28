@@ -1367,3 +1367,55 @@ of `stored`.
 
 `odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
 levels pass.
+
+### Follow-up — retention through a `^mut` destination
+
+Implemented on 2026-08-28. The previous entry's closing paragraph named this as
+the hole left behind; it is closed, and closing it also removed a false rejection
+the caller-side check had just introduced.
+
+**Why it was missing at both ends.** `prov_place_of` deliberately stops where a
+chain leaves lexical storage: reaching a pointee is a *use of the carrier*, not a
+competing access to a root. That is right for the access question and wrong for
+the retention one, where what matters is which storage the write lands in — and
+for `p^.view` that is whatever `p` borrows, a solved fact rather than a syntactic
+one. So `.Retain` gained a second destination form: `into`, the slots holding the
+carrier. The solver reads the destination roots off that carrier's reaching
+loans, asks `retain_kind_for_root` for each, and runs the same check. One
+diagnostic, two ways of naming where the borrow was going.
+
+That covers `p^.view = values`, the auto-deref spelling `p.view = values`, and
+`d[0].view = values` through a `[]mut` parameter — all of which compiled before
+with no contract written anywhere.
+
+**The caller's side matches.** `prov_writable_arguments` now also returns
+arguments whose parameter is a mutable carrier, and the contract check for those
+uses the argument's own loans as the destination. The flow half follows `&mut
+place` when the argument is written that way.
+
+**A false rejection this exposed.** The previous commit made every `inout`
+argument a destination, including one that cannot hold a borrow: passing a view
+to `bump :: proc(counter: inout int, @(escape=stored) values: []int)` demanded
+`stored` on the caller's own parameter, for a destination where nothing retained
+could possibly land. A destination now has to be able to hold a borrow —
+`type_carries_borrow` of the `inout` parameter's type, or of a mutable carrier's
+element — which is the same question the attribute itself is validated against.
+The corpus did not contain the case; the fix has a positive fixture now.
+
+**Corpus.** No existing case changed meaning, so both halves needed fixtures
+written for them: three body-side rejections and one caller-side in
+[m5b_retention.loke](tests/err/m5b_retention.loke), and three positives in
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke) — the
+pointer destination with its contract, a caller-local destination through a
+pointer, and the `inout int` destination that asks nothing. An A/B of both
+compilers over every corpus reports no other difference.
+
+**The remaining limit is precision, not a missing contract.** A destination
+reached through a pointer held in a variable — `p := &mut held; keep(p, view)` —
+records the borrow against `p` rather than against `held`, so the contract on the
+destination's storage is checked while the flow into `held` is not. Written
+directly, `keep(&mut held, view)`, both halves hold. `design.md`'s unchecked list
+names that.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.

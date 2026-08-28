@@ -37,3 +37,15 @@ this slice is used after `numbers`, the local it borrows, has ended
 L0513
 @106:9
 this slice is used after `numbers`, the local it borrows, has ended
+L0646
+@113:2
+this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
+L0646
+@117:2
+this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
+L0646
+@121:2
+this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
+L0647
+@132:2
+this slice borrows `numbers`, which does not outlive `global_holder`: storage that outlives the process

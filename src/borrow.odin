@@ -349,6 +349,17 @@ root_satisfies_retention :: proc(kind: Root_Kind, into: Retain_Kind) -> bool {
 	return false // `Param` is answered by its contract; `Unknown` proves nothing
 }
 
+// What kind of destination a place rooted here is. Storage that outlives the
+// frame asks a question; anything else does not.
+retain_kind_for_root :: proc(kind: Root_Kind) -> Retain_Kind {
+	#partial switch kind {
+	case .Static:       return .Process
+	case .Thread_Local: return .Thread
+	case .Param:        return .Caller
+	}
+	return .None
+}
+
 retain_kind_text :: proc(kind: Retain_Kind) -> string {
 	switch kind {
 	case .Process: return "storage that outlives the process"
@@ -1996,6 +2007,49 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 @(private = "file")
 check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 	graph := state.graph
+	// A destination written through a carrier — `p^.view`, `d[0].view`, a `^mut`
+	// argument — names its root only once the carrier's own loans are solved, so
+	// the event carries the carrier and the roots are read off here.
+	if len(event.into) > 0 {
+		seen := make(map[Root_Id]bool, 4, context.temp_allocator)
+		for slot in event.into {
+			row := reach_row(state, state.reach, slot)
+			for index in 0 ..< state.loans {
+				if !bit_get(row, index) || state.invalid[index] {
+					continue
+				}
+				target := graph.loans[index].root
+				if seen[target] {
+					continue
+				}
+				seen[target] = true
+				destination := graph.roots[int(target)]
+				into := retain_kind_for_root(destination.kind)
+				if into != .None && report_retention(state, event, into, target, destination) {
+					return
+				}
+			}
+		}
+		return
+	}
+	destination := Prov_Root{symbol = INVALID_SYMBOL}
+	if event.root != NO_ROOT {
+		destination = graph.roots[int(event.root)]
+	}
+	report_retention(state, event, event.retain, event.root, destination)
+}
+
+// One destination's question, asked of every loan the stored value carries.
+// Reports at most once and says whether it did.
+@(private = "file")
+report_retention :: proc(
+	state: ^Prov_State,
+	event: Prov_Event,
+	into: Retain_Kind,
+	target: Root_Id,
+	destination: Prov_Root,
+) -> bool {
+	graph := state.graph
 	for source in event.sources {
 		row := reach_row(state, state.reach, source)
 		for index in 0 ..< state.loans {
@@ -2009,16 +2063,12 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 			// another — is not retention at all, and the two end together. A
 			// parameter has one root for its entry loan and one for its places,
 			// so this compares the name rather than the identity.
-			destination := Prov_Root{symbol = INVALID_SYMBOL}
-			if event.root != NO_ROOT {
-				destination = graph.roots[int(event.root)]
-			}
-			if loan.root == event.root ||
+			if loan.root == target ||
 			   (root.symbol != INVALID_SYMBOL && root.symbol == destination.symbol) {
 				continue
 			}
 			if root.kind == .Param {
-				if parameter_allows_retention(state, root, event.retain) {
+				if parameter_allows_retention(state, root, into) {
 					continue
 				}
 				errorf(
@@ -2028,11 +2078,11 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 					"this %s borrows %s, which is not written `@(escape=%s)`, so it cannot reach %s",
 					loan.what,
 					root_phrase(state.k.c, root),
-					escape_level_name(retain_kind_level(event.retain)),
-					retain_destination(state, event),
+					escape_level_name(retain_kind_level(into)),
+					retain_destination(state, event, destination),
 				)
 			} else {
-				if root_satisfies_retention(root.kind, event.retain) {
+				if root_satisfies_retention(root.kind, into) {
 					continue
 				}
 				errorf(
@@ -2042,27 +2092,28 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 					"this %s borrows %s, which does not outlive %s: %s",
 					loan.what,
 					root_phrase(state.k.c, root),
-					retain_destination(state, event),
-					retain_kind_text(event.retain),
+					retain_destination(state, event, destination),
+					retain_kind_text(into),
 				)
 			}
 			if root.symbol != INVALID_SYMBOL && root.span.file != NO_FILE {
 				add_notef(state.k.c, root.span, "%s is declared here", root_label(state.k.c, root))
 			}
 			add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
-			return
+			return true
 		}
 	}
+	return false
 }
 
-// How a diagnostic names where the borrow was going: a place this body wrote,
-// or the callee parameter that may keep it.
+// How a diagnostic names where the borrow was going: the destination place when
+// one is known, and otherwise the callee parameter that may keep it.
 @(private = "file")
-retain_destination :: proc(state: ^Prov_State, event: Prov_Event) -> string {
-	if event.root == NO_ROOT {
+retain_destination :: proc(state: ^Prov_State, event: Prov_Event, destination: Prov_Root) -> string {
+	if destination.symbol == INVALID_SYMBOL || destination.name == "" {
 		return event.verb
 	}
-	return fmt.aprintf("`%s`", event.verb, allocator = state.k.c.semantic_allocator)
+	return fmt.aprintf("`%s`", destination.name, allocator = state.k.c.semantic_allocator)
 }
 
 // A borrowed parameter may be retained only as far as its own contract allows.
