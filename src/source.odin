@@ -138,6 +138,10 @@ Compiler :: struct {
 	// (design.md "Iteration adapters").
 	entry_types:        map[Type_Id]Type_Id,
 	indexed_types:      map[Type_Id]Type_Id,
+	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
+	// every body is checked. Both are pure functions of the type graph.
+	carrier_reach:      map[Type_Id]Carrier_Reach,
+	carrier_shapes:     map[Type_Id][]Carrier_Path,
 	rune_offset_type: Type_Id,
 	synth_procs:        [dynamic]Symbol_Id,
 

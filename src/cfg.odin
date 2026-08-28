@@ -1344,7 +1344,13 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 		return existing, true
 	}
 	sym := symbol_of(graph.k.c, id)
-	if sym == nil || !type_is_carrier(graph.k.c, sym.type) {
+	if sym == nil {
+		return 0, false
+	}
+	if !type_is_carrier(graph.k.c, sym.type) {
+		// It may still carry a borrow inside it. That is step 5's slot to
+		// allocate; step 4 only measures what it will cost.
+		prov_stats_note_aggregate(graph.k.c, id, sym.type)
 		return 0, false
 	}
 	if sym.kind != .Var && sym.kind != .Parameter && sym.kind != .Result {

@@ -824,6 +824,8 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.entry_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.indexed_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
+	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
+	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
 	c.dyn_types = make(map[string]Type_Id, c.semantic_allocator)
 	c.witnesses = make(map[string]^Witness, c.semantic_allocator)

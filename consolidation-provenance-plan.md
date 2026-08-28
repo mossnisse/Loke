@@ -364,6 +364,9 @@ with recorded before/after reaching-state bytes.
 
 ### 4. Introduce finite carrier shapes and per-value content state
 
+Shapes done; see the verification record. Content slots move to step 5 with the
+walk that reads them — the split is argued at the exit below.
+
 - Compute recursive carrier shapes over `.Struct`, `.Array`, `.Union`,
   `.Dynamic_Array`, and both map keys and values. Keep existing leaf semantics,
   distinct-type unwrapping, allocator handles, region providers, and compiler
@@ -395,9 +398,17 @@ with recorded before/after reaching-state bytes.
   value initializes no payload facts even when its type is a possible carrier.
 
 **Exit:** structural tests cover recursive/query-order independence, the depth
-limit, field distinctions, mixed capabilities, and empty values. Behind the new
-graph mode, aggregate slots carry facts; a change that merely makes
-`type_is_carrier` recursive while those slots stay empty is not this step.
+limit, field distinctions, mixed capabilities, and empty values, and the cost of
+the slots those shapes ask for is measured before it is paid.
+
+The shape machinery and the slot allocation that consumes it were originally one
+step. They are split: shapes and their tests land here, and content slots land
+with step 5's propagation, which is the first thing that reads them. Allocating
+slots nothing consumes would be scaffolding, and the new `Flow_Mode` member has
+no meaning until there is a walk that fills it. The guard the original wording
+existed to give — that a recursive `type_is_carrier` must not ship alone as if it
+were the feature — is kept by this step's measurement obligation and by step 5
+owning both halves.
 
 ### 5. Propagate aggregate values and direct results together
 
@@ -828,3 +839,68 @@ corpus: identical diagnostic output on every `tests/err/*.loke`, and byte-identi
 full matrix on the new compiler: `odin test src` 47 tests, `odin test tests` 14
 tests, and the run/trap corpus at `-opt=minimal` (3m11s), `size` (2m58s), `speed`
 (3m00s), and `aggressive` (3m11s) — all successful.
+
+### Step 4 — carrier shapes
+
+Implemented on 2026-08-28. `carrier_shape(c, type)` returns every place inside a
+value that can hold a borrow, as ordinary `Proj_Step` paths, so `paths_overlap`
+already relates them and a shorter path already covers everything beneath it.
+`type_carries_borrow(c, type)` answers whether a carrier is reachable at all and
+whether any reachable one is mutable. Both cache on the compiler.
+
+**Finiteness comes from four separate cuts, not from an occurs check.** A
+container contributes one wildcard element edge rather than one path per element,
+so `[dynamic]Node` is a single edge back into `Node`. Enumeration stops at
+`CARRIER_DEPTH` (4) and what is cut becomes one truncated path standing for
+everything below it, carrying the strongest capability found there. A type whose
+enumeration would exceed `CARRIER_WIDTH` (64) collapses to one truncated path
+over the whole value. And a subtree that cannot reach a carrier contributes
+nothing, which is what makes a cycle of scalars terminate without inventing a
+path.
+
+**Cycle safety without a fixed point.** Reachability here is existential, so a
+visiting set gives the *exact* answer for the type asked about: whatever an
+already-visiting ancestor reaches, that ancestor reports, and it propagates back
+through it. The subtlety is that an intermediate visited during a truncated
+exploration may hold an answer that is right for this walk and wrong on its own,
+so only the queried type is cached. That is why no worklist is needed and why the
+answer does not depend on query order. Both queries run during provenance
+analysis, after every body is checked, so no cached shape can describe a type
+whose structure was still incomplete — recording that invariant replaced building
+an invalidation mechanism for a case that cannot occur.
+
+Nine focused tests in [carrier_test.odin](src/carrier_test.odin) cover a bare
+carrier, a scalar record, distinct fields with mixed capabilities, a scalar
+cycle, a recursive type in both field orders and both query orders, the depth
+limit, a truncated path's capability, map keys versus values, and union
+alternatives. The two "no paths" tests assert the type was found, so they cannot
+pass vacuously.
+
+**Measured cost of the slots step 5 will allocate**, via a new
+`carrying-aggregates`/`content-paths` pair in `LOKE_PROV_STATS`, counted once per
+local:
+
+| Program | carrying aggregates | content paths |
+|---|---|---|
+| `tests/run/m6b_maps.loke` | 1 | 1 |
+| `tests/run/m5b_aggregate_baseline.loke` | 12 | 14 |
+| `tests/run/m5a_ownership.loke` | 0 | 0 |
+| nested/recursive aggregate program | 4 | 14 |
+
+The finding that matters: the body with the largest lattice by far
+(`m6b_maps.loke`, 35420 bytes) has one carrying aggregate. Content paths cluster
+in code that wraps borrows, which is small and shallow; the recursive case costs
+3.5 paths per local. Against step 3's 7.4x reduction there is comfortable
+headroom, so step 5 can allocate content slots without a precision trade.
+
+Ran: the full matrix. `odin test src` 56 tests (47 plus the nine new),
+`odin test tests` 14 tests, and the run/trap corpus at all four optimization
+levels — all successful. Diagnostics were compared against the step 3 compiler
+over the whole `tests/err` corpus and are identical: nothing outside the
+measurement path changed behavior.
+
+One harness bug found and fixed while writing the tests, worth recording because
+it wastes an hour if met again: a helper returned `Compiler` by value after
+passing `&c` to the parser and checker, so the returned copy's internals pointed
+at the dead local and the test hung rather than crashing. Compilers are filled in
+place through a `^Compiler` parameter.

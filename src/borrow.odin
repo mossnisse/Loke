@@ -299,6 +299,221 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
+// ----------------------------------------------------- carrier shapes --
+
+// consolidation-provenance-plan.md step 4. `type_is_carrier` answers "is this
+// value itself a borrow". A shape answers "where inside this value can a borrow
+// be", which is what lets a wrapped borrow keep the obligations the bare one
+// has. The steps are ordinary `Proj_Step` paths, so `paths_overlap` already
+// relates them and a shorter path already covers everything below it.
+//
+// Every shape is finite by construction, so a recursive type needs no occurs
+// check while it is being enumerated:
+//
+//   - a container contributes one wildcard element edge, not one path per
+//     element, so `[dynamic]Node` is one edge back into `Node`;
+//   - enumeration stops at `CARRIER_DEPTH`, and what is cut becomes one
+//     truncated path standing for everything below it, joined;
+//   - a type whose enumeration would exceed `CARRIER_WIDTH` collapses to a
+//     single truncated path covering the whole value;
+//   - a subtree that cannot reach a carrier at all contributes nothing, so a
+//     cycle of scalars terminates without inventing a path.
+//
+// Both queries are asked during provenance analysis, which runs after every
+// package body is checked. Generic instantiation and member synthesis have
+// finished by then, so a cached answer cannot describe a type whose structure
+// was still incomplete when it was computed.
+CARRIER_DEPTH :: 4
+CARRIER_WIDTH :: 64
+
+// A map's key and value content are separate storage, so a value read does not
+// inherit what a key borrows. They are sibling fields of the entry the wildcard
+// element step selects.
+PROJ_MAP_KEY :: 0
+PROJ_MAP_VALUE :: 1
+
+Carrier_Path :: struct {
+	steps: []Proj_Step,
+	// The leaf carrier's own type, or INVALID_TYPE for a truncated path.
+	type: Type_Id,
+	// The leaf's own capability. A record holding one immutable and one mutable
+	// carrier has no single aggregate capability, which is why this belongs to
+	// the path rather than to the value.
+	mutable: bool,
+	// This path was cut at a limit and stands for every carrier below it. It
+	// overlaps all of them under `paths_overlap` because it is their prefix, and
+	// `mutable` is true if any one of them is.
+	truncated: bool,
+}
+
+// Whether a carrier is reachable inside a type at all, and whether any
+// reachable one is mutable.
+Carrier_Reach :: struct {
+	any:     bool,
+	mutable: bool,
+}
+
+// Existential reachability, so a visited set gives the exact answer for the type
+// asked about: whatever an already-visiting ancestor reaches, that ancestor
+// reports, and the answer propagates back through it. Only the queried type is
+// cached — an intermediate visited during a truncated exploration may have an
+// answer that is right for this walk and wrong on its own.
+type_carries_borrow :: proc(c: ^Compiler, type: Type_Id) -> Carrier_Reach {
+	if type == INVALID_TYPE {
+		return {}
+	}
+	if cached, found := c.carrier_reach[type]; found {
+		return cached
+	}
+	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
+	reach := carrier_reach_walk(c, type, &visiting)
+	c.carrier_reach[type] = reach
+	return reach
+}
+
+@(private = "file")
+carrier_reach_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> Carrier_Reach {
+	if type == INVALID_TYPE {
+		return {}
+	}
+	if cached, found := c.carrier_reach[type]; found {
+		return cached
+	}
+	if visiting[type] {
+		return {} // an ancestor is already exploring everything below this
+	}
+	if type_is_carrier(c, type) {
+		return Carrier_Reach{any = true, mutable = carrier_is_mutable(c, type)}
+	}
+	info := underlying_info(c, type)
+	if info == nil {
+		return {}
+	}
+	visiting[type] = true
+	defer delete_key(visiting, type)
+	out: Carrier_Reach
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil {
+				carrier_reach_join(&out, carrier_reach_walk(c, sym.type, visiting))
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			carrier_reach_join(&out, carrier_reach_walk(c, variant, visiting))
+		}
+	case .Array, .Dynamic_Array:
+		carrier_reach_join(&out, carrier_reach_walk(c, info.element, visiting))
+	case .Map:
+		carrier_reach_join(&out, carrier_reach_walk(c, info.key, visiting))
+		carrier_reach_join(&out, carrier_reach_walk(c, info.element, visiting))
+	}
+	return out
+}
+
+@(private = "file")
+carrier_reach_join :: proc(into: ^Carrier_Reach, from: Carrier_Reach) {
+	into.any ||= from.any
+	into.mutable ||= from.mutable
+}
+
+// Every place inside a value of this type that can hold a borrow.
+carrier_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
+	if type == INVALID_TYPE {
+		return nil
+	}
+	if cached, found := c.carrier_shapes[type]; found {
+		return cached
+	}
+	out := make([dynamic]Carrier_Path, 0, 4, c.semantic_allocator)
+	carrier_shape_walk(c, type, nil, 0, &out)
+	shape := out[:]
+	if len(shape) > CARRIER_WIDTH {
+		// Too wide to be worth a slot each. One path covering the whole value
+		// keeps the answer sound and the slot count bounded.
+		whole := make([]Carrier_Path, 1, c.semantic_allocator)
+		whole[0] = carrier_truncated(nil, type_carries_borrow(c, type))
+		shape = whole
+	}
+	c.carrier_shapes[type] = shape
+	return shape
+}
+
+@(private = "file")
+carrier_shape_walk :: proc(
+	c: ^Compiler,
+	type: Type_Id,
+	prefix: []Proj_Step,
+	depth: int,
+	out: ^[dynamic]Carrier_Path,
+) {
+	if type == INVALID_TYPE {
+		return
+	}
+	if type_is_carrier(c, type) {
+		append(out, Carrier_Path {
+			steps   = carrier_steps(c, prefix, nil),
+			type    = type,
+			mutable = carrier_is_mutable(c, type),
+		})
+		return
+	}
+	reach := type_carries_borrow(c, type)
+	if !reach.any {
+		return // a scalar subtree, and the one place a cycle of scalars stops
+	}
+	if depth >= CARRIER_DEPTH {
+		append(out, carrier_truncated(carrier_steps(c, prefix, nil), reach))
+		return
+	}
+	info := underlying_info(c, type)
+	if info == nil {
+		return
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			sym := symbol_of(c, field)
+			if sym == nil {
+				continue
+			}
+			step := proj_field(int(sym.index))
+			carrier_shape_walk(c, sym.type, carrier_steps(c, prefix, {step}), depth + 1, out)
+		}
+	case .Union:
+		// Which alternative is live is not a static fact, so the alternatives
+		// share one wildcard step and their contents join there.
+		for variant in info.variants {
+			carrier_shape_walk(c, variant, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+		}
+	case .Array, .Dynamic_Array:
+		// One edge for every element: which index holds what is not a static
+		// fact, and one path per element would not be finite for a dynamic array.
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+	case .Map:
+		entry := carrier_steps(c, prefix, {proj_wild()})
+		carrier_shape_walk(c, info.key, carrier_steps(c, entry, {proj_field(PROJ_MAP_KEY)}), depth + 2, out)
+		carrier_shape_walk(c, info.element, carrier_steps(c, entry, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out)
+	}
+}
+
+@(private = "file")
+carrier_truncated :: proc(steps: []Proj_Step, reach: Carrier_Reach) -> Carrier_Path {
+	return Carrier_Path{steps = steps, type = INVALID_TYPE, mutable = reach.mutable, truncated = true}
+}
+
+@(private = "file")
+carrier_steps :: proc(c: ^Compiler, prefix: []Proj_Step, extra: []Proj_Step) -> []Proj_Step {
+	if len(prefix) == 0 && len(extra) == 0 {
+		return nil
+	}
+	out := make([]Proj_Step, len(prefix) + len(extra), c.semantic_allocator)
+	copy(out, prefix)
+	copy(out[len(prefix):], extra)
+	return out
+}
+
 carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 	if type_is_region_provider(c, type) {
 		return "region"
@@ -770,6 +985,28 @@ prov_stats: struct {
 	worst:  int,
 	name:   string,
 	shape:  string,
+	// What step 5's content slots will cost: how many locals carry a borrow
+	// inside a value without being one, and how many slots their shapes ask for.
+	aggregates: int,
+	paths:      int,
+	// The walk asks about the same local many times; count each one once.
+	counted: map[Symbol_Id]bool,
+}
+
+// Called for a local the walk skipped because its type is not itself a carrier.
+// A slot per content path is what step 5 will allocate for it, so counting them
+// here measures that cost before paying it.
+prov_stats_note_aggregate :: proc(c: ^Compiler, id: Symbol_Id, type: Type_Id) {
+	if !prov_stats_on() || prov_stats.counted[id] {
+		return
+	}
+	prov_stats.counted[id] = true
+	shape := carrier_shape(c, type)
+	if len(shape) == 0 {
+		return
+	}
+	prov_stats.aggregates += 1
+	prov_stats.paths += len(shape)
 }
 
 @(private = "file")
@@ -809,13 +1046,16 @@ prov_record_body :: proc(state: ^Prov_State) {
 @(private = "file")
 prov_report_stats :: proc() {
 	fmt.eprintf(
-		"prov-stats: bodies=%d worklist-rounds=%d reaching-bytes=%d worst-body=%d (%s, %s)\n",
+		"prov-stats: bodies=%d worklist-rounds=%d reaching-bytes=%d worst-body=%d (%s, %s) " +
+		"carrying-aggregates=%d content-paths=%d\n",
 		prov_stats.bodies,
 		prov_stats.rounds,
 		prov_stats.bytes,
 		prov_stats.worst,
 		prov_stats.name,
 		prov_stats.shape,
+		prov_stats.aggregates,
+		prov_stats.paths,
 	)
 }
 
