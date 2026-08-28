@@ -963,6 +963,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 				if underlying_kind(graph.k.c, expr_base(v.operand).type) == .Map && type_is_carrier(graph.k.c, v.type) {
 					return prov_borrow(graph, root, path, carrier_is_mutable(graph.k.c, v.type), v.span, "map value")
 				}
+				// Reading an element yields what that element holds. The path
+				// already ends in the wildcard that stands for every element, so
+				// this is the same selection a field read does.
+				if content := prov_content_at(graph, root, path); len(content) > 0 {
+					prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = v.span})
+					return content
+				}
 				return nil
 			}
 		}
@@ -1576,8 +1583,27 @@ prov_define_content :: proc(graph: ^Flow_Graph, into: []int, from: []int, span: 
 		if len(from) == len(into) {
 			sources = prov_one(graph, from[index])
 		}
+		// One content path can stand for many places — every element of a
+		// container, every alternative of a union — and a write reaches only one
+		// of them. Replacing the path would erase what the others hold, so an
+		// indistinguishable destination joins instead. A known field replaces.
+		if prov_path_is_indistinct(graph, slot) {
+			sources = prov_join(graph, prov_one(graph, slot), sources)
+		}
 		prov_define_one_content(graph, slot, sources, span)
 	}
+}
+
+// Whether this content path stands for more than one place, which is exactly
+// when a wildcard step selected it.
+@(private = "file")
+prov_path_is_indistinct :: proc(graph: ^Flow_Graph, slot: int) -> bool {
+	for step in graph.prov_slots[slot].path {
+		if step.kind == .Wild {
+			return true
+		}
+	}
+	return false
 }
 
 // One content path takes its own capability from the leaf that lives there: a
@@ -2239,11 +2265,17 @@ prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, boo
 			// design.md "Maps": insertion may reallocate the map, so the index is a
 			// mutable borrow of `m` for the duration of the statement. Rehashing
 			// moves every slot, so no narrower projection would be true.
+			//
+			// The second step says this is the value half of an entry, matching
+			// what `carrier_shape` names: a key is never a place, so it can only
+			// be reached through the shape, and a value read must not inherit
+			// what a key borrows.
 			root, path, ok := prov_place_of(graph, v.operand)
 			if !ok {
 				return NO_ROOT, nil, false
 			}
-			return root, prov_extend(graph, path, proj_wild()), true
+			entry := prov_extend(graph, path, proj_wild())
+			return root, prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE)), true
 		}
 		return NO_ROOT, nil, false
 	}
@@ -2748,9 +2780,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	receiver := Param_Mode.Value
 	has_receiver := false
 	map_value_borrow := false
+	container_op := Container_Op.None
 	if sym := symbol_of(c, v.resolution.chosen_overload); sym != nil && sym.has_receiver {
 		receiver, has_receiver = sym.receiver, true
-		map_value_borrow = sym.synth == .Container_Op && sym.container_op == .Map_Lookup_Value && type_is_carrier(c, sym.results[0])
+		if sym.synth == .Container_Op {
+			container_op = sym.container_op
+		}
+		map_value_borrow = container_op == .Map_Lookup_Value && type_is_carrier(c, sym.results[0])
 	}
 	// Method-call syntax puts the receiver in `bound[0]`; walking the callee
 	// selector as well would count one access twice.
@@ -2834,10 +2870,45 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		borrowed = prov_join(graph, borrowed, actuals[index])
 	}
 	prov_call_resets(graph, v)
+	prov_container_content(graph, v, container_op, actuals)
 	if len(borrowed) > 0 {
 		prov_emit(graph, Prov_Event{kind = .Live, sources = borrowed, span = v.span})
 	}
 	return prov_store_call_results(graph, v, actuals, borrowed)
+}
+
+// consolidation-provenance-plan.md step 6. A container operation is resolved
+// before this point, so the solver asks `Container_Op` rather than recognising a
+// member name. A stored element's borrows become the container's, at the element
+// content path — which is indistinct, so they join what is already there rather
+// than replacing it. An unknown index cannot erase the other elements' loans.
+@(private = "file")
+prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_Op, actuals: [][]int) {
+	#partial switch op {
+	case .Append, .Try_Append, .Insert, .Try_Insert, .Map_Try_Insert:
+	case:
+		return
+	}
+	if len(v.bound) == 0 || v.bound[0] == nil {
+		return
+	}
+	root, path, ok := prov_place_of(graph, v.bound[0])
+	if !ok {
+		return
+	}
+	stored: []int
+	for index in 1 ..< len(actuals) {
+		stored = prov_join(graph, stored, actuals[index])
+	}
+	if len(stored) == 0 {
+		return
+	}
+	// Every element path of the receiver, keys included: which argument is the
+	// key and which the value is not worth a second rule while an unknown index
+	// already joins them.
+	if content := prov_content_at(graph, root, path); len(content) > 0 {
+		prov_define_content(graph, content, stored, v.span)
+	}
 }
 
 // Every operand of an unforwarded variadic pack, in written order. The pack
@@ -2982,7 +3053,10 @@ prov_call_result :: proc(
 		}
 		return out
 	}
-	if !type_is_carrier(c, result_type) {
+	// A result that is not itself a borrow can still hold one, and its summary is
+	// about the same dependency either way (step 6: reading a container value out
+	// yields what that value borrows).
+	if !type_is_carrier(c, result_type) && !type_carries_borrow(c, result_type).any {
 		return nil
 	}
 	callee := v.resolution.chosen_overload

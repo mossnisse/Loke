@@ -100,6 +100,41 @@ escape_through_the_other_field :: proc() -> []int {
 	return only_right(Pair{numbers[:], others[:]});
 }
 
+// A container carries what its elements hold, so what the value read back
+// borrows is the local array and not the local table.
+map_from_a_local :: proc() -> []int {
+	table: map[string]Holder;
+	numbers := [3]int{1, 2, 3};
+	table["a"] = Holder{numbers[:]};
+	held, ok := table.lookup_value("a");
+	return held.view if ok else nil;
+}
+
+array_from_a_local :: proc() -> []int {
+	holders: [dynamic]Holder;
+	numbers := [3]int{1, 2, 3};
+	holders.append(Holder{numbers[:]});
+	return holders[0].view;
+}
+
+// A container-held borrow is a live borrow of its source.
+container_held_borrow :: proc() -> int {
+	numbers := [3]int{1, 2, 3};
+	holders: [dynamic]Holder;
+	holders.append(Holder{numbers[:]});
+	numbers[0] = 9;
+	return holders[0].view[0];
+}
+
+// An entry pointer is a borrow of the container's storage, so it cannot outlive
+// the container even when what the entry holds would.
+entry_pointer_escapes :: proc(values: []int) -> ^mut Holder {
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	slot, found := table.find("a");
+	return slot if found else nil;
+}
+
 main :: proc() {
 	fmt.println(1);
 }

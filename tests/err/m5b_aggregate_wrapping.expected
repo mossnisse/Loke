@@ -28,3 +28,15 @@ this slice cannot be returned: `numbers` ends when this procedure returns
 L0526
 @100:9
 this slice cannot be returned: `others` ends when this procedure returns
+L0526
+@110:9
+this slice cannot be returned: `numbers` ends when this procedure returns
+L0526
+@117:9
+this slice cannot be returned: `numbers` ends when this procedure returns
+L0511
+@125:2
+this write of `numbers` is not compatible with the read-only slice of it that is still in use
+L0526
+@135:9
+this borrow cannot be returned: `table` ends when this procedure returns

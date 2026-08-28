@@ -1,0 +1,29 @@
+package main; import "core:fmt";
+
+import "./wrapping";
+
+// consolidation-provenance-plan.md steps 5 and 6: the escaping half of the
+// integrated example. An imported wrapper's summary carries the caller's root
+// through the record and back out, so a local that ends here is named here even
+// though the wrapping happened in another package.
+
+// The root is this body's own dynamic array, and the wrapped view is returned
+// past its cleanup.
+escaping_root :: proc() -> []int {
+	numbers: [dynamic]int;
+	numbers.append(1);
+	return wrapping.unwrap(wrapping.wrap(numbers[:]));
+}
+
+// The same through a container: the element read back out borrows the local.
+escaping_element :: proc() -> []int {
+	numbers: [dynamic]int;
+	numbers.append(1);
+	holders: [dynamic]wrapping.Holder;
+	holders.append(wrapping.wrap(numbers[:]));
+	return holders[0].view;
+}
+
+main :: proc() {
+	fmt.println(1);
+}

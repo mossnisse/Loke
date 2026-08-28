@@ -1,0 +1,36 @@
+package wrapping;
+
+// consolidation-provenance-plan.md step 1: the importable half of the
+// integrated example. Every summary here has to survive being published as
+// package metadata and substituted with the importer's own roots.
+
+@(public)
+Holder :: struct { @(public) view: []int }
+
+// Wrap a borrowed argument and hand it back inside a record.
+@(public)
+wrap :: proc(values: []int) -> Holder {
+	return Holder{values};
+}
+
+// Take it back out. Together with `wrap` this is the pair design.md requires to
+// keep compiling.
+@(public)
+unwrap :: proc(holder: Holder) -> []int {
+	return holder.view;
+}
+
+// The second helper: retention into a destination the caller owns. What it
+// stores is another of the caller's arguments, which is the obligation an
+// importer has to be told about.
+@(public)
+retain :: proc(destination: inout Holder, values: []int) {
+	destination.view = values;
+}
+
+// Reached through a procedure value in the importer, where the result contract
+// is not visible at the call.
+@(public)
+first_half :: proc(values: []int) -> []int {
+	return values[:len(values) / 2];
+}

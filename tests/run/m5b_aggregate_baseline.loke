@@ -10,7 +10,7 @@ package main; import "core:fmt";
 //             acceptance is recorded, not required; moving it to a rejection
 //             fixture is the intended outcome, not a regression.
 //
-// Step 5 moved the wrapping cases out: a borrow now travels through a record
+// Steps 5 and 6 moved the wrapping and container cases out: a borrow now travels through a record
 // field, a union alternative, and a call, so those GAPs are rejections and live
 // in tests/err/m5b_aggregate_wrapping.loke. What is left here either must keep
 // compiling or waits for containers (step 6), retention contracts (step 7), or
@@ -76,16 +76,6 @@ map_value_read :: proc(table: map[string]Holder) -> []int {
 map_entry_pointer :: proc(table: inout map[string]Holder) -> ^mut Holder {
 	slot, found := table.find("a");
 	return slot if found else nil;
-}
-
-// GAP. The map is local, but what the returned view actually borrows is
-// `numbers`, and that is what ends here.
-map_from_a_local :: proc() -> []int {
-	table: map[string]Holder;
-	numbers := [3]int{1, 2, 3};
-	table["a"] = Holder{numbers[:]};
-	held, ok := table.lookup_value("a");
-	return held.view if ok else nil;
 }
 
 // --- moving an owner that carries a borrow ----------------------------------

@@ -41,13 +41,8 @@ invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
 	return len(holder.view);
 }
 
-// GAP. The escaping half: the root is this body's own dynamic array, and the
-// wrapped view is returned past its cleanup.
-escaping_root :: proc() -> []int {
-	numbers: [dynamic]int;
-	numbers.append(1);
-	return wrapping.unwrap(wrapping.wrap(numbers[:]));
-}
+// The escaping half moved to tests/pkg_err/m5b_aggregate/ once step 6 made the
+// imported wrapper carry its argument's root across the package boundary.
 
 // GAP. Retention through the imported helper stores a callee-local view in a
 // destination the caller owns.

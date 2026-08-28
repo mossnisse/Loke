@@ -460,6 +460,8 @@ do not gain new release rights.
 
 ### 6. Track container contents and synthesized operations
 
+Done; see the verification record.
+
 Use the resolved `Container_Op` and iteration descriptors in
 [container.odin](src/container.odin) and [iterate.odin](src/iterate.odin), not
 member-name recognition in the solver. Ordinary user types obtain equivalent
@@ -1023,3 +1025,67 @@ Cost is unchanged at 36608 reaching bytes. `odin test src` 56 tests,
 Step 5 is complete. Containers are step 6, and the copy/clone-hook bullet turned
 out to need no work of its own: a copy of an aggregate already publishes the
 source's content pairwise, and the region half of a clone is existing machinery.
+
+### Step 6 — container contents
+
+Implemented on 2026-08-28. Four changes, each small because steps 4 and 5 had
+already built what containers needed.
+
+**A map index names the value half of an entry.** `carrier_shape` gives a map
+`[wild, key|value, …]`, but `prov_place_of` gave a map index just `[wild]`, so a
+read of `table[k].view` matched nothing in the shape. The place path now ends
+`[wild, PROJ_MAP_VALUE]`, which lines the two up exactly. A key is never a place,
+so it is reachable only through the shape — which is what keeps a value read from
+inheriting what a key borrows.
+
+**An indistinct destination joins instead of replacing.** One content path stands
+for every element of a container and every alternative of a union, and a write
+reaches only one of them, so replacing the path would erase what the others hold.
+`prov_define_content` now joins when the destination path contains a wildcard and
+replaces when it does not — an unknown index cannot erase the other elements'
+loans, and a known field still replaces exactly.
+
+**Insertion publishes.** `prov_container_content` asks the resolved
+`Container_Op` — not a member name — and for `Append`, `Try_Append`, `Insert`,
+`Try_Insert`, and `Map_Try_Insert` publishes the stored arguments into the
+receiver's element content. Keys and values share the join rather than getting a
+second rule, since an unknown index already merges them.
+
+**Reads carry the element out.** Two bails were removing container provenance:
+`prov_call_result` returned nothing for a result type that was not itself a
+carrier, and `set_synth_result_summary` marked a synthesized result as depending
+on its receiver only when the result was a bare carrier. Both now ask
+`type_carries_borrow`, which is what makes `lookup_value`, `pop`, and `remove`
+carry what the stored value holds. An index read returns the element's content
+the same way a field read returns a field's.
+
+**The exit's two halves, both demonstrated.** A copied view outlives a local
+container when its original root is the caller's; an entry pointer from `find`
+does not, and is rejected naming the table. Container-held borrows now conflict
+with writing their source.
+
+Three GAP cases closed and migrated: `map_from_a_local` from the baseline
+fixture, and the cross-package `escaping_root` from
+[tests/pkg/m5b_aggregate/](tests/pkg/m5b_aggregate/main.loke) into the new
+[tests/pkg_err/m5b_aggregate/](tests/pkg_err/m5b_aggregate/main.loke), which also
+covers a container element wrapped by an imported helper. That second one is the
+integrated example working end to end: an imported wrapper's summary now carries
+the caller's root through a record, across a package boundary, and back out.
+
+**Measured precision limits**, recorded rather than fixed: `pop` on a local
+container is rejected naming the *container* rather than what the removed element
+borrows, because the synthesized summary attributes the result to the receiver.
+The rejection is correct and the attribution is conservative. Element content is
+one joined set per container, as the plan prototyped; no corpus program was
+falsely rejected by that approximation.
+
+Cost is unchanged at 36608 reaching bytes and 78 slots — containers reuse the
+element paths step 4 already counted. Against the previous compiler, `tests/err`
+output is byte-identical and the only differences anywhere in the corpus are the
+two intended GAP flips. `odin test src` 56 tests, `odin test tests` 14 tests, and
+all four optimization levels pass.
+
+**Phase 4a gate reached.** Aggregate and container content flow, direct
+summaries, root and region preservation, and field precision all pass their
+positive and negative cases, and safe `wrap`/`unwrap` was not sacrificed to
+reject an unsafe local escape.

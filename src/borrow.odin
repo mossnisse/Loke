@@ -692,7 +692,11 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: i
 		summary.results[index].param_paths = make([][]bool, len(sym.params), c.semantic_allocator)
 		summary.results[index].region.params = make([]bool, len(sym.params), c.semantic_allocator)
 	}
-	summary.results[result].params[param] = type_is_carrier(c, sym.results[result])
+	// A result that holds borrows inside it depends on the receiver just as a
+	// bare carrier result does: reading a container value out yields what that
+	// value borrows (consolidation-provenance-plan.md step 6).
+	summary.results[result].params[param] =
+		type_is_carrier(c, sym.results[result]) || type_carries_borrow(c, sym.results[result]).any
 	if type_is_managed(c, sym.results[result]) {
 		summary.results[result].region.default = true
 	}
