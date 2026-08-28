@@ -1045,6 +1045,37 @@ proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escap
 	return info.param_escapes[index]
 }
 
+// design.md `@(escape=<level>)`: a callee may promise more than the type its
+// value is stored in asks, and never less. The levels are part of procedure type
+// identity, so the two types stay distinct; what this answers is whether the
+// stricter one may be *assigned* to the weaker, which is safe because every
+// caller of the weaker type is already held to the obligation the stricter one
+// keeps. Everything else about the two types must still match exactly, and the
+// levels carry no ABI, so the assignment is still a plain pointer copy.
+proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
+	a := type_of(c, from)
+	b := type_of(c, to)
+	if a == nil || b == nil || a.kind != .Proc || b.kind != .Proc {
+		return false
+	}
+	if a.convention != b.convention ||
+	   a.c_vararg != b.c_vararg ||
+	   !equal_type_ids(a.parameters, b.parameters) ||
+	   !equal_param_modes(a.param_modes, b.param_modes) ||
+	   !equal_type_ids(a.results, b.results) ||
+	   !equal_bools(a.result_inout, b.result_inout) ||
+	   !equal_reset_effects(a.param_resets, b.param_resets) ||
+	   !equal_reset_effects(a.param_by_ptr, b.param_by_ptr) {
+		return false
+	}
+	for index in 0 ..< len(a.parameters) {
+		if proc_param_escape(c, from, index) > proc_param_escape(c, to, index) {
+			return false
+		}
+	}
+	return true
+}
+
 has_reset_effect :: proc(resets: []bool) -> bool {
 	for value in resets {
 		if value {

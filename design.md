@@ -4877,9 +4877,15 @@ declared level, is rejected at the parameter's declaration.
 The level belongs to the procedure type, as [`@(allocator_reset)`](#allocator_reset)
 does, which is what makes it useful where there is no body to infer from. A
 `none` parameter keeps a scratch argument out of the result of a call through a
-procedure value, a procedure-typed parameter, or a generic instantiation. A
-callee assigned to such a type must carry the same levels; a differing level is a
-type mismatch and not a separate rule.
+procedure value, a procedure-typed parameter, or a generic instantiation.
+
+The levels are part of the type's identity, so two procedure types differing only
+in a level are different types — but the difference orders one way. A callee may
+be assigned, passed, or returned as a procedure type whose levels are the same or
+*higher* than its own, because it promises at least what that type asks; the
+reverse is a type mismatch and needs no separate rule. What governs a call is
+always the type of the value called, so a procedure stored in a weaker type is
+called under the weaker promise, whatever its own body was written to keep.
 
 `@(escape=...)` describes what a call keeps of a *borrow*. Writing it on a
 parameter whose type reaches no borrow carrier is an error rather than a no-op.

@@ -51,10 +51,35 @@ run_wrapped :: proc(input: []int) -> []int {
 	return take_wrapped(input, Holder{local[:]});
 }
 
+// The level orders one way: a callee may promise more about what it keeps than
+// the type it is stored in asks, and never less. `strict` keeps `scratch` out of
+// its result, which is at least what an unannotated `Chooser` demands, so it can
+// be assigned, passed, and returned as one. The refusal in the other direction
+// is in tests/err/m5b_escape_levels.loke.
+Chooser :: proc(input: []int, scratch: []int) -> []int;
+
+strict :: proc(input: []int, @(escape=none) scratch: []int) -> []int { return input; }
+
+assigned_to_a_weaker_type :: proc(input: []int, scratch: []int) -> []int {
+	chooser: Chooser = strict;
+	return chooser(input, scratch);
+}
+
+passed_as_a_weaker_type :: proc(chooser: Chooser, input: []int, scratch: []int) -> []int {
+	return chooser(input, scratch);
+}
+
+returned_as_a_weaker_type :: proc() -> Chooser { return strict; }
+
 main :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	fmt.println(run_pick(pick, numbers[:])[0]);
 	fmt.println(run_stored(numbers[:])[1]);
 	fmt.println(run_generic(numbers[:])[2]);
 	fmt.println(run_wrapped(numbers[:])[3]);
+
+	scratch := [2]int{20, 21};
+	fmt.println(assigned_to_a_weaker_type(numbers[:], scratch[:])[0]);
+	fmt.println(passed_as_a_weaker_type(strict, numbers[:], scratch[:])[1]);
+	fmt.println(returned_as_a_weaker_type()(numbers[:], scratch[:])[2]);
 }

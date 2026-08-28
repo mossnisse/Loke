@@ -1557,3 +1557,41 @@ A/B of both compilers over every corpus reports no other difference.
 
 `odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
 levels pass.
+
+### Follow-up — the escape level's ordering at a procedure value
+
+Implemented on 2026-08-28. Step 2 specified a total order in which "a callee may
+promise more than its type asks and never less"; step 7 implemented *equality*,
+so a callee promising more was refused along with one promising less. The
+ordering holds now.
+
+**Identity and assignability are different questions**, and separating them is
+the whole fix. The levels stay part of procedure type identity — that is what
+stops an indirect call from laundering a promise, and step 7's reason for putting
+them there is unchanged. What was missing is that two distinct types can still be
+*assignable*: `proc_escape_weakens_to` accepts a source whose every parameter
+level is at most the destination's, with everything else about the two types
+matching exactly. It sits in `assignable`, so assignment, argument passing,
+return, and generic substitution all get it from one place, and no new diagnostic
+is needed: the reverse direction is still the ordinary L0310 mismatch, printed
+with the levels. L0645 stays unallocated.
+
+The levels carry no ABI, so the assignment remains a plain pointer copy — nothing
+is adapted, boxed, or wrapped.
+
+**The ordering is not a loophole, which the fixture shows.** What governs a call
+is the type of the value called, not the identity of what was stored in it. A
+`strict` callee assigned into an unannotated `Chooser` is called under
+`Chooser`'s promise, so passing it a local scratch buffer and returning the
+result is still L0526 — the caller gets no benefit from a promise the type does
+not carry. That is the conservative and correct outcome: the gain is that storing
+a stricter callee is *allowed*, not that callers may assume more.
+
+Corpus: three positives added to
+[m5b_escape_levels.loke](tests/run/m5b_escape_levels.loke) — assignment, argument,
+and return — while `assign_a_weaker_callee` in the matching `tests/err` fixture
+keeps the refusal in the other direction. An A/B of both compilers over every
+corpus reports no other difference.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.

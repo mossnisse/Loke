@@ -4342,6 +4342,12 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	if carrier_weakens_to(c, from, to) {
 		return true
 	}
+	// A callee may promise more about what it keeps of an argument than the
+	// procedure type it is stored in asks for, and never less (design.md
+	// "Escape levels").
+	if proc_escape_weakens_to(c, from, to) {
+		return true
+	}
 	// design.md "Unions": a union is assignable from any variant it can hold.
 	if type_kind(c, to) == .Union && union_holds(c, to, from) {
 		return true

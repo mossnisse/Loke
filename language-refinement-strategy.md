@@ -667,10 +667,11 @@ ordered levels, `result` by default, part of the procedure type as
 and call sites against the argument supplied — including the caller's half of
 `stored`, where the call is modelled as the assignment the callee may make, so
 the argument's borrows travel into the destination and the existing scope rules
-answer the rest without proving one local outlives another. Two limits remain:
-procedure-value compatibility is level equality rather than the intended
-ordering, so a stricter callee is currently a mismatch, and a container whose
-element index is not provable holds one joined content set.
+answer the rest without proving one local outlives another. One limit remains: a container
+whose element index is not provable holds one joined content set. Procedure-value
+compatibility follows the intended ordering — a callee may be assigned, passed,
+or returned as a type whose levels are the same or higher than its own, and what
+governs a call is always the type of the value called.
 
 #### Phase 4c — reconsider reference types only with evidence
 
