@@ -164,6 +164,45 @@ pop_a_local :: proc() -> []int {
 	return held.view if ok else nil;
 }
 
+// A map distinguishes constant keys, but only as far as a key is constant and
+// the entries last. Reading the key that holds the local names it; an unknown
+// key could be either; a write at an unknown key cannot erase what a known one
+// holds; and past the entry limit the keys share one step again.
+reads_the_local_key :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	table["b"] = Holder{local[:]};
+	return table["b"].view;
+}
+
+unknown_key :: proc(values: []int, which: string) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	table["b"] = Holder{local[:]};
+	return table[which].view;
+}
+
+unknown_key_write :: proc(values: []int, which: string) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["b"] = Holder{local[:]};
+	table[which] = Holder{values};
+	return table["b"].view;
+}
+
+overflowing_keys :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	table["b"] = Holder{values};
+	table["c"] = Holder{values};
+	table["d"] = Holder{values};
+	table["e"] = Holder{local[:]};
+	return table["f"].view;
+}
+
 main :: proc() {
 	fmt.println(1);
 }

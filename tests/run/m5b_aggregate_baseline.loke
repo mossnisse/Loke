@@ -154,6 +154,37 @@ remove_a_value :: proc(values: []int) -> []int {
 	return held.view if ok else nil;
 }
 
+// POSITIVE. Two constant keys are two entries, so reading one back does not
+// inherit what the other holds. A map's key set is not part of its type, so the
+// type provides the entries and this body decides which key uses which.
+constant_keys_are_independent :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	table["b"] = Holder{local[:]};
+	return table["a"].view;
+}
+
+// POSITIVE. The same through the copying lookup, which takes its key as an
+// argument rather than as part of a place.
+constant_key_lookup :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	table["b"] = Holder{local[:]};
+	held, ok := table.lookup_value("a");
+	return held.view if ok else nil;
+}
+
+// POSITIVE. A known key replaces what it held, so the local is gone from it.
+overwrite_a_key :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["b"] = Holder{local[:]};
+	table["b"] = Holder{values};
+	return table["b"].view;
+}
+
 // --- retention --------------------------------------------------------------
 
 // POSITIVE. The retained view is one of the caller's own arguments, and the
@@ -270,6 +301,9 @@ main :: proc() {
 
 	fmt.println(elements_are_independent(numbers[:])[0]);
 	fmt.println(len(pop_an_element(numbers[:])));
+	fmt.println(constant_keys_are_independent(numbers[:])[0]);
+	fmt.println(constant_key_lookup(numbers[:])[1]);
+	fmt.println(overwrite_a_key(numbers[:])[2]);
 	fmt.println(len(remove_a_value(numbers[:])));
 	fmt.println(write_beside_a_borrowed_element());
 	fmt.println(len(overwrite_one_element(numbers[:])));

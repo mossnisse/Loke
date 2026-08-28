@@ -4669,16 +4669,21 @@ those borrows: `Holder :: struct { view: []int }` is checked wherever a bare
 The compiler enumerates a type's **carrier paths**: the projection paths from the
 value to each built-in carrier reachable inside it. A record contributes one path
 per field, a union one per alternative, a small fixed array one path per element,
-a dynamic array or map one wildcard element path standing for every element, and
-a map separate key and value paths. Each path
+a dynamic array one wildcard element path standing for every element, and a map
+separate key and value paths under an entry step. A map's key set is not part of
+its type the way an array's length is, so the type provides a small number of
+entries and each procedure body decides which of its constant keys uses which. Each path
 keeps its own capability, so a record holding one `[]int` and one `[]mut int` has
 no single aggregate capability. A field that reaches no carrier contributes
 nothing, so a recursive type built from scalars enumerates to nothing at all.
 
 The enumeration is bounded: it stops at a fixed depth, a fixed array longer than
 a small limit contributes one wildcard element path rather than one per element,
-and a type with more paths than the limit collapses to one path for the whole
-value. A cut path stands for
+a map whose entry would be wide keeps a single wildcard entry, and a type with
+more paths than the limit collapses to one path for the whole value. An unknown
+index or key, and a constant key past the entry limit, use a wildcard step, which
+overlaps every element or entry: such a read sees all of them and such a write
+joins into all of them rather than replacing any. A cut path stands for
 every carrier beneath it and joins what they hold, so a limit costs precision and
 never a check.
 

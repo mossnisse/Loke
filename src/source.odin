@@ -142,6 +142,8 @@ Compiler :: struct {
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
+	// Whether a map type's shape gives constant keys entries of their own.
+	map_keyed:          map[Type_Id]bool,
 	rune_offset_type: Type_Id,
 	synth_procs:        [dynamic]Symbol_Id,
 

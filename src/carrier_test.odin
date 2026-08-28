@@ -229,16 +229,50 @@ main :: proc() { }`
 	defer destroy_compilation(&c)
 	f := shaped(&c, text)
 
+	// A `string` key carries no borrow, so every path here is a value path — one
+	// per entry, since a constant key gets an entry of its own.
 	shape := carrier_shape(&c, named_type(&c, f, "Table"))
-	testing.expectf(t, len(shape) == 1, "expected one carrier path in the values, got %d", len(shape))
-	steps := shape[0].steps
-	testing.expectf(t, len(steps) >= 3, "a map value path is missing its entry steps: %d", len(steps))
-	testing.expect(t, steps[len(steps) - 2].kind == .Field, "a map path does not separate key from value")
 	testing.expectf(
 		t,
-		steps[len(steps) - 2].lo == PROJ_MAP_VALUE,
-		"a value path was recorded under the key step",
+		len(shape) == MAP_KEY_SLOTS,
+		"expected one value path per entry, got %d",
+		len(shape),
 	)
+	entries := make(map[i64]bool, MAP_KEY_SLOTS, context.temp_allocator)
+	for path in shape {
+		steps := path.steps
+		testing.expectf(t, len(steps) >= 3, "a map value path is missing its entry steps: %d", len(steps))
+		testing.expect(t, steps[len(steps) - 2].kind == .Field, "a map path does not separate key from value")
+		testing.expectf(
+			t,
+			steps[len(steps) - 2].lo == PROJ_MAP_VALUE,
+			"a value path was recorded under the key step",
+		)
+		entry := steps[len(steps) - 3]
+		testing.expect(t, entry.kind == .Range, "a keyed map entry is not a constant range")
+		testing.expect(t, !entries[entry.lo], "two entries share one key slot")
+		entries[entry.lo] = true
+	}
+}
+
+@(test)
+a_wide_map_value_keeps_one_entry :: proc(t: ^testing.T) {
+	// Replicating the entry costs a copy of the value's paths, so a value with
+	// more than the limit keeps the single wildcard entry instead.
+	text := `package main;
+Wide :: struct { a: []int, b: []int, c: []int }
+Table :: struct { entries: map[string]Wide }
+main :: proc() { }`
+	c: Compiler
+	defer destroy_compilation(&c)
+	f := shaped(&c, text)
+
+	shape := carrier_shape(&c, named_type(&c, f, "Table"))
+	testing.expectf(t, len(shape) == 3, "expected one path per field, got %d", len(shape))
+	for path in shape {
+		entry := path.steps[len(path.steps) - 3]
+		testing.expect(t, entry.kind == .Wild, "a wide map value was given keyed entries")
+	}
 }
 
 @(test)

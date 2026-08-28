@@ -621,13 +621,15 @@ per-owner analysis it already was, and step 9 fixed the one place it was still
 lost by wrapping: an owner assigned into a *field* of file-scope storage. Field distinctions survive a call: a
 helper returning one field of a record argument substitutes that field's root.
 The measured false rejections were fixed rather than accepted, and `wrap`/`unwrap`
-stayed legal. Element precision follows what an index proves: a small fixed array
-gives each element its own path, so two elements holding two roots stay
-independent, while an unknown index, a longer array, a dynamic array, and a map
-keep one joined element set. One conservative limit is recorded: that
-joined set, where no index is provable. A removal names the removed element's own
+stayed legal. Element precision follows what an index or key
+proves: a small fixed array gives each element its own path, and a map gives a
+bounded number of constant keys an entry each, so two elements or two keys
+holding two roots stay independent. A removal names the removed element's own
 root rather than the container, so `pop` and both `remove` forms hand back the
-dependencies the element had.
+dependencies the element had. One conservative limit is recorded, and it is the
+domain rather than a defect: where no index or key is provable — a dynamic array
+index, a runtime key, a long array, a wide map entry — the elements keep one
+joined content set.
 
 #### Phase 4b — stable contracts at procedure boundaries
 
@@ -668,7 +670,8 @@ and call sites against the argument supplied — including the caller's half of
 `stored`, where the call is modelled as the assignment the callee may make, so
 the argument's borrows travel into the destination and the existing scope rules
 answer the rest without proving one local outlives another. One limit remains: a container
-whose element index is not provable holds one joined content set. Procedure-value
+whose element index or key is not provable holds one joined content set.
+Procedure-value
 compatibility follows the intended ordering — a callee may be assigned, passed,
 or returned as a type whose levels are the same or higher than its own, and what
 governs a call is always the type of the value called.

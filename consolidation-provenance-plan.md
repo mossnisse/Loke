@@ -1595,3 +1595,54 @@ corpus reports no other difference.
 
 `odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
 levels pass.
+
+### Follow-up — constant map keys get entries of their own
+
+Implemented on 2026-08-28. The same three-case measurement as the fixed-array
+step: two constant keys holding two different roots, read back through the index
+and through `lookup_value`, were both blamed for the root the *other* key held.
+
+**Why this could not be the array fix again.** A fixed array's length is part of
+its type, so the shape can enumerate one path per element. A map's key set is
+not. The split here is therefore in two halves: the *type* provides
+`MAP_KEY_SLOTS` entries, and each procedure body assigns its constant keys to
+them, first written first, in `Flow_Graph.map_key_entries`. Numbering is shared
+across a body's maps, which is harmless — two maps are two roots and their paths
+are never compared.
+
+**The wildcard entry was the design mistake, and the fixture caught it.** The
+first version gave the shape four keyed entries *plus* a wildcard entry to answer
+for unknown keys. But a wildcard path overlaps every keyed one, so every keyed
+write also wrote it and every keyed read also read it — reconstituting exactly
+the joined set the change was removing, while every test still passed. There is
+no wildcard entry now: an unknown key, or one past the limit, uses a wildcard
+*step*, which overlaps the keyed entries and so reads all of them and joins into
+all of them. The write-path indistinctness rule added with the array work is what
+makes that join happen instead of a replace.
+
+**The cost is bounded by the value's width, not the key count.** Every entry
+costs a copy of the key and value paths, so a map whose entry would exceed
+`MAP_KEY_PATH_LIMIT` keeps one wildcard entry rather than spending the type's
+whole `CARRIER_WIDTH` budget and collapsing every other field's precision.
+`map[string]Holder` is keyed; `map[string]` of a three-view record is not. Both
+are covered by focused tests.
+
+The key travels through the operations that take it as an argument as well as
+through the index place: `lookup_value` on a constant key now reads that entry's
+value content rather than the whole receiver, and a map `remove` reads it too.
+
+Corpus: three positives added to
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke) and four
+rejections to [m5b_aggregate_wrapping.loke](tests/err/m5b_aggregate_wrapping.loke)
+— the key that holds the local, an unknown key, a write at an unknown key, and a
+key past the entry limit. `src/carrier_test.odin` gained the wide-value case and
+its map test now asserts one value path per entry. An A/B of both compilers over
+every corpus reports no other difference.
+
+**Honest note on value.** The array case was idiomatic code; this one is rarer —
+a map read at a *literal* key whose entries hold borrows of different roots. It
+is implemented because the joined set was the last recorded Phase 4a limit, and
+it is bounded so that a map of wide records pays nothing.
+
+`odin test src` 57 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.

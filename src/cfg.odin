@@ -247,6 +247,12 @@ Flow_Graph :: struct {
 	// carrier but can hold one inside it (consolidation-provenance-plan.md
 	// step 5). Ordered by the shape, so two values of one type pair by index.
 	content_by_symbol: map[Symbol_Id][]int,
+	// Which entry of a keyed map shape each constant key of this body uses. A
+	// map's key set is not part of its type, so the type provides the entries and
+	// the body assigns them, first written first. Numbering is shared across the
+	// body's maps, which is harmless: two maps are two roots and their paths are
+	// never compared.
+	map_key_entries: map[string]int,
 	call_results:   map[^Expr_Call][]Prov_Call_Result,
 	// Direct callees whose result summaries this graph reads. Populated only in
 	// summary mode and copied into compilation metadata before the graph dies.
@@ -2407,7 +2413,12 @@ prov_place_of :: proc(graph: ^Flow_Graph, e: Expr) -> (Root_Id, []Proj_Step, boo
 			if !ok {
 				return NO_ROOT, nil, false
 			}
-			entry := prov_extend(graph, path, proj_wild())
+			key: Expr
+			if len(v.indices) == 1 {
+				key = v.indices[0]
+			}
+			step := prov_map_entry_step(graph, expr_base(v.operand).type, key)
+			entry := prov_extend(graph, path, step)
 			return root, prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE)), true
 		}
 		return NO_ROOT, nil, false
@@ -2437,6 +2448,51 @@ prov_const_int :: proc(graph: ^Flow_Graph, e: Expr) -> (i64, bool) {
 		return 0, false
 	}
 	return bi_to_i64(graph.k.c, base.const_value.integer)
+}
+
+// The entry step a map access uses: the key's own entry when the key is a
+// constant this body has room for, and the wildcard otherwise. The wildcard
+// overlaps every keyed entry, so an unknown key still reads all of them and
+// still joins when it writes.
+@(private = "file")
+prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) -> Proj_Step {
+	if key == nil || !map_shape_is_keyed(graph.k.c, map_type) {
+		return proj_wild()
+	}
+	base := expr_base(key)
+	if base == nil || !base.is_const {
+		return proj_wild()
+	}
+	name: string
+	#partial switch base.const_value.kind {
+	case .String:
+		name = fmt.aprintf("s:%s", base.const_value.text, allocator = graph.alloc)
+	case .Integer:
+		value, ok := bi_to_i64(graph.k.c, base.const_value.integer)
+		if !ok {
+			return proj_wild()
+		}
+		name = fmt.aprintf("i:%d", value, allocator = graph.alloc)
+	case .Rune:
+		value, ok := bi_to_i64(graph.k.c, base.const_value.integer)
+		if !ok {
+			return proj_wild()
+		}
+		name = fmt.aprintf("r:%d", value, allocator = graph.alloc)
+	case .Boolean:
+		name = fmt.aprintf("b:%v", base.const_value.boolean, allocator = graph.alloc)
+	case:
+		return proj_wild()
+	}
+	if entry, found := graph.map_key_entries[name]; found {
+		return proj_range(i64(entry), i64(entry) + 1)
+	}
+	entry := len(graph.map_key_entries)
+	if entry >= MAP_KEY_SLOTS {
+		return proj_wild() // out of entries; the wildcard answers for the rest
+	}
+	graph.map_key_entries[name] = entry
+	return proj_range(i64(entry), i64(entry) + 1)
 }
 
 @(private = "file")
@@ -3044,7 +3100,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 					// above is still what ends the borrows the container's own
 					// storage was carrying.
 					actuals[index] = prov_content_at(
-						graph, root, prov_element_path(graph, path, container_op),
+						graph, root, prov_element_path(graph, v, path, container_op),
 					)
 				} else {
 					actuals[index] = prov_borrow(graph, root, path, true, expr_span(argument), "borrow")
@@ -3069,10 +3125,21 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// A map is an owner, so reading its identifier carries no loans.
 			// A borrowed payload nevertheless depends on its current contents.
 			if root, path, ok := prov_place_of(graph, argument); ok {
-				actuals[index] = prov_borrow(graph, root, prov_extend(graph, path, proj_wild()), carrier_is_mutable(c, v.type), v.span, "map value")
+				entry := prov_extend(graph, path, prov_map_call_step(graph, v))
+				actuals[index] = prov_borrow(graph, root, entry, carrier_is_mutable(c, v.type), v.span, "map value")
 			} else if prov_expr_is_temporary(argument) {
 				root := prov_temp_root(graph, expr_span(argument))
 				actuals[index] = prov_borrow(graph, root, nil, carrier_is_mutable(c, v.type), v.span, "map value")
+			}
+		} else if index == 0 && container_op == .Map_Lookup_Value {
+			// A copied-out value holds what that entry held, and reading the whole
+			// receiver would hand back every entry's borrows instead.
+			if root, path, ok := prov_place_of(graph, argument); ok {
+				entry := prov_extend(graph, path, prov_map_call_step(graph, v))
+				value := prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
+				if content := prov_content_at(graph, root, value); len(content) > 0 {
+					actuals[index] = content
+				}
 			}
 		}
 		prov_weaken(graph, actuals[index], prov_parameter_type(graph, v, index))
@@ -3286,12 +3353,26 @@ prov_op_removes_element :: proc(op: Container_Op) -> bool {
 // The content path a removal reads from. A map entry's key and value are
 // separate storage, so removing a value does not hand back what a key borrows.
 @(private = "file")
-prov_element_path :: proc(graph: ^Flow_Graph, path: []Proj_Step, op: Container_Op) -> []Proj_Step {
-	element := prov_extend(graph, path, proj_wild())
-	if op == .Map_Remove {
-		return prov_extend(graph, element, proj_field(PROJ_MAP_VALUE))
+prov_element_path :: proc(
+	graph: ^Flow_Graph,
+	v: ^Expr_Call,
+	path: []Proj_Step,
+	op: Container_Op,
+) -> []Proj_Step {
+	if op != .Map_Remove {
+		return prov_extend(graph, path, proj_wild())
 	}
-	return element
+	entry := prov_extend(graph, path, prov_map_call_step(graph, v))
+	return prov_extend(graph, entry, proj_field(PROJ_MAP_VALUE))
+}
+
+// The entry step for a map operation that takes its key as an argument.
+@(private = "file")
+prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
+	if len(v.bound) < 2 || v.bound[0] == nil {
+		return proj_wild()
+	}
+	return prov_map_entry_step(graph, expr_base(v.bound[0]).type, v.bound[1])
 }
 
 // consolidation-provenance-plan.md step 6. A container operation is resolved

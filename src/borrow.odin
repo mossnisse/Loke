@@ -470,10 +470,39 @@ CARRIER_WIDTH :: 64
 CARRIER_ARRAY_ELEMENTS :: 8
 
 // A map's key and value content are separate storage, so a value read does not
-// inherit what a key borrows. They are sibling fields of the entry the wildcard
-// element step selects.
+// inherit what a key borrows. They are sibling fields of the entry step.
 PROJ_MAP_KEY :: 0
 PROJ_MAP_VALUE :: 1
+
+// How many constant keys of one body get an entry of their own, above the
+// wildcard entry that answers for an unknown or overflowing key. A map's key set
+// is not part of its type the way an array's length is, so this is the type
+// providing somewhere to put them and the body deciding which key goes where.
+MAP_KEY_SLOTS :: 4
+// And how wide one entry may be before the replication is not worth it. Every
+// entry costs a copy of the key and value paths, so a map of records with many
+// carriers keeps the single wildcard entry rather than spending the whole type's
+// budget at `CARRIER_WIDTH`.
+MAP_KEY_PATH_LIMIT :: 2
+
+// Whether this map type's shape separates constant keys. The place code asks the
+// same question, so both agree on how many entries exist.
+map_shape_is_keyed :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	if cached, found := c.map_keyed[type]; found {
+		return cached
+	}
+	// Provisionally unkeyed, so a value type that reaches this same map answers
+	// the question without asking it again. A map that contains itself keeps the
+	// single wildcard entry, which is the conservative side.
+	c.map_keyed[type] = false
+	out := false
+	if info := underlying_info(c, type); info != nil && info.kind == .Map {
+		width := len(carrier_shape(c, info.key)) + len(carrier_shape(c, info.element))
+		out = width > 0 && width <= MAP_KEY_PATH_LIMIT
+	}
+	c.map_keyed[type] = out
+	return out
+}
 
 Carrier_Path :: struct {
 	steps: []Proj_Step,
@@ -646,9 +675,22 @@ carrier_shape_walk :: proc(
 		// fact, and one path per element would not be finite here.
 		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
 	case .Map:
-		entry := carrier_steps(c, prefix, {proj_wild()})
-		carrier_shape_walk(c, info.key, carrier_steps(c, entry, {proj_field(PROJ_MAP_KEY)}), depth + 2, out)
-		carrier_shape_walk(c, info.element, carrier_steps(c, entry, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out)
+		// One entry per distinguishable constant key. There is deliberately no
+		// wildcard entry beside them: an unknown key, or one past the limit, uses
+		// a wildcard *step*, which overlaps every keyed entry — so such a read
+		// sees all of them and such a write joins into all of them. An entry of
+		// its own would instead be written by every keyed write and read by every
+		// keyed read, which is the single joined set this replaces.
+		entries := 1
+		if map_shape_is_keyed(c, type) {
+			entries = MAP_KEY_SLOTS
+		}
+		for entry in 0 ..< entries {
+			step := entries == 1 ? proj_wild() : proj_range(i64(entry), i64(entry) + 1)
+			base := carrier_steps(c, prefix, {step})
+			carrier_shape_walk(c, info.key, carrier_steps(c, base, {proj_field(PROJ_MAP_KEY)}), depth + 2, out)
+			carrier_shape_walk(c, info.element, carrier_steps(c, base, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out)
+		}
 	}
 }
 
