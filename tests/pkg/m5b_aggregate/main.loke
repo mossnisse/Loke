@@ -1,0 +1,69 @@
+package main; import "core:fmt";
+
+import "./wrapping";
+
+// consolidation-provenance-plan.md step 1: the strategy's integrated example
+// with today's records, maps, and procedure values. A borrow is taken out of a
+// map, wrapped, carried across a package boundary and through a procedure
+// value, and retained through a second helper.
+//
+// Labels match tests/run/m5b_aggregate_baseline.loke: POSITIVE must still
+// compile after steps 4-7, GAP is unsound and must stop compiling.
+
+// POSITIVE. Every root in this chain is the caller's, and the caller keeps the
+// table alive for the whole of it.
+integrated :: proc(table: inout map[string][dynamic]int) -> int {
+	slot, found := table.find("a");
+	if (!found) { return -1; }
+	holder := wrapping.wrap(slot^[:]);
+	held: wrapping.Holder;
+	wrapping.retain(inout held, wrapping.unwrap(holder));
+	chooser: proc(values: []int) -> []int = wrapping.first_half;
+	return chooser(held.view)[0];
+}
+
+// POSITIVE. The same chain with the borrow arriving as an ordinary argument,
+// so the imported summary substitutes the importer's root rather than a
+// container's.
+through_the_package :: proc(values: []int) -> []int {
+	return wrapping.unwrap(wrapping.wrap(values));
+}
+
+// GAP. The invalidated-root half of the first case: the entry pointer is a
+// borrow of the table's storage, and inserting through the same table may move
+// it. The wrapped view outlives that.
+invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
+	slot, found := table.find("a");
+	if (!found) { return -1; }
+	holder := wrapping.wrap(slot^[:]);
+	fresh: [dynamic]int;
+	table["b"] = move(fresh);
+	return len(holder.view);
+}
+
+// GAP. The escaping half: the root is this body's own dynamic array, and the
+// wrapped view is returned past its cleanup.
+escaping_root :: proc() -> []int {
+	numbers: [dynamic]int;
+	numbers.append(1);
+	return wrapping.unwrap(wrapping.wrap(numbers[:]));
+}
+
+// GAP. Retention through the imported helper stores a callee-local view in a
+// destination the caller owns.
+escaping_retention :: proc(destination: inout wrapping.Holder) {
+	numbers: [dynamic]int;
+	numbers.append(1);
+	wrapping.retain(inout destination, numbers[:]);
+}
+
+main :: proc() {
+	table: map[string][dynamic]int;
+	entries: [dynamic]int;
+	entries.append(11);
+	entries.append(22);
+	table["a"] = move(entries);
+
+	fmt.println(integrated(inout table));
+	fmt.println(through_the_package([4]int{1, 2, 3, 4}[:])[2]);
+}

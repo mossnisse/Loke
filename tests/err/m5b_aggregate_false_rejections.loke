@@ -1,0 +1,42 @@
+package main; import "core:fmt";
+
+// consolidation-provenance-plan.md step 1: the measured false rejections. Both
+// bodies below are valid programs that the checker refuses today because it
+// cannot follow a dependency through a value or express one at an indirect
+// call. Unlike an ordinary rejection fixture, the expectations here are the
+// thing being removed: steps 4-7 should make both compile, at which point these
+// bodies move to a positive fixture and this file goes away.
+
+Handle :: struct { target: ^mut int }
+
+// The bare form of this is accepted in tests/run/m5b_aggregate_baseline.loke.
+// Putting the same allocation base in a record field loses it, so `free` sees a
+// pointer with no visible allocation root. Step 5 must return the wrapped base
+// exactly as the bare one is returned, without granting an interior or aliased
+// pointer any new release right.
+wrapped_allocation_base :: proc() {
+	pointer, err := new(int);
+	if (err != nil) { return; }
+	pointer^ = 1;
+	handle := Handle{pointer};
+	free(handle.target);
+}
+
+// The callback's result borrows `input` and never `scratch`, but an indirect
+// call has no result contract, so every borrowed argument is assumed to be a
+// possible source of the result. Step 2 selects the contract that lets this
+// signature say which input the result depends on; step 7 enforces it.
+pick :: proc(input: []int, scratch: []int) -> []int {
+	fmt.println(scratch[0]);
+	return input;
+}
+
+run_pick :: proc(chooser: proc(input: []int, scratch: []int) -> []int, input: []int) -> []int {
+	scratch := [2]int{7, 8};
+	return chooser(input, scratch[:]);
+}
+
+main :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	fmt.println(run_pick(pick, numbers[:])[0]);
+}

@@ -145,6 +145,8 @@ program changes acceptance, and step 8 has the root information it needs.
 
 ### 1. Record the baseline and contract decision cases
 
+Done; see the verification record.
+
 - Run the complete `./test-all.ps1` matrix, recording revision, working-tree edits,
   toolchain versions, output, and elapsed time. Keep failures separate from new
   behavior. Do not use `-SkipOptimizationMatrix` for the milestone baseline.
@@ -549,7 +551,7 @@ carried by `Result_Provenance.thread` through `merge_provenance`,
 question and the current acceptance rule; its comment now says so, so step 8 does
 not reuse it as an outlives-the-destination proof.
 
-Coverage: `free_thread_local` and `free_static` in
+Coverage (step 0): `free_thread_local` and `free_static` in
 [m5b_provenance_regressions.loke](tests/err/m5b_provenance_regressions.loke) pin
 the two L0514 texts against each other, which is where the split is observable
 today.
@@ -560,3 +562,75 @@ other fixture's acceptance or expected text changed. The panic axis was not run:
 `Root_Kind` and `Result_Provenance` appear only in
 [borrow.odin](src/borrow.odin) and [cfg.odin](src/cfg.odin), so this change
 reaches no emission or cleanup path.
+
+### Step 1 — baseline, decision cases, and instrumentation
+
+Baseline taken on 2026-08-28 at `e3cd8aa71eef7a367e81c3d7764027605963b0c0` with
+the three in-flight specification edits uncommitted in the working tree and no
+compiler change beyond the counters below. Odin `dev-2025-09-nightly:42c2cb8`,
+clang 22.1.8, `x86_64-pc-windows-msvc`. `odin test src` 47 tests / 0.8s,
+`odin test tests` 14 tests / 2m54s, and the run/trap corpus at `-opt=minimal`
+(3m05s), `size` (2m59s), `speed` (2m54s), and `aggressive` (3m00s) — all
+successful. `test-all.ps1` itself was not used as the driver: it trips Windows
+PowerShell 5.1's `NativeCommandError` on the test runner's stderr, so its four
+commands were run directly.
+
+**Instrumentation.** `LOKE_PROV_STATS=1` makes `analyze_program_provenance`
+print `bodies`, `worklist-rounds`, total `reaching-bytes`, and the worst single
+body. Unset, it costs one boolean test per body. `bodies` counts only bodies that
+reach lattice allocation, which is the right denominator: a body that borrows
+nothing never sizes a lattice.
+
+| Program | bodies | rounds | reaching bytes | worst body |
+|---|---|---|---|---|
+| `tests/run/m6b_maps.loke` | 13 | 26 | 268248 | 265650 (`main`) |
+| `tests/run/m6b_regions.loke` | 26 | 29 | 1472 | 300 (`grows`) |
+| `tests/run/m5a_ownership.loke` | 25 | 34 | 512 | 240 (`to_string`) |
+| `tests/run/m5b_aggregate_baseline.loke` | 24 | 29 | 1024 | 648 (`main`) |
+| all-scalar program | 9 | 15 | 296 | 240 (`to_string`) |
+| nested/recursive aggregate program | 13 | 16 | 466 | 240 (`to_string`) |
+
+The all-scalar and nested figures are the linked runtime library's bodies; both
+user programs contribute nothing measurable, so ~300 bytes is the floor rather
+than a property of those programs. The number that matters is `m6b_maps.loke`'s
+`main` at 265650 bytes — 99% of that program's total, in one body, before any
+content path exists. `slots * loans * 2 * blocks` at one byte per bool is already
+the dominant cost in the existing corpus, which settles step 3: the packed-word
+conversion is not a contingency.
+
+**Fixtures.** Three added, all labelled per body as POSITIVE (must still compile
+after steps 4–7) or GAP (unsound, must stop compiling), so the later flip is a
+legible diff rather than a mystery regression:
+
+- [tests/run/m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke) —
+  everything accepted today: `wrap`/`unwrap` and the round trip, independent
+  fields, union injection/extraction, map value read versus entry pointer, a
+  moved owner carrying a borrow, a bare allocation base, and retention into an
+  `inout` destination (POSITIVE); a wrapped local escape, a union-wrapped local
+  escape, a view read back out of a local map, a write conflicting with a view
+  held in a field, a callee-local view retained into a caller's destination, a
+  global store, and a `thread_local` store (GAP).
+- [tests/pkg/m5b_aggregate/](tests/pkg/m5b_aggregate/main.loke) — the strategy's
+  integrated example with today's constructs: a borrow taken from a map with
+  `find`, wrapped, carried across a package boundary and through a procedure
+  value, and retained through a second helper, each valid case paired with its
+  escaping or invalidated-root counterpart.
+- [tests/err/m5b_aggregate_false_rejections.loke](tests/err/m5b_aggregate_false_rejections.loke) —
+  the two measured false rejections, whose expectations are the thing to be
+  removed rather than preserved.
+
+**What the baseline establishes.** The gap is real and it is the wrapper, not the
+borrow: `local[:]` returned bare is L0526, and the identical borrow inside
+`Holder{local[:]}` compiles. A union alternative and a map value hide it the same
+way. Two false rejections are equally concrete: a fresh allocation base put in a
+record field reaches `free` as L0514 "unknown provenance" where its bare
+equivalent is accepted, and an indirect call's result is assumed to borrow every
+borrowed argument, so a callback that returns `input` and only reads `scratch` is
+rejected for borrowing `scratch`. That second one is step 2's decision case in
+executable form: no inferred summary can fix it, because at the call site there
+is no body to infer from.
+
+Unrelated defect found while writing the fixtures, not fixed here: the checker
+accepts an explicit union conversion `Choice(Holder{...})` that LLVM emission
+then rejects with a type mismatch. Implicit injection is unaffected, which is
+what the fixture uses.

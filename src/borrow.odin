@@ -50,6 +50,7 @@ package lokec
 
 import "core:fmt"
 import "core:mem"
+import os2 "core:os/os2"
 
 Root_Id :: distinct int
 Loan_Id :: distinct int
@@ -560,6 +561,7 @@ analyze_program_provenance :: proc(k: ^Checker) {
 	for head := 0; head < len(queue); head += 1 {
 		literal := queue[head]
 		queued[int(literal.symbol)] = false
+		prov_stats.rounds += 1
 		if !summarize_body(k, literal) {
 			continue
 		}
@@ -585,6 +587,9 @@ analyze_program_provenance :: proc(k: ^Checker) {
 		if body.clean {
 			analyze_provenance(k, body.literal)
 		}
+	}
+	if prov_stats_on() {
+		prov_report_stats()
 	}
 }
 
@@ -711,6 +716,61 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	report_provenance(&state)
 }
 
+// consolidation-provenance-plan.md step 1: the two numbers that predict what
+// per-content-path slots will cost — the reaching lattice's size, which is
+// `slots * loans` per block and therefore the one that multiplies, and how many
+// rounds the summary worklist takes. `LOKE_PROV_STATS=1` prints them after the
+// whole program settles; unset, this is one boolean test per body.
+@(private = "file")
+prov_stats: struct {
+	on:     bool,
+	known:  bool,
+	bodies: int,
+	rounds: int,
+	bytes:  int,
+	worst:  int,
+	name:   string,
+}
+
+@(private = "file")
+prov_stats_on :: proc() -> bool {
+	if !prov_stats.known {
+		prov_stats.known = true
+		prov_stats.on = os2.get_env("LOKE_PROV_STATS", context.temp_allocator) != ""
+	}
+	return prov_stats.on
+}
+
+@(private = "file")
+prov_record_body :: proc(state: ^Prov_State) {
+	graph := state.graph
+	bytes := len(graph.blocks) * 2 * max(state.slots * state.loans, 1)
+	prov_stats.bodies += 1
+	prov_stats.bytes += bytes
+	if bytes <= prov_stats.worst {
+		return
+	}
+	prov_stats.worst = bytes
+	prov_stats.name = "?"
+	if graph.literal != nil {
+		if sym := symbol_of(state.k.c, graph.literal.symbol); sym != nil {
+			prov_stats.name = identifier_text(state.k.c, sym.name)
+		}
+	}
+}
+
+@(private = "file")
+prov_report_stats :: proc() {
+	fmt.eprintf(
+		"prov-stats: bodies=%d worklist-rounds=%d reaching-bytes=%d worst-body=%d (%s)\n",
+		prov_stats.bodies,
+		prov_stats.rounds,
+		prov_stats.bytes,
+		prov_stats.worst,
+		prov_stats.name,
+	)
+}
+
 // Sizes the per-block lattice storage. False when the body borrows nothing at
 // all, so neither rule can fail and neither pass has to run.
 @(private = "file")
@@ -739,6 +799,11 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
 	state.merged = make([]bool, state.loans, graph.alloc)
+	// Diagnose mode only: summary mode revisits one body once per worklist round,
+	// and the rounds are counted separately.
+	if graph.mode == .Prov_Diagnose && prov_stats_on() {
+		prov_record_body(state)
+	}
 	return true
 }
 

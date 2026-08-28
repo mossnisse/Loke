@@ -1,0 +1,182 @@
+package main; import "core:fmt";
+
+// consolidation-provenance-plan.md step 1: what the checker does with a borrow
+// that travels inside a value today. Every body here compiles at the revision
+// this fixture was added, and each is labelled with what it must be once
+// aggregate content flows:
+//
+//   POSITIVE  it is valid and must still compile after steps 4-6.
+//   GAP       it is unsound and must be rejected by steps 4-6 or 8. Its
+//             acceptance is recorded, not required; moving it to a rejection
+//             fixture is the intended outcome, not a regression.
+//
+// Bodies marked GAP are deliberately not called from `main`: several of them
+// return a view of storage that is already gone.
+
+Holder :: struct { view: []int }
+Pair :: struct { left: []int, right: []int }
+Choice :: union { Holder, int }
+Owner :: struct { numbers: [dynamic]int, view: []int }
+
+global_holder: Holder;
+
+// --- wrapping ---------------------------------------------------------------
+
+// POSITIVE. design.md's wrap/unwrap pair: the caller keeps the root alive, so
+// the borrow is valid on the way in and on the way out.
+wrap :: proc(values: []int) -> Holder {
+	return Holder{values};
+}
+
+unwrap :: proc(holder: Holder) -> []int {
+	return holder.view;
+}
+
+wrapped_round_trip :: proc(values: []int) -> []int {
+	return unwrap(wrap(values));
+}
+
+// GAP. The bare form of this is already rejected as L0526 in
+// tests/err/m5b_escape.loke; wrapping the same borrow in a record hides it.
+wrap_a_local :: proc() -> Holder {
+	local := [3]int{1, 2, 3};
+	return Holder{local[:]};
+}
+
+// GAP. A union alternative hides it the same way a field does.
+inject_a_local :: proc() -> Choice {
+	local := [3]int{1, 2, 3};
+	return Holder{local[:]};
+}
+
+// --- fields -----------------------------------------------------------------
+
+// POSITIVE. Two fields naming two different caller roots stay independent.
+independent_fields :: proc(a: []int, b: []int) -> Pair {
+	return Pair{a, b};
+}
+
+// POSITIVE. Injecting and extracting a caller's borrow through a union.
+inject :: proc(values: []int) -> Choice {
+	return Holder{values};
+}
+
+extract :: proc(choice: Choice) -> []int {
+	switch (value in choice) {
+	case Holder: return value.view;
+	case int:    return nil;
+	}
+	return nil;
+}
+
+// GAP. `pair.left` is a read-only view of `numbers`, so the write conflicts
+// with it exactly as it would if the view were held in a bare local.
+field_write_conflict :: proc() -> int {
+	numbers := [3]int{1, 2, 3};
+	others := [3]int{4, 5, 6};
+	pair := Pair{numbers[:], others[:]};
+	numbers[0] = 9;
+	return pair.left[0] + pair.right[0];
+}
+
+// --- containers -------------------------------------------------------------
+
+// POSITIVE. A value read copies the stored value, so it depends on what that
+// value borrows and not on the map root.
+map_value_read :: proc(table: map[string]Holder) -> []int {
+	held, ok := table.lookup_value("a");
+	return held.view if ok else nil;
+}
+
+// POSITIVE. An entry pointer is a borrow of the container's storage, which the
+// `inout` receiver makes the caller's.
+map_entry_pointer :: proc(table: inout map[string]Holder) -> ^mut Holder {
+	slot, found := table.find("a");
+	return slot if found else nil;
+}
+
+// GAP. The map is local, but what the returned view actually borrows is
+// `numbers`, and that is what ends here.
+map_from_a_local :: proc() -> []int {
+	table: map[string]Holder;
+	numbers := [3]int{1, 2, 3};
+	table["a"] = Holder{numbers[:]};
+	held, ok := table.lookup_value("a");
+	return held.view if ok else nil;
+}
+
+// --- moving an owner that carries a borrow ----------------------------------
+
+// POSITIVE. The move transfers the caller's borrow with the owner; the result
+// does not borrow the dead source binding.
+move_an_owner :: proc(values: []int) -> Owner {
+	owner: Owner;
+	owner.view = values;
+	return move(owner);
+}
+
+// --- allocation bases -------------------------------------------------------
+
+// POSITIVE. The bare base reaches checked `free`. Its wrapped equivalent does
+// not, which is recorded in tests/err/m5b_aggregate_false_rejections.loke.
+alloc_bare :: proc() {
+	pointer, err := new(int);
+	if (err != nil) { return; }
+	pointer^ = 1;
+	free(pointer);
+}
+
+// --- retention --------------------------------------------------------------
+
+// POSITIVE. The retained view is one of the caller's own arguments, so the
+// caller can be given an obligation it is able to meet.
+retain_into_inout :: proc(destination: inout Holder, values: []int) {
+	destination.view = values;
+}
+
+// GAP. The retained view is callee-local storage. No contract the caller could
+// be given makes this valid.
+retain_local_into_inout :: proc(destination: inout Holder) {
+	local := [3]int{1, 2, 3};
+	destination.view = local[:];
+}
+
+// GAP, and today a documented trust boundary rather than an oversight: nothing
+// tells the caller that `values` must outlive the process.
+set_global :: proc(values: []int) {
+	global_holder = Holder{values};
+}
+
+// GAP. Thread storage outlives every frame on its own thread and nothing on
+// another one; neither half of that is checked here.
+store_in_thread_local :: proc(values: []int) {
+	held: thread_local Holder;
+	held.view = values;
+	fmt.println(len(held.view));
+}
+
+main :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	others := [4]int{5, 6, 7, 8};
+
+	fmt.println(unwrap(wrap(numbers[:]))[0]);
+	fmt.println(wrapped_round_trip(numbers[:])[1]);
+
+	pair := independent_fields(numbers[:], others[:]);
+	fmt.println(pair.left[0] + pair.right[0]);
+
+	fmt.println(extract(inject(numbers[:]))[2]);
+
+	table: map[string]Holder;
+	table["a"] = Holder{numbers[:]};
+	fmt.println(map_value_read(table)[3]);
+	fmt.println(len(map_entry_pointer(inout table).view));
+
+	fmt.println(len(move_an_owner(numbers[:]).view));
+
+	alloc_bare();
+
+	holder: Holder;
+	retain_into_inout(inout holder, others[:]);
+	fmt.println(holder.view[0]);
+}
