@@ -45,6 +45,61 @@ hidden_alias :: proc() -> int {
 	return h.target^;
 }
 
+// Consuming a value hands on what it held, so the escape survives the move.
+move_a_local :: proc() -> Holder {
+	local := [3]int{1, 2, 3};
+	held := Holder{local[:]};
+	return move(held);
+}
+
+impl Holder {
+	take :: proc(self: move Holder) -> []int { return self.view; }
+}
+
+consume_a_local :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	held := Holder{local[:]};
+	return move(held).take();
+}
+
+// A type switch binds the alternative's value, so what it holds travels in.
+extract_a_local :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	choice: Choice = Holder{local[:]};
+	switch (value in choice) {
+	case Holder: return value.view;
+	case int:    return nil;
+	}
+	return nil;
+}
+
+// So does a `foreach` element.
+iterate_a_local :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	holders := [2]Holder{Holder{local[:]}, Holder{local[:]}};
+	foreach (h in holders) {
+		return h.view;
+	}
+	return nil;
+}
+
+// A helper returning one field substitutes that field's root at the caller, so
+// each of these names the array it actually borrows.
+only_left :: proc(p: Pair) -> []int { return p.left; }
+only_right :: proc(p: Pair) -> []int { return p.right; }
+
+escape_through_a_field :: proc() -> []int {
+	numbers := [3]int{1, 2, 3};
+	others := [3]int{4, 5, 6};
+	return only_left(Pair{numbers[:], others[:]});
+}
+
+escape_through_the_other_field :: proc() -> []int {
+	numbers := [3]int{1, 2, 3};
+	others := [3]int{4, 5, 6};
+	return only_right(Pair{numbers[:], others[:]});
+}
+
 main :: proc() {
 	fmt.println(1);
 }

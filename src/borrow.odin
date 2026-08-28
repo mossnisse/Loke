@@ -647,6 +647,12 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) {
 Result_Provenance :: struct {
 	// Which borrowed parameters the result may name storage of.
 	params:  []bool,
+	// Which of that parameter's content paths, when it holds its borrows inside
+	// it. Indices line up with `carrier_shape` of the parameter's type, which is
+	// the same order the caller's content slots are in, so a caller substitutes
+	// the matching field rather than everything the argument holds. Nil for a
+	// bare carrier and wherever the paths could not be narrowed.
+	param_paths: [][]bool,
 	// Static-duration or materialized storage, which outlives every caller.
 	static:  bool,
 	// `thread_local` storage, which outlives every caller on its own thread and
@@ -683,6 +689,7 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: i
 	summary.results = make([]Result_Provenance, len(sym.results), c.semantic_allocator)
 	for index in 0 ..< len(summary.results) {
 		summary.results[index].params = make([]bool, len(sym.params), c.semantic_allocator)
+		summary.results[index].param_paths = make([][]bool, len(sym.params), c.semantic_allocator)
 		summary.results[index].region.params = make([]bool, len(sym.params), c.semantic_allocator)
 	}
 	summary.results[result].params[param] = type_is_carrier(c, sym.results[result])
@@ -709,6 +716,20 @@ merge_provenance :: proc(into: ^Result_Provenance, from: Result_Provenance) -> b
 		if value && index < len(into.params) && !into.params[index] {
 			into.params[index] = true
 			changed = true
+		}
+	}
+	for paths, index in from.param_paths {
+		if len(paths) == 0 || index >= len(into.param_paths) {
+			continue
+		}
+		if into.param_paths[index] == nil {
+			continue // already the whole parameter; nothing to narrow
+		}
+		for value, path in paths {
+			if value && path < len(into.param_paths[index]) && !into.param_paths[index][path] {
+				into.param_paths[index][path] = true
+				changed = true
+			}
 		}
 	}
 	for value, index in from.region.params {
@@ -871,6 +892,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		summary.results = make([]Result_Provenance, len(sym.results), k.c.semantic_allocator)
 		for index in 0 ..< len(summary.results) {
 			summary.results[index].params = make([]bool, len(sym.param_symbols), k.c.semantic_allocator)
+			summary.results[index].param_paths = make([][]bool, len(sym.param_symbols), k.c.semantic_allocator)
 			summary.results[index].region.params = make([]bool, len(sym.param_symbols), k.c.semantic_allocator)
 		}
 		k.c.result_summaries[literal.symbol] = summary
@@ -939,11 +961,12 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Provenance, loan
 	switch root.kind {
 	case .Param:
 		if root.param_index >= 0 && root.param_index < len(into.params) {
-			if into.params[root.param_index] {
-				return false
+			changed := merge_param_paths(state, into, root, loan)
+			if !into.params[root.param_index] {
+				into.params[root.param_index] = true
+				changed = true
 			}
-			into.params[root.param_index] = true
-			return true
+			return changed
 		}
 		one.unknown = true
 	case .Static, .Materialized:
@@ -958,6 +981,52 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Provenance, loan
 		one.unknown = true
 	}
 	return merge_provenance(into, one)
+}
+
+// Narrows a parameter dependency to the content paths the loan actually names.
+// A loan derived from the parameter carries the projection it was taken at, so
+// the shape paths that overlap it are the ones the caller has to substitute —
+// and the ones it does not are what keeps a sibling field's root out of the
+// result. A parameter that is itself a carrier, or a loan whose path matches
+// everything, leaves the entry nil, which the caller reads as "all of it".
+@(private = "file")
+merge_param_paths :: proc(
+	state: ^Prov_State,
+	into: ^Result_Provenance,
+	root: Prov_Root,
+	loan: Prov_Loan,
+) -> bool {
+	index := root.param_index
+	if index >= len(into.param_paths) {
+		return false
+	}
+	sym := symbol_of(state.k.c, root.symbol)
+	if sym == nil || type_is_carrier(state.k.c, sym.type) {
+		into.param_paths[index] = nil
+		return false
+	}
+	shape := carrier_shape(state.k.c, sym.type)
+	if len(shape) == 0 {
+		into.param_paths[index] = nil
+		return false
+	}
+	if into.param_paths[index] == nil && into.params[index] {
+		return false // already widened to the whole parameter
+	}
+	if into.param_paths[index] == nil {
+		into.param_paths[index] = make([]bool, len(shape), state.k.c.semantic_allocator)
+	}
+	changed := false
+	for path, position in shape {
+		if !paths_overlap(path.steps, loan.path) {
+			continue
+		}
+		if !into.param_paths[index][position] {
+			into.param_paths[index][position] = true
+			changed = true
+		}
+	}
+	return changed
 }
 
 // One concrete body's root and region diagnostics.

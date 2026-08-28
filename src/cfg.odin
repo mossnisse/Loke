@@ -786,6 +786,13 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	body := new_flow_block(graph)
 	link(graph, head, body)
 	graph.current = body
+	// Each iteration binds the element to what the iteration holds, so a borrow
+	// stored inside an element travels into the binding instead of vanishing.
+	if graph.mode != .Lifecycle {
+		for binding in s.bindings {
+			prov_bind_value(graph, binding.symbol, iterated, expr_span(s.iterable))
+		}
+	}
 	walk_flow_loop_body(graph, s.body, head, done)
 	link(graph, graph.current, head)
 	graph.current = done
@@ -809,8 +816,9 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	if s.init != nil {
 		walk_flow_stmt(graph, s.init, extend = true)
 	}
+	subject: []int
 	if s.subject != nil {
-		walk_flow_expr(graph, s.subject)
+		subject = walk_flow_expr(graph, s.subject)
 	}
 	entry := graph.current
 	merge := new_flow_block(graph)
@@ -826,6 +834,11 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		outer_break, outer_break_depth := graph.break_block, graph.break_depth
 		graph.break_block, graph.break_depth = merge, len(graph.in_scope)
 		enter_flow_scope(graph)
+		// A type switch binds one name per case to the subject's value, so what
+		// the union alternative holds is what the binding holds.
+		if graph.mode != .Lifecycle {
+			prov_bind_value(graph, c.binding_symbol, subject, c.span)
+		}
 		walk_flow_stmts(graph, c.stmts)
 		leave_flow_scope(graph)
 		graph.break_block, graph.break_depth = outer_break, outer_break_depth
@@ -867,10 +880,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Move:
 		if prov {
-			// Moving, dropping, freeing, fully assigning, or exchanging a root
-			// invalidates borrows of its previous value (design.md).
-			prov_invalidate(graph, v.value, v.span, "moved")
-			return nil
+			return prov_consume(graph, v.value, v.span, "moved")
 		}
 		// One event, not a use followed by a kill: `Kill` already requires the
 		// source to be live, and two events would report one mistake twice.
@@ -1513,6 +1523,47 @@ prov_temp_content :: proc(graph: ^Flow_Graph, type: Type_Id) -> []int {
 		slots[index] = len(graph.prov_slots) - 1
 	}
 	return slots
+}
+
+// Consuming a value: what it held travels to wherever it went, so read that
+// before the source is invalidated. The borrows inside it are of other roots and
+// survive; what ends is the source binding's own storage, which is exactly what
+// the invalidation covers (design.md). An explicit `move` around the place is
+// transparent here — it is the same consumption written twice.
+@(private = "file")
+prov_consume :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) -> []int {
+	source := place
+	if moved, is_move := place.(^Expr_Move); is_move {
+		source = moved.value
+	}
+	consumed: []int
+	if root, path, ok := prov_place_of(graph, source); ok {
+		consumed = prov_content_at(graph, root, path)
+	}
+	prov_invalidate(graph, source, span, verb)
+	return consumed
+}
+
+// Publishes a value into whatever slots a binding has: its own slot when it is
+// a bare carrier, its content slots when it holds borrows inside it. Used where
+// a name is bound to a value the walk already has loans for but no declaration
+// runs — a `foreach` element and a type switch's per-case binding.
+@(private = "file")
+prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span: Span) {
+	if id == INVALID_SYMBOL {
+		return
+	}
+	if slot, is_carrier := prov_slot_for_symbol(graph, id); is_carrier {
+		sym := symbol_of(graph.k.c, id)
+		if sym != nil {
+			prov_weaken(graph, sources, sym.type, slot, span)
+		}
+		prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
+		return
+	}
+	if content := prov_content_slots(graph, id); len(content) > 0 {
+		prov_define_content(graph, content, sources, span)
+	}
 }
 
 // Publishes one value's content into another's. Two values of one type have
@@ -2739,7 +2790,12 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			continue
 		}
 		if index == 0 && receiver == .Move {
-			prov_invalidate(graph, argument, v.span, "moved")
+			// A consumed receiver hands its contents to the callee, so a result
+			// derived from it depends on what the receiver held.
+			// The move expression's own span, not the whole call's: what conflicts
+			// is the consumption of the receiver.
+			actuals[index] = prov_consume(graph, argument, expr_span(argument), "moved")
+			borrowed = prov_join(graph, borrowed, actuals[index])
 			continue
 		}
 		// Any user operation whose `self` parameter is `inout` also invalidates
@@ -2938,8 +2994,22 @@ prov_call_result :: proc(
 	if summary, found := result_summary(c, callee, result); found {
 		out: []int
 		for wanted, index in summary.params {
-			if wanted && index < len(actuals) {
+			if !wanted || index >= len(actuals) {
+				continue
+			}
+			// Substitute the caller's matching content, not everything the
+			// argument holds: the callee's summary records which of the
+			// parameter's content paths reach this result, in the same order the
+			// caller's content slots are in.
+			paths := index < len(summary.param_paths) ? summary.param_paths[index] : nil
+			if len(paths) != len(actuals[index]) {
 				out = prov_join(graph, out, actuals[index])
+				continue
+			}
+			for named, position in paths {
+				if named {
+					out = prov_join(graph, out, prov_one(graph, actuals[index][position]))
+				}
 			}
 		}
 		if summary.static {

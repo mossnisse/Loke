@@ -170,6 +170,19 @@ reslice_a_stored_view :: proc() -> int {
 	return part[0];
 }
 
+// POSITIVE since step 5. The helper returns one field, so the caller
+// substitutes that field's root and not everything the argument holds: writing
+// the array behind the *other* field stays legal.
+takes_left :: proc(p: Pair) -> []int { return p.left; }
+
+substituted_field_only :: proc() -> int {
+	numbers := [3]int{1, 2, 3};
+	others := [3]int{4, 5, 6};
+	view := takes_left(Pair{numbers[:], others[:]});
+	others[0] = 9;
+	return view[0];
+}
+
 main :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	others := [4]int{5, 6, 7, 8};
@@ -196,4 +209,5 @@ main :: proc() {
 	retain_into_inout(inout holder, others[:]);
 	fmt.println(holder.view[0]);
 	fmt.println(reslice_a_stored_view());
+	fmt.println(substituted_field_only());
 }

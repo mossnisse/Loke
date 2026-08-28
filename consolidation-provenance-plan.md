@@ -953,14 +953,7 @@ corpus, not predicted, and it is the kind of precision gain the milestone is for
 slots — 1.3%, matching step 4's measurement that content paths cluster in small
 shallow code rather than in the bodies with large lattices.
 
-**Still open in step 5**, none of it needed for the cases above but all of it
-named in the step's own list: preparing source facts before invalidating a move,
-`exchange`, and consuming receivers; resolved copy/clone hooks distinguishing a
-preserved contained borrow from fresh backing storage; iteration and type-switch
-bindings; extending result summaries with source and result *paths* (they remain
-positional and parameter-level, which is what carries `wrap`/`unwrap` today); and
-keeping `any_view`'s borrow of its subject distinct from what an extracted value
-holds. Containers are step 6 by design.
+**Still open after the first slice**, closed by the second below.
 
 **The staging `Flow_Mode` was not used, and should be dropped.** It exists so
 incomplete plumbing can land without changing acceptance. Content flow's whole
@@ -974,3 +967,59 @@ Ran: `odin test src` 56 tests, `odin test tests` 14 tests, and the run/trap
 corpus at all four optimization levels — all successful. Every difference against
 the step 4 compiler across `tests/err`, `tests/run`, `tests/pkg`, `tests/pkg_err`,
 and `examples` was enumerated and is accounted for above.
+
+### Step 5 — the rest: consumption, bindings, and path-level summaries
+
+Implemented on 2026-08-28. Each item was probed before it was written, and four
+of the five were real holes rather than theoretical ones.
+
+**Consumption.** `move(x)`, and a consuming `self` receiver, both discarded what
+the value held. `prov_consume` now reads the content of the place — seeing
+through an explicit `move` around it — and only then invalidates, so the borrows
+inside travel to wherever the value went while the source binding's own storage
+still ends. `move(held)` returning a wrapped view of a local, and
+`move(held).take()` returning the same through a consuming method, are both
+rejected now. The receiver case needed the move expression's own span rather than
+the whole call's, or an existing diagnostic widened its underline.
+
+**Bindings.** A `foreach` element and a type switch's per-case binding were never
+defined at all, so a borrow stored inside an element or a union alternative
+vanished at the binding. `prov_bind_value` publishes the iterated value into each
+element binding at the top of the loop body, and the subject into each case's
+binding, using the value's own slot when it is a bare carrier and its content
+slots otherwise.
+
+**Path-level result summaries.** This was the one with a measured false
+rejection, not just a hole: a helper returning `p.left` made its caller believe
+the result borrowed everything the argument held, so writing the array behind
+`p.right` was refused. `Result_Provenance.param_paths` now records *which*
+content paths of a parameter reach each result, indexed by `carrier_shape` — the
+same order the caller's content slots are in, so substitution is an index. The
+narrowing is derived from the loan's own projection through `paths_overlap`, so a
+loan derived from a field (a reslice, an element) narrows the same way a direct
+read does, and anything that cannot be narrowed leaves the entry nil meaning "all
+of it". Two escapes through two different fields of one argument now name the two
+different arrays they actually borrow.
+
+**`any_view` needed nothing.** Erasure already borrows its subject ahead of every
+other arm of the walk, and invalidating the subject while the view is live is
+rejected. The escaping form is not expressible: `any_view` may not be a result
+type (L0462).
+
+**`exchange` is not a step 5 case.** Its content half already works — the old
+value carries what it held. What the probe exposed is the *replacement* being
+retained in a caller-owned destination, which is `retain_local_into_inout`,
+already recorded as a gap for step 7.
+
+Six cases added to
+[m5b_aggregate_wrapping.loke](tests/err/m5b_aggregate_wrapping.loke) and one
+precision positive to
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke). The whole
+corpus was compared against the first slice's compiler: after restoring the
+receiver span, `tests/err` output is byte-identical and no other program changed.
+Cost is unchanged at 36608 reaching bytes. `odin test src` 56 tests,
+`odin test tests` 14 tests, and all four optimization levels pass.
+
+Step 5 is complete. Containers are step 6, and the copy/clone-hook bullet turned
+out to need no work of its own: a copy of an aggregate already publishes the
+source's content pairwise, and the region half of a clone is existing machinery.

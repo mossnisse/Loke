@@ -10,3 +10,21 @@ this write of `numbers` is not compatible with the read-only slice of it that is
 L0512
 @44:2
 `value` cannot be assigned here: a read-only pointer of it is still in use
+L0526
+@52:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@62:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@70:22
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@81:10
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@94:9
+this slice cannot be returned: `numbers` ends when this procedure returns
+L0526
+@100:9
+this slice cannot be returned: `others` ends when this procedure returns
