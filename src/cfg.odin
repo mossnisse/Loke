@@ -224,6 +224,10 @@ Flow_Graph :: struct {
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
+	// One slot per `carrier_shape` path, for a local whose type is not itself a
+	// carrier but can hold one inside it (consolidation-provenance-plan.md
+	// step 5). Ordered by the shape, so two values of one type pair by index.
+	content_by_symbol: map[Symbol_Id][]int,
 	call_results:   map[^Expr_Call][]Prov_Call_Result,
 	// Direct callees whose result summaries this graph reads. Populated only in
 	// summary mode and copied into compilation metadata before the graph dies.
@@ -302,6 +306,7 @@ build_flow_graph :: proc(
 	graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
 	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
 	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
+	graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 	graph.call_results = make(map[^Expr_Call][]Prov_Call_Result, 8, allocator)
 	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
@@ -926,6 +931,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		if prov {
 			if root, path, ok := prov_place_of(graph, v); ok {
 				prov_access(graph, root, path, .Read, v.span)
+				// Reading a field yields what that field holds, and only that.
+				// Checking the access must not add a lasting borrow of the
+				// wrapper on top of it.
+				if content := prov_content_at(graph, root, path); len(content) > 0 {
+					prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = v.span})
+					return content
+				}
 				return nil
 			}
 		}
@@ -962,6 +974,11 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		}
 
 	case ^Expr_Composite:
+		if prov {
+			if content := prov_temp_content(graph, v.type); len(content) > 0 {
+				return prov_composite_content(graph, v, content)
+			}
+		}
 		for element in v.elements {
 			if element.value != nil {
 				walk_flow_expr(graph, element.value)
@@ -1368,6 +1385,159 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 	return slot, true
 }
 
+// Constructing an aggregate puts each element's borrows at that element's own
+// place. A positional element goes to its field; a keyed one is not resolved to
+// a field index here, so a keyed literal joins every element into every path
+// rather than guessing. An array or slice literal has one wildcard element path,
+// which the same overlap test joins into.
+@(private = "file")
+prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: []int) -> []int {
+	keyed := false
+	for element in v.elements {
+		if element.key != nil {
+			keyed = true
+			break
+		}
+	}
+	per_element := make([][]int, len(v.elements), graph.alloc)
+	joined: []int
+	for element, index in v.elements {
+		if element.value == nil {
+			continue
+		}
+		loans := walk_flow_expr(graph, element.value)
+		per_element[index] = loans
+		joined = prov_join(graph, joined, loans)
+	}
+	for slot in content {
+		sources := joined
+		if !keyed {
+			sources = nil
+			for loans, index in per_element {
+				if len(loans) == 0 {
+					continue
+				}
+				if paths_overlap(graph.prov_slots[slot].path, {proj_field(index)}) {
+					sources = prov_join(graph, sources, loans)
+				}
+			}
+		}
+		prov_define_one_content(graph, slot, sources, v.span)
+	}
+	return content
+}
+
+// consolidation-provenance-plan.md step 5: a value that is not itself a borrow
+// can still hold one. Every place `carrier_shape` names gets its own slot, so a
+// read of one field does not inherit what a sibling borrows, and a wrapped
+// borrow keeps the obligations the bare one has.
+@(private = "file")
+prov_content_slots :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> []int {
+	if id == INVALID_SYMBOL {
+		return nil
+	}
+	if existing, found := graph.content_by_symbol[id]; found {
+		return existing
+	}
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil || type_is_carrier(graph.k.c, sym.type) {
+		return nil // a bare carrier already has its own slot
+	}
+	if sym.kind != .Var && sym.kind != .Parameter && sym.kind != .Result {
+		return nil
+	}
+	// Static-duration storage gets no slot, for the same reason a bare carrier
+	// in a global does not: design.md lists storing a view there as unchecked,
+	// and step 8 is where that changes.
+	if sym.duration != .None || (sym.decl != nil && sym.decl.top_level) {
+		return nil
+	}
+	shape := carrier_shape(graph.k.c, sym.type)
+	if len(shape) == 0 {
+		return nil // an all-scalar value initializes no payload facts
+	}
+	slots := make([]int, len(shape), graph.alloc)
+	for path, index in shape {
+		entry := empty_prov_slot(id)
+		entry.name = identifier_text(graph.k.c, sym.name)
+		entry.span = sym.span
+		entry.path = path.steps
+		entry.content_type = path.truncated ? INVALID_TYPE : path.type
+		append(&graph.prov_slots, entry)
+		slots[index] = len(graph.prov_slots) - 1
+	}
+	graph.content_by_symbol[id] = slots
+	return slots
+}
+
+// The content slots of one place: those whose shape path overlaps the
+// projection the place names. `paths_overlap` already treats a prefix as
+// covering everything below it, so a truncated path still answers for a deeper
+// read, and two distinct fields still answer separately.
+@(private = "file")
+prov_content_at :: proc(graph: ^Flow_Graph, root: Root_Id, path: []Proj_Step) -> []int {
+	if root == NO_ROOT {
+		return nil
+	}
+	slots := prov_content_slots(graph, graph.roots[int(root)].symbol)
+	if len(slots) == 0 {
+		return nil
+	}
+	if len(path) == 0 {
+		return slots
+	}
+	out := make([dynamic]int, 0, len(slots), graph.alloc)
+	for slot in slots {
+		if paths_overlap(graph.prov_slots[slot].path, path) {
+			append(&out, slot)
+		}
+	}
+	return out[:]
+}
+
+// Slots for the content of a value with no name of its own: a literal, a call
+// result, a temporary. Ordered by the same shape, so they pair by index with a
+// destination of the same type.
+@(private = "file")
+prov_temp_content :: proc(graph: ^Flow_Graph, type: Type_Id) -> []int {
+	shape := carrier_shape(graph.k.c, type)
+	if len(shape) == 0 {
+		return nil
+	}
+	slots := make([]int, len(shape), graph.alloc)
+	for path, index in shape {
+		entry := empty_prov_slot(INVALID_SYMBOL)
+		entry.path = path.steps
+		entry.content_type = path.truncated ? INVALID_TYPE : path.type
+		append(&graph.prov_slots, entry)
+		slots[index] = len(graph.prov_slots) - 1
+	}
+	return slots
+}
+
+// Publishes one value's content into another's. Two values of one type have
+// slot vectors built from the same shape, so they pair by index; anything else
+// takes the whole source conservatively into every destination path.
+@(private = "file")
+prov_define_content :: proc(graph: ^Flow_Graph, into: []int, from: []int, span: Span) {
+	for slot, index in into {
+		sources := from
+		if len(from) == len(into) {
+			sources = prov_one(graph, from[index])
+		}
+		prov_define_one_content(graph, slot, sources, span)
+	}
+}
+
+// One content path takes its own capability from the leaf that lives there: a
+// mutable borrow published into a read-only field weakens exactly as it would
+// at a read-only local.
+@(private = "file")
+prov_define_one_content :: proc(graph: ^Flow_Graph, slot: int, sources: []int, span: Span) {
+	prov_weaken(graph, sources, graph.prov_slots[slot].content_type, slot, span)
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
+}
+
 @(private = "file")
 prov_temp_slot :: proc(graph: ^Flow_Graph) -> int {
 	append(&graph.prov_slots, empty_prov_slot(INVALID_SYMBOL))
@@ -1515,17 +1685,32 @@ prov_bind_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 				set.params[index] = true
 				graph.region_of[id] = set
 			}
-			if !type_is_carrier(graph.k.c, sym.type) {
-				continue
-			}
-			slot, ok := prov_slot_for_symbol(graph, id)
-			if !ok {
+			slot, is_carrier := prov_slot_for_symbol(graph, id)
+			// An aggregate parameter arrives holding one borrow per place its
+			// shape names, seeded independently of the parameter binding itself.
+			content := prov_content_slots(graph, id)
+			if !is_carrier && len(content) == 0 {
 				continue
 			}
 			name := identifier_text(graph.k.c, sym.name)
 			root := prov_new_root(graph, .Param, sym.span, name)
 			graph.roots[int(root)].symbol = id
 			graph.roots[int(root)].param_index = index
+			if !is_carrier {
+				shape := carrier_shape(graph.k.c, sym.type)
+				for path, path_index in shape {
+					loan := prov_new_loan(
+						graph,
+						root,
+						path.steps,
+						path.mutable,
+						sym.span,
+						path.truncated ? "borrow" : carrier_noun(graph.k.c, path.type),
+					)
+					append(&graph.entry_defs, Prov_Entry_Def{slot = content[path_index], loan = loan})
+				}
+				continue
+			}
 			loan := prov_new_loan(
 				graph,
 				root,
@@ -2081,6 +2266,11 @@ prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind) -
 		prov_emit(graph, Prov_Event{kind = .Live, sources = sources, span = v.span})
 		return sources
 	}
+	// Reading a whole aggregate reads everything it holds.
+	if content := prov_content_slots(graph, v.symbol); len(content) > 0 {
+		prov_emit(graph, Prov_Event{kind = .Live, sources = content, span = v.span})
+		return content
+	}
 	return nil
 }
 
@@ -2249,7 +2439,8 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 		result_index := len(d.values) == 1 && len(d.symbols) > 1 ? symbol_index : 0
 		prov_declare_region(graph, id, sym, initializer, result_index)
 		slot, is_carrier := prov_slot_for_symbol(graph, id)
-		if !is_carrier {
+		content := prov_content_slots(graph, id)
+		if !is_carrier && len(content) == 0 {
 			continue
 		}
 		sources: []int
@@ -2259,6 +2450,10 @@ prov_declare :: proc(graph: ^Flow_Graph, d: ^Decl, value_loans: [][]int) {
 			} else if symbol_index < len(value_loans) {
 				sources = value_loans[symbol_index]
 			}
+		}
+		if !is_carrier {
+			prov_define_content(graph, content, sources, sym.span)
+			continue
 		}
 		prov_weaken(graph, sources, sym.type, slot, sym.span)
 		prov_emit(graph, Prov_Event {
@@ -2381,6 +2576,9 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					sources = sources,
 					span    = expr_span(target),
 				})
+			} else if content := prov_content_slots(graph, ident.symbol); len(content) > 0 {
+				// Replacing the whole value replaces everything it held.
+				prov_define_content(graph, content, sources, expr_span(target))
 			}
 			continue
 		}
@@ -2388,6 +2586,11 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 		if root, path, ok := prov_place_of(graph, target); ok {
 			prov_walk_subscripts(graph, target)
 			prov_access(graph, root, path, .Write, expr_span(target))
+			// Only the written path is replaced; the surviving fields keep what
+			// they held.
+			if written := prov_content_at(graph, root, path); len(written) > 0 && s.op == .Assign {
+				prov_define_content(graph, written, sources, expr_span(target))
+			}
 			continue
 		}
 		walk_flow_expr(graph, target)

@@ -83,14 +83,22 @@ mutable_user_slice_needs_an_exclusive_receiver :: proc() {
 	fmt.println(part[0]);
 }
 
-// A borrowed `operator([:])` result carries the receiver's root, so invalidating
-// the receiver while the result is live is rejected. What the slice inside the
-// receiver's own field borrows is the documented v1 trust boundary, not this.
+// A borrowed `operator([:])` result derived from the receiver's own storage
+// carries the receiver's root, so invalidating the receiver while the result is
+// live is rejected. When the field is itself a view, the result borrows what that
+// view borrows instead, which content provenance now follows: that variant is a
+// positive case in tests/run/m5b_views.loke.
+Owning_Table :: struct { rows: [4]int }
+impl Owning_Table {
+	span :: operator([:]) proc(self: inout Owning_Table, lo: int, hi: int) -> []mut int {
+		return self.rows[lo:hi];
+	}
+}
+
 user_slice_result_outlives_its_receiver :: proc() {
-	numbers := [4]int{1, 2, 3, 4};
-	t := Ok_Table{numbers[0:4]};
+	t := Owning_Table{[4]int{1, 2, 3, 4}};
 	part := t[0:2];
-	t = Ok_Table{numbers[2:4]};
+	t = Owning_Table{[4]int{5, 6, 7, 8}};
 	fmt.println(part[0]);
 }
 

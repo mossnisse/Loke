@@ -219,6 +219,16 @@ Prov_Slot :: struct {
 	symbol: Symbol_Id,
 	name:   string,
 	span:   Span,
+	// Which place inside the value this slot holds, from `carrier_shape`. Empty
+	// for a bare carrier and for a temporary, both of which are the whole value.
+	// A read of one field selects the slots whose path overlaps it, which is what
+	// keeps a sibling field's borrows out of it.
+	path: []Proj_Step,
+	// The leaf carrier's type at that path, so a borrow published into it weakens
+	// to the field's own capability rather than the whole value's. INVALID_TYPE
+	// for a slot that is not content, and for a truncated path, which stands for
+	// several leaves and keeps the stronger capability.
+	content_type: Type_Id,
 	// The loan this expression temporary was created with, if it holds a fresh
 	// borrow. A mutable carrier implicitly weakens to a read-only one (design.md),
 	// and that conversion is written at the destination, not at the borrowing
@@ -239,6 +249,7 @@ Prov_Slot :: struct {
 empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 	return Prov_Slot {
 		symbol             = symbol,
+		content_type       = INVALID_TYPE,
 		fresh_loan         = NO_LOAN,
 		fresh_access_block = NO_BLOCK,
 		fresh_access_index = -1,

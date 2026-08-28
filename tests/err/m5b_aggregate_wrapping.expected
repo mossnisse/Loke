@@ -1,0 +1,12 @@
+L0526
+@20:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@26:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0511
+@35:2
+this write of `numbers` is not compatible with the read-only slice of it that is still in use
+L0512
+@44:2
+`value` cannot be assigned here: a read-only pointer of it is still in use

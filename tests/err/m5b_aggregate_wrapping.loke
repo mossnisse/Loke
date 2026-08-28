@@ -1,0 +1,50 @@
+package main; import "core:fmt";
+
+// consolidation-provenance-plan.md step 5: the cases that content provenance
+// turned from silently accepted into rejections. Each one is the wrapped form
+// of a borrow whose bare form was already refused, which is the whole point:
+// putting a borrow inside a value must not lose what the value owes.
+//
+// These came out of tests/run/m5b_aggregate_baseline.loke and
+// tests/run/m5b_trust_boundary.loke, where they were labelled as gaps.
+
+Holder :: struct { view: []int }
+Pair :: struct { left: []int, right: []int }
+Choice :: union { Holder, int }
+Handle :: struct { target: ^int }
+
+// The bare form is `returns_a_local_array` in tests/err/m5b_escape.loke.
+// Wrapping it in a record used to hide the escape.
+wrap_a_local :: proc() -> Holder {
+	local := [3]int{1, 2, 3};
+	return Holder{local[:]};
+}
+
+// A union alternative hid it the same way a field did.
+inject_a_local :: proc() -> Choice {
+	local := [3]int{1, 2, 3};
+	return Holder{local[:]};
+}
+
+// `pair.left` is a read-only view of `numbers`, so the write conflicts with it
+// exactly as it would if the view were held in a bare local.
+field_write_conflict :: proc() -> int {
+	numbers := [3]int{1, 2, 3};
+	others := [3]int{4, 5, 6};
+	pair := Pair{numbers[:], others[:]};
+	numbers[0] = 9;
+	return pair.left[0] + pair.right[0];
+}
+
+// design.md listed an alias hidden inside a user pointer-containing record as
+// unchecked. It is checked now: `h.target` and `value` are the same storage.
+hidden_alias :: proc() -> int {
+	value := 1;
+	h := Handle{&value};
+	value = 2;
+	return h.target^;
+}
+
+main :: proc() {
+	fmt.println(1);
+}

@@ -6,9 +6,15 @@ package main; import "core:fmt";
 // aggregate content flows:
 //
 //   POSITIVE  it is valid and must still compile after steps 4-6.
-//   GAP       it is unsound and must be rejected by steps 4-6 or 8. Its
+//   GAP       it is unsound and must be rejected by a later step. Its
 //             acceptance is recorded, not required; moving it to a rejection
 //             fixture is the intended outcome, not a regression.
+//
+// Step 5 moved the wrapping cases out: a borrow now travels through a record
+// field, a union alternative, and a call, so those GAPs are rejections and live
+// in tests/err/m5b_aggregate_wrapping.loke. What is left here either must keep
+// compiling or waits for containers (step 6), retention contracts (step 7), or
+// storage duration (step 8).
 //
 // Bodies marked GAP are deliberately not called from `main`: several of them
 // return a view of storage that is already gone.
@@ -36,19 +42,6 @@ wrapped_round_trip :: proc(values: []int) -> []int {
 	return unwrap(wrap(values));
 }
 
-// GAP. The bare form of this is already rejected as L0526 in
-// tests/err/m5b_escape.loke; wrapping the same borrow in a record hides it.
-wrap_a_local :: proc() -> Holder {
-	local := [3]int{1, 2, 3};
-	return Holder{local[:]};
-}
-
-// GAP. A union alternative hides it the same way a field does.
-inject_a_local :: proc() -> Choice {
-	local := [3]int{1, 2, 3};
-	return Holder{local[:]};
-}
-
 // --- fields -----------------------------------------------------------------
 
 // POSITIVE. Two fields naming two different caller roots stay independent.
@@ -67,16 +60,6 @@ extract :: proc(choice: Choice) -> []int {
 	case int:    return nil;
 	}
 	return nil;
-}
-
-// GAP. `pair.left` is a read-only view of `numbers`, so the write conflicts
-// with it exactly as it would if the view were held in a bare local.
-field_write_conflict :: proc() -> int {
-	numbers := [3]int{1, 2, 3};
-	others := [3]int{4, 5, 6};
-	pair := Pair{numbers[:], others[:]};
-	numbers[0] = 9;
-	return pair.left[0] + pair.right[0];
 }
 
 // --- containers -------------------------------------------------------------
@@ -117,13 +100,25 @@ move_an_owner :: proc(values: []int) -> Owner {
 
 // --- allocation bases -------------------------------------------------------
 
-// POSITIVE. The bare base reaches checked `free`. Its wrapped equivalent does
-// not, which is recorded in tests/err/m5b_aggregate_false_rejections.loke.
+// POSITIVE. The bare base reaches checked `free`.
 alloc_bare :: proc() {
 	pointer, err := new(int);
 	if (err != nil) { return; }
 	pointer^ = 1;
 	free(pointer);
+}
+
+// POSITIVE since step 5, and a measured false rejection before it: the same
+// allocation base put in a record field reaches checked `free` too. An alias or
+// an interior pointer still does not.
+Handle :: struct { target: ^mut int }
+
+alloc_wrapped :: proc() {
+	pointer, err := new(int);
+	if (err != nil) { return; }
+	pointer^ = 1;
+	handle := Handle{pointer};
+	free(handle.target);
 }
 
 // --- retention --------------------------------------------------------------
@@ -155,6 +150,26 @@ store_in_thread_local :: proc(values: []int) {
 	fmt.println(len(held.view));
 }
 
+// POSITIVE since step 5. A user `operator([:])` whose receiver field is itself a
+// view returns a borrow of what that view borrows, not of the receiver's own
+// storage, so replacing the receiver does not invalidate the result. The
+// receiver-owns-its-storage form is still rejected, in tests/err/m5b_views.loke.
+Rows :: struct { rows: []mut int }
+impl Rows {
+	span :: operator([:]) proc(self: inout Rows, lo: int, hi: int) -> []mut int {
+		return self.rows[lo:hi];
+	}
+}
+
+reslice_a_stored_view :: proc() -> int {
+	numbers := [4]int{1, 2, 3, 4};
+	others := [4]int{5, 6, 7, 8};
+	table := Rows{numbers[0:4]};
+	part := table[0:2];
+	table = Rows{others[2:4]};
+	return part[0];
+}
+
 main :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	others := [4]int{5, 6, 7, 8};
@@ -175,8 +190,10 @@ main :: proc() {
 	fmt.println(len(move_an_owner(numbers[:]).view));
 
 	alloc_bare();
+	alloc_wrapped();
 
 	holder: Holder;
 	retain_into_inout(inout holder, others[:]);
 	fmt.println(holder.view[0]);
+	fmt.println(reslice_a_stored_view());
 }

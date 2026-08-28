@@ -412,6 +412,8 @@ owning both halves.
 
 ### 5. Propagate aggregate values and direct results together
 
+Partly done; see the verification record for what landed and what is still open.
+
 - Extend construction, declarations, assignment, selection, indexing, union
   injection/extraction, existing type-switch bindings, and iteration to consume
   and produce the content state. Preserve current union ownership restrictions;
@@ -904,3 +906,71 @@ it wastes an hour if met again: a helper returned `Compiler` by value after
 passing `&c` to the parser and checker, so the returned copy's internals pointed
 at the dead local and the test hung rather than crashing. Compilers are filled in
 place through a `^Compiler` parameter.
+
+### Step 5 — content flow through values (first slice)
+
+Implemented on 2026-08-28. This is the slice that closes the milestone's
+headline gap; the rest of step 5's list is still open and named below.
+
+**What flows now.** A local, parameter, or temporary whose type is not itself a
+carrier gets one `Prov_Slot` per `carrier_shape` path, ordered by the shape so
+two values of one type pair by index. Reading a whole aggregate yields all of
+them; reading a field yields only the slots whose path overlaps it, using
+`paths_overlap` rather than a second rule. Construction puts each positional
+element's borrows at that element's own field, and a keyed literal joins
+conservatively rather than guessing a field index. Declaration and whole-value
+assignment publish pairwise; a write through a field replaces only that path.
+A parameter is seeded with one loan per path, each borrowing the caller's root at
+that path, independently of the parameter binding. Each path weakens to its own
+leaf capability, so a mutable slice stored in a read-only field becomes read-only
+there — without that, a plain read of the source array was falsely rejected.
+
+Returns needed no work: escapes take their sources from the walked expression,
+which now returns content slots.
+
+**Behavior changes, all intended.** Four cases moved from
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke) and
+[m5b_trust_boundary.loke](tests/run/m5b_trust_boundary.loke) into the new
+[m5b_aggregate_wrapping.loke](tests/err/m5b_aggregate_wrapping.loke): a local
+wrapped in a record, the same through a union alternative, a write conflicting
+with a view held in a field, and `hidden_alias` — the alias inside a
+pointer-containing record that `design.md` listed as unchecked. One of step 1's
+two measured false rejections is gone: a fresh allocation base put in a record
+field now reaches checked `free`, and it is a positive case. The remaining false
+rejection is the callback, which needs step 7's contract.
+
+**One conservative rejection turned into an acceptance, deliberately.**
+`user_slice_result_outlives_its_receiver` in
+[m5b_views.loke](tests/err/m5b_views.loke) reassigned a receiver whose
+`operator([:])` result was still live. When the receiver's field is itself a
+view, the result borrows what that view borrows — not the receiver's storage — so
+replacing the receiver does not invalidate it, and the program is valid. The
+fixture keeps its meaning with a receiver that owns its rows, which is still
+rejected; the view-holding form became a positive case. This was found by the
+corpus, not predicted, and it is the kind of precision gain the milestone is for.
+
+**Cost.** The heaviest body went from 36148 to 36608 reaching bytes and 77 to 78
+slots — 1.3%, matching step 4's measurement that content paths cluster in small
+shallow code rather than in the bodies with large lattices.
+
+**Still open in step 5**, none of it needed for the cases above but all of it
+named in the step's own list: preparing source facts before invalidating a move,
+`exchange`, and consuming receivers; resolved copy/clone hooks distinguishing a
+preserved contained borrow from fresh backing storage; iteration and type-switch
+bindings; extending result summaries with source and result *paths* (they remain
+positional and parameter-level, which is what carries `wrap`/`unwrap` today); and
+keeping `any_view`'s borrow of its subject distinct from what an extracted value
+holds. Containers are step 6 by design.
+
+**The staging `Flow_Mode` was not used, and should be dropped.** It exists so
+incomplete plumbing can land without changing acceptance. Content flow's whole
+purpose is to change acceptance, and the fixture migration is what makes that
+legible to a reviewer; landing dark and flipping later would be two commits for
+one change and would hide the corpus evidence. The safety it was meant to provide
+came instead from running both compilers over the whole corpus and accounting for
+every difference.
+
+Ran: `odin test src` 56 tests, `odin test tests` 14 tests, and the run/trap
+corpus at all four optimization levels — all successful. Every difference against
+the step 4 compiler across `tests/err`, `tests/run`, `tests/pkg`, `tests/pkg_err`,
+and `examples` was enumerated and is accounted for above.

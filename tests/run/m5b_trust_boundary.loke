@@ -41,13 +41,14 @@ deref_unknown_provenance :: proc(supply: proc() -> ^int) -> int {
 	return pointer^;
 }
 
-// 4. An alias hidden inside a user pointer-containing record. `h.target` and
-//    `value` are the same storage, and the analysis follows neither into the
-//    record nor back out of it.
-hidden_alias :: proc() -> int {
+// 4. An alias hidden inside a user pointer-containing record used to be
+//    unchecked here. It is not any more: content provenance follows the borrow
+//    into `Handle` and back out, so the conflicting write is rejected. The case
+//    moved to tests/err/m5b_aggregate_wrapping.loke, and what remains valid is
+//    the alias without the conflict.
+alias_without_a_conflict :: proc() -> int {
 	value := 1;
 	h := Handle{&value};
-	value = 2;
 	return h.target^;
 }
 
@@ -80,7 +81,7 @@ main :: proc() {
 	fmt.println(global_holder.view[2]);
 
 	fmt.println(deref_unknown_provenance(supply_one));
-	fmt.println(hidden_alias());
+	fmt.println(alias_without_a_conflict());
 	run_with(store_a_view, numbers[:]);
 	fmt.println(global_view[0]);
 }

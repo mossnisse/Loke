@@ -1,26 +1,14 @@
 package main; import "core:fmt";
 
-// consolidation-provenance-plan.md step 1: the measured false rejections. Both
-// bodies below are valid programs that the checker refuses today because it
-// cannot follow a dependency through a value or express one at an indirect
-// call. Unlike an ordinary rejection fixture, the expectations here are the
-// thing being removed: steps 4-7 should make both compile, at which point these
-// bodies move to a positive fixture and this file goes away.
-
-Handle :: struct { target: ^mut int }
-
-// The bare form of this is accepted in tests/run/m5b_aggregate_baseline.loke.
-// Putting the same allocation base in a record field loses it, so `free` sees a
-// pointer with no visible allocation root. Step 5 must return the wrapped base
-// exactly as the bare one is returned, without granting an interior or aliased
-// pointer any new release right.
-wrapped_allocation_base :: proc() {
-	pointer, err := new(int);
-	if (err != nil) { return; }
-	pointer^ = 1;
-	handle := Handle{pointer};
-	free(handle.target);
-}
+// consolidation-provenance-plan.md step 1: the measured false rejections —
+// valid programs the checker refuses. Unlike an ordinary rejection fixture, the
+// expectations here are the thing being removed, and when the last one goes so
+// does this file.
+//
+// Step 5 removed the first: a fresh allocation base put in a record field now
+// reaches checked `free`, and that case is a positive in
+// tests/run/m5b_aggregate_baseline.loke. What is left needs a call contract,
+// which is step 7.
 
 // The callback's result borrows `input` and never `scratch`, but an indirect
 // call has no result contract, so every borrowed argument is assumed to be a
