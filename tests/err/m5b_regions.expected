@@ -27,3 +27,6 @@ L0310
 cannot initialise `proc(Allocator)` with `proc(@(allocator_reset) Allocator)`
 L0537
 this reset would end the region backing `xs`, which is still live here
+L0536
+@106:2
+`global_holder` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage

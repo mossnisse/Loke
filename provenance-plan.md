@@ -1,5 +1,13 @@
 # Transitive provenance implementation plan
 
+Status: historical; superseded by
+[`consolidation-provenance-plan.md`](consolidation-provenance-plan.md), the second
+consolidation implementation plan for aggregate provenance and call contracts.
+The decisions and checklist below are retained as historical input, not current
+implementation instructions. In particular, its recursive-cache shortcut,
+`Unknown` lifetime allowance, and `unsafe.forget_provenance` proposal are not
+adopted by the replacement plan.
+
 ## Context
 
 M5b built the two lifetime analyses design.md specifies, and
@@ -108,7 +116,7 @@ written down here so that agreeing to the plan is agreeing to them.
 | Reads from globals | A read of mutable global carrier storage yields unknown provenance and stays a trust boundary. | Nothing tracks writes to a global across procedures, so any other answer would be a guess. Unknown is not evidence of a failure — only an operation needing a proof, such as checked `free`, rejects it. |
 | `unsafe.forget_provenance` | `contribute_builtin(c, pkg, "forget_provenance", .Unsafe_Forget_Provenance)` in `src/stdlib.odin`, alongside the `raw_data`, `string_view`, and `cstring_view` entries already there. It evaluates its operand once under normal copy/move semantics, replaces root provenance with unknown, preserves region provenance, ownership, lifecycle, type, and representation, and lowers to nothing. | The mechanism exists and `core/unsafe` is otherwise an empty package. Keeping *region* provenance is the load-bearing half: forgetting a root must not also launder an arena-backed owner past a region reset. |
 | `forget_provenance` domain | Accepts any type and is the identity on one that carries no root provenance. | Once the carrier predicate is recursive, "can carry provenance" is most of the type system, so a restriction would reject little and would make generic code ask a question it cannot answer. |
-| Diagnostics | Reserve L0639–L0650. | M7 used through L0638. |
+| Diagnostics | Reserve L0649–L0660. | Stale as written: L0639 is in use and [`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) allocated L0644 and L0646–L0648 from the old reservation. L0645 is unused. |
 
 ## Steps
 

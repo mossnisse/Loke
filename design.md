@@ -380,7 +380,7 @@ A view from a `string` is thus `[]u8` and cannot become `[]mut u8`. Other read-o
 
 `[^]T` stays outside this axis. It is unchecked and always mutable, and converting to it visibly crosses the `core:unsafe` boundary.
 
-Checked provenance follows a local pointer and its copies until it is stored in an untracked place or converted through `core:unsafe`. A pointer loaded from such a place or received from foreign code is an unchecked address.
+Checked provenance follows a local pointer, its copies, and the records, unions, and containers it is [stored inside](#values-that-contain-borrows). It is lost by storing the pointer in a `rawptr` or `[^]T` place or converting it through `core:unsafe`. A pointer loaded from such a place or received from foreign code is an unchecked address.
 
 #### From string to X
 
@@ -1517,7 +1517,7 @@ A procedure type with a different calling convention can be declared like the fo
 
 proc "c" (n: i32, data: rawptr)
 
-Procedure types are compatible only when calling convention, parameter and result types, parameter modes, variadic shape, and type-level parameter effects match. In particular, `@(allocator_reset)` is part of the parameter's procedure type: a reset-capable procedure cannot be stored in a procedure value whose type hides that effect. Declaration-only attributes such as visibility and deprecation do not participate in type compatibility. Omitted-argument defaults are declaration metadata rather than type metadata; every call through a procedure value supplies the full parameter list.
+Procedure types are compatible only when calling convention, parameter and result types, parameter modes, variadic shape, and type-level parameter effects match. In particular, `@(allocator_reset)` is part of the parameter's procedure type: a reset-capable procedure cannot be stored in a procedure value whose type hides that effect. A parameter's [`@(escape=<level>)`](#escapelevel) is part of the type in the same way, so a call through a procedure value knows what the callee may keep of each argument. Declaration-only attributes such as visibility and deprecation do not participate in type compatibility. Omitted-argument defaults are declaration metadata rather than type metadata; every call through a procedure value supplies the full parameter list.
 
 Result-provenance summaries are also declaration metadata rather than part of a
 procedure type. A direct call can use the summary, but converting a declaration
@@ -1842,7 +1842,7 @@ value, ok := table.find("a");
 
 Where the receiver's type is written out — `inout` and `move` receivers, and every non-receiver mention — the bound names are used without `$`, which marks a binding site, not a use.
 
-A block may target one specialization, `impl Table(string, int) { ... }`; when both are visible the more specialized wins by tie-breaker 4 of [overload resolution](#operator-lookup-and-overload-resolution). Constraints use a `where` clause on the procedure, not the block. This is what lets a generic container satisfy an [interface](#interfaces-and-generic-operators), whose requirements use method syntax.
+A block may target one specialization, `impl Table(string, int) { ... }`; when both are visible the more specialized wins by tie-breaker 4 of [overload resolution](#operator-lookup-and-overload-resolution). Constraints use a `where` clause on the procedure, not the block. This is what lets a generic container satisfy an [interface](#interfaces-as-reusable-constraints), whose requirements use method syntax.
 
 ### Operator declarations
 
@@ -2674,7 +2674,7 @@ bumpable := (dyn mut Bumpable)(&mut counter);
 bumpable.bump();             // a mutating slot, through a mutable view
 ```
 
-The conversion allocates nothing and copies no value; it creates a compiler-recognized borrow whose provenance derives from the pointed-to source and materializes or reuses its witness. A pointer from a temporary may form a `dyn` value only for that complete expression. A local `dyn` value participates in ordinary use-based borrow analysis; storing one has the same unchecked-lifetime boundary as storing a slice. A `dyn` parameter or result follows the same coarse root-provenance rule as a slice.
+The conversion allocates nothing and copies no value; it creates a compiler-recognized borrow whose provenance derives from the pointed-to source and materializes or reuses its witness. A pointer from a temporary may form a `dyn` value only for that complete expression. A local `dyn` value participates in ordinary use-based borrow analysis, and storing one is checked exactly as storing a slice is. A `dyn` parameter or result follows the same coarse root-provenance rule as a slice.
 
 Converting a nil concrete pointer yields the nil dynamic view and retains no witness. The zero value of every `dyn Interface` is nil; copying one copies only the view when the borrow rules permit the alias, and calling a slot on nil panics. Dynamic interface values are comparable only with `nil`.
 
@@ -2843,7 +2843,7 @@ Storage modifiers are not [attributes](#attributes): a modifier specifies one va
 
 The following rules also apply to `static` and `thread_local`:
 
-- A `static` has a stable address for the life of the process. A `thread_local` has a stable address for the life of its thread. A procedure can return a borrow of either one. A program must not send a `thread_local` borrow to another thread or keep it after its thread ends. The borrow analysis does not check these errors.
+- A `static` has a stable address for the life of the process. A `thread_local` has a stable address for the life of its thread. A procedure can return a borrow of either one. Storing a `thread_local` borrow in process-duration storage is rejected, because thread storage does not outlive the process; see [Retaining a borrow](#retaining-a-borrow). A program must also not send a `thread_local` borrow to another thread or keep it after its thread ends, and the borrow analysis does not check those two errors.
 - An allocator-binding owner with either duration starts in the constant, allocator-unbound zero state. The first operation that needs an allocator binds the build-selected default allocator. The declaration cannot use `via` because a runtime allocator expression is not a constant initializer. To use a different allocator, construct the owner in an explicit startup procedure or thread-start procedure, and move it into the variable. `string` and `shared(T)` keep the allocator of the allocation that moves into them.
 
 ```odin
@@ -4468,7 +4468,7 @@ A bound may reference generic type and value parameters in scope from the declar
 
 Some cases that a where clause may be useful:
 
-- Generic parameter checks for procedures. The bound here is about what `E` *can do*, so it is written as an [interface](#interfaces-and-generic-operators) rather than as a type predicate:
+- Generic parameter checks for procedures. The bound here is about what `E` *can do*, so it is written as an [interface](#interfaces-as-reusable-constraints) rather than as a type predicate:
 
 ```odin
 // A fixed array has no `.x`/`.y` swizzle selectors; index it.
@@ -4627,11 +4627,12 @@ Operations propagate the two dependencies differently:
   Constructing an owning result with an allocator parameter propagates that
   allocator's region provenance. These cases are recorded separately in the
   procedure's result-provenance summary.
-- Storing a borrow in an untracked record or converting it through `core:unsafe`
-  loses checked root provenance as described under
-  [What is not checked](#what-is-not-checked). It does not extend the root or
-  allocator region and therefore cannot make an otherwise invalid lifetime
-  safe.
+- Storing a borrow inside a record, union, or container preserves its root
+  provenance along that value's carrier path. Converting it through
+  `core:unsafe`, or storing it in a `rawptr` or `[^]T` field, loses checked root
+  provenance as described under [What is not checked](#what-is-not-checked).
+  Losing provenance does not extend the root or allocator region and therefore
+  cannot make an otherwise invalid lifetime safe.
 
 For example, the two rejected returns below fail for different reasons:
 
@@ -4657,10 +4658,31 @@ compiler does not track is also an unchecked address despite having the same
 machine type as a checked `^T`. Dereferencing an unchecked address is the
 programmer's responsibility.
 
-A user record that contains pointer, length, or witness-table fields is not a
-new compiler-known borrow carrier. Version 1 has no user-defined provenance
-annotation. Storing a built-in borrow in such a record escapes the local
-analysis as described under [What is not checked](#what-is-not-checked).
+#### Values that contain borrows
+
+Putting a borrow inside a value does not discard what the borrow owes. A struct,
+union, fixed array, or container whose fields reach a built-in carrier *carries*
+those borrows: `Holder :: struct { view: []int }` is checked wherever a bare
+`[]int` is, and `return Holder{local[:]}` is rejected for the same reason
+`return local[:]` is.
+
+The compiler enumerates a type's **carrier paths**: the projection paths from the
+value to each built-in carrier reachable inside it. A record contributes one path
+per field, a union one per alternative, a container one wildcard element path
+standing for every element, and a map separate key and value paths. Each path
+keeps its own capability, so a record holding one `[]int` and one `[]mut int` has
+no single aggregate capability. A field that reaches no carrier contributes
+nothing, so a recursive type built from scalars enumerates to nothing at all.
+
+The enumeration is bounded: it stops at a fixed depth, and a type with more paths
+than the limit collapses to one path for the whole value. A cut path stands for
+every carrier beneath it and joins what they hold, so a limit costs precision and
+never a check.
+
+A user record is still not a new *carrier*; it is a value that contains carriers.
+Version 1 has no user-defined provenance annotation, so a record of `rawptr` or
+`[^]T` fields carries nothing to check, and one reconstructed from storage the
+compiler does not track carries unknown provenance rather than none.
 
 ### Capabilities and the one rule
 
@@ -4801,10 +4823,15 @@ For a direct call to a named Loke declaration or generic instantiation, the
 compiler records a result-provenance summary with the declaration. For each
 result it records two independent components when applicable:
 
-- root provenance: borrowed parameters, static storage, a fresh allocation
-  root, or unknown root provenance;
+- root provenance: borrowed parameters, static storage, `thread_local` storage,
+  a fresh allocation root, or unknown root provenance;
 - region provenance: allocator parameters, the region dependency of a moved or
   shared owner, a non-resettable static region, or unknown region provenance.
+
+Where a parameter reaches a borrow through its own
+[carrier paths](#values-that-contain-borrows), the summary records which of those
+paths the result may name, so a helper returning one field of a record argument
+substitutes that field's root rather than everything the argument holds.
 
 At a direct call, the compiler substitutes the actual argument roots and
 allocator regions into the corresponding component. The summary is compile-time
@@ -4813,7 +4840,7 @@ the runtime ABI. Its meaning is transitive across direct calls and independent
 of declaration order, including forward and mutually recursive declarations.
 Each concrete generic instantiation has its own summary.
 
-An ordinary procedure value carries no such metadata. At a call through one, a returned pointer, slice, view, or [`inout` result](#inout-results) is conservatively derived from every borrowed argument (unknown root provenance if there is none), and an owning result retains the region provenance of every moved owner and allocator argument (unknown if none). Fresh-allocation root provenance is never preserved, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through indirect calls uses a move-only resource wrapper, not bare `^T`. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
+An ordinary procedure value carries no such metadata. At a call through one, a returned pointer, slice, view, or [`inout` result](#inout-results) is conservatively derived from every borrowed argument the type does not exclude with [`@(escape=none)`](#escapelevel) (unknown root provenance if there is none), and an owning result retains the region provenance of every moved owner and allocator argument (unknown if none). Fresh-allocation root provenance is never preserved, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through indirect calls uses a move-only resource wrapper, not bare `^T`. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
 
 Allocator-wide invalidation is the one effect propagated through arbitrary
 ordinary procedure wrappers. A parameter marked
@@ -4821,19 +4848,81 @@ ordinary procedure wrappers. A parameter marked
 every allocation root in that allocator region. At the call, the compiler
 rejects the reset while a value or checked borrow from the region is live.
 
+#### Escape levels
+
+What a call may keep of one argument is written on the parameter as
+`@(escape=<level>)`, with four totally ordered levels:
+
+| Level | The call may leave behind |
+|---|---|
+| `none` | nothing that depends on this argument, not even a result |
+| `result` | a result may borrow it; this is the default |
+| `stored` | it may also be retained in storage the caller owns |
+| `static` | it may also be retained in storage that outlives the process |
+
+An unwritten parameter is `result`, so an existing signature keeps its meaning.
+The level is an upper bound on the body: a procedure whose result borrows a
+parameter written `@(escape=none)`, or which retains a parameter beyond its
+declared level, is rejected at the parameter's declaration.
+
+The level belongs to the procedure type, as [`@(allocator_reset)`](#allocator_reset)
+does, which is what makes it useful where there is no body to infer from. A
+`none` parameter keeps a scratch argument out of the result of a call through a
+procedure value, a procedure-typed parameter, or a generic instantiation. A
+callee assigned to such a type must carry the same levels; a differing level is a
+type mismatch and not a separate rule.
+
+`@(escape=...)` describes what a call keeps of a *borrow*. Writing it on a
+parameter whose type reaches no borrow carrier is an error rather than a no-op.
+
+#### Retaining a borrow
+
+A borrow written into storage that outlives the statement writing it is
+**retained**. Three destinations are checked:
+
+- `static` and file-scope storage, which outlives the process;
+- `thread_local` storage, which outlives its thread;
+- storage the caller owns, reached through an `inout` parameter or a pointer the
+  call received.
+
+What a root proves depends on where it lives. A local, a value temporary, or a
+literal's hidden array ends with the frame and satisfies none of the three.
+Static and materialized storage satisfies all of them. `thread_local` storage
+satisfies a thread-duration destination and not a process-duration one. An
+allocation lives until it is released, which the release rules already police, so
+retaining one is ordinary rather than proof of anything, and unknown provenance
+proves nothing.
+
+A parameter is answered by its written level and by nothing else, because only
+the caller knows how long the storage behind it lives. Retaining one in
+caller-owned storage requires `@(escape=stored)`, and in static or thread storage
+`@(escape=static)`. The body is checked against the level it declares, and a
+`static` parameter is checked again at each call site against the argument
+actually supplied. The caller's half of `stored` is listed under
+[What is not checked](#what-is-not-checked).
+
+Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a
+retention. A root outlives itself.
+
 ### What is not checked
 
-The analysis is deliberately local to one procedure body. These cases remain
-the programmer's responsibility:
+The analysis is local to one procedure body, together with the recorded summary
+and declared levels of the procedures that body calls. Storing a borrow in a
+record field, container, global, or callback state is part of what it checks; see
+[Values that contain borrows](#values-that-contain-borrows) and
+[Retaining a borrow](#retaining-a-borrow). These cases remain the programmer's
+responsibility:
 
-- storing a pointer, slice, iterator, or other view in a record field, global,
-  container, callback state, or service object;
-- a procedure or foreign function retaining a borrowed argument after return;
 - dereferencing `rawptr`, `[^]T`, or a `^T` with unknown provenance;
 - pointers or views manufactured or stripped of provenance through
   `core:unsafe`;
-- transferring borrows or unchecked addresses between threads;
-- aliases hidden by foreign code or user-defined pointer-containing records.
+- aliases hidden by foreign code, and what a foreign procedure retains of a
+  borrowed argument after it returns;
+- transferring borrows or unchecked addresses between threads, and keeping a
+  `thread_local` borrow past the end of its thread;
+- the caller's half of `@(escape=stored)`: the body is held to its level, but
+  the compiler does not prove that the argument retained in another argument's
+  storage outlives it.
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use
 `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.
@@ -5932,6 +6021,7 @@ Optimization and code-generation annotations such as `@(compiler.no_alias)` and 
 
 ```odin
     @(allocator_reset) – `Allocator` parameters whose region may be reset
+    @(escape=<level>) – what a call may keep of a borrowed argument
     @(by_ptr) – foreign declarations only
     @(c_vararg) – final variadic parameter of a foreign declaration
 ```
@@ -6170,6 +6260,16 @@ void bar(const T*)
 Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while an owning value (managed or manual) or borrow from that region is live.
 
 A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals are not permitted.
+
+##### `@(escape=<level>)`
+
+States what a call may keep of a borrowed argument: `none`, `result`, `stored`, or `static`, in that order. An unwritten parameter is `result`. The level is an upper bound on the body and, like `@(allocator_reset)`, part of the procedure type, so an indirect or generic call is held to it without seeing a body. The parameter's type must reach a borrow carrier. See [Escape levels](#escape-levels).
+
+```odin
+pick :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
+	return input; // returning `scratch` instead is an error
+}
+```
 
 ## Useful idioms
 

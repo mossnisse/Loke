@@ -2209,12 +2209,18 @@ prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int) {
 // assigned to `static`, `thread_local`, or file-scope storage (design.md).
 @(private = "file")
 prov_region_escape :: proc(graph: ^Flow_Graph, target: Expr, value: Expr, result := 0) {
-	ident, is_ident := target.(^Expr_Ident)
-	if !is_ident {
+	// The destination is a *place*, not only a bare name: wrapping an owner in a
+	// global's field must not lose the region obligation the bare form has,
+	// which is the same rule aggregate provenance applies to borrows.
+	if !type_is_managed(graph.k.c, expr_base(target).type) {
 		return
 	}
-	sym := symbol_of(graph.k.c, ident.symbol)
-	if sym == nil || !type_is_managed(graph.k.c, sym.type) {
+	root, _, ok := prov_place_of(graph, target)
+	if !ok {
+		return
+	}
+	sym := symbol_of(graph.k.c, graph.roots[int(root)].symbol)
+	if sym == nil {
 		return
 	}
 	storage := ""
@@ -2686,9 +2692,11 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 				sources = value_loans[index]
 			}
 		}
+		if value != nil && s.op == .Assign {
+			prov_region_escape(graph, target, value, result_index)
+		}
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
 			if value != nil {
-				prov_region_escape(graph, target, value, result_index)
 				if type_underlying(graph.k.c, expr_base(target).type) == TYPE_ALLOCATOR {
 					existing, found := graph.region_of[ident.symbol]
 					if !found {

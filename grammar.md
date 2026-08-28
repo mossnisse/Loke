@@ -147,9 +147,11 @@ The qualified form is an [extension attribute](design.md#extension-attributes),
 for example `@(compiler.no_alias)`. Attributes attach to declarations, package
 clauses, statements, blocks, parameters, record type literals, and foreign
 blocks; which attribute is valid where is a semantic rule, not a grammatical one.
-The base `@(allocator_reset)` parameter attribute is part of procedure-type
-compatibility and carries the allocator-region invalidation effect described in
-the language specification.
+The base `@(allocator_reset)` and `@(escape=<level>)` parameter attributes are
+part of procedure-type compatibility: the first carries the allocator-region
+invalidation effect and the second the borrow-retention level described in the
+language specification. `@(escape=...)` needs no grammar of its own — its value
+is an ordinary identifier expression.
 
 # Source files
 

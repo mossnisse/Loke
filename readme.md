@@ -188,11 +188,13 @@ and fail with different diagnostics:
   reset — not when everything was already freed — and lowers to the provider's
   reset entry.
 
-design.md's [What is not checked](design.md#what-is-not-checked) list is the
-deliberate boundary and stays that way: a borrow stored in a global, a record
-field, or callback state, a retained argument, `rawptr`/`[^]T`/unknown `^T`,
-`core:unsafe`, and cross-thread transfer are the programmer's responsibility, and
-each keeps a fixture proving it still compiles.
+M5b left design.md's [What is not checked](design.md#what-is-not-checked) list as
+its deliberate boundary. Aggregate provenance later closed two of its entries: a
+borrow keeps its obligations inside a record, union, or container, and what a
+call retains of an argument is written on the parameter as `@(escape=<level>)`
+and checked in the body and at the call site. Raw addresses, `core:unsafe`,
+foreign retention, and cross-thread transfer remain the programmer's
+responsibility, and each keeps a fixture proving it still compiles.
 
 M6a begins the runtime. A versioned C seed — allocation, failure, panic frames,
 text, and scalar formatting — is compiled beside the generated LLVM and found

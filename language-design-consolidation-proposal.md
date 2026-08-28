@@ -751,8 +751,9 @@ narrow raw conversions and audited resource APIs; any future root-erasure
 operation needs separate evidence and must preserve region and ownership
 obligations. It is distinct from `unsafe.forget`, which suppresses cleanup.
 Also do not adopt the old exclusions on public contracts, its fixed diagnostic
-numbers, or its assumption that particular adapters do not exist. Rebase the
-focused implementation plan against current source before using its steps.
+numbers, or its assumption that particular adapters do not exist. The rebased
+[`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) covers
+these corrections; recheck its source inventory before implementation.
 
 ## 6. Cleanup, stack storage, and removal of `manual`
 
@@ -1316,6 +1317,14 @@ ownership, and caller migration are gates.
    bare-versus-wrapped, container-content, and storage-escape checks in section
    5.8 before value migrations ship. Preserve the valid borrowed-parameter
    cases when migrating the old trust-boundary fixtures.
+   The [second implementation plan](consolidation-provenance-plan.md) covers
+   this gate and supersedes the historical provenance checklist. **Done.** A
+   borrow keeps its obligations inside a record, union, or container; direct,
+   cross-package, generic, and indirect calls carry result and retention
+   contracts; and retention into process, thread, and caller-owned storage is
+   checked. `wrap`/`unwrap` stayed legal throughout. One obligation is
+   deliberately open: the caller's half of `@(escape=stored)`, which needs proof
+   that one caller value outlives another.
 4. Compare typed fallibility against retaining the status protocol. Resolve
    union identity, zero/default behavior, unit representation, operator
    recognition, and ABI questions together. Record any reversal of the current

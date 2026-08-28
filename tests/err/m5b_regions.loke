@@ -95,3 +95,13 @@ erased_allocator_region :: proc() {
 	free_all(allocator);
 	fmt.println(xs[0], ok);
 }
+
+// consolidation-provenance-plan.md step 9: wrapping the owner in a field of
+// file-scope storage does not lose the obligation its bare form has.
+Holder :: struct { buffer: Buffer }
+
+global_holder: Holder;
+
+owner_escapes_through_a_field :: proc(allocator: Allocator) {
+	global_holder.buffer = make_buffer(4, allocator);
+}

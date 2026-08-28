@@ -15,10 +15,12 @@ compiler work belongs in focused plans:
 - [`interface-plan.md`](interface-plan.md) owns interface mechanics. Phase 3
   identifies which parts remain applicable and which must be revised; it does
   not create a second interface implementation plan.
-- [`provenance-plan.md`](provenance-plan.md) predates the current language and is
-  historical input, not an implementation checklist. Rebase it on the current
-  capability, ownership, and result rules before implementing Phase 4. Reuse its
-  motivating programs, but reassess its carrier table, inference shortcuts, and
+- [`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) is the
+  second consolidation implementation plan and owns Phase 4a/4b's aggregate
+  provenance and call-contract work. It supersedes
+  [`provenance-plan.md`](provenance-plan.md), whose motivating programs remain
+  historical input, not an implementation checklist. The new plan is not a
+  completion claim or adoption of the old inference shortcuts and
   `unsafe.forget_provenance` proposal.
 - [`language-design-consolidation-proposal.md`](language-design-consolidation-proposal.md)
   is a candidate value design. Its anonymous records, dual union forms, and
@@ -562,9 +564,10 @@ Exit conditions:
 
 ### Phase 4 — make provenance compose through values and calls
 
-Rewrite the outdated `provenance-plan.md` against the contracts below before
-using its implementation steps. This work can start immediately; it does not
-depend on adopting typed fallibility, tuples, or first-class references.
+Use [`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) for
+implementation against the contracts below; it replaces the outdated provenance
+checklist. This work can start immediately; it does not depend on adopting typed
+fallibility, tuples, or first-class references.
 
 #### Phase 4a — wrapping preserves dependencies
 
@@ -610,6 +613,18 @@ dependencies, including through recursive aggregates. Negative tests cover
 escaping locals, conflicting mutation, invalidation, and region reset; positive
 tests cover independent fields and borrowed parameters that remain live.
 
+This exit condition is met. A type's carrier paths are enumerated to a bounded
+depth, and each one carries its own root and capability through copies, moves,
+unions, containers, and calls; a cut path joins what lies beneath it, so a limit
+costs precision and never a check. Region provenance stayed the separate
+per-owner analysis it already was, and step 9 fixed the one place it was still
+lost by wrapping: an owner assigned into a *field* of file-scope storage. Field distinctions survive a call: a
+helper returning one field of a record argument substitutes that field's root.
+The measured false rejections were fixed rather than accepted, and `wrap`/`unwrap`
+stayed legal. Two conservative limits are recorded: a container holds one joined
+content set for all its elements, and `pop` names the container rather than the
+element's own root.
+
 #### Phase 4b — stable contracts at procedure boundaries
 
 Compare portable inferred summaries with small explicit contracts describing
@@ -638,6 +653,18 @@ Exit condition: the same borrowing operation has a usable, documented contract
 when called directly, generically, across a package, or through a procedure
 value. Record whether summaries alone suffice or explicit annotations are
 needed, and which conservative rejections remain.
+
+This exit condition is met, and the recorded answer is that summaries alone do
+not suffice. Inference covers every direct, generic, and cross-package call, but
+an indirect call has no body to infer from, so the parser example needed the
+distinction written down: `@(escape=<level>)` on a parameter, four totally
+ordered levels, `result` by default, part of the procedure type as
+`@(allocator_reset)` already is. Bodies are checked against the declared level
+and call sites against the argument supplied. Two limits remain: procedure-value
+compatibility is level equality rather than the intended ordering, so a stricter
+callee is currently a mismatch; and the caller's half of `@(escape=stored)` is
+unchecked, because proving one caller value outlives another needs scope
+reasoning this milestone does not have.
 
 #### Phase 4c — reconsider reference types only with evidence
 
@@ -833,8 +860,9 @@ This strategy makes the following decisions now:
    whole corpus with each semantic change and retain no compatibility spelling.
 3. Make Phase 1a the first bounded migration under the existing status protocol
    and special multiple results. Preserve validating conversions unchanged.
-4. Rebase the provenance plan now. Phase 4a gates borrowed aggregate migrations;
-   Phase 4b establishes their contracts at indirect and package boundaries.
+4. Use the rebased `consolidation-provenance-plan.md`. Phase 4a gates borrowed
+   aggregate migrations; Phase 4b establishes their contracts at indirect and
+   package boundaries. Writing the plan does not complete those gates.
 5. Evaluate typed fallibility with the product, variant, and default decisions.
    Prefer reuse of records and one union model; prototype explicit defaults
    instead of an automatic successful `Result`. Keeping the status protocol
@@ -850,11 +878,14 @@ This strategy makes the following decisions now:
 
 ## Immediate next work
 
-Complete Phase 0, then make the bounded Phase 1a producer change. Alongside that
-work, revise the provenance plan and build one integrated prototype: obtain a
-borrow from a map, wrap it in an ordinary record or union, and return it through
-a helper and a procedure value across a package boundary. Use existing
-aggregate syntax first; adopting `Option` is not a prerequisite to the test.
+The bounded Phase 1a producer change is complete; its baseline and verification
+are recorded in [`consolidation-phase-1a-plan.md`](consolidation-phase-1a-plan.md).
+Use [`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) to
+establish a fresh provenance baseline and build one integrated prototype:
+obtain a borrow from a map, wrap it in an ordinary record or union, and return
+it through a helper and a procedure value across a package boundary. Use
+existing aggregate syntax first; adopting `Option` is not a prerequisite to
+the test.
 
 The prototype must demonstrate:
 

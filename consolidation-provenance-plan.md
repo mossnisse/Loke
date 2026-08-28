@@ -1217,3 +1217,89 @@ corpus, along with the imported `wrapping.retain`, which now says
 
 `odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
 levels pass.
+
+### Step 9 — specification, grammar, and the deletion audit
+
+Implemented on 2026-08-28. The corpus and fixture bullets of this step were done
+with the slices that caused them, in steps 5 through 8; what remained was the
+specification, the grammar note, the audit, and the progress records.
+
+**design.md.** The paragraph that said a user record containing pointer or
+length fields "is not a new compiler-known borrow carrier" and that storing a
+borrow in one escapes the analysis became
+[Values that contain borrows](design.md#values-that-contain-borrows): carrier
+paths, one per field, one per alternative, one wildcard per container, separate
+key and value paths for a map, each with its own capability, bounded in depth and
+width, with a cut path standing for everything beneath it so a limit costs
+precision and never a check. A record is still not a new *carrier* — it is a
+value that contains carriers, and one built from `rawptr` or `[^]T` carries
+nothing.
+
+Two new subsections state Phase 4b: [Escape levels](design.md#escape-levels)
+gives the four levels, the default, the body check, and the type-identity rule;
+[Retaining a borrow](design.md#retaining-a-borrow) gives the three destinations,
+what each root kind proves, the parameter's contract as the only answer for a
+`Param` root, and the self-retention exemption. The result-summary text gained
+thread duration beside static and the per-parameter carrier paths. The pointer
+chapter, the `dyn` storing sentence, the `thread_local` storage-duration bullet,
+and the procedure-type compatibility paragraph were corrected to match. The
+attribute chapter gained `@(escape=<level>)` in the parameter category and a
+reference entry beside `@(allocator_reset)`.
+
+[What is not checked](design.md#what-is-not-checked) lost its record/global and
+retained-argument entries and gained an honest one: the caller's half of
+`@(escape=stored)`. Foreign retention stayed, narrowed to foreign procedures.
+
+**grammar.md.** `@(escape=none)` needs no grammar: `Attribute_Value` is already
+an `Expression` and `Parameter` already takes `Attributes?`. The note naming
+`@(allocator_reset)` as part of procedure-type compatibility now names both. That
+`Parameter = Attributes? ...` production had no fixture, so
+[tests/syntax/types.loke](tests/syntax/types.loke) gained an attributed parameter
+in the signature that covers every other parameter form.
+
+**The audit found one real hole, in the region half.** `prov_retain_escape`
+resolves its destination as a place; `prov_region_escape` still required a bare
+identifier, and its call site sat inside `prov_assign`'s identifier branch. So
+`global_buffer = make_buffer(n, allocator)` was L0536 and
+`global_holder.buffer = make_buffer(n, allocator)` compiled — the milestone's own
+headline gap, on the region axis instead of the root one. Both are fixed by
+resolving the place, and the case is now in
+[m5b_regions.loke](tests/err/m5b_regions.loke). Nothing else in the corpus
+changed: an A/B of both compilers over `tests/err`, `tests/run`, `tests/trap`,
+`tests/pkg`, `tests/pkg_err`, and `examples` reported no other difference, which
+is also why the hole needed a fixture written for it. The same audit records a
+result about the library: no declaration in `base` or `core` needs a written
+level. Nothing there retains a borrowed argument past a result, so `result` — the
+default — is the truthful contract for all of it, and the 25 written levels in
+the tree are all in fixtures.
+
+**Deletion audit.** The staging `Flow_Mode` member was never introduced: every
+slice landed green on the existing modes, so there is no dead alternative path to
+remove and `Flow_Mode` still has its three members. Whole-wrapper loans went with
+step 5's content slots and the map value-root shortcut with step 6's
+`PROJ_MAP_VALUE`; a map value read now names the value half of the entry and does
+not inherit what a key borrows. Summaries are no longer result-only: they carry
+per-parameter paths, and retention is answered by the declared level at both
+ends. `unsafe.forget_provenance` was never adopted, as the proposal directed.
+
+**Records.** The proposal's migration step 3 is marked done with the one
+deliberate omission named. Both Phase 4 exit conditions in the strategy record
+their answers: 4a that field distinctions survive a call and that the two
+measured false rejections were fixed rather than accepted, with the container
+join and `pop` as the recorded conservative limits; 4b that summaries alone do
+*not* suffice, which is why `@(escape=...)` exists, with level equality and the
+`stored` caller obligation as the recorded limits. The stale L0639 reservation in
+[provenance-plan.md](provenance-plan.md) now records what was actually allocated:
+L0644 and L0646 through L0648, with L0645 unused. readme.md's claim that the
+whole "what is not checked" list "stays that way" is corrected.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.
+
+The plan also asks for a `-panic=abort` pass over the run and trap corpora. It
+reports thirteen trap failures, and they are not a regression: the compiler at
+`HEAD` produces byte-identical output for each of them. Those fixtures assert
+what cleanup *prints while unwinding*, which is exactly what `abort` is defined
+not to do, so the suite as written is unwind-specific rather than
+strategy-neutral. Making it strategy-aware is its own change and is not claimed
+here.

@@ -40,7 +40,7 @@ c_callback: proc "c" (a: ^u8) -> i32;
 stdcall_callback: proc "stdcall" ();
 no_results: proc(a: int);
 
-// Signatures: every parameter and result form.
+// Signatures: every parameter and result form, including an attributed one.
 parameters :: proc(
 	a: int,
 	b, c: int,
@@ -48,6 +48,7 @@ parameters :: proc(
 	$T: type,
 	target: inout Buffer,
 	owned: move Handle,
+	@(escape=none) scratch: []int,
 	defaulted: int = 1,
 	inferred: = 1,
 	values: ..int,
