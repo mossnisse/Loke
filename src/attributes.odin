@@ -50,6 +50,9 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		specs["link_name"] = {{.Proc_Decl, .Var_Decl}, .Value_Required}
 		specs["default_calling_convention"] = {{.Foreign_Block}, .Value_Required}
 		specs["allocator_reset"] = {{.Parameter}, .None}
+		// The level is a bare identifier rather than a string, so the value shape
+		// is validated by `check_escape_attribute` with the rest of the rule.
+		specs["escape"] = {{.Parameter}, .Deferred}
 		specs["by_ptr"] = {{.Parameter}, .None}
 		specs["c_vararg"] = {{.Parameter}, .None}
 		specs["packed"] = {{.Struct_Literal}, .None}

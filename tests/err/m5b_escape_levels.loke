@@ -1,0 +1,38 @@
+package main; import "core:fmt";
+
+// consolidation-provenance-plan.md step 7: what `@(escape=...)` refuses. A
+// declared level is an upper bound on what the body does, so a body that
+// exceeds it, a value that promises less than its type, and a level written
+// where it cannot mean anything are all errors.
+
+// The body contradicts its own promise.
+liar :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
+	return scratch;
+}
+
+// The same through a wrapper, so the summary has to travel to find it.
+wrap_scratch :: proc(values: []int) -> []int { return values; }
+
+indirect_liar :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
+	return wrap_scratch(scratch);
+}
+
+// A procedure value that promises less than the type its destination requires.
+// The level is part of procedure type identity, so this is a type mismatch.
+honest :: proc(input: []int, scratch: []int) -> []int { return input; }
+
+assign_a_weaker_callee :: proc() -> int {
+	chooser: proc(input: []int, @(escape=none) scratch: []int) -> []int = honest;
+	numbers := [2]int{1, 2};
+	return chooser(numbers[:], numbers[:])[0];
+}
+
+// A parameter that carries no borrow cannot escape.
+counts :: proc(@(escape=none) count: int) -> int { return count; }
+
+// An unknown level.
+misspelled :: proc(@(escape=sometimes) values: []int) -> []int { return values; }
+
+main :: proc() {
+	fmt.println(1);
+}

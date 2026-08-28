@@ -2680,7 +2680,37 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 	}
 }
 
+// The procedure type a call goes through: the chosen overload's when the callee
+// is a declaration, and the callee expression's own when it is a value. The
+// second is the one that matters for `@(escape=...)`, because an indirect call
+// is exactly where there is no body to infer from.
 @(private = "file")
+prov_call_proc_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Type_Id {
+	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym != nil {
+		return sym.proc_type
+	}
+	if base := expr_base(v.callee); base != nil {
+		return base.type
+	}
+	return INVALID_TYPE
+}
+
+// The loans of every argument whose parameter may still be named after the call.
+// A parameter written `@(escape=none)` promises nothing survives, which is what
+// keeps a scratch argument out of an indirect call's conservative result.
+@(private = "file")
+prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) -> []int {
+	proc_type := prov_call_proc_type(graph, v)
+	out: []int
+	for slots, index in actuals {
+		if proc_param_escape(graph.k.c, proc_type, index) == .None {
+			continue
+		}
+		out = prov_join(graph, out, slots)
+	}
+	return out
+}
+
 prov_parameter_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> Type_Id {
 	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
 	if sym == nil {
@@ -3106,8 +3136,13 @@ prov_call_result :: proc(
 	if direct {
 		return nil
 	}
+	// No summary to consult, so every argument that may still be named after the
+	// call is a possible source of the result.
+	if escaping := prov_escaping_actuals(graph, v, actuals); len(escaping) > 0 {
+		return escaping
+	}
 	if len(borrowed) > 0 {
-		return borrowed
+		return nil // every borrowed argument promised it does not escape
 	}
 	return prov_synthetic_borrow(graph, v, .Unknown, result_type)
 }

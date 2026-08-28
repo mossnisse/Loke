@@ -52,6 +52,16 @@ escaping_retention :: proc(destination: inout wrapping.Holder) {
 	wrapping.retain(inout destination, numbers[:]);
 }
 
+// POSITIVE. The imported callback contract keeps this body's scratch buffer out
+// of the result, across a package boundary and through a procedure value.
+pick :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
+	return input;
+}
+
+across_a_package :: proc(input: []int) -> []int {
+	return wrapping.choose(pick, input);
+}
+
 main :: proc() {
 	table: map[string][dynamic]int;
 	entries: [dynamic]int;
@@ -61,4 +71,5 @@ main :: proc() {
 
 	fmt.println(integrated(inout table));
 	fmt.println(through_the_package([4]int{1, 2, 3, 4}[:])[2]);
+	fmt.println(across_a_package([4]int{1, 2, 3, 4}[:])[3]);
 }

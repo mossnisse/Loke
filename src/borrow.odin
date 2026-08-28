@@ -310,6 +310,64 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
+// ------------------------------------------------------- escape levels --
+
+// consolidation-provenance-plan.md step 2. What a call may leave behind that
+// depends on one parameter, as one totally ordered level: a callee may promise
+// more than its type asks and never less. Written `@(escape=none)` and so on.
+//
+// `Result` is the default and is what today's behaviour already is, so an
+// unannotated signature keeps compiling. Retention defaults to none because it
+// is rare, and making it visible at the boundary is what Phase 4b is for.
+Escape_Level :: enum u8 {
+	// Nothing that depends on this parameter outlives the call, not even a
+	// result. This is what lets a scratch argument stay local at an indirect
+	// call, where there is no body to infer from.
+	None,
+	// A result may borrow it. The default.
+	Result,
+	// It may also be retained in one of this call's own mutable destinations.
+	Stored,
+	// It may also be retained in process-duration storage.
+	Static,
+}
+
+escape_level_name :: proc(level: Escape_Level) -> string {
+	switch level {
+	case .None:   return "none"
+	case .Result: return "result"
+	case .Stored: return "stored"
+	case .Static: return "static"
+	}
+	return "result"
+}
+
+// The written `@(escape=<level>)` on one parameter. `Attribute.value` is an
+// ordinary expression, so the level is a bare identifier and needs no parser
+// change; anything else is reported by the caller.
+attribute_escape_level :: proc(c: ^Compiler, attributes: []Attribute) -> (Escape_Level, bool, bool) {
+	for attribute in attributes {
+		if len(attribute.path) != 1 || attribute.path[0].text != "escape" {
+			continue
+		}
+		if attribute.value == nil {
+			return .Result, true, false
+		}
+		ident, is_ident := attribute.value.(^Expr_Ident)
+		if !is_ident {
+			return .Result, true, false
+		}
+		switch ident.name {
+		case "none":   return .None, true, true
+		case "result": return .Result, true, true
+		case "stored": return .Stored, true, true
+		case "static": return .Static, true, true
+		}
+		return .Result, true, false
+	}
+	return .Result, false, true
+}
+
 // ----------------------------------------------------- carrier shapes --
 
 // consolidation-provenance-plan.md step 4. `type_is_carrier` answers "is this
@@ -877,8 +935,50 @@ analyze_program_provenance :: proc(k: ^Checker) {
 			analyze_provenance(k, body.literal)
 		}
 	}
+	for body in k.c.checked_bodies {
+		if body.clean {
+			check_declared_escape(k, body.literal)
+		}
+	}
 	if prov_stats_on() {
 		prov_report_stats()
+	}
+}
+
+// design.md `@(escape=...)`: a declared level is an upper bound on what the body
+// actually does, and inference computes the effect below it. `none` promises
+// that nothing which depends on the parameter outlives the call, so a result
+// summary naming it is the body contradicting its own signature.
+@(private = "file")
+check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
+	sym := symbol_of(k.c, literal.symbol)
+	if sym == nil {
+		return
+	}
+	summary, found := k.c.result_summaries[literal.symbol]
+	if !found {
+		return
+	}
+	for id, index in sym.param_symbols {
+		bound := symbol_of(k.c, id)
+		if bound == nil || bound.escape != .None {
+			continue
+		}
+		for result, position in summary.results {
+			if index >= len(result.params) || !result.params[index] {
+				continue
+			}
+			errorf(
+				k.c,
+				bound.span,
+				"L0644",
+				"`%s` is written `@(escape=none)`, but result %d of `%s` may borrow it",
+				identifier_text(k.c, bound.name),
+				position,
+				identifier_text(k.c, sym.name),
+			)
+			break
+		}
 	}
 }
 

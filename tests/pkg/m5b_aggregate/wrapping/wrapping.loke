@@ -34,3 +34,14 @@ retain :: proc(destination: inout Holder, values: []int) {
 first_half :: proc(values: []int) -> []int {
 	return values[:len(values) / 2];
 }
+
+// The callback contract is part of the written procedure type, so an importer
+// sees it without seeing any body (consolidation-provenance-plan.md step 7).
+@(public)
+choose :: proc(
+	chooser: proc(input: []int, @(escape=none) scratch: []int) -> []int,
+	input: []int,
+) -> []int {
+	scratch := [2]int{7, 8};
+	return chooser(input, scratch[:]);
+}

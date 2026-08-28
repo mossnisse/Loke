@@ -511,6 +511,9 @@ may ship later.
 
 ### 7. Implement result and retention contracts at every call boundary
 
+Result contracts done; retention (`stored`, `static`) still open. See the
+verification record.
+
 Implements the representation step 2 selected. Renegotiating it here means step 2
 was not finished.
 
@@ -1089,3 +1092,61 @@ all four optimization levels pass.
 summaries, root and region preservation, and field precision all pass their
 positive and negative cases, and safe `wrap`/`unwrap` was not sacrificed to
 reject an unsafe local escape.
+
+### Step 7 — `@(escape=...)` and the result half of the contract
+
+Implemented on 2026-08-28. Step 2's form exists end to end for the levels that
+govern results; the retention levels are still open and named below.
+
+**The attribute.** `specs["escape"]` with the `Deferred` value shape, since the
+level is a bare identifier rather than a string — `Attribute.value` is a general
+expression, so no parser change was needed, as step 2 predicted. Levels are read
+at both parameter positions `@(allocator_reset)` already had (a declaration's
+signature and a written `^Type_Proc`), stored on the bound symbol and in
+`Type_Info.param_escapes`, and interned into procedure type identity.
+`type_name` prints them, without which the type-mismatch diagnostic below showed
+two identical-looking types.
+
+**Compatibility came free, and stricter than designed.** Because the level
+participates in type identity exactly as the reset effect does, a procedure that
+promises less than its destination type requires is rejected as an ordinary type
+mismatch — no separate rule, no L0645. That is *equality*, not step 2's
+`level(callee) <= level(type)` ordering, so a callee that promises **more** than
+the type asks is also refused. Sound, conservative, and visible: the fix is to
+write the same level. The ordering stays available as a later relaxation, to be
+taken against a measured case rather than on principle.
+
+**`none` narrows the indirect call.** `prov_escaping_actuals` drops arguments
+whose parameter is at `none` from the conservative result of a call with no
+summary. This removes step 1's second and last measured false rejection:
+`run_pick` now compiles, and
+[m5b_aggregate_false_rejections.loke](tests/err/m5b_aggregate_wrapping.loke) is
+deleted, as its own comment said it would be when the last one went.
+
+**Bodies are checked against what they declare** (L0644): a result summary naming
+a parameter written `none` is the body contradicting its signature, caught after
+the whole-program worklist settles, so it finds the contradiction through a
+wrapper as well as directly. `@(escape=...)` on a parameter that carries no
+borrow, and an unknown level, are both L0648 — the rule `@(allocator_reset)`
+already has for a non-`Allocator` parameter.
+
+The exit case works at every boundary it named:
+[m5b_escape_levels.loke](tests/run/m5b_escape_levels.loke) covers the
+input/scratch callback directly, through an abstract procedure parameter, through
+a procedure value in a local, generically, and with a record-typed `none`
+parameter; [tests/pkg/m5b_aggregate/](tests/pkg/m5b_aggregate/main.loke) covers it
+across a package boundary. The violating body, the incompatible assignment, and
+both malformed forms fail in
+[tests/err/m5b_escape_levels.loke](tests/err/m5b_escape_levels.loke).
+
+**Still open, and what it costs.** `stored` and `static` parse, intern, and print
+but are not yet enforced: nothing infers retention from writes through mutable
+destination paths, so `retain_local_into_inout` and `set_global` remain gaps, and
+there is no L0646 or L0647. The step's monotone-may-effect versus proven-clear
+distinction and the caller-side outlives obligation belong with that work.
+`static` in particular is step 8's input, so the two are best done together.
+
+Adding the attribute changed nothing in the corpus: every `tests/err`,
+`tests/run`, `tests/trap`, `tests/pkg`, and `tests/pkg_err` case produced
+identical output before and after. `odin test src` 56 tests, `odin test tests` 14
+tests, and all four optimization levels pass.

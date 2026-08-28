@@ -182,6 +182,11 @@ Type_Info :: struct {
 	// reset-capable procedure cannot be stored in a procedure value whose type
 	// hides that effect (design.md "Procedure types").
 	param_resets: []bool,
+	// design.md/`@(escape=...)`: what a call may leave behind that depends on
+	// each parameter. Part of procedure type identity for the same reason the
+	// reset effect is — an indirect call must not launder a promise by passing
+	// through a type that hides it. Nil means every parameter is at the default.
+	param_escapes: []Escape_Level,
 	// Foreign ABI adapters are part of procedure type identity. Erasing either
 	// one changes the LLVM function type at an indirect call site.
 	param_by_ptr: []bool,
@@ -656,6 +661,9 @@ Symbol :: struct {
 	// be ended by a successful call. The promise is verified in the body and
 	// carried in the procedure type.
 	allocator_reset: bool,
+	// design.md `@(escape=...)`: what a call may leave behind that depends on
+	// this parameter. `.Result` unless written otherwise.
+	escape:          Escape_Level,
 	// A managed local declaration places an implicit conditional
 	// `defer drop(value)` at the declaration point (design.md "Managed values
 	// and storage"). `src/lifecycle.odin` decides both from the CFG: whether
@@ -952,6 +960,7 @@ intern_proc_type :: proc(
 	param_resets: []bool = nil,
 	param_by_ptr: []bool = nil,
 	c_vararg := false,
+	param_escapes: []Escape_Level = nil,
 ) -> Type_Id {
 	init_semantic_stores(c)
 	for info, index in c.types {
@@ -963,6 +972,7 @@ intern_proc_type :: proc(
 		   equal_bools(info.result_inout, result_inout) &&
 		   equal_reset_effects(info.param_resets, param_resets) &&
 		   equal_reset_effects(info.param_by_ptr, param_by_ptr) &&
+		   equal_escape_levels(info.param_escapes, param_escapes) &&
 		   info.c_vararg == c_vararg {
 			return Type_Id(index)
 		}
@@ -981,6 +991,11 @@ intern_proc_type :: proc(
 		by_ptr_copy = make([]bool, len(param_by_ptr), c.semantic_allocator)
 		copy(by_ptr_copy, param_by_ptr)
 	}
+	escape_copy: []Escape_Level
+	if has_escape_level(param_escapes) {
+		escape_copy = make([]Escape_Level, len(param_escapes), c.semantic_allocator)
+		copy(escape_copy, param_escapes)
+	}
 	copy(parameter_copy, parameters)
 	copy(mode_copy, param_modes)
 	copy(result_copy, results)
@@ -991,12 +1006,43 @@ intern_proc_type :: proc(
 		parameters    = parameter_copy,
 		param_modes   = mode_copy,
 		param_resets  = reset_copy,
+		param_escapes = escape_copy,
 		param_by_ptr  = by_ptr_copy,
 		c_vararg      = c_vararg,
 		results       = result_copy,
 		result_inout  = inout_copy,
 		convention    = convention,
 	})
+}
+
+// A level vector is only stored when something in it is not the default, so an
+// unannotated signature interns exactly the type it always did.
+has_escape_level :: proc(levels: []Escape_Level) -> bool {
+	for level in levels {
+		if level != .Result {
+			return true
+		}
+	}
+	return false
+}
+
+equal_escape_levels :: proc(a, b: []Escape_Level) -> bool {
+	for index in 0 ..< max(len(a), len(b)) {
+		left := index < len(a) ? a[index] : Escape_Level.Result
+		right := index < len(b) ? b[index] : Escape_Level.Result
+		if left != right {
+			return false
+		}
+	}
+	return true
+}
+
+proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escape_Level {
+	info := type_of(c, proc_type)
+	if info == nil || index >= len(info.param_escapes) {
+		return .Result
+	}
+	return info.param_escapes[index]
 }
 
 has_reset_effect :: proc(resets: []bool) -> bool {
@@ -1576,6 +1622,11 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 		// signatures must not print the same.
 		if index < len(info.param_resets) && info.param_resets[index] {
 			strings.write_string(&b, "@(allocator_reset) ")
+		}
+		if index < len(info.param_escapes) && info.param_escapes[index] != .Result {
+			strings.write_string(&b, "@(escape=")
+			strings.write_string(&b, escape_level_name(info.param_escapes[index]))
+			strings.write_string(&b, ") ")
 		}
 		if index < len(info.param_modes) && info.param_modes[index] == .Inout {
 			strings.write_string(&b, "inout ")

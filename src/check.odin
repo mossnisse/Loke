@@ -451,6 +451,33 @@ field_is_public :: proc(k: ^Checker, attributes: []Attribute) -> bool {
 	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
 }
 
+// design.md `@(escape=...)`: the level a parameter is written at, validated
+// where it is written. A parameter that carries no borrow cannot escape, so the
+// attribute on one is a mistake rather than a no-op — the same rule
+// `@(allocator_reset)` has for a non-`Allocator` parameter.
+check_escape_attribute :: proc(k: ^Checker, attributes: []Attribute, type: Type_Id, span: Span) -> Escape_Level {
+	level, written, ok := attribute_escape_level(k.c, attributes)
+	if !written {
+		return .Result
+	}
+	if !ok {
+		errorf(
+			k.c, span, "L0648",
+			"`@(escape=...)` takes one of `none`, `result`, `stored`, or `static`",
+		)
+		return .Result
+	}
+	if type != INVALID_TYPE && !type_is_carrier(k.c, type) && !type_carries_borrow(k.c, type).any {
+		errorf(
+			k.c, span, "L0648",
+			"`@(escape=...)` describes what a call may keep of a borrow, and `%s` carries none",
+			type_name(k.c, type),
+		)
+		return .Result
+	}
+	return level
+}
+
 has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
 	for attribute in attributes {
 		if len(attribute.path) == 1 && attribute.path[0].text == name {
@@ -715,6 +742,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)
 	modes := make([dynamic]Param_Mode, 0, 4, k.c.semantic_allocator)
 	resets_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
+	escapes_list := make([dynamic]Escape_Level, 0, 4, k.c.semantic_allocator)
 	by_ptr_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
 	param_symbols := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	defaults := make([dynamic]Expr, 0, 4, k.c.semantic_allocator)
@@ -790,6 +818,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			// design.md "`@(allocator_reset)`": a successful call can end every
 			// allocation root within that allocator's region, so the attribute only
 			// makes sense on an `Allocator`.
+			escape := check_escape_attribute(k, parameter.attributes, name_type, parameter.span)
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
 				!(split && name_index == 0)
 			if resets && type_underlying(k.c, name_type) != TYPE_ALLOCATOR {
@@ -823,6 +852,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				bound.immutable = mode == .Value
 				bound.owner_proc = literal
 				bound.allocator_reset = resets
+				bound.escape = escape
 			}
 			if position == 0 && name_index == 0 &&
 			   k.impl_type != INVALID_TYPE &&
@@ -835,6 +865,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			append(&params, name_type)
 			append(&modes, mode)
 			append(&resets_list, resets)
+			append(&escapes_list, escape)
 			append(&by_ptr_list, is_by_ptr)
 			append(&param_symbols, binding)
 			append(&defaults, default)
@@ -883,6 +914,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		k.c, params[:], modes[:], results[:], result_inout[:],
 		literal.signature.convention, resets_list[:],
 		param_by_ptr = by_ptr_list[:], c_vararg = saw_c_vararg,
+		param_escapes = escapes_list[:],
 	)
 	// Parameter/result binding creation may grow the symbol store. Reacquire by
 	// ID rather than retaining a pointer across append.
@@ -1200,6 +1232,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		params := make([dynamic]Type_Id, 0, len(value.params), k.c.semantic_allocator)
 		modes := make([dynamic]Param_Mode, 0, len(value.params), k.c.semantic_allocator)
 		resets := make([dynamic]bool, 0, len(value.params), k.c.semantic_allocator)
+		escapes := make([dynamic]Escape_Level, 0, len(value.params), k.c.semantic_allocator)
 		for parameter in value.params {
 			// design.md: the reset effect is part of the written procedure type, so
 			// a value of this type keeps it through an indirect call.
@@ -1225,6 +1258,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				append(&params, resolved)
 				append(&modes, parameter.mode)
 				append(&resets, marked)
+				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span))
 			}
 		}
 		results := make([dynamic]Type_Id, 0, len(value.results), k.c.semantic_allocator)
@@ -1242,6 +1276,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		}
 		value.denoted_type = intern_proc_type(
 			k.c, params[:], modes[:], results[:], result_inout[:], value.convention, resets[:],
+			param_escapes = escapes[:],
 		)
 		value.resolution.kind = .Type
 		return value.denoted_type

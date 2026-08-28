@@ -1,0 +1,15 @@
+L0644
+@9:43
+`scratch` is written `@(escape=none)`, but result 0 of `liar` may borrow it
+L0644
+@16:52
+`scratch` is written `@(escape=none)`, but result 0 of `indirect_liar` may borrow it
+L0310
+@25:72
+cannot initialise `proc([]int, @(escape=none) []int) -> []int` with `proc([]int, []int) -> []int`
+L0648
+@31:16
+`@(escape=...)` describes what a call may keep of a borrow, and `int` carries none
+L0648
+@34:20
+`@(escape=...)` takes one of `none`, `result`, `stored`, or `static`

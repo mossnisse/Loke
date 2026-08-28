@@ -1,0 +1,60 @@
+package main; import "core:fmt";
+
+// consolidation-provenance-plan.md step 7: `@(escape=none)` at the boundaries
+// where inference cannot reach. The callee's body is not visible at an indirect
+// call, so without a written level every borrowed argument is a possible source
+// of the result and a scratch buffer cannot stay local.
+
+// The result borrows `input` and never `scratch`.
+pick :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
+	fmt.println(scratch[0]);
+	return input;
+}
+
+// Through an abstract procedure parameter: the contract is in the type, so the
+// caller needs neither the callee's identity nor its body.
+run_pick :: proc(
+	chooser: proc(input: []int, @(escape=none) scratch: []int) -> []int,
+	input: []int,
+) -> []int {
+	scratch := [2]int{7, 8};
+	return chooser(input, scratch[:]);
+}
+
+// Through a procedure value held in a local.
+run_stored :: proc(input: []int) -> []int {
+	chooser: proc(input: []int, @(escape=none) scratch: []int) -> []int = pick;
+	scratch := [2]int{9, 10};
+	return chooser(input, scratch[:]);
+}
+
+// Generically: the level belongs to the parameter, not to the type argument.
+pick_any :: proc(input: []$T, @(escape=none) scratch: []T) -> []T {
+	return input;
+}
+
+run_generic :: proc(input: []int) -> []int {
+	scratch := [2]int{11, 12};
+	return pick_any(input, scratch[:]);
+}
+
+// A `none` parameter of a record type: what it holds does not survive either.
+Holder :: struct { view: []int }
+
+take_wrapped :: proc(input: []int, @(escape=none) held: Holder) -> []int {
+	fmt.println(len(held.view));
+	return input;
+}
+
+run_wrapped :: proc(input: []int) -> []int {
+	local := [2]int{13, 14};
+	return take_wrapped(input, Holder{local[:]});
+}
+
+main :: proc() {
+	numbers := [4]int{1, 2, 3, 4};
+	fmt.println(run_pick(pick, numbers[:])[0]);
+	fmt.println(run_stored(numbers[:])[1]);
+	fmt.println(run_generic(numbers[:])[2]);
+	fmt.println(run_wrapped(numbers[:])[3]);
+}
