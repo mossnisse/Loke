@@ -202,13 +202,24 @@ that backs them; an owner backed by a shorter-lived region cannot escape it.
 Calls carrying `@(allocator_reset)` are checked against every live owner and
 borrow that may use the affected region, and procedure effect summaries verify
 and propagate that promise through direct and indirect calls.
+
+A borrow keeps its obligations when it is stored inside a value, and what a call
+retains of an argument is stated on the parameter. A type that contains carriers
+has a bounded set of carrier paths — per field, per union alternative, per
+element of a small fixed array, one wildcard element for a dynamic array,
+separate key and value paths under a map entry — and two values of one type pair
+by path. `@(escape=<level>)` orders `none < result < stored < static`, bounds the
+body, belongs to the procedure type, and is ordered rather than matched at
+assignment. Retention into static, thread-local, or caller-owned storage is
+checked in the body and again at the call site.
 - **In:** typed AST + analysis CFG + callee effect summaries. **Out:** pass/fail
   diagnostics, owner/borrow provenance annotations, verified procedure effects;
   optional debug-mode runtime checks.
-- **Loke-specific:** raw pointers / stored borrows / foreign calls / cross-thread
-  are explicit trust boundaries and *not* checked. Allocator-reset effects and
-  owner region provenance are the deliberate cross-call exception. Diagnostics
-  name the region root, escaping owner or live borrow, and invalidating operation.
+- **Loke-specific:** raw pointers, `core:unsafe`, foreign calls and cross-thread
+  transfer are explicit trust boundaries and *not* checked; stored borrows and
+  cross-call retention are checked, along with allocator-reset effects and owner
+  region provenance. Diagnostics name the region root, escaping owner or live
+  borrow, and invalidating operation.
 
 ### Lowering & runtime
 
@@ -982,6 +993,56 @@ passes for a type whose `write` is package-private, and the instantiated body
 then fails to find the member. Whichever way it is resolved, satisfaction and
 lookup have to agree; the library documents the requirement rather than working
 around it.
+
+---
+
+### Aggregate provenance and call contracts
+
+`consolidation-provenance-plan.md` is language-refinement work rather than a
+milestone, but it is compiler work: it closes the two entries M5b left open in
+design.md's *What is not checked* list ([B12](#b12-borrow--lifetime-checker)).
+Both were the same shape — a borrow that stops being followed the moment it is
+put somewhere.
+
+**Borrows inside values.** `carrier_shape` gives a type one path per place that
+can hold a carrier: per record field, per union alternative, per element of a
+fixed array of at most `CARRIER_ARRAY_ELEMENTS`, one wildcard element for a
+dynamic array, and separate key and value paths under each map entry. Two values
+of one type pair by path index, so wrapping a borrow in a record, moving it
+through a container, or returning it inside a union carries the loans the bare
+carrier had. A map's key set is not part of its type, so the type supplies
+`MAP_KEY_SLOTS` entries and each body assigns its constant keys to them; a map
+whose entry is too wide keeps one. Every split is bounded — depth, width, element
+and key count — and past a bound the paths join, which costs precision and never
+soundness.
+
+**Call contracts.** `@(escape=<level>)` states what a procedure may do with a
+borrowed parameter: `none`, `result` (the default), `stored`, `static`. A level a
+type could not keep is refused where it is written (L0648); the level is an upper
+bound on the body (L0644); it is part of the procedure type, so an indirect call
+keeps it; and `assignable` orders it rather than matching it — a callee may
+promise more about what it keeps than the type it is stored in asks for, never
+less. Retention into static, thread-local, or caller-owned storage
+needs a source that outlives the destination (L0647), and a parameter answers
+only for the level it was written with (L0646). At the call site a call to a
+`stored` or `static` parameter is the assignment the callee is permitted to
+make, so the caller answers the same question about the argument it supplied.
+
+Two things had to be added to the solver for that to reach real code. A
+destination named through a pointer held in a variable is not known until that
+pointer's own loans are solved, so a write through it becomes a `.Publish`
+event whose destination slots are resolved during the solve and joined rather
+than replaced — monotone, so the fixed point still settles. And a removal
+(`pop`, `remove`, `remove_unordered`, a map `remove`) carries the element's own
+dependencies out instead of a borrow of the container, so the container is free
+immediately.
+
+What remains is the v1 trust-boundary set, one entry shorter in substance than
+M5b left it: unknown-provenance dereferences, `core:unsafe`, foreign aliasing and
+retention, and cross-thread transfer. Precision, not soundness, is the remaining
+limit where nothing is provable — a dynamic index, a runtime key, an array or map
+entry past its bound — and a container there answers with the join of everything
+it holds.
 
 ## D. Out of scope for v1
 
