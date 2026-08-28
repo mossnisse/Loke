@@ -135,6 +135,25 @@ entry_pointer_escapes :: proc(values: []int) -> ^mut Holder {
 	return slot if found else nil;
 }
 
+// A small fixed array gives each element its own place, but only where the index
+// says which one. An unknown index could be either, so it names both.
+unknown_index :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	which := len(values) - 1;
+	holders := [2]Holder{Holder{values}, Holder{local[:]}};
+	return holders[which].view;
+}
+
+// And a write at an unknown index reaches one element without saying which, so
+// it cannot erase what the others hold.
+unknown_write :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	which := len(values) - 1;
+	holders := [2]Holder{Holder{values}, Holder{local[:]}};
+	holders[which] = Holder{values};
+	return holders[1].view;
+}
+
 main :: proc() {
 	fmt.println(1);
 }

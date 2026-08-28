@@ -1466,3 +1466,53 @@ standard library writes through pointers exactly as before.
 
 `odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
 levels pass.
+
+### Follow-up — per-element paths for small fixed arrays
+
+Implemented on 2026-08-28. Phase 4a's exit condition told this step how to
+proceed: *measure false rejections before adding per-element tracking*. Three
+were measured, all in the same construct, and all now compile:
+
+```odin
+holders := [2]Holder{Holder{values}, Holder{local[:]}};
+return holders[0].view;          // was blamed for `local`, which element 1 holds
+```
+
+plus a write to one element's root while the *other* element's borrow was live,
+and the same pair of cases for a bare `[2][]int`.
+
+**The fix is a shape that matches the places.** `prov_place_of` already turns a
+constant index into `proj_range(i, i + 1)`, and `paths_overlap` already proves two
+constant ranges disjoint — design.md has said "distinct constant fixed-array
+indices" are provably disjoint since M5b. Only `carrier_shape` disagreed, giving
+every array one wildcard element edge. A fixed array of known length up to
+`CARRIER_ARRAY_ELEMENTS` now contributes one path per element. A dynamic array
+keeps its wildcard, because one path per element is not finite there, and so does
+a longer fixed array: spending the width budget on 64 elements would collapse the
+whole type at `CARRIER_WIDTH`, trading every field's precision for one array's.
+
+**Two matchers had to learn the new step kind**, and both would have silently
+un-done the change rather than failing:
+
+- `prov_composite_content` matched an element against `proj_field(index)`.
+  `steps_overlap` treats a *kind* mismatch as "nothing proven", so a `Field`
+  probe against a `Range` path joined every element into every path. An array
+  literal now probes with `proj_range`.
+- `prov_define_content` decided replace-versus-join from the destination slot's
+  path alone. That was sound while every element path held a wildcard; with
+  per-index paths, `holders[which] = ...` at an unknown index selects both
+  elements through overlap and would have *replaced* each, erasing the loan the
+  other element held. The write's own path decides now: indistinct writes join,
+  and a constant index replaces — which is what makes `holders[1] = Holder{values}`
+  followed by returning `holders[1].view` legal.
+
+Corpus: three positives added to
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke) and the two
+unknown-index rejections to
+[m5b_aggregate_wrapping.loke](tests/err/m5b_aggregate_wrapping.loke). An A/B of
+both compilers over every corpus reports no other difference, so no existing
+program changed meaning — the gain is entirely in programs that were rejected
+before.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.

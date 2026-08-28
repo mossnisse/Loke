@@ -40,3 +40,9 @@ this write of `numbers` is not compatible with the read-only slice of it that is
 L0526
 @135:9
 this borrow cannot be returned: `table` ends when this procedure returns
+L0526
+@144:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@154:9
+this slice cannot be returned: `local` ends when this procedure returns

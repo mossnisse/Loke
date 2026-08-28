@@ -621,9 +621,12 @@ per-owner analysis it already was, and step 9 fixed the one place it was still
 lost by wrapping: an owner assigned into a *field* of file-scope storage. Field distinctions survive a call: a
 helper returning one field of a record argument substitutes that field's root.
 The measured false rejections were fixed rather than accepted, and `wrap`/`unwrap`
-stayed legal. Two conservative limits are recorded: a container holds one joined
-content set for all its elements, and `pop` names the container rather than the
-element's own root.
+stayed legal. Element precision follows what an index proves: a small fixed array
+gives each element its own path, so two elements holding two roots stay
+independent, while an unknown index, a longer array, a dynamic array, and a map
+keep one joined element set. Two conservative limits are recorded: that joined
+set, where no index is provable, and `pop` naming the container rather than the
+removed element's own root.
 
 #### Phase 4b — stable contracts at procedure boundaries
 
@@ -665,8 +668,8 @@ and call sites against the argument supplied — including the caller's half of
 the argument's borrows travel into the destination and the existing scope rules
 answer the rest without proving one local outlives another. Two limits remain:
 procedure-value compatibility is level equality rather than the intended
-ordering, so a stricter callee is currently a mismatch, and a container holds one
-joined content set for all its elements.
+ordering, so a stricter callee is currently a mismatch, and a container whose
+element index is not provable holds one joined content set.
 
 #### Phase 4c — reconsider reference types only with evidence
 

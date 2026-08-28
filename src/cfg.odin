@@ -1422,12 +1422,13 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 }
 
 // Constructing an aggregate puts each element's borrows at that element's own
-// place. A positional element goes to its field; a keyed one is not resolved to
-// a field index here, so a keyed literal joins every element into every path
-// rather than guessing. An array or slice literal has one wildcard element path,
-// which the same overlap test joins into.
+// place. A positional element goes to its field, or to its index in an array; a
+// keyed one is not resolved here, so a keyed literal joins every element into
+// every path rather than guessing. An array whose shape kept a single wildcard
+// element path joins into it through the same overlap test.
 @(private = "file")
 prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: []int) -> []int {
+	is_array := underlying_kind(graph.k.c, expr_base(v).type) == .Array
 	keyed := false
 	for element in v.elements {
 		if element.key != nil {
@@ -1453,7 +1454,14 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 				if len(loans) == 0 {
 					continue
 				}
-				if paths_overlap(graph.prov_slots[slot].path, {proj_field(index)}) {
+				// An element is selected by index, a field by its own step, and
+				// the two kinds must not be compared: `steps_overlap` treats a
+				// mismatch as "nothing proven", which would join everything.
+				element_step := proj_field(index)
+				if is_array {
+					element_step = proj_range(i64(index), i64(index) + 1)
+				}
+				if paths_overlap(graph.prov_slots[slot].path, {element_step}) {
 					sources = prov_join(graph, sources, loans)
 				}
 			}
@@ -1596,7 +1604,17 @@ prov_bind_value :: proc(graph: ^Flow_Graph, id: Symbol_Id, sources: []int, span:
 // slot vectors built from the same shape, so they pair by index; anything else
 // takes the whole source conservatively into every destination path.
 @(private = "file")
-prov_define_content :: proc(graph: ^Flow_Graph, into: []int, from: []int, span: Span) {
+prov_define_content :: proc(
+	graph: ^Flow_Graph,
+	into: []int,
+	from: []int,
+	span: Span,
+	written: []Proj_Step = nil,
+) {
+	// A write whose own path is indistinct — an unknown index, a union subject —
+	// reaches one of the places it selected without saying which, so it may not
+	// erase the others.
+	indistinct := path_is_indistinct(written)
 	for slot, index in into {
 		sources := from
 		if len(from) == len(into) {
@@ -1606,18 +1624,18 @@ prov_define_content :: proc(graph: ^Flow_Graph, into: []int, from: []int, span: 
 		// container, every alternative of a union — and a write reaches only one
 		// of them. Replacing the path would erase what the others hold, so an
 		// indistinguishable destination joins instead. A known field replaces.
-		if prov_path_is_indistinct(graph, slot) {
+		if indistinct || path_is_indistinct(graph.prov_slots[slot].path) {
 			sources = prov_join(graph, prov_one(graph, slot), sources)
 		}
 		prov_define_one_content(graph, slot, sources, span)
 	}
 }
 
-// Whether this content path stands for more than one place, which is exactly
-// when a wildcard step selected it.
+// Whether a path stands for more than one place, which is exactly when a
+// wildcard step appears in it.
 @(private = "file")
-prov_path_is_indistinct :: proc(graph: ^Flow_Graph, slot: int) -> bool {
-	for step in graph.prov_slots[slot].path {
+path_is_indistinct :: proc(path: []Proj_Step) -> bool {
+	for step in path {
 		if step.kind == .Wild {
 			return true
 		}
@@ -2824,7 +2842,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			// Only the written path is replaced; the surviving fields keep what
 			// they held.
 			if written := prov_content_at(graph, root, path); len(written) > 0 && s.op == .Assign {
-				prov_define_content(graph, written, sources, expr_span(target))
+				prov_define_content(graph, written, sources, expr_span(target), path)
 			}
 			continue
 		}

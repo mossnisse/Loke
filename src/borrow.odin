@@ -463,6 +463,11 @@ attribute_escape_level :: proc(c: ^Compiler, attributes: []Attribute) -> (Escape
 // was still incomplete when it was computed.
 CARRIER_DEPTH :: 4
 CARRIER_WIDTH :: 64
+// How many elements of a fixed array get a path of their own. Which index holds
+// what *is* a static fact for a constant index, so a small array is worth one
+// path per element; a longer one keeps the single wildcard edge rather than
+// spending the whole type's precision at `CARRIER_WIDTH`.
+CARRIER_ARRAY_ELEMENTS :: 8
 
 // A map's key and value content are separate storage, so a value read does not
 // inherit what a key borrows. They are sibling fields of the entry the wildcard
@@ -625,9 +630,20 @@ carrier_shape_walk :: proc(
 		for variant in info.variants {
 			carrier_shape_walk(c, variant, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
 		}
-	case .Array, .Dynamic_Array:
+	case .Array:
+		// A constant index names one element, and `paths_overlap` already proves
+		// two constant ranges disjoint, so a small fixed array earns a path each.
+		if info.count > 0 && info.count <= CARRIER_ARRAY_ELEMENTS {
+			for index in 0 ..< i64(info.count) {
+				step := proj_range(index, index + 1)
+				carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out)
+			}
+			return
+		}
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+	case .Dynamic_Array:
 		// One edge for every element: which index holds what is not a static
-		// fact, and one path per element would not be finite for a dynamic array.
+		// fact, and one path per element would not be finite here.
 		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
 	case .Map:
 		entry := carrier_steps(c, prefix, {proj_wild()})

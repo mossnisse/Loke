@@ -109,6 +109,33 @@ alloc_wrapped :: proc() {
 	free(handle.target);
 }
 
+// POSITIVE. Two elements of a small fixed array are two places, so returning the
+// one that borrows the caller's argument does not name the local the other holds.
+elements_are_independent :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	holders := [2]Holder{Holder{values}, Holder{local[:]}};
+	return holders[0].view;
+}
+
+// POSITIVE. The same distinction for a write: element 1 borrows `second`, so
+// writing `first` conflicts with nothing that is live.
+write_beside_a_borrowed_element :: proc() -> int {
+	first := [3]int{1, 2, 3};
+	second := [3]int{4, 5, 6};
+	holders := [2]Holder{Holder{first[:]}, Holder{second[:]}};
+	first[0] = 9;
+	return holders[1].view[0];
+}
+
+// POSITIVE. A constant index replaces rather than joins, so after overwriting
+// element 1 it no longer holds what it held.
+overwrite_one_element :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	holders := [2]Holder{Holder{values}, Holder{local[:]}};
+	holders[1] = Holder{values};
+	return holders[1].view;
+}
+
 // --- retention --------------------------------------------------------------
 
 // POSITIVE. The retained view is one of the caller's own arguments, and the
@@ -222,6 +249,10 @@ main :: proc() {
 	fmt.println(len(map_entry_pointer(inout table).view));
 
 	fmt.println(len(move_an_owner(numbers[:]).view));
+
+	fmt.println(elements_are_independent(numbers[:])[0]);
+	fmt.println(write_beside_a_borrowed_element());
+	fmt.println(len(overwrite_one_element(numbers[:])));
 
 	alloc_bare();
 	alloc_wrapped();
