@@ -188,13 +188,43 @@ and fail with different diagnostics:
   reset — not when everything was already freed — and lowers to the provider's
   reset entry.
 
-M5b left design.md's [What is not checked](design.md#what-is-not-checked) list as
-its deliberate boundary. Aggregate provenance later closed two of its entries: a
-borrow keeps its obligations inside a record, union, or container, and what a
-call retains of an argument is written on the parameter as `@(escape=<level>)`
-and checked in the body and at the call site. Raw addresses, `core:unsafe`,
-foreign retention, and cross-thread transfer remain the programmer's
-responsibility, and each keeps a fixture proving it still compiles.
+Aggregate provenance closes the two entries M5b left in design.md's
+[What is not checked](design.md#what-is-not-checked) list: a borrow keeps its
+obligations when it is stored inside a value, and what a call retains of an
+argument is written on the parameter rather than assumed:
+
+- a type that contains borrow carriers gets a carrier path per place that can
+  hold one — per record field, per union alternative, per element of a small
+  fixed array, one wildcard element for a dynamic array, and separate key and
+  value paths under a map entry, with constant keys taking entries of their own.
+  Two values of one type pair by path, so wrapping a borrow in a record, moving
+  it through a container, or returning it inside a union carries the same loans
+  the bare carrier had. Every split is bounded by depth, width, and element
+  count; past a bound the paths join, which costs precision and never soundness;
+- `@(escape=<level>)` states what a procedure may do with a borrowed parameter:
+  `none` (nothing outlives the call), `result` (the default: it may come back
+  out), `stored` (it may be left in storage the caller owns), or `static` (it
+  may outlive the process). The level bounds the body and is part of the
+  procedure type, so an indirect call keeps it, and it is ordered at assignment
+  — a callee may promise more about what it keeps than the type it is stored in
+  asks for, never less;
+- retention is checked at both ends. In the body, a write into static,
+  thread-local, or caller-owned storage requires a source that outlives it, and
+  a parameter answers only for the level it was written with. At the call site,
+  a call to such a parameter is the assignment the callee is permitted to make,
+  so the caller answers the same question about the argument it supplied. A
+  destination reached through a `^mut` or `[]mut` parameter, or through a
+  pointer held in a variable, names its root once that carrier's own loans are
+  solved and is checked there;
+- a removal — `pop`, `remove`, `remove_unordered`, a map `remove` — carries the
+  element's own dependencies out rather than a borrow of the container, so the
+  container may be modified again immediately.
+
+Raw addresses, `core:unsafe`, foreign retention, and cross-thread transfer
+remain the programmer's responsibility, and each keeps a fixture proving it
+still compiles. Where no index or key is provable — a dynamic index, a runtime
+key, an array or map entry past its bound — a container answers with the join of
+everything it holds.
 
 M6a begins the runtime. A versioned C seed — allocation, failure, panic frames,
 text, and scalar formatting — is compiled beside the generated LLVM and found
