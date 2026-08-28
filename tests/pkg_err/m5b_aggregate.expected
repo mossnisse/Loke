@@ -4,3 +4,6 @@ this slice cannot be returned: `numbers` ends when this procedure returns
 L0526
 @24:9
 this slice cannot be returned: `numbers` ends when this procedure returns
+L0647
+@33:2
+this slice borrows `numbers`, which does not outlive `destination`: storage the caller owns

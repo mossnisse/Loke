@@ -1303,3 +1303,67 @@ what cleanup *prints while unwinding*, which is exactly what `abort` is defined
 not to do, so the suite as written is unwind-specific rather than
 strategy-neutral. Making it strategy-aware is its own change and is not claimed
 here.
+
+### Follow-up — the caller's half of `@(escape=stored)`
+
+Implemented on 2026-08-28, closing the one item steps 8 and 9 recorded as open.
+
+**The framing was wrong, and that is why it looked hard.** Step 8 described the
+missing check as proving that one caller value outlives another, which needs
+scope reasoning the solver does not have. It does not need that. A call to a
+`stored` parameter *is* the assignment the callee is permitted to make, so the
+call gets exactly what an assignment gets: `prov_retain_escape` for the duration
+question, and a join into the destination's slots for the flow. Modelling the
+flow is what removes the ordering question — the argument's borrows travel into
+the destination, and using a borrow after its root has ended is already an error
+the analysis reports.
+
+The three destinations fall out of the one model rather than needing three rules:
+
+- a destination in static or thread storage is L0647, the same diagnostic the
+  bare assignment gets;
+- a destination the caller only passes on is rooted in a parameter, so it is
+  L0646: the caller's own parameter must carry the contract instead of stopping
+  it;
+- a destination that is one of the caller's locals needs no contract at all. It
+  gets the loan, and the scope rules answer:
+  `keep(inout held, numbers[:])` in an inner block followed by `held.view[0]`
+  outside it is **L0513**, the ordinary use-after-scope diagnostic, with no new
+  machinery and no new code.
+
+**The destination set is the one the body check already recognises** — an `inout`
+parameter or receiver — so caller and callee agree on where a `stored` argument
+can go, rather than the caller assuming more than the callee is checked for.
+
+**An indirect call was silently exempt.** `prov_argument_is_inout` asked
+`chosen_overload`, which is nil when the callee is a value, so a call through a
+procedure value found no destinations and skipped the obligation. It now asks
+`prov_call_proc_type`, the same fallback `@(escape=...)` itself uses: a parameter
+mode is part of procedure-type compatibility, so an indirect call can answer it.
+
+**A span bug the corpus caught and a manual check did not.** Giving
+`prov_retain_escape` an optional span defaulted to `Span{}`, whose `file` is 0 —
+a valid file id, not `NO_FILE`. Every body-side retention diagnostic silently
+moved to line 1. Grepping the tail of the output missed it; `tests/err`'s exact
+spans did not. The parameter is now required at all three call sites.
+
+Corpus: one fixture changed meaning. `escaping_retention` in
+[tests/pkg/m5b_aggregate/main.loke](tests/pkg/m5b_aggregate/main.loke) was
+labelled `GAP` for exactly this hole and is now rejected, so it moved to
+[tests/pkg_err/m5b_aggregate/](tests/pkg_err/m5b_aggregate/main.loke) and a
+positive that carries the contract on took its place. Four cases were added to
+[m5b_retention.loke](tests/err/m5b_retention.loke) — a global destination, a
+forwarded parameter, the scope case, and the same through a procedure value —
+and a forwarding positive to
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke). An A/B of
+both compilers over every corpus reports no other difference.
+
+**What is left, and it is a different hole from the one that closed.** A callee
+can retain through a `^mut T` or `[]mut T` parameter — `destination^.view =
+values` — and neither the body check nor the call site sees it, because resolving
+that destination's root means following the carrier's loans rather than a static
+place. `design.md`'s unchecked list now names that instead of the caller's half
+of `stored`.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.

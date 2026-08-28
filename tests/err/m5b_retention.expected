@@ -25,3 +25,15 @@ this slice borrows `local`, which does not outlive `destination`: storage the ca
 L0646
 @64:2
 this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
+L0647
+@77:2
+this slice borrows `numbers`, which does not outlive `global_holder`: storage that outlives the process
+L0646
+@83:2
+this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
+L0513
+@94:9
+this slice is used after `numbers`, the local it borrows, has ended
+L0513
+@106:9
+this slice is used after `numbers`, the local it borrows, has ended

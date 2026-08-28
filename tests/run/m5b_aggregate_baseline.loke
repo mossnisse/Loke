@@ -117,6 +117,14 @@ retain_into_inout :: proc(destination: inout Holder, @(escape=stored) values: []
 	destination.view = values;
 }
 
+// POSITIVE. The caller's half of that obligation. Passing an argument to a
+// `stored` parameter is the assignment the callee is permitted to make, so a
+// body forwarding one carries the contract on instead of stopping here. `main`
+// answers the same question with two locals that live to the same point.
+forward_retention :: proc(destination: inout Holder, @(escape=stored) values: []int) {
+	retain_into_inout(inout destination, values);
+}
+
 // POSITIVE. The same for process storage, written at the stronger level. The
 // caller is held to it, so what it passes has to outlive the process too.
 KEPT :: [4]int{5, 6, 7, 8};

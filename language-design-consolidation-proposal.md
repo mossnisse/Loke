@@ -1322,9 +1322,9 @@ ownership, and caller migration are gates.
    borrow keeps its obligations inside a record, union, or container; direct,
    cross-package, generic, and indirect calls carry result and retention
    contracts; and retention into process, thread, and caller-owned storage is
-   checked. `wrap`/`unwrap` stayed legal throughout. One obligation is
-   deliberately open: the caller's half of `@(escape=stored)`, which needs proof
-   that one caller value outlives another.
+   checked at both ends. `wrap`/`unwrap` stayed legal throughout. One boundary
+   is still open: a destination reached through a `^mut T` or `[]mut T` parameter
+   rather than an `inout` one carries no contract.
 4. Compare typed fallibility against retaining the status protocol. Resolve
    union identity, zero/default behavior, unit representation, operator
    recognition, and ABI questions together. Record any reversal of the current

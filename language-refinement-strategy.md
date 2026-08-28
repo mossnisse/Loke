@@ -660,11 +660,14 @@ an indirect call has no body to infer from, so the parser example needed the
 distinction written down: `@(escape=<level>)` on a parameter, four totally
 ordered levels, `result` by default, part of the procedure type as
 `@(allocator_reset)` already is. Bodies are checked against the declared level
-and call sites against the argument supplied. Two limits remain: procedure-value
-compatibility is level equality rather than the intended ordering, so a stricter
-callee is currently a mismatch; and the caller's half of `@(escape=stored)` is
-unchecked, because proving one caller value outlives another needs scope
-reasoning this milestone does not have.
+and call sites against the argument supplied — including the caller's half of
+`stored`, where the call is modelled as the assignment the callee may make, so
+the argument's borrows travel into the destination and the existing scope rules
+answer the rest without proving one local outlives another. Two limits remain:
+procedure-value compatibility is level equality rather than the intended
+ordering, so a stricter callee is currently a mismatch; and a destination reached
+through a `^mut T` or `[]mut T` parameter is recognised by neither the body check
+nor the call site, so only an `inout` destination carries the contract.
 
 #### Phase 4c — reconsider reference types only with evidence
 

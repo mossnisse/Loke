@@ -64,6 +64,48 @@ retain_argument_into_inout :: proc(destination: inout Holder, values: []int) {
 	destination.view = values;
 }
 
+// The caller's half of the same contract. A call to a `stored` parameter is the
+// assignment the callee is permitted to make, so the caller answers the same
+// question about the argument it supplies.
+keep :: proc(destination: inout Holder, @(escape=stored) values: []int) {
+	destination.view = values;
+}
+
+// A destination with process duration needs an argument that has it too.
+caller_passes_a_local_to_a_global :: proc() {
+	numbers := [3]int{1, 2, 3};
+	keep(inout global_holder, numbers[:]);
+}
+
+// An unconstrained parameter proves nothing about the caller's storage, so the
+// contract has to be carried on rather than stopping here.
+caller_forwards_without_the_contract :: proc(destination: inout Holder, values: []int) {
+	keep(inout destination, values);
+}
+
+// A caller-local destination needs no contract — but what it was handed still
+// has to be there when it is read.
+caller_outlives_the_source :: proc() -> int {
+	held: Holder;
+	{
+		numbers := [3]int{1, 2, 3};
+		keep(inout held, numbers[:]);
+	}
+	return held.view[0];
+}
+
+// Through a procedure value: the level is part of the type, so the obligation
+// survives a call with no body to look at.
+caller_through_a_value :: proc() -> int {
+	action: proc(destination: inout Holder, @(escape=stored) values: []int) = keep;
+	held: Holder;
+	{
+		numbers := [3]int{1, 2, 3};
+		action(inout held, numbers[:]);
+	}
+	return held.view[0];
+}
+
 main :: proc() {
 	global_view = TABLE[:];
 	fmt.println(global_view[0]);

@@ -4896,10 +4896,30 @@ proves nothing.
 A parameter is answered by its written level and by nothing else, because only
 the caller knows how long the storage behind it lives. Retaining one in
 caller-owned storage requires `@(escape=stored)`, and in static or thread storage
-`@(escape=static)`. The body is checked against the level it declares, and a
-`static` parameter is checked again at each call site against the argument
-actually supplied. The caller's half of `stored` is listed under
-[What is not checked](#what-is-not-checked).
+`@(escape=static)`. The body is checked against the level it declares, and the
+call site is checked against the argument actually supplied.
+
+At a call, a parameter written `stored` or `static` is treated as the assignment
+the callee is permitted to make: the argument's borrows reach every destination
+the call can write — an `inout` parameter or receiver — and each of those asks the
+same question the assignment would. A destination in static or thread storage
+needs a source that outlives it; a destination the caller merely passes on needs
+the caller's own parameter to carry the contract; and a destination that is one of
+the caller's own locals needs no contract at all, because the borrow simply
+travels there and using it after its root has ended is already an error:
+
+```odin
+keep :: proc(destination: inout Holder, @(escape=stored) values: []int) {
+	destination.view = values;
+}
+
+held: Holder;
+{
+	numbers := [3]int{1, 2, 3};
+	keep(inout held, numbers[:]);
+}
+fmt.println(held.view[0]); // ERROR: `numbers` has ended
+```
 
 Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a
 retention. A root outlives itself.
@@ -4920,9 +4940,9 @@ responsibility:
   borrowed argument after it returns;
 - transferring borrows or unchecked addresses between threads, and keeping a
   `thread_local` borrow past the end of its thread;
-- the caller's half of `@(escape=stored)`: the body is held to its level, but
-  the compiler does not prove that the argument retained in another argument's
-  storage outlives it.
+- what a call retains through a parameter it can write but which is not `inout`:
+  a `^mut T` or `[]mut T` parameter is a destination neither the body check nor
+  the call site recognises.
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use
 `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.

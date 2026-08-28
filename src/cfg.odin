@@ -2177,7 +2177,7 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 // not only a bare identifier. Only a destination that actually receives a borrow
 // is reported, so ordinary global data costs nothing.
 @(private = "file")
-prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int) {
+prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, span: Span) {
 	if len(sources) == 0 {
 		return
 	}
@@ -2197,7 +2197,7 @@ prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int) {
 	}
 	prov_emit(graph, Prov_Event {
 		kind    = .Retain,
-		span    = expr_span(target),
+		span    = span,
 		sources = sources,
 		root    = root,
 		retain  = into,
@@ -2713,7 +2713,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 					graph.region_of[ident.symbol] = existing
 				}
 			}
-			prov_retain_escape(graph, target, sources)
+			prov_retain_escape(graph, target, sources, expr_span(target))
 			// Moving, dropping, freeing, fully assigning, or exchanging a root
 			// invalidates borrows of its previous value (design.md).
 			prov_invalidate(graph, target, expr_span(target), "assigned")
@@ -2733,7 +2733,7 @@ prov_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign, value_loans: [][]int) {
 			continue
 		}
 		// A write through a field or an element touches only that path.
-		prov_retain_escape(graph, target, sources)
+		prov_retain_escape(graph, target, sources, expr_span(target))
 		if root, path, ok := prov_place_of(graph, target); ok {
 			prov_walk_subscripts(graph, target)
 			prov_access(graph, root, path, .Write, expr_span(target))
@@ -2819,11 +2819,10 @@ prov_result_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result: int) -> 
 
 @(private = "file")
 prov_argument_is_inout :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> bool {
-	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
-	if sym == nil {
-		return false
-	}
-	info := type_of(graph.k.c, sym.proc_type)
+	// The declaration's type when there is one, the callee value's otherwise: a
+	// parameter mode is part of procedure-type compatibility, so an indirect call
+	// answers this question as well as a direct one does.
+	info := type_of(graph.k.c, prov_call_proc_type(graph, v))
 	if info == nil || index >= len(info.param_modes) {
 		return false
 	}
@@ -2976,29 +2975,106 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	return prov_store_call_results(graph, v, actuals, borrowed)
 }
 
-// The caller's half of `@(escape=static)`: a parameter the callee may keep in
-// process storage needs an argument that is still there, and the callee's body
-// check alone would leave the promise unenforced at the only place that knows.
-// `stored` is not checked here — its destinations are other arguments of the
-// same call, and proving one caller value outlives another is not this step's.
+// The caller's half of `@(escape=...)`, which the callee's body check cannot
+// answer: only the caller knows how long the storage behind an argument lives.
+//
+// `static` is direct — the argument has to still be there when the process ends.
+// `stored` says the callee may write the argument into a destination this call
+// hands it, so the call is modelled as exactly that assignment: the same
+// duration check an assignment gets, and the same flow, so the destination
+// carries what the argument borrowed and the existing scope rules answer the
+// rest. Modelling the flow is what makes a caller-local destination work without
+// proving one local outlives another — the loan simply travels, and using it
+// after its root has ended is already an error.
 @(private = "file")
 prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
 	proc_type := prov_call_proc_type(graph, v)
 	if type_of(graph.k.c, proc_type) == nil {
 		return
 	}
+	destinations: []int
 	for slots, index in actuals {
-		if len(slots) == 0 || proc_param_escape(graph.k.c, proc_type, index) != .Static {
+		if len(slots) == 0 {
 			continue
 		}
-		prov_emit(graph, Prov_Event {
-			kind    = .Retain,
-			span    = v.span,
-			sources = slots,
-			root    = NO_ROOT,
-			retain  = .Process,
-			verb    = prov_parameter_label(graph, v, index),
-		})
+		level := proc_param_escape(graph.k.c, proc_type, index)
+		if level == .Static {
+			prov_emit(graph, Prov_Event {
+				kind    = .Retain,
+				span    = v.span,
+				sources = slots,
+				root    = NO_ROOT,
+				retain  = .Process,
+				verb    = prov_parameter_label(graph, v, index),
+			})
+		}
+		if level < .Stored {
+			continue
+		}
+		if destinations == nil {
+			destinations = prov_writable_arguments(graph, v)
+		}
+		for target in destinations {
+			if target != index {
+				prov_retain_into_argument(graph, v, target, slots)
+			}
+		}
+	}
+}
+
+// The arguments a call can write through, which is where a `stored` parameter
+// may end up. These are the same destinations the body check recognises — an
+// `inout` parameter or receiver — so caller and callee agree on the set.
+@(private = "file")
+prov_writable_arguments :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	out := make([dynamic]int, 0, len(v.bound), graph.alloc)
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	// A receiver is `bound[0]` and answers with its own mode; an ordinary
+	// parameter answers with the procedure type's.
+	start := 0
+	if sym != nil && sym.has_receiver {
+		start = 1
+		if sym.receiver == .Inout && len(v.bound) > 0 {
+			append(&out, 0)
+		}
+	}
+	for index in start ..< len(v.bound) {
+		if prov_argument_is_inout(graph, v, index) {
+			append(&out, index)
+		}
+	}
+	return out[:]
+}
+
+// One argument receiving what another may leave in it. The duration question is
+// the assignment's — a destination in static, thread, or the caller's own
+// storage needs a source that outlives it — and the flow is the assignment's
+// too, joined rather than replaced because the callee may also leave it alone.
+@(private = "file")
+prov_retain_into_argument :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int, sources: []int) {
+	argument := v.bound[index]
+	if argument == nil {
+		return
+	}
+	root, path, ok := prov_place_of(graph, argument)
+	if !ok {
+		return
+	}
+	prov_retain_escape(graph, argument, sources, v.span)
+	slots := prov_content_at(graph, root, path)
+	if len(slots) == 0 {
+		ident, is_ident := argument.(^Expr_Ident)
+		if !is_ident {
+			return
+		}
+		slot, is_carrier := prov_slot_for_symbol(graph, ident.symbol)
+		if !is_carrier {
+			return
+		}
+		slots = prov_one(graph, slot)
+	}
+	for slot in slots {
+		prov_define_one_content(graph, slot, prov_join(graph, prov_one(graph, slot), sources), v.span)
 	}
 }
 

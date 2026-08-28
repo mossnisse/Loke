@@ -24,6 +24,15 @@ escaping_element :: proc() -> []int {
 	return holders[0].view;
 }
 
+// The caller's half of `@(escape=stored)`: the imported helper may leave this
+// body's local in a destination the caller owns, and no contract on an
+// unconstrained parameter makes that valid.
+escaping_retention :: proc(destination: inout wrapping.Holder) {
+	numbers: [dynamic]int;
+	numbers.append(1);
+	wrapping.retain(inout destination, numbers[:]);
+}
+
 main :: proc() {
 	fmt.println(1);
 }
