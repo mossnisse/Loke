@@ -72,10 +72,12 @@ Flow_Block :: struct {
 	visited:     bool,
 
 	// Provenance modes. `src/borrow.odin` solves reaching loans forwards and
-	// carrier liveness backwards over these same blocks.
+	// carrier liveness backwards over these same blocks. The reaching component
+	// is `slots * loans` bits and is the one that multiplies, so it is packed:
+	// one row of `ceil(loans / 8)` bytes per slot.
 	prov:          [dynamic]Prov_Event,
-	reach_entry:   []bool,
-	reach_exit:    []bool,
+	reach_entry:   []u8,
+	reach_exit:    []u8,
 	invalid_entry: []bool,
 	invalid_exit:  []bool,
 	live_entry:    []bool,

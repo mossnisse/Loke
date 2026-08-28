@@ -513,16 +513,54 @@ Prov_State :: struct {
 	slots:   int,
 	loans:   int,
 	roots:   int,
-	reach:   []bool,
+	// Bytes per slot row. Rows are byte-padded rather than densely packed so a
+	// row stays an ordinary subslice that `copy` and the word helpers work on.
+	// Padding bits above `loans` are never set, so whole-byte `or` and equality
+	// stay exact.
+	//
+	// A byte, not a wider word: step 4 multiplies `slots` without necessarily
+	// adding loans, so a body with many content paths and few loans would pay a
+	// whole padded word per row. Measured against the corpus, bytes beat both
+	// 64-bit words and the unpacked form at every size, and cost no measurable
+	// time (the merge loops are short either way).
+	row_words: int,
+	reach:   []u8,
 	invalid: []bool,
 	live:    []bool,
 	uses:    []Span,
-	merged:  []bool,
+	merged:  []u8,
 }
 
 @(private = "file")
-reach_row :: proc(state: ^Prov_State, buffer: []bool, slot: int) -> []bool {
-	return buffer[slot * state.loans:(slot + 1) * state.loans]
+reach_row :: proc(state: ^Prov_State, buffer: []u8, slot: int) -> []u8 {
+	return buffer[slot * state.row_words:(slot + 1) * state.row_words]
+}
+
+@(private = "file")
+bit_get :: proc(row: []u8, index: int) -> bool {
+	return row[index >> 3] & (1 << u8(index & 7)) != 0
+}
+
+@(private = "file")
+bit_mark :: proc(row: []u8, index: int) {
+	row[index >> 3] |= 1 << u8(index & 7)
+}
+
+@(private = "file")
+words_or :: proc(into: []u8, from: []u8) {
+	for word, index in from {
+		into[index] |= word
+	}
+}
+
+@(private = "file")
+words_equal :: proc(a, b: []u8) -> bool {
+	for word, index in a {
+		if word != b[index] {
+			return false
+		}
+	}
+	return true
 }
 
 // One checked concrete body, and whether checking it was clean. A body that
@@ -654,8 +692,9 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 					}
 				}
 				for source in event.sources {
-					for held, index in reach_row(state, state.reach, source) {
-						if held && merge_loan_provenance(state, into, graph.loans[index]) {
+					row := reach_row(state, state.reach, source)
+					for index in 0 ..< state.loans {
+						if bit_get(row, index) && merge_loan_provenance(state, into, graph.loans[index]) {
 							changed = true
 						}
 					}
@@ -718,9 +757,9 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 
 // consolidation-provenance-plan.md step 1: the two numbers that predict what
 // per-content-path slots will cost — the reaching lattice's size, which is
-// `slots * loans` per block and therefore the one that multiplies, and how many
-// rounds the summary worklist takes. `LOKE_PROV_STATS=1` prints them after the
-// whole program settles; unset, this is one boolean test per body.
+// `slots * loans` bits per block and therefore the one that multiplies, and how
+// many rounds the summary worklist takes. `LOKE_PROV_STATS=1` prints them after
+// the whole program settles; unset, this is one boolean test per body.
 @(private = "file")
 prov_stats: struct {
 	on:     bool,
@@ -730,6 +769,7 @@ prov_stats: struct {
 	bytes:  int,
 	worst:  int,
 	name:   string,
+	shape:  string,
 }
 
 @(private = "file")
@@ -744,7 +784,7 @@ prov_stats_on :: proc() -> bool {
 @(private = "file")
 prov_record_body :: proc(state: ^Prov_State) {
 	graph := state.graph
-	bytes := len(graph.blocks) * 2 * max(state.slots * state.loans, 1)
+	bytes := len(graph.blocks) * 2 * max(state.slots * state.row_words, 1) * size_of(u8)
 	prov_stats.bodies += 1
 	prov_stats.bytes += bytes
 	if bytes <= prov_stats.worst {
@@ -757,17 +797,25 @@ prov_record_body :: proc(state: ^Prov_State) {
 			prov_stats.name = identifier_text(state.k.c, sym.name)
 		}
 	}
+	prov_stats.shape = fmt.aprintf(
+		"blocks=%d slots=%d loans=%d",
+		len(graph.blocks),
+		state.slots,
+		state.loans,
+		allocator = state.k.c.semantic_allocator,
+	)
 }
 
 @(private = "file")
 prov_report_stats :: proc() {
 	fmt.eprintf(
-		"prov-stats: bodies=%d worklist-rounds=%d reaching-bytes=%d worst-body=%d (%s)\n",
+		"prov-stats: bodies=%d worklist-rounds=%d reaching-bytes=%d worst-body=%d (%s, %s)\n",
 		prov_stats.bodies,
 		prov_stats.rounds,
 		prov_stats.bytes,
 		prov_stats.worst,
 		prov_stats.name,
+		prov_stats.shape,
 	)
 }
 
@@ -782,10 +830,11 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	if state.loans == 0 && !graph.has_region_event {
 		return false
 	}
-	width := max(state.slots * state.loans, 1)
+	state.row_words = (state.loans + 7) / 8
+	width := max(state.slots * state.row_words, 1)
 	for block in graph.blocks {
-		block.reach_entry = make([]bool, width, graph.alloc)
-		block.reach_exit = make([]bool, width, graph.alloc)
+		block.reach_entry = make([]u8, width, graph.alloc)
+		block.reach_exit = make([]u8, width, graph.alloc)
 		block.invalid_entry = make([]bool, state.loans, graph.alloc)
 		block.invalid_exit = make([]bool, state.loans, graph.alloc)
 		block.live_entry = make([]bool, max(state.slots, 1), graph.alloc)
@@ -794,11 +843,11 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 		block.use_exit = make([]Span, max(state.slots, 1), graph.alloc)
 		block.prov_visited = false
 	}
-	state.reach = make([]bool, width, graph.alloc)
+	state.reach = make([]u8, width, graph.alloc)
 	state.invalid = make([]bool, state.loans, graph.alloc)
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
-	state.merged = make([]bool, state.loans, graph.alloc)
+	state.merged = make([]u8, max(state.row_words, 1), graph.alloc)
 	// Diagnose mode only: summary mode revisits one body once per worklist round,
 	// and the rounds are counted separately.
 	if graph.mode == .Prov_Diagnose && prov_stats_on() {
@@ -829,9 +878,7 @@ solve_reaching :: proc(state: ^Prov_State) {
 				if !source.prov_visited {
 					continue
 				}
-				for value, index in source.reach_exit {
-					state.reach[index] ||= value
-				}
+				words_or(state.reach, source.reach_exit)
 				for value, index in source.invalid_exit {
 					state.invalid[index] ||= value
 				}
@@ -843,7 +890,7 @@ solve_reaching :: proc(state: ^Prov_State) {
 		} else {
 			// A borrowed parameter arrives already holding the caller's root.
 			for entry in graph.entry_defs {
-				reach_row(state, state.reach, entry.slot)[int(entry.loan)] = true
+				bit_mark(reach_row(state, state.reach, entry.slot), int(entry.loan))
 			}
 		}
 		copy(block.reach_entry, state.reach)
@@ -852,7 +899,7 @@ solve_reaching :: proc(state: ^Prov_State) {
 			run_prov_event(state, event, state.reach, state.invalid)
 		}
 		if block.prov_visited &&
-		   bools_equal(block.reach_exit, state.reach) &&
+		   words_equal(block.reach_exit, state.reach) &&
 		   bools_equal(block.invalid_exit, state.invalid) {
 			continue
 		}
@@ -879,15 +926,13 @@ bools_equal :: proc(a, b: []bool) -> bool {
 }
 
 @(private = "file")
-run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, invalid: []bool) {
+run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, invalid: []bool) {
 	graph := state.graph
 	#partial switch event.kind {
 	case .Def:
 		mem.zero_slice(state.merged)
 		for source in event.sources {
-			for value, index in reach_row(state, reach, source) {
-				state.merged[index] ||= value
-			}
+			words_or(state.merged, reach_row(state, reach, source))
 		}
 		if event.loan != NO_LOAN {
 			// A loan ID names one syntactic creation site, which can execute again
@@ -895,7 +940,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, inv
 			// previous instance. The fresh definition starts a new valid instance;
 			// copied definitions keep the invalid state of their source loans.
 			invalid[int(event.loan)] = false
-			state.merged[int(event.loan)] = true
+			bit_mark(state.merged, int(event.loan))
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
 	case .Live:
@@ -907,8 +952,9 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, inv
 			break
 		}
 		for source in event.sources {
-			for held, index in reach_row(state, reach, source) {
-				if held {
+			row := reach_row(state, reach, source)
+			for index in 0 ..< state.loans {
+				if bit_get(row, index) {
 					invalid[index] = false
 				}
 			}
@@ -940,8 +986,9 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []bool, inv
 		// Every loan of the released allocation ends, which is what makes a later
 		// use of any locally tracked alias diagnosable instead of silently dangling.
 		for source in event.sources {
-			for held, index in reach_row(state, reach, source) {
-				if !held {
+			row := reach_row(state, reach, source)
+			for index in 0 ..< state.loans {
+				if !bit_get(row, index) {
 					continue
 				}
 				root := graph.loans[index].root
@@ -1074,8 +1121,9 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			if !live[slot] {
 				continue
 			}
-			for held, index in reach_row(state, state.reach, slot) {
-				if !held || state.invalid[index] {
+			row := reach_row(state, state.reach, slot)
+			for index in 0 ..< state.loans {
+				if !bit_get(row, index) || state.invalid[index] {
 					continue
 				}
 				loan := graph.loans[index]
@@ -1106,8 +1154,9 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			if !live[slot] {
 				continue
 			}
-			for held, index in reach_row(state, state.reach, slot) {
-				if !held || state.invalid[index] {
+			row := reach_row(state, state.reach, slot)
+			for index in 0 ..< state.loans {
+				if !bit_get(row, index) || state.invalid[index] {
 					continue
 				}
 				loan := graph.loans[index]
@@ -1143,8 +1192,9 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		// when the caller resumes, and unknown provenance is not evidence of a
 		// failure -- only an operation that needs a proof rejects it.
 		for source in event.sources {
-			for held, index in reach_row(state, state.reach, source) {
-				if !held || state.invalid[index] {
+			row := reach_row(state, state.reach, source)
+			for index in 0 ..< state.loans {
+				if !bit_get(row, index) || state.invalid[index] {
 					continue
 				}
 				loan := graph.loans[index]
@@ -1214,8 +1264,8 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 reborrow_values_overlap :: proc(state: ^Prov_State, reborrow: Prov_Reborrow) -> bool {
 	source := reach_row(state, state.reach, reborrow.source)
 	derived := reach_row(state, state.reach, reborrow.derived)
-	for held, index in source {
-		if held && derived[index] && !state.invalid[index] {
+	for index in 0 ..< state.loans {
+		if bit_get(source, index) && bit_get(derived, index) && !state.invalid[index] {
 			return true
 		}
 	}
@@ -1286,8 +1336,9 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 		if !live[slot] {
 			continue
 		}
-		for held, index in reach_row(state, state.reach, slot) {
-			if !held || state.invalid[index] {
+		row := reach_row(state, state.reach, slot)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.invalid[index] {
 				continue
 			}
 			loan := graph.loans[index]
@@ -1325,8 +1376,9 @@ report_live_dependants :: proc(
 		if !live[slot] {
 			continue
 		}
-		for held, index in reach_row(state, state.reach, slot) {
-			if !held || state.invalid[index] {
+		row := reach_row(state, state.reach, slot)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) || state.invalid[index] {
 				continue
 			}
 			loan := graph.loans[index]
@@ -1462,8 +1514,9 @@ check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> ([]Root_
 	found := 0
 	roots := make([dynamic]Root_Id, graph.alloc)
 	for source in event.sources {
-		for held, index in reach_row(state, state.reach, source) {
-			if !held {
+		row := reach_row(state, state.reach, source)
+		for index in 0 ..< state.loans {
+			if !bit_get(row, index) {
 				continue
 			}
 			if state.invalid[index] {

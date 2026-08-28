@@ -346,7 +346,8 @@ renegotiation.
 
 ### 3. Widen the reaching lattice before adding slots
 
-`prepare_state` allocates two `[]bool` of `slots * loans` per block. Step 4
+Done; see the verification record. `prepare_state` allocated two `[]bool` of
+`slots * loans` per block. Step 4
 multiplies `slots` by the content paths of every aggregate value, so the 10x
 threshold in step 1 is arithmetic rather than a risk to watch: a four-field record
 holding two loans per field already exceeds it.
@@ -789,3 +790,41 @@ requirements.
 
 No compiler change, so no test run beyond re-checking the fixture whose comment
 now names the selected form.
+
+### Step 3 — packed reaching lattice
+
+Implemented on 2026-08-28. The reaching component is now one bit per
+(slot, loan): `Flow_Block.reach_entry`/`reach_exit`, `Prov_State.reach`, and the
+`merged` accumulator became `[]u8`, with `bit_get`, `bit_mark`, `words_or`, and
+`words_equal` beside `reach_row`. `invalid` stays `[]bool` — it is indexed by
+loan alone and does not multiply. Rows are byte-padded so a row is still an
+ordinary subslice; padding bits above `loans` are never set, so whole-byte `or`
+and equality remain exact.
+
+**Byte, not a wider word.** A 64-bit version was built and measured first. It
+helped the worst body (265650 → 56672) but made every small body *larger*, since
+a row costs a whole 8-byte word even with three loans — and that is precisely the
+shape step 4 creates when it multiplies `slots` without adding loans. Bytes beat
+both 64-bit words and the unpacked form at every size measured, with no
+measurable time difference (832ms versus 842ms on three compiles of the heaviest
+program, both dominated by clang).
+
+| Program | before | after | worst body after |
+|---|---|---|---|
+| `tests/run/m6b_maps.loke` | 268248 | 36148 | 35420 (`main`, blocks=23 slots=77 loans=75) |
+| `tests/run/m6b_regions.loke` | 1472 | 364 | 80 |
+| `tests/run/m5a_ownership.loke` | 512 | 244 | 80 |
+| `tests/run/m5b_aggregate_baseline.loke` | 1024 | 312 | 108 (blocks=1 slots=18 loans=18) |
+| all-scalar program | 296 | 136 | 80 |
+| nested/recursive aggregate program | 466 | 198 | 80 |
+
+7.4x on the body that matters, 2–4x everywhere else. That is the headroom step 4
+spends. `LOKE_PROV_STATS` now also prints the worst body's blocks, slots, and
+loans, which is what makes the next regression legible.
+
+**Equivalence.** The old and new compilers were run side by side over the whole
+corpus: identical diagnostic output on every `tests/err/*.loke`, and byte-identical
+`-emit-ll` output on all 123 programs in `tests/run` and `tests/trap`. Then the
+full matrix on the new compiler: `odin test src` 47 tests, `odin test tests` 14
+tests, and the run/trap corpus at `-opt=minimal` (3m11s), `size` (2m58s), `speed`
+(3m00s), and `aggressive` (3m11s) — all successful.
