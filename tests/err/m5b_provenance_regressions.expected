@@ -25,3 +25,9 @@ this reset would end the region backing `result`, which is still live here
 L0537
 @117:2
 this reset would end the region backing `held`, which is still live here
+L0514
+@127:2
+this pointer may designate thread-duration storage
+L0514
+@133:2
+this pointer may designate static-duration storage

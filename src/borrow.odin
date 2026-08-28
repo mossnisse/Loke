@@ -65,7 +65,12 @@ Root_Kind :: enum u8 {
 	Local,
 	Slice_Literal,
 	Temporary,
+	// `static` and file-scope storage: one object for the life of the process.
 	Static,
+	// `thread_local` storage: one object per thread, for the life of that
+	// thread. It outlives every frame on its own thread and nothing on another
+	// one, which is why it is not the same root kind as `Static`.
+	Thread_Local,
 	Materialized,
 	Allocation,
 	Param,
@@ -75,6 +80,10 @@ Root_Kind :: enum u8 {
 // Whether storage of this kind is still there after the procedure returns. A
 // lexical local, an ordinary temporary and a hidden slice-literal array are the
 // three that end with the frame.
+//
+// This answers the frame question only. Thread and process storage both survive
+// a return, so both answer true here; a destination that outlives the thread
+// needs the stronger question, which this predicate does not answer.
 root_outlives_body :: proc(kind: Root_Kind) -> bool {
 	#partial switch kind {
 	case .Local, .Slice_Literal, .Temporary:
@@ -107,6 +116,7 @@ root_kind_text :: proc(kind: Root_Kind) -> string {
 	case .Slice_Literal: return "slice literal"
 	case .Temporary:     return "temporary"
 	case .Static:        return "static-duration storage"
+	case .Thread_Local:  return "thread-duration storage"
 	case .Materialized:  return "materialized constant"
 	case .Allocation:    return "allocation"
 	case .Param:         return "caller storage"
@@ -412,6 +422,10 @@ Result_Provenance :: struct {
 	params:  []bool,
 	// Static-duration or materialized storage, which outlives every caller.
 	static:  bool,
+	// `thread_local` storage, which outlives every caller on its own thread and
+	// nothing on another one. Separate from `static` so a destination that
+	// outlives the thread cannot be satisfied by it.
+	thread:  bool,
 	// A fresh allocation root, which is what lets a returned pointer reach
 	// checked `free`.
 	fresh:   bool,
@@ -479,6 +493,7 @@ merge_provenance :: proc(into: ^Result_Provenance, from: Result_Provenance) -> b
 	if from.region.default && !into.region.default { into.region.default, changed = true, true }
 	if from.region.unknown && !into.region.unknown { into.region.unknown, changed = true, true }
 	if from.static && !into.static   { into.static, changed  = true, true }
+	if from.thread && !into.thread   { into.thread, changed  = true, true }
 	if from.fresh && !into.fresh     { into.fresh, changed   = true, true }
 	if from.local && !into.local     { into.local, changed   = true, true }
 	if from.unknown && !into.unknown { into.unknown, changed = true, true }
@@ -663,6 +678,8 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Provenance, loan
 		one.unknown = true
 	case .Static, .Materialized:
 		one.static = true
+	case .Thread_Local:
+		one.thread = true
 	case .Allocation:
 		one.fresh = true
 	case .Local, .Slice_Literal, .Temporary:

@@ -117,3 +117,18 @@ second_result_region :: proc(@(allocator_reset) allocator: Allocator) {
 	free_all(allocator);
 	fmt.println(held.id);
 }
+
+// A `thread_local` root and a `static` one are different storage: one lives as
+// long as its thread, the other as long as the process. Neither is an
+// allocation base, and the diagnostic names which one it found.
+free_thread_local :: proc() {
+	counter: thread_local int = 0;
+	pointer := &mut counter;
+	free(pointer);
+}
+
+free_static :: proc() {
+	counter: static int = 0;
+	pointer := &mut counter;
+	free(pointer);
+}

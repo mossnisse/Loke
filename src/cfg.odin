@@ -1298,7 +1298,13 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 	kind := Root_Kind.Local
 	#partial switch sym.kind {
 	case .Var:
-		if sym.duration != .None || (sym.decl != nil && sym.decl.top_level) {
+		// `thread_local` storage lives as long as its thread, not as long as the
+		// process, so it is a root kind of its own even though both survive a
+		// return (design.md "Storage duration").
+		switch {
+		case sym.duration == .Thread_Local:
+			kind = .Thread_Local
+		case sym.duration != .None || (sym.decl != nil && sym.decl.top_level):
 			kind = .Static
 		}
 	case .Parameter:
@@ -2728,6 +2734,9 @@ prov_call_result :: proc(
 		if summary.static {
 			out = prov_join(graph, out, prov_synthetic_borrow(graph, v, .Static, result_type))
 		}
+		if summary.thread {
+			out = prov_join(graph, out, prov_synthetic_borrow(graph, v, .Thread_Local, result_type))
+		}
 		if summary.fresh {
 			out = prov_join(graph, out, prov_synthetic_borrow(graph, v, .Allocation, result_type))
 		}
@@ -2763,7 +2772,13 @@ prov_note_summary_dependency :: proc(graph: ^Flow_Graph, callee: Symbol_Id, dire
 
 @(private = "file")
 prov_synthetic_borrow :: proc(graph: ^Flow_Graph, v: ^Expr_Call, kind: Root_Kind, type: Type_Id) -> []int {
-	name := kind == .Allocation ? "this allocation" : kind == .Static ? "static storage" : "unknown storage"
+	name: string
+	#partial switch kind {
+	case .Allocation:   name = "this allocation"
+	case .Static:       name = "static storage"
+	case .Thread_Local: name = "`thread_local` storage"
+	case:               name = "unknown storage"
+	}
 	root := prov_new_root(graph, kind, v.span, name)
 	return prov_borrow(
 		graph,
