@@ -4753,6 +4753,12 @@ Consequently, proving two element paths disjoint can permit simultaneous loans
 of those elements, but cannot permit moving, dropping, replacing, freeing, or
 otherwise invalidating their common root while either loan is live.
 
+A value taken out of a container carries what that element held, not a borrow of
+the container it came from: `pop`, `remove`, `remove_unordered`, and a map's
+`remove` hand back the element's own dependencies. The removal still invalidates
+borrows of the container's storage, which is a separate question from what the
+removed value refers to.
+
 Moving, dropping, freeing, fully assigning, or exchanging a root invalidates
 borrows of its previous value. Container operations such as `append`, `resize`, `reserve`,
 `shrink`, `clear`, `remove`, map insertion, and any user operation whose `self`

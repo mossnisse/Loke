@@ -154,6 +154,16 @@ unknown_write :: proc(values: []int) -> []int {
 	return holders[1].view;
 }
 
+// A removal names the root the removed element borrowed, which is the local
+// array rather than the container it was taken out of.
+pop_a_local :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	holders: [dynamic]Holder;
+	holders.append(Holder{local[:]});
+	held, ok := holders.pop();
+	return held.view if ok else nil;
+}
+
 main :: proc() {
 	fmt.println(1);
 }

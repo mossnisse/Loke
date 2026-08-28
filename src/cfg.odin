@@ -3038,7 +3038,17 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		if index == 0 && receiver == .Inout {
 			prov_invalidate(graph, argument, v.span, "modified")
 			if root, path, ok := prov_place_of(graph, argument); ok {
-				actuals[index] = prov_borrow(graph, root, path, true, expr_span(argument), "borrow")
+				if prov_op_removes_element(container_op) {
+					// What a removal hands back is what that element held, not a
+					// borrow of the container it came out of. The invalidation
+					// above is still what ends the borrows the container's own
+					// storage was carrying.
+					actuals[index] = prov_content_at(
+						graph, root, prov_element_path(graph, path, container_op),
+					)
+				} else {
+					actuals[index] = prov_borrow(graph, root, path, true, expr_span(argument), "borrow")
+				}
 				borrowed = prov_join(graph, borrowed, actuals[index])
 			}
 			continue
@@ -3260,6 +3270,28 @@ prov_parameter_label :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> s
 		identifier_text(graph.k.c, sym.name),
 		allocator = graph.k.c.semantic_allocator,
 	)
+}
+
+// Which operations hand an element back out. Their result is the element, so it
+// carries what the element held rather than a borrow of the container.
+@(private = "file")
+prov_op_removes_element :: proc(op: Container_Op) -> bool {
+	#partial switch op {
+	case .Pop, .Remove, .Remove_Unordered, .Map_Remove:
+		return true
+	}
+	return false
+}
+
+// The content path a removal reads from. A map entry's key and value are
+// separate storage, so removing a value does not hand back what a key borrows.
+@(private = "file")
+prov_element_path :: proc(graph: ^Flow_Graph, path: []Proj_Step, op: Container_Op) -> []Proj_Step {
+	element := prov_extend(graph, path, proj_wild())
+	if op == .Map_Remove {
+		return prov_extend(graph, element, proj_field(PROJ_MAP_VALUE))
+	}
+	return element
 }
 
 // consolidation-provenance-plan.md step 6. A container operation is resolved

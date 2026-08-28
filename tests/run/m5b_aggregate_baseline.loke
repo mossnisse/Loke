@@ -136,6 +136,24 @@ overwrite_one_element :: proc(values: []int) -> []int {
 	return holders[1].view;
 }
 
+// POSITIVE. A removal hands back what the element held, so this borrows the
+// caller's argument and not the local container it came out of.
+pop_an_element :: proc(values: []int) -> []int {
+	holders: [dynamic]Holder;
+	holders.append(Holder{values});
+	held, ok := holders.pop();
+	return held.view if ok else nil;
+}
+
+// POSITIVE. The same for a map, where the value's content is what travels and a
+// key's is not.
+remove_a_value :: proc(values: []int) -> []int {
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	held, ok := table.remove("a");
+	return held.view if ok else nil;
+}
+
 // --- retention --------------------------------------------------------------
 
 // POSITIVE. The retained view is one of the caller's own arguments, and the
@@ -251,6 +269,8 @@ main :: proc() {
 	fmt.println(len(move_an_owner(numbers[:]).view));
 
 	fmt.println(elements_are_independent(numbers[:])[0]);
+	fmt.println(len(pop_an_element(numbers[:])));
+	fmt.println(len(remove_a_value(numbers[:])));
 	fmt.println(write_beside_a_borrowed_element());
 	fmt.println(len(overwrite_one_element(numbers[:])));
 

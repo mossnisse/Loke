@@ -624,9 +624,10 @@ The measured false rejections were fixed rather than accepted, and `wrap`/`unwra
 stayed legal. Element precision follows what an index proves: a small fixed array
 gives each element its own path, so two elements holding two roots stay
 independent, while an unknown index, a longer array, a dynamic array, and a map
-keep one joined element set. Two conservative limits are recorded: that joined
-set, where no index is provable, and `pop` naming the container rather than the
-removed element's own root.
+keep one joined element set. One conservative limit is recorded: that
+joined set, where no index is provable. A removal names the removed element's own
+root rather than the container, so `pop` and both `remove` forms hand back the
+dependencies the element had.
 
 #### Phase 4b — stable contracts at procedure boundaries
 

@@ -208,18 +208,28 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{type, TYPE_INT, element}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
 	))
 	// design.md optional-ok: an empty container yields the zero value and false.
-	append(&members, container_member(
+	// The removed value's provenance is the element's, not the container's: what
+	// comes back holds what that element held. Written as a summary for the same
+	// reason `lookup_value` has one — a synthesised member has no body for the
+	// fixed point to walk.
+	pop := container_member(
 		k, type, "pop", .Pop,
 		[]Type_Id{type}, []Param_Mode{.Inout}, []Type_Id{element, TYPE_BOOL}, 0,
-	))
-	append(&members, container_member(
+	)
+	set_synth_result_summary(k.c, pop, 0, 0)
+	append(&members, pop)
+	remove := container_member(
 		k, type, "remove", .Remove,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, []Type_Id{element}, 0,
-	))
-	append(&members, container_member(
+	)
+	set_synth_result_summary(k.c, remove, 0, 0)
+	append(&members, remove)
+	remove_unordered := container_member(
 		k, type, "remove_unordered", .Remove_Unordered,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, []Type_Id{element}, 0,
-	))
+	)
+	set_synth_result_summary(k.c, remove_unordered, 0, 0)
+	append(&members, remove_unordered)
 	append(&members, container_member(
 		k, type, "clear", .Clear, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
 	))
@@ -298,10 +308,12 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	))
 	// design.md: removal moves the stored value to the result and answers
 	// zero/false when the key was absent.
-	append(&members, container_member(
+	map_remove := container_member(
 		k, type, "remove", .Map_Remove,
 		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value}, []Type_Id{value, TYPE_BOOL}, 0,
-	))
+	)
+	set_synth_result_summary(k.c, map_remove, 0, 0)
+	append(&members, map_remove)
 	append(&members, container_member(
 		k, type, "clear", .Map_Clear, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
 	))

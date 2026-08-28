@@ -1516,3 +1516,44 @@ before.
 
 `odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
 levels pass.
+
+### Follow-up — a removal names the element's root
+
+Implemented on 2026-08-28, closing the last of Phase 4a's recorded limits.
+`holders.pop()` handed back a *borrow of the container*, so returning what the
+popped element held was refused as "`holders` ends when this procedure returns"
+even when the element borrowed the caller's own argument.
+
+**Why only removals were wrong.** A container's element content already flows
+correctly everywhere else: `holders[0].view` reads the content slots through
+`prov_content_at`, and `table.lookup_value(key)` works because its receiver is
+taken by *value*, so the actual is the receiver's content. A removal's receiver is
+`inout`, and that branch substitutes a borrow of the receiver's storage — right
+for `append`, which really does hand the callee the container, and wrong for
+`pop`, whose result is the element rather than the container.
+
+So the receiver actual for `Pop`, `Remove`, `Remove_Unordered`, and a map's
+`Remove` is now the content at the element path, and each carries a written
+result summary for the same reason `lookup_value` does: a synthesised member has
+no body for the fixed point to walk. A map removal reads the *value* half of the
+entry, so what a key borrows does not travel out with it — the same distinction
+step 6 made for the map index place.
+
+**The invalidation is a separate question and stayed.** Popping still ends
+borrows of the container's own storage: `view := numbers[:]` followed by
+`numbers.pop()` is still L0512. What changed is only what the *removed value*
+refers to. A borrow the element held — into the caller's array — is correctly not
+invalidated by the pop, because popping the container does not move that storage.
+
+The diagnostic improves in the same motion: a popped element that borrowed a
+local is now refused naming **`local`**, the root it actually borrows, instead of
+the container it came out of.
+
+Corpus: two positives added to
+[m5b_aggregate_baseline.loke](tests/run/m5b_aggregate_baseline.loke) — a `pop` and
+a map `remove` whose element holds the caller's argument — and the local-holding
+`pop` to [m5b_aggregate_wrapping.loke](tests/err/m5b_aggregate_wrapping.loke). An
+A/B of both compilers over every corpus reports no other difference.
+
+`odin test src` 56 tests, `odin test tests` 14 tests, and all four optimization
+levels pass.

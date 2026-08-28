@@ -46,3 +46,6 @@ this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @154:9
 this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@164:9
+this slice cannot be returned: `local` ends when this procedure returns
