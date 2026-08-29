@@ -199,7 +199,7 @@ any_view // erased view of any value
 
 #### Zero values
 
-Most runtime value types have a zero value, written `{}`. A local variable receives it only with an explicit initializer (`x: T = {};`); omitting the initializer leaves the local variable marked as dead, making it a compile error to use its value. File-scope, `static`, and `thread_local` variables are zero-initialized when they have no initializer.
+Most runtime value types have a zero value, written `{}`. A declaration with no initializer receives it: a local where it is reached, and a file-scope, `static`, or `thread_local` variable before the program runs. Writing `x: T = ---;` asks for the storage without the value instead, and nothing is dropped for it.
 
 The zero value is:
 
@@ -221,11 +221,10 @@ propagates: a struct, a non-empty fixed array, or a distinct type that reaches a
 no-zero type has none either. An empty fixed array holds no element and keeps
 its own zero.
 
-A local declaration with no initializer manufactures nothing — it is dead until
-it is fully assigned — so it is still allowed. Every operation that *does*
-manufacture a zero is rejected for a no-zero type:
+Every operation that manufactures a zero is rejected for a no-zero type:
 
-- a file-scope, `static`, or `thread_local` declaration with no initializer
+- a declaration with no initializer, wherever its storage lives; `x: T = ---;`
+  asks for the storage alone and is accepted
 - a field an aggregate literal omits
 - `new(T)`, which hands back zeroed storage
 - a `make` **length**, which fills that many slots; a capacity, a map
@@ -1425,7 +1424,8 @@ Maybe :: union @(zero=none) { none:, some: int }
 m: Maybe;              // accepted: the zero is `.none`
 
 Choice :: union { a: i32, b: bool }
-c: static Choice;      // rejected: `Choice` has no zero value
+c: Choice;             // rejected: `Choice` has no zero value
+d: Choice = ---;       // accepted: storage, with no value in it yet
 ```
 
 The property propagates: a struct, a non-empty fixed array, or a distinct type

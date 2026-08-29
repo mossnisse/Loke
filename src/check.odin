@@ -1597,12 +1597,16 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			errorf(k.c, d.span, "L0306", "this declaration needs a type or an initialiser")
 			return
 		}
-		// design.md "Zero values": a declaration with static duration starts at its
-		// type's zero value, and a no-zero type has none to start at. A local
-		// stays dead until it is fully assigned, so it is not diagnosed here.
+		// design.md "Zero values": a declaration with no initialiser starts at its
+		// type's zero value — a local is filled where it is reached exactly as a
+		// static one is filled before the program runs — and a no-zero type has
+		// none to start at. `---` asks for the storage without the value, and
+		// carries `nil` in `d.values`, so it never arrives here.
+		what := "a declaration with no initialiser"
 		if d.top_level || d.duration != .None {
-			require_type_has_zero(k, declared, d.span, "a declaration with static duration")
+			what = "a declaration with static duration"
 		}
+		require_type_has_zero(k, declared, d.span, what)
 		assign_symbol_types(k.c, d, declared)
 		return
 	}

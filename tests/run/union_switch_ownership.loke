@@ -1,0 +1,178 @@
+package main; import "core:fmt";
+
+// design.md "Switch ownership": a switch over a place borrows it, and a switch
+// over a temporary consumes it — the active payload transferring into the
+// case's own binding, which drops exactly once on every exit of that case.
+//
+// Every exit is walked here: falling out, `break`, `continue`, `return`, a
+// `move` out of the binding, a grouped case, a default case, and `_`.
+
+copies, drops: int;
+
+Owned :: struct { id: int }
+impl Owned {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
+		copies += 1;
+		return .ok(Owned{self.id});
+	}
+	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
+}
+
+Handle :: move_only struct { id: int }
+impl Handle {
+	release :: hook(drop) proc(self: inout Handle) { drops += 1; }
+}
+
+Boxed  :: union @(zero=empty) { empty:, held: Owned, spare: Owned }
+Sealed :: union { open: Handle, shut: }
+
+held :: proc(id: int) -> Boxed { return .held(Owned{id}); }
+opened :: proc(id: int) -> Sealed { return .open(Handle{id}); }
+
+reset :: proc() { copies, drops = 0, 0; }
+report :: proc(label: string_view) { fmt.println(label, copies, drops); }
+
+// A `return` out of a consuming case still drops the binding once.
+returns_from_a_case :: proc(id: int) -> int {
+	switch (value in held(id)) {
+	case .held:  return value.id;
+	case .spare: return -1;
+	case .empty: return 0;
+	}
+}
+
+// So does a `return` that hands the payload on: the binding is a place, so the
+// value that leaves is a copy of it.
+copies_out_of_a_case :: proc(id: int) -> Owned {
+	switch (value in held(id)) {
+	case .held:  return value;
+	case .spare: return Owned{0};
+	case .empty: return Owned{0};
+	}
+}
+
+main :: proc() {
+	// --- falling out of a case -------------------------------------------
+	reset();
+	{
+		switch (value in held(1)) {
+		case .held:  fmt.println("held", value.id);
+		case .spare: fmt.println("spare", value.id);
+		case .empty:
+		}
+	}
+	report("fall out");
+
+	// --- `break` out of a case -------------------------------------------
+	reset();
+	{
+		switch (value in held(2)) {
+		case .held:
+			fmt.println("before break", value.id);
+			break;
+		case .spare, .empty:
+		}
+	}
+	report("break");
+
+	// --- `continue` out of a case, from inside a loop ---------------------
+	reset();
+	{
+		for (i := 0; i < 2; i += 1) {
+			switch (value in held(3)) {
+			case .held:
+				fmt.println("iteration", i, value.id);
+				continue;
+			case .spare, .empty:
+			}
+			fmt.println("not reached");
+		}
+	}
+	report("continue");
+
+	// --- `return` out of a case ------------------------------------------
+	reset();
+	fmt.println(returns_from_a_case(4));
+	report("return");
+
+	reset();
+	{
+		copied := copies_out_of_a_case(5);
+		fmt.println("copied out", copied.id);
+	}
+	// One clone leaving the case, and two values ending.
+	report("return a copy");
+
+	// --- a grouped case binds the union, a default case binds it too ------
+	reset();
+	{
+		switch (value in held(6)) {
+		case .held, .spare:
+			// The active variant is not known, so the binding keeps the union
+			// type and owns the whole of it.
+			static_assert(type_of(value) == Boxed);
+			fmt.println("grouped", value);
+		case .empty:
+		}
+	}
+	report("grouped");
+
+	reset();
+	{
+		switch (value in held(7)) {
+		case .empty:
+		case:
+			static_assert(type_of(value) == Boxed);
+			fmt.println("default", value);
+		}
+	}
+	report("default");
+
+	// --- `_` acquires no binding, so the case owns the union --------------
+	reset();
+	{
+		switch (_ in held(8)) {
+		case .held:  fmt.println("discarded");
+		case .spare, .empty:
+		}
+	}
+	report("discarded");
+
+	// --- a place subject only lends ---------------------------------------
+	reset();
+	{
+		kept := held(9);
+		switch (value in kept) {
+		case .held:  fmt.println("borrowed", value.id);
+		case .spare, .empty:
+		}
+		// `kept` still holds its payload here, and drops it at the end of the
+		// block — one value, one drop, no copy.
+		fmt.println("still held", kept);
+	}
+	report("place subject");
+
+	// --- a move-only payload leaves through `move` ------------------------
+	// `taken` has no initialiser, so it starts at the zero `Handle` and the
+	// assignment drops that one: two drops, no copy.
+	reset();
+	{
+		taken: Handle;
+		switch (value in opened(10)) {
+		case .open: taken = move(value);
+		case .shut:
+		}
+		fmt.println("moved out", taken.id);
+	}
+	report("move out");
+
+	// And a move-only payload a case simply drops.
+	reset();
+	{
+		switch (value in opened(11)) {
+		case .open: fmt.println("dropped in place", value.id);
+		case .shut:
+		}
+	}
+	report("dropped in place");
+}

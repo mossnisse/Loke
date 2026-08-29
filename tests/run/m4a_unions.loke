@@ -56,8 +56,9 @@ fresh_counter :: proc() -> Counter { return Counter{1}; }
 Boxed :: struct { value: Value }
 carry :: proc(v: Value) -> Boxed { return Boxed{v}; }
 unions :: proc() -> [1]Value {
-	out: [1]Value;
-	out[0] = .count(2);
+	// `Value` designates no zero, so the array is written whole rather than
+	// declared empty and filled.
+	out := [1]Value{.count(2)};
 	return out;
 }
 same :: proc(v: Value) -> Value { return v; }

@@ -1,0 +1,26 @@
+package main; import "core:fmt";
+
+// design.md "Switch ownership": a consuming case's binding drops exactly once
+// on every exit — including the one a panic takes. The outer locals unwind
+// after it, in reverse registration order, and nothing is dropped twice.
+
+Owned :: struct { id: int }
+impl Owned {
+	release :: hook(drop) proc(self: inout Owned) { fmt.println("drop", self.id); }
+}
+
+Boxed :: union @(zero=empty) { empty:, held: Owned }
+
+held :: proc(id: int) -> Boxed { return .held(Owned{id}); }
+
+main :: proc() {
+	outer := Owned{1};
+	switch (value in held(2)) {
+	case .held:
+		inner := Owned{3};
+		fmt.println("in the case", value.id, inner.id);
+		panic("out of the case");
+	case .empty:
+	}
+	fmt.println("not reached", outer.id);
+}

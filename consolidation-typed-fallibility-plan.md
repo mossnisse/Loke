@@ -430,7 +430,7 @@ through 256 variants, two from 257, and an empty union keeps one byte.
 
 ### Defects the change surfaced
 
-Nine, each with a fixture:
+Ten, each with a fixture:
 
 1. A variant switch leaked its subject — the temporary was never registered with
    the switch's own cleanup scope.
@@ -456,6 +456,11 @@ Nine, each with a fixture:
    a contextual `.name`, so `xs.append(.a(1))` and `m.try_insert(k, .a(1))` did
    not compile — and a variadic pack's `[]T` was the context where `T` was
    wanted.
+10. A local declared with no initialiser was zero-filled and dropped like any
+    other, so a no-zero type reached the backend through the one declaration
+    form the checker had exempted — the exemption rested on a dead-until-assigned
+    rule the compiler has never had. `---` is the form that asks for the storage
+    alone, and `design.md` stated the exemption in two places.
 
 Every one of them is a bug the old model could not have had, and every one was
 found by the corpus or by a fixture written for the plan's evidence list, not

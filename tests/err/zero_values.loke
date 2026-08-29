@@ -3,8 +3,10 @@ package main; import "core:fmt";
 // design.md "Zero values": a union with no `@(zero=)` has no zero value, and
 // every operation that would manufacture one says so.
 //
-// A local declaration with no initialiser is deliberately not one of them: it
-// stays dead until it is fully assigned, so nothing is manufactured for it.
+// A declaration with no initialiser is one of them, wherever its storage lives:
+// a local is filled where it is reached exactly as a static one is filled before
+// the program runs. `---` asks for the storage without the value, and is the way
+// to hold one of these before it is assigned.
 
 Choice :: union { number: i32, flag: bool }
 Holder :: struct { id: int, choice: Choice }
@@ -43,6 +45,11 @@ main :: proc() {
 	ys: [dynamic]Choice;
 	ys.reserve(4);
 	ys.resize(4);
+
+	// A local with no initialiser is filled with the zero where it is reached,
+	// so it needs one; `---` asks for the storage alone and is accepted.
+	local: Choice;
+	uninitialised: Choice = ---;
 
 	// A map read answers the zero for a missing key, and an inserting index
 	// starts a new entry at it.

@@ -1,39 +1,42 @@
 L0424
-@19:1
+@21:1
 `Choice` has no zero value, so it cannot be produced by a declaration with static duration
 L0424
-@20:1
+@22:1
 `Wrapped` has no zero value, so it cannot be produced by a declaration with static duration
 L0424
-@21:1
+@23:1
 `[3]Choice` has no zero value, so it cannot be produced by a declaration with static duration
 L0424
-@29:11
+@31:11
 `Choice` has no zero value, so it cannot be produced by the omitted field `choice`
 L0424
-@30:13
+@32:13
 `Choice` has no zero value, so it cannot be produced by the omitted field `choice`
 L0424
-@31:12
+@33:12
 `Holder` has no zero value, so it cannot be produced by the omitted field `held`
 L0424
-@34:7
+@36:7
 `Choice` has no zero value, so it cannot be produced by `new`, which zeroes the allocation
 L0424
-@35:7
+@37:7
 `Named` has no zero value, so it cannot be produced by `new`, which zeroes the allocation
 L0424
-@39:34
+@41:34
 `Choice` has no zero value, so it cannot be produced by a `make` length
 L0424
-@45:2
+@47:2
 `Choice` has no zero value, so it cannot be produced by growing a container
 L0424
-@50:14
+@51:2
+`Choice` has no zero value, so it cannot be produced by a declaration with no initialiser
+L0424
+@57:14
 `Choice` has no zero value, so it cannot be produced by a map read, which answers the zero for a missing key
 L0424
-@51:2
+@58:2
 `Choice` has no zero value, so it cannot be produced by an inserting map index
 L0363
-@53:61
+@60:61
 `Result([dynamic]Choice, Allocator_Error)` has no immutable `len` method for the standard free alias
