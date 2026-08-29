@@ -34,8 +34,10 @@ main :: proc() {
 	p := new(Choice);
 	q := new(Named);
 
-	// A written length fills that many slots.
+	// A written length fills that many slots; a constant `0` length fills none,
+	// which is how `make(T, 0, capacity)` reserves storage for one of these.
 	filled := make([dynamic]Choice, 4);
+	reserved := make([dynamic]Choice, 0, 8);
 
 	// So does growth. Reserving capacity does not, and is accepted.
 	ys: [dynamic]Choice;
@@ -48,5 +50,5 @@ main :: proc() {
 	fmt.println(m[1]);
 	m[2] = Choice.number(3);
 
-	fmt.println(blank, partial, nested, p, q, len(filled), len(ys), global);
+	fmt.println(blank, partial, nested, p, q, len(filled), len(reserved), len(ys), global);
 }

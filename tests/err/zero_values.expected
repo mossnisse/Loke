@@ -23,14 +23,17 @@ L0424
 @35:7
 `Named` has no zero value, so it cannot be produced by `new`, which zeroes the allocation
 L0424
-@38:34
+@39:34
 `Choice` has no zero value, so it cannot be produced by a `make` length
 L0424
-@43:2
+@45:2
 `Choice` has no zero value, so it cannot be produced by growing a container
 L0424
-@48:14
+@50:14
 `Choice` has no zero value, so it cannot be produced by a map read, which answers the zero for a missing key
 L0424
-@49:2
+@51:2
 `Choice` has no zero value, so it cannot be produced by an inserting map index
+L0363
+@53:61
+`Result([dynamic]Choice, Allocator_Error)` has no immutable `len` method for the standard free alias

@@ -3341,8 +3341,9 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.alloc_type = container
 	// design.md "Zero values": a written *length* fills that many slots with the
 	// element's zero. A capacity or a map reservation is raw storage and fills
-	// nothing, so neither needs one.
-	if !is_map && len(counts) > 0 {
+	// nothing, and neither does a length written as the constant `0` — which is
+	// how `make(T, 0, capacity)` reserves storage for a no-zero element.
+	if !is_map && len(counts) > 0 && !is_constant_zero(k, counts[0]) {
 		if !require_type_has_zero(
 			k, container_element(k.c, container), expr_span(counts[0]), "a `make` length",
 		) {
@@ -3352,6 +3353,17 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	}
 
 	v.type = result_type(k, container, TYPE_ALLOCATOR_ERROR)
+}
+
+// Whether an expression is the folded constant `0`. A length the compiler can
+// see is zero initialises nothing, whatever the element type is.
+@(private = "file")
+is_constant_zero :: proc(k: ^Checker, e: Expr) -> bool {
+	base := expr_base(e)
+	if base == nil || !base.is_const || base.const_value.kind != .Integer {
+		return false
+	}
+	return bi_is_zero(base.const_value.integer)
 }
 
 // An argument that could be the trailing allocator is checked with `Allocator`

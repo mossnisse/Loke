@@ -430,24 +430,52 @@ through 256 variants, two from 257, and an empty union keeps one byte.
 
 ### Defects the change surfaced
 
-Six, each with a fixture:
+Nine, each with a fixture:
 
 1. A variant switch leaked its subject — the temporary was never registered with
    the switch's own cleanup scope.
-2. Variant construction dropped its payload's provenance, so a borrow wrapped in
+2. A union with a managed payload never got `try_clone` or `clone`, because
+   `contribute_lifecycle_members` listed every other aggregate kind and returned
+   early. The emitter had written the tag-aware bodies all along; nothing asked
+   for them, so an ordinary `b := a` reached the backend as a contract
+   violation.
+3. Variant construction dropped its payload's provenance, so a borrow wrapped in
    a union escaped unchecked; unwrapping dropped it again, and a validating text
    conversion stopped looking like a borrow once its result was an `Option`.
-3. An allocator handle lost its region inside an `Option`, so a local arena
+4. An allocator handle lost its region inside an `Option`, so a local arena
    reset stopped being caught.
-4. `or_else` and `or_return` moved the payload out of a *place* operand, leaving
+5. `or_else` and `or_return` moved the payload out of a *place* operand, leaving
    the source holding bits it no longer owned — a double drop.
-5. A union every variant of which is payloadless underflowed its padding
+6. A union every variant of which is payloadless underflowed its padding
    calculation, and its tag's own width did not raise the union's alignment.
-6. `@(zero=)` and `@(require_results)` were each enforced at one site, when both
+7. `@(zero=)` and `@(require_results)` were each enforced at one site, when both
    are properties of a type.
+8. `base:interfaces` still described `try_clone` and `next` with their old
+   trailing-status shapes, so no built-in container satisfied `Sequence`.
+9. An overloaded or contributed member's parameter supplied no expected type to
+   a contextual `.name`, so `xs.append(.a(1))` and `m.try_insert(k, .a(1))` did
+   not compile — and a variadic pack's `[]T` was the context where `T` was
+   wanted.
 
 Every one of them is a bug the old model could not have had, and every one was
-found by the corpus rather than by inspection.
+found by the corpus or by a fixture written for the plan's evidence list, not
+by inspection.
+
+### On the A/B run
+
+The plan's test matrix asks for "an A/B of old and new compilers over the
+complete corpus, reporting only intended acceptance, diagnostic, ABI, and output
+differences". That comparison is not runnable as stated once adoption is
+complete: the corpus is written in the new language, so the old compiler rejects
+it, and the old corpus is written in the deleted one. What the two compilers
+*were* compared on is the measurement table above — the same four programs built
+by each, from each tree's own source.
+
+The equivalent assurance is that every suite was green at `d2e3f6f` and is green
+now, and that every difference between the two corpora is a source change
+recorded in this branch's commits. The behavioural goldens are the record of the
+intended output differences: where one changed, the commit says which contract
+moved and why.
 
 ## Verification and acceptance
 

@@ -151,11 +151,12 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symb
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
 		k.place_position, k.insert_position = arg.mode == .Inout, arg.mode == .Inout
-		// A typeless aggregate needs context before it can be checked at all.
-		// Supply it only when every candidate agrees; scalar constants keep their
-		// untyped conversion ranks and ambiguous overloads gain no preference.
+		// A typeless aggregate and a contextual `.name` both need a destination
+		// type before they can be checked at all. Supply it only when every
+		// candidate agrees; scalar constants keep their untyped conversion ranks
+		// and ambiguous overloads gain no preference.
 		expected := INVALID_TYPE
-		if literal, composite := arg.value.(^Expr_Composite); composite && literal.type_expr == nil {
+		if argument_needs_context(arg.value) {
 			expected = common_argument_type(k, candidates, info.name, index + offset)
 		}
 		info.type = check_single_expr(k, arg.value, expected)
@@ -169,6 +170,24 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symb
 		out[index] = info
 	}
 	return out, ok
+}
+
+// An argument whose meaning comes from its destination: a typeless aggregate
+// literal, an implicit `.name` selector — an enum member, a record member, or a
+// payloadless union variant — and `.name(payload)`, which is that selector in
+// callee position.
+@(private = "file")
+argument_needs_context :: proc(e: Expr) -> bool {
+	#partial switch v in e {
+	case ^Expr_Composite:
+		return v.type_expr == nil
+	case ^Expr_Selector:
+		return v.operand == nil
+	case ^Expr_Call:
+		sel, is_selector := v.callee.(^Expr_Selector)
+		return is_selector && sel.operand == nil
+	}
+	return false
 }
 
 @(private = "file")
@@ -187,8 +206,31 @@ common_argument_type :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identif
 				}
 			}
 		}
-		if slot < 0 || slot >= len(sym.params) { continue }
+		if slot < 0 { continue }
+		// A variadic pack's parameter is `[]T`, but one written element wants
+		// `T`, and every argument from the pack's own slot onward is one of
+		// them. A `..` spread supplies the pack itself and needs no context, so
+		// it never reaches here.
+		//
+		// The modes live on the procedure type; a synthesized member leaves its
+		// parameter symbols unnamed, so this is the reading that works for both.
+		variadic := -1
+		if signature := underlying_info(k.c, sym.proc_type); signature != nil {
+			for mode, index in signature.param_modes {
+				if mode == .Variadic {
+					variadic = index
+					break
+				}
+			}
+		}
+		if variadic >= 0 && slot > variadic { slot = variadic }
+		if slot >= len(sym.params) { continue }
 		type := sym.params[slot]
+		if slot == variadic {
+			pack := underlying_info(k.c, type)
+			if pack == nil { return INVALID_TYPE }
+			type = pack.element
+		}
 		if common != INVALID_TYPE && common != type { return INVALID_TYPE }
 		common = type
 	}

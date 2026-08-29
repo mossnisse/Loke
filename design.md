@@ -228,11 +228,18 @@ manufacture a zero is rejected for a no-zero type:
 - a file-scope, `static`, or `thread_local` declaration with no initializer
 - a field an aggregate literal omits
 - `new(T)`, which hands back zeroed storage
-- a `make` **length**, which fills that many slots; a capacity or a map
-  reservation is raw storage and fills nothing
+- a `make` **length**, which fills that many slots; a capacity, a map
+  reservation, and a length written as the constant `0` are raw storage and
+  fill nothing, so `make(T, 0, capacity)` reserves storage for a no-zero
+  element
 - growing a container with `resize`
 - a map read, which answers the zero for a missing key
 - an inserting map index, which starts a new entry at the zero
+
+A map of a no-zero element is therefore not indexed at all, in either position.
+It is still an ordinary map: `try_insert` writes the value, `lookup_value`,
+`find` and `remove` answer an `Option`, and `in` tests for a key. A dynamic
+array of one is unrestricted apart from a written length and `resize`.
 
 The diagnostic names the operation and suggests the two ways out: give the union
 a zero with `@(zero=first_variant)`, or construct the value explicitly.
