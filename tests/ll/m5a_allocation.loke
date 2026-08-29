@@ -11,8 +11,8 @@ package main; import "core:fmt";
 Res :: struct { id: int }
 
 impl Res {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
-		return Res{self.id}, nil;
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		return .ok(Res{self.id});
 	}
 
 	release :: hook(drop) proc(self: inout Res) { self.id = 0; }

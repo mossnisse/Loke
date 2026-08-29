@@ -19,8 +19,8 @@ Res :: struct { id: int }
 impl Res {
 	// A non-allocating hook accepts and ignores the allocator, and returns a nil
 	// error.
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
-		return Res{self.id + 100}, nil;
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
+		return .ok(Res{self.id + 100});
 	}
 
 	// The observable half of cleanup: an implicit drop is a step 4 site, but the
@@ -35,13 +35,10 @@ impl Res {
 Failing :: struct { id: int }
 
 impl Failing {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
-		p, err := new(Huge, allocator);
-		if (err != nil) {
-			return Failing{0}, err;
-		}
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Failing, Allocator_Error) {
+		p := new(Huge, allocator) or_return;
 		free(p);
-		return Failing{self.id}, nil;
+		return .ok(Failing{self.id});
 	}
 }
 
@@ -53,9 +50,9 @@ Group :: struct {
 empty_copies, empty_drops: int;
 Empty_Element :: struct {}
 impl Empty_Element {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Empty_Element, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Empty_Element, Allocator_Error) {
 		empty_copies += 1;
-		return Empty_Element{}, nil;
+		return .ok(Empty_Element{});
 	}
 	release :: hook(drop) proc(self: inout Empty_Element) { empty_drops += 1; }
 }

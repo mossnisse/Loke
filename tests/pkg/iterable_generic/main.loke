@@ -12,11 +12,11 @@ impl Countdown {
 }
 
 impl Countdown_Iterator {
-	next :: proc(self: inout Countdown_Iterator) -> (int, bool) {
-		if (self.current <= 0) { return 0, false; }
+	next :: proc(self: inout Countdown_Iterator) -> Option(int) {
+		if (self.current <= 0) { return .none; }
 		value := self.current;
 		self.current -= 1;
-		return value, true;
+		return .some(value);
 	}
 }
 

@@ -13,11 +13,11 @@ impl Countdown {
 }
 
 impl Countdown_Iterator {
-	next :: proc(self: inout Countdown_Iterator) -> (int, bool) {
-		if (self.current <= 0) { return 0, false; }
+	next :: proc(self: inout Countdown_Iterator) -> Option(int) {
+		if (self.current <= 0) { return .none; }
 		value := self.current;
 		self.current -= 1;
-		return value, true;
+		return .some(value);
 	}
 }
 
@@ -31,7 +31,7 @@ impl Broken_Iter {
 	iter :: proc() -> Broken_Iter_State { return {}; }
 }
 impl Broken_Iter_State {
-	next :: proc(self: inout Broken_Iter_State) -> (int, bool) { return 0, false; }
+	next :: proc(self: inout Broken_Iter_State) -> Option(int) { return .none; }
 }
 
 Broken_Next :: struct { }

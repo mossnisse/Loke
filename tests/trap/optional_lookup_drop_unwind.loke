@@ -10,9 +10,9 @@ impl Key {
 	}
 }
 impl Resource {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Resource, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Resource, Allocator_Error) {
 		fmt.println("copy", self.id);
-		return Resource{self.id + 100}, nil;
+		return .ok(Resource{self.id + 100});
 	}
 	release :: hook(drop) proc(self: inout Resource) { if (self.id != 0) { fmt.println("drop", self.id); } }
 }

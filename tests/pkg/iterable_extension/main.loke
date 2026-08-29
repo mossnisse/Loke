@@ -24,11 +24,11 @@ impl vendor.Numbers {
 }
 
 impl Numbers_Iterator {
-	next :: proc(self: inout Numbers_Iterator) -> (int, bool) {
-		if (self.current < 0 || self.current >= 3) { return 0, false; }
+	next :: proc(self: inout Numbers_Iterator) -> Option(int) {
+		if (self.current < 0 || self.current >= 3) { return .none; }
 		value := self.values[self.current];
 		self.current += self.step;
-		return value, true;
+		return .some(value);
 	}
 }
 

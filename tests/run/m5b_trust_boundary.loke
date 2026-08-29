@@ -65,8 +65,8 @@ run_with :: proc(action: proc(@(escape=static) values: []int), @(escape=static) 
 // cross-thread transfer are M6: their bullets have no source to write yet.
 
 supply_one :: proc() -> ^int {
-	pointer, err := new(int);
-	if (err != nil) { panic("allocation failed"); }
+	pointer := new(int) or_else nil;
+	if (pointer == nil) { panic("allocation failed"); }
 	pointer^ = 3;
 	return pointer;
 }

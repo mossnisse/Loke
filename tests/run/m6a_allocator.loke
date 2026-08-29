@@ -8,8 +8,8 @@ package main; import "core:mem"; import "core:fmt";
 Wide :: struct { a: i128, b: int }
 
 round_trip :: proc(allocator: Allocator) -> int {
-	p, err := new(Wide, allocator);
-	if (err != nil) {
+	p := new(Wide, allocator) or_else nil;
+	if (p == nil) {
 		return -1;
 	}
 	p.b = 7;

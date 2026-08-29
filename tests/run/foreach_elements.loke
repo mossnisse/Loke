@@ -39,17 +39,17 @@ impl Countdown {
 }
 
 impl Countdown_Iterator {
-	next :: proc(self: inout Countdown_Iterator) -> (int, bool) {
+	next :: proc(self: inout Countdown_Iterator) -> Option(int) {
 		if (self.up) {
-			if (self.current > 3) { return 0, false; }
+			if (self.current > 3) { return .none; }
 			value := self.current;
 			self.current += 1;
-			return value, true;
+			return .some(value);
 		}
-		if (self.current <= 0) { return 0, false; }
+		if (self.current <= 0) { return .none; }
 		value := self.current;
 		self.current -= 1;
-		return value, true;
+		return .some(value);
 	}
 }
 

@@ -128,8 +128,8 @@ Counted :: struct { id: int }
 impl Counted {
 	// A custom hook makes the copy observable: a clone adds 100, a bitwise copy
 	// would not.
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
-		return Counted{self.id + 100}, nil;
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Counted, Allocator_Error) {
+		return .ok(Counted{self.id + 100});
 	}
 
 	release :: hook(drop) proc(self: inout Counted) {

@@ -6,13 +6,13 @@ package main; import "core:fmt";
 Huge :: struct { pad: [4611686018427387904]u8 }
 Res :: struct { id: int }
 impl Res {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Res, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
 		if (self.id == 2) {
 			p, error := new(Huge, allocator);
 			if (error != nil) { return Res{}, error; }
 			free(p);
 		}
-		return Res{self.id + 100}, nil;
+		return .ok(Res{self.id + 100});
 	}
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
 }

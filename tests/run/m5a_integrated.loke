@@ -13,8 +13,8 @@ Handle :: struct {
 
 impl Handle {
 	// A resource whose clone is observable and whose drop reports once.
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Handle, Allocator_Error) {
-		return Handle{self.id + 1000, self.valid}, nil;
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Handle, Allocator_Error) {
+		return .ok(Handle{self.id + 1000, self.valid});
 	}
 
 	release :: hook(drop) proc(self: inout Handle) {

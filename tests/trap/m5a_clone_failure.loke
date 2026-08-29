@@ -10,13 +10,10 @@ Huge :: struct { pad: [4611686018427387904]u8 }
 Failing :: struct { id: int }
 
 impl Failing {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Failing, Allocator_Error) {
-		p, err := new(Huge, allocator);
-		if (err != nil) {
-			return Failing{0}, err;
-		}
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Failing, Allocator_Error) {
+		p := new(Huge, allocator) or_return;
 		free(p);
-		return Failing{self.id}, nil;
+		return .ok(Failing{self.id});
 	}
 }
 

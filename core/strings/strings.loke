@@ -51,8 +51,11 @@ no_string :: proc() -> string { panic("string allocation failed"); }
 // after the last.
 
 contains :: proc(text: string_view, needle: string_view) -> bool {
-	_, found := index(text, needle);
-	return found;
+	switch (found in index(text, needle)) {
+	case .some: return true;
+	case .none: return false;
+	}
+	return false;
 }
 
 starts_with :: proc(text: string_view, prefix: string_view) -> bool {
@@ -80,46 +83,46 @@ matches_at :: proc(text: []u8, offset: int, needle: []u8) -> bool {
 // ponytail: a naive O(len(text) * len(needle)) scan. Every first-release caller
 // searches short needles in short lines; a two-way or Boyer-Moore search goes
 // here when a measurement asks for one, behind this same signature.
-index :: proc(text: string_view, needle: string_view) -> (int, bool) {
-	if (len(needle) == 0) { return 0, true; }
-	if (len(needle) > len(text)) { return -1, false; }
+index :: proc(text: string_view, needle: string_view) -> Option(int) {
+	if (len(needle) == 0) { return .some(0); }
+	if (len(needle) > len(text)) { return .none; }
 	haystack, wanted := text.bytes(), needle.bytes();
 	last := len(text) - len(needle);
 	for (offset := 0; offset <= last; offset += 1) {
 		if (matches_at(haystack, offset, wanted)) {
-			return offset, true;
+			return .some(offset);
 		}
 	}
-	return -1, false;
+	return .none;
 }
 
-last_index :: proc(text: string_view, needle: string_view) -> (int, bool) {
-	if (len(needle) == 0) { return len(text), true; }
-	if (len(needle) > len(text)) { return -1, false; }
+last_index :: proc(text: string_view, needle: string_view) -> Option(int) {
+	if (len(needle) == 0) { return .some(len(text)); }
+	if (len(needle) > len(text)) { return .none; }
 	haystack, wanted := text.bytes(), needle.bytes();
 	for (offset := len(text) - len(needle); offset >= 0; offset -= 1) {
 		if (matches_at(haystack, offset, wanted)) {
-			return offset, true;
+			return .some(offset);
 		}
 	}
-	return -1, false;
+	return .none;
 }
 
-index_byte :: proc(text: string_view, value: u8) -> (int, bool) {
+index_byte :: proc(text: string_view, value: u8) -> Option(int) {
 	bytes := text.bytes();
 	foreach (b, offset in bytes.indexed()) {
-		if (b == value) { return offset, true; }
+		if (b == value) { return .some(offset); }
 	}
-	return -1, false;
+	return .none;
 }
 
 // The byte offset where the scalar value begins. A rune never matches a
 // continuation byte of another one, because the loop only visits boundaries.
-index_rune :: proc(text: string_view, value: rune) -> (int, bool) {
+index_rune :: proc(text: string_view, value: rune) -> Option(int) {
 	foreach (codepoint, offset in text.rune_offsets()) {
-		if (codepoint == value) { return offset, true; }
+		if (codepoint == value) { return .some(offset); }
 	}
-	return -1, false;
+	return .none;
 }
 
 // Non-overlapping occurrences, left to right.
@@ -127,9 +130,16 @@ count :: proc(text: string_view, needle: string_view) -> int {
 	if (len(needle) == 0) { return len(text) + 1; }
 	total := 0;
 	rest := text;
-	for (; len(rest) >= len(needle); ) {
-		at, found := index(rest, needle);
-		if (!found) { break; }
+	// `break` inside a variant switch leaves the switch, so the loop's own exit
+	// is a condition rather than a jump out of a case.
+	searching := true;
+	for (; searching && len(rest) >= len(needle); ) {
+		at := 0;
+		switch (found in index(rest, needle)) {
+		case .some: at = found;
+		case .none: searching = false;
+		}
+		if (!searching) { continue; }
 		total += 1;
 		rest = rest[at + len(needle):];
 	}
@@ -188,8 +198,11 @@ trim :: proc(text: string_view, cutset: string_view) -> string_view {
 
 @(private)
 contains_rune :: proc(set: string_view, value: rune) -> bool {
-	_, found := index_rune(set, value);
-	return found;
+	switch (found in index_rune(set, value)) {
+	case .some: return true;
+	case .none: return false;
+	}
+	return false;
 }
 
 // The UTF-8 length of one scalar value, which is what a byte offset must
@@ -204,16 +217,16 @@ rune_size :: proc(value: rune) -> int {
 
 // ------------------------------------------------------------- splitting --
 
-// `before, after, ok` around the first occurrence of `separator`. When it does
-// not occur, `before` is the whole text and `ok` is false.
-cut :: proc(
-	text: string_view, separator: string_view,
-) -> (before: string_view, after: string_view, ok: bool) {
-	at, found := index(text, separator);
-	if (!found) {
-		return text, text[len(text):], false;
+// The two halves around the first occurrence of `separator`, or `.none` when it
+// does not occur.
+Cut :: struct { before: string_view, after: string_view }
+
+cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
+	switch (at in index(text, separator)) {
+	case .some: return .some(Cut{text[0:at], text[at + len(separator):]});
+	case .none: return .none;
 	}
-	return text[0:at], text[at + len(separator):], true;
+	return .none;
 }
 
 // ------------------------------------------------- allocating transforms --
@@ -262,9 +275,16 @@ replace :: proc(
 	builder := init(allocator);
 	rest := text;
 	done := 0;
-	for (; len(old) > 0 && (limit < 0 || done < limit); ) {
-		at, found := index(rest, old);
-		if (!found) { break; }
+	// `break` inside a variant switch leaves the switch, so the loop's own exit
+	// is a condition rather than a jump out of a case.
+	searching := true;
+	for (; searching && len(old) > 0 && (limit < 0 || done < limit); ) {
+		at := 0;
+		switch (found in index(rest, old)) {
+		case .some: at = found;
+		case .none: searching = false;
+		}
+		if (!searching) { continue; }
 		builder.append(rest[0:at]);
 		builder.append(new);
 		rest = rest[at + len(old):];

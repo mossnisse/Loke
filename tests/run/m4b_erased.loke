@@ -131,9 +131,9 @@ more :: proc() {
 erased_copies, erased_drops: int;
 Owned :: struct { id: int }
 impl Owned {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Owned, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
 		erased_copies += 1;
-		return Owned{self.id + 100}, nil;
+		return .ok(Owned{self.id + 100});
 	}
 	release :: hook(drop) proc(self: inout Owned) { if (self.id != 0) { erased_drops += 1; } }
 }

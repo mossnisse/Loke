@@ -24,7 +24,7 @@ count :: proc($T: type) -> int {
 main :: proc() {
 	a := mem.default_allocator();
 	b := take(a);
-	p, err := new(int, b);
-	if (err == nil) { free(p); }
+	p := new(int, b) or_else nil;
+	if (p != nil) { free(p); }
 	fmt.println(count(Res));
 }

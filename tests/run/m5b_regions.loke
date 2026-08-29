@@ -29,8 +29,8 @@ release_twice :: proc(@(allocator_reset) allocator: Allocator) {
 // allocation was already freed", so an unfreed allocation whose last carrier use
 // is behind us is simply released by the reset.
 reset_after_last_use :: proc(@(allocator_reset) allocator: Allocator) -> int {
-	pointer, err := new(int, allocator);
-	if (err != nil) { return 0; }
+	pointer := new(int, allocator) or_else nil;
+	if (pointer == nil) { return 0; }
 	pointer^ = 7;
 	total := pointer^;
 	// No alias survives, so the reset is accepted even though nothing was freed.

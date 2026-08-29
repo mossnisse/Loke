@@ -22,8 +22,8 @@ Opaque :: struct { value: int }
 Counted :: struct { n: int }
 
 impl Counted {
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Counted, Allocator_Error) {
-		return Counted{self.n}, nil;
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Counted, Allocator_Error) {
+		return .ok(Counted{self.n});
 	}
 }
 

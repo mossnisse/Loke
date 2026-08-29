@@ -28,16 +28,22 @@ impl Split_Iterator {
 
 	iter :: proc(self) -> Split_Iterator { return self; }
 
-	next :: proc(self: inout Split_Iterator) -> (string_view, bool) {
-		if (self.done) { return "", false; }
-		at, found := index(self.rest, self.separator);
-		if (!found || len(self.separator) == 0) {
+	next :: proc(self: inout Split_Iterator) -> Option(string_view) {
+		if (self.done) { return .none; }
+		at := 0;
+		switch (found in index(self.rest, self.separator)) {
+		case .some: at = found;
+		case .none:
 			self.done = true;
-			return self.rest, true;
+			return .some(self.rest);
+		}
+		if (len(self.separator) == 0) {
+			self.done = true;
+			return .some(self.rest);
 		}
 		part := self.rest[0:at];
 		self.rest = self.rest[at + len(self.separator):];
-		return part, true;
+		return .some(part);
 	}
 }
 
@@ -57,7 +63,7 @@ impl Fields_Iterator {
 
 	iter :: proc(self) -> Fields_Iterator { return self; }
 
-	next :: proc(self: inout Fields_Iterator) -> (string_view, bool) {
+	next :: proc(self: inout Fields_Iterator) -> Option(string_view) {
 		start := len(self.rest);
 		foreach (codepoint, offset in self.rest.rune_offsets()) {
 			if (!is_space(codepoint)) {
@@ -68,7 +74,7 @@ impl Fields_Iterator {
 		rest := self.rest[start:];
 		if (len(rest) == 0) {
 			self.rest = rest;
-			return "", false;
+			return .none;
 		}
 		end := len(rest);
 		foreach (codepoint, offset in rest.rune_offsets()) {
@@ -78,7 +84,7 @@ impl Fields_Iterator {
 			}
 		}
 		self.rest = rest[end:];
-		return rest[0:end], true;
+		return .some(rest[0:end]);
 	}
 }
 
@@ -99,13 +105,15 @@ impl Lines_Iterator {
 
 	iter :: proc(self) -> Lines_Iterator { return self; }
 
-	next :: proc(self: inout Lines_Iterator) -> (string_view, bool) {
-		if (self.done) { return "", false; }
-		at, found := index_byte(self.rest, u8('\n'));
-		if (!found) {
+	next :: proc(self: inout Lines_Iterator) -> Option(string_view) {
+		if (self.done) { return .none; }
+		at := 0;
+		switch (found in index_byte(self.rest, u8('\n'))) {
+		case .some: at = found;
+		case .none:
 			self.done = true;
-			if (len(self.rest) == 0) { return "", false; }
-			return self.rest, true;
+			if (len(self.rest) == 0) { return .none; }
+			return .some(self.rest);
 		}
 		line := self.rest[0:at];
 		// A byte read, not a subrange: `len(line) - 1` is the middle of a code
@@ -114,6 +122,6 @@ impl Lines_Iterator {
 			line = line[0:len(line) - 1];
 		}
 		self.rest = self.rest[at + 1:];
-		return line, true;
+		return .some(line);
 	}
 }
