@@ -1,0 +1,149 @@
+package main; import "core:fmt";
+
+// design.md's ownership matrix for `or_else` and `or_return`, one row at a
+// time. A place operand copies the selected payload and leaves the source
+// live; a temporary or `move(x)` hands its value over. `or_else` never copies
+// the error — it drops a temporary's and leaves a place's alone.
+
+copies, drops: int;
+
+Owned :: struct { id: int }
+impl Owned {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
+		copies += 1;
+		return .ok(Owned{self.id});
+	}
+	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
+}
+
+Boxed :: union @(failure=failed) { held: Owned, failed: Owned }
+
+held :: proc(id: int) -> Boxed { return .held(Owned{id}); }
+failed :: proc(id: int) -> Boxed { return .failed(Owned{id}); }
+
+// A move-only payload has no copy, so only a temporary or a `move` reaches it.
+Handle :: move_only struct { id: int }
+impl Handle {
+	release :: hook(drop) proc(self: inout Handle) { drops += 1; }
+}
+Sealed :: union @(failure=gone) { open: Handle, gone: }
+opened :: proc(id: int) -> Sealed { return .open(Handle{id}); }
+
+reset :: proc() { copies, drops = 0, 0; }
+report :: proc(label: string_view) { fmt.println(label, copies, drops); }
+
+// `or_return` over a place copies both payloads, so the source stays whole.
+place_or_return :: proc() -> Boxed {
+	source := held(1);
+	value := source or_return;
+	// The source still holds its own payload here.
+	return .held(Owned{value.id + 10});
+}
+
+place_or_return_fails :: proc() -> Boxed {
+	source := failed(2);
+	value := source or_return;
+	return .held(Owned{value.id});
+}
+
+temporary_or_return :: proc() -> Boxed {
+	value := held(3) or_return;
+	return .held(Owned{value.id + 10});
+}
+
+temporary_or_return_fails :: proc() -> Boxed {
+	value := failed(4) or_return;
+	return .held(Owned{value.id});
+}
+
+main :: proc() {
+	// --- or_else, success path -------------------------------------------
+	reset();
+	{
+		source := held(1);
+		taken := source or_else Owned{0};
+		fmt.println("place success", taken.id);
+	}
+	// One copy, and two values to drop: the place kept its own.
+	report("place or_else");
+
+	reset();
+	{
+		taken := held(2) or_else Owned{0};
+		fmt.println("temporary success", taken.id);
+	}
+	// No copy, and one value: the temporary handed its payload over.
+	report("temporary or_else");
+
+	reset();
+	{
+		source := held(3);
+		taken := move(source) or_else Owned{0};
+		fmt.println("moved success", taken.id);
+	}
+	report("move or_else");
+
+	// --- or_else, failure path -------------------------------------------
+	reset();
+	{
+		taken := failed(4) or_else Owned{9};
+		fmt.println("temporary failure", taken.id);
+	}
+	// The error is never copied. A temporary's is dropped before the fallback
+	// runs, and the fallback itself is the second value.
+	report("temporary or_else failure");
+
+	reset();
+	{
+		source := failed(5);
+		taken := source or_else Owned{9};
+		fmt.println("place failure", taken.id);
+	}
+	// The place still owns its error, so nothing was copied and two values end.
+	report("place or_else failure");
+
+	// --- or_return -------------------------------------------------------
+	reset();
+	{
+		outcome := place_or_return();
+		fmt.println("place or_return", (outcome or_else Owned{0}).id);
+	}
+	report("place or_return");
+
+	reset();
+	{
+		outcome := place_or_return_fails();
+		fmt.println("place or_return failed", (outcome or_else Owned{0}).id);
+	}
+	report("place or_return failure");
+
+	reset();
+	{
+		outcome := temporary_or_return();
+		fmt.println("temporary or_return", (outcome or_else Owned{0}).id);
+	}
+	report("temporary or_return");
+
+	reset();
+	{
+		outcome := temporary_or_return_fails();
+		fmt.println("temporary or_return failed", (outcome or_else Owned{0}).id);
+	}
+	report("temporary or_return failure");
+
+	// --- a move-only payload ---------------------------------------------
+	reset();
+	{
+		handle := opened(7) or_else Handle{0};
+		fmt.println("move-only", handle.id);
+	}
+	report("move-only or_else");
+
+	reset();
+	{
+		source := opened(8);
+		handle := move(source) or_else Handle{0};
+		fmt.println("moved move-only", handle.id);
+	}
+	report("move-only move or_else");
+}

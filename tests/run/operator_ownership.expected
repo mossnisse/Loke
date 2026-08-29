@@ -1,0 +1,22 @@
+place success 1
+place or_else 1 2
+temporary success 2
+temporary or_else 0 1
+moved success 3
+move or_else 0 1
+temporary failure 9
+temporary or_else failure 0 2
+place failure 9
+place or_else failure 0 2
+place or_return 11
+place or_return 2 3
+place or_return failed 0
+place or_return failure 1 2
+temporary or_return 13
+temporary or_return 1 2
+temporary or_return failed 0
+temporary or_return failure 0 1
+move-only 7
+move-only or_else 0 1
+moved move-only 8
+move-only move or_else 0 1

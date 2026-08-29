@@ -145,7 +145,8 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 	}
 	// design.md: a place operand copies the selected payload, so it must be
 	// copyable; a temporary or `move(x)` transfers it.
-	if expr_base(v.value).value_category == .Place && type_clone_disabled(k.c, payload) {
+	v.borrows = expr_base(v.value).value_category == .Place
+	if v.borrows && type_clone_disabled(k.c, payload) {
 		errorf(
 			k.c, expr_span(v.value), "L0503",
 			"`%s` is move-only, so `or_else` cannot copy it out of a place; write `move(...)`",
@@ -153,6 +154,9 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 		)
 		v.type = INVALID_TYPE
 		return
+	}
+	if v.borrows {
+		contribute_lifecycle_members(k, payload)
 	}
 	if !check_value_expr(k, v.fallback, payload, "supply") {
 		v.type = INVALID_TYPE
@@ -202,9 +206,13 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 	}
 	// design.md: a place operand copies the selected payload and leaves the
 	// source live, so both payloads must be copyable.
-	if base.value_category == .Place {
+	v.borrows = base.value_category == .Place
+	if v.borrows {
 		for candidate in ([2]Type_Id{shape.info.variants[shape.success], shape.info.variants[shape.failure]}) {
-			if candidate != TYPE_VOID && type_clone_disabled(k.c, candidate) {
+			if candidate == TYPE_VOID {
+				continue
+			}
+			if type_clone_disabled(k.c, candidate) {
 				errorf(
 					k.c, v.op_span, "L0503",
 					"`%s` is move-only, so `or_return` cannot copy it out of a place; write `move(...)`",
@@ -213,6 +221,7 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 				v.type = INVALID_TYPE
 				return
 			}
+			contribute_lifecycle_members(k, candidate)
 		}
 	}
 

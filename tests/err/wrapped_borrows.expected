@@ -1,0 +1,24 @@
+L0526
+@15:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@21:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@29:22
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@38:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@46:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@53:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@59:21
+this slice cannot be returned: `local` ends when this procedure returns
+L0537
+@74:3
+this reset would end the region backing `xs`, which is still live here

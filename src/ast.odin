@@ -288,6 +288,9 @@ Expr_Call :: struct {
 // The suffixes that take no operand: `^` and `or_return`.
 Expr_Postfix :: struct {
 	using base: Expr_Base,
+	// `or_return` over a place: both payloads are copied out and the source
+	// stays live, exactly as `or_else` over one does.
+	borrows:    bool,
 	op:         Token_Kind,
 	op_span:    Span,
 	operand:    Expr,
@@ -328,6 +331,9 @@ Expr_Or_Else :: struct {
 	using base: Expr_Base,
 	value:      Expr,
 	fallback:   Expr,
+	// design.md: a place operand copies the selected payload and leaves the
+	// source live; a temporary or `move(x)` hands its value over.
+	borrows:    bool,
 }
 
 // `then if cond else otherwise`, in source order.

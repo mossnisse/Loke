@@ -1,0 +1,84 @@
+package main; import "core:fmt"; import "core:mem";
+
+// consolidation-typed-fallibility-plan.md, "provenance parity for bare versus
+// wrapped borrows": wrapping a borrow in an `Option` or a `Result` must not
+// lose what it borrows, and unwrapping it must not lose it either. Every case
+// here has a bare twin that was already rejected, and each must be rejected the
+// same way.
+
+Holder :: struct { view: []int }
+Boxed :: union @(failure=empty) { held: Holder, empty: }
+
+// The bare form: a slice of a local cannot outlive the local.
+bare :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	return local[:];
+}
+
+// Wrapped in a union on the way out.
+wrapped :: proc() -> Boxed {
+	local := [3]int{1, 2, 3};
+	return .held(Holder{local[:]});
+}
+
+// Unwrapped by a variant switch on the way back.
+through_a_switch :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	boxed: Boxed = .held(Holder{local[:]});
+	switch (held in boxed) {
+	case .held:  return held.view;
+	case .empty: return nil;
+	}
+}
+
+// Unwrapped by `or_else`.
+through_or_else :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	boxed: Boxed = .held(Holder{local[:]});
+	return (boxed or_else Holder{nil}).view;
+}
+
+// Unwrapped by `or_return`.
+through_or_return :: proc() -> Boxed {
+	local := [3]int{1, 2, 3};
+	boxed: Boxed = .held(Holder{local[:]});
+	held := boxed or_return;
+	return .held(Holder{held.view});
+}
+
+// A validating conversion answers with an `Option`, and the view it produces
+// borrows the bytes it was built from whichever side of the wrapper it is on.
+converted :: proc() -> string_view {
+	local := [3]u8{107, 101, 121};
+	return string_view(local[:]) or_else "";
+}
+
+converted_through_a_switch :: proc() -> string_view {
+	local := [3]u8{107, 101, 121};
+	switch (view in string_view(local[:])) {
+	case .some: return view;
+	case .none: return "";
+	}
+}
+
+// An allocator handle keeps its region through the wrapper, so a local arena's
+// reset is still caught.
+erased_allocator :: proc() {
+	arena := mem.Arena.init();
+	allocator := arena.allocator();
+	view: any_view = allocator;
+	switch (restored in view.as(Allocator)) {
+	case .some:
+		xs: [dynamic]int via restored;
+		xs.append(1);
+		free_all(allocator);
+		fmt.println(xs[0]);
+	case .none:
+	}
+}
+
+main :: proc() {
+	fmt.println(len(bare()), len(through_a_switch()), len(through_or_else()));
+	fmt.println(len(converted()), len(converted_through_a_switch()));
+	erased_allocator();
+}

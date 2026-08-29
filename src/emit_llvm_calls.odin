@@ -588,16 +588,22 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	// The success payload is read only on the path where it is the active one.
 	place_label(e, success_label)
 	taken := emit_union_payload(e, operand_type, payload_type, slot)
+	// A place keeps owning what it holds, so what leaves is a copy of it. A
+	// trivially copied payload is already its own copy.
+	if v.borrows && type_is_managed(e.c, payload_type) {
+		taken = emit_clone_value(e, payload_type, taken)
+	}
 	success_exit := new_label(e, "orelse.success.exit")
 	branch(e, success_exit)
 	place_label(e, success_exit)
 	branch(e, done)
 
 	place_label(e, fallback_label)
-	// design.md: `or_else` never copies the error. A managed failure payload is
-	// dropped here, before the fallback is evaluated, because the operand's value
-	// is discarded on this path.
-	if failure_type := info.variants[info.failure_variant]; type_is_managed(e.c, failure_type) {
+	// design.md: `or_else` never copies the error. A managed failure payload of a
+	// *temporary* is dropped here, before the fallback is evaluated, because the
+	// operand's value is discarded on this path. A place still owns its own.
+	if failure_type := info.variants[info.failure_variant];
+	   !v.borrows && type_is_managed(e.c, failure_type) {
 		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 	}
 	fallback := emit_expr(e, v.fallback)
@@ -642,8 +648,12 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 		// `or_return` constructs the enclosing error directly: the operand's error
 		// payload is moved into the new variant without a second clone.
 		error := ""
-		if info.variants[info.failure_variant] != TYPE_VOID {
-			error = emit_union_payload(e, operand_type, info.variants[info.failure_variant], slot)
+		if failure_type := info.variants[info.failure_variant]; failure_type != TYPE_VOID {
+			error = emit_union_payload(e, operand_type, failure_type, slot)
+			// A place keeps its value, so the error the caller sees is a copy.
+			if v.borrows && type_is_managed(e.c, failure_type) {
+				error = emit_clone_value(e, failure_type, error)
+			}
 		}
 		wrapped := emit_union_value(e, e.result_types[last], target_info.failure_variant, error)
 		store(e, e.result_types[last], wrapped, e.result_slots[last])
@@ -658,6 +668,9 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 		return out
 	}
 	out[0] = emit_union_payload(e, operand_type, info.variants[success], slot)
+	if v.borrows && type_is_managed(e.c, info.variants[success]) {
+		out[0] = emit_clone_value(e, info.variants[success], out[0])
+	}
 	return out
 }
 
