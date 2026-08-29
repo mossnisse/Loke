@@ -9,8 +9,7 @@ impl Money {
 	delegate(+, -, ==, !=, <, <=, >, >=);
 }
 
-Error_Code :: enum { Overdrawn, Closed }
-Error :: union { Error_Code }
+Error :: enum { Overdrawn, Closed }
 
 Account :: struct {
 	balance: Money,
@@ -27,11 +26,11 @@ impl Account {
 		self.balance += amount;
 	}
 
-	withdraw :: proc(self: inout Account, amount: Money) -> Error {
-		if (!self.open) { return Error_Code.Closed; }
-		if (self.balance < amount) { return Error_Code.Overdrawn; }
+	withdraw :: proc(self: inout Account, amount: Money) -> Result(Unit, Error) {
+		if (!self.open) { return .err(.Closed); }
+		if (self.balance < amount) { return .err(.Overdrawn); }
 		self.balance -= amount;
-		return nil;
+		return .ok(Unit{});
 	}
 }
 
@@ -44,22 +43,23 @@ impl Ledger {
 	}
 }
 
-transfer :: proc(from: inout Account, to: inout Account, amount: Money) -> (moved: Money, err: Error) {
-	moved = Money(0);
+transfer :: proc(from: inout Account, to: inout Account, amount: Money) -> Result(Money, Error) {
 	from.withdraw(amount) or_return;
 	to.deposit(amount);
-	moved = amount;
-	return;
+	return .ok(amount);
 }
 
-describe :: proc(err: Error) -> int {
-	switch (e in err) {
-	case Error_Code:
-		return 1 if e == Error_Code.Overdrawn else 2;
-	case:
-		return 0;
+// One variant switch describes both halves of the outcome.
+describe :: proc(outcome: Result(Money, Error)) -> int {
+	switch (e in outcome) {
+	case .ok:  return 0;
+	case .err: return 1 if e == .Overdrawn else 2;
 	}
 	return -1;
+}
+
+moved_or_zero :: proc(outcome: Result(Money, Error)) -> int {
+	return int(i64(outcome or_else Money(0)));
 }
 
 main :: proc() {
@@ -69,20 +69,20 @@ main :: proc() {
 	fmt.println(int(i64(a.total())));
 	fmt.println(1 if b.open else 0);
 
-	moved, err := transfer(inout a, inout b, Money(30));
-	fmt.println(int(i64(moved)));
-	fmt.println(describe(err));
+	first := transfer(inout a, inout b, Money(30));
+	fmt.println(moved_or_zero(first));
+	fmt.println(describe(first));
 	fmt.println(int(i64(a.total())));
 
 	// `b` is closed, so the withdrawal fails and nothing moves.
-	moved2, err2 := transfer(inout b, inout a, Money(10));
-	fmt.println(int(i64(moved2)));
-	fmt.println(describe(err2));
+	second := transfer(inout b, inout a, Money(10));
+	fmt.println(moved_or_zero(second));
+	fmt.println(describe(second));
 
 	// A failure that is not "closed".
-	moved3, err3 := transfer(inout a, inout b, Money(1000));
-	fmt.println(int(i64(moved3)));
-	fmt.println(describe(err3));
+	third := transfer(inout a, inout b, Money(1000));
+	fmt.println(moved_or_zero(third));
+	fmt.println(describe(third));
 
 	ledger: Ledger;
 	ledger[2] = 9;

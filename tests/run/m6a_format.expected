@@ -6,7 +6,7 @@ Green Red
 Point{x = 1, y = 2}
 [10, 20, 30]
 [10, 20, 30]
-4
+.count(4)
 $ 250
 main 73
 8

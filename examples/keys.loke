@@ -26,7 +26,7 @@ describe :: proc(event: term.Key_Event) {
 	fmt.println(event.key);
 }
 
-run :: proc() -> io.Error {
+run :: proc() -> Result(Unit, io.Error) {
 	raw := term.begin_raw() or_return;
 	fmt.println("keys (escape quits)");
 	for (;;) {
@@ -39,7 +39,8 @@ run :: proc() -> io.Error {
 }
 
 main :: proc() {
-	if (error := run(); error != nil) {
-		fmt.eprintln("error:", error);
+	switch (outcome in run()) {
+	case .ok:
+	case .err: fmt.eprintln("error:", outcome);
 	}
 }

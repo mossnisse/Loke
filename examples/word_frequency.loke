@@ -56,10 +56,10 @@ main :: proc() {
 	// does, recursively, so this needs no loop.
 	fmt.println("repeated:", repeated);
 
-	// `find` hands back a pointer to the stored value without inserting.
-	slot, found := counts.find("fox");
-	if (found) {
-		slot^ += 100;
+	// `find` hands back `Option(^mut V)` over the stored value without inserting.
+	switch (slot in counts.find("fox")) {
+	case .some: slot^ += 100;
+	case .none:
 	}
 	fmt.println("fox:", counts["fox"]);
 	fmt.println("cat:", counts["cat"]);        // a missing key reads as zero

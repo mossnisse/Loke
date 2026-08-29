@@ -11,7 +11,7 @@ Pair :: struct($K, $V: type) where Additive(K) {
 
 Color :: enum u8 { Red, Green = 3 }
 
-Value :: union { int, string }
+Value :: union { count: int, label: string }
 
 Sequence :: interface($Self: type) {
 	(s: inout Self) s[0] -> inout Item;

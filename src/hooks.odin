@@ -99,6 +99,14 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		} else if info.kind == .Struct {
 			parts = make([]Type_Id, len(info.fields), context.temp_allocator)
 			for field, index in info.fields { parts[index] = symbol_of(c, field).type }
+		} else if info.kind == .Union {
+			// Which variant is active is a runtime fact, so a union's generated
+			// clone admits the worst case across every payload it could hold.
+			carried := make([dynamic]Type_Id, 0, len(info.variants), context.temp_allocator)
+			for variant in info.variants {
+				if variant != TYPE_VOID { append(&carried, variant) }
+			}
+			parts = carried[:]
 		}
 		for part in parts {
 			if !finalize_type_lifecycle(c, part) { return false }

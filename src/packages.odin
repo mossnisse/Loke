@@ -76,21 +76,52 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 
 // ------------------------------------------------------------------ loading --
 
-// A directory argument compiles every `.loke` file directly in it. A file
-// argument keeps the one-file-package behaviour the existing corpus relies on,
-// though its relative imports still resolve from its own directory.
 // The one unconditional package. It is loaded through the ordinary collection
 // machinery, so a program that also imports `base:runtime` by name gets the
 // same package rather than a second copy of it.
-@(private = "file")
-load_runtime_bootstrap :: proc(c: ^Compiler) {
+load_runtime_bootstrap :: proc(c: ^Compiler) -> (Package_Id, bool) {
 	root, registered := c.collections["base"]
 	if !registered {
-		return // reported at the first import that needs it
+		return INVALID_PACKAGE, false // reported at the first import that needs it
 	}
-	load_package_dir(c, strings.concatenate({root, "/runtime"}), STD_RUNTIME, no_span())
+	return load_package_dir(c, strings.concatenate({root, "/runtime"}), STD_RUNTIME, no_span())
 }
 
+// `compile_program` reaches `base:runtime` through the ordinary dependency
+// order. A caller that checks one package on its own — a unit test, or any
+// other direct entry — asks for the bootstrap here instead, because `Option`
+// and `Result` have to exist before a signature can name them.
+ensure_runtime_bootstrap :: proc(k: ^Checker) {
+	if k.c.bootstrap_ready {
+		return
+	}
+	init_semantic_stores(k.c)
+	if _, seeded := k.c.collections["base"]; !seeded {
+		if k.c.collections == nil {
+			k.c.collections = make(map[string]string, 2, k.c.semantic_allocator)
+		}
+		// The bundled root is resolved from the running executable. A direct entry
+		// is often *not* the installed compiler — the unit-test binary lives in a
+		// temporary directory — so the working directory is the fallback.
+		root := install_component("base")
+		if root == "" || !is_directory(strings.concatenate({root, "/runtime"})) {
+			root = "base"
+		}
+		k.c.collections["base"] = root
+	}
+	id, loaded := load_runtime_bootstrap(k.c)
+	if !loaded {
+		return
+	}
+	saved_pkg, saved_lookup, saved_scope := k.pkg, k.lookup_pkg, k.scope
+	rebuild_active_items(k.c, package_of(k.c, id))
+	prepare_package(k, id)
+	k.pkg, k.lookup_pkg, k.scope = saved_pkg, saved_lookup, saved_scope
+}
+
+// A directory argument compiles every `.loke` file directly in it. A file
+// argument keeps the one-file-package behaviour the existing corpus relies on,
+// though its relative imports still resolve from its own directory.
 @(private = "file")
 load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	if is_directory(input) {

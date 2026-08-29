@@ -16,7 +16,7 @@ Point :: struct {
 	@(public) y: i32,
 }
 
-Value :: union { int, bool }
+Value :: union { count: int, flag: bool }
 
 Money :: struct { @(public) cents: int }
 
@@ -62,7 +62,7 @@ main :: proc() {
 	xs := [?]int{10, 20, 30};
 	fmt.println(xs);
 	fmt.println(xs[:]);
-	u: Value = 4;
+	u: Value = .count(4);
 	fmt.println(u);
 
 	// The user-owned formatter, direct and through the erased path.

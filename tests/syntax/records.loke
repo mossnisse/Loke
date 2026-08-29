@@ -39,8 +39,9 @@ Bare_Enum :: enum { Red, Green, Blue }
 Typed_Enum :: enum u8 { Red = 1, Green, Blue = 4, }
 
 Empty_Union :: union { }
-Value_Union :: union { int, string, ^Point }
-Generic_Union :: union($T: type) @(shared_nil) where Sized(T) { T, Error, }
+Value_Union :: union { count: int, label: string, node: ^Point }
+Payloadless_Union :: union { absent:, present: int }
+Generic_Union :: union($T: type) @(zero=empty) where Sized(T) { empty:, held: T, failed: Error, }
 
 Sequence :: interface($Self: type) {
 	// An expression requirement, with and without a binding list and a result.

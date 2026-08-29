@@ -280,7 +280,7 @@ union_alternatives_join_under_one_wildcard :: proc(t: ^testing.T) {
 	text := `package main;
 Held :: struct { view: []int }
 Other :: struct { target: ^mut int }
-Choice :: union { Held, Other, int }
+Choice :: union { held: Held, other: Other, plain: int }
 main :: proc() { }`
 	c: Compiler
 	defer destroy_compilation(&c)

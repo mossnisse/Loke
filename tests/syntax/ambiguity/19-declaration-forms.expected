@@ -9,7 +9,7 @@
     (enum (ident "u8") (member "Red") (member "Green" (int "3")))
   )
   (const names=["Value"]
-    (union (ident "int") (ident "string"))
+    (union (variant "count" (ident "int")) (variant "label" (ident "string")))
   )
   (const names=["Sequence"]
     (interface (generic ["Self"] (type)) (req (binding ["s"] inout (ident "Self")) (index (ident "s") (int "0")) (-> inout (ident "Item"))) (slot "next" (proc-type (param ["self"] (ident "Self")) (result (ident "Item")))))

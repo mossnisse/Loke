@@ -19,53 +19,58 @@ import "core:term";
 // partial result and reports `Limit_Exceeded`.
 LIMIT :: 1024 * 1024;
 
-summarize :: proc(path: string_view) -> io.Error {
+summarize :: proc(path: string_view) -> Result(Unit, io.Error) {
 	bytes := fs.read_bytes(path, limit = LIMIT) or_return;
 	fmt.println("bytes:", len(bytes));
-	return nil;
+	return .ok(Unit{});
 }
 
 // The same file again, this time without holding it in memory: one fixed buffer,
 // however large the file is.
-count_lines :: proc(path: string_view) -> (int, io.Error) {
-	file, error := fs.open_read(path);
-	if (error != nil) { return 0, error; }
+count_lines :: proc(path: string_view) -> Result(int, io.Error) {
+	file := fs.open_read(path) or_return;
 
 	lines := 0;
 	window: [4096]u8 = {};
 	for (;;) {
-		count, read_error := file.read(window[:]);
-		foreach (index in 0 ..< count) {
-			if (window[index] == u8('\n')) { lines += 1; }
-		}
-		if (read_error != nil) {
-			if (io.is(read_error, .End_Of_Input)) { break; }
+		count := 0;
+		switch (outcome in file.read(window[:])) {
+		case .ok:
+			count = outcome;
+		case .err:
+			if (io.is(outcome, .End_Of_Input)) { break; }
 			// The close still runs: `file` is a managed local, and its `drop`
 			// closes a live handle on every path out of this procedure.
-			return lines, read_error;
+			return .err(outcome);
+		}
+		foreach (index in 0 ..< count) {
+			if (window[index] == u8('\n')) { lines += 1; }
 		}
 	}
 
 	// The explicit close is the one that can report. `drop` would run anyway, but
 	// it cannot tell anyone what it found.
-	return lines, file.close();
+	file.close() or_return;
+	return .ok(lines);
 }
 
-run :: proc() -> io.Error {
+run :: proc() -> Result(Unit, io.Error) {
 	if (os.args.len() < 2) {
 		out := term.stderr();
 		return io.write_string(inout out, "usage: streaming <path>\n");
 	}
 	path := os.view_at(1);
 	summarize(path) or_return;
-	lines, error := count_lines(path);
+	lines := count_lines(path) or_return;
 	fmt.println("lines:", lines);
-	return error;
+	return .ok(Unit{});
 }
 
 main :: proc() {
-	if (error := run(); error != nil) {
-		fmt.eprintln("error:", error);
+	switch (outcome in run()) {
+	case .ok:
+	case .err:
+		fmt.eprintln("error:", outcome);
 		os.exit(1);
 	}
 }

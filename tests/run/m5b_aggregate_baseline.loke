@@ -21,7 +21,7 @@ package main; import "core:fmt";
 
 Holder :: struct { view: []int }
 Pair :: struct { left: []int, right: []int }
-Choice :: union { Holder, int }
+Choice :: union { held: Holder, plain: int }
 Owner :: struct { numbers: [dynamic]int, view: []int }
 
 // --- wrapping ---------------------------------------------------------------
@@ -49,13 +49,13 @@ independent_fields :: proc(a: []int, b: []int) -> Pair {
 
 // POSITIVE. Injecting and extracting a caller's borrow through a union.
 inject :: proc(values: []int) -> Choice {
-	return Holder{values};
+	return .held(Holder{values});
 }
 
 extract :: proc(choice: Choice) -> []int {
 	switch (value in choice) {
-	case Holder: return value.view;
-	case int:    return nil;
+	case .held:  return value.view;
+	case .plain: return nil;
 	}
 	return nil;
 }
@@ -65,15 +65,21 @@ extract :: proc(choice: Choice) -> []int {
 // POSITIVE. A value read copies the stored value, so it depends on what that
 // value borrows and not on the map root.
 map_value_read :: proc(table: map[string]Holder) -> []int {
-	held, ok := table.lookup_value("a");
-	return held.view if ok else nil;
+	switch (held in table.lookup_value("a")) {
+	case .some: return held.view;
+	case .none: return nil;
+	}
+	return nil;
 }
 
 // POSITIVE. An entry pointer is a borrow of the container's storage, which the
 // `inout` receiver makes the caller's.
 map_entry_pointer :: proc(table: inout map[string]Holder) -> ^mut Holder {
-	slot, found := table.find("a");
-	return slot if found else nil;
+	switch (slot in table.find("a")) {
+	case .some: return slot;
+	case .none: return nil;
+	}
+	return nil;
 }
 
 // --- moving an owner that carries a borrow ----------------------------------
@@ -90,8 +96,8 @@ move_an_owner :: proc(values: []int) -> Owner {
 
 // POSITIVE. The bare base reaches checked `free`.
 alloc_bare :: proc() {
-	pointer, err := new(int);
-	if (err != nil) { return; }
+	pointer := new(int) or_else nil;
+	if (pointer == nil) { return; }
 	pointer^ = 1;
 	free(pointer);
 }
@@ -102,8 +108,8 @@ alloc_bare :: proc() {
 Handle :: struct { target: ^mut int }
 
 alloc_wrapped :: proc() {
-	pointer, err := new(int);
-	if (err != nil) { return; }
+	pointer := new(int) or_else nil;
+	if (pointer == nil) { return; }
 	pointer^ = 1;
 	handle := Handle{pointer};
 	free(handle.target);
@@ -141,8 +147,11 @@ overwrite_one_element :: proc(values: []int) -> []int {
 pop_an_element :: proc(values: []int) -> []int {
 	holders: [dynamic]Holder;
 	holders.append(Holder{values});
-	held, ok := holders.pop();
-	return held.view if ok else nil;
+	switch (held in holders.pop()) {
+	case .some: return held.view;
+	case .none: return nil;
+	}
+	return nil;
 }
 
 // POSITIVE. The same for a map, where the value's content is what travels and a
@@ -150,8 +159,11 @@ pop_an_element :: proc(values: []int) -> []int {
 remove_a_value :: proc(values: []int) -> []int {
 	table: map[string]Holder;
 	table["a"] = Holder{values};
-	held, ok := table.remove("a");
-	return held.view if ok else nil;
+	switch (held in table.remove("a")) {
+	case .some: return held.view;
+	case .none: return nil;
+	}
+	return nil;
 }
 
 // POSITIVE. Two constant keys are two entries, so reading one back does not
@@ -172,8 +184,11 @@ constant_key_lookup :: proc(values: []int) -> []int {
 	table: map[string]Holder;
 	table["a"] = Holder{values};
 	table["b"] = Holder{local[:]};
-	held, ok := table.lookup_value("a");
-	return held.view if ok else nil;
+	switch (held in table.lookup_value("a")) {
+	case .some: return held.view;
+	case .none: return nil;
+	}
+	return nil;
 }
 
 // POSITIVE. A known key replaces what it held, so the local is gone from it.
@@ -330,7 +345,7 @@ main :: proc() {
 	assert(temporary_field_read(numbers[:])[3] == 4);
 	assert(slice_element_read(numbers[:])[0] == 1);
 	assert(optional_extraction_read(numbers[:])[1] == 2);
-	assert(trapping_extraction_read(numbers[:])[2] == 3);
+	assert(grouped_extraction_read(numbers[:])[2] == 3);
 	assert(temporary_fields_are_independent(numbers[:])[0] == 1);
 	assert(temporary_elements_are_independent(numbers[:])[0] == 1);
 	assert(pointer_fields_are_independent(numbers[:])[0] == 1);
@@ -404,14 +419,21 @@ slice_element_read :: proc(values: []int) -> []int {
 }
 
 optional_extraction_read :: proc(values: []int) -> []int {
-	choice: Choice = Holder{values};
-	held, ok := choice.as(Holder);
-	return held.view if ok else nil;
+	choice: Choice = .held(Holder{values});
+	switch (held in choice) {
+	case .held:  return held.view;
+	case .plain: return nil;
+	}
+	return nil;
 }
 
-trapping_extraction_read :: proc(values: []int) -> []int {
-	choice: Choice = Holder{values};
-	return choice.(Holder).view;
+grouped_extraction_read :: proc(values: []int) -> []int {
+	choice: Choice = .held(Holder{values});
+	switch (held in choice) {
+	case .held: return held.view;
+	case:       return nil;
+	}
+	return nil;
 }
 
 temporary_fields_are_independent :: proc(values: []int) -> []int {
@@ -456,8 +478,11 @@ read_scalar_from_pointer :: proc() -> int {
 erased_extraction_read :: proc(values: []int) -> []int {
 	held := Holder{values};
 	erased: any_view = held;
-	value, ok := erased.as(Holder);
-	return value.view if ok else nil;
+	switch (value in erased.as(Holder)) {
+	case .some: return value.view;
+	case .none: return nil;
+	}
+	return nil;
 }
 
 Outer :: struct { pair: Pair }
@@ -566,11 +591,15 @@ static_result_field :: proc(values: []int) -> []int {
 	return result_static(local[:]).left;
 }
 
-Result_Choice :: union { Outer, int }
-result_union :: proc(a: []int, b: []int) -> Result_Choice { return Outer{Pair{a, b}}; }
+Result_Choice :: union { outer: Outer, plain: int }
+result_union :: proc(a: []int, b: []int) -> Result_Choice { return .outer(Outer{Pair{a, b}}); }
 union_result_field :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
-	return result_union(local[:], values).(Outer).pair.right;
+	switch (held in result_union(local[:], values)) {
+	case .outer: return held.pair.right;
+	case .plain: return nil;
+	}
+	return nil;
 }
 
 Result_With_Map :: struct { entries: map[string]Holder, view: []int }
@@ -627,7 +656,7 @@ append_with_contract :: proc(
 KEY_BYTES :: [3]u8{107, 101, 121};
 map_key_from_parameter :: proc(bytes: []u8) -> map[string_view]int {
 	table: map[string_view]int;
-	view, ok := string_view(bytes);
+	view := string_view(bytes) or_else "";
 	table[view] = 7;
 	return table;
 }
@@ -709,8 +738,11 @@ copy_survives_clear :: proc(values: []int) -> []int {
 bare_map_lookup :: proc(values: []int) -> []int {
 	table: map[string][]int;
 	table["a"] = values;
-	result, ok := table.lookup_value("a");
-	return result if ok else nil;
+	switch (result in table.lookup_value("a")) {
+	case .some: return result;
+	case .none: return nil;
+	}
+	return nil;
 }
 
 bare_map_index :: proc(values: []int) -> []int {

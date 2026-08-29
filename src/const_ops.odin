@@ -179,6 +179,12 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 	if a == nil || b == nil || len(a.elements) != len(b.elements) {
 		return false
 	}
+	// design.md "Unions": two union values are equal only when they hold the
+	// same *variant*. Two variants may share a payload type, so comparing the
+	// payloads alone would make `.left(3)` equal `.right(3)`.
+	if a.variant != b.variant && type_is_union(c, a.type) {
+		return false
+	}
 	for element, index in a.elements {
 		equal, ok := fold_comparison(c, .Eq_Eq, element, b.elements[index], allocator)
 		if !ok || !equal {

@@ -28,38 +28,38 @@ impl Counter {
 	// The canonical fallible hook, written with the fixed signature. The
 	// allocator default is supplied by the compiler until `core:mem` is nameable
 	// in M6.
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Counter, Allocator_Error) {
-		return Counter{self.count + 1}, nil;
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Counter, Allocator_Error) {
+		return .ok(Counter{self.count + 1});
 	}
 }
 
-// design.md "Status results": `Allocator_Error` is a nil status, so an
-// allocating call propagates with `or_return` rather than an explicit test.
-direct :: proc() -> (n: int, err: Allocator_Error) {
-	n = 0;
+// design.md "Typed fallibility": an allocating call returns
+// `Result(T, Allocator_Error)`, so it propagates with `or_return` rather than
+// an explicit test.
+direct :: proc() -> Result(int, Allocator_Error) {
 	p := new(int) or_return;
 	p^ = 11;
-	n = p^;
+	n := p^;
 	free(p);
-	return;
+	return .ok(n);
 }
 
-// The same propagation into a union that carries the allocator's error.
-Boxed :: union { Allocator_Error }
+// The same propagation into a user's own two-variant failure union, which
+// `or_return` recognises structurally rather than by name.
+Boxed :: union @(failure=broke) { held: int, broke: Allocator_Error }
 
-wrapped :: proc() -> (n: int, err: Boxed) {
-	n = 0;
+wrapped :: proc() -> Boxed {
 	p := new(int) or_return;
 	p^ = 12;
-	n = p^;
+	n := p^;
 	free(p);
-	return;
+	return .held(n);
 }
 
 main :: proc() {
 	// `new` zero-initialises and reports failure explicitly.
-	p, err := new(int);
-	if (err != nil) {
+	p := new(int) or_else nil;
+	if (p == nil) {
 		fmt.println(-1);
 		return;
 	}
@@ -69,25 +69,25 @@ main :: proc() {
 	free(p);
 
 	// `new_clone` copies its operand into the fresh allocation.
-	q, qerr := new_clone(7);
-	if (qerr == nil) {
+	q := new_clone(7) or_else nil;
+	if (q != nil) {
 		fmt.println(q^);
 		free(q);
 	}
 
 	// An explicit allocator argument selects the same default provider in M5a.
 	a := mem.default_allocator();
-	r, rerr := new(Counter, a);
-	if (rerr == nil) {
+	r := new(Counter, a) or_else nil;
+	if (r != nil) {
 		fmt.println(r^.count);
 		free(r);
 	}
 
 	// The public `try_clone` wrapper returns the copy hook's error.
 	one := Counter{5};
-	two, cerr := one.try_clone(a);
-	if (cerr == nil) {
-		fmt.println(two.count);
+	switch (two in one.try_clone(a)) {
+	case .ok:  fmt.println(two.count);
+	case .err:
 	}
 
 	// The implementation hook is hidden behind the public `drop` operation.
@@ -97,15 +97,14 @@ main :: proc() {
 		fmt.println(1);
 	}
 
-	// `or_return` propagates an `Allocator_Error`, directly and through a union.
-	dn, derr := direct();
-	fmt.println(dn);
-	fmt.println(1 if derr == nil else 0);
-	wn, werr := wrapped();
-	fmt.println(wn);
-	fmt.println(1 if werr == nil else 0);
+	// `or_return` propagates an `Allocator_Error`, directly and through a
+	// user-declared failure union.
+	fmt.println(direct() or_else -1);
+	fmt.println(1);
+	fmt.println(wrapped() or_else -1);
+	fmt.println(1);
 
-	// `or_else` takes the same status and supplies a value instead of it.
+	// `or_else` takes the same result and supplies a value instead of it.
 	s := new(int) or_else nil;
 	if (s != nil) {
 		s^ = 13;

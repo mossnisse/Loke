@@ -21,8 +21,14 @@ main_body :: proc(f: ^File) -> ^Block {
 
 // The single-package half of `compile_program`, for a package these tests have
 // loaded by hand. None of them uses `when`, so no discovery round is needed.
+// design.md "Typed fallibility": the bootstrap instantiates
+// `Result(Unit, Allocator_Error)`, so a test counting generic instances counts
+// this one too.
+BOOTSTRAP_INSTANCES :: 1
+
 check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	k := Checker{c = c}
+	ensure_runtime_bootstrap(&k)
 	rebuild_active_items(c, package_of(c, pkg_id))
 	prepare_package(&k, pkg_id)
 	check_package_bodies(&k, pkg_id)
@@ -697,11 +703,11 @@ main :: proc() {
 	testing.expectf(t, c.error_count == 0, "negative generic cache produced %d diagnostics", c.error_count)
 	testing.expectf(
 		t,
-		c.instantiation_count == 2,
+		c.instantiation_count == 2 + BOOTSTRAP_INSTANCES,
 		"one rejected and one selected unique entry should consume the budget, found %d",
 		c.instantiation_count,
 	)
-	testing.expectf(t, len(c.instances) == 2, "expected one rejected and one successful cache entry, found %d", len(c.instances))
+	testing.expectf(t, len(c.instances) == 2 + BOOTSTRAP_INSTANCES, "expected one rejected and one successful cache entry, found %d", len(c.instances))
 }
 
 @(test)

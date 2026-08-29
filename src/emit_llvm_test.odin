@@ -13,10 +13,10 @@ impl Key {
 Grid :: struct { entries: map[string]f32, nested: [1]map[Key]int, next: ^Grid }
 main :: proc() {
     g: Grid;
-    p, ok := g.entries.find("a");
-    value, found := g.entries.lookup_value("a");
+    p := g.entries.find("a");
+    value := g.entries.lookup_value("a");
     g.nested[0][{1}] = 7;
-    n, present := g.nested[0].lookup_value(key = {1});
+    n := g.nested[0].lookup_value(key = {1});
 }
 `)
 	defer destroy_compilation(&c)
@@ -168,8 +168,8 @@ lifecycle_consumers_use_finalized_operations :: proc(t: ^testing.T) {
 	c := test_compiler(`package main;
 Resource :: struct { value: int }
 impl Resource {
-    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> (Resource, Allocator_Error) {
-        return Resource{self.value + 1}, nil;
+    copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Resource, Allocator_Error) {
+        return .ok(Resource{self.value + 1});
     }
     release :: hook(drop) proc(self: inout Resource) { self.value = 0; }
 }

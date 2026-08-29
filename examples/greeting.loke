@@ -10,7 +10,7 @@ import "core:term";
 // program that reads a line, reads and writes a text file, and reports a
 // failure — with no compiler-specific I/O built-in anywhere in it.
 
-run :: proc() -> io.Error {
+run :: proc() -> Result(Unit, io.Error) {
 	name := term.prompt("Name: ") or_return;
 
 	// The file does not exist on the first run, which is not a failure here.
@@ -20,12 +20,14 @@ run :: proc() -> io.Error {
 	}
 
 	line := "Hello, " + name + "!\n";
-	fs.write_text("greetings.txt", old + line) or_return;
-	return nil;
+	return fs.write_text("greetings.txt", old + line);
 }
 
 main :: proc() {
-	if (error := run(); error != nil) {
-		fmt.eprintln("error:", error);
+	// design.md "Typed fallibility": one variant switch is the whole of error
+	// handling at the top of a program.
+	switch (outcome in run()) {
+	case .ok:
+	case .err: fmt.eprintln("error:", outcome);
 	}
 }

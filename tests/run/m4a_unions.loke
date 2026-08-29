@@ -1,44 +1,51 @@
 package main; import "core:fmt";
 
-Value :: union { bool, i32, f64 }
+// design.md "Unions": named variants, variant identity, and the typed failure
+// protocol built on them.
+
+Value :: union { flag: bool, count: i32, ratio: f64 }
 Error_Code :: enum { Something_Bad, Something_Worse }
-Error :: union { Error_Code }
+
+// Two variants carrying the same payload type. This is the proof that a
+// variant's identity is its declaration index and never its payload `Type_Id`.
+Pair_Of_Ints :: union { left: int, right: int }
+
+// A payloadless variant, and a designated zero so the union has one.
+Maybe_Int :: union @(zero=absent) { absent:, present: int }
+
+// A user's own failure protocol: `or_else`/`or_return` recognise the shape, not
+// the name `Result`.
+Parsed :: union @(failure=bad) { good: int, bad: Error_Code }
 
 // The natural layout, and the same variants under a written alignment.
-Narrow :: union { bool, i16 }
-Wide_Aligned :: union @(align=8) { bool, i16 }
+Narrow :: union { flag: bool, small: i16 }
+Wide_Aligned :: union @(align=8) { flag: bool, small: i16 }
 Holder :: struct { flag: bool, value: Wide_Aligned }
 
-caller_1 :: proc() -> Error { return nil; }
-caller_2 :: proc() -> (int, Error) { return 123, nil; }
-failing :: proc() -> (int, Error) { return 7, Error_Code.Something_Bad; }
+caller_1 :: proc() -> Result(Unit, Error_Code) { return .ok(Unit{}); }
+caller_2 :: proc() -> Result(int, Error_Code) { return .ok(123); }
+failing :: proc() -> Result(int, Error_Code) { return .err(.Something_Bad); }
 
-good :: proc() -> (n: int, err: Error) {
+good :: proc() -> Result(int, Error_Code) {
 	defer fmt.println(900);
-	n = 0;
 	x := caller_2() or_return;
 	caller_1() or_return;
-	n = x + 1;
-	return;
+	return .ok(x + 1);
 }
 
-bad :: proc() -> (n: int, err: Error) {
+bad :: proc() -> Result(int, Error_Code) {
 	defer fmt.println(901);
-	n = 5;
 	x := failing() or_return;
-	n = x + 1000;
-	return;
+	return .ok(x + 1000);
 }
 
-ok_status :: proc() -> (n: int, ok: bool) { return 3, true; }
-
-// An `or_else` operand whose status is a union rather than a `bool`.
-fetch :: proc(fail: bool) -> (int, Error) {
-	if (fail) { return 0, Error_Code.Something_Worse; }
-	return 8, nil;
+// An `or_else` operand whose failure variant is a user's own.
+fetch :: proc(fail: bool) -> Parsed {
+	if (fail) { return .bad(.Something_Worse); }
+	return .good(8);
 }
 
-// An ordinary member named `as`, which the built-in extraction must not shadow.
+// An ordinary member named `as`, which nothing built-in shadows on a struct.
 Counter :: struct { n: int }
 impl Counter {
 	as :: proc(self, step: int) -> int { return self.n + step; }
@@ -46,92 +53,72 @@ impl Counter {
 Pair :: struct { first: Counter }
 fresh_counter :: proc() -> Counter { return Counter{1}; }
 
-// Union receivers that are not identifiers, which is where the name-collision
-// guard has to consult the type rather than the spelling.
 Boxed :: struct { value: Value }
 carry :: proc(v: Value) -> Boxed { return Boxed{v}; }
 unions :: proc() -> [1]Value {
 	out: [1]Value;
-	out[0] = i32(2);
+	out[0] = .count(2);
 	return out;
 }
 same :: proc(v: Value) -> Value { return v; }
 
-labelled :: proc(fail: bool) -> (int, string, Error) {
-	if (fail) { return 0, "", Error_Code.Something_Bad; }
-	return 4, "live", nil;
-}
-
-fallback_pair :: proc() -> (int, string) { return -2, "gone"; }
-
-branch_result :: proc(flag: bool) -> (n: int, err: Error) {
-	if (flag) { n = 10; } else { n = 20; }
+branch_result :: proc(flag: bool) -> Result(int, Error_Code) {
+	n := 10 if flag else 20;
 	caller_1() or_return;
-	return;
-}
-
-status_user :: proc() -> (ok: bool) {
-	ok = false;
-	x := ok_status() or_return;
-	if (x < 5) { ok = true; }
-	return;
+	return .ok(n);
 }
 
 describe :: proc(v: Value) -> int {
 	switch (t in v) {
-	case i32:
+	case .count:
 		return int(t) + 100;
-	case bool, f64:
-		// A multiple-type case keeps the binding at the union type.
-		return 1 if t == nil else 200;
-	case:
-		return 300;
+	case .flag, .ratio:
+		// A grouped case cannot know which variant is active, so the binding
+		// keeps the union type.
+		return 200 if t == v else 201;
 	}
 	return -1;
 }
 
+// Which side of `Pair_Of_Ints` is active, which no payload type could answer.
+side :: proc(p: Pair_Of_Ints) -> int {
+	switch (n in p) {
+	case .left:  return n;
+	case .right: return -n;
+	}
+	return 0;
+}
+
 main :: proc() {
-	// Discarding the pair still evaluates the extraction, without trapping.
-	discarded: Value = i32(7);
-	discarded.as(i32);
-	discarded.as(bool);
-	_, _ = discarded.as(i32);
-	assert(extract_as(discarded, i32) == 7);
-	// The zero value of a union is nil.
-	v: Value;
-	fmt.println(1 if v == nil else 0);
+	// A union always holds a variant; the designated zero is the first one.
+	m: Maybe_Int;
+	fmt.println(m);
+	fmt.println(Maybe_Int.present(5));
 
-	// Every variant round-trips.
-	v = i32(7);
-	fmt.println(int(v.(i32)));
-	v = true;
-	fmt.println(1 if v.(bool) else 0);
-	v = 2.5;
-	fmt.println(int(v.(f64)));
+	// Every variant round-trips through construction and matching.
+	v: Value = .count(7);
+	fmt.println(describe(v));
+	v = .flag(true);
+	fmt.println(describe(v));
+	v = .ratio(2.5);
+	fmt.println(describe(v));
+	fmt.println(v);
 
-	// Nil comparison and variant equality.
-	a: Value = i32(7);
-	b: Value = i32(7);
-	c: Value = true;
+	// Variant identity, not payload identity.
+	fmt.println(side(Pair_Of_Ints.left(3)));
+	fmt.println(side(Pair_Of_Ints.right(3)));
+	fmt.println(1 if Pair_Of_Ints.left(3) == Pair_Of_Ints.left(3) else 0);
+	fmt.println(1 if Pair_Of_Ints.left(3) == Pair_Of_Ints.right(3) else 0);
+
+	// Equality dispatches on the tag and then on the active payload.
+	a: Value = .count(7);
+	b: Value = .count(7);
+	c: Value = .flag(true);
 	fmt.println(1 if a == b else 0);
 	fmt.println(1 if a == c else 0);
 	fmt.println(1 if a != c else 0);
-	fmt.println(1 if a == nil else 0);
 
-	// `as` is the optional spelling and never traps; `.(T)` is the trapping one.
-	m, ok := a.as(f64);
-	fmt.println(1 if ok else 0);
-	fmt.println(int(m));
-	hit, hit_ok := a.as(i32);
-	fmt.println(1 if hit_ok else 0);
-	fmt.println(int(hit));
-	// A nil union matches no variant.
-	nothing: Value;
-	_, none := nothing.as(i32);
-	fmt.println(1 if none else 0);
-
-	// `as` is a name users choose, so the *receiver's type* decides the meaning.
-	// A declared member wins on every non-union receiver, whatever its form.
+	// A declared member named `as` wins on every non-union receiver.
 	c1 := Counter{10};
 	pair := Pair{Counter{20}};
 	row := [?]Counter{Counter{30}};
@@ -139,55 +126,27 @@ main :: proc() {
 	fmt.println(fresh_counter().as(1));
 	fmt.println(pair.first.as(1));
 	fmt.println(row[0].as(1));
-	// And the built-in wins on a union reached through those same forms.
-	fmt.println(int(carry(a).value.as(i32) or_else i32(-1)));
-	fmt.println(int(unions()[0].as(i32) or_else i32(-1)));
-	fmt.println(int(same(a).as(i32) or_else i32(-1)));
+	fmt.println(carry(a).value);
+	fmt.println(unions()[0]);
+	fmt.println(same(a));
 
-	fmt.println(describe(a));
-	fmt.println(describe(c));
-	fmt.println(describe(v));
-	empty: Value;
-	fmt.println(describe(empty));
+	// The failure protocol.
+	fmt.println(good());
+	fmt.println(bad());
+	fmt.println(branch_result(false));
 
-	// The error protocol.
-	n1, e1 := good();
-	fmt.println(n1);
-	fmt.println(1 if e1 == nil else 0);
-	n2, e2 := bad();
-	fmt.println(n2);
-	fmt.println(1 if e2 == nil else 0);
-	fmt.println(1 if status_user() else 0);
-	bn, be := branch_result(false);
-	fmt.println(bn);
-	fmt.println(1 if be == nil else 0);
-
-	// `or_else` supplies a fallback without evaluating it on success.
-	fmt.println(int(a.as(i32) or_else i32(123)));
-	fmt.println(int(a.as(f64) or_else 4.0));
-
-	// The same operator over a union status, which it discards.
+	// `or_else` supplies a fallback and evaluates it only on the failure variant.
 	fmt.println(fetch(false) or_else -1);
 	fmt.println(fetch(true) or_else -1);
-	ln, ll := labelled(false) or_else fallback_pair();
-	fmt.println(ln);
-	fmt.println(ll);
-	fn, fl := labelled(true) or_else fallback_pair();
-	fmt.println(fn);
-	fmt.println(fl);
+	fmt.println(good() or_else -1);
+	fmt.println(bad() or_else -1);
 
-	// `@(align=N)` raises the payload's alignment, which `tests/layout` can only
-	// confirm agrees with LLVM — the values themselves belong here.
+	// `@(align=N)` raises the payload's alignment; `tests/layout` confirms the
+	// checker and LLVM agree, and the values themselves belong here.
 	fmt.println(size_of(Narrow));
 	fmt.println(align_of(Narrow));
 	fmt.println(size_of(Wide_Aligned));
 	fmt.println(align_of(Wide_Aligned));
 	fmt.println(size_of(Holder));
 	fmt.println(offset_of(Holder, value));
-}
-
-extract_as :: proc(value: Value, $T: type) -> T {
-	result, ok := value.as(T);
-	assert(ok);
-	return result;
 }
