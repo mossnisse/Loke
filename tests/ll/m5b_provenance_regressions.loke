@@ -7,9 +7,10 @@ release :: proc(@(allocator_reset) allocator: Allocator) {
 // A reset before a later allocation must not poison that future loan.
 allocate_after_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	release(allocator);
-	pointer, err := new(int, allocator);
-	if (err != nil) { return; }
-	free(pointer);
+	switch (pointer in new(int, allocator)) {
+	case .ok:  free(pointer);
+	case .err:
+	}
 }
 
 // Written in the adverse order for summary propagation. This chain is longer
@@ -50,9 +51,10 @@ deep_32 :: proc(value: int) -> ^mut int { return deep_33(value); }
 deep_33 :: proc(value: int) -> ^mut int { return deep_34(value); }
 deep_34 :: proc(value: int) -> ^mut int { return deep_leaf(value); }
 
+no_pointer :: proc() -> ^mut int { panic("allocation failed"); }
+
 deep_leaf :: proc(value: int) -> ^mut int {
-	pointer, err := new(int);
-	if (err != nil) { panic("allocation failed"); }
+	pointer := new(int) or_else no_pointer();
 	pointer^ = value;
 	return pointer;
 }

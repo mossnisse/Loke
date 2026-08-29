@@ -2,14 +2,14 @@ declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)
 declare void @loke_rt_v1_frame_pop(ptr)
 declare void @loke_rt_v1_thread_attach()
 declare void @loke_rt_v1_thread_detach()
-%ulive.281 = alloca [2 x i1]
-call void @llvm.memset.p0.i64(ptr %ulive.281, i8 0, i64 2, i1 false)
-call void @loke_rt_v1_frame_push(ptr %uframe.281, ptr @loke.u281.loke.p.owner, ptr %uctx.281)
-call void @loke_rt_v1_frame_pop(ptr %uframe.271)
-define private void @loke.u281.loke.p.owner(ptr %ctx) {
+alloca [2 x i1]
+call void @llvm.memset.p0.i64(ptr %ulive.
+call void @loke_rt_v1_frame_push(ptr %uframe.
+call void @loke_rt_v1_frame_pop(ptr %uframe.
+.loke.p.owner(ptr %ctx) {
 unwind.run.
 unwind.skip.
-call void @loke.p.Res.release(ptr %t305)
+call void @loke.p.Res.release(ptr %t
 call void @loke_rt_v1_thread_attach()
 call void @loke_rt_v1_thread_detach()
 define void @loke_rt_v1_program_tls_cleanup() {

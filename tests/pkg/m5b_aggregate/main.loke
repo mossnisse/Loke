@@ -13,8 +13,8 @@ import "./wrapping";
 // POSITIVE. Every root in this chain is the caller's, and the caller keeps the
 // table alive for the whole of it.
 integrated :: proc(table: inout map[string][dynamic]int) -> int {
-	slot, found := table.find("a");
-	if (!found) { return -1; }
+	slot := table.find("a") or_else nil;
+	if (slot == nil) { return -1; }
 	holder := wrapping.wrap(slot^[:]);
 	held: wrapping.Holder;
 	wrapping.retain(inout held, wrapping.unwrap(holder));
@@ -33,8 +33,8 @@ through_the_package :: proc(values: []int) -> []int {
 // borrow of the table's storage, and inserting through the same table may move
 // it. The wrapped view outlives that.
 invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
-	slot, found := table.find("a");
-	if (!found) { return -1; }
+	slot := table.find("a") or_else nil;
+	if (slot == nil) { return -1; }
 	holder := wrapping.wrap(slot^[:]);
 	fresh: [dynamic]int;
 	table["b"] = move(fresh);

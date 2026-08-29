@@ -235,6 +235,11 @@ layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if info == nil || !type_is_supported(c, type) {
 		return false
 	}
+	// A generic record's own shell is a placeholder for its instances: no
+	// definition is emitted for it, so LLVM has no layout to be asked about.
+	if sym := symbol_of(c, info.symbol); sym != nil && sym.generic {
+		return false
+	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Proc, .Enum, .Array, .Struct,
 	     .Distinct, .Union, .Slice, .Allocator, .Allocator_Error,

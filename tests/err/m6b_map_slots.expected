@@ -2,7 +2,7 @@ L0511
 @13:2
 this write of `m` is not compatible with the mutable borrow of it that is still in use
 L0512
-@20:9
+@20:2
 `m` cannot be modified here: a mutable borrow of it is still in use
 L0512
 @27:2

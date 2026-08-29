@@ -7,12 +7,12 @@ L0391
 L0408
 @26:7
 `length` is a method and must be called
-L0425
-@29:12
-`f64` is not a variant of `Value`
+L0426
+@30:7
+`Value` has no variant `missing`
 L0427
-@31:2
-this type switch over `Value` does not cover bool
+@35:2
+this type switch over `Value` does not cover .flag
 L0410
-@36:7
+@40:7
 a conversion to `Vec` takes exactly one plain value argument

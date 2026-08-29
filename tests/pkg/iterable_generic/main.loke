@@ -22,7 +22,7 @@ impl Countdown_Iterator {
 
 // The associated output makes a generic loop's element type available without
 // another inferred generic parameter.
-first :: proc(source: $S) -> (S.Element, bool)
+first :: proc(source: $S) -> Option(S.Element)
 	where interfaces.Iterable(S) {
 	iterator := source.iter();
 	return iterator.next();
@@ -64,16 +64,22 @@ main :: proc() {
 	static_assert(interfaces.Reverse_Iterable([dynamic]int));
 
 	xs := [3]int{1, 2, 3};
-	a, a_ok := first(xs);
-	fmt.println(a);
+	switch (a in first(xs)) {
+	case .some: fmt.println(a);
+	case .none: fmt.println(-1);
+	}
 
 	half := 1 ..< 4;
 	closed := 1 ..= 4;
-	b, b_ok := first(half);
-	fmt.println(b);
+	switch (b in first(half)) {
+	case .some: fmt.println(b);
+	case .none: fmt.println(-1);
+	}
 
-	c, c_ok := first(Countdown{5});
-	fmt.println(c);
+	switch (c in first(Countdown{5})) {
+	case .some: fmt.println(c);
+	case .none: fmt.println(-1);
+	}
 
 	fmt.println(sum_all(xs));
 	fmt.println(sum_all(half));
@@ -87,8 +93,10 @@ main :: proc() {
 	static_assert(interfaces.Iterable(map[int]int));
 	ys: [dynamic]int = {4, 5, 6};
 	fmt.println(sum_all(ys));
-	d, d_ok := first(ys);
-	fmt.println(d);
+	switch (d in first(ys)) {
+	case .some: fmt.println(d);
+	case .none: fmt.println(-1);
+	}
 	m: map[int]int;
 	m[1] = 10;
 	m[2] = 20;

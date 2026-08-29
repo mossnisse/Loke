@@ -884,7 +884,8 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		// A type switch binds one name per case to the subject's value, so what
 		// the union alternative holds is what the binding holds.
 		if graph.mode != .Lifecycle {
-			prov_bind_value(graph, c.binding_symbol, subject, c.span)
+			prov_bind_value(graph, c.binding_symbol, prov_case_payload(graph, s, c, subject), c.span)
+			prov_bind_case_region(graph, c.binding_symbol, s.subject)
 		} else {
 			track_case_binding(graph, c, consumes)
 		}
@@ -897,6 +898,60 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		link(graph, entry, merge)
 	}
 	graph.current = merge
+}
+
+// The payload read out from under a union's wildcard alternative. Unwrapping a
+// borrow-carrying value — a case binding, `or_else`, `or_return` — keeps every
+// borrow the wrapper carried. An `any_view` reads through its data pointer
+// instead, which is the read the extraction itself performs.
+@(private = "file")
+prov_payload_content :: proc(
+	graph: ^Flow_Graph, loans: []int, subject_type, payload_type: Type_Id, span: Span,
+) -> []int {
+	if len(loans) == 0 || payload_type == INVALID_TYPE || payload_type == subject_type {
+		return loans
+	}
+	if subject_type == TYPE_ANY_VIEW {
+		return prov_load_content(graph, loans, nil, payload_type, span)
+	}
+	if !type_is_union(graph.k.c, subject_type) {
+		return loans
+	}
+	return prov_project_content(graph, loans, subject_type, {proj_wild()}, payload_type, span)
+}
+
+// What a case binding holds: the subject's own content when the case binds the
+// union type, and the active variant's payload when it binds one variant.
+@(private = "file")
+prov_case_payload :: proc(
+	graph: ^Flow_Graph, s: ^Stmt_Switch, entry: Switch_Case, subject: []int,
+) -> []int {
+	if entry.binding_symbol == INVALID_SYMBOL || s.subject == nil {
+		return subject
+	}
+	return prov_payload_content(
+		graph, subject, expr_base(s.subject).type, entry.binding_type, entry.span,
+	)
+}
+
+// A case binding names the payload its subject held, so it inherits that
+// subject's region: unwrapping a handle does not lose which region it names.
+@(private = "file")
+prov_bind_case_region :: proc(graph: ^Flow_Graph, id: Symbol_Id, subject: Expr) {
+	if id == INVALID_SYMBOL || subject == nil {
+		return
+	}
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil {
+		return
+	}
+	if type_underlying(graph.k.c, sym.type) != TYPE_ALLOCATOR &&
+	   !type_is_managed(graph.k.c, sym.type) {
+		return
+	}
+	if set := prov_region_of(graph, subject); !region_is_empty(set) {
+		graph.region_of[id] = set
+	}
 }
 
 // A consuming switch hands the active payload to the case's binding, which is
@@ -1014,10 +1069,12 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			emit_cleanups(graph, 0)
 			graph.current = resume
 			// design.md "or_return operator": on success the expression yields the
-			// operand's values with the status removed, so whatever those values
-			// borrow or allocate travels out with them. Dropping the loans here
+			// operand's value with the failure removed, so whatever that value
+			// borrows or allocates travels out with it. Dropping the loans here
 			// would leave `p := new(T) or_return` with unknown provenance.
-			return operand_loans
+			return prov_payload_content(
+				graph, operand_loans, expr_base(v.operand).type, v.type, v.span,
+			)
 		}
 
 	case ^Expr_Selector:
@@ -1122,7 +1179,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		fallback_loans := walk_flow_expr(graph, v.fallback)
 		link(graph, graph.current, merge)
 		graph.current = merge
-		return prov_join(graph, value_loans, fallback_loans)
+		payload := prov_payload_content(graph, value_loans, expr_base(v.value).type, v.type, v.span)
+		return prov_join(graph, payload, fallback_loans)
 
 	case ^Expr_Checked_Extract:
 		loans := walk_flow_expr(graph, v.operand)
@@ -1192,13 +1250,18 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	if v.union_op == .Extract && v.extract != nil {
 		return walk_flow_expr(graph, v.extract)
 	}
-	// A union's active type query reads its receiver once and returns a scalar;
-	// it neither consumes the union nor carries provenance into the result.
+	// `.name(payload)` is aggregate construction: the payload's borrows travel
+	// into the union under its wildcard alternative, exactly as wrapping the
+	// same value in a struct field puts them at that field.
 	if v.union_op != .None {
+		loans: []int
 		if len(v.bound) == 1 {
-			walk_flow_expr(graph, v.bound[0])
+			loans = walk_flow_expr(graph, v.bound[0])
 		}
-		return nil
+		if graph.mode == .Lifecycle || v.union_op != .Construct {
+			return nil
+		}
+		return prov_variant_content(graph, v, loans)
 	}
 	if graph.mode != .Lifecycle {
 		return prov_call(graph, v)
@@ -1554,6 +1617,31 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 					sources = prov_join(graph, sources, prov_select_content(graph, loans, child_type, suffix))
 				}
 			}
+		}
+		prov_define_one_content(graph, slot, sources, v.span)
+	}
+	return content
+}
+
+// design.md "Unions": one variant's payload sits under the union's wildcard
+// alternative, so constructing a variant puts the payload's borrows there.
+@(private = "file")
+prov_variant_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, loans: []int) -> []int {
+	content := prov_temp_content(graph, v.type)
+	if len(content) == 0 {
+		return nil
+	}
+	prefix := prov_extend(graph, nil, proj_wild())
+	payload_type := INVALID_TYPE
+	if len(v.bound) == 1 && v.bound[0] != nil {
+		payload_type = expr_base(v.bound[0]).type
+	}
+	for slot in content {
+		sources: []int
+		if len(loans) > 0 && paths_overlap(graph.prov_slots[slot].path, prefix) {
+			path := graph.prov_slots[slot].path
+			suffix := path[min(len(prefix), len(path)):]
+			sources = prov_select_content(graph, loans, payload_type, suffix)
 		}
 		prov_define_one_content(graph, slot, sources, v.span)
 	}
@@ -2217,6 +2305,29 @@ prov_region_name :: proc(graph: ^Flow_Graph, set: Region_Set) -> string {
 	return found
 }
 
+// design.md "Allocators": a handle carries its region through every copy of it.
+// An `Option` or `Result` around one is still that handle in transit, so the
+// wrapper carries whatever its payload carries.
+@(private = "file")
+prov_carries_allocator :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+	if type == INVALID_TYPE || depth > 8 {
+		return false
+	}
+	if type_underlying(c, type) == TYPE_ALLOCATOR {
+		return true
+	}
+	info := underlying_info(c, type)
+	if info == nil || info.kind != .Union {
+		return false
+	}
+	for payload in info.variants {
+		if payload != TYPE_VOID && prov_carries_allocator(c, payload, depth + 1) {
+			return true
+		}
+	}
+	return false
+}
+
 // The allocator region an expression denotes, or an empty set when it denotes
 // nothing region-shaped.
 @(private = "file")
@@ -2274,7 +2385,7 @@ prov_region_of :: proc(graph: ^Flow_Graph, e: Expr) -> Region_Set {
 		}
 		return prov_call_region(graph, v, 0, v.type)
 	}
-	if type_underlying(c, expr_base(e) == nil ? INVALID_TYPE : expr_base(e).type) == TYPE_ALLOCATOR {
+	if prov_carries_allocator(c, expr_base(e) == nil ? INVALID_TYPE : expr_base(e).type) {
 		set := prov_empty_region(graph)
 		set.unknown = true
 		return set
@@ -2312,7 +2423,7 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bo
 prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result: int, result_type: Type_Id) -> Region_Set {
 	c := graph.k.c
 	out := prov_empty_region(graph)
-	allocator_result := type_underlying(c, result_type) == TYPE_ALLOCATOR
+	allocator_result := prov_carries_allocator(c, result_type)
 	if !type_is_managed(c, result_type) && !allocator_result {
 		return out
 	}
@@ -3881,7 +3992,29 @@ text_result_borrows :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 		return false
 	}
 	result := len(v.result_types) > 0 ? v.result_types[0] : v.type
-	return type_is_carrier(c, result)
+	return prov_carries_borrow(c, result)
+}
+
+// A carrier, or an `Option`/`Result` around one: the wrapper travels with the
+// borrow its payload holds, and unwrapping it hands that borrow on.
+@(private = "file")
+prov_carries_borrow :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
+	if type == INVALID_TYPE || depth > 8 {
+		return false
+	}
+	if type_is_carrier(c, type) {
+		return true
+	}
+	info := underlying_info(c, type)
+	if info == nil || info.kind != .Union {
+		return false
+	}
+	for payload in info.variants {
+		if payload != TYPE_VOID && prov_carries_borrow(c, payload, depth + 1) {
+			return true
+		}
+	}
+	return false
 }
 
 @(private = "file")

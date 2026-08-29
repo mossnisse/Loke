@@ -1,24 +1,18 @@
-L0494
-@11:1
-contains a managed union; tag-aware union clone and drop lowering is not implemented in M5a
 L0514
-@19:2
+@17:2
 `free` releases an allocation from `new` or `new_clone`; this pointer may designate local
 L0498
-@24:7
+@22:7
 cannot be applied to `static` storage, which is always live
 L0497
-@26:7
+@24:7
 names a variable; move the owner out of the aggregate first
 L0500
-@31:20
+@29:20
 cannot be used here: it has already been moved, dropped, or released
 L0500
-@38:16
+@36:16
 cannot be dropped here: it is live on only some of the paths
 L0500
-@39:15
+@37:15
 cannot be used here: it is live on only some of the paths
-L0494
-@46:2
-contains a managed union; tag-aware union clone and drop lowering is not implemented in M5a

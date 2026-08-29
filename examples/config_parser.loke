@@ -59,8 +59,12 @@ parse_entry :: proc(line: string_view) -> Result(Entry, Error) {
 	return .ok(Entry{line[0:separator], value});
 }
 
+// The keys stored in `into` are views into `lines`, so the contract says so:
+// the caller's storage is what the caller's map ends up holding.
 load :: proc(
-	reader: inout Reader, lines: []string_view, into: inout map[string_view]int,
+	reader: inout Reader,
+	@(escape=stored) lines: []string_view,
+	into: inout map[string_view]int,
 ) -> Result(Unit, Error) {
 	foreach (line in lines) {
 		reader.line += 1;

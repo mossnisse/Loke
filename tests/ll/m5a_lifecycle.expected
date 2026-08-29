@@ -1,9 +1,12 @@
-insertvalue { %struct.Plain.36, i64 } undef, %struct.Plain.36 %arg0, 0
-call { %struct.Plain.36, i64 } @loke.i.Plain.try_clone(%struct.Plain.36 %arg0, ptr %arg1)
+define %union.Result.Plain.Allocator_Error.
+@loke.i.Plain.try_clone(%struct.Plain.
 clone.failed.
-call { %struct.Res.37, i64 } @loke.i.Res.try_clone(
-store %struct.Group.38 zeroinitializer, ptr
+call %union.Result.Res.Allocator_Error.
+@loke.i.Res.try_clone(
+store %struct.Group.
+ zeroinitializer, ptr
 clone.unwind.
 call void @loke.p.Res.release(ptr
-insertvalue { %struct.Group.38, i64 } zeroinitializer, i64
-call %struct.Group.38 @loke.i.Group.clone(
+store %union.Result.Group.Allocator_Error.
+call %struct.Group.
+@loke.i.Group.clone(

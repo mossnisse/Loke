@@ -156,7 +156,9 @@ run :: proc() -> int {
 	}
 
 	if opts.check_layout {
-		return check_layout_agreement(&c, opts)
+		code := check_layout_agreement(&c, opts)
+		report(&c) // the disagreements themselves are diagnostics
+		return code
 	}
 
 	code := emit_package(&c, package_id, opts)

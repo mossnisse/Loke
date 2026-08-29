@@ -1,25 +1,35 @@
 package main; import "core:fmt";
 
-// The lowering of the two optional operations (consolidation phase 1a).
+// The lowering of the operations that answer with an `Option` (consolidation
+// phase 1a, then the typed-fallibility consolidation).
 //
-// `v.as(T)` is the same extraction node `v.(T)` is, so it emits one tag compare
-// and selects a zeroed payload instead of trapping. `m.lookup_value(key)` is a
+// `view.as(T)` is the same extraction node `view.(T)` is, so it emits one tag
+// compare and builds `.none` instead of trapping. `m.lookup_value(key)` is a
 // contributed member: one `map_find` probe, no insertion, and exactly one clone
-// of a managed payload inside the operation.
+// of a managed payload inside the operation. A variant switch compares the
+// union's own tag and reads the payload out of the spilled subject.
 
-Value :: union { bool, i32 }
+Value :: union { flag: bool, number: i32 }
 
 main :: proc() {
-	v: Value = i32(4);
-	n, ok := v.as(i32);
-	fmt.println(int(n) + (1 if ok else 0));
-	// The trapping spelling still traps, and is still single-valued.
-	fmt.println(int(v.(i32)));
+	v: Value = .number(4);
+	switch (n in v) {
+	case .number: fmt.println(int(n) + 1);
+	case .flag:   fmt.println(0);
+	}
+
+	// The erased extraction keeps both spellings: `.as` yields `Option(T)`,
+	// `.(T)` traps.
+	view: any_view = i32(4);
+	fmt.println(int(view.as(i32) or_else 0));
+	fmt.println(int(view.(i32)));
 
 	m: map[string][dynamic]int;
 	xs: [dynamic]int;
 	xs.append(1);
 	m["a"] = move(xs);
-	held, found := m.lookup_value("a");
-	fmt.println(len(held) + (1 if found else 0));
+	switch (held in m.lookup_value("a")) {
+	case .some: fmt.println(len(held) + 1);
+	case .none: fmt.println(0);
+	}
 }

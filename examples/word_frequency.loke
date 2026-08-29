@@ -15,7 +15,13 @@ TEXT ::
 	"the quick brown fox jumps over the lazy dog " +
 	"while the dog sleeps and the fox runs on";
 
-count_words :: proc(text: string, counts: inout map[string_view]int, order: inout [dynamic]string_view) {
+// Both destinations end up holding views into `text`, so `text` arrives as the
+// borrow it really is and the contract says what the call keeps of it.
+count_words :: proc(
+	@(escape=stored) text: string_view,
+	counts: inout map[string_view]int,
+	order: inout [dynamic]string_view,
+) {
 	// `text[i]` is deliberately not an index: one code point can span several
 	// bytes. `bytes()` is the explicit byte view.
 	bytes := text.bytes();
@@ -40,9 +46,9 @@ main :: proc() {
 	order:  [dynamic]string_view;
 	count_words(text, inout counts, inout order);
 
-	// One name over a map binds the value; two names bind key and value.
+	// One name over a map binds the entry; two names bind key and value.
 	total := 0;
-	foreach (n in counts) { total += n; }
+	foreach (entry in counts) { total += entry.value; }
 	fmt.println("distinct:", len(counts));
 	fmt.println("total:", total);
 

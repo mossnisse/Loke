@@ -6,7 +6,7 @@ package main;
 
 Packed :: struct @(packed) { x: u8, y: i32 }
 Outer :: struct { inner: Packed }
-Bad_Union :: union @(packed) { i32, bool } // L0607: packed is struct-only
+Bad_Union :: union @(packed) { n: i32, f: bool } // L0607: packed is struct-only
 
 main :: proc() {
 	p := Packed{ x = 1, y = 2 };

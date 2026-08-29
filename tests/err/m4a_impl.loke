@@ -31,9 +31,10 @@ impl Complex {
 	length :: proc(self, extra: int) -> f64 { return self.real; }
 }
 
-// A file-scope union starts at nil, because writing its tag needs code.
-Maybe :: union { int }
-global: Maybe = 3;
+// A union with no `@(zero=)` has no zero value, so a declaration with no
+// initialiser has nothing to start at.
+Maybe :: union { number: int, nothing: }
+global: Maybe;
 
 // `self` is only a receiver inside an `impl` or `extend` block.
 loose :: proc(self) -> int { return 1; }

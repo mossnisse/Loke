@@ -31,7 +31,7 @@ smooth :: proc(input: []Sample, scratch: Allocator) -> f64 {
 // A caller that owns the region: it may reset one it created without any
 // promise from anyone, because no caller can own anything inside it.
 run_batches :: proc(samples: []Sample) {
-	scratch := mem.Scratch();
+	scratch := mem.Scratch.init();
 	for (start := 0; start < len(samples); start += 4) {
 		stop := start + 4;
 		if (stop > len(samples)) { stop = len(samples); }
@@ -49,7 +49,7 @@ run_batches :: proc(samples: []Sample) {
 // analysis is what enforces it.
 in_frame :: proc() -> int {
 	buffer: [1024]u8 = {};
-	arena := mem.Arena(buffer[:]);
+	arena := mem.Arena.from_buffer(buffer[:]);
 
 	ids: [dynamic]int via arena.allocator() = {};
 	for (i := 0; i < 16; i += 1) { ids.append(i * i); }

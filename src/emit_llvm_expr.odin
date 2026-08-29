@@ -46,14 +46,18 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 
 	b := strings.builder_make()
 	strings.write_string(&b, "{ ")
-	fmt.sbprintf(&b, "i%d %s", shape.align * 8, head)
-	if pad := shape.payload_size - shape.align; pad > 0 {
-		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", pad)
+	// An all-payloadless union stores its tag and nothing else.
+	if shape.payload_size > 0 {
+		fmt.sbprintf(&b, "i%d %s", shape.align * 8, head)
+		if pad := shape.payload_size - shape.align; pad > 0 {
+			fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", pad)
+		}
+		if gap := shape.tag_offset - shape.payload_size; gap > 0 {
+			fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", gap)
+		}
+		strings.write_string(&b, ", ")
 	}
-	if gap := shape.tag_offset - shape.payload_size; gap > 0 {
-		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", gap)
-	}
-	fmt.sbprintf(&b, ", i%d %d", shape.tag_bytes * 8, index)
+	fmt.sbprintf(&b, "i%d %d", shape.tag_bytes * 8, index)
 	if tail := shape.size - shape.tag_offset - shape.tag_bytes; tail > 0 {
 		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", tail)
 	}

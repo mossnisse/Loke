@@ -39,9 +39,7 @@ conditional_free :: proc(use_heap: bool) {
 	local := 7;
 	pointer := &mut local;
 	if (use_heap) {
-		allocated, err := new(int);
-		if (err != nil) { return; }
-		pointer = allocated;
+		pointer = new(int) or_else nil;
 	}
 	free(pointer);
 }

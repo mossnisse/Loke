@@ -42,8 +42,7 @@ indirect_wrapper :: proc(allocator: Allocator, reset: proc(@(allocator_reset) a:
 // design.md: `free_all` "frees every allocation in the allocator's region", so
 // a pointer into it that is used afterwards would dangle.
 alias_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
-	pointer, err := new(int, allocator);
-	if (err != nil) { return; }
+	pointer := new(int, allocator) or_else nil;
 	free_all(allocator);
 	fmt.println(pointer^);
 }
@@ -89,11 +88,14 @@ erased_allocator_region :: proc() {
 	arena := mem.Arena.init();
 	allocator := arena.allocator();
 	view: any_view = allocator;
-	restored, ok := view.as(Allocator);
-	xs: [dynamic]int via restored;
-	xs.append(1);
-	free_all(allocator);
-	fmt.println(xs[0], ok);
+	switch (restored in view.as(Allocator)) {
+	case .some:
+		xs: [dynamic]int via restored;
+		xs.append(1);
+		free_all(allocator);
+		fmt.println(xs[0]);
+	case .none:
+	}
 }
 
 // consolidation-provenance-plan.md step 9: wrapping the owner in a field of

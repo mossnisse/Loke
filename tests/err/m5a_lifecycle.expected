@@ -6,7 +6,7 @@ L0487
 `clone` is a compiler-generated copy operation; bind custom behavior with `hook(copy)`
 L0488
 @15:2
-`copy` has a fixed signature for `S`: `proc(self, allocator: Allocator) -> (T, Allocator_Error)`
+`copy` has a fixed signature for `S`: `proc(self, allocator: Allocator) -> Result(T, Allocator_Error)`
 L0489
 @23:61
 a lifecycle hook takes no written default; the compiler supplies `mem.default_allocator()`
@@ -17,7 +17,7 @@ L0488
 @40:2
 duplicate `hook(drop)` for `Resource`
 L0491
-@46:25
+@46:19
 `Move_Only` is move-only, so it cannot be cloned into a new allocation
 L0412
 @48:2

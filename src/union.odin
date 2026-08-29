@@ -235,6 +235,10 @@ union_layout :: proc(c: ^Compiler, type: Type_Id) -> Union_Layout {
 	info = type_of(c, type)
 	out.align = max(out.align, info.written_align)
 	out.tag_bytes = union_tag_bytes(len(info.variants))
+	// The tag is a member like any other, so a tag wider than every payload
+	// raises the union's alignment. Only a union of many payloadless or very
+	// narrow variants reaches that.
+	out.align = max(out.align, out.tag_bytes)
 	out.payload_size = align_to(out.payload_size, out.align)
 	out.tag_offset = align_to(out.payload_size, out.tag_bytes)
 	out.size = align_to(out.tag_offset + out.tag_bytes, out.align)

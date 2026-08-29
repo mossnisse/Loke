@@ -19,23 +19,24 @@ impl Res {
 }
 
 main :: proc() {
-	p, err := new(int);
-	if (err == nil) {
+	switch (p in new(int)) {
+	case .ok:
 		p^ = 1;
 		free(p);
+	case .err:
 	}
 
 	// A trivially copyable operand stores its representation.
-	q, qerr := new_clone(7);
-	if (qerr == nil) {
-		free(q);
+	switch (q in new_clone(7)) {
+	case .ok:  free(q);
+	case .err:
 	}
 
 	// A record whose clone can fail goes through the hook, and the allocation it
 	// cannot publish into is released.
-	r, rerr := new_clone(Res{2});
-	if (rerr == nil) {
-		free(r);
+	switch (r in new_clone(Res{2})) {
+	case .ok:  free(r);
+	case .err:
 	}
 	fmt.println(0);
 }

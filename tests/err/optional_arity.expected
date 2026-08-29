@@ -1,50 +1,34 @@
 L0308
-@20:2
+@21:2
 2 names but 1 initialiser
-`value.(T)` traps on a mismatch; `value.as(T)` yields `(T, bool)`
+`m[key]` reads one value; `m.lookup_value(key)` yields `Option(V)`
 L0428
-@21:7
-`or_else` needs a status expression with a payload on its left
-L0308
-@22:2
-2 names but 1 initialiser
-`m[key]` reads one value; `m.lookup_value(key)` yields `(V, bool)`
-L0428
-@23:7
-`or_else` needs a status expression with a payload on its left
-L0382
+@22:7
+`or_else` needs a union with a designated failure variant on its left, found `int`
+L0425
 @26:7
-this call produces 2 values, but one is expected here
-L0382
-@27:7
-this call produces 2 values, but one is expected here
-L0425
-@30:7
-`as` names the requested type as its one positional argument, found 0 arguments
-L0425
-@31:7
-`as` names the requested type as its one positional argument, found 2 arguments
-L0425
-@32:7
-`as` names the requested type as its one positional argument, found 1 argument
-L0425
-@33:12
-`f64` is not a variant of `Value`
+`Value` is a union: match its variants with a `switch (p in value)` whose cases are `.name`
 L0363
-@37:7
+@27:7
+`Value` has no field or member `as`
+L0363
+@31:7
 `Plain` has no field or member `lookup_value`
 L0491
-@41:13
+@35:7
 `Token` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows
-L0341
-@49:13
-this expression has no compile-time meaning
-in `trapping`, called here
-L0341
-@55:13
-this expression has no compile-time meaning
-in `optional_extract`, called here
+L0425
+@42:7
+`as` names the requested type as its one positional argument, found 0 arguments
+L0425
+@43:7
+`as` names the requested type as its one positional argument, found 2 arguments
+L0425
+@44:7
+`as` names the requested type as its one positional argument, found 1 argument
 L0503
+@48:11
 `Token` is move-only, so a checked extraction cannot copy it from an `any_view`
 L0503
+@49:13
 `Token` is move-only, so a checked extraction cannot copy it from an `any_view`

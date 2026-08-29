@@ -9,4 +9,4 @@ newclone.store.
 newclone.clone.
 newclone.release.
 newclone.publish.
-call { %struct.Res.36, i64 } @loke.i.Res.try_clone(%struct.Res.36 { i64 2 }, ptr @loke_rt_v1_default_allocator)
+@loke.i.Res.try_clone(%struct.Res.45 { i64 2 }, ptr @loke_rt_v1_default_allocator)

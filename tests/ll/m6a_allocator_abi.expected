@@ -1,4 +1,4 @@
-define i64 @loke.p.in_region(ptr %arg0) {
-%t276 = call ptr @loke_rt_v1_alloc_zeroed(ptr %t275, i64 32, i64 16)
+@loke.p.in_region(ptr %arg0) {
+call ptr @loke_rt_v1_alloc_zeroed(ptr %t314, i64 32, i64 16)
 call void @loke_rt_v1_free(ptr @loke_rt_v1_default_allocator, ptr
-call i64 @loke.p.in_region(ptr @loke_rt_v1_default_allocator)
+@loke.p.in_region(ptr @loke_rt_v1_default_allocator)

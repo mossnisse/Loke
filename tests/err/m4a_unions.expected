@@ -1,33 +1,50 @@
 L0422
-@4:30
-`i32` is already a variant of this union
+@4:36
+`n` is already a variant of this union
 L0423
 @5:22
 `@(align=3)` must be a power of two between 1 and 16
+L0422
+@6:33
+this union variant payload is not a type
+L0423
+@10:22
+`@(zero=second)` must name the first variant, so the zero value stays all-zero
+L0423
+@11:25
+`@(zero=missing)` names no variant of this union
+L0423
+@14:22
+`@(failure=...)` needs a union of exactly two variants, found 3
+L0423
+@15:28
+`@(failure=missing)` names no variant of this union
 L0429
-@13:14
-`or_return` needs every result of this procedure to be named
-L0430
-@21:14
-`n` is not initialised yet, and `or_return` returns its current value
-L0430
-@29:14
-`n` is not initialised yet, and `or_return` returns its current value
+@24:17
+`or_return` needs this procedure's last result to be a union with a designated failure variant, found `int`
+L0429
+@30:19
 L0425
-@37:10
-`f64` is not a variant of `Value`
+@37:7
+`Value` is a union: match its variants with a `switch (p in value)` whose cases are `.name`
 L0426
-@40:15
+@41:15
 a type switch needs a union or an `any_view`, found `int`
 L0427
-@45:2
-this type switch over `Value` does not cover bool
+@47:2
+this type switch over `Value` does not cover .flag, .number
+L0426
+@48:7
+a union case names a variant: `case .name:`
+L0427
+@53:2
+this type switch over `Value` does not cover .flag
+L0427
+@59:2
+this type switch over `Value` does not cover .number
+L0426
+@61:7
+`Value` has no variant `missing`
 L0428
-@50:7
-`or_else` needs a status expression with a payload on its left
-L0429
-@52:20
-`or_return` needs a `bool`, union, or `Allocator_Error` final result, found `int`
-L0429
-@54:19
-`or_return` needs a `bool`, union, or `Allocator_Error` final result, found `^int`
+@65:7
+`or_else` needs a union with a designated failure variant on its left, found `bool`

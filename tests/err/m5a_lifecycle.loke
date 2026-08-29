@@ -20,7 +20,7 @@ T :: struct { w: int }
 impl T {
 	// The allocator default is supplied by the compiler until `core:mem` is
 	// nameable in M6, so a written one is rejected.
-	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(T, Allocator_Error) {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator = mem.default_allocator()) -> Result(T, Allocator_Error) {
 		return .ok(self);
 	}
 }
@@ -43,7 +43,7 @@ impl Resource {
 main :: proc() {
 	// A move-only value has no copy entry point to allocate through.
 	m := Move_Only{1};
-	bad, berr := new_clone(m);
+	bad := new_clone(m);
 	r := Resource{true};
 	r.release();
 

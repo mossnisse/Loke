@@ -8,11 +8,9 @@ impl Res {
 }
 
 Box :: struct { item: Res }
-Managed_Value :: union { Res }
 
 stale_allocation_root :: proc() {
-	p, err := new(int);
-	if (err != nil) { return; }
+	p := new(int) or_else nil;
 	free(p);
 	x := 42;
 	p = &mut x;
@@ -40,10 +38,4 @@ continue_must_run_post :: proc() {
 		i += 1;
 		continue;
 	}
-}
-
-managed_union_copy :: proc() {
-	u: Managed_Value = Res{5};
-	v := u;
-	fmt.println(v.(Res).id);
 }

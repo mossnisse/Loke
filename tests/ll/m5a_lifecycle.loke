@@ -27,9 +27,9 @@ main :: proc() {
 	fmt.println(q.x);
 
 	g := Group{Res{1}, Res{2}};
-	c, error := g.try_clone();
-	if (error == nil) {
-		fmt.println(c.second.id);
+	switch (c in g.try_clone()) {
+	case .ok:  fmt.println(c.second.id);
+	case .err:
 	}
 	d := g.clone();
 	fmt.println(d.first.id);

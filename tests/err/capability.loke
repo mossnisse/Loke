@@ -63,8 +63,7 @@ casts_away_read_only :: proc() {
 
 // Releasing storage is a write, so `free` needs the write capability.
 frees_a_reader :: proc() {
-	allocated, err := new(int);
-	if (err != nil) { return; }
+	allocated := new(int) or_else nil;
 	reader: ^int = allocated;
 	fmt.println(reader^);
 	free(reader);

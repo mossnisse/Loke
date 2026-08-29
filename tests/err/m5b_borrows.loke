@@ -7,7 +7,9 @@ package main; import "core:fmt";
 
 Pair :: struct { a: int, b: int }
 
-Choice :: union { int, bool }
+Choice :: union { number: int, flag: bool }
+
+no_pointer :: proc() -> ^mut int { panic("allocation failed"); }
 
 Res :: struct { id: int }
 
@@ -56,12 +58,15 @@ dynamic_index_overlaps :: proc(i: int) {
 	fmt.println(view[0]);
 }
 
-// A checked union extraction reads the whole subject, so it overlaps too.
+// A variant switch reads the whole subject, so it overlaps too.
 union_variant_overlaps :: proc() {
-	c: Choice = 1;
+	c: Choice = .number(1);
 	pointer := &mut c;
-	fmt.println(c.(int));
-	fmt.println(pointer^.(int));
+	switch (n in c) {
+	case .number: fmt.println(n);
+	case .flag:
+	}
+	fmt.println(pointer^);
 }
 
 // design.md: "Moving, dropping, freeing, fully assigning, or exchanging a root
@@ -112,8 +117,7 @@ free_of_a_lexical_root :: proc() {
 }
 
 double_free :: proc() {
-	q, err := new(int);
-	if (err != nil) { panic("allocation failed"); }
+	q := new(int) or_else no_pointer();
 	free(q);
 	free(q);
 }
@@ -121,8 +125,7 @@ double_free :: proc() {
 // A `free` invalidates every locally tracked alias, so one that survives it is
 // the error rather than the read it would later perform.
 alias_survives_free :: proc() {
-	q, err := new(int);
-	if (err != nil) { panic("allocation failed"); }
+	q := new(int) or_else no_pointer();
 	alias := q;
 	free(q);
 	fmt.println(alias^);
@@ -146,9 +149,9 @@ main :: proc() {
 map_lookup_carrier :: proc() {
 	m: map[int]string_view;
 	m[1] = "hello";
-	value, ok := m.lookup_value(1);
+	value := m.lookup_value(1);
 	m.clear();
-	fmt.println(value, ok);
+	fmt.println(value);
 }
 
 map_index_carrier :: proc() {

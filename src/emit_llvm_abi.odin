@@ -374,14 +374,20 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
 	b := strings.builder_make()
 	strings.write_string(&b, "{ ")
-	fmt.sbprintf(&b, "i%d", shape.align * 8)
-	if pad := shape.payload_size - shape.align; pad > 0 {
-		fmt.sbprintf(&b, ", [%d x i8]", pad)
+	// A union every variant of which is payloadless has no payload region at
+	// all: its storage is the tag alone, and there is no head to carry an
+	// alignment no payload asks for.
+	if shape.payload_size > 0 {
+		fmt.sbprintf(&b, "i%d", shape.align * 8)
+		if pad := shape.payload_size - shape.align; pad > 0 {
+			fmt.sbprintf(&b, ", [%d x i8]", pad)
+		}
+		if gap := shape.tag_offset - shape.payload_size; gap > 0 {
+			fmt.sbprintf(&b, ", [%d x i8]", gap)
+		}
+		strings.write_string(&b, ", ")
 	}
-	if gap := shape.tag_offset - shape.payload_size; gap > 0 {
-		fmt.sbprintf(&b, ", [%d x i8]", gap)
-	}
-	fmt.sbprintf(&b, ", i%d", shape.tag_bytes * 8)
+	fmt.sbprintf(&b, "i%d", shape.tag_bytes * 8)
 	if tail := shape.size - shape.tag_offset - shape.tag_bytes; tail > 0 {
 		fmt.sbprintf(&b, ", [%d x i8]", tail)
 	}
@@ -499,6 +505,9 @@ emit_union_payload :: proc(e: ^Emitter, union_type, payload_type: Type_Id, slot:
 @(private = "file")
 union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
 	shape := union_layout(e.c, type)
+	if shape.payload_size == 0 {
+		return 0 // no payload region, so the tag is the whole storage
+	}
 	index := 1
 	if shape.payload_size > shape.align {
 		index += 1

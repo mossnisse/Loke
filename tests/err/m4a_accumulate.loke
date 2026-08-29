@@ -4,7 +4,7 @@ package main; import "core:fmt";
 // reported.
 
 Vec :: struct { x: i32 }
-Value :: union { i32, bool }
+Value :: union { number: i32, flag: bool }
 
 take_int :: proc(i: int) -> int { return i; }
 take_f32 :: proc(f: f32) -> int { return int(f); }
@@ -25,11 +25,15 @@ main :: proc() {
 	v := Vec{1};
 	f := v.length;
 	// A variant that is not in the union.
-	u: Value = i32(1);
-	bad := u.(f64);
+	u: Value = .number(1);
+	switch (t in u) {
+	case .missing:
+	case .number:
+	case .flag:
+	}
 	// A type switch with no default that misses a variant.
 	switch (t in u) {
-	case i32:
+	case .number:
 		fmt.println(0);
 	}
 	// A construction with no `init`.

@@ -10,7 +10,9 @@ package main; import "core:fmt"; import "core:mem";
 
 Holder :: struct { view: []int }
 Pair :: struct { left: []int, right: []int }
-Choice :: union { Holder, int }
+Choice :: union { held: Holder, number: int }
+
+no_pointer :: proc() -> ^mut int { panic("allocation failed"); }
 Handle :: struct { target: ^int }
 
 // The bare form is `returns_a_local_array` in tests/err/m5b_escape.loke.
@@ -62,15 +64,14 @@ consume_a_local :: proc() -> []int {
 	return move(held).take();
 }
 
-// A type switch binds the alternative's value, so what it holds travels in.
+// A variant switch binds the active payload, so what it holds travels in.
 extract_a_local :: proc() -> []int {
 	local := [3]int{1, 2, 3};
-	choice: Choice = Holder{local[:]};
+	choice: Choice = .held(Holder{local[:]});
 	switch (value in choice) {
-	case Holder: return value.view;
-	case int:    return nil;
+	case .held:   return value.view;
+	case .number: return nil;
 	}
-	return nil;
 }
 
 // So does a `foreach` element.
@@ -106,8 +107,10 @@ map_from_a_local :: proc() -> []int {
 	table: map[string]Holder;
 	numbers := [3]int{1, 2, 3};
 	table["a"] = Holder{numbers[:]};
-	held, ok := table.lookup_value("a");
-	return held.view if ok else nil;
+	switch (held in table.lookup_value("a")) {
+	case .some: return held.view;
+	case .none: return nil;
+	}
 }
 
 array_from_a_local :: proc() -> []int {
@@ -131,8 +134,7 @@ container_held_borrow :: proc() -> int {
 entry_pointer_escapes :: proc(values: []int) -> ^mut Holder {
 	table: map[string]Holder;
 	table["a"] = Holder{values};
-	slot, found := table.find("a");
-	return slot if found else nil;
+	return table.find("a") or_else nil;
 }
 
 // A small fixed array gives each element its own place, but only where the index
@@ -160,8 +162,10 @@ pop_a_local :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	holders: [dynamic]Holder;
 	holders.append(Holder{local[:]});
-	held, ok := holders.pop();
-	return held.view if ok else nil;
+	switch (held in holders.pop()) {
+	case .some: return held.view;
+	case .none: return nil;
+	}
 }
 
 // A map distinguishes constant keys, but only as far as a key is constant and
@@ -244,17 +248,21 @@ dereferenced_value_read :: proc() -> Holder {
 	return p^;
 }
 
-optional_extraction_read :: proc() -> []int {
+variant_switch_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
-	choice: Choice = Holder{local[:]};
-	held, ok := choice.as(Holder);
-	return held.view if ok else nil;
+	choice: Choice = .held(Holder{local[:]});
+	switch (held in choice) {
+	case .held:   return held.view;
+	case .number: return nil;
+	}
 }
 
-trapping_extraction_read :: proc() -> []int {
+consumed_variant_switch_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
-	choice: Choice = Holder{local[:]};
-	return choice.(Holder).view;
+	switch (held in Choice.held(Holder{local[:]})) {
+	case .held:   return held.view;
+	case .number: return nil;
+	}
 }
 
 temporary_element_read :: proc() -> []int {
@@ -301,8 +309,10 @@ erased_extraction_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
 	held := Holder{local[:]};
 	erased: any_view = held;
-	value, ok := erased.as(Holder);
-	return value.view if ok else nil;
+	switch (value in erased.as(Holder)) {
+	case .some: return value.view;
+	case .none: return nil;
+	}
 }
 
 loop_pointer_read :: proc(values: []int, choose_local: bool) -> []int {
@@ -382,19 +392,21 @@ result_flip_b :: proc(a: []int, b: []int, depth: int) -> Pair {
 }
 
 Result_Outer :: struct { pair: Pair }
-Result_Choice :: union { Result_Outer, int }
+Result_Choice :: union { outer: Result_Outer, number: int }
 union_result :: proc(a: []int, b: []int) -> Result_Choice {
-	return Result_Outer{Pair{a, b}};
+	return .outer(Result_Outer{Pair{a, b}});
 }
 union_result_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	return union_result(values, local[:]).(Result_Outer).pair.right;
+	switch (outer in union_result(values, local[:])) {
+	case .outer:  return outer.pair.right;
+	case .number: return nil;
+	}
 }
 
 Result_Pointers :: struct { left: ^mut int, right: ^mut int }
 allocate_result_pair :: proc() -> Result_Pointers {
-	p, err := new(int);
-	if (err != nil) { panic("allocation failed"); }
+	p := new(int) or_else no_pointer();
 	return Result_Pointers{p, p};
 }
 result_fields_may_alias :: proc() -> int {
@@ -491,16 +503,14 @@ container_append_parameter_escape :: proc(
 map_key_escape :: proc() -> map[string_view]int {
 	local := [3]u8{107, 101, 121};
 	table: map[string_view]int;
-	view, ok := string_view(local[:]);
-	table[view] = 7;
+	table[string_view(local[:]) or_else ""] = 7;
 	return table;
 }
 map_key_alias_escape :: proc() -> map[string_view]int {
 	local := [3]u8{107, 101, 121};
 	table: map[string_view]int;
 	alias := &mut table;
-	view, ok := string_view(local[:]);
-	alias^[view] = 7;
+	alias^[string_view(local[:]) or_else ""] = 7;
 	return table;
 }
 
@@ -525,8 +535,7 @@ unknown_global_aggregate_read :: proc() {
 // needs proof independent of the allocation root.
 retained_allocation: ^mut int;
 retain_and_release_escape :: proc() {
-	p, err := new(int);
-	if (err != nil) { return; }
+	p := new(int) or_else no_pointer();
 	retained_allocation = p;
 	free(p);
 }
@@ -536,8 +545,7 @@ retain_and_release_escape :: proc() {
 region_retained_allocation: ^mut int;
 retain_local_region_escape :: proc() {
 	arena := mem.Arena.init();
-	p, err := new(int, arena.allocator());
-	if (err != nil) { return; }
+	p := new(int, arena.allocator()) or_else no_pointer();
 	region_retained_allocation = p;
 }
 

@@ -1,14 +1,14 @@
-%union.Error.
+%union.Outcome.
 = type { i32, i8, [3 x i8] }
 define i32 @loke.p.Vec.double
 define %struct.Vec
 @loke.p.Vec.add
-getelementptr inbounds %union.Error.
-extractvalue %union.Error.
+getelementptr inbounds %union.Outcome.
+extractvalue %union.Outcome.
 select i1
 typecase.test
 typecase.body
 orreturn.fail
 orreturn.ok
-store %union.Error.
+store %union.Outcome.
 defer.run

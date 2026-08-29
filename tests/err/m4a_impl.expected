@@ -11,44 +11,44 @@ L0409
 @31:2
 `Complex` already has a member `length`
 L0424
-@36:17
-a file-scope union starts at nil; assign the variant in `main`
+@37:1
+`Maybe` has no zero value, so it cannot be produced by a declaration with static duration
 L0408
-@39:15
+@40:15
 a parameter needs a type; only the receiver `self` may omit one
 L0488
-@41:1
+@42:1
 `hook(convert)` is a type role and must be declared as an inherent `impl` member
 L0310
-@50:28
+@51:28
 cannot pass `Complex` with `f64`
 L0412
-@54:12
+@55:12
 `from_scalar` implements `hook(convert)` and is not directly accessible; use `T(value)`
 L0412
-@55:16
+@56:16
 `from_scalar` implements `hook(convert)` and is not directly accessible; use `T(value)`
 L0363
-@57:2
+@58:2
 `Complex` has no field or member `bump`
 L0358
-@59:2
+@60:2
 a constant cannot be the receiver of a mutating method
 L0408
-@61:7
+@62:7
 `length` is a method and must be called
 L0410
-@63:7
+@64:7
 a conversion to `Point` takes exactly one plain value argument
 L0408
-@65:7
+@66:7
 `Complex` has no member `magnitude`
 L0391
-@66:29
+@67:29
 implicit conversion to `Ambiguous` is ambiguous here: 2 candidates are equally good
 L0411
-@82:2
+@83:2
 `i32` already has a built-in conversion to `Builtin_Wrapped`; a conversion hook for that pair would be unreachable
 L0306
-@95:25
+@96:25
 unknown type `Element`

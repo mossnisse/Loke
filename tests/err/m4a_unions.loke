@@ -1,57 +1,68 @@
 package main; import "core:fmt";
 
-Value :: union { bool, i32 }
-Bad_Variants :: union { i32, i32 }
-Bad_Align :: union @(align=3) { i32 }
-Error :: union { bool }
+Value :: union { flag: bool, number: i32 }
+Duplicate_Names :: union { n: i32, n: bool }
+Bad_Align :: union @(align=3) { n: i32 }
+Bad_Payload :: union { nothing: void }
 
-not_optional :: proc() -> bool { return true; }
-two_values :: proc() -> (int, int) { return 1, 2; }
+// `@(zero=)` may only name the first variant, because the zero value has to
+// stay all-zero.
+Late_Zero :: union @(zero=second) { first: i32, second: }
+No_Such_Zero :: union @(zero=missing) { first: }
 
-// A procedure with several results needs every one of them named to propagate.
-unnamed :: proc() -> (int, Error) {
-	x := pair() or_return;
-	return x, nil;
+// `@(failure=)` designates one of exactly two variants.
+Three_Way :: union @(failure=c) { a: i32, b: bool, c: }
+No_Such_Failure :: union @(failure=missing) { a: i32, b: }
+
+Outcome :: union @(failure=bad) { good: i32, bad: }
+
+not_fallible :: proc() -> bool { return true; }
+outcome :: proc() -> Outcome { return .good(1); }
+
+// A procedure with several results has no single result to propagate into.
+several :: proc() -> (int, int) {
+	x := outcome() or_return;
+	return x, 2;
 }
 
-pair :: proc() -> (int, Error) { return 1, nil; }
-
-uninitialised :: proc() -> (n: int, err: Error) {
-	// `n` has not been written yet, and `or_return` returns its current value.
-	x := pair() or_return;
-	n = x;
-	return;
-}
-
-branch_initialised :: proc(flag: bool) -> (n: int, err: Error) {
-	if (flag) { n = 1; }
-	// The assignment above is not live along the false branch.
-	x := pair() or_return;
-	n = x;
-	return;
+// And one whose result is not a failure-designated union has nowhere to put it.
+wrong_result :: proc() -> int {
+	return outcome() or_return;
 }
 
 main :: proc() {
-	v: Value = i32(1);
-	// `f64` is not a variant of `Value`.
-	a := v.(f64);
-	// A type switch needs a union.
+	v: Value = .number(1);
+
+	// A payload type does not name a variant: two variants may share one.
+	a := v.(i32);
+
+	// A type switch needs a union or an `any_view`.
 	plain := 1;
 	switch (t in plain) {
 	case int:
 		fmt.println(0);
 	}
-	// A type switch with no default must cover every variant.
+
+	// A union case names a variant, not a type.
 	switch (t in v) {
 	case i32:
 		fmt.println(1);
 	}
-	// `or_else` needs a status expression with a payload on its left.
-	b := not_optional() or_else true;
-	// A status has to be a `bool` or a union.
-	c := two_values() or_return;
-	// A pointer compares against `nil` but is not a status.
-	d := find_node() or_return;
-}
 
-find_node :: proc() -> (int, ^int) { return 0, nil; }
+	// With no default, every variant must be covered.
+	switch (t in v) {
+	case .number:
+		fmt.println(1);
+	}
+
+	// A variant that is not there at all.
+	switch (t in v) {
+	case .flag:
+	case .missing:
+	}
+
+	// `or_else` needs a union with a designated failure variant on its left.
+	b := not_fallible() or_else true;
+
+	fmt.println(a, b);
+}

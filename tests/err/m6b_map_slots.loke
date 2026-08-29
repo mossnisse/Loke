@@ -9,30 +9,30 @@ package main; import "core:fmt";
 
 insert :: proc() {
 	m := map[string]int{"a" = 1};
-	slot, ok := m.find("a");
+	slot := m.find("a");
 	m["b"] = 2;
-	if (ok) { fmt.println(slot^); }
+	fmt.println((slot or_else nil)^);
 }
 
 removal :: proc() {
 	m := map[string]int{"a" = 1};
-	slot, ok := m.find("a");
-	_, _ = m.remove("a");
-	if (ok) { fmt.println(slot^); }
+	slot := m.find("a");
+	m.remove("a");
+	fmt.println((slot or_else nil)^);
 }
 
 rehash :: proc() {
 	m := map[string]int{"a" = 1};
-	slot, ok := m.find("a");
+	slot := m.find("a");
 	m.shrink();
-	if (ok) { fmt.println(slot^); }
+	fmt.println((slot or_else nil)^);
 }
 
 release :: proc() {
 	m := map[string]int{"a" = 1};
-	slot, ok := m.find("a");
+	slot := m.find("a");
 	drop(m);
-	if (ok) { fmt.println(slot^); }
+	fmt.println((slot or_else nil)^);
 }
 
 main :: proc() {
