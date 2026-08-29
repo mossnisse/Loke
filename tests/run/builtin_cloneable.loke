@@ -30,10 +30,13 @@ main :: proc() {
 	fmt.println(xs[0]);
 	fmt.println(ys[0]);
 
-	// The fallible half reports success through its error result.
-	zs, error := xs.try_clone();
-	fmt.println(len(zs));
-	fmt.println(1 if error == nil else 0);
+	// The fallible half reports success through its `Result`.
+	switch (zs in xs.try_clone()) {
+	case .ok:
+		fmt.println(len(zs));
+		fmt.println(1);
+	case .err: fmt.println(0);
+	}
 
 	// Maps clone through the same path.
 	m := map[string]int{"a" = 1, "b" = 2};
@@ -79,9 +82,12 @@ main :: proc() {
 	// and take the same optional allocator.
 	fmt.println(len(clone(xs)));
 	fmt.println(len(xs.clone()));
-	freed, free_error := try_clone(xs);
-	fmt.println(len(freed));
-	fmt.println(1 if free_error == nil else 0);
+	switch (freed in try_clone(xs)) {
+	case .ok:
+		fmt.println(len(freed));
+		fmt.println(1);
+	case .err: fmt.println(0);
+	}
 	fmt.println(clone(original));
 	fmt.println(clone(holder).text);
 	arena := mem.Arena.init();

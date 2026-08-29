@@ -17,9 +17,9 @@ main :: proc() {
 
 	// A zero-length write succeeds immediately and moves nothing.
 	empty: [0]u8 = {};
-	count, error := out.write(empty[:]);
+	count := out.write(empty[:]) or_else -1;
 	fmt.println(count);
-	fmt.println(error == nil);
+	fmt.println(count >= 0);
 
 	// Standard error is a second, independent handle.
 	problem := term.stderr();

@@ -39,6 +39,9 @@ Eval_Flow :: enum {
 Eval_Value :: struct {
 	kind:       Const_Kind,
 	type:       Type_Id,
+	// For a union value: the variant it holds, with `elements[0]` its payload
+	// (an `Invalid` value for a payloadless variant). Unread otherwise.
+	variant:    int,
 	integer:    Big_Int,
 	float:      f64,
 	float_bits: u16,
@@ -342,6 +345,9 @@ element_type_at :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 				return symbol.type
 			}
 		}
+	case .Union:
+		// A union constant holds one element, its active variant's payload.
+		return INVALID_TYPE
 	}
 	return INVALID_TYPE
 }
@@ -368,13 +374,16 @@ value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eva
 	if cv.kind == .Aggregate && cv.aggregate != nil {
 		holder := type != INVALID_TYPE ? type : cv.aggregate.type
 		value.type = holder
+		value.variant = cv.aggregate.variant
+		is_union := type_is_union(ev.k.c, type_underlying(ev.k.c, holder))
 		elements, allocated := eval_elements(ev, len(cv.aggregate.elements))
 		if !allocated {
 			return Eval_Value{}, false
 		}
 		value.elements = elements
 		for element, index in cv.aggregate.elements {
-			converted, ok := value_from_const(ev, element, element_type_at(ev.k.c, holder, index))
+			member := is_union 				? union_variant_payload(ev.k.c, holder, cv.aggregate.variant) 				: element_type_at(ev.k.c, holder, index)
+			converted, ok := value_from_const(ev, element, member)
 			if !ok {
 				return Eval_Value{}, false
 			}
@@ -628,8 +637,11 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 	case ^Expr_Proc:
 		return Eval_Value{kind = .Nil, type = v.type, proc_value = v.symbol}, true
 
+	case ^Expr_Or_Else:
+		return eval_or_else(ev, v)
+
 	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract, ^Expr_Slice, ^Expr_Range,
-	     ^Expr_Or_Else, ^Expr_Move, ^Expr_Proc_Group, ^Expr_Operator,
+	     ^Expr_Move, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
@@ -1107,7 +1119,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return int(number), true
 	}
 
-	fallible := len(symbol.results) == 1 && symbol.results[0] == TYPE_ALLOCATOR_ERROR
+	fallible := len(symbol.results) == 1 && symbol.results[0] == ev.k.c.alloc_result_type
 	switch symbol.container_op {
 	case .None:
 		return nil, false
@@ -1137,7 +1149,8 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !set_contents(ev, self, grown[:]) {
 			return nil, false
 		}
-		return fallible ? results(ev, no_error) : none, true
+		if !fallible { return none, true }
+		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
 
 	case .Insert, .Try_Insert:
 		at, at_ok := count_argument(ev, v, 1)
@@ -1157,20 +1170,17 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !set_contents(ev, self, grown[:]) {
 			return nil, false
 		}
-		return fallible ? results(ev, no_error) : none, true
+		if !fallible { return none, true }
+		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
 
 	case .Pop:
-		// design.md optional-ok: an empty container yields the zero value and false.
+		// An empty container has nothing to pop, and says so with `.none`.
 		if len(self.elements) == 0 {
-			zero, zeroed := zero_value(ev, element)
-			if !zeroed {
-				return nil, false
-			}
-			return results(ev, zero, no), true
+			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
 		}
 		last := self.elements[len(self.elements) - 1]
 		self.elements = self.elements[:len(self.elements) - 1]
-		return results(ev, last, yes), true
+		return eval_one(ev, eval_option(ev, symbol.results[0], last, true))
 
 	case .Remove, .Remove_Unordered:
 		at, at_ok := count_argument(ev, v, 1)
@@ -1224,7 +1234,8 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !set_contents(ev, self, next[:]) {
 			return nil, false
 		}
-		return fallible ? results(ev, no_error) : none, true
+		if !fallible { return none, true }
+		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
 
 	case .Reserve, .Try_Reserve, .Shrink, .Try_Shrink, .Map_Reserve, .Map_Try_Reserve,
 	     .Map_Shrink, .Map_Try_Shrink:
@@ -1234,7 +1245,8 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if _, ok := count_argument(ev, v, 1); !ok {
 			return nil, false
 		}
-		return fallible ? results(ev, no_error) : none, true
+		if !fallible { return none, true }
+		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
 
 	case .Map_Lookup_Value:
 		// The copying read: one probe, no insertion, and an independently owned
@@ -1248,21 +1260,17 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if at < 0 {
-			zero, zeroed := zero_value(ev, element)
-			if !zeroed {
-				return nil, false
-			}
-			return results(ev, zero, no), true
+			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
 		}
 		copied, copied_ok := copy_value(ev, self.elements[at + MAP_ENTRY_VALUE])
 		if !copied_ok {
 			return nil, false
 		}
-		return results(ev, copied, yes), true
+		return eval_one(ev, eval_option(ev, symbol.results[0], copied, true))
 
 	case .Map_Find:
-		// `find` returns a pointer to the existing value and `true`, or `nil` and
-		// `false` — it never inserts (design.md).
+		// `find` answers with a pointer to the existing value, or `.none` — it
+		// never inserts (design.md).
 		key, key_ok := argument(ev, v, 1)
 		if !key_ok {
 			return nil, false
@@ -1271,11 +1279,15 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !found_ok {
 			return nil, false
 		}
-		pointer := Eval_Value{kind = .Nil, type = symbol.results[0]}
-		if at >= 0 {
-			pointer.target = &self.elements[at + MAP_ENTRY_VALUE]
+		if at < 0 {
+			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
 		}
-		return results(ev, pointer, at >= 0 ? yes : no), true
+		pointer := Eval_Value {
+			kind   = .Nil,
+			type   = union_variant_payload(ev.k.c, symbol.results[0], union_index_of(ev.k.c, symbol.results[0], "some")),
+			target = &self.elements[at + MAP_ENTRY_VALUE],
+		}
+		return eval_one(ev, eval_option(ev, symbol.results[0], pointer, true))
 
 	case .Map_Try_Insert:
 		key, key_ok := argument(ev, v, 1)
@@ -1288,7 +1300,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		slot^ = value
-		return results(ev, no_error), true
+		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
 
 	case .Map_Remove:
 		key, key_ok := argument(ev, v, 1)
@@ -1300,11 +1312,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if at < 0 {
-			zero, zeroed := zero_value(ev, element)
-			if !zeroed {
-				return nil, false
-			}
-			return results(ev, zero, no), true
+			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
 		}
 		taken := self.elements[at + MAP_ENTRY_VALUE]
 		kept, err := make([dynamic]Eval_Value, 0, len(self.elements) - 2, ev.alloc)
@@ -1314,7 +1322,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !set_contents(ev, self, kept[:]) {
 			return nil, false
 		}
-		return results(ev, taken, yes), true
+		return eval_one(ev, eval_option(ev, symbol.results[0], taken, true))
 	}
 	return nil, false
 }
@@ -1497,12 +1505,112 @@ eval_aggregate_place :: proc(ev: ^Evaluator, operand: Expr) -> (^Eval_Value, boo
 	return eval_place(ev, operand)
 }
 
+// ------------------------------------------------------------------ unions --
+
+// A union value: `variant` names the arm and `elements[0]` holds its payload.
+// A payloadless variant keeps an `Invalid` element, which is what makes the
+// element count the same for every arm.
+@(private = "file")
+eval_union :: proc(ev: ^Evaluator, type: Type_Id, variant: int, payload: Eval_Value) -> (Eval_Value, bool) {
+	elements, allocated := eval_elements(ev, 1)
+	if !allocated {
+		return Eval_Value{}, false
+	}
+	elements[0] = payload
+	return Eval_Value{kind = .Aggregate, type = type, variant = variant, elements = elements}, true
+}
+
+// The variant named in compiler-owned code, so nothing here hard-codes a tag.
+@(private = "file")
+eval_named_union :: proc(ev: ^Evaluator, type: Type_Id, name: string, payload: Eval_Value) -> (Eval_Value, bool) {
+	return eval_union(ev, type, union_index_of(ev.k.c, type, name), payload)
+}
+
+// `value or_else fallback`: the success payload, or the fallback when the
+// value carries its designated failure variant. The fallback is not evaluated
+// on the success path, exactly as the backend branches around it.
+@(private = "file")
+eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (Eval_Value, bool) {
+	value, ok := eval_expr(ev, v.value)
+	if !ok {
+		return Eval_Value{}, false
+	}
+	shape, fallible := fallible_of(ev.k, expr_base(v.value).type)
+	if !fallible {
+		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
+		return Eval_Value{}, false
+	}
+	if value.variant == shape.failure {
+		return eval_expr(ev, v.fallback)
+	}
+	return eval_union_payload(value, INVALID_TYPE), true
+}
+
+// `.ok(Unit{})`: an allocating container operation that had nothing to allocate.
+@(private = "file")
+eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
+	return eval_named_union(ev, type, "ok", Eval_Value{kind = .Aggregate, type = unit_type(ev.k.c)})
+}
+
+// `.some(payload)` or `.none`, for a container read that may find nothing.
+@(private = "file")
+eval_option :: proc(ev: ^Evaluator, type: Type_Id, payload: Eval_Value, present: bool) -> (Eval_Value, bool) {
+	if !present {
+		return eval_named_union(ev, type, "none", Eval_Value{})
+	}
+	return eval_named_union(ev, type, "some", payload)
+}
+
+// One result, in the evaluator's arena so it outlives this frame.
+@(private = "file")
+eval_one :: proc(ev: ^Evaluator, value: Eval_Value, built := true) -> ([]Eval_Value, bool) {
+	if !built {
+		return nil, false
+	}
+	out, err := make([]Eval_Value, 1, ev.alloc)
+	if err != nil {
+		return nil, false
+	}
+	out[0] = value
+	return out, true
+}
+
+@(private = "file")
+eval_union_construct :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
+	if len(v.bound) != 1 || v.bound[0] == nil {
+		eval_fail(ev, v.span, "L0341", "a union construction needs its payload")
+		return Eval_Value{}, false
+	}
+	payload, ok := eval_expr(ev, v.bound[0])
+	if !ok {
+		return Eval_Value{}, false
+	}
+	copied, copied_ok := copy_value(ev, payload)
+	if !copied_ok {
+		return Eval_Value{}, false
+	}
+	return eval_union(ev, v.type, v.variant_index, copied)
+}
+
+// The payload of `value`, or the whole union when the case binds the union
+// type itself (a grouped or default case).
+@(private = "file")
+eval_union_payload :: proc(value: Eval_Value, binding_type: Type_Id) -> Eval_Value {
+	if binding_type == value.type || len(value.elements) == 0 {
+		return value
+	}
+	return value.elements[0]
+}
+
 // ------------------------------------------------------------------- calls --
 
 @(private = "file")
 eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	if v.resolution.kind == .Conversion {
 		return eval_conversion(ev, v)
+	}
+	if v.union_op == .Construct {
+		return eval_union_construct(ev, v)
 	}
 	// `value.as(T)` is an extraction, and an extraction has no compile-time
 	// meaning yet. Say so here rather than treating it as an unresolved call.
@@ -2224,6 +2332,9 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 	if !ok {
 		return .Fail
 	}
+	if s.kind == .Type && type_is_union(ev.k.c, type_underlying(ev.k.c, expr_base(s.subject).type)) {
+		return eval_variant_switch(ev, s, subject)
+	}
 	default_index := -1
 	for entry, index in s.cases {
 		if len(entry.values) == 0 {
@@ -2244,6 +2355,49 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 		return eval_case_body(ev, s.cases[default_index].stmts)
 	}
 	return .Normal
+}
+
+// A variant switch dispatches on the value's own variant index and binds the
+// case's name to the payload — the same identity the emitter compares a tag
+// against, so both agree without either consulting a payload type.
+@(private = "file")
+eval_variant_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch, subject: Eval_Value) -> Eval_Flow {
+	chosen := -1
+	fallback := -1
+	for entry, index in s.cases {
+		if len(entry.variant_indices) == 0 {
+			fallback = index
+			continue
+		}
+		for variant in entry.variant_indices {
+			if variant == subject.variant {
+				chosen = index
+				break
+			}
+		}
+		if chosen >= 0 {
+			break
+		}
+	}
+	if chosen < 0 {
+		chosen = fallback
+	}
+	if chosen < 0 {
+		return .Normal
+	}
+	entry := s.cases[chosen]
+	if entry.binding_symbol != INVALID_SYMBOL {
+		frame := current_frame(ev)
+		if frame == nil {
+			eval_fail(ev, s.span, "L0341", "a case binding needs a compile-time frame")
+			return .Fail
+		}
+		bound, copied := copy_value(ev, eval_union_payload(subject, entry.binding_type))
+		if !copied || !bind_local(ev, frame, entry.binding_symbol, bound) {
+			return .Fail
+		}
+	}
+	return eval_case_body(ev, entry.stmts)
 }
 
 @(private = "file")

@@ -8,8 +8,7 @@ Res :: struct { id: int }
 impl Res {
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Res, Allocator_Error) {
 		if (self.id == 2) {
-			p, error := new(Huge, allocator);
-			if (error != nil) { return Res{}, error; }
+			p := new(Huge, allocator) or_return;
 			free(p);
 		}
 		return .ok(Res{self.id + 100});

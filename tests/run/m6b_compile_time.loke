@@ -26,15 +26,20 @@ sum_built :: proc() -> int {
 	return total;
 }
 
-// Optional-ok, verbatim: an empty container yields the zero value and false.
+// The `Option` protocol, verbatim: an empty container has nothing to pop.
 POPPED :: popped();
 popped :: proc() -> int {
 	xs: [dynamic]int = {4, 5, 6};
-	value, ok := xs.pop();
-	if (!ok) { return -1; }
+	value := 0;
+	switch (popped in xs.pop()) {
+	case .some: value = popped;
+	case .none: return -1;
+	}
 	empty: [dynamic]int;
-	zero, empty_ok := empty.pop();
-	if (empty_ok || zero != 0) { return -2; }
+	switch (_ in empty.pop()) {
+	case .some: return -2;
+	case .none:
+	}
 	return value * 100 + len(xs);
 }
 
@@ -68,11 +73,13 @@ LOOKED_UP :: looked_up();
 looked_up :: proc() -> int {
 	m: map[string][dynamic]int;
 	m["a"] = {4};
-	held, ok := m.lookup_value("a");
-	if (!ok) { return -1; }
+	held := m.lookup_value("a") or_else {};
+	if (len(held) != 1) { return -1; }
 	held.append(5);
-	_, absent := m.lookup_value("zz");
-	if (absent) { return -2; }
+	switch (_ in m.lookup_value("zz")) {
+	case .some: return -2;
+	case .none:
+	}
 	// The clone is independent, and the read inserted nothing.
 	return len(held) * 100 + len(m["a"]) * 10 + len(m);
 }
@@ -80,13 +87,19 @@ looked_up :: proc() -> int {
 FOUND :: found();
 found :: proc() -> int {
 	m := map[int]int{1 = 10, 2 = 20, 1 = 30};
-	slot, ok := m.find(2);
-	if (!ok) { return -1; }
-	slot^ = 99;
-	_, gone := m.find(7);
-	if (gone) { return -2; }
-	taken, removed_ok := m.remove(1);
-	if (!removed_ok) { return -3; }
+	switch (slot in m.find(2)) {
+	case .some: slot^ = 99;
+	case .none: return -1;
+	}
+	switch (_ in m.find(7)) {
+	case .some: return -2;
+	case .none:
+	}
+	taken := 0;
+	switch (removed in m.remove(1)) {
+	case .some: taken = removed;
+	case .none: return -3;
+	}
 	return taken * 1000 + m[2] * 10 + len(m);
 }
 
@@ -142,13 +155,21 @@ custom_keys :: proc() -> int {
 	if (!(Annotated_Key{1, 40} in m)) { return -2; }
 	m[Annotated_Key{1, 50}] = 8;
 	{
-		p, ok := m.find(Annotated_Key{1, 60});
-		if (!ok || p^ != 8) { return -3; }
+		switch (p in m.find(Annotated_Key{1, 60})) {
+		case .some: if (p^ != 8) { return -3; }
+		case .none: return -3;
+		}
 	}
-	err := m.try_insert(Annotated_Key{1, 70}, 7);
-	if (err != nil || len(m) != 1) { return -4; }
-	value, removed := m.remove(Annotated_Key{1, 80});
-	if (!removed || len(m) != 0) { return -5; }
+	switch (_ in m.try_insert(Annotated_Key{1, 70}, 7)) {
+	case .ok:  if (len(m) != 1) { return -4; }
+	case .err: return -4;
+	}
+	value := 0;
+	switch (removed in m.remove(Annotated_Key{1, 80})) {
+	case .some: value = removed;
+	case .none: return -5;
+	}
+	if (len(m) != 0) { return -5; }
 	return value;
 }
 equal_ids :: proc(a, b: int) -> bool { return a == b; }
@@ -160,6 +181,5 @@ temporary_map :: proc() -> map[[2]int]int {
 }
 TEMP_LOOKUP :: temporary_lookup();
 temporary_lookup :: proc() -> int {
-	value, ok := temporary_map().lookup_value(key = {1, 2});
-	return value if ok else -1;
+	return temporary_map().lookup_value(key = {1, 2}) or_else -1;
 }

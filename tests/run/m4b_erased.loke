@@ -75,8 +75,7 @@ main :: proc() {
 
 	// A temporary converted for a call stays valid through the call.
 	view: any_view = 42;
-	n, ok := view.as(int);
-	fmt.println(n);
+	fmt.println(view.as(int) or_else -1);
 	fmt.println(view.(int));
 
 	c := Circle{3};
@@ -143,12 +142,19 @@ owned_extraction :: proc() {
 		source := Owned{1};
 		view: any_view = source;
 		{
-			held, ok := view.as(Owned);
-			assert(ok && held.id == 101 && source.id == 1 && erased_copies == 1);
+			switch (held in view.as(Owned)) {
+			case .some: assert(held.id == 101 && source.id == 1 && erased_copies == 1);
+			case .none: assert(false);
+			}
 		}
 		assert(erased_drops == 1);
-		_, ok := view.as(Owned);
-		assert(ok && erased_copies == 2 && erased_drops == 2);
+		{
+			switch (_ in view.as(Owned)) {
+			case .some:
+			case .none: assert(false);
+			}
+		}
+		assert(erased_copies == 2 && erased_drops == 2);
 		{
 			held := view.(Owned);
 			assert(held.id == 101 && erased_copies == 3);
@@ -157,8 +163,10 @@ owned_extraction :: proc() {
 		view.as(Owned);
 		assert(erased_copies == 4 && erased_drops == 4);
 		other: any_view = 42;
-		missing, absent := other.as(Owned);
-		assert(!absent && missing.id == 0 && erased_copies == 4);
+		switch (_ in other.as(Owned)) {
+		case .some: assert(false);
+		case .none: assert(erased_copies == 4);
+		}
 	}
 	assert(erased_drops == 5);
 }

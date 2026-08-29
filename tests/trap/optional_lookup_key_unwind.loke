@@ -12,6 +12,6 @@ make_map :: proc() -> map[int]Resource {
 key :: proc() -> int { panic("key evaluation failed"); return 1; }
 main :: proc() {
 	// The receiver is owned before the next argument begins evaluation.
-	value, ok := make_map().lookup_value(key());
-	fmt.println("unexpected return", value.id, ok);
+	value := make_map().lookup_value(key());
+	fmt.println("unexpected return", value);
 }

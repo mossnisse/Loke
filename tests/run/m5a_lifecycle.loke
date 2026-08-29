@@ -66,8 +66,10 @@ empty_array_copies :: proc() {
 	// element has a custom (potentially failing) copy. Keep the other fields.
 	value: Empty_Arrays;
 	value.marker = 7;
-	fallible, error := value.try_clone();
-	assert(error == nil && fallible.marker == 7);
+	switch (fallible in value.try_clone()) {
+	case .ok: assert(fallible.marker == 7);
+	case .err: assert(false);
+	}
 	explicit := value.clone();
 	implicit := value;
 	replacement: Empty_Arrays;
@@ -112,38 +114,34 @@ main :: proc() {
 	// The generated `try_clone` is field-wise: the custom hook of `Res` runs for
 	// every element, so each id gains 100.
 	ok := Group{[2]Res{Res{11}, Res{22}}, Failing{0}};
-	single, single_error := ok.items[0].try_clone();
-	if (single_error == nil) {
-		fmt.println(single.id);
-	}
+	single := ok.items[0].try_clone() or_else Res{0};
+	fmt.println(single.id);
 
 	// `tail` fails, so the two elements already cloned into the temporary are
-	// dropped in reverse part order — 122 then 111 — and the result is the inert
-	// zero paired with the error.
-	failed, error := ok.try_clone();
-	if (error != nil) {
-		fmt.println(-1);
+	// dropped in reverse part order — 122 then 111 — and the `Result` carries the
+	// error alone. There is no half-built value to inspect.
+	switch (_ in ok.try_clone()) {
+	case .ok: fmt.println(0);
+	case .err: fmt.println(-1);
 	}
-	fmt.println(failed.items[0].id);
-	fmt.println(failed.tail.id);
 
 	// design.md: `new_clone` "creates a new allocation root containing a clone of
 	// the value", so it fills the allocation through the same hook.
-	held, allocation_error := new_clone(Res{5});
-	if (allocation_error == nil) {
+	switch (held in new_clone(Res{5})) {
+	case .ok:
 		fmt.println(held^.id);
 		free(held);
+	case .err: fmt.println(0);
 	}
 
 	// And destroys the allocation it could not publish into: the two elements
 	// already cloned are dropped, then the block is released.
-	spare, group_error := new_clone(ok);
-	if (group_error != nil) {
-		fmt.println(-2);
+	switch (_ in new_clone(ok)) {
+	case .ok: fmt.println(0);
+	case .err: fmt.println(-2);
 	}
 
 	// Falling out of `main` drops every managed local still live, in reverse
-	// registration order (m5a-plan step 4): the inert `failed`, then `single`,
-	// then `ok`'s two elements in reverse. `held` and `spare` are allocation
-	// roots, which are manual and never dropped automatically.
+	// registration order (m5a-plan step 4): `single`, then `ok`'s two elements in
+	// reverse. The allocation root is manual and never dropped automatically.
 }

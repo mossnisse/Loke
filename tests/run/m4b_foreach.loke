@@ -66,12 +66,19 @@ main :: proc() {
 	foreach (v in low ..= high) { fmt.println(int(v)); }
 	maximum := low ..= high;
 	it := iter(maximum);
-	first, first_ok := it.next();
-	second, second_ok := it.next();
-	_, done := it.next();
-	if (first_ok) { fmt.println(int(first)); }
-	if (second_ok) { fmt.println(int(second)); }
-	if (done) { fmt.println(0); } else { fmt.println(1); }
+	switch (first in it.next()) {
+	case .some: fmt.println(int(first));
+	case .none:
+	}
+	switch (second in it.next()) {
+	case .some: fmt.println(int(second));
+	case .none:
+	}
+	// The inclusive range is exhausted after its maximum endpoint.
+	switch (_ in it.next()) {
+	case .some: fmt.println(0);
+	case .none: fmt.println(1);
+	}
 }
 
 // `iter_reverse` is what `reversed()` asks for, and it does not change what a

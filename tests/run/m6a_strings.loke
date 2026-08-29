@@ -49,28 +49,40 @@ main :: proc() {
 		fmt.println(int(codepoint));
 	}
 
-	// Validating conversions have optional-ok results.
+	// Validating conversions answer with an `Option`.
 	good := [?]u8{72, 105};
-	valid, valid_ok := string(good[:]);
-	fmt.println(len(valid) if valid_ok else -1);
+	switch (valid in string(good[:])) {
+	case .some: fmt.println(len(valid));
+	case .none: fmt.println(-1);
+	}
 
 	invalid := [?]u8{0xC3, 0x28};
-	broken, broken_ok := string(invalid[:]);
-	fmt.println(-1 if broken_ok else len(broken));
+	switch (_ in string(invalid[:])) {
+	case .some: fmt.println(-1);
+	case .none: fmt.println(0);
+	}
 
-	view, view_ok := string_view(good[:]);
-	fmt.println(len(view) if view_ok else -1);
+	switch (view in string_view(good[:])) {
+	case .some: fmt.println(len(view));
+	case .none: fmt.println(-1);
+	}
 
 	// A literal has static lifetime, so it initializes a C view directly.
 	terminated: cstring_view = "hej";
-	scanned, scanned_ok := string(terminated);
-	fmt.println(len(scanned) if scanned_ok else -1);
+	switch (scanned in string(terminated)) {
+	case .some: fmt.println(len(scanned));
+	case .none: fmt.println(-1);
+	}
 
 	// And a runtime string reuses the terminator its buffer already carries.
-	back, back_ok := string(joined.to_c_view());
-	fmt.println(len(back) if back_ok else -1);
+	switch (back in string(joined.to_c_view())) {
+	case .some: fmt.println(len(back));
+	case .none: fmt.println(-1);
+	}
 
 	runes := [?]rune{'A', 0x00C5};
-	built, built_ok := string.from_runes(runes[:]);
-	fmt.println(len(built) if built_ok else -1);
+	switch (built in string.from_runes(runes[:])) {
+	case .some: fmt.println(len(built));
+	case .none: fmt.println(-1);
+	}
 }

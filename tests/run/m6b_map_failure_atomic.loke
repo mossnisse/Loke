@@ -11,8 +11,7 @@ impl Key {
 	release :: hook(drop) proc(self: inout Key) { self.id = 0; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Key, Allocator_Error) {
 		if (self.id == 99) {
-			p, err := new(Huge, allocator);
-			if (err != nil) { return Key{0}, err; }
+			p := new(Huge, allocator) or_return;
 			free(p);
 		}
 		return .ok(Key{self.id});
@@ -27,30 +26,39 @@ impl Value {
 	release :: hook(drop) proc(self: inout Value) { self.id = 0; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Value, Allocator_Error) {
 		if (self.id == 99) {
-			p, err := new(Huge, allocator);
-			if (err != nil) { return Value{0}, err; }
+			p := new(Huge, allocator) or_return;
 			free(p);
 		}
 		return .ok(Value{self.id});
 	}
 }
 
+// `try_insert` answers with `Result(Unit, Allocator_Error)`; these tests only
+// care which variant came back.
+succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
+	switch (_ in outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
 main :: proc() {
 	m: map[Key]Value;
 	for (i := 0; i < 7; i += 1) {
-		fmt.println(m.try_insert(Key{i}, Value{i + 10}) == nil);
+		fmt.println(succeeded(m.try_insert(Key{i}, Value{i + 10})));
 	}
 	before := cap(m);
 
 	// The eighth key needs growth. Its clone fails, so even table metadata stays
 	// unchanged and all seven original entries remain reachable.
-	fmt.println(m.try_insert(Key{99}, Value{80}) != nil);
+	fmt.println(!succeeded(m.try_insert(Key{99}, Value{80})));
 	fmt.println(cap(m) == before);
 	fmt.println(len(m));
 	fmt.println(m[Key{6}].id);
 
 	// A failed value clone while replacing a key leaves the old value intact.
-	fmt.println(m.try_insert(Key{1}, Value{99}) != nil);
+	fmt.println(!succeeded(m.try_insert(Key{1}, Value{99})));
 	fmt.println(len(m));
 	fmt.println(m[Key{1}].id);
 }

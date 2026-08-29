@@ -22,9 +22,10 @@ main :: proc() {
 	fmt.println(round_trip(mem.default_allocator()));
 
 	// `new_clone` through the same provider, with a value whose clone can fail.
-	q, qerr := new_clone(41);
-	if (qerr == nil) {
+	switch (q in new_clone(41)) {
+	case .ok:
 		fmt.println(q^ + 1);
 		free(q);
+	case .err: fmt.println("allocation failed");
 	}
 }

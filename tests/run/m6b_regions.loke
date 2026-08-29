@@ -211,12 +211,14 @@ wrapped_provider :: proc() {
 fallible_provider :: proc() {
 	buffer: [4096]u8 = {};
 	parent := mem.Arena.from_buffer(buffer[:]);
-	a, a_err := mem.try_arena(parent.allocator());
-	s, s_err := mem.try_scratch(parent.allocator());
-	fmt.println(a_err != nil);
-	fmt.println(s_err != nil);
-	drop(a);
-	drop(s);
+	switch (_ in mem.try_arena(parent.allocator())) {
+	case .ok: fmt.println(false);
+	case .err: fmt.println(true);
+	}
+	switch (_ in mem.try_scratch(parent.allocator())) {
+	case .ok: fmt.println(false);
+	case .err: fmt.println(true);
+	}
 }
 
 main :: proc() {

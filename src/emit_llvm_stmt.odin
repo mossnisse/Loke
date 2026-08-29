@@ -530,6 +530,11 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		tag_llvm = fmt.aprintf("i%d", shape.tag_bytes * 8)
 		slot = emit_union_spill(e, union_type, value)
 		tag = emit_union_tag(e, union_type, value)
+		// A subject the switch produced is the switch's to drop; one that names
+		// storage someone else owns is only borrowed.
+		if !expression_is_borrowed_place(e.c, s.subject) {
+			register_scope_place(e, union_type, slot)
+		}
 	}
 
 	done := new_label(e, "typeswitch.done")

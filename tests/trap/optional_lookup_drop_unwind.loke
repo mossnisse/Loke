@@ -21,6 +21,6 @@ main :: proc() {
 	m[Key{0}] = Resource{1};
 	// The completed result must stay protected while its temporary key is
 	// dropped. A panic here drops the result, but never drops that key twice.
-	value, ok := m.lookup_value(Key{1});
-	fmt.println("unexpected return", value.id, ok);
+	value := m.lookup_value(Key{1});
+	fmt.println("unexpected return", value);
 }

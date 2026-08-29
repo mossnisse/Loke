@@ -59,8 +59,8 @@ main :: proc() {
 	fmt.println(1 if table.cap() == cap(table) else 0);
 
 	reverse := iter_reverse(xs);
-	last, ok := reverse.next();
-	fmt.println(last, ok);
+	last := reverse.next();
+	fmt.println(last);
 
 	format(box, fmt.stdout(), fmt.Options{});
 	fmt.println();

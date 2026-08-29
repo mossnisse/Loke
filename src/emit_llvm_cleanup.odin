@@ -438,6 +438,24 @@ hold_temporary_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> Defer
 	return begin_temporary_drop(e, type, place)
 }
 
+// A variant switch owns its subject: every case binding only borrows the
+// payload, so the drop belongs to the switch's own scope, where falling out,
+// `break`, `return` and a panic each replay it exactly once.
+@(private)
+register_scope_place :: proc(e: ^Emitter, type: Type_Id, place: string) {
+	if !emit_lifecycle(e, type).managed || len(e.cleanups) == 0 {
+		return
+	}
+	entry := Deferred{type = type, place = place, temporary_place = true, slot = -1, place_env = -1}
+	if unwind_enabled(e) {
+		entry.place_env = unwind_reserve_env(e)
+	}
+	unwind_reserve(e, &entry)
+	unwind_publish_env(e, entry.place_env, place)
+	unwind_register(e, entry)
+	append(&e.cleanups[len(e.cleanups) - 1].entries, entry)
+}
+
 @(private)
 drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 	if entry.place == "" { return }

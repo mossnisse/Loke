@@ -26,8 +26,11 @@ impl Id {
 // design.md "Maps": `lookup_value` copies rather than borrows, so its receiver
 // is immutable and an ordinary `value:` parameter can be read through it.
 borrowed_len :: proc(m: map[string][dynamic]int) -> int {
-	held, ok := m.lookup_value("a");
-	return len(held) if ok else -1;
+	switch (held in m.lookup_value("a")) {
+	case .some: return len(held);
+	case .none: return -1;
+	}
+	return -1;
 }
 
 built :: proc() -> map[string]int {
@@ -70,14 +73,19 @@ main :: proc() {
 	fmt.println(m["nobody"].x);
 	fmt.println(len(m));
 
-	// The three membership forms. `lookup_value` is the `(V, bool)` read: it
-	// never inserts, and its payload is an independently owned value rather than
-	// a pointer into the table.
-	entry, ok := m.lookup_value("Bob");
-	fmt.println(entry.x);
-	fmt.println(ok);
-	_, missing := m.lookup_value("nobody");
-	fmt.println(missing);
+	// The three membership forms. `lookup_value` is the `Option` read: it never
+	// inserts, and its payload is an independently owned value rather than a
+	// pointer into the table.
+	switch (entry in m.lookup_value("Bob")) {
+	case .some:
+		fmt.println(entry.x);
+		fmt.println(true);
+	case .none: fmt.println(false);
+	}
+	switch (_ in m.lookup_value("nobody")) {
+	case .some: fmt.println(true);
+	case .none: fmt.println(false);
+	}
 	fmt.println(len(m));
 	fmt.println("Chloe" in m);
 	fmt.println("nobody" in m);
@@ -86,22 +94,30 @@ main :: proc() {
 	fmt.println((m.lookup_value("nobody") or_else Test{5, 5}).x);
 
 	// `find` never inserts and hands back a pointer to the stored value.
-	slot, found := m.find("Chloe");
-	fmt.println(found);
-	if (found) {
+	switch (slot in m.find("Chloe")) {
+	case .some:
+		fmt.println(true);
 		slot^ = Test{9, 9};
+	case .none: fmt.println(false);
 	}
 	fmt.println(m["Chloe"].y);
-	_, absent := m.find("nobody");
-	fmt.println(absent);
+	switch (_ in m.find("nobody")) {
+	case .some: fmt.println(true);
+	case .none: fmt.println(false);
+	}
 	fmt.println(len(m));
 
 	// Removal moves the stored value out and drops the key.
-	taken, removed := m.remove("Bob");
-	fmt.println(taken.x);
-	fmt.println(removed);
-	_, again := m.remove("Bob");
-	fmt.println(again);
+	switch (taken in m.remove("Bob")) {
+	case .some:
+		fmt.println(taken.x);
+		fmt.println(true);
+	case .none: fmt.println(false);
+	}
+	switch (_ in m.remove("Bob")) {
+	case .some: fmt.println(true);
+	case .none: fmt.println(false);
+	}
 	fmt.println(len(m));
 
 	// Capacity and clearing.
@@ -111,7 +127,10 @@ main :: proc() {
 	counts["a"] = 1;
 	counts["a"] += 5;
 	fmt.println(counts["a"]);
-	fmt.println(counts.try_insert("b", 2) == nil);
+	switch (_ in counts.try_insert("b", 2)) {
+	case .ok:  fmt.println(true);
+	case .err: fmt.println(false);
+	}
 	fmt.println(counts["b"]);
 	counts.shrink();
 	fmt.println(len(counts));
@@ -145,14 +164,14 @@ main :: proc() {
 	first.append(1);
 	first.append(2);
 	owned["a"] = move(first);
-	copied, copied_ok := owned.lookup_value("a");
-	fmt.println(copied_ok);
+	copied := owned.lookup_value("a") or_else {};
+	fmt.println(len(copied) > 0);
 	fmt.println(len(copied));
 	copied.append(3);
 	fmt.println(len(copied));
 	fmt.println(len(owned["a"]));
-	vacant, vacant_ok := owned.lookup_value("b");
-	fmt.println(vacant_ok);
+	vacant := owned.lookup_value("b") or_else {};
+	fmt.println(len(vacant) > 0);
 	fmt.println(len(vacant));
 	// The source map survives the result's cleanup.
 	fmt.println(len(owned));
@@ -161,18 +180,24 @@ main :: proc() {
 	fmt.println(built().lookup_value("k") or_else -1);
 	fmt.println(built().lookup_value("gone") or_else -1);
 	// Receiver, then key, each once.
-	loud, loud_ok := noisy_map().lookup_value(noisy_key());
-	fmt.println(loud);
-	fmt.println(loud_ok);
+	switch (loud in noisy_map().lookup_value(noisy_key())) {
+	case .some:
+		fmt.println(loud);
+		fmt.println(true);
+	case .none: fmt.println(false);
+	}
 
 	// A carrier payload still borrows through the map, exactly as the index it
 	// replaces does: `lookup_value` trades no place provenance for `unknown`.
 	views: map[int]string_view;
 	views[1] = "borrowed";
 	fmt.println(views[1]);
-	seen, seen_ok := views.lookup_value(1);
-	fmt.println(seen);
-	fmt.println(seen_ok);
+	switch (seen in views.lookup_value(1)) {
+	case .some:
+		fmt.println(seen);
+		fmt.println(true);
+	case .none: fmt.println(false);
+	}
 
 	names.clear();
 	fmt.println(len(names));
@@ -187,8 +212,10 @@ main :: proc() {
 	fmt.println(wide[199]);
 	total := 0;
 	for (i := 0; i < 200; i += 2) {
-		_, gone := wide.remove(i);
-		if (gone) { total += 1; }
+		switch (_ in wide.remove(i)) {
+		case .some: total += 1;
+		case .none:
+		}
 	}
 	fmt.println(total);
 	fmt.println(len(wide));
@@ -230,58 +257,84 @@ lookup_regressions :: proc() {
 		assert(key_copies == 1 && key_drops == 0);
 		assert(value_copies == 0 && value_drops == 0);
 		{
-			held, ok := m.lookup_value(key = key);
-			assert(ok && held.id == 1 && key.id == 1);
-			assert(value_copies == 1 && value_drops == 0 && key_drops == 0);
+			switch (held in m.lookup_value(key = key)) {
+			case .some:
+				assert(held.id == 1 && key.id == 1);
+				assert(value_copies == 1 && value_drops == 0 && key_drops == 0);
+			case .none: assert(false);
+			}
 		}
 		assert(value_drops == 1);
-		_, ok := m.lookup_value(key);
-		assert(ok && value_copies == 2 && value_drops == 2);
-		_, ok = m.lookup_value(key);
-		assert(ok && value_copies == 3 && value_drops == 3);
+		{
+			switch (_ in m.lookup_value(key)) {
+			case .some:
+			case .none: assert(false);
+			}
+		}
+		assert(value_copies == 2 && value_drops == 2);
+		{
+			switch (_ in m.lookup_value(key)) {
+			case .some:
+			case .none: assert(false);
+			}
+		}
+		assert(value_copies == 3 && value_drops == 3);
 		m.lookup_value(key);
-		_, _ = m.lookup_value(key);
+		m.lookup_value(key);
 		assert(value_copies == 5 && value_drops == 5);
-		_, missing := m.lookup_value({9});
-		assert(!missing && value_copies == 5 && value_drops == 5 && key_drops == 1);
-		_, found := m.find(key = key);
-		assert(found && key_drops == 1);
+		switch (_ in m.lookup_value({9})) {
+		case .some: assert(false);
+		case .none: assert(value_copies == 5 && value_drops == 5 && key_drops == 1);
+		}
+		switch (_ in m.find(key = key)) {
+		case .some: assert(key_drops == 1);
+		case .none: assert(false);
+		}
 		assert(key in m);
 		assert(m[key].id == 1 && key_drops == 1);
-		_, found = m.find({1});
-		assert(found && key_drops == 2);
+		switch (_ in m.find({1})) {
+		case .some: assert(key_drops == 2);
+		case .none: assert(false);
+		}
 		assert(Tracked_Key{1} in m);
 		assert(m[Tracked_Key{1}].id == 1 && key_drops == 4);
 		{
-			taken, removed := m.remove(key);
-			assert(removed && taken.id == 1 && key_drops == 5);
+			switch (taken in m.remove(key)) {
+			case .some: assert(taken.id == 1 && key_drops == 5);
+			case .none: assert(false);
+			}
 		}
 		assert(value_drops == 6 && key.id == 1);
 	}
 	assert(key_drops == 6);
 	{
-		held, ok := tracked_map().lookup_value(1);
-		assert(ok && held.id == 2 && value_copies == 6 && value_drops == 7);
+		switch (held in tracked_map().lookup_value(1)) {
+		case .some: assert(held.id == 2 && value_copies == 6 && value_drops == 7);
+		case .none: assert(false);
+		}
 	}
 	assert(value_drops == 8);
-	_, ok := tracked_map().lookup_value(9);
-	assert(!ok && value_copies == 6 && value_drops == 9);
+	switch (_ in tracked_map().lookup_value(9)) {
+	case .some: assert(false);
+	case .none: assert(value_copies == 6 && value_drops == 9);
+	}
 
 	// The formal key type supplies context to positional and named literals.
 	grid: map[[2]int]int;
 	grid[{1, 2}] = 17;
-	value, present := grid.lookup_value(key = {1, 2});
-	assert(present && value == 17);
-	ptr, exists := grid.find({1, 2});
-	assert(exists && ptr^ == 17);
+	assert((grid.lookup_value(key = {1, 2}) or_else -1) == 17);
+	switch (ptr in grid.find({1, 2})) {
+	case .some: assert(ptr^ == 17);
+	case .none: assert(false);
+	}
 }
 
 lookup_regions :: proc() {
 	arena := mem.Arena.init();
 	m: map[int][dynamic]int via arena.allocator();
 	m[1] = {9};
-	held, ok := m.lookup_value(1);
+	held := m.lookup_value(1) or_else {};
 	drop(m);
 	free_all(arena.allocator());
-	assert(ok && len(held) == 1 && held[0] == 9);
+	assert(len(held) == 1 && held[0] == 9);
 }

@@ -47,11 +47,11 @@ Integral :: interface($T: type) {
 // its `impl` block writes, or the field-wise one the compiler generates.
 // `move_only struct` removes the member, so a move-only type fails it.
 Cloneable :: interface($T: type) {
-	slot try_clone: proc(self, allocator: Allocator) -> (T, Allocator_Error);
+	slot try_clone: proc(self, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
 Iterator :: interface($Self, $Element: type) {
-	slot next: proc(self: inout Self) -> (Element, bool);
+	slot next: proc(self: inout Self) -> Option(Element);
 }
 
 Iterable :: interface($Self: type) {

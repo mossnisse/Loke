@@ -29,22 +29,30 @@ main :: proc() {
 	// Four zero-valued elements inside a capacity of sixteen. The zero of a
 	// managed element is the inert value every hook must already handle, so the
 	// fill is not a construction and the drop of an untouched element is a no-op.
-	rows, err := make([dynamic]Res, 4, 16);
-	fmt.println(err == nil);
+	switch (_ in make([dynamic]Res, 4, 16)) {
+	case .ok: fmt.println(true);
+	case .err: fmt.println(false);
+	}
 
 	// A map takes an optional reservation, and the allocator is recognised by its
 	// type rather than by a written parameter name.
-	pool, perr := make(map[int]Res, 32, mem.default_allocator());
-	fmt.println(perr == nil);
+	switch (_ in make(map[int]Res, 32, mem.default_allocator())) {
+	case .ok: fmt.println(true);
+	case .err: fmt.println(false);
+	}
 
 	// Empty, and still bound: `make` with no counts allocates nothing.
-	empty, eerr := make([dynamic]string);
-	fmt.println(eerr == nil);
+	switch (_ in make([dynamic]string)) {
+	case .ok: fmt.println(true);
+	case .err: fmt.println(false);
+	}
 
-	// Representable, and far larger than any heap will give: the error comes
-	// back and the value is an empty container bound to its provider.
-	huge, herr := make([dynamic]i128, 0, 1152921504606846976);
-	fmt.println(herr != nil);
+	// Representable, and far larger than any heap will give: the `Result` carries
+	// the error alone.
+	switch (_ in make([dynamic]i128, 0, 1152921504606846976)) {
+	case .ok: fmt.println(false);
+	case .err: fmt.println(true);
+	}
 
 	// A written policy on a local managed owner. The provider is selected when
 	// the declaration is evaluated, and the declaration keeps it across drop and

@@ -30,9 +30,12 @@ main :: proc() {
 	fmt.println(cap(empty));
 
 	// Round trip.
-	back, ok := string.from_runes(rs[:]);
-	fmt.println(back);
-	fmt.println(ok);
+	switch (back in string.from_runes(rs[:])) {
+	case .some:
+		fmt.println(back);
+		fmt.println(true);
+	case .none: fmt.println(false);
+	}
 
 	// The unsafe boundary: the current data pointer and nothing else.
 	xs: [dynamic]u8 = {7, 8, 9};

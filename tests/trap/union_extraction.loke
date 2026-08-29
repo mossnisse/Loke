@@ -1,9 +1,0 @@
-package main; import "core:fmt";
-
-Value :: union { bool, i32 }
-
-main :: proc() {
-	v: Value = i32(7);
-	// A failed single-value checked extraction traps; the comma-ok form does not.
-	fmt.println(1 if v.(bool) else 0);
-}

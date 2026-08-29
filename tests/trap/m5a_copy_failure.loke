@@ -22,12 +22,12 @@ impl Failing {
 main :: proc() {
 	source := Failing{1};
 	// The explicit entry point hands the error back, so this much runs.
-	_, error := source.try_clone();
-	if (error == nil) {
+	switch (_ in source.try_clone()) {
+	case .ok:
 		fmt.println(0);
 		return;
+	case .err: fmt.println(1);
 	}
-	fmt.println(1);
 
 	// An implicit copy has no error to hand back, so it traps.
 	destination := source;
