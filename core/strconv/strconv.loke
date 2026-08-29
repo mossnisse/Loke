@@ -12,7 +12,7 @@ package strconv;
 
 // What went wrong. `Parse_Error` is nil on success, so it composes with
 // `or_return` like every other error value in the library.
-Fault :: enum {
+Parse_Error :: enum {
 	// The text is not a number at all: no digits, a stray sign, a misplaced
 	// underscore, an exponent with no digits.
 	Invalid_Syntax,
@@ -24,57 +24,50 @@ Fault :: enum {
 	Trailing_Data,
 }
 
-Parse_Error :: union {Fault}
-
-// design.md's optional-ok convention: absence is the whole story here, so this
-// one reports a `bool` rather than an error value.
+// Absence is the whole story here, so this one reports `Option` rather than an
+// error value.
 //
 // Accepts `true`/`false` in either case, and `1`/`0`.
-parse_bool :: proc(text: string_view) -> (bool, bool) {
+parse_bool :: proc(text: string_view) -> Option(bool) {
 	trimmed := trim_ascii_space(text);
 	if (trimmed == "true" || trimmed == "TRUE" || trimmed == "True" || trimmed == "1") {
-		return true, true;
+		return .some(true);
 	}
 	if (trimmed == "false" || trimmed == "FALSE" || trimmed == "False" || trimmed == "0") {
-		return false, true;
+		return .some(false);
 	}
-	return false, false;
+	return .none;
 }
 
 // `base == 0` recognises the language's own prefixes — `0b`, `0o`, `0x` — and
 // otherwise reads decimal. Any other base is 2 through 36, with no prefix
 // accepted. Underscores may separate digits, as in a Loke literal.
-parse_u64 :: proc(text: string_view, base: int = 0) -> (u64, Parse_Error) {
-	digits, radix, negative, error := split_number(text, base);
-	if (error != nil) { return 0, error; }
-	if (negative) { return 0, Fault.Invalid_Syntax; }
-	return accumulate(digits, radix, 0xFFFFFFFFFFFFFFFF);
+parse_u64 :: proc(text: string_view, base: int = 0) -> Result(u64, Parse_Error) {
+	split := split_number(text, base) or_return;
+	if (split.negative) { return .err(.Invalid_Syntax); }
+	return accumulate(split.digits, split.radix, 0xFFFFFFFFFFFFFFFF);
 }
 
-parse_i64 :: proc(text: string_view, base: int = 0) -> (i64, Parse_Error) {
-	digits, radix, negative, error := split_number(text, base);
-	if (error != nil) { return 0, error; }
+parse_i64 :: proc(text: string_view, base: int = 0) -> Result(i64, Parse_Error) {
+	split := split_number(text, base) or_return;
 	// One more magnitude is representable on the negative side, which is the
 	// whole reason the sign is handled here rather than after the conversion.
-	limit: u64 = 0x8000000000000000 if negative else 0x7FFFFFFFFFFFFFFF;
-	magnitude, accumulate_error := accumulate(digits, radix, limit);
-	if (accumulate_error != nil) { return 0, accumulate_error; }
-	if (negative) {
-		return -i64(magnitude - 1) - 1, nil;
+	limit: u64 = 0x8000000000000000 if split.negative else 0x7FFFFFFFFFFFFFFF;
+	magnitude := accumulate(split.digits, split.radix, limit) or_return;
+	if (split.negative) {
+		return .ok(-i64(magnitude - 1) - 1);
 	}
-	return i64(magnitude), nil;
+	return .ok(i64(magnitude));
 }
 
 // `int` and `uint` are the target's pointer-sized integers, which on every
 // supported target is 64 bits; these exist so a caller need not convert.
-parse_int :: proc(text: string_view, base: int = 0) -> (int, Parse_Error) {
-	value, error := parse_i64(text, base);
-	return int(value), error;
+parse_int :: proc(text: string_view, base: int = 0) -> Result(int, Parse_Error) {
+	return .ok(int(parse_i64(text, base) or_return));
 }
 
-parse_uint :: proc(text: string_view, base: int = 0) -> (uint, Parse_Error) {
-	value, error := parse_u64(text, base);
-	return uint(value), error;
+parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error) {
+	return .ok(uint(parse_u64(text, base) or_return));
 }
 
 // ponytail: a decimal mantissa scaled by a power of ten. Exact when the mantissa
@@ -86,9 +79,9 @@ parse_uint :: proc(text: string_view, base: int = 0) -> (uint, Parse_Error) {
 //
 // Accepts `[+-]digits[.digits][(e|E)[+-]digits]`. Infinities and NaNs are not
 // spellable; a caller that needs them tests for the words itself.
-parse_f64 :: proc(text: string_view) -> (f64, Parse_Error) {
+parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	trimmed := trim_ascii_space(text);
-	if (len(trimmed) == 0) { return 0, Fault.Invalid_Syntax; }
+	if (len(trimmed) == 0) { return .err(.Invalid_Syntax); }
 	bytes := trimmed.bytes();
 	at := 0;
 	negative := false;
@@ -131,7 +124,7 @@ parse_f64 :: proc(text: string_view) -> (f64, Parse_Error) {
 			exponent -= 1;
 		}
 	}
-	if (digits == 0) { return 0, Fault.Invalid_Syntax; }
+	if (digits == 0) { return .err(.Invalid_Syntax); }
 
 	if (at < len(bytes) && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
 		at += 1;
@@ -150,19 +143,19 @@ parse_f64 :: proc(text: string_view) -> (f64, Parse_Error) {
 				value = value * 10 + int(bytes[at] - u8('0'));
 			}
 		}
-		if (written == 0) { return 0, Fault.Invalid_Syntax; }
+		if (written == 0) { return .err(.Invalid_Syntax); }
 		exponent += -value if exponent_negative else value;
 	}
-	if (at != len(bytes)) { return 0, Fault.Trailing_Data; }
+	if (at != len(bytes)) { return .err(.Trailing_Data); }
 
 	value := scale(f64(mantissa), exponent);
 	// Scaling a finite decimal outside f64's range must not quietly manufacture
-	// an infinity: infinities are not accepted spellings, and `Fault.Overflow`
+	// an infinity: infinities are not accepted spellings, and `Parse_Error.Overflow`
 	// exists precisely for a value the destination cannot hold.
 	if (mantissa != 0 && value > 1.7976931348623157e308) {
-		return 0, Fault.Overflow;
+		return .err(.Overflow);
 	}
-	return -value if negative else value, nil;
+	return .ok(-value if negative else value);
 }
 
 // ---------------------------------------------------------------- private --
@@ -214,12 +207,15 @@ trim_ascii_space :: proc(text: string_view) -> string_view {
 
 // The sign, the base, and the digits with any prefix removed. Every syntactic
 // judgement that does not depend on the destination type happens here.
+// One result, because `Result` carries one payload: the three facts travel in a
+// record rather than as a tuple with a trailing status.
 @(private)
-split_number :: proc(
-	text: string_view, base: int,
-) -> (digits: string_view, radix: int, negative: bool, error: Parse_Error) {
+Split :: struct { digits: string_view, radix: int, negative: bool }
+
+@(private)
+split_number :: proc(text: string_view, base: int) -> Result(Split, Parse_Error) {
 	if (base != 0 && (base < 2 || base > 36)) {
-		return text, 10, false, Fault.Invalid_Base;
+		return .err(.Invalid_Base);
 	}
 	rest := trim_ascii_space(text);
 	bytes := rest.bytes();
@@ -237,9 +233,9 @@ split_number :: proc(
 		else if (marker == u8('x') || marker == u8('X')) { selected = 16; at += 2; }
 	}
 	if (at >= len(bytes)) {
-		return rest, selected, sign, Fault.Invalid_Syntax;
+		return .err(.Invalid_Syntax);
 	}
-	return rest[at:], selected, sign, nil;
+	return .ok(Split{rest[at:], selected, sign});
 }
 
 // The digits themselves, in `radix`, refusing anything above `limit`.
@@ -248,7 +244,7 @@ split_number :: proc(
 // exactly what the lexer does with a written literal — `1_000`, `0x_ff` and
 // `12_` all lex. At least one digit is still required.
 @(private)
-accumulate :: proc(digits: string_view, radix: int, limit: u64) -> (u64, Parse_Error) {
+accumulate :: proc(digits: string_view, radix: int, limit: u64) -> Result(u64, Parse_Error) {
 	bytes := digits.bytes();
 	value: u64 = 0;
 	scale := u64(radix);
@@ -258,17 +254,17 @@ accumulate :: proc(digits: string_view, radix: int, limit: u64) -> (u64, Parse_E
 		digit := digit_value(byte);
 		if (digit < 0 || digit >= radix) {
 			// Something followed a number, rather than the text not being one.
-			return 0, Fault.Trailing_Data if seen > 0 else Fault.Invalid_Syntax;
+			return .err(Parse_Error.Trailing_Data if seen > 0 else Parse_Error.Invalid_Syntax);
 		}
 		seen += 1;
 		// Both halves of the overflow test, before the value is committed.
 		if (value > (limit - u64(digit)) / scale) {
-			return 0, Fault.Overflow;
+			return .err(.Overflow);
 		}
 		value = value * scale + u64(digit);
 	}
-	if (seen == 0) { return 0, Fault.Invalid_Syntax; }
-	return value, nil;
+	if (seen == 0) { return .err(.Invalid_Syntax); }
+	return .ok(value);
 }
 
 @(private)

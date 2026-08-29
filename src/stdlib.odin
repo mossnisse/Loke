@@ -24,7 +24,8 @@ STD_STRINGS :: "core:strings"
 // Called once per package, right after its scope exists and before any of its
 // own declarations are collected, so a source declaration colliding with a
 // contributed name is reported as the ordinary redeclaration it is.
-contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
+contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
+	c := k.c
 	if pkg == nil || pkg.scope == nil || pkg.contributed {
 		return
 	}
@@ -53,8 +54,8 @@ contribute_standard_members :: proc(c: ^Compiler, pkg: ^Package) {
 			// lattice has to recognise them, not merely call them.
 			contribute_type(c, pkg, "Arena", arena_type(c))
 			contribute_type(c, pkg, "Scratch", scratch_type(c))
-			contribute_symbol(c, pkg, "try_arena", provider_try_proc(c, arena_type(c), "try_arena"))
-			contribute_symbol(c, pkg, "try_scratch", provider_try_proc(c, scratch_type(c), "try_scratch"))
+			contribute_symbol(c, pkg, "try_arena", provider_try_proc(k, arena_type(c), "try_arena"))
+			contribute_symbol(c, pkg, "try_scratch", provider_try_proc(k, scratch_type(c), "try_scratch"))
 		}
 	case STD_UNSAFE:
 		// These make the loss of bounds and borrow capability visible at the call

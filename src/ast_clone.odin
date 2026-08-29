@@ -142,6 +142,15 @@ clone_fields :: proc(c: ^Compiler, list: []Field) -> []Field {
 }
 
 @(private = "file")
+clone_variants :: proc(c: ^Compiler, list: []Variant) -> []Variant {
+	out := clone_slice(c, list)
+	for entry, index in list {
+		out[index] = Variant{span = entry.span, name = entry.name, type = clone_expr(c, entry.type)}
+	}
+	return out
+}
+
+@(private = "file")
 clone_enum_fields :: proc(c: ^Compiler, list: []Enum_Field) -> []Enum_Field {
 	out := clone_slice(c, list)
 	for entry, index in list {
@@ -396,7 +405,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.attributes = clone_attributes(c, v.attributes)
 		n.where_clauses = clone_exprs(c, v.where_clauses)
 		n.fields = clone_fields(c, v.fields)
-		n.variants = clone_exprs(c, v.variants)
+		n.variants = clone_variants(c, v.variants)
 		return n
 
 	case ^Type_Enum:

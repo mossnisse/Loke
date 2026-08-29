@@ -8,6 +8,59 @@ import "core:strings"
 
 // -------------------------------------------------------------- constants --
 
+// design.md "Zero values": a union constant is a payload written into the
+// storage type's alignment-carrying head plus the variant's tag. The head is an
+// integer, so the payload has to be spellable as one.
+//
+// ponytail: scalar payloads only. An aggregate payload would need the constant
+// serialized to the target's byte image, which nothing else in the backend does
+// yet; until something needs it, the diagnostic is better than the machinery.
+@(private = "file")
+union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Type_Info) -> string {
+	shape := union_layout(e.c, type)
+	if value.kind != .Aggregate || value.aggregate == nil {
+		return "zeroinitializer" // the designated zero variant, which is all-zero
+	}
+	index := value.aggregate.variant
+	payload_type := union_variant_payload(e.c, type, index)
+	head := "0"
+	// A zero-sized payload — `Unit`, or any empty record — contributes no bits,
+	// so the zeroed head already *is* the whole value.
+	if payload_type != TYPE_VOID && type_size(e.c, payload_type) != 0 {
+		bits := u64(0)
+		#partial switch underlying_kind(e.c, payload_type) {
+		case .Bool:
+			bits = value.aggregate.elements[0].boolean ? 1 : 0
+		case .Int, .Enum, .Rune:
+			wrapped := bi_wrap(e.c, value.aggregate.elements[0].integer, type_bits(e.c, payload_type), false)
+			raw, fits := bi_to_i64(e.c, wrapped)
+			if !fits {
+				backend_fail(e, "a union payload constant is wider than one word")
+			}
+			bits = u64(raw)
+		case:
+			backend_fail(e, fmt.aprintf("a union constant needs a scalar payload, found %s in %s", type_name(e.c, payload_type), type_name(e.c, type)))
+		}
+		head = fmt.aprintf("%d", bits)
+	}
+
+	b := strings.builder_make()
+	strings.write_string(&b, "{ ")
+	fmt.sbprintf(&b, "i%d %s", shape.align * 8, head)
+	if pad := shape.payload_size - shape.align; pad > 0 {
+		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", pad)
+	}
+	if gap := shape.tag_offset - shape.payload_size; gap > 0 {
+		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", gap)
+	}
+	fmt.sbprintf(&b, ", i%d %d", shape.tag_bytes * 8, index)
+	if tail := shape.size - shape.tag_offset - shape.tag_bytes; tail > 0 {
+		fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", tail)
+	}
+	strings.write_string(&b, " }")
+	return strings.to_string(b)
+}
+
 llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	under := type_underlying(e.c, default_type(e.c, type))
 	info := type_of(e.c, under)
@@ -46,9 +99,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		// Nil is success, and success is zero.
 		return value.kind == .Nil ? "0" : bi_text(e.c, value.integer)
 	case .Union:
-		// The only constant of a union or an erased view is its zero value; every
-		// other one is built at run time.
-		return "zeroinitializer"
+		return union_constant(e, value, under, info)
 	case .Array:
 		b := strings.builder_make()
 		strings.write_string(&b, "[")
@@ -629,7 +680,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		base.union_from, base.type = INVALID_TYPE, from
 		inner := emit_expr(e, expr)
 		base.union_from, base.type = from, target
-		return emit_union_value(e, target, from, inner)
+		return emit_union_value(e, target, base.union_variant, inner)
 	}
 	if base.is_const && base.const_value.kind != .Invalid {
 		return llvm_const(e, base.const_value, base.type)
@@ -1172,8 +1223,8 @@ type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// Two unions are equal when their tags match and, for a non-nil tag, the active
-// variant's payloads match.
+// Two unions are equal when their tags match and the active variant's payloads
+// match. A payloadless variant is settled by the tag alone.
 //
 // ponytail: every variant's comparison is computed and then selected, rather
 // than branching per tag. Each payload load is inside the union's own storage,
@@ -1194,15 +1245,18 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	left_slot := emit_union_spill(e, union_type, lhs)
 	right_slot := emit_union_spill(e, union_type, rhs)
 
-	// Nil equals nil, so the chain starts from `true` and each variant overrides
-	// it when its own tag is active.
+	// A payloadless variant is equal to itself, so the chain starts from `true`
+	// and each payload-carrying variant overrides it when its tag is active.
 	payloads := "true"
 	for variant, index in info.variants {
+		if variant == TYPE_VOID {
+			continue
+		}
 		left := emit_union_payload(e, union_type, variant, left_slot)
 		right := emit_union_payload(e, union_type, variant, right_slot)
 		equal := emit_equal(e, variant, left, right)
 		active := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, left_tag, index + 1)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, left_tag, index)
 		next := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", next, active, equal, payloads)
 		payloads = next
@@ -1438,7 +1492,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		data := extract(e, storage, slice, SLICE_DATA)
 		count := extract(e, storage, slice, SLICE_LEN)
 		return emit_text_optional_ok(
-			e, "loke_rt_v1_string_from_runes",
+			e, v.type, "loke_rt_v1_string_from_runes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, RT_DEFAULT_ALLOCATOR),
 		)
 	}
@@ -1481,12 +1535,13 @@ emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments: string, fail_i
 // design.md "Optional-ok results": the value is the zero value on failure, which
 // the runtime has already published into the slot.
 @(private = "file")
-emit_text_optional_ok :: proc(e: ^Emitter, callee, arguments: string) -> []string {
+emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: string) -> []string {
 	slot, ok := emit_text_call_slot(e, callee, arguments)
-	out := make([]string, 2)
-	out[0], out[1] = temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out[0], STRING_TYPE, slot)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", out[1], ok)
+	value, valid := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, STRING_TYPE, slot)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", valid, ok)
+	out := make([]string, 1)
+	out[0] = emit_option_value(e, option, valid, value)
 	return out
 }
 
@@ -1503,12 +1558,11 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	slot, ok := emit_text_call_slot(
 		e, "loke_rt_v1_string_clone", fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, allocator),
 	)
-	out := make([]string, 2)
-	out[0] = load(e, STRING_TYPE, slot)
+	copied := load(e, STRING_TYPE, slot)
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
-	out[1] = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to %s", out[1], failed, llvm_type(e, TYPE_ALLOCATOR_ERROR))
+	out := make([]string, 1)
+	out[0] = emit_alloc_result(e, v.type, failed, copied)
 	return out
 }
 
@@ -1523,7 +1577,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	case .String_From_Bytes:
 		data, length := emit_byte_slice_parts(e, v.bound[0])
 		return emit_text_optional_ok(
-			e, "loke_rt_v1_string_from_bytes",
+			e, v.type, "loke_rt_v1_string_from_bytes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, RT_DEFAULT_ALLOCATOR),
 		)
 
@@ -1539,8 +1593,8 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
 		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
-		out := make([]string, 2)
-		out[0], out[1] = view, ok
+		out := make([]string, 1)
+		out[0] = emit_option_value(e, v.type, ok, view)
 		return out
 
 	case .String_From_C_View:
@@ -1550,13 +1604,13 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		length := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, pointer)
 		return emit_text_optional_ok(
-			e, "loke_rt_v1_string_from_bytes",
+			e, v.type, "loke_rt_v1_string_from_bytes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", pointer, length, RT_DEFAULT_ALLOCATOR),
 		)
 	}
 	backend_fail(e, "an unclassified text conversion reached emission")
-	out := make([]string, 2)
-	out[0], out[1] = "zeroinitializer", "false"
+	out := make([]string, 1)
+	out[0] = "zeroinitializer"
 	return out
 }
 
@@ -1613,9 +1667,9 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> [
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr null", kept_data, ok, data)
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
 		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
-		pair := make([]string, 2)
-		pair[0], pair[1] = view, ok
-		return pair
+		single := make([]string, 1)
+		single[0] = emit_option_value(e, v.type, ok, view)
+		return single
 	}
 	return out
 }

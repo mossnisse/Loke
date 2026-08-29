@@ -76,3 +76,24 @@ Source_Code_Location :: struct {
 	line:      int,
 	column:    int,
 }
+
+// design.md "Typed fallibility": the three declarations the compiler
+// bootstraps and binds into the universe, so every program spells absence and
+// failure with one pair of types rather than a trailing status convention.
+//
+// `Option` has a zero — `.none` is its first variant — so it may be stored in
+// a global, a container, or a zero-initialized allocation. `Result` has none:
+// there is no honest default between success and failure, so it must be
+// constructed.
+
+// The no-payload result type. A fallible operation that produces nothing on
+// success returns `Result(Unit, E)`.
+@(public)
+Unit :: struct {}
+
+@(public)
+Option :: union($T: type) @(zero=none, failure=none) { none:, some: T }
+
+@(public)
+@(require_results)
+Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }

@@ -558,10 +558,16 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		place_label(e, tests[case_index])
 		next := position + 1 < len(order) ? tests[order[position + 1]] : fallback
 		matched := ""
-		for variant_expr in s.cases[case_index].values {
-			variant := expr_base(variant_expr).denoted_type
+		entry := s.cases[case_index]
+		count := erased ? len(entry.values) : len(entry.variant_indices)
+		for position in 0 ..< count {
 			test := temp(e)
-			discriminant := erased ? typeid_value(e.c, variant) : u64(union_variant_tag(e.c, union_type, variant))
+			discriminant := u64(0)
+			if erased {
+				discriminant = typeid_value(e.c, expr_base(entry.values[position]).denoted_type)
+			} else {
+				discriminant = u64(entry.variant_indices[position])
+			}
 			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", test, tag_llvm, tag, discriminant)
 			if matched == "" {
 				matched = test

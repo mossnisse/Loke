@@ -29,10 +29,13 @@ Expr_Base :: struct {
 	// exactly-one-value type, so nothing that expects one value silently reads
 	// the first of many.
 	result_types: []Type_Id,
-	// The variant type this expression produces before it is wrapped into the
-	// union `type` now names. INVALID_TYPE when no wrap happens; the emitter
-	// evaluates the node at this type and then writes payload and tag.
-	union_from:  Type_Id,
+	// The payload type this expression produces before it is wrapped into the
+	// union `type` now names, with the variant it lands in. INVALID_TYPE when no
+	// wrap happens; the emitter evaluates the node at this type and then writes
+	// payload and tag. The index is carried rather than re-derived, because two
+	// variants may share a payload type.
+	union_from:    Type_Id,
+	union_variant: int,
 	// The concrete type this expression produces before it is erased into the
 	// `any_view` that `type` now names. The emitter evaluates the node at this
 	// type, takes its address, and pairs it with the frozen `typeid`.
@@ -121,6 +124,11 @@ Expr_Selector :: struct {
 	using base: Expr_Base,
 	operand:    Expr,
 	name:       Name,
+	// When this selector names a union variant: the union and the variant's
+	// declaration index. `resolution.kind` says whether the payload is still
+	// owed (`.Union_Variant`) or the variant is payloadless and complete.
+	variant_union: Type_Id,
+	variant_index: int,
 }
 
 // The two extraction spellings share one semantic description: a source, a
@@ -138,6 +146,10 @@ Expr_Checked_Extract :: struct {
 	operand:    Expr,
 	target:     Expr,
 	mode:       Extract_Mode,
+	// The requested type. `type` is that same type for `.(T)` and `Option(T)`
+	// for `.as(T)`, so the extracted value's own type is kept apart from the
+	// expression's result.
+	payload:    Type_Id,
 }
 
 // `x[a]`, and the user-defined comma form `x[a, b]`.
@@ -206,7 +218,9 @@ Text_Op :: enum {
 // of runtime variant inspection.
 Union_Op :: enum {
 	None,
-	Active_Typeid,
+	// `.name(payload)` / `U.name(payload)`: variant construction. `bound[0]` is
+	// the payload and `variant_index` is the variant it lands in.
+	Construct,
 	// `value.as(T)`, whose semantics live in the `extract` node below.
 	Extract,
 }
@@ -235,8 +249,10 @@ Expr_Call :: struct {
 	reflect_field: Symbol_Id,
 	// `text.byte_len()`, `text.bytes()`, and the rest of the text surface.
 	text:            Text_Op,
-	// `value.active_typeid()` on a union.
+	// `.name(payload)` variant construction, or `value.as(T)`.
 	union_op:        Union_Op,
+	// The variant `union_op == .Construct` writes.
+	variant_index:   int,
 	// `value.as(T)`: the optional extraction this call resolved to. Downstream
 	// phases delegate to it rather than treating the call as a call, which is
 	// what keeps `.(T)` and `.as(T)` on one flow, evaluation, and lowering path.
@@ -562,6 +578,14 @@ Record_Kind :: enum {
 	Union,
 }
 
+// One written union variant: `name: T` or the payloadless `name:`. The name is
+// the variant's identity, so two variants may carry the same payload type.
+Variant :: struct {
+	span: Span,
+	name: Name,
+	type: Expr, // nil for a payloadless variant
+}
+
 // `struct` and `union` differ only in their body, so one node carries both:
 // `fields` for a struct, `variants` for a union.
 Type_Record :: struct {
@@ -572,7 +596,7 @@ Type_Record :: struct {
 	attributes:     []Attribute,
 	where_clauses:  []Expr,
 	fields:         []Field,
-	variants:       []Expr,
+	variants:       []Variant,
 }
 
 Type_Enum :: struct {
@@ -851,11 +875,14 @@ Switch_Case :: struct {
 	span:   Span,
 	values: []Expr,
 	stmts:  []Stmt,
-	// A type switch binds one name per case: at the variant's type for a
-	// single-type case, and at the union's type for a multiple-type or default
+	// A type switch binds one name per case: at the variant's payload type for a
+	// single-variant case, and at the union's type for a grouped or default
 	// case, where the active variant is not known.
 	binding_symbol: Symbol_Id,
 	binding_type:   Type_Id,
+	// A union switch's cases are variant identities, resolved once here so the
+	// evaluator and the emitter never look a payload type back up.
+	variant_indices: []int,
 }
 
 Stmt_Switch :: struct {

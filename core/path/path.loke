@@ -170,8 +170,7 @@ clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator())
 	rooted := len(rest) > 0 && is_separator(rest.bytes()[0]);
 
 	// The element stack, as offsets into `rest`: cleaning never invents text.
-	elements, made := make([dynamic]string_view, 0, 8, allocator);
-	if (made != nil) { panic("path cleaning allocation failed"); }
+	elements := make([dynamic]string_view, 0, 8, allocator) or_else no_elements();
 	foreach (element in split_elements(rest)) {
 		if (len(element) == 0 || element == ".") { continue; }
 		if (element == "..") {
@@ -215,17 +214,20 @@ impl Element_Iterator {
 
 	iter :: proc(self) -> Element_Iterator { return self; }
 
-	next :: proc(self: inout Element_Iterator) -> (string_view, bool) {
-		if (self.done) { return "", false; }
+	next :: proc(self: inout Element_Iterator) -> Option(string_view) {
+		if (self.done) { return .none; }
 		bytes := self.rest.bytes();
 		at := 0;
 		for (; at < len(bytes) && !is_separator(bytes[at]); at += 1) {}
 		element := self.rest[0:at];
 		if (at == len(bytes)) {
 			self.done = true;
-			return element, len(element) > 0;
+			return .some(element) if len(element) > 0 else .none;
 		}
 		self.rest = self.rest[at + 1:];
-		return element, true;
+		return .some(element);
 	}
 }
+
+@(private)
+no_elements :: proc() -> [dynamic]string_view { panic("path cleaning allocation failed"); }

@@ -126,16 +126,9 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 		backend_fail(e, "a fallible container element has no `try_clone` member")
 		return "false"
 	}
-	pair := clone_pair_type(llvm_type(e, type))
-	returned := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, pair, e.names[hook], llvm_type(e, type), value, allocator,
-	)
-	cloned := extract(e, pair, returned, 0)
-	error := extract(e, pair, returned, 1)
+	cloned, broke := emit_clone_call(e, hook, type, value, allocator)
 	ok := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", ok, error)
+	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", ok, broke)
 	// The hook already cleaned its own temporary on the failing path, and a
 	// failed clone returns the zero value, so publishing it unconditionally would
 	// leave an inert value the caller must not count as initialised. Store it
@@ -745,15 +738,35 @@ register_variadic_cleanup :: proc(
 
 // ------------------------------------------------------- lifecycle bodies --
 
-// `{ T, i64 }`, the `(T, Allocator_Error)` result pair. Built rather than
-// formatted, because `{` is a directive to core:fmt.
+// design.md "Typed fallibility": `try_clone` returns `Result(T, Allocator_Error)`.
+// The clone machinery keeps working in `(value, failed)` pairs internally and
+// converts only at the two boundaries - the call and the return.
 @(private)
-clone_pair_type :: proc(value: string) -> string {
-	b := strings.builder_make()
-	strings.write_string(&b, "{ ")
-	strings.write_string(&b, value)
-	strings.write_string(&b, ", i64 }")
-	return strings.to_string(b)
+clone_result_of :: proc(e: ^Emitter, hook: Symbol_Id) -> Type_Id {
+	sym := symbol_of(e.c, hook)
+	if sym == nil || len(sym.results) != 1 {
+		backend_fail(e, "a `try_clone` member has no result type")
+		return INVALID_TYPE
+	}
+	return sym.results[0]
+}
+
+// Calls one `try_clone` and unpacks its result into the internal pair. The
+// cloned value is only meaningful where `failed` is false.
+@(private)
+emit_clone_call :: proc(
+	e: ^Emitter, hook: Symbol_Id, subject: Type_Id, value, allocator: string,
+) -> (cloned: string, failed: string) {
+	result := clone_result_of(e, hook)
+	returned := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
+		returned, llvm_type(e, result), e.names[hook], llvm_type(e, subject), value, allocator,
+	)
+	slot := emit_union_spill(e, result, returned)
+	failed = emit_union_failed(e, result, returned)
+	cloned = emit_union_payload(e, result, subject, slot)
+	return
 }
 
 // Compiler-generated field-wise cloning calls `try_clone` recursively for every
@@ -770,7 +783,8 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	subject := symbol.params[0]
 	operations := emit_lifecycle(e, subject)
 	value_type := llvm_type(e, subject)
-	pair := clone_pair_type(value_type)
+	result := symbol.results[0]
+	pair := llvm_type(e, result)
 	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, value_type)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
@@ -790,11 +804,13 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// handle, so asking about failure alone would hand back a second owner of one
 	// allocation with the count still at 1.
 	if !operations.managed {
-		first, out := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %%arg0, 0", first, pair, value_type)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, 1", out, pair, first)
-		fmt.sbprintfln(&e.b, "  ret %s %s", pair, out)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", "%arg0"))
 		fmt.sbprintln(&e.b, "}")
+		return
+	}
+
+	if info := underlying_info(e.c, subject); info != nil && info.kind == .Union {
+		emit_union_try_clone_body(e, subject, info, result, pair, value_type)
 		return
 	}
 
@@ -810,12 +826,9 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, built)
 		ok := emit_try_clone_into(e, subject, built, self, "%arg1")
 		value := load(e, value_type, built)
-		error := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 1", error, ok)
-		first, out := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, value_type, value)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, 1", out, pair, first, error)
-		fmt.sbprintfln(&e.b, "  ret %s %s", pair, out)
+		broke := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", broke, ok)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, broke, value))
 		fmt.sbprintln(&e.b, "}")
 		return
 	}
@@ -847,9 +860,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			store(e, part, emit_clone_value(e, part, loaded, "%arg1"), destination)
 			continue
 		}
-		cloned, error := emit_part_clone(e, part, source)
-		failed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
+		cloned, failed := emit_part_clone(e, part, source)
 		unwind, ok := new_label(e, "clone.unwind"), new_label(e, "clone.ok")
 		branch_if(e, failed, unwind, ok)
 
@@ -859,9 +870,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		for done := index - 1; done >= 0; done -= 1 {
 			emit_drop_place(e, clone_part(e.c, subject, done), element_address(e, subject, out, done))
 		}
-		zeroed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s zeroinitializer, i64 %s, 1", zeroed, pair, error)
-		fmt.sbprintfln(&e.b, "  ret %s %s", pair, zeroed)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "true"))
 		e.terminated = true
 		// Only a successful part is published, so a hook that breaks its contract
 		// and hands back a live value beside an error cannot leave one in the
@@ -871,10 +880,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 
 	built := load(e, value_type, out)
-	first, result := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair, value_type, built)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, 1", result, pair, first)
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair, result)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", built))
 	fmt.sbprintln(&e.b, "}")
 }
 
@@ -909,28 +915,19 @@ emit_part_clone :: proc(e: ^Emitter, part: Type_Id, source: string) -> (string, 
 		destination := alloca(e, CONTAINER_TYPE)
 		ok := emit_try_clone_into(e, part, destination, source, "%arg1")
 		cloned := load(e, CONTAINER_TYPE, destination)
-		error := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 1", error, ok)
-		return cloned, error
+		failed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, ok)
+		return cloned, failed
 	}
 	hook := operations.try_clone
 	if hook == INVALID_SYMBOL {
 		// The checked facts say this part reaches a custom hook, so the
 		// contribution pass owed it one.
 		backend_fail(e, "a fallible clone part has no `try_clone` member")
-		return "0", "1"
+		return "0", "true"
 	}
-	part_type := llvm_type(e, part)
-	pair := clone_pair_type(part_type)
-	loaded := load(e, part_type, source)
-	returned := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call %s %s(%s %s, ptr %%arg1)",
-		returned, pair, e.names[hook], part_type, loaded,
-	)
-	cloned := extract(e, pair, returned, 0)
-	error := extract(e, pair, returned, 1)
-	return cloned, error
+	loaded := load(e, llvm_type(e, part), source)
+	return emit_clone_call(e, hook, part, loaded, "%arg1")
 }
 
 // Drops every initialized element of a compiler-owned variadic buffer in
@@ -991,21 +988,12 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 @(private = "file")
 emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: string) -> string {
 	value_type := llvm_type(e, subject)
-	pair := clone_pair_type(value_type)
 	hook := emit_lifecycle(e, subject).try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a policy-following copy has no `try_clone` operation")
 		return "0"
 	}
-	returned := temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, pair, e.names[hook], value_type, value, allocator,
-	)
-	cloned := extract(e, pair, returned, 0)
-	error := extract(e, pair, returned, 1)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
+	cloned, failed := emit_clone_call(e, hook, subject, value, allocator)
 	// design.md "Allocation failure": an implicit copy has nowhere to return an
 	// error, so the *allocator's* policy decides — `.Panic` follows the program
 	// strategy and `.Trap` terminates immediately under either. The runtime reads
@@ -1072,6 +1060,12 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	if hook := operations.custom_drop; hook != INVALID_SYMBOL {
 		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", e.names[hook], address)
 	}
+	// design.md "Unions": a union owns exactly one payload, so its drop reads the
+	// tag and destroys that variant alone. No inactive payload is loaded.
+	if info := underlying_info(e.c, type); info != nil && info.kind == .Union {
+		emit_union_drop(e, type, info, address)
+		return
+	}
 	for index := clone_part_count(e.c, type) - 1; index >= 0; index -= 1 {
 		part := clone_part(e.c, type, index)
 		if !emit_lifecycle(e, part).managed {
@@ -1079,4 +1073,83 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		}
 		emit_drop_place(e, part, element_address(e, type, address, index))
 	}
+}
+
+// The tag-aware half of `emit_drop_place`. Only a variant whose payload is
+// managed gets a block; every other tag falls straight through to `done`.
+@(private = "file")
+emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: string) {
+	shape := union_layout(e.c, type)
+	value := load(e, llvm_type(e, type), address)
+	tag := emit_union_tag(e, type, value)
+	done := new_label(e, "uniondrop.done")
+	for variant, index in info.variants {
+		if variant == TYPE_VOID || !type_is_managed(e.c, variant) {
+			continue
+		}
+		matched := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, shape.tag_bytes * 8, tag, index)
+		hit, next := new_label(e, "uniondrop.hit"), new_label(e, "uniondrop.next")
+		branch_if(e, matched, hit, next)
+		place_label(e, hit)
+		emit_drop_place(e, variant, gep_field(e, llvm_type(e, type), address, 0))
+		branch(e, done)
+		place_label(e, next)
+	}
+	branch(e, done)
+	place_label(e, done)
+	// A dropped union is left inert, so a second drop on an unwind path is a
+	// no-op rather than a second release of the same payload.
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm_type(e, type), address)
+}
+
+// The tag-aware half of `emit_synth_try_clone`. Each managed variant clones its
+// own payload and rebuilds the union at that variant; a partial failure has
+// nothing to unwind, because a union holds one payload and it is either cloned
+// whole or not at all.
+@(private = "file")
+emit_union_try_clone_body :: proc(
+	e: ^Emitter, subject: Type_Id, info: ^Type_Info, result: Type_Id, pair, value_type: string,
+) {
+	shape := union_layout(e.c, subject)
+	self := alloca(e, value_type)
+	fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
+	tag := emit_union_tag(e, subject, "%arg0")
+
+	for variant, index in info.variants {
+		if variant == TYPE_VOID || !type_is_managed(e.c, variant) {
+			continue
+		}
+		matched := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", matched, shape.tag_bytes * 8, tag, index)
+		hit, next := new_label(e, "unionclone.hit"), new_label(e, "unionclone.next")
+		branch_if(e, matched, hit, next)
+
+		place_label(e, hit)
+		source := gep_field(e, value_type, self, 0)
+		if !type_clone_is_fallible(e.c, variant) {
+			loaded := load(e, llvm_type(e, variant), source)
+			cloned := emit_clone_value(e, variant, loaded, "%arg1")
+			built := emit_union_value(e, subject, index, cloned)
+			fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", built))
+			e.terminated = true
+			place_label(e, next)
+			continue
+		}
+		cloned, failed := emit_part_clone(e, variant, source)
+		broke, ok := new_label(e, "unionclone.failed"), new_label(e, "unionclone.ok")
+		branch_if(e, failed, broke, ok)
+		place_label(e, broke)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "true"))
+		e.terminated = true
+		place_label(e, ok)
+		built := emit_union_value(e, subject, index, cloned)
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", built))
+		e.terminated = true
+		place_label(e, next)
+	}
+
+	// Every remaining tag holds a payload the representation already copies.
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", "%arg0"))
+	fmt.sbprintln(&e.b, "}")
 }

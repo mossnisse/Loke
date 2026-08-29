@@ -956,6 +956,71 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 // design.md: `any_view` supports runtime checked extractions and type switches,
 // through the same two spellings a union has — trapping `.(T)` and optional
 // `.as(T)` — on the same `Expr_Checked_Extract` node.
+// design.md "Checked extractions": `value.as(T)` is the optional spelling. It
+// is written with selector/call syntax but is not a call — it resolves to the
+// same `Expr_Checked_Extract` `value.(T)` produces, so the flow graph, the
+// evaluator, and the emitter keep one extraction path rather than two.
+//
+// `as` is a name users choose, so the receiver's *type* decides which meaning
+// applies: an `any_view` takes the built-in, and every other type keeps its
+// declared member. Resolving the receiver first is what makes that true for
+// `f().as(T)`, `a.b.as(T)`, and `xs[0].as(T)` as well as for a plain name.
+check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
+	if sel.name.text != "as" {
+		return false
+	}
+	// A package selector names a declaration, not a value receiver.
+	if ident, ok := sel.operand.(^Expr_Ident); ok {
+		if sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident))); sym != nil &&
+		   sym.kind == .Package_Alias {
+			return false
+		}
+	}
+	if check_single_expr(k, sel.operand) != TYPE_ANY_VIEW {
+		return false
+	}
+
+	v.value_category = .Value
+	v.union_op = .Extract
+	v.resolution = Resolution{kind = .Builtin_Operator}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = sel.operand
+	v.bound = bound
+
+	// Exactly one positional type argument, which is the extraction's target.
+	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value ||
+	   v.args[0].value == nil {
+		errorf(
+			k.c, v.span, "L0425",
+			"`as` names the requested type as its one positional argument, found %d argument%s",
+			len(v.args), len(v.args) == 1 ? "" : "s",
+		)
+		v.type = INVALID_TYPE
+		return true
+	}
+
+	extract := new(Expr_Checked_Extract, k.c.semantic_allocator)
+	extract.span = v.span
+	extract.operand = sel.operand
+	extract.target = v.args[0].value
+	extract.mode = .Optional
+	v.extract = extract
+
+	check_extract_of(k, extract, TYPE_ANY_VIEW)
+	v.type = extract.type
+	v.result_types = extract.result_types
+	return true
+}
+
+// `.as(T)` produces `Option(T)`; `.(T)` produces `T` and traps on a mismatch.
+@(private = "file")
+set_extract_results :: proc(k: ^Checker, v: ^Expr_Checked_Extract, target: Type_Id) {
+	if v.mode != .Optional {
+		return
+	}
+	v.type = option_type(k, target, v.span)
+}
+
 check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 	target := resolve_type_syntax(k, v.target)
 	if target == INVALID_TYPE {
@@ -975,6 +1040,7 @@ check_any_view_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
 		return
 	}
 	v.type = target
+	v.payload = target
 	set_extract_results(k, v, target)
 	if type_clone_disabled(k.c, target) {
 		errorf(k.c, v.span, "L0503", "`%s` is move-only, so a checked extraction cannot copy it from an `any_view`", type_name(k.c, target))

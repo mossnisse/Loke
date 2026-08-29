@@ -72,54 +72,40 @@ Operation :: enum {
 
 // Owned scalars only: no borrowed path, and no allocation merely to report a
 // failure. The fields are package-private; the queries below are the access.
-Error_Info :: struct {
+// design.md "Typed fallibility": failure is a payload inside `Result`, not a
+// nil-status wrapper around one. Every fallible procedure here returns
+// `Result(T, Error)` and composes with `or_return`.
+Error :: struct {
 	@(private) code:        Code,
 	@(private) native_code: u32,
 	@(private) operation:   Operation,
 }
-
-// nil is success, which is what makes every fallible procedure here compose with
-// `or_return`.
-Error :: union {Error_Info}
 
 // Public because Loke has package and public visibility only: `core:fs`,
 // `core:term`, `core:os`, and third-party `Reader`/`Writer` implementations
 // cannot call a package-private constructor. Both take owned scalar data, so
 // exposing them does not weaken the lifetime guarantee.
 make_error :: proc(code: Code, operation: Operation, native_code: u32 = 0) -> Error {
-	return Error_Info{code, native_code, operation};
+	return Error{code, native_code, operation};
 }
 
 // The one conversion point between the two vocabularies. A procedure here that
 // allocates takes an allocator, uses the `try_` form internally, destroys any
 // partial result, and converts the failure exactly once — so no procedure ever
 // returns both an `Allocator_Error` and an `Error`.
-from_allocator_error :: proc(error: Allocator_Error, operation: Operation) -> Error {
-	if (error == nil) { return nil; }
-	return Error_Info{.Out_Of_Memory, 0, operation};
+from_allocator_error :: proc(operation: Operation) -> Error {
+	return Error{.Out_Of_Memory, 0, operation};
 }
 
-is :: proc(error: Error, code: Code) -> bool {
-	info, present := error.as(Error_Info);
-	return present && info.code == code;
-}
+is :: proc(error: Error, code: Code) -> bool { return error.code == code; }
 
-code_of :: proc(error: Error) -> Code {
-	info, present := error.as(Error_Info);
-	return info.code if present else .Other;
-}
+code_of :: proc(error: Error) -> Code { return error.code; }
 
-operation_of :: proc(error: Error) -> Operation {
-	info, present := error.as(Error_Info);
-	return info.operation if present else .Other;
-}
+operation_of :: proc(error: Error) -> Operation { return error.operation; }
 
-native_code_of :: proc(error: Error) -> u32 {
-	info, present := error.as(Error_Info);
-	return info.native_code if present else 0;
-}
+native_code_of :: proc(error: Error) -> u32 { return error.native_code; }
 
-impl Error_Info {
+impl Error {
 	// design.md's coherence rule: a `format` is eligible only in the value type's
 	// own package, and this is that package. `fmt.eprintln("error:", error)`
 	// therefore prints the operation and the code rather than three raw fields.
@@ -149,18 +135,19 @@ impl Error_Info {
 //   - a count is always between zero and the supplied slice length;
 //   - an empty slice succeeds immediately with a zero count;
 //   - a read reports `End_Of_Input` only when it produced no more bytes;
-//   - an implementation may return a positive count *and* an error together, and
-//     a caller must consume the count before handling the error;
+//   - an implementation that made progress reports the count and surfaces the
+//     failure on the *next* call, because a `Result` carries one or the other
+//     and progress must never be lost;
 //   - a zero count with no error is permitted only for an empty slice;
 //   - `write` may write only a prefix — `write_all` handles partial writes; and
 //   - an implementation retries an interrupted platform call where that is safe
 //     and no observable progress has happened.
 Reader :: interface($Self: type) {
-	slot read: proc(self: inout Self, destination: []mut u8) -> (int, Error);
+	slot read: proc(self: inout Self, destination: []mut u8) -> Result(int, Error);
 }
 
 Writer :: interface($Self: type) {
-	slot write: proc(self: inout Self, source: []u8) -> (int, Error);
+	slot write: proc(self: inout Self, source: []u8) -> Result(int, Error);
 }
 
 Line_Options :: struct { keep_ending: bool }
@@ -172,39 +159,37 @@ CHUNK :: 4096;
 
 // Fills `destination` completely, or fails. A stream that ends early is
 // `Unexpected_End`, which is the difference between this and `read`.
-read_exact :: proc(reader: inout $R, destination: []mut u8) -> Error where Reader(R) {
+read_exact :: proc(reader: inout $R, destination: []mut u8) -> Result(Unit, Error) where Reader(R) {
 	filled := 0;
 	for (; filled < len(destination); ) {
-		count, error := reader.read(destination[filled:]);
-		filled += count;
-		if (error != nil) {
-			if (is(error, .End_Of_Input)) {
-				return make_error(.Unexpected_End, .Read);
+		switch (outcome in reader.read(destination[filled:])) {
+		case .ok:
+			if (outcome == 0) { return .err(make_error(.Unexpected_End, .Read)); }
+			filled += outcome;
+		case .err:
+			if (is(outcome, .End_Of_Input)) {
+				return .err(make_error(.Unexpected_End, .Read));
 			}
-			return error;
-		}
-		if (count == 0) {
-			return make_error(.Unexpected_End, .Read);
+			return .err(outcome);
 		}
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 // Writes every byte, looping over partial writes.
-write_all :: proc(writer: inout $W, source: []u8) -> Error where Writer(W) {
+write_all :: proc(writer: inout $W, source: []u8) -> Result(Unit, Error) where Writer(W) {
 	written := 0;
 	for (; written < len(source); ) {
-		count, error := writer.write(source[written:]);
-		written += count;
-		if (error != nil) { return error; }
+		count := writer.write(source[written:]) or_return;
 		if (count == 0) {
-			return make_error(.Broken_Pipe, .Write);
+			return .err(make_error(.Broken_Pipe, .Write));
 		}
+		written += count;
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
-write_string :: proc(writer: inout $W, text: string_view) -> Error where Writer(W) {
+write_string :: proc(writer: inout $W, text: string_view) -> Result(Unit, Error) where Writer(W) {
 	return write_all(inout writer, text.bytes());
 }
 
@@ -218,30 +203,29 @@ read_to_end :: proc(
 	reader: inout $R,
 	allocator: Allocator = mem.default_allocator(),
 	limit: int = 0,
-) -> ([dynamic]u8, Error) where Reader(R) {
-	collected, made := make([dynamic]u8, 0, 0, allocator);
-	if (made != nil) {
-		return collected, from_allocator_error(made, .Read_To_End);
-	}
+) -> Result([dynamic]u8, Error) where Reader(R) {
+	collected := make([dynamic]u8, 0, 0, allocator) or_else empty_bytes();
 	chunk: [CHUNK]u8 = {};
 	for (;;) {
-		count, error := reader.read(chunk[:]);
-		if (count > 0) {
-			if (limit > 0 && len(collected) + count > limit) {
-				drop(collected);
-				return {}, make_error(.Limit_Exceeded, .Read_To_End);
-			}
-			if (failed := collected.try_append(..chunk[0:count]); failed != nil) {
-				drop(collected);
-				return {}, from_allocator_error(failed, .Read_To_End);
-			}
-		}
-		if (error != nil) {
-			if (is(error, .End_Of_Input)) { return collected, nil; }
+		count := 0;
+		switch (outcome in reader.read(chunk[:])) {
+		case .ok: count = outcome;
+		case .err:
+			if (is(outcome, .End_Of_Input)) { return .ok(collected); }
 			drop(collected);
-			return {}, error;
+			return .err(outcome);
 		}
-		if (count == 0) { return collected, nil; }
+		if (count == 0) { return .ok(collected); }
+		if (limit > 0 && len(collected) + count > limit) {
+			drop(collected);
+			return .err(make_error(.Limit_Exceeded, .Read_To_End));
+		}
+		switch (added in collected.try_append(..chunk[0:count])) {
+		case .ok:
+		case .err:
+			drop(collected);
+			return .err(from_allocator_error(.Read_To_End));
+		}
 	}
 }
 
@@ -249,23 +233,21 @@ read_to_end :: proc(
 // many moved. A caller's `buffer` avoids the frame-sized one.
 copy :: proc(
 	destination: inout $W, source: inout $R, buffer: []mut u8 = nil,
-) -> (u64, Error) where Writer(W), Reader(R) {
+) -> Result(u64, Error) where Writer(W), Reader(R) {
 	own: [CHUNK]u8 = {};
 	window := buffer if len(buffer) > 0 else own[:];
 	moved: u64 = 0;
 	for (;;) {
-		count, error := source.read(window);
-		if (count > 0) {
-			if (failed := write_all(inout destination, window[0:count]); failed != nil) {
-				return moved, failed;
-			}
-			moved += u64(count);
+		count := 0;
+		switch (outcome in source.read(window)) {
+		case .ok: count = outcome;
+		case .err:
+			if (is(outcome, .End_Of_Input)) { return .ok(moved); }
+			return .err(outcome);
 		}
-		if (error != nil) {
-			if (is(error, .End_Of_Input)) { return moved, nil; }
-			return moved, error;
-		}
-		if (count == 0) { return moved, nil; }
+		if (count == 0) { return .ok(moved); }
+		write_all(inout destination, window[0:count]) or_return;
+		moved += u64(count);
 	}
 }
 
@@ -280,16 +262,23 @@ read_line :: proc(
 	reader: inout $R,
 	allocator: Allocator = mem.default_allocator(),
 	options: Line_Options = {},
-) -> (string, Error) where Reader(R) {
-	collected, made := make([dynamic]u8, 0, 0, allocator);
-	if (made != nil) {
-		return "", from_allocator_error(made, .Read_Line);
-	}
+) -> Result(string, Error) where Reader(R) {
+	collected := make([dynamic]u8, 0, 0, allocator) or_else empty_bytes();
 	one: [1]u8 = {};
 	seen := 0;
 	ended := false;
 	for (; !ended; ) {
-		count, error := reader.read(one[:]);
+		count := 0;
+		failed := false;
+		switch (outcome in reader.read(one[:])) {
+		case .ok: count = outcome;
+		case .err:
+			if (!is(outcome, .End_Of_Input)) {
+				drop(collected);
+				return .err(outcome);
+			}
+			failed = true;
+		}
 		if (count == 1) {
 			seen += 1;
 			if (one[0] == u8('\n')) {
@@ -300,42 +289,34 @@ read_line :: proc(
 					if (kept >= 0 && collected[kept] == u8('\r')) {
 						collected.resize(kept);
 					}
-					if (error != nil && !is(error, .End_Of_Input)) {
-						return "", error;
-					}
 					break;
 				}
 			}
-			if (failed := collected.try_append(one[0]); failed != nil) {
-				return "", from_allocator_error(failed, .Read_Line);
+			switch (added in collected.try_append(one[0])) {
+			case .ok:
+			case .err:
+				drop(collected);
+				return .err(from_allocator_error(.Read_Line));
 			}
-			// A reader may make progress and report a failure in the same call. The
-			// byte belongs to this line, but the accompanying failure must not be
-			// replaced by whatever the next read happens to return.
-			if (error != nil) {
-				if (!is(error, .End_Of_Input)) { return "", error; }
-				ended = true;
-			}
+			if (failed) { ended = true; }
 			continue;
 		}
-		if (error != nil && !is(error, .End_Of_Input)) {
-			return "", error;
-		}
 		if (seen == 0) {
-			return "", make_error(.End_Of_Input, .Read_Line);
+			drop(collected);
+			return .err(make_error(.End_Of_Input, .Read_Line));
 		}
 		ended = true;
 	}
 	// The byte-to-text boundary: a line is only a `string` if it is valid UTF-8.
-	view, valid := string_view(collected[:]);
-	if (!valid) {
-		return "", make_error(.Invalid_Data, .Read_Line);
+	switch (view in string_view(collected[:])) {
+	case .some:
+		text := strings.try_copy(view, allocator) or_else "";
+		drop(collected);
+		return .ok(text);
+	case .none:
+		drop(collected);
+		return .err(make_error(.Invalid_Data, .Read_Line));
 	}
-	text, allocation := strings.try_copy(view, allocator);
-	if (allocation != nil) {
-		return "", from_allocator_error(allocation, .Read_Line);
-	}
-	return text, nil;
 }
 
 // ------------------------------------------------------- formatting bridge --
@@ -350,24 +331,34 @@ read_line :: proc(
 // and passes its address through that untyped field. The resulting `fmt.Writer`
 // is valid only for the enclosing call: it is constructed, used, and discarded
 // inside these bodies, and the raw pointer is never a value a caller holds.
-write_formatted :: proc(writer: inout $W, args: ..any_view) -> Error where Writer(W) {
-	latch := Latch{(dyn mut Writer)(&mut writer), nil};
+write_formatted :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
+	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	fmt.format_to(fmt.Writer{latch_sink, &mut latch}, ..args);
-	return latch.error;
+	return latched(latch);
 }
 
-write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Error where Writer(W) {
-	latch := Latch{(dyn mut Writer)(&mut writer), nil};
+write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
+	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	adapter := fmt.Writer{latch_sink, &mut latch};
 	fmt.format_to(adapter, ..args);
 	fmt.format_to(adapter, "\n");
-	return latch.error;
+	return latched(latch);
 }
 
+// `Option(Error)` rather than `Result`, because a latch records *whether* a
+// failure happened rather than standing in for a value.
 @(private)
 Latch :: struct {
 	writer: dyn mut Writer,
-	error:  Error,
+	error:  Option(Error),
+}
+
+@(private)
+latched :: proc(latch: Latch) -> Result(Unit, Error) {
+	switch (failure in latch.error) {
+	case .some: return .err(failure);
+	case .none: return .ok(Unit{});
+	}
 }
 
 @(private)
@@ -375,6 +366,16 @@ latch_sink :: proc(state: rawptr, bytes: [^]u8, count: int) {
 	latch := (^mut Latch)(state);
 	// The first failure wins and every later callback does nothing, so a
 	// half-formatted value cannot turn into a second, more confusing error.
-	if (latch^.error != nil || count <= 0) { return; }
-	latch^.error = write_all(inout latch^.writer, bytes[0:count]);
+	switch (existing in latch^.error) {
+	case .some: return;
+	case .none:
+	}
+	if (count <= 0) { return; }
+	switch (written in write_all(inout latch^.writer, bytes[0:count])) {
+	case .ok:
+	case .err: latch^.error = .some(written);
+	}
 }
+
+@(private)
+empty_bytes :: proc() -> [dynamic]u8 { panic("io allocation failed"); }

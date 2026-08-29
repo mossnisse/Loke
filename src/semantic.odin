@@ -152,9 +152,24 @@ Type_Info :: struct {
 	// Struct fields and enum members, in declaration order. Each symbol carries
 	// its own type, index, and (for an enum member) discriminant.
 	fields:     []Symbol_Id,
-	// A union's variants, in declaration order. Variant 0 is the first written
-	// one; tag 0 is nil.
+	// A union's variants, in declaration order. The index *is* the variant's
+	// identity — two variants may carry the same payload type — and it is also
+	// the tag, so variant 0 has tag 0 and there is no nil tag.
+	//
+	// `variants[i]` is variant `i`'s payload type, or `TYPE_VOID` when the
+	// variant is payloadless. `variant_names[i]` is its name.
 	variants:   []Type_Id,
+	variant_names: []Identifier_Id,
+	// design.md "Unions": `@(zero=name)` designates the semantic zero, which must
+	// be the first variant so that the all-zero representation stays the zero
+	// value. `@(failure=name)` designates the failure variant of a two-variant
+	// union, which is what `or_else`/`or_return` recognise structurally.
+	zero_designated:    bool,
+	failure_designated: bool,
+	failure_variant:    int,
+	// design.md "Required results": `@(require_results)` on a type declaration.
+	// A bare call statement is rejected when any result type requires handling.
+	requires_results: bool,
 	// A validated `union @(align=N)` or `struct @(align=N)`, or 0. Kept apart from
 	// `align`, which the layout pass overwrites with the computed result:
 	// `union_layout` is asked again by the emitter after that, and both must get
@@ -283,6 +298,10 @@ Const_Kind :: enum {
 Const_Aggregate :: struct {
 	type:     Type_Id,
 	elements: []Const_Value,
+	// For a union-typed constant: the variant it holds, with `elements[0]` its
+	// payload (an `Invalid` value when the variant is payloadless). Unread for
+	// a struct or array constant.
+	variant:  int,
 }
 
 // Text is source/compilation backed; `integer` is arena-owned and immutable
@@ -429,6 +448,9 @@ Resolution_Kind :: enum {
 	Generic_Application,
 	Builtin_Operator,
 	User_Operator,
+	// `U.name` / `.name` naming a union variant that still needs its payload:
+	// the selector alone is not a value, and `check_call` completes it.
+	Union_Variant,
 }
 
 Value_Category :: enum {
@@ -1361,6 +1383,10 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
 		return true
+	// A payloadless union variant carries `void`, and two of them are equal when
+	// their tags are.
+	case .Void:
+		return true
 	// `string` and `string_view` values are comparable and ordered, lexically
 	// byte-wise (design.md). A `cstring_view` is not: it promises no encoding and
 	// carries no length, so comparing two of them would compare addresses.
@@ -1503,7 +1529,7 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 				return false
 			}
 		}
-		return len(info.variants) > 0
+		return true
 	case .Pointer, .Array, .Distinct:
 		return type_is_supported_depth(c, info.element, depth + 1)
 	case .Enum:

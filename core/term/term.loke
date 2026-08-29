@@ -37,15 +37,15 @@ impl Input {
 	// `read_line` below is what a program should use for interactive text. A
 	// UTF-8 console reader needs a buffer that survives between calls, which this
 	// deliberately non-owning value does not have.
-	read :: proc(self: inout Input, destination: []mut u8) -> (int, io.Error) {
-		if (len(destination) == 0) { return 0, nil; }
+	read :: proc(self: inout Input, destination: []mut u8) -> Result(int, io.Error) {
+		if (len(destination) == 0) { return .ok(0); }
 		return read_handle(self.handle, destination);
 	}
 }
 
 impl Output {
-	write :: proc(self: inout Output, source: []u8) -> (int, io.Error) {
-		if (len(source) == 0) { return 0, nil; }
+	write :: proc(self: inout Output, source: []u8) -> Result(int, io.Error) {
+		if (len(source) == 0) { return .ok(0); }
 		return write_handle(self.handle, source);
 	}
 }
@@ -65,7 +65,7 @@ Stream :: enum {Input, Output, Error}
 read_line :: proc(
 	allocator: Allocator = mem.default_allocator(),
 	options: io.Line_Options = {},
-) -> (string, io.Error) {
+) -> Result(string, io.Error) {
 	source := stdin();
 	if (is_console(source.handle)) {
 		return read_console_line(source.handle, allocator, options);
@@ -82,9 +82,8 @@ prompt :: proc(
 	label: string_view,
 	allocator: Allocator = mem.default_allocator(),
 	options: io.Line_Options = {},
-) -> (text: string, error: io.Error) {
+) -> Result(string, io.Error) {
 	out := stdout();
-	text = "";
 	io.write_string(inout out, label) or_return;
 	return read_line(allocator, options);
 }
@@ -212,28 +211,28 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 }
 
 @(private)
-read_handle :: proc(handle: int, destination: []mut u8) -> (int, io.Error) {
+read_handle :: proc(handle: int, destination: []mut u8) -> Result(int, io.Error) {
 	read: u32 = 0;
 	if (rt_read_file(handle, unsafe.raw_data(destination), u32(len(destination)), &mut read, nil) == 0) {
 		error := from_last_error(.Read);
 		if (io.is(error, .Broken_Pipe)) {
-			return 0, io.make_error(.End_Of_Input, .Read);
+			return .err(io.make_error(.End_Of_Input, .Read));
 		}
-		return 0, error;
+		return .err(error);
 	}
 	if (read == 0) {
-		return 0, io.make_error(.End_Of_Input, .Read);
+		return .err(io.make_error(.End_Of_Input, .Read));
 	}
-	return int(read), nil;
+	return .ok(int(read));
 }
 
 @(private)
-write_handle :: proc(handle: int, source: []u8) -> (int, io.Error) {
+write_handle :: proc(handle: int, source: []u8) -> Result(int, io.Error) {
 	written: u32 = 0;
 	if (rt_write_file(handle, unsafe.raw_data(source), u32(len(source)), &mut written, nil) == 0) {
-		return 0, from_last_error(.Write);
+		return .err(from_last_error(.Write));
 	}
-	return int(written), nil;
+	return .ok(int(written));
 }
 
 // A console delivers UTF-16, one cooked line at a time. The loop is for a line
@@ -241,19 +240,19 @@ write_handle :: proc(handle: int, source: []u8) -> (int, io.Error) {
 @(private)
 read_console_line :: proc(
 	handle: int, allocator: Allocator, options: io.Line_Options,
-) -> (string, io.Error) {
+) -> Result(string, io.Error) {
 	builder := strings.init(allocator);
 	units: [512]u16 = {};
 	total := 0;
 	for (;;) {
 		read: u32 = 0;
 		if (rt_read_console(handle, unsafe.raw_data(units[:]), 512, &mut read, nil) == 0) {
-			return "", from_last_error(.Read_Line);
+			return .err(from_last_error(.Read_Line));
 		}
 		if (read == 0) {
 			// Ctrl+Z at the start of a line is the console's end of input.
 			if (total == 0) {
-				return "", io.make_error(.End_Of_Input, .Read_Line);
+				return .err(io.make_error(.End_Of_Input, .Read_Line));
 			}
 			break;
 		}
@@ -264,16 +263,16 @@ read_console_line :: proc(
 			count -= 1;
 			if (count > 0 && units[count - 1] == u16('\r')) { count -= 1; }
 		}
-		chunk, decode_error := utf16.decode(units[0:count], allocator);
-		if (decode_error != nil) {
-			fault := decode_error.(utf16.Fault);
-			code := io.Code.Out_Of_Memory if fault == .Out_Of_Memory else io.Code.Invalid_Data;
-			return "", io.make_error(code, .Read_Line);
+		switch (chunk in utf16.decode(units[0:count], allocator)) {
+		case .ok:
+			builder.append(chunk);
+		case .err:
+			code := io.Code.Out_Of_Memory if chunk == .Out_Of_Memory else io.Code.Invalid_Data;
+			return .err(io.make_error(code, .Read_Line));
 		}
-		builder.append(chunk);
 		if (ended) { break; }
 	}
-	return builder.finish(), nil;
+	return .ok(builder.finish());
 }
 
 // The scoped resource. Its `drop` restores the exact previous mode on ordinary
@@ -316,16 +315,16 @@ restore_handler :: proc "stdcall" (event: u32) -> i32 {
 // `Not_A_Terminal`.
 begin_raw :: proc(
 	input: Input = stdin(), options: Raw_Options = {},
-) -> (Raw_Mode, io.Error) {
+) -> Result(Raw_Mode, io.Error) {
 	// One process-global restore record can safely describe one live scope. A
 	// second would overwrite the original cooked mode and could leave the console
 	// raw when either value closes or the control handler runs.
 	if (handler_handle != 0) {
-		return Raw_Mode{}, io.make_error(.Already_Exists, .Terminal_Mode);
+		return .err(io.make_error(.Already_Exists, .Terminal_Mode));
 	}
 	previous: u32 = 0;
 	if (rt_get_console_mode(input.handle, &mut previous) == 0) {
-		return Raw_Mode{}, io.make_error(.Not_A_Terminal, .Terminal_Mode);
+		return .err(io.make_error(.Not_A_Terminal, .Terminal_Mode));
 	}
 	wanted := previous & ~u32(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
 	if (options.interrupt_as_key) {
@@ -338,15 +337,15 @@ begin_raw :: proc(
 	if (!handler_installed) {
 		if (rt_set_ctrl_handler(restore_handler, 1) == 0) {
 			handler_handle = 0;
-			return Raw_Mode{}, from_last_error(.Terminal_Mode);
+			return .err(from_last_error(.Terminal_Mode));
 		}
 		handler_installed = true;
 	}
 	if (rt_set_console_mode(input.handle, wanted) == 0) {
 		handler_handle = 0;
-		return Raw_Mode{}, from_last_error(.Terminal_Mode);
+		return .err(from_last_error(.Terminal_Mode));
 	}
-	return Raw_Mode{input.handle, previous, true, 0}, nil;
+	return .ok(Raw_Mode{input.handle, previous, true, 0});
 }
 
 impl Raw_Mode {
@@ -360,14 +359,14 @@ impl Raw_Mode {
 	}
 
 	// Idempotent, and leaves the value inert even when the restore failed.
-	close :: proc(self: inout Raw_Mode) -> io.Error {
-		if (!self.live) { return nil; }
+	close :: proc(self: inout Raw_Mode) -> Result(Unit, io.Error) {
+		if (!self.live) { return .ok(Unit{}); }
 		self.live = false;
 		handler_handle = 0;
 		if (rt_set_console_mode(self.handle, self.previous) == 0) {
-			return from_last_error(.Terminal_Mode);
+			return .err(from_last_error(.Terminal_Mode));
 		}
-		return nil;
+		return .ok(Unit{});
 	}
 
 	// One key event. Key releases, mouse events, focus changes, and window resizes
@@ -377,32 +376,34 @@ impl Raw_Mode {
 	// A repeat count is reported as that many individual events on later calls
 	// only if the platform sends them; this decoder does not expand one record
 	// into several, because doing so would reorder it against the next.
-	read_key :: proc(self: inout Raw_Mode) -> (Key_Event, io.Error) {
+	read_key :: proc(self: inout Raw_Mode) -> Result(Key_Event, io.Error) {
 		if (!self.live) {
-			return Key_Event{}, io.make_error(.Not_A_Terminal, .Read_Key);
+			return .err(io.make_error(.Not_A_Terminal, .Read_Key));
 		}
 		record: Input_Record = {};
 		for (;;) {
 			read: u32 = 0;
 			if (rt_read_console_input(self.handle, &mut record, 1, &mut read) == 0) {
-				return Key_Event{}, from_last_error(.Read_Key);
+				return .err(from_last_error(.Read_Key));
 			}
 			if (read == 0) {
-				return Key_Event{}, io.make_error(.End_Of_Input, .Read_Key);
+				return .err(io.make_error(.End_Of_Input, .Read_Key));
 			}
 			if (record.event_type != u16(KEY_EVENT) || record.key_down == 0) {
 				continue;
 			}
-			event, produced := decode_record(inout self, record);
-			if (produced) { return event, nil; }
+			switch (event in decode_record(inout self, record)) {
+			case .some: return .ok(event);
+			case .none:
+			}
 		}
 	}
 }
 
-// One native record to one event, or `false` when the record was only half of a
+// One native record to one event, or `.none` when the record was only half of a
 // surrogate pair and the other half has still to arrive.
 @(private)
-decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> (Key_Event, bool) {
+decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> Option(Key_Event) {
 	event: Key_Event = {};
 	event.shift = (record.control_state & u32(SHIFT_PRESSED)) != 0;
 	event.control =
@@ -417,12 +418,12 @@ decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> (Key_Event,
 			combined := 0x10000 + ((int(high) - 0xD800) << 10) + (int(unit) - 0xDC00);
 			event.key = .Character;
 			event.value = rune(combined);
-			return event, true;
+			return .some(event);
 		}
 	}
 	if (unit >= 0xD800 && unit <= 0xDBFF) {
 		mode.pending = unit;
-		return event, false;
+		return .none;
 	}
 
 	// A named key first: Enter, Tab, Escape and Backspace all carry a control
@@ -430,15 +431,15 @@ decode_record :: proc(mode: inout Raw_Mode, record: Input_Record) -> (Key_Event,
 	named := key_for(record.virtual_key);
 	if (named != .Unknown) {
 		event.key = named;
-		return event, true;
+		return .some(event);
 	}
 	if (unit != 0) {
 		event.key = .Character;
 		event.value = rune(int(unit));
-		return event, true;
+		return .some(event);
 	}
 	event.key = .Unknown;
-	return event, true;
+	return .some(event);
 }
 
 @(private)

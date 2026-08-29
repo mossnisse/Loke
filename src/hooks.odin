@@ -7,7 +7,7 @@
 // validated rather than inferred:
 //
 //   hook(drop): proc(self: inout T)
-//   hook(copy): proc(self, allocator: Allocator) -> (T, Allocator_Error)
+//   hook(copy): proc(self, allocator: Allocator) -> Result(T, Allocator_Error)
 //
 // `move_only struct` disables both copy entry points. `clone` and `try_clone`
 // remain generated public operations and are never implementation hook names.
@@ -204,46 +204,6 @@ type_is_managed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	return lifecycle_of(c, type).managed
-}
-
-// M5a implements recursive lifecycle operations for records and fixed arrays.
-// A tagged union needs tag-aware clone/drop lowering so that only its active
-// variant is touched; reject any runtime position that would require that
-// lowering instead of letting it reach the backend as a managed value with no
-// hook. Provenance does not change this boundary.
-type_contains_managed_union :: proc(c: ^Compiler, type: Type_Id) -> bool {
-	seen := make(map[Type_Id]bool, allocator = context.temp_allocator)
-	return type_contains_managed_union_inner(c, type, &seen)
-}
-
-@(private = "file")
-type_contains_managed_union_inner :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> bool {
-	under := type_underlying(c, type)
-	if seen[under] {
-		return false
-	}
-	seen[under] = true
-	info := type_of(c, under)
-	if info == nil {
-		return false
-	}
-	#partial switch info.kind {
-	case .Union:
-		return lifecycle_of(c, type).managed
-	case .Array, .Slice, .Dynamic_Array:
-		return type_contains_managed_union_inner(c, info.element, seen)
-	case .Map:
-		return type_contains_managed_union_inner(c, info.key, seen) ||
-		       type_contains_managed_union_inner(c, info.element, seen)
-	case .Struct:
-		for field in info.fields {
-			sym := symbol_of(c, field)
-			if sym != nil && type_contains_managed_union_inner(c, sym.type, seen) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // A `move_only` type has neither copy entry
@@ -449,12 +409,21 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 			return true
 		}
 	}
+	// A union inherits from every variant it could be holding: which one is
+	// active is a runtime fact, so the signature has to admit the worst case.
+	if info := underlying_info(c, type); info != nil && info.kind == .Union {
+		for variant in info.variants {
+			if variant != TYPE_VOID && type_clone_is_fallible(c, variant) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
 @(private = "file")
 generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kind, fallible: bool) -> Symbol_Id {
-	results := fallible ? []Type_Id{type, TYPE_ALLOCATOR_ERROR} : []Type_Id{type}
+	results := fallible ? []Type_Id{result_type(k, type, TYPE_ALLOCATOR_ERROR)} : []Type_Id{type}
 	id := synth_proc(
 		k.c, name, kind, type,
 		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Value, .Value}, results,
@@ -614,7 +583,7 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 			errorf(k.c, sym.span, "L0488", "a `move_only` type cannot also declare `hook(copy)`")
 			return
 		}
-		require_hook_shape(k, sym, subject, "copy", "proc(self, allocator: Allocator) -> (T, Allocator_Error)", 2, 2, .Value)
+		require_hook_shape(k, sym, subject, "copy", "proc(self, allocator: Allocator) -> Result(T, Allocator_Error)", 2, 1, .Value)
 	case .Convert:
 		if sym.has_receiver || len(sym.params) != 1 || len(sym.results) != 1 || sym.results[0] != subject {
 			errorf(k.c, sym.span, "L0411", "`hook(convert)` takes one value without a receiver and returns `%s`", type_name(k.c, subject))
@@ -649,7 +618,10 @@ require_hook_shape :: proc(
 		bad = true
 	}
 	if !bad && name == "copy" {
-		if sym.params[1] != TYPE_ALLOCATOR || sym.results[0] != subject || sym.results[1] != TYPE_ALLOCATOR_ERROR {
+		// design.md "Typed fallibility": the fallible copy primitive reports
+		// through `Result(Self, Allocator_Error)`.
+		if sym.params[1] != TYPE_ALLOCATOR ||
+		   sym.results[0] != result_type(k, subject, TYPE_ALLOCATOR_ERROR) {
 			bad = true
 		}
 	}

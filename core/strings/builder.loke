@@ -23,10 +23,7 @@ String_Builder :: struct {
 
 // A builder whose buffer *and* finished string come from `allocator`.
 init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder {
-	made, error := make([dynamic]u8, 0, 0, allocator);
-	if (error != nil) {
-		panic("String_Builder allocation failed");
-	}
+	made := make([dynamic]u8, 0, 0, allocator) or_else no_buffer();
 	return String_Builder{made, allocator};
 }
 
@@ -43,7 +40,7 @@ impl String_Builder {
 		self.data.reserve(wanted);
 	}
 
-	try_reserve :: proc(self: inout String_Builder, additional: int) -> Allocator_Error {
+	try_reserve :: proc(self: inout String_Builder, additional: int) -> Result(Unit, Allocator_Error) {
 		if (additional < 0) { panic("reserve count is negative"); }
 		wanted := len(self.data) + additional;
 		return self.data.try_reserve(wanted);
@@ -67,16 +64,16 @@ impl String_Builder {
 
 	append :: proc{append_text, append_rune};
 
-	try_append_text :: proc(self: inout String_Builder, text: string_view) -> Allocator_Error {
+	try_append_text :: proc(self: inout String_Builder, text: string_view) -> Result(Unit, Allocator_Error) {
 		return self.data.try_append(..text.bytes());
 	}
 
-	try_append_rune :: proc(self: inout String_Builder, value: rune) -> Allocator_Error {
+	try_append_rune :: proc(self: inout String_Builder, value: rune) -> Result(Unit, Allocator_Error) {
 		encoded, count := encode_rune(value);
 		return self.data.try_append(..encoded[0:count]);
 	}
 
-	try_append_byte_ascii :: proc(self: inout String_Builder, value: u8) -> Allocator_Error {
+	try_append_byte_ascii :: proc(self: inout String_Builder, value: u8) -> Result(Unit, Allocator_Error) {
 		if (value >= 0x80) { panic("try_append_byte_ascii takes an ASCII byte"); }
 		return self.data.try_append(value);
 	}
@@ -98,33 +95,23 @@ impl String_Builder {
 
 	// The same, reporting an allocation failure instead of applying a policy. The
 	// builder is left completely unchanged when it fails.
-	try_finish :: proc(self: inout String_Builder) -> (string, Allocator_Error) {
-		text, error := self.try_copy_string(self.allocator);
-		if (error != nil) {
-			return "", error;
-		}
+	try_finish :: proc(self: inout String_Builder) -> Result(string, Allocator_Error) {
+		text := self.try_copy_string(self.allocator) or_return;
 		self.data.clear();
-		return text, nil;
+		return .ok(text);
 	}
 
 	// A copy of what is written so far. The builder is not disturbed either way.
 	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
-		text, error := self.try_copy_string(allocator);
-		if (error != nil) {
-			panic("String_Builder allocation failed");
-		}
-		return text;
+		return self.try_copy_string(allocator) or_else builder_no_string();
 	}
 
 	try_copy_string :: proc(
 		self, allocator: Allocator = mem.default_allocator(),
-	) -> (string, Allocator_Error) {
-		view, ok := string_view(self.data[:]);
-		if (!ok) {
-			// Unreachable through the public surface, which never admits a partial
-			// rune. It is a guard, not a policy.
-			panic("String_Builder holds invalid UTF-8");
-		}
+	) -> Result(string, Allocator_Error) {
+		// Unreachable through the public surface, which never admits a partial
+		// rune. The diverging fallback is a guard, not a policy.
+		view := string_view(self.data[:]) or_else not_utf8();
 		selected := mem.default_allocator() if allocator == nil else allocator;
 		return allocate_string(view, selected);
 	}
@@ -157,3 +144,14 @@ encode_rune :: proc(value: rune) -> ([4]u8, int) {
 		u8(0x80 | (v & 0x3F)),
 	}, 4;
 }
+
+// design.md "Typed fallibility": `or_else` needs a value on its right, and
+// these failures have none to offer - the program stops instead.
+@(private)
+no_buffer :: proc() -> [dynamic]u8 { panic("String_Builder allocation failed"); }
+
+@(private)
+builder_no_string :: proc() -> string { panic("String_Builder allocation failed"); }
+
+@(private)
+not_utf8 :: proc() -> string_view { panic("String_Builder holds invalid UTF-8"); }

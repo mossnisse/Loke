@@ -141,10 +141,12 @@ provider_member :: proc(
 // A package-level fallible constructor. It is synthesized eagerly when
 // `core:mem` is loaded because, unlike an associated member, package lookup has
 // no type from which to trigger lazy contribution.
-provider_try_proc :: proc(c: ^Compiler, owner: Type_Id, name: string) -> Symbol_Id {
+provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string) -> Symbol_Id {
+	c := k.c
 	id := provider_member(
 		c, owner, name, .Try_Open,
-		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value}, []Type_Id{owner, TYPE_ALLOCATOR_ERROR},
+		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value},
+		[]Type_Id{result_type(k, owner, TYPE_ALLOCATOR_ERROR)},
 		has_receiver = false,
 	)
 	if sym := symbol_of(c, id); sym != nil {

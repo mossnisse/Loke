@@ -364,10 +364,8 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 		e.terminated = false
 	}
 
-	error := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 1, i64 0", error, failed)
-	out := make([]string, 2)
-	out[0], out[1] = pointer, error
+	out := make([]string, 1)
+	out[0] = emit_alloc_result(e, v.type, failed, pointer)
 	return out
 }
 
@@ -403,20 +401,19 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	hook := emit_lifecycle(e, v.alloc_type).try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a fallible `new_clone` has no `try_clone` member")
-		failed := make([]string, 2)
-		failed[0], failed[1] = "null", "1"
+		failed := make([]string, 1)
+		failed[0] = "zeroinitializer"
 		return failed
 	}
-	pair := clone_pair_type(value_type)
+	clone_result := symbol_of(e.c, hook).results[0]
 	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, pair, e.names[hook], value_type, value, allocator,
+		returned, llvm_type(e, clone_result), e.names[hook], value_type, value, allocator,
 	)
-	cloned := extract(e, pair, returned, 0)
-	error := extract(e, pair, returned, 1)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", failed, error)
+	clone_slot := emit_union_spill(e, clone_result, returned)
+	failed := emit_union_failed(e, clone_result, returned)
+	cloned := emit_union_payload(e, clone_result, v.alloc_type, clone_slot)
 	release_label, publish_label := new_label(e, "newclone.release"), new_label(e, "newclone.publish")
 	branch_if(e, failed, release_label, publish_label)
 
@@ -425,7 +422,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
 		allocator, pointer, size, align,
 	)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", error, error_slot)
+	fmt.sbprintfln(&e.b, "  store i64 1, ptr %s", error_slot)
 	branch(e, done_label)
 
 	place_label(e, publish_label)
@@ -436,10 +433,12 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 
 	place_label(e, done_label)
 	e.terminated = false
-	out := make([]string, 2)
-	out[0], out[1] = temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", out[0], pointer_slot)
-	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", out[1], error_slot)
+	published, code, broke := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", published, pointer_slot)
+	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", code, error_slot)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", broke, code)
+	out := make([]string, 1)
+	out[0] = emit_alloc_result(e, v.type, broke, published)
 	return out
 }
 
@@ -512,10 +511,10 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	place_label(e, done_label)
 	e.terminated = false
 
-	out := make([]string, 2)
-	out[0], out[1] = temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out[0], CONTAINER_TYPE, header)
-	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out[1], failed)
+	built := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", built, CONTAINER_TYPE, header)
+	out := make([]string, 1)
+	out[0] = emit_alloc_result(e, v.type, failed, built)
 	return out
 }
 
@@ -544,109 +543,92 @@ emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	)
 }
 
-// design.md "Checked extractions": a single-value extraction traps on a
-// mismatch, and the comma-ok form yields a zeroed payload with `false`.
+// design.md "Checked extractions": `any_view` only. `.(T)` traps on a mismatch
+// and `.as(T)` produces `Option(T)`.
 @(private = "file")
 emit_checked_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string {
-	union_type := expr_base(v.operand).type
-	if union_type == TYPE_ANY_VIEW {
-		return emit_any_view_extract(e, v)
-	}
+	return emit_any_view_extract(e, v)
+}
+
+// Whether this union value holds its designated failure variant.
+@(private)
+emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> string {
+	info := type_of(e.c, type_underlying(e.c, union_type))
 	shape := union_layout(e.c, union_type)
-	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
-	value := emit_expr(e, v.operand)
-	slot := emit_union_spill(e, union_type, value)
 	tag := emit_union_tag(e, union_type, value)
-
-	matched := temp(e)
+	out := temp(e)
 	fmt.sbprintfln(
-		&e.b,
-		"  %s = icmp eq %s %s, %d",
-		matched, tag_llvm, tag, union_variant_tag(e.c, union_type, v.type),
+		&e.b, "  %s = icmp eq i%d %s, %d",
+		out, shape.tag_bytes * 8, tag, info.failure_variant,
 	)
-	if v.mode == .Trap {
-		failed := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
-		panic_if(e, failed, "extract.variant", "checked extraction failed")
-		out := make([]string, 1)
-		out[0] = emit_union_payload(e, union_type, v.type, slot)
-		return out
-	}
-	// The zeroed payload is selected by address, so no aggregate has to be
-	// selected and nothing out of bounds is ever read.
-	llvm := llvm_type(e, v.type)
-	zero_slot := alloca(e, llvm)
-	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, zero_slot)
-	payload := gep_field(e, llvm_type(e, union_type), slot, 0)
-	chosen := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", chosen, matched, payload, zero_slot)
-	loaded := load(e, llvm, chosen)
-
-	out := make([]string, 2)
-	out[0], out[1] = loaded, matched
 	return out
 }
 
-// design.md "or_else expression": the fallback is evaluated only when `ok` is
-// false, which is why it lives in its own block.
+// design.md "or_else expression": the fallback is evaluated only when the
+// operand holds its failure variant, which is why it lives in its own block.
 @(private = "file")
 emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
-	values := emit_multi_value(e, v.value)
-	types := expr_base(v.value).result_types
-	status := values[len(values) - 1]
-	status_type := types[len(types) - 1]
-	payloads := values[:len(values) - 1]
+	operand_type := type_underlying(e.c, expr_base(v.value).type)
+	info := type_of(e.c, operand_type)
+	success := 1 - info.failure_variant
+	payload_type := info.variants[success]
+
+	value := emit_expr(e, v.value)
+	slot := emit_union_spill(e, operand_type, value)
 
 	entry := new_label(e, "orelse.entry")
+	success_label := new_label(e, "orelse.success")
 	fallback_label := new_label(e, "orelse.fallback")
 	done := new_label(e, "orelse.done")
 	branch(e, entry)
 	place_label(e, entry)
-	// The same status test `or_return` uses, so a `bool` and a union status take
-	// one implementation.
-	failed := emit_status_failed(e, status_type, status)
-	branch_if(e, failed, fallback_label, done)
+	failed := emit_union_failed(e, operand_type, value)
+	branch_if(e, failed, fallback_label, success_label)
+
+	// The success payload is read only on the path where it is the active one.
+	place_label(e, success_label)
+	taken := emit_union_payload(e, operand_type, payload_type, slot)
+	success_exit := new_label(e, "orelse.success.exit")
+	branch(e, success_exit)
+	place_label(e, success_exit)
+	branch(e, done)
 
 	place_label(e, fallback_label)
-	// design.md "or_else expression": the status is discarded, and a failing union
-	// status runs its drop hook before the fallback is evaluated. No drop is
-	// emitted because no status reaching here owns anything: a `bool` is trivial,
-	// and naming a managed union is rejected as L0494 (`type_contains_managed_union`
-	// in check.odin) until tag-aware drop lowering exists. That lowering has to add
-	// the drop here.
-	fallback := emit_multi_value(e, v.fallback)
+	// design.md: `or_else` never copies the error. A managed failure payload is
+	// dropped here, before the fallback is evaluated, because the operand's value
+	// is discarded on this path.
+	if failure_type := info.variants[info.failure_variant]; type_is_managed(e.c, failure_type) {
+		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
+	}
+	fallback := emit_expr(e, v.fallback)
 	fallback_exit := new_label(e, "orelse.fallback.exit")
 	branch(e, fallback_exit)
 	place_label(e, fallback_exit)
 	branch(e, done)
 
 	place_label(e, done)
-	out := make([]string, len(payloads))
-	for index in 0 ..< len(payloads) {
-		joined := temp(e)
-		fmt.sbprintfln(
-			&e.b,
-			"  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
-			joined, llvm_type(e, types[index]), payloads[index], entry, fallback[index], fallback_exit,
-		)
-		out[index] = joined
-	}
+	joined := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
+		joined, llvm_type(e, payload_type), taken, success_exit, fallback, fallback_exit,
+	)
+	out := make([]string, 1)
+	out[0] = joined
 	return out
 }
 
-// design.md "or_return operator": on failure the status is assigned to the final
-// result and control leaves through the ordinary epilogue, so `defer` ordering
-// stays in one implementation.
+// design.md "or_return operator": on failure the operand's error payload is
+// rewrapped as the enclosing procedure's failure variant and control leaves
+// through the ordinary epilogue, so `defer` ordering stays in one
+// implementation.
 @(private = "file")
 emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
-	values := emit_multi_value(e, v.operand)
-	operand := expr_base(v.operand)
-	status_type := operand.type
-	if len(operand.result_types) > 0 {
-		status_type = operand.result_types[len(operand.result_types) - 1]
-	}
-	status := values[len(values) - 1]
-	failed := emit_status_failed(e, status_type, status)
+	operand_type := type_underlying(e.c, expr_base(v.operand).type)
+	info := type_of(e.c, operand_type)
+	success := 1 - info.failure_variant
+	value := emit_expr(e, v.operand)
+	slot := emit_union_spill(e, operand_type, value)
+	failed := emit_union_failed(e, operand_type, value)
 
 	fail_label := new_label(e, "orreturn.fail")
 	ok_label := new_label(e, "orreturn.ok")
@@ -655,38 +637,27 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	place_label(e, fail_label)
 	last := len(e.result_slots) - 1
 	if last >= 0 {
-		target := e.result_types[last]
-		if target != status_type && type_is_union(e.c, target) && union_holds(e.c, target, status_type) {
-			status = emit_union_value(e, target, status_type, status)
+		target := type_underlying(e.c, e.result_types[last])
+		target_info := type_of(e.c, target)
+		// `or_return` constructs the enclosing error directly: the operand's error
+		// payload is moved into the new variant without a second clone.
+		error := ""
+		if info.variants[info.failure_variant] != TYPE_VOID {
+			error = emit_union_payload(e, operand_type, info.variants[info.failure_variant], slot)
 		}
-		store(e, target, status, e.result_slots[last])
+		wrapped := emit_union_value(e, e.result_types[last], target_info.failure_variant, error)
+		store(e, e.result_types[last], wrapped, e.result_slots[last])
 	}
 	emit_epilogue(e)
 
 	place_label(e, ok_label)
-	return values[:len(values) - 1]
-}
-
-// design.md "Status results": the status is successful when it is `true` for
-// `bool` or `nil` for a union or an `Allocator_Error`, and nothing else is a
-// status. There is therefore no pointer or procedure form to compare against
-// null; the checker has already rejected those.
-@(private = "file")
-emit_status_failed :: proc(e: ^Emitter, status_type: Type_Id, status: string) -> string {
-	out := temp(e)
-	if type_is_union(e.c, status_type) {
-		shape := union_layout(e.c, status_type)
-		tag := emit_union_tag(e, status_type, status)
-		fmt.sbprintfln(&e.b, "  %s = icmp ne i%d %s, 0", out, shape.tag_bytes * 8, tag)
+	out := make([]string, 1)
+	if info.variants[success] == TYPE_VOID {
+		// A payloadless success yields `Unit`, which is zero-sized.
+		out[0] = "zeroinitializer"
 		return out
 	}
-	// An `Allocator_Error` is an integer code whose nil — and so its success — is
-	// zero, the same representation `err != nil` already tests.
-	if underlying_kind(e.c, status_type) == .Allocator_Error {
-		fmt.sbprintfln(&e.b, "  %s = icmp ne %s %s, 0", out, llvm_type(e, status_type), status)
-		return out
-	}
-	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, status)
+	out[0] = emit_union_payload(e, operand_type, info.variants[success], slot)
 	return out
 }
 
@@ -1098,35 +1069,13 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	return out
 }
 
-// `union.active_typeid()`: translate the compact union discriminant to the
-// deterministic program-wide `typeid` assigned to that variant. Tag zero is
-// the nil union and therefore remains the nil `typeid`.
+// `U.name(payload)`: evaluate the payload and write it plus the variant's tag.
 @(private = "file")
 emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	if v.union_op != .Active_Typeid || len(v.bound) != 1 {
-		backend_fail(e, "a union call has no active-type operation")
+	if v.union_op != .Construct || len(v.bound) != 1 {
+		backend_fail(e, "a union call has no construction operand")
 		return "0"
 	}
-	union_type := expr_base(v.bound[0]).type
-	info := type_of(e.c, union_type)
-	if info == nil || info.kind != .Union {
-		backend_fail(e, "active_typeid did not receive a union")
-		return "0"
-	}
-	value := emit_expr(e, v.bound[0])
-	tag := emit_union_tag(e, union_type, value)
-	shape := union_layout(e.c, union_type)
-	tag_llvm := fmt.aprintf("i%d", shape.tag_bytes * 8)
-	result := "0"
-	for variant, index in info.variants {
-		matched := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", matched, tag_llvm, tag, index + 1)
-		next := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = select i1 %s, i64 %d, i64 %s",
-			next, matched, typeid_value(e.c, variant), result,
-		)
-		result = next
-	}
-	return result
+	payload := emit_expr(e, v.bound[0])
+	return emit_union_value(e, v.type, v.variant_index, payload)
 }

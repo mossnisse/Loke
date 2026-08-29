@@ -29,19 +29,18 @@ import "core:mem";
 // A copy of `text` in storage from `allocator`. Failure follows the allocator's
 // failure policy, like every other implicitly allocating operation.
 copy :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
-	owned, error := allocate_string(text, allocator);
-	if (error != nil) {
-		panic("string allocation failed");
-	}
-	return owned;
+	return allocate_string(text, allocator) or_else no_string();
 }
 
-// The fallible half: an empty string and the error, with nothing allocated.
+// The fallible half: the error, with nothing allocated.
 try_copy :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
-) -> (string, Allocator_Error) {
+) -> Result(string, Allocator_Error) {
 	return allocate_string(text, allocator);
 }
+
+@(private)
+no_string :: proc() -> string { panic("string allocation failed"); }
 
 // --------------------------------------------------------------- queries --
 

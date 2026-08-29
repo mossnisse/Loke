@@ -6,9 +6,16 @@
 // rather than a second identity.
 package lokec
 
+// One universe per compilation, not per package: `bind_runtime_bootstrap` binds
+// `Unit`, `Option`, and `Result` into it once, and every package has to see
+// them.
 build_universe :: proc(c: ^Compiler) -> ^Scope {
+	if c.universe != nil {
+		return c.universe
+	}
 	init_semantic_stores(c)
 	universe := new_scope(c, nil, .Universe)
+	c.universe = universe
 
 	types := []struct{name: string, id: Type_Id} {
 		{"bool", TYPE_BOOL},

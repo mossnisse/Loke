@@ -13,7 +13,7 @@ import "core:mem";
 import "core:strings";
 import "core:unsafe";
 
-// The value of `name`, and whether it is set at all. The boolean is what
+// The value of `name`, or `.none` when it is not set at all. `Option` is what
 // separates a missing variable from one whose value is the empty string; the
 // owning result uses the supplied allocator.
 //
@@ -22,7 +22,7 @@ import "core:unsafe";
 // rather than silently changed.
 get_environment :: proc(
 	name: string_view, allocator: Allocator = mem.default_allocator(),
-) -> (string, bool, io.Error) {
+) -> Result(Option(string), io.Error) {
 	return get_environment_native(name, allocator);
 }
 
@@ -30,27 +30,27 @@ get_environment :: proc(
 // string as removing it, so a later `get_environment` answers "not set" rather
 // than "set to nothing". That is the platform's behavior, not this library's
 // choice, and it is why the boolean above is about presence rather than length.
-set_environment :: proc(name: string_view, value: string_view) -> io.Error {
+set_environment :: proc(name: string_view, value: string_view) -> Result(Unit, io.Error) {
 	return set_environment_native(name, value);
 }
 
-unset_environment :: proc(name: string_view) -> io.Error {
+unset_environment :: proc(name: string_view) -> Result(Unit, io.Error) {
 	return unset_environment_native(name);
 }
 
 working_directory :: proc(
 	allocator: Allocator = mem.default_allocator(),
-) -> (string, io.Error) {
+) -> Result(string, io.Error) {
 	return working_directory_native(allocator);
 }
 
-set_working_directory :: proc(path: string_view) -> io.Error {
+set_working_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 	return set_working_directory_native(path);
 }
 
 executable_path :: proc(
 	allocator: Allocator = mem.default_allocator(),
-) -> (string, io.Error) {
+) -> Result(string, io.Error) {
 	return executable_path_native(allocator);
 }
 
@@ -87,123 +87,121 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 }
 
 @(private)
-wide :: proc(text: string_view, operation: io.Operation) -> ([dynamic]u16, io.Error) {
-	units, error := utf16.encode(text, mem.default_allocator());
-	if (error != nil) {
-		return units, io.make_error(.Out_Of_Memory, operation);
+wide :: proc(text: string_view, operation: io.Operation) -> Result([dynamic]u16, io.Error) {
+	switch (units in utf16.encode(text, mem.default_allocator())) {
+	case .ok:  return .ok(units);
+	case .err: return .err(io.make_error(.Out_Of_Memory, operation));
 	}
-	return units, nil;
 }
 
 // Decodes a wide buffer of `count` units into an owning `string`.
 @(private)
 from_wide :: proc(
 	units: []u16, count: int, allocator: Allocator, operation: io.Operation,
-) -> (string, io.Error) {
-	text, error := utf16.decode(units[0:count], allocator);
-	if (error != nil) {
-		fault := error.(utf16.Fault);
-		code := io.Code.Out_Of_Memory if fault == .Out_Of_Memory else io.Code.Invalid_Data;
-		return "", io.make_error(code, operation);
+) -> Result(string, io.Error) {
+	switch (text in utf16.decode(units[0:count], allocator)) {
+	case .ok:
+		return .ok(text);
+	case .err:
+		code := io.Code.Out_Of_Memory if text == .Out_Of_Memory else io.Code.Invalid_Data;
+		return .err(io.make_error(code, operation));
 	}
-	return text, nil;
 }
 
 @(private)
 get_environment_native :: proc(
 	name: string_view, allocator: Allocator,
-) -> (string, bool, io.Error) {
-	encoded, name_error := wide(name, .Environment);
-	if (name_error != nil) { return "", false, name_error; }
+) -> Result(Option(string), io.Error) {
+	encoded := wide(name, .Environment) or_return;
+	defer drop(encoded);
 
 	// The first call sizes the buffer: with a zero-length destination the answer
 	// is the length *including* the terminator, or zero for a failure.
 	needed := rt_get_environment(unsafe.raw_data(encoded), nil, 0);
 	if (needed == 0) {
 		error := from_last_error(.Environment);
-		if (io.is(error, .Not_Found)) { return "", false, nil; }
-		return "", false, error;
+		if (io.is(error, .Not_Found)) { return .ok(.none); }
+		return .err(error);
 	}
-	buffer, made := make([dynamic]u16, int(needed), int(needed), mem.default_allocator());
-	if (made != nil) {
-		return "", false, io.from_allocator_error(made, .Environment);
-	}
+	buffer := make([dynamic]u16, int(needed), int(needed), mem.default_allocator()) or_else no_units();
+	defer drop(buffer);
 	written := rt_get_environment(unsafe.raw_data(encoded), unsafe.raw_data(buffer), needed);
 	if (written == 0 || written >= needed) {
 		// A concurrent change resized the value between the two calls.
-		return "", false, from_last_error(.Environment);
+		return .err(from_last_error(.Environment));
 	}
-	text, decode_error := from_wide(buffer[:], int(written), allocator, .Environment);
-	if (decode_error != nil) { return "", false, decode_error; }
-	return text, true, nil;
+	return .ok(.some(from_wide(buffer[:], int(written), allocator, .Environment) or_return));
 }
 
 @(private)
-set_environment_native :: proc(name: string_view, value: string_view) -> io.Error {
+no_units :: proc() -> [dynamic]u16 { panic("os allocation failed"); }
+
+@(private)
+set_environment_native :: proc(name: string_view, value: string_view) -> Result(Unit, io.Error) {
 	encoded_name := wide(name, .Environment) or_return;
+	defer drop(encoded_name);
 	encoded_value := wide(value, .Environment) or_return;
+	defer drop(encoded_value);
 	if (rt_set_environment(unsafe.raw_data(encoded_name), unsafe.raw_data(encoded_value)) == 0) {
-		return from_last_error(.Environment);
+		return .err(from_last_error(.Environment));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-unset_environment_native :: proc(name: string_view) -> io.Error {
+unset_environment_native :: proc(name: string_view) -> Result(Unit, io.Error) {
 	encoded := wide(name, .Environment) or_return;
+	defer drop(encoded);
 	// A null value removes the variable.
 	if (rt_set_environment(unsafe.raw_data(encoded), nil) == 0) {
-		return from_last_error(.Environment);
+		return .err(from_last_error(.Environment));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-working_directory_native :: proc(allocator: Allocator) -> (string, io.Error) {
+working_directory_native :: proc(allocator: Allocator) -> Result(string, io.Error) {
 	needed := rt_get_directory(0, nil);
 	if (needed == 0) {
-		return "", from_last_error(.Working_Directory);
+		return .err(from_last_error(.Working_Directory));
 	}
-	buffer, made := make([dynamic]u16, int(needed), int(needed), mem.default_allocator());
-	if (made != nil) {
-		return "", io.from_allocator_error(made, .Working_Directory);
-	}
+	buffer := make([dynamic]u16, int(needed), int(needed), mem.default_allocator()) or_else no_units();
+	defer drop(buffer);
 	written := rt_get_directory(needed, unsafe.raw_data(buffer));
 	if (written == 0 || written >= needed) {
-		return "", from_last_error(.Working_Directory);
+		return .err(from_last_error(.Working_Directory));
 	}
 	return from_wide(buffer[:], int(written), allocator, .Working_Directory);
 }
 
 @(private)
-set_working_directory_native :: proc(path: string_view) -> io.Error {
+set_working_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
 	encoded := wide(path, .Working_Directory) or_return;
+	defer drop(encoded);
 	if (rt_set_directory(unsafe.raw_data(encoded)) == 0) {
-		return from_last_error(.Working_Directory);
+		return .err(from_last_error(.Working_Directory));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-executable_path_native :: proc(allocator: Allocator) -> (string, io.Error) {
+executable_path_native :: proc(allocator: Allocator) -> Result(string, io.Error) {
 	// `GetModuleFileNameW` has no size query: it fills whatever it is given and
 	// says so, which is indistinguishable from "it exactly fitted". Growing until
 	// the answer is shorter than the buffer is the documented way to be sure.
 	size := 260;
 	for (; size <= 65536; size *= 2) {
-		buffer, made := make([dynamic]u16, size, size, mem.default_allocator());
-		if (made != nil) {
-			return "", io.from_allocator_error(made, .Executable_Path);
-		}
+		buffer := make([dynamic]u16, size, size, mem.default_allocator()) or_else no_units();
+		defer drop(buffer);
 		written := rt_module_file_name(0, unsafe.raw_data(buffer), u32(size));
 		if (written == 0) {
-			return "", from_last_error(.Executable_Path);
+			return .err(from_last_error(.Executable_Path));
 		}
 		if (int(written) < size) {
 			return from_wide(buffer[:], int(written), allocator, .Executable_Path);
 		}
 	}
-	return "", io.make_error(.Limit_Exceeded, .Executable_Path);
+	return .err(io.make_error(.Limit_Exceeded, .Executable_Path));
 }
 
 } else {

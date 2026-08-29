@@ -207,13 +207,11 @@ check_from_runes :: proc(k: ^Checker, v: ^Expr_Call) {
 	set_optional_ok_results(k, v, TYPE_STRING)
 }
 
-// A validating conversion produces `(value, ok: bool)`; on invalid input,
-// `value` is the zero value and `ok` is false (design.md "Optional-ok results").
+// design.md "Typed fallibility": a validating conversion produces
+// `Option(value)`; invalid input is `.none` rather than a zero paired with a
+// `false` nobody is obliged to read.
 set_optional_ok_results :: proc(k: ^Checker, v: ^Expr_Call, value: Type_Id) {
-	results := make([]Type_Id, 2, k.c.semantic_allocator)
-	results[0], results[1] = value, TYPE_BOOL
-	v.result_types = results
-	v.type = value
+	v.type = option_type(k, value, v.span)
 }
 
 // The validating conversions of design.md's conversion tables. Each has
@@ -275,10 +273,7 @@ check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 		}
 	}
 	v.bound = bound
-	results := make([]Type_Id, 2, k.c.semantic_allocator)
-	results[0], results[1] = TYPE_STRING, TYPE_ALLOCATOR_ERROR
-	v.result_types = results
-	v.type = TYPE_STRING
+	v.type = result_type(k, TYPE_STRING, TYPE_ALLOCATOR_ERROR)
 }
 
 // ------------------------------------------------------------ core:unsafe --

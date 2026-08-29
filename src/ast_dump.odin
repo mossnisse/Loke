@@ -646,7 +646,11 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 			fmt.sbprint(b, ")")
 		}
 		for variant in node.variants {
-			dump_child(b, variant, depth)
+			fmt.sbprintf(b, " (variant %q", variant.name.text)
+			if variant.type != nil {
+				dump_child(b, variant.type, depth)
+			}
+			fmt.sbprint(b, ")")
 		}
 		fmt.sbprint(b, ")")
 

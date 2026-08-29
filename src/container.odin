@@ -188,7 +188,9 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 
 	members := make([dynamic]Symbol_Id, 0, 16, k.c.semantic_allocator)
 	none := []Type_Id{}
-	fails := []Type_Id{TYPE_ALLOCATOR_ERROR}
+	// design.md "Typed fallibility": a recoverable operation reports through
+	// `Result(Unit, Allocator_Error)`, never a trailing status.
+	fails := []Type_Id{result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)}
 
 	pack := slice_of(k.c, element, mutable = false)
 	append(&members, container_member(
@@ -207,14 +209,14 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		k, type, "try_insert", .Try_Insert,
 		[]Type_Id{type, TYPE_INT, element}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
 	))
-	// design.md optional-ok: an empty container yields the zero value and false.
+	// design.md "Typed fallibility": an empty container yields `.none`.
 	// The removed value's provenance is the element's, not the container's: what
 	// comes back holds what that element held. Written as a summary for the same
 	// reason `lookup_value` has one — a synthesised member has no body for the
 	// fixed point to walk.
 	pop := container_member(
 		k, type, "pop", .Pop,
-		[]Type_Id{type}, []Param_Mode{.Inout}, []Type_Id{element, TYPE_BOOL}, 0,
+		[]Type_Id{type}, []Param_Mode{.Inout}, []Type_Id{option_type(k, element)}, 0,
 	)
 	set_synth_result_summary(k.c, pop, 0, 0)
 	append(&members, pop)
@@ -276,24 +278,27 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 
 	members := make([dynamic]Symbol_Id, 0, 8, k.c.semantic_allocator)
 	none := []Type_Id{}
-	fails := []Type_Id{TYPE_ALLOCATOR_ERROR}
+	fails := []Type_Id{result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)}
 
-	// `find` returns a pointer to the existing value and `true`, or `nil` and
-	// `false` — it never inserts (design.md). The receiver is `inout` because
-	// the pointer it hands back grants mutation of the stored value.
-	append(&members, container_member(
+	// `find` returns `Option(^mut V)` over the existing value — it never inserts
+	// (design.md). The receiver is `inout` because the pointer it hands back
+	// grants mutation of the stored value. Only its result representation
+	// changed with typed fallibility; the borrow and invalidation rules did not.
+	find := container_member(
 		k, type, "find", .Map_Find,
 		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
-		[]Type_Id{pointer_to(k.c, value, true), TYPE_BOOL}, 0,
-	))
-	// design.md "Maps": the `(V, bool)` read. Unlike `find` it hands back an
+		[]Type_Id{option_type(k, pointer_to(k.c, value, true))}, 0,
+	)
+	set_synth_result_summary(k.c, find, 0, 0)
+	append(&members, find)
+	// design.md "Maps": the owning read. Unlike `find` it hands back an
 	// independently owned value rather than a pointer into the table, so its
 	// receiver is immutable and an immutable parameter or a temporary map can be
 	// read through it.
 	lookup := container_member(
 		k, type, "lookup_value", .Map_Lookup_Value,
 		[]Type_Id{type, key}, []Param_Mode{.Value, .Value},
-		[]Type_Id{value, TYPE_BOOL}, 0, .Value,
+		[]Type_Id{option_type(k, value)}, 0, .Value,
 	)
 	// A synthesised member has no body, so without a written summary a carrier
 	// payload would fall through to `.Unknown` storage and lose the provenance the
@@ -307,10 +312,10 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		[]Type_Id{type, key, value}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
 	))
 	// design.md: removal moves the stored value to the result and answers
-	// zero/false when the key was absent.
+	// `.none` when the key was absent.
 	map_remove := container_member(
 		k, type, "remove", .Map_Remove,
-		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value}, []Type_Id{value, TYPE_BOOL}, 0,
+		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value}, []Type_Id{option_type(k, value)}, 0,
 	)
 	set_synth_result_summary(k.c, map_remove, 0, 0)
 	append(&members, map_remove)

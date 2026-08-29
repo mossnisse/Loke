@@ -14,14 +14,12 @@ package cstrings;
 import "core:mem";
 import "core:unsafe";
 
-Fault :: enum {
+Error :: enum {
 	// A Loke `string` may legitimately contain U+0000; a retained C string
 	// cannot, because the terminator would end it early.
 	Contains_Zero,
 	Out_Of_Memory,
 }
-
-Error :: union {Fault}
 
 C_String :: struct {
 	// The bytes *including* the terminator, so `view` never has to add one and
@@ -31,21 +29,26 @@ C_String :: struct {
 
 from_string :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
-) -> (C_String, Error) {
+) -> Result(C_String, Error) {
 	foreach (byte in text.bytes()) {
 		if (byte == 0) {
-			return C_String{}, Fault.Contains_Zero;
+			return .err(.Contains_Zero);
 		}
 	}
-	buffer, made := make([dynamic]u8, 0, len(text) + 1, allocator);
-	if (made != nil) {
-		return C_String{}, Fault.Out_Of_Memory;
+	buffer := make([dynamic]u8, 0, len(text) + 1, allocator) or_else no_buffer();
+	switch (added in buffer.try_append(..text.bytes())) {
+	case .ok:
+	case .err: drop(buffer); return .err(.Out_Of_Memory);
 	}
-	if (buffer.try_append(..text.bytes()) != nil || buffer.try_append(0) != nil) {
-		return C_String{}, Fault.Out_Of_Memory;
+	switch (added in buffer.try_append(0)) {
+	case .ok:
+	case .err: drop(buffer); return .err(.Out_Of_Memory);
 	}
-	return C_String{buffer}, nil;
+	return .ok(C_String{buffer});
 }
+
+@(private)
+no_buffer :: proc() -> [dynamic]u8 { panic("C_String allocation failed"); }
 
 impl C_String {
 	// design.md spells the accessor as a method, so the whole surface is one.

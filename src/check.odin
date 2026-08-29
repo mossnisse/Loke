@@ -90,7 +90,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	// Before the package's own declarations are collected, so a source
 	// declaration colliding with a contributed name is an ordinary
 	// redeclaration rather than a silent replacement.
-	contribute_standard_members(k.c, pkg)
+	contribute_standard_members(k, pkg)
 	k.pkg = package_id
 	k.lookup_pkg = package_id
 	k.scope = pkg.scope
@@ -117,6 +117,10 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 			}
 		}
 	}
+	// design.md "Typed fallibility": the three bootstrap declarations enter the
+	// universe as soon as `base:runtime`'s own names exist, which is before any
+	// other package is prepared.
+	bind_runtime_bootstrap(k, pkg)
 	// Aliases first: an `impl vendor.Vector2` block names its subject through
 	// one, so the alias has to exist before the block can resolve it.
 	bind_import_aliases(k, pkg)
@@ -590,6 +594,7 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		} else {
 			resolve_union_variants(k, symbol.type, value)
 		}
+		apply_type_metadata(k, d, symbol.type)
 	case ^Type_Enum:
 		resolve_enum_members(k, symbol.type, value)
 	case ^Expr_Proc_Group:
@@ -1415,16 +1420,6 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if type_is_region_provider(k.c, type) {
 		ensure_provider_members(k, type_underlying(k.c, type))
 	}
-	if type_contains_managed_union(k.c, type) {
-		errorf(
-			k.c,
-			span,
-			"L0494",
-			"`%s` contains a managed union; tag-aware union clone and drop lowering is not implemented in M5a",
-			type_name(k.c, type),
-		)
-		return false
-	}
 	return true
 }
 
@@ -1602,6 +1597,12 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			errorf(k.c, d.span, "L0306", "this declaration needs a type or an initialiser")
 			return
 		}
+		// design.md "Zero values": a declaration with static duration starts at its
+		// type's zero value, and a no-zero type has none to start at. A local
+		// stays dead until it is fully assigned, so it is not diagnosed here.
+		if d.top_level || d.duration != .None {
+			require_type_has_zero(k, declared, d.span, "a declaration with static duration")
+		}
 		assign_symbol_types(k.c, d, declared)
 		return
 	}
@@ -1691,12 +1692,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		// constant initialiser may call a procedure and still get the same
 		// diagnostics as a folded one.
 		if d.top_level && d.kind == .Var {
-			folded, evaluated := require_const(k, value, "a file-scope initializer", "L0325")
-			// A union's tag is written by code, and a file-scope initialiser has
-			// none: without this the global would silently start at nil.
-			if evaluated && const_holds_live_union(k.c, folded, final) {
-				errorf(k.c, expr_span(value), "L0424", "a file-scope union starts at nil; assign the variant in `main`")
-			}
+			require_const(k, value, "a file-scope initializer", "L0325")
 		}
 
 		bind_literal_allocator(k.c, value, symbol_id)
@@ -2043,7 +2039,9 @@ expression_statement_has_effect :: proc(e: Expr) -> bool {
 	case ^Expr_Call:
 		return true
 	case ^Expr_Postfix:
-		return v.op == .Or_Return && expression_statement_has_effect(v.operand)
+		// design.md "or_return operator": propagating a failure *is* the effect, so
+		// a bare `fallible or_return;` is a statement whatever its operand is.
+		return v.op == .Or_Return
 	}
 	return false
 }

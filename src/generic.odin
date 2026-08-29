@@ -1197,6 +1197,9 @@ instantiate_record_body :: proc(
 	} else {
 		resolve_union_variants(k, type, record)
 	}
+	// design.md "Required results": the property is declared once and every
+	// instance carries it, so `Result(int, Error)` is checked like `Result` is.
+	apply_type_metadata(k, clone, type)
 	if !check_where_clauses(k, record.where_clauses, instance.span, name, report) {
 		return false
 	}
@@ -1271,6 +1274,31 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 	v.denoted_type = instance.type
 	v.value_category = .Type
 	v.resolution = Resolution{kind = .Generic_Application, symbol = instance.symbol}
+	return instance.type
+}
+
+// The bootstrap path into the same instance cache an ordinary `Option(int)`
+// application uses: types in, an instance out, with no syntax in between. It is
+// how built-ins, container members, generated hooks, and iteration all reach
+// the *source-declared* `Option` and `Result` rather than a compiler-owned
+// second copy of them.
+instantiate_record_types :: proc(k: ^Checker, symbol: Symbol_Id, args: []Type_Id, span: Span) -> Type_Id {
+	template := generic_template_for(k, symbol)
+	if template == nil || len(template.params) != len(args) {
+		return INVALID_TYPE
+	}
+	scope := new_instance_scope(k, template)
+	bindings := make([dynamic]Generic_Binding, 0, len(args), k.c.semantic_allocator)
+	for parameter, index in template.params {
+		name := Name{text = identifier_text(k.c, parameter.name), span = span, id = parameter.name}
+		if !bind_pattern_name(k, name, Generic_Arg{is_type = true, type = args[index]}, scope, &bindings) {
+			return INVALID_TYPE
+		}
+	}
+	instance, made := instantiate_generic(k, template, bindings[:], scope, span, report = true)
+	if !made {
+		return INVALID_TYPE
+	}
 	return instance.type
 }
 

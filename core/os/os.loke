@@ -46,15 +46,13 @@ impl Args {
 
 	// design.md "From cstring_view to X": the conversion validates UTF-8 and
 	// copies into owned storage. The runtime's bytes are already valid, so the
-	// optional-ok failure is unreachable; an out-of-range index yields "" rather
-	// than reading past the vector.
+	// `.none` case is unreachable; an out-of-range index yields "" rather than
+	// reading past the vector.
 	at :: operator([]) proc(self, index: int) -> string {
 		if (index < 0 || index >= rt_args_count()) {
 			return "";
 		}
-		text, ok := string(rt_args_at(index));
-		if (!ok) { return ""; }
-		return text;
+		return string(rt_args_at(index)) or_else "";
 	}
 
 	iter :: proc(self) -> Args_Iterator {
@@ -63,28 +61,26 @@ impl Args {
 }
 
 impl Args_Iterator {
-	next :: proc(self: inout Args_Iterator) -> (string_view, bool) {
+	next :: proc(self: inout Args_Iterator) -> Option(string_view) {
 		if (self.next_index >= rt_args_count()) {
-			return "", false;
+			return .none;
 		}
 		index := self.next_index;
 		self.next_index += 1;
-		return view_at(index), true;
+		return .some(view_at(index));
 	}
 }
 
 // A borrow of one cached argument. The bytes live for the process, so the view
 // has no owner to outlive; the runtime already validated them as UTF-8, which is
-// why the optional-ok failure is unreachable.
+// why the `.none` case is unreachable.
 @(public)
 view_at :: proc(index: int) -> string_view {
 	if (index < 0 || index >= rt_args_count()) {
 		return "";
 	}
 	bytes := unsafe.raw_data(rt_args_at(index));
-	view, ok := unsafe.string_view(bytes, rt_args_len(index));
-	if (!ok) { return ""; }
-	return view;
+	return unsafe.string_view(bytes, rt_args_len(index)) or_else "";
 }
 
 // design.md "Program entry and exit": terminates immediately. It runs no

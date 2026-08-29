@@ -19,6 +19,11 @@ import "core:strings"
 // reaches, and check each package in dependency order.
 compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	init_semantic_stores(c)
+	// design.md "Typed fallibility": `base:runtime` declares `Unit`, `Option`,
+	// and `Result`, which the checker instantiates for built-in producers before
+	// any user signature is resolved. Loading it first also makes it package 1,
+	// so the dependency-first order checks it before everything else.
+	load_runtime_bootstrap(c)
 	root, loaded := load_root_package(c, input)
 	if !loaded {
 		return INVALID_PACKAGE, false
@@ -74,6 +79,18 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 // A directory argument compiles every `.loke` file directly in it. A file
 // argument keeps the one-file-package behaviour the existing corpus relies on,
 // though its relative imports still resolve from its own directory.
+// The one unconditional package. It is loaded through the ordinary collection
+// machinery, so a program that also imports `base:runtime` by name gets the
+// same package rather than a second copy of it.
+@(private = "file")
+load_runtime_bootstrap :: proc(c: ^Compiler) {
+	root, registered := c.collections["base"]
+	if !registered {
+		return // reported at the first import that needs it
+	}
+	load_package_dir(c, strings.concatenate({root, "/runtime"}), STD_RUNTIME, no_span())
+}
+
 @(private = "file")
 load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	if is_directory(input) {

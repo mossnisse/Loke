@@ -80,8 +80,8 @@ impl File {
 	}
 
 	// Idempotent: the value is left inert even when the close itself failed.
-	close :: proc(self: inout File) -> io.Error {
-		if (self.handle == NO_HANDLE) { return nil; }
+	close :: proc(self: inout File) -> Result(Unit, io.Error) {
+		if (self.handle == NO_HANDLE) { return .ok(Unit{}); }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
 		return close_handle(handle);
@@ -89,55 +89,55 @@ impl File {
 
 	is_open :: proc(self) -> bool { return self.handle != NO_HANDLE; }
 
-	read :: proc(self: inout File, destination: []mut u8) -> (int, io.Error) {
-		if (len(destination) == 0) { return 0, nil; }
+	read :: proc(self: inout File, destination: []mut u8) -> Result(int, io.Error) {
+		if (len(destination) == 0) { return .ok(0); }
 		if (self.handle == NO_HANDLE) {
-			return 0, io.make_error(.Invalid_Data, .Read);
+			return .err(io.make_error(.Invalid_Data, .Read));
 		}
 		if (self.access == .Write) {
-			return 0, io.make_error(.Unsupported, .Read);
+			return .err(io.make_error(.Unsupported, .Read));
 		}
 		return read_handle(self.handle, destination);
 	}
 
-	write :: proc(self: inout File, source: []u8) -> (int, io.Error) {
-		if (len(source) == 0) { return 0, nil; }
+	write :: proc(self: inout File, source: []u8) -> Result(int, io.Error) {
+		if (len(source) == 0) { return .ok(0); }
 		if (self.handle == NO_HANDLE) {
-			return 0, io.make_error(.Invalid_Data, .Write);
+			return .err(io.make_error(.Invalid_Data, .Write));
 		}
 		if (self.access == .Read) {
-			return 0, io.make_error(.Unsupported, .Write);
+			return .err(io.make_error(.Unsupported, .Write));
 		}
 		return write_handle(self.handle, source);
 	}
 
-	seek :: proc(self: inout File, offset: i64, origin: Seek_Origin) -> (u64, io.Error) {
+	seek :: proc(self: inout File, offset: i64, origin: Seek_Origin) -> Result(u64, io.Error) {
 		if (self.handle == NO_HANDLE) {
-			return 0, io.make_error(.Invalid_Data, .Seek);
+			return .err(io.make_error(.Invalid_Data, .Seek));
 		}
 		return seek_handle(self.handle, offset, origin);
 	}
 
-	flush :: proc(self: inout File) -> io.Error {
-		if (self.handle == NO_HANDLE) { return nil; }
+	flush :: proc(self: inout File) -> Result(Unit, io.Error) {
+		if (self.handle == NO_HANDLE) { return .ok(Unit{}); }
 		return flush_handle(self.handle);
 	}
 }
 
-open :: proc(path: string_view, options: Open_Options) -> (File, io.Error) {
+open :: proc(path: string_view, options: Open_Options) -> Result(File, io.Error) {
 	return open_native(path, options);
 }
 
-open_read :: proc(path: string_view) -> (File, io.Error) {
+open_read :: proc(path: string_view) -> Result(File, io.Error) {
 	return open(path, Open_Options{.Read, .Open_Existing, false});
 }
 
 // Creates the file, or truncates an existing one.
-create :: proc(path: string_view) -> (File, io.Error) {
+create :: proc(path: string_view) -> Result(File, io.Error) {
 	return open(path, Open_Options{.Write, .Create_Or_Truncate, false});
 }
 
-append :: proc(path: string_view) -> (File, io.Error) {
+append :: proc(path: string_view) -> Result(File, io.Error) {
 	return open(path, Open_Options{.Write, .Open_Or_Create, true});
 }
 
@@ -148,83 +148,93 @@ append :: proc(path: string_view) -> (File, io.Error) {
 // result.
 read_bytes :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
-) -> ([dynamic]u8, io.Error) {
-	file, error := open_read(path);
-	if (error != nil) {
-		return {}, error;
-	}
-	bytes, read_error := io.read_to_end(inout file, allocator, limit);
+) -> Result([dynamic]u8, io.Error) {
+	file := open_read(path) or_return;
+	outcome := io.read_to_end(inout file, allocator, limit);
 	closed := file.close();
-	if (read_error != nil) { return bytes, read_error; }
-	return bytes, closed;
+	switch (bytes in outcome) {
+	case .ok:
+		closed or_return;
+		return .ok(bytes);
+	case .err:
+		return .err(bytes);
+	}
 }
 
 // The whole file as text. The bytes are validated: a file that is not UTF-8 is
 // `Invalid_Data`, never silently repaired.
 read_text :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
-) -> (string, io.Error) {
-	bytes, error := read_bytes(path, allocator, limit);
-	if (error != nil) { return "", error; }
-	view, valid := string_view(bytes[:]);
-	if (!valid) {
-		return "", io.make_error(.Invalid_Data, .Read);
+) -> Result(string, io.Error) {
+	bytes := read_bytes(path, allocator, limit) or_return;
+	switch (view in string_view(bytes[:])) {
+	case .some:
+		switch (text in strings.try_copy(view, allocator)) {
+		case .ok:
+			drop(bytes);
+			return .ok(text);
+		case .err:
+			drop(bytes);
+			return .err(io.from_allocator_error(.Read));
+		}
+	case .none:
+		drop(bytes);
+		return .err(io.make_error(.Invalid_Data, .Read));
 	}
-	text, allocation := strings.try_copy(view, allocator);
-	if (allocation != nil) {
-		return "", io.from_allocator_error(allocation, .Read);
-	}
-	return text, nil;
 }
 
 // Truncates an existing file only after the target has been opened. This is not
 // an atomic replacement; a `replace_atomic` with documented same-filesystem and
 // durability guarantees can be added later.
-write_bytes :: proc(path: string_view, data: []u8) -> io.Error {
+write_bytes :: proc(path: string_view, data: []u8) -> Result(Unit, io.Error) {
 	file := create(path) or_return;
-	error := io.write_all(inout file, data);
+	written := io.write_all(inout file, data);
 	closed := file.close();
-	return error if error != nil else closed;
+	written or_return;
+	return closed;
 }
 
-write_text :: proc(path: string_view, text: string_view) -> io.Error {
+write_text :: proc(path: string_view, text: string_view) -> Result(Unit, io.Error) {
 	return write_bytes(path, text.bytes());
 }
 
-append_bytes :: proc(path: string_view, data: []u8) -> io.Error {
+append_bytes :: proc(path: string_view, data: []u8) -> Result(Unit, io.Error) {
 	file := append(path) or_return;
-	error := io.write_all(inout file, data);
+	written := io.write_all(inout file, data);
 	closed := file.close();
-	return error if error != nil else closed;
+	written or_return;
+	return closed;
 }
 
-append_text :: proc(path: string_view, text: string_view) -> io.Error {
+append_text :: proc(path: string_view, text: string_view) -> Result(Unit, io.Error) {
 	return append_bytes(path, text.bytes());
 }
 
 // ---------------------------------------------------------- the filesystem --
 
-metadata :: proc(path: string_view) -> (Metadata, io.Error) {
+metadata :: proc(path: string_view) -> Result(Metadata, io.Error) {
 	return metadata_native(path);
 }
 
 // False only for a definite not-found answer. A permission failure or an I/O
 // failure is still an error, because "I could not tell" is not "it is not
 // there".
-exists :: proc(path: string_view) -> (bool, io.Error) {
-	_, error := metadata(path);
-	if (error == nil) { return true, nil; }
-	if (io.is(error, .Not_Found)) { return false, nil; }
-	return false, error;
+exists :: proc(path: string_view) -> Result(bool, io.Error) {
+	switch (outcome in metadata(path)) {
+	case .ok: return .ok(true);
+	case .err:
+		if (io.is(outcome, .Not_Found)) { return .ok(false); }
+		return .err(outcome);
+	}
 }
 
-remove :: proc(path: string_view) -> io.Error { return remove_native(path); }
+remove :: proc(path: string_view) -> Result(Unit, io.Error) { return remove_native(path); }
 
-rename :: proc(old_path: string_view, new_path: string_view) -> io.Error {
+rename :: proc(old_path: string_view, new_path: string_view) -> Result(Unit, io.Error) {
 	return rename_native(old_path, new_path);
 }
 
-create_directory :: proc(path: string_view) -> io.Error {
+create_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 	return create_directory_native(path);
 }
 
@@ -234,7 +244,7 @@ create_directory :: proc(path: string_view) -> io.Error {
 // Nothing at or above the volume is a directory anything can create — `C:` is a
 // drive and a UNC prefix is a share — so the walk starts past whatever
 // `path.volume` finds.
-create_directories :: proc(path: string_view) -> io.Error {
+create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
 	bytes := path.bytes();
 	at := len(lexical.volume(path));
 	for (; at < len(bytes); at += 1) {
@@ -250,15 +260,18 @@ create_directories :: proc(path: string_view) -> io.Error {
 // directory and an existing non-directory. Only the former satisfies this
 // operation's postcondition.
 @(private)
-ensure_directory :: proc(path: string_view) -> io.Error {
-	error := create_directory(path);
-	if (error == nil || !io.is(error, .Already_Exists)) { return error; }
-	info, metadata_error := metadata(path);
-	if (metadata_error != nil) { return metadata_error; }
-	return nil if info.kind == .Directory else error;
+ensure_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
+	switch (outcome in create_directory(path)) {
+	case .ok: return .ok(Unit{});
+	case .err:
+		if (!io.is(outcome, .Already_Exists)) { return .err(outcome); }
+		info := metadata(path) or_return;
+		if (info.kind == .Directory) { return .ok(Unit{}); }
+		return .err(outcome);
+	}
 }
 
-remove_directory :: proc(path: string_view) -> io.Error {
+remove_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 	return remove_directory_native(path);
 }
 
@@ -271,7 +284,7 @@ remove_directory :: proc(path: string_view) -> io.Error {
 // array collects one itself.
 read_directory :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(),
-) -> (Directory_Reader, io.Error) {
+) -> Result(Directory_Reader, io.Error) {
 	return read_directory_native(path, allocator);
 }
 
@@ -389,15 +402,14 @@ Find_Data :: struct {
 // A path that cannot be represented is `Invalid_Path` rather than a silently
 // changed name.
 @(private)
-wide_path :: proc(path: string_view, operation: io.Operation) -> ([dynamic]u16, io.Error) {
-	units, error := utf16.encode(path, mem.default_allocator());
-	if (error != nil) {
-		return units, io.make_error(.Out_Of_Memory, operation);
-	}
+wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic]u16, io.Error) {
 	if (len(path) == 0) {
-		return units, io.make_error(.Invalid_Path, operation);
+		return .err(io.make_error(.Invalid_Path, operation));
 	}
-	return units, nil;
+	switch (units in utf16.encode(path, mem.default_allocator())) {
+	case .ok:  return .ok(units);
+	case .err: return .err(io.make_error(.Out_Of_Memory, operation));
+	}
 }
 
 // One place turns a Windows error number into a portable code, so no public
@@ -420,9 +432,9 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 }
 
 @(private)
-open_native :: proc(path: string_view, options: Open_Options) -> (File, io.Error) {
-	wide, path_error := wide_path(path, .Open);
-	if (path_error != nil) { return File{}, path_error; }
+open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io.Error) {
+	wide := wide_path(path, .Open) or_return;
+	defer drop(wide);
 
 	access: u32 = 0;
 	if (options.access == .Read || options.access == .Read_Write) {
@@ -444,21 +456,21 @@ open_native :: proc(path: string_view, options: Open_Options) -> (File, io.Error
 		disposition, u32(FILE_ATTRIBUTE_NORMAL), 0,
 	);
 	if (handle == INVALID_HANDLE) {
-		return File{}, from_last_error(.Open);
+		return .err(from_last_error(.Open));
 	}
-	return File{handle, options.access, options.append}, nil;
+	return .ok(File{handle, options.access, options.append});
 }
 
 @(private)
-close_handle :: proc(handle: Handle) -> io.Error {
+close_handle :: proc(handle: Handle) -> Result(Unit, io.Error) {
 	if (rt_close_handle(handle) == 0) {
-		return from_last_error(.Close);
+		return .err(from_last_error(.Close));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-read_handle :: proc(handle: Handle, destination: []mut u8) -> (int, io.Error) {
+read_handle :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Error) {
 	wanted := len(destination);
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	read: u32 = 0;
@@ -466,25 +478,25 @@ read_handle :: proc(handle: Handle, destination: []mut u8) -> (int, io.Error) {
 		error := from_last_error(.Read);
 		// A read that ends at the end of a pipe is the end of input, not a fault.
 		if (io.is(error, .Broken_Pipe)) {
-			return 0, io.make_error(.End_Of_Input, .Read);
+			return .err(io.make_error(.End_Of_Input, .Read));
 		}
-		return 0, error;
+		return .err(error);
 	}
 	if (read == 0) {
-		return 0, io.make_error(.End_Of_Input, .Read);
+		return .err(io.make_error(.End_Of_Input, .Read));
 	}
-	return int(read), nil;
+	return .ok(int(read));
 }
 
 @(private)
-write_handle :: proc(handle: Handle, source: []u8) -> (int, io.Error) {
+write_handle :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
 	wanted := len(source);
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	written: u32 = 0;
 	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {
-		return 0, from_last_error(.Write);
+		return .err(from_last_error(.Write));
 	}
-	return int(written), nil;
+	return .ok(int(written));
 }
 
 // One call moves at most this many bytes: the count is a `DWORD`, and a caller's
@@ -492,38 +504,38 @@ write_handle :: proc(handle: Handle, source: []u8) -> (int, io.Error) {
 @(private) MAX_CHUNK :: 0x3FFFFFFF;
 
 @(private)
-seek_handle :: proc(handle: Handle, offset: i64, origin: Seek_Origin) -> (u64, io.Error) {
+seek_handle :: proc(handle: Handle, offset: i64, origin: Seek_Origin) -> Result(u64, io.Error) {
 	method: u32 = 0;
 	if (origin == .Current) { method = 1; }
 	else if (origin == .End) { method = 2; }
 	position: i64 = 0;
 	if (rt_set_file_pointer(handle, offset, &mut position, method) == 0) {
-		return 0, from_last_error(.Seek);
+		return .err(from_last_error(.Seek));
 	}
-	return u64(position), nil;
+	return .ok(u64(position));
 }
 
 @(private)
-flush_handle :: proc(handle: Handle) -> io.Error {
+flush_handle :: proc(handle: Handle) -> Result(Unit, io.Error) {
 	if (rt_flush(handle) == 0) {
-		return from_last_error(.Flush);
+		return .err(from_last_error(.Flush));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-metadata_native :: proc(path: string_view) -> (Metadata, io.Error) {
-	wide, path_error := wide_path(path, .Metadata);
-	if (path_error != nil) { return Metadata{}, path_error; }
+metadata_native :: proc(path: string_view) -> Result(Metadata, io.Error) {
+	wide := wide_path(path, .Metadata) or_return;
+	defer drop(wide);
 	data: File_Attribute_Data = {};
 	if (rt_file_attributes(unsafe.raw_data(wide), 0, &mut data) == 0) {
-		return Metadata{}, from_last_error(.Metadata);
+		return .err(from_last_error(.Metadata));
 	}
-	return Metadata{
+	return .ok(Metadata{
 		kind_of(data.attributes),
 		(u64(data.size_high) << 32) | u64(data.size_low),
 		unix_nanoseconds(data.written),
-	}, nil;
+	});
 }
 
 @(private)
@@ -541,45 +553,45 @@ unix_nanoseconds :: proc(time: [2]u32) -> i64 {
 }
 
 @(private)
-remove_native :: proc(path: string_view) -> io.Error {
-	wide, path_error := wide_path(path, .Remove);
-	if (path_error != nil) { return path_error; }
+remove_native :: proc(path: string_view) -> Result(Unit, io.Error) {
+	wide := wide_path(path, .Remove) or_return;
+	defer drop(wide);
 	if (rt_delete_file(unsafe.raw_data(wide)) == 0) {
-		return from_last_error(.Remove);
+		return .err(from_last_error(.Remove));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-rename_native :: proc(old_path: string_view, new_path: string_view) -> io.Error {
-	from, from_error := wide_path(old_path, .Rename);
-	if (from_error != nil) { return from_error; }
-	to, to_error := wide_path(new_path, .Rename);
-	if (to_error != nil) { return to_error; }
+rename_native :: proc(old_path: string_view, new_path: string_view) -> Result(Unit, io.Error) {
+	from := wide_path(old_path, .Rename) or_return;
+	defer drop(from);
+	to := wide_path(new_path, .Rename) or_return;
+	defer drop(to);
 	if (rt_move_file(unsafe.raw_data(from), unsafe.raw_data(to), u32(MOVEFILE_REPLACE_EXISTING)) == 0) {
-		return from_last_error(.Rename);
+		return .err(from_last_error(.Rename));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-create_directory_native :: proc(path: string_view) -> io.Error {
-	wide, path_error := wide_path(path, .Create_Directory);
-	if (path_error != nil) { return path_error; }
+create_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
+	wide := wide_path(path, .Create_Directory) or_return;
+	defer drop(wide);
 	if (rt_create_directory(unsafe.raw_data(wide), nil) == 0) {
-		return from_last_error(.Create_Directory);
+		return .err(from_last_error(.Create_Directory));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 @(private)
-remove_directory_native :: proc(path: string_view) -> io.Error {
-	wide, path_error := wide_path(path, .Remove);
-	if (path_error != nil) { return path_error; }
+remove_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
+	wide := wide_path(path, .Remove) or_return;
+	defer drop(wide);
 	if (rt_remove_directory(unsafe.raw_data(wide)) == 0) {
-		return from_last_error(.Remove);
+		return .err(from_last_error(.Remove));
 	}
-	return nil;
+	return .ok(Unit{});
 }
 
 // The search handle plus the record Windows fills. `pending` is the entry
@@ -603,27 +615,27 @@ impl Directory_Reader {
 		}
 	}
 
-	close :: proc(self: inout Directory_Reader) -> io.Error {
-		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) { return nil; }
+	close :: proc(self: inout Directory_Reader) -> Result(Unit, io.Error) {
+		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) { return .ok(Unit{}); }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
 		if (rt_find_close(handle) == 0) {
-			return from_last_error(.Read_Directory);
+			return .err(from_last_error(.Read_Directory));
 		}
-		return nil;
+		return .ok(Unit{});
 	}
 
-	// The next entry, or `ok == false` at the end of the directory. `.` and `..`
-	// are skipped: they are an artefact of the platform's enumeration, not
-	// entries a program asked for.
+	// The next entry, or `.none` at the end of the directory. `.` and `..` are
+	// skipped: they are an artefact of the platform's enumeration, not entries a
+	// program asked for.
 	//
 	// ponytail: one allocation per entry, because the name is decoded into an
 	// owned `string` whose view is handed out. Decoding straight into a reused
 	// byte buffer would avoid it, and needs a UTF-16 decoder that writes into a
 	// caller's buffer — worth doing when a directory walk is measured.
-	next :: proc(self: inout Directory_Reader) -> (Directory_Entry, bool, io.Error) {
+	next :: proc(self: inout Directory_Reader) -> Result(Option(Directory_Entry), io.Error) {
 		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) {
-			return Directory_Entry{}, false, nil;
+			return .ok(.none);
 		}
 		for (;;) {
 			if (!self.pending) {
@@ -631,22 +643,21 @@ impl Directory_Reader {
 					error := from_last_error(.Read_Directory);
 					// ERROR_NO_MORE_FILES is the ordinary end of a directory.
 					if (io.native_code_of(error) == 18) {
-						return Directory_Entry{}, false, nil;
+						return .ok(.none);
 					}
-					return Directory_Entry{}, false, error;
+					return .err(error);
 				}
 			}
 			self.pending = false;
 			// A slice, not a copy: the record is 592 bytes and the name alone is 520.
 			units := self.data.name[:];
 			count := utf16.length_of(units);
-			name, decode_error := utf16.decode(units[0:count], self.allocator);
-			if (decode_error != nil) {
-				return Directory_Entry{}, false, from_utf16_error(decode_error, .Read_Directory);
+			switch (decoded in utf16.decode(units[0:count], self.allocator)) {
+			case .ok:  self.current = decoded;
+			case .err: return .err(from_utf16_error(decoded, .Read_Directory));
 			}
-			self.current = name;
 			if (self.current == "." || self.current == "..") { continue; }
-			return Directory_Entry{self.current, kind_of(self.data.attributes)}, true, nil;
+			return .ok(.some(Directory_Entry{self.current, kind_of(self.data.attributes)}));
 		}
 	}
 }
@@ -654,27 +665,26 @@ impl Directory_Reader {
 @(private)
 read_directory_native :: proc(
 	path: string_view, allocator: Allocator,
-) -> (Directory_Reader, io.Error) {
+) -> Result(Directory_Reader, io.Error) {
 	// `FindFirstFileW` takes a pattern, not a directory.
 	pattern := strings.join([]string_view{path, "*"}, "\\", mem.default_allocator());
-	wide, path_error := wide_path(pattern, .Read_Directory);
-	if (path_error != nil) { return Directory_Reader{}, path_error; }
+	wide := wide_path(pattern, .Read_Directory) or_return;
+	defer drop(wide);
 
 	reader: Directory_Reader = {};
 	reader.allocator = allocator;
 	handle := rt_find_first(unsafe.raw_data(wide), &mut reader.data);
 	if (handle == INVALID_HANDLE) {
-		return Directory_Reader{}, from_last_error(.Read_Directory);
+		return .err(from_last_error(.Read_Directory));
 	}
 	reader.handle = handle;
 	reader.pending = true;
-	return reader, nil;
+	return .ok(move(reader));
 }
 
 @(private)
 from_utf16_error :: proc(error: utf16.Error, operation: io.Operation) -> io.Error {
-	fault := error.(utf16.Fault);
-	code := io.Code.Out_Of_Memory if fault == .Out_Of_Memory else io.Code.Invalid_Data;
+	code := io.Code.Out_Of_Memory if error == .Out_Of_Memory else io.Code.Invalid_Data;
 	return io.make_error(code, operation);
 }
 

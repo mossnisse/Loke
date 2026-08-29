@@ -123,6 +123,17 @@ Compiler :: struct {
 	// The two local region providers (`src/region.odin`), created on first use.
 	arena_type:           Type_Id,
 	scratch_type:         Type_Id,
+	// design.md "Typed fallibility": the three `base:runtime` declarations the
+	// compiler bootstraps and binds into the universe. `Unit` is a type; the
+	// other two are generic templates instantiated through `src/bootstrap.odin`.
+	universe:             ^Scope,
+	unit_type:            Type_Id,
+	option_symbol:        Symbol_Id,
+	// `Result(Unit, Allocator_Error)`, instantiated once at bootstrap: every
+	// recoverable operation with no success value returns exactly this type.
+	alloc_result_type:    Type_Id,
+	result_symbol:        Symbol_Id,
+	bootstrap_ready:      bool,
 	typeid_requested:     map[Type_Id]bool,
 	typeid_order:         [dynamic]Type_Id,
 	typeid_values:        map[Type_Id]u64,

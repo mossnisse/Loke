@@ -1,10 +1,15 @@
-// Checked extractions, the type switch, and the optional-ok error protocol.
+// Checked extractions, the variant switch, and the typed failure protocol.
 //
-// design.md gives extraction two spellings with one result shape each: `v.(T)`
-// traps on a mismatch and produces `T`, `v.as(T)` never traps and produces
-// `(T, bool)`. The mode belongs to the spelling, so nothing about a destination
-// can change what a producer returns.
+// design.md gives `any_view` extraction two spellings with one result shape
+// each: `v.(T)` traps on a mismatch and produces `T`, `v.as(T)` never traps and
+// produces `Option(T)`. The mode belongs to the spelling, so nothing about a
+// destination can change what a producer returns.
+//
+// A union is not extracted at all: its variants are matched by name, because
+// two variants may carry the same payload type.
 package lokec
+
+import "core:slice"
 
 // -------------------------------------------------- checked extractions --
 
@@ -40,165 +45,121 @@ check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id
 		check_any_view_extract(k, v)
 		return
 	}
-	if !type_is_union(k.c, operand) {
+	// design.md "Unions": a union is inspected by `switch (p in u)`, whose cases
+	// are variant identities. A payload type cannot name a variant, because two
+	// variants may share one.
+	if type_is_union(k.c, operand) {
 		errorf(
 			k.c,
 			v.span,
 			"L0425",
-			"`%s` is not a union, so it has no variant to extract",
+			"`%s` is a union: match its variants with `switch (p in value) { case .name: ... }`",
 			type_name(k.c, operand),
 		)
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md: a checked extraction must name the requested type; the compiler does
-	// not infer it from context.
-	target := resolve_type_syntax(k, v.target)
-	if target == INVALID_TYPE {
-		errorf(k.c, expr_span(v.target), "L0425", "a checked extraction names the requested type")
-		v.type = INVALID_TYPE
-		return
-	}
-	if !union_holds(k.c, operand, target) {
-		errorf(
-			k.c,
-			expr_span(v.target),
-			"L0425",
-			"`%s` is not a variant of `%s`",
-			type_name(k.c, target),
-			type_name(k.c, operand),
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-	v.type = target
-	set_extract_results(k, v, target)
-}
-
-// `.as(T)` always produces `(T, bool)`; `.(T)` always produces `T`.
-set_extract_results :: proc(k: ^Checker, v: ^Expr_Checked_Extract, target: Type_Id) {
-	if v.mode != .Optional {
-		return
-	}
-	results := make([]Type_Id, 2, k.c.semantic_allocator)
-	results[0], results[1] = target, TYPE_BOOL
-	v.result_types = results
+	errorf(
+		k.c,
+		v.span,
+		"L0425",
+		"`%s` is not an `any_view`, so it has no runtime type to extract",
+		type_name(k.c, operand),
+	)
+	v.type = INVALID_TYPE
 }
 
 // ---------------------------------------------------------- optional-ok --
 
-// design.md "Status results": exactly two forms are admissible, a `bool` status
-// that succeeds on `true` and a nil status that succeeds on `nil`. A union and
-// `Allocator_Error` are the nil statuses. A pointer, multi-pointer, `rawptr`,
-// slice, map, procedure, `typeid`, view, or `dyn` result compares against `nil`
-// but is not a status, so a procedure returning `(int, ^Node)` returns two
-// ordinary values rather than a value and an error.
-type_is_status :: proc(k: ^Checker, status: Type_Id) -> bool {
-	if type_is_boolean(k.c, status) {
-		return true
-	}
-	#partial switch underlying_kind(k.c, status) {
-	case .Union, .Allocator_Error:
-		return true
-	}
-	return false
+// design.md "Failure protocol": `or_else` and `or_return` accept any two-variant
+// union whose declaration designates one variant as the failure. No declaration
+// is privileged by name, so a user's own `Parse :: union @(failure=bad) {...}`
+// works exactly as `Result` does.
+Fallible :: struct {
+	union_type: Type_Id,
+	info:       ^Type_Info,
+	failure:    int,
+	success:    int,
 }
 
-// design.md "Status results": an `or_else` operand is a status expression with
-// at least one payload result. The `bool` case is the optional-ok shape a
-// built-in producer uses; a union status is the error shape. A procedure
-// returning only a status is an `or_return` operand, not an `or_else` one.
-status_payloads :: proc(k: ^Checker, e: Expr) -> ([]Type_Id, bool) {
-	base := expr_base(e)
-	if base == nil || len(base.result_types) < 2 {
-		return nil, false
+fallible_of :: proc(k: ^Checker, type: Type_Id) -> (Fallible, bool) {
+	info := type_of(k.c, type_underlying(k.c, type))
+	if info == nil || info.kind != .Union || !info.failure_designated {
+		return Fallible{}, false
 	}
-	if !type_is_status(k, base.result_types[len(base.result_types) - 1]) {
-		return nil, false
-	}
-	return base.result_types[:len(base.result_types) - 1], true
+	return Fallible {
+		union_type = type,
+		info = info,
+		failure = info.failure_variant,
+		success = 1 - info.failure_variant,
+	}, true
 }
 
-// The two producers that used to grow a second result from their destination.
-// Neither does any more, so a use that wanted the optional shape is told which
-// operation now spells it.
+// The producers that used to grow a second result from their destination.
+// A use that wanted the optional shape is told which operation now spells it.
 note_optional_replacement :: proc(k: ^Checker, e: Expr) {
 	#partial switch v in e {
 	case ^Expr_Checked_Extract:
 		if v.mode == .Trap {
-			add_notef(k.c, expr_span(e), "`value.(T)` traps on a mismatch; `value.as(T)` yields `(T, bool)`")
+			add_notef(k.c, expr_span(e), "`value.(T)` traps on a mismatch; `value.as(T)` yields `Option(T)`")
 		}
 	case ^Expr_Index:
 		if v.operand != nil && type_is_map(k.c, expr_base(v.operand).type) && !v.map_inserts {
-			add_notef(k.c, expr_span(e), "`m[key]` reads one value; `m.lookup_value(key)` yields `(V, bool)`")
+			add_notef(k.c, expr_span(e), "`m[key]` reads one value; `m.lookup_value(key)` yields `Option(V)`")
 		}
 	}
 }
 
-// design.md "or_else expression": the fallback produces exactly the payload
-// results and is evaluated only when the status is a failure.
+// design.md "or_else expression": the result is the success payload, and the
+// fallback is evaluated only when the operand holds its failure variant.
 check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 	v.value_category = .Value
-	if check_expr(k, v.value, expected) == INVALID_TYPE {
+	if check_expr(k, v.value) == INVALID_TYPE {
 		v.type = INVALID_TYPE
 		return
 	}
-	payloads, has_payloads := status_payloads(k, v.value)
-	if !has_payloads {
+	shape, is_fallible := fallible_of(k, expr_base(v.value).type)
+	if !is_fallible {
 		errorf(
 			k.c,
 			expr_span(v.value),
 			"L0428",
-			"`or_else` needs a status expression with a payload on its left",
+			"`or_else` needs a union with a designated failure variant on its left, found `%s`",
+			type_name(k.c, expr_base(v.value).type),
 		)
 		note_optional_replacement(k, v.value)
 		v.type = INVALID_TYPE
 		return
 	}
-
-	if len(payloads) == 1 {
-		if !check_value_expr(k, v.fallback, payloads[0], "supply") {
-			v.type = INVALID_TYPE
-			return
-		}
-		v.type = payloads[0]
-		return
-	}
-	// Loke has no tuple literal, so a multiple-payload fallback is a call.
-	if check_expr(k, v.fallback) == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	fallback := expr_base(v.fallback)
-	if len(fallback.result_types) != len(payloads) {
+	payload := shape.info.variants[shape.success]
+	if payload == TYPE_VOID {
 		errorf(
 			k.c,
-			expr_span(v.fallback),
+			expr_span(v.value),
 			"L0428",
-			"this fallback produces %d value%s, but %d are wanted",
-			max(len(fallback.result_types), 1),
-			len(fallback.result_types) == 1 ? "" : "s",
-			len(payloads),
+			"`%s.%s` carries no payload, so there is nothing for `or_else` to produce",
+			type_name(k.c, shape.union_type), union_variant_name(k.c, shape.union_type, shape.success),
 		)
 		v.type = INVALID_TYPE
 		return
 	}
-	for payload, index in payloads {
-		if !assignable(k.c, fallback.result_types[index], payload) {
-			errorf(
-				k.c,
-				expr_span(v.fallback),
-				"L0428",
-				"cannot supply `%s` with `%s`",
-				type_name(k.c, payload),
-				type_name(k.c, fallback.result_types[index]),
-			)
-			v.type = INVALID_TYPE
-			return
-		}
+	// design.md: a place operand copies the selected payload, so it must be
+	// copyable; a temporary or `move(x)` transfers it.
+	if expr_base(v.value).value_category == .Place && type_clone_disabled(k.c, payload) {
+		errorf(
+			k.c, expr_span(v.value), "L0503",
+			"`%s` is move-only, so `or_else` cannot copy it out of a place; write `move(...)`",
+			type_name(k.c, payload),
+		)
+		v.type = INVALID_TYPE
+		return
 	}
-	v.type = payloads[0]
-	v.result_types = payloads
+	if !check_value_expr(k, v.fallback, payload, "supply") {
+		v.type = INVALID_TYPE
+		return
+	}
+	v.type = payload
+	_ = expected
 }
 
 // ----------------------------------------------------------- or_return --
@@ -223,60 +184,76 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		return
 	}
 	base := expr_base(v.operand)
-	results := base.result_types
-	if len(results) == 0 {
-		single := make([]Type_Id, 1, k.c.semantic_allocator)
-		single[0] = base.type
-		results = single
-	}
-	status := results[len(results) - 1]
-	// design.md "Status results": unlike `or_else` this places no lower bound on
-	// the payload results, so an operand that returns only a status is admissible.
-	if !type_is_status(k, status) {
+	shape, is_fallible := fallible_of(k, base.type)
+	if !is_fallible {
 		errorf(
 			k.c,
 			v.op_span,
 			"L0429",
-			"`or_return` needs a `bool`, union, or `Allocator_Error` final result, found `%s`",
-			type_name(k.c, status),
+			"`or_return` needs a union with a designated failure variant, found `%s`",
+			type_name(k.c, base.type),
 		)
 		v.type = INVALID_TYPE
 		return
 	}
-	if !check_or_return_target(k, v, status) {
+	if !check_or_return_target(k, v, shape) {
 		v.type = INVALID_TYPE
 		return
 	}
-
-	payloads := results[:len(results) - 1]
-	switch len(payloads) {
-	case 0:
-		v.type = TYPE_VOID
-	case 1:
-		v.type = payloads[0]
-	case:
-		v.type = payloads[0]
-		v.result_types = payloads
+	// design.md: a place operand copies the selected payload and leaves the
+	// source live, so both payloads must be copyable.
+	if base.value_category == .Place {
+		for candidate in ([2]Type_Id{shape.info.variants[shape.success], shape.info.variants[shape.failure]}) {
+			if candidate != TYPE_VOID && type_clone_disabled(k.c, candidate) {
+				errorf(
+					k.c, v.op_span, "L0503",
+					"`%s` is move-only, so `or_return` cannot copy it out of a place; write `move(...)`",
+					type_name(k.c, candidate),
+				)
+				v.type = INVALID_TYPE
+				return
+			}
+		}
 	}
+
+	// A payloadless success yields `Unit`, so `or_return` is an expression in
+	// every case and no second spelling is needed for the no-value one.
+	success := shape.info.variants[shape.success]
+	v.type = success == TYPE_VOID ? unit_type(k.c) : success
 }
 
 // The enclosing procedure's side of the contract, including the
 // definite-initialization requirement on earlier named results.
 @(private = "file")
-check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, status: Type_Id) -> bool {
+check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -> bool {
 	if len(k.result_types) == 0 {
-		errorf(k.c, v.op_span, "L0429", "`or_return` needs a result to propagate the status into")
+		errorf(k.c, v.op_span, "L0429", "`or_return` needs a result to propagate the failure into")
 		return false
 	}
 	last := len(k.result_types) - 1
-	if !assignable(k.c, status, k.result_types[last]) && status != k.result_types[last] {
+	target, target_fallible := fallible_of(k, k.result_types[last])
+	if !target_fallible {
 		errorf(
 			k.c,
 			v.op_span,
 			"L0429",
-			"the failed status `%s` cannot be returned as `%s`",
-			type_name(k.c, status),
+			"`or_return` needs this procedure's last result to be a union with a designated failure variant, found `%s`",
 			type_name(k.c, k.result_types[last]),
+		)
+		return false
+	}
+	// The operand's failure payload is assignable to the enclosing one, or both
+	// are payloadless.
+	from := shape.info.variants[shape.failure]
+	into := target.info.variants[target.failure]
+	if from != into && !(from != TYPE_VOID && into != TYPE_VOID && assignable(k.c, from, into)) {
+		errorf(
+			k.c,
+			v.op_span,
+			"L0429",
+			"the failure payload `%s` cannot be returned as `%s`",
+			from == TYPE_VOID ? "()" : type_name(k.c, from),
+			into == TYPE_VOID ? "()" : type_name(k.c, into),
 		)
 		return false
 	}
@@ -386,6 +363,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 
 	covered := make(map[Type_Id]bool, 8, context.temp_allocator)
+	seen_variants := make([dynamic]int, 0, 8, context.temp_allocator)
 	has_default := false
 	flow := Flow_Info{}
 	any_case_falls := false
@@ -402,11 +380,12 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 			}
 			has_default = true
 		}
+		indices := make([dynamic]int, 0, len(entry.values), k.c.semantic_allocator)
 		for value in entry.values {
-			variant := resolve_type_syntax(k, value)
 			// An `any_view` case names any concrete type the view could hold; a
-			// union case names one of its variants.
+			// union case names one of its variants by name.
 			if erased {
+				variant := resolve_type_syntax(k, value)
 				if variant == INVALID_TYPE || !any_view_accepts(k.c, variant) {
 					errorf(
 						k.c,
@@ -425,29 +404,46 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 				covered[variant] = true
 				continue
 			}
-			if variant == INVALID_TYPE || !union_holds(k.c, subject, variant) {
+			index := case_variant_index(k, subject, value)
+			if index < 0 {
+				continue
+			}
+			if slice.contains(indices[:], index) {
 				errorf(
-					k.c,
-					expr_span(value),
-					"L0426",
-					"`%s` is not a variant of `%s`",
-					variant == INVALID_TYPE ? "this case" : type_name(k.c, variant),
-					type_name(k.c, subject),
+					k.c, expr_span(value), "L0367",
+					"`.%s` is already covered by an earlier case", union_variant_name(k.c, subject, index),
 				)
 				continue
 			}
-			if covered[variant] {
-				errorf(k.c, expr_span(value), "L0367", "`%s` is already covered by an earlier case", type_name(k.c, variant))
+			for existing in seen_variants {
+				if existing == index {
+					errorf(
+						k.c, expr_span(value), "L0367",
+						"`.%s` is already covered by an earlier case", union_variant_name(k.c, subject, index),
+					)
+					index = -1
+					break
+				}
+			}
+			if index < 0 {
 				continue
 			}
-			covered[variant] = true
+			append(&indices, index)
+			append(&seen_variants, index)
 		}
-		// A case naming several types cannot know which one is active, so the
-		// binding keeps the union type.
-		if len(entry.values) == 1 {
-			if variant := expr_base(entry.values[0]).denoted_type; variant != INVALID_TYPE {
-				binding_type = variant
+		entry.variant_indices = indices[:]
+		// A case naming several variants cannot know which one is active, so the
+		// binding keeps the union type. A single case binds its payload, and a
+		// payloadless variant binds `Unit`.
+		if erased {
+			if len(entry.values) == 1 {
+				if variant := expr_base(entry.values[0]).denoted_type; variant != INVALID_TYPE {
+					binding_type = variant
+				}
 			}
+		} else if len(entry.variant_indices) == 1 {
+			payload := union_variant_payload(k.c, subject, entry.variant_indices[0])
+			binding_type = payload == TYPE_VOID ? unit_type(k.c) : payload
 		}
 		entry.binding_type = binding_type
 
@@ -480,34 +476,68 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		}
 	}
 
+	// design.md "Unions": a variant switch with a case for every variant is
+	// exhaustive, so no path reaches the end of the statement without entering a
+	// case. That is what lets an exhaustive switch be the last statement of a
+	// value-returning procedure.
+	exhaustive := has_default
 	if !has_default {
 		if erased {
 			// An `any_view` erases an open set, so no case list can be exhaustive.
 			errorf(k.c, s.span, "L0465", "a type switch over `any_view` needs a default case")
+		} else if variant_count(k.c, subject) == len(seen_variants) {
+			exhaustive = true
 		} else {
-			report_uncovered_variants(k, s, subject, covered)
+			report_uncovered_variants(k, s, subject, seen_variants[:])
 		}
+	}
+	if !exhaustive {
 		joined = have_join ? intersect_result_assignments(k.c, joined, incoming) : incoming
 		have_join = true
 	}
 	k.assigned_results = have_join ? joined : incoming
 	return Flow_Info {
-		can_fall_through = !has_default || any_case_falls || len(s.cases) == 0,
+		can_fall_through = !exhaustive || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,
 		continues        = flow.continues,
 	}
 }
 
+// A union case is a variant name, `.name`, written as a bare implicit selector.
+// Nothing resolves it as a type: two variants may share a payload type, so only
+// the name identifies which arm this is.
 @(private = "file")
-report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: map[Type_Id]bool) {
-	info := type_of(k.c, subject)
+case_variant_index :: proc(k: ^Checker, subject: Type_Id, value: Expr) -> int {
+	sel, is_selector := value.(^Expr_Selector)
+	if !is_selector || sel.operand != nil {
+		errorf(k.c, expr_span(value), "L0426", "a union case names a variant: `case .name:`")
+		return -1
+	}
+	index := union_variant_index(k.c, subject, intern_identifier(k.c, sel.name.text))
+	if index < 0 {
+		errorf(
+			k.c, expr_span(value), "L0426",
+			"`%s` has no variant `%s`", type_name(k.c, subject), sel.name.text,
+		)
+		return -1
+	}
+	sel.type = subject
+	sel.variant_union = subject
+	sel.variant_index = index
+	sel.resolution = Resolution{kind = .Builtin_Operator}
+	return index
+}
+
+@(private = "file")
+report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: []int) {
+	info := type_of(k.c, type_underlying(k.c, subject))
 	if info == nil {
 		return
 	}
 	missing := ""
 	count := 0
-	for variant in info.variants {
-		if covered[variant] {
+	for _, index in info.variants {
+		if slice.contains(covered, index) {
 			continue
 		}
 		count += 1
@@ -515,7 +545,7 @@ report_uncovered_variants :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id
 			if missing != "" {
 				missing = concat(k.c, missing, ", ")
 			}
-			missing = concat(k.c, missing, type_name(k.c, variant))
+			missing = concat(k.c, missing, concat(k.c, ".", union_variant_name(k.c, subject, index)))
 		}
 	}
 	if count == 0 {

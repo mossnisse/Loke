@@ -321,12 +321,12 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	}
 	add_members(k.c, under, members)
 
-	// `next(self: inout Iterator) -> (Element, bool)` — the optional-ok shape the
-	// protocol requires, on the opaque iterator.
+	// `next(self: inout Iterator) -> Option(Element)` — the shape the protocol
+	// requires, on the opaque iterator.
 	next_members := make([]Symbol_Id, 1, k.c.semantic_allocator)
 	next := synth_proc(
 		k.c, "next", next_kind, iterator,
-		[]Type_Id{iterator}, []Param_Mode{.Inout}, []Type_Id{element, TYPE_BOOL},
+		[]Type_Id{iterator}, []Param_Mode{.Inout}, []Type_Id{option_type(k, element)},
 	)
 	if sym := symbol_of(k.c, next); sym != nil {
 		sym.has_receiver = true
@@ -858,12 +858,12 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	}
 	next := iteration_member(k, iterator, "next")
 	next_sym := symbol_of(k.c, next)
-	if !iteration_proc_matches(k, next_sym, iterator, .Inout, []Type_Id{element, TYPE_BOOL}) {
+	if !iteration_proc_matches(k, next_sym, iterator, .Inout, []Type_Id{option_type(k, element)}) {
 		errorf(
 			k.c,
 			expr_span(s.iterable),
 			"L0456",
-			"`%s` needs `next :: proc(self: inout %s) -> (%s, bool)`",
+			"`%s` needs `next :: proc(self: inout %s) -> Option(%s)`",
 			type_name(k.c, iterator),
 			type_name(k.c, iterator),
 			type_name(k.c, element),

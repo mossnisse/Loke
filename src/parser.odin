@@ -1508,7 +1508,10 @@ parse_switch_case :: proc(p: ^Parser, kind: Switch_Kind) -> Switch_Case {
 	values := make([dynamic]Expr, 0, 0, p.allocator)
 	if !at(p, .Colon) {
 		for {
-			append(&values, kind == .Type ? parse_type(p) : parse_expr(p))
+			// A type-switch case is a type for an `any_view` subject and the
+			// implicit selector `.name` for a union variant. Both are parsed here;
+			// the checker settles which one the subject calls for.
+			append(&values, kind == .Type && !at(p, .Period) ? parse_type(p) : parse_expr(p))
 			if !allow(p, .Comma) {
 				break
 			}
@@ -2725,11 +2728,25 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	_, opened := expect(p, .Lbrace, "L0239", "`{` to open the body")
 
 	fields: []Field
-	variants: []Expr
+	variants: []Variant
 	if keyword.kind == .Union {
-		list := make([dynamic]Expr, 0, 0, p.allocator)
+		list := make([dynamic]Variant, 0, 0, p.allocator)
 		for !at(p, .Rbrace) && !at(p, .EOF) {
-			append(&list, parse_type(p))
+			start := current(p)
+			entry: Variant
+			name, named := expect(p, .Ident, "L0239", "a variant name")
+			if !named {
+				break
+			}
+			entry.name = name_of(p, name)
+			expect(p, .Colon, "L0239", "`:` after the variant name")
+			// A payloadless variant is written `name:` — nothing follows the colon
+			// but the separator or the closing brace.
+			if !at(p, .Comma) && !at(p, .Rbrace) && !at(p, .EOF) {
+				entry.type = parse_type(p)
+			}
+			entry.span = span_to_here(p, start)
+			append(&list, entry)
 			if !allow(p, .Comma) {
 				break
 			}

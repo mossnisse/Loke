@@ -43,7 +43,10 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	if len(specs) == 0 {
 		specs["public"] = {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
 		specs["private"] = {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
-		specs["require_results"] = {{.Proc_Decl, .Proc_Group, .Foreign_Block}, .None}
+		// design.md "Required results": on a type declaration the property is
+		// carried by the *type*, so every value of it is checked, not only the
+		// procedures declared beside it.
+		specs["require_results"] = {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None}
 		specs["deprecated"] = {{.Proc_Decl}, .Value_Required}
 		specs["export"] = {{.Proc_Decl, .Var_Decl}, .None}
 		specs["implicit"] = {{.Proc_Decl}, .None}
@@ -57,6 +60,10 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		specs["c_vararg"] = {{.Parameter}, .None}
 		specs["packed"] = {{.Struct_Literal}, .None}
 		specs["align"] = {{.Struct_Literal, .Union_Literal}, .Deferred}
+		// The value is a bare variant name rather than a string, so the shape is
+		// validated by `src/union.odin` against the union's own variant list.
+		specs["zero"] = {{.Union_Literal}, .Deferred}
+		specs["failure"] = {{.Union_Literal}, .Deferred}
 	}
 	spec, ok := specs[name]
 	return spec, ok

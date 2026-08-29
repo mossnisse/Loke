@@ -534,11 +534,23 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	v.value_category = .Value
 
-	// `.Member`: the implicit enum selector, whose operand is the expected type.
+	// `.Member`: the implicit enum selector and the payloadless union variant,
+	// both of which take their type from the expected one.
 	if v.operand == nil {
+		if check_union_variant_selector(k, v, expected) {
+			if v.resolution.kind == .Union_Variant && !k.in_callee {
+				reject_incomplete_variant(k, v)
+				v.type = INVALID_TYPE
+			}
+			return
+		}
 		enum_type := type_underlying(k.c, expected)
 		if !type_is_enum(k.c, enum_type) {
-			errorf(k.c, v.span, "L0385", "`.%s` needs an expected enum type here", v.name.text)
+			if type_is_union(k.c, enum_type) {
+				errorf(k.c, v.span, "L0425", "`%s` has no variant `%s`", type_name(k.c, expected), v.name.text)
+			} else {
+				errorf(k.c, v.span, "L0385", "`.%s` needs an expected enum type here", v.name.text)
+			}
 			v.type = INVALID_TYPE
 			return
 		}
@@ -578,6 +590,16 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		return
 	}
 	operand_base := expr_base(v.operand)
+
+	// A named union type selects its own variant: `Option.none`, `Result.ok`.
+	if operand_base.value_category == .Type &&
+	   check_union_variant_selector(k, v, operand_base.denoted_type) {
+		if v.resolution.kind == .Union_Variant && !callee_position {
+			reject_incomplete_variant(k, v)
+			v.type = INVALID_TYPE
+		}
+		return
+	}
 
 	// A named enum type selects its own member: `Colour.Red`.
 	if operand_base.value_category == .Type {
@@ -2085,9 +2107,6 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	// `text.byte_len()`, `text.bytes()`, `string.from_runes(...)`, and
 	// `union.active_typeid()`: compiler-defined operations on built-in carriers.
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
-		if check_union_operation(k, v, sel) {
-			return
-		}
 		if check_union_extract(k, v, sel) {
 			return
 		}
@@ -2107,7 +2126,13 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 
 	outer_callee := k.in_callee
 	k.in_callee = true
-	callee_type := check_expr(k, v.callee)
+	// A bare `.name(payload)` callee takes its union from the expected type, the
+	// same way the implicit enum selector takes its enum from one.
+	callee_expected := INVALID_TYPE
+	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand == nil {
+		callee_expected = expected
+	}
+	callee_type := check_expr(k, v.callee, callee_expected)
 	k.in_callee = outer_callee
 	callee_base := expr_base(v.callee)
 	if callee_base == nil {
@@ -2118,6 +2143,12 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	// the selector alone cannot do.
 	if callee_base.resolution.kind == .Method {
 		check_method_call(k, v, v.callee.(^Expr_Selector), expected)
+		return
+	}
+	// `U.name(payload)` / `.name(payload)`: the selector named the variant, and
+	// the argument supplies its payload.
+	if callee_base.resolution.kind == .Union_Variant {
+		check_union_construct(k, v, v.callee.(^Expr_Selector))
 		return
 	}
 	if callee_type == INVALID_TYPE {
@@ -3256,11 +3287,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound = bound
 	v.alloc_type = container
 
-	results := make([]Type_Id, 2, k.c.semantic_allocator)
-	results[0] = container
-	results[1] = TYPE_ALLOCATOR_ERROR
-	v.result_types = results
-	v.type = container
+	v.type = result_type(k, container, TYPE_ALLOCATOR_ERROR)
 }
 
 // An argument that could be the trailing allocator is checked with `Allocator`
@@ -3273,11 +3300,7 @@ allocator_hint :: proc(k: ^Checker, index: int, count: int) -> Type_Id {
 
 @(private = "file")
 set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
-	results := make([]Type_Id, 2, k.c.semantic_allocator)
-	results[0] = pointer
-	results[1] = TYPE_ALLOCATOR_ERROR
-	v.result_types = results
-	v.type = pointer
+	v.type = result_type(k, pointer, TYPE_ALLOCATOR_ERROR)
 	v.value_category = .Value
 }
 
@@ -4096,25 +4119,9 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	if base == nil || target == INVALID_TYPE || base.type == INVALID_TYPE {
 		return false
 	}
-	// design.md "Unions": a variant value becomes a union value at the point of
-	// use, which is where the tag can be written.
-	if type_is_union(k.c, target) && base.type != target {
-		if union_holds(k.c, target, base.type) {
-			base.union_from = base.type
-			base.type = target
-			return true
-		}
-		// An untyped constant enters through its own default type, so which
-		// variant it lands in never depends on the order the variants are written.
-		if type_is_untyped(k.c, base.type) && base.type != TYPE_UNTYPED_NIL {
-			variant := default_type(k.c, base.type)
-			if union_holds(k.c, target, variant) && materialize(k, e, variant) {
-				base.union_from = variant
-				base.type = target
-				return true
-			}
-		}
-	}
+	// design.md "Unions": a payload never becomes a union implicitly. Two variants
+	// may share a payload type, so only a written `.name(payload)` says which one
+	// is meant.
 	// design.md "any_view type": the conversion is implicit at an `any_view`
 	// destination. The concrete type is kept so the backend knows what to take
 	// the address of and which `typeid` to pair with it.
@@ -4346,10 +4353,6 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	// procedure type it is stored in asks for, and never less (design.md
 	// "Escape levels").
 	if proc_escape_weakens_to(c, from, to) {
-		return true
-	}
-	// design.md "Unions": a union is assignable from any variant it can hold.
-	if type_kind(c, to) == .Union && union_holds(c, to, from) {
 		return true
 	}
 	// design.md: conversion from a concrete value to `any_view` is implicit when

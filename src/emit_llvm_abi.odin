@@ -389,24 +389,78 @@ union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 	return strings.to_string(b)
 }
 
-// A variant value becoming a union value: zero the storage, write the payload
-// through a typed pointer, then write the tag.
+// Constructing a variant: zero the storage, write the payload through a typed
+// pointer, then write the tag. `value` is empty for a payloadless variant,
+// which is nothing but its tag.
 @(private)
-emit_union_value :: proc(e: ^Emitter, union_type, variant: Type_Id, value: string) -> string {
-	slot := emit_union_slot(e, union_type, variant, value)
-	out := load(e, llvm_type(e, union_type), slot)
-	return out
-}
-
-@(private = "file")
-emit_union_slot :: proc(e: ^Emitter, union_type, variant: Type_Id, value: string) -> string {
+emit_union_value :: proc(e: ^Emitter, union_type: Type_Id, index: int, value: string) -> string {
 	llvm := llvm_type(e, union_type)
 	slot := alloca(e, llvm)
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, slot)
-	payload := gep_field(e, llvm, slot, 0)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, variant), value, payload)
-	emit_union_store_tag(e, union_type, slot, union_variant_tag(e.c, union_type, variant))
-	return slot
+	if payload_type := union_variant_payload(e.c, union_type, index); payload_type != TYPE_VOID {
+		payload := gep_field(e, llvm, slot, 0)
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, payload_type), value, payload)
+	}
+	emit_union_store_tag(e, union_type, slot, index)
+	out := load(e, llvm, slot)
+	return out
+}
+
+// A two-variant union built from a runtime condition: each payload is written
+// only on the branch where it is the active one, so an absent `Option` and a
+// failed `Result` never publish uninitialized bytes.
+//
+// A payload string may be empty when that variant is payloadless. Both must
+// already be computed: this branches, it does not evaluate.
+@(private)
+emit_union_either :: proc(
+	e: ^Emitter,
+	union_type: Type_Id,
+	condition: string,
+	true_index: int, true_payload: string,
+	false_index: int, false_payload: string,
+) -> string {
+	llvm := llvm_type(e, union_type)
+	slot := alloca(e, llvm)
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm, slot)
+	yes, no, done := new_label(e, "variant.yes"), new_label(e, "variant.no"), new_label(e, "variant.done")
+	branch_if(e, condition, yes, no)
+
+	arm :: proc(e: ^Emitter, union_type: Type_Id, llvm, slot: string, index: int, payload: string) {
+		// An empty operand means the caller has nothing to write: the variant is
+		// payloadless, or its payload is zero-sized and the zeroed slot is already
+		// the whole value.
+		if payload_type := union_variant_payload(e.c, union_type, index);
+		   payload != "" && payload_type != TYPE_VOID {
+			address := gep_field(e, llvm, slot, 0)
+			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, payload_type), payload, address)
+		}
+		emit_union_store_tag(e, union_type, slot, index)
+	}
+
+	place_label(e, yes)
+	arm(e, union_type, llvm, slot, true_index, true_payload)
+	branch(e, done)
+
+	place_label(e, no)
+	arm(e, union_type, llvm, slot, false_index, false_payload)
+	branch(e, done)
+
+	place_label(e, done)
+	e.terminated = false
+	out := load(e, llvm, slot)
+	return out
+}
+
+@(private)
+emit_union_choice :: proc(
+	e: ^Emitter,
+	union_type: Type_Id,
+	present: string,
+	present_index, absent_index: int,
+	payload: string,
+) -> string {
+	return emit_union_either(e, union_type, present, present_index, payload, absent_index, "")
 }
 
 @(private = "file")
@@ -435,9 +489,9 @@ emit_union_spill :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> str
 }
 
 @(private)
-emit_union_payload :: proc(e: ^Emitter, union_type, variant: Type_Id, slot: string) -> string {
+emit_union_payload :: proc(e: ^Emitter, union_type, payload_type: Type_Id, slot: string) -> string {
 	payload := gep_field(e, llvm_type(e, union_type), slot, 0)
-	out := load(e, llvm_type(e, variant), payload)
+	out := load(e, llvm_type(e, payload_type), payload)
 	return out
 }
 
@@ -861,4 +915,27 @@ emit_foreign_call :: proc(
 		single[0] = call
 	}
 	return single
+}
+
+// `Option(T)` from a runtime presence flag. The payload is written only on the
+// present branch, so an absent option never publishes uninitialized bytes.
+@(private)
+emit_option_value :: proc(e: ^Emitter, option_type: Type_Id, present, payload: string) -> string {
+	return emit_union_choice(
+		e, option_type, present,
+		union_index_of(e.c, option_type, "some"), union_index_of(e.c, option_type, "none"),
+		payload,
+	)
+}
+
+// `Result(T, Allocator_Error)` from a runtime failure flag. The error payload is
+// the one non-zero `Allocator_Error` code the seed runtime reports; `value` is
+// the success payload, empty when success carries `Unit`.
+@(private)
+emit_alloc_result :: proc(e: ^Emitter, result: Type_Id, failed: string, value := "") -> string {
+	return emit_union_either(
+		e, result, failed,
+		union_index_of(e.c, result, "err"), "1",
+		union_index_of(e.c, result, "ok"), value,
+	)
 }

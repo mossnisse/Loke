@@ -8,14 +8,16 @@ import "core:strings"
 
 // ============================================================== iteration ==
 
-// `{ T, i1 }`. Built rather than formatted: `{` is a directive to core:fmt.
+// design.md "Iteration protocol": `next` yields `Option(Element)`. These two
+// helpers name the parts of that instance so no synthesized body re-derives it.
 @(private)
-optional_pair_type :: proc(element: string) -> string {
-	b := strings.builder_make()
-	strings.write_string(&b, "{ ")
-	strings.write_string(&b, element)
-	strings.write_string(&b, ", i1 }")
-	return strings.to_string(b)
+option_payload :: proc(c: ^Compiler, option_type: Type_Id) -> Type_Id {
+	return union_variant_payload(c, option_type, union_index_of(c, option_type, "some"))
+}
+
+@(private)
+emit_option_some :: proc(e: ^Emitter, option_type: Type_Id, payload: string) -> string {
+	return emit_union_value(e, option_type, union_index_of(e.c, option_type, "some"), payload)
 }
 
 // `a ..< b` and `a ..= b` as a stored value: the endpoints plus the closed flag,
@@ -593,15 +595,22 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	place_label(e, head)
 	yielded := foreach_yielded_type(e, s)
-	element := llvm_type(e, yielded)
-	pair_type := optional_pair_type(element)
-	pair := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", pair, pair_type, e.names[s.next_symbol], iterator)
-	value := extract(e, pair_type, pair, 0)
-	ok := extract(e, pair_type, pair, 1)
+	option := symbol_of(e.c, s.next_symbol).results[0]
+	option_llvm := llvm_type(e, option)
+	produced := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, option_llvm, e.names[s.next_symbol], iterator)
+	ok := temp(e)
+	shape := union_layout(e.c, option)
+	tag := emit_union_tag(e, option, produced)
+	fmt.sbprintfln(
+		&e.b, "  %s = icmp eq i%d %s, %d",
+		ok, shape.tag_bytes * 8, tag, union_index_of(e.c, option, "some"),
+	)
+	slot := emit_union_spill(e, option, produced)
 	branch_if(e, ok, body, done)
 
 	place_label(e, body)
+	value := emit_union_payload(e, option, yielded, slot)
 	fields := []Foreach_Field{{type = yielded, value = value}}
 	numbered := counter == "" ? "" : load(e, "i64", counter)
 	bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
@@ -710,11 +719,13 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	element := llvm_type(e, symbol.results[0])
+	option := symbol.results[0]
+	step := option_payload(e.c, option)
+	element := llvm_type(e, step)
 	iterator := llvm_type(e, symbol.params[0])
-	signed := type_signed(e.c, symbol.results[0]) || type_is_rune(e.c, symbol.results[0])
+	signed := type_signed(e.c, step) || type_is_rune(e.c, step)
 
-	pair_type := optional_pair_type(element)
+	pair_type := llvm_type(e, option)
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
@@ -748,10 +759,7 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 false, i1 %s", next_closed, last, closed)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, next_current, current_ptr)
 	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", next_closed, closed_ptr)
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, current)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, out)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, current))
 
 	fmt.sbprintfln(&e.b, "%s:", reverse_label)
 	reverse_open, reverse_closed, reverse_live := temp(e), temp(e), temp(e)
@@ -767,13 +775,10 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, %s %s, %s %s", yielded, closed, element, current, element, previous)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, yielded, current_ptr)
 	fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", closed_ptr)
-	reverse_first, reverse_out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", reverse_first, pair_type, element, yielded)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", reverse_out, pair_type, reverse_first)
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, reverse_out)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, yielded))
 
-	// design.md optional-ok: a false `bool` ends the loop with the first result
-	// unobserved, so the payload is the zero value.
+	// design.md "Typed fallibility": exhaustion is `.none`, which is `Option`'s
+	// designated zero and therefore the all-zero representation.
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
 	fmt.sbprintln(&e.b, "}")
@@ -783,14 +788,15 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	element := llvm_type(e, symbol.results[0])
+	option := symbol.results[0]
+	element := llvm_type(e, option_payload(e.c, option))
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
 	array_type := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
 	data_type := llvm_type(e, array_type)
 	count := type_of(e.c, array_type).count
 
-	pair_type := optional_pair_type(element)
+	pair_type := llvm_type(e, option)
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
@@ -817,10 +823,7 @@ emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", next_index, reversed, previous, stepped)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_index, index_ptr)
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, value)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, out)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, value))
 
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
@@ -834,13 +837,14 @@ emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	element := llvm_type(e, symbol.results[0])
+	option := symbol.results[0]
+	element := llvm_type(e, option_payload(e.c, option))
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
 	slice_type := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
 	slice_llvm := llvm_type(e, slice_type)
 
-	pair_type := optional_pair_type(element)
+	pair_type := llvm_type(e, option)
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
@@ -869,10 +873,7 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", next_index, reversed, previous, stepped)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_index, index_ptr)
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, value)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, out)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, value))
 
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
@@ -886,11 +887,13 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	element := llvm_type(e, symbol.results[0])
+	option := symbol.results[0]
+	entry_type := option_payload(e.c, option)
+	element := llvm_type(e, entry_type)
 	iterator := llvm_type(e, symbol.params[0])
 	ops := container_ops_global(e, type_of(e.c, symbol.params[0]).key)
 
-	pair_type := optional_pair_type(element)
+	pair_type := llvm_type(e, option)
 	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
 	fmt.sbprintln(&e.b, " {")
 	fmt.sbprintln(&e.b, "entry:")
@@ -915,7 +918,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// entry, so the protocol path hands back the same record a direct loop
 	// destructures.
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	entry := type_of(e.c, type_underlying(e.c, symbol.results[0]))
+	entry := type_of(e.c, type_underlying(e.c, entry_type))
 	key_type := llvm_type(e, symbol_of(e.c, entry.fields[ELEMENT_FIRST]).type)
 	value_type := llvm_type(e, symbol_of(e.c, entry.fields[ELEMENT_SECOND]).type)
 	key := load(e, key_type, load(e, "ptr", key_out))
@@ -923,10 +926,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	built, whole := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", built, element, key_type, key, ELEMENT_FIRST)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", whole, element, built, value_type, value, ELEMENT_SECOND)
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, 0", first, pair_type, element, whole)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 true, 1", out, pair_type, first)
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, out)
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, whole))
 
 	fmt.sbprintfln(&e.b, "%s:", stop_label)
 	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)

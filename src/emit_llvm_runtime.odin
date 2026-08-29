@@ -573,10 +573,13 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	}
 }
 
-// Tag 0 is nil (design.md "Unions"), and a union prints as whatever it is
-// currently holding — the same thing a type switch would see. The chain is over
-// variants for the same reason the enum one is: the tag is not an index into
-// anything the formatter can address.
+// A union prints as `.name` for a payloadless variant and `.name(payload)` for
+// a payload one — the variant identity a type switch would see, not the payload
+// type's own spelling, because two variants may share a payload type. The chain
+// is over variants for the same reason the enum one is: the tag is not an index
+// into anything the formatter can address.
+//
+// Only the active variant's payload is ever loaded or formatted.
 @(private = "file")
 emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -586,22 +589,24 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	tag := emit_union_tag(e, under, value)
 	slot := emit_union_spill(e, under, value)
 	done := new_label(e, "fmt.union.done")
-	for variant in info.variants {
+	for variant, index in info.variants {
 		matched := temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = icmp eq %s %s, %d",
-			matched, tag_llvm, tag, union_variant_tag(e.c, under, variant),
-		)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", matched, tag_llvm, tag, index)
 		hit, next := new_label(e, "fmt.union.hit"), new_label(e, "fmt.union.next")
 		branch_if(e, matched, hit, next)
 		place_label(e, hit)
-		payload := gep_field(e, llvm_type(e, under), slot, 0)
-		emit_format_body(e, variant, payload)
+		emit_format_literal(e, fmt.aprintf(".%s", identifier_text(e.c, info.variant_names[index])))
+		if variant != TYPE_VOID {
+			emit_format_literal(e, "(")
+			payload := gep_field(e, llvm_type(e, under), slot, 0)
+			emit_format_body(e, variant, payload)
+			emit_format_literal(e, ")")
+		}
 		branch(e, done)
 		place_label(e, next)
 	}
-	// Tag 0: design.md's nil union, which prints like every other nil.
-	emit_format_literal(e, "<nil>")
+	// A union always holds a variant, so this is unreachable; emitting nothing
+	// keeps the block well-formed.
 	branch(e, done)
 	place_label(e, done)
 }
@@ -1049,12 +1054,18 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			append(&entries, named_field_constant(e, member, values))
 		}
 	case .Union:
-		for variant in shape.variants {
+		for variant, index in shape.variants {
 			values := make(map[string]string)
 			defer delete(values)
+			// The variant's *name* is its identity; a payloadless one reports
+			// `Unit` so every entry names a real type.
+			payload := variant == TYPE_VOID ? unit_type(e.c) : variant
 			values["kind"] = "2" // Union_Variant
-			values["name"] = text_constant(e, Const_Value{kind = .String, text = type_name(e.c, variant)}, false)
-			values["type"] = fmt.aprintf("%d", typeid_value(e.c, variant))
+			values["name"] = text_constant(
+				e, Const_Value{kind = .String, text = identifier_text(e.c, shape.variant_names[index])}, false,
+			)
+			values["type"] = fmt.aprintf("%d", typeid_value(e.c, payload))
+			values["offset"] = fmt.aprintf("%d", index)
 			append(&entries, named_field_constant(e, member, values))
 		}
 	case .Proc:
@@ -1286,39 +1297,43 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string
 	data := extract(e, storage, view, ANY_VIEW_DATA)
 	id := extract(e, storage, view, ANY_VIEW_ID)
 	matched := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", matched, id, typeid_value(e.c, v.type))
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, %d", matched, id, typeid_value(e.c, v.payload))
 
-	target := llvm_type(e, v.type)
+	target := llvm_type(e, v.payload)
 	if v.mode == .Trap {
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
 		panic_if(e, failed, "anyview.mismatch", "checked extraction failed")
 		out := load(e, target, data)
-		if type_is_managed(e.c, v.type) {
-			out = emit_clone_value(e, v.type, out)
+		if type_is_managed(e.c, v.payload) {
+			out = emit_clone_value(e, v.payload, out)
 		}
 		single := make([]string, 1)
 		single[0] = out
 		return single
 	}
 
-	slot := alloca(e, target)
-	zero, _ := zero_const(e.c, v.type)
-	store(e, v.type, llvm_const(e, zero, v.type), slot)
+	// design.md "Typed fallibility": `.as(T)` produces `Option(T)`, so the miss
+	// is `.none` rather than a zeroed payload paired with `false`. Nothing is
+	// read through the data pointer unless the `typeid` matched.
+	option := v.type
+	slot := alloca(e, llvm_type(e, option))
+	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm_type(e, option), slot)
 	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", matched, then_label, done_label)
 	fmt.sbprintfln(&e.b, "%s:", then_label)
 	loaded := load(e, target, data)
-	if type_is_managed(e.c, v.type) {
-		loaded = emit_clone_value(e, v.type, loaded)
+	if type_is_managed(e.c, v.payload) {
+		loaded = emit_clone_value(e, v.payload, loaded)
 	}
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", target, loaded, slot)
+	some := union_variant_index(e.c, option, intern_identifier(e.c, "some"))
+	wrapped := emit_union_value(e, option, some, loaded)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, option), wrapped, slot)
 	branch(e, done_label)
 	place_label(e, done_label)
-	payload := load(e, target, slot)
-	pair := make([]string, 2)
-	pair[0], pair[1] = payload, matched
-	return pair
+	single := make([]string, 1)
+	single[0] = load(e, llvm_type(e, option), slot)
+	return single
 }
 
 // `(dyn I)(&value)`: the data pointer plus the coherent witness for the erased
