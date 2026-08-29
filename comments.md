@@ -373,6 +373,47 @@ would still need ownership and lifetime rules. Typed `state + proc` records and
 callbacks with explicit generic state provide the useful mechanism using
 ordinary language facilities while keeping procedure values thin.
 
+### Typed fallibility, and the `Option` decision it reverses
+
+An earlier revision of [`design.md`](design.md) said the language and core
+library define no `Option`, `Maybe`, or `Result`, that a procedure with no value
+returns `(T, bool)`, and that nothing prevents a library from declaring its own
+`Option` because "no language construct is aware of it". That decision is
+reversed. `Option(T)` and `Result(T, E)` are now ordinary generic unions in
+`base:runtime`, and `or_else` and `or_return` are specified over the *shape* a
+union declares rather than over a trailing result's position.
+
+The old answer was defensible on its own terms — a trailing `bool` is cheap and
+needs no library type. What it could not do was compose. A `(T, bool)` result
+lived only in a result list: it could not be stored in a field, passed through
+an unconstrained generic, or returned through a procedure value without a caller
+rebuilding the convention by hand. Every producer that wanted the shape needed
+privileged syntax, and every consumer needed to know which of two spellings it
+was looking at.
+
+Two shapes also cost more of the language than they looked like they did. To
+make a trailing error work, a union needed a nil state to be the successful
+value, which needed an `active_typeid()` to ask what was in a non-nil one, which
+could not discriminate two variants sharing a payload type — so `Result(int,
+int)` was not expressible. Meanwhile the specification carried an "optional-ok"
+rule letting a destination change a producer's result count, and a "status
+result" concept with two admissible spellings and an explicit list of types that
+compare against `nil` but are *not* statuses. One shape removed all of it.
+
+The migration was not free, and the cost is recorded rather than waved at:
+front-end time rose 7–18%, largest on the smallest program, because
+`base:runtime` is a fixed charge; an empty program's binary is byte-identical,
+and two real example programs grew about 3%. The measurements and the six
+compiler defects the change surfaced are in
+[`consolidation-typed-fallibility-plan.md`](consolidation-typed-fallibility-plan.md#gate-result).
+
+One library contract changed with it. `io.Reader.read` used to return a count
+*and* an error together, so a reader could report progress and a failure in one
+result. A `Result` carries one or the other, so progress is reported and the
+failure surfaces on the next call — the same contract Rust's `Read` has, and one
+every helper in `core:io` was already written for, because they all loop until
+they have what they asked for.
+
 ## Removed or narrowed features
 
 ### Generics are not ABI surface
@@ -544,13 +585,14 @@ that every foreign boolean is just a differently sized Loke `bool`.
 
 ### Unchecked union extractions
 
-Union extractions are always checked. Unchecked multi-pointer indexing in
-`core:unsafe` does not weaken a checked extraction performed elsewhere.
+A union has no extraction at all: it is inspected with a `switch`, whose cases
+are variant names and which the compiler requires to be exhaustive. There is no
+spelling that reads one variant's payload while another is active.
 Interpreting the wrong payload as an owning type can manufacture a container
 header from unrelated bits and later pass an invalid pointer to `drop`.
 `transmute` and raw storage in `core:unsafe` remain available for explicit
-low-level work, but an unchecked ordinary extraction would bypass the lifecycle
-restrictions placed on those features.
+low-level work, and the checked extraction that does exist — `view.(T)` on an
+`any_view`, where the set of types is open — traps rather than guessing.
 
 ## Changed features
 
@@ -608,7 +650,7 @@ additive one. That silently regrouped `x in values + extra` as
 Odin prohibits `m[key].field = value`. Loke permits it because indexing a user
 type can already return an `inout` place, and built-in maps should follow the
 same place rules. Assignment through a missing key inserts a zero value first;
-`m.find(key)` is the non-inserting lookup, with optional-ok results.
+`m.find(key)` is the non-inserting lookup, answering `Option(^mut V)`.
 
 ### `string` borrows as `string_view`
 

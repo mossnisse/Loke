@@ -12,6 +12,15 @@ Stuff like hidden allocations are allowed but procedures returning values that h
 
 The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
 
+Language refinement runs as separate consolidations, planned in
+[language-refinement-strategy.md](language-refinement-strategy.md). The latest
+made absence and failure into types: every union variant is now named, and
+`Option(T)` and `Result(T, E)` are ordinary generic unions declared in
+`base:runtime` that `or_else` and `or_return` recognise by shape rather than by
+name. It removed the nil union state, `active_typeid()`, the trapping union
+extraction, and the rule that let a destination change a producer's result
+count.
+
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The build is decomposed in
@@ -48,8 +57,8 @@ core:os               arguments, exit, environment, process state (grown)
 - **errors are values.** `core:io` owns one `Error` for `io`, `fs`, `term` and
   fallible process I/O: a normalized `Code`, a closed `Operation`, and the native
   number, all owned scalars, so an error never borrows a caller's path and never
-  allocates to report a failure. It is nil on success, composes with `or_return`,
-  and formats through its own package's `format`;
+  allocates to report a failure. A fallible call answers `Result(T, Error)`,
+  composes with `or_return`, and formats through its own package's `format`;
 - **streams.** `io.Reader` and `io.Writer` are `slot` interfaces, so a concrete
   implementation is specialized and `dyn io.Writer` also exists — which is what
   lets `io.write_formatted` present a `fmt.Writer` that latches the first real

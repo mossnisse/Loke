@@ -199,7 +199,7 @@ any_view // erased view of any value
 
 #### Zero values
 
-Every runtime value type has a zero value, written `{}`. A local variable receives it only with an explicit initializer (`x: T = {};`); omitting the initializer leaves the local varible v marked as dead making it an compile error trying using the value. File-scope, `static`, and `thread_local` variables are zero-initialized when they have no initializer.
+Most runtime value types have a zero value, written `{}`. A local variable receives it only with an explicit initializer (`x: T = {};`); omitting the initializer leaves the local variable marked as dead, making it a compile error to use its value. File-scope, `static`, and `thread_local` variables are zero-initialized when they have no initializer.
 
 The zero value is:
 
@@ -207,11 +207,35 @@ The zero value is:
 - `false` for `bool`
 - `""` for `string`
 - an empty, immediately usable value for `[dynamic]T` and `map[K]V`: `len` and `cap` are 0, and appending or inserting needs no prior construction. Without a `via` declaration it is allocator-unbound until its first allocating operation
-- `nil` for pointer, multi-pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, union, `any_view`, every `dyn Interface`, `shared(T)`, and `weak(T)` type. A nil slice or view has length 0; a nil union holds no variant
+- `nil` for pointer, multi-pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, `any_view`, every `dyn Interface`, `shared(T)`, and `weak(T)` type. A nil slice or view has length 0
+- the variant `@(zero=name)` designates, for a [union](#unions) that designates one
 
 Aggregate zero values are built recursively from their fields. A type with `hook(drop)` must have an inert zero value on which dropping does nothing; a resource that uses zero for a live handle must instead carry a separate validity field or forbid a zero owning value.
 
 Compile-time-only `type` and reflection descriptors have no zero value.
+
+##### Types with no zero value
+
+A union has no zero value unless it writes `@(zero=name)`, and the property
+propagates: a struct, a non-empty fixed array, or a distinct type that reaches a
+no-zero type has none either. An empty fixed array holds no element and keeps
+its own zero.
+
+A local declaration with no initializer manufactures nothing — it is dead until
+it is fully assigned — so it is still allowed. Every operation that *does*
+manufacture a zero is rejected for a no-zero type:
+
+- a file-scope, `static`, or `thread_local` declaration with no initializer
+- a field an aggregate literal omits
+- `new(T)`, which hands back zeroed storage
+- a `make` **length**, which fills that many slots; a capacity or a map
+  reservation is raw storage and fills nothing
+- growing a container with `resize`
+- a map read, which answers the zero for a missing key
+- an inserting map index, which starts a new entry at the zero
+
+The diagnostic names the operation and suggests the two ways out: give the union
+a zero with `@(zero=first_variant)`, or construct the value explicitly.
 
 #### Type conversion
 
@@ -347,11 +371,14 @@ m := byte_count(owned[5:]);   // a subrange view
 
 Use `string_view` to read text and `string` to store it. The conversion runs one way only: a `string_view` becomes a `string` with `.copy()`, which allocates because the result must own its bytes.
 
-A validating conversion has [optional-ok semantics](#optional-ok-results): it produces `(value, ok: bool)`, with `value` the zero value and `ok` false on invalid input. Handle it with the comma-ok form or `or_else`:
+A validating conversion answers with an [`Option`](#typed-fallibility): the
+payload on valid input, `.none` on invalid. Handle it with a `switch` or with
+`or_else`:
 
 ```odin
-text, ok := string(bytes);
-if (!ok) {
+switch (text in string(bytes)) {
+case .some: fmt.println(text);
+case .none:
 	// `bytes` was not valid UTF-8.
 }
 text = string(bytes) or_else "";
@@ -400,7 +427,7 @@ Checked provenance follows a local pointer, its copies, and the records, unions,
 
 | To | Action | Code |
 | --- | --- | --- |
-| `string` | validate and copy, optional-ok | `string(st)` |
+| `Option(string)` | validate and copy | `string(st)` |
 | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
 
 #### From a string literal to X
@@ -414,15 +441,15 @@ Checked provenance follows a local pointer, its copies, and the records, unions,
 
 | To | Action | Code |
 | --- | --- | --- |
-| `string` | validate and copy, optional-ok | `string(st)` |
-| `string_view` | validate and borrow, optional-ok | `string_view(st)` |
+| `Option(string)` | validate and copy | `string(st)` |
+| `Option(string_view)` | validate and borrow | `string_view(st)` |
 | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
 
 #### From []rune to string
 
 | Action | Code |
 | --- | --- |
-| validate and copy, optional-ok | `string.from_runes(st)` |
+| validate and copy, `Option(string)` | `string.from_runes(st)` |
 
 #### From [^]u8 to cstring_view
 
@@ -434,8 +461,8 @@ Checked provenance follows a local pointer, its copies, and the records, unions,
 
 | Action | Code |
 | --- | --- |
-| validate and copy, optional-ok | `string(ptr[0:length])` |
-| unsafe validate and borrow, optional-ok | `unsafe.string_view(ptr, length)` |
+| validate and copy, `Option(string)` | `string(ptr[0:length])` |
+| unsafe validate and borrow, `Option(string_view)` | `unsafe.string_view(ptr, length)` |
 
 ## Pointer types
 
@@ -853,7 +880,7 @@ Loke has no separate grow-and-assign operation. Use `resize` to grow and zero-fi
 
 Removing from a dynamic array can be done in several ways using the built-in procedures:
 
-- `pop` removes and returns the last element with [optional-ok semantics](#optional-ok-results), as `(T, bool)`; on an empty array the value is zero and `ok` is false.
+- `pop` removes and returns the last element as `Option(T)`; an empty array has nothing to pop and answers `.none`.
 - `remove_unordered` removes and returns an element in O(1) by moving the last element into its location.
 - `remove` removes and returns an element while preserving order.
 
@@ -1056,16 +1083,15 @@ or
 ok := key in m; // `ok` is true if the element for that key exists
 ```
 
-`m.lookup_value(key)` has [optional-ok semantics](#optional-ok-results): it
-produces the element followed by `true`, or the zero value of the element type
-followed by `false`. It never inserts, evaluates its receiver before its key,
-performs exactly one lookup, and produces an independently owned element — a
-managed payload is cloned once, inside the operation, so the map keeps its own
-storage. Its receiver is immutable, so an immutable parameter or a temporary map
-can be read through it without `inout`.
+`m.lookup_value(key)` answers `Option(V)`. It never inserts, evaluates its
+receiver before its key, performs exactly one lookup, and produces an
+independently owned element — a managed payload is cloned once, inside the
+operation, so the map keeps its own storage. Its receiver is immutable, so an
+immutable parameter or a temporary map can be read through it without `inout`.
 
-`m[key]` as a read is always single-valued, so a comma-ok destination or an
-`or_else` left operand takes `lookup_value` instead.
+`m[key]` as a read answers the element's zero for a missing key, so a caller
+that needs to tell absence apart takes `lookup_value` instead. A no-zero element
+type has no zero to answer with, and `m[key]` is rejected for it entirely.
 
 A map literal initializes a map:
 
@@ -1099,16 +1125,16 @@ m["Dana"].x = 7;     // inserts a zero `Test` for "Dana", then assigns `.x`
 The two forms differ when the key is missing:
 
 - **`m[key]` as an assignment target inserts.** If the key is absent, a zero element is inserted first and its slot is the location — the same behavior `m[key] = elem` has, extended to field and index chains. It applies to the target of an assignment or compound assignment and to an `inout` argument. Insertion may reallocate the map, so the index is a mutable borrow of `m` for the statement. This differs from [dynamic-array assignment](#assigning-to-a-dynamic-array), where an index past the end panics rather than growing the array; a map key is not positional.
-- **A non-inserting lookup is `m.find(key)`,** not `&m[key]`. It has [optional-ok semantics](#optional-ok-results), yielding a pointer to the existing slot and a `bool`:
+- **A non-inserting lookup is `m.find(key)`,** not `&m[key]`. It answers `Option(^mut V)`, a pointer to the existing slot:
 
 ```odin
-value, ok := m.find("Bob");
-if (ok) {
-	value^ = { 2, 2 };
+switch (value in m.find("Bob")) {
+case .some: value^ = { 2, 2 };
+case .none:
 }
 ```
 
-  `&m[key]` is not a special lookup form: `&` always returns one pointer, never an optional-ok result. Use `find` for a non-inserting lookup.
+  `&m[key]` is not a special lookup form: `&` always returns one pointer, and a key that is not there has no address to give. Use `find` for a non-inserting lookup.
 
 #### Map container operations
 
@@ -1119,8 +1145,8 @@ The built-in map supports these container operations:
 - `some_map.clear()` removes all entries and retains the capacity.
 - `some_map.reserve(capacity)` reserves capacity for at least the requested number of entries.
 - `some_map.shrink()` removes excess capacity.
-- `some_map.find(key)` returns `(^V, bool)`. It returns a pointer to the existing value and `true`, or `nil` and `false`. It does not insert.
-- `some_map.lookup_value(key)` returns `(V, bool)`. It returns an independently owned copy of the existing value and `true`, or the zero value and `false`. It does not insert, and its receiver is immutable.
+- `some_map.find(key)` returns `Option(^mut V)`: a pointer to the existing value, or `.none`. It does not insert.
+- `some_map.lookup_value(key)` returns `Option(V)`: an independently owned copy of the existing value, or `.none`. It does not insert, and its receiver is immutable.
 
 ## Structured and algebraic types
 
@@ -1292,85 +1318,144 @@ Promoted names are only member-lookup shorthand. An explicitly declared field on
 
 ### Unions
 
-A union is a discriminated union, also known as a tagged union or sum type. The zero value of a union is nil.
+A union is a discriminated union, also known as a tagged union or sum type.
+Every variant is **named**, and a variant may carry a payload or carry nothing.
 
 ```odin
 Value :: union {
-	bool,
-	i32,
-	f32,
-	string,
+	flag:   bool,
+	number: i32,
+	real:   f32,
+	text:   string,
+	absent:            // payloadless: the colon is written, the type is not
 }
-v: Value;
-v = "Hello";
 
-// Trapping checked extraction: panic if another variant is active.
-s1 := v.(string);
-
-// Optional checked extraction: report a mismatch without panicking.
-s2, ok := v.as(string);
+v: Value = .text("Hello");
 ```
 
-A **checked extraction** tests whether the union's active variant is `T` and, if
-so, extracts its payload. It has two spellings, and each has one result shape:
-
-- `v.(T)` produces `T`, and panics on a mismatch.
-- `v.as(T)` has [optional-ok semantics](#optional-ok-results): it produces the
-  payload followed by `true` on a match, or the zero value of `T` followed by
-  `false` on a mismatch. It never panics because of a variant mismatch, and it is
-  therefore also what the left operand of `or_else` is written with.
-
-The spelling decides the mode, not the destination. `v.(T)` is always
-single-valued, so a comma-ok destination or an `or_else` left operand rejects it;
-`v.as(T)` always produces two results, so a single-value destination rejects it.
-
-`as` applies to a union and to an [`any_view`](#any_view-type), using their
-existing extraction eligibility rules. It takes exactly one positional type
-argument and is not a conversion. It adds no keyword: which meaning `x.as(T)`
-has follows from the *type* of `x`, so an ordinary member named `as` declared on
-any other type is unaffected and is reached by the same syntax.
-
-A checked extraction must name the requested type; the compiler does not infer it from context.
-
-Every union also has the compiler-provided `active_typeid()` method. It returns the runtime `typeid` of the active variant without extracting its payload, or the nil `typeid` when the union is nil. The method evaluates its receiver once, takes no arguments, and cannot be replaced by an overload.
+The colon is mandatory. Writing a bare type is not a union variant: the name is
+the variant's identity, so two variants may carry the same payload type and
+remain distinct.
 
 ```odin
-value: Value = "hello";
-
-static_assert(type_of(value) == Value);                 // static type
-assert(typeid_of(Value) != value.active_typeid());
-assert(value.active_typeid() == typeid_of(string)); // active runtime variant
-
-value = nil;
-assert(value.active_typeid() == nil);
+Pair :: union { left: i32, right: i32 }   // two arms, one payload type
 ```
 
-#### Type switch statement
+A variant's identity is its **declaration index**, never its payload type. That
+is what makes `Result(int, int)` an ordinary union rather than a contradiction,
+and what a `switch` compares against.
 
-A type switch dispatches on the active variant and extracts its payload when a case names exactly one type. It is like a regular switch statement, but its cases are types rather than values. For a union, each case type must be one of the union's variants.
+#### Constructing a variant
+
+`.name(payload)` builds a variant where the union type is known from context;
+`U.name(payload)` names the union explicitly. A payloadless variant is written
+without the call: `.name`, or `U.name`.
 
 ```odin
-value: Value = ...;
-switch (av in value) {
-case string:
-	// `av` is a new binding whose static type is narrowed to `string`.
-	static_assert(type_of(av) == string)
+v = .number(7);
+v = Value.number(7);
+v = .absent;
+```
 
-case bool:
-	// `type_of` reports that narrowed static type; it is not reading the tag.
-	static_assert(type_of(av) == bool)
+Record-field initialization rules apply to the payload: a place argument clones
+it and must be copyable; a temporary or `move(x)` transfers it.
 
-case i32, f32:
-	// This case allows for multiple types, therefore we cannot know which type to use
-	// `av` remains the original union value
-	static_assert(type_of(av) == Value)
-case:
-	// Default case
-	// In this case, it is `nil`
+#### Inspecting a union
+
+A union is inspected with a `switch`, whose cases are variant names. There is no
+extraction operator: `v.(T)` and `v.as(T)` belong to
+[`any_view`](#any_view-type), where the set of possible types is genuinely open.
+
+```odin
+switch (p in v) {
+case .text:
+	// `p` is a new binding whose static type is the variant's payload type.
+	static_assert(type_of(p) == string);
+case .flag:
+	static_assert(type_of(p) == bool);
+case .number, .real:
+	// Several variants cannot choose one payload type, so the binding keeps
+	// the union type.
+	static_assert(type_of(p) == Value);
+case .absent:
+	// A payloadless variant binds `Unit`, so every case binds something.
+	static_assert(type_of(p) == Unit);
 }
 ```
 
-The switch reads `value`'s runtime tag. In a case naming one variant, its binding is a new value with that variant's static type. `type_of(value)` remains `Value` everywhere, while `type_of(av)` reflects the case binding's static narrowing. A case naming several variants cannot choose one static payload type, so its binding remains the original union type.
+The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while
+`type_of(p)` reflects the case binding's static narrowing.
+
+A switch with a case for every variant is **exhaustive**, and no path reaches
+the end of the statement. That is what lets an exhaustive switch be the last
+statement of a value-returning procedure. A switch that omits a variant and has
+no default case is rejected, and names the variants it did not cover. There is
+no nil case, because a union has no nil state.
+
+Writing `_` as the binding name acquires no binding.
+
+#### Switch ownership
+
+A switch over a **place** borrows it: the binding is immutable and non-owning,
+and the place keeps its value.
+
+A switch over a **temporary** — or over `move(subject)` — consumes it. The
+active payload transfers into the case's own binding, which is an ordinary
+managed local from there on: it can be moved out, and it drops exactly once on
+every exit of its case. A case with no binding owns the whole union instead.
+
+#### Zero values and `@(zero=)`
+
+A union has **no zero value** unless it designates one, because there is no
+variant to start at and no nil state to fall back on.
+
+`@(zero=name)` designates one. It is valid only for the *first* declared
+variant, and that variant's payload must itself be all-zero, so the union's zero
+stays the all-zero representation every other zero is.
+
+```odin
+Maybe :: union @(zero=none) { none:, some: int }
+m: Maybe;              // accepted: the zero is `.none`
+
+Choice :: union { a: i32, b: bool }
+c: static Choice;      // rejected: `Choice` has no zero value
+```
+
+The property propagates: a struct, a non-empty fixed array, or a distinct type
+that reaches a no-zero type has no zero either. An empty array holds no element
+and keeps its own. See [Zero values](#zero-values) for the operations that
+manufacture one.
+
+#### The failure protocol and `@(failure=)`
+
+`@(failure=name)` designates one variant of a union of **exactly two** as the
+failure one. It is what [`or_else`](#or_else-expression) and
+[`or_return`](#or_return-operator) recognise: they read the *shape*, never a
+privileged type name, so a user-declared union participates on equal terms with
+`Option` and `Result`.
+
+```odin
+Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
+```
+
+#### `@(require_results)`
+
+`@(require_results)` on a union declaration makes a value of that type one the
+caller must handle: a bare call statement producing one is rejected, and `_ =`
+is the explicit discard. It is a property of the *type*, so it survives every
+way a call can be spelled — through an overload, a generic instance, an import,
+a procedure value, and an aggregate that merely holds one. It may also be
+written on a procedure declaration, which requires that procedure's results
+whatever their types.
+
+#### Representation
+
+A union's storage is its payload region, then the tag, then whatever padding the
+alignment asks for. The tag is the narrowest unsigned integer that indexes
+`0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The
+first declared variant has tag 0, and there is no nil tag. A union with no
+variants keeps one byte. A tag wider than every payload raises the union's
+alignment, as any other member would.
 
 #### Union alignment
 
@@ -1580,9 +1665,11 @@ info = type_info_of(id);
 ```
 
 `typeid_of(T)` maps a compile-time `type` value to its runtime `typeid` constant.
-For a union expression, `type_of(value)` still denotes the union's static type
-and `typeid_of(type_of(value))` therefore identifies the union itself. Use
-`value.active_typeid()` to obtain the active variant's runtime identity.
+For a union expression, `type_of(value)` denotes the union's static type and
+`typeid_of(type_of(value))` therefore identifies the union itself. A union's
+active variant is not a runtime type: variants are named, two of them may share
+a payload type, and the way to ask which one is active is a
+[`switch`](#inspecting-a-union).
 `type_info_of(id)` accepts a runtime `typeid` and returns runtime metadata. It
 does not recover a compile-time `type`, because runtime information cannot flow
 back into specialization. A `typeid` is an ordinary scalar and can be forged, so
@@ -1826,7 +1913,7 @@ impl Table($Key, $Value) {
 		return self.count;
 	}
 
-	find :: proc(self, key: Key) -> (Value, bool) {
+	find :: proc(self, key: Key) -> Option(Value) {
 		...
 	}
 
@@ -2034,11 +2121,10 @@ Values are not made callable through operator overloading; a callable object exp
 - an `Element` type;
 - an `Iterator` type;
 - `iter(self) -> Iterator`;
-- `next(self: inout Iterator) -> (Element, bool)` on its iterator.
+- `next(self: inout Iterator) -> Option(Element)` on its iterator.
 
-Each successful call to `next` returns an element and `true`. Returning `false`
-ends the loop, and the element result is ignored. This is the
-[optional-ok form](#optional-ok-results).
+Each call to `next` answers `.some(element)`, or `.none` to end the loop. See
+[Typed fallibility](#typed-fallibility).
 
 The free alias `iter(source)` selects the same method as `source.iter()`. A
 visible [extension block](#methods-and-implementation-blocks) can make a foreign
@@ -2068,13 +2154,13 @@ impl Countdown {
 }
 
 impl Countdown_Iterator {
-	next :: proc(self: inout Countdown_Iterator) -> (int, bool) {
+	next :: proc(self: inout Countdown_Iterator) -> Option(int) {
 		if (self.current <= 0) {
-			return 0, false;
+			return .none;
 		}
 		value := self.current;
 		self.current -= 1;
-		return value, true;
+		return .some(value);
 	}
 }
 
@@ -2273,9 +2359,9 @@ Zero- and multi-argument type calls are invalid. Use a composite literal or name
 
 User records get field-wise `try_clone`, `clone`, `move`, and `drop` behavior by default. An `impl` block may replace the implementation of copying or dropping with `hook(copy)` or `hook(drop)`. As with conversion hooks, the declaration's own name is descriptive and has no hidden meaning.
 
-The signatures are fixed: `hook(drop)` is `proc(self: inout T)`, and `hook(copy)` is `proc(self, allocator: Allocator) -> (T, Allocator_Error)`. A custom copy hook must allocate all cloned storage through fallible operations on the supplied allocator and return any error without publishing a partial result. Generated field-wise cloning calls the public `try_clone` operation recursively for each owning field, destroys a partial temporary on failure, and returns zero plus the error.
+The signatures are fixed: `hook(drop)` is `proc(self: inout T)`, and `hook(copy)` is `proc(self, allocator: Allocator) -> Result(T, Allocator_Error)`. A custom copy hook must allocate all cloned storage through fallible operations on the supplied allocator and return any error without publishing a partial result. Generated field-wise cloning calls the public `try_clone` operation recursively for each owning field, destroys a partial temporary on failure, and returns `.err` alone — a failed clone has no half-built value to hand back.
 
-`try_clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> (T, Allocator_Error)` and `clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> T` are compiler-generated public operations; neither name is a hook and user code cannot replace either declaration. `try_clone` delegates to `hook(copy)` when one exists. `clone` calls `try_clone` once and, on failure, invokes the allocator's failure policy. `value.clone()` uses the program default; `value.clone(allocator)` selects one. For types governed by these lifecycle hooks, assignment and copy initialization call `try_clone` with the destination's bound allocator (or the destination's declared allocation policy when it is dead or allocator-unbound), invoking the failure policy only after cloning fails and before modifying the destination. A non-allocating copy hook ignores the allocator and returns a nil error. Built-in immutable `string` instead has the shared implicit-copy behavior described under [Assignment statements](#assignment-statements); its explicit independent byte-copy operation is `copy`.
+`try_clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> Result(T, Allocator_Error)` and `clone :: proc(self, allocator: Allocator = mem.default_allocator()) -> T` are compiler-generated public operations; neither name is a hook and user code cannot replace either declaration. `try_clone` delegates to `hook(copy)` when one exists. `clone` calls `try_clone` once and, on failure, invokes the allocator's failure policy. `value.clone()` uses the program default; `value.clone(allocator)` selects one. For types governed by these lifecycle hooks, assignment and copy initialization call `try_clone` with the destination's bound allocator (or the destination's declared allocation policy when it is dead or allocator-unbound), invoking the failure policy only after cloning fails and before modifying the destination. A non-allocating copy hook ignores the allocator and returns `.ok`. Built-in immutable `string` instead has the shared implicit-copy behavior described under [Assignment statements](#assignment-statements); its explicit independent byte-copy operation is `copy`.
 
 A custom copy hook may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations.
 
@@ -2554,11 +2640,11 @@ Integral :: interface($T: type) {
 }
 
 Cloneable :: interface($T: type) {
-	slot try_clone: proc(self, allocator: Allocator) -> (T, Allocator_Error);
+	slot try_clone: proc(self, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
 Iterator :: interface($Self, $Element: type) {
-	slot next: proc(self: inout Self) -> (Element, bool);
+	slot next: proc(self: inout Self) -> Option(Element);
 }
 
 Iterable :: interface($Self: type) {
@@ -3158,7 +3244,7 @@ For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x` and `&mut x` 
 - an index of a slice, dynamic array, or addressable fixed array
 - a visible [`operator([])` that returns `inout T`](#indexing-and-slicing)
 - a field of an addressable, non-packed struct
-- a trapping checked extraction `x.(T)` from an addressable union; `x.as(T)` produces a value rather than a place
+- a trapping checked extraction `x.(T)` from an addressable `any_view`; `x.as(T)` produces a value rather than a place
 - a composite literal
 - a value parameter, and a [materialized constant](#materialization) or a place within one
 
@@ -3272,7 +3358,7 @@ a if c1 else b if c2 else d   // a if c1 else (b if c2 else d)
 x or_else y or_else z         // x or_else (y or_else z)
 ```
 
-The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be a [status expression](#status-results) with at least one payload result, and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
+The conditional groups as an else-if chain. `or_else` uses the same right grouping. Its left operand must be a [fallible expression](#typed-fallibility) whose success variant carries a payload, and its result is an ordinary value. Left grouping would give the outer `or_else` an ordinary left operand and make a fallback chain invalid.
 
 The postfix forms — call `()`, index `[]`, slice `[:]`, selector `.`, dereference `^`, trapping checked extraction `.(T)`, and `or_return` — are not in the table because they bind tighter than every unary and binary operator. They associate left to right among themselves. `-x^` is `-(x^)`, `f() or_return + 1` is `(f() or_return) + 1`, and `a.b().as(T) or_else c` is `(a.b().as(T)) or_else c`. `or_return` is postfix rather than binary because it takes no right operand; [Other operators](#other-operators) lists it alongside the binary forms only for discoverability.
 
@@ -3716,14 +3802,14 @@ case foo():
 
 `foo()` does not get called if `i == 0`. If all the case values are constants, the compiler may optimize the switch statement into a jump table (like C).
 
-A switch header of the form `switch (name in expression)` is always a [type switch](#type-switch-statement), never a value switch whose subject is the boolean `name in expression`. The membership meaning needs a second pair of parentheses:
+A switch header of the form `switch (name in expression)` is always a [variant switch](#inspecting-a-union), never a value switch whose subject is the boolean `name in expression`. The membership meaning needs a second pair of parentheses:
 
 ```odin
-switch (x in set) { }     // type switch: `x` binds the variant of `set`
+switch (x in set) { }     // variant switch: `x` binds the payload of `set`
 switch ((x in set)) { }   // value switch on the boolean `x in set`
 ```
 
-The type switch is by far the more common reading.
+The variant switch is by far the more common reading.
 
 A switch statement can also use the same ranges accepted by `foreach`:
 
@@ -3773,25 +3859,25 @@ case:
 }
 ```
 
-With union types (see Type switch statement)
+With union types (see [Inspecting a union](#inspecting-a-union))
 
 ```odin
-Foo :: union {int, bool};
-f: Foo = 123;
+Foo :: union { number: int, flag: bool }
+f: Foo = .number(123);
 switch (_ in f) {
-case int:  fmt.println("int");
-case bool: fmt.println("bool");
-case:
+case .number: fmt.println("number");
+case .flag:   fmt.println("flag");
 }
 
 switch (_ in f) {
-case bool: fmt.println("bool");
-case: // intentionally ignore `int` and nil
+case .flag: fmt.println("flag");
+case: // intentionally ignore `.number`
 }
 ```
 
-A switch over an enum must either list every member or include `case:`. A type
-switch over a union must either cover every variant and nil, or include `case:`.
+A switch over an enum must either list every member or include `case:`. A
+variant switch must either cover every variant or include `case:`; one that
+covers every variant needs no default, and no path reaches the end of it.
 The default may be empty; writing it is the explicit acknowledgement that the
 remaining cases are intentionally ignored.
 
@@ -3813,8 +3899,8 @@ case .C: fmt.println("C");
 ```
 
 A switch over a value from outside the program should write `case:` and handle
-the unexpected value there. A type switch does not have this problem: a union's
-tag is written only by the language, so covering every variant and nil covers
+the unexpected value there. A variant switch does not have this problem: a
+union's tag is written only by the language, so covering every variant covers
 every value.
 
 ### defer statement
@@ -4375,10 +4461,9 @@ Generic union:
 
 ```odin
 Error :: enum {Foo0, Foo1, Foo2};
-Param_Union :: union($T: type) {T, Error};
-r: Param_Union(int);
-r = 123;
-r = Error.Foo0;
+Param_Union :: union($T: type) @(failure=failed) { value: T, failed: Error }
+r: Param_Union(int) = .value(123);
+r = .failed(Error.Foo0);
 ```
 
 Record and union generic parameters always require `$`, like compile-time procedure parameters, keeping every binding site explicit.
@@ -4417,11 +4502,11 @@ A generic parameter can require a structural shape. Write the shape in the param
 ```odin
 // Only allow read-only slices, binding their element type.
 // A []mut E argument may call this through capability weakening.
-first_slice_value :: proc(values: []$E) -> (E, bool) {
+first_slice_value :: proc(values: []$E) -> Option(E) {
 	if (len(values) == 0) {
-		return {}, false;
+		return .none;
 	}
-	return values[0], true;
+	return .some(values[0]);
 }
 
 Table_Slot :: struct($Key, $Value: type) {
@@ -4441,7 +4526,7 @@ allocate :: proc(table: ^Table($Key, $Value), capacity: int) {
 	...
 }
 
-find :: proc(table: ^Table($Key, $Value), key: Key) -> (Value, bool) {
+find :: proc(table: ^Table($Key, $Value), key: Key) -> Option(Value) {
 	...
 }
 ```
@@ -4664,7 +4749,9 @@ Putting a borrow inside a value does not discard what the borrow owes. A struct,
 union, fixed array, or container whose fields reach a built-in carrier *carries*
 those borrows: `Holder :: struct { view: []int }` is checked wherever a bare
 `[]int` is, and `return Holder{local[:]}` is rejected for the same reason
-`return local[:]` is.
+`return local[:]` is. An `Option` or a `Result` is a union like any other, so
+wrapping a borrow in one keeps it, and unwrapping it — a case binding,
+`or_else`, `or_return` — hands the same borrow on.
 
 The compiler enumerates a type's **carrier paths**: the projection paths from the
 value to each built-in carrier reachable inside it. A record contributes one path
@@ -5226,188 +5313,140 @@ Unlike that cast, `transmute` needs no addressable operand. It cannot reinterpre
 
 ## Error handling
 
-### Optional-ok results
+### Typed fallibility
 
-The common absence protocol is a value followed by a `bool` named `ok`: `(T, bool)`, or more generally `(A, B, ..., bool)`. `ok` is `true` when the preceding results are present. Built-in producers return the zero values of those results when `ok` is false; `or_else` and iteration do not observe the failed values. User procedures using this shape should follow the same convention.
+Absence and failure are **types**, not a trailing result. A procedure that may
+have no answer returns `Option(T)`; one that may fail returns `Result(T, E)`.
+Both are ordinary [unions](#unions) declared in `base:runtime`, and both are
+recognised by their *shape* rather than by their names:
 
-An **optional-ok expression** is a built-in producer with that shape, or a call with at least two results whose final result is `bool` — so it always has one or more payload results before the status. A comma-ok destination receives every result; `or_else` consumes the final `bool` and yields the payloads or evaluates its fallback. A procedure returning only `bool` is a [status expression](#status-results) (usable by `or_return` or control flow) but not an optional-ok expression, and cannot be the left operand of `or_else`.
+```odin
+Unit :: struct {}
 
-A producer's result count is its own: a destination never adds a `bool` to it. Where two behaviors are wanted they are two operations, and the single-value one is what the older spelling keeps: `v.(T)` panics on a mismatch and `v.as(T)` reports it, `m[key]` reads the zero value for a missing key and `m.lookup_value(key)` reports its absence.
+Option :: union($T: type) @(zero=none, failure=none) { none:, some: T }
 
-### Status results
+@(require_results)
+Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+```
 
-A **status result** is a trailing result reporting whether the results before it are valid. Exactly two forms are admissible:
+`Option` designates `none` as both its zero and its failure, so an `Option` has
+an all-zero "absent" value and participates in the failure protocol. `Result`
+designates `err` as its failure and requires its results to be handled; it has
+no zero, because neither arm is one.
 
-- a **`bool` status**, successful when `true`;
-- a **nil status**, successful when `nil`. A **union** — whose zero value is `nil` — and [`Allocator_Error`](#allocators) are the nil statuses.
+A **fallible expression** is one whose type is a union of exactly two variants
+with `@(failure=name)` written on it. That is the only thing
+[`or_else`](#or_else-expression) and [`or_return`](#or_return-operator) look
+for, so a user-declared union is a first-class participant:
 
-No other truthiness rule applies, and no other type is a status. In particular a pointer, multi-pointer, `rawptr`, slice, map, procedure, `typeid`, `string_view`, `cstring_view`, `any_view`, `dyn Interface`, `shared(T)`, or `weak(T)` result is **not** a status even though it compares against `nil`. A procedure returning `(int, ^Node)` returns two ordinary values, not a value and an error.
+```odin
+Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
+```
 
-`Allocator_Error` being a nil status is what lets an allocating procedure propagate with `p := new(T) or_return`, or supply a value with `or_else`. It does not weaken the [failure policy](#allocators): propagating is a choice the calling procedure makes by declaring a final result the error is assignable to, and code that handles allocation failure where it happens still writes the explicit `err != nil` test.
+There is no truthiness rule and no nil status: `nil` is not a failure, a
+trailing `bool` is not a status, and a procedure returning `(int, ^Node)`
+returns two ordinary values.
 
-A **status expression** is an expression whose final result is a status result. Both error-handling operators take one and differ only in arity and in what they do with the status:
+A producer's result count is its own, and a destination never changes it. Where
+two behaviours are wanted they are two operations: `m[key]` reads the zero for a
+missing key and `m.lookup_value(key)` answers `Option(V)`; `view.(T)` traps on a
+mismatch and `view.as(T)` answers `Option(T)`.
 
-| | payload results required | status on failure |
+#### Operator ownership
+
+Both operators read their operand once, and what they do with the payload
+depends on whether that operand is a place:
+
+| operand | success payload | failure payload |
 | --- | --- | --- |
-| [`or_else`](#or_else-expression) | one or more | discarded |
-| [`or_return`](#or_return-operator) | zero or more | propagated to the caller |
+| a place | copied out, source stays live | copied by `or_return`; left alone by `or_else` |
+| a temporary, or `move(x)` | transferred | dropped by `or_else` before the fallback runs |
 
-An [optional-ok expression](#optional-ok-results) is the `bool`-status case of an `or_else` operand — the shape the built-in producers use.
+A place operand therefore requires a copyable payload: a move-only one must be
+written `move(x)`. `or_else` never copies the error.
 
 ### or_else expression
 
-`or_else` is an infix binary operator that supplies fallback values for a [status expression](#status-results) with at least one payload result: every [optional-ok expression](#optional-ok-results), and equally a procedure whose final result is an error union. If the left operand has logical results `(A, B, ..., status)`, the fallback expression must produce exactly `(A, B, ...)`, with each value assignable to the corresponding payload type. A single-payload fallback is any ordinary expression. A multiple-payload fallback must be a multiple-result call; Loke has no tuple literal that would provide a second spelling. The fallback is evaluated only when the status is a failure.
-
-`or_else` **discards** the status on both paths. A failing union status is therefore swallowed rather than propagated, and its drop hook runs before the fallback is evaluated. `or_else` has no form that binds the status to a name; code needing the error value uses `or_return` or an ordinary `if`.
+`or_else` is an infix binary operator that supplies a fallback for a
+[fallible expression](#typed-fallibility). The left operand's success variant
+must carry a payload; the fallback must be assignable to that payload type, and
+is evaluated only on the failure path. The result is the payload.
 
 ```odin
 m: map[string]int = {};
-i: int;
-ok: bool;
 
-if (i, ok = m.lookup_value("hellope"); !ok) {
-	i = 123;
-}
-// The above can be mapped to `or_else`
-i = m.lookup_value("hellope") or_else 123;
-
+// `lookup_value` answers `Option(int)`.
+i := m.lookup_value("hellope") or_else 123;
 assert(i == 123);
 ```
 
-`or_else` can be used with the optional checked extraction too, as it has optional-ok semantics. The trapping spelling `v.(T)` is single-valued and is not an `or_else` operand.
-
-```odin
-v: union{int, f64} = nil;
-i: int;
-i = v.as(int) or_else 123;
-assert(i == 123);
-```
-
-`or_else` works with any status expression that has a payload, so it applies equally to `lookup_value`, a validating conversion, an optional checked extraction, a procedure returning `(T, bool)`, and a procedure returning `(T, Error)`:
+It applies to every producer of that shape — a container read, a validating
+conversion, an erased extraction, and any procedure returning `Option` or
+`Result`:
 
 ```odin
 n := numbers.pop() or_else 0;
 text := string(bytes) or_else "";
+data := files.read_bytes("data.bin") or_else no_bytes();
 
-// read_file :: proc(path: string, allocator := ...) -> ([]byte, Error)
-data := files.read_file("data.bin") or_else []byte{};
-
-fallback_pair :: proc() -> (int, string) { return 0, ""; }
-number, label := parse_pair(input) or_else fallback_pair();
+view: any_view = 42;
+number := view.as(int) or_else 0;
 ```
+
+`or_else` **discards** the failure on both paths. A managed failure payload of a
+temporary is dropped before the fallback is evaluated; a place keeps its own.
+There is no form that binds the failure to a name — code that needs the error
+uses `or_return` or a `switch`.
 
 ### or_return operator
 
-`or_return` is an error-propagation operator for a [status expression](#status-results). Unlike `or_else` it places no lower bound on the payload results, so an operand that returns only a status is admissible. The operand is evaluated exactly once.
+`or_return` propagates the failure of a [fallible expression](#typed-fallibility)
+out of the enclosing procedure. The operand is evaluated exactly once.
 
-On success, `or_return` removes the final status and yields the preceding result values. A single-valued operand therefore yields no value and may only be used as a statement. On failure, control returns from the innermost enclosing procedure:
+On success it yields the success payload; a payloadless success yields `Unit`,
+so `or_return` is an expression in every case and no second spelling is needed
+for the no-value one.
 
-- If the procedure has one result, the failed status must be assignable to it and is returned directly.
-- If the procedure has multiple results, every result must be named. The failed status must be assignable to the final result; it is assigned there and a bare `return` is performed. Every earlier named result must already be definitely live at the `or_return` expression and retains its current value. Otherwise the expression is a compile-time definite-initialization error.
+On failure, control returns from the innermost enclosing procedure. That
+procedure's **last** result must itself be a fallible union, and the operand's
+failure payload must be assignable to its failure payload. With several results
+every one must be named, every earlier one must already be definitely live, and
+a bare `return` is performed.
 
-The operand's temporary values are destroyed before the return completes, and normal `defer` and cleanup rules run. `or_return` cannot appear outside a procedure or inside a deferred statement. A nested procedure propagates only from that nested procedure, never from its lexical parent.
+The operand's temporaries are destroyed before the return completes, and the
+ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a
+procedure or inside a deferred statement. A nested procedure propagates only
+from itself, never from its lexical parent.
 
 ```odin
-Error_Code :: enum {
-	Something_Bad,
-	Something_Worse,
-	The_Worst,
-	Your_Mum,
-}
+Error_Code :: enum { Something_Bad, Something_Worse, The_Worst }
 
-// The union's zero value is nil, which is the successful status.
-// A failure contains one Error_Code value.
-Error :: union {Error_Code};
+// The two shapes a fallible procedure has. `Result(Unit, E)` is the one with
+// nothing to hand back on success.
+step  :: proc() -> Result(Unit, Error_Code) { return .ok(Unit{}); }
+value :: proc() -> Result(int, Error_Code)  { return .ok(123); }
 
-caller_1 :: proc() -> Error {
-	return nil;
-}
-
-caller_2 :: proc() -> (int, Error) {
-	return 123, nil;
-}
-caller_3 :: proc() -> (int, int, Error) {
-	return 123, 345, nil;
-}
-
-foo_1 :: proc() -> Error {
-	// This can be a common idiom in many code bases
-	n0, err := caller_2();
-	if (err != nil) {
-		return err;
+work :: proc() -> Result(int, Error_Code) {
+	// The common idiom, written out.
+	switch (n in value()) {
+	case .ok:  _ = n;
+	case .err: return .err(n);
 	}
 
-	// The above idiom can be transformed into the following
-	n1 := caller_2() or_return;
+	// The same thing, as one operator.
+	n := value() or_return;
 
-	// And if the expression is 1-valued, it can be used like this
-	caller_1() or_return;
-	// which is functionally equivalent to
-	if (err1 := caller_1(); err1 != nil) {
-		return err1;
-	}
+	// A `Unit` success is used as a statement.
+	step() or_return;
 
-	// Multiple return values still work with `or_return` as it only
-	// pops off the end value in the multi-valued expression
-	n0, n1 = caller_3() or_return;
-
-	return nil;
-}
-foo_2 :: proc() -> (n: int, err: Error) {
-	// A procedure usually returns multiple values in this case.
-	// If `or_return` is used within a procedure that returns multiple 
-	// values (2+), then all the returned values must be named 
-	// so that a bare `return` statement can be used. Earlier results must
-	// already be initialized because propagation returns their current values.
-	n = 0;
-
-	// This can be a common idiom in many code bases
-	x: int;
-	x, err = caller_2();
-	if (err != nil) {
-		return;
-	}
-
-	// The above idiom can be transformed into the following
-	y := caller_2() or_return;
-	_ = y;
-
-	// And if the expression is 1-valued, it can be used like this
-	caller_1() or_return;
-
-	// which is functionally equivalent to
-	if (err1 := caller_1(); err1 != nil) {
-		err = err1;
-		return;
-	}
-
-	// If using a non-bare `return` statement is required, setting the return values
-	// using the normal idiom is a better choice and clearer to read
-	if (z, zerr := caller_2(); zerr != nil) {
-		return -345 * z, zerr;
-	}
-
-	n = 123;
-	return;
-}
-
-caller_4 :: proc() -> (n: int, ok: bool) {
-    return 3, true;
-}
-
-foo_3 :: proc() -> (ok: bool) {
-    // `or_return` also supports the ok semantics common in Loke code.
-    // Note an error is indicated by `ok` being `false`
-	ok = false;
-    x := caller_4() or_return;
-
-    if (x < 5) {
-        ok = true;
-    }
-
-    return;
+	return .ok(n * 2);
 }
 ```
+
+The failure payload is rewrapped as the enclosing procedure's failure variant,
+so a procedure may propagate into a different error type as long as the payloads
+are assignable. A place operand copies both payloads and leaves the source
+whole; see [Operator ownership](#operator-ownership).
 
 ## Panics and unwinding
 
@@ -5653,7 +5692,7 @@ release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
 
 The following low-level procedures are built in and are also available in package `mem` with enforced allocator errors. Normal managed strings, arrays, and maps do not need them.
 
-- `new(T, allocator=mem.default_allocator()) -> (^mut T, Allocator_Error)` creates a new allocation root containing a zero-initialized value. On success the pointer has root provenance identifying that fresh allocation, and the allocation root has region provenance identifying its allocator region; the pointer is nil on failure. The allocation is manual: the pointer itself has no `drop` hook and the program must eventually pass the allocation root to `free`, reset its allocator region, or transfer responsibility to an ordinary resource wrapper.
+- `new(T, allocator=mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a new allocation root containing a zero-initialized value, so `T` must have a [zero value](#zero-values). On success the pointer has root provenance identifying that fresh allocation, and the allocation root has region provenance identifying its allocator region; a failure carries the error alone. The allocation is manual: the pointer itself has no `drop` hook and the program must eventually pass the allocation root to `free`, reset its allocator region, or transfer responsibility to an ordinary resource wrapper.
 
 ```odin
 ptr, err := new(int);
@@ -5662,7 +5701,7 @@ ptr^ = 123;
 x: int = ptr^;
 ```
 
-- `new_clone(value, allocator=mem.default_allocator()) -> (^mut T, Allocator_Error)` creates a new allocation root containing a clone of the value. Its pointer and allocation root receive the same respective root and region provenance and manual release rule as `new`; the pointer is nil on failure.
+- `new_clone(value, allocator=mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a new allocation root containing a clone of the value. Its pointer and allocation root receive the same respective root and region provenance and manual release rule as `new`; a failure carries the error alone.
 
 ```odin
 x: int = 123;
@@ -5673,7 +5712,7 @@ if (err != nil) { panic("clone allocation failed"); }
 assert(ptr^ == 123);
 ```
 
-- `make(Container, ..., allocator=mem.default_allocator()) -> (Container, Allocator_Error)` is an explicitly fallible constructor for a dynamic array or map with selected backing storage. On failure the container is zero. The result is an ordinary owning value: assigning it to a managed declaration enables automatic cleanup, while assigning it to a `manual` declaration requires an explicit `drop`. Slices are borrows and cannot be owners.
+- `make(Container, ..., allocator=mem.default_allocator()) -> Result(Container, Allocator_Error)` is an explicitly fallible constructor for a dynamic array or map with selected backing storage. A written *length* fills that many slots with the element's zero, so the element must have one; a capacity or a map reservation is raw storage and needs none. The result is an ordinary owning value: assigning it to a managed declaration enables automatic cleanup, while assigning it to a `manual` declaration requires an explicit `drop`. Slices are borrows and cannot be owners.
 
 ```odin
 dynamic_array_zero_length: manual [dynamic]int;
@@ -5798,7 +5837,7 @@ The atomic reference count makes concurrent handle accounting race-free. It does
 
 Atomic handle accounting also does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` whose root provenance derives from that handle; callers must use a mutex, atomics within `T`, immutability, or another protocol before conflicting access. The borrow may not outlive the handle used to obtain it, but the compiler does not correlate aliases obtained from different shared handles.
 
-Strong-reference cycles are permitted and leak until explicitly broken. `weak(T)` is the non-owning companion: it keeps the control block but not the payload alive, and `upgrade` returns `(shared(T), bool)`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
+Strong-reference cycles are permitted and leak until explicitly broken. `weak(T)` is the non-owning companion: it keeps the control block but not the payload alive, and `upgrade` returns `Option(shared(T))`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
 
 Immutable `string` implementations that share backing storage use the same atomic handle-accounting principle: their reference-count operations, when present, are atomic, while the bytes themselves never change. The allocator-lifecycle obligation above still applies, and this requirement does not make mutable containers safe for concurrent access.
 
@@ -6413,27 +6452,44 @@ defer {
 }
 ```
 
-#### Optional results
+#### Optional and fallible results
 
-A procedure that can have no value returns `(T, bool)`. This is the [optional-ok form](#optional-ok-results). `map.lookup_value`, validating conversions, the optional checked extraction `v.as(T)`, `pop`, and the [iteration protocol](#iteration-protocol) use the same form. The language and core library do not define `Option`, `Maybe`, or `Result` types.
+A procedure that can have no value returns `Option(T)`; one that can fail
+returns `Result(T, E)`. Both are declared in `base:runtime` and described under
+[Typed fallibility](#typed-fallibility). `map.lookup_value`, `find`, `remove`,
+`pop`, the validating conversions, the erased extraction `view.as(T)`, and the
+[iteration protocol](#iteration-protocol) all answer with an `Option`; every
+allocating operation answers with a `Result`.
 
 ```odin
-halve :: proc(n: int) -> (int, bool) {
-	if (n % 2 != 0) { return 0, false; }
-	return n / 2, true;
+halve :: proc(n: int) -> Option(int) {
+	if (n % 2 != 0) { return .none; }
+	return .some(n / 2);
 }
 
-half, ok := halve(2);
-if (ok) { fmt.println(half); }      // 1
-
-_, ok = halve(3);
-if (!ok) { fmt.println("3/2 isn't an int"); }
+switch (half in halve(2)) {
+case .some: fmt.println(half);      // 1
+case .none: fmt.println("odd");
+}
 
 n := halve(4) or_else 0;
 fmt.println(n);                     // 2
 ```
 
-The convention is that the `bool` comes last and is named `ok`, and that the value is the zero value when `ok` is false. An error that carries information returns an error value instead and is propagated with [`or_return`](#or_return-operator); `bool` is for the case where "absent" is the whole story. Nothing prevents a library from declaring `Option :: union($T: type) {T}` for its own use — it is an ordinary union — but the core library does not, and no language construct is aware of it.
+`Option` is for the case where "absent" is the whole story; a failure that
+carries information is a `Result`, and both propagate with
+[`or_return`](#or_return-operator). Neither is privileged: an ordinary union of
+two variants with `@(failure=name)` behaves identically, and a library that
+wants its own vocabulary declares one.
+
+*Reversed decision.* An earlier revision of this document said the language and
+core library define no `Option`, `Maybe`, or `Result`, and that a procedure with
+no value returns `(T, bool)`. Two shapes — a trailing `bool` and a trailing
+error — cost the language a nil union state, an `active_typeid()` method, an
+arity rule tying a producer to its destination, and a "status result" concept
+with two admissible spellings and a list of near-misses that are *not* statuses.
+One shape removes all of it, and a designated failure variant is what the
+operators had been approximating.
 
 ### Advanced idioms
 
@@ -6466,7 +6522,7 @@ Several types, interfaces, and a few core procedures are used in normative text 
 | --- | --- | --- |
 | `os.Args`, `os.args`, `os.exit` | [program entry and exit](#program-entry-and-exit) | `core:os`, ordinary Loke source over one foreign block; the compiler knows nothing about it. `os.args` has the [frozen `Args` surface](#osargs) over the vector the [executable entry](#executable-startup-abi) converted. `os.exit` terminates immediately with a specified status. |
 | `fs.File`, `fs.open`, `File.close` | the [`defer`](#defer-statement) and [lifecycle hook](#lifecycle-hooks-and-resource-types) examples | `core:fs`. Files are **not** in `core:os`: that package is process state, and the package owning the argument vector should not also own file handles. `fs.File` is an ordinary library resource with no compiler-known behavior — a move-only record whose `drop` closes a live handle. There is no `os.open` alias; one spelling for opening a file is the point. |
-| `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `len(builder)` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> (string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
+| `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `len(builder)` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> Result(string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
 | `C_String` | [C string views](#c-string-views) | `core:cstrings`. Owned zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. It does not promise UTF-8, and its constructor rejects an interior zero, so the view it hands out is never shorter than the data it owns. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |
 | `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Reverse_Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |

@@ -1,6 +1,20 @@
 # Third consolidation implementation plan: typed fallibility and one union model
 
-Status: planned; no implementation or verification results are claimed here.
+Status: **implemented and adopted.** The gate result and its measurements are
+recorded under [Gate result](#gate-result) below; the normative text now lives
+in [`design.md`](design.md) and [`grammar.md`](grammar.md), and this plan is the
+record of how it got there.
+
+One deviation from the plan is recorded here rather than buried. The plan asks
+for a disposable prototype that keeps anonymous unions alive as an A/B control,
+followed by a gate. The work went **direct to adoption on an isolated branch**
+instead: two live union models would have doubled the change in every consumer —
+the checker, the emitter, the evaluator, the standard library, and the whole
+corpus — and the discardability the plan actually asks for ("the disposable
+prototype must live in isolated git state so a no-go never requires a
+destructive reset") is what a branch already is. The A/B comparison the gate
+wanted was made against a baseline worktree at the pre-change commit, which is
+what produced the measurements below.
 
 ## Context
 
@@ -354,6 +368,86 @@ Land specification changes with the adoption change:
   migration completion, and any rejected alternative.
 - `comments.md`: A/B evidence and the explicit reversal (or no-go retention) of
   the current `Option` decision.
+
+## Gate result
+
+**Adopted.** The reversal is worth its cost, and this is what the cost turned
+out to be.
+
+### What it removed
+
+The nil union state, `active_typeid()`, the trapping union extraction on a
+union, the "optional-ok" rule that let a destination change a producer's result
+count, and the "status result" concept — two admissible spellings, a list of
+near-misses that are *not* statuses, and a truthiness rule that had to be
+written down precisely because it was not obvious. One shape replaced all of it.
+
+### What it added
+
+Named variants with declaration-index identity, `@(zero=name)`,
+`@(failure=name)`, and `@(require_results)` as a type attribute. Each is a rule
+about unions, which the plan's step 2 had to settle regardless. `Unit`,
+`Option`, and `Result` are ordinary declarations in `base:runtime` that the
+compiler binds into the universe; none of them is a new type category.
+
+### Measured cost
+
+Measured against a worktree at `d2e3f6f`, the commit before the change, with
+both compilers built by the same Odin and run interleaved (15 samples each,
+minimum reported).
+
+| | baseline | adopted | delta |
+| --- | --- | --- | --- |
+| front end, empty program | 9.4 ms | 11.1 ms | +17.6% |
+| front end, `hello` | 16.1 ms | 18.1 ms | +12.7% |
+| front end, `robot_arena` | 21.7 ms | 24.1 ms | +11.2% |
+| front end, `game_of_life` | 22.1 ms | 23.7 ms | +7.3% |
+| IR type definitions, empty program | 5 | 11 | +6 |
+| IR lines, empty program | 98 | 112 | +14 |
+| linked binary, empty program | 176 128 B | 176 128 B | 0 |
+| linked binary, `hello` | 182 784 B | 188 416 B | +3.1% |
+| linked binary, `robot_arena` | 187 904 B | 194 048 B | +3.3% |
+
+The front-end cost is `base:runtime` being loaded and checked before the root
+package: a fixed charge, which is why it is largest on the smallest program. An
+empty program's binary is **byte-identical** — the bootstrap contributes type
+definitions and no code, so a program that uses no `Option` and no `Result` pays
+nothing at run time. The growth in the two real programs is the instances they
+actually use.
+
+### Representation
+
+`Option(T)` and `Result(T, E)` lower to the ordinary union layout: the payload
+region, then the tag, then alignment padding. That is the same aggregate the old
+`(T, bool)` and `(T, Allocator_Error)` result pairs lowered to, one byte wider
+wherever the tag does not fit in existing padding. No boxing, no wrapper
+allocation, and no second C-ABI return to preserve — a foreign boundary passes a
+foreign-ABI-safe wrapper as it did before.
+
+Tag widths were verified against LLVM's own layout at 0, 1, 255, 256, and 257
+variants (`tests/layout/unions.loke`, run under `-check-layout`): one byte
+through 256 variants, two from 257, and an empty union keeps one byte.
+
+### Defects the change surfaced
+
+Six, each with a fixture:
+
+1. A variant switch leaked its subject — the temporary was never registered with
+   the switch's own cleanup scope.
+2. Variant construction dropped its payload's provenance, so a borrow wrapped in
+   a union escaped unchecked; unwrapping dropped it again, and a validating text
+   conversion stopped looking like a borrow once its result was an `Option`.
+3. An allocator handle lost its region inside an `Option`, so a local arena
+   reset stopped being caught.
+4. `or_else` and `or_return` moved the payload out of a *place* operand, leaving
+   the source holding bits it no longer owned — a double drop.
+5. A union every variant of which is payloadless underflowed its padding
+   calculation, and its tag's own width did not raise the union's alignment.
+6. `@(zero=)` and `@(require_results)` were each enforced at one site, when both
+   are properties of a type.
+
+Every one of them is a bug the old model could not have had, and every one was
+found by the corpus rather than by inspection.
 
 ## Verification and acceptance
 

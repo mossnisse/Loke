@@ -1,6 +1,6 @@
 # Loke language consolidation proposal
 
-Status: proposal
+Status: sections 4 and 5 adopted; the rest is still a proposal
 
 This document proposes a coherent set of changes to `design.md`, `grammar.md`,
 and the compiler, covering product types, multiple results, and error
@@ -8,12 +8,31 @@ handling. It is concrete enough that examples and costs can be judged
 together. Nothing here is normative until it replaces the relevant text in
 `design.md` and `grammar.md`.
 
-This is a candidate for the evaluations in
+**Sections 4 and 5 have shipped.** Named union variants and typed fallibility
+are now in `design.md` and `grammar.md`, which are the normative text; this
+document keeps its reasoning as the record of why. The shipped design differs
+from this draft in three places, each noted where it arises:
+
+- **Anonymous unions are gone,** rather than kept beside named ones. Every
+  variant is named, so `active_typeid()` had nothing left to discriminate and
+  was deleted, and `.(T)`/`.as(T)` are `any_view` operations only.
+- **`Result` has no zero value.** A union has one only when it writes
+  `@(zero=name)` naming its first variant, and no arm of `Result` is a
+  meaningful default. `Option` does write it, naming `none`.
+- **The protocol is an attribute, not a name.** `@(failure=name)` on a union of
+  exactly two variants is what `or_else` and `or_return` recognise, so a
+  user-declared union participates on equal terms. `@(require_results)` is
+  written on `Result` itself.
+
+Sections 1, 2, 3, and 6 — anonymous records, general destructuring,
+one-result procedures, and the removal of `manual` — remain proposals and were
+deliberately not taken in the same change.
+
+The rest is a candidate for the evaluations in
 [`language-refinement-strategy.md`](language-refinement-strategy.md), not an
-approved implementation roadmap. In particular, retaining anonymous unions
-and giving `Result` a successful zero value remain alternatives to the
-strategy's preferred candidates. Those decisions need evidence before
-adoption. The provenance prerequisites below apply whichever value model wins.
+approved implementation roadmap. The provenance prerequisites below applied and
+were met: a borrow wrapped in a union keeps its root and region dependencies,
+and unwrapping one hands them on.
 
 ## Summary
 
@@ -28,12 +47,14 @@ adoption. The provenance prerequisites below apply whichever value model wins.
    but a call's arguments are never materialized as a record value.
 5. A procedure returns zero or one value. Multiple related values become
    fields of a record.
-6. **New: union variants may be named.** A named-variant union is an ordinary
-   sum type with a designated zero variant, may repeat a payload type across
-   variants, and is read with the existing `.name` selector.
+6. **New: union variants may be named.** *Adopted, with every variant named:*
+   a union is an ordinary sum type that may repeat a payload type across
+   variants and is read with the existing `.name` selector. A zero variant is
+   designated with `@(zero=name)`, and a union without one has no zero.
 7. `Option(T)` and `Result(T, E)` become ordinary generic unions declared in
    `base:`, not compiler-owned type families. Both are inline values and never
-   imply allocation or boxing.
+   imply allocation or boxing. *Adopted:* they are declarations in
+   `base:runtime` that the compiler binds into the universe.
 8. `or_else` and `or_return` operate on `Option`/`Result` values, not on a
    trailing result whose type is interpreted contextually as status. A stored
    operand is not implicitly consumed; `move` requests ownership transfer.
@@ -399,21 +420,34 @@ inspection of erased `any_view` storage into an ownership transfer.
 
 ### 4.4 What the addition costs
 
-The addition needs disjoint named/anonymous variant grammar, a per-union
-variant-name namespace using implicit selectors, a zero-value rule, variant
-names in reflection, constructor ownership checks, and borrowing/consuming
-switch lowering. It also needs a decision about
-`active_typeid()`, which can't discriminate two variants sharing a payload
-type (open decision 3 — this draft keeps `active_typeid()` for anonymous
-unions only, using the switch/reflection as variant identity for named ones).
+The addition needs a per-union variant-name namespace using implicit selectors,
+a zero-value rule, variant names in reflection, constructor ownership checks,
+and borrowing/consuming switch lowering.
 
-Checked extraction `value.(T)` / `value.as(T)` still select by type and
-remain anonymous-union operations; a named union is read through its switch
-or ordinary methods.
+*As adopted, it needed less.* Keeping anonymous unions beside named ones would
+have meant a disjoint grammar for the two forms and a decision about
+`active_typeid()`, which cannot discriminate two variants sharing a payload
+type. Requiring every variant to be named removed both questions: there is one
+grammar, `active_typeid()` was deleted, and the nil union state went with it.
+`value.(T)` and `value.as(T)` remain, on `any_view`, where the set of possible
+types is genuinely open and selecting by type is the only thing to do.
 
 ## 5. `Option(T)` and `Result(T, E)`
 
 ### 5.1 Ordinary library unions
+
+*As adopted, both carry the attributes that make them work:*
+
+```odin
+Option :: union($T: type) @(zero=none, failure=none) { none:, some: T }
+
+@(require_results)
+Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
+```
+
+`Option` designates `none` as both its zero and its failure; `Result`
+designates `err` as its failure and has no zero, because neither arm is a
+meaningful default. The draft below writes them without attributes.
 
 ```odin
 Option :: union($T: type)     {none:, some: T}

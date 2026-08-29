@@ -23,8 +23,10 @@ compiler work belongs in focused plans:
   completion claim or adoption of the old inference shortcuts and
   `unsafe.forget_provenance` proposal.
 - [`language-design-consolidation-proposal.md`](language-design-consolidation-proposal.md)
-  is a candidate value design. Its anonymous records, dual union forms, and
-  default `Result` value are evaluated in Phase 2, not accepted by reference.
+  is a candidate value design. Its sections on named variants and typed
+  fallibility have shipped, without its dual union forms and without a default
+  `Result` value; its anonymous records remain a candidate evaluated in
+  Phase 2, not accepted by reference.
 
 Requirements such as preserving a borrow through a wrapper are acceptance
 criteria. Recommended APIs and representations below are prototype candidates;
@@ -91,9 +93,9 @@ Assignment arity, a comma-ok destination, or use as the left operand of an
 operator should not change whether an expression traps, returns zero, or
 produces a status value.
 
-Different behavior needs a different operation. For example, a trapping union
-extraction and an optional extraction should have distinct spellings, and map
-indexing and optional map lookup should be distinct operations.
+Different behavior needs a different operation. For example, a trapping erased
+extraction and one that reports a mismatch should have distinct spellings, and
+map indexing and a lookup that reports absence should be distinct operations.
 
 Expected types may still resolve literals and implicit selectors. Once an
 operation and its operand types are resolved, destination arity must not select
@@ -288,16 +290,15 @@ result. [`design.md`](design.md) now states one status shape and one fallback
 rule for procedures. What remains is not the protocol; it is the built-in
 producers that still read their destination.
 
-The remaining defect is stated in the specification itself: *"Single-value
-behavior is per-producer"* — a missing map lookup yields zero, while a failed
-single-value checked extraction panics. Checked extraction has optional-ok
+The remaining defect was stated in the specification itself: *"Single-value
+behavior is per-producer"* — a missing map lookup yielded zero, while a failed
+single-value checked extraction panicked. Checked extraction had optional-ok
 semantics in a comma-ok destination or as the left operand of `or_else`, but
-produces one value or panics in a single-value context.
+produced one value or panicked in a single-value context.
 
-Validating text conversions already have a fixed `(value, bool)` result shape.
-Invalid input produces zero and `false`; a single-value use is a compile-time
-arity error, not a trapping conversion. Phase 1a preserves these operations and
-uses them as a baseline rather than splitting or renaming them.
+Validating text conversions already had a fixed result shape. Phase 1a preserved
+these operations and used them as a baseline rather than splitting or renaming
+them; Phase 1b then moved every one of them to `Option`.
 
 The phase therefore splits into a cheap change that fixes the stated defect and
 an expensive change that reshapes how absence is typed. They have very
@@ -349,64 +350,66 @@ the same reason the one-name form already did.
 
 #### Phase 1b — decide whether absence becomes a type
 
-Only after 1a lands, evaluate representing absence and failure as ordinary
-`Option(T)` and `Result(T, E)` values rather than as a trailing status result,
-with `or_else` and `or_return` specified by operand type.
+**Adopted.** Absence and failure are types: `Option(T)` and `Result(T, E)`,
+declared in `base:runtime` as ordinary generic unions, with `or_else` and
+`or_return` specified by operand type rather than by trailing-result position.
 
-This is a separate decision because 1a fixes destination-sensitive result arity
-and failure handling. What 1b adds is composability: storing, passing, and
-returning a fallible value without privileged producer syntax, and one absence
-convention across the standard library. Provenance and container policy remain
-separate work even if typed fallibility is adopted.
+The comparison the exit condition asked for, and what it found:
 
-Even library-declared result types need defined layout, reflection, generic,
-lifecycle, and ABI behavior. Measure the additional rules and changed costs
-under design law 5 and property 8 (*predictable lowering*), rather than assuming
-they need a separate compiler type category. Existing `(T, bool)` procedure
-results use the `loke` calling convention and are emitted as one LLVM aggregate.
-Foreign calling conventions permit at most one result, so there is no second
-C-ABI return to preserve. The prototype must compare the representation and
-call lowering of `Option`/`Result` with the current Loke results, and separately
-define any C boundary through foreign-ABI-safe wrappers.
+- **Composability.** The status protocol could not store, pass, or return a
+  fallible value: it lived only in a result list. A `map[K]Option(V)`, a
+  `[dynamic]Result(T, E)`, and a procedure taking one as a parameter are all
+  ordinary now, and the standard library has one absence convention instead of
+  a per-package choice between a trailing `bool` and a trailing error.
+- **Rules removed.** One shape removed the nil union state, `active_typeid()`,
+  the "optional-ok" arity rule tying a producer's result count to its
+  destination, and the "status result" concept with its two admissible
+  spellings and its list of near-misses that are *not* statuses. It also
+  removed the trapping union extraction, because a union with named variants
+  and an exhaustive `switch` has nothing left for one to do.
+- **Rules added.** Named variants with declaration-index identity, `@(zero=)`,
+  `@(failure=)`, and `@(require_results)` as a type attribute. Each is a rule
+  about unions, which Phase 2b had to settle anyway; none is a new type
+  category, and the two runtime declarations are ordinary source the compiler
+  binds into the universe rather than compiler-owned types.
+- **Lowering.** A `Result(T, E)` is the union layout, so it lowers to the
+  payload region plus a tag — the same aggregate the old `(T, Error)` pair
+  lowered to, one byte wider where the tag does not fit in existing padding.
+  Foreign calling conventions permit at most one result and are unaffected: a C
+  boundary passes a foreign-ABI-safe wrapper as it did before.
+- **Measured cost.** Front-end time rose 7–18% on the example corpus, largest
+  on the smallest program, because `base:runtime` is a fixed cost paid once.
+  An empty program's binary is byte-identical: the bootstrap contributes six
+  LLVM type definitions and no code. `hello` grew 5.6 KiB (+3.1%) and
+  `robot_arena` 6.0 KiB (+3.3%), which is the `Option`/`Result` instances those
+  programs actually use.
+- **Borrowed and managed payloads.** Both were proved rather than assumed. A
+  borrow wrapped in an `Option` or a `Result` is caught exactly where its bare
+  twin is, across construction, a variant switch, `or_else`, `or_return`, a
+  validating conversion, and an erased allocator handle
+  (`tests/err/wrapped_borrows.loke`). The operator ownership matrix — a place
+  copies, a temporary transfers, `or_else` never copies the error — is counted
+  row by row in `tests/run/operator_ownership.loke`.
+- **Discard diagnostics.** `@(require_results)` is written on `Result` itself,
+  so the obligation survives an overload, a generic instance, an import, a
+  procedure value, and an aggregate that merely holds one
+  (`tests/pkg_err/require_results/`). `_ =` remains the explicit discard. It
+  checks discarded results, not whether a stored error is eventually inspected.
+- **Protocol recognition.** `or_else` and `or_return` recognise
+  `@(failure=name)` on a union of exactly two variants. An unrelated two-variant
+  union is not an error result unless it says so.
 
-Prefer ordinary generic library unions over compiler-owned result types. Count
-only the rules that cannot be reused from the selected union model. Phase 2b
-settles variant identity, Phase 2c settles default construction, and Phase 4a
-must preserve borrows inside their payloads before the migration ships.
+The recorded `Option` decision in [`design.md`](design.md) is reversed rather
+than routed around: the passage that said the language and core library define
+no `Option`, `Maybe`, or `Result` is replaced, and the entry that replaces it
+states what the old answer cost.
 
-If typed fallibility wins, make `require_results` a type attribute on `Result`
-so direct and indirect calls share discard diagnostics; `_` remains an explicit
-discard. Specify its behavior for containing aggregates and generic wrappers.
-This checks discarded results, not whether every error stored in a variable is
-eventually inspected. Operator recognition must identify the intended protocol
-explicitly, not turn any unrelated two-variant union into an error result.
-
-Adopting `Option`/`Result` would also reverse a recorded decision.
-[`design.md`](design.md) currently states that nothing prevents a library from
-declaring `Option :: union($T: type) {T}`, but that the core library does not and
-no language construct is aware of one. The prototype must cite that passage,
-and an adoption proposal must rebut it directly; per the decision record rule
-above, a reversal that routes around the existing entry leaves two current
-answers in the repository.
-
-The prototype must compare `Option`/`Result` against the smaller alternative of
-keeping the explicit status protocol from 1a unchanged. Keeping it is the
-default outcome; `Option`/`Result` wins only by demonstrating the composability
-gap on a generic and a managed-value program, not on scalars.
-
-Exit condition: record the comparison and complete one of these outcomes:
-
-- **Keep the status protocol.** Record why typed fallibility did not justify its
-  cost. Retain the Phase 1a protocol and the existing `Option` decision in
-  `design.md`; no language migration is required.
-- **Adopt typed fallibility.** Specify `or_else` and `or_return` by operand type
-  rather than trailing-result position, migrate the standard library to one
-  absence/failure convention, document the representation and ABI decisions,
-  prove borrowed and managed payload behavior, define discard diagnostics, and
-  replace the recorded `Option` decision in `design.md`.
-
-Either outcome completes Phase 1b once it agrees with Phase 2's related
-decisions. Keeping the status protocol does not block the provenance work.
+One contract changed with it. `io.Reader.read` returned a count *and* an error
+together, so a reader could report progress and a failure in one result. A
+`Result` carries one or the other, so progress is reported and the failure
+surfaces on the next call. Every helper in `core:io` was already written to loop
+until it had what it asked for, so the change is confined to the readers
+themselves.
 
 ### Phase 2 — unify product, variant, and initialization rules
 

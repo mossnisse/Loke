@@ -322,7 +322,8 @@ Member_Name_List = Member_Name ("," Member_Name)*
 Member_Name = Identifier | "type"
 
 Union_Type  = "union" Generic_Parameters? Attributes? Where_Clause? "{" Union_Variants? "}"
-Union_Variants = Type ("," Type)* ","?
+Union_Variants = Union_Variant ("," Union_Variant)* ","?
+Union_Variant  = Identifier ":" Type?
 
 Generic_Parameters = "(" Generic_Parameter ("," Generic_Parameter)* ")"
 Generic_Parameter  = Generic_Name ("," Generic_Name)* ":" Type
@@ -531,7 +532,11 @@ Value_Case   = "case" Expression_List? ":" Statement*
 Type_Switch  = Attributes? "switch" "(" Init_Statement? Binding_Name "in" Expression ")"
                "{" Type_Case* "}"
 Binding_Name = Identifier | "_"
-Type_Case    = "case" (Type ("," Type)*)? ":" Statement*
+Type_Case    = "case" (Case_Selector ("," Case_Selector)*)? ":" Statement*
+// A union case names variants; an `any_view` case names types. Which one a
+// case list is read as follows from the subject's type, and a `.` at case
+// position can never begin a type expression.
+Case_Selector = ("." Identifier) | Type
 ```
 
 `case` with no values is the default case. Case values may be ranges, since
@@ -629,16 +634,21 @@ a block. A slice literal's type is the one written: `[]T{...}` is read-only and
 
 Right associativity is also what lets `or_else` chain: `a or_else b or_else c`
 groups as `a or_else (b or_else c)`, giving each `or_else` an unresolved
-[status expression](design.md#status-results) on its left — left association
-would break type-checking. Payload-count requirements are in
+[fallible expression](design.md#typed-fallibility) on its left — left
+association would break type-checking. What shape that operand must have is in
 [design.md](design.md#or_else-expression).
 
-The optional extraction `value.as(T)` has no suffix of its own: it is written
-with the selector and call suffixes above. Its receiver's type is what makes it
-the built-in — a union or an `any_view` — so a declared member named `as` on any
-other type is reached by exactly the same syntax. `m.lookup_value(key)` is an
-ordinary member call in the same way. Neither result count depends on the
-destination, which is why `.(T)` and `m[key]` are always single-valued.
+Variant construction has no suffix of its own either: `.name(payload)` is the
+implicit-selector primary followed by the call suffix, and `U.name(payload)` is
+the ordinary selector followed by one. Whether `.name` denotes a variant, an
+enum member, or a member of an expected record type follows from the expected
+type, not from the syntax.
+
+The erased extraction `view.as(T)` is likewise written with the selector and
+call suffixes above. Its receiver's type is what makes it the built-in — an
+`any_view` — so a declared member named `as` on any other type is reached by
+exactly the same syntax. `m.lookup_value(key)` is an ordinary member call in the
+same way. No result count depends on the destination.
 
 `move(x)` is a primary form rather than a call because `move` is a keyword — it
 is also a [parameter mode](#procedures), so it has to be reserved anyway.
@@ -650,8 +660,9 @@ are ordinary identifiers and use the call suffix. `transmute(T, x)` and
 
 The productions above use the following deterministic parsing rules:
 
-- `switch (name in expression)` is a type switch. A value switch over membership
-  uses `switch ((name in expression))`.
+- `switch (name in expression)` is a type switch, over a union's variants or an
+  `any_view`'s types. A value switch over membership uses
+  `switch ((name in expression))`.
 - An `Init_Statement` is a `Variable_Decl` when the comma-separated list of names
   that opens it is followed by `:`, and a `Simple_Statement` otherwise. Deciding
   this means scanning a name list, which is the same bounded scan `Declaration`
