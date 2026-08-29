@@ -2,39 +2,45 @@ package main; import "core:fmt"; import "core:strconv";
 
 // `core:strconv` end to end (standard-library-plan stage 1, item 4).
 //
-// A failure prints its `Fault` ordinal: 0 invalid syntax, 1 invalid base,
+// A failure prints its `Parse_Error` ordinal: 0 invalid syntax, 1 invalid base,
 // 2 overflow, 3 trailing data.
 
 show_i64 :: proc(text: string_view, base: int = 0) {
-	value, error := strconv.parse_i64(text, base);
-	if (error != nil) {
-		fault := error.(strconv.Fault);
-		fmt.println(int(fault));
-		return;
+	switch (outcome in strconv.parse_i64(text, base)) {
+	case .ok:  fmt.println(outcome);
+	case .err: fmt.println(int(outcome));
 	}
-	fmt.println(value);
 }
 
 show_f64 :: proc(text: string_view) {
-	value, error := strconv.parse_f64(text);
-	if (error != nil) {
-		fault := error.(strconv.Fault);
-		fmt.println(int(fault));
-		return;
+	switch (outcome in strconv.parse_f64(text)) {
+	case .ok:  fmt.println(outcome);
+	case .err: fmt.println(int(outcome));
 	}
-	fmt.println(value);
 }
 
 main :: proc() {
-	// Booleans use the optional-ok convention: absent is the whole story.
-	yes, yes_ok := strconv.parse_bool(" true ");
-	fmt.println(yes);
-	fmt.println(yes_ok);
-	no, no_ok := strconv.parse_bool("0");
-	fmt.println(no);
-	fmt.println(no_ok);
-	_, bad_ok := strconv.parse_bool("yes");
-	fmt.println(bad_ok);
+	// Booleans answer with an `Option`: absence is the whole story.
+	switch (yes in strconv.parse_bool(" true ")) {
+	case .some:
+		fmt.println(yes);
+		fmt.println(true);
+	case .none:
+		fmt.println(false);
+		fmt.println(false);
+	}
+	switch (no in strconv.parse_bool("0")) {
+	case .some:
+		fmt.println(no);
+		fmt.println(true);
+	case .none:
+		fmt.println(false);
+		fmt.println(false);
+	}
+	switch (_ in strconv.parse_bool("yes")) {
+	case .some: fmt.println(true);
+	case .none: fmt.println(false);
+	}
 
 	// Integers, with the language's own prefixes when the base is 0, and the
 	// lexer's own underscore rule.
@@ -59,16 +65,21 @@ main :: proc() {
 	show_i64("9223372036854775808");
 	show_i64("-9223372036854775809");
 
-	unsigned, unsigned_error := strconv.parse_u64("18446744073709551615");
-	fmt.println(unsigned);
-	fmt.println(unsigned_error == nil);
-	_, negative_error := strconv.parse_u64("-1");
-	fmt.println(negative_error != nil);
+	switch (unsigned in strconv.parse_u64("18446744073709551615")) {
+	case .ok:
+		fmt.println(unsigned);
+		fmt.println(true);
+	case .err:
+		fmt.println(0);
+		fmt.println(false);
+	}
+	switch (_ in strconv.parse_u64("-1")) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(true);
+	}
 
-	counted, _ := strconv.parse_int("123");
-	fmt.println(counted);
-	size, _ := strconv.parse_uint("123");
-	fmt.println(size);
+	fmt.println(strconv.parse_int("123") or_else -1);
+	fmt.println(strconv.parse_uint("123") or_else 0);
 
 	// Floating point.
 	show_f64("0");
@@ -84,10 +95,16 @@ main :: proc() {
 
 	// Mantissas are accumulated without wrapping, and a finite spelling outside
 	// f64's range reports Overflow instead of succeeding with infinity.
-	large, large_error := strconv.parse_f64("30000000000000000000");
-	fmt.println(large_error == nil);
-	fmt.println(large > 29000000000000000000.0 && large < 31000000000000000000.0);
-	_, float_overflow := strconv.parse_f64("1e999");
-	fault := float_overflow.(strconv.Fault);
-	fmt.println(int(fault));
+	switch (large in strconv.parse_f64("30000000000000000000")) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(large > 29000000000000000000.0 && large < 31000000000000000000.0);
+	case .err:
+		fmt.println(false);
+		fmt.println(false);
+	}
+	switch (float_overflow in strconv.parse_f64("1e999")) {
+	case .ok:  fmt.println(-1);
+	case .err: fmt.println(int(float_overflow));
+	}
 }

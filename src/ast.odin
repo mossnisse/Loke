@@ -253,6 +253,10 @@ Expr_Call :: struct {
 	union_op:        Union_Op,
 	// The variant `union_op == .Construct` writes.
 	variant_index:   int,
+	// Whether that construction clones its payload: a place keeps owning its
+	// value, so the variant receives a copy, exactly as an aggregate literal's
+	// field does.
+	variant_clone:   bool,
 	// `value.as(T)`: the optional extraction this call resolved to. Downstream
 	// phases delegate to it rather than treating the call as a call, which is
 	// what keeps `.(T)` and `.as(T)` on one flow, evaluation, and lowering path.

@@ -14,55 +14,92 @@ foreign libc {
 	strlen :: proc "c" (s: cstring_view) -> uint ---;
 }
 
+// These two are constructed from valid input; a failure is a bug in the test.
+no_text :: proc() -> string { panic("the test produced invalid UTF-8"); }
+no_units :: proc() -> [dynamic]u16 { panic("encoding failed"); }
+
 main :: proc() {
 	// An owned zero-terminated buffer, handed to a C routine that measures it.
-	owned, error := cstrings.from_string("hej, värld");
-	fmt.println(error == nil);
-	fmt.println(owned.len());
-	fmt.println(strlen(owned.view()));
+	switch (owned in cstrings.from_string("hej, värld")) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(owned.len());
+		fmt.println(strlen(owned.view()));
+	case .err:
+		fmt.println(false);
+		fmt.println(-1);
+		fmt.println(-1);
+	}
 
 	// The empty case still produces a usable, terminated view.
-	empty, empty_error := cstrings.from_string("");
-	fmt.println(empty_error == nil);
-	fmt.println(empty.len());
-	fmt.println(strlen(empty.view()));
+	switch (empty in cstrings.from_string("")) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(empty.len());
+		fmt.println(strlen(empty.view()));
+	case .err:
+		fmt.println(false);
+		fmt.println(-1);
+		fmt.println(-1);
+	}
 
 	// A Loke string may contain U+0000; a retained C string may not.
 	with_zero := [?]u8{u8('a'), 0, u8('b')};
-	text, valid := string(with_zero[:]);
-	fmt.println(valid);
+	text := string(with_zero[:]) or_else no_text();
+	fmt.println(true);
 	fmt.println(len(text));
-	_, rejected := cstrings.from_string(text);
-	fmt.println(rejected != nil);
-	fault, present := rejected.as(cstrings.Fault);
-	fmt.println(present);
-	fmt.println(int(fault));
+	switch (rejected in cstrings.from_string(text)) {
+	case .ok:
+		fmt.println(false);
+		fmt.println(false);
+		fmt.println(-1);
+	case .err:
+		fmt.println(true);
+		// The error is the enum itself now, not an erased value to extract.
+		fmt.println(true);
+		fmt.println(int(rejected));
+	}
 
 	// The zero value of `C_String` is an empty, terminated buffer too.
 	inert: cstrings.C_String = {};
 	fmt.println(inert.len());
 
 	// UTF-16, both directions, including a surrogate pair.
-	units, encode_error := utf16.encode("Hej å 😀");
-	fmt.println(encode_error == nil);
+	units := utf16.encode("Hej å 😀") or_else no_units();
+	fmt.println(true);
 	fmt.println(len(units));
 	fmt.println(utf16.length_of(units[:]));
-	back, decode_error := utf16.decode(units[0:utf16.length_of(units[:])]);
-	fmt.println(decode_error == nil);
-	fmt.println(back);
-	fmt.println(len(back));
+	switch (back in utf16.decode(units[0:utf16.length_of(units[:])])) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(back);
+		fmt.println(len(back));
+	case .err:
+		fmt.println(false);
+		fmt.println("");
+		fmt.println(-1);
+	}
 
 	// An unpaired surrogate is invalid data, not a replacement character.
 	lone := [?]u16{0xD800, 65};
-	_, unpaired := utf16.decode(lone[:]);
-	fmt.println(unpaired != nil);
+	switch (_ in utf16.decode(lone[:])) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(true);
+	}
 	trailing := [?]u16{0xDC00};
-	_, low_first := utf16.decode(trailing[:]);
-	fmt.println(low_first != nil);
+	switch (_ in utf16.decode(trailing[:])) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(true);
+	}
 
 	// An explicit allocator reaches the decoded string.
 	arena := mem.Arena.init();
-	scoped, scoped_error := utf16.decode(units[0:3], arena.allocator());
-	fmt.println(scoped_error == nil);
-	fmt.println(scoped);
+	switch (scoped in utf16.decode(units[0:3], arena.allocator())) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(scoped);
+	case .err:
+		fmt.println(false);
+		fmt.println("");
+	}
 }

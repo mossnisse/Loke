@@ -14,10 +14,10 @@ Short_Reader :: struct {
 
 impl Short_Reader {
 	@(public)
-	read :: proc(self: inout Short_Reader, destination: []mut u8) -> (int, io.Error) {
-		if (len(destination) == 0) { return 0, nil; }
+	read :: proc(self: inout Short_Reader, destination: []mut u8) -> Result(int, io.Error) {
+		if (len(destination) == 0) { return .ok(0); }
 		if (self.at >= len(self.source)) {
-			return 0, io.make_error(.End_Of_Input, .Read);
+			return .err(io.make_error(.End_Of_Input, .Read));
 		}
 		count := len(destination);
 		if (count > self.most) { count = self.most; }
@@ -26,7 +26,7 @@ impl Short_Reader {
 			destination[index] = self.source[self.at + index];
 		}
 		self.at += count;
-		return count, nil;
+		return .ok(count);
 	}
 }
 
@@ -37,11 +37,11 @@ Short_Writer :: struct {
 
 impl Short_Writer {
 	@(public)
-	write :: proc(self: inout Short_Writer, source: []u8) -> (int, io.Error) {
+	write :: proc(self: inout Short_Writer, source: []u8) -> Result(int, io.Error) {
 		count := len(source);
 		if (count > self.most) { count = self.most; }
 		self.collected.append(..source[0:count]);
-		return count, nil;
+		return .ok(count);
 	}
 }
 
@@ -49,27 +49,55 @@ Broken_Writer :: struct { written: int }
 
 impl Broken_Writer {
 	@(public)
-	write :: proc(self: inout Broken_Writer, source: []u8) -> (int, io.Error) {
-		return 0, io.make_error(.Broken_Pipe, .Write, 109);
+	write :: proc(self: inout Broken_Writer, source: []u8) -> Result(int, io.Error) {
+		return .err(io.make_error(.Broken_Pipe, .Write, 109));
 	}
 }
 
-// A legal Reader edge: progress and a failure in the same result. Helpers must
-// consume the byte without forgetting the accompanying error.
+// A `Result` carries progress or a failure, never both: this reader hands over
+// its one byte, and the failure arrives on the call after. Helpers must not
+// lose the byte on the way.
 Error_After_Byte :: struct { done: bool }
 
 impl Error_After_Byte {
 	@(public)
-	read :: proc(self: inout Error_After_Byte, destination: []mut u8) -> (int, io.Error) {
-		if (self.done) { return 0, io.make_error(.End_Of_Input, .Read); }
+	read :: proc(self: inout Error_After_Byte, destination: []mut u8) -> Result(int, io.Error) {
+		if (self.done) { return .err(io.make_error(.Other, .Read)); }
 		self.done = true;
 		destination[0] = u8('x');
-		return 1, io.make_error(.Other, .Read);
+		return .ok(1);
 	}
 }
 
 reader_over :: proc(text: string_view, most: int) -> Short_Reader {
 	return Short_Reader{text.bytes(), 0, most};
+}
+
+// Every stream below is built from valid UTF-8 and every helper below is
+// expected to reach its end, so a failure at either is a bug in the test.
+text_of :: proc(bytes: []u8) -> string {
+	switch (text in string(bytes)) {
+	case .some: return text;
+	case .none: panic("the test produced invalid UTF-8");
+	}
+}
+
+no_line :: proc() -> string { panic("the reader ended early"); }
+
+succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
+	switch (_ in outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
+// The failure a `Result(Unit, Error)` carries. Every use below expects one.
+failed :: proc(outcome: Result(Unit, io.Error)) -> io.Error {
+	switch (error in outcome) {
+	case .ok:  panic("this operation was supposed to fail");
+	case .err: return error;
+	}
 }
 
 main :: proc() {
@@ -80,77 +108,90 @@ main :: proc() {
 	// write_all loops over partial writes.
 	sink: Short_Writer = {};
 	sink.most = 3;
-	if (io.write_string(inout sink, "hello, värld") != nil) { fmt.println("write failed"); }
+	if (!succeeded(io.write_string(inout sink, "hello, värld"))) { fmt.println("write failed"); }
 	fmt.println(len(sink.collected));
-	written, _ := string(sink.collected[:]);
-	fmt.println(written);
+	fmt.println(text_of(sink.collected[:]));
 
 	// read_exact fills the whole destination, and reports a short stream.
 	source := reader_over("abcdef", 2);
 	buffer: [6]u8 = {};
-	fmt.println(io.read_exact(inout source, buffer[:]) == nil);
-	exact, _ := string(buffer[:]);
-	fmt.println(exact);
+	fmt.println(succeeded(io.read_exact(inout source, buffer[:])));
+	fmt.println(text_of(buffer[:]));
 
 	short := reader_over("abc", 2);
 	big: [6]u8 = {};
-	fmt.println(int(io.code_of(io.read_exact(inout short, big[:]))));
+	fmt.println(int(io.code_of(failed(io.read_exact(inout short, big[:])))));
 
 	// read_to_end, with and without a limit.
 	whole := reader_over("one two three", 4);
-	bytes, error := io.read_to_end(inout whole);
-	fmt.println(error == nil);
-	fmt.println(len(bytes));
+	switch (bytes in io.read_to_end(inout whole)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(len(bytes));
+	case .err:
+		fmt.println(false);
+		fmt.println(0);
+	}
 
 	bounded := reader_over("0123456789", 3);
-	_, limited := io.read_to_end(inout bounded, limit = 5);
-	fmt.println(io.is(limited, .Limit_Exceeded));
+	switch (limited in io.read_to_end(inout bounded, limit = 5)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(limited, .Limit_Exceeded));
+	}
 
 	// Exactly at the limit is not over it.
 	edge := reader_over("01234", 3);
-	edge_bytes, edge_error := io.read_to_end(inout edge, limit = 5);
-	fmt.println(edge_error == nil);
-	fmt.println(len(edge_bytes));
+	switch (edge_bytes in io.read_to_end(inout edge, limit = 5)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(len(edge_bytes));
+	case .err:
+		fmt.println(false);
+		fmt.println(0);
+	}
 
 	// copy moves everything through a caller-sized window.
 	from := reader_over("stream me", 2);
 	into: Short_Writer = {};
 	into.most = 4;
 	window: [3]u8 = {};
-	moved, copy_error := io.copy(inout into, inout from, window[:]);
-	fmt.println(moved);
-	fmt.println(copy_error == nil);
-	copied, _ := string(into.collected[:]);
-	fmt.println(copied);
+	switch (moved in io.copy(inout into, inout from, window[:])) {
+	case .ok:
+		fmt.println(moved);
+		fmt.println(true);
+	case .err:
+		fmt.println(0);
+		fmt.println(false);
+	}
+	fmt.println(text_of(into.collected[:]));
 
 	// read_line: both endings, an unterminated last line, and the end.
 	lines := reader_over("first\r\nsecond\nthird", 5);
-	one, _ := io.read_line(inout lines);
-	fmt.println(one);
-	two, _ := io.read_line(inout lines);
-	fmt.println(two);
-	three, _ := io.read_line(inout lines);
-	fmt.println(three);
-	_, done := io.read_line(inout lines);
-	fmt.println(io.is(done, .End_Of_Input));
+	fmt.println(io.read_line(inout lines) or_else no_line());
+	fmt.println(io.read_line(inout lines) or_else no_line());
+	fmt.println(io.read_line(inout lines) or_else no_line());
+	switch (done in io.read_line(inout lines)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(done, .End_Of_Input));
+	}
 
 	kept := reader_over("keep\n", 5);
-	with_ending, _ := io.read_line(inout kept, options = io.Line_Options{true});
-	fmt.println(len(with_ending));
+	fmt.println(len(io.read_line(inout kept, options = io.Line_Options{true}) or_else no_line()));
 
 	combined: Error_After_Byte = {};
-	_, combined_error := io.read_line(inout combined);
-	fmt.println(io.is(combined_error, .Other));
+	switch (combined_error in io.read_line(inout combined)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(combined_error, .Other));
+	}
 
 	// The formatting bridge latches the first failure.
 	formatted: Short_Writer = {};
 	formatted.most = 2;
-	fmt.println(io.write_formatted_line(inout formatted, "count:", 42) == nil);
-	shown, _ := string(formatted.collected[:]);
-	fmt.println(shown);
+	fmt.println(succeeded(io.write_formatted_line(inout formatted, "count:", 42)));
+	fmt.println(text_of(formatted.collected[:]));
 
 	broken: Broken_Writer = {};
-	failure := io.write_formatted(inout broken, "anything");
+	failure := failed(io.write_formatted(inout broken, "anything"));
 	fmt.println(io.is(failure, .Broken_Pipe));
 	fmt.println(int(io.operation_of(failure)));
 	fmt.println(io.native_code_of(failure));
@@ -160,11 +201,11 @@ main :: proc() {
 	fmt.println(io.make_error(.Not_Found, .Open));
 
 	// And propagates with `or_return`.
-	fmt.println(propagate() != nil);
+	fmt.println(!succeeded(propagate()));
 }
 
-propagate :: proc() -> io.Error {
+propagate :: proc() -> Result(Unit, io.Error) {
 	broken: Broken_Writer = {};
 	io.write_string(inout broken, "x") or_return;
-	return nil;
+	return .ok(Unit{});
 }

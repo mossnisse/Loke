@@ -8,19 +8,38 @@ import "core:os";
 // Process-state allocation failures keep their normalized I/O identity. A
 // deliberately small fixed arena makes UTF-16 decoding fail without depending
 // on machine memory pressure.
+// The process calls answer with `Result(Unit, io.Error)`; these checks only
+// care which variant came back.
+succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
+	switch (_ in outcome) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+
 main :: proc() {
 	name: string_view = "LOKE_STDLIB_OOM_CHECK_7E2C";
 	value: string_view =
 		"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
 		"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" +
 		"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
-	fmt.println(os.set_environment(name, value) == nil);
+	fmt.println(succeeded(os.set_environment(name, value)));
 
 	room: [160]u8 = {};
 	arena := mem.Arena.from_buffer(room[:]);
-	_, present, error := os.get_environment(name, arena.allocator());
-	fmt.println(present);
-	fmt.println(io.is(error, .Out_Of_Memory));
+	switch (outcome in os.get_environment(name, arena.allocator())) {
+	case .ok:
+		// A successful read still separates "set" from "not set".
+		switch (_ in outcome) {
+		case .some: fmt.println(true);
+		case .none: fmt.println(false);
+		}
+		fmt.println(false);
+	case .err:
+		fmt.println(false);
+		fmt.println(io.is(outcome, .Out_Of_Memory));
+	}
 
-	fmt.println(os.unset_environment(name) == nil);
+	fmt.println(succeeded(os.unset_environment(name)));
 }

@@ -1077,5 +1077,8 @@ emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		return "0"
 	}
 	payload := emit_expr(e, v.bound[0])
+	if v.variant_clone {
+		payload = emit_clone_value(e, expr_base(v.bound[0]).type, payload)
+	}
 	return emit_union_value(e, v.type, v.variant_index, payload)
 }

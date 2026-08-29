@@ -862,6 +862,11 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	if s.subject != nil {
 		subject = walk_flow_expr(graph, s.subject)
 	}
+	// A switch over a place borrows it; one over a temporary consumes it, and
+	// the active payload transfers into the case's own owning binding.
+	consumes := s.kind == .Type && s.subject != nil &&
+		expr_base(s.subject).type != TYPE_ANY_VIEW &&
+		!expression_is_borrowed_place(graph.k.c, s.subject)
 	entry := graph.current
 	merge := new_flow_block(graph)
 	// A `switch` without a default can fall past every case, so the entry
@@ -880,6 +885,8 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		// the union alternative holds is what the binding holds.
 		if graph.mode != .Lifecycle {
 			prov_bind_value(graph, c.binding_symbol, subject, c.span)
+		} else {
+			track_case_binding(graph, c, consumes)
 		}
 		walk_flow_stmts(graph, c.stmts)
 		leave_flow_scope(graph)
@@ -890,6 +897,37 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		link(graph, entry, merge)
 	}
 	graph.current = merge
+}
+
+// A consuming switch hands the active payload to the case's binding, which is
+// an ordinary managed local from there on: tracked, movable, droppable, and
+// dropped exactly once on every exit of its case.
+@(private = "file")
+track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: bool) {
+	if !consumes || entry.binding_symbol == INVALID_SYMBOL {
+		return
+	}
+	sym := symbol_of(graph.k.c, entry.binding_symbol)
+	if sym == nil || !type_is_managed(graph.k.c, sym.type) {
+		return
+	}
+	slot, already := slot_of(graph, entry.binding_symbol)
+	if !already {
+		append(&graph.tracked, Tracked_Local {
+			symbol       = entry.binding_symbol,
+			scope        = len(graph.scopes),
+			owns_cleanup = true,
+		})
+		slot = len(graph.tracked) - 1
+		graph.by_symbol[entry.binding_symbol] = slot
+	}
+	append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
+	emit(graph, Flow_Event {
+		kind = .Init,
+		slot = slot,
+		span = sym.span,
+		name = identifier_text(graph.k.c, sym.name),
+	})
 }
 
 // ------------------------------------------------------------ expressions --

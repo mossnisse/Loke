@@ -357,6 +357,7 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = v.args[0].value
 	v.bound = bound
+	v.variant_clone = classify_variant_payload(k, v.args[0].value, payload)
 
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.

@@ -515,6 +515,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	// An `any_view` switch compares the stored `typeid` and reads through the
 	// data pointer; a union switch compares its tag and reads its payload.
 	erased := union_type == TYPE_ANY_VIEW
+	consumes := false
 	tag_llvm := "i64"
 	value := emit_expr(e, s.subject)
 	slot := ""
@@ -532,9 +533,7 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		tag = emit_union_tag(e, union_type, value)
 		// A subject the switch produced is the switch's to drop; one that names
 		// storage someone else owns is only borrowed.
-		if !expression_is_borrowed_place(e.c, s.subject) {
-			register_scope_place(e, union_type, slot)
-		}
+		consumes = !expression_is_borrowed_place(e.c, s.subject)
 	}
 
 	done := new_label(e, "typeswitch.done")
@@ -589,6 +588,16 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
 		emit_type_case_binding(e, entry, union_type, value, slot, erased)
+		// The consumed payload leaves through the case's binding, which drops it
+		// like any other managed local. With no binding to hand it to, the case
+		// itself owns the whole union.
+		if consumes {
+			if entry.binding_symbol != INVALID_SYMBOL {
+				register_implicit_drop(e, entry.binding_symbol)
+			} else {
+				register_scope_place(e, union_type, slot)
+			}
+		}
 		emit_statements(e, entry.stmts)
 		pop_scope(e)
 		branch(e, done)

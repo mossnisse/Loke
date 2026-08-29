@@ -14,12 +14,33 @@ import "core:strings";
 // environment, so nothing depends on the repository working directory or on a
 // developer's machine, and the directory is removed at the end.
 
-root :: proc() -> string {
-	base, present, error := os.get_environment("TEMP");
-	if (error != nil || !present) {
-		return "loke_fs_case";
+// Every `Result(Unit, io.Error)` below is only ever asked which variant it is.
+succeeded :: proc(outcome: Result(Unit, io.Error)) -> bool {
+	switch (_ in outcome) {
+	case .ok:  return true;
+	case .err: return false;
 	}
-	return path.join([]string_view{base, "loke_fs_case"});
+	return false;
+}
+
+// And these want the failure itself.
+failure_of :: proc(outcome: Result(Unit, io.Error)) -> io.Error {
+	switch (error in outcome) {
+	case .ok:  return io.make_error(.Other, .Other);
+	case .err: return error;
+	}
+}
+
+root :: proc() -> string {
+	switch (outcome in os.get_environment("TEMP")) {
+	case .ok:
+		switch (base in outcome) {
+		case .some: return path.join([]string_view{base, "loke_fs_case"});
+		case .none:
+		}
+	case .err:
+	}
+	return strings.copy("loke_fs_case");
 }
 
 in_root :: proc(directory: string_view, name: string_view) -> string {
@@ -30,138 +51,217 @@ main :: proc() {
 	directory := root();
 	// A leftover directory from an interrupted earlier run is not a failure.
 	clean_up(directory);
-	fmt.println(fs.create_directories(in_root(directory, "nested")) == nil);
+	fmt.println(succeeded(fs.create_directories(in_root(directory, "nested"))));
 
 	file := in_root(directory, "notes.txt");
-	fmt.println(fs.write_text(file, "första\n") == nil);
+	fmt.println(succeeded(fs.write_text(file, "första\n")));
 	// An existing file is not an already-satisfied directory creation.
-	fmt.println(io.is(fs.create_directories(file), .Already_Exists));
-	text, read_error := fs.read_text(file);
-	fmt.println(read_error == nil);
-	fmt.println(text);
-	fmt.println(len(text));
+	fmt.println(io.is(failure_of(fs.create_directories(file)), .Already_Exists));
+	switch (text in fs.read_text(file)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(text);
+		fmt.println(len(text));
+	case .err:
+		fmt.println(false);
+		fmt.println("");
+		fmt.println(0);
+	}
 
 	// Appending adds to the end; writing truncates first.
-	fmt.println(fs.append_text(file, "andra\n") == nil);
-	both, _ := fs.read_text(file);
+	fmt.println(succeeded(fs.append_text(file, "andra\n")));
+	both := fs.read_text(file) or_else no_text();
 	fmt.println(len(both));
 	foreach (line in strings.lines(both)) {
 		fmt.println(line);
 	}
-	fmt.println(fs.write_text(file, "kort") == nil);
-	short, _ := fs.read_text(file);
-	fmt.println(short);
+	fmt.println(succeeded(fs.write_text(file, "kort")));
+	fmt.println(fs.read_text(file) or_else no_text());
 
 	// Bytes, including a zero byte, survive unchanged.
 	binary := in_root(directory, "binary.bin");
 	data := [?]u8{0, 1, 2, 0xFF, 0};
-	fmt.println(fs.write_bytes(binary, data[:]) == nil);
-	bytes, bytes_error := fs.read_bytes(binary);
-	fmt.println(bytes_error == nil);
-	fmt.println(len(bytes));
-	fmt.println(int(bytes[3]));
+	fmt.println(succeeded(fs.write_bytes(binary, data[:])));
+	switch (bytes in fs.read_bytes(binary)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(len(bytes));
+		fmt.println(int(bytes[3]));
+	case .err:
+		fmt.println(false);
+		fmt.println(0);
+		fmt.println(-1);
+	}
 
 	// Those bytes are not UTF-8, and `read_text` says so rather than repairing.
-	_, invalid := fs.read_text(binary);
-	fmt.println(io.is(invalid, .Invalid_Data));
+	switch (invalid in fs.read_text(binary)) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(invalid, .Invalid_Data));
+	}
 
 	// The bounded read: one below, exactly at, and one above the limit.
-	under, under_error := fs.read_bytes(binary, limit = 6);
-	fmt.println(under_error == nil);
-	fmt.println(len(under));
-	exact, exact_error := fs.read_bytes(binary, limit = 5);
-	fmt.println(exact_error == nil);
-	fmt.println(len(exact));
-	over, over_error := fs.read_bytes(binary, limit = 4);
-	fmt.println(io.is(over_error, .Limit_Exceeded));
-	fmt.println(len(over));
+	switch (under in fs.read_bytes(binary, limit = 6)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(len(under));
+	case .err:
+		fmt.println(false);
+		fmt.println(0);
+	}
+	switch (exact in fs.read_bytes(binary, limit = 5)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(len(exact));
+	case .err:
+		fmt.println(false);
+		fmt.println(0);
+	}
+	switch (over in fs.read_bytes(binary, limit = 4)) {
+	case .ok:
+		fmt.println(false);
+		fmt.println(len(over));
+	case .err:
+		// Nothing partial comes back with the failure.
+		fmt.println(io.is(over, .Limit_Exceeded));
+		fmt.println(0);
+	}
 
 	// Metadata and existence.
-	info, info_error := fs.metadata(file);
-	fmt.println(info_error == nil);
-	fmt.println(int(info.kind));
-	fmt.println(info.size);
-	// The modification time is nanoseconds since the Unix epoch, so a file
-	// written moments ago sits between 2020 and 2100 rather than in 1601.
-	fmt.println(info.modified > 1577836800000000000 && info.modified < 4102444800000000000);
-	directory_info, _ := fs.metadata(directory);
-	fmt.println(int(directory_info.kind));
+	switch (info in fs.metadata(file)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(int(info.kind));
+		fmt.println(info.size);
+		// The modification time is nanoseconds since the Unix epoch, so a file
+		// written moments ago sits between 2020 and 2100 rather than in 1601.
+		fmt.println(info.modified > 1577836800000000000 && info.modified < 4102444800000000000);
+	case .err:
+		fmt.println(false);
+		fmt.println(-1);
+		fmt.println(0);
+		fmt.println(false);
+	}
+	switch (directory_info in fs.metadata(directory)) {
+	case .ok:  fmt.println(int(directory_info.kind));
+	case .err: fmt.println(-1);
+	}
 
-	present, present_error := fs.exists(file);
-	fmt.println(present);
-	fmt.println(present_error == nil);
-	absent, absent_error := fs.exists(in_root(directory, "nothing.txt"));
-	fmt.println(absent);
-	fmt.println(absent_error == nil);
+	switch (present in fs.exists(file)) {
+	case .ok:
+		fmt.println(present);
+		fmt.println(true);
+	case .err:
+		fmt.println(false);
+		fmt.println(false);
+	}
+	switch (absent in fs.exists(in_root(directory, "nothing.txt"))) {
+	case .ok:
+		fmt.println(absent);
+		fmt.println(true);
+	case .err:
+		fmt.println(true);
+		fmt.println(false);
+	}
 
 	// A missing file is `Not_Found`, on every entry point.
-	_, missing := fs.open_read(in_root(directory, "nothing.txt"));
-	fmt.println(io.is(missing, .Not_Found));
-	fmt.println(int(io.operation_of(missing)));
-	fmt.println(io.is(fs.remove(in_root(directory, "nothing.txt")), .Not_Found));
+	switch (missing in fs.open_read(in_root(directory, "nothing.txt"))) {
+	case .ok:
+		fmt.println(false);
+		fmt.println(-1);
+	case .err:
+		fmt.println(io.is(missing, .Not_Found));
+		fmt.println(int(io.operation_of(missing)));
+	}
+	fmt.println(io.is(failure_of(fs.remove(in_root(directory, "nothing.txt"))), .Not_Found));
 
 	// A Unicode name is an ordinary name.
 	unicode := in_root(directory, "vär(ld).txt");
-	fmt.println(fs.write_text(unicode, "ok") == nil);
-	unicode_present, _ := fs.exists(unicode);
-	fmt.println(unicode_present);
+	fmt.println(succeeded(fs.write_text(unicode, "ok")));
+	fmt.println(fs.exists(unicode) or_else false);
 
 	// The handle API: write, seek, read back, and close explicitly.
 	handle_path := in_root(directory, "handle.bin");
-	handle, open_error := fs.open(handle_path, fs.Open_Options{.Read_Write, .Create_Or_Truncate, false});
-	fmt.println(open_error == nil);
-	fmt.println(io.write_string(inout handle, "0123456789") == nil);
-	fmt.println(handle.flush() == nil);
-	position, seek_error := handle.seek(4, fs.Seek_Origin.Start);
-	fmt.println(seek_error == nil);
-	fmt.println(position);
+	handle := fs.open(handle_path, fs.Open_Options{.Read_Write, .Create_Or_Truncate, false}) or_else no_file();
+	fmt.println(true);
+	fmt.println(succeeded(io.write_string(inout handle, "0123456789")));
+	fmt.println(succeeded(handle.flush()));
+	switch (position in handle.seek(4, fs.Seek_Origin.Start)) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(position);
+	case .err:
+		fmt.println(false);
+		fmt.println(0);
+	}
 	window: [3]u8 = {};
-	count, read_count_error := handle.read(window[:]);
-	fmt.println(read_count_error == nil);
-	fmt.println(count);
-	seen, _ := string(window[:]);
-	fmt.println(seen);
-	fmt.println(handle.close() == nil);
+	switch (count in handle.read(window[:])) {
+	case .ok:
+		fmt.println(true);
+		fmt.println(count);
+	case .err:
+		fmt.println(false);
+		fmt.println(0);
+	}
+	fmt.println(string(window[:]) or_else no_text());
+	fmt.println(succeeded(handle.close()));
 	// Close is idempotent, and the value is inert afterwards.
-	fmt.println(handle.close() == nil);
+	fmt.println(succeeded(handle.close()));
 	fmt.println(handle.is_open());
-	_, after_close := handle.read(window[:]);
-	fmt.println(after_close != nil);
+	switch (_ in handle.read(window[:])) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(true);
+	}
 
 	// A file opened for reading refuses to write, whatever the static type says.
-	reader, _ := fs.open_read(file);
+	reader := fs.open_read(file) or_else no_file();
 	one: string_view = "x";
-	_, wrong_direction := reader.write(one.bytes());
-	fmt.println(io.is(wrong_direction, .Unsupported));
-	fmt.println(reader.close() == nil);
+	switch (wrong_direction in reader.write(one.bytes())) {
+	case .ok:  fmt.println(false);
+	case .err: fmt.println(io.is(wrong_direction, .Unsupported));
+	}
+	fmt.println(succeeded(reader.close()));
 
 	// Renaming, then reading through the new name.
 	renamed := in_root(directory, "renamed.txt");
-	fmt.println(fs.rename(file, renamed) == nil);
-	moved, _ := fs.read_text(renamed);
-	fmt.println(moved);
+	fmt.println(succeeded(fs.rename(file, renamed)));
+	fmt.println(fs.read_text(renamed) or_else no_text());
 
 	// The directory reader yields every entry once, and skips `.` and `..`.
 	entries := count_entries(directory);
 	fmt.println(entries);
 
 	clean_up(directory);
-	gone, _ := fs.exists(directory);
-	fmt.println(gone);
+	fmt.println(fs.exists(directory) or_else true);
 }
+
+// Everything these stand in for is checked by the case that produced it; a
+// failure here is a broken test environment rather than a case to cover.
+no_text :: proc() -> string { panic("a file the test just wrote could not be read"); }
+no_file :: proc() -> fs.File { panic("a file the test just created could not be opened"); }
 
 // The reader is move-only and closes its search handle in `drop`, so this
 // collects what it needs and lets the scope end.
 count_entries :: proc(directory: string_view) -> int {
-	reader, error := fs.read_directory(directory);
-	if (error != nil) { return -1; }
+	reader: fs.Directory_Reader;
+	switch (opened in fs.read_directory(directory)) {
+	case .ok:  reader = move(opened);
+	case .err: return -1;
+	}
 	total := 0;
-	for (;;) {
-		entry, present, next_error := reader.next();
-		if (next_error != nil) { return -2; }
-		if (!present) { break; }
-		if (len(entry.name) == 0) { return -3; }
-		total += 1;
+	// `break` inside a variant switch leaves the switch, so the loop's own exit
+	// is a condition rather than a jump out of a case.
+	reading := true;
+	for (; reading; ) {
+		switch (outcome in reader.next()) {
+		case .ok:
+			switch (entry in outcome) {
+			case .some:
+				if (len(entry.name) == 0) { return -3; }
+				total += 1;
+			case .none: reading = false;
+			}
+		case .err: return -2;
+		}
 	}
 	return total;
 }
@@ -169,23 +269,31 @@ count_entries :: proc(directory: string_view) -> int {
 // Removes every file, then the directories. `remove` on a missing path is not
 // checked here: this runs before the first case as well.
 clean_up :: proc(directory: string_view) {
-	reader, error := fs.read_directory(directory);
-	if (error != nil) { return; }
-	names, made := make([dynamic]string, 0, 8);
-	if (made != nil) { return; }
-	for (;;) {
-		entry, present, next_error := reader.next();
-		if (next_error != nil || !present) { break; }
-		names.append(strings.copy(entry.name));
+	reader: fs.Directory_Reader;
+	switch (opened in fs.read_directory(directory)) {
+	case .ok:  reader = move(opened);
+	case .err: return;
+	}
+	names := make([dynamic]string, 0, 8) or_else {};
+	reading := true;
+	for (; reading; ) {
+		switch (outcome in reader.next()) {
+		case .ok:
+			switch (entry in outcome) {
+			case .some: names.append(strings.copy(entry.name));
+			case .none: reading = false;
+			}
+		case .err: reading = false;
+		}
 	}
 	// The reader holds a search handle over the directory being emptied, so it is
 	// closed before anything is removed.
-	if (reader.close() != nil) { return; }
+	if (!succeeded(reader.close())) { return; }
 	// Indexed, not `foreach`: a by-value loop over a managed element is L0504,
 	// which is the same limit that shaped `Directory_Reader`.
 	for (index := 0; index < len(names); index += 1) {
 		full := path.join([]string_view{directory, names[index]});
-		if (fs.remove(full) != nil) {
+		if (!succeeded(fs.remove(full))) {
 			fs.remove_directory(full);
 		}
 	}

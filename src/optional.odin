@@ -351,6 +351,9 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		return Flow_Info{can_fall_through = true}
 	}
 	erased := subject == TYPE_ANY_VIEW
+	// design.md "Unions": a switch over a place borrows it, and a switch over a
+	// temporary consumes it.
+	borrows := erased || expression_is_borrowed_place(k.c, s.subject)
 	if !erased && !type_is_union(k.c, subject) {
 		errorf(
 			k.c,
@@ -458,6 +461,10 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 				type       = binding_type,
 				pkg        = k.pkg,
 				owner_proc = k.proc_literal,
+				// A place subject keeps owning its value, so its binding is a
+				// non-owning view of the payload. A temporary hands the payload
+				// over, and the binding owns it like any other managed local.
+				immutable  = borrows,
 			})
 			k.scope.names[name] = entry.binding_symbol
 		}
