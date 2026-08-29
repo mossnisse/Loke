@@ -1,0 +1,66 @@
+package main; import "core:fmt";
+
+import "./producers";
+
+// design.md "@(require_results)": a result that must be handled is a property
+// of the declaration *and* of the type, so it survives every way a call can be
+// spelled — direct, overloaded, generic, imported, through a procedure value,
+// through a wrapper, and through recursion. `_ = call()` is the explicit
+// discard, and it is always accepted.
+
+Fail :: enum { Bad }
+
+step :: proc() -> Result(int, Fail) { return .ok(1); }
+
+@(require_results)
+counted :: proc() -> int { return 1; }
+
+// The property travels through an aggregate that holds one.
+Pair :: struct { left: Result(int, Fail), right: int }
+paired :: proc() -> Pair { return Pair{.ok(1), 2}; }
+
+// Overloads: the policy applies whichever candidate is selected.
+narrow :: proc(value: i8) -> Result(int, Fail) { return .ok(int(value)); }
+wide :: proc(value: i16) -> Result(int, Fail) { return .ok(int(value)); }
+either :: proc{narrow, wide};
+
+// A generic instance answers with the instantiated type.
+wrap :: proc(value: $T) -> Result(T, Fail) { return .ok(value); }
+
+// A wrapper that forwards keeps its own result's property.
+forward :: proc() -> Result(int, Fail) { return step(); }
+
+recurse :: proc(depth: int) -> Result(int, Fail) {
+	if (depth <= 0) { return .ok(0); }
+	return recurse(depth - 1);
+}
+
+main :: proc() {
+	step();
+	counted();
+	paired();
+	either(i8(1));
+	either(i16(1));
+	wrap(1);
+	forward();
+	recurse(2);
+	producers.open();
+	producers.counted();
+
+	// A call through a procedure value: the value's result type carries the
+	// property even though no declaration is named here.
+	indirect: proc() -> Result(int, Fail) = step;
+	indirect();
+
+	// Every one of these is accepted.
+	_ = step();
+	_ = counted();
+	_ = either(i8(1));
+	_ = wrap(1);
+	_ = producers.open();
+	fmt.println(step() or_else 0, forward() or_else 0);
+	switch (n in recurse(2)) {
+	case .ok:  fmt.println(n);
+	case .err: fmt.println(-1);
+	}
+}

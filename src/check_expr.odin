@@ -1084,6 +1084,16 @@ check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, container
 		v.type = INVALID_TYPE
 		return
 	}
+	// design.md "Zero values": both behaviours manufacture the element's zero —
+	// a read answers with it for a missing key, and an insertion starts the new
+	// entry at it — so a no-zero element has neither.
+	if !require_type_has_zero(
+		k, info.element, v.span,
+		place ? "an inserting map index" : "a map read, which answers the zero for a missing key",
+	) {
+		v.type = INVALID_TYPE
+		return
+	}
 	if place {
 		// An inserting place is a location: assignable, and addressable so a
 		// field or index chain rooted in it works.
@@ -2235,6 +2245,24 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 			k.c, call.span, "L0612",
 			"the result of `%s` must be used or discarded with `_ = ...`", name,
 		)
+		return
+	}
+	// design.md "@(require_results)": the attribute is a *type* attribute as
+	// well, so a result whose type requires handling is required whoever
+	// declared the procedure. `Result` is the one that matters in practice.
+	results := call.result_types
+	if len(results) == 0 {
+		results = {call.type}
+	}
+	for result in results {
+		if type_requires_results(k.c, result) {
+			errorf(
+				k.c, call.span, "L0612",
+				"this call produces `%s`, which must be used or discarded with `_ = ...`",
+				type_name(k.c, result),
+			)
+			return
+		}
 	}
 }
 
@@ -2438,6 +2466,14 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	// `lookup_value` produces an owned copy of the stored element, so a move-only
 	// element has nothing for it to produce. Reported after the result shape is
 	// settled, so a `v, ok :=` destructuring still knows its arity.
+	// design.md "Zero values": growth fills the new slots with the element's
+	// zero, and a no-zero element has none to fill them with.
+	#partial switch chosen.container_op {
+	case .Resize, .Try_Resize:
+		require_type_has_zero(
+			k, container_element(k.c, chosen.params[0]), v.span, "growing a container",
+		)
+	}
 	if chosen.container_op == .Map_Lookup_Value {
 		element := container_element(k.c, chosen.params[0])
 		if type_clone_disabled(k.c, element) {
@@ -3085,6 +3121,10 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			v.type = INVALID_TYPE
 			return
 		}
+		if !require_type_has_zero(k, element, v.span, "`new`, which zeroes the allocation") {
+			v.type = INVALID_TYPE
+			return
+		}
 		v.alloc_type = element
 		// A fresh allocation is the caller's to write and to free, so `new` and
 		// `new_clone` hand back `^mut T`.
@@ -3286,6 +3326,17 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	bound[max_counts] = allocator
 	v.bound = bound
 	v.alloc_type = container
+	// design.md "Zero values": a written *length* fills that many slots with the
+	// element's zero. A capacity or a map reservation is raw storage and fills
+	// nothing, so neither needs one.
+	if !is_map && len(counts) > 0 {
+		if !require_type_has_zero(
+			k, container_element(k.c, container), expr_span(counts[0]), "a `make` length",
+		) {
+			v.type = INVALID_TYPE
+			return
+		}
+	}
 
 	v.type = result_type(k, container, TYPE_ALLOCATOR_ERROR)
 }
@@ -3886,6 +3937,23 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			ok = false
 		} else {
 			classify_composite_element(k, v, index, symbol.type)
+		}
+	}
+	if !ok {
+		return
+	}
+	// design.md "Zero values": an omitted field is filled with its type's zero,
+	// and a no-zero type has none to fill it with.
+	for field, index in info.fields {
+		if seen[index] {
+			continue
+		}
+		symbol := symbol_of(k.c, field)
+		if symbol == nil {
+			continue
+		}
+		if !require_type_has_zero(k, symbol.type, v.span, strings.concatenate({"the omitted field `", identifier_text(k.c, symbol.name), "`"}, context.temp_allocator)) {
+			ok = false
 		}
 	}
 	if !ok {

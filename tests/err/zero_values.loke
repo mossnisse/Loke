@@ -1,0 +1,52 @@
+package main; import "core:fmt";
+
+// design.md "Zero values": a union with no `@(zero=)` has no zero value, and
+// every operation that would manufacture one says so.
+//
+// A local declaration with no initialiser is deliberately not one of them: it
+// stays dead until it is fully assigned, so nothing is manufactured for it.
+
+Choice :: union { number: i32, flag: bool }
+Holder :: struct { id: int, choice: Choice }
+
+// The property propagates through a struct, a non-empty fixed array, and a
+// distinct type; an empty array holds no element, so it keeps its zero.
+Wrapped :: struct { held: Holder }
+Row :: [3]Choice;
+Empty_Row :: [0]Choice;
+Named :: distinct Choice;
+
+global: Choice;
+lasting: static Wrapped;
+per_thread: thread_local Row;
+
+// Accepted: an empty array has no element to fill.
+still_fine: Empty_Row;
+also_fine: static Empty_Row;
+
+main :: proc() {
+	// Every field an aggregate literal omits is filled with that field's zero.
+	blank := Holder{};
+	partial := Holder{1};
+	nested := Wrapped{};
+
+	// A fresh allocation is zeroed.
+	p := new(Choice);
+	q := new(Named);
+
+	// A written length fills that many slots.
+	filled := make([dynamic]Choice, 4);
+
+	// So does growth. Reserving capacity does not, and is accepted.
+	ys: [dynamic]Choice;
+	ys.reserve(4);
+	ys.resize(4);
+
+	// A map read answers the zero for a missing key, and an inserting index
+	// starts a new entry at it.
+	m: map[int]Choice;
+	fmt.println(m[1]);
+	m[2] = Choice.number(3);
+
+	fmt.println(blank, partial, nested, p, q, len(filled), len(ys), global);
+}

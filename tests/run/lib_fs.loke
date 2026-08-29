@@ -294,9 +294,9 @@ clean_up :: proc(directory: string_view) {
 	for (index := 0; index < len(names); index += 1) {
 		full := path.join([]string_view{directory, names[index]});
 		if (!succeeded(fs.remove(full))) {
-			fs.remove_directory(full);
+			_ = fs.remove_directory(full);
 		}
 	}
-	fs.remove_directory(in_root(directory, "nested"));
-	fs.remove_directory(directory);
+	_ = fs.remove_directory(in_root(directory, "nested"));
+	_ = fs.remove_directory(directory);
 }

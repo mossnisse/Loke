@@ -74,7 +74,8 @@ impl File {
 	// uses to observe one.
 	release :: hook(drop) proc(self: inout File) {
 		if (self.handle != NO_HANDLE) {
-			close_handle(self.handle);
+			// The discard is the point: a drop has nowhere to report to.
+			_ = close_handle(self.handle);
 			self.handle = NO_HANDLE;
 		}
 	}

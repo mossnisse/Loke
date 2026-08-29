@@ -1,0 +1,15 @@
+@(public)
+package producers;
+
+@(public)
+Fail :: enum { Bad }
+
+// A `Result` carries `@(require_results)` in its own declaration, so an
+// importer inherits the obligation without this package writing anything.
+@(public)
+open :: proc() -> Result(int, Fail) { return .ok(1); }
+
+// The declaration-level half, on a type that carries nothing itself.
+@(public)
+@(require_results)
+counted :: proc() -> int { return 1; }
