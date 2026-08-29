@@ -12,7 +12,7 @@
 // The compiler contributes one package-private primitive:
 //
 //   allocate_string(text: string_view, allocator: Allocator)
-//       -> (string, Allocator_Error)
+//       -> Result(string, Allocator_Error)
 //
 // which copies known-valid UTF-8 into string storage from a *supplied*
 // allocator. Every built-in text operation allocates from the default provider,

@@ -123,11 +123,9 @@ impl Error {
 
 // ---------------------------------------------------------------- streams --
 
-// The two protocols. Both are declared with `slot` requirements: an expression
-// requirement's result is a single type and there is no tuple type, so
-// `-> (int, Error)` is not expressible that way — and `slot` is also what
-// dyn-compatibility needs, which is what makes `dyn mut Writer` exist for the
-// formatting adapter below. Both slots take `inout self`, so both views are
+// The two protocols. Both are declared with `slot` requirements, which is what
+// dyn-compatibility needs — and that is what makes `dyn mut Writer` exist for
+// the formatting adapter below. Both slots take `inout self`, so both views are
 // mutable ones.
 //
 // The contracts are:
@@ -197,8 +195,8 @@ write_string :: proc(writer: inout $W, text: string_view) -> Result(Unit, Error)
 //
 // `limit == 0` means no library-imposed limit. A nonzero limit is what keeps an
 // untrusted stream from causing an unbounded allocation: input that would make
-// the result exceed it returns `Limit_Exceeded`, destroys the partial result,
-// and returns the zero value.
+// the result exceed it destroys the partial result and returns
+// `Limit_Exceeded` alone.
 read_to_end :: proc(
 	reader: inout $R,
 	allocator: Allocator = mem.default_allocator(),

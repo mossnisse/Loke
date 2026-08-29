@@ -2178,6 +2178,19 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 
 	info := underlying_info(k.c, callee_type)
 	if info == nil || info.kind != .Proc {
+		// A payloadless variant is complete on its own, so the call is the
+		// mistake rather than the selector.
+		if sel, is_sel := v.callee.(^Expr_Selector);
+		   is_sel && sel.variant_union != INVALID_TYPE &&
+		   union_variant_payload(k.c, sel.variant_union, sel.variant_index) == TYPE_VOID {
+			errorf(
+				k.c, v.span, "L0425",
+				"`%s.%s` carries no payload: write `%s` without a call",
+				type_name(k.c, sel.variant_union), sel.name.text, sel.name.text,
+			)
+			v.type = INVALID_TYPE
+			return
+		}
 		errorf(k.c, expr_span(v.callee), "L0320", "`%s` is not callable", type_name(k.c, callee_type))
 		v.type = INVALID_TYPE
 		return

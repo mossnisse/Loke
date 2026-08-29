@@ -10,6 +10,10 @@ Bad_Payload :: union { nothing: void }
 Late_Zero :: union @(zero=second) { first: i32, second: }
 No_Such_Zero :: union @(zero=missing) { first: }
 
+// Tag 0 alone is not the all-zero representation: the payload beside it has to
+// be all-zero too, and a union with no zero of its own is not.
+No_Zero_Payload :: union @(zero=first) { first: Value, second: }
+
 // `@(failure=)` designates one of exactly two variants.
 Three_Way :: union @(failure=c) { a: i32, b: bool, c: }
 No_Such_Failure :: union @(failure=missing) { a: i32, b: }
@@ -32,6 +36,13 @@ wrong_result :: proc() -> int {
 
 main :: proc() {
 	v: Value = .number(1);
+
+	// Construction: every arity and shape mistake has its own diagnostic.
+	w: Value = .number();       // a payload variant with no payload
+	x: Value = .number(1, 2);   // two payloads where one is taken
+	y: Value = .flag;           // a payload variant written as a complete one
+	z: Value = 1;               // an implicit payload conversion
+	q: Three_Way = .c(1);       // a payload where the variant takes none
 
 	// A payload type does not name a variant: two variants may share one.
 	a := v.(i32);
@@ -64,5 +75,5 @@ main :: proc() {
 	// `or_else` needs a union with a designated failure variant on its left.
 	b := not_fallible() or_else true;
 
-	fmt.println(a, b);
+	fmt.println(a, b, w, x, y, z, q);
 }

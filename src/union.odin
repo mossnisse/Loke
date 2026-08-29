@@ -103,6 +103,16 @@ resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
 		)
 		return
 	}
+	// Tag 0 alone is not the all-zero representation: the payload beside it has
+	// to be all-zero too, which a no-zero payload is not.
+	if payload := info.variants[0]; payload != TYPE_VOID && !type_has_zero(k.c, payload) {
+		errorf(
+			k.c, attribute.span, "L0423",
+			"`@(zero=%s)` needs an all-zero payload, and `%s` has no zero value",
+			identifier_text(k.c, name), type_name(k.c, payload),
+		)
+		return
+	}
 	info.zero_designated = true
 }
 

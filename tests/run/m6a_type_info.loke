@@ -17,6 +17,12 @@ Colour :: enum { Red, Green = 5, Blue }
 
 Huge :: enum u128 { Value = 18446744073709551617 }
 
+// A union's members are its variants, in declaration order. The variant's name
+// is its identity, so two variants sharing a payload type are two entries; a
+// payloadless one reports `Unit`, and each entry's `offset` is the declaration
+// index the tag holds.
+Pair :: union { left: i32, right: i32, neither: }
+
 // A `typeid` is an ordinary runtime scalar, so an out-of-range value can be
 // produced through unsafe storage reinterpretation.
 forge :: proc(raw: i64) -> typeid {
@@ -47,5 +53,13 @@ main :: proc() {
 	wide := type_info_of(typeid_of(Huge));
 	if (wide != nil) {
 		fmt.println(wide.members[0].value_low, wide.members[0].value_high);
+	}
+	pair := type_info_of(typeid_of(Pair));
+	if (pair != nil) {
+		fmt.println(int(pair.kind), len(pair.members));
+		foreach (member in pair.members) {
+			fmt.println(member.name, int(member.kind), member.offset,
+				1 if member.type == typeid_of(i32) else 0);
+		}
 	}
 }

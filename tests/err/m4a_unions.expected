@@ -14,37 +14,56 @@ L0423
 @11:25
 `@(zero=missing)` names no variant of this union
 L0423
-@14:22
+@15:28
+`@(zero=first)` needs an all-zero payload, and `Value` has no zero value
+L0423
+@18:22
 `@(failure=...)` needs a union of exactly two variants, found 3
 L0423
-@15:28
+@19:28
 `@(failure=missing)` names no variant of this union
 L0429
-@24:17
+@28:17
 `or_return` needs this procedure's last result to be a union with a designated failure variant, found `int`
 L0429
-@30:19
+@34:19
+`or_return` needs this procedure's last result to be a union with a designated failure variant, found `int`
 L0425
-@37:7
+@41:13
+`Value.number` takes exactly one payload argument, found 0
+L0425
+@42:13
+`Value.number` takes exactly one payload argument, found 2
+L0425
+@43:13
+`Value.flag` carries a payload: write `flag(value)`
+L0352
+@44:13
+1 is not representable by `Value`
+L0425
+@45:17
+`Three_Way.c` carries no payload: write `c` without a call
+L0425
+@48:7
 `Value` is a union: match its variants with a `switch (p in value)` whose cases are `.name`
 L0426
-@41:15
+@52:15
 a type switch needs a union or an `any_view`, found `int`
 L0427
-@47:2
+@58:2
 this type switch over `Value` does not cover .flag, .number
 L0426
-@48:7
+@59:7
 a union case names a variant: `case .name:`
 L0427
-@53:2
+@64:2
 this type switch over `Value` does not cover .flag
 L0427
-@59:2
+@70:2
 this type switch over `Value` does not cover .number
 L0426
-@61:7
+@72:7
 `Value` has no variant `missing`
 L0428
-@65:7
+@76:7
 `or_else` needs a union with a designated failure variant on its left, found `bool`

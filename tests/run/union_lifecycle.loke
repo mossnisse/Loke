@@ -1,0 +1,91 @@
+package main; import "core:fmt";
+
+// design.md "Unions": a union owns exactly one payload, so every generated
+// operation reads the tag first and touches that variant alone. An inactive
+// payload is never loaded, compared, formatted, cloned, or dropped.
+
+copies, drops: int;
+
+Owned :: struct { id: int }
+impl Owned {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Owned, Allocator_Error) {
+		copies += 1;
+		return .ok(Owned{self.id});
+	}
+	release :: hook(drop) proc(self: inout Owned) { drops += 1; }
+}
+
+Boxed :: union @(zero=empty) { empty:, held: Owned }
+
+// Two variants of one payload type. `Result(int, int)` is the same shape, and
+// is the reason variant identity is the declaration index rather than the
+// payload: nothing about `int` distinguishes these two arms.
+Pair :: union @(zero=left) { left: int, right: int }
+
+// A managed payload beside a managed one, so the tag decides which hook runs.
+Text :: union @(zero=none) { none:, one: string, two: string }
+
+reset :: proc() { copies, drops = 0, 0; }
+
+main :: proc() {
+	// --- the inactive payload is untouched --------------------------------
+	reset();
+	{
+		empty: Boxed = .empty;
+		copy := empty;
+		fmt.println(empty == copy, copies, drops);
+		fmt.println(empty);
+	}
+	// Nothing was cloned and nothing was dropped: neither value held a payload.
+	fmt.println("empty", copies, drops);
+
+	reset();
+	{
+		held: Boxed = .held(Owned{7});
+		copy := held;
+		fmt.println(held == copy, copies, drops);
+		fmt.println(held);
+	}
+	// Exactly one clone, and two values to destroy.
+	fmt.println("held", copies, drops);
+
+	// The zero of a union that designates one is that variant.
+	reset();
+	{
+		inert: Boxed;
+		fmt.println(inert);
+	}
+	fmt.println("zero", copies, drops);
+
+	// --- variant identity -------------------------------------------------
+	// Same payload type, same payload value, different arms.
+	fmt.println(Pair.left(3) == Pair.left(3), Pair.left(3) == Pair.right(3));
+	fmt.println(Pair.left(3), Pair.right(3));
+	switch (n in Pair.right(9)) {
+	case .left:  fmt.println("left", n);
+	case .right: fmt.println("right", n);
+	}
+
+	// --- which hook runs follows the tag ----------------------------------
+	{
+		a: Text = .one("first" + "");
+		b: Text = .two("second" + "");
+		c := a;
+		d := b;
+		fmt.println(a, b, c, d);
+		fmt.println(a == c, b == d, a == b);
+	}
+
+	// A union nested in a struct and in an array keeps the same behaviour.
+	reset();
+	{
+		Holder :: struct { id: int, boxed: Boxed }
+		h := Holder{1, .held(Owned{5})};
+		g := h;
+		fmt.println(g.boxed, copies);
+		row := [2]Boxed{.empty, .held(Owned{6})};
+		other := row;
+		fmt.println(other[1], copies);
+	}
+	fmt.println("nested", copies, drops);
+}

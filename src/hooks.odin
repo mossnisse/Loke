@@ -245,6 +245,14 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 				return true
 			}
 		}
+	case .Union:
+		// A union holding a move-only variant is move-only: the tag-aware clone
+		// would have no hook to call for the arm that is active.
+		for variant in info.variants {
+			if variant != TYPE_VOID && type_clone_disabled(c, variant) {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -283,7 +291,7 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 		return
 	}
 	#partial switch info.kind {
-	case .Struct, .Array, .Dynamic_Array, .Map, .String:
+	case .Struct, .Array, .Union, .Dynamic_Array, .Map, .String:
 	case:
 		return
 	}
@@ -298,7 +306,7 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	// does — the difference is only what its body lowers to, which
 	// `emit_synth_try_clone` decides from `Lifecycle.intrinsic`.
 	#partial switch info.kind {
-	case .Struct, .Array:
+	case .Struct, .Array, .Union:
 	case .Dynamic_Array, .Map:
 		// What the generated operation table calls *is* the element's (and key's)
 		// own hook, so the recursion has to run whatever this type installs.
@@ -331,12 +339,25 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	// its emitted body forwards to that hook; otherwise it performs the generated
 	// field-wise operation.
 	append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
-	// design.md: `clone` is generated for a user record. A fixed array is reached
-	// only as a part of one, and is not itself a record.
-	if info.kind == .Struct {
+	// design.md: `clone` is generated for a user record and for a union, both of
+	// which a program names directly. A fixed array is reached only as a part of
+	// one, and is not itself a record.
+	if info.kind == .Struct || info.kind == .Union {
 		append(&members, generated_hook(k, type, "clone", .Clone, false))
 	}
 	add_members(k.c, type, members[:])
+
+	// A union's parts are its variant payloads. The generated body reads the tag
+	// and visits exactly one of them, but any of them may be the active one, so
+	// every payload's own operations have to exist.
+	if info.kind == .Union {
+		for variant in info.variants {
+			if variant != TYPE_VOID && type_is_managed(k.c, variant) {
+				contribute_lifecycle_members(k, variant)
+			}
+		}
+		return
+	}
 
 	// All elements of a fixed array have the same operation dependencies.
 	part_count := clone_part_count(k.c, type)
