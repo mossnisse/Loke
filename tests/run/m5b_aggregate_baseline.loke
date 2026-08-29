@@ -323,4 +323,398 @@ main :: proc() {
 	total := 0;
 	forward_a_count(inout total, KEPT[:]);
 	fmt.println(total);
+
+	assert(pointer_field_read(numbers[:])[0] == 1);
+	assert(auto_dereferenced_field_read(numbers[:])[1] == 2);
+	assert(dereferenced_value_read(numbers[:]).view[2] == 3);
+	assert(temporary_field_read(numbers[:])[3] == 4);
+	assert(slice_element_read(numbers[:])[0] == 1);
+	assert(optional_extraction_read(numbers[:])[1] == 2);
+	assert(trapping_extraction_read(numbers[:])[2] == 3);
+	assert(temporary_fields_are_independent(numbers[:])[0] == 1);
+	assert(temporary_elements_are_independent(numbers[:])[0] == 1);
+	assert(pointer_fields_are_independent(numbers[:])[0] == 1);
+	assert(nested_pointer_read(numbers[:])[0] == 1);
+	assert(read_does_not_borrow_wrapper(numbers[:])[0] == 1);
+	assert(read_scalar_from_pointer() == 7);
+	assert(erased_extraction_read(numbers[:])[0] == 1);
+	assert(projected_pointer_read(numbers[:])[0] == 1);
+	assert(reordered_result_field(numbers[:])[0] == 1);
+	assert(reordered_parameter_field(numbers[:])[0] == 1);
+	assert(nested_result_field(numbers[:])[0] == 1);
+	assert(assigned_result_field(numbers[:])[0] == 1);
+	assert(conditional_result_field(numbers[:], true)[0] == 1);
+	assert(conditional_result_field(numbers[:], false)[0] == 1);
+	assert(multiple_result_fields(numbers[:])[0] == 1);
+	assert(generic_result_field(numbers[:])[0] == 1);
+	assert(recursive_result_field(numbers[:])[0] == 1);
+	assert(array_result_field(numbers[:])[0] == 1);
+	assert(duplicate_result_field(numbers[:])[0] == 1);
+	assert(named_result_field(numbers[:])[0] == 1);
+	assert(static_result_field(numbers[:])[0] == 5);
+	assert(union_result_field(numbers[:])[0] == 1);
+	assert(field_beside_map_result(numbers[:])[0] == 1);
+	assert(field_beside_map_parameter(numbers[:])[0] == 1);
+	assert(truncated_whole_replacement(numbers[:])[0] == 1);
+	assert(map_try_insert_keeps_unrelated_key(numbers[:])[0] == 1);
+	retained_elements: [dynamic]Holder;
+	append_with_contract(inout retained_elements, numbers[:]);
+	assert(retained_elements[0].view[0] == 1);
+	keyed := map_key_from_parameter(KEY_BYTES[:]);
+	assert(len(keyed) == 1);
+	track_static_aggregate_content();
+	track_tls_aggregate_content();
+	assert(distinct_callback_local(numbers[:])[0] == 1);
+	assert(content_after_clear() == 4);
+	assert(content_after_whole_replacement() == 4);
+	assert(map_content_after_clear() == 4);
+	assert(copy_survives_clear(numbers[:])[0] == 1);
+	assert(bare_map_lookup(numbers[:])[0] == 1);
+	assert(bare_map_index(numbers[:])[0] == 1);
+}
+
+// Loading content must not add a lasting borrow of the local wrapper. These
+// return the caller's storage through the same paths as the rejection cases.
+pointer_field_read :: proc(values: []int) -> []int {
+	held := Holder{values};
+	p := &held;
+	return p^.view;
+}
+
+auto_dereferenced_field_read :: proc(values: []int) -> []int {
+	held := Holder{values};
+	p := &held;
+	return p.view;
+}
+
+dereferenced_value_read :: proc(values: []int) -> Holder {
+	held := Holder{values};
+	p := &held;
+	return p^;
+}
+
+temporary_field_read :: proc(values: []int) -> []int {
+	return wrap(values).view;
+}
+
+slice_element_read :: proc(values: []int) -> []int {
+	held := [1]Holder{Holder{values}};
+	view := held[:];
+	return view[0].view;
+}
+
+optional_extraction_read :: proc(values: []int) -> []int {
+	choice: Choice = Holder{values};
+	held, ok := choice.as(Holder);
+	return held.view if ok else nil;
+}
+
+trapping_extraction_read :: proc(values: []int) -> []int {
+	choice: Choice = Holder{values};
+	return choice.(Holder).view;
+}
+
+temporary_fields_are_independent :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	return Pair{values, local[:]}.left;
+}
+
+temporary_elements_are_independent :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	return [2]Holder{Holder{values}, Holder{local[:]}}[0].view;
+}
+
+pointer_fields_are_independent :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	pair := Pair{values, local[:]};
+	p := &pair;
+	local[0] = 9;
+	return p^.left;
+}
+
+nested_pointer_read :: proc(values: []int) -> []int {
+	held := Holder{values};
+	p := &held;
+	pp := &p;
+	return pp^^.view;
+}
+
+read_does_not_borrow_wrapper :: proc(values: []int) -> []int {
+	held := Holder{values};
+	p := &held;
+	view := p^.view;
+	held = Holder{};
+	return view;
+}
+
+read_scalar_from_pointer :: proc() -> int {
+	value := 7;
+	p := &value;
+	return p^;
+}
+
+erased_extraction_read :: proc(values: []int) -> []int {
+	held := Holder{values};
+	erased: any_view = held;
+	value, ok := erased.as(Holder);
+	return value.view if ok else nil;
+}
+
+Outer :: struct { pair: Pair }
+
+projected_pointer_read :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	outer: Outer;
+	outer.pair.left = values;
+	outer.pair.right = local[:];
+	p := &outer.pair;
+	return p^.left;
+}
+
+// Result paths, not parameter order or slot count, decide which argument a
+// selected field borrows. The unused field may borrow a local in every case.
+result_reverse :: proc(a: []int, b: []int) -> Pair { return Pair{b, a}; }
+result_swap :: proc(pair: Pair) -> Pair { return Pair{pair.right, pair.left}; }
+result_nested :: proc(a: []int, b: []int) -> Outer { return Outer{Pair{b, a}}; }
+result_duplicate :: proc(a: []int, b: []int) -> Pair { return Pair{b, b}; }
+result_array :: proc(a: []int, b: []int) -> [2]Holder {
+	return [2]Holder{Holder{b}, Holder{a}};
+}
+result_many :: proc(a: []int, b: []int) -> (Pair, Pair) {
+	return Pair{b, a}, Pair{a, b};
+}
+result_generic :: proc(pair: $T) -> T { return T{pair.right, pair.left}; }
+result_named :: proc(a: []int, b: []int) -> (out: Pair) {
+	out.left = b;
+	out.right = a;
+	return;
+}
+
+reordered_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	pair := result_reverse(local[:], values);
+	return pair.left;
+}
+
+reordered_parameter_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_swap(Pair{local[:], values}).left;
+}
+
+nested_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_nested(local[:], values).pair.left;
+}
+
+assigned_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	outer: Outer;
+	outer.pair = result_reverse(local[:], values);
+	return outer.pair.left;
+}
+
+conditional_result_field :: proc(values: []int, choose_first: bool) -> []int {
+	local := [3]int{7, 8, 9};
+	pair := result_reverse(local[:], values) if choose_first else Pair{values, nil};
+	return pair.left;
+}
+
+multiple_result_fields :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	first, second := result_many(local[:], values);
+	return first.left if len(values) > 0 else second.right;
+}
+
+generic_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_generic(Pair{local[:], values}).left;
+}
+
+recursive_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_cycle_a(local[:], values, 2).left;
+}
+
+// Both the caller and one half of this cycle precede their callees. Per-path
+// changes must drive the fixed point even if the whole-result union is unchanged.
+result_cycle_a :: proc(a: []int, b: []int, depth: int) -> Pair {
+	if (depth == 0) { return Pair{b, a}; }
+	return result_cycle_b(a, b, depth - 1);
+}
+result_cycle_b :: proc(a: []int, b: []int, depth: int) -> Pair {
+	return result_cycle_a(a, b, depth);
+}
+
+array_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_array(local[:], values)[0].view;
+}
+
+duplicate_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_duplicate(local[:], values).right;
+}
+
+named_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_named(local[:], values).left;
+}
+
+result_static :: proc(values: []int) -> Pair { return Pair{KEPT[:], values}; }
+static_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_static(local[:]).left;
+}
+
+Result_Choice :: union { Outer, int }
+result_union :: proc(a: []int, b: []int) -> Result_Choice { return Outer{Pair{a, b}}; }
+union_result_field :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_union(local[:], values).(Outer).pair.right;
+}
+
+Result_With_Map :: struct { entries: map[string]Holder, view: []int }
+result_with_map :: proc(a: []int, b: []int) -> Result_With_Map {
+	table: map[string]Holder;
+	table["b"] = Holder{b};
+	return Result_With_Map{move(table), a};
+}
+field_beside_map_result :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	return result_with_map(values, local[:]).view;
+}
+
+Parameter_With_Map :: struct { entries: map[string]Holder, view: []int }
+parameter_view :: proc(value: Parameter_With_Map) -> []int { return value.view; }
+field_beside_map_parameter :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	table: map[string]Holder;
+	table["b"] = Holder{local[:]};
+	value := Parameter_With_Map{move(table), values};
+	return parameter_view(value);
+}
+
+Replace_A :: struct { pair: Pair }
+Replace_B :: struct { a: Replace_A }
+Replace_C :: struct { b: Replace_B }
+Replace_D :: struct { c: Replace_C }
+truncated_whole_replacement :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	held: Replace_D;
+	held.c.b.a.pair.left = local[:];
+	held.c.b.a.pair = Pair{values, values};
+	return held.c.b.a.pair.left;
+}
+
+// A known map key updates only its own summary slot. The local stored under
+// `b` must not contaminate the caller-backed value still stored under `a`.
+map_try_insert_keeps_unrelated_key :: proc(values: []int) -> []int {
+	local := [3]int{7, 8, 9};
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	err := table.try_insert("b", Holder{local[:]});
+	return table["a"].view;
+}
+
+// Synthesized insertion honors the same stored contract as indexed assignment.
+append_with_contract :: proc(
+	destination: inout [dynamic]Holder,
+	@(escape=stored) values: []int,
+) {
+	destination.append(Holder{values});
+}
+
+KEY_BYTES :: [3]u8{107, 101, 121};
+map_key_from_parameter :: proc(bytes: []u8) -> map[string_view]int {
+	table: map[string_view]int;
+	view, ok := string_view(bytes);
+	table[view] = 7;
+	return table;
+}
+
+STABLE_NUMBERS :: [3]int{7, 8, 9};
+stable_holder: Holder;
+stable_view: []int;
+track_static_aggregate_content :: proc() {
+	stable_holder.view = STABLE_NUMBERS[:];
+	stable_view = stable_holder.view;
+}
+
+stable_tls_numbers: thread_local [3]int;
+stable_tls_holder: thread_local Holder;
+stable_tls_view: thread_local []int;
+track_tls_aggregate_content :: proc() {
+	stable_tls_holder.view = stable_tls_numbers[:];
+	stable_tls_view = stable_tls_holder.view;
+}
+
+retain_for_distinct_callback :: proc(
+	destination: inout Holder,
+	@(escape=stored) values: []int,
+) {
+	destination.view = values;
+}
+Distinct_Local_Retainer :: distinct proc(
+	destination: inout Holder,
+	@(escape=stored) values: []int,
+);
+distinct_callback_local :: proc(values: []int) -> []int {
+	held: Holder;
+	action := Distinct_Local_Retainer(retain_for_distinct_callback);
+	action(inout held, values);
+	return held.view;
+}
+
+content_after_clear :: proc() -> int {
+	local := [3]int{1, 2, 3};
+	other := [3]int{4, 5, 6};
+	held: [dynamic]Holder;
+	held.append(Holder{local[:]});
+	held.clear();
+	held.append(Holder{other[:]});
+	local[0] = 9;
+	return held[0].view[0];
+}
+
+content_after_whole_replacement :: proc() -> int {
+	local := [3]int{1, 2, 3};
+	other := [3]int{4, 5, 6};
+	held: [dynamic]Holder;
+	held.append(Holder{local[:]});
+	held = [dynamic]Holder{};
+	held.append(Holder{other[:]});
+	local[0] = 9;
+	return held[0].view[0];
+}
+
+map_content_after_clear :: proc() -> int {
+	local := [3]int{1, 2, 3};
+	other := [3]int{4, 5, 6};
+	table: map[string]Holder;
+	table["old"] = Holder{local[:]};
+	table.clear();
+	table["new"] = Holder{other[:]};
+	local[0] = 9;
+	return table["new"].view[0];
+}
+
+copy_survives_clear :: proc(values: []int) -> []int {
+	held: [dynamic]Holder;
+	held.append(Holder{values});
+	copy := held[0];
+	held.clear();
+	return copy.view;
+}
+
+bare_map_lookup :: proc(values: []int) -> []int {
+	table: map[string][]int;
+	table["a"] = values;
+	result, ok := table.lookup_value("a");
+	return result if ok else nil;
+}
+
+bare_map_index :: proc(values: []int) -> []int {
+	table: map[string][]int;
+	table["a"] = values;
+	return table["a"];
 }

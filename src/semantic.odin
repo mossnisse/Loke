@@ -1038,7 +1038,9 @@ equal_escape_levels :: proc(a, b: []Escape_Level) -> bool {
 }
 
 proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escape_Level {
-	info := type_of(c, proc_type)
+	// A distinct procedure type has its own nominal identity, but its calling
+	// contract lives on the procedure representation it wraps.
+	info := underlying_info(c, proc_type)
 	if info == nil || index >= len(info.param_escapes) {
 		return .Result
 	}

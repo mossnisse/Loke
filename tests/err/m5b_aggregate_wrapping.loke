@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:mem";
 
 // consolidation-provenance-plan.md step 5: the cases that content provenance
 // turned from silently accepted into rejections. Each one is the wrapped form
@@ -205,4 +205,349 @@ overflowing_keys :: proc(values: []int) -> []int {
 
 main :: proc() {
 	fmt.println(1);
+}
+
+// Reads must carry the selected value's content even after leaving lexical
+// storage through a pointer, slice, temporary, or checked extraction.
+pointer_field_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	held := Holder{local[:]};
+	p := &held;
+	return p^.view;
+}
+
+auto_dereferenced_field_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	held := Holder{local[:]};
+	p := &held;
+	return p.view;
+}
+
+wrap_read :: proc(values: []int) -> Holder { return Holder{values}; }
+
+temporary_field_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	return wrap_read(local[:]).view;
+}
+
+slice_element_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	held := [1]Holder{Holder{local[:]}};
+	view := held[:];
+	return view[0].view;
+}
+
+dereferenced_value_read :: proc() -> Holder {
+	local := [3]int{1, 2, 3};
+	held := Holder{local[:]};
+	p := &held;
+	return p^;
+}
+
+optional_extraction_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	choice: Choice = Holder{local[:]};
+	held, ok := choice.as(Holder);
+	return held.view if ok else nil;
+}
+
+trapping_extraction_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	choice: Choice = Holder{local[:]};
+	return choice.(Holder).view;
+}
+
+temporary_element_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	return [1]Holder{Holder{local[:]}}[0].view;
+}
+
+// Reaching loans, rather than the last syntactic assignment, select the root.
+branched_pointer_read :: proc(values: []int, choose_local: bool) -> []int {
+	local := [3]int{1, 2, 3};
+	first := Holder{values};
+	second := Holder{local[:]};
+	p := &first;
+	if (choose_local) { p = &second; }
+	return p^.view;
+}
+
+// Resolving a load also makes the stored borrow live before that load.
+pointer_read_keeps_content_live :: proc() -> int {
+	local := [3]int{1, 2, 3};
+	held := Holder{local[:]};
+	p := &held;
+	local[0] = 9;
+	return p^.view[0];
+}
+
+slice_read_keeps_content_live :: proc() -> int {
+	local := [3]int{1, 2, 3};
+	held := [1]Holder{Holder{local[:]}};
+	view := held[:];
+	local[0] = 9;
+	return view[0].view[0];
+}
+
+published_content_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	held: Holder;
+	p := &mut held;
+	p^.view = local[:];
+	return p^.view;
+}
+
+erased_extraction_read :: proc() -> []int {
+	local := [3]int{1, 2, 3};
+	held := Holder{local[:]};
+	erased: any_view = held;
+	value, ok := erased.as(Holder);
+	return value.view if ok else nil;
+}
+
+loop_pointer_read :: proc(values: []int, choose_local: bool) -> []int {
+	local := [3]int{1, 2, 3};
+	first := Holder{values};
+	second := Holder{local[:]};
+	p := &first;
+	for (choose_local) { p = &second; }
+	return p^.view;
+}
+
+// A callee's result fields have their own dependencies. Reordering parameters,
+// reading a call temporary, and assigning it must preserve that correspondence.
+result_reverse :: proc(a: []int, b: []int) -> Pair { return Pair{b, a}; }
+result_swap :: proc(pair: Pair) -> Pair { return Pair{pair.right, pair.left}; }
+result_many :: proc(a: []int, b: []int) -> (Pair, Pair) {
+	return Pair{b, a}, Pair{a, b};
+}
+result_generic :: proc(pair: $T) -> T { return T{pair.right, pair.left}; }
+
+reordered_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	pair := result_reverse(values, local[:]);
+	return pair.left;
+}
+
+temporary_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	return result_reverse(values, local[:]).left;
+}
+
+assigned_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	pair: Pair;
+	pair = result_reverse(values, local[:]);
+	return pair.left;
+}
+
+parameter_path_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	return result_swap(Pair{values, local[:]}).left;
+}
+
+multiple_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	first, second := result_many(values, local[:]);
+	return second.right;
+}
+
+generic_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	return result_generic(Pair{values, local[:]}).left;
+}
+
+// A procedure value has no path mapping. Equal argument/result slot counts
+// must therefore join conservatively rather than pairing in parameter order.
+indirect_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	callee: proc(a: []int, b: []int) -> Pair = result_reverse;
+	pair := callee(values, local[:]);
+	return pair.left;
+}
+
+// New per-field facts must propagate even when the union of all fields has
+// already reached both parameters. The call cycle adds the reversed mapping.
+recursive_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	return result_flip_a(values, local[:], 1).left;
+}
+result_flip_a :: proc(a: []int, b: []int, depth: int) -> Pair {
+	if (depth == 0) { return Pair{a, b}; }
+	return result_flip_b(a, b, depth - 1);
+}
+result_flip_b :: proc(a: []int, b: []int, depth: int) -> Pair {
+	if (depth == 0) { return Pair{b, a}; }
+	return result_flip_a(a, b, depth - 1);
+}
+
+Result_Outer :: struct { pair: Pair }
+Result_Choice :: union { Result_Outer, int }
+union_result :: proc(a: []int, b: []int) -> Result_Choice {
+	return Result_Outer{Pair{a, b}};
+}
+union_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	return union_result(values, local[:]).(Result_Outer).pair.right;
+}
+
+Result_Pointers :: struct { left: ^mut int, right: ^mut int }
+allocate_result_pair :: proc() -> Result_Pointers {
+	p, err := new(int);
+	if (err != nil) { panic("allocation failed"); }
+	return Result_Pointers{p, p};
+}
+result_fields_may_alias :: proc() -> int {
+	pair := allocate_result_pair();
+	free(pair.left);
+	return pair.right^;
+}
+
+// Entry numbering is local to a body, so map results have no precise key
+// correspondence to export. The caller deliberately encounters the keys in
+// the opposite order from the callee.
+result_map :: proc(a: []int, b: []int) -> map[string]Holder {
+	table: map[string]Holder;
+	table["b"] = Holder{b};
+	table["a"] = Holder{a};
+	return move(table);
+}
+map_result_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	seed: map[string]int;
+	seed["a"] = 1;
+	table := result_map(values, local[:]);
+	return table["b"].view;
+}
+
+// Parameter summaries have the same body-local map-entry numbering as result
+// summaries. A callee's first key must not select the caller's different first
+// key and thereby hide the local stored at the requested entry.
+map_parameter_get_b :: proc(table: map[string]Holder) -> []int {
+	return table["b"].view;
+}
+map_parameter_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["a"] = Holder{values};
+	table["b"] = Holder{local[:]};
+	return map_parameter_get_b(table);
+}
+
+// The bounded carrier shape collapses everything below Cutoff_D.c.b.a.p into
+// one slot. Writing its right field must retain the left field's dependency.
+Cutoff_A :: struct { p: Pair }
+Cutoff_B :: struct { a: Cutoff_A }
+Cutoff_C :: struct { b: Cutoff_B }
+Cutoff_D :: struct { c: Cutoff_C }
+truncated_partial_write_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	held: Cutoff_D;
+	held.c.b.a.p.left = local[:];
+	held.c.b.a.p.right = values;
+	return held.c.b.a.p.left;
+}
+
+// Map try_insert touches only the requested entry, and its allocator-failure
+// edge retains the old value even when that same key is being replaced.
+map_try_insert_other_entry_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["a"] = Holder{local[:]};
+	err := table.try_insert("b", Holder{values});
+	return table["a"].view;
+}
+map_try_insert_failure_edge_escape :: proc(values: []int) -> []int {
+	local := [3]int{1, 2, 3};
+	table: map[string]Holder;
+	table["b"] = Holder{local[:]};
+	err := table.try_insert("b", Holder{values});
+	return table["b"].view;
+}
+
+retained_holders: [dynamic]Holder;
+container_append_global_escape :: proc() {
+	local := [3]int{1, 2, 3};
+	retained_holders.append(Holder{local[:]});
+}
+container_append_caller_escape :: proc(destination: inout [dynamic]Holder) {
+	local := [3]int{1, 2, 3};
+	destination.append(Holder{local[:]});
+}
+container_append_alias_escape :: proc(destination: inout [dynamic]Holder) {
+	local := [3]int{1, 2, 3};
+	alias := &mut destination;
+	alias^.append(Holder{local[:]});
+}
+container_append_parameter_escape :: proc(
+	destination: inout [dynamic]Holder,
+	values: []int,
+) {
+	destination.append(Holder{values});
+}
+
+// A map owns both halves of an entry. Publishing only the scalar RHS must not
+// erase the local borrow carried by the inserted key.
+map_key_escape :: proc() -> map[string_view]int {
+	local := [3]u8{107, 101, 121};
+	table: map[string_view]int;
+	view, ok := string_view(local[:]);
+	table[view] = 7;
+	return table;
+}
+map_key_alias_escape :: proc() -> map[string_view]int {
+	local := [3]u8{107, 101, 121};
+	table: map[string_view]int;
+	alias := &mut table;
+	view, ok := string_view(local[:]);
+	alias^[view] = 7;
+	return table;
+}
+
+aggregate_global_view: []int;
+aggregate_tls_holder: thread_local Holder;
+aggregate_tls_numbers: thread_local [3]int;
+tls_aggregate_retention_escape :: proc() {
+	aggregate_tls_holder.view = aggregate_tls_numbers[:];
+	aggregate_global_view = aggregate_tls_holder.view;
+}
+
+// A body that has not established a global aggregate's content must retain an
+// explicit unknown fact rather than silently treating the field as empty.
+unknown_global_holder: Holder;
+unknown_global_view: []int;
+unknown_global_aggregate_read :: proc() {
+	unknown_global_view = unknown_global_holder.view;
+}
+
+// A fresh allocation is valid until release, not for the duration of whatever
+// longer-lived place receives one of its aliases. Retention itself therefore
+// needs proof independent of the allocation root.
+retained_allocation: ^mut int;
+retain_and_release_escape :: proc() {
+	p, err := new(int);
+	if (err != nil) { return; }
+	retained_allocation = p;
+	free(p);
+}
+
+// The same rule covers allocations tied to a locally owned allocator region:
+// the arena's cleanup ends the allocation even without an explicit `free`.
+region_retained_allocation: ^mut int;
+retain_local_region_escape :: proc() {
+	arena := mem.Arena.init();
+	p, err := new(int, arena.allocator());
+	if (err != nil) { return; }
+	region_retained_allocation = p;
+}
+
+retain_for_callback :: proc(destination: inout Holder, @(escape=stored) values: []int) {
+	destination.view = values;
+}
+Distinct_Retainer :: distinct proc(destination: inout Holder, @(escape=stored) values: []int);
+distinct_global_holder: Holder;
+distinct_callback_escape :: proc() {
+	local := [3]int{1, 2, 3};
+	action := Distinct_Retainer(retain_for_callback);
+	action(inout distinct_global_holder, local[:]);
 }

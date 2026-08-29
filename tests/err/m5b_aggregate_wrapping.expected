@@ -61,3 +61,123 @@ this slice cannot be returned: `local` ends when this procedure returns
 L0526
 @203:9
 this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@216:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@223:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@230:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@237:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@244:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@251:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@257:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@262:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@272:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0511
+@280:2
+this write of `local` is not compatible with the read-only slice of it that is still in use
+L0511
+@288:2
+this write of `local` is not compatible with the read-only slice of it that is still in use
+L0526
+@297:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@305:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@314:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@329:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@334:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@341:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@346:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@352:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@357:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@366:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@373:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@391:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0512
+@402:2
+this allocation cannot be released here: a pointer of it is still in use
+L0526
+@420:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@434:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@448:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@458:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@465:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0647
+@471:2
+this slice borrows `local`, which does not outlive `retained_holders`: storage that outlives the process
+L0647
+@475:2
+this slice borrows `local`, which does not outlive `destination`: storage the caller owns
+L0647
+@480:2
+this slice borrows `local`, which does not outlive `destination`: storage the caller owns
+L0646
+@486:2
+this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
+L0526
+@496:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0526
+@504:9
+this slice cannot be returned: `local` ends when this procedure returns
+L0647
+@512:2
+this slice borrows `aggregate_tls_numbers`, which does not outlive `aggregate_global_view`: storage that outlives the process
+L0647
+@520:2
+this slice borrows existing content of `unknown_global_holder`, which does not outlive `unknown_global_view`: storage that outlives the process
+L0647
+@530:2
+this pointer borrows this allocation, which does not outlive `retained_allocation`: storage that outlives the process
+L0647
+@541:2
+this pointer borrows this allocation, which does not outlive `region_retained_allocation`: storage that outlives the process
+L0647
+@552:2
+this slice borrows `local`, which does not outlive `distinct_global_holder`: storage that outlives the process

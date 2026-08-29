@@ -108,6 +108,9 @@ root_phrase :: proc(c: ^Compiler, root: Prov_Root) -> string {
 	if root.symbol != INVALID_SYMBOL {
 		return root_label(c, root)
 	}
+	if (root.kind == .Unknown || root.kind == .Allocation) && root.name != "" {
+		return root.name
+	}
 	return fmt.aprintf("the %s it borrows", root_kind_text(root.kind), allocator = c.semantic_allocator)
 }
 
@@ -229,6 +232,13 @@ Prov_Slot :: struct {
 	// for a slot that is not content, and for a truncated path, which stands for
 	// several leaves and keeps the stronger capability.
 	content_type: Type_Id,
+	// The value type whose shape `path` belongs to. An unstructured dependency
+	// (for example a call summary) must not be projected as if it had this shape.
+	content_shape: Type_Id,
+	// The path is a bounded-shape cutoff standing for every carrier below its
+	// prefix. A write below that prefix updates only one represented place and
+	// therefore has to join with, rather than replace, the slot's old contents.
+	content_truncated: bool,
 	// The loan this expression temporary was created with, if it holds a fresh
 	// borrow. A mutable carrier implicitly weakens to a read-only one (design.md),
 	// and that conversion is written at the destination, not at the borrowing
@@ -250,6 +260,8 @@ empty_prov_slot :: proc(symbol: Symbol_Id) -> Prov_Slot {
 	return Prov_Slot {
 		symbol             = symbol,
 		content_type       = INVALID_TYPE,
+		content_shape      = INVALID_TYPE,
+		content_truncated  = false,
 		fresh_loan         = NO_LOAN,
 		fresh_access_block = NO_BLOCK,
 		fresh_access_index = -1,
@@ -331,17 +343,18 @@ Retain_Kind :: enum u8 {
 //   - static and materialized storage satisfies all three;
 //   - thread storage satisfies a thread destination and the caller, and not the
 //     process: sending it to another thread is the error design.md already names;
-//   - an allocation lives until it is released, which the release rules already
-//     police, so storing one is ordinary rather than proof of anything;
+//   - an allocation lives only until an explicit release or the end of its
+//     allocator region, so its existence is not proof that it reaches any
+//     longer-lived destination;
 //   - the caller's storage needs the parameter's own written contract, which is
 //     why this predicate does not answer for `Param`; and
 //   - unknown provenance is not a proof of anything, which is the whole point of
 //     tracking it.
 root_satisfies_retention :: proc(kind: Root_Kind, into: Retain_Kind) -> bool {
 	#partial switch kind {
-	case .Local, .Slice_Literal, .Temporary:
+	case .Local, .Slice_Literal, .Temporary, .Allocation:
 		return false
-	case .Static, .Materialized, .Allocation:
+	case .Static, .Materialized:
 		return true
 	case .Thread_Local:
 		return into != .Process
@@ -829,7 +842,7 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) {
 // This is the root component; the region component joins it separately.
 // Every field is a *possibility*, so the join is a union and the lattice is
 // finite, which is what makes the whole-program fixed point below terminate.
-Result_Provenance :: struct {
+Result_Dependencies :: struct {
 	// Which borrowed parameters the result may name storage of.
 	params:  []bool,
 	// Which of that parameter's content paths, when it holds its borrows inside
@@ -851,6 +864,22 @@ Result_Provenance :: struct {
 	// component exists so a caller does not silently believe the result.
 	local:   bool,
 	unknown: bool,
+}
+
+Result_Content_Provenance :: struct {
+	path:         Carrier_Path,
+	dependencies: Result_Dependencies,
+}
+
+Result_Provenance :: struct {
+	// The union is also needed by escape-contract checking and by callers for
+	// which no result-path mapping is available (such as synthesized members).
+	using dependencies: Result_Dependencies,
+	// Each path describes dependencies of that part of the result, independently
+	// of parameter order and of sibling result fields. Only concrete body
+	// summaries have this mapping; a missing mapping must be joined conservatively.
+	content_type: Type_Id,
+	content:      []Result_Content_Provenance,
 	// An owning result constructed with an allocator parameter derives its
 	// region provenance from that allocator argument at the call site
 	// (design.md). The region component is independent of the root component above:
@@ -860,6 +889,77 @@ Result_Provenance :: struct {
 
 Proc_Summary :: struct {
 	results: []Result_Provenance,
+}
+
+@(private = "file")
+new_result_dependencies :: proc(c: ^Compiler, param_count: int) -> Result_Dependencies {
+	return Result_Dependencies {
+		params = make([]bool, param_count, c.semantic_allocator),
+		param_paths = make([][]bool, param_count, c.semantic_allocator),
+	}
+}
+
+@(private = "file")
+new_result_provenance :: proc(c: ^Compiler, param_count: int, type: Type_Id, with_content: bool) -> Result_Provenance {
+	out := Result_Provenance {
+		dependencies = new_result_dependencies(c, param_count),
+		content_type = type,
+		region = Region_Set{params = make([]bool, param_count, c.semantic_allocator)},
+	}
+	if with_content && !type_is_carrier(c, type) {
+		shape := carrier_shape(c, type)
+		out.content = make([]Result_Content_Provenance, len(shape), c.semantic_allocator)
+		for path, index in shape {
+			summary_path := path
+			summary_path.steps = make([]Proj_Step, len(path.steps), c.semantic_allocator)
+			copy(summary_path.steps, path.steps)
+			widen_summary_map_path(c, type, summary_path.steps)
+			out.content[index] = Result_Content_Provenance {
+				path = summary_path,
+				dependencies = new_result_dependencies(c, param_count),
+			}
+		}
+	}
+	return out
+}
+
+// Constant map entries are numbered separately in each body. Their indices
+// cannot be exported in summary paths; join entries while preserving enclosing
+// record fields and stable array indices. Walking a shape consumes a step at
+// each level, so recursive types stop at the shape's existing depth bound.
+@(private = "file")
+widen_summary_map_path :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) {
+	if len(path) == 0 {
+		return
+	}
+	info := underlying_info(c, type)
+	if info == nil {
+		return
+	}
+	#partial switch info.kind {
+	case .Struct:
+		for field in info.fields {
+			if sym := symbol_of(c, field); sym != nil && steps_overlap(proj_field(int(sym.index)), path[0]) {
+				widen_summary_map_path(c, sym.type, path[1:])
+			}
+		}
+	case .Union:
+		for variant in info.variants {
+			widen_summary_map_path(c, variant, path[1:])
+		}
+	case .Array, .Dynamic_Array:
+		widen_summary_map_path(c, info.element, path[1:])
+	case .Map:
+		path[0] = proj_wild()
+		if len(path) > 1 {
+			if steps_overlap(path[1], proj_field(PROJ_MAP_KEY)) {
+				widen_summary_map_path(c, info.key, path[2:])
+			}
+			if steps_overlap(path[1], proj_field(PROJ_MAP_VALUE)) {
+				widen_summary_map_path(c, info.element, path[2:])
+			}
+		}
+	}
 }
 
 // A compiler-contributed member has no body for the fixed point to walk, so its
@@ -873,9 +973,7 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: i
 	summary := new(Proc_Summary, c.semantic_allocator)
 	summary.results = make([]Result_Provenance, len(sym.results), c.semantic_allocator)
 	for index in 0 ..< len(summary.results) {
-		summary.results[index].params = make([]bool, len(sym.params), c.semantic_allocator)
-		summary.results[index].param_paths = make([][]bool, len(sym.params), c.semantic_allocator)
-		summary.results[index].region.params = make([]bool, len(sym.params), c.semantic_allocator)
+		summary.results[index] = new_result_provenance(c, len(sym.params), sym.results[index], false)
 	}
 	// A result that holds borrows inside it depends on the receiver just as a
 	// bare carrier result does: reading a container value out yields what that
@@ -899,7 +997,7 @@ result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Re
 // Union of two possibilities. Returns whether the destination grew, which is the
 // fixed point's termination signal.
 @(private = "file")
-merge_provenance :: proc(into: ^Result_Provenance, from: Result_Provenance) -> bool {
+merge_provenance :: proc(into: ^Result_Dependencies, from: Result_Dependencies) -> bool {
 	changed := false
 	for value, index in from.params {
 		if value && index < len(into.params) && !into.params[index] {
@@ -921,14 +1019,6 @@ merge_provenance :: proc(into: ^Result_Provenance, from: Result_Provenance) -> b
 			}
 		}
 	}
-	for value, index in from.region.params {
-		if value && index < len(into.region.params) && !into.region.params[index] {
-			into.region.params[index] = true
-			changed = true
-		}
-	}
-	if from.region.default && !into.region.default { into.region.default, changed = true, true }
-	if from.region.unknown && !into.region.unknown { into.region.unknown, changed = true, true }
 	if from.static && !into.static   { into.static, changed  = true, true }
 	if from.thread && !into.thread   { into.thread, changed  = true, true }
 	if from.fresh && !into.fresh     { into.fresh, changed   = true, true }
@@ -1122,9 +1212,7 @@ summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 		summary = new(Proc_Summary, k.c.semantic_allocator)
 		summary.results = make([]Result_Provenance, len(sym.results), k.c.semantic_allocator)
 		for index in 0 ..< len(summary.results) {
-			summary.results[index].params = make([]bool, len(sym.param_symbols), k.c.semantic_allocator)
-			summary.results[index].param_paths = make([][]bool, len(sym.param_symbols), k.c.semantic_allocator)
-			summary.results[index].region.params = make([]bool, len(sym.param_symbols), k.c.semantic_allocator)
+			summary.results[index] = new_result_provenance(k.c, len(sym.param_symbols), sym.results[index], true)
 		}
 		k.c.result_summaries[literal.symbol] = summary
 	}
@@ -1171,10 +1259,20 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 					}
 				}
 				for source in event.sources {
+					slot := graph.prov_slots[source]
 					row := reach_row(state, state.reach, source)
 					for index in 0 ..< state.loans {
-						if bit_get(row, index) && merge_loan_provenance(state, into, graph.loans[index]) {
-							changed = true
+						if !bit_get(row, index) {
+							continue
+						}
+						loan := graph.loans[index]
+						changed = merge_loan_provenance(state, &into.dependencies, loan) || changed
+						for &content in into.content {
+							if slot.content_shape == into.content_type && !paths_overlap(slot.path, content.path.steps) {
+								continue
+							}
+							// An unshaped source describes the whole returned value.
+							changed = merge_loan_provenance(state, &content.dependencies, loan) || changed
 						}
 					}
 				}
@@ -1186,9 +1284,9 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 }
 
 @(private = "file")
-merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Provenance, loan: Prov_Loan) -> bool {
+merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, loan: Prov_Loan) -> bool {
 	root := state.graph.roots[int(loan.root)]
-	one := Result_Provenance{}
+	one := Result_Dependencies{}
 	switch root.kind {
 	case .Param:
 		if root.param_index >= 0 && root.param_index < len(into.params) {
@@ -1223,7 +1321,7 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Provenance, loan
 @(private = "file")
 merge_param_paths :: proc(
 	state: ^Prov_State,
-	into: ^Result_Provenance,
+	into: ^Result_Dependencies,
 	root: Prov_Root,
 	loan: Prov_Loan,
 ) -> bool {
@@ -1233,13 +1331,15 @@ merge_param_paths :: proc(
 	}
 	sym := symbol_of(state.k.c, root.symbol)
 	if sym == nil || type_is_carrier(state.k.c, sym.type) {
+		changed := len(into.param_paths[index]) > 0
 		into.param_paths[index] = nil
-		return false
+		return changed
 	}
 	shape := carrier_shape(state.k.c, sym.type)
 	if len(shape) == 0 {
+		changed := len(into.param_paths[index]) > 0
 		into.param_paths[index] = nil
-		return false
+		return changed
 	}
 	if into.param_paths[index] == nil && into.params[index] {
 		return false // already widened to the whole parameter
@@ -1247,9 +1347,16 @@ merge_param_paths :: proc(
 	if into.param_paths[index] == nil {
 		into.param_paths[index] = make([]bool, len(shape), state.k.c.semantic_allocator)
 	}
+	// Constant map entries are numbered by encounter order in each body. Widen
+	// those steps before exporting this dependency so a callee's entry zero is
+	// never mistaken for a different key in its caller. Stable enclosing fields,
+	// array indices, and the map key/value split remain precise.
+	loan_path := make([]Proj_Step, len(loan.path), state.graph.alloc)
+	copy(loan_path, loan.path)
+	widen_summary_map_path(state.k.c, sym.type, loan_path)
 	changed := false
 	for path, position in shape {
-		if !paths_overlap(path.steps, loan.path) {
+		if !paths_overlap(path.steps, loan_path) {
 			continue
 		}
 		if !into.param_paths[index][position] {
@@ -1277,6 +1384,7 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		return
 	}
 	solve_reaching(&state)
+	resolve_content_reads(&state)
 	solve_loan_liveness(&state)
 	report_provenance(&state)
 }
@@ -1494,6 +1602,8 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 			bit_mark(state.merged, int(event.loan))
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
+	case .Load:
+		load_pointee_content(state, event, reach)
 	case .Publish:
 		// Where this lands is what the carrier borrows, which is a solved fact
 		// rather than a syntactic one. Joining into every root it may name is
@@ -1566,6 +1676,88 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 						invalid[other] = true
 					}
 				}
+			}
+		}
+	}
+}
+
+// A load follows the addressing loans, then reads the slots at the projected
+// pointee path. It copies those slots' dependencies, not the borrow of the
+// wrapper that was needed only to perform the read. Unknown/external storage
+// retains its loan conservatively because it has no local content to inspect.
+@(private = "file")
+load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) {
+	graph := state.graph
+	mem.zero_slice(state.merged)
+	for carrier in event.into {
+		row := reach_row(state, reach, carrier)
+		for loan, loan_index in graph.loans {
+			if !bit_get(row, loan_index) {
+				continue
+			}
+			root := graph.roots[int(loan.root)]
+			sym := symbol_of(graph.k.c, root.symbol)
+			found := false
+			if sym != nil && !(root.kind == .Param && type_is_carrier(graph.k.c, sym.type)) {
+				slots := graph.content_by_symbol[root.symbol]
+				bare: [1]int
+				if index, exists := graph.slot_by_symbol[root.symbol]; exists {
+					bare[0] = index
+					slots = bare[:]
+				}
+				for index in slots {
+					slot := graph.prov_slots[index]
+					if !paths_overlap(slot.path, loan.path) {
+						continue
+					}
+					// A shorter content path is a collapsed prefix and therefore
+					// covers every projection below it.
+					suffix := slot.path[min(len(loan.path), len(slot.path)):]
+					if !paths_overlap(suffix, event.path) {
+						continue
+					}
+					found = true
+					words_or(state.merged, reach_row(state, reach, index))
+					if reads != nil {
+						seen := false
+						for existing in reads^ {
+							seen ||= existing == index
+						}
+						if !seen {
+							append(reads, index)
+						}
+					}
+				}
+			}
+			if !found {
+				bit_mark(state.merged, loan_index)
+			}
+		}
+	}
+	copy(reach_row(state, reach, event.slot), state.merged)
+}
+
+// Forward reaching determines which stored values each indirect read uses.
+// Record those uses before the backward pass, so a mutation before `p^.view`
+// still conflicts with the borrow held in the pointee, including across loops.
+@(private = "file")
+resolve_content_reads :: proc(state: ^Prov_State) {
+	if !state.graph.has_content_load {
+		return
+	}
+	for block in state.graph.blocks {
+		if !block.prov_visited {
+			continue
+		}
+		copy(state.reach, block.reach_entry)
+		copy(state.invalid, block.invalid_entry)
+		for &event in block.prov {
+			if event.kind == .Load {
+				reads := make([dynamic]int, 0, 4, state.graph.alloc)
+				load_pointee_content(state, event, state.reach, &reads)
+				event.sources = reads[:]
+			} else {
+				run_prov_event(state, event, state.reach, state.invalid)
 			}
 		}
 	}
@@ -1647,6 +1839,12 @@ run_live_event :: proc(event: Prov_Event, live: []bool, uses: []Span) {
 		// A full overwrite ends the value that was there, not the variable: the
 		// sources are read first, and their own `Live` events precede this one.
 		live[event.slot] = false
+	case .Load:
+		live[event.slot] = false
+		for source in event.sources {
+			live[source] = true
+			uses[source] = event.span
+		}
 	case .Live, .Escape, .Free:
 		for source in event.sources {
 			live[source] = true
@@ -1723,7 +1921,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				return
 			}
 		}
-	case .Live:
+	case .Live, .Load:
 		// A read-only reborrow suspends the carrier it was taken from until its
 		// own last use (design.md). Using the suspended name meanwhile would let
 		// a mutable alias act behind the reborrow's back.

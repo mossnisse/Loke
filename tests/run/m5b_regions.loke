@@ -73,4 +73,24 @@ main :: proc() {
 	// really outlives the process.
 	store_a_view(KEPT_NUMBERS[:]);
 	fmt.println(KEPT_NUMBERS[0]);
+
+}
+
+// Region facts are path-specific: moving a local-arena owner into one field must
+// not contaminate the default-backed sibling returned to the caller.
+Split_Regions :: struct {
+	local:  [dynamic]int,
+	stable: [dynamic]int,
+}
+
+move_default_region_sibling :: proc() -> [dynamic]int {
+	arena := mem.Arena.init();
+	local: [dynamic]int via arena.allocator();
+	local.append(1);
+	stable: [dynamic]int via mem.default_allocator();
+	stable.append(2);
+	held: Split_Regions;
+	held.local = move(local);
+	held.stable = move(stable);
+	return held.stable;
 }

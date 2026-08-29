@@ -30,3 +30,6 @@ this reset would end the region backing `xs`, which is still live here
 L0536
 @106:2
 `global_holder` is backed by an allocator region this procedure received, so it cannot be stored in file-scope storage
+L0592
+@120:9
+this result is backed by `arena`, an allocator region that ends when this procedure returns

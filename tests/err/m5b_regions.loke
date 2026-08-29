@@ -105,3 +105,17 @@ global_holder: Holder;
 owner_escapes_through_a_field :: proc(allocator: Allocator) {
 	global_holder.buffer = make_buffer(4, allocator);
 }
+
+// Moving a region-backed owner into an aggregate field transfers the field's
+// backing-region dependency just as constructing the aggregate in one expression
+// does. Returning the wrapper would outlive the local arena.
+Region_Owner :: struct { data: [dynamic]int }
+
+local_region_moved_into_field :: proc() -> Region_Owner {
+	arena := mem.Arena.init();
+	values: [dynamic]int via arena.allocator();
+	values.append(1);
+	held: Region_Owner;
+	held.data = move(values);
+	return held;
+}
