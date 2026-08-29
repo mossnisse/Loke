@@ -1,33 +1,42 @@
 L0612
-@39:2
-this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
-L0612
-@40:2
-the result of `counted` must be used or discarded with `_ = ...`
-L0612
-@41:2
-this call produces `Pair`, which must be used or discarded with `_ = ...`
-L0612
-@42:2
-this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
-L0612
-@43:2
-this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
-L0612
-@44:2
-this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
-L0612
-@45:2
-this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
-L0612
-@46:2
-this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
-L0612
 @47:2
 this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
 L0612
 @48:2
 the result of `counted` must be used or discarded with `_ = ...`
 L0612
+@49:2
+this call produces `Pair`, which must be used or discarded with `_ = ...`
+L0612
+@50:2
+this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
+L0612
+@51:2
+this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
+L0612
+@52:2
+this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
+L0612
 @53:2
+this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
+L0612
+@54:2
+this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
+L0612
+@55:2
+this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`
+L0612
+@56:2
+the result of `counted` must be used or discarded with `_ = ...`
+L0612
+@57:2
+this call produces `Important`, which must be used or discarded with `_ = ...`
+L0612
+@58:2
+this call produces `Decision`, which must be used or discarded with `_ = ...`
+L0612
+@59:2
+this call produces `Required_35`, which must be used or discarded with `_ = ...`
+L0612
+@64:2
 this call produces `Result(int, Fail)`, which must be used or discarded with `_ = ...`

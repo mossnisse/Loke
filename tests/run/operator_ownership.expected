@@ -8,6 +8,8 @@ temporary failure 9
 temporary or_else failure 0 2
 place failure 9
 place or_else failure 0 2
+place fallback 10
+place or_else fallback 1 3
 place or_return 11
 place or_return 2 3
 place or_return failed 0

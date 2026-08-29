@@ -17,10 +17,22 @@ Maybe_Int :: union @(zero=absent) { absent:, present: int }
 // the name `Result`.
 Parsed :: union @(failure=bad) { good: int, bad: Error_Code }
 
+Inner_Failure :: union @(failure=err) { ok: int, err: string }
+Outer_Failure :: union @(failure=err) { ok: int, err: string_view }
+outer_failure :: proc(source: inout Inner_Failure) -> Outer_Failure {
+	n := source or_return;
+	return .ok(n);
+}
+
 // The natural layout, and the same variants under a written alignment.
 Narrow :: union { flag: bool, small: i16 }
 Wide_Aligned :: union @(align=8) { flag: bool, small: i16 }
 Holder :: struct { flag: bool, value: Wide_Aligned }
+Pair_Value :: union { numbers: [2]i16, flag: bool }
+
+static_ratio: Value = .ratio(1.5);
+static_pair: Pair_Value = .numbers({3, 4});
+static_result: Result([2]i16, Error_Code) = .ok({5, 6});
 
 caller_1 :: proc() -> Result(Unit, Error_Code) { return .ok(Unit{}); }
 caller_2 :: proc() -> Result(int, Error_Code) { return .ok(123); }
@@ -67,6 +79,13 @@ branch_result :: proc(flag: bool) -> Result(int, Error_Code) {
 	n := 10 if flag else 20;
 	caller_1() or_return;
 	return .ok(n);
+}
+
+multi_result :: proc() -> (prefix: int, outcome: Result(int, Error_Code)) {
+	prefix = 41;
+	n := failing() or_return;
+	outcome = .ok(n);
+	return;
 }
 
 describe :: proc(v: Value) -> int {
@@ -135,6 +154,13 @@ main :: proc() {
 	fmt.println(good());
 	fmt.println(bad());
 	fmt.println(branch_result(false));
+	{
+		source: Inner_Failure = .err("converted");
+		fmt.println(outer_failure(inout source));
+	}
+	prefix, outcome := multi_result();
+	fmt.println(prefix, outcome);
+	fmt.println(static_ratio, static_pair, static_result);
 
 	// `or_else` supplies a fallback and evaluates it only on the failure variant.
 	fmt.println(fetch(false) or_else -1);

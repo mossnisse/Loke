@@ -62,6 +62,10 @@ Eval_Frame :: struct {
 	defers:       [dynamic]Stmt,
 	results:      []Eval_Value,
 	result_slots: []^Eval_Value,
+	// Set by a failing `or_return`. Expression evaluation then bubbles `false`
+	// to the statement boundary, which turns it into ordinary return flow so
+	// block defers still run in their normal order.
+	returning:    bool,
 }
 
 Evaluator :: struct {
@@ -605,6 +609,9 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 		return operand.elements[index], true
 
 	case ^Expr_Postfix:
+		if v.op == .Or_Return {
+			return eval_or_return(ev, v)
+		}
 		pointer, ok := eval_expr(ev, v.operand)
 		if !ok {
 			return Eval_Value{}, false
@@ -1546,6 +1553,67 @@ eval_or_else :: proc(ev: ^Evaluator, v: ^Expr_Or_Else) -> (Eval_Value, bool) {
 	return eval_union_payload(value, INVALID_TYPE), true
 }
 
+// `or_return` uses false as an internal expression-unwind signal. The current
+// statement translates that signal to `.Return`; it is not an evaluation
+// failure and does not set `ev.failed`.
+@(private = "file")
+eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
+	value, ok := eval_expr(ev, v.operand)
+	if !ok {
+		return Eval_Value{}, false
+	}
+	shape, fallible := fallible_of(ev.k, expr_base(v.operand).type)
+	frame := current_frame(ev)
+	if !fallible || frame == nil || len(frame.results) == 0 {
+		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
+		return Eval_Value{}, false
+	}
+	if value.variant != shape.failure {
+		if shape.info.variants[shape.success] == TYPE_VOID {
+			return zero_value(ev, unit_type(ev.k.c))
+		}
+		return eval_union_payload(value, INVALID_TYPE), true
+	}
+
+	last := len(frame.results) - 1
+	for slot, index in frame.result_slots {
+		if index == last {
+			continue
+		}
+		copied, copied_ok := copy_value(ev, slot^)
+		if !copied_ok {
+			return Eval_Value{}, false
+		}
+		frame.results[index] = copied
+	}
+	target, target_ok := fallible_of(ev.k, frame.result_slots[last].type)
+	if !target_ok {
+		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
+		return Eval_Value{}, false
+	}
+	payload := eval_union_payload(value, INVALID_TYPE)
+	into := target.info.variants[target.failure]
+	if into != TYPE_VOID {
+		payload, ok = copy_value(ev, payload)
+		if !ok {
+			return Eval_Value{}, false
+		}
+		// The evaluator's string/string_view carriers share their textual value;
+		// the other representation-preserving assignment conversions likewise
+		// only need the destination type here.
+		payload.type = into
+	} else {
+		payload = Eval_Value{kind = .Invalid, type = TYPE_VOID}
+	}
+	wrapped, wrapped_ok := eval_union(ev, frame.result_slots[last].type, target.failure, payload)
+	if !wrapped_ok {
+		return Eval_Value{}, false
+	}
+	frame.results[last] = wrapped
+	frame.returning = true
+	return Eval_Value{}, false
+}
+
 // `.ok(Unit{})`: an allocating container operation that had nothing to allocate.
 @(private = "file")
 eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
@@ -2010,8 +2078,21 @@ run_defers :: proc(ev: ^Evaluator, frame: ^Eval_Frame, mark: int, flow: Eval_Flo
 	return result
 }
 
-eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> (result: Eval_Flow) {
-	defer { if !eval_memory_ok(ev) { result = .Fail } }
+eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
+	result := eval_stmt_inner(ev, stmt)
+	if !eval_memory_ok(ev) {
+		return .Fail
+	}
+	if result == .Fail {
+		if frame := current_frame(ev); frame != nil && frame.returning && !ev.failed {
+			return .Return
+		}
+	}
+	return result
+}
+
+@(private = "file")
+eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 	if !eval_step(ev, stmt_span(stmt)) {
 		return .Fail
 	}

@@ -350,14 +350,14 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		if index < len(v.element_clones) && v.element_clones[index] {
 			value = emit_clone_value(e, element, value)
 		}
-		place := emit_map_entry(e, ops, address, key_slot)
-		emit_drop_place(e, key, key_slot)
+		place, inserted := emit_map_entry(e, ops, address, key_slot)
 		missing := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
 		fail_label, store_label, done_label :=
 			new_label(e, "mlit.fail"), new_label(e, "mlit.store"), new_label(e, "mlit.done")
 		branch_if(e, missing, fail_label, store_label)
 		place_label(e, fail_label)
+		emit_drop_place(e, key, key_slot)
 		provider, slot := temp(e), temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
@@ -367,9 +367,18 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
 		branch(e, done_label)
 		place_label(e, store_label)
-		// A duplicate key replaces its value, so whatever the slot held goes first.
+		// A new entry contains only inert zeroed storage. Only a duplicate key has
+		// a live value that replacement must destroy.
+		is_new := temp(e)
+		replace_label, write_label := new_label(e, "mlit.replace"), new_label(e, "mlit.write")
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", is_new, inserted)
+		branch_if(e, is_new, write_label, replace_label)
+		place_label(e, replace_label)
 		emit_drop_place(e, element, place)
+		branch(e, write_label)
+		place_label(e, write_label)
 		store(e, element, value, place)
+		emit_drop_place(e, key, key_slot)
 		branch(e, done_label)
 		place_label(e, done_label)
 		e.terminated = false
@@ -670,7 +679,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 		place_label(e, clone_ready)
 		key_slot := value_storage(e, key_type, "%arg1")
-		place := emit_map_entry(e, ops, "%arg0", key_slot)
+		place, inserted := emit_map_entry(e, ops, "%arg0", key_slot)
 		missing, ok_label, failed_label := temp(e), new_label(e, "mins.ok"), new_label(e, "mins.failed")
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
 		branch_if(e, missing, failed_label, ok_label)
@@ -681,8 +690,16 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 		place_label(e, ok_label)
 		// The clone is complete, so replacement can now commit without a failure
-		// point between destroying the old value and publishing the new one.
+		// point between destroying the old value and publishing the new one. A new
+		// slot contains inert bytes, not a live element, and must not be dropped.
+		is_new := temp(e)
+		replace_label, store_label := new_label(e, "mins.replace"), new_label(e, "mins.store")
+		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", is_new, inserted)
+		branch_if(e, is_new, store_label, replace_label)
+		place_label(e, replace_label)
 		emit_drop_place(e, element, place)
+		branch(e, store_label)
+		place_label(e, store_label)
 		stored := load(e, element_llvm, staged)
 		store(e, element, stored, place)
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.results[0], "false"))
@@ -787,7 +804,7 @@ emit_map_place :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	ops := container_ops_global(e, container)
 	header := emit_address(e, v.operand)
 	key_slot, cleanup := emit_map_key_slot(e, v, container)
-	place := emit_map_entry(e, ops, header, key_slot)
+	place, _ := emit_map_entry(e, ops, header, key_slot)
 	drop_temporary_value(e, cleanup)
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, place)
@@ -858,15 +875,18 @@ emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> (s
 	return slot, cleanup
 }
 
-// design.md "Maps": an inserting place. The slot is found or created with the
-// zero value, and the answer is NULL only when the insertion could not allocate.
+// Finds or creates a map slot. The runtime reports whether its zeroed bytes are
+// a newly inserted inert slot or an existing live value. An inserting index has
+// already required a real element zero; explicit insertion commits its supplied
+// value before treating a new slot as live.
 @(private = "file")
-emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot: string) -> string {
+emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot: string) -> (string, string) {
 	inserted := alloca(e, "i32")
 	place := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call ptr @loke_rt_v1_map_entry(ptr %s, ptr %s, ptr %s, ptr %s)",
 		place, header, ops, key_slot, inserted,
 	)
-	return place
+	was_inserted := load(e, "i32", inserted)
+	return place, was_inserted
 }

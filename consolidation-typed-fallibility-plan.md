@@ -149,8 +149,8 @@ is constant, including an explicitly constructed `Result`.
 |---|---|
 | Failure marker | `@(failure=name)` designates one variant as failure. Such a union has exactly two variants; the other is success. |
 | `or_else` | The success variant must carry a payload. The result type is that payload. The fallback is evaluated only on failure. |
-| `or_return` | The enclosing procedure has a single union result with a designated failure variant. The operand failure payload is assignable to the enclosing failure payload, or both are payloadless. The success payload may be absent, in which case the expression yields `Unit`. |
-| Operator ownership | A place operand copies the selected payload and leaves the source live; a temporary or `move(x)` transfers it. `or_else` never copies the error. `or_return` copies a place error and therefore requires it to be copyable. A place operand also requires a copyable success payload. |
+| `or_return` | The enclosing procedure's last result is a union with a designated failure variant. With several results, every result is named and every earlier result is definitely initialised so propagation can perform the equivalent of a bare `return`. The operand failure payload is assignable to the enclosing failure payload, or both are payloadless; conversions that create a borrowed view remain subject to the ordinary return-escape rules. The success payload may be absent, in which case the expression yields `Unit`. |
+| Operator ownership | A place operand copies the selected payload and leaves the source live; a temporary or `move(x)` transfers it. A managed `or_else` fallback follows the same value semantics: selecting a place clones it. `or_else` never copies the error. `or_return` copies a place error and therefore requires it to be copyable. A place operand also requires a copyable success payload. |
 
 `require_results` is a **declaration/type attribute**, not a union-layout
 attribute. The ordinary declarations are:
@@ -274,8 +274,9 @@ gate has a control.
   static explicit construction for unions carrying managed or move-only
   payloads. Constructor/switch/operator tests alone are insufficient.
 - Rewrite `check_or_else` and `check_or_return` against the designated-failure
-  protocol. Delete `type_is_status`, `status_payloads`, multi-payload fallback,
-  and named-result initialization coupling in the prototype.
+  protocol. Delete `type_is_status`, `status_payloads`, and multi-payload
+  fallback. Retain definite-initialization tracking for the named results that
+  a propagated bare return also returns.
 - Implement every row of the operator ownership matrix and consuming/borrowing
   switch rules in semantic analysis, lifecycle annotations, evaluator, and LLVM
   lowering. `or_return` constructs the enclosing error directly without a

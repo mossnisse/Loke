@@ -564,6 +564,35 @@ emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> st
 	return out
 }
 
+// The checker accepts the same implicit assignment conversions for propagated
+// failures as it does for an ordinary destination. Most of those conversions
+// preserve the LLVM representation; the two erased/view conversions need
+// explicit construction because `or_return` has an extracted SSA value rather
+// than an expression node for `materialize` to annotate.
+@(private = "file")
+emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id, source_address := "") -> string {
+	if from == into || value == "" {
+		return value
+	}
+	if underlying_kind(e.c, from) == .String && underlying_kind(e.c, into) == .String_View {
+		data := extract(e, STRING_TYPE, value, STRING_DATA)
+		length := extract(e, STRING_TYPE, value, STRING_LEN)
+		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+	}
+	if into == TYPE_ANY_VIEW {
+		concrete := any_view_source_type(e.c, from)
+		slot := source_address
+		if slot == "" {
+			slot = alloca(e, llvm_type(e, concrete))
+			store(e, concrete, value, slot)
+		}
+		return emit_any_view_value(e, slot, concrete)
+	}
+	// Carrier weakening, procedure escape weakening, pointer/multi-pointer
+	// interchange, and pointer-to-rawptr all share one backend representation.
+	return value
+}
+
 // design.md "or_else expression": the fallback is evaluated only when the
 // operand holds its failure variant, which is why it lives in its own block.
 @(private = "file")
@@ -607,6 +636,9 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 	}
 	fallback := emit_expr(e, v.fallback)
+	if v.fallback_clone {
+		fallback = emit_clone_value(e, payload_type, fallback)
+	}
 	fallback_exit := new_label(e, "orelse.fallback.exit")
 	branch(e, fallback_exit)
 	place_label(e, fallback_exit)
@@ -632,7 +664,17 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	operand_type := type_underlying(e.c, expr_base(v.operand).type)
 	info := type_of(e.c, operand_type)
 	success := 1 - info.failure_variant
-	value := emit_expr(e, v.operand)
+	operand_address := ""
+	value := ""
+	if v.borrows {
+		// A place is evaluated once and retained as an address. Borrowing failure
+		// conversions such as `T -> any_view` must point into that proven-live
+		// source rather than into the temporary union spill below.
+		operand_address = emit_address(e, v.operand)
+		value = load(e, llvm_type(e, operand_type), operand_address)
+	} else {
+		value = emit_expr(e, v.operand)
+	}
 	slot := emit_union_spill(e, operand_type, value)
 	failed := emit_union_failed(e, operand_type, value)
 
@@ -651,9 +693,16 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 		if failure_type := info.variants[info.failure_variant]; failure_type != TYPE_VOID {
 			error = emit_union_payload(e, operand_type, failure_type, slot)
 			// A place keeps its value, so the error the caller sees is a copy.
-			if v.borrows && type_is_managed(e.c, failure_type) {
+			failure_into := target_info.variants[target_info.failure_variant]
+			if v.borrows && type_is_managed(e.c, failure_type) &&
+			   !failure_assignment_borrows(e.c, failure_type, failure_into) {
 				error = emit_clone_value(e, failure_type, error)
 			}
+			source_address := ""
+			if v.borrows && failure_assignment_borrows(e.c, failure_type, failure_into) {
+				source_address = gep_field(e, llvm_type(e, operand_type), operand_address, 0)
+			}
+			error = emit_failure_conversion(e, error, failure_type, failure_into, source_address)
 		}
 		wrapped := emit_union_value(e, e.result_types[last], target_info.failure_variant, error)
 		store(e, e.result_types[last], wrapped, e.result_slots[last])

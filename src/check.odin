@@ -597,6 +597,7 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		apply_type_metadata(k, d, symbol.type)
 	case ^Type_Enum:
 		resolve_enum_members(k, symbol.type, value)
+		apply_type_metadata(k, d, symbol.type)
 	case ^Expr_Proc_Group:
 		symbol.kind = .Proc_Group
 		resolve_group_members(k, d.symbols[0], value)
@@ -612,8 +613,10 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 		if info := type_of(k.c, symbol.type); info != nil {
 			info.element = underlying
 		}
+		apply_type_metadata(k, d, symbol.type)
 	case ^Type_Interface:
 		check_interface_declaration(k, d.symbols[0])
+		apply_type_metadata(k, d, symbol.type)
 	}
 }
 

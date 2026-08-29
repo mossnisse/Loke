@@ -124,6 +124,18 @@ copied :: proc() -> int {
 	return len(xs) * 10 + len(ys);
 }
 
+Eval_Failure :: union @(failure=err) { ok: int, err: int }
+eval_source :: proc(fail: bool) -> Eval_Failure {
+	if (fail) { return .err(7); }
+	return .ok(4);
+}
+eval_propagate :: proc(fail: bool) -> Eval_Failure {
+	value := eval_source(fail) or_return;
+	return .ok(value + 1);
+}
+EVAL_OR_RETURN_OK :: eval_propagate(false) or_else -1;
+EVAL_OR_RETURN_ERR :: eval_propagate(true) or_else -1;
+
 main :: proc() {
 	static_assert(TEMP_LOOKUP == 73);
 	assert(temporary_lookup() == TEMP_LOOKUP);
@@ -138,6 +150,7 @@ main :: proc() {
 	fmt.println(FOUND);
 	fmt.println(REVIVED);
 	fmt.println(COPIED);
+	fmt.println(EVAL_OR_RETURN_OK, EVAL_OR_RETURN_ERR);
 }
 
 // Equality deliberately ignores the annotation: structural comparison gives

@@ -290,7 +290,6 @@ expression_is_borrowed_place :: proc(c: ^Compiler, e: Expr) -> bool {
 // The compiler never silently moves a dynamic array, map, runtime string,
 // `shared(T)`, or type with a custom copy hook — including at the source's
 // last use (design.md).
-@(private = "file")
 classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> bool {
 	if value == nil || !type_is_managed(k.c, type) || !expression_is_borrowed_place(k.c, value) {
 		return false

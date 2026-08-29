@@ -10,6 +10,14 @@ import "./producers";
 
 Fail :: enum { Bad }
 
+@(require_results)
+Important :: distinct int;
+important :: proc() -> Important { return Important(1); }
+
+@(require_results)
+Decision :: enum { Yes, No }
+decision :: proc() -> Decision { return .Yes; }
+
 step :: proc() -> Result(int, Fail) { return .ok(1); }
 
 @(require_results)
@@ -46,6 +54,9 @@ main :: proc() {
 	recurse(2);
 	producers.open();
 	producers.counted();
+	important();
+	decision();
+	deep_required();
 
 	// A call through a procedure value: the value's result type carries the
 	// property even though no declaration is named here.

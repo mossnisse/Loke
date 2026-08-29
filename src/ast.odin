@@ -334,6 +334,9 @@ Expr_Or_Else :: struct {
 	// design.md: a place operand copies the selected payload and leaves the
 	// source live; a temporary or `move(x)` hands its value over.
 	borrows:    bool,
+	// A managed fallback place also stays live, so the selected value must be
+	// cloned before it becomes the result.
+	fallback_clone: bool,
 }
 
 // `then if cond else otherwise`, in source order.

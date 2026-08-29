@@ -1,0 +1,40 @@
+package main;
+
+Deep_Leaf :: union { value: int, flag: bool }
+Deep_01 :: struct { value: Deep_Leaf }
+Deep_02 :: struct { value: Deep_01 }
+Deep_03 :: struct { value: Deep_02 }
+Deep_04 :: struct { value: Deep_03 }
+Deep_05 :: struct { value: Deep_04 }
+Deep_06 :: struct { value: Deep_05 }
+Deep_07 :: struct { value: Deep_06 }
+Deep_08 :: struct { value: Deep_07 }
+Deep_09 :: struct { value: Deep_08 }
+Deep_10 :: struct { value: Deep_09 }
+Deep_11 :: struct { value: Deep_10 }
+Deep_12 :: struct { value: Deep_11 }
+Deep_13 :: struct { value: Deep_12 }
+Deep_14 :: struct { value: Deep_13 }
+Deep_15 :: struct { value: Deep_14 }
+Deep_16 :: struct { value: Deep_15 }
+Deep_17 :: struct { value: Deep_16 }
+Deep_18 :: struct { value: Deep_17 }
+Deep_19 :: struct { value: Deep_18 }
+Deep_20 :: struct { value: Deep_19 }
+Deep_21 :: struct { value: Deep_20 }
+Deep_22 :: struct { value: Deep_21 }
+Deep_23 :: struct { value: Deep_22 }
+Deep_24 :: struct { value: Deep_23 }
+Deep_25 :: struct { value: Deep_24 }
+Deep_26 :: struct { value: Deep_25 }
+Deep_27 :: struct { value: Deep_26 }
+Deep_28 :: struct { value: Deep_27 }
+Deep_29 :: struct { value: Deep_28 }
+Deep_30 :: struct { value: Deep_29 }
+Deep_31 :: struct { value: Deep_30 }
+Deep_32 :: struct { value: Deep_31 }
+Deep_33 :: struct { value: Deep_32 }
+Deep_34 :: struct { value: Deep_33 }
+Deep_35 :: struct { value: Deep_34 }
+
+global: Deep_35;

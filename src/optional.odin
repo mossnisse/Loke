@@ -82,6 +82,15 @@ Fallible :: struct {
 	success:    int,
 }
 
+// The implicit assignments that change an owning value into a borrowed view.
+// `or_return` accepts them like any other destination, but provenance must
+// prove the source outlives the returned view and lowering must not manufacture
+// an owner the target has nowhere to retain.
+failure_assignment_borrows :: proc(c: ^Compiler, from, into: Type_Id) -> bool {
+	return (underlying_kind(c, from) == .String && underlying_kind(c, into) == .String_View) ||
+	       (into == TYPE_ANY_VIEW && from != TYPE_ANY_VIEW)
+}
+
 fallible_of :: proc(k: ^Checker, type: Type_Id) -> (Fallible, bool) {
 	info := type_of(k.c, type_underlying(k.c, type))
 	if info == nil || info.kind != .Union || !info.failure_designated {
@@ -159,6 +168,11 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 		contribute_lifecycle_members(k, payload)
 	}
 	if !check_value_expr(k, v.fallback, payload, "supply") {
+		v.type = INVALID_TYPE
+		return
+	}
+	v.fallback_clone = classify_copy(k, v.fallback, payload, "`or_else` fallback")
+	if type_clone_disabled(k.c, payload) && expression_is_borrowed_place(k.c, v.fallback) {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -265,6 +279,9 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 			into == TYPE_VOID ? "()" : type_name(k.c, into),
 		)
 		return false
+	}
+	if into == TYPE_ANY_VIEW && from != TYPE_VOID && from != TYPE_ANY_VIEW {
+		request_typeid(k.c, any_view_source_type(k.c, from))
 	}
 	if len(k.result_types) == 1 {
 		return true

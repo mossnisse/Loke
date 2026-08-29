@@ -1,0 +1,39 @@
+package main;
+
+Required_01 :: struct { value: Decision }
+Required_02 :: struct { value: Required_01 }
+Required_03 :: struct { value: Required_02 }
+Required_04 :: struct { value: Required_03 }
+Required_05 :: struct { value: Required_04 }
+Required_06 :: struct { value: Required_05 }
+Required_07 :: struct { value: Required_06 }
+Required_08 :: struct { value: Required_07 }
+Required_09 :: struct { value: Required_08 }
+Required_10 :: struct { value: Required_09 }
+Required_11 :: struct { value: Required_10 }
+Required_12 :: struct { value: Required_11 }
+Required_13 :: struct { value: Required_12 }
+Required_14 :: struct { value: Required_13 }
+Required_15 :: struct { value: Required_14 }
+Required_16 :: struct { value: Required_15 }
+Required_17 :: struct { value: Required_16 }
+Required_18 :: struct { value: Required_17 }
+Required_19 :: struct { value: Required_18 }
+Required_20 :: struct { value: Required_19 }
+Required_21 :: struct { value: Required_20 }
+Required_22 :: struct { value: Required_21 }
+Required_23 :: struct { value: Required_22 }
+Required_24 :: struct { value: Required_23 }
+Required_25 :: struct { value: Required_24 }
+Required_26 :: struct { value: Required_25 }
+Required_27 :: struct { value: Required_26 }
+Required_28 :: struct { value: Required_27 }
+Required_29 :: struct { value: Required_28 }
+Required_30 :: struct { value: Required_29 }
+Required_31 :: struct { value: Required_30 }
+Required_32 :: struct { value: Required_31 }
+Required_33 :: struct { value: Required_32 }
+Required_34 :: struct { value: Required_33 }
+Required_35 :: struct { value: Required_34 }
+
+deep_required :: proc() -> Required_35 { return Required_35{}; }

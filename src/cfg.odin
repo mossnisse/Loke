@@ -1066,6 +1066,36 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			failure := new_flow_block(graph)
 			link(graph, entry, failure)
 			graph.current = failure
+			proc_symbol := symbol_of(graph.k.c, graph.literal.symbol)
+			if graph.mode != .Lifecycle && proc_symbol != nil && len(proc_symbol.results) > 0 {
+				shape, operand_fallible := fallible_of(graph.k, expr_base(v.operand).type)
+				last := len(proc_symbol.results) - 1
+				target, target_fallible := fallible_of(graph.k, proc_symbol.results[last])
+				if operand_fallible && target_fallible {
+					from := shape.info.variants[shape.failure]
+					into := target.info.variants[target.failure]
+					escaping := prov_payload_content(
+						graph, operand_loans, expr_base(v.operand).type, from, v.span,
+					)
+					if failure_assignment_borrows(graph.k.c, from, into) {
+						if root, path, is_place := prov_place_of(graph, v.operand); is_place {
+							block, index := prov_access(graph, root, path, .Read, v.span)
+							escaping = prov_join(
+								graph, escaping,
+								prov_borrow(graph, root, path, false, v.span, "view", block, index),
+							)
+						} else {
+							escaping = prov_join(
+								graph, escaping,
+								prov_borrow(graph, prov_temp_root(graph, v.span), nil, false, v.span, "view"),
+							)
+						}
+					}
+					prov_emit(graph, Prov_Event {
+						kind = .Escape, sources = escaping, span = v.span, result = last,
+					})
+				}
+			}
 			emit_cleanups(graph, 0)
 			graph.current = resume
 			// design.md "or_return operator": on success the expression yields the

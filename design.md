@@ -5377,7 +5377,9 @@ written `move(x)`. `or_else` never copies the error.
 `or_else` is an infix binary operator that supplies a fallback for a
 [fallible expression](#typed-fallibility). The left operand's success variant
 must carry a payload; the fallback must be assignable to that payload type, and
-is evaluated only on the failure path. The result is the payload.
+is evaluated only on the failure path. The result is the payload. Ordinary
+value semantics apply to the fallback: selecting a managed place clones it and
+leaves the place live, while a temporary or `move(x)` transfers ownership.
 
 ```odin
 m: map[string]int = {};
@@ -5418,7 +5420,9 @@ On failure, control returns from the innermost enclosing procedure. That
 procedure's **last** result must itself be a fallible union, and the operand's
 failure payload must be assignable to its failure payload. With several results
 every one must be named, every earlier one must already be definitely live, and
-a bare `return` is performed.
+a bare `return` is performed. An assignable conversion that creates a borrowed
+view is also subject to the ordinary return-escape rules: its source must
+outlive the returned view.
 
 The operand's temporaries are destroyed before the return completes, and the
 ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a

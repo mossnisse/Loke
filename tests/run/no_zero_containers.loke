@@ -9,6 +9,12 @@ package main; import "core:fmt";
 
 Choice :: union { a: i32, b: bool }
 
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+Tracked_Choice :: union { a: Tracked, b: Tracked }
+
 succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
 	switch (_ in outcome) {
 	case .ok:  return true;
@@ -61,4 +67,18 @@ main :: proc() {
 	// An empty fixed array of them has a zero, because it holds no element.
 	none: [0]Choice;
 	fmt.println(len(none));
+
+	// A new map entry is raw inert storage until the supplied no-zero value is
+	// committed. Its zeroed bytes are never passed to the drop hook.
+	{
+		tracked: map[int]Tracked_Choice;
+		_ = tracked.try_insert(1, .a(Tracked{7}));
+	}
+	{
+		literal := map[int]Tracked_Choice{
+			1 = .b(Tracked{8}),
+			1 = .a(Tracked{9}),
+		};
+		fmt.println(len(literal));
+	}
 }

@@ -376,27 +376,59 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.
 	if inner := expr_base(v.args[0].value); inner != nil && inner.is_const &&
-	   variant_payload_is_constant(k.c, payload) {
+	   variant_payload_is_constant(k.c, payload, inner.const_value) {
 		v.is_const = true
 		v.const_value = union_const(k.c, subject, index, inner.const_value)
 	}
 }
 
-// Whether a payload can be written into the union storage type's
-// alignment-carrying head as one integer.
-//
-// ponytail: scalars and zero-sized payloads only. A wider or aggregate payload
-// would need the constant serialized to the target's byte image, which nothing
-// else in the backend does; such a value is built at run time instead, and only
-// a *static-duration* construction of one is rejected. Add the serializer when
-// a program actually needs `Result(Option(T), E)` as a global initialiser.
-variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id) -> bool {
-	if payload == TYPE_VOID || type_size(c, payload) == 0 {
+// Whether this constant has a complete target byte image. Text values contain
+// relocatable pointers and therefore keep using their ordinary typed LLVM
+// constants; scalars and recursively byte-serializable aggregates can live in
+// a union's inline payload storage.
+variant_payload_is_constant :: proc(c: ^Compiler, payload: Type_Id, value: Const_Value) -> bool {
+	if payload == TYPE_VOID || type_size(c, payload) == 0 || value.kind == .Invalid || value.kind == .Nil {
 		return true
 	}
-	#partial switch underlying_kind(c, payload) {
-	case .Bool, .Int, .Enum, .Rune:
-		return type_size(c, payload) <= 8
+	info := type_of(c, type_underlying(c, payload))
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Bool, .Int, .Enum, .Rune, .Float, .Typeid, .Allocator_Error:
+		return true
+	case .Array:
+		if value.aggregate == nil {
+			return false
+		}
+		for index in 0 ..< int(info.count) {
+			element := index < len(value.aggregate.elements) ? value.aggregate.elements[index] : Const_Value{}
+			if !variant_payload_is_constant(c, info.element, element) {
+				return false
+			}
+		}
+		return true
+	case .Struct:
+		if value.aggregate == nil {
+			return false
+		}
+		for field, index in info.fields {
+			symbol := symbol_of(c, field)
+			if symbol == nil {
+				return false
+			}
+			element := index < len(value.aggregate.elements) ? value.aggregate.elements[index] : Const_Value{}
+			if !variant_payload_is_constant(c, symbol.type, element) {
+				return false
+			}
+		}
+		return true
+	case .Union:
+		if value.aggregate == nil || value.aggregate.variant < 0 || value.aggregate.variant >= len(info.variants) {
+			return false
+		}
+		element := len(value.aggregate.elements) > 0 ? value.aggregate.elements[0] : Const_Value{}
+		return variant_payload_is_constant(c, info.variants[value.aggregate.variant], element)
 	}
 	return false
 }

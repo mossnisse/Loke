@@ -9,12 +9,9 @@ import "core:strings"
 // -------------------------------------------------------------- constants --
 
 // design.md "Zero values": a union constant is a payload written into the
-// storage type's alignment-carrying head plus the variant's tag. The head is an
-// integer, so the payload has to be spellable as one.
-//
-// ponytail: scalar payloads only. An aggregate payload would need the constant
-// serialized to the target's byte image, which nothing else in the backend does
-// yet; until something needs it, the diagnostic is better than the machinery.
+// storage type's alignment-carrying head plus the variant's tag. Constants are
+// serialized to the same little-endian byte image used for packed/aligned
+// records, then split across the integer head and byte-array tail.
 @(private = "file")
 union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Type_Info) -> string {
 	shape := union_layout(e.c, type)
@@ -24,24 +21,21 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 	index := value.aggregate.variant
 	payload_type := union_variant_payload(e.c, type, index)
 	head := "0"
+	payload_bytes := make([]u8, int(shape.payload_size), context.temp_allocator)
 	// A zero-sized payload — `Unit`, or any empty record — contributes no bits,
 	// so the zeroed head already *is* the whole value.
 	if payload_type != TYPE_VOID && type_size(e.c, payload_type) != 0 {
-		bits := u64(0)
-		#partial switch underlying_kind(e.c, payload_type) {
-		case .Bool:
-			bits = value.aggregate.elements[0].boolean ? 1 : 0
-		case .Int, .Enum, .Rune:
-			wrapped := bi_wrap(e.c, value.aggregate.elements[0].integer, type_bits(e.c, payload_type), false)
-			raw, fits := bi_to_i64(e.c, wrapped)
-			if !fits {
-				backend_fail(e, "a union payload constant is wider than one word")
-			}
-			bits = u64(raw)
-		case:
-			backend_fail(e, fmt.aprintf("a union constant needs a scalar payload, found %s in %s", type_name(e.c, payload_type), type_name(e.c, type)))
+		payload_size := int(type_size(e.c, payload_type))
+		if payload_size > len(payload_bytes) ||
+		   !write_const_bytes(e, payload_bytes[:payload_size], value.aggregate.elements[0], payload_type) {
+			backend_fail(e, fmt.aprintf("a union payload constant cannot be represented as bytes: %s in %s", type_name(e.c, payload_type), type_name(e.c, type)))
 		}
-		head = fmt.aprintf("%d", bits)
+		bits := bi_zero(e.c)
+		for byte, byte_index in payload_bytes[:int(shape.align)] {
+			part := bi_shl(e.c, bi_from_u64(e.c, u64(byte)), byte_index * 8)
+			bits = bi_add(e.c, bits, part)
+		}
+		head = bi_text(e.c, bits)
 	}
 
 	b := strings.builder_make()
@@ -50,7 +44,8 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 	if shape.payload_size > 0 {
 		fmt.sbprintf(&b, "i%d %s", shape.align * 8, head)
 		if pad := shape.payload_size - shape.align; pad > 0 {
-			fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", pad)
+			strings.write_string(&b, ", ")
+			write_byte_array_constant(&b, payload_bytes[int(shape.align):int(shape.payload_size)])
 		}
 		if gap := shape.tag_offset - shape.payload_size; gap > 0 {
 			fmt.sbprintf(&b, ", [%d x i8] zeroinitializer", gap)
@@ -63,6 +58,15 @@ union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Ty
 	}
 	strings.write_string(&b, " }")
 	return strings.to_string(b)
+}
+
+@(private = "file")
+write_byte_array_constant :: proc(b: ^strings.Builder, bytes: []u8) {
+	fmt.sbprintf(b, "[%d x i8] c\"", len(bytes))
+	for byte in bytes {
+		fmt.sbprintf(b, "\\%02X", byte)
+	}
+	strings.write_string(b, "\"")
 }
 
 llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
@@ -189,7 +193,7 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 		return false
 	}
 	#partial switch info.kind {
-	case .Int, .Enum, .Rune:
+	case .Int, .Enum, .Rune, .Allocator_Error:
 		if value.kind != .Integer && value.kind != .Rune {
 			return false
 		}
@@ -259,7 +263,32 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 			}
 		}
 		return true
-	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .CString_View, .Union:
+	case .Union:
+		if value.kind != .Aggregate || value.aggregate == nil {
+			return false
+		}
+		shape := union_layout(e.c, under)
+		index := value.aggregate.variant
+		if index < 0 || index >= len(info.variants) || int(shape.size) > len(out) {
+			return false
+		}
+		payload := len(value.aggregate.elements) > 0 ? value.aggregate.elements[0] : Const_Value{}
+		payload_type := info.variants[index]
+		payload_size := int(type_size(e.c, payload_type))
+		if payload_size > 0 && !write_const_bytes(e, out[:payload_size], payload, payload_type) {
+			return false
+		}
+		for byte_index in 0 ..< int(shape.tag_bytes) {
+			out[int(shape.tag_offset) + byte_index] = u8(u64(index) >> u64(byte_index * 8))
+		}
+		return true
+	case .Typeid:
+		id := typeid_value(e.c, value.type_value)
+		for _, index in out {
+			out[index] = u8(id >> u64(index * 8))
+		}
+		return true
+	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .CString_View:
 		// Their only byte-serializable compile-time value is nil, handled above.
 		return false
 	}

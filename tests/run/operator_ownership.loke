@@ -102,6 +102,15 @@ main :: proc() {
 	// The place still owns its error, so nothing was copied and two values end.
 	report("place or_else failure");
 
+	reset();
+	{
+		fallback := Owned{10};
+		taken := failed(6) or_else fallback;
+		fmt.println("place fallback", taken.id);
+	}
+	// The fallback place remains live and the selected result owns a clone.
+	report("place or_else fallback");
+
 	// --- or_return -------------------------------------------------------
 	reset();
 	{

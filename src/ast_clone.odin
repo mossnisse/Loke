@@ -262,6 +262,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 	case ^Expr_Postfix:
 		n := new_clone(c, Expr_Postfix, &v.base)
 		n.op, n.op_span = v.op, v.op_span
+		n.borrows = v.borrows
 		n.operand = clone_expr(c, v.operand)
 		return n
 
@@ -288,6 +289,8 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 
 	case ^Expr_Or_Else:
 		n := new_clone(c, Expr_Or_Else, &v.base)
+		n.borrows = v.borrows
+		n.fallback_clone = v.fallback_clone
 		n.value = clone_expr(c, v.value)
 		n.fallback = clone_expr(c, v.fallback)
 		return n

@@ -1,0 +1,12 @@
+package main;
+
+Inner :: union @(failure=err) { ok: int, err: string }
+Outer :: union @(failure=err) { ok: int, err: string_view }
+
+inner :: proc() -> Inner { return .err("temporary"); }
+outer :: proc() -> Outer {
+	value := inner() or_return;
+	return .ok(value);
+}
+
+main :: proc() {}

@@ -24,11 +24,23 @@ apply_type_metadata :: proc(k: ^Checker, d: ^Decl, type: Type_Id) {
 }
 
 // Does a value of this type start at the all-zero representation?
-type_has_zero :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
-	if type == INVALID_TYPE || depth > 32 {
+type_has_zero :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	seen := make(map[Type_Id]bool, context.temp_allocator)
+	return type_has_zero_walk(c, type, &seen)
+}
+
+@(private = "file")
+type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> bool {
+	if type == INVALID_TYPE {
 		return true
 	}
-	info := type_of(c, type_underlying(c, type))
+	under := type_underlying(c, type)
+	if seen[under] {
+		// Recursive value graphs contribute no non-zero leaf merely by cycling.
+		return true
+	}
+	seen[under] = true
+	info := type_of(c, under)
 	if info == nil {
 		return true
 	}
@@ -39,11 +51,11 @@ type_has_zero :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 		if !info.zero_designated || len(info.variants) == 0 {
 			return false
 		}
-		return type_has_zero(c, info.variants[0], depth + 1)
+		return type_has_zero_walk(c, info.variants[0], seen)
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol != nil && !type_has_zero(c, symbol.type, depth + 1) {
+			if symbol != nil && !type_has_zero_walk(c, symbol.type, seen) {
 				return false
 			}
 		}
@@ -51,7 +63,7 @@ type_has_zero :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 	case .Array:
 		// A zero-length array contains no element, so it has a zero whatever the
 		// element type is.
-		return info.count == 0 || type_has_zero(c, info.element, depth + 1)
+		return info.count == 0 || type_has_zero_walk(c, info.element, seen)
 	}
 	// Dynamic arrays and maps keep their empty all-zero header whatever they
 	// hold: capacity is raw storage, not a sequence of initialized values.
@@ -75,14 +87,24 @@ require_type_has_zero :: proc(k: ^Checker, type: Type_Id, span: Span, what: stri
 // Does a value of this type have to be handled rather than discarded? Pointers,
 // views, and procedure values do not inherit the property merely because the
 // pointee or the signature mentions it.
-type_requires_results :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
-	if type == INVALID_TYPE || depth > 32 {
+type_requires_results :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	seen := make(map[Type_Id]bool, context.temp_allocator)
+	return type_requires_results_walk(c, type, &seen)
+}
+
+@(private = "file")
+type_requires_results_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool) -> bool {
+	if type == INVALID_TYPE {
 		return false
 	}
 	if info := type_of(c, type); info != nil && info.requires_results {
 		return true
 	}
 	under := type_underlying(c, type)
+	if seen[under] {
+		return false
+	}
+	seen[under] = true
 	info := type_of(c, under)
 	if info == nil {
 		return false
@@ -94,18 +116,18 @@ type_requires_results :: proc(c: ^Compiler, type: Type_Id, depth := 0) -> bool {
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol != nil && type_requires_results(c, symbol.type, depth + 1) {
+			if symbol != nil && type_requires_results_walk(c, symbol.type, seen) {
 				return true
 			}
 		}
 	case .Union:
 		for variant in info.variants {
-			if type_requires_results(c, variant, depth + 1) {
+			if type_requires_results_walk(c, variant, seen) {
 				return true
 			}
 		}
 	case .Array:
-		return type_requires_results(c, info.element, depth + 1)
+		return type_requires_results_walk(c, info.element, seen)
 	}
 	return false
 }
