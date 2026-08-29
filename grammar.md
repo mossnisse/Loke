@@ -1,6 +1,7 @@
 # Loke grammar
 
-Formal grammar for the language specified in [design.md](design.md).
+Formal grammar for the language specified in [design.md](design.md). This file
+covers syntax only; semantics are described there.
 
 ## Notation
 
@@ -40,9 +41,8 @@ A comment is whitespace.
 Identifier = ("A".."Z" | "a".."z" | "_") ("A".."Z" | "a".."z" | "0".."9" | "_")*
 ```
 
-Identifiers are case-sensitive. The identifier `_` is the discard identifier: it
-may appear wherever a name is bound but introduces no binding and cannot be
-referenced.
+Identifiers are case-sensitive. `_` is the discard identifier: it may appear
+wherever a name is bound but introduces no binding.
 
 ## Keywords
 
@@ -144,14 +144,12 @@ Attribute_Value= Expression
 ```
 
 The qualified form is an [extension attribute](design.md#extension-attributes),
-for example `@(compiler.no_alias)`. Attributes attach to declarations, package
+e.g. `@(compiler.no_alias)`. Attributes attach to declarations, package
 clauses, statements, blocks, parameters, record type literals, and foreign
-blocks; which attribute is valid where is a semantic rule, not a grammatical one.
-The base `@(allocator_reset)` and `@(escape=<level>)` parameter attributes are
-part of procedure-type compatibility: the first carries the allocator-region
-invalidation effect and the second the borrow-retention level described in the
-language specification. `@(escape=...)` needs no grammar of its own — its value
-is an ordinary identifier expression.
+blocks; which attribute is valid where is semantic, not grammatical.
+`@(allocator_reset)` and `@(escape=<level>)` are part of procedure-type
+compatibility — see [design.md](design.md#allocator_reset). `@(escape=...)`
+needs no grammar of its own; its value is an ordinary identifier expression.
 
 # Source files
 
@@ -185,11 +183,9 @@ Impl_Member   = Declaration | Delegate_Decl | ";"
 Delegate_Decl = "delegate" "(" Operator_Symbol ("," Operator_Symbol)* ","? ")" ";"
 ```
 
-One block form serves both an *inherent* implementation and an *extension*.
-Which one a block is is not written: it follows from whether the subject type
-is declared by the package containing the block. A subject no package declares,
-such as `[]int`, is therefore always extended. This is a semantic rule, not a
-grammatical one.
+Whether an `Impl_Block` is an inherent implementation or an extension is not
+written — it follows from whether the subject type is declared by the
+enclosing package, a semantic rule (see [design.md](design.md#methods-and-implementation-blocks)).
 
 A procedure declared in a foreign block has no body and ends its signature with
 `---`; see [Procedures](#procedures).
@@ -228,42 +224,32 @@ Semicolon_Constant_Value = Operator_Declaration
                          | Expression
 ```
 
-`x: T;` declares a zero-initialized variable, `x: T = e;` and `x: = e;` add an
-initializer, and `x: T: e;` declares a constant. A typed variable may use the
-uninitialized-storage marker as in `x: T = ---;`; it is not an expression and
-therefore cannot be used with inferred `x := ...` syntax. The second
-`Variable_Decl` alternative is the `x := e` spelling, and it accepts storage
-modifiers with the type still inferred, as in `x: static = 0;` or
-`raw: manual = [dynamic]int{1, 2, 3};`. `Storage_Modifiers` is nullable, so both
-alternatives cover the unmodified forms and the two are distinguished by whether
-a `Type` follows. A modifier takes the place of the type, so it is followed by
-the single `=` of this alternative and never by the `:` `=` pair: `x := e` is
-this alternative with no modifiers, and `x: manual = e` is it with one.
+`x: T;` declares a zero-initialized variable; `x: T = e;` / `x: = e;` add an
+initializer; `x: T: e;` declares a constant. `x: T = ---;` uses the
+uninitialized-storage marker, which is not an expression and so cannot appear
+in inferred `x := ...` form. The second `Variable_Decl` alternative is
+`x := e`, and also covers storage modifiers with an inferred type
+(`x: static = 0;`, `raw: manual = [dynamic]int{1, 2, 3};`); since
+`Storage_Modifiers` is nullable, the two alternatives are distinguished by
+whether a `Type` follows, and a modifier always precedes the alternative's
+single `=`, never a `:` `=` pair.
 
-The two modifier groups are independent: `Duration_Modifier` answers where a
-variable lives and for how long, `manual` answers who releases it. `x: static
-manual Foo;` is therefore a process-lifetime owner whose cleanup the compiler
-does not insert. The duration modifiers are mutually exclusive.
-
-A managed `thread_local` owner is dropped on normal thread return; a manual one
-is not. File-scope and `static` owners are never dropped automatically. Panic or
-process termination does not run TLS cleanup, as specified in `design.md`.
+`Duration_Modifier` and `manual` are independent modifier groups, and
+`static`/`thread_local` are mutually exclusive; see
+[design.md](design.md#storage-modifiers) for what each combination means at
+runtime.
 
 File-scope, `static`, and `thread_local` declarations require constant
-initializers and may not use `via`; omitted initializers use the zero value.
-These are semantic restrictions rather than separate grammar productions.
+initializers, may not use `via`, and default omitted initializers to the zero
+value — semantic restrictions, not separate productions.
 
-A brace-bodied constant is terminated by its outer closing `}`. A following
-semicolon is parsed as a separate empty item. An expression constant always
-requires `;`, including when its expression ends in a composite literal.
+A brace-bodied constant ends at its outer `}`; a following `;` is a separate
+empty item. An expression constant always requires `;`, even when it ends in a
+composite literal.
 
-`via` selects the allocator for a managed value and takes a unary expression, so
-`b: [dynamic]u8 via arena.allocator() = ...;` parses without backtracking.
-It is semantically rejected for `string`, `shared(T)`, and non-owning types,
-whose allocation rules do not accept a destination allocation policy. A mutable
-owner without `via` keeps an allocator-unbound constant zero representation and
-loads the build-selected default only when an operation first needs storage;
-an explicit `via` expression is evaluated and recorded at the declaration.
+`via` takes a unary expression so that `b: [dynamic]u8 via arena.allocator() =
+...;` parses without backtracking. Which types accept `via`, and what happens
+when it's omitted, is semantic — see [design.md](design.md#storage-modifiers).
 
 # Types
 
@@ -294,16 +280,16 @@ Proc_Type = "proc" Calling_Convention? Signature
 Calling_Convention = String_Literal                      // portable: "loke", "c", "stdcall"
 ```
 
-`[?]T` is valid only as the type of a composite literal. `mut` is the capability
-modifier, written on a slice, a pointer, a `dyn` view, or a unary `&`; `[]mut T`
-is a slice with mutable elements and `[]T` is read-only. design.md "Capabilities
-and the one rule" defines what each carrier's capability permits.
-`Type_Arguments` also carries
-specialization patterns, as in `^Table($Key, $Value)`, because `$Name` is itself
-a `Type`. A value parameter accepts any constant expression, so `Matrix(f32, 4)`
-is valid when the second record parameter has type `int`. A bare identifier in a
-generic argument is parsed as an unresolved name and classified as a type or
-value during name resolution.
+`[?]T` is valid only as the type of a composite literal. `mut` is the
+capability modifier, written on a slice, a pointer, a `dyn` view, or a unary
+`&` (`[]mut T` vs. read-only `[]T`); see
+[design.md](design.md#capabilities-and-the-one-rule) for what each carrier's
+capability permits. `Type_Arguments` also carries specialization patterns, as
+in `^Table($Key, $Value)`, because `$Name` is itself a `Type`. A value
+parameter accepts any constant expression, so `Matrix(f32, 4)` is valid when
+the second record parameter has type `int`. A bare identifier in a generic
+argument is parsed as an unresolved name and classified as a type or value
+during name resolution.
 
 The single selector in `Type_Name` is classified during name resolution too. It
 is either a package-qualified type such as `interfaces.Sequence` or an associated
@@ -345,12 +331,9 @@ Generic_Name       = "$" Identifier
 Where_Clause    = "where" Expression ("," Expression)*
 ```
 
-Every expression in a `Where_Clause` must be a compile-time boolean. It may
-reference generic parameters, constants, types, interfaces, compile-time
-built-ins, and ordinary procedures that can be evaluated at compile time, but
-not runtime values or runtime-only calls. A `Where_Clause` with no generic
-parameters in its declaration or enclosing generic `impl` is therefore a
-semantic error.
+A `Where_Clause` expression must be a compile-time boolean over generic
+parameters, constants, types, interfaces, and compile-time-evaluable
+procedures — never runtime values; see [design.md](design.md#where-clauses).
 
 A `Where_Clause` expression may not have a `Composite_Literal` at its top level;
 see [Resolved ambiguities](#resolved-ambiguities).
@@ -371,21 +354,19 @@ Bindings           = "(" Binding_Group ("," Binding_Group)* ")"
 Binding_Group      = Identifier ("," Identifier)* ":" "inout"? Type
 ```
 
-A requirement beginning with `(` starts a binding list when an `Identifier` and
-then `,` or `:` follow the parenthesis, and neither can appear that early in an
-expression. Wrap the expression in a second pair of parentheses if a requirement
-must begin with a parenthesised expression, as in `((a + b).c()) -> T;`. An associated constant is an ordinary expression
-requirement, written `T.NAME -> U;`; when `U` is `type`, the selected member is
-an associated type usable by later requirements. An `inout` binding denotes a hypothetical
-exclusive mutable place for requirement checking. An `-> inout T` result
-requires the expression to denote an assignable place of exactly type `T`; it
-does not introduce a general first-class reference type. `move` bindings are not
-part of requirement lists.
+A requirement beginning with `(` starts a binding list when an identifier
+followed by `,` or `:` comes next — a form no expression can start with;
+otherwise wrap the expression in parentheses, as in `((a + b).c()) -> T;`.
+`T.NAME -> U;` is an associated-constant requirement; when `U` is `type`, the
+selected member becomes an associated type usable by later requirements.
+`inout` in a binding or result denotes a hypothetical exclusive place, not a
+general first-class reference type. `move` bindings are not part of
+requirement lists.
 
-`slot` is contextual only in this position. Its procedure type cannot introduce
-new generic parameters, and its first parameter must be the receiver `self` in
-one of the method-call receiver forms; dyn compatibility imposes the additional
-semantic rules in `design.md`.
+`slot` is contextual only in this position. Its procedure type may not
+introduce new generic parameters, and its first parameter must be the receiver
+`self`; dyn compatibility adds further rules — see
+[design.md](design.md#dyn-compatibility).
 
 # Procedures
 
@@ -433,33 +414,22 @@ Result_Item  = Identifier_List ":" Result_Type
 Result_Type  = "inout"? Type
 ```
 
-A parameter with no type is legal only for the receiver `self`, whose type is
-inferred from the enclosing `impl` block or from the subject
-parameter of an interface `slot`. `Parameter_Names` would otherwise swallow that
-receiver: in `proc(self, allocator: Allocator)` the first name is the receiver
-and the written type belongs to the names after it, so a leading `self` inside an
-`impl` or `slot` ends its name list. The receiver keeps the immutable
-borrow mode of the untyped form whatever `Parameter_Mode` the rest of the group
-writes, and an omitted-argument default written for the group belongs to those
-parameters rather than to `self`. A receiver that wants another mode writes its
-own type, as `self: inout Type`. `..T` is a variadic
-parameter. Variadic parameters cannot use `inout` or `move`. An ordinary value
-parameter initializer is an omitted-argument default and accepts an ordinary
-runtime `Expression`; `inout`, `move`, and variadic parameters cannot have
-defaults. The expression is evaluated only when the caller omits that argument,
-as specified in `design.md`. It may reference the receiver and parameters
-declared to its left, but not itself or parameters to its right. Defaults belong
-to named declarations; a call through a procedure value supplies every
-parameter. A named result has no initializer form; like any other
-uninitialized local it starts **dead**, and `design.md` requires it to be
-definitely live before a bare `return` or an `or_return` reads it. The `---`
-body marks a foreign declaration.
+A parameter with no type is legal only for the receiver `self` (typed from the
+enclosing `impl` block or interface `slot`); a leading `self` therefore ends
+`Parameter_Names` in `proc(self, allocator: Allocator)`, since it would
+otherwise swallow the receiver. The receiver keeps an immutable borrow mode
+regardless of the group's `Parameter_Mode`; one wanting another mode writes its
+own type, as `self: inout Type`. `..T` is a variadic parameter; variadic,
+`inout`, and `move` parameters cannot have defaults. A value parameter's
+`= Expression` default may reference the receiver and parameters to its left
+only — see [design.md](design.md#default-values) for when it's evaluated. A
+named result starts dead like any uninitialized local; see
+[design.md](design.md#named-results) for its liveness requirement before
+`return`/`or_return`. The `---` body marks a foreign declaration.
 
-`convert`, `copy`, and `drop` are contextual only inside `hook(...)`; elsewhere
-they remain identifiers. A semantic hook is legal only as an inherent `impl`
-member and its role determines the fixed signature described in `design.md`.
-The procedure's declaration name remains ordinary metadata and does not select
-the role.
+`convert`, `copy`, and `drop` are contextual only inside `hook(...)`. A hook is
+legal only as an inherent `impl` member; its role fixes the signature (see
+[design.md](design.md#compiler-semantic-hooks)), not its declared name.
 
 # Statements
 
@@ -530,12 +500,11 @@ A binding list has any length: it names the fields of the element the iterable
 yields, so the arity a header may use is a semantic property of that element's
 type, not a syntactic limit.
 
-A `foreach` whose bindings carry `$` is a **static expansion**: it requires a
-compile-time iterable and expands its block once per element. The two forms share
-one production so that a mixed header parses and can be diagnosed. The semantic
-restrictions are that every binding in a header must agree on `$`, that a `$`
-binding may not also carry `&`, and that `break` and `continue` cannot target an
-expansion.
+A `foreach` whose bindings carry `$` is a static expansion over a compile-time
+iterable; the two forms share one production so a mixed header parses and can
+be diagnosed. Semantic restrictions (binding `$`-agreement, no `&` with `$`, no
+`break`/`continue` across an expansion) are in
+[design.md](design.md#static-foreach-expansion).
 
 `Init_Statement` is what makes `for (i := 0; ...)`, `if (x := foo(); ...)`, and
 `switch (arch := LOKE_ARCH; arch)` legal: an initial statement may be a variable
@@ -546,11 +515,9 @@ followed by one.
 declared `inout`; see [Procedures](#procedures). Everywhere else a `Return_Value`
 is an ordinary expression.
 
-The unrestricted `Statement` in `Defer_Statement` is narrowed semantically:
-deferred syntax may not contain `return`, `or_return`, or another `defer`.
-`break` and `continue` may target only a loop or switch wholly
-inside that deferred statement. Nested procedure literals are checked as
-independent procedures.
+`Defer_Statement`'s body is narrowed semantically: no `return`, `or_return`, or
+nested `defer`; `break`/`continue` may target only a loop or switch wholly
+inside it. See [design.md](design.md#defer-statement).
 
 ## Switch
 
@@ -660,16 +627,11 @@ may not begin an expression statement, because `{` at statement position starts
 a block. A slice literal's type is the one written: `[]T{...}` is read-only and
 `[]mut T{...}` has mutable elements.
 
-Right associativity is also what lets `or_else` chain. `a or_else b or_else c`
-groups as `a or_else (b or_else c)`, so each `or_else` receives an
-[optional-ok](design.md#optional-ok-results) left operand and an ordinary
-fallback. Under left association the outer operator would have received an
-already-resolved value on its left and could not have type-checked.
-
-The left operand of `or_else` must have at least one payload result followed by
-`bool`; a single-result `bool` call is not eligible. For multiple payloads, the
-fallback expression must itself produce the same number of results, as specified
-in the normative design.
+Right associativity is also what lets `or_else` chain: `a or_else b or_else c`
+groups as `a or_else (b or_else c)`, giving each `or_else` an unresolved
+[status expression](design.md#status-results) on its left — left association
+would break type-checking. Payload-count requirements are in
+[design.md](design.md#or_else-expression).
 
 The optional extraction `value.as(T)` has no suffix of its own: it is written
 with the selector and call suffixes above. Its receiver's type is what makes it
