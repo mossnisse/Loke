@@ -57,6 +57,33 @@ rule, and a normative slot-flattening order for a consumer that did not exist.
 Whichever way the question above is answered, the primitive comes back with the
 owner that needs it.
 
+## Full-expression temporaries
+
+An owned temporary that something *borrows from* inside a larger expression is
+never cleaned up. `takes(build()[:])` builds a container, slices it, passes the
+slice, and leaks the container; the same expression written `takes(build())`,
+where the temporary is the argument itself, is cleaned up correctly.
+
+The borrow rules already say what the lifetime should be — such a borrow "may be
+used during that expression, including by a called procedure, but cannot escape
+it" — and the checker enforces exactly that. What is missing is the emitter
+counterpart: a full-expression boundary at which temporaries created inside a
+statement are dropped, in reverse order.
+
+The boundary is the whole difficulty. Registering these temporaries in the
+surrounding lexical scope is wrong, for the reason `emit_discarded_temporary`
+already records: one alloca reused by a loop would drop only the last value and
+leak every earlier iteration. So the drop has to happen per *statement*, which
+means every construct that evaluates an expression has to declare its own
+boundary — a `return` before its epilogue, a `break` or `continue` before its
+branch, and a loop or `if` condition per evaluation rather than once for the
+enclosing statement. That last case is why this is a mechanism rather than a
+patch.
+
+Until it exists, the leak is bounded: it needs a *managed* temporary that is
+borrowed from rather than passed. Every sliced temporary in the corpus today is
+a fixed array, which is frame storage and leaks nothing.
+
 ## Borrow checking across procedure boundaries
 
 A direct call is no longer coarse. Aggregate provenance gave every named

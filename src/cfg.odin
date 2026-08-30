@@ -3269,7 +3269,12 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	}
 	// A slice literal borrows a hidden array, which follows the surrounding
 	// lexical scope (design.md); any other temporary ends with its statement.
-	if _, is_literal := v.operand.(^Expr_Composite); is_literal {
+	// An unmanaged composite — a slice literal's hidden `[N]T`, or an array
+	// literal sliced in place — is frame storage and lives for that scope. A
+	// *managed* one such as `[dynamic]int{1, 2}[:]` owns an allocation instead,
+	// and nothing keeps that alive past the statement that built it.
+	_, is_literal := v.operand.(^Expr_Composite)
+	if is_literal && !type_is_managed(graph.k.c, expr_base(v.operand).type) {
 		root := prov_new_root(graph, .Slice_Literal, expr_span(v.operand), "this slice literal")
 		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = expr_span(v.operand)})
 		return prov_borrow(graph, root, nil, mutable, v.span, "slice")

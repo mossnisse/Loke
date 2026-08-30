@@ -2286,17 +2286,36 @@ report_root_outlived :: proc(state: ^Prov_State, event: Prov_Event, loan: Prov_L
 	label := root_label(k.c, root)
 	// The storage ends at a closing brace the reader did not write an operation
 	// at, so the use that needs it is the actionable place to point.
-	errorf(
-		k.c,
-		later.file == NO_FILE ? event.span : later,
-		"L0513",
-		"this %s is used after %s, the %s it borrows, has ended",
-		loan.what,
-		label,
-		root_kind_text(root.kind),
-	)
+	if root.symbol == INVALID_SYMBOL {
+		// A nameless root's label is already its kind ("this temporary"), so the
+		// appositive the named case needs would only repeat it.
+		errorf(
+			k.c,
+			later.file == NO_FILE ? event.span : later,
+			"L0513",
+			"this %s is used after %s has ended",
+			loan.what,
+			label,
+		)
+	} else {
+		errorf(
+			k.c,
+			later.file == NO_FILE ? event.span : later,
+			"L0513",
+			"this %s is used after %s, the %s it borrows, has ended",
+			loan.what,
+			label,
+			root_kind_text(root.kind),
+		)
+	}
 	if root.span.file != NO_FILE {
-		add_notef(k.c, root.span, "%s is declared here and ends with its scope", label)
+		// A temporary is not declared and does not reach a closing brace: it ends
+		// at the end of the statement that built it.
+		if root.kind == .Temporary {
+			add_notef(k.c, root.span, "%s ends with the statement that created it", label)
+		} else {
+			add_notef(k.c, root.span, "%s is declared here and ends with its scope", label)
+		}
 	}
 	add_notef(k.c, loan.span, "the %s is created here", loan.what)
 }

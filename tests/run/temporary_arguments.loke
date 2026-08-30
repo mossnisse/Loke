@@ -1,0 +1,74 @@
+package main; import "core:fmt";
+
+// An owned temporary handed to a procedure is the caller's to clean up.
+//
+// design.md "Parameter semantics": an ordinary `value: T` parameter is a
+// non-owning borrow, so the callee never drops one. Every hook here prints, so
+// a missing cleanup is a line that is not in the expected output and a doubled
+// one is a line that appears twice.
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) {
+		if (self.id != 0) {
+			fmt.println(self.id);
+		}
+	}
+}
+
+make_res :: proc(id: int) -> Res { return Res{id}; }
+
+borrows :: proc(value: Res) -> int { return value.id; }
+consumes :: proc(value: move Res) -> int { return value.id; }
+
+// The temporary is dropped after the call, not by the callee.
+temporary_argument :: proc() {
+	fmt.println(1000);
+	fmt.println(borrows(make_res(1)));
+	fmt.println(1001);
+}
+
+// A place is somebody else's; passing it borrows and drops nothing early.
+place_argument :: proc() {
+	fmt.println(2000);
+	kept := make_res(2);
+	fmt.println(borrows(kept));
+	fmt.println(2001);
+}
+
+// A `move` parameter transfers ownership, so the callee's copy is the one that
+// dies and the caller adds no second drop. The marker is written at the call
+// site even when the source is already a temporary.
+consuming_argument :: proc() {
+	fmt.println(3000);
+	held := make_res(3);
+	fmt.println(consumes(move(held)));
+	fmt.println(3001);
+}
+
+// Several temporaries in one call are each cleaned up, in reverse order.
+two :: proc(a: Res, b: Res) -> int { return a.id + b.id; }
+
+several :: proc() {
+	fmt.println(4000);
+	fmt.println(two(make_res(4), make_res(5)));
+	fmt.println(4001);
+}
+
+// A temporary built inside a loop is cleaned up once per iteration.
+looping :: proc() {
+	fmt.println(5000);
+	for (i := 6; i <= 7; i += 1) {
+		fmt.println(borrows(make_res(i)));
+	}
+	fmt.println(5001);
+}
+
+main :: proc() {
+	temporary_argument();
+	place_argument();
+	consuming_argument();
+	several();
+	looping();
+}

@@ -1032,9 +1032,14 @@ emit_bound_call :: proc(
 		} else {
 			operands[index] = emit_expr(e, argument)
 		}
-		// Container members borrow value parameters. Only the caller knows
-		// whether an argument is an owned temporary or somebody else's place.
-		if symbol != nil && symbol.synth == .Container_Op && mode == .Value &&
+		// design.md "Parameter semantics": an ordinary `value: T` parameter is a
+		// non-owning borrow, so the callee never cleans one up — a `move`
+		// parameter is a different mode and is excluded here. When the argument
+		// is an owned temporary rather than somebody else's place, that cleanup
+		// belongs to the caller, and only the caller can tell the two apart.
+		// A C-variadic call passes arguments past the declared parameter list;
+		// those have no parameter type to clean up against.
+		if mode == .Value && index < len(callee_type.parameters) &&
 		   !expression_is_borrowed_place(e.c, argument) {
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&argument_cleanups, entry) }

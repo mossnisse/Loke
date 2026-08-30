@@ -1,0 +1,28 @@
+package main; import "core:fmt";
+
+// A borrow of an owned temporary ends with the statement that built it.
+//
+// design.md "Borrows and lifetimes": such a borrow "may be used during that
+// expression, including by a called procedure, but cannot escape it". A managed
+// temporary owns an allocation, so unlike a slice literal's hidden array it is
+// not frame storage the surrounding scope keeps alive.
+
+first_half :: proc(values: []int) -> []int {
+	return values[:len(values)/2];
+}
+
+length :: proc(values: []int) -> int { return len(values); }
+
+main :: proc() {
+	// Used during the statement that built the temporary: allowed.
+	fmt.println(length([dynamic]int{1, 2, 3}[:]));
+
+	// Escaping it: rejected.
+	bad := first_half([dynamic]int{1, 2, 3, 4}[:]);
+	fmt.println(len(bad));
+
+	// A slice literal is different: its hidden array is frame storage that
+	// follows the surrounding scope, so this one is fine.
+	literal := []int{1, 2, 3}[:];
+	fmt.println(length(literal));
+}

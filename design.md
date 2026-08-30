@@ -4990,7 +4990,8 @@ bad :: proc() -> []int {
 ```
 
 A borrow returned from storage reachable through a borrowed parameter derives
-root provenance from every borrowed argument received by the procedure:
+root provenance from the borrowed arguments the procedure's result summary names
+— every one of them at a call the compiler cannot resolve to a declaration:
 
 ```odin
 first_half :: proc(values: []int) -> []int {
@@ -5001,14 +5002,30 @@ numbers := [dynamic]int{1, 2, 3, 4};
 view := first_half(numbers[:]); // borrows `numbers`
 
 bad := first_half([dynamic]int{1, 2, 3, 4}[:]);
-// ERROR: the result would outlive the temporary argument
+fmt.println(len(bad));
+// ERROR: the result outlives the temporary argument, which ends with the
+// statement that built it
 ```
+
+Passing that same slice to something that consumes it within the statement is
+allowed, because the borrow never escapes the expression:
+
+```odin
+fmt.println(len([dynamic]int{1, 2, 3, 4}[:])); // fine
+```
+
+A [slice literal](#slice-literals) behaves differently, and the difference is
+what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the
+surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation
+that nothing keeps alive past the statement.
 
 The default parameter binding itself is a callee-local read-only value. Taking
 `&parameter` borrows that local and cannot produce a returned pointer. An
 `inout` parameter aliases the caller's root, so a borrow returned from it is
-derived from that root. If a procedure has multiple borrowed arguments, its
-returned borrow conservatively derives from all of them.
+derived from that root. Where a procedure has several borrowed arguments, which of
+them a returned borrow derives from is what the result summary below records; a
+call through a procedure value, which has no summary, conservatively derives
+from all of them.
 
 A checked pointer to an allocation root created by `new` or `new_clone` may be
 returned because the allocation is not callee-local storage. The pointer's root
