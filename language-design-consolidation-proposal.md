@@ -29,11 +29,13 @@ procedures — were deliberately not taken in the same change, and have since
 shipped. Section 6, the removal of `manual`, has shipped too: `unsafe.forget` is
 the one replacement, and the modifier grammar is down to one axis.
 
-The rest is a candidate for the evaluations in
-[`language-refinement-strategy.md`](language-refinement-strategy.md), not an
-approved implementation roadmap. The provenance prerequisites below applied and
-were met: a borrow wrapped in a union keeps its root and region dependencies,
-and unwrapping one hands them on.
+Every section of this proposal has now been evaluated under
+[`language-refinement-strategy.md`](language-refinement-strategy.md) and every
+step of the migration order in section 13 is done. What remains open is recorded
+against the individual decisions in section 12 and the items in section 9; the
+document is kept as the reasoning behind what shipped, not as a roadmap. The
+provenance prerequisites below applied and were met: a borrow wrapped in a union
+keeps its root and region dependencies, and unwrapping one hands them on.
 
 ## Summary
 
@@ -581,17 +583,17 @@ Validating conversions return `Option(T)` when invalidity carries no useful
 information, `Result(T, E)` when it does.
 
 Strategy Phase 1a has shipped the arity half of this table under the existing
-status protocol: `value.as(T)` and `table.lookup_value(key)` exist today and
-return `(T, bool)` rather than `Option(T)`. Adopting this proposal would change
-their result *type*, not their names or their trapping behavior — except for
-`get`/`lookup_value`, where the shipped name is `lookup_value` and this table's
-`get` remains a proposal.
+status protocol. **Shipped.** `value.as(T)` and `table.lookup_value(key)` now
+answer `Option(T)`; their names and trapping behaviour are unchanged, and the
+shipped name for the lookup is `lookup_value`, not this table's `get`.
 
-**`find` is unresolved** (open decision 8). `Option(^mut V)` trades a place
-result for a nullable, storable address — the same trade section 7 declines
-for `inout`. `Option(inout V)` isn't available either, since a mode can't be
-written on a field. Either `find` accepts stepping down to a pointer, or it
-stays a place-returning operation outside `Option`.
+**`find` answers `Option(^mut V)`** (open decision 8, since answered). It trades
+a place result for a nullable, storable address — the same trade section 7
+declines for `inout`, and the reason indexing keeps its place result while
+`find` does not: indexing has no "absent" case to report. `Option(inout V)`
+isn't available either, since a mode can't be
+written on a field. `find` accepted stepping down to a pointer; indexing did
+not, and stays a place-returning operation outside `Option`.
 
 ### 5.6 Receiving values
 
@@ -1040,12 +1042,20 @@ unsafe.forget(move(socket)); // visibly unsafe: compiler can't prove the handoff
   with no trailing status left to notice. Allowing the attribute on a type
   declaration lets `Option`/`Result` carry it once instead of annotating
   every fallible procedure in the standard library.
+  **Done.** The attribute accepts `.Type_Decl`, and a call whose result type
+  requires handling is diagnosed whoever declared the procedure.
 - **The `try_` family should be re-examined.** `append`/`try_append`,
   `reserve`/`try_reserve`, etc. double the container API over a
   failure-policy choice; typed propagation makes the fallible variant cheap
   enough that keeping both spellings needs re-justifying.
-  `Small_Array.try_append -> bool` becomes the last bare-`bool` failure in the
-  language and should likely become `Result((), Capacity_Error)`.
+  **Partly resolved.** The bare-`bool` half is gone from the specification: a
+  `try_` operation now reports failure as a `Result`, and `Small_Array`'s form
+  is `Result(Unit, Capacity_Error)` over an ordinary library union with
+  `@(failure=...)` — no compiler-known error type. `Small_Array` itself is not
+  implemented, so this is a specification fix, not a migration.
+  **Still open:** whether both spellings should exist at all. Every shipped
+  container keeps its `op`/`try_op` pair, and the case for collapsing them is
+  a separate decision with its own migration.
 - **Is `()` a new zero-sized type category, or the anonymous spelling of an
   already-legal empty struct?** `Result((), E)` puts `()` in every
   no-payload fallible signature in the standard library, so this needs an
@@ -1053,6 +1063,11 @@ unsafe.forget(move(socket)); // visibly unsafe: compiler can't prove the handoff
 - **Storage modifiers stay modifiers.** Removing `manual` reduces the
   modifier grammar to one axis and makes it more orthogonal — see section
   6.1 — so `static` and `thread_local` should not move to attributes.
+  **Done.** `manual` is removed and the reasoning is recorded in `design.md`
+  under "Storage duration": both modifiers change the meaning of the
+  declaration itself — address stability, initialization time, and which
+  operations the binding admits — which is what a type-adjacent modifier says
+  and an attribute does not.
 
 ## 10. Mechanism inventory
 
@@ -1320,18 +1335,23 @@ different behavior silently. Until a decision changes the text, the concrete
 rules above define this candidate. Record evidence and revise the affected
 sections before implementation:
 
-1. Does retaining anonymous unions justify their distinct nil, extraction,
-   and reflection rules, or should all unions migrate to one named model?
-   This candidate retains both with disjoint syntax and forbids mixing; the
-   refinement strategy prefers one model. Compare both before adoption.
-2. Should `or_else`/`or_return` be specified by name over the two `base:`
-   types, or structurally over any two-variant union with a designated
-   failure variant?
-3. What replaces `active_typeid()` for a named-variant union whose variants
-   may share a payload type — a variant-index accessor, reflection only, or
-   restricting `active_typeid()` to anonymous unions?
-4. Is `.ok(T{})` an acceptable zero value for `Result(T, E)`, or should a
-   named union be allowed a non-first zero variant, or none at all?
+1. **Answered: one named model.** The strategy's preference won. Named
+   variants are the union model, and the distinct nil state that anonymous
+   unions needed is gone with them — `design.md` records the reversal under
+   "Optional and fallible results" and counts what the two-shape design had
+   cost: a nil union state, an `active_typeid()` method, an arity rule tying a
+   producer to its destination, and a "status result" concept with two
+   admissible spellings.
+2. **Answered: structurally, through an attribute.** `or_else` and `or_return`
+   recognise any two-variant union carrying `@(failure=name)`, so `Option` and
+   `Result` are ordinary `base:` declarations with no privileged status and a
+   library can declare its own vocabulary on equal terms.
+3. **Answered: nothing replaces it.** `active_typeid()` is removed along with
+   the anonymous union model that needed it. A named variant is selected by
+   name in a switch, which is what the accessor was approximating.
+4. **Answered: none at all, unless designated.** A union has no zero value
+   unless it writes `@(zero=name)`. `.ok(T{})` is not implicit, and the zero
+   variant is not required to be the first one.
 5. **Deferred.** Is `()` a new zero-sized type category, or the anonymous
    spelling of an already-legal empty struct? The shipped `Unit :: struct {}`
    already covers `Result(Unit, E)`, so a second spelling for one type buys
@@ -1378,8 +1398,13 @@ sections before implementation:
     project — which is `Option(^mut V)`, the shape `find` already has and that
     indexing deliberately does not. Section 7's provisional keep is now a
     recorded decision. A change needs its own plan.
-12. What exact ABI guarantee should `Option`/`Result` make for C-compatible
-    payloads and exported Loke procedures?
+12. **Answered: none — they are not ABI surface.** A tagged union is not
+    foreign-ABI-safe whatever its payloads, so `Option` and `Result` cannot
+    appear in a foreign-convention signature in either direction. A value that
+    must cross the boundary is unwrapped first, and the concrete instantiation
+    is wrapped in a procedure with a foreign calling convention. This is the
+    general rule for managed containers, slices, `dyn`, and hooked records, not
+    a special case, and the compiler enforces it (L0619).
 
 ## 13. Proposed migration order
 
@@ -1418,20 +1443,32 @@ ownership, and caller migration are gates.
    union identity, zero/default behavior, unit representation, operator
    recognition, and ABI questions together. Record any reversal of the current
    `design.md` decision not to give `Option` a standard-library/operator role.
+   The [third implementation plan](consolidation-typed-fallibility-plan.md)
+   covers steps 4–6. **Done, and the decision is reversed.** `design.md` now
+   declares `Option` and `Result` in `base:` and records the reversal in place,
+   with the reason: two failure shapes cost more mechanism than one.
 5. If adopted, implement the selected union rules, unit product, ordinary
    `base:` declarations, constructor ownership, switch borrowing/consumption,
    reflection, and lifecycle support. Test the operator ownership matrix from
-   section 5.7, not just calls returning temporary wrappers.
+   section 5.7, not just calls returning temporary wrappers. **Done.** `Unit`
+   shipped as an ordinary empty struct rather than a new `()` category
+   (decision 5), and `@(zero=name)` settled zero behaviour (decision 4).
 6. Migrate fallible producers, their callers, and `or_else`/`or_return`
    together. Include extraction, lookup, conversions, `pop`, iteration,
    allocation, generated `try_clone`/copy hooks, and library procedures. Delete
    the old optional-ok/status protocol only with that migration. Steps 5–6
    form one adoption change; do not leave two supported propagation protocols.
    If anonymous records are not ready, use named records for multiple payloads.
+   **Done.** One propagation protocol ships; the optional-ok/status protocol is
+   gone.
 7. Implement structural anonymous records and general destructuring together
    with migrating procedures to one result and removing named-result locals.
    The labelled-parenthesis rule and removal of its old meaning land in the
    same change. Preserve the single `inout` result form.
+   The [fourth implementation plan](consolidation-one-result-anonymous-records-plan.md)
+   covers this step. **Done.** Every procedure exposes one result, destructuring
+   is flat (decision 6), record identity includes field names (decision 7), and
+   the single `inout` result form is preserved.
 8. Validate real manual-storage cases; add consuming raw conversions and
    `unsafe.forget`, plus narrowly scoped raw-storage operations only if needed.
    Migrate those cases and then remove `manual`. Do not remove it before its

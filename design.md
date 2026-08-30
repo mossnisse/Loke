@@ -855,7 +855,7 @@ y.append(..x[:]); // append a slice
 
 Ordinary mutating operations use the allocator's configured failure policy, which normally reports an out-of-memory panic. Fallible variants such as `try_append` and `try_reserve` return `Allocator_Error` for code that needs to recover.
 
-The `try_` prefix is a library-wide convention meaning: *report the failure this operation would otherwise panic on, and leave the value unchanged.* The result type depends on what can fail — `Allocator_Error` for an operation that can fail only by allocating, `bool` for one on a never-allocating container such as [`Small_Array(T, N)`](#fixed-capacity-arrays). The prefix names the contract, not the result type.
+The `try_` prefix is a library-wide convention meaning: *report the failure this operation would otherwise panic on, and leave the value unchanged.* A `try_` operation reports that failure as a [`Result`](#optional-and-fallible-results), never as a bare `bool`; only the error type varies with what can fail — `Allocator_Error` for an operation that can fail only by allocating, a library-declared error such as `Capacity_Error` for one on a never-allocating container such as [`Small_Array(T, N)`](#fixed-capacity-arrays). A no-payload success is `Result(Unit, E)`. The prefix names the contract, not the error type.
 
 #### Assigning to a dynamic array
 
@@ -981,7 +981,7 @@ fmt.println(len(x), cap(x)); // 5 5
 
 #### Fixed-capacity arrays
 
-A growable array with inline fixed capacity is the library type `Small_Array(T, N)`, not a second built-in array form. It implements the ordinary indexing, slicing, iteration, and container procedures through the same abstraction facilities available to user code. It never allocates; operations that would exceed `N` panic, while their `try_` forms leave the value unchanged and return false.
+A growable array with inline fixed capacity is the library type `Small_Array(T, N)`, not a second built-in array form. It implements the ordinary indexing, slicing, iteration, and container procedures through the same abstraction facilities available to user code. It never allocates; operations that would exceed `N` panic, while their `try_` forms leave the value unchanged and return `.err` — `try_append` is `Result(Unit, Capacity_Error)`, with `Capacity_Error` an ordinary library union carrying `@(failure=...)`, not a compiler-known type.
 
 ```odin
 x: Small_Array(int, 8) = {};
