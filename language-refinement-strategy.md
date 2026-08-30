@@ -19,11 +19,11 @@ compiler work belongs in focused plans:
   contracts it established are stated in Phase 4 below. The inference shortcuts
   and the `unsafe.forget_provenance` proposal from an earlier draft of that work
   were deliberately not adopted.
-- [`language-design-consolidation-proposal.md`](language-design-consolidation-proposal.md)
-  is a candidate value design. Its sections on named variants and typed
-  fallibility have shipped, without its dual union forms and without a default
-  `Result` value; its anonymous records remain a candidate evaluated in
-  Phase 2, not accepted by reference.
+- The consolidation proposal that drove Phases 1 and 2 is gone. It was adopted
+  in full — named variants and typed fallibility without its dual union forms or
+  a default `Result` value, and the anonymous records Phase 2a shipped — so
+  `design.md` is now the reasoning of record and `comments.md` holds what it
+  left open.
 
 Requirements such as preserving a borrow through a wrapper are acceptance
 criteria. Recommended APIs and representations below are prototype candidates;
@@ -412,8 +412,7 @@ themselves.
 
 Evaluate this phase together with Phase 1b. If fallibility becomes ordinary
 union values, its payload and variant models must agree; neither decision
-should force a second mechanism into the other. The consolidation proposal
-supplies examples, not a requirement to adopt its complete design.
+should force a second mechanism into the other.
 
 #### Phase 2a — one model for grouped values
 
@@ -481,8 +480,8 @@ Variant identity is the declared name; absence is an explicit variant. Two
 variants may carry the same payload type, so switching and reflection cannot
 use payload type as variant identity. Include `Result(int, int)` in the proof.
 
-The consolidation proposal's permanent split between anonymous unions with
-implicit nil and named unions without it is not the recommended endpoint.
+A permanent split between anonymous unions with implicit nil and named unions
+without it is not the recommended endpoint.
 Keep anonymous syntax only if it is exact shorthand for the same semantics;
 otherwise migrate it away with its type-based extraction and nil-state rules.
 Any union migration must also migrate the nil-status consumers it changes; it
@@ -959,9 +958,8 @@ and no special treatment of an `Option` wrapper.
 What is left:
 
 - **Phase 6, surface syntax**, still deliberately last.
-- The open items recorded against
-  [`language-design-consolidation-proposal.md`](language-design-consolidation-proposal.md)
-  sections 9 and 12 — chiefly whether the `op`/`try_op` pair should exist at
+- Two questions the consolidation left open, now in
+  [`comments.md`](comments.md): whether the `op`/`try_op` pair should exist at
   all, and whether `()` ever becomes a type category rather than `Unit`.
 - The measured conservatism the provenance work recorded rather than removed.
   If conservative checks reject essential library programs, use those programs

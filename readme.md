@@ -13,10 +13,9 @@ Stuff like hidden allocations are allowed but procedures returning values that h
 The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
 
 Language refinement runs as separate consolidations, planned in
-[language-refinement-strategy.md](language-refinement-strategy.md) and reasoned
-through in
-[language-design-consolidation-proposal.md](language-design-consolidation-proposal.md).
-All of them have shipped:
+[language-refinement-strategy.md](language-refinement-strategy.md). All of them
+have shipped, and [design.md](design.md) carries the reasoning for what they
+settled:
 
 - **Typed fallibility** made absence and failure into types. Every union variant
   is named, and `Option(T)` and `Result(T, E)` are ordinary generic unions in
