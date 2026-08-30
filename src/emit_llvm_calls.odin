@@ -74,7 +74,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			// build time, so the handle is the runtime's own record.
 			return RT_DEFAULT_ALLOCATOR
 		case .New, .New_Clone:
-			return emit_allocation(e, v, symbol.builtin)
+			return emit_allocation_pair(e, v, symbol.builtin)[0]
 		case .Make:
 			return emit_make_container(e, v)[0]
 		case .Drop:
@@ -447,11 +447,6 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	out := make([]string, 1)
 	out[0] = emit_alloc_result(e, v.type, broke, published)
 	return out
-}
-
-@(private = "file")
-emit_allocation :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
-	return emit_allocation_pair(e, v, kind)[0]
 }
 
 // `make(T, counts..., allocator)`. The checker bound the counts in written

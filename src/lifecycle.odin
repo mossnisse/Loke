@@ -376,12 +376,6 @@ classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, 
 	v.element_clones[index] = true
 }
 
-// Variant construction is aggregate construction: `.some(x)` where `x` names a
-// place leaves that place owning its value, so the variant receives a clone.
-classify_variant_payload :: proc(k: ^Checker, value: Expr, type: Type_Id) -> bool {
-	return classify_copy(k, value, type, "variant construction")
-}
-
 classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 	if d.destructure.active {
 		classify_destructure(k, &d.destructure, d.values[0], in_loop)

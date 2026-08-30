@@ -464,18 +464,6 @@ drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 	emit_drop_place(e, entry.type, entry.place)
 }
 
-@(private)
-discard_owned_values :: proc(e: ^Emitter, types: []Type_Id, values: []string) {
-	guards := make([]Deferred, len(values))
-	defer delete(guards)
-	for value, index in values {
-		guards[index] = hold_temporary_value(e, types[index], value)
-	}
-	for index := len(guards) - 1; index >= 0; index -= 1 {
-		drop_temporary_value(e, guards[index])
-	}
-}
-
 // -------------------------------------------------------------- cleanups --
 
 @(private)

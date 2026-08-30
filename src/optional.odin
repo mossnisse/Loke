@@ -13,10 +13,6 @@ import "core:slice"
 
 // -------------------------------------------------- checked extractions --
 
-check_checked_extract :: proc(k: ^Checker, v: ^Expr_Checked_Extract) {
-	check_extract_of(k, v, check_single_expr(k, v.operand))
-}
-
 // The shared half, entered with the operand already resolved. `.as(T)` resolves
 // its receiver first — that is what decides whether it is the built-in at all —
 // so it must not be checked a second time here.

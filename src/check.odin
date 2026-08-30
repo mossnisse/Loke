@@ -1948,9 +1948,11 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	errors_before := k.c.error_count
 	for parameter in literal.signature.params {
 		if parameter.default != nil {
-			// Defaults are resolved in the declaration's lexical scope, before
-			// any parameter is visible to the right of it.
-			check_parameter_default(k, literal, parameter)
+			// design.md "Default values": a default is resolved in the declaration's
+			// lexical scope with only the parameters to its left installed, so a
+			// reference to a later parameter is an unknown name rather than a forward
+			// peek. It may name `self` and nothing else in the body.
+			check_value_expr(k, parameter.default, resolve_type_syntax(k, parameter.type), "pass")
 		}
 		install_symbols(k.scope, k.c, parameter.symbols)
 	}
@@ -1967,17 +1969,6 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	if symbol.result != INVALID_TYPE && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")
 	}
-}
-
-// design.md "Default values": a default may reference `self` and parameters to
-// its left, and nothing else in the body.
-// design.md "Default values": a default is resolved in the declaration's lexical
-// scope with only the parameters to its left installed, so a reference to a
-// later parameter is an unknown name rather than a forward peek. The grammar
-// already restricts a default to a value parameter.
-@(private = "file")
-check_parameter_default :: proc(k: ^Checker, literal: ^Expr_Proc, parameter: Parameter) {
-	check_value_expr(k, parameter.default, resolve_type_syntax(k, parameter.type), "pass")
 }
 
 install_symbols :: proc(scope: ^Scope, c: ^Compiler, symbols: []Symbol_Id) {

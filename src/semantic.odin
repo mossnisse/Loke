@@ -1146,13 +1146,6 @@ equal_param_modes :: proc(a, b: []Param_Mode) -> bool {
 	return true
 }
 
-@(private = "file")
-equal_bools :: proc(a, b: []bool) -> bool {
-	if len(a) != len(b) { return false }
-	for value, index in a { if value != b[index] { return false } }
-	return true
-}
-
 intern_type :: proc(c: ^Compiler, key: Type_Key, value: Type_Info) -> Type_Id {
 	init_semantic_stores(c)
 	if id, ok := c.type_by_shape[key]; ok {

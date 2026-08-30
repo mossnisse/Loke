@@ -187,6 +187,14 @@ request_typeid :: proc(c: ^Compiler, type: Type_Id) {
 	append(&c.typeid_order, type)
 }
 
+// One type and the canonical key it sorts by, so the comparison reads the key
+// off its own element rather than out of a captured table.
+@(private = "file")
+Ranked_Type :: struct {
+	key:  string,
+	type: Type_Id,
+}
+
 // After semantic discovery is complete, every requested concrete type is sorted
 // by a stable canonical key and given a deterministic nonzero `u64`. Zero stays
 // the nil `typeid`, and the mapping cannot move because a traversal visited two
@@ -206,25 +214,15 @@ freeze_typeids :: proc(c: ^Compiler) {
 		}
 	}
 	c.typeid_frozen = true
-	sorted := make([]Type_Id, len(c.typeid_order), c.semantic_allocator)
-	copy(sorted, c.typeid_order[:])
-	keys := make(map[Type_Id]string, c.semantic_allocator)
-	for type in sorted {
-		keys[type] = typeid_sort_key(c, type)
+	// Sorting key-and-type pairs keeps the comparison non-capturing, which is what
+	// `slice.stable_sort_by` needs; the sort is stable so equal keys keep request order.
+	sorted := make([]Ranked_Type, len(c.typeid_order), c.semantic_allocator)
+	for type, index in c.typeid_order {
+		sorted[index] = Ranked_Type{typeid_sort_key(c, type), type}
 	}
-	// `slice.sort_by` takes a non-capturing procedure; use insertion sort here so
-	// the precomputed compilation-owned keys remain available to the comparison.
-	for index in 1 ..< len(sorted) {
-		current := sorted[index]
-		position := index
-		for position > 0 && keys[current] < keys[sorted[position - 1]] {
-			sorted[position] = sorted[position - 1]
-			position -= 1
-		}
-		sorted[position] = current
-	}
-	for type, index in sorted {
-		c.typeid_values[type] = u64(index) + 1
+	slice.stable_sort_by(sorted, proc(a, b: Ranked_Type) -> bool { return a.key < b.key })
+	for entry, index in sorted {
+		c.typeid_values[entry.type] = u64(index) + 1
 	}
 }
 

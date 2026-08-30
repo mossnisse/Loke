@@ -360,15 +360,6 @@ synth_proc :: proc(
 	return id
 }
 
-// ---------------------------------------------------------- the `iter` call --
-
-// `iter(source)` is the closed standard alias for `source.iter()`. Protocol
-// validation belongs to `Iterable`/`foreach`; a direct alias call performs the
-// same overload selection as direct method syntax and rewrites to that member.
-check_iter_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, expected: Type_Id) {
-	check_standard_alias(k, v, ident, expected)
-}
-
 @(private = "file")
 iteration_proc_matches :: proc(
 	k: ^Checker,

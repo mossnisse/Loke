@@ -99,7 +99,7 @@ activate_when_items :: proc(k: ^Checker, pkg: ^Package) -> bool {
 resolve_item_when :: proc(k: ^Checker, item: ^Item_When) -> bool {
 	// A condition waiting on a declaration another branch may still supply is
 	// pending, not wrong; it is only an error once no round can add anything.
-	if !condition_ready(k, item.cond) {
+	if first_unresolved_name(k, item.cond) != "" {
 		return false
 	}
 	value, ok := check_when_condition(k, item.cond)
@@ -200,13 +200,6 @@ check_when_condition :: proc(k: ^Checker, cond: Expr) -> (bool, bool) {
 		return false, false
 	}
 	return folded.boolean, true
-}
-
-// Can every name this condition reads be resolved right now? Checking a
-// condition that cannot would report an unknown name for a declaration a later
-// round may still introduce.
-condition_ready :: proc(k: ^Checker, e: Expr) -> bool {
-	return first_unresolved_name(k, e) == ""
 }
 
 // Does this callee name the given built-in? Used where an argument is a token

@@ -371,7 +371,9 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = v.args[0].value
 	v.bound = bound
-	v.variant_clone = classify_variant_payload(k, v.args[0].value, payload)
+	// Variant construction is aggregate construction: `.some(x)` where `x` names a
+	// place leaves that place owning its value, so the variant receives a clone.
+	v.variant_clone = classify_copy(k, v.args[0].value, payload, "variant construction")
 
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.

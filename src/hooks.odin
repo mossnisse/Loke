@@ -467,17 +467,6 @@ generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kin
 	return id
 }
 
-// `clone(value)` and `try_clone(value)` are standard aliases for the generated
-// receiver members (design.md "Standard customization procedures"). This
-// resolves to the very member `value.clone()` would and rewrites the callee to
-// name it — one emitted call, not two entry points that could drift.
-//
-// A user customizes copying with `hook(copy)`; there is deliberately no way to
-// answer the alias with an unrelated free procedure.
-check_clone_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, expected: Type_Id) {
-	check_standard_alias(k, v, ident, expected)
-}
-
 // The call expression the compiler supplies for an omitted hook allocator. One
 // shared node, exactly as a written default argument is shared by every call
 // site that omits it.

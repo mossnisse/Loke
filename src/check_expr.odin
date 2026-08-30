@@ -56,7 +56,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_slice(k, v, place)
 
 	case ^Expr_Checked_Extract:
-		check_checked_extract(k, v)
+		check_extract_of(k, v, check_single_expr(k, v.operand))
 
 	case ^Expr_Or_Else:
 		check_or_else(k, v, expected)
@@ -2592,14 +2592,14 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
 		return
-	case .Iter:
-		check_iter_builtin(k, v, ident, expected)
-		return
-	case .Standard_Alias:
+	// `iter(source)` and `value.clone()`'s free spelling are closed standard
+	// aliases like any other: the same overload selection as direct method syntax,
+	// rewritten to that member, so there is one emitted call and not two entry
+	// points that could drift. `Iterable`/`foreach` own protocol validation, and a
+	// user customizes copying with `hook(copy)` — never with an unrelated free
+	// procedure.
+	case .Iter, .Standard_Alias, .Clone, .Try_Clone:
 		check_standard_alias(k, v, ident, expected)
-		return
-	case .Clone, .Try_Clone:
-		check_clone_builtin(k, v, ident, expected)
 		return
 	case .Make:
 		check_make_builtin(k, v, ident)
