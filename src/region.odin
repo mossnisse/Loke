@@ -96,12 +96,12 @@ ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 		buffer := slice_of(k.c, TYPE_U8, mutable = true)
 		append(&members, provider_member(
 			k.c, type, "from_buffer", .Open_Fixed,
-			[]Type_Id{buffer}, []Param_Mode{.Value}, []Type_Id{type}, has_receiver = false,
+			[]Type_Id{buffer}, []Param_Mode{.Value}, type, has_receiver = false,
 		))
 	}
 	open := provider_member(
 		k.c, type, "init", .Open,
-		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value}, []Type_Id{type}, has_receiver = false,
+		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value}, type, has_receiver = false,
 	)
 	if sym := symbol_of(k.c, open); sym != nil {
 		sym.param_defaults[0] = default_allocator_arg(k.c)
@@ -111,7 +111,7 @@ ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 	// address, and reading a provider does not modify it.
 	append(&members, provider_member(
 		k.c, type, "allocator", .Handle,
-		[]Type_Id{type}, []Param_Mode{.Value}, []Type_Id{TYPE_ALLOCATOR}, has_receiver = true,
+		[]Type_Id{type}, []Param_Mode{.Value}, TYPE_ALLOCATOR, has_receiver = true,
 	))
 	add_members(k.c, type, members[:])
 }
@@ -124,10 +124,10 @@ provider_member :: proc(
 	op: Provider_Op,
 	params: []Type_Id,
 	modes: []Param_Mode,
-	results: []Type_Id,
+	result: Type_Id,
 	has_receiver: bool,
 ) -> Symbol_Id {
-	id := synth_proc(c, name, .Provider_Op, owner, params, modes, results)
+	id := synth_proc(c, name, .Provider_Op, owner, params, modes, result)
 	if sym := symbol_of(c, id); sym != nil {
 		sym.has_receiver = has_receiver
 		if has_receiver {
@@ -146,7 +146,7 @@ provider_try_proc :: proc(k: ^Checker, owner: Type_Id, name: string) -> Symbol_I
 	id := provider_member(
 		c, owner, name, .Try_Open,
 		[]Type_Id{TYPE_ALLOCATOR}, []Param_Mode{.Value},
-		[]Type_Id{result_type(k, owner, TYPE_ALLOCATOR_ERROR)},
+		result_type(k, owner, TYPE_ALLOCATOR_ERROR),
 		has_receiver = false,
 	)
 	if sym := symbol_of(c, id); sym != nil {

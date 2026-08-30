@@ -1,0 +1,47 @@
+// proposal §8.3: the pair that makes the ownership rule visible. Destructuring
+// the temporary an `or_return` produces consumes it and clones nothing; binding
+// the value first and then destructuring the place clones every retained
+// managed field, and the copy-cost diagnostic says so.
+package main; import "core:fmt";
+
+Doc :: struct { name: string, bytes: int }
+Error_Code :: enum { Missing }
+
+read_document :: proc(path: string_view) -> Result(Doc, Error_Code) {
+	owned: string = "report";
+	return .ok(Doc{name = owned, bytes = len(path)});
+}
+
+// Consuming: no clone, and no warning.
+consuming :: proc(path: string_view) -> Result(int, Error_Code) {
+	name, bytes := read_document(path) or_return;
+	return .ok(len(name) + bytes);
+}
+
+// Cloning: `doc` stays live, so `name` is a copy of its string.
+cloning :: proc(path: string_view) -> Result(int, Error_Code) {
+	doc := read_document(path) or_return;
+	name, bytes := doc;
+	return .ok(len(name) + bytes + len(doc.name));
+}
+
+// A move-only field cannot be cloned out of a place at all.
+Only :: move_only struct { id: int }
+Holder :: struct { token: Only, count: int }
+held :: proc(h: Holder) -> int {
+	token, count := h;
+	return token.id + count;
+}
+
+// `_` retains nothing, so a move-only field discarded from a place is neither
+// cloned nor diagnosed.
+discarded_move_only :: proc(h: Holder) -> int {
+	_, count := h;
+	return count;
+}
+
+main :: proc() {
+	fmt.println(consuming("abc"), cloning("abc"));
+	fmt.println(held(Holder{token = Only{1}, count = 2}));
+	fmt.println(discarded_move_only(Holder{token = Only{3}, count = 4}));
+}

@@ -1,0 +1,21 @@
+// A discarded-field drop may panic. Every earlier field of the consumed record
+// is already guarded, so unwinding still drops the not-yet-processed fields in
+// reverse declaration order exactly once.
+package main; import "core:fmt";
+
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		if (self.id == 0) { return; }
+		id := self.id;
+		self.id = 0;
+		fmt.println(id);
+		if (id == 3) { panic("discard drop failed"); }
+	}
+}
+
+Three :: struct { first: Tracked, second: Tracked, third: Tracked }
+
+main :: proc() {
+	_, _, _ := Three{Tracked{1}, Tracked{2}, Tracked{3}};
+}

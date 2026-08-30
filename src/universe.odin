@@ -84,7 +84,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// The signature every built-in shares: none. `check_builtin_call` settles
 	// arity and operand types for all of them, so an interned signature would
 	// only be a second place for those rules to disagree.
-	no_args := intern_proc_type(c, nil, nil, nil, nil, "")
+	no_args := intern_proc_type(c, nil, nil, INVALID_TYPE, false, "")
 	// Every predeclared built-in: one name, the kind that selects its checking,
 	// and the type the checker starts from. All of them share `no_args`, because
 	// arity and operand types are settled by `check_builtin_call` rather than by

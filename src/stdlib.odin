@@ -110,7 +110,7 @@ contribute_builtin :: proc(c: ^Compiler, pkg: ^Package, name: string, kind: Buil
 		kind      = .Builtin,
 		builtin   = kind,
 		type      = TYPE_VOID,
-		proc_type = intern_proc_type(c, nil, nil, nil, nil, ""),
+		proc_type = intern_proc_type(c, nil, nil, INVALID_TYPE, false, ""),
 		public    = public,
 	})
 	pkg.scope.names[intern_identifier(c, name)] = symbol_id

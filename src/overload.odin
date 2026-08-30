@@ -714,10 +714,10 @@ overload_has_viable :: proc(
 @(private = "file")
 candidate_result_fits :: proc(k: ^Checker, symbol_id: Symbol_Id, expected: Type_Id) -> bool {
 	sym := symbol_of(k.c, symbol_id)
-	if sym == nil || len(sym.results) != 1 {
+	if sym == nil || sym.result == INVALID_TYPE {
 		return false
 	}
-	return sym.results[0] == expected || assignable(k.c, sym.results[0], expected)
+	return sym.result == expected || assignable(k.c, sym.result, expected)
 }
 
 // ---------------------------------------------------------------- diagnostics --

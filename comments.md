@@ -39,9 +39,14 @@ current compile-time or interface design.
 
 ## Tuples
 
-Should multiple return values be a real tuple type rather than a special form?
-
-Today `a, b := swap(1, 2)` is a language rule that applies to return values and nothing else. A first-class tuple would unify multiple returns, multiple declarations, and pattern matching under one construct, and would let a tuple be stored, passed, and named. The counter-argument is that Odin's approach works, costs nothing, and never tempts anyone to return a tuple where a struct with named fields would document the code better.
+**Answered: anonymous records, not tuples.** `a, b := swap(1, 2)` used to be a
+language rule that applied to return values and nothing else. It is now one
+rule — [destructuring](design.md#destructuring) — over one type, the
+[anonymous record](design.md#anonymous-records), which can be stored, passed,
+named, and reflected on like any other value. A positional tuple family was
+rejected: it would have been a second product mechanism beside `struct`, and
+naming the fields is what lets field access, reflection, and the `foreach`
+binding rule mean the same thing for both.
 
 ## Owning runtime polymorphism
 
@@ -414,6 +419,46 @@ failure surfaces on the next call — the same contract Rust's `Read` has, and o
 every helper in `core:io` was already written for, because they all loop until
 they have what they asked for.
 
+### One result, and the compatibility break that came with it
+
+A procedure returns at most one value. Multiple results, named result locals,
+and the bare `return;` that published them are gone, and so is the
+definite-initialisation dataflow that existed only to let `or_return` perform
+that bare return with several results outstanding. Several values are returned
+as one [anonymous record](design.md#anonymous-records) and taken apart by
+[destructuring](design.md#destructuring), which is now one rule in declarations,
+assignments, and `foreach` rather than a result-only special case.
+
+The migration cost was near zero because typed fallibility had already collapsed
+the library to single results: `core:` had exactly one multi-result procedure
+(`strings.encode_rune`), `base:` and `examples:` had none, and five naked
+returns existed in the whole live corpus. Everything else was test fixtures for
+the mechanism being deleted.
+
+**The break.** `-> (a: int, b: int)` keeps compiling and changes meaning: it was
+two named results, and it is now one record result. Result names used to be
+excluded from procedure-type identity, while anonymous-record field names are
+part of it — so `proc() -> (a: int, b: int)` and `proc() -> (x: int, y: int)`
+were compatible before this phase and are not after it, through a procedure
+value, an overload, an interface slot, reflection, and ABI lowering alike. The
+one-result form changes too: `-> (n: T)` was one named `T`, and is now a
+one-field record. `-> (T, U)` is no longer a type and says so.
+
+That break is the price of the answer to the identity question. Interning on the
+*semantic* vector — the ordered `(field name, field type)` pairs, compared pair
+by pair — rather than on a printed type name is what keeps two packages'
+unrelated `Token` types from collapsing into one record type merely because both
+print as `Token`. A display-string key would have been shorter and wrong.
+
+One pre-existing defect surfaced during the migration and was fixed with it: a
+composite literal's *named* elements were joined into every borrow-provenance
+path instead of being resolved to the field each names, because the checker's
+resolved slot was not carried into the flow graph. Every migrated record literal
+is written with named fields, so this turned an exact per-field result
+provenance into a join. The same missing information was behind a second bug:
+named call arguments evaluated in *parameter* order rather than source order.
+Both now read the slot the checker already chose.
+
 ## Removed or narrowed features
 
 ### Generics are not ABI surface
@@ -472,10 +517,12 @@ restrictions.
 
 ### Named-result initializers
 
-`-> (color := "blue")` is gone; a named result starts at its zero value and is
-assigned in the body. It resembled a parameter default but fired on a different
-condition — every entry, rather than every call that omits an argument — and two
-similar spellings with different trigger conditions is a poor use of syntax.
+`-> (color := "blue")` was removed first, then named results themselves. The
+initializer resembled a parameter default but fired on a different condition —
+every entry, rather than every call that omits an argument — and two similar
+spellings with different trigger conditions is a poor use of syntax. What
+remains is simpler still: a result is anonymous and `return` always carries its
+value.
 
 ### Reflection beyond fields and enum values
 

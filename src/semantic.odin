@@ -206,8 +206,16 @@ Type_Info :: struct {
 	// one changes the LLVM function type at an indirect call site.
 	param_by_ptr: []bool,
 	c_vararg:     bool,
-	results:    []Type_Id,
-	result_inout: []bool,
+	// design.md: a procedure returns at most one value. INVALID_TYPE means it has
+	// none, and requires `result_inout == false`; `TYPE_VOID` remains the checked
+	// expression type of a no-result call and is never stored here.
+	result:       Type_Id,
+	result_inout: bool,
+	// `(key: string_view, value: int)`: a structural record with no declaration
+	// site. `name` holds its readable spelling for diagnostics and metadata, but
+	// identity is the ordered `(field name, field type)` vector, so this bit
+	// keeps the display string out of every key that would otherwise use it.
+	anonymous_record: bool,
 	convention: string,
 	// Set once the finite-size check has visited this nominal type, so a cycle
 	// is reported at one place instead of once per reference.
@@ -495,7 +503,6 @@ Symbol_Kind :: enum {
 	Type,
 	Package_Alias,
 	Parameter,
-	Result,
 	Field,
 	Enum_Member,
 	Builtin,
@@ -609,13 +616,13 @@ Symbol :: struct {
 	type:        Type_Id,
 	const_value: Const_Value,
 	params:      []Type_Id,
-	results:     []Type_Id,
+	result:      Type_Id, // INVALID_TYPE when the procedure has no result
+	result_inout: bool,
 	proc_type:   Type_Id,
 	// Flattened one entry per parameter name, so `proc(a, b: int)` has two of
 	// each. Defaults are the declaration's syntax, evaluated at the call site.
 	param_symbols:  []Symbol_Id,
 	param_defaults: []Expr,
-	result_symbols: []Symbol_Id,
 	members:     []Symbol_Id,
 	decl:        ^Decl,
 	// Expression-position procedures have no declaration wrapper. Keeping their
@@ -837,6 +844,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.identifier_by_name = make(map[string]Identifier_Id, c.semantic_allocator)
 	c.types = make([dynamic]Type_Info, 0, 64, c.semantic_allocator)
 	c.type_by_shape = make(map[Type_Key]Type_Id, c.semantic_allocator)
+	c.anon_record_types = make(map[u64][]Type_Id, c.semantic_allocator)
 	c.symbols = make([dynamic]Symbol, 0, 128, c.semantic_allocator)
 	c.packages = make([dynamic]Package, 0, 8, c.semantic_allocator)
 	c.generic_templates = make(map[Symbol_Id]^Generic_Template, c.semantic_allocator)
@@ -852,8 +860,6 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.typeid_values = make(map[Type_Id]u64, c.semantic_allocator)
 	c.range_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
-	c.entry_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
-	c.indexed_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)
@@ -976,8 +982,8 @@ intern_proc_type :: proc(
 	c: ^Compiler,
 	parameters: []Type_Id,
 	param_modes: []Param_Mode,
-	results: []Type_Id,
-	result_inout: []bool,
+	result: Type_Id,
+	result_inout: bool,
 	convention: string,
 	param_resets: []bool = nil,
 	param_by_ptr: []bool = nil,
@@ -990,8 +996,8 @@ intern_proc_type :: proc(
 		   info.convention == convention &&
 		   equal_type_ids(info.parameters, parameters) &&
 		   equal_param_modes(info.param_modes, param_modes) &&
-		   equal_type_ids(info.results, results) &&
-		   equal_bools(info.result_inout, result_inout) &&
+		   info.result == result &&
+		   info.result_inout == result_inout &&
 		   equal_reset_effects(info.param_resets, param_resets) &&
 		   equal_reset_effects(info.param_by_ptr, param_by_ptr) &&
 		   equal_escape_levels(info.param_escapes, param_escapes) &&
@@ -1001,8 +1007,6 @@ intern_proc_type :: proc(
 	}
 	parameter_copy := make([]Type_Id, len(parameters), c.semantic_allocator)
 	mode_copy := make([]Param_Mode, len(param_modes), c.semantic_allocator)
-	result_copy := make([]Type_Id, len(results), c.semantic_allocator)
-	inout_copy := make([]bool, len(result_inout), c.semantic_allocator)
 	reset_copy: []bool
 	if has_reset_effect(param_resets) {
 		reset_copy = make([]bool, len(param_resets), c.semantic_allocator)
@@ -1020,8 +1024,6 @@ intern_proc_type :: proc(
 	}
 	copy(parameter_copy, parameters)
 	copy(mode_copy, param_modes)
-	copy(result_copy, results)
-	copy(inout_copy, result_inout)
 	return new_type(c, Type_Info {
 		kind          = .Proc,
 		bits          = c.target.pointer_bits,
@@ -1031,8 +1033,8 @@ intern_proc_type :: proc(
 		param_escapes = escape_copy,
 		param_by_ptr  = by_ptr_copy,
 		c_vararg      = c_vararg,
-		results       = result_copy,
-		result_inout  = inout_copy,
+		result        = result,
+		result_inout  = result_inout,
 		convention    = convention,
 	})
 }
@@ -1086,8 +1088,8 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	   a.c_vararg != b.c_vararg ||
 	   !equal_type_ids(a.parameters, b.parameters) ||
 	   !equal_param_modes(a.param_modes, b.param_modes) ||
-	   !equal_type_ids(a.results, b.results) ||
-	   !equal_bools(a.result_inout, b.result_inout) ||
+	   a.result != b.result ||
+	   a.result_inout != b.result_inout ||
 	   !equal_reset_effects(a.param_resets, b.param_resets) ||
 	   !equal_reset_effects(a.param_by_ptr, b.param_by_ptr) {
 		return false
@@ -1160,6 +1162,100 @@ intern_type :: proc(c: ^Compiler, key: Type_Key, value: Type_Info) -> Type_Id {
 	id := new_type(c, value)
 	c.type_by_shape[key] = id
 	return id
+}
+
+// design.md "Anonymous records": `(key: string_view, value: int)` has no
+// declaration site, so its identity is the ordered sequence of its
+// `(field name, field type)` pairs. Field order matters and field names are
+// part of the type, which is exactly the vector compared here.
+Anon_Record_Field :: struct {
+	name: Identifier_Id,
+	type: Type_Id,
+}
+
+// Interns one anonymous record. Takes specs rather than field symbols so a
+// cache hit does not leak the orphan `Symbol`s a caller would have had to build
+// speculatively.
+anon_record_type :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> Type_Id {
+	init_semantic_stores(c)
+	hash := u64(0xcbf29ce484222325)
+	for field in fields {
+		hash = (hash ~ u64(field.name)) * HASH_MULTIPLIER
+		hash = (hash ~ u64(field.type)) * HASH_MULTIPLIER
+	}
+	bucket := c.anon_record_types[hash]
+	for candidate in bucket {
+		info := type_of(c, candidate)
+		if info == nil || len(info.fields) != len(fields) {
+			continue
+		}
+		same := true
+		for field, index in fields {
+			member := symbol_of(c, info.fields[index])
+			if member == nil || member.name != field.name || member.type != field.type {
+				same = false
+				break
+			}
+		}
+		if same {
+			return candidate
+		}
+	}
+
+	id := new_type(c, Type_Info{kind = .Struct, anonymous_record = true})
+	members := make([]Symbol_Id, len(fields), c.semantic_allocator)
+	for field, index in fields {
+		members[index] = new_symbol(c, Symbol {
+			name   = field.name,
+			span   = no_span(),
+			kind   = .Field,
+			type   = field.type,
+			index  = u32(index),
+			public = true,
+		})
+	}
+	if info := type_of(c, id); info != nil {
+		info.fields = members
+		info.name = intern_identifier(c, anon_record_display(c, fields))
+		info.mangled = anon_record_mangled(c, fields)
+	}
+	grown := make([]Type_Id, len(bucket) + 1, c.semantic_allocator)
+	copy(grown, bucket)
+	grown[len(bucket)] = id
+	c.anon_record_types[hash] = grown
+	return id
+}
+
+@(private = "file")
+anon_record_display :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
+	b := strings.builder_make(c.semantic_allocator)
+	strings.write_string(&b, "(")
+	for field, index in fields {
+		if index > 0 {
+			strings.write_string(&b, ", ")
+		}
+		strings.write_string(&b, identifier_text(c, field.name))
+		strings.write_string(&b, ": ")
+		strings.write_string(&b, type_name(c, field.type))
+	}
+	strings.write_string(&b, ")")
+	return strings.to_string(b)
+}
+
+// The backend spelling. It is built from the structural sort key rather than
+// the display name, so two packages' unrelated `Token` types cannot collide in
+// a generated symbol merely because both print as `Token`.
+@(private = "file")
+anon_record_mangled :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string {
+	b := strings.builder_make(c.semantic_allocator)
+	strings.write_string(&b, "anon")
+	for field in fields {
+		fmt.sbprintf(
+			&b, ".%s.%s", llvm_safe(identifier_text(c, field.name)),
+			llvm_safe(typeid_sort_key(c, field.type)),
+		)
+	}
+	return strings.to_string(b)
 }
 
 // An interned type by shape, without creating one. The backend uses this where
@@ -1548,10 +1644,8 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 				return false
 			}
 		}
-		for result in info.results {
-			if !type_is_supported_depth(c, result, depth + 1) {
-				return false
-			}
+		if info.result != INVALID_TYPE && !type_is_supported_depth(c, info.result, depth + 1) {
+			return false
 		}
 		return true
 	}
@@ -1693,18 +1787,12 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 		strings.write_string(&b, type_name(c, parameter))
 	}
 	strings.write_string(&b, ")")
-	if len(info.results) == 1 {
+	if info.result != INVALID_TYPE {
 		strings.write_string(&b, " -> ")
-		strings.write_string(&b, type_name(c, info.results[0]))
-	} else if len(info.results) > 1 {
-		strings.write_string(&b, " -> (")
-		for result, index in info.results {
-			if index > 0 {
-				strings.write_string(&b, ", ")
-			}
-			strings.write_string(&b, type_name(c, result))
+		if info.result_inout {
+			strings.write_string(&b, "inout ")
 		}
-		strings.write_string(&b, ")")
+		strings.write_string(&b, type_name(c, info.result))
 	}
 	return strings.to_string(b)
 }

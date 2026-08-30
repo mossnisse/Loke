@@ -121,28 +121,34 @@ impl String_Builder {
 // Rejecting a surrogate or an out-of-range value here is what keeps every buffer
 // in this package valid.
 @(private)
-encode_rune :: proc(value: rune) -> ([4]u8, int) {
+encode_rune :: proc(value: rune) -> (bytes: [4]u8, length: int) {
 	v := int(value);
 	if (v < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) {
 		panic("not a Unicode scalar value");
 	}
 	if (v < 0x80) {
-		return [4]u8{u8(v), 0, 0, 0}, 1;
+		return {bytes = [4]u8{u8(v), 0, 0, 0}, length = 1};
 	}
 	if (v < 0x800) {
-		return [4]u8{u8(0xC0 | (v >> 6)), u8(0x80 | (v & 0x3F)), 0, 0}, 2;
+		return {bytes = [4]u8{u8(0xC0 | (v >> 6)), u8(0x80 | (v & 0x3F)), 0, 0}, length = 2};
 	}
 	if (v < 0x10000) {
-		return [4]u8{
-			u8(0xE0 | (v >> 12)), u8(0x80 | ((v >> 6) & 0x3F)), u8(0x80 | (v & 0x3F)), 0,
-		}, 3;
+		return {
+			bytes = [4]u8{
+				u8(0xE0 | (v >> 12)), u8(0x80 | ((v >> 6) & 0x3F)), u8(0x80 | (v & 0x3F)), 0,
+			},
+			length = 3,
+		};
 	}
-	return [4]u8{
-		u8(0xF0 | (v >> 18)),
-		u8(0x80 | ((v >> 12) & 0x3F)),
-		u8(0x80 | ((v >> 6) & 0x3F)),
-		u8(0x80 | (v & 0x3F)),
-	}, 4;
+	return {
+		bytes = [4]u8{
+			u8(0xF0 | (v >> 18)),
+			u8(0x80 | ((v >> 12) & 0x3F)),
+			u8(0x80 | ((v >> 6) & 0x3F)),
+			u8(0x80 | (v & 0x3F)),
+		},
+		length = 4,
+	};
 }
 
 // design.md "Typed fallibility": `or_else` needs a value on its right, and

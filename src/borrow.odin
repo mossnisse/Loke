@@ -832,6 +832,19 @@ region_merge :: proc(into: ^Region_Set, from: Region_Set) {
 	into.crowded ||= from.crowded
 }
 
+@(private = "file")
+merge_region_provenance :: proc(into: ^Region_Set, from: Region_Set) -> bool {
+	changed := (!into.default && from.default) || (!into.unknown && from.unknown) ||
+	           (from.locals & ~into.locals) != 0 || (!into.crowded && from.crowded)
+	for value, index in from.params {
+		if value && index < len(into.params) && !into.params[index] {
+			changed = true
+		}
+	}
+	region_merge(into, from)
+	return changed
+}
+
 // ------------------------------------------------------- result summaries --
 
 // design.md "Temporaries and procedure boundaries": for a direct call to a
@@ -884,11 +897,16 @@ Result_Provenance :: struct {
 	// region provenance from that allocator argument at the call site
 	// (design.md). The region component is independent of the root component above:
 	// passing one rule does not waive the other.
-	region:  Region_Set,
+	region:         Region_Set,
+	// Direct fields of an aggregate result retain their allocator dependencies
+	// independently, just as `content` does for borrow roots.
+	region_content: []Prov_Region_Content,
 }
 
+// design.md: a procedure returns at most one value, so a summary describes one
+// result.
 Proc_Summary :: struct {
-	results: []Result_Provenance,
+	result: Result_Provenance,
 }
 
 @(private = "file")
@@ -917,6 +935,19 @@ new_result_provenance :: proc(c: ^Compiler, param_count: int, type: Type_Id, wit
 			out.content[index] = Result_Content_Provenance {
 				path = summary_path,
 				dependencies = new_result_dependencies(c, param_count),
+			}
+		}
+	}
+	if with_content {
+		if info := underlying_info(c, type); info != nil && info.kind == .Struct {
+			out.region_content = make([]Prov_Region_Content, len(info.fields), c.semantic_allocator)
+			for _, index in info.fields {
+				path := make([]Proj_Step, 1, c.semantic_allocator)
+				path[0] = proj_field(index)
+				out.region_content[index] = Prov_Region_Content {
+					path = path,
+					region = Region_Set{params = make([]bool, param_count, c.semantic_allocator)},
+				}
 			}
 		}
 	}
@@ -965,33 +996,30 @@ widen_summary_map_path :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) {
 // A compiler-contributed member has no body for the fixed point to walk, so its
 // summary is written directly. A carrier result borrows through `param`; an
 // owned result is cloned with the default allocator, not the receiver's region.
-set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int, param: int) {
+set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: int) {
 	sym := symbol_of(c, declaration)
-	if sym == nil || result >= len(sym.results) || param >= len(sym.params) {
+	if sym == nil || sym.result == INVALID_TYPE || param >= len(sym.params) {
 		return
 	}
 	summary := new(Proc_Summary, c.semantic_allocator)
-	summary.results = make([]Result_Provenance, len(sym.results), c.semantic_allocator)
-	for index in 0 ..< len(summary.results) {
-		summary.results[index] = new_result_provenance(c, len(sym.params), sym.results[index], false)
-	}
+	summary.result = new_result_provenance(c, len(sym.params), sym.result, false)
 	// A result that holds borrows inside it depends on the receiver just as a
 	// bare carrier result does: reading a container value out yields what that
 	// value borrows (consolidation-provenance-plan.md step 6).
-	summary.results[result].params[param] =
-		type_is_carrier(c, sym.results[result]) || type_carries_borrow(c, sym.results[result]).any
-	if type_is_managed(c, sym.results[result]) {
-		summary.results[result].region.default = true
+	summary.result.params[param] =
+		type_is_carrier(c, sym.result) || type_carries_borrow(c, sym.result).any
+	if type_is_managed(c, sym.result) {
+		summary.result.region.default = true
 	}
 	c.result_summaries[declaration] = summary
 }
 
-result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, result: int) -> (Result_Provenance, bool) {
+result_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> (Result_Provenance, bool) {
 	summary, found := c.result_summaries[declaration]
-	if !found || result >= len(summary.results) {
+	if !found {
 		return Result_Provenance{}, false
 	}
-	return summary.results[result], true
+	return summary.result, true
 }
 
 // Union of two possibilities. Returns whether the destination grew, which is the
@@ -1181,20 +1209,15 @@ check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
 		if bound == nil || bound.escape != .None {
 			continue
 		}
-		for result, position in summary.results {
-			if index >= len(result.params) || !result.params[index] {
-				continue
-			}
+		if index < len(summary.result.params) && summary.result.params[index] {
 			errorf(
 				k.c,
 				bound.span,
 				"L0644",
-				"`%s` is written `@(escape=none)`, but result %d of `%s` may borrow it",
+				"`%s` is written `@(escape=none)`, but the result of `%s` may borrow it",
 				identifier_text(k.c, bound.name),
-				position,
 				identifier_text(k.c, sym.name),
 			)
-			break
 		}
 	}
 }
@@ -1204,16 +1227,13 @@ check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
 @(private = "file")
 summarize_body :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
 	sym := symbol_of(k.c, literal.symbol)
-	if sym == nil || len(sym.results) == 0 {
+	if sym == nil || sym.result == INVALID_TYPE {
 		return false
 	}
 	summary, found := k.c.result_summaries[literal.symbol]
 	if !found {
 		summary = new(Proc_Summary, k.c.semantic_allocator)
-		summary.results = make([]Result_Provenance, len(sym.results), k.c.semantic_allocator)
-		for index in 0 ..< len(summary.results) {
-			summary.results[index] = new_result_provenance(k.c, len(sym.param_symbols), sym.results[index], true)
-		}
+		summary.result = new_result_provenance(k.c, len(sym.param_symbols), sym.result, true)
 		k.c.result_summaries[literal.symbol] = summary
 	}
 	defer free_all(k.c.analysis_allocator)
@@ -1247,15 +1267,26 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 		copy(state.reach, block.reach_entry)
 		copy(state.invalid, block.invalid_entry)
 		for event in block.prov {
-			if event.kind == .Escape && event.result < len(summary.results) {
-				into := &summary.results[event.result]
+			if event.kind == .Escape {
+				into := &summary.result
 				if !region_is_empty(event.region) {
-					before := into.region
-					region_merge(&into.region, event.region)
-					if before.default != into.region.default ||
-					   before.unknown != into.region.unknown ||
-					   !bools_equal(before.params, into.region.params) {
-						changed = true
+					changed = merge_region_provenance(&into.region, event.region) || changed
+				}
+				for escaped in event.region_content {
+					for &content in into.region_content {
+						if len(content.path) != len(escaped.path) {
+							continue
+						}
+						exact := true
+						for step, index in content.path {
+							other := escaped.path[index]
+							if step.kind != other.kind || step.lo != other.lo || step.hi != other.hi {
+								exact = false
+								break
+							}
+						}
+						if !exact { continue }
+						changed = merge_region_provenance(&content.region, escaped.region) || changed
 					}
 				}
 				for source in event.sources {

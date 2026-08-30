@@ -267,15 +267,14 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 	for parameter in under.parameters {
 		consider(c, parameter)
 	}
-	for result in under.results {
-		consider(c, result)
+	if under.result != INVALID_TYPE {
+		consider(c, under.result)
 	}
 }
 
 // A canonical identity independent of both request order and the internal
 // Type_Id allocation order. Nominal types use their package-qualified symbol;
 // structural types recursively name their complete shape.
-@(private = "file")
 typeid_sort_key :: proc(c: ^Compiler, type: Type_Id) -> string {
 	memo := make(map[Type_Id]string, c.semantic_allocator)
 	visiting := make(map[Type_Id]bool, c.semantic_allocator)
@@ -335,6 +334,27 @@ typeid_sort_key_walk :: proc(
 			return result
 		}
 	}
+	// An anonymous record's `name` is a readable spelling, never an identity: two
+	// packages' unrelated `Token` types both print as `Token`. Its key is the
+	// ordered field names plus each field type's own stable key, which is the
+	// same vector `anon_record_type` interns on.
+	if info.anonymous_record {
+		b := strings.builder_make(c.semantic_allocator)
+		strings.write_string(&b, "anon-record")
+		for field in info.fields {
+			member := symbol_of(c, field)
+			if member == nil {
+				continue
+			}
+			fmt.sbprintf(
+				&b, ":f%s{%s}", identifier_text(c, member.name),
+				typeid_sort_key_walk(c, member.type, memo, visiting),
+			)
+		}
+		result = strings.to_string(b)
+		memo^[type] = result
+		return result
+	}
 	// Predeclared and compiler-owned named identities are unique compilation-wide.
 	if info.name != INVALID_IDENTIFIER {
 		result = fmt.aprintf(
@@ -367,9 +387,11 @@ typeid_sort_key_walk :: proc(
 			typeid_sort_key_walk(c, parameter, memo, visiting),
 		)
 	}
-	for result, index in info.results {
-		inout := index < len(info.result_inout) && info.result_inout[index]
-		fmt.sbprintf(&b, ":r%t{%s}", inout, typeid_sort_key_walk(c, result, memo, visiting))
+	if info.result != INVALID_TYPE {
+		fmt.sbprintf(
+			&b, ":r%t{%s}", info.result_inout,
+			typeid_sort_key_walk(c, info.result, memo, visiting),
+		)
 	}
 	if info.convention != "" {
 		fmt.sbprintf(&b, ":c{%s}", info.convention)

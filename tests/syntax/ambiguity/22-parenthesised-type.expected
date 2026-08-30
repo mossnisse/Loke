@@ -1,0 +1,33 @@
+(file package="main"
+  (var names=["single"] type=(record (field ["n"] (ident "int"))))
+  (var names=["several"] type=(record (field ["a"] (ident "int")) (field ["b"] (ident "int"))))
+  (var names=["grouped"] type=(record (field ["a","b"] (ident "int"))))
+  (const names=["Alias"]
+    (record (field ["key"] (ident "string_view")) (field ["value"] (ident "int")))
+  )
+  (var names=["nested"] type=(record (field ["inner"] (record (field ["a"] (ident "int")))) (field ["count"] (ident "int"))))
+  (const names=["result_position"]
+    (proc (proc-type (result (record (field ["a"] (ident "int")) (field ["b"] (ident "int")))))
+      (block
+      )
+    )
+  )
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (var names=["grouping"]
+          (binary Star (binary Plus (int "1") (int "2")) (int "3"))
+        )
+        (var names=["converted"]
+          (call (ident "int") (float "3.5"))
+        )
+        (var names=["contextual"] type=(record (field ["a"] (ident "int")) (field ["b"] (ident "int")))
+          (composite _ (= (ident "a") (int "1")) (= (ident "b") (int "2")))
+        )
+        (var names=["prefixed"]
+          (composite (ident "Alias") (= (ident "key") (string "\"k\"")) (= (ident "value") (int "1")))
+        )
+      )
+    )
+  )
+)

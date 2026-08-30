@@ -1,0 +1,27 @@
+L0326
+@11:2
+so `return` needs a value; a result is anonymous and has no local to fill
+L0326
+@16:2
+this procedure returns nothing
+L0418
+@25:65
+an `inout` result must return a place
+L0444
+@36:51
+`Source` does not satisfy `Producer(Source)`
+L0308
+@52:13
+`Point` has 2 fields, so it fills 2 bindings, not 3
+L0308
+@56:13
+`Promoted` has 2 fields, so it fills 2 bindings, not 3
+L0308
+@59:2
+2 names but 1 initialiser
+L0508
+@62:15
+so it cannot be taken apart by a destructure
+L0310
+@65:34
+cannot initialise `proc() -> (x: int, y: int)` with `proc() -> (a: int, b: int)`

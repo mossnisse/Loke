@@ -45,16 +45,11 @@ Checker :: struct {
 	// The procedure being checked. `proc_literal` also identifies the frame a
 	// name may come from, which is what makes the capture check possible.
 	proc_literal:   ^Expr_Proc,
-	result_types:   []Type_Id,
-	result_symbols: []Symbol_Id,
-	// Which results were declared `inout`: such a result returns a place, so its
-	// `return inout e` needs an addressable operand.
-	result_inout:   []bool,
-	named_results:  bool,
-
-	// Named results already written, for `or_return`'s definite-initialization
-	// requirement.
-	assigned_results: map[Symbol_Id]bool,
+	// design.md: at most one result. INVALID_TYPE means the procedure has none.
+	result_type:    Type_Id,
+	// Whether the result was declared `inout`: such a result returns a place, so
+	// its `return inout e` needs an addressable operand.
+	result_inout:   bool,
 
 	// Lexical targets for `break`, `continue`, and `defer` restrictions.
 	loop_depth:   int,
@@ -277,7 +272,7 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	} else if symbol := symbol_of(c, entry); symbol == nil || symbol.kind != .Proc {
 		span := symbol == nil ? no_span() : symbol.span
 		errorf(c, span, "L0303", "`main` must be a procedure: `main :: proc() { ... }`")
-	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || len(info.results) != 0 {
+	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || info.result != INVALID_TYPE {
 		errorf(c, symbol.span, "L0303", "`main` must have no parameters and no results: `main :: proc() { ... }`")
 	}
 }
@@ -654,6 +649,114 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	}
 }
 
+// `(name: Type, ...)`. Every field is named and public by grammar, so all that
+// is left is resolving the field types and interning the shape. Interning
+// happens here, during checking, so the type exists before
+// `c.lifecycle_operations_ready` closes contribution (`src/hooks.odin`).
+@(private = "file")
+resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
+	specs := make([dynamic]Anon_Record_Field, 0, len(value.fields), context.temp_allocator)
+	bad := false
+	for &field in value.fields {
+		field_type := resolve_type_syntax(k, field.type)
+		if field_type == INVALID_TYPE {
+			report_unresolved_type(k, field.type)
+			bad = true
+			continue
+		}
+		reject_any_view_position(k, field_type, field.span, "a record field")
+		for name in field.names {
+			append(&specs, Anon_Record_Field{name = intern_identifier(k.c, name.text), type = field_type})
+		}
+	}
+	if bad || len(specs) == 0 {
+		return INVALID_TYPE
+	}
+	return anon_record_type(k.c, specs[:])
+}
+
+// design.md "Destructuring": two or more bindings take one record's directly
+// declared fields, positionally. The eligibility rule is the same wherever the
+// form appears — a declaration, an assignment, or a `foreach` binding list — so
+// it lives in one place: exactly as many directly declared fields as bindings,
+// every one visible here. Promoted (`using`) fields are not flattened and `_`
+// does not bypass visibility.
+// Whether this type can be taken apart at all. A non-record on the right of a
+// multi-binding form is an arity error, not a destructuring error, so this
+// separates "the wrong shape entirely" from "a record that does not fit".
+type_is_destructurable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	info := underlying_info(c, type)
+	return info != nil && info.kind == .Struct
+}
+
+destructure_fields :: proc(
+	k: ^Checker,
+	record: Type_Id,
+	count: int,
+	span: Span,
+	code: string,
+	action: string,
+) -> ([]Symbol_Id, bool) {
+	info := underlying_info(k.c, record)
+	if info == nil || info.kind != .Struct {
+		errorf(
+			k.c, span, code,
+			"`%s` is not a record, so it cannot fill %d bindings",
+			type_name(k.c, record), count,
+		)
+		return nil, false
+	}
+	if len(info.fields) != count {
+		errorf(
+			k.c, span, code,
+			"`%s` has %d field%s, so it fills %d binding%s, not %d",
+			type_name(k.c, record), len(info.fields), len(info.fields) == 1 ? "" : "s",
+			len(info.fields), len(info.fields) == 1 ? "" : "s", count,
+		)
+		return nil, false
+	}
+	for field in info.fields {
+		if !require_visible_field(k, span, record, field, code, action) {
+			return nil, false
+		}
+	}
+	return info.fields, true
+}
+
+// The ownership half of the rule. A place stays live, so every retained managed
+// field is cloned out of it; a temporary or a `move(...)` transfers instead and
+// clones nothing. Consuming a record with its own copy or drop hook would have
+// to run that hook on a value it is taking apart, so it is rejected rather than
+// given an exception.
+@(private = "file")
+plan_destructure :: proc(
+	k: ^Checker,
+	operand: Expr,
+	record: Type_Id,
+	fields: []Symbol_Id,
+	retained: []bool,
+) -> Destructure {
+	plan := Destructure {
+		active     = true,
+		record     = record,
+		fields     = fields,
+		from_place = expression_is_borrowed_place(k.c, operand),
+		retained   = retained,
+	}
+	if !plan.from_place {
+		if life := lifecycle_of(k.c, record); life != nil &&
+		   (life.custom_drop != INVALID_SYMBOL || life.custom_try_clone != INVALID_SYMBOL) {
+			errorf(
+				k.c, expr_span(operand), "L0508",
+				"`%s` has a custom `hook(copy)` or `hook(drop)`, so it cannot be taken apart by a destructure",
+				type_name(k.c, record),
+			)
+			add_notef(k.c, expr_span(operand), "bind the whole value, or give the type a procedure that decomposes it")
+		}
+	}
+	return plan
+}
+
 // design.md: an enum's members are named constants that need not be
 // contiguous. An omitted value continues from the previous member.
 resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
@@ -881,45 +984,26 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		parameter.symbols = bindings[:]
 	}
 
-	results := make([dynamic]Type_Id, 0, 2, k.c.semantic_allocator)
-	result_inout := make([dynamic]bool, 0, 2, k.c.semantic_allocator)
-	result_symbols := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-	for &result in literal.signature.results {
+	result_type := INVALID_TYPE
+	result_inout := false
+	if result := literal.signature.result; result != nil {
 		before := k.c.error_count
-		result_type := resolve_type_syntax(k, result.type)
+		result_type = resolve_type_syntax(k, result.type)
 		if result.type != nil && result_type == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, result.type)
 		}
 		reject_any_view_position(k, result_type, result.span, "a result type")
-		bindings := make([dynamic]Symbol_Id, 0, len(result.names), k.c.semantic_allocator)
-		if len(result.names) == 0 {
-			append(&results, result_type)
-			append(&result_inout, result.is_inout)
-			append(&result_symbols, INVALID_SYMBOL)
-		}
-		for name in result.names {
-			binding := new_binding_symbol(k, name, .Result)
-			if bound := symbol_of(k.c, binding); bound != nil {
-				bound.type = result_type
-				bound.index = u32(len(results))
-				bound.owner_proc = literal
-			}
-			append(&bindings, binding)
-			append(&results, result_type)
-			append(&result_inout, result.is_inout)
-			append(&result_symbols, binding)
-		}
-		result.symbols = bindings[:]
+		result_inout = result.is_inout
 	}
 
 	if validate_convention(k, literal.signature.convention, literal.span) &&
 	   convention_is_foreign(literal.signature.convention) {
 		check_foreign_signature(
-			k, params[:], modes[:], by_ptr_list[:], results[:], result_inout[:], literal.span,
+			k, params[:], modes[:], by_ptr_list[:], result_type, result_inout, literal.span,
 		)
 	}
 	proc_type := intern_proc_type(
-		k.c, params[:], modes[:], results[:], result_inout[:],
+		k.c, params[:], modes[:], result_type, result_inout,
 		literal.signature.convention, resets_list[:],
 		param_by_ptr = by_ptr_list[:], c_vararg = saw_c_vararg,
 		param_escapes = escapes_list[:],
@@ -928,10 +1012,10 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	// ID rather than retaining a pointer across append.
 	symbol = symbol_of(k.c, symbol_id)
 	symbol.params = params[:]
-	symbol.results = results[:]
+	symbol.result = result_type
+	symbol.result_inout = result_inout
 	symbol.param_symbols = param_symbols[:]
 	symbol.param_defaults = defaults[:]
-	symbol.result_symbols = result_symbols[:]
 	symbol.proc_type = proc_type
 	symbol.signature_error = k.c.error_count > reported
 	// design.md "Receiver forms": three modes and no others, and a first
@@ -1228,6 +1312,13 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		value.resolution.kind = .Type
 		return value.denoted_type
 
+	case ^Type_Anon_Record:
+		if value.denoted_type == INVALID_TYPE {
+			value.denoted_type = resolve_anon_record(k, value)
+		}
+		value.resolution.kind = .Type
+		return value.denoted_type
+
 	case ^Type_Enum:
 		if value.denoted_type == INVALID_TYPE {
 			value.denoted_type = new_type(k.c, Type_Info{kind = .Enum})
@@ -1269,21 +1360,18 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span))
 			}
 		}
-		results := make([dynamic]Type_Id, 0, len(value.results), k.c.semantic_allocator)
-		result_inout := make([dynamic]bool, 0, len(value.results), k.c.semantic_allocator)
-		for result in value.results {
-			count := max(len(result.names), 1)
-			for _ in 0 ..< count {
-				append(&results, resolve_type_syntax(k, result.type))
-				append(&result_inout, result.is_inout)
-			}
+		result_type := INVALID_TYPE
+		result_inout := false
+		if result := value.result; result != nil {
+			result_type = resolve_type_syntax(k, result.type)
+			result_inout = result.is_inout
 		}
 		if validate_convention(k, value.convention, value.span) &&
 		   convention_is_foreign(value.convention) {
-			check_foreign_signature(k, params[:], modes[:], nil, results[:], result_inout[:], value.span)
+			check_foreign_signature(k, params[:], modes[:], nil, result_type, result_inout, value.span)
 		}
 		value.denoted_type = intern_proc_type(
-			k.c, params[:], modes[:], results[:], result_inout[:], value.convention, resets[:],
+			k.c, params[:], modes[:], result_type, result_inout, value.convention, resets[:],
 			param_escapes = escapes[:],
 		)
 		value.resolution.kind = .Type
@@ -1613,15 +1701,28 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		assign_symbol_types(k.c, d, declared)
 		return
 	}
-	// `a, b := f()`: one call filling several names, checked before arity so the
-	// single call is not mistaken for a missing initialiser.
+	// `a, b := record;`: one record value filling several names, checked before
+	// arity so the single initialiser is not mistaken for a missing one.
 	if len(d.values) == 1 && len(d.names) > 1 && d.values[0] != nil {
 		check_expr(k, d.values[0])
-		if base := expr_base(d.values[0]); base != nil && len(base.result_types) == len(d.names) {
-			for symbol_id, index in d.symbols {
-				if symbol := symbol_of(k.c, symbol_id); symbol != nil {
-					symbol.type = base.result_types[index]
+		// A non-record initialiser is an ordinary arity error, and keeps the
+		// existing note that says which operation produces the value it wanted.
+		if base := expr_base(d.values[0]); base != nil && type_is_destructurable(k.c, base.type) {
+			if fields, ok := destructure_fields(
+				k, base.type, len(d.names), expr_span(d.values[0]), "L0308", "bound by a destructuring declaration",
+			); ok {
+				retained := make([]bool, len(fields), k.c.semantic_allocator)
+				for symbol_id, index in d.symbols {
+					retained[index] = symbol_id != INVALID_SYMBOL
 				}
+				d.destructure = plan_destructure(k, d.values[0], base.type, fields, retained)
+				for symbol_id, index in d.symbols {
+					field := symbol_of(k.c, fields[index])
+					if symbol := symbol_of(k.c, symbol_id); symbol != nil && field != nil {
+						symbol.type = field.type
+					}
+				}
+				return
 			}
 			return
 		}
@@ -1815,8 +1916,8 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	check_proc_body(k, literal)
 }
 
-// Installs parameters and named results, checks the body, and demands a return
-// on every path that can fall out of a result-bearing procedure.
+// Installs parameters, checks the body, and demands a return on every path that
+// can fall out of a result-bearing procedure.
 check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	symbol := symbol_of(k.c, literal.symbol)
 	if symbol == nil {
@@ -1824,40 +1925,28 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	}
 	outer_scope := k.scope
 	outer_proc := k.proc_literal
-	outer_results := k.result_types
-	outer_result_symbols := k.result_symbols
+	outer_result := k.result_type
 	outer_result_inout := k.result_inout
-	outer_named := k.named_results
 	outer_loop, outer_switch, outer_defer := k.loop_depth, k.switch_depth, k.in_defer
 	defer {
 		k.scope = outer_scope
 		k.proc_literal = outer_proc
-		k.result_types = outer_results
-		k.result_symbols = outer_result_symbols
+		k.result_type = outer_result
 		k.result_inout = outer_result_inout
-		k.named_results = outer_named
 		k.loop_depth, k.switch_depth, k.in_defer = outer_loop, outer_switch, outer_defer
 	}
 
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
 	k.proc_literal = literal
-	k.result_types = symbol.results
-	k.result_symbols = symbol.result_symbols
-	k.result_inout = nil
-	if info := type_of(k.c, symbol.proc_type); info != nil {
-		k.result_inout = info.result_inout
-	}
-	outer_assigned := k.assigned_results
-	k.assigned_results = make(map[Symbol_Id]bool, 4, k.c.semantic_allocator)
-	defer k.assigned_results = outer_assigned
+	k.result_type = symbol.result
+	k.result_inout = symbol.result_inout
 	k.loop_depth, k.switch_depth, k.in_defer = 0, 0, false
 	outer_slots := k.defer_slots
 	k.defer_slots = 0
 	defer k.defer_slots = outer_slots
 
 	errors_before := k.c.error_count
-	k.named_results = false
 	for parameter in literal.signature.params {
 		if parameter.default != nil {
 			// Defaults are resolved in the declaration's lexical scope, before
@@ -1865,12 +1954,6 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 			check_parameter_default(k, literal, parameter)
 		}
 		install_symbols(k.scope, k.c, parameter.symbols)
-	}
-	for result in literal.signature.results {
-		install_symbols(k.scope, k.c, result.symbols)
-		if len(result.symbols) > 0 {
-			k.named_results = true
-		}
 	}
 
 	flow := check_block(k, literal.body)
@@ -1882,7 +1965,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	// this one only joins the queue the post-checking passes walk.
 	append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
 	literal.defer_count = k.defer_slots
-	if len(symbol.results) > 0 && flow.can_fall_through {
+	if symbol.result != INVALID_TYPE && flow.can_fall_through {
 		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")
 	}
 }
@@ -2072,15 +2155,26 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		return
 	}
 
-	// `a, b = f()` and `a, ok = v.as(T)`: one expression filling several
-	// destinations. Its result count is its own — a destination never changes
-	// what a producer returns.
+	// `a, b = record`: one record value filling several destinations.
 	if len(s.rhs) == 1 && len(s.lhs) > 1 {
 		check_expr(k, s.rhs[0])
-		if base := expr_base(s.rhs[0]); base != nil && len(base.result_types) == len(s.lhs) {
-			for target, index in s.lhs {
-				check_assign_target(k, target, base.result_types[index])
-				note_result_assigned(k, target)
+		if base := expr_base(s.rhs[0]); base != nil && type_is_destructurable(k.c, base.type) {
+			if fields, ok := destructure_fields(
+				k, base.type, len(s.lhs), expr_span(s.rhs[0]), "L0360", "bound by a destructuring assignment",
+			); ok {
+				retained := make([]bool, len(fields), k.c.semantic_allocator)
+				for target, index in s.lhs {
+					retained[index] = !is_discard(target)
+				}
+				s.destructure = plan_destructure(k, s.rhs[0], base.type, fields, retained)
+				for target, index in s.lhs {
+					field := symbol_of(k.c, fields[index])
+					if field == nil {
+						return
+					}
+					check_assign_target(k, target, field.type)
+				}
+				return
 			}
 			return
 		}
@@ -2125,7 +2219,6 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			continue
 		}
 		check_value_expr(k, s.rhs[index], type, "assign")
-		note_result_assigned(k, target)
 	}
 }
 
@@ -2271,14 +2364,14 @@ check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: 
 		return true
 	}
 	result := symbol_of(k.c, chosen)
-	if len(result.results) != 1 || !assignable(k.c, result.results[0], type) && result.results[0] != type {
+	if result.result == INVALID_TYPE || !assignable(k.c, result.result, type) && result.result != type {
 		errorf(
 			k.c,
 			s.op_span,
 			"L0417",
 			"`%s` produces `%s`, which cannot be assigned back to `%s`",
 			binary,
-			len(result.results) == 1 ? type_name(k.c, result.results[0]) : "no value",
+			result.result == INVALID_TYPE ? "no value" : type_name(k.c, result.result),
 			type_name(k.c, type),
 		)
 		return true
@@ -2374,13 +2467,10 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 	}
 	check_condition(k, s.cond)
 
-	incoming := clone_result_assignments(k.c, k.assigned_results)
 	then_flow := check_scoped_block(k, s.then)
-	then_assigned := clone_result_assignments(k.c, k.assigned_results)
 	if s.otherwise == nil {
 		// The condition may be false, so only assignments already live on entry
 		// remain definite after an if without an else.
-		k.assigned_results = incoming
 		return Flow_Info {
 			can_fall_through = true,
 			returns          = then_flow.returns,
@@ -2388,18 +2478,12 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 			continues        = then_flow.continues,
 		}
 	}
-	k.assigned_results = clone_result_assignments(k.c, incoming)
 	else_flow := check_stmt(k, s.otherwise)
-	else_assigned := clone_result_assignments(k.c, k.assigned_results)
 	switch {
 	case then_flow.can_fall_through && else_flow.can_fall_through:
-		k.assigned_results = intersect_result_assignments(k.c, then_assigned, else_assigned)
 	case then_flow.can_fall_through:
-		k.assigned_results = then_assigned
 	case else_flow.can_fall_through:
-		k.assigned_results = else_assigned
 	case:
-		k.assigned_results = incoming
 	}
 	return Flow_Info {
 		can_fall_through = then_flow.can_fall_through || else_flow.can_fall_through,
@@ -2433,7 +2517,6 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 		check_stmt(k, s.init)
 	}
 	check_condition(k, s.cond)
-	incoming := clone_result_assignments(k.c, k.assigned_results)
 
 	k.loop_depth += 1
 	body := check_scoped_block(k, s.body)
@@ -2443,7 +2526,6 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 	k.loop_depth -= 1
 	// A conditional loop may execute zero times. A loop that exits through break
 	// likewise has no single body assignment guaranteed on every exit path.
-	k.assigned_results = incoming
 
 	// `for (;;)` without a `break` never falls out of the loop.
 	infinite := s.cond == nil
@@ -2483,12 +2565,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	has_default := false
 	flow := Flow_Info{}
 	any_case_falls := false
-	incoming := clone_result_assignments(k.c, k.assigned_results)
-	joined := make(map[Symbol_Id]bool, 0, k.c.semantic_allocator)
-	have_join := false
-
 	for &entry in s.cases {
-		k.assigned_results = clone_result_assignments(k.c, incoming)
 		if len(entry.values) == 0 {
 			if has_default {
 				errorf(k.c, entry.span, "L0367", "this switch already has a default case")
@@ -2507,32 +2584,11 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		flow.returns ||= case_flow.returns
 		flow.continues ||= case_flow.continues
 		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
-		if case_flow.can_fall_through || case_flow.breaks {
-			state := clone_result_assignments(k.c, k.assigned_results)
-			joined = have_join ? intersect_result_assignments(k.c, joined, state) : state
-			have_join = true
-		}
 	}
 
 	if !has_default {
 		check_exhaustive(k, s, subject, covered)
-		exhaustive := type_is_enum(k.c, subject)
-		if exhaustive {
-			if info := underlying_info(k.c, subject); info != nil {
-				for member in info.fields {
-					if !covered[u32(member)] {
-						exhaustive = false
-						break
-					}
-				}
-			}
-		}
-		if !exhaustive {
-			joined = have_join ? intersect_result_assignments(k.c, joined, incoming) : incoming
-			have_join = true
-		}
 	}
-	k.assigned_results = have_join ? joined : incoming
 	return Flow_Info {
 		can_fall_through = !has_default || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,
@@ -2694,62 +2750,30 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 	}
 	terminated := Flow_Info{returns = true}
 
-	if len(s.values) == 0 {
-		if len(k.result_types) > 0 && !k.named_results {
-			errorf(k.c, s.span, "L0326", "this procedure returns %d value%s", len(k.result_types), len(k.result_types) == 1 ? "" : "s")
+	if s.value == nil {
+		if k.result_type != INVALID_TYPE {
+			errorf(
+				k.c, s.span, "L0326",
+				"this procedure returns `%s`, so `return` needs a value; a result is anonymous and has no local to fill",
+				type_name(k.c, k.result_type),
+			)
 		}
 		return terminated
 	}
-	if len(k.result_types) == 0 {
+	if k.result_type == INVALID_TYPE {
 		errorf(k.c, s.span, "L0326", "this procedure returns nothing")
 		return terminated
 	}
 
-	// `return f()` where `f` produces exactly this procedure's results.
-	if len(s.values) == 1 && len(k.result_types) > 1 {
-		if call, is_call := s.values[0].expr.(^Expr_Call); is_call {
-			check_expr(k, call)
-			if len(call.result_types) == len(k.result_types) {
-				for result, index in call.result_types {
-					if !assignable(k.c, result, k.result_types[index]) {
-						errorf(
-							k.c,
-							call.span,
-							"L0310",
-							"cannot return `%s` as `%s`",
-							type_name(k.c, result),
-							type_name(k.c, k.result_types[index]),
-						)
-					}
-				}
-				return terminated
-			}
-		}
-	}
-
-	if len(s.values) != len(k.result_types) {
-		errorf(
-			k.c,
-			s.span,
-			"L0326",
-			"this procedure returns %d value%s, found %d",
-			len(k.result_types),
-			len(k.result_types) == 1 ? "" : "s",
-			len(s.values),
-		)
+	value := s.value
+	if !check_value_expr(k, value.expr, k.result_type, "return") {
 		return terminated
 	}
-	for &value, index in s.values {
-		if !check_value_expr(k, value.expr, k.result_types[index], "return") {
-			continue
-		}
-		classify_return_value(k, &value, k.result_types[index])
-		// An `inout` result hands back a place, so what is returned must be one.
-		// Borrow, escape, and exclusivity checking for it arrive with M5 (B12).
-		if index < len(k.result_inout) && k.result_inout[index] {
-			if base := expr_base(value.expr); base == nil || !base.addressable {
-				errorf(k.c, expr_span(value.expr), "L0418", "an `inout` result must return a place")
-			}
+	classify_return_value(k, value, k.result_type)
+	// An `inout` result hands back a place, so what is returned must be one.
+	if k.result_inout {
+		if base := expr_base(value.expr); base == nil || !base.addressable {
+			errorf(k.c, expr_span(value.expr), "L0418", "an `inout` result must return a place")
 		}
 	}
 	return terminated

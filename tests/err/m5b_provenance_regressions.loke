@@ -44,11 +44,12 @@ conditional_free :: proc(use_heap: bool) {
 	free(pointer);
 }
 
-return_second :: proc(values: []int) -> (int, []int) {
-	return 0, values;
+return_second :: proc(values: []int) -> (number: int, view: []int) {
+	return {number = 0, view = values};
 }
 
-// Provenance is selected by result position, not attached only to result zero.
+// A destructured binding takes its own field's provenance, not the record's
+// joined set.
 second_result_borrow :: proc() {
 	values := [2]int{1, 2};
 	number, view := return_second(values[:]);
@@ -104,9 +105,9 @@ indirect_moved_owner :: proc(
 
 main :: proc() { }
 
-// Region summaries, like root summaries, are selected by result position.
-return_second_buffer :: proc(allocator: Allocator) -> (int, Buffer) {
-	return 0, make_buffer(3, allocator);
+// Region summaries, like root summaries, follow the destructured field.
+return_second_buffer :: proc(allocator: Allocator) -> (number: int, held: Buffer) {
+	return {number = 0, held = make_buffer(3, allocator)};
 }
 
 second_result_region :: proc(@(allocator_reset) allocator: Allocator) {

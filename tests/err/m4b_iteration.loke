@@ -42,7 +42,7 @@ impl Broken_Next {
 	iter :: proc(self) -> Broken_Next_State { return {}; }
 }
 impl Broken_Next_State {
-	next :: proc(self: Broken_Next_State) -> (int, bool) { return 0, false; }
+	next :: proc(self: Broken_Next_State) -> bool { return false; }
 }
 
 main :: proc() {

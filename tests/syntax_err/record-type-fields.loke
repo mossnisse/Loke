@@ -1,0 +1,15 @@
+// design.md "Anonymous records": every field is named and public, and no
+// parameter-only spelling is available. A `struct` declaration is what carries
+// those. An unlabelled result list is the deleted multi-result syntax.
+package main;
+
+modes    :: (a: inout int, b: move int);
+variadic :: (a: ..int);
+defaults :: (a: int = 1);
+unnamed  :: proc() -> (int, int);
+mixed    :: proc() -> (ok: bool, int);
+applied  :: proc(v: Foo(x: int));
+
+main :: proc() { }
+
+sentinel :: proc() { }

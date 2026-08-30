@@ -56,8 +56,18 @@ parameters :: proc(
 
 single_result :: proc() -> int { }
 borrowed_result :: proc() -> inout Buffer { }
-named_results :: proc() -> (a: int, b: int) { }
-mixed_results :: proc() -> (ok: bool, int) { }
+// design.md "Anonymous records": a parenthesised result list is one record
+// result, at any arity, and a grouped field list names several fields of one
+// type.
+record_result :: proc() -> (a: int, b: int) { }
+one_field_record :: proc() -> (n: int) { }
+grouped_fields :: proc() -> (a, b: int) { }
 trailing_comma :: proc(a: int,) { }
+
+// The same spelling in every other type position.
+entry: (key: string_view, value: int);
+Entry :: (key: string_view, value: int);
+nested: (inner: (a: int, b: int), count: int);
+in_carriers: []( a: int, b: int);
 
 main :: proc() { }

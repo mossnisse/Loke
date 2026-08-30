@@ -751,7 +751,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 
 	case ^Expr_Postfix:
 		if v.op == .Or_Return {
-			results := emit_multi_value(e, expr)
+			results := emit_producer_value(e, expr)
 			return len(results) == 0 ? "0" : results[0]
 		}
 		address := emit_address(e, expr)
@@ -802,7 +802,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Checked_Extract, ^Expr_Or_Else:
-		return emit_multi_value(e, expr)[0]
+		return emit_producer_value(e, expr)[0]
 
 	case ^Expr_Composite:
 		if v.backing != INVALID_TYPE {
@@ -827,7 +827,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	case ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
-	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
+	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 	}
 	// Same gate as `emit_stmt`: returning `0` here would compile silently and
 	// produce the wrong answer.

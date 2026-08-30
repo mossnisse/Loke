@@ -53,13 +53,8 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 					continue
 				}
 			}
-			if base := expr_base(expr); base != nil && len(base.result_types) > 0 {
-				values := emit_multi_value(e, expr)
-				discard_owned_values(e, base.result_types, values)
-			} else {
-				value := emit_expr(e, expr)
-				emit_discarded_temporary(e, expr, value)
-			}
+			value := emit_expr(e, expr)
+			emit_discarded_temporary(e, expr, value)
 		}
 
 	case ^Stmt_Assign:
@@ -123,25 +118,9 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 
 @(private = "file")
 emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
-	// A call filling several names evaluates once.
-	if len(d.values) == 1 && len(d.symbols) > 1 {
-		if base := expr_base(d.values[0]); base != nil && len(base.result_types) == len(d.symbols) {
-			results := emit_multi_value(e, d.values[0])
-			for symbol_id, index in d.symbols {
-				slot := declare_local(e, symbol_id)
-				if slot != "" {
-					store(e, base.result_types[index], results[index], slot)
-					register_implicit_drop(e, symbol_id)
-				}
-			}
-			// Bind retained results before any discarded payload's drop can panic.
-			for symbol_id, index in d.symbols {
-				if symbol_id == INVALID_SYMBOL {
-					drop_temporary_value(e, hold_temporary_value(e, base.result_types[index], results[index]))
-				}
-			}
-			return
-		}
+	if d.destructure.active {
+		emit_destructure_decl(e, d)
+		return
 	}
 	for symbol_id, i in d.symbols {
 		sym := symbol_of(e.c, symbol_id)
@@ -209,6 +188,125 @@ emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
 	return value
 }
 
+// design.md "Destructuring": the operand is evaluated exactly once, then each
+// field is projected out of it. On the place path a retained managed field is
+// cloned and the source stays live; on the consuming path the fields are
+// transferred and each discarded one drops exactly once, in reverse declaration
+// order, after every retained field is already bound.
+@(private = "file")
+emit_destructure_fields :: proc(
+	e: ^Emitter,
+	plan: ^Destructure,
+	operand: Expr,
+	// The destination root of each binding, so a cloned field is built with that
+	// destination's written `via` allocator exactly as an ordinary binding is.
+	// INVALID_SYMBOL falls back to the default provider.
+	destinations: []Symbol_Id,
+) -> (values: []string, guards: []Deferred) {
+	record := emit_expr(e, operand)
+	aggregate := llvm_type(e, plan.record)
+	values = make([]string, len(plan.fields))
+	guards = make([]Deferred, len(plan.fields))
+	for field_id, index in plan.fields {
+		field := symbol_of(e.c, field_id)
+		if field == nil {
+			continue
+		}
+		value := extract(e, aggregate, record, index)
+		retained := index < len(plan.retained) && plan.retained[index]
+		if retained && index < len(plan.clones) && plan.clones[index] {
+			value = emit_clone_value(
+				e, field.type, value, emit_destination_allocator(e, destinations[index]),
+			)
+		}
+		values[index] = value
+		// A successful clone must survive a later clone failing. On the consuming
+		// path every managed field is already ours, so guard retained and discarded
+		// fields before any user drop can unwind through this statement.
+		if !plan.from_place || (retained && index < len(plan.clones) && plan.clones[index]) {
+			guards[index] = hold_temporary_value(e, field.type, value)
+		}
+	}
+	return
+}
+
+// The discarded fields of a consumed record. A cloning destructure took nothing
+// from them, so only the consuming path owes them a drop — in reverse
+// declaration order, and after every retained binding is published, so a drop
+// that panics cannot leave a half-bound statement behind.
+@(private = "file")
+emit_destructure_discards :: proc(e: ^Emitter, plan: ^Destructure, guards: []Deferred) {
+	if plan.from_place {
+		return
+	}
+	#reverse for field_id, index in plan.fields {
+		if index < len(plan.retained) && plan.retained[index] {
+			continue
+		}
+		field := symbol_of(e.c, field_id)
+		if field == nil {
+			continue
+		}
+		drop_temporary_value(e, guards[index])
+	}
+}
+
+@(private = "file")
+emit_destructure_decl :: proc(e: ^Emitter, d: ^Decl) {
+	plan := &d.destructure
+	destinations := make([]Symbol_Id, len(plan.fields))
+	for symbol_id, index in d.symbols {
+		destinations[index] = symbol_id
+	}
+	values, guards := emit_destructure_fields(e, plan, d.values[0], destinations)
+	for symbol_id, index in d.symbols {
+		if symbol_id == INVALID_SYMBOL {
+			continue
+		}
+		field := symbol_of(e.c, plan.fields[index])
+		slot := declare_local(e, symbol_id)
+		if slot == "" || field == nil {
+			continue
+		}
+		store(e, field.type, values[index], slot)
+		register_implicit_drop(e, symbol_id)
+		finish_temporary_drop(e, guards[index])
+	}
+	emit_destructure_discards(e, plan, guards)
+}
+
+@(private = "file")
+emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
+	plan := &s.destructure
+	destinations := make([]Symbol_Id, len(plan.fields))
+	for target, index in s.lhs {
+		destinations[index] = place_root_symbol(e.c, target)
+	}
+	values, guards := emit_destructure_fields(e, plan, s.rhs[0], destinations)
+	// design.md "Assignment statements": every value is prepared, then every
+	// destination address, then the writes happen.
+	addresses := make([]string, len(s.lhs))
+	for target, index in s.lhs {
+		if index >= len(plan.retained) || !plan.retained[index] {
+			continue
+		}
+		addresses[index] = emit_address(e, target)
+	}
+	for target, index in s.lhs {
+		if index >= len(plan.retained) || !plan.retained[index] || addresses[index] == "" {
+			continue
+		}
+		field := symbol_of(e.c, plan.fields[index])
+		if field == nil {
+			continue
+		}
+		emit_replace_place(e, s, index, addresses[index])
+		store(e, field.type, values[index], addresses[index])
+		finish_temporary_drop(e, guards[index])
+	}
+	emit_destructure_discards(e, plan, guards)
+}
+
 @(private = "file")
 declare_local :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 	sym := symbol_of(e.c, symbol_id)
@@ -235,25 +333,20 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		emit_operator_call(e, s.place_setter, s.setter_bound)
 		return
 	}
-	values: []string
-	types: []Type_Id
-	if len(s.rhs) == 1 && len(s.lhs) > 1 {
-		values = emit_multi_value(e, s.rhs[0])
-		types = expr_base(s.rhs[0]).result_types
-	} else {
-		values = make([]string, len(s.rhs))
-		types = make([]Type_Id, len(s.rhs))
-		for value, index in s.rhs {
-			values[index] = emit_expr(e, value)
-			// design.md: the clone happens before the destination is touched, so a
-			// failure leaves a previously live destination unchanged.
-			if index < len(s.rhs_clones) && s.rhs_clones[index] {
-				values[index] = emit_clone_value(
-					e, expr_base(s.lhs[index]).type, values[index],
-					emit_destination_allocator(e, place_root_symbol(e.c, s.lhs[index])),
-				)
-			}
-			types[index] = expr_base(value).type
+	if s.destructure.active {
+		emit_destructure_assign(e, s)
+		return
+	}
+	values := make([]string, len(s.rhs))
+	for value, index in s.rhs {
+		values[index] = emit_expr(e, value)
+		// design.md: the clone happens before the destination is touched, so a
+		// failure leaves a previously live destination unchanged.
+		if index < len(s.rhs_clones) && s.rhs_clones[index] {
+			values[index] = emit_clone_value(
+				e, expr_base(s.lhs[index]).type, values[index],
+				emit_destination_allocator(e, place_root_symbol(e.c, s.lhs[index])),
+			)
 		}
 	}
 
@@ -267,11 +360,7 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	for target, index in s.lhs {
 		if addresses[index] == "" || index >= len(values) {
 			if is_discard(target) && index < len(values) {
-				if len(s.rhs) == 1 && len(s.lhs) > 1 {
-					drop_temporary_value(e, hold_temporary_value(e, types[index], values[index]))
-				} else {
-					emit_discarded_temporary(e, s.rhs[index], values[index])
-				}
+				emit_discarded_temporary(e, s.rhs[index], values[index])
 			}
 			continue
 		}
@@ -342,7 +431,8 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	store(e, type, result, address)
 }
 
-@(private = "file")
+// `_` as a destination: written to nothing, and the value it would have taken
+// is dropped instead.
 is_discard :: proc(target: Expr) -> bool {
 	ident, ok := target.(^Expr_Ident)
 	return ok && ident.name == "_"
@@ -654,46 +744,22 @@ emit_case_test :: proc(e: ^Emitter, subject: string, subject_type: Type_Id, valu
 // deferred statement cannot change what is returned.
 @(private)
 emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
-	if s != nil && len(s.values) > 0 {
-		if len(s.values) == 1 && len(e.result_types) > 1 {
-			if base := expr_base(s.values[0].expr); base != nil && len(base.result_types) == len(e.result_types) {
-				results := emit_multi_value(e, s.values[0].expr)
-				for value, index in results {
-					store(e, e.result_types[index], value, e.result_slots[index])
-				}
-				emit_epilogue(e)
-				return
-			}
+	if s != nil && s.value != nil && e.result_slot != "" {
+		value := s.value
+		// An `inout` result hands back the place itself, not a copy of it.
+		operand := e.result_inout ? emit_address(e, value.expr) : emit_expr(e, value.expr)
+		if value.clone_on_return {
+			operand = emit_clone_value(e, e.result_type, operand)
 		}
-		values := make([]string, len(s.values))
-		for value, index in s.values {
-			// An `inout` result hands back the place itself, not a copy of it.
-			if emit_result_is_inout(e, index) {
-				values[index] = emit_address(e, value.expr)
-			} else {
-				values[index] = emit_expr(e, value.expr)
-			}
-			if value.clone_on_return && index < len(e.result_types) {
-				values[index] = emit_clone_value(e, e.result_types[index], values[index])
-			}
-		}
-		for value, index in values {
-			if index >= len(e.result_slots) {
-				continue
-			}
-			if emit_result_is_inout(e, index) {
-				fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", value, e.result_slots[index])
-			} else {
-				store(e, e.result_types[index], value, e.result_slots[index])
-			}
+		if e.result_inout {
+			fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", operand, e.result_slot)
+		} else {
+			store(e, e.result_type, operand, e.result_slot)
 		}
 		// The result is in result storage before cleanup runs, so a transferred
 		// local can be marked dead here without the epilogue dropping what was
 		// just handed back (design.md "Managed values and storage").
-		for value in s.values {
-			if value.clone_on_return {
-				continue
-			}
+		if !value.clone_on_return {
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
 				if sym := symbol_of(e.c, ident.symbol); sym != nil && emit_lifecycle(e, sym.type).managed {
 					kill_place(e, ident.symbol)
@@ -715,29 +781,13 @@ emit_epilogue :: proc(e: ^Emitter) {
 		e.terminated = true
 		return
 	}
-	slot_type :: proc(e: ^Emitter, index: int) -> string {
-		return emit_result_is_inout(e, index) ? "ptr" : llvm_type(e, e.result_types[index])
-	}
-	switch len(e.result_types) {
-	case 0:
+	if e.result_type == INVALID_TYPE {
 		fmt.sbprintln(&e.b, "  ret void")
-	case 1:
-		value := load(e, slot_type(e, 0), e.result_slots[0])
-		fmt.sbprintfln(&e.b, "  ret %s %s", slot_type(e, 0), value)
-	case:
-		aggregate := "undef"
-		result_type := llvm_result_type(e, e.result_types, e.result_inout)
-		for _, index in e.result_types {
-			value := load(e, slot_type(e, index), e.result_slots[index])
-			next := temp(e)
-			fmt.sbprintfln(
-				&e.b,
-				"  %s = insertvalue %s %s, %s %s, %d",
-				next, result_type, aggregate, slot_type(e, index), value, index,
-			)
-			aggregate = next
-		}
-		fmt.sbprintfln(&e.b, "  ret %s %s", result_type, aggregate)
+		e.terminated = true
+		return
 	}
+	slot_type := e.result_inout ? "ptr" : llvm_type(e, e.result_type)
+	value := load(e, slot_type, e.result_slot)
+	fmt.sbprintfln(&e.b, "  ret %s %s", slot_type, value)
 	e.terminated = true
 }

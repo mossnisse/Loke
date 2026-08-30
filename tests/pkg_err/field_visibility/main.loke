@@ -20,4 +20,10 @@ main :: proc() {
 	fine := models.Account{id = 1};
 	fmt.println(fine.id);
 	fmt.println(named.id + positional.id);
+
+	// Destructuring is not a back door either: `_` does not bypass visibility,
+	// because the rule is about what this site may see, not what it retains.
+	id, secret := account;
+	id2, _ := account;
+	fmt.println(id, secret, id2);
 }

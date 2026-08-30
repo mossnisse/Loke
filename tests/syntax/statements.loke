@@ -107,7 +107,7 @@ main :: proc() {
 }
 
 with_results :: proc() -> (a: int, b: int) {
-	return 1, 2;
+	return {a = 1, b = 2};
 }
 
 with_borrow :: proc(target: inout Buffer) -> inout Buffer {

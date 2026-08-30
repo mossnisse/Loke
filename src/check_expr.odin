@@ -91,7 +91,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	case ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
-	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
+	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 		// A type in expression position denotes a type, which is legal as a
 		// conversion callee and nowhere else in M2. `check_call` reads
 		// `denoted_type` before falling back to this.
@@ -115,22 +115,12 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	return base.type
 }
 
-// One value, exactly. A call with several results is legal only where the
-// statement form explicitly expands it.
+// One value, exactly. design.md: every value-producing expression produces one
+// value, so what is left here is the no-value case — a call to a procedure with
+// no result, used where a value is wanted.
 check_single_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Type_Id {
 	type := check_expr(k, e, expected)
 	base := expr_base(e)
-	if base != nil && len(base.result_types) > 1 {
-		errorf(
-			k.c,
-			base.span,
-			"L0382",
-			"this call produces %d values, but one is expected here",
-			len(base.result_types),
-		)
-		base.type = INVALID_TYPE
-		return INVALID_TYPE
-	}
 	if type == TYPE_VOID {
 		errorf(k.c, expr_span(e), "L0309", "this expression produces no value")
 		if base != nil {
@@ -388,7 +378,7 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 	// an enclosing procedure's frame is rejected here rather than silently
 	// miscompiled.
 	if owner != nil && owner.owner_proc != nil && owner.owner_proc != k.proc_literal {
-		if sym.kind == .Var || sym.kind == .Parameter || sym.kind == .Result {
+		if sym.kind == .Var || sym.kind == .Parameter {
 			errorf(
 				k.c,
 				v.span,
@@ -499,7 +489,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.const_value = sym.const_value
 		v.immutable = .Constant
 
-	case .Var, .Parameter, .Result:
+	case .Var, .Parameter:
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Place
 		v.type = sym.type
@@ -1153,7 +1143,7 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: b
 	sym := symbol_of(k.c, chosen)
 	v.bound = bound
 	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
-	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	v.type = sym.result
 	if operator_result_is_place(k, chosen) {
 		v.value_category = .Place
 		v.addressable = true
@@ -1210,7 +1200,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	sym := symbol_of(k.c, chosen)
 	v.bound = bound
 	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
-	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	v.type = sym.result
 	// design.md "Capabilities and the one rule": a mutable borrow excludes
 	// competing access, so a `[]mut T` result can only come from a receiver the
 	// call already holds exclusively. An immutable receiver may produce `[]T`.
@@ -1562,7 +1552,7 @@ check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id, expected
 	sym := symbol_of(k.c, chosen)
 	v.operand = bound[0]
 	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
-	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	v.type = sym.result
 	return true
 }
 
@@ -1597,7 +1587,7 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id, expec
 	v.lhs, v.rhs = bound[0], bound[1]
 	v.negated = negate
 	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
-	v.type = len(sym.results) == 1 ? sym.results[0] : INVALID_TYPE
+	v.type = sym.result
 	return true
 }
 
@@ -2216,19 +2206,15 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 
-	switch len(info.results) {
-	case 0:
+	if info.result == INVALID_TYPE {
 		v.type = TYPE_VOID
-	case 1:
-		v.type = info.results[0]
-		if len(info.result_inout) > 0 && info.result_inout[0] {
+	} else {
+		v.type = info.result
+		if info.result_inout {
 			v.value_category = .Place
 			v.addressable = true
 			v.assignable = true
 		}
-	case:
-		v.type = info.results[0]
-		v.result_types = info.results
 	}
 }
 
@@ -2263,19 +2249,13 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 	// design.md "@(require_results)": the attribute is a *type* attribute as
 	// well, so a result whose type requires handling is required whoever
 	// declared the procedure. `Result` is the one that matters in practice.
-	results := call.result_types
-	if len(results) == 0 {
-		results = {call.type}
-	}
-	for result in results {
-		if type_requires_results(k.c, result) {
-			errorf(
-				k.c, call.span, "L0612",
-				"this call produces `%s`, which must be used or discarded with `_ = ...`",
-				type_name(k.c, result),
-			)
-			return
-		}
+	if type_requires_results(k.c, call.type) {
+		errorf(
+			k.c, call.span, "L0612",
+			"this call produces `%s`, which must be used or discarded with `_ = ...`",
+			type_name(k.c, call.type),
+		)
+		return
 	}
 }
 
@@ -2467,14 +2447,10 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = INVALID_TYPE
 		return
 	}
-	switch len(chosen.results) {
-	case 0:
+	if chosen.result == INVALID_TYPE {
 		v.type = TYPE_VOID
-	case 1:
-		v.type = chosen.results[0]
-	case:
-		v.type = chosen.results[0]
-		v.result_types = chosen.results
+	} else {
+		v.type = chosen.result
 	}
 	// `lookup_value` produces an owned copy of the stored element, so a move-only
 	// element has nothing for it to produce. Reported after the result shape is
@@ -2543,14 +2519,10 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
-	switch len(chosen.results) {
-	case 0:
+	if chosen.result == INVALID_TYPE {
 		v.type = TYPE_VOID
-	case 1:
-		v.type = chosen.results[0]
-	case:
-		v.type = chosen.results[0]
-		v.result_types = chosen.results
+	} else {
+		v.type = chosen.result
 	}
 }
 
@@ -2778,14 +2750,10 @@ check_standard_alias :: proc(
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
-	switch len(chosen.results) {
-	case 0:
+	if chosen.result == INVALID_TYPE {
 		v.type = TYPE_VOID
-	case 1:
-		v.type = chosen.results[0]
-	case:
-		v.type = chosen.results[0]
-		v.result_types = chosen.results
+	} else {
+		v.type = chosen.result
 	}
 	fold_standard_customization_call(k, v, chosen)
 }
@@ -3475,6 +3443,11 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	declared := symbol_of(k.c, declaration)
 	ok := true
 	named := false
+	// design.md "Argument evaluation": a written argument runs where it is
+	// written, whatever slot its name selects. The order is recorded here, where
+	// the slot for each source element is already known, so neither the backend
+	// nor the evaluator has to rediscover it.
+	order := make([dynamic]int, 0, count, k.c.semantic_allocator)
 
 	for arg, index in v.args {
 		if arg.mode == .Spread {
@@ -3529,6 +3502,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		}
 
 		filled[slot] = true
+		append(&order, slot)
 		bound[slot] = arg.value
 		modes[slot] = arg.mode
 		expected_mode := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
@@ -3579,9 +3553,13 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 			return false
 		}
 		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
+		append(&order, index)
 	}
 
 	v.bound = bound
+	if named {
+		v.bound_order = order[:]
+	}
 	require_argument_ownership(k, v, declaration)
 	return ok
 }

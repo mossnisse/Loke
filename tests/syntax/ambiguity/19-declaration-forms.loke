@@ -18,7 +18,7 @@ Sequence :: interface($Self: type) {
 	slot next: proc(self: Self) -> Item;
 }
 
-add :: proc(a: int, $T: type, values: ..T, b: int = 1) -> (ok: bool, int) { }
+add :: proc(a: int, $T: type, values: ..T, b: int = 1) -> (ok: bool, count: int) { }
 extern_call :: proc "c" (a: ^u8) ---;
 group :: proc { add, sub }
 element_set :: operator([]=) proc(a: int) ---;

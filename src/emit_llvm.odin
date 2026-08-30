@@ -27,12 +27,13 @@ Emitter :: struct {
 	// rejects both a block without one and an instruction after one.
 	terminated: bool,
 
-	// Current procedure.
-	result_types: []Type_Id,
-	result_slots: []string,
-	// Which results were declared `inout`. Such a result is returned as the
+	// Current procedure. design.md: at most one result; INVALID_TYPE when it has
+	// none, and then `result_slot` is empty.
+	result_type: Type_Id,
+	result_slot: string,
+	// Whether the result was declared `inout`. Such a result is returned as the
 	// address of a place, which is what makes `grid[i] = v` an ordinary store.
-	result_inout: []bool,
+	result_inout: bool,
 	// design.md "Calling conventions": whether the procedure being emitted uses a
 	// foreign convention, so its signature and `ret` follow the Windows x64
 	// classification (m7-plan step 3) rather than LLVM's own aggregate lowering.
@@ -453,9 +454,9 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 
-	e.result_types = symbol.results
+	e.result_type = symbol.result
 	e.result_inout = result_inout_of(e, symbol.proc_type)
-	e.result_slots = make([]string, len(symbol.results))
+	e.result_slot = ""
 	e.terminated = false
 	e.abi_foreign = convention_is_foreign(proc_convention_of(e, symbol))
 	e.abi_sret = ""
@@ -465,7 +466,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	if e.abi_foreign {
 		emit_foreign_signature(e, symbol, llvm_name)
 	} else {
-		fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.results, e.result_inout), llvm_name)
+		fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.result, e.result_inout), llvm_name)
 		for parameter, index in symbol.params {
 			if index > 0 {
 				fmt.sbprint(&e.b, ", ")
@@ -505,39 +506,29 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		bind_local(e, binding, slot)
 	}
 
-	// Named results start at their zero value (design.md "Named results").
-	for result, index in symbol.results {
-		// A single result returned through a hidden `sret` pointer writes straight
-		// into caller storage: the result slot is that pointer, not a fresh alloca.
-		if e.abi_sret != "" && index == 0 {
-			e.result_slots[0] = e.abi_sret
+	// The result slot starts at the result type's zero, so `or_return` has
+	// somewhere to publish a failure from inside an expression.
+	if result := symbol.result; result != INVALID_TYPE {
+		// A result returned through a hidden `sret` pointer writes straight into
+		// caller storage: the result slot is that pointer, not a fresh alloca.
+		if e.abi_sret != "" {
+			e.result_slot = e.abi_sret
 			if zero, ok := zero_const(e.c, result); ok {
 				fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, result), llvm_const(e, zero, result), e.abi_sret)
 			}
-			if len(symbol.result_symbols) > 0 && symbol.result_symbols[0] != INVALID_SYMBOL {
-				bind_local(e, symbol.result_symbols[0], e.abi_sret)
-			}
-			continue
-		}
-		slot := fmt.aprintf("%%r%d.%d", index, next_id(e))
-		if emit_result_is_inout(e, index) {
+		} else if e.result_inout {
 			// The slot holds the address of the place being handed back.
+			slot := fmt.aprintf("%%r0.%d", next_id(e))
 			fmt.sbprintfln(&e.b, "  %s = alloca ptr", slot)
 			fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", slot)
-			e.result_slots[index] = slot
-			if index < len(symbol.result_symbols) && symbol.result_symbols[index] != INVALID_SYMBOL {
-				bind_local(e, symbol.result_symbols[index], slot)
+			e.result_slot = slot
+		} else {
+			slot := fmt.aprintf("%%r0.%d", next_id(e))
+			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, result))
+			if zero, ok := zero_const(e.c, result); ok {
+				fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, result), llvm_const(e, zero, result), slot)
 			}
-			continue
-		}
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, result))
-		zero, ok := zero_const(e.c, result)
-		if ok {
-			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, result), llvm_const(e, zero, result), slot)
-		}
-		e.result_slots[index] = slot
-		if index < len(symbol.result_symbols) && symbol.result_symbols[index] != INVALID_SYMBOL {
-			bind_local(e, symbol.result_symbols[index], slot)
+			e.result_slot = slot
 		}
 	}
 

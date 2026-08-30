@@ -1,0 +1,19 @@
+package main; import "core:fmt";
+
+import "./alpha";
+import "./beta";
+
+main :: proc() {
+	a := alpha.make(4);
+	b := beta.make(4);
+	fmt.println(alpha.read(a), beta.read(b));
+
+	// Each package's record is its own type, and its generated hooks and typeid
+	// do not collide with the other's despite the equal display spelling.
+	fmt.println(typeid_of((value: alpha.Token, weight: int)) == typeid_of((value: beta.Token, weight: int)));
+
+	// A destructure over each still projects that package's fields.
+	av, aw := a;
+	bv, bw := b;
+	fmt.println(av.id, aw, bv.id, bv.extra, bw);
+}

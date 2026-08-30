@@ -1,0 +1,19 @@
+// Rule 22: a parenthesised group is an anonymous record type iff it is
+// labelled. `(T)` in expression position stays grouping and is not a type;
+// `(x: int)` in type position is a one-field record; and a labelled list after a
+// name is not a generic application.
+package main;
+
+single: (n: int);
+several: (a: int, b: int);
+grouped: (a, b: int);
+Alias :: (key: string_view, value: int);
+nested: (inner: (a: int), count: int);
+result_position :: proc() -> (a: int, b: int) { }
+
+main :: proc() {
+	grouping := (1 + 2) * 3;
+	converted := int(3.5);
+	contextual: (a: int, b: int) = {a = 1, b = 2};
+	prefixed := Alias{key = "k", value = 1};
+}

@@ -762,11 +762,11 @@ register_variadic_cleanup :: proc(
 @(private)
 clone_result_of :: proc(e: ^Emitter, hook: Symbol_Id) -> Type_Id {
 	sym := symbol_of(e.c, hook)
-	if sym == nil || len(sym.results) != 1 {
+	if sym == nil || sym.result == INVALID_TYPE {
 		backend_fail(e, "a `try_clone` member has no result type")
 		return INVALID_TYPE
 	}
-	return sym.results[0]
+	return sym.result
 }
 
 // Calls one `try_clone` and unpacks its result into the internal pair. The
@@ -801,7 +801,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	subject := symbol.params[0]
 	operations := emit_lifecycle(e, subject)
 	value_type := llvm_type(e, subject)
-	result := symbol.results[0]
+	result := symbol.result
 	pair := llvm_type(e, result)
 	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, value_type)
 	fmt.sbprintln(&e.b, " {")

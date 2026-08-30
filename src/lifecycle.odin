@@ -62,7 +62,7 @@ check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 	ident, is_ident := e.(^Expr_Ident)
 	sym := is_ident ? symbol_of(k.c, ident.symbol) : nil
-	if sym == nil || (sym.kind != .Var && sym.kind != .Parameter && sym.kind != .Result) {
+	if sym == nil || (sym.kind != .Var && sym.kind != .Parameter) {
 		errorf(
 			k.c,
 			expr_span(e),
@@ -236,9 +236,6 @@ classify_return_value :: proc(k: ^Checker, value: ^Return_Value, result: Type_Id
 	if sym.kind == .Var && sym.decl != nil && !sym.decl.top_level {
 		return
 	}
-	if sym.kind == .Result {
-		return
-	}
 	if sym.kind == .Parameter && sym.mode == .Move {
 		return
 	}
@@ -331,6 +328,10 @@ classify_variant_payload :: proc(k: ^Checker, value: Expr, type: Type_Id) -> boo
 }
 
 classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
+	if d.destructure.active {
+		classify_destructure(k, &d.destructure, d.values[0], in_loop)
+		return
+	}
 	if d.kind == .Const || d.top_level || len(d.values) != len(d.symbols) {
 		return // one call filling several names hands over results it already owns
 	}
@@ -357,6 +358,16 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := false) {
 	if s.op != .Assign {
 		return // a compound assignment reads and writes one place, and copies nothing
+	}
+	if s.destructure.active {
+		if s.destination_live == nil && len(s.lhs) > 0 {
+			s.destination_live = make([]Liveness, len(s.lhs), k.c.semantic_allocator)
+			for index in 0 ..< len(s.lhs) {
+				s.destination_live[index] = .Live
+			}
+		}
+		classify_destructure(k, &s.destructure, s.rhs[0], in_loop)
+		return
 	}
 	// The destination state is recorded per target whether or not the source is a
 	// copy: a transfer still replaces a value that has to be dropped first.
@@ -392,6 +403,44 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 		clones[index] = true
 	}
 	s.rhs_clones = clones
+}
+
+// design.md "Destructuring": the operand's category decides for the whole form,
+// and then each retained field is classified on its own. `classify_copy` cannot
+// be reached through `classify_declaration_copies`/`classify_assignment_copies`
+// here — both return when value and target counts differ — so this drives it
+// directly, field by field, and reports the copy cost per cloned field rather
+// than once for the whole record.
+@(private = "file")
+classify_destructure :: proc(k: ^Checker, plan: ^Destructure, operand: Expr, in_loop: bool) {
+	if !plan.from_place {
+		return // a temporary or a `move` transfers its fields; nothing is cloned
+	}
+	clones: []bool
+	for field_id, index in plan.fields {
+		if index < len(plan.retained) && !plan.retained[index] {
+			continue
+		}
+		field := symbol_of(k.c, field_id)
+		if field == nil || !type_is_managed(k.c, field.type) {
+			continue
+		}
+		report_copy_cost(k, .Binding, expr_span(operand), operand, field.type, in_loop)
+		if type_clone_disabled(k.c, field.type) {
+			errorf(
+				k.c, expr_span(operand), "L0503",
+				"field `%s` is `%s`, which is move-only, so this destructure cannot copy it; write `move(...)` to transfer ownership instead",
+				identifier_text(k.c, field.name), type_name(k.c, field.type),
+			)
+			continue
+		}
+		contribute_lifecycle_members(k, field.type)
+		if clones == nil {
+			clones = make([]bool, len(plan.fields), k.c.semantic_allocator)
+		}
+		clones[index] = true
+	}
+	plan.clones = clones
 }
 
 // --------------------------------------------------------- storage duration --

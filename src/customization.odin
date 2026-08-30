@@ -20,15 +20,15 @@ ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
 
 	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
 	if standard_len_type(k.c, under) {
-		append(&members, standard_receiver_member(k.c, "len", .Standard_Len, under, []Type_Id{under}, []Type_Id{TYPE_INT}))
+		append(&members, standard_receiver_member(k.c, "len", .Standard_Len, under, []Type_Id{under}, TYPE_INT))
 	}
 	if type_is_container(k.c, under) {
-		append(&members, standard_receiver_member(k.c, "cap", .Standard_Cap, under, []Type_Id{under}, []Type_Id{TYPE_INT}))
+		append(&members, standard_receiver_member(k.c, "cap", .Standard_Cap, under, []Type_Id{under}, TYPE_INT))
 	}
 	if standard_hash_type(k.c, under) {
 		append(&members, standard_receiver_member(
 			k.c, "hash", .Standard_Hash, under,
-			[]Type_Id{under, TYPE_UINT}, []Type_Id{TYPE_UINT},
+			[]Type_Id{under, TYPE_UINT}, TYPE_UINT,
 		))
 	}
 	add_members(k.c, under, members[:])
@@ -59,10 +59,11 @@ standard_receiver_member :: proc(
 	name: string,
 	kind: Synth_Kind,
 	owner: Type_Id,
-	params, results: []Type_Id,
+	params: []Type_Id,
+	result: Type_Id,
 ) -> Symbol_Id {
 	modes := make([]Param_Mode, len(params), c.semantic_allocator)
-	id := synth_proc(c, name, kind, owner, params, modes, results)
+	id := synth_proc(c, name, kind, owner, params, modes, result)
 	if sym := symbol_of(c, id); sym != nil {
 		sym.has_receiver = true
 		sym.receiver = .Value

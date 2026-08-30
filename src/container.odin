@@ -187,10 +187,10 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	contribute_lifecycle_members(k, element)
 
 	members := make([dynamic]Symbol_Id, 0, 16, k.c.semantic_allocator)
-	none := []Type_Id{}
+	none := INVALID_TYPE
 	// design.md "Typed fallibility": a recoverable operation reports through
 	// `Result(Unit, Allocator_Error)`, never a trailing status.
-	fails := []Type_Id{result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)}
+	fails := result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)
 
 	pack := slice_of(k.c, element, mutable = false)
 	append(&members, container_member(
@@ -216,21 +216,21 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	// fixed point to walk.
 	pop := container_member(
 		k, type, "pop", .Pop,
-		[]Type_Id{type}, []Param_Mode{.Inout}, []Type_Id{option_type(k, element)}, 0,
+		[]Type_Id{type}, []Param_Mode{.Inout}, option_type(k, element), 0,
 	)
-	set_synth_result_summary(k.c, pop, 0, 0)
+	set_synth_result_summary(k.c, pop, 0)
 	append(&members, pop)
 	remove := container_member(
 		k, type, "remove", .Remove,
-		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, []Type_Id{element}, 0,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, element, 0,
 	)
-	set_synth_result_summary(k.c, remove, 0, 0)
+	set_synth_result_summary(k.c, remove, 0)
 	append(&members, remove)
 	remove_unordered := container_member(
 		k, type, "remove_unordered", .Remove_Unordered,
-		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, []Type_Id{element}, 0,
+		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, element, 0,
 	)
-	set_synth_result_summary(k.c, remove_unordered, 0, 0)
+	set_synth_result_summary(k.c, remove_unordered, 0)
 	append(&members, remove_unordered)
 	append(&members, container_member(
 		k, type, "clear", .Clear, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
@@ -277,8 +277,8 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	contribute_lifecycle_members(k, value)
 
 	members := make([dynamic]Symbol_Id, 0, 8, k.c.semantic_allocator)
-	none := []Type_Id{}
-	fails := []Type_Id{result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)}
+	none := INVALID_TYPE
+	fails := result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)
 
 	// `find` returns `Option(^mut V)` over the existing value — it never inserts
 	// (design.md). The receiver is `inout` because the pointer it hands back
@@ -287,9 +287,9 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	find := container_member(
 		k, type, "find", .Map_Find,
 		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
-		[]Type_Id{option_type(k, pointer_to(k.c, value, true))}, 0,
+		option_type(k, pointer_to(k.c, value, true)), 0,
 	)
-	set_synth_result_summary(k.c, find, 0, 0)
+	set_synth_result_summary(k.c, find, 0)
 	append(&members, find)
 	// design.md "Maps": the owning read. Unlike `find` it hands back an
 	// independently owned value rather than a pointer into the table, so its
@@ -298,14 +298,14 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	lookup := container_member(
 		k, type, "lookup_value", .Map_Lookup_Value,
 		[]Type_Id{type, key}, []Param_Mode{.Value, .Value},
-		[]Type_Id{option_type(k, value)}, 0, .Value,
+		option_type(k, value), 0, .Value,
 	)
 	// A synthesised member has no body, so without a written summary a carrier
 	// payload would fall through to `.Unknown` storage and lose the provenance the
 	// map index it replaces already carried. The payload's provenance is exactly
 	// the receiver's: an owned managed value depends on nothing, while a
 	// `map[K]string_view` payload still borrows through the map.
-	set_synth_result_summary(k.c, lookup, 0, 0)
+	set_synth_result_summary(k.c, lookup, 0)
 	append(&members, lookup)
 	append(&members, container_member(
 		k, type, "try_insert", .Map_Try_Insert,
@@ -315,9 +315,9 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	// `.none` when the key was absent.
 	map_remove := container_member(
 		k, type, "remove", .Map_Remove,
-		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value}, []Type_Id{option_type(k, value)}, 0,
+		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value}, option_type(k, value), 0,
 	)
-	set_synth_result_summary(k.c, map_remove, 0, 0)
+	set_synth_result_summary(k.c, map_remove, 0)
 	append(&members, map_remove)
 	append(&members, container_member(
 		k, type, "clear", .Map_Clear, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
@@ -407,8 +407,8 @@ require_nested_map_key_policies_inner :: proc(k: ^Checker, type: Type_Id, span: 
 		for parameter in shape.parameters {
 			if !require_nested_map_key_policies_inner(k, parameter, span, seen) { return false }
 		}
-		for result in shape.results {
-			if !require_nested_map_key_policies_inner(k, result, span, seen) { return false }
+		if shape.result != INVALID_TYPE && !require_nested_map_key_policies_inner(k, shape.result, span, seen) {
+			return false
 		}
 	}
 	return true
@@ -424,11 +424,11 @@ container_member :: proc(
 	op: Container_Op,
 	params: []Type_Id,
 	modes: []Param_Mode,
-	results: []Type_Id,
+	result: Type_Id,
 	defaulted: int,
 	receiver := Param_Mode.Inout,
 ) -> Symbol_Id {
-	id := synth_proc(k.c, name, .Container_Op, owner, params, modes, results)
+	id := synth_proc(k.c, name, .Container_Op, owner, params, modes, result)
 	if sym := symbol_of(k.c, id); sym != nil {
 		sym.has_receiver = true
 		sym.receiver = receiver

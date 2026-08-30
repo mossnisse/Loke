@@ -81,11 +81,11 @@ branch_result :: proc(flag: bool) -> Result(int, Error_Code) {
 	return .ok(n);
 }
 
-multi_result :: proc() -> (prefix: int, outcome: Result(int, Error_Code)) {
-	prefix = 41;
+// One result, so a failure propagated by `or_return` carries the whole thing.
+// The prefix travels inside the success payload rather than beside it.
+multi_result :: proc() -> Result((prefix: int, value: int), Error_Code) {
 	n := failing() or_return;
-	outcome = .ok(n);
-	return;
+	return .ok({prefix = 41, value = n});
 }
 
 describe :: proc(v: Value) -> int {
@@ -158,8 +158,7 @@ main :: proc() {
 		source: Inner_Failure = .err("converted");
 		fmt.println(outer_failure(inout source));
 	}
-	prefix, outcome := multi_result();
-	fmt.println(prefix, outcome);
+	fmt.println(multi_result());
 	fmt.println(static_ratio, static_pair, static_result);
 
 	// `or_else` supplies a fallback and evaluates it only on the failure variant.

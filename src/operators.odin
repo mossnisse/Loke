@@ -115,7 +115,7 @@ validate_operator_shape :: proc(k: ^Checker, value: ^Expr_Operator, shape: Opera
 		)
 		return
 	}
-	if shape.results >= 0 && len(sym.results) != shape.results {
+	if shape.results >= 0 && (sym.result == INVALID_TYPE ? 0 : 1) != shape.results {
 		errorf(
 			k.c,
 			value.symbol_span,
@@ -127,7 +127,7 @@ validate_operator_shape :: proc(k: ^Checker, value: ^Expr_Operator, shape: Opera
 		)
 		return
 	}
-	if shape.boolean && (len(sym.results) != 1 || !type_is_boolean(k.c, sym.results[0])) {
+	if shape.boolean && (sym.result == INVALID_TYPE || !type_is_boolean(k.c, sym.result)) {
 		errorf(k.c, value.symbol_span, "L0416", "`operator(%s)` produces `bool`", value.symbol)
 		return
 	}
@@ -408,7 +408,7 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 		return false
 	}
 	info := type_of(k.c, sym.proc_type)
-	return info != nil && len(info.result_inout) == 1 && info.result_inout[0]
+	return info != nil && info.result_inout
 }
 
 // ----------------------------------------------------------------- delegate --
@@ -514,15 +514,10 @@ register_forwarded_operator :: proc(
 	for type, index in source.params {
 		params[index] = substitute(type, underlying, subject)
 	}
-	results := make([]Type_Id, len(source.results), k.c.semantic_allocator)
-	for type, index in source.results {
-		results[index] = substitute(type, underlying, subject)
-	}
+	result := source.result == INVALID_TYPE ? INVALID_TYPE : substitute(source.result, underlying, subject)
 	modes := make([]Param_Mode, len(params), k.c.semantic_allocator)
 	copy(modes, shape.param_modes)
-	inout := make([]bool, len(results), k.c.semantic_allocator)
-	copy(inout, shape.result_inout)
-	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, results, inout, target)
+	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, result, shape.result_inout, target)
 }
 
 // The built-in operation, which has no symbol to forward to: one homogeneous
@@ -537,14 +532,12 @@ register_builtin_delegation :: proc(k: ^Checker, item: ^Item_Delegate, subject, 
 	for index in 0 ..< len(params) {
 		params[index] = subject
 	}
-	results := make([]Type_Id, 1, k.c.semantic_allocator)
-	results[0] = subject
+	result := subject
 	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
-		results[0] = TYPE_BOOL
+		result = TYPE_BOOL
 	}
-	inout := make([]bool, 1, k.c.semantic_allocator)
-	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, results, inout, INVALID_SYMBOL)
+	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, result, false, INVALID_SYMBOL)
 }
 
 // The generated overload is a compiler-owned symbol, not source: it has no body,
@@ -558,8 +551,8 @@ install_delegated_operator :: proc(
 	symbol: string,
 	params: []Type_Id,
 	modes: []Param_Mode,
-	results: []Type_Id,
-	inout: []bool,
+	result: Type_Id,
+	inout: bool,
 	target: Symbol_Id,
 ) {
 	id := new_symbol(k.c, Symbol {
@@ -571,8 +564,9 @@ install_delegated_operator :: proc(
 		pkg        = k.pkg,
 		lookup_pkg = k.pkg,
 		params     = params,
-		results    = results,
-		proc_type  = intern_proc_type(k.c, params, modes, results, inout, ""),
+		result     = result,
+		result_inout = inout,
+		proc_type  = intern_proc_type(k.c, params, modes, result, inout, ""),
 		delegated  = true,
 		delegate_underlying = underlying,
 		delegate_target = target,

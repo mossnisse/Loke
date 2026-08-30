@@ -1,0 +1,55 @@
+// design.md "Argument evaluation": a written argument runs where it is written,
+// whatever slot its name selects; an omitted default runs afterwards, in
+// parameter order. Only the operand list the callee receives is
+// parameter-ordered. The same schedule holds at compile time.
+package main; import "core:fmt";
+
+tick: int;
+bump :: proc(n: int) -> int { tick += 1; return n * 100 + tick; }
+take :: proc(a: int, b: int, c: int = bump(9)) -> int { return a * 1000000 + b * 1000 + c; }
+
+// A struct literal's elements evaluate in source order too, and land in field
+// order.
+Point :: struct { x: int, y: int, z: int }
+
+Runner :: interface($Self: type) {
+	slot run: proc(self, a: int, b: int) -> int;
+}
+Machine :: struct {}
+impl Machine {
+	run :: proc(self, a: int, b: int) -> int { return a * 1000 + b; }
+}
+
+// The compile-time evaluator runs the same schedule.
+step :: proc(n: int, seen: int) -> int { return n * 100 + seen; }
+const_tick :: proc() -> int {
+	return step(seen = 1, n = 3) + step(n = 4, seen = 2);
+}
+CONST :: const_tick();
+
+main :: proc() {
+	fmt.println(take(c = bump(3), a = bump(1), b = bump(2)));
+	tick = 0;
+	fmt.println(take(b = bump(2), a = bump(1)));
+	tick = 0;
+	fmt.println(take(bump(1), bump(2), bump(3)));
+
+	tick = 0;
+	p := Point{z = bump(3), x = bump(1), y = bump(2)};
+	fmt.println(p.x, p.y, p.z);
+
+	// Mixed positional and named, and a partial literal that zero-fills.
+	mixed := Point{1, y = 2};
+	partial := Point{1};
+	empty := Point{};
+	fmt.println(mixed.x, mixed.y, mixed.z, partial.x, partial.y, empty.x);
+
+	// An erased slot uses the same matcher and schedule as a direct call: the
+	// operands run in written order, then reach the thunk in parameter order.
+	tick = 0;
+	machine := Machine{};
+	view := (dyn Runner)(&machine);
+	fmt.println(view.run(b = bump(2), a = bump(1)));
+
+	fmt.println(CONST);
+}

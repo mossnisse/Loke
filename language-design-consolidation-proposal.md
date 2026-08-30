@@ -71,6 +71,16 @@ and unwrapping one hands them on.
     dependencies. This is a prerequisite for migrating producers, not a later
     improvement or special behavior of `Option`/`Result`.
 
+**Adoption status.** Sections 1, 2, and 3 are **adopted** and shipped, with two
+deviations recorded in the open decisions below: no `()` unit spelling (open
+decision 5, deferred), and no inline shape-prefixed record literal — a record
+value is built from a contextually typed literal or through an alias used as an
+ordinary prefix, because a second spelling for one construction buys nothing.
+Section 2's shared matching *rule* holds and its evaluation schedule shipped;
+the two matchers themselves were left as two, since a matching-only core over
+two callers with disjoint diagnostics and one visibility rule is more
+indirection than it removes.
+
 ## 1. One product model: records
 
 ### 1.1 Named records stay nominal
@@ -834,13 +844,25 @@ foreign_adopt(raw);
 automatic cleanup would run; `File.from_raw(raw)` is the unsafe inverse. This
 is clearer than changing the cleanup policy of every `File` variable.
 
-### 6.4 `unsafe.forget(move(value))`
+### 6.4 `unsafe.forget(value)`
 
-For the rare generic case, `core:unsafe` provides a compiler special form
-with exact semantics: the operand must be a live lexical value written with
-`move`; ownership is consumed and the source binding becomes dead; no `drop`
-hook runs; nothing is moved to the heap or given an extended/stack-preserved
-address.
+For the rare generic case, `core:unsafe` provides a compiler special form with
+exact semantics. A live lexical place must be written `move(place)` and becomes
+dead. A value temporary may be supplied directly, including the previous value
+returned by `exchange(inout static_value, {})`; that is a narrow rule of this
+built-in and does not make temporaries valid arguments to ordinary `move`
+parameters or consuming receivers. In either form ownership is consumed, no
+`drop` hook runs, and nothing is moved to the heap or given an
+extended/stack-preserved address.
+
+A managed value is forgettable even when it contains checked borrows: its owned
+resource is deliberately leaked and its contained loans end with the forgotten
+value. An unmanaged value is forgettable only when it carries no checked
+borrows. Thus generic scalar and plain-record instantiations are accepted
+silently, while a checked pointer, slice, view, `dyn` value, borrow-only record,
+or temporary such as `&local` is rejected. Raw pointers and multi-pointers carry
+no checked provenance and remain accepted; forgetting one neither releases nor
+forgets the allocation obligation of anything it designates.
 
 For an inline plain value the stack bytes just disappear with the frame; for
 a dynamic array the small header stays on the stack but its backing
@@ -1309,12 +1331,24 @@ sections before implementation:
    restricting `active_typeid()` to anonymous unions?
 4. Is `.ok(T{})` an acceptable zero value for `Result(T, E)`, or should a
    named union be allowed a non-first zero variant, or none at all?
-5. Is `()` a new zero-sized type category, or the anonymous spelling of an
-   already-legal empty struct?
-6. Is flat destructuring sufficient? Do ordinary consuming conversions cover
-   records excluded by the visibility and custom-lifecycle restrictions?
-7. Should anonymous record identity include field names, or only ordered
-   field types? This draft includes names to preserve field access.
+5. **Deferred.** Is `()` a new zero-sized type category, or the anonymous
+   spelling of an already-legal empty struct? The shipped `Unit :: struct {}`
+   already covers `Result(Unit, E)`, so a second spelling for one type buys
+   nothing yet. Sections 1, 2, and 3 shipped without it.
+6. **Answered: flat is sufficient.** Across `base:`, `core:`, `examples:`, and
+   the whole test corpus, no migrated site wanted a nested pattern; every one
+   was a flat projection of a record's own fields. The excluded cases — a
+   private field, and a record with a custom `hook(copy)`/`hook(drop)` — are
+   covered by binding the whole value, or by a type-provided decomposition
+   procedure, and neither appeared in the corpus. Nested patterns can be
+   designed later without changing what shipped.
+7. **Answered: identity includes field names.** A field name is part of the
+   type, so `(a: int, b: int)` and `(x: int, y: int)` are unrelated. That is
+   what makes field access, reflection, and the `foreach` binding rule mean the
+   same thing for a record as for a `struct`. It is also the source of the one
+   compatibility break this phase carries: result names used to be excluded from
+   procedure-type identity, so two procedure values that were compatible before
+   are not after.
 8. Does `table.find(key)` return `Option(^mut V)`, or stay a place-returning
    operation?
 9. Which real implementation case, if any, still needs an undropped inline

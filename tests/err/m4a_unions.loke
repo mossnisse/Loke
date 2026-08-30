@@ -23,10 +23,11 @@ Outcome :: union @(failure=bad) { good: i32, bad: }
 not_fallible :: proc() -> bool { return true; }
 outcome :: proc() -> Outcome { return .good(1); }
 
-// A procedure with several results has no single result to propagate into.
-several :: proc() -> (int, int) {
+// A record result is one value, and not a failure-designated union, so there is
+// nowhere for `or_return` to put the failure.
+several :: proc() -> (first: int, second: int) {
 	x := outcome() or_return;
-	return x, 2;
+	return {first = x, second = 2};
 }
 
 // And one whose result is not a failure-designated union has nowhere to put it.

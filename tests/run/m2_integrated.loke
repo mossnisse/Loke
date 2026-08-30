@@ -25,9 +25,7 @@ swap :: proc(p: inout Point) {
 }
 
 divmod :: proc(a: int, b: int) -> (q: int, r: int) {
-	q = a / b;
-	r = a % b;
-	return;
+	return {q = a / b, r = a % b};
 }
 
 fib :: proc(n: int) -> int {

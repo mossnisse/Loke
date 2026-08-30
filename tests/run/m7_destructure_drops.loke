@@ -1,0 +1,43 @@
+// design.md "Destructuring": `_` discards. It clones nothing from a place; in a
+// consuming form the discarded field drops exactly once, in reverse declaration
+// order, after every retained binding is published.
+package main; import "core:fmt";
+
+order: [dynamic]int;
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		if (self.id != 0) { order.append(self.id); self.id = 0; }
+	}
+}
+
+Three :: struct { first: Tracked, second: Tracked, third: Tracked }
+build :: proc() -> Three {
+	return Three{first = Tracked{1}, second = Tracked{2}, third = Tracked{3}};
+}
+
+// `Three` itself has no hook, so a temporary is consumed; its *fields* may have
+// hooks of their own, and here they do. The discarded field drops during the
+// destructure; the retained bindings drop at scope exit, as any local does.
+consuming :: proc() {
+	// Two retained bindings and one discard: the discarded `second` drops once.
+	first, _, third := build();
+	fmt.println(first.id, third.id);
+}
+
+// Reverse declaration order for two discards.
+two_discards :: proc() {
+	_, kept, _ := build();
+	fmt.println(kept.id);
+}
+
+main :: proc() {
+	consuming();
+	fmt.println(len(order));
+	foreach (v in order) { fmt.println(v); }
+	order.clear();
+
+	two_discards();
+	fmt.println(len(order));
+	foreach (v in order) { fmt.println(v); }
+}

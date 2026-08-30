@@ -144,18 +144,12 @@ Compiler :: struct {
 	// compilation rather than per package.
 	range_types:        map[Type_Id]Type_Id,
 	iterator_types:     map[Type_Id]Type_Id,
-	// The record `Element` types: a map's `struct{key, value}` entry, keyed by the
-	// map, and `indexed()`'s `struct{value, index}` pair, keyed by the value type
-	// (design.md "Iteration adapters").
-	entry_types:        map[Type_Id]Type_Id,
-	indexed_types:      map[Type_Id]Type_Id,
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,
 	carrier_shapes:     map[Type_Id][]Carrier_Path,
 	// Whether a map type's shape gives constant keys entries of their own.
 	map_keyed:          map[Type_Id]bool,
-	rune_offset_type: Type_Id,
 	synth_procs:        [dynamic]Symbol_Id,
 
 	// Erased views (`src/erased.odin`). A witness is compilation-global, so it is
@@ -251,6 +245,10 @@ Compiler :: struct {
 	identifier_by_name:   map[string]Identifier_Id,
 	types:                [dynamic]Type_Info,
 	type_by_shape:        map[Type_Key]Type_Id,
+	// Anonymous record types, bucketed by a hash of their ordered field vector.
+	// The hash only picks a bucket; identity is settled by comparing every
+	// `(name, type)` pair, so a collision costs a walk and never a wrong reuse.
+	anon_record_types:    map[u64][]Type_Id,
 	symbols:              [dynamic]Symbol,
 	packages:             [dynamic]Package,
 }

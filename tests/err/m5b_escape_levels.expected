@@ -1,9 +1,9 @@
 L0644
 @9:43
-`scratch` is written `@(escape=none)`, but result 0 of `liar` may borrow it
+`scratch` is written `@(escape=none)`, but the result of `liar` may borrow it
 L0644
 @16:52
-`scratch` is written `@(escape=none)`, but result 0 of `indirect_liar` may borrow it
+`scratch` is written `@(escape=none)`, but the result of `indirect_liar` may borrow it
 L0310
 @25:72
 cannot initialise `proc([]int, @(escape=none) []int) -> []int` with `proc([]int, []int) -> []int`

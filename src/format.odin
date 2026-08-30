@@ -76,7 +76,7 @@ discover_formatters :: proc(c: ^Compiler) {
 // so there is one identity for each.
 @(private = "file")
 formatter_signature_ok :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
-	if len(sym.params) != 3 || len(sym.results) != 0 {
+	if len(sym.params) != 3 || sym.result != INVALID_TYPE {
 		return false
 	}
 	writer, has_writer := c.runtime_types["Writer"]

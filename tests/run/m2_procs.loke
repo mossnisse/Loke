@@ -18,23 +18,21 @@ move_point :: proc(p: inout Point, dx: int, dy: int) {
 	p.y += dy;
 }
 
-// Multiple and named results.
-divmod :: proc(a: int, b: int) -> (int, int) {
-	return a / b, a % b;
+// One result, spelled as an anonymous record when it carries several values.
+// Every path returns the whole record; there are no result locals to fill in.
+divmod :: proc(a: int, b: int) -> (quotient: int, remainder: int) {
+	return {quotient = a / b, remainder = a % b};
 }
 
 minmax :: proc(a: int, b: int) -> (low: int, high: int) {
 	if (a < b) {
-		low = a;
-		high = b;
-		return;
+		return {low = a, high = b};
 	}
-	low = b;
-	high = a;
-	return;
+	return {low = b, high = a};
 }
 
-forward :: proc(a: int, b: int) -> (int, int) {
+// A record result passes straight through, because it is one value.
+forward :: proc(a: int, b: int) -> (quotient: int, remainder: int) {
 	return divmod(a, b);
 }
 

@@ -1,0 +1,39 @@
+// design.md "Destructuring": on the cloning path a failed clone cleans its
+// partial field temporaries and leaves the source untouched. The generated
+// `clone` has no error to hand back, so it applies the allocator's failure
+// policy — here, a trap — and no binding is ever published.
+package main; import "core:fmt";
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+
+Failing :: struct { id: int }
+
+Tracked :: struct { id: int }
+
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		return .ok(Tracked{self.id + 10});
+	}
+	release :: hook(drop) proc(self: inout Tracked) {
+		if (self.id != 0) { fmt.println(self.id); self.id = 0; }
+	}
+}
+
+impl Failing {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Failing, Allocator_Error) {
+		p := new(Huge, allocator) or_return;
+		free(p);
+		return .ok(Failing{self.id});
+	}
+}
+
+// The record itself has no hook; its fields do, which is exactly the case a
+// consuming destructure is allowed and a cloning one has to survive.
+Pair :: struct { first: Tracked, second: Failing }
+
+main :: proc() {
+	p := Pair{Tracked{1}, Failing{2}};
+	fmt.println(p.first.id);
+	a, b := p;
+	fmt.println(a.id, b.id, p.first.id);
+}

@@ -1,0 +1,51 @@
+// design.md "Anonymous records": identity is structural, so equal shapes written
+// at separate sites are one type, through every path that compares procedure
+// types — a value, an overload, an interface slot, and reflection.
+package main; import "core:fmt";
+
+Pair :: (a: int, b: int);
+
+produce :: proc() -> (a: int, b: int) { return {a = 1, b = 2}; }
+
+// The same shape written a second time, and through an alias.
+call_value :: proc(f: proc() -> (a: int, b: int)) -> int {
+	x, y := f();
+	return x + y;
+}
+call_alias :: proc(f: proc() -> Pair) -> int { return f().a; }
+
+// An overload set discriminated by the record shape.
+consume :: proc { consume_pair, consume_flipped }
+consume_pair :: proc(v: (a: int, b: int)) -> int { return v.a * 10 + v.b; }
+consume_flipped :: proc(v: (b: int, a: int)) -> int { return v.b * 100 + v.a; }
+
+// An interface slot naming a record result.
+Producer :: interface($Self: type) {
+	slot make: proc(self) -> (a: int, b: int);
+}
+Source :: struct { seed: int }
+impl Source {
+	make :: proc(self) -> (a: int, b: int) { return {a = self.seed, b = self.seed + 1}; }
+}
+through_dyn :: proc(view: dyn Producer) -> int {
+	p := view.make();
+	return p.a * 1000 + p.b;
+}
+
+main :: proc() {
+	fmt.println(call_value(produce));
+	fmt.println(call_alias(produce));
+
+	pair: (a: int, b: int) = {a = 3, b = 4};
+	fmt.println(consume(pair));
+	fmt.println(consume(Pair{a = 5, b = 6}));
+	flipped: (b: int, a: int) = {b = 7, a = 8};
+	fmt.println(consume(flipped));
+
+	s := Source{seed = 2};
+	fmt.println(through_dyn((dyn Producer)(&s)));
+
+	// Reflection distinguishes the two orderings.
+	fmt.println(typeid_of((a: int, b: int)) == typeid_of(Pair));
+	fmt.println(typeid_of((a: int, b: int)) == typeid_of((b: int, a: int)));
+}

@@ -25,10 +25,6 @@ Expr_Base :: struct {
 	addressable:  bool,
 	assignable:   bool,
 	immutable:    Immutable_Reason,
-	// A call to a procedure with several results. `type` stays the
-	// exactly-one-value type, so nothing that expects one value silently reads
-	// the first of many.
-	result_types: []Type_Id,
 	// The payload type this expression produces before it is wrapped into the
 	// union `type` now names, with the variant it lands in. INVALID_TYPE when no
 	// wrap happens; the emitter evaluates the node at this type and then writes
@@ -95,6 +91,7 @@ Expr :: union {
 	^Type_Poly,
 	^Type_Proc,
 	^Type_Record,
+	^Type_Anon_Record,
 	^Type_Enum,
 	^Type_Interface,
 }
@@ -241,8 +238,13 @@ Expr_Call :: struct {
 	callee:     Expr,
 	args:       []Argument,
 	// Arguments in parameter order after names and defaults are resolved. This
-	// is what the backend evaluates; `args` stays the written syntax.
+	// is what the callee receives; `args` stays the written syntax.
 	bound:      []Expr,
+	// design.md "Argument evaluation": the parameter slots in *evaluation* order
+	// — every supplied argument in `args` source order, then every omitted
+	// default in parameter order. Nil when the two orders coincide, which is
+	// every call written without named arguments.
+	bound_order: []int,
 	// `field.get(value)` / `field.pointer(value)`, with the struct field the
 	// descriptor selected.
 	reflect:       Reflect_Op,
@@ -467,13 +469,13 @@ Parameter :: struct {
 	symbols: []Symbol_Id,
 }
 
-// `Result_Item`. An unnamed result has no `names`.
+// `Results`. design.md: a procedure returns at most one value, and that value is
+// anonymous — a record result names its own fields. `inout` is the one place a
+// result is still a place rather than a value.
 Result :: struct {
 	span:     Span,
-	names:    []Name,
 	is_inout: bool,
 	type:     Expr,
-	symbols:  []Symbol_Id,
 }
 
 // `Proc_Type`: a signature with no body.
@@ -481,7 +483,7 @@ Type_Proc :: struct {
 	using base: Expr_Base,
 	convention: string, // the calling-convention literal's spelling, or ""
 	params:     []Parameter,
-	results:    []Result,
+	result:     ^Result, // nil when the procedure has no result
 }
 
 // `Proc_Literal`: a signature plus a block, or `---` for a bodiless
@@ -612,6 +614,14 @@ Type_Record :: struct {
 	variants:       []Variant,
 }
 
+// `(name: Type, ...)`: the anonymous structural record. Every field is named
+// and public by grammar, so this reuses `Field` without ever carrying an
+// attribute, `using`, or a parameter-only spelling.
+Type_Anon_Record :: struct {
+	using base: Expr_Base,
+	fields:     []Field,
+}
+
 Type_Enum :: struct {
 	using base: Expr_Base,
 	backing:    Expr, // nil when the backing type is omitted
@@ -690,6 +700,8 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 	case ^Type_Proc:
 		return &v.base
 	case ^Type_Record:
+		return &v.base
+	case ^Type_Anon_Record:
 		return &v.base
 	case ^Type_Enum:
 		return &v.base
@@ -770,6 +782,7 @@ Stmt_Assign :: struct {
 	// filled by `src/lifecycle.odin`.
 	rhs_clones:       []bool,
 	destination_live: []Liveness,
+	destructure:      Destructure,
 	// A user compound assignment: either a direct `+=` overload, or the binary
 	// `+` overload the fallback rule reaches. INVALID_SYMBOL for a built-in one.
 	operator:        Symbol_Id,
@@ -930,7 +943,7 @@ Return_Value :: struct {
 
 Stmt_Return :: struct {
 	using base: Node_Base,
-	values:     []Return_Value,
+	value:      ^Return_Value, // nil for `return;`
 }
 
 Stmt_Branch :: struct {
@@ -1008,6 +1021,28 @@ Duration :: enum {
 // One declaration, covering `x: int;`, `x: int = e;`, `x := e;` and
 // `x: int : e;`. A `nil` entry in `values` is the uninitialised-storage marker
 // `---`; an omitted initialiser leaves `values` empty instead.
+// design.md "Destructuring": `a, b := record;`. Two or more bindings project one
+// record's directly declared fields. The checker resolves the field symbols and
+// the ownership policy once, here; the lifecycle pass, the emitter, and the
+// compile-time evaluator read this decision instead of reclassifying the
+// operand syntactically.
+Destructure :: struct {
+	active: bool,
+	record: Type_Id,
+	fields: []Symbol_Id,
+	// The operand names a place, so it stays live and every retained managed
+	// field is cloned out of it. A temporary or a `move(...)` consumes instead
+	// and clones nothing.
+	from_place: bool,
+	// One entry per binding: whether the field is retained by a real target.
+	// `_` leaves its field with the consumed record (or untouched on the place
+	// path), so later phases must not classify, clone, or evaluate it.
+	retained: []bool,
+	// One entry per binding: whether that field is cloned. Only the place path
+	// ever sets one, and only for a managed field.
+	clones: []bool,
+}
+
 Decl :: struct {
 	using base:    Node_Base,
 	kind:          Decl_Kind,
@@ -1021,6 +1056,7 @@ Decl :: struct {
 	// One entry per initialiser: whether it copies a managed place someone else
 	// owns, rather than transferring a value it already owns.
 	value_clones:  []bool,
+	destructure:   Destructure,
 	top_level:     bool,
 	// Signature resolution and body checking have separate readiness states: the
 	// compile-time evaluator may need a procedure's body before the phase that

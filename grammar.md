@@ -197,6 +197,10 @@ Declaration   = Variable_Decl | Constant_Decl
 
 Variable_Decl = Attributes? Identifier_List ":" Declared_Type ("=" Variable_Initializer_List)? ";"
               | Attributes? Identifier_List ":" Storage_Modifiers "=" Expression_List ";"
+                                                         // destructures when the
+                                                         // name list has 2+ and
+                                                         // the initializer list
+                                                         // has exactly 1
 
 Constant_Decl = Attributes? Identifier ":" Type? ":" Constant_Initializer
 
@@ -268,7 +272,11 @@ Type = "^" "mut"? Type                                   // pointer
      | Proc_Type
      | Type_Definition
      | "$" Identifier (":" Type)?                        // specialization binding
+     | Record_Type                                       // anonymous structural record
      | Type_Name Type_Arguments?
+
+Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
+Record_Field   = Identifier_List ":" Type
 
 Type_Name      = Identifier ("." Identifier)?            // optionally package-qualified
 Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ")"
@@ -408,10 +416,7 @@ Parameter_Names = Parameter_Name ("," Parameter_Name)*
 Parameter_Name  = "$"? (Identifier | "_")
 Parameter_Mode  = "inout" | "move"
 
-Results      = Result_Type
-             | "(" Result_Item ("," Result_Item)* ","? ")"
-Result_Item  = Identifier_List ":" Result_Type
-             | Result_Type
+Results      = Result_Type                                // exactly one, or none
 Result_Type  = "inout"? Type
 ```
 
@@ -423,10 +428,10 @@ regardless of the group's `Parameter_Mode`; one wanting another mode writes its
 own type, as `self: inout Type`. `..T` is a variadic parameter; variadic,
 `inout`, and `move` parameters cannot have defaults. A value parameter's
 `= Expression` default may reference the receiver and parameters to its left
-only — see [design.md](design.md#default-values) for when it's evaluated. A
-named result starts dead like any uninitialized local; see
-[design.md](design.md#named-results) for its liveness requirement before
-`return`/`or_return`. The `---` body marks a foreign declaration.
+only — see [design.md](design.md#default-values) for when it's evaluated. A result
+is anonymous: `Results` is one `Result_Type`, so there is no result name and no
+result local, and `return` always carries its value. The `---` body marks a
+foreign declaration.
 
 `convert`, `copy`, and `drop` are contextual only inside `hook(...)`. A hook is
 legal only as an inherent `impl` member; its role fixes the signature (see
@@ -454,7 +459,9 @@ Simple_Statement = Assignment | Expression_List
 
 Init_Statement = Variable_Decl | Simple_Statement ";"   // supplies its own `;`
 
-Assignment   = Expression_List "=" Expression_List
+Assignment   = Expression_List "=" Expression_List       // destructures when
+                                                         // the left has 2+ and
+                                                         // the right has 1
              | Expression Compound_Operator Expression
 Compound_Operator = "+=" | "-=" | "*=" | "/=" | "%="
                   | "|=" | "~=" | "&=" | "&~=" | "<<=" | ">>="
@@ -487,8 +494,7 @@ When_Statement = Attributes? "when" "(" Expression ")" Block
 
 Defer_Statement= "defer" Statement
 
-Return_Statement = "return" Return_Value_List? ";"
-Return_Value_List= Return_Value ("," Return_Value)*
+Return_Statement = "return" Return_Value? ";"
 Return_Value   = "inout"? Expression
 
 Branch_Statement = ("break" | "continue") ";"
@@ -631,6 +637,15 @@ A `Composite_Literal` with no `Composite_Type` takes its type from context. It
 may not begin an expression statement, because `{` at statement position starts
 a block. A slice literal's type is the one written: `[]T{...}` is read-only and
 `[]mut T{...}` has mutable elements.
+
+An anonymous `Record_Type` is never a `Composite_Type`: a record value is built
+from a contextually typed literal, or through an alias used as an ordinary
+literal prefix. There is no inline `(field: T){...}` form.
+
+A parenthesised group is a `Record_Type` only when its first field group is
+labelled — the same bounded `Identifier_List ":"` scan a `Variable_Decl` uses.
+`(T)` in expression position therefore stays a parenthesised expression, and
+`Type_Name "(" Record_Field ...` is not a `Type_Arguments` list.
 
 Right associativity is also what lets `or_else` chain: `a or_else b or_else c`
 groups as `a or_else (b or_else c)`, giving each `or_else` an unresolved

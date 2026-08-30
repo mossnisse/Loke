@@ -93,10 +93,8 @@ type_contains_any_view :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 				return true
 			}
 		}
-		for result in info.results {
-			if type_contains_any_view(c, result, depth + 1) {
-				return true
-			}
+		if info.result != INVALID_TYPE && type_contains_any_view(c, info.result, depth + 1) {
+			return true
 		}
 	}
 	return false
@@ -221,7 +219,7 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 			}
 		}
 		k.scope = scope
-		params, modes, results, result_inout, ok := slot_signature(k, entry.type, dyn)
+		params, modes, result_type, result_inout, ok := slot_signature(k, entry.type, dyn)
 		k.scope = saved_scope
 		if !ok {
 			continue
@@ -240,11 +238,11 @@ install_dyn_forwarding_slots :: proc(k: ^Checker, info: ^Interface_Info, args: [
 			public         = true,
 			owner_type     = dyn,
 			params         = params,
-			results        = results,
+			result         = result_type,
+			result_inout   = result_inout,
 			param_symbols  = make([]Symbol_Id, len(params), k.c.semantic_allocator),
 			param_defaults = make([]Expr, len(params), k.c.semantic_allocator),
-			result_symbols = make([]Symbol_Id, len(results), k.c.semantic_allocator),
-			proc_type      = intern_proc_type(k.c, params, modes, results, result_inout, ""),
+			proc_type      = intern_proc_type(k.c, params, modes, result_type, result_inout, ""),
 			synth          = .Dyn_Forward,
 			has_receiver   = true,
 			receiver       = modes[0],
@@ -458,14 +456,12 @@ dyn_slot_is_compatible :: proc(k: ^Checker, requirement: Requirement, subject: I
 			), false
 		}
 	}
-	for result in signature.results {
-		if type_syntax_names(result.type, subject) {
-			return fmt.aprintf(
-				"slot `%s` returns the subject, whose size is not known behind the view",
-				name,
-				allocator = k.c.semantic_allocator,
-			), false
-		}
+	if result := signature.result; result != nil && type_syntax_names(result.type, subject) {
+		return fmt.aprintf(
+			"slot `%s` returns the subject, whose size is not known behind the view",
+			name,
+			allocator = k.c.semantic_allocator,
+		), false
 	}
 	return "", true
 }
@@ -527,7 +523,7 @@ Witness_Slot :: struct {
 	// The receiver mode the thunk has to re-type the erased pointer for.
 	mode:   Param_Mode,
 	params: []Type_Id,
-	results: []Type_Id,
+	result: Type_Id,
 }
 
 // The flattened slots of an interface application, composition included, each
@@ -634,17 +630,17 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 		// decides which extensions may supply it.
 		k.pkg, k.lookup_pkg = owner.pkg, owner.pkg
 		k.scope = owner.scope == nil ? build_universe(k.c) : owner.scope
-		params, modes, results, _, shape_ok := slot_signature_for(k, owner, entry, concrete)
+		params, modes, result_type, _, shape_ok := slot_signature_for(k, owner, entry, concrete)
 		target := INVALID_SYMBOL
 		if shape_ok {
-			target = find_witness_slot(k, concrete, entry.name, owner.pkg, params, modes, results)
+			target = find_witness_slot(k, concrete, entry.name, owner.pkg, params, modes, result_type)
 		}
 		slots[index] = Witness_Slot {
-			name    = entry.name,
-			target  = target,
-			mode    = len(modes) > 0 ? modes[0] : Param_Mode.Value,
-			params  = params,
-			results = results,
+			name   = entry.name,
+			target = target,
+			mode   = len(modes) > 0 ? modes[0] : Param_Mode.Value,
+			params = params,
+			result = result_type,
 		}
 	}
 	k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
@@ -701,7 +697,7 @@ slot_signature_for :: proc(
 	owner: ^Interface_Info,
 	entry: Interface_Slot,
 	concrete: Type_Id,
-) -> ([]Type_Id, []Param_Mode, []Type_Id, []bool, bool) {
+) -> ([]Type_Id, []Param_Mode, Type_Id, bool, bool) {
 	scope := new_scope(k.c, k.scope, .Local)
 	for parameter, index in owner.params {
 		if index < len(entry.args) {
@@ -722,15 +718,14 @@ find_witness_slot :: proc(
 	owner_pkg: Package_Id,
 	params: []Type_Id,
 	modes: []Param_Mode,
-	results: []Type_Id,
+	result: Type_Id,
 ) -> Symbol_Id {
-	result_inout := make([]bool, len(results), k.c.semantic_allocator)
 	for candidate in slot_candidates_for_witness(k, concrete, name, owner_pkg) {
 		sym := symbol_of(k.c, candidate)
 		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
 			continue
 		}
-		if witness_slot_matches(k, sym, params, modes, results, result_inout) {
+		if witness_slot_matches(k, sym, params, modes, result) {
 			return candidate
 		}
 	}
@@ -763,10 +758,9 @@ witness_slot_matches :: proc(
 	sym: ^Symbol,
 	params: []Type_Id,
 	modes: []Param_Mode,
-	results: []Type_Id,
-	result_inout: []bool,
+	result: Type_Id,
 ) -> bool {
-	if len(sym.params) != len(params) || len(sym.results) != len(results) {
+	if len(sym.params) != len(params) || sym.result != result {
 		return false
 	}
 	info := type_of(k.c, sym.proc_type)
@@ -779,11 +773,6 @@ witness_slot_matches :: proc(
 		}
 		have := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
 		if have != modes[index] {
-			return false
-		}
-	}
-	for want, index in results {
-		if sym.results[index] != want {
 			return false
 		}
 	}
@@ -1008,7 +997,6 @@ check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> 
 
 	check_extract_of(k, extract, TYPE_ANY_VIEW)
 	v.type = extract.type
-	v.result_types = extract.result_types
 	return true
 }
 
@@ -1075,7 +1063,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	}
 	// The receiver's own type is the erased view, and every other parameter is
 	// resolved from the interface application.
-	params, modes, results, _, ok := slot_signature(k, entry.type, dyn)
+	params, modes, result_type, _, ok := slot_signature(k, entry.type, dyn)
 	k.scope = saved
 	if !ok {
 		errorf(k.c, v.span, "L0467", "`%s`'s signature does not resolve here", sel.name.text)
@@ -1114,37 +1102,70 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 		return true
 	}
 	bound := make([]Expr, len(params), k.c.semantic_allocator)
+	filled := make([]bool, len(params), k.c.semantic_allocator)
+	order := make([dynamic]int, 0, len(params), k.c.semantic_allocator)
 	bound[0] = sel.operand
+	filled[0] = true
+	append(&order, 0)
+	named := false
 	for arg, position in v.args {
-		want := params[position + 1]
-		k.place_position, k.insert_position = modes[position + 1] == .Inout, modes[position + 1] == .Inout
+		slot := position + 1
+		if arg.name.text != "" {
+			named = true
+			slot = -1
+			target := intern_identifier(k.c, arg.name.text)
+			flat := 0
+			for parameter in entry.type.params {
+				for parameter_name in parameter.names {
+					if intern_identifier(k.c, parameter_name.name.text) == target {
+						slot = flat
+						break
+					}
+					flat += 1
+				}
+				if slot >= 0 { break }
+			}
+			if slot < 0 {
+				errorf(k.c, arg.span, "L0371", "no parameter named `%s`", arg.name.text)
+				v.type = INVALID_TYPE
+				return true
+			}
+			if filled[slot] {
+				errorf(k.c, arg.span, "L0371", "`%s` is given twice", arg.name.text)
+				v.type = INVALID_TYPE
+				return true
+			}
+		} else if named {
+			errorf(k.c, arg.span, "L0372", "a positional argument cannot follow a named one")
+			v.type = INVALID_TYPE
+			return true
+		}
+		filled[slot] = true
+		append(&order, slot)
+		want := params[slot]
+		k.place_position, k.insert_position = modes[slot] == .Inout, modes[slot] == .Inout
 		checked := check_single_expr(k, arg.value, want)
 		k.place_position = false
 		if checked == INVALID_TYPE || !materialize_argument(k, arg.value, want) {
 			v.type = INVALID_TYPE
 			return true
 		}
-		if modes[position + 1] == .Inout {
+		if modes[slot] == .Inout {
 			if base := expr_base(arg.value); base != nil && !base.assignable {
 				report_not_assignable(k, base, "an `inout` argument")
 				v.type = INVALID_TYPE
 				return true
 			}
 		}
-		bound[position + 1] = arg.value
+		bound[slot] = arg.value
 	}
 	v.bound = bound
+	if named {
+		v.bound_order = order[:]
+	}
 	v.is_dyn_call = true
 	v.dyn_slot = index
-	sel.type = intern_proc_type(k.c, params, modes, results, make([]bool, len(results), k.c.semantic_allocator), "")
-	switch len(results) {
-	case 0:
-		v.type = TYPE_VOID
-	case 1:
-		v.type = results[0]
-	case:
-		v.type = results[0]
-		v.result_types = results
-	}
+	sel.type = intern_proc_type(k.c, params, modes, result_type, false, "")
+	v.type = result_type == INVALID_TYPE ? TYPE_VOID : result_type
 	return true
 }

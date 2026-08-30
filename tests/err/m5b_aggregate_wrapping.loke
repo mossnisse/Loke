@@ -328,8 +328,8 @@ loop_pointer_read :: proc(values: []int, choose_local: bool) -> []int {
 // reading a call temporary, and assigning it must preserve that correspondence.
 result_reverse :: proc(a: []int, b: []int) -> Pair { return Pair{b, a}; }
 result_swap :: proc(pair: Pair) -> Pair { return Pair{pair.right, pair.left}; }
-result_many :: proc(a: []int, b: []int) -> (Pair, Pair) {
-	return Pair{b, a}, Pair{a, b};
+result_many :: proc(a: []int, b: []int) -> (first: []int, second: []int) {
+	return {first = b, second = a};
 }
 result_generic :: proc(pair: $T) -> T { return T{pair.right, pair.left}; }
 
@@ -358,8 +358,8 @@ parameter_path_result_escape :: proc(values: []int) -> []int {
 
 multiple_result_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	first, second := result_many(values, local[:]);
-	return second.right;
+	first, _ := result_many(values, local[:]);
+	return first;
 }
 
 generic_result_escape :: proc(values: []int) -> []int {

@@ -104,74 +104,40 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 
 // ------------------------------------------------------- element records --
 
-// The two-field records a loop can bind whole or destructure. They are ordinary
-// public-field structs built the way `Range(T)` is, so `entry.key` and a
-// two-name header are the same element seen two ways (design.md "Element
-// bindings").
+// The records a loop binds whole or destructures. They are ordinary anonymous
+// records — `entry.key` and a two-name header are the same element seen two
+// ways (design.md "Element bindings") — so they intern through
+// `anon_record_type` like any record a program writes, rather than through a
+// cache of their own.
 
 ELEMENT_FIRST :: 0
 ELEMENT_SECOND :: 1
 
-// A map's `Element`: `struct{key: K, value: V}` (design.md "Iteration adapters").
+// A map's `Element`: `(key: K, value: V)` (design.md "Iteration adapters").
 map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
-	if existing, found := c.entry_types[subject]; found {
-		return existing
-	}
 	info := type_of(c, subject)
-	key, value := info.key, info.element
-	type := element_record(
-		c,
-		fmt.aprintf("Map_Entry(%s)", type_name(c, subject), allocator = c.semantic_allocator),
-		fmt.aprintf("Map_Entry.%s", llvm_safe(type_name(c, subject)), allocator = c.semantic_allocator),
-		"key", key, "value", value,
-	)
-	c.entry_types[subject] = type
-	return type
+	return anon_record_type(c, []Anon_Record_Field{
+		{name = intern_identifier(c, "key"), type = info.key},
+		{name = intern_identifier(c, "value"), type = info.element},
+	})
 }
 
-// `indexed()`'s `Element`: `struct{value: E, index: int}`.
+// `indexed()`'s `Element`: `(value: E, index: int)`.
 indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
-	if existing, found := c.indexed_types[element]; found {
-		return existing
-	}
-	type := element_record(
-		c,
-		fmt.aprintf("Indexed(%s)", type_name(c, element), allocator = c.semantic_allocator),
-		fmt.aprintf("Indexed.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator),
-		"value", element, "index", TYPE_INT,
-	)
-	c.indexed_types[element] = type
-	return type
+	return anon_record_type(c, []Anon_Record_Field{
+		{name = intern_identifier(c, "value"), type = element},
+		{name = intern_identifier(c, "index"), type = TYPE_INT},
+	})
 }
 
-// `rune_offsets()`'s `Element`: `struct{value: rune, offset: int}`. The offset is
-// the byte index the code point begins at, which is why it is a separate adapter
+// `rune_offsets()`'s `Element`: `(value: rune, offset: int)`. The offset is the
+// byte index the code point begins at, which is why it is a separate adapter
 // from `indexed()`'s rune ordinal (design.md "String iteration").
 rune_offset_type :: proc(c: ^Compiler) -> Type_Id {
-	if c.rune_offset_type != INVALID_TYPE {
-		return c.rune_offset_type
-	}
-	type := element_record(c, "Rune_Offset", "Rune_Offset", "value", TYPE_RUNE, "offset", TYPE_INT)
-	c.rune_offset_type = type
-	return type
-}
-
-@(private = "file")
-element_record :: proc(
-	c: ^Compiler,
-	name, mangled: string,
-	first_name: string, first: Type_Id,
-	second_name: string, second: Type_Id,
-) -> Type_Id {
-	type := new_type(c, Type_Info{kind = .Struct, name = intern_identifier(c, name)})
-	fields := make([]Symbol_Id, 2, c.semantic_allocator)
-	fields[ELEMENT_FIRST] = new_field(c, first_name, first, ELEMENT_FIRST, public = true)
-	fields[ELEMENT_SECOND] = new_field(c, second_name, second, ELEMENT_SECOND, public = true)
-	if info := type_of(c, type); info != nil {
-		info.fields = fields
-		info.mangled = mangled
-	}
-	return type
+	return anon_record_type(c, []Anon_Record_Field{
+		{name = intern_identifier(c, "value"), type = TYPE_RUNE},
+		{name = intern_identifier(c, "offset"), type = TYPE_INT},
+	})
 }
 
 // ------------------------------------------------------- iterator types --
@@ -304,7 +270,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	members[1] = new_associated_type(k.c, "Iterator", iterator, under)
 	// design.md "Iteration protocol": `iter` takes a receiver, so `source.iter()`
 	// is the protocol spelling and the free `iter(source)` overload still finds it.
-	members[2] = synth_proc(k.c, "iter", iter_kind, under, []Type_Id{under}, []Param_Mode{.Value}, []Type_Id{iterator})
+	members[2] = synth_proc(k.c, "iter", iter_kind, under, []Type_Id{under}, []Param_Mode{.Value}, iterator)
 	if sym := symbol_of(k.c, members[2]); sym != nil {
 		sym.has_receiver = true
 		sym.receiver = .Value
@@ -312,7 +278,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	if reverse_kind != .None {
 		members[3] = synth_proc(
 			k.c, "iter_reverse", reverse_kind, under,
-			[]Type_Id{under}, []Param_Mode{.Value}, []Type_Id{iterator},
+			[]Type_Id{under}, []Param_Mode{.Value}, iterator,
 		)
 		if sym := symbol_of(k.c, members[3]); sym != nil {
 			sym.has_receiver = true
@@ -326,7 +292,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	next_members := make([]Symbol_Id, 1, k.c.semantic_allocator)
 	next := synth_proc(
 		k.c, "next", next_kind, iterator,
-		[]Type_Id{iterator}, []Param_Mode{.Inout}, []Type_Id{option_type(k, element)},
+		[]Type_Id{iterator}, []Param_Mode{.Inout}, option_type(k, element),
 	)
 	if sym := symbol_of(k.c, next); sym != nil {
 		sym.has_receiver = true
@@ -373,12 +339,10 @@ synth_proc :: proc(
 	owner: Type_Id,
 	params: []Type_Id,
 	modes: []Param_Mode,
-	results: []Type_Id,
+	result: Type_Id,
 ) -> Symbol_Id {
 	param_copy := make([]Type_Id, len(params), c.semantic_allocator)
-	result_copy := make([]Type_Id, len(results), c.semantic_allocator)
 	copy(param_copy, params)
-	copy(result_copy, results)
 	id := new_symbol(c, Symbol {
 		name          = intern_identifier(c, name),
 		span          = no_span(),
@@ -386,11 +350,10 @@ synth_proc :: proc(
 		public        = true,
 		owner_type    = owner,
 		params        = param_copy,
-		results       = result_copy,
+		result        = result,
 		param_symbols = make([]Symbol_Id, len(params), c.semantic_allocator),
 		param_defaults = make([]Expr, len(params), c.semantic_allocator),
-		result_symbols = make([]Symbol_Id, len(results), c.semantic_allocator),
-		proc_type     = intern_proc_type(c, param_copy, modes, result_copy, make([]bool, len(results), c.semantic_allocator), ""),
+		proc_type     = intern_proc_type(c, param_copy, modes, result, false, ""),
 		synth         = kind,
 	})
 	append(&c.synth_procs, id)
@@ -412,23 +375,17 @@ iteration_proc_matches :: proc(
 	sym: ^Symbol,
 	parameter: Type_Id,
 	mode: Param_Mode,
-	results: []Type_Id,
+	result: Type_Id,
 ) -> bool {
 	if sym == nil || sym.kind != .Proc || len(sym.params) != 1 || sym.params[0] != parameter ||
-	   len(sym.results) != len(results) {
+	   sym.result != result {
 		return false
 	}
 	info := type_of(k.c, sym.proc_type)
 	if info == nil || info.convention != "" || len(info.param_modes) != 1 || info.param_modes[0] != mode {
 		return false
 	}
-	for result, index in results {
-		if sym.results[index] != result ||
-		   (index < len(info.result_inout) && info.result_inout[index]) {
-			return false
-		}
-	}
-	return true
+	return !info.result_inout
 }
 
 // One named protocol member, using the declaration's frozen lookup package.
@@ -829,7 +786,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	iter := iteration_member(k, subject, "iter")
 	iter_sym := symbol_of(k.c, iter)
 	if element == INVALID_TYPE || iterator == INVALID_TYPE ||
-	   !iteration_proc_matches(k, iter_sym, subject, .Value, []Type_Id{iterator}) {
+	   !iteration_proc_matches(k, iter_sym, subject, .Value, iterator) {
 		errorf(
 			k.c,
 			expr_span(s.iterable),
@@ -843,7 +800,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	// it, and it produces the same `Iterator` (design.md "Iteration adapters").
 	if s.adapter == .Reversed {
 		reverse := iteration_member(k, subject, "iter_reverse")
-		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Value, []Type_Id{iterator}) {
+		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Value, iterator) {
 			errorf(
 				k.c,
 				expr_span(s.iterable),
@@ -858,7 +815,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	}
 	next := iteration_member(k, iterator, "next")
 	next_sym := symbol_of(k.c, next)
-	if !iteration_proc_matches(k, next_sym, iterator, .Inout, []Type_Id{option_type(k, element)}) {
+	if !iteration_proc_matches(k, next_sym, iterator, .Inout, option_type(k, element)) {
 		errorf(
 			k.c,
 			expr_span(s.iterable),
@@ -895,17 +852,23 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		}
 		return check_foreach_block(k, s)
 	}
+	// The same eligibility rule every destructuring form asks for. `foreach` keeps
+	// its own note-carrying arity message, so it pre-checks the shape and calls
+	// the shared helper only for the field walk.
 	info := underlying_info(k.c, element)
 	if info == nil || info.kind != .Struct || len(info.fields) != len(s.bindings) {
 		report_arity_mismatch(k, s, element, info)
 		return FLOWS
 	}
-	for binding, index in s.bindings {
-		field := symbol_of(k.c, info.fields[index])
+	fields, eligible := destructure_fields(
+		k, element, len(s.bindings), s.bindings[1].name.span, "L0459", "bound by a `foreach`",
+	)
+	if !eligible {
+		return FLOWS
+	}
+	for _, index in s.bindings {
+		field := symbol_of(k.c, fields[index])
 		if field == nil {
-			return FLOWS
-		}
-		if !require_visible_field(k, binding.name.span, element, info.fields[index], "L0459", "bound by a `foreach`") {
 			return FLOWS
 		}
 		if !bind_element_field(k, s, index, field.type, borrowed = foreach_field_borrowed(s, index)) {
@@ -997,13 +960,9 @@ report_arity_mismatch :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id, i
 
 @(private = "file")
 check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
-	incoming := clone_result_assignments(k.c, k.assigned_results)
 	k.loop_depth += 1
 	body := check_scoped_block(k, s.body)
 	k.loop_depth -= 1
-	// A `foreach` may execute zero times, so nothing the body assigns is
-	// guaranteed on the way out.
-	k.assigned_results = incoming
 	return Flow_Info{can_fall_through = true, returns = body.returns}
 }
 

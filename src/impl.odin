@@ -266,10 +266,10 @@ check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
 
 @(private = "file")
 implicit_conversion_is_valid :: proc(k: ^Checker, sym: ^Symbol) -> bool {
-	if sym.kind != .Proc || len(sym.params) != 1 || len(sym.results) != 1 {
+	if sym.kind != .Proc || len(sym.params) != 1 || sym.result == INVALID_TYPE {
 		return false
 	}
-	if sym.results[0] != sym.owner_type {
+	if sym.result != sym.owner_type {
 		return false
 	}
 	param := sym.params[0]
@@ -473,7 +473,7 @@ implicit_conversion_overload :: proc(k: ^Checker, arg: Arg_Info, target: Type_Id
 // the compiler sees an ordinary call and needs no rank-4 special case.
 wrap_implicit_conversion :: proc(k: ^Checker, value: Expr, overload: Symbol_Id) -> Expr {
 	sym := symbol_of(k.c, overload)
-	if sym == nil || len(sym.params) != 1 || len(sym.results) != 1 {
+	if sym == nil || len(sym.params) != 1 || sym.result == INVALID_TYPE {
 		return value
 	}
 	if !materialize_argument(k, value, sym.params[0]) {
@@ -495,7 +495,7 @@ wrap_implicit_conversion :: proc(k: ^Checker, value: Expr, overload: Symbol_Id) 
 	call.span = span
 	call.callee = callee
 	call.bound = bound
-	call.type = sym.results[0]
+	call.type = sym.result
 	call.value_category = .Value
 	call.resolution = Resolution{kind = .Call, symbol = overload, chosen_overload = overload}
 	return call

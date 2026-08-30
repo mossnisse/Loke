@@ -1242,17 +1242,106 @@ fmt.println(v);
 
 For a pointer to a struct, `p.field` is equivalent to `p^.field`.
 
+#### Anonymous records
+
+`(name: Type, ...)` is a record type with no declaration site — the lightweight
+product type, written wherever a type is written:
+
+```odin
+entry: (key: string_view, value: int);
+Entry :: (key: string_view, value: int);   // an alias, not a new nominal type
+lookup :: proc(k: string_view) -> (value: int, found: bool) { ... }
+```
+
+Its identity is **structural**: the ordered sequence of its `(field name, field
+type)` pairs. Two records with the same fields in the same order are the same
+type wherever they are written; the same fields in a different order are
+different types. A field name is part of the type, so `(a: int, b: int)` and
+`(x: int, y: int)` are unrelated.
+
+Every field is named and public. There is no `using`, no private field, no
+layout attribute, no default, and none of the parameter-only modes — a `struct`
+declaration is what carries those. Copy, move, drop, equality, formatting, and
+reflection derive structurally, exactly as they do for a `struct` with no user
+hooks.
+
+A record is constructed by a [contextually typed](#struct-literals) composite
+literal, or through an alias used as an ordinary literal prefix. There is no
+inline shape-prefixed literal:
+
+```odin
+entry: Entry = {key = "port", value = 8080};
+named := Entry{key = "port", value = 8080};
+return .ok({key = k, value = v});
+```
+
+A parenthesised group is a record type only when it is **labelled**. `(T)` in
+expression position stays grouping and is not a type, and `Foo(x: int)` is not a
+generic application.
+
+#### Destructuring
+
+Two or more bindings on the left of `:=` or `=`, with one record on the right,
+project that record's fields positionally. A single binding takes the whole
+value. `foreach`'s binding list is the same rule.
+
+```odin
+q, r := divmod(17, 5);
+low, high = minmax(a, b);
+foreach (key, value in table) { ... }
+```
+
+The record must have exactly as many **directly declared** fields as there are
+bindings, and every one must be visible at the use site. Promoted (`using`)
+fields are not flattened, private fields are not filtered out, and `_` does not
+bypass visibility. Destructuring is flat: a binding takes a whole field,
+whatever that field's own shape is.
+
+Ownership follows the operand's category, exactly as every other binding does:
+
+- A **place** clones. `x, y := point` copy-initialises each binding and `point`
+  stays live and drops normally. Each retained field must be copyable, and the
+  copy-cost diagnostic applies per cloned field. This projects fields; it does
+  not call the containing record's copy hook.
+- A **temporary** or `move(...)` consumes. Retained fields transfer without
+  cloning. The containing record must have neither a custom `hook(copy)` nor a
+  custom `hook(drop)` — decomposing a value whose hooks own its lifecycle is
+  rejected rather than given an exception; its *fields* may have hooks of their
+  own.
+
+`_` discards. It clones nothing from a place; in a consuming form the discarded
+field drops exactly once, in reverse declaration order, after every retained
+binding is published.
+
+Retained fields are prepared in declaration order before any binding is
+published, and an assignment keeps the ordinary prepare-then-write rule. On the
+cloning path a failed clone cleans its partial field temporaries and leaves the
+source untouched.
+
+```odin
+// The temporary is consumed: nothing is cloned.
+name, bytes := read_document(path) or_return;
+
+// The place is cloned, and the copy-cost diagnostic reports it.
+doc := read_document(path) or_return;
+name, bytes := doc;
+```
+
 #### Struct literals
 
-A struct literal starts with its type and a pair of braces. An unnamed initializer list must supply all fields or no fields:
+A struct literal starts with its type and a pair of braces. Elements may be
+positional, named, or a mix with every positional element first. Any field the
+literal omits takes its type's zero value, and a field whose type has no zero
+cannot be omitted:
 
 ```odin
 Vector3 :: struct {
 	x, y, z: f32,
 }
 v: Vector3;
-v = Vector3{}; // Zero value
+v = Vector3{};           // zero value
 v = Vector3{1, 4, 9};
+v = Vector3{1, y = 4};   // positional first, then named; `z` zero-fills
 ```
 
 A named initializer list can supply a subset of fields. Field order does not matter. Omitted fields use their zero value:
@@ -1263,6 +1352,9 @@ assert(v.x == 0);
 assert(v.y == 2);
 assert(v.z == 1);
 ```
+
+Elements evaluate **in source order**, whatever field each one names, and are
+then placed into field-order storage.
 
 Structs can be nested by defining a field as a struct.
 
@@ -2865,7 +2957,7 @@ This behavior is **managed lexical storage**. Cleanup occurs at normal scope exi
 
 Cleanup uses `defer` order: a managed declaration places an implicit conditional `defer drop(value)` at its declaration point, which drops the value only if it is live when the action runs. Implicit drops and explicit deferred statements run in reverse registration order, so a deferred statement can read a managed local the compiler can prove still live before that local is dropped.
 
-For a `return`, the compiler first evaluates the result and moves it to result storage. The compiler then runs the scope-exit actions. A deferred statement cannot change the result. A return can require a clone when its expression names a non-owning parameter or borrowed place. See [Parameter semantics](#parameter-semantics-and-abi-lowering) and [Named results](#named-results).
+For a `return`, the compiler first evaluates the result and moves it to result storage. The compiler then runs the scope-exit actions. A deferred statement cannot change the result. A return can require a clone when its expression names a non-owning parameter or borrowed place. See [Parameter semantics](#parameter-semantics-and-abi-lowering).
 
 #### Values that outlive every scope
 
@@ -2988,7 +3080,11 @@ Built-in owning types receive compiler-defined cleanup. User-defined types recei
 
 Structs and fixed arrays containing managed fields receive compiler-generated copy, move, and cleanup operations recursively. Self-assignment is safe. Reference cycles require explicit pointers or `shared(T)`; plain pointer cycles are non-owning, while `shared(T)` can form ownership cycles.
 
-Multiple declarations such as `y, z := 20, 30;` remain valid. More general tuple destructuring and pattern matching can be designed separately because they do not affect storage lifetime.
+Multiple declarations such as `y, z := 20, 30;` remain valid, and are a
+different construct from [destructuring](#destructuring), which takes one record
+on the right. Destructuring is flat: a binding takes a whole field. Nested
+patterns and pattern matching can be designed separately because they do not
+affect storage lifetime.
 
 ## Constant declarations
 
@@ -4114,7 +4210,7 @@ The source-level parameter mode is decided before ABI lowering:
 
 A `value: T` parameter is never made `inout` by its machine representation. A trivial value behaves as an immutable callee-local; a managed owner (including a struct or fixed array with managed fields) is a non-owning immutable borrow for the call, cloning nothing and transferring nothing, with reached storage protected by [Borrows and lifetimes](#borrows-and-lifetimes).
 
-Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, named result, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
+Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
 
 After these rules, the ABI may pass a parameter in registers, an argument slot, or indirectly through a hidden pointer to caller-prepared temporary storage. That temporary is valid until the call completes, cannot be retained by the callee, and grants no permission to modify the caller's variable; `&value` inside the procedure addresses the callee-local binding. This lowering is an implementation detail of the `loke` convention; a foreign procedure follows its declared foreign ABI, including that ABI's aggregate-passing rules.
 
@@ -4222,17 +4318,27 @@ odds := []int{1, 3, 5};
 fmt.println(sum(..odds));        // 9, passing a slice as varargs
 ```
 
-#### Multiple results
+#### One result
 
-A procedure can return zero or more results:
+A procedure returns at most one value. `Results` is one `Result_Type`, never a
+list, and the result is anonymous — there is no name to fill in and no result
+local to assign. A procedure with a result must `return expression;` on every
+path that leaves it; a bare `return;` there is an error.
+
+To hand back several values, return one [anonymous
+record](#anonymous-records) and [destructure](#destructuring) it at the call
+site:
 
 ```odin
-swap :: proc(x, y: int) -> (int, int) {
-	return y, x;
+swap :: proc(x, y: int) -> (first: int, second: int) {
+	return {first = y, second = x};
 }
 a, b := swap(1, 2);
 fmt.println(a, b); // 2 1
 ```
+
+The parenthesised result spelling is therefore one record type, at any arity. An
+unlabelled `(T, U)` result is not a type and is rejected.
 
 #### `inout` results
 
@@ -4278,37 +4384,6 @@ escape :: proc() -> inout int {
 Because the borrow is mutable, the caller's root is exclusively loaned for as
 long as any copy of the result is live, under [the one
 rule](#capabilities-and-the-one-rule).
-
-#### Named results
-
-A result can have a name. A named result is an initially dead local variable that exists for the complete procedure body. A `return` statement without expressions returns all named results and is valid only where every named result is definitely live. Use this short form only when the returned values are clear.
-
-A named result is an ordinary local, not the caller's result storage. A bare `return` **moves** the named results into result storage, then scope-exit actions run; a `return` with expressions evaluates them directly into result storage and does not require the named locals to be live. This is why `defer` cannot change a result. The transfer is a move, so a managed named result costs nothing extra and its cleanup is suppressed by the liveness tracking under [Managed values and storage](#managed-values-and-storage).
-
-```odin
-do_math :: proc(input: int) -> (x, y: int) {
-	x = 2*input + 1;
-	y = 3*input / 5;
-	return x, y;
-}
-do_math_with_naked_return :: proc(input: int) -> (x, y: int) {
-	x = 2*input + 1;
-	y = 3*input / 5;
-	return; // A "naked" return statement, as no values are explicitly specified.
-}
-```
-
-A named result has no initializer syntax. It starts dead and is assigned in the body like any other uninitialized local:
-
-```odin
-conditionally_blue :: proc(red: bool) -> (color: string) {
-    if (red) {
-        return "red";
-    }
-    color = "blue";
-    return;
-}
-```
 
 #### Named arguments
 
@@ -4373,9 +4448,8 @@ scratch_data, scratch_err := files.read_file("scratch.bin", allocator=scratch);
 ```
 
 The compiler-provided [`caller_location()`](#caller_location) expression is also
-valid as a default and denotes the source location of the call. Defaults exist
-only for parameters; a [named result](#named-results) has no initializer syntax
-and starts dead.
+valid as a default and denotes the source location of the call. Defaults exist only for parameters; a result is anonymous, so there is no result
+local to give one.
 
 #### Explicit procedure overloading
 
@@ -5417,12 +5491,10 @@ so `or_return` is an expression in every case and no second spelling is needed
 for the no-value one.
 
 On failure, control returns from the innermost enclosing procedure. That
-procedure's **last** result must itself be a fallible union, and the operand's
-failure payload must be assignable to its failure payload. With several results
-every one must be named, every earlier one must already be definitely live, and
-a bare `return` is performed. An assignable conversion that creates a borrowed
-view is also subject to the ordinary return-escape rules: its source must
-outlive the returned view.
+procedure's result must itself be a fallible union, and the operand's failure
+payload must be assignable to its failure payload. An assignable conversion that
+creates a borrowed view is also subject to the ordinary return-escape rules: its
+source must outlive the returned view.
 
 The operand's temporaries are destroyed before the return completes, and the
 ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a

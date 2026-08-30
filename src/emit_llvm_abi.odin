@@ -63,9 +63,9 @@ emit_foreign_declare :: proc(e: ^Emitter, sym: ^Symbol) {
 	ret := "void"
 	sret_prefix := ""
 	proc_info := type_of(e.c, sym.proc_type)
-	if len(sym.results) == 1 {
-		result := sym.results[0]
-		if proc_result_is_inout(proc_info, 0) {
+	if sym.result != INVALID_TYPE {
+		result := sym.result
+		if proc_result_is_inout(proc_info) {
 			ret = "ptr"
 		} else {
 			switch abi_pass(e.c, result) {
@@ -518,45 +518,20 @@ union_tag_member :: proc(e: ^Emitter, type: Type_Id) -> int {
 	return index
 }
 
-// The internal convention for several results: one anonymous literal struct,
-// used consistently by caller and callee. This is not the frozen Loke or C
-// ABI; M7 replaces it.
+// design.md: a procedure returns at most one value. An `inout` result is a
+// place, so it travels as its address.
 @(private)
-llvm_result_type :: proc(e: ^Emitter, results: []Type_Id, inout: []bool = nil) -> string {
-	// An `inout` result is a place, so it travels as its address.
-	slot :: proc(e: ^Emitter, results: []Type_Id, inout: []bool, index: int) -> string {
-		if index < len(inout) && inout[index] {
-			return "ptr"
-		}
-		return llvm_type(e, results[index])
-	}
-	switch len(results) {
-	case 0:
+llvm_result_type :: proc(e: ^Emitter, result: Type_Id, inout := false) -> string {
+	if result == INVALID_TYPE {
 		return "void"
-	case 1:
-		return slot(e, results, inout, 0)
 	}
-	b := strings.builder_make()
-	strings.write_string(&b, "{ ")
-	for _, index in results {
-		if index > 0 {
-			strings.write_string(&b, ", ")
-		}
-		strings.write_string(&b, slot(e, results, inout, index))
-	}
-	strings.write_string(&b, " }")
-	return strings.to_string(b)
+	return inout ? "ptr" : llvm_type(e, result)
 }
 
 @(private)
-result_inout_of :: proc(e: ^Emitter, proc_type: Type_Id) -> []bool {
+result_inout_of :: proc(e: ^Emitter, proc_type: Type_Id) -> bool {
 	info := type_of(e.c, proc_type)
-	return info == nil ? nil : info.result_inout
-}
-
-@(private)
-emit_result_is_inout :: proc(e: ^Emitter, index: int) -> bool {
-	return index < len(e.result_inout) && e.result_inout[index]
+	return info != nil && info.result_inout
 }
 
 @(private)
@@ -582,9 +557,9 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 	ret := "void"
 	sret_prefix := ""
 	proc_info := type_of(e.c, symbol.proc_type)
-	if len(symbol.results) == 1 {
-		result := symbol.results[0]
-		if proc_result_is_inout(proc_info, 0) {
+	if symbol.result != INVALID_TYPE {
+		result := symbol.result
+		if proc_result_is_inout(proc_info) {
 			ret = "ptr"
 		} else {
 			switch abi_pass(e.c, result) {
@@ -672,13 +647,13 @@ emit_foreign_param_slot :: proc(e: ^Emitter, parameter: Type_Id, index: int) -> 
 // larger one has already been written through `sret`.
 @(private)
 emit_foreign_return :: proc(e: ^Emitter) {
-	if len(e.result_types) == 0 {
+	if e.result_type == INVALID_TYPE {
 		fmt.sbprintln(&e.b, "  ret void")
 		return
 	}
-	result := e.result_types[0]
-	slot := e.result_slots[0]
-	if emit_result_is_inout(e, 0) {
+	result := e.result_type
+	slot := e.result_slot
+	if e.result_inout {
 		v := load(e, "ptr", slot)
 		fmt.sbprintfln(&e.b, "  ret ptr %s", v)
 		return
@@ -755,9 +730,9 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 @(private = "file")
 foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) -> string {
 	ret := "void"
-	if len(callee_type.results) == 1 {
-		result := callee_type.results[0]
-		if proc_result_is_inout(callee_type, 0) {
+	if callee_type.result != INVALID_TYPE {
+		result := callee_type.result
+		if proc_result_is_inout(callee_type) {
 			ret = "ptr"
 		} else {
 			#partial switch abi_pass(e.c, result) {
@@ -813,9 +788,9 @@ emit_foreign_call :: proc(
 	ret := "void"
 	sret := ""
 	result_type := INVALID_TYPE
-	if len(callee_type.results) == 1 {
-		result_type = callee_type.results[0]
-		if proc_result_is_inout(callee_type, 0) {
+	if callee_type.result != INVALID_TYPE {
+		result_type = callee_type.result
+		if proc_result_is_inout(callee_type) {
 			ret = "ptr"
 		} else {
 			switch abi_pass(e.c, result_type) {
@@ -901,11 +876,11 @@ emit_foreign_call :: proc(
 	}
 	fmt.sbprintln(&e.b, ")")
 
-	if len(callee_type.results) == 0 {
+	if callee_type.result == INVALID_TYPE {
 		return nil
 	}
 	single := make([]string, 1)
-	if proc_result_is_inout(callee_type, 0) {
+	if proc_result_is_inout(callee_type) {
 		single[0] = call
 		return single
 	}

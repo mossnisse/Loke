@@ -414,12 +414,12 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	defer finish_function_emission(e, function)
 	// `try_arena` returns `Result(Arena, Allocator_Error)`, so the provider type
 	// is that result's success payload rather than the result itself.
-	produced := symbol.results[0]
+	produced := symbol.result
 	if symbol.provider_op == .Try_Open {
 		produced = union_variant_payload(e.c, produced, union_index_of(e.c, produced, "ok"))
 	}
 	provider := llvm_type(e, produced == TYPE_ALLOCATOR ? symbol.params[0] : produced)
-	result := llvm_result_type(e, symbol.results, nil)
+	result := llvm_result_type(e, symbol.result)
 	fmt.sbprintf(&e.b, "define %s %s(", result, name)
 	for parameter, index in symbol.params {
 		if index > 0 {
@@ -459,7 +459,7 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", value, provider, opened, PROVIDER_CONTROL)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, opened)
 		fmt.sbprintfln(
-			&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.results[0], failed, value),
+			&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed, value),
 		)
 
 	case .Handle:
@@ -503,9 +503,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	element := container_element(e.c, container)
 	element_llvm := llvm_type(e, element)
 	ops := container_ops_global(e, container)
-	fallible := len(symbol.results) == 1 && type_is_union(e.c, symbol.results[0])
+	fallible := symbol.result != INVALID_TYPE && type_is_union(e.c, symbol.result)
 
-	result := llvm_result_type(e, symbol.results, nil)
+	result := llvm_result_type(e, symbol.result)
 	fmt.sbprintf(&e.b, "define %s %s(", result, name)
 	for parameter, index in symbol.params {
 		if index > 0 {
@@ -557,7 +557,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		value, ok := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element_llvm, out)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.results[0], ok, value))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, ok, value))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -606,7 +606,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %%arg0, ptr %s, ptr %s)", found, ops, slot,
 		)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", ok, found)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.results[0], ok, found))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, ok, found))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -646,7 +646,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		e.terminated = false
 
 		value := load(e, element_llvm, out)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.results[0], present, value))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, present, value))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -674,7 +674,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		clone_ready, clone_failed := new_label(e, "mins.cloned"), new_label(e, "mins.clone_failed")
 		branch_if(e, cloned, clone_ready, clone_failed)
 		place_label(e, clone_failed)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.results[0], "true"))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, "true"))
 		e.terminated = true
 
 		place_label(e, clone_ready)
@@ -685,7 +685,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		branch_if(e, missing, failed_label, ok_label)
 		place_label(e, failed_label)
 		emit_drop_place(e, element, staged)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.results[0], "true"))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, "true"))
 		e.terminated = true
 
 		place_label(e, ok_label)
@@ -702,7 +702,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		place_label(e, store_label)
 		stored := load(e, element_llvm, staged)
 		store(e, element, stored, place)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.results[0], "false"))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, "false"))
 		fmt.sbprintln(&e.b, "}")
 		e.terminated = true
 		return
@@ -719,7 +719,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		value := load(e, element_llvm, out)
 		ok := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", ok, found)
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.results[0], ok, value))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, ok, value))
 		fmt.sbprintln(&e.b, "}")
 		return
 
@@ -752,7 +752,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
 	if fallible {
-		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.results[0], failed))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed))
 		fmt.sbprintln(&e.b, "}")
 		return
 	}

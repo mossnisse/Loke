@@ -331,18 +331,18 @@ interface_check :: proc(
 
 	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
 	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal, saved_results := k.proc_literal, k.result_types
+	saved_literal, saved_result := k.proc_literal, k.result_type
 	saved_place := k.place_position
 	k.interface_depth += 1
 	defer {
 		k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
 		k.impl_type, k.file, k.file_node = saved_impl, saved_file, saved_node
-		k.proc_literal, k.result_types = saved_literal, saved_results
+		k.proc_literal, k.result_type = saved_literal, saved_result
 		k.place_position = saved_place
 		k.interface_depth -= 1
 	}
 	k.proc_literal = nil
-	k.result_types = nil
+	k.result_type = INVALID_TYPE
 
 	// The application site's own lookup package serves free expression and
 	// validity requirements; each slot switches to its declaring interface's.
@@ -613,7 +613,7 @@ slot_signature :: proc(
 	k: ^Checker,
 	signature: ^Type_Proc,
 	subject: Type_Id,
-) -> ([]Type_Id, []Param_Mode, []Type_Id, []bool, bool) {
+) -> ([]Type_Id, []Param_Mode, Type_Id, bool, bool) {
 	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)
 	modes := make([dynamic]Param_Mode, 0, 4, k.c.semantic_allocator)
 	for parameter, position in signature.params {
@@ -621,7 +621,7 @@ slot_signature :: proc(
 		if parameter.type != nil {
 			written = resolve_type_syntax(k, parameter.type)
 			if written == INVALID_TYPE {
-				return nil, nil, nil, nil, false
+				return nil, nil, INVALID_TYPE, false, false
 			}
 		}
 		// `proc(self, canvas: inout Canvas)` is the receiver followed by one typed
@@ -644,25 +644,22 @@ slot_signature :: proc(
 				continue
 			}
 			if written == INVALID_TYPE {
-				return nil, nil, nil, nil, false
+				return nil, nil, INVALID_TYPE, false, false
 			}
 			append(&params, written)
 			append(&modes, parameter.mode)
 		}
 	}
-	results := make([dynamic]Type_Id, 0, 2, k.c.semantic_allocator)
-	result_inout := make([dynamic]bool, 0, 2, k.c.semantic_allocator)
-	for result in signature.results {
-		written := resolve_type_syntax(k, result.type)
-		if written == INVALID_TYPE {
-			return nil, nil, nil, nil, false
+	result_type := INVALID_TYPE
+	result_inout := false
+	if result := signature.result; result != nil {
+		result_type = resolve_type_syntax(k, result.type)
+		if result_type == INVALID_TYPE {
+			return nil, nil, INVALID_TYPE, false, false
 		}
-		for _ in 0 ..< max(len(result.names), 1) {
-			append(&results, written)
-			append(&result_inout, result.is_inout)
-		}
+		result_inout = result.is_inout
 	}
-	return params[:], modes[:], results[:], result_inout[:], true
+	return params[:], modes[:], result_type, result_inout, true
 }
 
 @(private = "file")
@@ -671,10 +668,10 @@ slot_matches :: proc(
 	sym: ^Symbol,
 	params: []Type_Id,
 	modes: []Param_Mode,
-	results: []Type_Id,
-	result_inout: []bool,
+	result: Type_Id,
+	result_inout: bool,
 ) -> bool {
-	if len(sym.params) != len(params) || len(sym.results) != len(results) {
+	if len(sym.params) != len(params) || sym.result != result {
 		return false
 	}
 	info := type_of(k.c, sym.proc_type)
@@ -690,14 +687,5 @@ slot_matches :: proc(
 			return false
 		}
 	}
-	for want, index in results {
-		if sym.results[index] != want {
-			return false
-		}
-		have := index < len(info.result_inout) ? info.result_inout[index] : false
-		if have != result_inout[index] {
-			return false
-		}
-	}
-	return true
+	return info.result_inout == result_inout
 }

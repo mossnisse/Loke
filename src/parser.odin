@@ -732,7 +732,13 @@ parse_top_level_block :: proc(
 // is a declaration. Everything else at this position is a statement.
 @(private = "file")
 starts_declaration :: proc(p: ^Parser) -> bool {
-	offset := 0
+	return scans_name_list_colon(p, 0)
+}
+
+// `Ident ("," Ident)* ":"` from `offset`. The bounded scan a declaration, a
+// result item, and an anonymous record field group all ask for.
+scans_name_list_colon :: proc(p: ^Parser, offset: int) -> bool {
+	offset := offset
 	for {
 		if peek_token(p, offset).kind != .Ident {
 			return false
@@ -747,6 +753,13 @@ starts_declaration :: proc(p: ^Parser) -> bool {
 			return false
 		}
 	}
+}
+
+// A parenthesised type is a record iff its first group is labelled. `(T)` in
+// expression position stays grouping, so this looks one field group past the
+// `(` and no further.
+starts_anon_record_type :: proc(p: ^Parser) -> bool {
+	return at(p, .Lparen) && scans_name_list_colon(p, 1)
 }
 
 @(private = "file")
@@ -1402,28 +1415,38 @@ parse_defer :: proc(p: ^Parser) -> Stmt {
 parse_return :: proc(p: ^Parser) -> Stmt {
 	start := advance(p) // `return`
 
-	values := make([dynamic]Return_Value, 0, 0, p.allocator)
 	bad := false
-	// A missing `;` is one diagnostic, so a `}` here means "no value list"; asking
-	// for an expression first would describe the same typo twice.
+	value: Return_Value
+	has_value := false
+	// A missing `;` is one diagnostic, so a `}` here means "no value"; asking for
+	// an expression first would describe the same typo twice.
 	if !at(p, .Semicolon) && !at(p, .Rbrace) {
-		for {
-			value_start := current(p)
-			value: Return_Value
-			value.is_inout = allow(p, .Inout)
-			value.expr = parse_expr(p)
-			value.span = span_to_here(p, value_start)
-			bad = bad || expr_has_error(value.expr)
-			append(&values, value)
-			if !allow(p, .Comma) {
-				break
+		value_start := current(p)
+		value.is_inout = allow(p, .Inout)
+		value.expr = parse_expr(p)
+		value.span = span_to_here(p, value_start)
+		bad = expr_has_error(value.expr)
+		has_value = true
+		// design.md: a procedure returns at most one value. A record result is
+		// written as one record value, not as a comma-separated list.
+		if at(p, .Comma) {
+			parse_error(
+				p, span_of(p, current(p)), "L0215", "found `,`",
+				"a `return` carries at most one value; write a record literal to return several",
+			)
+			bad = true
+			for allow(p, .Comma) {
+				parse_expr(p)
 			}
 		}
 	}
 	_, terminated := expect(p, .Semicolon, "L0215", "`;` after `return`")
 
 	s := new_stmt(p, Stmt_Return, start)
-	s.values = values[:]
+	if has_value {
+		s.value = new(Return_Value, p.allocator)
+		s.value^ = value
+	}
 	s.has_error = bad || !terminated
 	return s
 }
@@ -2144,6 +2167,12 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		return parse_composite_body(p, nil, t.lo)
 
 	case .Lparen:
+		// A labelled group is a type, not a parenthesised expression. Test before
+		// consuming the opener so `parse_type` sees the whole spelling; that also
+		// covers the constant path `Entry :: (key: string_view, value: int);`.
+		if starts_anon_record_type(p) {
+			return parse_type(p)
+		}
 		advance(p)
 		outer := p.no_composite
 		p.no_composite = false
@@ -2307,12 +2336,110 @@ parse_type :: proc(p: ^Parser) -> Expr {
 	case .Interface:
 		return parse_interface(p)
 
+	case .Lparen:
+		return parse_anon_record_type(p)
+
 	case .Ident:
 		return parse_type_name(p)
 	}
 
 	parse_error(p, span_of(p, t), "L0210", fmt_found(p, t), "expected a type")
 	return error_expr(p, span_of(p, t))
+}
+
+// `(name: Type, ...)`. Its own grammar rather than `parse_parameter_list`: an
+// anonymous record field is a name list, a `:`, and a type, and nothing else.
+// Every parameter-only spelling is a syntax error naming the declared struct
+// that carries it.
+@(private = "file")
+parse_anon_record_type :: proc(p: ^Parser) -> Expr {
+	open := advance(p) // `(`
+	lo := open.lo
+	fields := make([dynamic]Field, 0, 0, p.allocator)
+	bad := false
+	for !at(p, .Rparen) && !at(p, .EOF) {
+		field, ok := parse_anon_record_field(p)
+		bad = bad || !ok
+		append(&fields, field)
+		if !allow(p, .Comma) {
+			break
+		}
+	}
+	_, closed := expect(p, .Rparen, "L0254", "`)` to close the record type")
+	n := new_expr(p, Type_Anon_Record, lo)
+	n.fields = fields[:]
+	n.span = span_to_here(p, open)
+	n.has_error = bad || !closed
+	if len(fields) == 0 && closed {
+		parse_error(p, n.span, "L0254", "found `()`", "a record type has at least one named field")
+		n.has_error = true
+	}
+	return n
+}
+
+@(private = "file")
+parse_anon_record_field :: proc(p: ^Parser) -> (Field, bool) {
+	start := current(p)
+	field: Field
+	if !scans_name_list_colon(p, 0) {
+		parse_error(
+			p, span_of(p, start), "L0254", fmt_found(p, start),
+			"a record field is `name: Type`; every field of a record type is named",
+		)
+		// Consume to the next separator so one bad field does not cascade.
+		for !at(p, .Comma) && !at(p, .Rparen) && !at(p, .EOF) {
+			advance(p)
+		}
+		field.span = span_to_here(p, start)
+		return field, false
+	}
+	names := make([dynamic]Name, 0, 0, p.allocator)
+	for {
+		name, ok := expect(p, .Ident, "L0254", "a record field name")
+		if !ok {
+			break
+		}
+		append(&names, name_of(p, name))
+		if !allow(p, .Comma) {
+			break
+		}
+	}
+	field.names = names[:]
+	expect(p, .Colon, "L0254", "`:` after the record field names")
+	ok := true
+	if what := anon_record_excluded_spelling(p); what != "" {
+		parse_error(p, span_of(p, current(p)), "L0254", fmt_found(p, current(p)), what)
+		advance(p) // the mode marker, so the type after it still parses
+		ok = false
+	}
+	field.type = parse_type(p)
+	if allow(p, .Assign) {
+		parse_error(
+			p, span_of(p, current(p)), "L0254", "found `=`",
+			"a record type field has no default value; declare a `struct` for that",
+		)
+		parse_expr(p)
+		ok = false
+	}
+	field.span = span_to_here(p, start)
+	return field, ok && !expr_has_error(field.type)
+}
+
+@(private = "file")
+anon_record_excluded_spelling :: proc(p: ^Parser) -> string {
+	#partial switch current(p).kind {
+	case .Inout:
+		return "a record type field has no `inout` mode; declare a `struct` for that"
+	case .Move:
+		return "a record type field has no `move` mode; declare a `struct` for that"
+	case .Dollar:
+		return "a record type field cannot be a `$` template name; declare a `struct` for that"
+	case .Range:
+		return "a record type field cannot be variadic; declare a `struct` for that"
+	case .At:
+		return "a record type field takes no attributes; declare a `struct` for that"
+	}
+	return ""
 }
 
 // Everything the grammar spells with a leading `[`.
@@ -2408,6 +2535,16 @@ parse_type_name :: proc(p: ^Parser) -> Expr {
 	}
 
 	if at(p, .Lparen) {
+		if scans_name_list_colon(p, 1) {
+			// `Foo(x: int)`: labelled fields after a type name. Say so here rather
+			// than letting generic-argument recovery guess at it.
+			parse_error(
+				p, span_of(p, current(p)), "L0254", "found a labelled field list",
+				"a record type is written on its own, `(x: int)`, not applied to a name",
+			)
+			parse_anon_record_type(p)
+			return error_expr(p, span_to_here(p, start))
+		}
 		args, args_ok := parse_argument_list(p)
 		c := new_expr(p, Expr_Call, start.lo)
 		c.callee = e
@@ -2447,13 +2584,13 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 	}
 
 	params, params_ok := parse_parameter_list(p)
-	results, results_ok := parse_results(p)
-	bad := !params_ok || !results_ok
+	result, result_ok := parse_results(p)
+	bad := !params_ok || !result_ok
 
 	signature := new_expr(p, Type_Proc, lo)
 	signature.convention = convention
 	signature.params = params
-	signature.results = results
+	signature.result = result
 	signature.has_error = bad
 
 	where_clauses := parse_where_clause(p)
@@ -2589,66 +2726,46 @@ parse_parameter :: proc(p: ^Parser) -> Parameter {
 	return param
 }
 
-// `Results`. A `Type` never starts with `(`, so the parenthesised list needs
-// one token of lookahead and no more.
+// `Results = Result_Type`. design.md: a procedure returns at most one value, so
+// this is one type and never a list. A parenthesised labelled group is that one
+// type — an anonymous record — and `parse_type` reads it; an unlabelled `(T, U)`
+// is the deleted multi-result spelling and says so.
 @(private = "file")
-parse_results :: proc(p: ^Parser) -> ([]Result, bool) {
+parse_results :: proc(p: ^Parser) -> (^Result, bool) {
 	if !allow(p, .Arrow) {
 		return nil, true
 	}
 
-	results := make([dynamic]Result, 0, 0, p.allocator)
-	if !at(p, .Lparen) {
-		// grammar.md: `Results = Result_Type | "(" Result_Item ... ")"`. Only the
-		// parenthesised form takes names, so the bare form must not scan for one:
-		// in `proc(...) -> int, a: int` the `, a: int` belongs to the enclosing
-		// parameter list, not to this result.
-		start := current(p)
-		item: Result
-		item.is_inout = allow(p, .Inout)
-		item.type = parse_type(p)
-		item.span = span_to_here(p, start)
-		append(&results, item)
-		return results[:], true
-	}
-
-	advance(p) // `(`
-	for !at(p, .Rparen) && !at(p, .EOF) {
-		append(&results, parse_result_item(p))
-		if !allow(p, .Comma) {
-			break
-		}
-	}
-	_, closed := expect(p, .Rparen, "L0238", "`)` to close the result list")
-	return results[:], closed
-}
-
-@(private = "file")
-parse_result_item :: proc(p: ^Parser) -> Result {
 	start := current(p)
-	item: Result
-
-	// The same bounded scan a declaration uses: a name list through its `:`.
-	if starts_declaration(p) {
-		names := make([dynamic]Name, 0, 0, p.allocator)
-		for {
-			name, ok := expect(p, .Ident, "L0238", "a result name")
-			if !ok {
-				break
+	item := new(Result, p.allocator)
+	if at(p, .Lparen) && !starts_anon_record_type(p) {
+		parse_error(
+			p, span_of(p, start), "L0238", "found an unlabelled `(`",
+			"a procedure returns at most one value; write `(name: Type, ...)` to return a record",
+		)
+		// Consume the group so one deleted signature does not cascade.
+		depth := 0
+		for !at(p, .EOF) {
+			if at(p, .Lparen) {
+				depth += 1
+			} else if at(p, .Rparen) {
+				depth -= 1
+				if depth == 0 {
+					advance(p)
+					break
+				}
 			}
-			append(&names, name_of(p, name))
-			if !allow(p, .Comma) {
-				break
-			}
+			advance(p)
 		}
-		expect(p, .Colon, "L0238", "`:` after the result names")
-		item.names = names[:]
+		item.type = error_expr(p, span_to_here(p, start))
+		item.span = span_to_here(p, start)
+		return item, false
 	}
 
 	item.is_inout = allow(p, .Inout)
 	item.type = parse_type(p)
 	item.span = span_to_here(p, start)
-	return item
+	return item, !expr_has_error(item.type)
 }
 
 // `Where_Clause`. Its expressions may not have a composite literal at the top

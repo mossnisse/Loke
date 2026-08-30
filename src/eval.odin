@@ -60,8 +60,10 @@ Eval_Frame :: struct {
 	site:         Span,
 	locals:       map[Symbol_Id]^Eval_Value,
 	defers:       [dynamic]Stmt,
-	results:      []Eval_Value,
-	result_slots: []^Eval_Value,
+	// design.md: at most one result. `result.type == INVALID_TYPE` and a nil slot
+	// mean the procedure has none.
+	result:      Eval_Value,
+	result_slot: ^Eval_Value,
 	// Set by a failing `or_return`. Expression evaluation then bubbles `false`
 	// to the statement boundary, which turns it into ordinary return flow so
 	// block defers still run in their normal order.
@@ -187,20 +189,18 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	}
 
 	outer_location := save_checker_location(k)
-	outer_proc, outer_results := k.proc_literal, k.result_types
-	outer_result_symbols, outer_named := k.result_symbols, k.named_results
+	outer_proc, outer_result := k.proc_literal, k.result_type
 	outer_loop, outer_switch, outer_defer := k.loop_depth, k.switch_depth, k.in_defer
 	outer_slots := k.defer_slots
 	defer {
 		restore_checker_location(k, outer_location)
-		k.proc_literal, k.result_types = outer_proc, outer_results
-		k.result_symbols, k.named_results = outer_result_symbols, outer_named
+		k.proc_literal, k.result_type = outer_proc, outer_result
 		k.loop_depth, k.switch_depth, k.in_defer = outer_loop, outer_switch, outer_defer
 		k.defer_slots = outer_slots
 	}
 	enter_symbol_location(k, symbol)
 	k.proc_literal = nil
-	k.result_types, k.result_symbols, k.named_results = nil, nil, false
+	k.result_type = INVALID_TYPE
 	k.loop_depth, k.switch_depth, k.in_defer = 0, 0, false
 
 	resolve_declaration_signature(k, d)
@@ -651,7 +651,7 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 	     ^Expr_Move, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
-	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
+	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 	}
 	eval_fail(ev, expr_span(e), "L0341", "this expression has no compile-time meaning")
 	return Eval_Value{}, false
@@ -1029,12 +1029,12 @@ eval_map_key_equal :: proc(ev: ^Evaluator, map_type: Type_Id, a, b: Eval_Value) 
 	if policy.equal == INVALID_SYMBOL || !ensure_proc_typed_for_eval(ev.k, policy.equal) {
 		return false, eval_fail(ev, ev.origin, "L0341", "the map key's equality cannot be evaluated")
 	}
-	results, ok := eval_invoke(ev, policy.equal, nil, ev.origin, []Eval_Value{a, b})
+	result, ok := eval_invoke(ev, policy.equal, nil, ev.origin, []Eval_Value{a, b})
 	if !ok { return false, false }
-	if len(results) != 1 || results[0].kind != .Boolean {
+	if result.kind != .Boolean {
 		return false, eval_fail(ev, ev.origin, "L0341", "the map key's equality must return a boolean")
 	}
-	return results[0].boolean, true
+	return result.boolean, true
 }
 
 // The stored value slot for `key`, inserting a zero entry when it is missing.
@@ -1126,7 +1126,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return int(number), true
 	}
 
-	fallible := len(symbol.results) == 1 && symbol.results[0] == ev.k.c.alloc_result_type
+	fallible := symbol.result == ev.k.c.alloc_result_type
 	switch symbol.container_op {
 	case .None:
 		return nil, false
@@ -1157,7 +1157,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
+		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
 	case .Insert, .Try_Insert:
 		at, at_ok := count_argument(ev, v, 1)
@@ -1178,16 +1178,16 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
+		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
 	case .Pop:
 		// An empty container has nothing to pop, and says so with `.none`.
 		if len(self.elements) == 0 {
-			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
+			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
 		}
 		last := self.elements[len(self.elements) - 1]
 		self.elements = self.elements[:len(self.elements) - 1]
-		return eval_one(ev, eval_option(ev, symbol.results[0], last, true))
+		return eval_one(ev, eval_option(ev, symbol.result, last, true))
 
 	case .Remove, .Remove_Unordered:
 		at, at_ok := count_argument(ev, v, 1)
@@ -1242,7 +1242,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
+		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
 	case .Reserve, .Try_Reserve, .Shrink, .Try_Shrink, .Map_Reserve, .Map_Try_Reserve,
 	     .Map_Shrink, .Map_Try_Shrink:
@@ -1253,7 +1253,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if !fallible { return none, true }
-		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
+		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
 	case .Map_Lookup_Value:
 		// The copying read: one probe, no insertion, and an independently owned
@@ -1267,13 +1267,13 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if at < 0 {
-			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
+			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
 		}
 		copied, copied_ok := copy_value(ev, self.elements[at + MAP_ENTRY_VALUE])
 		if !copied_ok {
 			return nil, false
 		}
-		return eval_one(ev, eval_option(ev, symbol.results[0], copied, true))
+		return eval_one(ev, eval_option(ev, symbol.result, copied, true))
 
 	case .Map_Find:
 		// `find` answers with a pointer to the existing value, or `.none` — it
@@ -1287,14 +1287,14 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if at < 0 {
-			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
+			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
 		}
 		pointer := Eval_Value {
 			kind   = .Nil,
-			type   = union_variant_payload(ev.k.c, symbol.results[0], union_index_of(ev.k.c, symbol.results[0], "some")),
+			type   = union_variant_payload(ev.k.c, symbol.result, union_index_of(ev.k.c, symbol.result, "some")),
 			target = &self.elements[at + MAP_ENTRY_VALUE],
 		}
-		return eval_one(ev, eval_option(ev, symbol.results[0], pointer, true))
+		return eval_one(ev, eval_option(ev, symbol.result, pointer, true))
 
 	case .Map_Try_Insert:
 		key, key_ok := argument(ev, v, 1)
@@ -1307,7 +1307,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		slot^ = value
-		return eval_one(ev, eval_alloc_ok(ev, symbol.results[0]))
+		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
 	case .Map_Remove:
 		key, key_ok := argument(ev, v, 1)
@@ -1319,7 +1319,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 			return nil, false
 		}
 		if at < 0 {
-			return eval_one(ev, eval_option(ev, symbol.results[0], Eval_Value{}, false))
+			return eval_one(ev, eval_option(ev, symbol.result, Eval_Value{}, false))
 		}
 		taken := self.elements[at + MAP_ENTRY_VALUE]
 		kept, err := make([dynamic]Eval_Value, 0, len(self.elements) - 2, ev.alloc)
@@ -1329,7 +1329,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !set_contents(ev, self, kept[:]) {
 			return nil, false
 		}
-		return eval_one(ev, eval_option(ev, symbol.results[0], taken, true))
+		return eval_one(ev, eval_option(ev, symbol.result, taken, true))
 	}
 	return nil, false
 }
@@ -1564,7 +1564,7 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 	}
 	shape, fallible := fallible_of(ev.k, expr_base(v.operand).type)
 	frame := current_frame(ev)
-	if !fallible || frame == nil || len(frame.results) == 0 {
+	if !fallible || frame == nil || frame.result_slot == nil {
 		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
 		return Eval_Value{}, false
 	}
@@ -1575,18 +1575,7 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 		return eval_union_payload(value, INVALID_TYPE), true
 	}
 
-	last := len(frame.results) - 1
-	for slot, index in frame.result_slots {
-		if index == last {
-			continue
-		}
-		copied, copied_ok := copy_value(ev, slot^)
-		if !copied_ok {
-			return Eval_Value{}, false
-		}
-		frame.results[index] = copied
-	}
-	target, target_ok := fallible_of(ev.k, frame.result_slots[last].type)
+	target, target_ok := fallible_of(ev.k, frame.result_slot.type)
 	if !target_ok {
 		eval_fail(ev, v.op_span, "L0341", "this `or_return` has no compile-time target")
 		return Eval_Value{}, false
@@ -1605,11 +1594,11 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 	} else {
 		payload = Eval_Value{kind = .Invalid, type = TYPE_VOID}
 	}
-	wrapped, wrapped_ok := eval_union(ev, frame.result_slots[last].type, target.failure, payload)
+	wrapped, wrapped_ok := eval_union(ev, frame.result_slot.type, target.failure, payload)
 	if !wrapped_ok {
 		return Eval_Value{}, false
 	}
-	frame.results[last] = wrapped
+	frame.result = wrapped
 	frame.returning = true
 	return Eval_Value{}, false
 }
@@ -1714,14 +1703,14 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		return Eval_Value{}, false
 	}
 
-	results, ok := eval_invoke(ev, target, v.bound, v.span)
+	result, ok := eval_invoke(ev, target, v.bound, v.span, order = v.bound_order)
 	if !ok {
 		return Eval_Value{}, false
 	}
-	if len(results) == 0 {
+	if result.type == INVALID_TYPE {
 		return Eval_Value{kind = .Invalid, type = TYPE_VOID}, true
 	}
-	return results[0], true
+	return result, true
 }
 
 @(private = "file")
@@ -1787,45 +1776,50 @@ eval_call_target :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Symbol_Id, bool) {
 	return target, true
 }
 
-// Binds arguments, runs the body, unwinds `defer`, and hands back one value per
-// declared result.
+// Binds arguments, runs the body, unwinds `defer`, and hands back the one
+// declared result, or an invalid value when the procedure has none.
 @(private = "file")
-eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil) -> (out: []Eval_Value, success: bool) {
+eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Span, values: []Eval_Value = nil, order: []int = nil) -> (out: Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
 	symbol := symbol_of(ev.k.c, symbol_id)
 	if symbol == nil {
-		return nil, false
+		return Eval_Value{}, false
 	}
 	literal := eval_proc_literal(symbol)
 	if literal == nil || literal.body == nil {
 		eval_fail(ev, site, "L0341", "`%s` has no body to evaluate", eval_proc_name(ev.k.c, symbol_id))
-		return nil, false
+		return Eval_Value{}, false
 	}
 	if len(ev.frames) >= EVAL_MAX_DEPTH {
 		eval_fail(ev, site, "L0342", "compile-time evaluation exceeded a call depth of %d", EVAL_MAX_DEPTH)
-		return nil, false
+		return Eval_Value{}, false
 	}
 
 	frame := new(Eval_Frame, ev.alloc)
-	if frame == nil { return nil, false }
+	if frame == nil { return Eval_Value{}, false }
 	frame.symbol = symbol_id
 	frame.site = site
 	frame.locals = make(map[Symbol_Id]^Eval_Value, 8, ev.alloc)
 	frame.defers = make([dynamic]Stmt, 0, 4, ev.alloc)
-	frame.results = make([]Eval_Value, len(symbol.results), ev.alloc)
-	frame.result_slots = make([]^Eval_Value, len(symbol.results), ev.alloc)
-	if !eval_memory_ok(ev) { return nil, false }
+	if !eval_memory_ok(ev) { return Eval_Value{}, false }
 
 	info := type_of(ev.k.c, symbol.proc_type)
 	// A default argument may name a parameter to its left, so it is evaluated
 	// with the callee's frame current while every written argument is evaluated
 	// in the caller's.
 	append(&ev.frames, frame)
-	if !eval_memory_ok(ev) { return nil, false }
-	for index in 0 ..< max(len(args), len(values)) {
+	if !eval_memory_ok(ev) { return Eval_Value{}, false }
+	// design.md "Argument evaluation": supplied operands run in source order,
+	// omitted defaults in parameter order. `order` carries that schedule when a
+	// named argument made the two differ.
+	for step in 0 ..< max(len(args), len(values)) {
+		index := step
+		if step < len(order) {
+			index = order[step]
+		}
 		argument := index < len(args) ? args[index] : Expr(nil)
 		if index >= len(symbol.param_symbols) {
-			break
+			continue
 		}
 		binding := symbol.param_symbols[index]
 		mode := info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
@@ -1859,46 +1853,36 @@ eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Sp
 		}
 		if !ok {
 			pop(&ev.frames)
-			return nil, false
+			return Eval_Value{}, false
 		}
 		if binding != INVALID_SYMBOL {
 			frame.locals[binding] = slot
 		}
 	}
 
-	// Named results start at their zero value (design.md "Named results").
-	for result, index in symbol.results {
-		value, zeroed := zero_value(ev, result)
+	// The result slot exists so `or_return` has somewhere to publish its failure
+	// value from inside an expression. It starts at the result type's zero.
+	if symbol.result != INVALID_TYPE {
+		value, zeroed := zero_value(ev, symbol.result)
 		if !zeroed {
 			pop(&ev.frames)
-			return nil, false
+			return Eval_Value{}, false
 		}
 		slot, allocated := eval_slot(ev, value)
 		if !allocated {
 			pop(&ev.frames)
-			return nil, false
+			return Eval_Value{}, false
 		}
-		frame.result_slots[index] = slot
-		if index < len(symbol.result_symbols) && symbol.result_symbols[index] != INVALID_SYMBOL {
-			frame.locals[symbol.result_symbols[index]] = slot
-		}
+		frame.result_slot = slot
+		frame.result = value
 	}
 
 	flow := eval_block(ev, literal.body)
-	if flow != .Fail {
-		// A `return` with no values, or falling out of a procedure with named
-		// results, hands back whatever the result slots hold.
-		if flow != .Return || frame.results == nil {
-			for slot, index in frame.result_slots {
-				frame.results[index] = slot^
-			}
-		}
-	}
 	pop(&ev.frames)
 	if flow == .Fail {
-		return nil, false
+		return Eval_Value{}, false
 	}
-	return frame.results, true
+	return frame.result, true
 }
 
 @(private = "file")
@@ -2195,21 +2179,17 @@ eval_local_decl :: proc(ev: ^Evaluator, d: ^Decl) -> Eval_Flow {
 		eval_fail(ev, d.span, "L0341", "a declaration needs a compile-time frame")
 		return .Fail
 	}
-	// One call filling several names evaluates once.
-	if len(d.values) == 1 && len(d.symbols) > 1 {
-		if call, is_call := d.values[0].(^Expr_Call); is_call && len(call.result_types) == len(d.symbols) {
-			results, ok := eval_call_results(ev, call)
-			if !ok {
-				return .Fail
-			}
-			for symbol_id, index in d.symbols {
-				copied, copied_ok := copy_value(ev, results[index])
-				if !copied_ok || !bind_local(ev, frame, symbol_id, copied) {
-					return .Fail
-				}
-			}
-			return .Normal
+	if d.destructure.active {
+		values, ok := eval_destructure(ev, &d.destructure, d.values[0])
+		if !ok {
+			return .Fail
 		}
+		for symbol_id, index in d.symbols {
+			if symbol_id == INVALID_SYMBOL || !bind_local(ev, frame, symbol_id, values[index]) {
+				continue
+			}
+		}
+		return .Normal
 	}
 	for symbol_id, index in d.symbols {
 		symbol := symbol_of(ev.k.c, symbol_id)
@@ -2250,25 +2230,41 @@ bind_local :: proc(ev: ^Evaluator, frame: ^Eval_Frame, symbol_id: Symbol_Id, val
 	return true
 }
 
+// design.md "Destructuring": the operand is evaluated exactly once and its
+// fields are projected out of the result. The compile-time evaluator's values
+// are already copies rather than shared storage, so the place path's clone is
+// `copy_value` and the consuming path takes the field as it stands.
 @(private = "file")
-eval_call_results :: proc(ev: ^Evaluator, call: ^Expr_Call) -> ([]Eval_Value, bool) {
-	// `n, ok := v.as(T)` is an extraction, which has no compile-time meaning yet.
-	// Say so here as well as in `eval_call`, so both arities report it.
-	if call.union_op == .Extract {
-		eval_fail(ev, call.span, "L0341", "this expression has no compile-time meaning")
-		return nil, false
-	}
-	// `taken, removed := xs.remove(0)` reaches the operation the same way a
-	// single-value call does.
-	if chosen := symbol_of(ev.k.c, call.resolution.chosen_overload); chosen != nil && chosen.synth == .Container_Op {
-		return eval_container_op(ev, call, chosen)
-	}
-	target, ok := eval_call_target(ev, call)
+eval_destructure :: proc(ev: ^Evaluator, plan: ^Destructure, operand: Expr) -> ([]Eval_Value, bool) {
+	record, ok := eval_expr(ev, operand)
 	if !ok {
 		return nil, false
 	}
-	return eval_invoke(ev, target, call.bound, call.span)
+	if record.kind != .Aggregate || len(record.elements) != len(plan.fields) {
+		eval_fail(ev, expr_span(operand), "L0341", "this value has no compile-time fields to destructure")
+		return nil, false
+	}
+	values, err := make([]Eval_Value, len(plan.fields), ev.alloc)
+	if err != nil {
+		return nil, false
+	}
+	for index in 0 ..< len(plan.fields) {
+		if index < len(plan.retained) && !plan.retained[index] {
+			continue
+		}
+		if !plan.from_place {
+			values[index] = record.elements[index]
+			continue
+		}
+		copied, copied_ok := copy_value(ev, record.elements[index])
+		if !copied_ok {
+			return nil, false
+		}
+		values[index] = copied
+	}
+	return values, true
 }
+
 
 @(private = "file")
 eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
@@ -2279,26 +2275,33 @@ eval_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	if s.op != .Assign {
 		return eval_compound_assign(ev, s)
 	}
-	// `a, b = f()`: one call filling several destinations.
-	if len(s.rhs) == 1 && len(s.lhs) > 1 {
-		if call, is_call := s.rhs[0].(^Expr_Call); is_call && len(call.result_types) == len(s.lhs) {
-			results, ok := eval_call_results(ev, call)
-			if !ok {
+	if s.destructure.active {
+		values, ok := eval_destructure(ev, &s.destructure, s.rhs[0])
+		if !ok {
+			return .Fail
+		}
+		// design.md "Assignment statements": every value is prepared before any
+		// destination is resolved or written.
+		slots, slot_err := make([]^Eval_Value, len(s.lhs), ev.alloc)
+		if slot_err != nil {
+			return .Fail
+		}
+		for target, index in s.lhs {
+			if is_discard(target) {
+				continue
+			}
+			slot, place_ok := eval_place(ev, target)
+			if !place_ok {
 				return .Fail
 			}
-			for target, index in s.lhs {
-				slot, place_ok := eval_place(ev, target)
-				if !place_ok {
-					return .Fail
-				}
-				copied, copied_ok := copy_value(ev, results[index])
-				if !copied_ok {
-					return .Fail
-				}
-				slot^ = copied
-			}
-			return .Normal
+			slots[index] = slot
 		}
+		for slot, index in slots {
+			if slot != nil {
+				slot^ = values[index]
+			}
+		}
+		return .Normal
 	}
 	// design.md "Assignment statements": every right side is evaluated, then
 	// every destination address, then the writes happen.
@@ -2532,43 +2535,17 @@ eval_return :: proc(ev: ^Evaluator, s: ^Stmt_Return) -> Eval_Flow {
 		eval_fail(ev, s.span, "L0341", "`return` needs a compile-time frame")
 		return .Fail
 	}
-	if len(s.values) == 0 {
-		// Named results keep whatever their slots hold.
-		for slot, index in frame.result_slots {
-			frame.results[index] = slot^
-		}
+	if s.value == nil {
 		return .Return
 	}
-	// `return f()` filling every result at once.
-	if len(s.values) == 1 && len(frame.results) > 1 {
-		if call, is_call := s.values[0].expr.(^Expr_Call); is_call && len(call.result_types) == len(frame.results) {
-			results, ok := eval_call_results(ev, call)
-			if !ok {
-				return .Fail
-			}
-			for value, index in results {
-				copied, copied_ok := copy_value(ev, value)
-				if !copied_ok {
-					return .Fail
-				}
-				frame.results[index] = copied
-			}
-			return .Return
-		}
+	computed, ok := eval_expr(ev, s.value.expr)
+	if !ok {
+		return .Fail
 	}
-	for value, index in s.values {
-		if index >= len(frame.results) {
-			break
-		}
-		computed, ok := eval_expr(ev, value.expr)
-		if !ok {
-			return .Fail
-		}
-		copied, copied_ok := copy_value(ev, computed)
-		if !copied_ok {
-			return .Fail
-		}
-		frame.results[index] = copied
+	copied, copied_ok := copy_value(ev, computed)
+	if !copied_ok {
+		return .Fail
 	}
+	frame.result = copied
 	return .Return
 }

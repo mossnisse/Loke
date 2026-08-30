@@ -113,15 +113,15 @@ clone_params :: proc(c: ^Compiler, list: []Parameter) -> []Parameter {
 }
 
 @(private = "file")
-clone_results :: proc(c: ^Compiler, list: []Result) -> []Result {
-	out := clone_slice(c, list)
-	for entry, index in list {
-		out[index] = Result {
-			span     = entry.span,
-			names    = entry.names,
-			is_inout = entry.is_inout,
-			type     = clone_expr(c, entry.type),
-		}
+clone_result :: proc(c: ^Compiler, result: ^Result) -> ^Result {
+	if result == nil {
+		return nil
+	}
+	out := new(Result, c.semantic_allocator)
+	out^ = Result {
+		span     = result.span,
+		is_inout = result.is_inout,
+		type     = clone_expr(c, result.type),
 	}
 	return out
 }
@@ -397,7 +397,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n := new_clone(c, Type_Proc, &v.base)
 		n.convention = v.convention
 		n.params = clone_params(c, v.params)
-		n.results = clone_results(c, v.results)
+		n.result = clone_result(c, v.result)
 		return n
 
 	case ^Type_Record:
@@ -409,6 +409,11 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.where_clauses = clone_exprs(c, v.where_clauses)
 		n.fields = clone_fields(c, v.fields)
 		n.variants = clone_variants(c, v.variants)
+		return n
+
+	case ^Type_Anon_Record:
+		n := new_clone(c, Type_Anon_Record, &v.base)
+		n.fields = clone_fields(c, v.fields)
 		return n
 
 	case ^Type_Enum:
@@ -554,16 +559,13 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 	case ^Stmt_Return:
 		n := new(Stmt_Return, c.semantic_allocator)
 		clone_node_base(c, &n.base, &v.base)
-		if len(v.values) > 0 {
-			values := make([]Return_Value, len(v.values), c.semantic_allocator)
-			for entry, index in v.values {
-				values[index] = Return_Value {
-					span     = entry.span,
-					is_inout = entry.is_inout,
-					expr     = clone_expr(c, entry.expr),
-				}
+		if v.value != nil {
+			n.value = new(Return_Value, c.semantic_allocator)
+			n.value^ = Return_Value {
+				span     = v.value.span,
+				is_inout = v.value.is_inout,
+				expr     = clone_expr(c, v.value.expr),
 			}
-			n.values = values
 		}
 		return n
 

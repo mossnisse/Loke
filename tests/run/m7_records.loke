@@ -1,0 +1,112 @@
+// design.md "Anonymous records" and "Destructuring". A record type has no
+// declaration site: its identity is the ordered sequence of its
+// `(field name, field type)` pairs, so equal shapes written at different sites
+// are one type and reordered fields are not.
+package main; import "core:fmt";
+
+Entry :: (key: string_view, value: int);
+
+// Written twice, at two sites: the same type both times.
+take_entry :: proc(e: (key: string_view, value: int)) -> int { return e.value; }
+make_entry :: proc(k: string_view, v: int) -> Entry { return {key = k, value = v}; }
+
+// A record result is one value, so it passes straight through a forwarder.
+divmod :: proc(a: int, b: int) -> (quotient: int, remainder: int) {
+	return {quotient = a / b, remainder = a % b};
+}
+forward :: proc(a: int, b: int) -> (quotient: int, remainder: int) { return divmod(a, b); }
+
+// One field is still a record, not a bare value.
+wrapped :: proc(n: int) -> (n: int) { return {n = n * 2}; }
+
+// An `inout` result is unchanged: it is the one result that is a place.
+Buffer :: struct { count: int }
+pick :: proc(target: inout Buffer) -> inout Buffer { return inout target; }
+
+// A record with owning fields. The place path clones each retained field and
+// leaves the source live; a temporary or a `move` transfers instead.
+Named :: struct { name: string, count: int }
+build :: proc(n: int) -> Named {
+	owned: string = "kept";
+	return Named{name = owned, count = n};
+}
+
+// Compile-time evaluation runs the same projection.
+const_pair :: proc() -> (a: int, b: int) { return {a = 3, b = 4}; }
+const_sum :: proc() -> int {
+	x, y := const_pair();
+	return x + y;
+}
+SUM :: const_sum();
+
+// A record whose own hooks own its lifecycle can still be destructured out of a
+// place: that projects fields and does not call the copy hook, so the source
+// keeps its hook and drops exactly once.
+Handle :: struct { valid: bool, id: int }
+released: int;
+impl Handle {
+	release :: hook(drop) proc(self: inout Handle) {
+		if (self.valid) { self.valid = false; released += 1; }
+	}
+}
+open_handle :: proc() -> Handle { return Handle{valid = true, id = 4}; }
+
+// design.md "Iteration adapters": `foreach` binds record fields by the same
+// rule, and its map key stays borrowed.
+totals :: proc() -> int {
+	m: map[string]int;
+	m["a"] = 1;
+	m["b"] = 2;
+	sum := 0;
+	foreach (k, v in m) { sum += v + len(k); }
+	return sum;
+}
+
+main :: proc() {
+	fmt.println(take_entry(make_entry("port", 8080)));
+	fmt.println(take_entry(Entry{key = "alias", value = 7}));
+	e: (key: string_view, value: int) = {key = "inline", value = 5};
+	fmt.println(take_entry(e));
+
+	q, r := forward(17, 5);
+	fmt.println(q, r);
+	fmt.println(wrapped(21).n);
+
+	b := Buffer{count = 9};
+	pick(inout b).count = 10;
+	fmt.println(b.count);
+
+	// A place destructure clones: `owner` is still live afterwards.
+	owner := build(3);
+	name, count := owner;
+	fmt.println(name, count, owner.name);
+
+	// A temporary destructure consumes: nothing is cloned.
+	tname, tcount := build(1);
+	fmt.println(tname, tcount);
+
+	// `move` consumes an existing place.
+	moved := build(2);
+	mname, mcount := move(moved);
+	fmt.println(mname, mcount);
+
+	// `_` discards; a discarded owning field drops exactly once.
+	_, only := build(4);
+	fmt.println(only);
+
+	// Assignment destructuring writes existing places.
+	dst_name: string;
+	dst_count := 0;
+	dst_name, dst_count = build(5);
+	fmt.println(dst_name, dst_count);
+
+	{
+		h := open_handle();
+		hv, hi := h;
+		fmt.println(hv, hi, h.valid);
+	}
+	fmt.println(released);
+
+	fmt.println(SUM);
+	fmt.println(totals());
+}

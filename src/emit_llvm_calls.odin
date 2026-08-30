@@ -105,7 +105,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return "0"
 		}
 	}
-	results := emit_multi_call(e, v)
+	results := emit_direct_call(e, v)
 	return len(results) == 0 ? "0" : results[0]
 }
 
@@ -254,10 +254,12 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 	return emit_binary_op(e, op, underlying, underlying, lhs, rhs)
 }
 
-// Every result of an expression that produces several: a call, a comma-ok
-// extraction, an `or_else`, or an `or_return`.
+// The value of a producer whose lowering is not the ordinary `emit_expr` one:
+// an extraction, a slot call, an allocation, a container `make`, a text
+// operation, an `or_else`, or an `or_return`. Each of those has its own
+// sequence; this is the one place that picks between them.
 @(private)
-emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
+emit_producer_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 	#partial switch v in expr {
 	case ^Expr_Call:
 		// `value.as(T)`: one extraction lowering, reached through call syntax.
@@ -289,9 +291,6 @@ emit_multi_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		}
 		if call_builtin_kind(e, v) == .Strings_Allocate {
 			return emit_strings_allocate(e, v)
-		}
-		if len(v.result_types) > 1 {
-			return emit_multi_call(e, v)
 		}
 		single := make([]string, 1)
 		single[0] = emit_expr(e, expr)
@@ -405,7 +404,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		failed[0] = "zeroinitializer"
 		return failed
 	}
-	clone_result := symbol_of(e.c, hook).results[0]
+	clone_result := symbol_of(e.c, hook).result
 	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
@@ -683,9 +682,8 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	branch_if(e, failed, fail_label, ok_label)
 
 	place_label(e, fail_label)
-	last := len(e.result_slots) - 1
-	if last >= 0 {
-		target := type_underlying(e.c, e.result_types[last])
+	if e.result_slot != "" {
+		target := type_underlying(e.c, e.result_type)
 		target_info := type_of(e.c, target)
 		// `or_return` constructs the enclosing error directly: the operand's error
 		// payload is moved into the new variant without a second clone.
@@ -704,8 +702,8 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 			}
 			error = emit_failure_conversion(e, error, failure_type, failure_into, source_address)
 		}
-		wrapped := emit_union_value(e, e.result_types[last], target_info.failure_variant, error)
-		store(e, e.result_types[last], wrapped, e.result_slots[last])
+		wrapped := emit_union_value(e, e.result_type, target_info.failure_variant, error)
+		store(e, e.result_type, wrapped, e.result_slot)
 	}
 	emit_epilogue(e)
 
@@ -723,9 +721,9 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 	return out
 }
 
-// Emits the call and returns one operand per result.
+// Emits the call and returns its one result operand, or nothing.
 @(private = "file")
-emit_multi_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	callee_type := underlying_info(e.c, expr_base(v.callee).type)
 	symbol := symbol_of(e.c, v.resolution.symbol)
 
@@ -966,8 +964,8 @@ param_is_by_ptr :: proc(info: ^Type_Info, index: int) -> bool {
 }
 
 @(private)
-proc_result_is_inout :: proc(info: ^Type_Info, index: int) -> bool {
-	return info != nil && index < len(info.result_inout) && info.result_inout[index]
+proc_result_is_inout :: proc(info: ^Type_Info) -> bool {
+	return info != nil && info.result_inout
 }
 
 // The shared call sequence: bind the operands left to right, emit the call, and
@@ -1005,7 +1003,15 @@ emit_bound_call :: proc(
 	pack_cleanup := Deferred{slot = -1}
 	argument_cleanups := make([dynamic]Deferred)
 	defer delete(argument_cleanups)
-	for argument, index in bound {
+	// design.md "Argument evaluation": supplied operands run in source order and
+	// are staged into their matched slots; omitted defaults follow in parameter
+	// order. Only the final operand list is parameter-ordered.
+	for step in 0 ..< len(bound) {
+		index := step
+		if call_node != nil && step < len(call_node.bound_order) {
+			index = call_node.bound_order[step]
+		}
+		argument := bound[index]
 		if index == pack {
 			packed := emit_variadic_pack(e, call_node, callee_type.parameters[index])
 			operands[index] = packed.value
@@ -1042,9 +1048,9 @@ emit_bound_call :: proc(
 		return emit_foreign_call(e, callee, callee_type, operands, symbol, bound)
 	}
 
-	result_type := llvm_result_type(e, callee_type.results, callee_type.result_inout)
+	result_type := llvm_result_type(e, callee_type.result, callee_type.result_inout)
 	call := ""
-	if len(callee_type.results) > 0 {
+	if callee_type.result != INVALID_TYPE {
 		call = temp(e)
 		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, callee)
 	} else {
@@ -1067,24 +1073,22 @@ emit_bound_call :: proc(
 		unwind_clear(e, pack_cleanup.slot)
 	}
 
-	results := make([]string, len(callee_type.results))
-	for index in 0 ..< len(callee_type.results) {
-		results[index] = len(results) == 1 ? call : extract(e, result_type, call, index)
+	results: []string
+	if callee_type.result != INVALID_TYPE {
+		results = make([]string, 1)
+		results[0] = call
 	}
 	if len(argument_cleanups) > 0 {
 		// A drop hook can panic after the call has produced an owned result.
-		// Protect those results until all borrowed argument temporaries are gone.
-		guards := make([]Deferred, len(results))
-		defer delete(guards)
-		for value, index in results {
-			guards[index] = hold_temporary_value(e, callee_type.results[index], value)
+		// Protect that result until all borrowed argument temporaries are gone.
+		guard: Deferred
+		if len(results) == 1 {
+			guard = hold_temporary_value(e, callee_type.result, results[0])
 		}
 		for index := len(argument_cleanups) - 1; index >= 0; index -= 1 {
 			drop_temporary_value(e, argument_cleanups[index])
 		}
-		for guard in guards {
-			if guard.place != "" { finish_temporary_drop(e, guard) }
-		}
+		if guard.place != "" { finish_temporary_drop(e, guard) }
 	}
 	return results
 }

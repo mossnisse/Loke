@@ -361,7 +361,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 	case ^Stmt_Return:
 		dump_indent(b, depth)
 		fmt.sbprint(b, "(return")
-		for value in node.values {
+		if value := node.value; value != nil {
 			if value.is_inout {
 				fmt.sbprint(b, " (inout")
 				dump_child(b, value.expr, depth)
@@ -620,8 +620,8 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		for param in node.params {
 			dump_parameter(b, param, depth)
 		}
-		for result in node.results {
-			dump_result(b, result, depth)
+		if node.result != nil {
+			dump_result(b, node.result^, depth)
 		}
 		fmt.sbprint(b, ")")
 
@@ -650,6 +650,16 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 			if variant.type != nil {
 				dump_child(b, variant.type, depth)
 			}
+			fmt.sbprint(b, ")")
+		}
+		fmt.sbprint(b, ")")
+
+	case ^Type_Anon_Record:
+		fmt.sbprint(b, "(record")
+		for field in node.fields {
+			fmt.sbprint(b, " (field ")
+			dump_names(b, field.names)
+			dump_child(b, field.type, depth)
 			fmt.sbprint(b, ")")
 		}
 		fmt.sbprint(b, ")")
@@ -727,10 +737,6 @@ dump_result :: proc(b: ^strings.Builder, result: Result, depth: int) {
 	fmt.sbprint(b, " (result")
 	if result.is_inout {
 		fmt.sbprint(b, " inout")
-	}
-	if len(result.names) > 0 {
-		fmt.sbprint(b, " ")
-		dump_names(b, result.names)
 	}
 	dump_child(b, result.type, depth)
 	fmt.sbprint(b, ")")

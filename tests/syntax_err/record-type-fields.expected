@@ -1,0 +1,21 @@
+L0254
+@6:17
+a record type field has no `inout` mode
+L0254
+@6:31
+a record type field has no `move` mode
+L0254
+@7:17
+a record type field cannot be variadic
+L0254
+@8:23
+a record type field has no default value
+L0238
+@9:23
+a procedure returns at most one value
+L0254
+@10:34
+a record field is `name: Type`
+L0254
+@11:24
+a record type is written on its own

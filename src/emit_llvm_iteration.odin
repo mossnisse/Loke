@@ -595,7 +595,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 
 	place_label(e, head)
 	yielded := foreach_yielded_type(e, s)
-	option := symbol_of(e.c, s.next_symbol).results[0]
+	option := symbol_of(e.c, s.next_symbol).result
 	option_llvm := llvm_type(e, option)
 	produced := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, option_llvm, e.names[s.next_symbol], iterator)
@@ -645,7 +645,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	source := llvm_type(e, symbol.params[0])
-	iterator := llvm_type(e, symbol.results[0])
+	iterator := llvm_type(e, symbol.result)
 	reversed := symbol.synth == .Range_Iter_Reverse ||
 	            symbol.synth == .Array_Iter_Reverse ||
 	            symbol.synth == .Dynamic_Iter_Reverse
@@ -677,7 +677,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// `{ {storage, len}, 0 }`: the current allocation, viewed as a slice. The
 		// capacity and the allocator stay behind, which is what keeps the iterator
 		// a borrow rather than a second header.
-		view_type := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.results[0]).fields[ITER_ARRAY_DATA]).type)
+		view_type := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.result).fields[ITER_ARRAY_DATA]).type)
 		storage := extract(e, source, "%arg0", CONTAINER_STORAGE)
 		length := extract(e, source, "%arg0", CONTAINER_LEN)
 		filled := emit_ptr_len(e, view_type, storage, length)
@@ -719,7 +719,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	option := symbol.results[0]
+	option := symbol.result
 	step := option_payload(e.c, option)
 	element := llvm_type(e, step)
 	iterator := llvm_type(e, symbol.params[0])
@@ -788,7 +788,7 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	option := symbol.results[0]
+	option := symbol.result
 	element := llvm_type(e, option_payload(e.c, option))
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
@@ -837,7 +837,7 @@ emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	option := symbol.results[0]
+	option := symbol.result
 	element := llvm_type(e, option_payload(e.c, option))
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
@@ -887,7 +887,7 @@ emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	option := symbol.results[0]
+	option := symbol.result
 	entry_type := option_payload(e.c, option)
 	element := llvm_type(e, entry_type)
 	iterator := llvm_type(e, symbol.params[0])

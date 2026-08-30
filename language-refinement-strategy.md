@@ -420,6 +420,36 @@ supplies examples, not a requirement to adopt its complete design.
 
 #### Phase 2a — one model for grouped values
 
+**Outcome: shipped.** Anonymous records with structural identity were adopted;
+special multiple results and named result locals were deleted, and with them the
+definite-initialisation dataflow that existed only to serve `or_return`'s
+multi-result half. `Type_Info.results`/`result_inout`, `Symbol.results`,
+`Expr_Base.result_types`, symbol kind `.Result`, `Proc_Summary.results`, and the
+per-result index on every provenance and backend path all became scalars. A
+procedure returns at most one value; `-> (a: T, b: U)` is one record result, and
+an unlabelled `-> (T, U)` is rejected.
+
+The prototype's questions were settled as follows. Identity is the ordered
+`(field name, field type)` vector, interned on that semantic vector rather than
+on any printed name, so two packages' unrelated `Token` types stay distinct.
+Destructuring is one rule in declarations, assignments, and `foreach`: as many
+directly declared visible fields as bindings, flat, no `using` flattening.
+Binding a result before destructuring it does not conceal a copy — the place
+path clones and the copy-cost diagnostic reports it, while a temporary or a
+`move` consumes. A consuming destructure of a record with a custom
+`hook(copy)`/`hook(drop)` is rejected rather than given an exception, and a
+discarded field of a consumed record drops exactly once, in reverse declaration
+order, after every retained binding is published. Call argument matching kept
+its own machinery and materializes no argument record, but its *schedule* was
+corrected: supplied arguments now evaluate in source order and omitted defaults
+afterwards in parameter order, at run time and at compile time alike. The `()`
+unit spelling was deferred; `Unit :: struct {}` already covers it.
+
+One pre-existing precision bug surfaced and was fixed with the migration: a
+composite literal's *named* elements were joined into every provenance path
+instead of being resolved to the field each one names, which made every migrated
+record literal lose per-field root and region provenance.
+
 Compare retaining special multiple results, returning named structs, anonymous
 records with structural identity, and a separate tuple family. Provisionally
 keep special results for Phase 1a; no product decision is needed for that fix.

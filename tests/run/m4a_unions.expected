@@ -24,7 +24,7 @@
 .err(Something_Bad)
 .ok(20)
 .err(converted)
-41 .err(Something_Bad)
+.err(Something_Bad)
 .ratio(1.5) .numbers([3, 4]) .ok([5, 6])
 8
 -1

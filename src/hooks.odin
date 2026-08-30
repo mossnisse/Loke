@@ -452,10 +452,10 @@ type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 @(private = "file")
 generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kind, fallible: bool) -> Symbol_Id {
-	results := fallible ? []Type_Id{result_type(k, type, TYPE_ALLOCATOR_ERROR)} : []Type_Id{type}
+	result := fallible ? result_type(k, type, TYPE_ALLOCATOR_ERROR) : type
 	id := synth_proc(
 		k.c, name, kind, type,
-		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Value, .Value}, results,
+		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Value, .Value}, result,
 	)
 	if sym := symbol_of(k.c, id); sym != nil {
 		sym.has_receiver = true
@@ -614,7 +614,7 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 		}
 		require_hook_shape(k, sym, subject, "copy", "proc(self, allocator: Allocator) -> Result(T, Allocator_Error)", 2, 1, .Value)
 	case .Convert:
-		if sym.has_receiver || len(sym.params) != 1 || len(sym.results) != 1 || sym.results[0] != subject {
+		if sym.has_receiver || len(sym.params) != 1 || sym.result != subject {
 			errorf(k.c, sym.span, "L0411", "`hook(convert)` takes one value without a receiver and returns `%s`", type_name(k.c, subject))
 			return
 		}
@@ -640,7 +640,7 @@ require_hook_shape :: proc(
 	if !sym.has_receiver || sym.receiver != receiver {
 		bad = true
 	}
-	if len(sym.params) != params || len(sym.results) != results {
+	if len(sym.params) != params || (sym.result == INVALID_TYPE ? 0 : 1) != results {
 		bad = true
 	}
 	if !bad && sym.params[0] != subject {
@@ -650,7 +650,7 @@ require_hook_shape :: proc(
 		// design.md "Typed fallibility": the fallible copy primitive reports
 		// through `Result(Self, Allocator_Error)`.
 		if sym.params[1] != TYPE_ALLOCATOR ||
-		   sym.results[0] != result_type(k, subject, TYPE_ALLOCATOR_ERROR) {
+		   sym.result != result_type(k, subject, TYPE_ALLOCATOR_ERROR) {
 			bad = true
 		}
 	}

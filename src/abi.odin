@@ -48,8 +48,8 @@ check_foreign_signature :: proc(
 	params: []Type_Id,
 	modes: []Param_Mode,
 	by_ptr: []bool,
-	results: []Type_Id,
-	result_inout: []bool,
+	result: Type_Id,
+	result_inout: bool,
 	span: Span,
 ) {
 	for param, index in params {
@@ -68,13 +68,7 @@ check_foreign_signature :: proc(
 			errorf(k.c, span, "L0619", "a foreign parameter is not ABI-safe: %s", reason)
 		}
 	}
-	if len(results) > 1 {
-		errorf(k.c, span, "L0620", "a foreign procedure returns at most one value, found %d", len(results))
-	}
-	for result, index in results {
-		if index < len(result_inout) && result_inout[index] {
-			continue
-		}
+	if result != INVALID_TYPE && !result_inout {
 		if ok, reason := foreign_abi_safe(k.c, result); !ok {
 			errorf(k.c, span, "L0619", "a foreign result is not ABI-safe: %s", reason)
 		}
@@ -192,11 +186,8 @@ abi_walk :: proc(
 				return false, n, p
 			}
 		}
-		for result, index in info.results {
-			if index < len(info.result_inout) && info.result_inout[index] {
-				continue
-			}
-			if s, n, p := abi_walk(c, result, true, visiting, saw_cycle); !s {
+		if info.result != INVALID_TYPE && !info.result_inout {
+			if s, n, p := abi_walk(c, info.result, true, visiting, saw_cycle); !s {
 				return false, n, p
 			}
 		}

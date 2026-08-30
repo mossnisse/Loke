@@ -1,10 +1,10 @@
 package main; import "core:fmt";
 
-pair :: proc() -> (int, int) {
-	return 20, 22;
+pair :: proc() -> (low: int, high: int) {
+	return {low = 20, high = 22};
 }
 
-call_pair :: proc(f: proc() -> (int, int)) -> int {
+call_pair :: proc(f: proc() -> (low: int, high: int)) -> int {
 	a, b := f();
 	return a + b;
 }

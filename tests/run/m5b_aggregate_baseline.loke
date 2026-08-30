@@ -505,14 +505,17 @@ result_duplicate :: proc(a: []int, b: []int) -> Pair { return Pair{b, b}; }
 result_array :: proc(a: []int, b: []int) -> [2]Holder {
 	return [2]Holder{Holder{b}, Holder{a}};
 }
-result_many :: proc(a: []int, b: []int) -> (Pair, Pair) {
-	return Pair{b, a}, Pair{a, b};
+// Each field of a record result carries its own dependencies, and a destructure
+// gives each binding that field's root rather than a join of them all.
+result_many :: proc(a: []int, b: []int) -> (first: []int, second: []int) {
+	return {first = b, second = a};
 }
 result_generic :: proc(pair: $T) -> T { return T{pair.right, pair.left}; }
-result_named :: proc(a: []int, b: []int) -> (out: Pair) {
+result_named :: proc(a: []int, b: []int) -> Pair {
+	out: Pair;
 	out.left = b;
 	out.right = a;
-	return;
+	return out;
 }
 
 reordered_result_field :: proc(values: []int) -> []int {
@@ -546,8 +549,8 @@ conditional_result_field :: proc(values: []int, choose_first: bool) -> []int {
 
 multiple_result_fields :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
-	first, second := result_many(local[:], values);
-	return first.left if len(values) > 0 else second.right;
+	first, _ := result_many(local[:], values);
+	return first;
 }
 
 generic_result_field :: proc(values: []int) -> []int {

@@ -314,7 +314,8 @@ M4a is implemented: `src/overload.odin` owns the one candidate engine,
 `src/impl.odin` the method and `init` tables, `src/operators.odin` the operator
 tables and `delegate`, and `src/union.odin` plus `src/optional.odin` the tagged
 representation and the error protocol. Diagnostics `L0391`–`L0396`,
-`L0406`–`L0413`, `L0416`–`L0421`, and `L0422`–`L0430` are live.
+`L0406`–`L0413`, `L0416`–`L0421`, and `L0422`–`L0429` are live; `L0430` retired
+with named results.
 
 M4b is implemented: `src/ast_clone.odin` supplies the declaration cloning both
 generics and static `foreach` need, `src/generic.odin` the templates, inference,

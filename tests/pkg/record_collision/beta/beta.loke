@@ -1,0 +1,12 @@
+@(public)
+package beta;
+
+Token :: struct { id: int, extra: bool }
+
+@(public)
+make :: proc(id: int) -> (value: Token, weight: int) {
+	return {value = Token{id = id, extra = true}, weight = id * 3};
+}
+
+@(public)
+read :: proc(v: (value: Token, weight: int)) -> int { return v.value.id + v.weight; }

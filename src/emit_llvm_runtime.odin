@@ -1076,11 +1076,11 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			values["type"] = fmt.aprintf("%d", typeid_value(e.c, parameter))
 			append(&entries, named_field_constant(e, member, values))
 		}
-		for result in shape.results {
+		if shape.result != INVALID_TYPE {
 			values := make(map[string]string)
 			defer delete(values)
 			values["kind"] = "4" // Result
-			values["type"] = fmt.aprintf("%d", typeid_value(e.c, result))
+			values["type"] = fmt.aprintf("%d", typeid_value(e.c, shape.result))
 			append(&entries, named_field_constant(e, member, values))
 		}
 	}
@@ -1237,7 +1237,7 @@ emit_synth_procs :: proc(e: ^Emitter) {
 emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
-	result := llvm_type(e, symbol.results[0])
+	result := llvm_type(e, symbol.result)
 	fmt.sbprintf(&e.b, "define %s %s(", result, name)
 	for parameter, index in symbol.params {
 		if index > 0 { fmt.sbprint(&e.b, ", ") }
@@ -1371,19 +1371,23 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, entry)
 
 	signature := type_of(e.c, expr_base(v.callee).type)
-	result_type := llvm_result_type(e, signature.results, nil)
-	operands := make([dynamic]string, 0, len(v.bound), context.temp_allocator)
-	append(&operands, data)
-	for index in 1 ..< len(v.bound) {
+	result_type := llvm_result_type(e, signature.result)
+	operands := make([]string, len(v.bound), context.temp_allocator)
+	operands[0] = data
+	for step in 1 ..< len(v.bound) {
+		index := step
+		if step < len(v.bound_order) {
+			index = v.bound_order[step]
+		}
 		if signature.param_modes[index] == .Inout {
-			append(&operands, emit_address(e, v.bound[index]))
+			operands[index] = emit_address(e, v.bound[index])
 		} else {
-			append(&operands, emit_expr(e, v.bound[index]))
+			operands[index] = emit_expr(e, v.bound[index])
 		}
 	}
 
 	call := ""
-	if len(signature.results) > 0 {
+	if signature.result != INVALID_TYPE {
 		call = temp(e)
 		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, thunk)
 	} else {
@@ -1398,20 +1402,12 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	}
 	fmt.sbprintln(&e.b, ")")
 
-	switch len(signature.results) {
-	case 0:
+	if signature.result == INVALID_TYPE {
 		return nil
-	case 1:
-		single := make([]string, 1)
-		single[0] = call
-		return single
 	}
-	out := make([]string, len(signature.results))
-	for index in 0 ..< len(signature.results) {
-		out[index] = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", out[index], result_type, call, index)
-	}
-	return out
+	single := make([]string, 1)
+	single[0] = call
+	return single
 }
 
 // One private immutable global per materialised constant, in registration order
@@ -1471,7 +1467,7 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	e.terminated = false
 	name := witness_thunk_name(e, witness, index)
 	signature := type_of(e.c, target.proc_type)
-	result_type := llvm_result_type(e, target.results, nil)
+	result_type := llvm_result_type(e, target.result)
 
 	fmt.sbprintf(&e.b, "define private %s %s(ptr %%arg0", result_type, name)
 	for position in 1 ..< len(target.params) {
@@ -1492,7 +1488,7 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	}
 
 	call := ""
-	if len(target.results) > 0 {
+	if target.result != INVALID_TYPE {
 		call = temp(e)
 		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, e.names[slot.target])
 	} else {
@@ -1507,7 +1503,7 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	}
 	fmt.sbprintln(&e.b, ")")
 
-	if len(target.results) == 0 {
+	if target.result == INVALID_TYPE {
 		fmt.sbprintln(&e.b, "  ret void")
 	} else {
 		fmt.sbprintfln(&e.b, "  ret %s %s", result_type, call)
@@ -1524,7 +1520,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	signature := type_of(e.c, symbol.proc_type)
-	result_type := llvm_result_type(e, symbol.results, nil)
+	result_type := llvm_result_type(e, symbol.result)
 	view_type := llvm_type(e, symbol.params[0])
 
 	receiver_inout := len(signature.param_modes) > 0 && signature.param_modes[0] == .Inout
@@ -1555,7 +1551,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, entry)
 
 	call := ""
-	if len(symbol.results) > 0 {
+	if symbol.result != INVALID_TYPE {
 		call = temp(e)
 		fmt.sbprintf(&e.b, "  %s = call %s %s(ptr %s", call, result_type, thunk, data)
 	} else {
@@ -1568,7 +1564,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 	fmt.sbprintln(&e.b, ")")
 
-	if len(symbol.results) == 0 {
+	if symbol.result == INVALID_TYPE {
 		fmt.sbprintln(&e.b, "  ret void")
 	} else {
 		fmt.sbprintfln(&e.b, "  ret %s %s", result_type, call)

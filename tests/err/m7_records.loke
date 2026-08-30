@@ -1,0 +1,68 @@
+// design.md: a procedure returns at most one value, results are anonymous, and
+// a destructure projects a record's directly declared fields.
+package main; import "core:fmt";
+
+Point :: struct { x: int, y: int }
+Promoted :: struct { using base: Point, z: int }
+
+// A result is anonymous, so there is no local to fill and `return;` cannot
+// publish one.
+naked :: proc() -> int {
+	return;
+}
+
+// A no-result procedure has nothing to return.
+extra :: proc() {
+	return 1;
+}
+
+// Two record results with different field names are different types, so a
+// procedure value of one does not accept the other.
+labelled :: proc() -> (a: int, b: int) { return {a = 1, b = 2}; }
+renamed :: proc() -> (x: int, y: int) { return {x = 1, y = 2}; }
+
+// An `inout` result hands back a place, so a computed value is not one.
+not_a_place :: proc(a: int, b: int) -> inout int { return inout a + b; }
+
+// An interface slot's record result is compared by field name too, so a
+// differently-named shape does not satisfy the requirement.
+Producer :: interface($Self: type) {
+	slot make: proc(self) -> (a: int, b: int);
+}
+Source :: struct { seed: int }
+impl Source {
+	make :: proc(self) -> (x: int, y: int) { return {x = self.seed, y = self.seed}; }
+}
+erase :: proc(s: Source) -> dyn Producer { return (dyn Producer)(&s); }
+
+// A type with a custom drop hook cannot be taken apart by a consuming
+// destructure: the hook would have to run on the value being decomposed.
+Handle :: struct { valid: bool, id: int }
+released: int;
+impl Handle {
+	release :: hook(drop) proc(self: inout Handle) {
+		if (self.valid) { self.valid = false; released += 1; }
+	}
+}
+open_handle :: proc() -> Handle { return Handle{valid = true, id = 1}; }
+
+main :: proc() {
+	// A destructure needs exactly as many directly declared fields as bindings.
+	p := Point{x = 1, y = 2};
+	a, b, c := p;
+
+	// A promoted field is not flattened: `Promoted` has two declared fields.
+	q := Promoted{base = p, z = 3};
+	m, n, o := q;
+
+	// A non-record right side is an arity error, not a destructure.
+	d, e := 5;
+
+	// Consuming a record with a custom hook.
+	valid, id := open_handle();
+
+	// A procedure value keeps the result's field names in its type.
+	f: proc() -> (x: int, y: int) = labelled;
+
+	fmt.println(a, b, c, m, n, o, d, e, valid, id);
+}

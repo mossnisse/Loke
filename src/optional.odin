@@ -245,23 +245,21 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 	v.type = success == TYPE_VOID ? unit_type(k.c) : success
 }
 
-// The enclosing procedure's side of the contract, including the
-// definite-initialization requirement on earlier named results.
+// The enclosing procedure's side of the contract.
 @(private = "file")
 check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -> bool {
-	if len(k.result_types) == 0 {
+	if k.result_type == INVALID_TYPE {
 		errorf(k.c, v.op_span, "L0429", "`or_return` needs a result to propagate the failure into")
 		return false
 	}
-	last := len(k.result_types) - 1
-	target, target_fallible := fallible_of(k, k.result_types[last])
+	target, target_fallible := fallible_of(k, k.result_type)
 	if !target_fallible {
 		errorf(
 			k.c,
 			v.op_span,
 			"L0429",
-			"`or_return` needs this procedure's last result to be a union with a designated failure variant, found `%s`",
-			type_name(k.c, k.result_types[last]),
+			"`or_return` needs this procedure's result to be a union with a designated failure variant, found `%s`",
+			type_name(k.c, k.result_type),
 		)
 		return false
 	}
@@ -283,70 +281,9 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 	if into == TYPE_ANY_VIEW && from != TYPE_VOID && from != TYPE_ANY_VIEW {
 		request_typeid(k.c, any_view_source_type(k.c, from))
 	}
-	if len(k.result_types) == 1 {
-		return true
-	}
-	// With several results a bare `return` is performed, so every result must be
-	// named and every earlier one must already carry a value.
-	for symbol_id, index in k.result_symbols {
-		if symbol_id == INVALID_SYMBOL {
-			errorf(k.c, v.op_span, "L0429", "`or_return` needs every result of this procedure to be named")
-			return false
-		}
-		if index == last {
-			continue
-		}
-		if !k.assigned_results[symbol_id] {
-			errorf(
-				k.c,
-				v.op_span,
-				"L0430",
-				"`%s` is not initialised yet, and `or_return` returns its current value",
-				identifier_text(k.c, symbol_of(k.c, symbol_id).name),
-			)
-			return false
-		}
-	}
 	return true
 }
 
-// Records that a named result has been written. Branching statements clone this
-// state and intersect the paths that reach their join.
-note_result_assigned :: proc(k: ^Checker, target: Expr) {
-	ident, is_ident := target.(^Expr_Ident)
-	if !is_ident || ident.symbol == INVALID_SYMBOL {
-		return
-	}
-	if symbol := symbol_of(k.c, ident.symbol); symbol != nil && symbol.kind == .Result {
-		if k.assigned_results == nil {
-			k.assigned_results = make(map[Symbol_Id]bool, 4, k.c.semantic_allocator)
-		}
-		k.assigned_results[ident.symbol] = true
-	}
-}
-
-clone_result_assignments :: proc(c: ^Compiler, source: map[Symbol_Id]bool) -> map[Symbol_Id]bool {
-	out := make(map[Symbol_Id]bool, len(source), c.semantic_allocator)
-	for symbol, assigned in source {
-		if assigned {
-			out[symbol] = true
-		}
-	}
-	return out
-}
-
-intersect_result_assignments :: proc(
-	c: ^Compiler,
-	left, right: map[Symbol_Id]bool,
-) -> map[Symbol_Id]bool {
-	out := make(map[Symbol_Id]bool, min(len(left), len(right)), c.semantic_allocator)
-	for symbol, assigned in left {
-		if assigned && right[symbol] {
-			out[symbol] = true
-		}
-	}
-	return out
-}
 
 // ---------------------------------------------------------- type switch --
 
@@ -396,12 +333,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	has_default := false
 	flow := Flow_Info{}
 	any_case_falls := false
-	incoming := clone_result_assignments(k.c, k.assigned_results)
-	joined := make(map[Symbol_Id]bool, 0, k.c.semantic_allocator)
-	have_join := false
-
 	for &entry in s.cases {
-		k.assigned_results = clone_result_assignments(k.c, incoming)
 		binding_type := subject
 		if len(entry.values) == 0 {
 			if has_default {
@@ -502,11 +434,6 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		flow.returns ||= case_flow.returns
 		flow.continues ||= case_flow.continues
 		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
-		if case_flow.can_fall_through || case_flow.breaks {
-			state := clone_result_assignments(k.c, k.assigned_results)
-			joined = have_join ? intersect_result_assignments(k.c, joined, state) : state
-			have_join = true
-		}
 	}
 
 	// design.md "Unions": a variant switch with a case for every variant is
@@ -524,11 +451,6 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 			report_uncovered_variants(k, s, subject, seen_variants[:])
 		}
 	}
-	if !exhaustive {
-		joined = have_join ? intersect_result_assignments(k.c, joined, incoming) : incoming
-		have_join = true
-	}
-	k.assigned_results = have_join ? joined : incoming
 	return Flow_Info {
 		can_fall_through = !exhaustive || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,

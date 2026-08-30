@@ -15,7 +15,7 @@
     (interface (generic ["Self"] (type)) (req (binding ["s"] inout (ident "Self")) (index (ident "s") (int "0")) (-> inout (ident "Item"))) (slot "next" (proc-type (param ["self"] (ident "Self")) (result (ident "Item")))))
   )
   (const names=["add"]
-    (proc (proc-type (param ["a"] (ident "int")) (param ["$T"] (type)) (param .. ["values"] (ident "T")) (param ["b"] (ident "int") (default (int "1"))) (result ["ok"] (ident "bool")) (result (ident "int")))
+    (proc (proc-type (param ["a"] (ident "int")) (param ["$T"] (type)) (param .. ["values"] (ident "T")) (param ["b"] (ident "int") (default (int "1"))) (result (record (field ["ok"] (ident "bool")) (field ["count"] (ident "int")))))
       (block
       )
     )

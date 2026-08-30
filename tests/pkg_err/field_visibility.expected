@@ -13,3 +13,9 @@ is not public, so it cannot be initialised here
 L0474
 @16:34
 is not public, so it cannot be initialised positionally here
+L0308
+@26:16
+is not public, so it cannot be bound by a destructuring declaration here
+L0308
+@27:12
+is not public, so it cannot be bound by a destructuring declaration here
