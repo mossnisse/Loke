@@ -228,7 +228,7 @@ Compiler :: struct {
 	default_allocator_arg:    Expr,
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,
-	// An explicitly dropped manual owner is dead and no longer blocks reset
+	// An explicitly dropped owner is dead and no longer blocks reset
 	// (design.md). M5a's liveness answers that, one pass and one graph earlier than the
 	// reset check, so the definitely-dead owners at each reset call are recorded
 	// here (`src/lifecycle.odin`, `src/cfg.odin`).

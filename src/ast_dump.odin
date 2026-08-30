@@ -165,9 +165,6 @@ dump_decl :: proc(b: ^strings.Builder, d: ^Decl, depth: int) {
 	case .Thread_Local:
 		fmt.sbprint(b, " thread_local")
 	}
-	if d.manual {
-		fmt.sbprint(b, " manual")
-	}
 	if d.declared_type != nil {
 		fmt.sbprint(b, " type=")
 		dump_expr(b, d.declared_type, depth)

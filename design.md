@@ -694,7 +694,7 @@ fmt.println(s); // 1, 1, 2
 
 A slice does not own element storage. Its runtime value contains a pointer and a length.
 
-**A slice is a borrow.** It is not an owning value: it has no allocator, it is never cleaned up at scope exit, and it cannot be a `manual` owner. Creating a slice over a dynamic array therefore constrains that container for as long as the slice is live, and the rules in [Borrows and lifetimes](#borrows-and-lifetimes) apply in full:
+**A slice is a borrow.** It is not an owning value: it has no allocator, it is never cleaned up at scope exit, and it owns nothing. Creating a slice over a dynamic array therefore constrains that container for as long as the slice is live, and the rules in [Borrows and lifetimes](#borrows-and-lifetimes) apply in full:
 
 ```odin
 numbers := [dynamic]int{1, 2, 3};
@@ -798,7 +798,7 @@ y := x;       // independent ownership-recursive clone
 z := move(x); // allocation transfer; x becomes dead
 ```
 
-A managed dynamic array stores its allocator with its allocation, so automatic cleanup always uses the right one. A declaration may select another allocator, without becoming manual, with the `via` modifier. `via` selects storage; it does not bring names into scope.
+A managed dynamic array stores its allocator with its allocation, so automatic cleanup always uses the right one. A declaration may select another allocator, without changing anything about its cleanup, with the `via` modifier. `via` selects storage; it does not bring names into scope.
 
 **`via` appears only on declarations.** A procedure that needs an allocator takes an ordinary parameter. By convention, the parameter is named `allocator` and defaults to `mem.default_allocator()`. Callers supply it like any other argument.
 
@@ -827,7 +827,7 @@ data: [dynamic]int via arena.allocator() = {};    // runtime length, backing is 
 data.append(1, 2, 3);                             // no heap allocation
 ```
 
-Storage location depends on the type: a local `[N]T` stores its elements in the value, a `[dynamic]T` stores them wherever its allocator provides (possibly the stack), and [`Small_Array(T, N)`](#fixed-capacity-arrays) stores an `N`-element buffer in the value. A stack-frame value must have a compile-time `size_of` that depends only on the type. `manual` specifies ownership; `via` specifies an allocator.
+Storage location depends on the type: a local `[N]T` stores its elements in the value, a `[dynamic]T` stores them wherever its allocator provides (possibly the stack), and [`Small_Array(T, N)`](#fixed-capacity-arrays) stores an `N`-element buffer in the value. A stack-frame value must have a compile-time `size_of` that depends only on the type. `via` specifies an allocator; it does not change who cleans the value up.
 
 Copy initialization uses the destination's bound allocator, resolving its declaration policy if the zero destination is still allocator-unbound. Assignment into an existing live array preserves that array's allocator. `move` transfers both the allocation and its allocator; after that owner is moved out or dropped, revival by copy again uses the destination declaration's policy. `clone(value, allocator)` and `try_clone(value, allocator)` are available when a specific allocator is required.
 
@@ -936,18 +936,14 @@ b = [dynamic]int{};
 assert(len(b) == 0);
 ```
 
-Low-level code may opt out of scope-exit cleanup with `manual` and use the fallible `make` constructor. `make` returns an ordinary owning value; the destination declaration determines whether cleanup is automatic. Moving a manual owner into a managed variable still requires `move`:
+Low-level code that wants an explicit allocator and an explicit failure uses the fallible `make` constructor. `make` returns an ordinary owning value, cleaned up at scope exit like any other; moving it elsewhere still requires `move`:
 
 ```odin
-raw: manual [dynamic]int;
-allocation_error: Allocator_Error;
-raw, allocation_error = make([dynamic]int, 0, 64, my_allocator);
-if (allocation_error != nil) { panic("array allocation failed"); }
-owned := move(raw); // `owned` is managed; `raw` is dead and needs no `drop`
-
-managed, managed_error := make([dynamic]int, 0, 64, my_allocator);
-// `managed` is cleaned up automatically because its declaration is not manual.
+raw := make([dynamic]int, 0, 64, my_allocator) or_else panic("array allocation failed");
+owned := move(raw); // `owned` is the owner now; `raw` is dead and needs no `drop`
 ```
+
+Where a container must deliberately outlive its scope uncleaned, [`unsafe.forget`](#unsafeforget) suppresses the cleanup of that one value.
 
 #### Clearing a dynamic array
 
@@ -1108,7 +1104,7 @@ m := map[string]int{
 }
 ```
 
-Map literals create managed values using the current allocator. Low-level code that must avoid implicit allocation can use a `manual` declaration or a project-level lint that rejects implicit allocation.
+Map literals create managed values using the current allocator. Low-level code that must avoid implicit allocation can use `make` with an explicit allocator, or a project-level lint that rejects implicit allocation.
 
 A map index in a place position is a location, so a field of a stored value can be assigned directly:
 
@@ -2023,7 +2019,10 @@ impl Table($Key, $Value) {
 
 table: Table(string, int) = {};
 table.insert("a", 1);
-value, ok := table.find("a");
+switch (value in table.find("a")) {
+case .some: assert(value == 1);
+case .none:
+}
 ```
 
 Where the receiver's type is written out — `inout` and `move` receivers, and every non-receiver mention — the bound names are used without `$`, which marks a binding site, not a use.
@@ -2965,7 +2964,7 @@ A managed value with static storage duration exists for the life of the process.
 
 A `thread_local` owner exists for the life of its thread. The runtime initializes thread-local storage (TLS) in a deterministic order. It orders declarations by canonical package path, normalized package-relative file path, and source position. At normal thread return, the runtime drops each live managed `thread_local` value in reverse initialization order. This cleanup occurs before the thread synchronizes with a successful join.
 
-The runtime does not drop a manual TLS owner. It does not guarantee TLS cleanup after `os.exit`, an aborting panic, or termination after panic unwinding. A library-created thread must enter and leave through the Loke runtime. A foreign thread must use the documented runtime attach and detach API before it calls exported Loke code.
+The runtime drops every live managed TLS owner. A value that must escape that teardown is taken out first: `unsafe.forget(exchange(inout value, {}))` leaves the binding holding its zero, which the teardown then has nothing to clean up. The runtime does not guarantee TLS cleanup after `os.exit`, an aborting panic, or termination after panic unwinding. A library-created thread must enter and leave through the Loke runtime. A foreign thread must use the documented runtime attach and detach API before it calls exported Loke code.
 
 Do not rely on implicit process cleanup for an operation with an external effect — flushing a file, closing a socket, releasing a shared-memory lock. Use an owning scope, `defer`, or an explicit `drop` in `main`:
 
@@ -2980,28 +2979,30 @@ main :: proc() {
 
 #### Storage modifiers
 
-A declaration specifies storage duration and ownership separately. Storage modifiers occur after `:`.
+A declaration specifies storage duration. Duration is the only storage-modifier axis, and modifiers occur after `:`.
 
 **Duration** specifies where the variable exists and how long it exists. `static` and `thread_local` are mutually exclusive. If neither modifier is present, the variable has lexical storage.
 
 - `static` creates one instance for the life of the process. The value remains available between calls.
 - `thread_local` creates one instance for each thread. A live managed value is dropped at normal thread return.
 
-**Ownership** specifies who cleans up an owning value. `manual` disables automatic cleanup. Use it for arenas, foreign ownership, custom containers, and low-level allocator code. It can occur with either duration modifier.
-
 ```odin
-counter: static int;               // keeps its value across calls
-current: thread_local ^Task;       // one per thread
-buffer:  manual [dynamic]u8 = {};  // live zero owner; released explicitly
-handle:  manual File = {};         // this scope, cleanup is mine
+counter: static int;          // keeps its value across calls
+current: thread_local ^Task;  // one per thread
 ```
 
 A modifier may also be written where the type is inferred:
 
 ```odin
 counter: static = 0;
-raw: manual := [dynamic]int{1, 2, 3};
+session: thread_local = 0;
 ```
+
+Three distinct things are easily confused, and this document keeps them apart:
+
+- an **automatic owner** is a lexical value the compiler cleans up at scope exit — the ordinary case, and the one a declaration produces;
+- an **allocation root** is `new`/`new_clone` storage, released by `free` or by resetting its allocator region, never by scope exit;
+- a **forgotten owner** is a value whose cleanup was explicitly suppressed.
 
 A local's inline representation lives in the stack frame; a managed local can additionally own allocator-supplied backing storage on the heap or elsewhere. The compiler drops a live managed value when it leaves scope.
 
@@ -3022,7 +3023,7 @@ to that instance is possible.
 
 File-scope and `static` storage is ready before `main` starts. Thread-local storage is ready before its thread runs Loke code. Importing a package does not run package code. For runtime initialization, call a package procedure explicitly, use a `once` value from `core:sync`, or use state that the caller owns.
 
-**Storage modifiers are not type constructors.** `manual [dynamic]int` and `[dynamic]int` are the same type. A move between them does not need a conversion.
+**Storage modifiers are not type constructors.** `static int` and `int` are the same type. A move between a `static` binding and a lexical one does not need a conversion.
 
 Storage modifiers are not [attributes](#attributes): a modifier specifies one variable's storage duration, address stability, or cleanup, and so sits next to the type. Attributes specify other properties.
 
@@ -3032,21 +3033,16 @@ The following rules also apply to `static` and `thread_local`:
 - An allocator-binding owner with either duration starts in the constant, allocator-unbound zero state. The first operation that needs an allocator binds the build-selected default allocator. The declaration cannot use `via` because a runtime allocator expression is not a constant initializer. To use a different allocator, construct the owner in an explicit startup procedure or thread-start procedure, and move it into the variable. `string` and `shared(T)` keep the allocator of the allocation that moves into them.
 
 ```odin
-buffer: manual [dynamic]u8;
-allocation_error: Allocator_Error;
-buffer, allocation_error = make([dynamic]u8, allocator=my_allocator);
-if (allocation_error != nil) { panic("buffer allocation failed"); }
-
-// A manual owner must be dropped explicitly.
-drop(buffer);
+buffer := make([dynamic]u8, allocator=my_allocator) or_else panic("buffer allocation failed");
+drop(buffer); // or leave it to scope exit
 ```
 
 `drop(value)` explicitly cleans up a definitely live lexical owning variable. It
 runs the cleanup operation, writes the inert zero representation, and marks the
 variable **dead**. Applying it to file-scope, `static`, or `thread_local` storage,
 or to a subplace rooted in such storage, is a compile-time error. Scope exit
-automatically drops a live managed lexical owner. It does not clean up a manual
-lexical owner.
+automatically drops every live managed lexical owner; the only way to suppress
+that for one value is [`unsafe.forget`](#unsafeforget).
 
 `drop`, like `move`, operates on a storage location naming a variable; it is a compiler special form, not an ordinary procedure, and marks its operand dead. It cannot operate directly on a field, element, or map entry, because leaving a hole inside a live aggregate is exactly what the liveness analysis does not track. Neither can `move`, so "take the owner out first" is not available either. To release one field's storage while its aggregate stays live, use [`exchange`](#exchange), which hands back the old value and installs a live replacement in one operation:
 
@@ -3085,6 +3081,23 @@ different construct from [destructuring](#destructuring), which takes one record
 on the right. Destructuring is flat: a binding takes a whole field. Nested
 patterns and pattern matching can be designed separately because they do not
 affect storage lifetime.
+
+##### `unsafe.forget`
+
+Cleanup is a property of the *value*, not of the declaration that holds it. There is no modifier that disables it. Where a resource is deliberately leaked, or has escaped to something else that now owns it, `unsafe.forget(value)` consumes the value, marks it dead, and runs no cleanup — for it or for anything it owns transitively:
+
+```odin
+held := open_device();
+unsafe.forget(move(held));  // the device driver owns it now
+```
+
+- The operand is consumed. A place is written `unsafe.forget(move(place))` and obeys `move`'s rules in full, including the ban on static-duration storage. A value temporary is accepted directly, which is what permits `unsafe.forget(exchange(inout value, {}))` — the way a static-duration owner is forgotten.
+- The operand must own something or be provenance-free. A managed value is accepted even when it contains checked borrows: forgetting it leaks the owned resource and ends the loans inside it. An unmanaged value is accepted only when it carries no checked borrow, which rejects bare pointers, slices, views, `dyn` values, and borrow-only records. An unmanaged value that carries none — an `int`, a plain record, a raw or multi-pointer — is accepted silently, so a generic `T` that may or may not be managed can be written once. Forgetting a raw pointer releases nothing it designates.
+- **`forget` does not extend a lifetime.** It performs no heap promotion, no address stabilization, and no frame preservation. A borrow of a forgotten owner is invalidated at the `forget`, exactly as it would be at a `drop`, so a borrow can never outlive the value it names.
+- The source binding becomes dead. Using it again, or forgetting it twice, is the ordinary use-after-move error.
+- The result is `Unit`, matching `drop`.
+
+The preferred alternative for a foreign handoff is a library pattern, not a compiler feature: give the resource type a consuming `into_raw` that returns the underlying handle and leaves the value inert, and an unsafe `from_raw` inverse that reconstructs it. That keeps the handoff typed and needs no compiler support; `unsafe.forget` is what a type without those members uses.
 
 ## Constant declarations
 
@@ -3592,8 +3605,9 @@ between those two moves, and the destination is never observably dead.
 
 If `replacement` names an owning variable whose ownership should transfer, it
 must use the ordinary explicit `move(source)` spelling. The result is an
-ordinary owning value; it may initialize a managed or `manual` local, be moved
-again, or be ignored and cleaned up as a temporary under the normal rules.
+ordinary owning value; it may initialize a local, be moved again, be forgotten
+with `unsafe.forget`, or be ignored and cleaned up as a temporary under the
+normal rules.
 
 `exchange` is permitted for lexical and static-duration destinations. It is the
 only operation that can move the current value out of file-scope, `static`, or
@@ -4721,9 +4735,10 @@ allocation or another resource, as a dynamic array or `File` does, but that is a
 separate lifecycle property. An allocator-created allocation is also a storage
 root even though it is reached through a pointer.
 
-The `manual` modifier changes who performs cleanup; it does not change which
-value is the root. Thus `&managed_value` and `&manual_value` are checked borrows
-in exactly the same way.
+Cleanup policy does not change which value is the root. A borrow of an
+automatic owner and a borrow of one that will be forgotten are checked borrows
+in exactly the same way — and forgetting an owner invalidates its borrows just
+as dropping it would.
 
 A **borrow carrier** is a value that refers to another root without owning that
 root. The built-in carriers are:
@@ -4816,7 +4831,7 @@ bad_owner :: proc() -> [dynamic]u8 {
 }
 ```
 
-The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&` pointer is a borrow even when the root is `manual`, and a `new` pointer designates a separate allocation root without owning it or acquiring automatic cleanup. `free` ends the allocation root and invalidates every checked pointer derived from it. To make an allocation a move-only, auto-cleaned value, wrap the pointer and allocator in a resource type with a `drop` hook.
+The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&` pointer is a borrow whatever becomes of its root, and a `new` pointer designates a separate allocation root without owning it or acquiring automatic cleanup. `free` ends the allocation root and invalidates every checked pointer derived from it. To make an allocation a move-only, auto-cleaned value, wrap the pointer and allocator in a resource type with a `drop` hook.
 
 `rawptr` and `[^]T` carry no checked provenance. A `^T` received from foreign
 code, reconstructed by unsafe code, or loaded from storage whose provenance the
@@ -5683,7 +5698,7 @@ bytes: [dynamic]u8 via scratch.allocator() = {};
 bytes.reserve(4096);
 ```
 
-The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Use the `manual` declaration modifier to opt out of automatic cleanup.
+The allocator affects where backing storage comes from, but does not change value semantics or whether cleanup is automatic. Cleanup is suppressed per value with [`unsafe.forget`](#unsafeforget), never by a declaration modifier.
 
 All allocations are preferably done through allocators. The following call:
 
@@ -5704,8 +5719,8 @@ argument. The final build fixes which provider implements that procedure.
 There is no ambient temporary allocator. Temporary storage has a reset boundary
 and runtime identity, so code creates a `mem.Scratch` or `mem.Arena` owner and
 passes its allocator explicitly. The compiler rejects `free_all`, or any call
-carrying the same allocator-reset effect, while a live owning value (managed or
-manual) or borrow still refers to storage from that allocator.
+carrying the same allocator-reset effect, while a live owning value or borrow
+still refers to storage from that allocator.
 
 `Arena` and `Scratch` are move-only region owners. A fixed-buffer arena borrows
 the supplied storage; provider-backed construction takes a parent allocator and
@@ -5722,8 +5737,9 @@ maybe, err := mem.try_scratch(parent_allocator);
 ```
 
 For this rule, an owner is live when it may be used later or still requires
-cleanup on an outgoing path. An explicitly dropped manual owner is dead and no
-longer blocks reset; moving an owner transfers the dependency to its destination.
+cleanup on an outgoing path. An explicitly dropped or forgotten owner is dead
+and no longer blocks reset; moving an owner transfers the dependency to its
+destination.
 An unfreed allocation root whose checked carriers have no later use does not by
 itself block reset, because the reset is the operation that releases it. A
 carrier or owner that would survive and be used or cleaned up after the reset
@@ -5775,7 +5791,7 @@ release_scratch(arena.allocator()); // ERROR while `scratch` or `view` is live
 
 The following low-level procedures are built in and are also available in package `mem` with enforced allocator errors. Normal managed strings, arrays, and maps do not need them.
 
-- `new(T, allocator=mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a new allocation root containing a zero-initialized value, so `T` must have a [zero value](#zero-values). On success the pointer has root provenance identifying that fresh allocation, and the allocation root has region provenance identifying its allocator region; a failure carries the error alone. The allocation is manual: the pointer itself has no `drop` hook and the program must eventually pass the allocation root to `free`, reset its allocator region, or transfer responsibility to an ordinary resource wrapper.
+- `new(T, allocator=mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a new allocation root containing a zero-initialized value, so `T` must have a [zero value](#zero-values). On success the pointer has root provenance identifying that fresh allocation, and the allocation root has region provenance identifying its allocator region; a failure carries the error alone. The result is an **allocation root**, not an automatic owner: the pointer itself has no `drop` hook and the program must eventually pass the allocation root to `free`, reset its allocator region, or transfer responsibility to an ordinary resource wrapper.
 
 ```odin
 ptr, err := new(int);
@@ -5784,7 +5800,7 @@ ptr^ = 123;
 x: int = ptr^;
 ```
 
-- `new_clone(value, allocator=mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a new allocation root containing a clone of the value. Its pointer and allocation root receive the same respective root and region provenance and manual release rule as `new`; a failure carries the error alone.
+- `new_clone(value, allocator=mem.default_allocator()) -> Result(^mut T, Allocator_Error)` creates a new allocation root containing a clone of the value. Its pointer and allocation root receive the same respective root and region provenance, and the same explicit release rule, as `new`; a failure carries the error alone.
 
 ```odin
 x: int = 123;
@@ -5795,24 +5811,15 @@ if (err != nil) { panic("clone allocation failed"); }
 assert(ptr^ == 123);
 ```
 
-- `make(Container, ..., allocator=mem.default_allocator()) -> Result(Container, Allocator_Error)` is an explicitly fallible constructor for a dynamic array or map with selected backing storage. A written *length* fills that many slots with the element's zero, so the element must have one; a capacity or a map reservation is raw storage and needs none. The result is an ordinary owning value: assigning it to a managed declaration enables automatic cleanup, while assigning it to a `manual` declaration requires an explicit `drop`. Slices are borrows and cannot be owners.
+- `make(Container, ..., allocator=mem.default_allocator()) -> Result(Container, Allocator_Error)` is an explicitly fallible constructor for a dynamic array or map with selected backing storage. A written *length* fills that many slots with the element's zero, so the element must have one; a capacity or a map reservation is raw storage and needs none. The result is an ordinary owning value: it is cleaned up at scope exit like any other, whatever allocator it selected. Slices are borrows and cannot be owners.
 
 ```odin
-dynamic_array_zero_length: manual [dynamic]int;
-dynamic_array_with_length: manual [dynamic]int;
-dynamic_array_with_length_and_capacity: manual [dynamic]int;
-made_map: manual map[string]int;
-made_map_with_reservation: manual map[string]int;
-managed_array: [dynamic]int;
-err0, err1, err2, err3, err4, err5: Allocator_Error;
-
-dynamic_array_zero_length, err0 = make([dynamic]int);
-dynamic_array_with_length, err1 = make([dynamic]int, 32);
-dynamic_array_with_length_and_capacity, err2 = make([dynamic]int, 16, 64);
-made_map, err3 = make(map[string]int);
-made_map_with_reservation, err4 = make(map[string]int, 64);
-managed_array, err5 = make([dynamic]int, 32);
-// Each error must be handled or explicitly discarded.
+zero_length := make([dynamic]int) or_else {};
+with_length := make([dynamic]int, 32) or_else {};
+with_length_and_capacity := make([dynamic]int, 16, 64) or_else {};
+made_map := make(map[string]int) or_else {};
+made_map_with_reservation := make(map[string]int, 64) or_else {};
+// Each failure must be handled or explicitly discarded.
 ```
 
 - `free` ends the allocation root designated by a checked base pointer from `new` or `new_clone`. It consumes the operand binding and invalidates every locally tracked pointer or view of that allocation. `free` needs the write capability, so its operand is a `^mut T`; a `^T` weakened from an allocation may still read it but not end it. A pointer obtained with `&` or `&mut` is not an allocation root and cannot be passed to `free` at all. The program must use the allocator that created the allocation; releasing an unchecked or foreign allocation crosses the `core:unsafe` or foreign-allocator boundary.
@@ -5829,11 +5836,11 @@ free(ptr);
 free_all(my_allocator);
 ```
 
-- `drop` releases either a managed or manual lexical owner, writes its inert zero representation, and marks it dead until full reassignment. Direct `drop` and `move` are forbidden on static-duration storage; use full assignment to clean up and replace its value, or `exchange` to move the old value out while installing a live replacement. Scope exit invokes `drop` automatically only for live managed lexical owners and for managed TLS at normal thread return; reading or explicitly dropping a dead lexical variable is an error.
+- `drop` releases a live managed lexical owner, writes its inert zero representation, and marks it dead until full reassignment. Direct `drop` and `move` are forbidden on static-duration storage; use full assignment to clean up and replace its value, or `exchange` to move the old value out while installing a live replacement. Scope exit invokes `drop` automatically only for live managed lexical owners and for managed TLS at normal thread return; reading or explicitly dropping a dead lexical variable is an error.
 
 ```odin
-drop(manual_dynamic_array);
-drop(manual_map);
+drop(numbers);
+drop(index);
 ```
 
 To see more uses of allocators and allocation-related procedures, please see package mem in the core library.
@@ -6203,7 +6210,7 @@ Optimization and code-generation annotations such as `@(compiler.no_alias)` and 
     @(public) – globals and struct fields
 ```
 
-These attributes specify linkage or visibility. They specify the symbol that a declaration produces or the code that can use the declaration. Storage duration and ownership use [storage modifiers](#storage-modifiers), not attributes. A [constant](#constant-declarations) specifies read-only data.
+These attributes specify linkage or visibility. They specify the symbol that a declaration produces or the code that can use the declaration. Storage duration uses [storage modifiers](#storage-modifiers), not attributes. A [constant](#constant-declarations) specifies read-only data.
 
 #### Constant value declarations
 
@@ -6328,9 +6335,9 @@ main :: proc() {
 }
 ```
 
-#### Storage duration and ownership
+#### Storage duration
 
-`static`, `thread_local`, and `manual` are not attributes but [storage modifiers](#storage-modifiers) written in the declaration; they control where a variable's storage lives, for how long, and who releases it:
+`static` and `thread_local` are not attributes but [storage modifiers](#storage-modifiers) written in the declaration; they control where a variable's storage lives and for how long. They stay modifiers rather than becoming attributes because they change the meaning of the declaration itself — its address stability, its initialization time, and which operations its binding admits — which is what a type-adjacent modifier says and what an attribute does not:
 
 ```odin
 test :: proc() -> int {
@@ -6425,7 +6432,7 @@ void bar(const T*)
 
 ##### `@(allocator_reset)`
 
-Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while an owning value (managed or manual) or borrow from that region is live.
+Marks an `Allocator` parameter whose region may be reset by a successful call. The effect is part of the procedure type. At each call site the compiler substitutes the supplied allocator's region identity and rejects the call while an owning value or borrow from that region is live.
 
 A Loke procedure is verified: every `free_all` operation on a region that existed before procedure entry, and every call through another reset-capable parameter, must be covered by one of the procedure's own `@(allocator_reset)` parameters. A procedure may freely reset a region it created locally. Foreign procedures carrying the attribute are programmer promises. A pre-existing allocator that may be reset must be passed explicitly; hidden resets through globals are not permitted.
 

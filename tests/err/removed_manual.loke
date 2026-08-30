@@ -1,0 +1,15 @@
+package main;
+
+// `manual` is an ordinary identifier now (consolidation-cleanup-and-storage-plan
+// step 4). No migration diagnostic is added: the old modifier forms simply parse
+// `manual` as the type, which is what the two errors below report. Suppressing
+// cleanup is `unsafe.forget`, a property of the value rather than of the
+// declaration.
+
+main :: proc() {
+	// An explicit-type form leaves the real type adjacent to a complete
+	// declaration.
+	x: manual int;
+	// An inferred form names a type that does not exist.
+	y: manual = 0;
+}

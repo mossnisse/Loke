@@ -5,10 +5,13 @@
   (var names=["inferred"] static
     (int "0")
   )
-  (var names=["two"] static manual type=(ident "int"))
-  (var names=["both_inferred"] thread_local manual
+  (var names=["thread"] thread_local type=(ident "int"))
+  (var names=["thread_inferred"] thread_local
     (int "0")
   )
   (var names=["type_name"] type=(ident "static"))
   (var names=["other_type_name"] type=(ident "manual"))
+  (var names=["manual"] type=(ident "manual")
+    (ident "manual")
+  )
 )

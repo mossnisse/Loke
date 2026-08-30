@@ -143,5 +143,6 @@ main :: proc() {
 
 	// Falling out of `main` drops every managed local still live, in reverse
 	// registration order (m5a-plan step 4): `single`, then `ok`'s two elements in
-	// reverse. The allocation root is manual and never dropped automatically.
+	// reverse. An allocation root is released explicitly and never dropped
+	// automatically.
 }

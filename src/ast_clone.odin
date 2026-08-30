@@ -590,7 +590,6 @@ clone_decl :: proc(c: ^Compiler, d: ^Decl) -> ^Decl {
 	n.kind = d.kind
 	n.names = d.names
 	n.duration = d.duration
-	n.manual = d.manual
 	n.declared_type = clone_expr(c, d.declared_type)
 	n.via = clone_expr(c, d.via)
 	n.values = clone_exprs(c, d.values)

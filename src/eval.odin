@@ -1982,6 +1982,27 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		slot^ = zeroed
 		return void, true
 
+	case .Unsafe_Forget:
+		// No hook runs, here or at run time. What is left is that the source
+		// binding is dead — which the CFG already recorded — so the only work is
+		// to leave the slot inert and discard the value.
+		if moved, is_move := v.bound[0].(^Expr_Move); is_move {
+			// `Expr_Move` itself has no compile-time value; the lexical place it
+			// names does.
+			slot, ok := eval_place(ev, moved.value)
+			if !ok {
+				return Eval_Value{}, false
+			}
+			if zeroed, made := zero_value(ev, slot.type); made {
+				slot^ = zeroed
+			}
+			return void, true
+		}
+		if _, ok := eval_expr(ev, v.bound[0]); !ok {
+			return Eval_Value{}, false
+		}
+		return void, true
+
 	case .Hash:
 		// The compile-time half of the compiler-contributed `hash`: the same two
 		// steps the backend emits, so a folded hash and a runtime one agree.

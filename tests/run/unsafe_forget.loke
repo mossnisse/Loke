@@ -1,0 +1,101 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// `unsafe.forget` (consolidation-cleanup-and-storage-plan step 2).
+//
+// design.md "Forgotten owners": forgetting a value consumes it, marks it dead,
+// and runs no cleanup hook — for it or for anything it owns transitively. Every
+// hook here prints, so a suppressed cleanup is observable as a line that is not
+// in the expected output.
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) {
+		if (self.id != 0) {
+			fmt.println(self.id);
+		}
+	}
+}
+
+make_res :: proc(id: int) -> Res {
+	return Res{id};
+}
+
+// A forgotten owner leaks; the one beside it is dropped as usual, so the pair
+// shows that suppression is per value and not per scope.
+suppressed :: proc() {
+	fmt.println(1000);
+	held := make_res(1);
+	automatic := make_res(2);
+	unsafe.forget(move(held));
+}
+
+// "for it or for anything it owns transitively": neither the nested hook nor
+// the container's storage is released.
+Bundle :: struct { name: Res, numbers: [dynamic]int }
+
+transitively :: proc() {
+	fmt.println(2000);
+	bundle := Bundle{make_res(30), [dynamic]int{7, 8, 9}};
+	fmt.println(len(bundle.numbers));
+	unsafe.forget(move(bundle));
+}
+
+// A value temporary is already owned, so it is accepted without a written
+// `move`. Nothing binds it, and the drop it would otherwise get is skipped.
+temporary :: proc() {
+	fmt.println(3000);
+	unsafe.forget(make_res(4));
+}
+
+// The drop-flag path: live at the scope exit on one branch and dead on the
+// other, so the runtime flag is what decides.
+conditional :: proc(flag: bool) {
+	fmt.println(4000);
+	r := make_res(5);
+	if (flag) {
+		unsafe.forget(move(r));
+	}
+}
+
+// `forget` exists for the generic case, where `T` may or may not be managed.
+// The unmanaged instantiation lowers to nothing at all; the managed one forgets
+// the body's own copy, leaving the caller's original to be dropped as usual.
+forgotten :: proc(seed: $T) {
+	local := seed;
+	unsafe.forget(move(local));
+}
+
+// design.md: `exchange` replaces a static-duration value, which direct `drop`
+// and `move` cannot reach. Forgetting its result is how a `thread_local` owner
+// escapes the detach teardown.
+session: thread_local Res;
+
+escaped :: proc() {
+	fmt.println(5000);
+	session = make_res(6);
+	unsafe.forget(exchange(inout session, {}));
+}
+
+// Compile-time evaluation runs no hook either, on either operand form.
+folded :: proc() -> int {
+	n := 41;
+	unsafe.forget(move(n));
+	unsafe.forget(1 + 1);
+	return 42;
+}
+
+ANSWER :: folded();
+
+main :: proc() {
+	suppressed();
+	transitively();
+	temporary();
+	conditional(true);
+	conditional(false);
+	forgotten(11);
+	original := make_res(12);
+	forgotten(original);
+	escaped();
+	fmt.println(ANSWER);
+}

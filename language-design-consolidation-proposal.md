@@ -24,9 +24,10 @@ from this draft in three places, each noted where it arises:
   user-declared union participates on equal terms. `@(require_results)` is
   written on `Result` itself.
 
-Sections 1, 2, 3, and 6 — anonymous records, general destructuring,
-one-result procedures, and the removal of `manual` — remain proposals and were
-deliberately not taken in the same change.
+Sections 1, 2, and 3 — anonymous records, general destructuring, and one-result
+procedures — were deliberately not taken in the same change, and have since
+shipped. Section 6, the removal of `manual`, has shipped too: `unsafe.forget` is
+the one replacement, and the modifier grammar is down to one axis.
 
 The rest is a candidate for the evaluations in
 [`language-refinement-strategy.md`](language-refinement-strategy.md), not an
@@ -1349,15 +1350,34 @@ sections before implementation:
    compatibility break this phase carries: result names used to be excluded from
    procedure-type identity, so two procedure values that were compatible before
    are not after.
-8. Does `table.find(key)` return `Option(^mut V)`, or stay a place-returning
-   operation?
-9. Which real implementation case, if any, still needs an undropped inline
-   owner after `manual` is removed? That case should shape the unsafe
-   raw-storage primitive.
-10. Can every foreign ownership transfer expose a consuming `into_raw`,
-    leaving `unsafe.forget` a rare last resort?
-11. Do `inout` results justify their place-expression semantics
-    independently of `inout` parameters and receivers?
+8. **Answered: `Option(^mut V)`.** Typed fallibility settled this when it gave
+   `find` an option result; a place-returning `find` had no way to say "absent"
+   that was not a second value. The one remaining stale `design.md` example that
+   still destructured it as `value, ok := table.find("a")` is fixed.
+9. **Answered: one case, and it is a deliberate leak.** The whole corpus had
+   exactly one `manual` binding that was live at scope exit and never dropped —
+   `held` in `tests/run/m5a_ownership.loke`. Every other `manual` site was an
+   ordinary owner that already wrote its own `drop`, and `base:`, `core:`, and
+   `examples/` had no uses at all. `unsafe.forget` covers the leak and the
+   undropped `thread_local` owner (through
+   `unsafe.forget(exchange(inout value, {}))`), so no unsafe raw-storage
+   primitive is needed to preserve a capability. `unsafe.Maybe_Uninit(T)` has no
+   demonstrated user and is **not built**; section 6.6 conditions it on a real
+   implementation need, and that need has not appeared.
+10. **Answered: yes, and it stays a library pattern.** `fs.File` already has the
+    inert-making half (`close`), so `into_raw`/`from_raw` is about five lines
+    whenever a handoff appears. None appears today. `design.md` records
+    `into_raw`/`from_raw` as the preferred spelling and `unsafe.forget` as what
+    a type without those members uses; the members are added with the first
+    actual caller, not before.
+11. **Reviewed and kept, unchanged.** The current `inout`-result users are
+    place-returning indexing and user-defined mutable projections. As `^mut T`
+    each would become a nullable first-class value with different assignment and
+    address-taking rules: `m[k] = v` would become `m[k]^ = v`, and every
+    projection would have to say what it returns when there is nothing to
+    project — which is `Option(^mut V)`, the shape `find` already has and that
+    indexing deliberately does not. Section 7's provisional keep is now a
+    recorded decision. A change needs its own plan.
 12. What exact ABI guarantee should `Option`/`Result` make for C-compatible
     payloads and exported Loke procedures?
 
@@ -1416,9 +1436,17 @@ ownership, and caller migration are gates.
    `unsafe.forget`, plus narrowly scoped raw-storage operations only if needed.
    Migrate those cases and then remove `manual`. Do not remove it before its
    required replacements and cleanup tests exist.
+   The [fifth implementation plan](consolidation-cleanup-and-storage-plan.md)
+   covers this step. **Done.** The corpus had thirteen modifier uses across six
+   files and exactly one binding that needed cleanup suppression;
+   `unsafe.forget` shipped with its tests before `manual` was touched, and no
+   raw-storage operation was needed. Programs that never used `manual` compile
+   to byte-identical IR.
 9. Keep `inout` through these changes. Review `find` and place results
    separately; an unresolved lookup contract is not a shipped API. Changes to
    map insertion or clone/failure policy also need their own recorded decision.
+   **Done, and nothing changed.** `find` answers `Option(^mut V)`, and `inout`
+   results are kept with their user list recorded in decision 11.
 
 Update `design.md`, `grammar.md`, `base`, `core`, examples, and tests in each
 vertical change. Steps 5–6 may precede step 7 only after the provenance gates

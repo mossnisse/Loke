@@ -41,8 +41,8 @@ Flow_Event_Kind :: enum {
 	Use,
 	Cleanup,
 	// An allocator-region reset, noted only so the *later* provenance pass can
-	// ask which owners were definitely dead at it. An explicitly dropped manual
-	// owner no longer blocks a reset (design.md). The two passes run over
+	// ask which owners were definitely dead at it. An explicitly dropped owner
+	// no longer blocks a reset (design.md). The two passes run over
 	// separate graphs, so the answer is recorded against the call node both of
 	// them walk.
 	Reset_Point,
@@ -219,14 +219,12 @@ Flow_Cleanup :: struct {
 }
 
 // One managed local the lifecycle analysis follows. An allocation root is not
-// one of them: design.md makes the pointer `new` returns manual, and root
-// provenance in `src/borrow.odin` is what decides whether `free` may have it.
+// one of them: design.md releases `new` storage through `free` or a region
+// reset, and root provenance in `src/borrow.odin` is what decides whether
+// `free` may have it.
 Tracked_Local :: struct {
 	symbol: Symbol_Id,
 	scope:  int,
-	// Whether scope exit is responsible for this slot. False for an allocation
-	// root: it is released explicitly or not at all.
-	owns_cleanup: bool,
 	// A `move` parameter arrives owned, so it is live before the first statement
 	// rather than at a declaration inside the body.
 	live_on_entry: bool,
@@ -436,7 +434,7 @@ track_move_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 			if sym == nil || !type_is_managed(graph.k.c, sym.type) {
 				continue
 			}
-			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true, owns_cleanup = true})
+			append(&graph.tracked, Tracked_Local{symbol = id, live_on_entry = true})
 			graph.by_symbol[id] = len(graph.tracked) - 1
 			append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = len(graph.tracked) - 1})
 		}
@@ -656,17 +654,15 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		if sym.duration != .None {
 			continue
 		}
-		// ponytail: `manual` disables automatic cleanup, but it is still gated at
-		// the declaration, so there is nothing here to exempt yet.
-		// Scope exit automatically drops a live managed lexical owner but not a
-		// manual one (design.md). A `manual` owner is still followed, so `drop(x)`
-		// and use-after-drop both work on it.
+		// Scope exit automatically drops every live managed lexical owner
+		// (design.md). Suppressing that is a property of the value — an
+		// `unsafe.forget` consumes it, and a consumed local is dead here like any
+		// other — never of the declaration.
 		slot, already_tracked := slot_of(graph, id)
 		if !already_tracked {
 			append(&graph.tracked, Tracked_Local {
-				symbol       = id,
-				scope        = len(graph.scopes),
-				owns_cleanup = type_is_managed(graph.k.c, sym.type) && !sym.manual,
+				symbol = id,
+				scope  = len(graph.scopes),
 			})
 			slot = len(graph.tracked) - 1
 			graph.by_symbol[id] = slot
@@ -957,9 +953,8 @@ track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: boo
 	slot, already := slot_of(graph, entry.binding_symbol)
 	if !already {
 		append(&graph.tracked, Tracked_Local {
-			symbol       = entry.binding_symbol,
-			scope        = len(graph.scopes),
-			owns_cleanup = true,
+			symbol = entry.binding_symbol,
+			scope  = len(graph.scopes),
 		})
 		slot = len(graph.tracked) - 1
 		graph.by_symbol[entry.binding_symbol] = slot
@@ -2713,8 +2708,8 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	//
 	//
 	// An owner is live when it may be used later or still requires cleanup on an
-	// outgoing path; an explicitly dropped manual owner is dead and no longer
-	// blocks reset (design.md). Scope presence cannot answer that, so the answer
+	// outgoing path; an explicitly dropped owner is dead and no longer blocks
+	// reset (design.md). Scope presence cannot answer that, so the answer
 	// is M5a's, recorded at this same call node one pass earlier.
 	dead := graph.k.c.reset_dead[at]
 	for id in graph.owners_in_scope {
@@ -3442,8 +3437,8 @@ prov_declare_region :: proc(
 			})
 		}
 	}
-	// Resetting a region is rejected while a live owning value, managed or
-	// manual, still refers to storage from that allocator (design.md). All
+	// Resetting a region is rejected while a live owning value, or a borrow,
+	// still refers to storage from that allocator (design.md). All
 	// lexical owners register once; the flow-insensitive region map may learn a
 	// dependency from a later assignment.
 	if sym.duration == .None {
@@ -3696,6 +3691,15 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			if len(v.bound) == 2 {
 				prov_invalidate(graph, v.bound[0], v.span, "exchanged")
 				walk_flow_expr(graph, v.bound[1])
+			}
+			return nil
+		case .Unsafe_Forget:
+			if len(v.bound) == 1 {
+				// The carriers the operand held go nowhere: nothing binds the
+				// forgotten value, so every loan inside it ends here. Invalidating
+				// the source root is what keeps `forget` from reading as a lifetime
+				// extension — a borrow of it dies here exactly as at a `drop`.
+				prov_consume(graph, v.bound[0], v.span, "forgotten")
 			}
 			return nil
 		}

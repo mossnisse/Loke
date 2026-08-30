@@ -2616,6 +2616,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
 		check_unsafe_builtin(k, v, ident, sym.builtin)
 		return
+	case .Unsafe_Forget:
+		check_forget_builtin(k, v, ident)
+		return
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 		return
@@ -3015,7 +3018,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		result = type_field_offset(k.c, operand, int(symbol.index))
 	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Cap, .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
-	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
+	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter, .Standard_Alias,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Clone, .Try_Clone:
@@ -3168,7 +3171,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			return
 		}
 		// The compiler rejects `free_all`, or any call with the same
-		// allocator-reset effect, while a live owning value (managed or manual) or
+		// allocator-reset effect, while a live owning value or
 		// borrow still refers to storage from that allocator (design.md). That is
 		// region provenance, in `src/borrow.odin`; what is left here is the shape.
 		append(&bound, v.args[0].value)
@@ -3179,7 +3182,8 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Make,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
-	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Type_Info_Of,
+	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
+	     .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .Clone, .Try_Clone, .Standard_Alias:
 		return

@@ -294,7 +294,7 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 	}
 
 	// Contextual keywords (`static`, `self`, `slot`, `using`, `delegate`,
-	// `thread_local`, `manual`) and the predeclared, shadowable names (`nil`,
+	// `thread_local`) and the predeclared, shadowable names (`nil`,
 	// `true`, `false`, the built-ins) stay ordinary identifiers here; position
 	// is the parser's problem.
 	kind: Token_Kind = .Ident

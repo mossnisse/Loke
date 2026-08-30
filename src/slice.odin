@@ -10,8 +10,8 @@
 // what lets it reuse the existing layout, parameter-passing, and emission paths
 // instead of growing a second aggregate mechanism.
 //
-// A slice is a *borrow*: it has no allocator, no cleanup, and cannot be a
-// `manual` owner. Its value, layout, bounds and capability behavior are here;
+// A slice is a *borrow*: it has no allocator, no cleanup, and owns nothing.
+// Its value, layout, bounds and capability behavior are here;
 // the root it borrows, its last use, and what may touch that root meanwhile are
 // `src/borrow.odin`'s.
 package lokec

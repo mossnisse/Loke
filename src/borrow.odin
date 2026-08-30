@@ -2094,7 +2094,7 @@ reborrow_values_overlap :: proc(state: ^Prov_State, reborrow: Prov_Reborrow) -> 
 
 
 // design.md: the compiler rejects `free_all`, or any call carrying the same
-// allocator-reset effect, while a live owning value (managed or manual) or
+// allocator-reset effect, while a live owning value or
 // borrow still refers to storage from that allocator.
 //
 // Two independent questions. First, may this body reset this region at all --

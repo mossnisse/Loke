@@ -15,7 +15,7 @@ Trait :: interface($Self: type) { }
 stored: Trait;
 
 // File-scope storage is initialised before any code runs.
-pooled: manual int via allocator_of();
+pooled: int via allocator_of();
 
 allocator_of :: proc() -> Allocator { return mem.default_allocator(); }
 

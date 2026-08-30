@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 // Implicit drops, `move`, and explicit `drop` (m5a-plan step 4).
 //
@@ -187,14 +187,17 @@ exchanged :: proc() {
 	fmt.println(current.id);
 }
 
-// design.md "Storage modifiers": "`manual` disables automatic cleanup", so
-// scope exit leaves it alone and an explicit `drop` is what releases it.
-manual_owner :: proc() {
+// design.md "Forgotten owners": suppression belongs to the value, not to its
+// declaration. `held` is a deliberate leak and prints nothing; `released` is an
+// ordinary owner that writes its own `drop`; `automatic` is cleaned up at scope
+// exit like every other local.
+forgotten_owner :: proc() {
 	fmt.println(9700);
 	automatic := make_res(19);
-	held: manual Res = make_res(20);
-	released: manual Res = make_res(21);
+	held := make_res(20);
+	released := make_res(21);
 	drop(released);
+	unsafe.forget(move(held));
 }
 
 // "`static` creates one instance for the life of the process. The value remains
@@ -230,7 +233,7 @@ main :: proc() {
 	replaced(false);
 	discarded();
 	exchanged();
-	manual_owner();
+	forgotten_owner();
 	fmt.println(counted());
 	fmt.println(counted());
 	session();

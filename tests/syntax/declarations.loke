@@ -14,23 +14,26 @@ list_inferred, list_more := 1, 2;
 discarded, _: int = 1, 2;
 uninitialized: [4]int = ---;
 
-// Storage modifiers take the place of the type, or precede it.
+// The one storage-modifier axis is duration: it takes the place of the type, or
+// precedes it.
 duration: static int = 0;
 thread: thread_local int = 0;
-heap: manual []int;
-both: static manual int = 0;
+heap: []int;
 duration_inferred: static = 0;
-manual_inferred: manual = [dynamic]int{1, 2, 3};
-both_inferred: thread_local manual = 0;
+thread_inferred: thread_local = 0;
+container_inferred: [dynamic]int = {1, 2, 3};
 
-// `static` is a type name where no modifier can follow it.
+// `static` is a type name where no modifier can follow it, and `manual` is an
+// ordinary identifier everywhere now that it names no modifier at all.
 plain_type: static;
 plain_field: manual;
+manual := 0;
+manual_typed: manual = manual;
 
 // `via` names the allocator, and takes exactly one unary expression.
 buffered: [dynamic]u8 via arena.allocator();
-buffered_init: manual []int via arena.allocator() = a;
-via_unary: manual []int via &pool;
+buffered_init: []int via arena.allocator() = a;
+via_unary: []int via &pool;
 
 // Constants: braced bodies end at their `}`, everything else needs a `;`.
 Answer :: 42;

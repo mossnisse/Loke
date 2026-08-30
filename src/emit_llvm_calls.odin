@@ -84,6 +84,14 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return emit_exchange(e, v)
 		case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
 			return emit_unsafe_builtin(e, v, symbol.builtin)[0]
+		case .Unsafe_Forget:
+			// The whole runtime meaning of the feature is the call that is *not*
+			// made: the operand is evaluated for its side effects, and the
+			// `emit_discarded_temporary` an owned temporary would otherwise get is
+			// skipped. A `move(place)` operand zeroes and kills its source through
+			// `emit_move`, as every other transfer does.
+			emit_expr(e, v.bound[0])
+			return "0"
 		case .Type_Info_Of:
 			return emit_type_info_of(e, v)
 		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:

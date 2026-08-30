@@ -1,0 +1,12 @@
+L0306
+@12:5
+unknown type `manual`
+L0209
+@12:12
+expected `;` after the declaration
+L0313
+@12:12
+this expression statement has no effect
+L0306
+@14:5
+unknown type `manual`

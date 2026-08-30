@@ -83,7 +83,7 @@ declare_impl_member :: proc(
 		return
 	}
 	d.top_level = true
-	if d.kind != .Const || d.duration != .None || d.manual || d.via != nil {
+	if d.kind != .Const || d.duration != .None || d.via != nil {
 		errorf(k.c, d.span, "L0406", "an `impl` member is a constant, a procedure, or an associated type")
 		d.symbols = make([]Symbol_Id, 0, k.c.semantic_allocator)
 		return

@@ -56,6 +56,61 @@ check_drop_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound = bound
 }
 
+// `unsafe.forget(value)` consumes an owning operand, marks it dead, and runs no
+// cleanup hook — for it or for anything it owns transitively (design.md
+// "Forgotten owners"). It is not a lifetime extension: a borrow of the operand
+// is invalidated here exactly as it would be at a `drop`.
+check_forget_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.type = TYPE_VOID
+	v.value_category = .Value
+	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+		errorf(k.c, v.span, "L0649", "`unsafe.forget` takes one argument, the value whose cleanup is suppressed")
+		v.type = INVALID_TYPE
+		return
+	}
+	operand := v.args[0].value
+	// Checked once, whichever form it takes: an `Expr_Move` goes through
+	// `check_move`, which applies the lexical-owner and static-duration rules
+	// every other transfer obeys.
+	type := check_single_expr(k, operand)
+	if type == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	// A place still belongs to whoever declared it, so consuming it is written
+	// out — the same rule a `move` parameter and a consuming receiver follow.
+	// A value temporary is already owned, which is what permits
+	// `unsafe.forget(exchange(inout tls_value, {}))`.
+	if expression_is_borrowed_place(k.c, operand) {
+		errorf(
+			k.c,
+			expr_span(operand),
+			"L0501",
+			"`unsafe.forget` consumes its operand, so a place is written `unsafe.forget(move(...))`",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	// A managed value is accepted even when it contains checked borrows:
+	// forgetting it leaks what it owns and ends the loans inside it. An
+	// unmanaged one owns nothing, so the only thing it could be carrying is
+	// provenance — and forgetting a bare borrow means nothing at all.
+	if !type_is_managed(k.c, type) && type_carries_borrow(k.c, type).any {
+		errorf(
+			k.c,
+			expr_span(operand),
+			"L0650",
+			"`%s` owns nothing and carries a borrow, so there is no cleanup for `unsafe.forget` to suppress",
+			type_name(k.c, type),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = operand
+	v.bound = bound
+}
+
 // `move` and `drop` both operate on a lexical storage location — never a
 // field, element, or map entry, nor file-scope/`static`/`thread_local`
 // storage or a subplace of it (design.md, `drop`'s operand rules).
@@ -732,7 +787,7 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 }
 
 // An owner is live when it may be used later or still requires cleanup on an
-// outgoing path; an explicitly dropped manual owner is dead and no longer
+// outgoing path; an explicitly dropped owner is dead and no longer
 // blocks reset (design.md).
 //
 // That is exactly this analysis's `.Dead`, and only `.Dead`: a conditionally
@@ -789,9 +844,8 @@ assign_cleanup_slots :: proc(k: ^Checker, graph: ^Flow_Graph) {
 		if sym == nil {
 			continue
 		}
-		// Reaching a cleanup point live is what gives a local an implicit drop. An
-		// allocation root reaches the same points but owns no cleanup.
-		sym.drop_at_exit = local.owns_cleanup && local.seen_cleanup && local.live_exit
+		// Reaching a cleanup point live is what gives a local an implicit drop.
+		sym.drop_at_exit = local.seen_cleanup && local.live_exit
 		// A hidden flag exists only where a lowering has to tell the runtime paths
 		// apart: cleanup points that disagree, or an assignment whose destination
 		// is live on one path and dead on another (design.md "Managed values and

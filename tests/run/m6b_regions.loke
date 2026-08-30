@@ -77,12 +77,12 @@ reset_through_wrapper :: proc() {
 }
 
 // design.md: "an owner is live when it may be used later or still requires
-// cleanup on an outgoing path. An explicitly dropped manual owner is dead and no
+// cleanup on an outgoing path. An explicitly dropped owner is dead and no
 // longer blocks reset." Scope presence cannot answer that; M5a's definite
 // liveness can, and does.
 dropped_owner_permits_reset :: proc() {
 	arena := mem.Arena.init();
-	raw: manual [dynamic]u8 via arena.allocator();
+	raw: [dynamic]u8 via arena.allocator();
 	raw.append(1, 2, 3);
 	fmt.println(len(raw));
 	drop(raw);

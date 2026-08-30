@@ -1641,7 +1641,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 	for symbol_id in d.symbols {
 		if sym := symbol_of(k.c, symbol_id); sym != nil {
-			sym.manual = d.manual
 			sym.duration = d.duration
 		}
 	}

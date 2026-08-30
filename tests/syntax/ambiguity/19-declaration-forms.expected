@@ -32,7 +32,7 @@
   (const names=["Move_Only"]
     (move-only-struct (field ["id"] (ident "int")))
   )
-  (var names=["counter"] static manual type=(ident "int")
+  (var names=["counter"] static type=(ident "int")
     (int "0")
   )
   (var names=["inferred"] thread_local

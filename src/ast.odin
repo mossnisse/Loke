@@ -1048,7 +1048,6 @@ Decl :: struct {
 	kind:          Decl_Kind,
 	names:         []Name,
 	duration:      Duration,
-	manual:        bool,
 	declared_type: Expr, // nil when the type is inferred
 	via:           Expr, // the `via` allocator expression, or nil
 	values:        []Expr,

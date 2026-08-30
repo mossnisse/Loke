@@ -61,7 +61,7 @@ Contextual keywords, reserved only in the positions given:
 
 | Word | Position |
 | --- | --- |
-| `static`, `thread_local`, `manual` | in the storage-modifier position of a declaration, after its `:` |
+| `static`, `thread_local` | in the storage-modifier position of a declaration, after its `:` |
 | `self` | the first parameter name of a procedure declared in an `impl` block, or of an interface `slot` |
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
@@ -210,7 +210,7 @@ Variable_Initializer = Expression | "---"
 
 Declared_Type = Storage_Modifiers Type ("via" Unary_Expression)?
 
-Storage_Modifiers = Duration_Modifier? "manual"?
+Storage_Modifiers = Duration_Modifier?
 Duration_Modifier = "static" | "thread_local"
 
 Constant_Initializer = Braced_Constant_Value
@@ -232,16 +232,16 @@ Semicolon_Constant_Value = Operator_Declaration
 initializer; `x: T: e;` declares a constant. `x: T = ---;` uses the
 uninitialized-storage marker, which is not an expression and so cannot appear
 in inferred `x := ...` form. The second `Variable_Decl` alternative is
-`x := e`, and also covers storage modifiers with an inferred type
-(`x: static = 0;`, `raw: manual = [dynamic]int{1, 2, 3};`); since
-`Storage_Modifiers` is nullable, the two alternatives are distinguished by
-whether a `Type` follows, and a modifier always precedes the alternative's
-single `=`, never a `:` `=` pair.
+`x := e`, and also covers a storage modifier with an inferred type
+(`x: static = 0;`, `counter: thread_local = 0;`); since `Storage_Modifiers` is
+nullable, the two alternatives are distinguished by whether a `Type` follows,
+and a modifier always precedes the alternative's single `=`, never a `:` `=`
+pair.
 
-`Duration_Modifier` and `manual` are independent modifier groups, and
-`static`/`thread_local` are mutually exclusive; see
-[design.md](design.md#storage-modifiers) for what each combination means at
-runtime.
+Duration is the only modifier axis, and `static`/`thread_local` are mutually
+exclusive; see [design.md](design.md#storage-modifiers) for what each means at
+runtime. Suppressing cleanup is not a modifier: it is `unsafe.forget(value)`, a
+property of the value rather than of the declaration.
 
 File-scope, `static`, and `thread_local` declarations require constant
 initializers, may not use `via`, and default omitted initializers to the zero
@@ -682,9 +682,9 @@ The productions above use the following deterministic parsing rules:
   that opens it is followed by `:`, and a `Simple_Statement` otherwise. Deciding
   this means scanning a name list, which is the same bounded scan `Declaration`
   already performs at statement position.
-- After the first `:` of a declaration, `static`, `thread_local`, and `manual`
-  are storage modifiers only when followed by another modifier, by a type-start
-  token, or by `=`. Otherwise they are ordinary type names.
+- After the first `:` of a declaration, `static` and `thread_local` are storage
+  modifiers only when followed by another modifier, by a type-start token, or by
+  `=`. Otherwise they are ordinary type names.
 - At the start of an `impl` member, `delegate` is the contextual
   keyword only when followed by `(`; otherwise it remains an ordinary identifier
   that may begin a declaration.

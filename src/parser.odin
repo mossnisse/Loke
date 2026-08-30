@@ -827,21 +827,19 @@ parse_declaration :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> 
 	return d, true
 }
 
-// grammar.md: after the first `:`, `static`, `thread_local` and `manual` are
-// storage modifiers only when followed by another modifier, a type-start
-// token, or `=`. Otherwise they are ordinary type names.
+// grammar.md: after the first `:`, `static` and `thread_local` are storage
+// modifiers only when followed by another modifier, a type-start token, or `=`.
+// Otherwise they are ordinary type names. Duration is the only axis, so the
+// loop runs at most twice — once for the modifier, once to reject a repeat.
 @(private = "file")
 parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
 	for at(p, .Ident) {
 		duration := Duration.None
-		is_manual := false
 		switch text_of(p, current(p)) {
 		case "static":
 			duration = .Static
 		case "thread_local":
 			duration = .Thread_Local
-		case "manual":
-			is_manual = true
 		case:
 			return
 		}
@@ -852,8 +850,7 @@ parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
 		}
 
 		word := advance(p)
-		switch {
-		case is_manual && d.manual, !is_manual && d.duration != .None:
+		if d.duration != .None {
 			parse_error(
 				p,
 				span_of(p, word),
@@ -861,9 +858,7 @@ parse_storage_modifiers :: proc(p: ^Parser, d: ^Decl) {
 				"already given",
 				"repeated storage modifier",
 			)
-		case is_manual:
-			d.manual = true
-		case:
+		} else {
 			d.duration = duration
 		}
 	}
@@ -884,7 +879,7 @@ finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 			"a constant declares exactly one name",
 		)
 	}
-	if d.duration != .None || d.manual || d.via != nil {
+	if d.duration != .None || d.via != nil {
 		parse_error(
 			p,
 			span_of(p, start),

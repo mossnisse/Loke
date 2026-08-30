@@ -24,7 +24,7 @@ group :: proc { add, sub }
 element_set :: operator([]=) proc(a: int) ---;
 Move_Only :: move_only struct { id: int }
 
-counter: static manual int = 0;
+counter: static int = 0;
 inferred: thread_local = 1;
 not_a_modifier: static;
 buffer: [dynamic]u8 via arena.allocator() = a;

@@ -64,6 +64,10 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "raw_data", .Unsafe_Raw_Data)
 		contribute_builtin(c, pkg, "string_view", .Unsafe_String_View)
 		contribute_builtin(c, pkg, "cstring_view", .Unsafe_C_String_View)
+		// Suppressing cleanup is the same kind of visible loss: the resource is
+		// leaked, or it escaped to something else that owns it now (design.md
+		// "Forgotten owners").
+		contribute_builtin(c, pkg, "forget", .Unsafe_Forget)
 	case STD_FMT:
 		// design.md "String format printing": the library owns the protocol, the
 		// writer, the options, and the `print` family. What the compiler owns is

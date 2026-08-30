@@ -796,7 +796,8 @@ not hide a release obligation inside a borrowed pointer.
 The same phase should examine declaration-specific `via` and `manual` policies.
 Compare them with explicit construction, consuming ownership transfers, and
 narrow unsafe storage operations. A wrapper that merely recreates `manual`
-under another spelling is not a simplification. Do not change them unless the
+under another spelling is not a simplification. (`manual` has since been
+removed; see the exit record below.) Do not change them unless the
 alternative preserves:
 
 - visible allocator selection;
@@ -811,6 +812,37 @@ storage policies, including justified decisions to retain current mechanisms.
 Any adopted changes must preserve borrowing, explicit allocation obligations,
 and cleanup. Every remaining storage modifier must describe a binding property
 that cannot be represented more clearly by an ordinary value or type.
+
+**Met.** The
+[fifth implementation plan](consolidation-cleanup-and-storage-plan.md) shipped
+the result:
+
+- **`via` is retained**, unchanged. It selects the provider a destination's
+  value is built with, which is a property of the declaration and of nothing
+  else; no ordinary value or type says it more clearly.
+- **`manual` is removed.** It was not paying for itself: across `base:`,
+  `core:`, `examples/`, and the whole test corpus it had thirteen modifier uses,
+  of which exactly one was a binding that stayed live at scope exit and was
+  never dropped. Every other use was an ordinary owner already writing its own
+  `drop`. Worse, "manual" named two unrelated things — a cleanup policy and an
+  allocation root — which `design.md` conflated in about twenty places.
+- **The replacement is `unsafe.forget(value)`**, a `core:unsafe` built-in that
+  consumes an owning operand and runs no cleanup for it or for anything it owns.
+  Suppression became a property of the value rather than of the declaration,
+  which is what let a modifier axis disappear. It is explicitly not a lifetime
+  extension: a borrow of a forgotten owner is invalidated at the `forget`,
+  exactly as at a `drop`.
+- **Every preserved property held.** Programs that never used `manual` compile
+  to byte-identical IR — no change to stack placement, allocator selection,
+  backing-storage location, region provenance, failure atomicity, or any
+  `drop`/`move`/`exchange` rule.
+- **Terminology is fixed.** `design.md` now says **automatic owner**,
+  **allocation root**, and **forgotten owner**, and never "manual" for any of
+  them.
+
+`static` and `thread_local` remain, one axis, and each describes exactly the
+binding property this exit condition asks for: where the storage lives, how long
+it lives, when it is initialized, and which operations its binding admits.
 
 ### Phase 6 — simplify surface syntax last
 

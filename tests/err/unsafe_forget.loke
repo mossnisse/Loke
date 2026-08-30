@@ -1,0 +1,57 @@
+package main; import "core:fmt"; import "core:unsafe";
+
+// `unsafe.forget`'s operand rules (consolidation-cleanup-and-storage-plan
+// step 2).
+//
+// design.md "Forgotten owners": the operand is consumed, so a place is written
+// out like every other transfer, and the value must own something or be
+// provenance-free. Forgetting is not a lifetime extension: a borrow of the
+// operand ends there, exactly as it would at a `drop`.
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
+}
+
+kept: static Res;
+
+main :: proc() {
+	// A place still belongs to whoever declared it.
+	borrowed := Res{1};
+	unsafe.forget(borrowed);
+
+	// The source is dead afterwards, so a second consumption of any kind is the
+	// ordinary use-after-move.
+	twice := Res{2};
+	unsafe.forget(move(twice));
+	unsafe.forget(move(twice));
+
+	used := Res{3};
+	unsafe.forget(move(used));
+	fmt.println(used.id);
+
+	// Unmanaged and carrying a borrow: there is no cleanup to suppress, and
+	// forgetting a bare loan would mean nothing.
+	local := 4;
+	unsafe.forget(&local);
+	numbers := [3]int{1, 2, 3};
+	view := numbers[:];
+	unsafe.forget(move(view));
+
+	// Static-duration storage is always live; `exchange` is what replaces it.
+	unsafe.forget(move(kept));
+
+	// One operand, positional, by value.
+	extra := Res{5};
+	unsafe.forget(move(extra), 1);
+}
+
+// The acceptance criterion: the borrow dies at the `forget`, so it cannot
+// outlive the forgotten owner.
+escaping :: proc() -> ^Res {
+	owner := Res{6};
+	view := &owner;
+	unsafe.forget(move(owner));
+	return view;
+}

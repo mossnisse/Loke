@@ -1,6 +1,6 @@
 # Fifth consolidation implementation plan: cleanup policy, storage, and removal of `manual`
 
-Status: **planned.**
+Status: **implemented.** See [Outcome](#outcome).
 
 ## Context
 
@@ -335,6 +335,73 @@ New `tests/err` cases:
 `test-all.ps1` at every optimization level, after step 2 and again after step 4.
 Compare `-opt=minimal` against `aggressive` for the forget cases specifically:
 suppression must not be an optimizer artifact.
+
+
+## Outcome
+
+Every step landed as written, in the planned order: `unsafe.forget` shipped with
+its tests while `manual` still existed, the corpus migrated, and only then was
+the modifier removed.
+
+**The one substantive deviation is the cost evidence.** The plan expected a
+*negative* net line delta in `src/`. The measured delta is **about +80 lines**.
+The prediction counted `manual`'s surface — a parser branch, an AST field, a
+`Symbol` field, a `Tracked_Local` field, and their comments, roughly 30 lines
+removed — but not what a built-in costs, which is a check procedure, a CFG
+provenance arm, an emitter arm, a compile-time arm, and five exhaustive-switch
+entries, roughly 110 lines added. The *language* got smaller by a grammar axis
+and four pieces of per-declaration state; the *compiler* got slightly bigger.
+That is the honest trade, and it does not change the case for the phase: what it
+bought is that cleanup suppression is now a property of a value, reachable from
+generic code, rather than a declaration modifier that thirteen sites used and
+one of them needed.
+
+Everything else matched the plan:
+
+- **IR on programs that never used `manual`** — `greeting`, `config_parser`, and
+  `m5a_lifecycle` are **byte-identical** to baseline. So is `m6b_regions`, whose
+  migrated `raw` was already dead at scope exit through its explicit `drop`.
+- **IR on `m5a_ownership`**, the one program whose behaviour the migration
+  touched, differs by exactly two instructions once the `manual_owner` →
+  `forgotten_owner` rename is normalised away: the load and the zeroing store of
+  `move(held)`. No drop call is added or removed.
+- **`unsafe.forget` emits nothing** beyond evaluating its operand. The generic
+  `int` instantiation lowers to a dead load and the move's zeroing store, and no
+  call at all.
+- **Suppression is not an optimizer artifact.** `tests/run/unsafe_forget` gives
+  identical output at `-opt=minimal` and `-opt=aggressive`, and `test-all.ps1`
+  is clean at every level.
+- **Both `manual` fixtures kept their ordinary-identifier coverage**, and
+  `tests/syntax/ambiguity/03-storage-modifiers.loke` now also declares a
+  variable named `manual`, of a type named `manual`, initialised from an
+  identifier named `manual`.
+
+New evidence lives in [`tests/run/unsafe_forget.loke`](tests/run/unsafe_forget.loke)
+(eight behaviours, drop counts printed),
+[`tests/err/unsafe_forget.loke`](tests/err/unsafe_forget.loke) (eight
+diagnostics, including the acceptance criterion that a borrow cannot outlive a
+forgotten owner), and
+[`tests/err/removed_manual.loke`](tests/err/removed_manual.loke) (the two old
+modifier forms, reported against `manual`-as-a-type exactly as predicted, with
+no dedicated migration hint).
+
+Two diagnostic codes were added: **L0649** for `unsafe.forget`'s call shape, and
+**L0650** for an unmanaged operand that carries a checked borrow. The
+consuming-operand error reuses **L0501**, the existing consuming-argument code.
+
+### Noticed while implementing, and deliberately not fixed
+
+- `require_lexical_owner` ([`src/lifecycle.odin`](src/lifecycle.odin)) rejects a
+  `move` parameter, so `drop(p)` and `unsafe.forget(move(p))` are both refused
+  inside a body that owns `p` — while `classify_return_value` in the same file
+  treats a `move` parameter as owned. One of the two is wrong. Changing it is a
+  `move`/`drop` operand rule, which section "What does not change" puts outside
+  this phase.
+- `design.md`'s `new`, `new_clone`, and `free` examples still use the pre-typed-
+  fallibility two-value form (`ptr, err := new(int);`). The `make` examples in
+  the same region were rewritten here because their `manual` declarations had to
+  go; the `new` family was left alone. That is leftover debt from the typed-
+  fallibility phase, not this one.
 
 ## Boundaries
 

@@ -584,6 +584,10 @@ Builtin_Kind :: enum {
 	Unsafe_Raw_Data,
 	Unsafe_String_View,
 	Unsafe_C_String_View,
+	// `unsafe.forget(value)` consumes an owning operand and runs no cleanup for
+	// it or for anything it owns (design.md "Storage modifiers"). No signature
+	// can express "consume without cleanup", so it is a built-in too.
+	Unsafe_Forget,
 	// `type_info_of(id)` takes a runtime `typeid` and returns runtime metadata
 	// (design.md "`type` and `typeid`"). A `typeid` is an ordinary scalar and
 	// can be forged, so the lookup is checked rather than an unchecked index.
@@ -701,11 +705,6 @@ Symbol :: struct {
 	drop_at_exit:     bool,
 	drop_conditional: bool,
 	cleanup_slot:     int,
-	// `manual` disables automatic cleanup, for arenas, foreign ownership, custom
-	// containers, and low-level allocator code (design.md "Storage modifiers").
-	// The value is still tracked — an explicit `drop` and use-after-drop
-	// both need its liveness — it simply has no scope-exit obligation.
-	manual:           bool,
 	// design.md "Allocators": the `via` allocator expression this declaration
 	// wrote, or nil for the lazy default binding. This is kept on the
 	// *declaration*: it survives drop and move and is what a later revival
