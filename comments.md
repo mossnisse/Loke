@@ -121,9 +121,44 @@ puts provenance into type identity and therefore into procedure-value
 compatibility, which is a considerably larger change than the imprecision it
 would remove; no program has yet needed it.
 
-## unsafe alive
+## Marking a dead variable live
 
-should we add an function to mark an dead variable to alive. The idea is to have an explicit unsafe mechanism for optimizing code and cheat the mechanism that checks if variables are safe to use.
+Should `core:unsafe` gain an operation that tells the checker a dead variable is
+live again, without writing a value into it?
+
+Two thirds of the original question have since been answered. Reviving a dead
+variable is already possible and already cheap: a full assignment completes an
+initialization and makes the variable live, so `a = [dynamic]int{7, 8}` after a
+`move(a)` is the supported spelling (see
+[Assignment statements](design.md#assignment-statements) and
+[Managed values and storage](design.md#managed-values-and-storage)). The
+opposite direction shipped too — [`unsafe.forget`](design.md#unsafeforget) makes
+a live owner dead without running its cleanup. What is missing is only the
+combination of the two: becoming live again *without* the write.
+
+The optimization motivation is narrower than it looks. Liveness is a
+compile-time property and "does not add storage to ordinary variables", so a
+definitely-live or definitely-dead variable costs nothing at runtime and has
+nothing to remove. Only the *conditionally* live case can cost anything: the
+specification permits the compiler to preserve that state however it likes, and
+today it emits a hidden `i1` drop flag, set when a variable is conditionally
+assigned or dead on one exit path. So the entire surface of this question is
+letting a programmer assert that such a variable is definitely one state or the
+other, and thereby delete one flag and the branch that reads it. No corpus
+program has yet shown that flag mattering.
+
+The harder objection is the package charter. `core:unsafe` is scoped to
+operations that "discard or manufacture provenance", and all four of its members
+— `forget`, `raw_data`, `string_view`, `cstring_view` — fit that description.
+Liveness is not provenance. Such an operation would be the package's first
+member that does not, which is either a reason to widen the stated charter
+deliberately or a reason the operation belongs somewhere else. That question
+should be settled before the signature is, and it is a larger one than the flag
+it would remove.
+
+The precedent points at deferral: `unsafe.Maybe_Uninit(T)` was decided the same
+way and left unbuilt, conditioned on an implementation need that has not
+appeared.
 
 ## Concurrency refinements
 
