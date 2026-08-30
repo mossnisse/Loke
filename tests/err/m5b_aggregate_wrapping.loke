@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:mem";
 
-// consolidation-provenance-plan.md step 5: the cases that content provenance
+// The cases that content provenance
 // turned from silently accepted into rejections. Each one is the wrapped form
 // of a borrow whose bare form was already refused, which is the whole point:
 // putting a borrow inside a value must not lose what the value owes.

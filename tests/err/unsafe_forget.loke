@@ -1,7 +1,6 @@
 package main; import "core:fmt"; import "core:unsafe";
 
-// `unsafe.forget`'s operand rules (consolidation-cleanup-and-storage-plan
-// step 2).
+// `unsafe.forget`'s operand rules.
 //
 // design.md "Forgotten owners": the operand is consumed, so a place is written
 // out like every other transfer, and the value must own something or be

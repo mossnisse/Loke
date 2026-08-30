@@ -1,8 +1,8 @@
 package main;
 
-// `manual` is an ordinary identifier now (consolidation-cleanup-and-storage-plan
-// step 4). No migration diagnostic is added: the old modifier forms simply parse
-// `manual` as the type, which is what the two errors below report. Suppressing
+// `manual` is an ordinary identifier now. No migration diagnostic is added: the
+// old modifier forms simply parse `manual` as the type, which is what the two
+// errors below report. Suppressing
 // cleanup is `unsafe.forget`, a property of the value rather than of the
 // declaration.
 

@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// consolidation-provenance-plan.md step 1: what the checker does with a borrow
+// What the checker does with a borrow
 // that travels inside a value today. Every body here compiles at the revision
 // this fixture was added, and each is labelled with what it must be once
 // aggregate content flows:

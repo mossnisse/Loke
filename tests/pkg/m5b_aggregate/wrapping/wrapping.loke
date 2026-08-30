@@ -1,6 +1,6 @@
 package wrapping;
 
-// consolidation-provenance-plan.md step 1: the importable half of the
+// The importable half of the
 // integrated example. Every summary here has to survive being published as
 // package metadata and substituted with the importer's own roots.
 
@@ -36,7 +36,7 @@ first_half :: proc(values: []int) -> []int {
 }
 
 // The callback contract is part of the written procedure type, so an importer
-// sees it without seeing any body (consolidation-provenance-plan.md step 7).
+// sees it without seeing any body.
 @(public)
 choose :: proc(
 	chooser: proc(input: []int, @(escape=none) scratch: []int) -> []int,

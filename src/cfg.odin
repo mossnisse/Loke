@@ -108,8 +108,8 @@ Prov_Kind :: enum u8 {
 	// `free`, which needs an allocation base and ends that allocation root.
 	Free,
 	// A borrow is stored where it outlives the statement that stored it: in
-	// process or thread storage, or in storage the caller owns
-	// (consolidation-provenance-plan.md step 8). `retain` says which.
+	// process or thread storage, or in storage the caller owns. `retain` says
+	// which.
 	Retain,
 	// An allocator region reset: `free_all`, or a call through a parameter marked
 	// `@(allocator_reset)`.
@@ -254,8 +254,8 @@ Flow_Graph :: struct {
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
 	// One slot per `carrier_shape` path, for a local whose type is not itself a
-	// carrier but can hold one inside it (consolidation-provenance-plan.md
-	// step 5). Ordered by the shape, so two values of one type pair by index.
+	// carrier but can hold one inside it. Ordered by the shape, so two values of
+	// one type pair by index.
 	content_by_symbol: map[Symbol_Id][]int,
 	// Which entry of a keyed map shape each constant key of this body uses. A
 	// map's key set is not part of its type, so the type provides the entries and
@@ -1758,7 +1758,7 @@ prov_variant_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, loans: []int) ->
 	return content
 }
 
-// consolidation-provenance-plan.md step 5: a value that is not itself a borrow
+// A value that is not itself a borrow
 // can still hold one. Every place `carrier_shape` names gets its own slot, so a
 // read of one field does not inherit what a sibling borrows, and a wrapped
 // borrow keeps the obligations the bare one has.
@@ -2746,7 +2746,7 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	prov_emit(graph, event)
 }
 
-// consolidation-provenance-plan.md step 8: a borrow stored where it outlives the
+// A borrow stored where it outlives the
 // statement that stored it. The destination is resolved as a place, so a field,
 // a nested container element, and a write through a tracked alias are all seen,
 // not only a bare identifier. Only a destination that actually receives a borrow
@@ -3154,8 +3154,7 @@ prov_read_ident :: proc(graph: ^Flow_Graph, v: ^Expr_Ident, kind: Access_Kind) -
 	}
 	// Reading a carrier that lives in static or thread storage yields a borrow of
 	// that storage, which is what lets a later store ask whether it outlives its
-	// destination — a `thread_local` view does not outlive the process
-	// (consolidation-provenance-plan.md step 8).
+	// destination — a `thread_local` view does not outlive the process.
 	if sym := symbol_of(graph.k.c, v.symbol); sym != nil && sym.duration != .None {
 		if type_is_carrier(graph.k.c, sym.type) {
 			if root := prov_root_for_symbol(graph, v.symbol); root != NO_ROOT {
@@ -4046,7 +4045,7 @@ prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
 	return prov_map_entry_step(graph, expr_base(v.bound[0]).type, v.bound[1])
 }
 
-// consolidation-provenance-plan.md steps 6 and 8. A container operation is
+// A container operation is
 // resolved before this point, so the solver asks `Container_Op` rather than
 // recognising a member name. Stored key/value borrows become the receiver's and
 // must satisfy its duration just like an indexed assignment. A fallible write

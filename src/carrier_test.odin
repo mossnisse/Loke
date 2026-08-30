@@ -1,4 +1,4 @@
-// consolidation-provenance-plan.md step 4: the structural half of carrier
+// The structural half of carrier
 // shapes. These ask the shape of a type directly rather than compiling a
 // program, because what has to hold is a property of the type graph — the same
 // answer whichever type is queried first, whichever order the fields are

@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// consolidation-provenance-plan.md step 7: what `@(escape=...)` refuses. A
+// What `@(escape=...)` refuses. A
 // declared level is an upper bound on what the body does, so a body that
 // exceeds it, a value that promises less than its type, and a level written
 // where it cannot mean anything are all errors.

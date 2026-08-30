@@ -408,9 +408,8 @@ compare against `nil` but are *not* statuses. One shape removed all of it.
 The migration was not free, and the cost is recorded rather than waved at:
 front-end time rose 7–18%, largest on the smallest program, because
 `base:runtime` is a fixed charge; an empty program's binary is byte-identical,
-and two real example programs grew about 3%. The measurements and the nine
-compiler defects the change surfaced are in
-[`consolidation-typed-fallibility-plan.md`](consolidation-typed-fallibility-plan.md#gate-result).
+and two real example programs grew about 3%. The change also surfaced nine compiler defects, each fixed with the
+migration.
 
 One library contract changed with it. `io.Reader.read` used to return a count
 *and* an error together, so a reader could report progress and a failure in one

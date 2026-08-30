@@ -13,13 +13,25 @@ Stuff like hidden allocations are allowed but procedures returning values that h
 The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
 
 Language refinement runs as separate consolidations, planned in
-[language-refinement-strategy.md](language-refinement-strategy.md). The latest
-made absence and failure into types: every union variant is now named, and
-`Option(T)` and `Result(T, E)` are ordinary generic unions declared in
-`base:runtime` that `or_else` and `or_return` recognise by shape rather than by
-name. It removed the nil union state, `active_typeid()`, the trapping union
-extraction, and the rule that let a destination change a producer's result
-count.
+[language-refinement-strategy.md](language-refinement-strategy.md) and reasoned
+through in
+[language-design-consolidation-proposal.md](language-design-consolidation-proposal.md).
+All of them have shipped:
+
+- **Typed fallibility** made absence and failure into types. Every union variant
+  is named, and `Option(T)` and `Result(T, E)` are ordinary generic unions in
+  `base:runtime` that `or_else` and `or_return` recognise by shape rather than
+  by name. It removed the nil union state, `active_typeid()`, the trapping union
+  extraction, and the rule that let a destination change a producer's result
+  count.
+- **One result** gave every procedure exactly one result value, with anonymous
+  records and general destructuring where several values used to travel
+  together.
+- **Cleanup policy** removed the `manual` storage modifier, leaving duration as
+  the only modifier axis. Suppressing cleanup is now `unsafe.forget(value)`, a
+  property of a value rather than of the declaration that holds it.
+
+What is left is Phase 6, surface syntax, deliberately last.
 
 ## The compiler
 

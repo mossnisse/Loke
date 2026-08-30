@@ -15,13 +15,10 @@ compiler work belongs in focused plans:
 - [`interface-plan.md`](interface-plan.md) owns interface mechanics. Phase 3
   identifies which parts remain applicable and which must be revised; it does
   not create a second interface implementation plan.
-- [`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) is the
-  second consolidation implementation plan and owns Phase 4a/4b's aggregate
-  provenance and call-contract work. It supersedes
-  [`provenance-plan.md`](provenance-plan.md), whose motivating programs remain
-  historical input, not an implementation checklist. The new plan is not a
-  completion claim or adoption of the old inference shortcuts and
-  `unsafe.forget_provenance` proposal.
+- Phase 4a/4b's aggregate provenance and call-contract work is **done**; the
+  contracts it established are stated in Phase 4 below. The inference shortcuts
+  and the `unsafe.forget_provenance` proposal from an earlier draft of that work
+  were deliberately not adopted.
 - [`language-design-consolidation-proposal.md`](language-design-consolidation-proposal.md)
   is a candidate value design. Its sections on named variants and typed
   fallibility have shipped, without its dual union forms and without a default
@@ -597,10 +594,9 @@ Exit conditions:
 
 ### Phase 4 — make provenance compose through values and calls
 
-Use [`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) for
-implementation against the contracts below; it replaces the outdated provenance
-checklist. This work can start immediately; it does not depend on adopting typed
-fallibility, tuples, or first-class references.
+**Done.** The contracts below are implemented. They did not depend on adopting
+typed fallibility, tuples, or first-class references, and were established
+before those landed.
 
 #### Phase 4a — wrapping preserves dependencies
 
@@ -813,9 +809,7 @@ Any adopted changes must preserve borrowing, explicit allocation obligations,
 and cleanup. Every remaining storage modifier must describe a binding property
 that cannot be represented more clearly by an ordinary value or type.
 
-**Met.** The
-[fifth implementation plan](consolidation-cleanup-and-storage-plan.md) shipped
-the result:
+**Met.** The result that shipped:
 
 - **`via` is retained**, unchanged. It selects the provider a destination's
   value is built with, which is a property of the declaration and of nothing
@@ -935,9 +929,9 @@ This strategy makes the following decisions now:
    whole corpus with each semantic change and retain no compatibility spelling.
 3. Make Phase 1a the first bounded migration under the existing status protocol
    and special multiple results. Preserve validating conversions unchanged.
-4. Use the rebased `consolidation-provenance-plan.md`. Phase 4a gates borrowed
-   aggregate migrations; Phase 4b establishes their contracts at indirect and
-   package boundaries. Writing the plan does not complete those gates.
+4. Gate borrowed aggregate migrations on Phase 4a, and establish their
+   contracts at indirect and package boundaries in Phase 4b. Writing a plan does
+   not complete those gates; the implementation and its verification do.
 5. Evaluate typed fallibility with the product, variant, and default decisions.
    Prefer reuse of records and one union model; prototype explicit defaults
    instead of an automatic successful `Result`. Keeping the status protocol
@@ -953,30 +947,26 @@ This strategy makes the following decisions now:
 
 ## Immediate next work
 
-The bounded Phase 1a producer change is complete; its baseline and verification
-are recorded in [`consolidation-phase-1a-plan.md`](consolidation-phase-1a-plan.md).
-Use [`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) to
-establish a fresh provenance baseline and build one integrated prototype:
-obtain a borrow from a map, wrap it in an ordinary record or union, and return
-it through a helper and a procedure value across a package boundary. Use
-existing aggregate syntax first; adopting `Option` is not a prerequisite to
-the test.
+Phases 1a through 5d are complete. The integrated provenance test that gated the
+value migrations passed and is now ordinary corpus coverage: a borrow obtained
+from a map, wrapped in a record or union, and returned through a helper and a
+procedure value across a package boundary is accepted while its owner and
+allocator region remain valid, rejected when the owner ends or its region is
+reset, checked at both ends for retention into a mutable destination, and
+carries a stable call contract with no boxing, no runtime provenance metadata,
+and no special treatment of an `Option` wrapper.
 
-The prototype must demonstrate:
+What is left:
 
-- acceptance while the borrowed owner and its allocator region remain valid;
-- independent record fields without unnecessary lifetime coupling;
-- rejection when the owner ends, is invalidated, or its region is reset while
-  a dependent value remains live;
-- caller-visible retention into a mutable destination, and rejection of an
-  escape whose source does not outlive that destination; and
-- a stable call contract without boxing, runtime provenance metadata, or
-  special compiler treatment of an `Option` wrapper.
-
-If the wrapped or indirect path escapes checking, repair that contract before
-shipping the value migration. If conservative checks reject essential library
-programs, use those programs to choose the smallest contract or precision
-improvement rather than adding a general reference system by default.
+- **Phase 6, surface syntax**, still deliberately last.
+- The open items recorded against
+  [`language-design-consolidation-proposal.md`](language-design-consolidation-proposal.md)
+  sections 9 and 12 — chiefly whether the `op`/`try_op` pair should exist at
+  all, and whether `()` ever becomes a type category rather than `Unit`.
+- The measured conservatism the provenance work recorded rather than removed.
+  If conservative checks reject essential library programs, use those programs
+  to choose the smallest contract or precision improvement rather than adding a
+  general reference system by default.
 
 The intended result is not the smallest possible language. It is the smallest
 set of rules that still delivers Loke's intended control, ergonomics, and

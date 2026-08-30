@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// consolidation-provenance-plan.md step 7: `@(escape=none)` at the boundaries
+// `@(escape=none)` at the boundaries
 // where inference cannot reach. The callee's body is not visible at an indirect
 // call, so without a written level every borrowed argument is a possible source
 // of the result and a scratch buffer cannot stay local.

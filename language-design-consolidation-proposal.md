@@ -1,6 +1,8 @@
 # Loke language consolidation proposal
 
-Status: sections 4 and 5 adopted; the rest is still a proposal
+Status: **fully adopted.** Every section has shipped and every step of the
+migration order in section 13 is done; what remains open is recorded against
+the individual items in sections 9 and 12.
 
 This document proposes a coherent set of changes to `design.md`, `grammar.md`,
 and the compiler, covering product types, multiple results, and error
@@ -700,9 +702,8 @@ runtime provenance metadata, or boxing.
 
 #### Stored content and container operations
 
-The useful addition from the older
-[`provenance-plan.md`](provenance-plan.md) is to describe what happens to
-contained dependencies at each operation. A type's ability to contain a borrow
+The useful addition from the older provenance work is to describe what happens
+to contained dependencies at each operation. A type's ability to contain a borrow
 does not mean every value of that type borrows something: an empty container
 or `.none` has no element/payload dependencies. An owner can independently
 retain an allocator-region dependency even when it has no elements.
@@ -798,9 +799,8 @@ narrow raw conversions and audited resource APIs; any future root-erasure
 operation needs separate evidence and must preserve region and ownership
 obligations. It is distinct from `unsafe.forget`, which suppresses cleanup.
 Also do not adopt the old exclusions on public contracts, its fixed diagnostic
-numbers, or its assumption that particular adapters do not exist. The rebased
-[`consolidation-provenance-plan.md`](consolidation-provenance-plan.md) covers
-these corrections; recheck its source inventory before implementation.
+numbers, or its assumption that particular adapters do not exist. The shipped
+provenance work corrects all three.
 
 ## 6. Cleanup, stack storage, and removal of `manual`
 
@@ -1430,8 +1430,7 @@ ownership, and caller migration are gates.
    bare-versus-wrapped, container-content, and storage-escape checks in section
    5.8 before value migrations ship. Preserve the valid borrowed-parameter
    cases when migrating the old trust-boundary fixtures.
-   The [second implementation plan](consolidation-provenance-plan.md) covers
-   this gate and supersedes the historical provenance checklist. **Done.** A
+   **Done.** A
    borrow keeps its obligations inside a record, union, or container; direct,
    cross-package, generic, and indirect calls carry result and retention
    contracts; and retention into process, thread, and caller-owned storage is
@@ -1443,8 +1442,7 @@ ownership, and caller migration are gates.
    union identity, zero/default behavior, unit representation, operator
    recognition, and ABI questions together. Record any reversal of the current
    `design.md` decision not to give `Option` a standard-library/operator role.
-   The [third implementation plan](consolidation-typed-fallibility-plan.md)
-   covers steps 4–6. **Done, and the decision is reversed.** `design.md` now
+   **Done, and the decision is reversed.** `design.md` now
    declares `Option` and `Result` in `base:` and records the reversal in place,
    with the reason: two failure shapes cost more mechanism than one.
 5. If adopted, implement the selected union rules, unit product, ordinary
@@ -1465,16 +1463,14 @@ ownership, and caller migration are gates.
    with migrating procedures to one result and removing named-result locals.
    The labelled-parenthesis rule and removal of its old meaning land in the
    same change. Preserve the single `inout` result form.
-   The [fourth implementation plan](consolidation-one-result-anonymous-records-plan.md)
-   covers this step. **Done.** Every procedure exposes one result, destructuring
+   **Done.** Every procedure exposes one result, destructuring
    is flat (decision 6), record identity includes field names (decision 7), and
    the single `inout` result form is preserved.
 8. Validate real manual-storage cases; add consuming raw conversions and
    `unsafe.forget`, plus narrowly scoped raw-storage operations only if needed.
    Migrate those cases and then remove `manual`. Do not remove it before its
    required replacements and cleanup tests exist.
-   The [fifth implementation plan](consolidation-cleanup-and-storage-plan.md)
-   covers this step. **Done.** The corpus had thirteen modifier uses across six
+   **Done.** The corpus had thirteen modifier uses across six
    files and exactly one binding that needed cleanup suppression;
    `unsafe.forget` shipped with its tests before `manual` was touched, and no
    raw-storage operation was needed. Programs that never used `manual` compile

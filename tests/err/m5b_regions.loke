@@ -98,7 +98,7 @@ erased_allocator_region :: proc() {
 	}
 }
 
-// consolidation-provenance-plan.md step 9: wrapping the owner in a field of
+// Wrapping the owner in a field of
 // file-scope storage does not lose the obligation its bare form has.
 Holder :: struct { buffer: Buffer }
 

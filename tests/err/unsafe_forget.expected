@@ -1,24 +1,24 @@
 L0501
-@22:16
+@21:16
 so a place is written `unsafe.forget(move(...))`
 L0500
-@28:16
+@27:16
 has already been moved, dropped, or released
 L0500
-@32:14
+@31:14
 has already been moved, dropped, or released
 L0650
-@37:16
+@36:16
 `^int` owns nothing and carries a borrow
 L0650
-@40:16
+@39:16
 `[]mut int` owns nothing and carries a borrow
 L0498
-@43:21
+@42:21
 `static` storage, which is always live
 L0649
-@47:2
+@46:2
 `unsafe.forget` takes one argument
 L0512
-@55:2
+@54:2
 `owner` cannot be forgotten here

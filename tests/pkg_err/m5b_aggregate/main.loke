@@ -2,7 +2,7 @@ package main; import "core:fmt";
 
 import "./wrapping";
 
-// consolidation-provenance-plan.md steps 5 and 6: the escaping half of the
+// The escaping half of the
 // integrated example. An imported wrapper's summary carries the caller's root
 // through the record and back out, so a local that ends here is named here even
 // though the wrapping happened in another package.

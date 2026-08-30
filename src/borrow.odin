@@ -324,7 +324,7 @@ carrier_is_mutable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // ---------------------------------------------------- retention targets --
 
-// consolidation-provenance-plan.md step 8: where a stored borrow has to still
+// Where a stored borrow has to still
 // be valid. Process and thread are different questions — a `thread_local`
 // destination is satisfied by thread storage, a `static` one is not — and
 // caller-owned storage is a third, answered by the argument's contract.
@@ -394,7 +394,7 @@ retain_kind_level :: proc(kind: Retain_Kind) -> Escape_Level {
 
 // ------------------------------------------------------- escape levels --
 
-// consolidation-provenance-plan.md step 2. What a call may leave behind that
+// What a call may leave behind that
 // depends on one parameter, as one totally ordered level: a callee may promise
 // more than its type asks and never less. Written `@(escape=none)` and so on.
 //
@@ -452,7 +452,7 @@ attribute_escape_level :: proc(c: ^Compiler, attributes: []Attribute) -> (Escape
 
 // ----------------------------------------------------- carrier shapes --
 
-// consolidation-provenance-plan.md step 4. `type_is_carrier` answers "is this
+// `type_is_carrier` answers "is this
 // value itself a borrow". A shape answers "where inside this value can a borrow
 // be", which is what lets a wrapped borrow keep the obligations the bare one
 // has. The steps are ordinary `Proj_Step` paths, so `paths_overlap` already
@@ -1005,7 +1005,7 @@ set_synth_result_summary :: proc(c: ^Compiler, declaration: Symbol_Id, param: in
 	summary.result = new_result_provenance(c, len(sym.params), sym.result, false)
 	// A result that holds borrows inside it depends on the receiver just as a
 	// bare carrier result does: reading a container value out yields what that
-	// value borrows (consolidation-provenance-plan.md step 6).
+	// value borrows.
 	summary.result.params[param] =
 		type_is_carrier(c, sym.result) || type_carries_borrow(c, sym.result).any
 	if type_is_managed(c, sym.result) {
@@ -1420,7 +1420,7 @@ solve_provenance :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	report_provenance(&state)
 }
 
-// consolidation-provenance-plan.md step 1: the two numbers that predict what
+// The two numbers that predict what
 // per-content-path slots will cost — the reaching lattice's size, which is
 // `slots * loans` bits per block and therefore the one that multiplies, and how
 // many rounds the summary worklist takes. `LOKE_PROV_STATS=1` prints them after
@@ -2325,7 +2325,7 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 	}
 }
 
-// consolidation-provenance-plan.md step 8: what is stored where it outlives the
+// What is stored where it outlives the
 // statement that stored it must still be valid there. A parameter answers with
 // its own written `@(escape=...)` level, because the caller is the only one who
 // knows how long its storage lives; every other root answers from its kind.

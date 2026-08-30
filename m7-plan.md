@@ -99,7 +99,7 @@ v1 short of the whole document by exactly these two entries and no others.
 | Compile-time foreign | A foreign procedure cannot be called on an executed compile-time path, and has no body to run in any case. | [B10](compiler-plan.md#b10-compile-time-evaluation-engine)'s sandbox already forbids it; M7 adds the fixture that proves the message names the foreign declaration. |
 | Foreign trust boundary | Unchanged. Retention of a pointer, `cstring_view`, or `inout` argument by foreign code is not checked. M5b's rules apply up to the call and stop there. | design.md's [what is not checked](design.md#what-is-not-checked) list is a v1 decision, not a gap M7 closes. |
 | `core:os` | Freeze `os.Args` as a process-lifetime, read-only zero-sized view and `os.args: Args` as its zero value. It supports `len`, indexing, and iteration; indexing returns an owning UTF-8 `string`. Executable entry becomes `wmain(i32, ptr)`, calls a versioned runtime initializer that converts the incoming UTF-16 argument vector to cached UTF-8 before attaching the initial thread, then calls Loke `main`. Two foreign-safe runtime getters expose count and one `cstring_view`; `core:os` implements the view and copying conversion as ordinary Loke source over that foreign block. `os.exit` is also ordinary source and needs no compiler knowledge: the process dies inside the call, so no cleanup runs by construction. | This freezes the previously missing public shape, preserves Loke's UTF-8 invariant on Windows, and keeps imports free of automatic package initialization: startup belongs to the executable runtime, while the library layer is ordinary Loke. An object build emits neither `wmain` nor argument initialization because its foreign host owns startup. File handles remain ordinary post-v1 library work. |
-| Diagnostics | Reserve L0601–L0635: build and driver L0601–L0605, attributes L0606–L0612, record layout L0613–L0617, conventions and foreign ABI L0618–L0630, export and linking L0631–L0635. L0636–L0638 went to the deferred-`Simd`, text, and map-address messages. L0639 onwards is left for M8 and [transitive provenance](provenance-plan.md). | M6b's reservation ended at L0600 and its last used code is L0595. |
+| Diagnostics | Reserve L0601–L0635: build and driver L0601–L0605, attributes L0606–L0612, record layout L0613–L0617, conventions and foreign ABI L0618–L0630, export and linking L0631–L0635. L0636–L0638 went to the deferred-`Simd`, text, and map-address messages. L0639 onwards is left for M8 and transitive provenance. | M6b's reservation ended at L0600 and its last used code is L0595. |
 
 ## Steps
 
@@ -314,9 +314,9 @@ Milestone spot checks:
 
 The v1 trust-boundary set is unchanged: stored borrows, unsafe provenance loss,
 foreign retention, hidden user-record aliases, and cross-thread transfer stay
-unchecked. Closing the record and global halves of that list is
-[its own plan](provenance-plan.md), because it changes what the borrow checker
-is rather than what this milestone builds. The annotated typed AST still lowers directly to textual LLVM; MIR
+unchecked. Closing the record and global halves of that list was its own piece of work,
+because it changes what the borrow checker is rather than what this milestone
+builds. The annotated typed AST still lowers directly to textual LLVM; MIR
 waits for a second consumer. Debug builds and debug information, shared-library output, extension
 attributes, non-Windows targets, and the two blocks listed under
 [Moved to M8](#moved-to-m8) are all deferred, none of them in a way that changes

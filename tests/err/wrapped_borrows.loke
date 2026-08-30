@@ -1,7 +1,7 @@
 package main; import "core:fmt"; import "core:mem";
 
-// consolidation-typed-fallibility-plan.md, "provenance parity for bare versus
-// wrapped borrows": wrapping a borrow in an `Option` or a `Result` must not
+// Provenance parity for bare versus wrapped borrows: wrapping a borrow in an
+// `Option` or a `Result` must not
 // lose what it borrows, and unwrapping it must not lose it either. Every case
 // here has a bare twin that was already rejected, and each must be rejected the
 // same way.

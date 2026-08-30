@@ -1,6 +1,6 @@
 package wrapping;
 
-// consolidation-provenance-plan.md step 1: the importable half of the
+// The importable half of the
 // integrated example. Every summary here has to survive being published as
 // package metadata and substituted with the importer's own roots.
 

@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:unsafe";
 
-// `unsafe.forget` (consolidation-cleanup-and-storage-plan step 2).
+// `unsafe.forget`.
 //
 // design.md "Forgotten owners": forgetting a value consumes it, marks it dead,
 // and runs no cleanup hook — for it or for anything it owns transitively. Every

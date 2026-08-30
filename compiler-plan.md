@@ -999,9 +999,9 @@ around it.
 
 ### Aggregate provenance and call contracts
 
-`consolidation-provenance-plan.md` is language-refinement work rather than a
-milestone, but it is compiler work: it closes the two entries M5b left open in
-design.md's *What is not checked* list ([B12](#b12-borrow--lifetime-checker)).
+Aggregate provenance was language-refinement work rather than a milestone, but
+it is compiler work: it closes the two entries M5b left open in design.md's
+*What is not checked* list ([B12](#b12-borrow--lifetime-checker)).
 Both were the same shape — a borrow that stops being followed the moment it is
 put somewhere.
 

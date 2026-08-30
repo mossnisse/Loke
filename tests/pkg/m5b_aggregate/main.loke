@@ -2,7 +2,7 @@ package main; import "core:fmt";
 
 import "./wrapping";
 
-// consolidation-provenance-plan.md step 1: the strategy's integrated example
+// The strategy's integrated example
 // with today's records, maps, and procedure values. A borrow is taken out of a
 // map, wrapped, carried across a package boundary and through a procedure
 // value, and retained through a second helper.
