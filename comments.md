@@ -37,17 +37,6 @@ reactive evaluation, and clearer contracts on operations such as `hash` and
 is allowed local mutation and result allocation. It is not required by the
 current compile-time or interface design.
 
-## Tuples
-
-**Answered: anonymous records, not tuples.** `a, b := swap(1, 2)` used to be a
-language rule that applied to return values and nothing else. It is now one
-rule — [destructuring](design.md#destructuring) — over one type, the
-[anonymous record](design.md#anonymous-records), which can be stored, passed,
-named, and reflected on like any other value. A positional tuple family was
-rejected: it would have been a second product mechanism beside `struct`, and
-naming the fields is what lets field access, reflection, and the `foreach`
-binding rule mean the same thing for both.
-
 ## Owning runtime polymorphism
 
 Borrowed `dyn Interface` views are now defined. Should a later version add an
@@ -70,7 +59,32 @@ owner that needs it.
 
 ## Borrow checking across procedure boundaries
 
-The rule in [Borrows and lifetimes](design.md#borrows-and-lifetimes) treats a returned borrow as derived from every borrowed argument whose storage is reachable through a parameter. It rejects results attributed to temporary arguments before they can escape, so it is sound but coarse and can force copies in code that does not need them. Whether that imprecision is acceptable in practice can only be answered by writing a real library against it.
+A direct call is no longer coarse. Aggregate provenance gave every named
+declaration and generic instantiation a result-provenance summary that records
+*which* borrowed parameters a result may name, and which
+[carrier paths](design.md#values-that-contain-borrows) inside them, so a helper
+returning one field of a record argument substitutes that field's root rather
+than everything the argument holds. Two borrowed parameters where the result
+derives from one leaves the other free to be a temporary.
+
+The original question — whether the imprecision forces copies in code that does
+not need them — asked to be settled by writing a real library against it. That
+library exists: `core:strings`, `fmt`, `io`, `fs`, `path`, `cstrings`,
+`encoding/utf16`, `strconv`, and `term` are all written against these rules. The
+conservatism that remains was measured and recorded during that work rather than
+removed, and is tracked with the provenance contracts in
+[`language-refinement-strategy.md`](language-refinement-strategy.md).
+
+What remains is narrower. **A call through a procedure value is still coarse**:
+the result is derived from every borrowed argument the type does not exclude
+with [`@(escape=none)`](design.md#escapelevel), because a procedure value
+carries no summary — the metadata lives on the declaration, and an indirect call
+does not know which declaration it reaches. The open question is whether
+`@(escape=none)` on the parameter is a sufficient answer, or whether a procedure
+*type* should be able to carry a result contract of its own. The second option
+puts provenance into type identity and therefore into procedure-value
+compatibility, which is a considerably larger change than the imprecision it
+would remove; no program has yet needed it.
 
 ## unsafe alive
 
