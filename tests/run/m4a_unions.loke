@@ -80,6 +80,17 @@ unions :: proc() -> [1]Value {
 }
 same :: proc(v: Value) -> Value { return v; }
 
+// A variant's identity is its declaration index, and compile-time evaluation
+// has to agree with the running program about that: `Pair_Of_Ints` gives two
+// variants the same payload type, so comparing payloads alone would make these
+// equal. The comparison runs once folded and once at run time.
+variants_differ :: proc() -> bool {
+	left: Pair_Of_Ints = .left(3);
+	right: Pair_Of_Ints = .right(3);
+	return left == right;
+}
+FOLDED_VARIANTS_DIFFER :: variants_differ();
+
 branch_result :: proc(flag: bool) -> Result(int, Error_Code) {
 	n := 10 if flag else 20;
 	caller_1() or_return;
@@ -163,6 +174,7 @@ main :: proc() {
 	fmt.println(carry(a).value);
 	fmt.println(unions()[0]);
 	fmt.println(same(a));
+	fmt.println(FOLDED_VARIANTS_DIFFER, variants_differ());
 
 	// The failure protocol.
 	fmt.println(good());

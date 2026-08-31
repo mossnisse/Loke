@@ -8,3 +8,18 @@ main :: proc() {
 // A field whose type does not resolve is what is wrong with the record. The
 // record around it is not an unimplemented construct.
 Holder :: struct { n: Nope }
+
+// A composed type is unresolved because a component of it is, so the answer
+// names the component rather than the shape written around it.
+composed :: proc() {
+	a: []no_such_type;
+	b: ^no_such_type;
+	c: [4]no_such_type;
+	d: [dynamic]no_such_type;
+	e: [^]no_such_type;
+	f: map[no_such_type]int;
+	g: map[int]no_such_type;
+	h: distinct no_such_type;
+	i: proc(x: no_such_type);
+	j: proc() -> no_such_type;
+}

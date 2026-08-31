@@ -54,9 +54,18 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 
 	size, alignment := u64(0), u64(1)
 	offsets: []u64
-	#partial switch info.kind {
+	// Exhaustive on purpose: a size of zero is indistinguishable from a correct
+	// answer, so a new `Type_Kind` has to say which of these two groups it joins
+	// rather than inherit one.
+	switch info.kind {
 	case .Void, .Invalid:
 		size, alignment = 0, 1
+
+	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String, .Interface, .Type:
+		// No runtime representation at all: an untyped constant is materialised
+		// into a concrete type before anything is laid out, and `interface` and
+		// `type` exist only during compilation.
 
 	case .Bool:
 		size, alignment = 1, 1

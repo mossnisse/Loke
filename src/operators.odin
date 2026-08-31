@@ -10,6 +10,7 @@
 // `distinct` type is deliberately not built-in for this purpose.
 package lokec
 
+import "core:slice"
 import "core:fmt"
 
 // ------------------------------------------------------------ declarations --
@@ -211,12 +212,9 @@ operator_candidates_for_receiver :: proc(k: ^Checker, symbol: string, receiver: 
 
 @(private = "file")
 append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
-	for existing in out {
-		if existing == id {
-			return
-		}
+	if !slice.contains(out[:], id) {
+		append(out, id)
 	}
-	append(out, id)
 }
 
 // -------------------------------------------------- the built-in priority --

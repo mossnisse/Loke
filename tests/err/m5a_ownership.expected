@@ -46,3 +46,6 @@ a `static` declaration is initialised once, before any code runs, so its initial
 L0500
 @98:14
 `d` cannot be used here: it is live on only some of the paths that reach this point
+L0501
+@103:23
+`value` is a `move` parameter, so this argument is written `move(...)`

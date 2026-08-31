@@ -18,8 +18,18 @@ stored: []any_view;
 
 sum :: proc(nums: ..int) -> int { return len(nums); }
 
+// design.md "Named arguments": a name reaches a fixed parameter, never a pack
+// element, and positional arguments still come first.
+labelled :: proc(a: int, b: int, nums: ..int) -> int { return a + b + len(nums); }
+
 main :: proc() {
 	// A spread's operand still has to be the pack's own slice type.
 	texts := []u8{1, 2};
 	fmt.println(sum(..texts));
+
+	fmt.println(labelled(a = 1, missing = 2));
+	fmt.println(labelled(1, a = 2, b = 3));
+	fmt.println(labelled(a = 1, b = 2, 3));
+	value := labelled;
+	fmt.println(value(a = 1, b = 2));
 }

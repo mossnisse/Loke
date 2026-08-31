@@ -3,9 +3,7 @@
 // reallocating arrays or backend-specific state.
 package lokec
 
-import "base:runtime"
 import "core:fmt"
-import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
 
@@ -1578,9 +1576,19 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	if info == nil {
 		return false
 	}
-	#partial switch info.kind {
+	// Exhaustive on purpose: this recurses through every type that has
+	// components, so a new composed `Type_Kind` must not quietly answer "no
+	// invalid part" the way a scalar correctly does.
+	switch info.kind {
 	case .Invalid:
 		return true
+	case .Void, .Bool, .Int, .Float, .Rune, .Enum, .Raw_Pointer, .Typeid,
+	     .String, .String_View, .CString_View, .Any_View, .Dyn, .Interface, .Type,
+	     .Allocator, .Allocator_Error,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
+		// No components, so nothing to be invalid below the type itself.
+		return false
 	case .Pointer, .Multi_Pointer, .Slice, .Dynamic_Array, .Array, .Distinct:
 		return type_contains_invalid(c, info.element, depth + 1)
 	case .Map:

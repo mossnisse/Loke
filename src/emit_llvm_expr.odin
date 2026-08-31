@@ -1336,7 +1336,7 @@ emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_In
 	left_slot := alloca(e, llvm)
 	right_slot := temp(e)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, lhs, left_slot)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", right_slot, llvm)
+	alloca_named(e, right_slot, llvm)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm, rhs, right_slot)
 
 	result := "true"
@@ -1551,7 +1551,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 @(private = "file")
 emit_text_call_slot :: proc(e: ^Emitter, callee: string, arguments: string) -> (slot: string, ok: string) {
 	slot = temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, STRING_TYPE)
+	alloca_named(e, slot, STRING_TYPE)
 	ok = temp(e)
 	fmt.sbprintfln(&e.b, "  %s = call i32 @%s(ptr %s, %s)", ok, callee, slot, arguments)
 	return slot, ok

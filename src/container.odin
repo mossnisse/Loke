@@ -128,22 +128,22 @@ container_key :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // Which operation one contributed member is, so the backend writes the right
 // body without matching on its name.
+//
+// design.md "Typed fallibility" spells each mutating operation twice, once
+// panicking on allocation failure and once reporting it. Those are one
+// operation; `symbol.result` says which spelling a call reached, so the pair
+// shares an entry rather than being a second source of truth for it.
 Container_Op :: enum {
 	None,
 	Append,
-	Try_Append,
 	Insert,
-	Try_Insert,
 	Pop,
 	Remove,
 	Remove_Unordered,
 	Clear,
 	Resize,
-	Try_Resize,
 	Reserve,
-	Try_Reserve,
 	Shrink,
-	Try_Shrink,
 	// The map half. `find` never inserts; `m[key] = v` and every chain rooted in
 	// one are places rather than calls, so they are not members.
 	Map_Find,
@@ -152,9 +152,7 @@ Container_Op :: enum {
 	Map_Remove,
 	Map_Clear,
 	Map_Reserve,
-	Map_Try_Reserve,
 	Map_Shrink,
-	Map_Try_Shrink,
 }
 
 // design.md "Dynamic arrays": the operation set, contributed as real members so
@@ -198,7 +196,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{type, pack}, []Param_Mode{.Inout, .Variadic}, none, 0,
 	))
 	append(&members, container_member(
-		k, type, "try_append", .Try_Append,
+		k, type, "try_append", .Append,
 		[]Type_Id{type, pack}, []Param_Mode{.Inout, .Variadic}, fails, 0,
 	))
 	append(&members, container_member(
@@ -206,7 +204,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{type, TYPE_INT, element}, []Param_Mode{.Inout, .Value, .Value}, none, 0,
 	))
 	append(&members, container_member(
-		k, type, "try_insert", .Try_Insert,
+		k, type, "try_insert", .Insert,
 		[]Type_Id{type, TYPE_INT, element}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
 	))
 	// design.md "Typed fallibility": an empty container yields `.none`.
@@ -240,7 +238,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 0,
 	))
 	append(&members, container_member(
-		k, type, "try_resize", .Try_Resize,
+		k, type, "try_resize", .Resize,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 0,
 	))
 	append(&members, container_member(
@@ -248,7 +246,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 0,
 	))
 	append(&members, container_member(
-		k, type, "try_reserve", .Try_Reserve,
+		k, type, "try_reserve", .Reserve,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 0,
 	))
 	// design.md spells `shrink` twice, with and without a floor. One signature
@@ -259,7 +257,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 1,
 	))
 	append(&members, container_member(
-		k, type, "try_shrink", .Try_Shrink,
+		k, type, "try_shrink", .Shrink,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
 	add_members(k.c, type, members[:])
@@ -327,7 +325,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 0,
 	))
 	append(&members, container_member(
-		k, type, "try_reserve", .Map_Try_Reserve,
+		k, type, "try_reserve", .Map_Reserve,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 0,
 	))
 	append(&members, container_member(
@@ -335,7 +333,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, none, 1,
 	))
 	append(&members, container_member(
-		k, type, "try_shrink", .Map_Try_Shrink,
+		k, type, "try_shrink", .Map_Shrink,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
 	add_members(k.c, type, members[:])
@@ -355,7 +353,7 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if reason == "" {
 		// Selecting semantic IDs is safe even for a hypothetical signature. It
 		// does not commit bodies, typeids, materializations, or witness globals.
-		k.c.map_key_policies[type_underlying(k.c, key)] = policy
+		k.c.map_key_policies[key] = policy
 		return true
 	}
 	errorf(

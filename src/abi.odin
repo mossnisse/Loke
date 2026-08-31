@@ -159,7 +159,10 @@ abi_walk :: proc(
 	defer if marked {
 		visiting[index] = false
 	}
-	#partial switch info.kind {
+	// Exhaustive on purpose: this is the whole answer to "may this cross a C
+	// boundary", so a new `Type_Kind` states its own answer rather than
+	// inheriting the rejection below.
+	switch info.kind {
 	case .Int:
 		// Clang's Win64 ABI does not lower `__int128` as Loke's direct `i128`.
 		// Reject it until the target-specific indirect/vector classification exists.
@@ -177,9 +180,10 @@ abi_walk :: proc(
 		if !convention_is_foreign(info.convention) {
 			return false, "a `loke`-convention procedure pointer", ""
 		}
-		for param, index in info.parameters {
-			mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-			if mode == .Inout || (index < len(info.param_by_ptr) && info.param_by_ptr[index]) {
+		// Not `index`: the `defer` above still has to clear this type's own slot.
+		for param, position in info.parameters {
+			mode := position < len(info.param_modes) ? info.param_modes[position] : Param_Mode.Value
+			if mode == .Inout || (position < len(info.param_by_ptr) && info.param_by_ptr[position]) {
 				continue
 			}
 			if s, n, p := abi_walk(c, param, true, visiting, saw_cycle); !s {
@@ -243,6 +247,12 @@ abi_walk :: proc(
 		return false, "a compile-time `type`, which has no runtime ABI", ""
 	case .Allocator, .Allocator_Error:
 		return false, "a Loke-specific runtime handle", ""
+	case .Invalid, .Void, .Distinct,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
+		// `under` has already resolved a `distinct`, and nothing untyped survives
+		// checking, so none of these is a written parameter type.
+		return false, "not foreign-ABI-safe", ""
 	}
 	return false, "not foreign-ABI-safe", ""
 }

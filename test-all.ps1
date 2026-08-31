@@ -12,7 +12,9 @@ try {
     & odin test src -define:ODIN_TEST_TRACK_MEMORY=false
     if ($LASTEXITCODE -ne 0) { throw "compiler unit tests failed ($LASTEXITCODE)" }
 
-    & odin build src -out:lokec.exe
+    # An unused local or a shadowed name is how a rename or a deleted branch goes
+    # quiet instead of failing, so the shipped binary is built under both vets.
+    & odin build src -out:lokec.exe -vet-unused -vet-shadowing
     if ($LASTEXITCODE -ne 0) { throw "compiler build failed ($LASTEXITCODE)" }
 
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', $null, 'Process')

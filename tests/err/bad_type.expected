@@ -4,3 +4,33 @@ unknown type `Missing`
 L0306
 @10:23
 unknown type `Nope`
+L0306
+@15:7
+unknown type `no_such_type`
+L0306
+@16:6
+unknown type `no_such_type`
+L0306
+@17:8
+unknown type `no_such_type`
+L0306
+@18:14
+unknown type `no_such_type`
+L0306
+@19:8
+unknown type `no_such_type`
+L0306
+@20:9
+unknown type `no_such_type`
+L0306
+@21:13
+unknown type `no_such_type`
+L0306
+@22:14
+unknown type `no_such_type`
+L0306
+@23:13
+unknown type `no_such_type`
+L0306
+@24:15
+unknown type `no_such_type`

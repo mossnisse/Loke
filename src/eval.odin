@@ -472,6 +472,7 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 		if aggregate == nil { return Const_Value{}, false }
 		aggregate.type = v.type
 		aggregate.elements = elements
+		aggregate.variant = v.variant
 		cv.aggregate = aggregate
 	}
 	return cv, true
@@ -768,15 +769,6 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
 	}
 
 	#partial switch v.op {
-	case .Shl, .Shr:
-		count, fits := bi_to_u64(ev.alloc, right.integer)
-		if !fits || count > 1 << 20 {
-			eval_fail(ev, expr_span(v.rhs), "L0356", "shift count %s is too large", bi_text(ev.alloc, right.integer))
-			return Eval_Value{}, false
-		}
-		shifted := v.op == .Shl ? bi_shl(ev.alloc, left.integer, int(count)) : bi_shr(ev.alloc, left.integer, int(count))
-		return scalar(Const_Value{kind = left.kind, integer = wrap_to_type(ev.k.c, shifted, v.type, ev.alloc)}, v.type), true
-
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		result, ok := eval_compare(ev, v.op, left, right)
 		if !ok {
@@ -813,17 +805,20 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 		if op != .Eq_Eq && op != .Not_Eq {
 			return false, false
 		}
-		equal := true
+		// The same two rules `aggregate_equal` holds a frozen constant to: the
+		// element counts have to match, and design.md "Unions" makes two union
+		// values equal only when they hold the same *variant*, because two
+		// variants may share a payload type.
+		equal := len(a.elements) == len(b.elements)
+		if a.variant != b.variant && type_is_union(ev.k.c, a.type) {
+			equal = false
+		}
 		for element, index in a.elements {
-			if index >= len(b.elements) {
-				equal = false
+			if !equal {
 				break
 			}
 			same, ok := eval_compare(ev, .Eq_Eq, element, b.elements[index])
-			if !ok || !same {
-				equal = false
-				break
-			}
+			equal = ok && same
 		}
 		return equal == (op == .Eq_Eq), true
 	}
@@ -1087,7 +1082,6 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		self = place
 	}
 	element := container_element(ev.k.c, self.type)
-	no_error := Eval_Value{kind = .Nil, type = TYPE_ALLOCATOR_ERROR}
 	none: []Eval_Value
 
 	// Results outlive this frame, so they are built in the evaluator's arena.
@@ -1097,8 +1091,6 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		copy(out, values)
 		return out
 	}
-	yes := Eval_Value{kind = .Boolean, type = TYPE_BOOL, boolean = true}
-	no := Eval_Value{kind = .Boolean, type = TYPE_BOOL}
 
 	// The argument at `index`, already evaluated and deep-copied.
 	argument :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> (Eval_Value, bool) {
@@ -1131,7 +1123,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 	case .None:
 		return nil, false
 
-	case .Append, .Try_Append:
+	case .Append:
 		// design.md "Variadic parameters": the pack is a read-only slice, and a
 		// `..slice` spread needs a compile-time slice value, which the evaluator
 		// does not have. The written elements are what it can run.
@@ -1159,7 +1151,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !fallible { return none, true }
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
-	case .Insert, .Try_Insert:
+	case .Insert:
 		at, at_ok := count_argument(ev, v, 1)
 		value, value_ok := argument(ev, v, 2)
 		if !at_ok || !value_ok {
@@ -1220,7 +1212,7 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		self.elements = nil
 		return none, true
 
-	case .Resize, .Try_Resize:
+	case .Resize:
 		size, size_ok := count_argument(ev, v, 1)
 		if !size_ok {
 			return nil, false
@@ -1244,8 +1236,8 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !fallible { return none, true }
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
-	case .Reserve, .Try_Reserve, .Shrink, .Try_Shrink, .Map_Reserve, .Map_Try_Reserve,
-	     .Map_Shrink, .Map_Try_Shrink:
+	case .Reserve, .Shrink, .Map_Reserve,
+	     .Map_Shrink:
 		// Capacity is a property of an allocation, and there is none here. Reserving
 		// or shrinking is therefore observably nothing, which is exactly what makes
 		// `cap` answer the length.
@@ -2370,17 +2362,6 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	}
 	op := compound_operator(s.op)
 	type := slot.type
-	#partial switch op {
-	case .Shl, .Shr:
-		count, fits := bi_to_u64(ev.alloc, operand.integer)
-		if !fits || count > 1 << 20 {
-			eval_fail(ev, s.op_span, "L0356", "shift count %s is too large", bi_text(ev.alloc, operand.integer))
-			return .Fail
-		}
-		shifted := op == .Shl ? bi_shl(ev.alloc, slot.integer, int(count)) : bi_shr(ev.alloc, slot.integer, int(count))
-		slot^ = scalar(Const_Value{kind = slot.kind, integer = wrap_to_type(ev.k.c, shifted, type, ev.alloc)}, type)
-		return .Normal
-	}
 	folded, folded_ok := fold_arithmetic(ev.k.c, op, s.op_span, const_of(slot^), const_of(operand), type, ev.alloc)
 	if !folded_ok {
 		if !eval_memory_ok(ev) { return .Fail }

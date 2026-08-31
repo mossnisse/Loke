@@ -400,9 +400,8 @@ emit_format_thunks :: proc(e: ^Emitter) {
 // braces, and an enum by the member's own name.
 @(private = "file")
 emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
-	saved_body, saved_terminated := e.b, e.terminated
-	e.b = strings.builder_make()
-	e.terminated = false
+	frame := begin_function_emission(e)
+	defer finish_pending_thunk(e, frame)
 
 	fmt.sbprintf(&e.b, "define private void %s(ptr %%data, ptr %%w, ptr %%o)", fmt_thunk_name(e, type))
 	fmt.sbprintln(&e.b, " {")
@@ -411,10 +410,6 @@ emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
-
-	text := hoist_fixed_allocas(strings.to_string(e.b))
-	e.b, e.terminated = saved_body, saved_terminated
-	append(&e.pending_thunks, text)
 }
 
 // A literal separator: `[`, `, `, ` = ` and friends all go through the same
@@ -561,7 +556,8 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, storage, address)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, storage, value, ANY_VIEW_DATA)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", id, storage, value, ANY_VIEW_ID)
-		emit_format_dispatch(e, data, id)
+		// The thunk's own `%w`/`%o` parameters are the records to write into.
+		emit_format_dispatch_at(e, data, id, "%w", "%o")
 
 	case .Union:
 		emit_format_union(e, under, address)
@@ -778,34 +774,6 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 		emit_format_call(e, sym.type, slot)
 	}
 	emit_format_literal(e, "}")
-}
-
-// The erased dispatch itself: look the concrete formatter up by `typeid`, which
-// is the only thing an `any_view` carries. A nil or forged id has no formatter,
-// so it prints as nil rather than reading past the table.
-@(private = "file")
-emit_format_dispatch :: proc(e: ^Emitter, data, id: string) {
-	limit := load(e, "i64", FMT_THUNK_COUNT)
-	zero, past, bad := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", zero, id)
-	fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %s", past, id, limit)
-	fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", bad, zero, past)
-	safe := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 0, i64 %s", safe, bad, id)
-	slot, thunk := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %s", slot, FMT_THUNKS, safe)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, slot)
-	missing := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, thunk)
-	none, call, done := new_label(e, "fmt.none"), new_label(e, "fmt.call"), new_label(e, "fmt.done")
-	branch_if(e, missing, none, call)
-	place_label(e, none)
-	emit_format_literal(e, "<nil>")
-	branch(e, done)
-	place_label(e, call)
-	fmt.sbprintfln(&e.b, "  call void %s(ptr %s, ptr %%w, ptr %%o)", thunk, data)
-	branch(e, done)
-	place_label(e, done)
 }
 
 // The four compiler-owned `core:fmt` entry points.

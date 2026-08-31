@@ -84,6 +84,15 @@ fold_arithmetic :: proc(
 		result = bi_xor(storage, x, y)
 	case .Amp_Tilde:
 		result = bi_and_not(storage, x, y)
+	case .Shl, .Shr:
+		// An exact untyped result past this width would need more storage than the
+		// compiler is willing to spend; every runtime type saturates long before it.
+		count, fits := bi_to_u64(storage, y)
+		if !fits || count > 1 << 20 {
+			errorf(c, op_span, "L0356", "shift count %s is too large to fold", bi_text(storage, y))
+			return Const_Value{}, false
+		}
+		result = op == .Shl ? bi_shl(storage, x, int(count)) : bi_shr(storage, x, int(count))
 	case:
 		errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
 		return Const_Value{}, false

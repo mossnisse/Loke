@@ -223,6 +223,7 @@ main :: proc() {
 	fmt.println(0 in wide);
 
 	inout_slots();
+	distinct_keys();
 }
 
 bump :: proc(n: inout int) { n += 1; }
@@ -359,4 +360,25 @@ lookup_regions :: proc() {
 	drop(m);
 	free_all(arena.allocator());
 	assert(len(held) == 1 && held[0] == 9);
+}
+
+// design.md "Maps": "A different policy wraps the key in a local `distinct`
+// type with its own inherent operations." The pair belongs to the key type, so
+// this one folds pairs of keys together, and a plain `map[u64]` in the same
+// program keeps the built-in policy its own underlying type has.
+Folded :: distinct u64;
+impl Folded {
+	hash :: proc(self, seed: uint) -> uint { return hash(u64(self) / 2, seed); }
+	same :: operator(==) proc(a, b: Folded) -> bool { return u64(a) / 2 == u64(b) / 2; }
+}
+
+distinct_keys :: proc() {
+	folded: map[Folded]int;
+	folded[Folded(2)] = 5;
+	folded[Folded(3)] = 6;
+	plain: map[u64]int;
+	plain[2] = 5;
+	plain[3] = 6;
+	fmt.println(len(folded), folded[Folded(2)]);
+	fmt.println(len(plain), plain[2]);
 }

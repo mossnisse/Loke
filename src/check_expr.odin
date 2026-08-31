@@ -108,7 +108,10 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 			base.is_const = true
 			base.const_value = type_const(denoted)
 		} else {
-			unsupported_construct(k, base.span)
+			// The same answer a written type position gets: a composed type names the
+			// component that failed, and only a shape nothing accounts for falls
+			// through to the milestone guard inside.
+			report_unresolved_type(k, e)
 			base.type = INVALID_TYPE
 		}
 	}
@@ -1819,21 +1822,15 @@ check_shift :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id, left_type, 
 		return
 	}
 
-	count, fits := bi_to_u64(k.c, right.const_value.integer)
-	if !fits || count > 1 << 20 {
-		// An exact untyped result would need more storage than the compiler is
-		// willing to spend; every runtime type saturates long before this.
-		errorf(k.c, expr_span(v.rhs), "L0356", "shift count %s is too large to fold", bi_text(k.c, right.const_value.integer))
+	folded, folded_ok := fold_arithmetic(
+		k.c, v.op, v.op_span, left.const_value, right.const_value, v.type,
+	)
+	if !folded_ok {
 		v.type = INVALID_TYPE
 		return
 	}
-	value := left.const_value.integer
-	shifted := v.op == .Shl ? bi_shl(k.c, value, int(count)) : bi_shr(k.c, value, int(count))
 	v.is_const = true
-	v.const_value = Const_Value {
-		kind    = left.const_value.kind,
-		integer = wrap_to_type(k.c, shifted, v.type),
-	}
+	v.const_value = folded
 }
 
 // The same rule for `a << b` and `a <<= b`: an unsigned typed count, or an
@@ -2462,7 +2459,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	// design.md "Zero values": growth fills the new slots with the element's
 	// zero, and a no-zero element has none to fill them with.
 	#partial switch chosen.container_op {
-	case .Resize, .Try_Resize:
+	case .Resize:
 		require_type_has_zero(
 			k, container_element(k.c, chosen.params[0]), v.span, "growing a container",
 		)
@@ -3469,10 +3466,14 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	// parameter, so the pack is settled before the ordinary positional binding
 	// runs and the written arguments it consumed are no longer separate.
 	if variadic_parameter_index(info) >= 0 {
-		return bind_variadic_arguments(k, v, info, declaration)
+		bound_ok := bind_variadic_arguments(k, v, info, declaration)
+		// A pack changes how the arguments are packed, not whether a `move`
+		// parameter's transfer is written at the call site. A call through a group
+		// asks the same question right after binding the same way.
+		require_argument_ownership(k, v, declaration)
+		return bound_ok
 	}
 	bound := make([]Expr, count, k.c.semantic_allocator)
-	modes := make([]Argument_Mode, count, k.c.semantic_allocator)
 	filled := make([]bool, count, k.c.semantic_allocator)
 	declared := symbol_of(k.c, declaration)
 	ok := true
@@ -3500,14 +3501,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 				ok = false
 				continue
 			}
-			slot = -1
-			target := intern_identifier(k.c, arg.name.text)
-			for symbol_id, position in declared.param_symbols {
-				if symbol := symbol_of(k.c, symbol_id); symbol != nil && symbol.name == target {
-					slot = position
-					break
-				}
-			}
+			slot = parameter_slot_named(k.c, declared, intern_identifier(k.c, arg.name.text))
 			if slot < 0 {
 				errorf(k.c, arg.span, "L0371", "no parameter named `%s`", arg.name.text)
 				ok = false
@@ -3537,7 +3531,6 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 
 		filled[slot] = true
 		append(&order, slot)
-		modes[slot] = arg.mode
 		expected_mode := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
 		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected_mode)
 		bound[slot] = value
@@ -4253,12 +4246,11 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		if !ok {
 			return true
 		}
-		target := merged
-		converted, fits := convert_const(k.c, base.const_value, target, false)
+		converted, fits := convert_const(k.c, base.const_value, merged, false)
 		if !fits {
 			return true
 		}
-		base.type = target
+		base.type = merged
 		base.const_value = converted
 		return true
 	}

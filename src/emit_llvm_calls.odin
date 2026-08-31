@@ -795,13 +795,13 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	staging_cleanup := Deferred{slot = -1}
 	if managed && static_count > 0 {
 		staging, staging_flags, staging_count = temp(e), temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca [%d x %s]", staging, static_count, element_llvm)
-		fmt.sbprintfln(&e.b, "  %s = alloca [%d x i1]", staging_flags, static_count)
+		alloca_named(e, staging, fmt.aprintf("[%d x %s]", static_count, element_llvm))
+		alloca_named(e, staging_flags, fmt.aprintf("[%d x i1]", static_count))
 		fmt.sbprintfln(
 			&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
 			staging_flags, static_count,
 		)
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", staging_count)
+		alloca_named(e, staging_count, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %d, ptr %s", static_count, staging_count)
 		staging_cleanup = register_variadic_cleanup(e, element, staging, staging_flags, staging_count)
 	}
@@ -849,21 +849,21 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 
 	buffer := temp(e)
 	if len(v.variadic_spreads) == 0 {
-		fmt.sbprintfln(&e.b, "  %s = alloca [%d x %s]", buffer, static_count, element_llvm)
+		alloca_named(e, buffer, fmt.aprintf("[%d x %s]", static_count, element_llvm))
 	} else {
 		limit := u64(max(i64)) / max(type_size(e.c, element), 1)
 		too_large := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp ugt i64 %s, %d", too_large, total, limit)
 		panic_if(e, too_large, "variadic.size", "variadic argument pack is too large")
-		fmt.sbprintfln(&e.b, "  %s = alloca %s, i64 %s", buffer, element_llvm, total)
+		alloca_count(e, buffer, element_llvm, total)
 	}
 	final_flags, final_count := "", ""
 	cleanup := Deferred{slot = -1}
 	if managed {
 		final_flags, final_count = temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca i1, i64 %s", final_flags, total)
+		alloca_count(e, final_flags, "i1", total)
 		fmt.sbprintfln(&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %s, i1 false)", final_flags, total)
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", final_count)
+		alloca_named(e, final_count, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", total, final_count)
 		cleanup = register_variadic_cleanup(e, element, buffer, final_flags, final_count)
 	}
@@ -872,7 +872,7 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	cursor_slot := ""
 	if managed {
 		cursor_slot = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor_slot)
+		alloca_named(e, cursor_slot, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor_slot)
 	}
 	next_element, next_spread = 0, 0

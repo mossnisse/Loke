@@ -991,7 +991,7 @@ ends_with_brace :: proc(e: Expr) -> bool {
 parse_block :: proc(p: ^Parser) -> (^Block, bool) {
 	start := current(p)
 	attributes := parse_attributes(p)
-	open, ok := expect(p, .Lbrace, "L0213", "`{` to open a block")
+	_, ok := expect(p, .Lbrace, "L0213", "`{` to open a block")
 	if !ok {
 		return nil, false
 	}

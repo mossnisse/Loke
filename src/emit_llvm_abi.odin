@@ -318,7 +318,9 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 	if info == nil {
 		return "i64"
 	}
-	#partial switch info.kind {
+	// Exhaustive on purpose: `i64` is a plausible-looking wrong width, so a new
+	// `Type_Kind` has to choose a spelling here rather than inherit one.
+	switch info.kind {
 	case .Void:
 		return "void"
 	case .Bool:
@@ -328,9 +330,11 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		return "i1"
 	case .Int, .Enum, .Allocator_Error:
 		return fmt.aprintf("i%d", type_bits(e.c, under))
-	case .Typeid:
+	case .Typeid, .Type:
 		// design.md: an ordinary runtime scalar holding one concrete type's unique
-		// identifier. Zero is nil.
+		// identifier. Zero is nil. A compile-time `type` borrows the spelling: it
+		// reaches the backend only as the `type` member of a `meta.Field`
+		// descriptor, whose values are all folded before anything is emitted.
 		return "i64"
 	case .Rune:
 		return "i32"
@@ -360,6 +364,13 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 	case .Struct, .Union, .Any_View, .Dyn, .Slice:
 		// A two-word erased view or slice is an ordinary aggregate to the backend.
 		return struct_name(e, under)
+	case .Invalid, .Distinct, .Interface,
+	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
+	     .Untyped_String:
+		// `type_underlying` has already resolved a `distinct` and `default_type`
+		// every untyped constant, so arriving here means a compile-time-only type
+		// escaped the checker. Say which one instead of picking a width for it.
+		backend_fail(e, fmt.aprintf("`%s` has no backend representation", type_name(e.c, type)))
 	}
 	return "i64"
 }
@@ -627,7 +638,7 @@ emit_foreign_param_slot :: proc(e: ^Emitter, parameter: Type_Id, index: int) -> 
 		return arg
 	case .Reg_Int:
 		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+		alloca_named(e, slot, llvm_type(e, parameter))
 		fmt.sbprintfln(
 			&e.b, "  store i%d %s, ptr %s, align %d",
 			abi_reg_bits(e.c, parameter), arg, slot, type_align(e.c, parameter),
@@ -635,7 +646,7 @@ emit_foreign_param_slot :: proc(e: ^Emitter, parameter: Type_Id, index: int) -> 
 		return slot
 	case .Bool_I1, .Direct:
 		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+		alloca_named(e, slot, llvm_type(e, parameter))
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, parameter), arg, slot)
 		return slot
 	}
@@ -712,7 +723,7 @@ emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> st
 		case .Reg_Int:
 			slot, loaded := temp(e), temp(e)
 			bits, align := abi_reg_bits(e.c, under), type_align(e.c, under)
-			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, under))
+			alloca_named(e, slot, llvm_type(e, under))
 			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, under), operand, slot, align)
 			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
 			return fmt.aprintf("i%d %s", bits, loaded)
@@ -796,7 +807,7 @@ emit_foreign_call :: proc(
 			switch abi_pass(e.c, result_type) {
 			case .Indirect:
 				sret = temp(e)
-				fmt.sbprintfln(&e.b, "  %s = alloca %s", sret, llvm_type(e, result_type))
+				alloca_named(e, sret, llvm_type(e, result_type))
 			case .Reg_Int:
 				ret = fmt.aprintf("i%d", abi_reg_bits(e.c, result_type))
 			case .Bool_I1:
@@ -842,7 +853,7 @@ emit_foreign_call :: proc(
 		case .Reg_Int:
 			slot, loaded := temp(e), temp(e)
 			bits, align := abi_reg_bits(e.c, parameter), type_align(e.c, parameter)
-			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+			alloca_named(e, slot, llvm_type(e, parameter))
 			fmt.sbprintfln(&e.b, "  store %s %s, ptr %s, align %d", llvm_type(e, parameter), operand, slot, align)
 			fmt.sbprintfln(&e.b, "  %s = load i%d, ptr %s, align %d", loaded, bits, slot, align)
 			append(&args, fmt.aprintf("i%d %s", bits, loaded))
@@ -891,7 +902,7 @@ emit_foreign_call :: proc(
 	case .Reg_Int:
 		slot, v := temp(e), temp(e)
 		align := type_align(e.c, result_type)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, result_type))
+		alloca_named(e, slot, llvm_type(e, result_type))
 		fmt.sbprintfln(&e.b, "  store i%d %s, ptr %s, align %d", abi_reg_bits(e.c, result_type), call, slot, align)
 		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s, align %d", v, llvm_type(e, result_type), slot, align)
 		single[0] = v

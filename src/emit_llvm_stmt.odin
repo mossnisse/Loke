@@ -292,7 +292,7 @@ emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		}
 		addresses[index] = emit_address(e, target)
 	}
-	for target, index in s.lhs {
+	for _, index in s.lhs {
 		if index >= len(plan.retained) || !plan.retained[index] || addresses[index] == "" {
 			continue
 		}
@@ -314,7 +314,7 @@ declare_local :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 		return ""
 	}
 	name := fmt.aprintf("%%%s.%d", identifier_text(e.c, sym.name), next_id(e))
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", name, llvm_type(e, sym.type))
+	alloca_named(e, name, llvm_type(e, sym.type))
 	bind_local(e, symbol_id, name)
 	return name
 }
@@ -400,7 +400,7 @@ emit_replace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: st
 		place_label(e, skip)
 	}
 	// The place holds a value again from here.
-	if ident, is_ident := target.(^Expr_Ident); is_ident && flag != "" {
+	if _, is_ident := target.(^Expr_Ident); is_ident && flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
 	}
 }
@@ -654,13 +654,13 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		matched := ""
 		entry := s.cases[case_index]
 		count := erased ? len(entry.values) : len(entry.variant_indices)
-		for position in 0 ..< count {
+		for value_index in 0 ..< count {
 			test := temp(e)
 			discriminant := u64(0)
 			if erased {
-				discriminant = typeid_value(e.c, expr_base(entry.values[position]).denoted_type)
+				discriminant = typeid_value(e.c, expr_base(entry.values[value_index]).denoted_type)
 			} else {
-				discriminant = u64(entry.variant_indices[position])
+				discriminant = u64(entry.variant_indices[value_index])
 			}
 			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", test, tag_llvm, tag, discriminant)
 			if matched == "" {
@@ -703,7 +703,7 @@ emit_type_case_binding :: proc(e: ^Emitter, entry: Switch_Case, union_type: Type
 		return
 	}
 	binding := fmt.aprintf("%%bind.%d", next_id(e))
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", binding, llvm_type(e, entry.binding_type))
+	alloca_named(e, binding, llvm_type(e, entry.binding_type))
 	bind_local(e, entry.binding_symbol, binding)
 	if erased {
 		if entry.binding_type == union_type {

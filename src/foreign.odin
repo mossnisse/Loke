@@ -22,7 +22,6 @@ foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> s
 // The block supplies the visibility default and the calling convention default;
 // a member's own attribute or written convention overrides either.
 declare_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
-	library := block.library.text
 	convention := foreign_default_convention(k, block)
 	block_public, block_sets_visibility := foreign_block_visibility(k, block)
 

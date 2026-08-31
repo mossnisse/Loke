@@ -604,7 +604,13 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 			resolve_operator_declaration(k, d, value)
 		}
 	case ^Type_Distinct:
+		before := k.c.error_count
 		underlying := resolve_type_syntax(k, value.elem)
+		// The identity is fresh but the representation is the underlying type's, so
+		// an underlying type that did not resolve is what is wrong here.
+		if value.elem != nil && underlying == INVALID_TYPE && k.c.error_count == before {
+			report_unresolved_type(k, value.elem)
+		}
 		if info := type_of(k.c, symbol.type); info != nil {
 			info.element = underlying
 		}
@@ -1351,7 +1357,14 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		// Anonymous distinct syntax is still a fresh identity. A named distinct
 		// declaration receives its shell in phase 2a.
 		if value.denoted_type == INVALID_TYPE {
-			value.denoted_type = new_type(k.c, Type_Info{kind = .Distinct, element = resolve_type_syntax(k, value.elem)})
+			before := k.c.error_count
+			element := resolve_type_syntax(k, value.elem)
+			// The fresh identity resolves whatever the underlying type does not, so an
+			// underlying type that failed would otherwise travel inside a valid shell.
+			if value.elem != nil && element == INVALID_TYPE && k.c.error_count == before {
+				report_unresolved_type(k, value.elem)
+			}
+			value.denoted_type = new_type(k.c, Type_Info{kind = .Distinct, element = element})
 		}
 		value.resolution.kind = .Type
 		return value.denoted_type
@@ -1394,6 +1407,14 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			// a value of this type keeps it through an indirect call.
 			marked := has_attribute(parameter.attributes, "allocator_reset")
 			count := max(len(parameter.names), 1)
+			// A written parameter type that did not resolve is what is wrong with the
+			// procedure type. Said once here, ahead of the per-name loop, because the
+			// interned type carries the failure silently otherwise.
+			before := k.c.error_count
+			if parameter.type != nil && resolve_type_syntax(k, parameter.type) == INVALID_TYPE &&
+			   k.c.error_count == before {
+				report_unresolved_type(k, parameter.type)
+			}
 			for _ in 0 ..< count {
 				resolved := resolve_type_syntax(k, parameter.type)
 				if marked && type_underlying(k.c, resolved) != TYPE_ALLOCATOR {
@@ -1420,7 +1441,11 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		result_type := INVALID_TYPE
 		result_inout := false
 		if result := value.result; result != nil {
+			before := k.c.error_count
 			result_type = resolve_type_syntax(k, result.type)
+			if result.type != nil && result_type == INVALID_TYPE && k.c.error_count == before {
+				report_unresolved_type(k, result.type)
+			}
 			result_inout = result.is_inout
 		}
 		if validate_convention(k, value.convention, value.span) &&
@@ -1611,6 +1636,15 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 		errorf(k.c, ident.span, "L0306", "unknown type `%s`", ident.name)
 		return
 	}
+	// A composed type is unresolved because a component of it is. Recurse into
+	// the component that failed, so the answer names it rather than the shape
+	// written around it. `resolve_type_syntax` is the probe it is documented to
+	// be here: it reports nothing, so asking it twice costs a diagnostic nothing.
+	component := unresolved_component(k, syntax)
+	if component != nil {
+		report_unresolved_type(k, component)
+		return
+	}
 	if poly, is_poly := syntax.(^Type_Poly); is_poly {
 		errorf(k.c, poly.span, "L0437", "`$%s` is not bound here", poly.name.text)
 		return
@@ -1628,6 +1662,34 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 		}
 	}
 	unsupported_construct(k, expr_span(syntax))
+}
+
+// The written component of a composed type that did not resolve, or nil when
+// the shape itself is what is unaccounted for. An array's length is an
+// expression rather than a type and is diagnosed where it is checked.
+@(private = "file")
+unresolved_component :: proc(k: ^Checker, syntax: Expr) -> Expr {
+	failed :: proc(k: ^Checker, part: Expr) -> bool {
+		return part != nil && resolve_type_syntax(k, part) == INVALID_TYPE
+	}
+	#partial switch value in syntax {
+	case ^Type_Pointer:
+		if failed(k, value.elem) { return value.elem }
+	case ^Type_Multi_Pointer:
+		if failed(k, value.elem) { return value.elem }
+	case ^Type_Slice:
+		if failed(k, value.elem) { return value.elem }
+	case ^Type_Dynamic_Array:
+		if failed(k, value.elem) { return value.elem }
+	case ^Type_Array:
+		if failed(k, value.elem) { return value.elem }
+	case ^Type_Distinct:
+		if failed(k, value.elem) { return value.elem }
+	case ^Type_Map:
+		if failed(k, value.key) { return value.key }
+		if failed(k, value.value) { return value.value }
+	}
+	return nil
 }
 
 // design.md specifies `Simd(T, N)` and reserves it in the public `Type_Kind`,

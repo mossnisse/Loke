@@ -1,6 +1,9 @@
 L0586
-@27:2
+@35:2
 `Bare` cannot be a map key: it needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package
 L0586
-@28:2
+@36:2
 `Half` cannot be a map key: it has an inherent `hash` but no inherent `==`
+L0586
+@37:2
+`Folded` cannot be a map key: it has an inherent `hash` but no inherent `==`

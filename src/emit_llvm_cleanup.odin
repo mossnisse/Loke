@@ -283,10 +283,7 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 	}
 	// `{` is a directive to core:fmt, so the record type is written literally.
 	FRAME :: "{ ptr, ptr, ptr }"
-	fmt.sbprint(&e.b, "  ")
-	fmt.sbprint(&e.b, u.frame)
-	fmt.sbprint(&e.b, " = alloca ")
-	fmt.sbprintln(&e.b, FRAME)
+	alloca_named(e, u.frame, FRAME)
 	fmt.sbprint(&e.b, "  store ")
 	fmt.sbprint(&e.b, FRAME)
 	fmt.sbprint(&e.b, " zeroinitializer, ptr ")
@@ -299,13 +296,13 @@ emit_unwind_prologue :: proc(e: ^Emitter) {
 	// A procedure with locals but no cleanup still published their addresses, so
 	// the env exists even where the live array would be empty. LLVM drops both
 	// when nothing reads them.
-	fmt.sbprintfln(&e.b, "  %s = alloca [%d x i1]", u.live, max(len(u.actions), 1))
+	alloca_named(e, u.live, fmt.aprintf("[%d x i1]", max(len(u.actions), 1)))
 	fmt.sbprintfln(
 		&e.b, "  call void @llvm.memset.p0.i64(ptr %s, i8 0, i64 %d, i1 false)",
 		u.live, max(len(u.actions), 1),
 	)
-	fmt.sbprintfln(&e.b, "  %s = alloca [%d x ptr]", u.env, max(u.env_count, 1))
-	fmt.sbprintfln(&e.b, "  %s = alloca [2 x ptr]", u.ctx)
+	alloca_named(e, u.env, fmt.aprintf("[%d x ptr]", max(u.env_count, 1)))
+	alloca_named(e, u.ctx, "[2 x ptr]")
 	if len(u.actions) == 0 {
 		return
 	}
@@ -337,11 +334,16 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	if len(u.actions) == 0 {
 		return
 	}
+	// The one nested function that does not go through `begin_function_emission`:
+	// it replays *this* frame's actions and re-emits the parent's own `defer`
+	// statements, so it needs the enclosing procedure's unwind state and result
+	// slot rather than a cleared set. Only the three it really owns are swapped.
 	saved_body, saved_terminated := e.b, e.terminated
-	saved_cleanups := e.cleanups
+	saved_cleanups, saved_prologue := e.cleanups, e.prologue
 	e.b = strings.builder_make()
 	e.terminated = false
 	e.cleanups = make([dynamic]Cleanup_Scope)
+	e.prologue = nil
 	u.replaying = true
 
 	fmt.sbprintf(&e.b, "define private void %s(ptr %%ctx)", u.thunk)
@@ -403,9 +405,10 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	for binding, index in u.env_bindings {
 		e.names[binding.symbol] = saved_names[index]
 	}
-	append(&e.pending, hoist_fixed_allocas(strings.to_string(e.b)))
+	append(&e.pending, splice_prologue(strings.to_string(e.b), e.prologue[:]))
 	u.replaying = false
 	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
+	e.prologue = saved_prologue
 }
 
 // Registers a partially constructed compiler-owned value for panic replay. It
@@ -844,7 +847,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	self := alloca(e, value_type)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", out, value_type)
+	alloca_named(e, out, value_type)
 	// Every hook must handle the inert zero value (design.md), and a cleanup that
 	// runs before a part is written must see that zero rather than garbage.
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, out)
@@ -993,7 +996,6 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // operation owns partial-copy cleanup; only a complete result is published.
 @(private = "file")
 emit_clone_with_policy :: proc(e: ^Emitter, subject: Type_Id, value, allocator: string) -> string {
-	value_type := llvm_type(e, subject)
 	hook := emit_lifecycle(e, subject).try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a policy-following copy has no `try_clone` operation")

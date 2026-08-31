@@ -747,17 +747,25 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	}
 }
 
+// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
+// whole statement — its condition, body, and post all see it, nothing after
+// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this is
+// the same boundary the emitter drops the local at.
+//
+// The caller pairs this with `defer leave_flow_scope(graph)`, which has to sit
+// in the caller's own scope to close over the whole statement.
+@(private = "file")
+enter_flow_header_scope :: proc(graph: ^Flow_Graph, init: Stmt) {
+	enter_flow_scope(graph)
+	if init != nil {
+		walk_flow_stmt(graph, init, extend = true)
+	}
+}
+
 @(private = "file")
 walk_flow_if :: proc(graph: ^Flow_Graph, s: ^Stmt_If) {
-	// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
-	// whole statement — its condition, body, and post all see it, nothing after
-	// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this
-	// is the same boundary the emitter drops the local at.
-	enter_flow_scope(graph)
+	enter_flow_header_scope(graph, s.init)
 	defer leave_flow_scope(graph)
-	if s.init != nil {
-		walk_flow_stmt(graph, s.init, extend = true)
-	}
 	walk_flow_expr(graph, s.cond)
 	entry := graph.current
 	merge := new_flow_block(graph)
@@ -779,15 +787,8 @@ walk_flow_if :: proc(graph: ^Flow_Graph, s: ^Stmt_If) {
 
 @(private = "file")
 walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
-	// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
-	// whole statement — its condition, body, and post all see it, nothing after
-	// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this
-	// is the same boundary the emitter drops the local at.
-	enter_flow_scope(graph)
+	enter_flow_header_scope(graph, s.init)
 	defer leave_flow_scope(graph)
-	if s.init != nil {
-		walk_flow_stmt(graph, s.init, extend = true)
-	}
 	head := new_flow_block(graph)
 	link(graph, graph.current, head)
 	graph.current = head
@@ -864,15 +865,8 @@ walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_
 
 @(private = "file")
 walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
-	// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
-	// whole statement — its condition, body, and post all see it, nothing after
-	// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this
-	// is the same boundary the emitter drops the local at.
-	enter_flow_scope(graph)
+	enter_flow_header_scope(graph, s.init)
 	defer leave_flow_scope(graph)
-	if s.init != nil {
-		walk_flow_stmt(graph, s.init, extend = true)
-	}
 	subject: []int
 	if s.subject != nil {
 		subject = walk_flow_expr(graph, s.subject)
@@ -1653,9 +1647,8 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 		return 0, false
 	}
 	if !type_is_carrier(graph.k.c, sym.type) {
-		// It may still carry a borrow inside it. That is step 5's slot to
-		// allocate; step 4 only measures what it will cost.
-		prov_stats_note_aggregate(graph.k.c, id, sym.type)
+		// It may still carry a borrow inside it; that is a content slot, not one
+		// of these.
 		return 0, false
 	}
 	if sym.kind != .Var && sym.kind != .Parameter {
@@ -4087,7 +4080,7 @@ prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
 @(private = "file")
 prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_Op, actuals: [][]int) {
 	#partial switch op {
-	case .Append, .Try_Append, .Insert, .Try_Insert, .Map_Try_Insert, .Clear, .Map_Clear:
+	case .Append, .Insert, .Map_Try_Insert, .Clear, .Map_Clear:
 	case:
 		return
 	}
@@ -4113,11 +4106,11 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	}
 	stored: []int
 	#partial switch op {
-	case .Append, .Try_Append:
+	case .Append:
 		if type_carries_borrow(graph.k.c, info.element).any && len(actuals) > 1 {
 			stored = actuals[1]
 		}
-	case .Insert, .Try_Insert:
+	case .Insert:
 		if type_carries_borrow(graph.k.c, info.element).any && len(actuals) > 2 {
 			stored = actuals[2]
 		}

@@ -11,6 +11,7 @@
 // structure orders what survives, and constraints never rank.
 package lokec
 
+import "core:slice"
 import "core:fmt"
 import "core:strings"
 
@@ -116,17 +117,11 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 			errorf(k.c, name.span, "L0393", "`%s` is not a procedure, so it cannot be a group member", name.text)
 			continue
 		}
-		duplicate := false
-		for existing in members {
-			if existing == member {
-				errorf(k.c, name.span, "L0394", "`%s` is already a member of this group", name.text)
-				duplicate = true
-				break
-			}
+		if slice.contains(members[:], member) {
+			errorf(k.c, name.span, "L0394", "`%s` is already a member of this group", name.text)
+			continue
 		}
-		if !duplicate {
-			append(&members, member)
-		}
+		append(&members, member)
 	}
 	if group := symbol_of(k.c, group_id); group != nil {
 		group.members = members[:]
@@ -388,13 +383,7 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		slot := index
 		if arg.name != INVALID_IDENTIFIER {
 			named = true
-			slot = -1
-			for binding, position in sym.param_symbols {
-				if symbol := symbol_of(k.c, binding); symbol != nil && symbol.name == arg.name {
-					slot = position
-					break
-				}
-			}
+			slot = parameter_slot_named(k.c, sym, arg.name)
 			if slot < 0 {
 				cand.reason = fmt.aprintf(
 					"it has no parameter named `%s`",

@@ -40,6 +40,28 @@ consume :: proc(values: ..Res) {
 	fmt.println(values[0].id + values[1].id);
 }
 
+// A `move` parameter ahead of a pack. The transfer is written at the call
+// site exactly as it is without one, and the callee owns the only copy: the
+// value is destroyed once, inside `hand_over`, and not again in `main`.
+hand_over :: proc(value: move Res, counts: ..int) {
+	fmt.println(value.id + len(counts));
+}
+
+// design.md "Named arguments": a name reaches a fixed parameter — there is no
+// way to name a pack element, so a name means the pack is empty. The written
+// order is still the evaluation order.
+labelled :: proc(a: int, b: int, nums: ..int) -> int {
+	return a * 100 + b * 10 + len(nums);
+}
+loud :: proc(n: int) -> int { fmt.println(n); return n; }
+// The same name through a group and through method syntax, where the receiver
+// occupies slot 0 and is not one of the written arguments.
+labelled_f :: proc(a: f64, nums: ..f64) -> int { return int(a) * 1000 + len(nums); }
+either :: proc { labelled, labelled_f };
+impl Res {
+	tally :: proc(self, a: int, nums: ..int) -> int { return self.id + a * 10 + len(nums); }
+}
+
 main :: proc() {
 	fmt.println(sum());
 	fmt.println(sum(1, 2));
@@ -69,4 +91,18 @@ main :: proc() {
 	consume(resource, Res{2});
 	pair := [?]Res{Res{3}, Res{4}};
 	consume(Res{5}, ..pair[:]);
+
+	handed := Res{6};
+	hand_over(move(handed), 1, 2);
+	fmt.println(99);
+
+	fmt.println(labelled(1, 2, 3, 4));
+	fmt.println(labelled(1, b = 2));
+	fmt.println(labelled(b = 2, a = 1));
+	fmt.println(labelled(b = loud(7), a = loud(8)));
+	fmt.println(either(a = 1, b = 2));
+	fmt.println(either(a = 2.0));
+	counter := Res{20};
+	fmt.println(counter.tally(a = 3));
+	drop(counter);
 }

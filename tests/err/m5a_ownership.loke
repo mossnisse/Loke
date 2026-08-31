@@ -96,4 +96,13 @@ main :: proc() {
 		drop(d);
 	}
 	fmt.println(d.id);
+
+	// A variadic pack changes how the arguments are packed, not whether the
+	// transfer is written.
+	o := Res{17};
+	fmt.println(take_all(o, 1, 2));
+}
+
+take_all :: proc(value: move Res, counts: ..int) -> int {
+	return value.id + len(counts);
 }

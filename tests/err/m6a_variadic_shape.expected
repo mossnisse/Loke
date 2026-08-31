@@ -8,5 +8,20 @@ L0462
 L0462
 @17:1
 L0574
-@24:18
+@28:18
 `..` spreads a `[]int`, found `[]u8`
+L0371
+@30:30
+no parameter named `missing`
+L0371
+@31:26
+`a` is given twice
+L0372
+@32:37
+a positional argument cannot follow a named one
+L0371
+@34:20
+a call through a procedure value cannot use named arguments
+L0371
+@34:27
+a call through a procedure value cannot use named arguments

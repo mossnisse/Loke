@@ -287,42 +287,33 @@ assembly_temporaries_include_the_source_identity :: proc(t: ^testing.T) {
 	testing.expectf(t, first == again, "one Windows source path produced %q and %q", first, again)
 }
 
+// A fixed-size `alloca` reaches the entry block however deep in the body it was
+// asked for; a runtime-sized pack stays where its element count exists.
 @(test)
-fixed_allocas_are_hoisted_per_function :: proc(t: ^testing.T) {
-	module :=
-		"define void @first(i64 %n, i32 %m) {\n" +
+fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
+	body :=
+		"define void @first(i64 %n) {\n" +
 		"entry:\n" +
 		"  br label %loop\n" +
 		"loop:\n" +
-		"  %pair = alloca { i64, i64 }\n" +
-		"  %named = alloca %Thing, align 8\n" +
 		"  %pack = alloca i8, i64 %n\n" +
-		"  %pack32 = alloca i8, i32 %m\n" +
 		"  br label %loop\n" +
-		"}\n" +
-		"define void @empty() { ret void }\n" +
-		"define void @second() {\n" +
-		"entry:\n" +
-		"  %byte = alloca i8\n" +
-		"  ret void\n" +
 		"}\n"
 	expected :=
-		"define void @first(i64 %n, i32 %m) {\n" +
+		"define void @first(i64 %n) {\n" +
 		"entry:\n" +
 		"  %pair = alloca { i64, i64 }\n" +
-		"  %named = alloca %Thing, align 8\n" +
+		"  %byte = alloca i8\n" +
 		"  br label %loop\n" +
 		"loop:\n" +
 		"  %pack = alloca i8, i64 %n\n" +
-		"  %pack32 = alloca i8, i32 %m\n" +
 		"  br label %loop\n" +
-		"}\n" +
-		"define void @empty() { ret void }\n" +
-		"define void @second() {\n" +
-		"entry:\n" +
-		"  %byte = alloca i8\n" +
-		"  ret void\n" +
 		"}\n"
-	actual := hoist_fixed_allocas(module)
-	testing.expectf(t, actual == expected, "unexpected alloca hoist:\n%s", actual)
+	actual := splice_prologue(body, {"  %pair = alloca { i64, i64 }", "  %byte = alloca i8"})
+	testing.expectf(t, actual == expected, "unexpected prologue splice:\n%s", actual)
+
+	// Nothing to place, and nowhere to place it, both leave the text alone.
+	testing.expect(t, splice_prologue(body, nil) == body)
+	orphan := "declare void @outside()\n"
+	testing.expect(t, splice_prologue(orphan, {"  %x = alloca i8"}) == orphan)
 }

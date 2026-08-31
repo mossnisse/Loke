@@ -564,11 +564,16 @@ bind_variadic_arguments :: proc(
 	declared := symbol_of(k.c, declaration)
 	ok := true
 
+	// design.md "Argument evaluation": a written argument runs where it is
+	// written. Recorded only when a name reorders the fixed parameters, which is
+	// the one case where written order and slot order can disagree here.
+	slot_order := make([dynamic]int, 0, pack + 1, k.c.semantic_allocator)
 	// The fixed parameters, positionally. design.md gives no way to name one past
-	// a variadic, so a named argument here would have to name a fixed one.
+	// a variadic, so a named argument here names a fixed one.
 	first := 0
 	if receiver != nil {
 		bound[0] = receiver
+		append(&slot_order, 0)
 		first = 1
 	}
 	fixed := 0
@@ -581,10 +586,57 @@ bind_variadic_arguments :: proc(
 		expected := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
 		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected, prechecked)
 		bound[slot] = value
+		append(&slot_order, slot)
 		ok = ok && passed
 		fixed += 1
 	}
-	for index in first + fixed ..< pack {
+	// design.md "Named arguments": positional arguments come before named ones,
+	// and no argument can name a pack element — so once a name appears every
+	// remaining argument names a fixed parameter and the pack is empty. A name
+	// cannot skip a fixed slot either: the positional arguments ahead of it
+	// filled the slots to its left, or there would be no fixed slot left to name.
+	named := 0
+	for fixed + named < len(v.args) && v.args[fixed + named].name.text != "" {
+		arg := v.args[fixed + named]
+		named += 1
+		if declared == nil {
+			errorf(k.c, arg.span, "L0371", "a call through a procedure value cannot use named arguments")
+			ok = false
+			continue
+		}
+		// A name reaches a fixed parameter, never a pack element, so the search
+		// stops at the pack.
+		slot := parameter_slot_named(k.c, declared, intern_identifier(k.c, arg.name.text), pack)
+		if slot < 0 {
+			errorf(k.c, arg.span, "L0371", "no parameter named `%s`", arg.name.text)
+			ok = false
+			continue
+		}
+		if bound[slot] != nil {
+			errorf(k.c, arg.span, "L0371", "`%s` is given twice", arg.name.text)
+			ok = false
+			continue
+		}
+		expected := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
+		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected, prechecked)
+		bound[slot] = value
+		append(&slot_order, slot)
+		ok = ok && passed
+	}
+	if named > 0 && fixed + named < len(v.args) {
+		errorf(k.c, v.args[fixed + named].span, "L0372", "a positional argument cannot follow a named one")
+		return false
+	}
+	append(&slot_order, pack)
+	for index in first ..< pack {
+		if bound[index] != nil {
+			continue
+		}
+		if !ok {
+			// An argument already failed, so the slot it should have filled is not a
+			// second mistake to report.
+			return false
+		}
 		if declared == nil || index >= len(declared.param_defaults) || declared.param_defaults[index] == nil {
 			errorf(
 				k.c, v.span, "L0322",
@@ -594,9 +646,13 @@ bind_variadic_arguments :: proc(
 			return false
 		}
 		bound[index] = substitute_caller_location(k, declared.param_defaults[index], v.span)
+		append(&slot_order, index)
+	}
+	if named > 0 {
+		v.bound_order = slot_order[:]
 	}
 
-	rest := v.args[fixed:]
+	rest := v.args[fixed + named:]
 	// One spread and nothing else: forward the slice itself.
 	if len(rest) == 1 && rest[0].mode == .Spread {
 		spread, passed := check_spread_argument(k, rest[0], info.parameters[pack], prechecked)
@@ -651,6 +707,27 @@ bind_variadic_arguments :: proc(
 	v.variadic_order = order[:]
 	v.bound = bound
 	return ok
+}
+
+// design.md "Named arguments": a name reaches a declared parameter by that
+// parameter's own name. Every call form asks it here, so a candidate weighed by
+// overload resolution and the call finally bound cannot disagree about which
+// slot a name means. `limit` stops the search short of a variadic pack, whose
+// elements have no names to reach.
+//
+// -1 when no parameter carries the name, including a call through a procedure
+// value, which has no parameter symbols to carry one.
+parameter_slot_named :: proc(c: ^Compiler, declared: ^Symbol, name: Identifier_Id, limit := -1) -> int {
+	if declared == nil {
+		return -1
+	}
+	stop := limit < 0 ? len(declared.param_symbols) : min(limit, len(declared.param_symbols))
+	for binding, position in declared.param_symbols[:stop] {
+		if symbol := symbol_of(c, binding); symbol != nil && symbol.name == name {
+			return position
+		}
+	}
+	return -1
 }
 
 // Overload resolution checks every written argument once, before it knows which

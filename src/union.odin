@@ -14,24 +14,19 @@
 // those cached facts rather than asking LLVM to infer one.
 package lokec
 
+import "core:slice"
+
 // design.md "Unions": a discriminated union of named variants.
 resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	payloads := make([dynamic]Type_Id, 0, len(value.variants), k.c.semantic_allocator)
 	names := make([dynamic]Identifier_Id, 0, len(value.variants), k.c.semantic_allocator)
 	for variant in value.variants {
 		name := intern_identifier(k.c, variant.name.text)
-		duplicate := false
-		for existing in names {
-			if existing == name {
-				errorf(
-					k.c, variant.span, "L0422",
-					"`%s` is already a variant of this union", variant.name.text,
-				)
-				duplicate = true
-				break
-			}
-		}
-		if duplicate {
+		if slice.contains(names[:], name) {
+			errorf(
+				k.c, variant.span, "L0422",
+				"`%s` is already a variant of this union", variant.name.text,
+			)
 			continue
 		}
 		// A payloadless variant carries `void`, which is zero-sized and inert. It

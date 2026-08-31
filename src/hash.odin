@@ -70,12 +70,18 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 	if key == INVALID_TYPE {
 		return Key_Policy{}, "is not a type"
 	}
-	if type_is_hashable(c, key) {
-		return Key_Policy{kind = .Builtin}, ""
-	}
 	hash := inherent_member_named(c, key, "hash")
 	equal := inherent_operator_named(c, key, "==")
+	// design.md "Maps": "A different policy wraps the key in a local `distinct`
+	// type with its own inherent operations." A key that declares either half of
+	// the pair means that policy, so the built-in catalogue answers only for a key
+	// that declares neither. Asking the catalogue first resolves a `distinct`
+	// scalar through to its underlying type and pairs that type's hash with the
+	// key's own `==`, which is the incoherence this check exists to prevent.
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
+		if type_is_hashable(c, key) {
+			return Key_Policy{kind = .Builtin}, ""
+		}
 		return Key_Policy{}, "needs an inherent `==` and `value.hash(seed: uint) -> uint` pair in its own package"
 	}
 	if hash == INVALID_SYMBOL {
@@ -90,22 +96,27 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 // A missing choice is a broken phase contract, never permission to repeat
 // overload/member lookup or silently substitute structural equality.
 resolved_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> Key_Policy {
-	return c.map_key_policies[type_underlying(c, key)]
+	return c.map_key_policies[key]
 }
 
-// An inherent member of the type's own package, never an extension one. `members`
-// on the type is exactly the inherent set (`src/impl.odin` keeps extensions in
-// the extending package instead), so the lookup is direct.
+// An inherent member of the type's own package, never an extension one and never
+// one the compiler contributed: a synthesized `hash` is the built-in policy
+// itself, and finding it here would make every scalar key look user-defined.
+// `members` on the type is exactly the inherent set (`src/impl.odin` keeps
+// extensions in the extending package instead), and it is read from the key type
+// itself rather than its underlying one, because a `distinct` type does not
+// inherit the underlying type's operations (design.md "Distinct types").
 @(private = "file")
 inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {
-	info := underlying_info(c, type)
+	info := type_of(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
 	wanted := intern_identifier(c, name)
 	for member in info.members {
 		sym := symbol_of(c, member)
-		if sym != nil && sym.name == wanted && sym.kind == .Proc && sym.operator == "" {
+		if sym != nil && sym.name == wanted && sym.kind == .Proc && sym.operator == "" &&
+		   sym.synth == .None {
 			return member
 		}
 	}
@@ -114,13 +125,16 @@ inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symb
 
 @(private = "file")
 inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string) -> Symbol_Id {
-	info := underlying_info(c, type)
+	info := type_of(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
 	for member in info.members {
 		sym := symbol_of(c, member)
-		if sym != nil && sym.operator == symbol_text {
+		// A delegated operator is the underlying type's own operation wrapped, so
+		// it announces no policy of its own: the underlying type's hash is already
+		// its coherent partner (design.md "Delegating operators").
+		if sym != nil && sym.operator == symbol_text && !sym.delegated {
 			return member
 		}
 	}

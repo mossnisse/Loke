@@ -23,8 +23,17 @@ impl Half {
 // that would satisfy an ordinary local query — is `tests/pkg_err/m6b_map_key`,
 // because `extend` on a same-package type is already rejected on its own.
 
+// A `distinct` type does not inherit its underlying type's operations, so
+// declaring one half of the pair on it is the same half-policy as above even
+// when the underlying type is built-in hashable.
+Folded :: distinct u64;
+impl Folded {
+	hash :: proc(self, seed: uint) -> uint { return hash(u64(self) / 2, seed); }
+}
+
 main :: proc() {
 	bare: map[Bare]int;
 	half: map[Half]int;
+	folded: map[Folded]int;
 	fmt.println(1);
 }

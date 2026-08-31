@@ -4,7 +4,6 @@
 package lokec
 
 import "core:fmt"
-import "core:strings"
 
 // ============================================================== iteration ==
 
@@ -198,7 +197,7 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	offset := alloca(e, "i64")
 	decoded := temp(e)
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", offset)
-	fmt.sbprintfln(&e.b, "  %s = alloca i32", decoded)
+	alloca_named(e, decoded, "i32")
 
 	// `indexed()` counts the runes it yields, so its counter lives across
 	// iterations rather than being rebuilt per step.
@@ -363,7 +362,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		written := s.iterable.(^Expr_Range)
 		low := emit_expr(e, written.lo)
 		high := emit_expr(e, written.hi)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", cursor, element)
+		alloca_named(e, cursor, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, low, cursor)
 		limit = high
 		floor = low
@@ -375,7 +374,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		low := extract(e, range_type, value, RANGE_LOW)
 		high := extract(e, range_type, value, RANGE_HIGH)
 		flag := extract(e, range_type, value, RANGE_CLOSED)
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", cursor, element)
+		alloca_named(e, cursor, element)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element, low, cursor)
 		limit = high
 		floor = low
@@ -386,7 +385,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		// rather than a copy.
 		array_slot = spill_iterable(e, s.iterable)
 		counter_type = "i64"
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+		alloca_named(e, cursor, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 		limit = fmt.aprintf("%d", s.count)
 
@@ -399,7 +398,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", array_slot, slice_type, value, SLICE_DATA)
 		length := extract(e, slice_type, value, SLICE_LEN)
 		counter_type = "i64"
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+		alloca_named(e, cursor, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 		limit = length
 
@@ -413,7 +412,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		length_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
 		length := load(e, "i64", length_slot)
 		counter_type = "i64"
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", cursor)
+		alloca_named(e, cursor, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
 		limit = length
 
@@ -434,7 +433,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	index_slot := ""
 	if foreach_is_place_loop(s) && len(s.bindings) == 2 && s.bindings[1].symbol != INVALID_SYMBOL {
 		index_slot = temp(e)
-		fmt.sbprintfln(&e.b, "  %s = alloca i64", index_slot)
+		alloca_named(e, index_slot, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
 		bind_local(e, s.bindings[1].symbol, index_slot)
 	}

@@ -76,6 +76,34 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 	return name
 }
 
+// Every part thunk is the same frame: a private definition with one entry
+// block, whose text is parked because a function cannot be defined inside the
+// one that needed it. Only the signature and the body differ, and each body
+// writes its own `ret`.
+@(private = "file")
+container_thunk :: proc(
+	e: ^Emitter,
+	name: string,
+	part: Type_Id,
+	result, params: string,
+	body: proc(e: ^Emitter, part: Type_Id),
+) -> string {
+	if e.container_thunks[name] {
+		return name
+	}
+	e.container_thunks[name] = true
+	frame := begin_function_emission(e)
+	// `{` is a directive to core:fmt, so the brace is printed separately.
+	fmt.sbprintf(&e.b, "define private %s %s(%s)", result, name, params)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	body(e, part)
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+	finish_pending_thunk(e, frame)
+	return name
+}
+
 // A NULL `drop` means the part is trivially destroyed, which is what keeps the
 // C loop out of the way entirely for a `[dynamic]int`.
 @(private = "file")
@@ -83,25 +111,14 @@ container_drop_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	if part == INVALID_TYPE || !emit_lifecycle(e, part).managed {
 		return "null"
 	}
-	name := fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part)))
-	if e.container_thunks[name] {
-		return name
-	}
-	e.container_thunks[name] = true
-	saved_body, saved_terminated := e.b, e.terminated
-	e.b, e.terminated = strings.builder_make(), false
-	// `{` is a directive to core:fmt, so the brace is printed separately.
-	fmt.sbprintf(&e.b, "define private void %s(ptr %%p)", name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
-	emit_drop_place(e, part, "%p")
-	fmt.sbprintln(&e.b, "  ret void")
-	fmt.sbprintln(&e.b, "}")
-	fmt.sbprintln(&e.b, "")
-	text := hoist_fixed_allocas(strings.to_string(e.b))
-	e.b, e.terminated = saved_body, saved_terminated
-	append(&e.pending_thunks, text)
-	return name
+	return container_thunk(
+		e, fmt.aprintf("@loke.cdrop.%d", int(type_underlying(e.c, part))), part,
+		"void", "ptr %p",
+		proc(e: ^Emitter, part: Type_Id) {
+			emit_drop_place(e, part, "%p")
+			fmt.sbprintln(&e.b, "  ret void")
+		},
+	)
 }
 
 // A NULL `clone` means the part's clone is the copy its representation already
@@ -111,98 +128,72 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	if part == INVALID_TYPE || !emit_lifecycle(e, part).managed {
 		return "null"
 	}
-	name := fmt.aprintf("@loke.cclone.%d", int(type_underlying(e.c, part)))
-	if e.container_thunks[name] {
-		return name
-	}
-	e.container_thunks[name] = true
-	saved_body, saved_terminated := e.b, e.terminated
-	e.b, e.terminated = strings.builder_make(), false
-	fmt.sbprintf(&e.b, "define private i32 %s(ptr %%out, ptr %%src, ptr %%a)", name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
-	ok := emit_try_clone_into(e, part, "%out", "%src", "%a")
-	widened := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", widened, ok)
-	fmt.sbprintfln(&e.b, "  ret i32 %s", widened)
-	fmt.sbprintln(&e.b, "}")
-	fmt.sbprintln(&e.b, "")
-	text := hoist_fixed_allocas(strings.to_string(e.b))
-	e.b, e.terminated = saved_body, saved_terminated
-	append(&e.pending_thunks, text)
-	return name
+	return container_thunk(
+		e, fmt.aprintf("@loke.cclone.%d", int(type_underlying(e.c, part))), part,
+		"i32", "ptr %out, ptr %src, ptr %a",
+		proc(e: ^Emitter, part: Type_Id) {
+			ok := emit_try_clone_into(e, part, "%out", "%src", "%a")
+			widened := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", widened, ok)
+			fmt.sbprintfln(&e.b, "  ret i32 %s", widened)
+		},
+	)
 }
 
 // The concrete operation table *freezes* the key's `==`/`hash` selection, so
 // a map that travels between
 // packages keeps one policy. The checker has already rejected a key with no
 // coherent inherent pair, so this only has to emit whichever pair it settled on.
+//
+// Keyed by the key type itself, not its underlying one: a `distinct` key may
+// carry its own inherent `==`/`hash` pair, so `map[Meters]` and `map[f64]` in one
+// program need two thunks and not whichever was emitted first.
 @(private = "file")
 container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
-	name := fmt.aprintf("@loke.chash.%d", int(type_underlying(e.c, key)))
-	if e.container_thunks[name] {
-		return name
-	}
-	e.container_thunks[name] = true
-	saved_body, saved_terminated := e.b, e.terminated
-	e.b, e.terminated = strings.builder_make(), false
-	fmt.sbprintf(&e.b, "define private i64 %s(ptr %%p, i64 %%seed)", name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
-	value := load(e, llvm_type(e, key), "%p")
-	out := ""
-	if hook := key_policy_member(e, key, false); hook != INVALID_SYMBOL {
-		out = temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i64 %s(%s %s, i64 %%seed)",
-			out, e.names[hook], llvm_type(e, key), value,
-		)
-	} else {
-		out = emit_hash_value(e, key, value, "%seed")
-	}
-	fmt.sbprintfln(&e.b, "  ret i64 %s", out)
-	fmt.sbprintln(&e.b, "}")
-	fmt.sbprintln(&e.b, "")
-	text := hoist_fixed_allocas(strings.to_string(e.b))
-	e.b, e.terminated = saved_body, saved_terminated
-	append(&e.pending_thunks, text)
-	return name
+	return container_thunk(
+		e, fmt.aprintf("@loke.chash.%d", int(key)), key,
+		"i64", "ptr %p, i64 %seed",
+		proc(e: ^Emitter, key: Type_Id) {
+			value := load(e, llvm_type(e, key), "%p")
+			out := ""
+			if hook := key_policy_member(e, key, false); hook != INVALID_SYMBOL {
+				out = temp(e)
+				fmt.sbprintfln(
+					&e.b, "  %s = call i64 %s(%s %s, i64 %%seed)",
+					out, e.names[hook], llvm_type(e, key), value,
+				)
+			} else {
+				out = emit_hash_value(e, key, value, "%seed")
+			}
+			fmt.sbprintfln(&e.b, "  ret i64 %s", out)
+		},
+	)
 }
 
 @(private = "file")
 container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
-	name := fmt.aprintf("@loke.cequal.%d", int(type_underlying(e.c, key)))
-	if e.container_thunks[name] {
-		return name
-	}
-	e.container_thunks[name] = true
-	saved_body, saved_terminated := e.b, e.terminated
-	e.b, e.terminated = strings.builder_make(), false
-	fmt.sbprintf(&e.b, "define private i32 %s(ptr %%a, ptr %%b)", name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
-	llvm := llvm_type(e, key)
-	left := load(e, llvm, "%a")
-	right := load(e, llvm, "%b")
-	same := ""
-	if hook := key_policy_member(e, key, true); hook != INVALID_SYMBOL {
-		same = temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = call i1 %s(%s %s, %s %s)",
-			same, e.names[hook], llvm, left, llvm, right,
-		)
-	} else {
-		same = emit_compare(e, .Eq_Eq, key, left, right)
-	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, same)
-	fmt.sbprintfln(&e.b, "  ret i32 %s", out)
-	fmt.sbprintln(&e.b, "}")
-	fmt.sbprintln(&e.b, "")
-	text := hoist_fixed_allocas(strings.to_string(e.b))
-	e.b, e.terminated = saved_body, saved_terminated
-	append(&e.pending_thunks, text)
-	return name
+	return container_thunk(
+		e, fmt.aprintf("@loke.cequal.%d", int(key)), key,
+		"i32", "ptr %a, ptr %b",
+		proc(e: ^Emitter, key: Type_Id) {
+			llvm := llvm_type(e, key)
+			left := load(e, llvm, "%a")
+			right := load(e, llvm, "%b")
+			same := ""
+			if hook := key_policy_member(e, key, true); hook != INVALID_SYMBOL {
+				same = temp(e)
+				fmt.sbprintfln(
+					&e.b, "  %s = call i1 %s(%s %s, %s %s)",
+					same, e.names[hook], llvm, left, llvm, right,
+				)
+			} else {
+				same = emit_compare(e, .Eq_Eq, key, left, right)
+			}
+			out := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, same)
+			fmt.sbprintfln(&e.b, "  ret i32 %s", out)
+		},
+	)
 }
 
 // The key type's own inherent `hash` or `operator(==)`, or INVALID_SYMBOL when
@@ -530,7 +521,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	status := ""
 	switch symbol.container_op {
-	case .Append, .Try_Append:
+	case .Append:
 		data, count := temp(e), temp(e)
 		pack := llvm_type(e, symbol.params[1])
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg1, %d", data, pack, SLICE_DATA)
@@ -541,7 +532,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			status, ops, data, count,
 		)
 
-	case .Insert, .Try_Insert:
+	case .Insert:
 		slot := value_storage(e, element, "%arg2")
 		status = temp(e)
 		fmt.sbprintfln(
@@ -578,20 +569,20 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintln(&e.b, "}")
 		return
 
-	case .Resize, .Try_Resize:
+	case .Resize:
 		status = temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_resize(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
 		)
 
-	case .Reserve, .Try_Reserve:
+	case .Reserve:
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_dyn_bind(ptr %%arg0)")
 		status = temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_reserve(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
 		)
 
-	case .Shrink, .Try_Shrink:
+	case .Shrink:
 		status = temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
@@ -729,14 +720,14 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintln(&e.b, "}")
 		return
 
-	case .Map_Reserve, .Map_Try_Reserve:
+	case .Map_Reserve:
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_map_bind(ptr %%arg0)")
 		status = temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_map_reserve(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
 		)
 
-	case .Map_Shrink, .Map_Try_Shrink:
+	case .Map_Shrink:
 		status = temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_map_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,

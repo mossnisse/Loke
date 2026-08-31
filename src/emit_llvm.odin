@@ -23,37 +23,13 @@ Emitter :: struct {
 	// (m7-plan step 2, decision "Alignment at use sites").
 	place_align:  map[string]u64,
 
-	// Whether the block being appended to already ends in a terminator. LLVM
-	// rejects both a block without one and an instruction after one.
-	terminated: bool,
+	// Everything that describes the one function currently being written.
+	// `begin_function_emission` saves and clears the whole thing, so a thunk
+	// emitted mid-body cannot inherit any of it.
+	using fn: Function_State,
 
-	// Current procedure. design.md: at most one result; INVALID_TYPE when it has
-	// none, and then `result_slot` is empty.
-	result_type: Type_Id,
-	result_slot: string,
-	// Whether the result was declared `inout`. Such a result is returned as the
-	// address of a place, which is what makes `grid[i] = v` an ordinary store.
-	result_inout: bool,
-	// design.md "Calling conventions": whether the procedure being emitted uses a
-	// foreign convention, so its signature and `ret` follow the Windows x64
-	// classification (m7-plan step 3) rather than LLVM's own aggregate lowering.
-	abi_foreign:  bool,
-	// The hidden `sret` result pointer, when the single result is returned
-	// indirectly. Empty otherwise. The body's result slot aliases it directly.
-	abi_sret:     string,
-	defer_flags:  []string,
-	cleanups:     [dynamic]Cleanup_Scope,
-	break_label:    string,
-	continue_label: string,
-	break_depth:    int,
-	continue_depth: int,
-	// Parameter values already bound at the call site being emitted, so a
-	// default expression that names a parameter to its left reads that value.
-	param_values: map[Symbol_Id]string,
-
-	// The current procedure's panic-cleanup registration, and the functions
-	// generated to replay it. Both are empty under `-panic=abort`.
-	unwind: Unwind_State,
+	// The functions generated to replay panic cleanups. Empty under
+	// `-panic=abort`.
 	pending: [dynamic]string,
 	// Generated formatter thunks, flushed once at the end of the module: each is
 	// a function, and a function cannot be defined inside another.
@@ -155,133 +131,113 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 // Every function emitter writes into an isolated buffer. Finalization applies
 // function-local prologue policy before the bytes reach the module builder, so
 // storage can never leak into the next function even as new emitters are added.
+//
+// A thunk is emitted in the middle of the function that needed it, so the
+// isolation has to cover every field that describes "the function being
+// written" and not just the buffer: an inherited `result_slot`, cleanup scope
+// or loop label would otherwise be the outer function's. Everything listed
+// here is saved, zeroed for the nested function, and put back; anything the
+// module owns, such as `names`, `next` and `globals`, deliberately is not.
 @(private = "file")
 Function_Emission :: struct {
-	parent:            strings.Builder,
-	parent_terminated: bool,
+	parent: strings.Builder,
+	saved:  Function_State,
+}
+
+// The per-function half of `Emitter`, embedded so a field is still written as
+// `e.result_type` and adding one to this struct is all it takes to have it
+// saved and restored.
+@(private)
+Function_State :: struct {
+	// Whether the block being appended to already ends in a terminator. LLVM
+	// rejects both a block without one and an instruction after one.
+	terminated: bool,
+
+	// Current procedure. design.md: at most one result; INVALID_TYPE when it has
+	// none, and then `result_slot` is empty.
+	result_type: Type_Id,
+	result_slot: string,
+	// Whether the result was declared `inout`. Such a result is returned as the
+	// address of a place, which is what makes `grid[i] = v` an ordinary store.
+	result_inout: bool,
+	// design.md "Calling conventions": whether the procedure being emitted uses a
+	// foreign convention, so its signature and `ret` follow the Windows x64
+	// classification (m7-plan step 3) rather than LLVM's own aggregate lowering.
+	abi_foreign: bool,
+	// The hidden `sret` result pointer, when the single result is returned
+	// indirectly. Empty otherwise. The body's result slot aliases it directly.
+	abi_sret:    string,
+	defer_flags: []string,
+	cleanups:    [dynamic]Cleanup_Scope,
+	break_label:    string,
+	continue_label: string,
+	break_depth:    int,
+	continue_depth: int,
+	// Parameter values already bound at the call site being emitted, so a
+	// default expression that names a parameter to its left reads that value.
+	param_values: map[Symbol_Id]string,
+	// The current procedure's panic-cleanup registration.
+	unwind: Unwind_State,
+	// Every fixed-size `alloca` this function asked for, in the order it asked.
+	// LLVM retains an alloca until the function returns, so one left where it was
+	// needed would grow the native stack on every iteration of an enclosing loop
+	// at `-opt=none`. They are spliced into the entry block on the way out.
+	prologue: [dynamic]string,
 }
 
 @(private)
 begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
-	state := Function_Emission{parent = e.b, parent_terminated = e.terminated}
+	state := Function_Emission{parent = e.b, saved = e.fn}
 	e.b = strings.builder_make()
-	e.terminated = false
+	e.fn = {}
+	e.result_type = INVALID_TYPE
 	return state
+}
+
+// Ends the isolated emission and hands back the finished function text, which
+// the caller places: into the enclosing buffer for an ordinary definition, or
+// into `pending_thunks` for one generated in the middle of another function.
+@(private)
+end_function_emission :: proc(e: ^Emitter, state: Function_Emission) -> string {
+	text := splice_prologue(strings.to_string(e.b), e.prologue[:])
+	e.b = state.parent
+	e.fn = state.saved
+	return text
 }
 
 @(private)
 finish_function_emission :: proc(e: ^Emitter, state: Function_Emission) {
-	text := hoist_fixed_allocas(strings.to_string(e.b))
-	e.b = state.parent
-	e.terminated = state.parent_terminated
-	strings.write_string(&e.b, text)
+	strings.write_string(&e.b, end_function_emission(e, state))
 }
 
-// Moves every fixed-size `alloca` to the entry block of the function that owns
-// it. LLVM retains an alloca until the function returns, so leaving one in a
-// loop grows the native stack on every iteration at `-opt=none`. Runtime-sized
-// variadic packs remain at their use: their element count is an SSA value that
-// does not exist at function entry.
-hoist_fixed_allocas :: proc(module: string) -> string {
-	// Generated modules end in one newline. Remove it before `split_lines` so
-	// writing each logical line once does not manufacture a second blank line.
-	lines := strings.split_lines(strings.trim_suffix(module, "\n"))
+// A function cannot be defined inside another, so a thunk generated while a
+// body is being written is parked and flushed once at the end of the module.
+@(private)
+finish_pending_thunk :: proc(e: ^Emitter, state: Function_Emission) {
+	append(&e.pending_thunks, end_function_emission(e, state))
+}
+
+// Places the collected `alloca` lines immediately after the function's entry
+// label, which is the only point at which every one of them is known.
+@(private)
+splice_prologue :: proc(body: string, prologue: []string) -> string {
+	if len(prologue) == 0 {
+		return body
+	}
+	ENTRY :: "\nentry:\n"
+	at := strings.index(body, ENTRY)
+	if at < 0 {
+		// No entry block to hold them. Hand the text to LLVM for its own
+		// diagnostic rather than silently dropping a function's storage.
+		return body
+	}
 	out := strings.builder_make()
-	function := make([dynamic]string, context.temp_allocator)
-	in_function := false
-
-	for line in lines {
-		trimmed := strings.trim_space(line)
-		if !in_function {
-			// The runtime's no-op TLS callback is deliberately a one-line function;
-			// it has no body lines (and no allocas) to collect.
-			if strings.has_prefix(line, "define ") && !strings.has_suffix(trimmed, "}") {
-				clear(&function)
-				append(&function, line)
-				in_function = true
-				continue
-			}
-			fmt.sbprintln(&out, line)
-			continue
-		}
-
-		append(&function, line)
-		if trimmed == "}" {
-			emit_function_with_entry_allocas(&out, function[:])
-			in_function = false
-		}
+	strings.write_string(&out, body[:at + len(ENTRY)])
+	for line in prologue {
+		fmt.sbprintln(&out, line)
 	}
-
-	// Malformed generated IR is still handed to LLVM for its normal diagnostic;
-	// this seam must not silently discard a partial definition.
-	if in_function {
-		for line in function {
-			fmt.sbprintln(&out, line)
-		}
-	}
+	strings.write_string(&out, body[at + len(ENTRY):])
 	return strings.to_string(out)
-}
-
-@(private = "file")
-emit_function_with_entry_allocas :: proc(out: ^strings.Builder, lines: []string) {
-	entry := -1
-	allocas := make([dynamic]string, context.temp_allocator)
-	for line, index in lines {
-		if strings.trim_space(line) == "entry:" {
-			entry = index
-		}
-		if fixed_alloca_line(line) {
-			append(&allocas, line)
-		}
-	}
-	if entry < 0 || len(allocas) == 0 {
-		for line in lines {
-			fmt.sbprintln(out, line)
-		}
-		return
-	}
-
-	for line, index in lines {
-		if fixed_alloca_line(line) {
-			continue
-		}
-		fmt.sbprintln(out, line)
-		if index == entry {
-			for alloca in allocas {
-				fmt.sbprintln(out, alloca)
-			}
-		}
-	}
-}
-
-@(private = "file")
-fixed_alloca_line :: proc(line: string) -> bool {
-	marker := strings.index(line, " = alloca ")
-	if marker < 0 {
-		return false
-	}
-	// Find the optional element-count operand, ignoring commas nested in literal
-	// aggregate and function types. An SSA count cannot be evaluated in the entry
-	// block, regardless of whether LLVM spells its integer type as i32 or i64.
-	tail := line[marker + len(" = alloca "):]
-	depth := 0
-	for ch, index in tail {
-		switch ch {
-		case '[', '{', '<', '(':
-			depth += 1
-		case ']', '}', '>', ')':
-			depth -= 1
-		case ',':
-			if depth == 0 {
-				operand := strings.trim_space(tail[index + 1:])
-				if strings.has_prefix(operand, "align ") {
-					return true
-				}
-				return !strings.contains(operand, "%")
-			}
-		}
-	}
-	return true
 }
 
 @(private)
@@ -456,11 +412,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 
 	e.result_type = symbol.result
 	e.result_inout = result_inout_of(e, symbol.proc_type)
-	e.result_slot = ""
-	e.terminated = false
 	e.abi_foreign = convention_is_foreign(proc_convention_of(e, symbol))
-	e.abi_sret = ""
-	clear(&e.cleanups)
 	begin_unwind_frame(e, llvm_name)
 
 	if e.abi_foreign {
@@ -501,7 +453,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 			continue
 		}
 		slot := fmt.aprintf("%%p%d.%d", index, next_id(e))
-		fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, parameter))
+		alloca_named(e, slot, llvm_type(e, parameter))
 		fmt.sbprintfln(&e.b, "  store %s %%arg%d, ptr %s", llvm_type(e, parameter), index, slot)
 		bind_local(e, binding, slot)
 	}
@@ -519,12 +471,12 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		} else if e.result_inout {
 			// The slot holds the address of the place being handed back.
 			slot := fmt.aprintf("%%r0.%d", next_id(e))
-			fmt.sbprintfln(&e.b, "  %s = alloca ptr", slot)
+			alloca_named(e, slot, "ptr")
 			fmt.sbprintfln(&e.b, "  store ptr null, ptr %s", slot)
 			e.result_slot = slot
 		} else {
 			slot := fmt.aprintf("%%r0.%d", next_id(e))
-			fmt.sbprintfln(&e.b, "  %s = alloca %s", slot, llvm_type(e, result))
+			alloca_named(e, slot, llvm_type(e, result))
 			if zero, ok := zero_const(e.c, result); ok {
 				fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, result), llvm_const(e, zero, result), slot)
 			}
@@ -538,7 +490,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	e.defer_flags = make([]string, literal.defer_count)
 	for index in 0 ..< literal.defer_count {
 		flag := fmt.aprintf("%%defer%d.%d", index, next_id(e))
-		fmt.sbprintfln(&e.b, "  %s = alloca i1", flag)
+		alloca_named(e, flag, "i1")
 		e.defer_flags[index] = flag
 	}
 
@@ -642,8 +594,21 @@ load :: proc(e: ^Emitter, type: string, address: string) -> string {
 @(private)
 alloca :: proc(e: ^Emitter, type: string) -> string {
 	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = alloca %s", out, type)
+	alloca_named(e, out, type)
 	return out
+}
+
+// The same storage, for a caller that has already chosen the slot's name.
+@(private)
+alloca_named :: proc(e: ^Emitter, name, type: string) {
+	append(&e.prologue, fmt.aprintf("  %s = alloca %s", name, type))
+}
+
+// A pack whose element count is an SSA value, so it cannot move to the entry
+// block: the count does not exist there.
+@(private)
+alloca_count :: proc(e: ^Emitter, name, type, count: string) {
+	fmt.sbprintfln(&e.b, "  %s = alloca %s, i64 %s", name, type, count)
 }
 
 // The address of field `index` of an aggregate.
