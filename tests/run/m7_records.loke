@@ -22,6 +22,11 @@ wrapped :: proc(n: int) -> (n: int) { return {n = n * 2}; }
 // An `inout` result is unchanged: it is the one result that is a place.
 Buffer :: struct { count: int }
 pick :: proc(target: inout Buffer) -> inout Buffer { return inout target; }
+pick_int :: proc(target: inout int) -> inout int { return inout target; }
+pick_any :: proc { pick, pick_int }
+impl Buffer {
+	slot :: proc(self: inout Buffer) -> inout Buffer { return inout self; }
+}
 
 // A record with owning fields. The place path clones each retained field and
 // leaves the source live; a temporary or a `move` transfers instead.
@@ -75,6 +80,14 @@ main :: proc() {
 	b := Buffer{count = 9};
 	pick(inout b).count = 10;
 	fmt.println(b.count);
+
+	// The same result through the other call spellings. Which one reached the
+	// procedure does not change what it returns, so each is equally a place.
+	pick_any(inout b).count = 11;
+	fmt.println(b.count);
+	b.slot().count = 12;
+	fmt.println(b.count);
+	fmt.println(pick_any(inout b).count);
 
 	// A place destructure clones: `owner` is still live afterwards.
 	owner := build(3);

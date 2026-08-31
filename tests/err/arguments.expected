@@ -22,3 +22,9 @@ this expression cannot be an `inout` argument
 L0370
 @25:24
 this parameter is not `inout`
+L0370
+@29:13
+this parameter is `inout`; write `inout` at the call site
+L0359
+@30:19
+this expression cannot be an `inout` argument

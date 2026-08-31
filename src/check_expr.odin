@@ -2206,15 +2206,23 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 
-	if info.result == INVALID_TYPE {
+	set_call_result(v, info.result, info.result_inout)
+}
+
+// design.md "Parameter semantics": an `inout` result returns a place, so the
+// call is one — addressable and assignable. Every call spelling settles its
+// result here, because which one reached the procedure does not change what the
+// procedure returns.
+set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool) {
+	if result == INVALID_TYPE {
 		v.type = TYPE_VOID
-	} else {
-		v.type = info.result
-		if info.result_inout {
-			v.value_category = .Place
-			v.addressable = true
-			v.assignable = true
-		}
+		return
+	}
+	v.type = result
+	if result_inout {
+		v.value_category = .Place
+		v.addressable = true
+		v.assignable = true
 	}
 }
 
@@ -2447,11 +2455,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = INVALID_TYPE
 		return
 	}
-	if chosen.result == INVALID_TYPE {
-		v.type = TYPE_VOID
-	} else {
-		v.type = chosen.result
-	}
+	set_call_result(v, chosen.result, chosen.result_inout)
 	// `lookup_value` produces an owned copy of the stored element, so a move-only
 	// element has nothing for it to produce. Reported after the result shape is
 	// settled, so a `v, ok :=` destructuring still knows its arity.
@@ -2519,11 +2523,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
-	if chosen.result == INVALID_TYPE {
-		v.type = TYPE_VOID
-	} else {
-		v.type = chosen.result
-	}
+	set_call_result(v, chosen.result, chosen.result_inout)
 }
 
 // A fixed array's length is a property of its type and does not evaluate the
@@ -2753,11 +2753,7 @@ check_standard_alias :: proc(
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
-	if chosen.result == INVALID_TYPE {
-		v.type = TYPE_VOID
-	} else {
-		v.type = chosen.result
-	}
+	set_call_result(v, chosen.result, chosen.result_inout)
 	fold_standard_customization_call(k, v, chosen)
 }
 
@@ -3391,8 +3387,42 @@ check_message_arg :: proc(k: ^Checker, e: Expr) {
 // One argument against one parameter, with the `@(implicit)` path for an
 // untyped constant that no built-in conversion reaches. Returns the expression
 // to bind, which is the written one unless a conversion wrapped it.
-check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id) -> (Expr, bool) {
+// design.md "Parameter semantics": `inout` is written at both ends, and the
+// argument is a place, because the callee writes through it. One written
+// argument bound against the parameter it fills — shared, so a call that has a
+// variadic pack enforces the same contract as one that has none.
+bind_written_argument :: proc(
+	k: ^Checker, arg: Argument, target: Type_Id, expected: Param_Mode, prechecked := false,
+) -> (Expr, bool) {
+	if (expected == .Inout) != (arg.mode == .Inout) {
+		if expected == .Inout {
+			errorf(k.c, arg.span, "L0370", "this parameter is `inout`; write `inout` at the call site")
+		} else {
+			errorf(k.c, arg.span, "L0370", "this parameter is not `inout`")
+		}
+		return arg.value, false
+	}
+	value, passed := pass_argument(k, arg.value, target, prechecked, arg.mode == .Inout)
+	if !passed {
+		return value, false
+	}
+	if arg.mode == .Inout {
+		if base := expr_base(value); base != nil && !base.assignable {
+			report_not_assignable(k, base, "an `inout` argument")
+			return value, false
+		}
+	}
+	return value, true
+}
+
+check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id, inout_argument := false) -> (Expr, bool) {
+	// design.md "Indexing and slicing" and "Maps": an `inout` argument is a place
+	// the callee really writes, so it selects an `inout` indexing overload and
+	// makes `m[key]` insert, exactly as an assignment destination does. Every
+	// path that binds an argument goes through here, so the rule is stated once.
+	k.place_position, k.insert_position = inout_argument, inout_argument
 	type := check_single_expr(k, e, target)
+	k.place_position, k.insert_position = false, false
 	if type == INVALID_TYPE || target == INVALID_TYPE {
 		return e, false
 	}
@@ -3507,32 +3537,11 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 
 		filled[slot] = true
 		append(&order, slot)
-		bound[slot] = arg.value
 		modes[slot] = arg.mode
 		expected_mode := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
-		if expected_mode == .Inout && arg.mode != .Inout {
-			errorf(k.c, arg.span, "L0370", "this parameter is `inout`; write `inout` at the call site")
-			ok = false
-			continue
-		}
-		if expected_mode != .Inout && arg.mode == .Inout {
-			errorf(k.c, arg.span, "L0370", "this parameter is not `inout`")
-			ok = false
-			continue
-		}
-		value, passed := check_argument_value(k, arg.value, info.parameters[slot])
+		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected_mode)
 		bound[slot] = value
-		if !passed {
-			ok = false
-			continue
-		}
-		if arg.mode == .Inout {
-			base := expr_base(value)
-			if !base.assignable {
-				report_not_assignable(k, base, "an `inout` argument")
-				ok = false
-			}
-		}
+		ok = ok && passed
 	}
 
 	for index in 0 ..< count {

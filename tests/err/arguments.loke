@@ -24,4 +24,12 @@ main :: proc() {
 	aliased(inout 5);
 	fmt.println(takes_two(inout n, 2));
 	fmt.println(backwards());
+
+	// A fixed parameter ahead of a variadic pack keeps the same `inout` contract.
+	accumulate(n, 1, 2);
+	accumulate(inout 5, 1);
+}
+
+accumulate :: proc(total: inout int, xs: ..int) {
+	foreach (x in xs) { total += x; }
 }

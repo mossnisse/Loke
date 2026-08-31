@@ -31,3 +31,9 @@ this pointer may designate thread-duration storage
 L0514
 @132:2
 this pointer may designate static-duration storage
+L0537
+@141:2
+this reset would end the region backing `held`, which is still live here
+L0537
+@151:2
+this reset would end the region backing `held`, which is still live here

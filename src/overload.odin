@@ -160,7 +160,7 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symb
 			expected = common_argument_type(k, candidates, info.name, index + offset)
 		}
 		info.type = check_single_expr(k, arg.value, expected)
-		k.place_position = false
+		k.place_position, k.insert_position = false, false
 		if info.type == INVALID_TYPE {
 			ok = false
 		} else if base := expr_base(arg.value); base != nil {
@@ -865,7 +865,10 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 	}
 	for slot in 0 ..< count {
 		if !cand.filled[slot] && slot < len(sym.param_defaults) {
-			bound[slot] = sym.param_defaults[slot]
+			// design.md: `caller_location()` is evaluated at each call that omits
+			// the argument, so an omitted default belongs to this call site and
+			// not to the declaration — through a group exactly as directly.
+			bound[slot] = substitute_caller_location(k, sym.param_defaults[slot], v.span)
 		}
 	}
 	v.bound = bound

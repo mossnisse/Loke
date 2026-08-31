@@ -221,6 +221,28 @@ main :: proc() {
 	fmt.println(len(wide));
 	fmt.println(wide[3]);
 	fmt.println(0 in wide);
+
+	inout_slots();
+}
+
+bump :: proc(n: inout int) { n += 1; }
+bump_f :: proc(n: inout f64) { n += 1.0; }
+bump_either :: proc { bump, bump_f }
+add_all :: proc(n: inout int, xs: ..int) { foreach (x in xs) { n += x; } }
+
+// design.md "Maps": an `inout` argument is a place the callee writes, so
+// `m[key]` inserts for one exactly as it does for an assignment target — and it
+// does so however the callee is spelled: named directly, reached through an
+// overload group, or fixed ahead of a variadic pack.
+inout_slots :: proc() {
+	slots: map[string]int;
+	bump(inout slots["direct"]);
+	bump_either(inout slots["group"]);
+	add_all(inout slots["variadic"], 1, 2, 3);
+	fmt.println(len(slots));
+	fmt.println(slots["direct"]);
+	fmt.println(slots["group"]);
+	fmt.println(slots["variadic"]);
 }
 
 key_copies, key_drops, value_copies, value_drops: int;

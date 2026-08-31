@@ -577,8 +577,10 @@ bind_variadic_arguments :: proc(
 		if arg.name.text != "" || arg.mode == .Spread {
 			break
 		}
-		value, passed := pass_argument(k, arg.value, info.parameters[first + fixed], prechecked)
-		bound[first + fixed] = value
+		slot := first + fixed
+		expected := slot < len(info.param_modes) ? info.param_modes[slot] : Param_Mode.Value
+		value, passed := bind_written_argument(k, arg, info.parameters[slot], expected, prechecked)
+		bound[slot] = value
 		ok = ok && passed
 		fixed += 1
 	}
@@ -654,10 +656,11 @@ bind_variadic_arguments :: proc(
 // Overload resolution checks every written argument once, before it knows which
 // candidate wins, so binding the chosen one must not check them again: a second
 // pass would re-resolve nested calls and report their diagnostics twice.
-@(private = "file")
-pass_argument :: proc(k: ^Checker, e: Expr, target: Type_Id, prechecked: bool) -> (Expr, bool) {
+pass_argument :: proc(
+	k: ^Checker, e: Expr, target: Type_Id, prechecked: bool, inout_argument := false,
+) -> (Expr, bool) {
 	if !prechecked {
-		return check_argument_value(k, e, target)
+		return check_argument_value(k, e, target, inout_argument)
 	}
 	return e, materialize_argument(k, e, target)
 }

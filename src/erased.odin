@@ -1063,7 +1063,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	}
 	// The receiver's own type is the erased view, and every other parameter is
 	// resolved from the interface application.
-	params, modes, result_type, _, ok := slot_signature(k, entry.type, dyn)
+	params, modes, result_type, result_inout, ok := slot_signature(k, entry.type, dyn)
 	k.scope = saved
 	if !ok {
 		errorf(k.c, v.span, "L0467", "`%s`'s signature does not resolve here", sel.name.text)
@@ -1145,7 +1145,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 		want := params[slot]
 		k.place_position, k.insert_position = modes[slot] == .Inout, modes[slot] == .Inout
 		checked := check_single_expr(k, arg.value, want)
-		k.place_position = false
+		k.place_position, k.insert_position = false, false
 		if checked == INVALID_TYPE || !materialize_argument(k, arg.value, want) {
 			v.type = INVALID_TYPE
 			return true
@@ -1165,7 +1165,9 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	}
 	v.is_dyn_call = true
 	v.dyn_slot = index
-	sel.type = intern_proc_type(k.c, params, modes, result_type, false, "")
-	v.type = result_type == INVALID_TYPE ? TYPE_VOID : result_type
+	// The slot's `inout` result travels with the signature: the witness returns a
+	// pointer, so a call through the view has to be typed — and lowered — as one.
+	sel.type = intern_proc_type(k.c, params, modes, result_type, result_inout, "")
+	set_call_result(v, result_type, result_inout)
 	return true
 }

@@ -202,9 +202,15 @@ Flow_Cleanup_Kind :: enum {
 	Defer,
 	// A provenance root whose storage ends when its scope does.
 	Prov_Root,
-	// A region-backed owner leaving scope, so a later reset no longer has to
-	// treat it as a surviving dependant.
-	Prov_Owner,
+}
+
+// One open lexical scope: where its cleanup registrations start in `in_scope`,
+// and how many region-backed owners were in scope when it opened. Both are
+// restored by `leave_flow_scope` and by nothing else, so an abrupt exit can
+// emit a scope's cleanups without ending the scope itself.
+Flow_Scope :: struct {
+	cleanups: int,
+	owners:   int,
 }
 
 // One registration in the unified cleanup order. Locals and written defers
@@ -301,7 +307,7 @@ Flow_Graph :: struct {
 	// marker into it per open lexical scope. Leaving a scope cleans up exactly
 	// the slots above its marker and then forgets them.
 	in_scope: [dynamic]Flow_Cleanup,
-	scopes:   [dynamic]int,
+	scopes:   [dynamic]Flow_Scope,
 	// How many loops enclose the statement being walked, so the copy-cost report
 	// can say that a copy runs on every iteration.
 	loop_depth: int,
@@ -335,7 +341,7 @@ build_flow_graph :: proc(
 	graph.blocks = make([dynamic]^Flow_Block, allocator)
 	graph.tracked = make([dynamic]Tracked_Local, allocator)
 	graph.by_symbol = make(map[Symbol_Id]int, 8, allocator)
-	graph.scopes = make([dynamic]int, allocator)
+	graph.scopes = make([dynamic]Flow_Scope, allocator)
 	graph.in_scope = make([dynamic]Flow_Cleanup, allocator)
 	graph.roots = make([dynamic]Prov_Root, allocator)
 	graph.loans = make([dynamic]Prov_Loan, allocator)
@@ -443,16 +449,23 @@ track_move_parameters :: proc(graph: ^Flow_Graph, literal: ^Expr_Proc) {
 
 @(private = "file")
 enter_flow_scope :: proc(graph: ^Flow_Graph) {
-	append(&graph.scopes, len(graph.in_scope))
+	append(
+		&graph.scopes,
+		Flow_Scope{cleanups = len(graph.in_scope), owners = len(graph.owners_in_scope)},
+	)
 }
 
 @(private = "file")
 leave_flow_scope :: proc(graph: ^Flow_Graph) {
-	marker := pop(&graph.scopes)
-	emit_cleanups(graph, marker)
+	scope := pop(&graph.scopes)
+	emit_cleanups(graph, scope.cleanups)
 	// A local leaving its scope is gone: nothing after this may name it, and the
-	// enclosing scope must not clean it up a second time.
-	resize(&graph.in_scope, marker)
+	// enclosing scope must not clean it up a second time. Leaving the scope is
+	// the only thing that ends it: an abrupt exit emits the same cleanups on its
+	// way out, but the statements after it are still inside this scope and still
+	// see everything it declared.
+	resize(&graph.in_scope, scope.cleanups)
+	resize(&graph.owners_in_scope, scope.owners)
 }
 
 @(private = "file")
@@ -479,14 +492,14 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 			// The walk appends into this same backing storage, so the entries
 			// have to be saved, not the dynamic-array header.
 			tail := slice.clone(graph.in_scope[index:], graph.alloc)
+			owners := len(graph.owners_in_scope)
 			resize(&graph.in_scope, index)
 			walk_flow_stmt(graph, action.stmt)
 			resize(&graph.in_scope, index)
 			append(&graph.in_scope, ..tail)
-			continue
-		}
-		if action.kind == .Prov_Owner {
-			resize(&graph.owners_in_scope, action.slot)
+			// A declaration inside the deferred syntax is not in scope after it,
+			// any more than its cleanup registration above is.
+			resize(&graph.owners_in_scope, owners)
 			continue
 		}
 		if action.kind == .Prov_Root {
@@ -736,6 +749,12 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 
 @(private = "file")
 walk_flow_if :: proc(graph: ^Flow_Graph, s: ^Stmt_If) {
+	// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
+	// whole statement — its condition, body, and post all see it, nothing after
+	// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this
+	// is the same boundary the emitter drops the local at.
+	enter_flow_scope(graph)
+	defer leave_flow_scope(graph)
 	if s.init != nil {
 		walk_flow_stmt(graph, s.init, extend = true)
 	}
@@ -760,6 +779,12 @@ walk_flow_if :: proc(graph: ^Flow_Graph, s: ^Stmt_If) {
 
 @(private = "file")
 walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
+	// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
+	// whole statement — its condition, body, and post all see it, nothing after
+	// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this
+	// is the same boundary the emitter drops the local at.
+	enter_flow_scope(graph)
+	defer leave_flow_scope(graph)
 	if s.init != nil {
 		walk_flow_stmt(graph, s.init, extend = true)
 	}
@@ -839,6 +864,12 @@ walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_
 
 @(private = "file")
 walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
+	// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
+	// whole statement — its condition, body, and post all see it, nothing after
+	// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this
+	// is the same boundary the emitter drops the local at.
+	enter_flow_scope(graph)
+	defer leave_flow_scope(graph)
 	if s.init != nil {
 		walk_flow_stmt(graph, s.init, extend = true)
 	}
@@ -3406,7 +3437,6 @@ prov_declare_region :: proc(
 			}
 		}
 		append(&graph.owners_in_scope, id)
-		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Owner, slot = len(graph.owners_in_scope) - 1})
 		return
 	}
 	if type_underlying(graph.k.c, sym.type) == TYPE_ALLOCATOR {
@@ -3447,7 +3477,6 @@ prov_declare_region :: proc(
 	// dependency from a later assignment.
 	if sym.duration == .None {
 		append(&graph.owners_in_scope, id)
-		append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Owner, slot = len(graph.owners_in_scope) - 1})
 	}
 }
 

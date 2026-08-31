@@ -1558,6 +1558,60 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 // Nothing is deferred after M6b. `interface` as a runtime type is the one
 // rejection left here, and it is not a deferral: an interface is deliberately
 // compile-time metadata, so `gate_type` gives it its own L0441.
+// A type is unsupported for two different reasons: it mentions a construct this
+// version does not compile, or a component of it never resolved. Only the first
+// is a milestone answer — an invalid component was rejected where it was
+// written — so the two are told apart here rather than reported as one.
+type_mentions_invalid :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	return type_contains_invalid(c, id, 0)
+}
+
+@(private = "file")
+type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
+	if id == INVALID_TYPE {
+		return true
+	}
+	if depth > 32 {
+		return false // a recursive nominal type; its own declaration is checked once
+	}
+	info := type_of(c, id)
+	if info == nil {
+		return false
+	}
+	#partial switch info.kind {
+	case .Invalid:
+		return true
+	case .Pointer, .Multi_Pointer, .Slice, .Dynamic_Array, .Array, .Distinct:
+		return type_contains_invalid(c, info.element, depth + 1)
+	case .Map:
+		return type_contains_invalid(c, info.key, depth + 1) ||
+		       type_contains_invalid(c, info.element, depth + 1)
+	case .Union:
+		for variant in info.variants {
+			if type_contains_invalid(c, variant, depth + 1) {
+				return true
+			}
+		}
+	case .Struct:
+		for field in info.fields {
+			symbol := symbol_of(c, field)
+			if symbol == nil || type_contains_invalid(c, symbol.type, depth + 1) {
+				return true
+			}
+		}
+	case .Proc:
+		for parameter in info.parameters {
+			if type_contains_invalid(c, parameter, depth + 1) {
+				return true
+			}
+		}
+		// design.md: a procedure with no result carries INVALID_TYPE for one, which
+		// is the absence of a result rather than a type that failed to resolve.
+		return info.result != INVALID_TYPE && type_contains_invalid(c, info.result, depth + 1)
+	}
+	return false
+}
+
 type_is_supported :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_is_supported_depth(c, id, 0)
 }

@@ -10,3 +10,6 @@ L0389
 L0389
 @21:8
 a `when` condition must be `bool`, found `untyped string`
+L0389
+@28:7
+`ALSO_MISSING` is not declared, so this `when` condition cannot be answered

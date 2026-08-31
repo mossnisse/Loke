@@ -22,3 +22,11 @@ main :: proc() {
 		fmt.println(1);
 	}
 }
+
+// An unanswerable condition selects neither branch, so nothing inside either
+// one is checked: only the condition itself is reported.
+when (ALSO_MISSING) {
+	D :: 4;
+} else {
+	E :: not_declared_anywhere;
+}

@@ -1259,11 +1259,11 @@ type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // Two unions are equal when their tags match and the active variant's payloads
 // match. A payloadless variant is settled by the tag alone.
 //
-// ponytail: every variant's comparison is computed and then selected, rather
-// than branching per tag. Each payload load is inside the union's own storage,
-// so reading one at the wrong variant's type is harmless — only the selected
-// comparison is ever used. Switch to a block-per-variant chain if a union ever
-// holds a variant whose comparison is expensive.
+// Only the active variant's comparison runs. Computing every variant's
+// comparison and selecting afterwards is smaller IR, but a payload whose
+// equality is a runtime call over a pointer and a length — `string`,
+// `string_view`, or any aggregate holding one — would then run that call over
+// another variant's bytes and read arbitrary memory.
 @(private = "file")
 emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> string {
 	info := type_of(e.c, union_type)
@@ -1278,25 +1278,38 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 	left_slot := emit_union_spill(e, union_type, lhs)
 	right_slot := emit_union_spill(e, union_type, rhs)
 
-	// A payloadless variant is equal to itself, so the chain starts from `true`
-	// and each payload-carrying variant overrides it when its tag is active.
-	payloads := "true"
+	// Differing tags settle it, and so does a matching payloadless variant. A
+	// payload comparison below overrides this answer when its tag is the active
+	// one.
+	answer := alloca(e, "i1")
+	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", same_tag, answer)
+
+	done, payloads := new_label(e, "unioneq.done"), new_label(e, "unioneq.payloads")
+	branch_if(e, same_tag, payloads, done)
+	place_label(e, payloads)
+
 	for variant, index in info.variants {
 		if variant == TYPE_VOID {
 			continue
 		}
-		left := emit_union_payload(e, union_type, variant, left_slot)
-		right := emit_union_payload(e, union_type, variant, right_slot)
-		equal := emit_equal(e, variant, left, right)
 		active := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %d", active, tag_llvm, left_tag, index)
-		next := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", next, active, equal, payloads)
-		payloads = next
+		hit, next := new_label(e, "unioneq.hit"), new_label(e, "unioneq.next")
+		branch_if(e, active, hit, next)
+
+		place_label(e, hit)
+		left := emit_union_payload(e, union_type, variant, left_slot)
+		right := emit_union_payload(e, union_type, variant, right_slot)
+		// The comparison may open blocks of its own, so the store belongs
+		// wherever it left off rather than in `hit`.
+		equal := emit_equal(e, variant, left, right)
+		fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", equal, answer)
+		branch(e, done)
+
+		place_label(e, next)
 	}
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", out, same_tag, payloads)
-	return out
+	place_label(e, done)
+	return load(e, "i1", answer)
 }
 
 // Whether this record's LLVM members are byte arrays rather than the fields'

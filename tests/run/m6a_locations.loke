@@ -14,6 +14,14 @@ report :: proc(loc: runtime.Source_Code_Location = caller_location()) -> int {
 	return loc.line;
 }
 
+// The same default reached through an overload group. `caller_location()` is
+// per call site, so the group spelling must agree with the direct one.
+report_n :: proc(n: int, loc: runtime.Source_Code_Location = caller_location()) -> int {
+	return loc.line;
+}
+
+note :: proc { report, report_n }
+
 main :: proc() {
 	here := source_location();
 	fmt.println(here.line);
@@ -34,4 +42,24 @@ main :: proc() {
 		source_location := 5;
 		fmt.println(source_location);
 	}
+
+	// A direct call and a group call on adjacent lines each report their own.
+	fmt.println(report());
+	fmt.println(note(1));
+
+	// A callee declared *after* this call, direct and through a group. The
+	// default belongs to the call site either way, which holds only because a
+	// default is resolved with the signature rather than with the body.
+	fmt.println(ahead());
+	fmt.println(look(2));
 }
+
+ahead :: proc(loc: runtime.Source_Code_Location = caller_location()) -> int {
+	return loc.line;
+}
+
+look_n :: proc(n: int, loc: runtime.Source_Code_Location = caller_location()) -> int {
+	return loc.line;
+}
+
+look :: proc { ahead, look_n }

@@ -30,6 +30,11 @@ Wide_Aligned :: union @(align=8) { flag: bool, small: i16 }
 Holder :: struct { flag: bool, value: Wide_Aligned }
 Pair_Value :: union { numbers: [2]i16, flag: bool }
 
+// A text variant beside a payload wide enough to fill both words a
+// `string_view` occupies. Comparing two `pair` values must not reach the text
+// comparison, which is a runtime call over a pointer and a length.
+Text_Or_Pair :: union { pair: [2]int, text: string_view }
+
 static_ratio: Value = .ratio(1.5);
 static_pair: Pair_Value = .numbers({3, 4});
 static_result: Result([2]i16, Error_Code) = .ok({5, 6});
@@ -137,6 +142,15 @@ main :: proc() {
 	fmt.println(1 if a == b else 0);
 	fmt.println(1 if a == c else 0);
 	fmt.println(1 if a != c else 0);
+
+	// Only the active variant is compared. `pair` covers every byte the
+	// inactive `text` variant would read, so an eager comparison would hand the
+	// runtime byte compare another variant's bits as a pointer and a length.
+	wide_a: Text_Or_Pair = .pair({0x4141414141414141, 4096});
+	wide_b: Text_Or_Pair = .pair({0x4141414141414141, 4096});
+	fmt.println(1 if wide_a == wide_b else 0);
+	fmt.println(1 if wide_a == Text_Or_Pair.text("A") else 0);
+	fmt.println(1 if Text_Or_Pair.text("A") == Text_Or_Pair.text("A") else 0);
 
 	// A declared member named `as` wins on every non-union receiver.
 	c1 := Counter{10};

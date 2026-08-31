@@ -6,6 +6,12 @@ B :: struct { a: A }
 
 Ok :: struct { next: ^Ok }
 
+// Two independent cycles reached from one root. Each path is its own: the first
+// closes at `X`, and `X` is not on the way to `Y`.
+Root :: struct { x: X, y: Y }
+X :: struct { s: X }
+Y :: struct { s: Y }
+
 main :: proc() {
 	fmt.println(1);
 }

@@ -1188,6 +1188,10 @@ Item_When :: struct {
 	otherwise:  Item, // `^Item_When` for `else when`, `^Item_Block` for `else`
 	resolved:   bool,
 	taken:      bool, // this node's own condition was true
+	// Reported as unanswerable. Neither branch is selected — a `when` that
+	// cannot choose selects nothing — and the flag only keeps a later round
+	// from reporting the same condition twice.
+	stalled:    bool,
 }
 
 // `Top_Level_Block`

@@ -21,6 +21,9 @@ Int_Valued :: interface($Self: type) {
 
 Bumpable :: interface($Self: type) {
 	slot bump: proc(self: inout Self) ;
+	// A slot whose result is `inout`: the witness returns a pointer, so a call
+	// through the view has to be typed and lowered as the place it is.
+	slot cell: proc(self: inout Self) -> inout int;
 }
 
 Circle :: struct { radius: int }
@@ -45,6 +48,7 @@ impl Token {
 Counter :: struct { value: int }
 impl Counter {
 	bump :: proc(self: inout Counter) { self.value += 1; }
+	cell :: proc(self: inout Counter) -> inout int { return inout self.value; }
 }
 
 describe :: proc(value: any_view) -> int {
@@ -122,8 +126,11 @@ more :: proc() {
 	counter := Counter{0};
 	mutable := (dyn mut Bumpable)(&mut counter);
 	mutable.bump();
+	mutable.cell() = 40;
 	nested := (dyn mut Bumpable)(&mut mutable);
 	nested.bump();
+	nested.cell() += 2;
+	fmt.println(nested.cell());
 	fmt.println(counter.value);
 }
 

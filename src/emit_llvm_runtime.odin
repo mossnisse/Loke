@@ -1371,7 +1371,7 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, entry)
 
 	signature := type_of(e.c, expr_base(v.callee).type)
-	result_type := llvm_result_type(e, signature.result)
+	result_type := llvm_result_type(e, signature.result, signature.result_inout)
 	operands := make([]string, len(v.bound), context.temp_allocator)
 	operands[0] = data
 	for step in 1 ..< len(v.bound) {
@@ -1467,7 +1467,7 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	e.terminated = false
 	name := witness_thunk_name(e, witness, index)
 	signature := type_of(e.c, target.proc_type)
-	result_type := llvm_result_type(e, target.result)
+	result_type := llvm_result_type(e, target.result, signature.result_inout)
 
 	fmt.sbprintf(&e.b, "define private %s %s(ptr %%arg0", result_type, name)
 	for position in 1 ..< len(target.params) {
@@ -1520,7 +1520,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	signature := type_of(e.c, symbol.proc_type)
-	result_type := llvm_result_type(e, symbol.result)
+	result_type := llvm_result_type(e, symbol.result, signature.result_inout)
 	view_type := llvm_type(e, symbol.params[0])
 
 	receiver_inout := len(signature.param_modes) > 0 && signature.param_modes[0] == .Inout

@@ -46,3 +46,12 @@ this allocation cannot be released here: a pointer of it is still in use
 L0512
 @139:2
 `value` cannot be assigned here: a read-only pointer of it is still in use
+L0513
+@170:14
+this pointer is used after `x`, the local it borrows, has ended
+L0513
+@176:14
+this pointer is used after `x`, the local it borrows, has ended
+L0513
+@182:14
+this pointer is used after `x`, the local it borrows, has ended

@@ -4,3 +4,7 @@ main :: proc() {
 	x: Missing = 1;
 	fmt.println(x);
 }
+
+// A field whose type does not resolve is what is wrong with the record. The
+// record around it is not an unimplemented construct.
+Holder :: struct { n: Nope }

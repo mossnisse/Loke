@@ -58,7 +58,11 @@ collect_pending_whens :: proc(items: []Item, out: ^[dynamic]^Item_When) {
 			collect_pending_whens(v.items, out)
 		case ^Item_When:
 			if !v.resolved {
-				append(out, v)
+				// A condition already reported as unanswerable is not pending; it has
+				// no answer to wait for, and neither branch is selected.
+				if !v.stalled {
+					append(out, v)
+				}
 				continue
 			}
 			if v.taken {
@@ -123,7 +127,9 @@ report_stalled_whens :: proc(k: ^Checker, pkg: ^Package) {
 		collect_pending_whens(file.items, &pending)
 		k.file, k.file_node = file.file, file
 		for item in pending {
-			item.resolved = true // so a later round does not report it twice
+			// Reported, but never resolved: a `when` that cannot answer its condition
+			// selects neither branch, so nothing inside either one is checked.
+			item.stalled = true
 			missing := first_unresolved_name(k, item.cond)
 			if missing == "" {
 				errorf(k.c, expr_span(item.cond), "L0389", "this `when` condition cannot be answered")

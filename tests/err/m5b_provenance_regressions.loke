@@ -131,3 +131,24 @@ free_static :: proc() {
 	pointer := &mut counter;
 	free(pointer);
 }
+
+// An abrupt exit emits a scope's cleanups on its way out, but it does not end
+// the scope: the statements after it still see everything the scope declared,
+// so `held` is exactly as live at the reset as it is with no early exit.
+reset_after_return :: proc(@(allocator_reset) allocator: Allocator, flag: bool) {
+	held := make_buffer(1, allocator);
+	if (flag) { return; }
+	free_all(allocator);
+	fmt.println(held.id);
+}
+
+// The same for `or_return`, which is the idiomatic propagation form.
+reset_after_or_return :: proc(
+	@(allocator_reset) allocator: Allocator,
+) -> Result(Unit, Allocator_Error) {
+	held := make_buffer(1, allocator);
+	p := new(int, allocator) or_return;
+	free_all(allocator);
+	fmt.println(held.id);
+	return .ok(Unit{});
+}

@@ -1,3 +1,6 @@
 L0306
 @4:5
 unknown type `Missing`
+L0306
+@10:23
+unknown type `Nope`

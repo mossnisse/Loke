@@ -419,7 +419,7 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		produced = union_variant_payload(e.c, produced, union_index_of(e.c, produced, "ok"))
 	}
 	provider := llvm_type(e, produced == TYPE_ALLOCATOR ? symbol.params[0] : produced)
-	result := llvm_result_type(e, symbol.result)
+	result := llvm_result_type(e, symbol.result, symbol.result_inout)
 	fmt.sbprintf(&e.b, "define %s %s(", result, name)
 	for parameter, index in symbol.params {
 		if index > 0 {
@@ -505,7 +505,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	ops := container_ops_global(e, container)
 	fallible := symbol.result != INVALID_TYPE && type_is_union(e.c, symbol.result)
 
-	result := llvm_result_type(e, symbol.result)
+	result := llvm_result_type(e, symbol.result, symbol.result_inout)
 	fmt.sbprintf(&e.b, "define %s %s(", result, name)
 	for parameter, index in symbol.params {
 		if index > 0 {

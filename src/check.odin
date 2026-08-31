@@ -618,7 +618,14 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	members := make([dynamic]Symbol_Id, 0, len(value.fields), k.c.semantic_allocator)
 	for &field in value.fields {
+		before := k.c.error_count
 		field_type := resolve_type_syntax(k, field.type)
+		// A field whose written type did not resolve is what is wrong with the
+		// record. Say so here; otherwise the declaration is gated as unimplemented,
+		// which names neither the field nor the type.
+		if field.type != nil && field_type == INVALID_TYPE && k.c.error_count == before {
+			report_unresolved_type(k, field.type)
+		}
 		bindings := make([dynamic]Symbol_Id, 0, len(field.names), k.c.semantic_allocator)
 		// design.md "Compile-time reflection": reflection observes only
 		// declarations visible at the reflection site, so a field carries the same
@@ -1025,6 +1032,48 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.receiver = receiver_mode
 	literal.type = proc_type
 	literal.symbol = symbol_id
+	check_param_defaults(k, literal, symbol_id)
+}
+
+// design.md "Default values": a default belongs to the signature, because every
+// call that omits the argument binds it. It is checked here rather than with the
+// body so that a caller checked before this procedure's body still sees a
+// resolved expression — `caller_location()` in particular, which each call site
+// replaces with a constant for its own span and cannot recognise until the
+// default's call is resolved.
+@(private = "file")
+check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol_Id) {
+	written := false
+	for parameter in literal.signature.params {
+		written ||= parameter.default != nil
+	}
+	if !written {
+		return
+	}
+	symbol := symbol_of(k.c, symbol_id)
+	outer_scope, outer_proc := k.scope, k.proc_literal
+	outer_result, outer_result_inout := k.result_type, k.result_inout
+	defer {
+		k.scope, k.proc_literal = outer_scope, outer_proc
+		k.result_type, k.result_inout = outer_result, outer_result_inout
+	}
+	// The same context the body is checked in: a default names the procedure it
+	// is written on, and `source_location()` in one reports that procedure.
+	k.scope = new_scope(k.c, outer_scope, .Procedure)
+	k.scope.owner_proc = literal
+	k.proc_literal = literal
+	k.result_type = symbol.result
+	k.result_inout = symbol.result_inout
+	for parameter in literal.signature.params {
+		if parameter.default != nil {
+			// design.md "Default values": a default is resolved in the declaration's
+			// lexical scope with only the parameters to its left installed, so a
+			// reference to a later parameter is an unknown name rather than a forward
+			// peek. It may name `self` and nothing else in the body.
+			check_value_expr(k, parameter.default, resolve_type_syntax(k, parameter.type), "pass")
+		}
+		install_symbols(k.scope, k.c, parameter.symbols)
+	}
 }
 
 @(private = "file")
@@ -1075,8 +1124,13 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 	case .Cyclic:
 		return false
 	case .Checking:
-		append(path, type)
-		errorf(k.c, span, "L0364", "`%s` contains itself by value: %s", type_name(k.c, type), size_cycle_path(k, path[:]))
+		// The repeated type closes the cycle rather than extending it, so it is not
+		// pushed onto the walk's shared path: a sibling's own cycle, found after
+		// this one returns, would otherwise print this cycle's tail as its prefix.
+		errorf(
+			k.c, span, "L0364", "`%s` contains itself by value: %s",
+			type_name(k.c, type), size_cycle_path(k, path[:], type),
+		)
 		info.size_state = .Cyclic
 		return false
 	case .Unchecked:
@@ -1126,7 +1180,7 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 }
 
 @(private = "file")
-size_cycle_path :: proc(k: ^Checker, path: []Type_Id) -> string {
+size_cycle_path :: proc(k: ^Checker, path: []Type_Id, closing: Type_Id) -> string {
 	text := ""
 	for type, index in path {
 		if index > 0 {
@@ -1134,7 +1188,10 @@ size_cycle_path :: proc(k: ^Checker, path: []Type_Id) -> string {
 		}
 		text = concat(k.c, text, type_name(k.c, type))
 	}
-	return text
+	if len(path) > 0 {
+		text = concat(k.c, text, " -> ")
+	}
+	return concat(k.c, text, type_name(k.c, closing))
 }
 
 concat :: proc(c: ^Compiler, a, b: string) -> string {
@@ -1498,7 +1555,12 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return false
 	}
 	if !type_is_supported(k.c, type) {
-		unsupported_construct(k, span)
+		// Unsupported because a component never resolved is not a milestone answer:
+		// whatever rejected that component already said what is wrong with it, and
+		// "not compiled yet" names neither it nor a fix that will ever come.
+		if !type_mentions_invalid(k.c, type) {
+			unsupported_construct(k, span)
+		}
 		return false
 	}
 	// design.md "Maps": the key's coherent `==`/`hash` pair is settled where the
@@ -1946,14 +2008,8 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	defer k.defer_slots = outer_slots
 
 	errors_before := k.c.error_count
+	// Defaults were checked with the signature; the body only needs the names.
 	for parameter in literal.signature.params {
-		if parameter.default != nil {
-			// design.md "Default values": a default is resolved in the declaration's
-			// lexical scope with only the parameters to its left installed, so a
-			// reference to a later parameter is an unknown name rather than a forward
-			// peek. It may name `self` and nothing else in the body.
-			check_value_expr(k, parameter.default, resolve_type_syntax(k, parameter.type), "pass")
-		}
 		install_symbols(k.scope, k.c, parameter.symbols)
 	}
 
