@@ -65,13 +65,13 @@ TYPE_UNTYPED_STRING :: Type_Id(30)
 TYPE_STRING_VIEW :: Type_Id(31)
 
 // design.md "Allocators" and "Allocation failure". `core:mem` and `base:runtime`
-// export exactly these identities rather than declaring their own: the
+// export these identities rather than declaring their own, since the
 // catalogue's `Cloneable` and the fixed lifecycle signatures spell them
-// unqualified, so they stay predeclared as well.
+// unqualified.
 //
-// `Allocator` is a one-word nominal handle pointing at the seed runtime's
-// provider record. Per-expression region identity is semantic metadata in
-// `src/borrow.odin`, not part of the type or the ABI.
+// `Allocator` is a one-word nominal handle to the seed runtime's provider
+// record. Per-expression region identity is semantic metadata in
+// `src/borrow.odin`, not part of the type or ABI.
 TYPE_ALLOCATOR :: Type_Id(32)
 // A nil-comparable error code. Nil is success, so `err != nil` is the whole
 // interface an explicitly fallible operation needs.
@@ -151,11 +151,11 @@ Type_Info :: struct {
 	// its own type, index, and (for an enum member) discriminant.
 	fields:     []Symbol_Id,
 	// A union's variants, in declaration order. The index *is* the variant's
-	// identity — two variants may carry the same payload type — and it is also
-	// the tag, so variant 0 has tag 0 and there is no nil tag.
+	// identity — two variants may carry the same payload type — and is also the
+	// tag, so variant 0 has tag 0 and there is no nil tag.
 	//
-	// `variants[i]` is variant `i`'s payload type, or `TYPE_VOID` when the
-	// variant is payloadless. `variant_names[i]` is its name.
+	// `variants[i]` is variant `i`'s payload type (`TYPE_VOID` if payloadless);
+	// `variant_names[i]` is its name.
 	variants:   []Type_Id,
 	variant_names: []Identifier_Id,
 	// design.md "Unions": `@(zero=name)` designates the semantic zero, which must
@@ -169,9 +169,8 @@ Type_Info :: struct {
 	// A bare call statement is rejected when any result type requires handling.
 	requires_results: bool,
 	// A validated `union @(align=N)` or `struct @(align=N)`, or 0. Kept apart from
-	// `align`, which the layout pass overwrites with the computed result:
-	// `union_layout` is asked again by the emitter after that, and both must get
-	// the same answer.
+	// `align`, which the layout pass overwrites with the computed result —
+	// `union_layout` is asked again by the emitter after that, and both must agree.
 	written_align: u64,
 	// design.md "@(packed)": this struct removes inter-field padding and has a
 	// natural alignment of 1 (an `@(align=N)` may still raise it). (m7-plan step 2)
@@ -186,7 +185,7 @@ Type_Info :: struct {
 	members:    []Symbol_Id,
 	// Which compiler-contributed member sets are already installed. More than one
 	// contributor appends here — iteration for a range, array, or slice, and the
-	// lifecycle hooks for a record — so "already has members" cannot be the
+	// lifecycle hooks for a record — so "already has members" can't be the
 	// idempotence guard: whichever ran first would suppress the other.
 	contributed: bit_set[Contribution],
 	parameters: []Type_Id,
@@ -195,10 +194,10 @@ Type_Info :: struct {
 	// reset-capable procedure cannot be stored in a procedure value whose type
 	// hides that effect (design.md "Procedure types").
 	param_resets: []bool,
-	// design.md/`@(escape=...)`: what a call may leave behind that depends on
-	// each parameter. Part of procedure type identity for the same reason the
-	// reset effect is — an indirect call must not launder a promise by passing
-	// through a type that hides it. Nil means every parameter is at the default.
+	// design.md/`@(escape=...)`: what a call may leave behind, per parameter. Part
+	// of procedure type identity for the same reason the reset effect is — an
+	// indirect call must not launder a promise through a type that hides it. Nil
+	// means every parameter is at the default.
 	param_escapes: []Escape_Level,
 	// Foreign ABI adapters are part of procedure type identity. Erasing either
 	// one changes the LLVM function type at an indirect call site.
@@ -210,9 +209,9 @@ Type_Info :: struct {
 	result:       Type_Id,
 	result_inout: bool,
 	// `(key: string_view, value: int)`: a structural record with no declaration
-	// site. `name` holds its readable spelling for diagnostics and metadata, but
-	// identity is the ordered `(field name, field type)` vector, so this bit
-	// keeps the display string out of every key that would otherwise use it.
+	// site. `name` holds its readable spelling for diagnostics, but identity is
+	// the ordered `(field name, field type)` vector, so this bit keeps the
+	// display string out of every key that would otherwise use it.
 	anonymous_record: bool,
 	convention: string,
 	// Set once the finite-size check has visited this nominal type, so a cycle
@@ -256,10 +255,10 @@ Size_State :: enum {
 	Cyclic,
 }
 
-// `mutable` is the borrow capability, and it is part of a carrier's identity:
-// `[]T` and `[]mut T`, `^T` and `^mut T`, are distinct types over one
-// representation. It is a field of its own rather than a spare bit of `count`
-// so that a capability question never has to be asked of array metadata.
+// `mutable` is the borrow capability, part of a carrier's identity: `[]T` and
+// `[]mut T`, `^T` and `^mut T`, are distinct types over one representation. A
+// field of its own, not a spare bit of `count`, so a capability question never
+// has to touch array metadata.
 Type_Key :: struct {
 	kind:    Type_Kind,
 	element: Type_Id,
@@ -367,9 +366,8 @@ round_float :: proc(value: f64, bits: u16) -> f64 {
 // IEEE-754 binary16, rounding to nearest with ties to even.
 //
 // Odin's own `f16(x)` conversion rounds halfway cases away from zero — it turns
-// 2049 into 2050 where the hardware `fadd half` LLVM emits produces 2048. Every
-// folded `f16` constant would then disagree with the same expression evaluated
-// at runtime, so the conversion is done here instead.
+// 2049 into 2050 where the hardware `fadd half` LLVM emits produces 2048, which
+// would make a folded `f16` constant disagree with the runtime expression.
 f64_to_f16_bits :: proc(value: f64) -> u16 {
 	pattern := transmute(u64)value
 	sign := u16((pattern >> 48) & 0x8000)
@@ -477,12 +475,12 @@ Immutable_Reason :: enum {
 	Discard,
 	Not_A_Place,
 	// A place in read-only storage: an element of a `[]T`, or anything inside a
-	// materialised constant. It is a real place — it has an address the backend
-	// can read, and `&` may borrow it — but no operation may write it or hand
-	// out a `^mut T` to it.
+	// materialised constant. A real place — it has an address the backend can
+	// read, and `&` may borrow it — but no operation may write it or hand out a
+	// `^mut T` to it.
 	Read_Only,
 	// The same, reached by dereferencing or projecting a `^T`. Kept apart from
-	// `Read_Only` only so the diagnostic can name the fix, which is `^mut`.
+	// `Read_Only` only so the diagnostic can name the fix: `^mut`.
 	Through_Pointer,
 }
 
@@ -513,10 +511,10 @@ Builtin_Kind :: enum {
 	None,
 	Assert,
 	Panic,
-	// design.md "Compile-time built-ins". Ordinary predeclared identifiers like
-	// every other built-in: `static_assert` forces the compile-time phase that
-	// plain `assert` inherits from its caller, `build_config` reads a `-define`
-	// key, and the two location forms fold to a `runtime.Source_Code_Location`.
+	// design.md "Compile-time built-ins". Ordinary predeclared identifiers:
+	// `static_assert` forces the compile-time phase plain `assert` inherits from
+	// its caller, `build_config` reads a `-define` key, and the two location
+	// forms fold to a `runtime.Source_Code_Location`.
 	Static_Assert,
 	Build_Config,
 	Source_Location,
@@ -551,17 +549,16 @@ Builtin_Kind :: enum {
 	Clone,
 	Try_Clone,
 	// design.md "Allocators" and "Allocation failure". The explicitly fallible
-	// primitives always return an error and never invoke a failure policy;
-	// `free` returns no status. `free_all` lowers to the provider's reset entry
-	// once region provenance has proved no dependant survives it.
+	// primitives always return an error and never invoke a failure policy; `free`
+	// returns no status. `free_all` lowers to the provider's reset entry once
+	// region provenance proves no dependant survives it.
 	New,
 	New_Clone,
 	Free,
 	Free_All,
 	// design.md "Dynamic arrays" and "Maps": `make` creates a container bound to
 	// the selected allocator, with an optional initial length and capacity. Its
-	// first operand is a *type*, which no ordinary signature can spell, so it is
-	// a built-in.
+	// first operand is a *type*, which no ordinary signature can spell.
 	Make,
 	// The default provider handle, spelled `mem.default_allocator()`. The symbol
 	// is compiler-owned and `core:mem` binds it, so a generated default argument
@@ -577,8 +574,8 @@ Builtin_Kind :: enum {
 	Exchange,
 	// The `core:unsafe` surface, where losing bounds and borrow capability is
 	// visible right at the call site (design.md "unsafe.raw_data procedure",
-	// "string type conversions"). Each takes an operand whose shape the
-	// ordinary signature language cannot spell, so each is a built-in.
+	// "string type conversions"). Each takes an operand whose shape ordinary
+	// signature language can't spell.
 	Unsafe_Raw_Data,
 	Unsafe_String_View,
 	Unsafe_C_String_View,
@@ -597,13 +594,11 @@ Builtin_Kind :: enum {
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
 	Fmt_Format_Any,
-	// String-producing procedures accept a conventional `allocator` argument
-	// when selection is needed (design.md "Allocators"). Every built-in text
-	// operation allocates from the default provider instead, so this is the one
-	// bridge a library needs to honour a caller's allocator. It is contributed
-	// package-privately to `core:strings`, which publishes it as `copy` and
-	// `try_copy`, and to `core:fmt`, which cannot import `core:strings` for
-	// `to_string` without emitting that whole package into every program.
+	// String-producing procedures take a conventional `allocator` argument when
+	// selection is needed (design.md "Allocators") — built-ins otherwise allocate
+	// from the default provider. Contributed package-privately to `core:strings`
+	// (published as `copy`/`try_copy`) and to `core:fmt`, which can't import
+	// `core:strings` for `to_string` without pulling in the whole package.
 	Strings_Allocate,
 }
 
@@ -633,17 +628,17 @@ Symbol :: struct {
 	proc_literal: ^Expr_Proc,
 	pkg:         Package_Id,
 	// The package whose method, operator, and extension tables this declaration's
-	// body may use, which is not always the package being checked: `delegate`
-	// freezes it at its declaration, and M4b's instantiations look up at their
-	// definition site.
+	// body may use — not always the package being checked: `delegate` freezes it
+	// at its declaration, and M4b's instantiations look up at their definition
+	// site.
 	lookup_pkg:  Package_Id,
 	// The `impl`/`extend` subject this member belongs to, or INVALID_TYPE.
 	owner_type:  Type_Id,
-	// Generics. `generic` marks a template, which has no
-	// signature and no runtime representation until it is instantiated;
-	// `instance_of` names the template an instance came from. `def_scope` is the
-	// declaration's own lexical scope, which is what definition-site lookup hangs
-	// an instantiation off instead of the caller's.
+	// Generics. `generic` marks a template, which has no signature and no
+	// runtime representation until instantiated; `instance_of` names the
+	// template an instance came from. `def_scope` is the declaration's own
+	// lexical scope, what definition-site lookup hangs an instantiation off
+	// instead of the caller's.
 	generic:       bool,
 	instance_of:   Symbol_Id,
 	def_scope:     ^Scope,
@@ -668,8 +663,8 @@ Symbol :: struct {
 	operator:     string,
 	// A forwarding overload `delegate(...)` generated. It has no body: the
 	// backend applies the underlying type's operation to the unwrapped operands.
-	// `delegate_target` is the underlying type's own overload when there is one,
-	// and INVALID_SYMBOL when the underlying operation is the built-in.
+	// `delegate_target` is the underlying type's own overload if it has one, or
+	// INVALID_SYMBOL when the underlying operation is the built-in.
 	delegated:           bool,
 	delegate_underlying: Type_Id,
 	delegate_target:     Symbol_Id,
@@ -698,19 +693,18 @@ Symbol :: struct {
 	// A managed local declaration places an implicit conditional
 	// `defer drop(value)` at the declaration point (design.md "Managed values
 	// and storage"). `src/lifecycle.odin` decides both from the CFG: whether
-	// scope exit drops this local at all, and whether the state it exits in is
-	// the same on every path. A definite state needs no runtime flag.
+	// scope exit drops this local at all, and whether its exit state is the
+	// same on every path — a definite state needs no runtime flag.
 	drop_at_exit:     bool,
 	drop_conditional: bool,
 	cleanup_slot:     int,
 	// design.md "Allocators": the `via` allocator expression this declaration
-	// wrote, or nil for the lazy default binding. This is kept on the
-	// *declaration*: it survives drop and move and is what a later revival
-	// selects, while the handle a live value currently holds travels in the
-	// value itself.
+	// wrote, or nil for the lazy default binding. Kept on the *declaration*
+	// since it survives drop and move and is what a later revival selects, while
+	// the handle a live value currently holds travels in the value itself.
 	via:              Expr,
-	// design.md "Storage modifiers": `static` exists for the life of the process
-	// and `thread_local` for the life of its thread. Either one makes a *local*
+	// design.md "Storage modifiers": `static` exists for the life of the process,
+	// `thread_local` for the life of its thread. Either makes a *local*
 	// declaration name storage outside the frame, so the backend gives it a
 	// global rather than an `alloca`.
 	duration:         Duration,
@@ -730,9 +724,9 @@ Symbol :: struct {
 	// design.md "Foreign system" (m7-plan step 4): a foreign declaration has no
 	// body. It names an external symbol under `link_name` (its own written name
 	// unless `@(link_name)` renamed it), and the backend emits a
-	// `declare`/`external global` rather than a definition. The library it comes
-	// from is not recorded: every foreign block links against the one image, so
-	// nothing downstream ever asked which block a symbol was written in.
+	// `declare`/`external global` rather than a definition. The source library
+	// isn't recorded: every foreign block links against the one image, so
+	// nothing downstream asks which block a symbol was written in.
 	is_foreign:         bool,
 	link_name:          string,
 	// design.md "@(export)" (m7-plan step 5): the declaration emits its symbol into
@@ -784,15 +778,14 @@ Package :: struct {
 	name:           Identifier_Id,
 	canonical_path: string,
 	// The logical canonical import identity — root-relative, or
-	// `collection:relative/path` — which is what every user symbol is mangled
-	// with. Never an alias and never a host absolute path, so a build is
-	// reproducible and two same-named packages cannot collide.
-	// The root package's key is "".
+	// `collection:relative/path` — which every user symbol is mangled with.
+	// Never an alias and never a host absolute path, so a build is reproducible
+	// and two same-named packages cannot collide. The root package's key is "".
 	key:            string,
 	files:          [dynamic]^File,
 	scope:          ^Scope,
 	// `extend` members, keyed by subject type. Package-scoped by design: an
-	// unused import must not change or make ambiguous an existing expression, so
+	// unused import must not change or make an existing expression ambiguous, so
 	// this is never merged into the type itself.
 	extensions:     map[Type_Id][]Symbol_Id,
 	operators:      map[string]^Operator_Set,
@@ -819,16 +812,16 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	}
 	c.semantic_initialized = true
 	c.target = WINDOWS_X64
-	// A growing virtual arena, not `mem.Dynamic_Arena`. The latter rejects any
-	// single allocation larger than its block size — 64 KiB by default — with
-	// `.Invalid_Argument`, and both `append` and `make` swallow that: the symbol
-	// store crossing the threshold kept its old length while `new_symbol` handed
-	// out IDs for elements that were never stored. This arena serves an
-	// allocation of any size, honours the cache-line alignment Odin's maps
-	// assert on, and one `destroy_compilation` still frees the lot.
+	// A growing virtual arena, not `mem.Dynamic_Arena`: the latter rejects any
+	// single allocation over its block size (64 KiB by default) with
+	// `.Invalid_Argument`, which `append`/`make` swallow — the symbol store
+	// crossing that threshold kept its old length while `new_symbol` handed out
+	// IDs for elements never stored. This arena serves any allocation size,
+	// honours the cache-line alignment Odin's maps assert on, and still frees
+	// the lot in one `destroy_compilation`.
 	//
-	// The per-file syntax arena in `File` is only ever asked for small nodes and
-	// holds no maps, so it stays as it is.
+	// The per-file syntax arena in `File` only ever gets small nodes and holds no
+	// maps, so it stays as it is.
 	if err := virtual.arena_init_growing(&c.semantic_arena); err != nil {
 		panic("cannot reserve the compilation's semantic arena")
 	}
@@ -1069,12 +1062,11 @@ proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escap
 }
 
 // design.md `@(escape=<level>)`: a callee may promise more than the type its
-// value is stored in asks, and never less. The levels are part of procedure type
-// identity, so the two types stay distinct; what this answers is whether the
-// stricter one may be *assigned* to the weaker, which is safe because every
-// caller of the weaker type is already held to the obligation the stricter one
-// keeps. Everything else about the two types must still match exactly, and the
-// levels carry no ABI, so the assignment is still a plain pointer copy.
+// value is stored in asks, never less. Levels are part of procedure type
+// identity, but assigning a stricter type to a weaker one is safe — every
+// caller of the weaker type already meets the stricter obligation. Everything
+// else must match exactly; levels carry no ABI, so the assignment stays a
+// plain pointer copy.
 proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	a := type_of(c, from)
 	b := type_of(c, to)
@@ -1362,10 +1354,10 @@ type_signed :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // which is what layout, folding, and lowering need.
 type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	current := id
-	// A valid chain cannot visit more types than the compilation owns. Using that
-	// invariant avoids both an arbitrary nesting limit and an allocation in this
-	// very hot helper. If an invalid distinct cycle exists, return a member of the
-	// cycle; the finite-size pass is responsible for diagnosing it.
+	// A valid chain cannot visit more types than the compilation owns — using
+	// that invariant avoids both an arbitrary nesting limit and an allocation in
+	// this hot helper. If an invalid distinct cycle exists, this returns a member
+	// of it; the finite-size pass is responsible for diagnosing it.
 	for _ in 0 ..< len(c.types) + 1 {
 		info := type_of(c, current)
 		if info == nil || info.kind != .Distinct || info.element == INVALID_TYPE {
@@ -1379,8 +1371,8 @@ type_underlying :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 // A type's own `Type_Info` and kind are almost never what a question is about —
 // a distinct type answers structural questions through what it wraps. These two
 // are that pairing, spelled once: `underlying_info` is nil for an invalid type
-// exactly as `type_of` is, and `underlying_kind` reports `.Invalid` for one
-// exactly as `type_kind` does.
+// like `type_of`, and `underlying_kind` reports `.Invalid` for one like
+// `type_kind`.
 underlying_info :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
 	return type_of(c, type_underlying(c, id))
 }
@@ -1553,13 +1545,13 @@ default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 // syntax still resolves to a real `Type_Id`, so this walks rather than looking
 // for absence.
 //
-// Nothing is deferred after M6b. `interface` as a runtime type is the one
-// rejection left here, and it is not a deferral: an interface is deliberately
-// compile-time metadata, so `gate_type` gives it its own L0441.
-// A type is unsupported for two different reasons: it mentions a construct this
-// version does not compile, or a component of it never resolved. Only the first
-// is a milestone answer — an invalid component was rejected where it was
-// written — so the two are told apart here rather than reported as one.
+// Nothing is deferred after M6b; `interface` as a runtime type is the one
+// rejection left, and not a deferral — it's deliberately compile-time metadata,
+// so `gate_type` gives it its own L0441. Unsupported has two causes: a
+// construct this version doesn't compile, or a component that never resolved.
+// Only the first is a milestone answer (an invalid component was already
+// rejected where written), so the two are told apart here rather than reported
+// as one.
 type_mentions_invalid :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return type_contains_invalid(c, id, 0)
 }

@@ -1,9 +1,9 @@
 // Installation-relative discovery.
 //
 // The seed runtime and the bundled `base`/`core` roots ship beside the
-// compiler, so they are resolved from the canonical `lokec.exe` path rather
-// than from the current directory: a compiler invoked from anywhere, including
-// the test harness and an installed copy, finds the same files.
+// compiler, so they resolve from the canonical `lokec.exe` path rather than
+// the current directory: a compiler invoked from anywhere — test harness,
+// installed copy — finds the same files.
 package lokec
 
 import "core:os"
@@ -36,9 +36,9 @@ install_component :: proc(name: string) -> string {
 }
 
 // Every `*.c` input of the seed runtime, sorted, so one directory always
-// produces one command. An empty result means the directory has no sources —
-// the caller reports that with the resolved path, since a wrong `-runtime` and
-// a missing installation are the same symptom from inside the linker.
+// produces one command. An empty result means no sources — the caller reports
+// that with the resolved path, since a wrong `-runtime` and a missing
+// installation look the same from inside the linker.
 runtime_sources :: proc(dir: string) -> []string {
 	if dir == "" {
 		return nil

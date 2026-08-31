@@ -1,12 +1,11 @@
 // Checked extractions, the variant switch, and the typed failure protocol.
 //
 // design.md gives `any_view` extraction two spellings with one result shape
-// each: `v.(T)` traps on a mismatch and produces `T`, `v.as(T)` never traps and
-// produces `Option(T)`. The mode belongs to the spelling, so nothing about a
-// destination can change what a producer returns.
+// each: `v.(T)` traps and produces `T`, `v.as(T)` never traps and produces
+// `Option(T)`. The mode belongs to the spelling, never the destination.
 //
-// A union is not extracted at all: its variants are matched by name, because
-// two variants may carry the same payload type.
+// A union is never extracted this way: its variants are matched by name,
+// since two variants may share a payload type.
 package lokec
 
 import "core:slice"
@@ -68,9 +67,9 @@ check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id
 // ---------------------------------------------------------- optional-ok --
 
 // design.md "Failure protocol": `or_else` and `or_return` accept any two-variant
-// union whose declaration designates one variant as the failure. No declaration
-// is privileged by name, so a user's own `Parse :: union @(failure=bad) {...}`
-// works exactly as `Result` does.
+// union whose declaration designates one variant as the failure. No
+// declaration is privileged by name, so `Parse :: union @(failure=bad) {...}`
+// works exactly like `Result`.
 Fallible :: struct {
 	union_type: Type_Id,
 	info:       ^Type_Info,
@@ -80,8 +79,8 @@ Fallible :: struct {
 
 // The implicit assignments that change an owning value into a borrowed view.
 // `or_return` accepts them like any other destination, but provenance must
-// prove the source outlives the returned view and lowering must not manufacture
-// an owner the target has nowhere to retain.
+// prove the source outlives the view, and lowering must not manufacture an
+// owner with nowhere for the target to retain it.
 failure_assignment_borrows :: proc(c: ^Compiler, from, into: Type_Id) -> bool {
 	return (underlying_kind(c, from) == .String && underlying_kind(c, into) == .String_View) ||
 	       (into == TYPE_ANY_VIEW && from != TYPE_ANY_VIEW)
@@ -432,10 +431,9 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
 	}
 
-	// design.md "Unions": a variant switch with a case for every variant is
-	// exhaustive, so no path reaches the end of the statement without entering a
-	// case. That is what lets an exhaustive switch be the last statement of a
-	// value-returning procedure.
+	// design.md "Unions": a variant switch covering every variant is exhaustive,
+	// so no path falls off the end — letting an exhaustive switch be the last
+	// statement of a value-returning procedure.
 	exhaustive := has_default
 	if !has_default {
 		if erased {
@@ -454,9 +452,9 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 }
 
-// A union case is a variant name, `.name`, written as a bare implicit selector.
-// Nothing resolves it as a type: two variants may share a payload type, so only
-// the name identifies which arm this is.
+// A union case is a variant name, `.name`, written as a bare implicit
+// selector. Nothing resolves it as a type: two variants may share a payload
+// type, so only the name identifies the arm.
 @(private = "file")
 case_variant_index :: proc(k: ^Checker, subject: Type_Id, value: Expr) -> int {
 	sel, is_selector := value.(^Expr_Selector)

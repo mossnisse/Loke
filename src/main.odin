@@ -143,9 +143,9 @@ run :: proc() -> int {
 	// Every requested concrete type gets its deterministic `typeid` before any
 	// body is emitted, so traversal order cannot change an observable ID.
 	freeze_typeids(&c)
-	// design.md's formatter coherence is decided once the requested type set is
-	// closed, so "one formatter per concrete type" is a whole-program answer
-	// rather than a per-call-site one.
+	// design.md's formatter coherence is decided once the type set is closed, so
+	// "one formatter per concrete type" is a whole-program answer, not a
+	// per-call-site one.
 	discover_formatters(&c)
 	// Copy/drop lowering consumes a closed snapshot after all checked helpers
 	// have had the opportunity to contribute their lifecycle dependencies.
@@ -268,8 +268,8 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 	return opts, true
 }
 
-// A directory takes its complete final component, including dots; only a file
-// sheds its extension. Trim either host separator from a written directory so
+// A directory keeps its complete final component, dots included; only a file
+// sheds its extension. Either host separator is trimmed from a directory so
 // `package\` and `package/` both produce the sibling `package.exe`.
 default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	stem := input
@@ -338,12 +338,11 @@ is_config_name :: proc(name: string) -> bool {
 // `-collection name=path`, over the `base:` and `core:` roots bundled beside the
 // compiler.
 //
-// The seeds go in first and an explicit entry replaces one outright, so a
-// project can substitute its own standard tree. Duplicate *explicit* entries
-// remain an error; replacing a seed is not a duplicate. A bundled directory that
-// is missing is diagnosed only when an import actually needs it, which is what
-// lets an installation without the standard tree still compile a program that
-// never imports it.
+// Seeds go in first, and an explicit entry replaces one outright, letting a
+// project substitute its own standard tree. Duplicate *explicit* entries are
+// still an error; replacing a seed is not. A missing bundled directory is
+// diagnosed only when an import actually needs it, so an installation without
+// the standard tree can still compile a program that never imports it.
 @(private = "file")
 register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	init_semantic_stores(c)

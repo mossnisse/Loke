@@ -3,13 +3,13 @@
 // design.md "Typed fallibility": `Unit`, `Option`, and `Result` are ordinary
 // source declarations, not compiler-owned types. Built-ins, container members,
 // generated hooks, and iteration all instantiate *those* declarations, so a
-// program and the compiler cannot end up with two `Option`s that print the same
-// and compare unequal.
+// program and the compiler can't end up with two `Option`s that print the
+// same and compare unequal.
 //
-// `base:runtime` is therefore loaded before the root package and checked first,
-// and the three symbols are bound into the universe once their signatures are
-// resolved. A failure to find them is diagnosed here rather than papered over
-// with a synthesized substitute.
+// `base:runtime` is therefore loaded before the root package and checked
+// first, and the three symbols are bound into the universe once their
+// signatures are resolved. Failure to find them is diagnosed here rather than
+// papered over with a synthesized substitute.
 package lokec
 
 // Called once, right after `base:runtime` has been prepared. Binds the three
@@ -41,8 +41,7 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	universe.names[intern_identifier(c, "Option")] = option
 	universe.names[intern_identifier(c, "Result")] = result
 
-	// The one instance compiler-owned signatures need before any checker is in
-	// scope to ask for it.
+	// The instance compiler-owned signatures need before any checker exists to ask.
 	c.alloc_result_type = result_type(k, c.unit_type, TYPE_ALLOCATOR_ERROR)
 }
 

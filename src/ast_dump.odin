@@ -1,6 +1,6 @@
-// Deterministic, semantic-free AST dump used by the parser golden tests and the
-// `-dump-ast` driver mode. It intentionally omits addresses and checker
-// annotations so output is stable across runs and compiler phases.
+// Deterministic, semantic-free AST dump for the parser golden tests and the
+// `-dump-ast` driver mode: omits addresses and checker annotations so output
+// stays stable across runs and phases.
 //
 // `_` stands for an absent optional child everywhere it appears.
 package lokec
@@ -610,8 +610,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Type_Proc:
 		fmt.sbprint(b, "(proc-type")
 		if node.convention != "" {
-			// The stored convention is unquoted; the dump shows it as the source
-			// string literal it was written as.
+			// The stored convention is unquoted; the dump shows it as the written literal.
 			fmt.sbprintf(b, " %q", node.convention)
 		}
 		for param in node.params {

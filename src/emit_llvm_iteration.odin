@@ -86,11 +86,10 @@ Foreach_Field :: struct {
 	place:   bool,
 }
 
-// design.md "Element bindings": one binding names the whole `Element`, and N
-// bindings name its fields positionally. The sources are whatever the lowering
-// already has, so a destructuring loop never materializes the record it is
-// taking apart, and only a one-name loop over a synthesized element pays for
-// building it.
+// design.md "Element bindings": one binding names the whole `Element`; N
+// bindings name its fields positionally. Sources come from what the lowering
+// already has, so a destructuring loop never materializes the record it takes
+// apart — only a one-name loop over a synthesized element pays to build it.
 @(private = "file")
 bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field) {
 	if len(s.bindings) == len(fields) {
@@ -146,9 +145,9 @@ bind_foreach_field :: proc(e: ^Emitter, symbol: Symbol_Id, field: Foreach_Field)
 	bind_local(e, symbol, slot)
 }
 
-// `indexed()` numbers whatever traversal it wraps, so the wrapped element
-// becomes one field again — built here when the traversal produced several — and
-// the counter follows it.
+// `indexed()` numbers whatever traversal it wraps: the wrapped element becomes
+// one field again (built here when the traversal produced several), with the
+// counter following it.
 @(private = "file")
 with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, counter: string) -> []Foreach_Field {
 	if !s.indexed {
@@ -187,10 +186,9 @@ field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 	return load(e, llvm_type(e, field.type), field.address)
 }
 
-// The loop yields decoded code points. A byte offset — the index where the
-// yielded code point begins, advancing by 1 to 4 per step — comes from
-// `rune_offsets()`, and a rune ordinal from `indexed()` (design.md "String
-// iteration").
+// The loop yields decoded code points: a byte offset (where the yielded code
+// point begins, advancing 1 to 4 per step) comes from `rune_offsets()`, and a
+// rune ordinal from `indexed()` (design.md "String iteration").
 @(private = "file")
 emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	data, length := emit_text_parts(e, s.iterable)
@@ -226,9 +224,8 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		&e.b, "  %s = call i64 @loke_rt_v1_rune_at(ptr %s, i64 %s, i64 %s, ptr %s)",
 		used, data, length, current, decoded,
 	)
-	// A `string` is valid UTF-8 by construction and every borrowed view of one is
-	// checked where it is created, so a zero here would mean the invariant was
-	// already broken.
+	// A `string` is valid UTF-8 by construction, and every borrowed view is
+	// checked where it's created — a zero here means that invariant already broke.
 	stalled := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i64 %s, 0", stalled, used)
 	panic_if(e, stalled, "text.invalid", "invalid UTF-8 in a string")
@@ -255,8 +252,8 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 }
 
 // A slot walk over a map; iteration order is unspecified (design.md "Maps").
-// The cursor is one integer the runtime hands back; the table's controls, seed,
-// and slot count stay entirely inside `runtime/container.c`.
+// The cursor is one integer the runtime hands back — the table's controls,
+// seed, and slot count stay entirely inside `runtime/container.c`.
 //
 // One name binds the whole `{key, value}` entry and two destructure it; `keys()`
 // and `values()` name the single-field traversals. A value binding written `&` is
@@ -390,8 +387,8 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		limit = fmt.aprintf("%d", s.count)
 
 	case .Slice:
-		// The slice is evaluated once; the loop then walks its root through the
-		// data word, so `&value` reaches the root rather than a copy.
+		// The slice is evaluated once; the loop walks its root through the data
+		// word, so `&value` reaches the root, not a copy.
 		slice_type := llvm_type(e, expr_base(s.iterable).type)
 		value := emit_expr(e, s.iterable)
 		array_slot = temp(e)
@@ -403,9 +400,9 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		limit = length
 
 	case .Dynamic:
-		// design.md "Dynamic arrays": the loop views the *current* allocation and
-		// stops at the length, never at the capacity. The whole-container loan the
-		// loop holds is what keeps that snapshot true for its duration.
+		// design.md "Dynamic arrays": the loop views the *current* allocation,
+		// stopping at the length, never the capacity — kept true for the loop's
+		// duration by the whole-container loan it holds.
 		header := emit_address(e, s.iterable)
 		array_slot = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", array_slot, header)
@@ -437,8 +434,8 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
 		bind_local(e, s.bindings[1].symbol, index_slot)
 	}
-	// A sequence's cursor is already the index `indexed()` wants. A range's cursor
-	// is its *value*, so numbering one needs a counter of its own.
+	// A sequence's cursor is already the index `indexed()` wants; a range's
+	// cursor is its *value*, so numbering it needs a counter of its own.
 	counter := ""
 	if s.indexed && (s.kind == .Range || s.kind == .Stored_Range) {
 		counter = alloca(e, "i64")
@@ -511,10 +508,9 @@ bind_indexed_value :: proc(
 	if s.kind != .Array && s.kind != .Slice && s.kind != .Dynamic {
 		at := current
 		if s.adapter == .Reversed {
-			// The cursor still counts up from the low endpoint; only the value it
-			// names is mirrored, so `low + high' - current` walks the range backwards
-			// without a second loop shape. `high'` is the last value the forward loop
-			// would yield.
+			// The cursor still counts up from the low endpoint; only the value it names
+			// is mirrored, so `low + high' - current` walks it backwards without a
+			// second loop shape (`high'` is the last value the forward loop would yield).
 			last, mirrored := temp(e), temp(e)
 			open_high := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = sub %s %s, 1", open_high, element, limit)
@@ -673,9 +669,9 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 	if symbol.synth == .Dynamic_Iter || symbol.synth == .Dynamic_Iter_Reverse {
-		// `{ {storage, len}, 0 }`: the current allocation, viewed as a slice. The
-		// capacity and the allocator stay behind, which is what keeps the iterator
-		// a borrow rather than a second header.
+		// `{ {storage, len}, 0 }`: the current allocation, viewed as a slice.
+		// Capacity and allocator stay behind, keeping the iterator a borrow, not a
+		// second header.
 		view_type := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.result).fields[ITER_ARRAY_DATA]).type)
 		storage := extract(e, source, "%arg0", CONTAINER_STORAGE)
 		length := extract(e, source, "%arg0", CONTAINER_LEN)

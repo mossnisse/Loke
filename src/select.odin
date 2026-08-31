@@ -2,12 +2,12 @@
 //
 // `when` is structural source selection, not a constant `if`. An unselected
 // branch is parsed and nothing else — never declared, name-resolved,
-// type-checked, gated, evaluated, given defer slots, or emitted. No edit inside
-// one may change semantic state, diagnostics, symbol names, or generated code.
+// type-checked, gated, evaluated, given defer slots, or emitted. Nothing
+// inside it may change semantic state, diagnostics, symbol names, or code.
 //
-// Checking annotates the parser's AST in place rather than producing a second
-// tree, so the selected view has to be persistent: `File.active_items` is
-// rebuilt after each activation by flattening every selected branch at its
+// Checking annotates the parser's AST in place rather than building a second
+// tree, so the selected view must persist: `File.active_items` is rebuilt
+// after each activation by flattening every selected branch at its
 // surrounding position, and every semantic consumer iterates that.
 package lokec
 

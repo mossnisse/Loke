@@ -23,8 +23,8 @@ emit_block_statements :: proc(e: ^Emitter, b: ^Block) {
 }
 
 // Unreachable code still needs a block to live in, or LLVM rejects the
-// instructions that follow a terminator. A switch case body has the same
-// problem as a block, so both go through here.
+// instructions after a terminator — switch case bodies have the same problem,
+// so both go through here.
 @(private = "file")
 emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 	for stmt in stmts {
@@ -46,8 +46,8 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 
 	case ^Stmt_Expr:
 		for expr in s.exprs {
-			// `static_assert` is checked and answered at compile time and has no
-			// runtime cost, so there is nothing here to emit.
+			// `static_assert` is checked at compile time and has no runtime cost —
+			// nothing here to emit.
 			if call, is_call := expr.(^Expr_Call); is_call {
 				if call_builtin_kind(e, call) == .Static_Assert {
 					continue
@@ -99,16 +99,14 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 		emit_scoped_block(e, s)
 
 	case ^Stmt_When:
-		// Structural selection: the branch the checker chose is emitted in place,
-		// with no scope of its own, so its declarations and `defer`s belong to
-		// the surrounding block exactly as written.
+		// Structural selection: the checker-chosen branch is emitted in place with no
+		// scope of its own — its declarations and `defer`s belong to the surrounding block.
 		emit_block_statements(e, when_selected_block(s))
 
 	case ^Stmt_Foreach:
 		if s.kind == .Unresolved {
-			// The checker's L0350 arm gates every statement missing here, so this
-			// is a hole in that gate — and skipping it would emit a program that
-			// silently does less than the source says.
+			// The checker's L0350 arm gates every statement missing here — reaching
+			// this is a hole in that gate, silently emitting less than the source says.
 			backend_fail(e, "an unresolved statement reached emission")
 			return
 		}
@@ -150,23 +148,19 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 		if ok {
 			store(e, sym.type, llvm_const(e, zero, sym.type), slot)
 		}
-		// design.md "Allocators": a written `via` is *eager* — the provider is
-		// selected where the declaration is evaluated, so a later operation on this
-		// container allocates through it rather than lazily binding the default.
+		// design.md "Allocators": a written `via` is *eager*, selected at declaration —
+		// later operations on this container allocate through it, not the lazy default.
 		emit_eager_via_binding(e, symbol_id, slot)
 		register_implicit_drop(e, symbol_id)
 	}
 }
 
-// design.md "Exchange": the destination place is evaluated once, then
-// `replacement` is evaluated completely before the destination is touched — a
-// failure or panic during that leaves the destination unchanged. Once the
-// replacement is ready, the compiler moves the old value into result storage
-// and moves the replacement into the destination as one lifecycle operation.
-//
-// So the order below is the specification: address, replacement, load, store. No
-// hook runs between the two moves — the old value is handed back rather than
-// dropped, and the destination is never observably dead.
+// design.md "Exchange": the destination is evaluated once, then `replacement`
+// fully evaluated before it's touched, so a failure or panic leaves the
+// destination unchanged. Order is address, replacement, load, store — the old
+// value moves to result storage and the replacement moves in as one lifecycle
+// operation. No hook runs between the two moves, so the old value is handed
+// back rather than dropped, and the destination is never observably dead.
 @(private)
 emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	address := emit_address(e, v.bound[0])
@@ -176,9 +170,8 @@ emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	return previous
 }
 
-// `move` transfers the representation, writes the inert zero representation to
-// a lexical source, and marks that source dead (design.md "Assignment
-// statements").
+// `move` transfers the representation, zeroes the lexical source, and marks it
+// dead (design.md "Assignment statements").
 @(private)
 emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
 	value := emit_expr(e, v.value)
@@ -188,18 +181,17 @@ emit_move :: proc(e: ^Emitter, v: ^Expr_Move) -> string {
 	return value
 }
 
-// design.md "Destructuring": the operand is evaluated exactly once, then each
-// field is projected out of it. On the place path a retained managed field is
-// cloned and the source stays live; on the consuming path the fields are
-// transferred and each discarded one drops exactly once, in reverse declaration
-// order, after every retained field is already bound.
+// design.md "Destructuring": the operand is evaluated once, then each field is
+// projected out. Place path: a retained managed field is cloned, source stays
+// live. Consuming path: fields transfer; each discarded field drops once, in
+// reverse declaration order, after every retained field is bound.
 @(private = "file")
 emit_destructure_fields :: proc(
 	e: ^Emitter,
 	plan: ^Destructure,
 	operand: Expr,
-	// The destination root of each binding, so a cloned field is built with that
-	// destination's written `via` allocator exactly as an ordinary binding is.
+	// The destination root of each binding, so a cloned field uses that
+	// destination's written `via` allocator like an ordinary binding does.
 	// INVALID_SYMBOL falls back to the default provider.
 	destinations: []Symbol_Id,
 ) -> (values: []string, guards: []Deferred) {
@@ -220,9 +212,9 @@ emit_destructure_fields :: proc(
 			)
 		}
 		values[index] = value
-		// A successful clone must survive a later clone failing. On the consuming
-		// path every managed field is already ours, so guard retained and discarded
-		// fields before any user drop can unwind through this statement.
+		// A successful clone must survive a later clone failing. On the consuming path
+		// every managed field is already ours, so guard retained and discarded fields
+		// before any user drop can unwind through this statement.
 		if !plan.from_place || (retained && index < len(plan.clones) && plan.clones[index]) {
 			guards[index] = hold_temporary_value(e, field.type, value)
 		}
@@ -231,9 +223,9 @@ emit_destructure_fields :: proc(
 }
 
 // The discarded fields of a consumed record. A cloning destructure took nothing
-// from them, so only the consuming path owes them a drop — in reverse
-// declaration order, and after every retained binding is published, so a drop
-// that panics cannot leave a half-bound statement behind.
+// from them, so only the consuming path owes them a drop, in reverse declaration
+// order and after every retained binding is published — so a drop that panics
+// cannot leave a half-bound statement behind.
 @(private = "file")
 emit_destructure_discards :: proc(e: ^Emitter, plan: ^Destructure, guards: []Deferred) {
 	if plan.from_place {
@@ -320,8 +312,7 @@ declare_local :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 }
 
 // design.md "Assignment statements": every right side is evaluated, then every
-// destination address, then the writes happen. Nothing is written before all of
-// both are prepared.
+// destination address is computed, before anything is written.
 @(private = "file")
 emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	if s.op != .Assign {
@@ -369,10 +360,9 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	}
 }
 
-// design.md "Assignment statements": the assignment `drop(destination)` between
-// a successful clone and the write. The destination's state decides whether it
-// happens at all — a definitely dead one holds nothing, and a conditional one
-// asks its hidden flag.
+// design.md "Assignment statements": `drop(destination)` runs between a successful
+// clone and the write, gated by destination state — a definitely dead one holds
+// nothing, a conditional one checks its hidden flag.
 @(private = "file")
 emit_replace_place :: proc(e: ^Emitter, s: ^Stmt_Assign, index: int, address: string) {
 	target := s.lhs[index]
@@ -509,8 +499,8 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 }
 
 // ponytail: one ordered comparison chain rather than an LLVM `switch` for the
-// all-constant case. Ranges and non-constant cases need the chain anyway, and a
-// second lowering would have to agree with this one about source order. Add the
+// all-constant case — ranges and non-constant cases need the chain anyway, and a
+// second lowering would have to agree with this one about source order. Add a
 // jump table when a measured switch is hot.
 @(private = "file")
 emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
@@ -586,8 +576,8 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 }
 
 // A type switch dispatches on the tag. Each case binds its own name: at the
-// variant's type where one is known, and at the union's type where a case names
-// several types or is the default.
+// variant's type where one is known, and at the union's type where a case
+// names several types or is the default.
 @(private = "file")
 emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	outer_break, outer_break_depth := e.break_label, e.break_depth
@@ -678,9 +668,9 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		place_label(e, bodies[index])
 		push_scope_stmts(e, entry.stmts)
 		emit_type_case_binding(e, entry, union_type, value, slot, erased)
-		// The consumed payload leaves through the case's binding, which drops it
-		// like any other managed local. With no binding to hand it to, the case
-		// itself owns the whole union.
+		// The consumed payload leaves through the case's binding, which drops it like
+		// any other managed local. With no binding to hand it to, the case itself
+		// owns the whole union.
 		if consumes {
 			if entry.binding_symbol != INVALID_SYMBOL {
 				register_implicit_drop(e, entry.binding_symbol)
@@ -756,9 +746,9 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 		} else {
 			store(e, e.result_type, operand, e.result_slot)
 		}
-		// The result is in result storage before cleanup runs, so a transferred
-		// local can be marked dead here without the epilogue dropping what was
-		// just handed back (design.md "Managed values and storage").
+		// The result is in result storage before cleanup runs, so a transferred local
+		// can be marked dead here without the epilogue dropping what was just handed
+		// back (design.md "Managed values and storage").
 		if !value.clone_on_return {
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident {
 				if sym := symbol_of(e.c, ident.symbol); sym != nil && emit_lifecycle(e, sym.type).managed {

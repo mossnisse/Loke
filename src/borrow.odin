@@ -78,12 +78,12 @@ Root_Kind :: enum u8 {
 }
 
 // Whether storage of this kind is still there after the procedure returns. A
-// lexical local, an ordinary temporary and a hidden slice-literal array are the
-// three that end with the frame.
+// lexical local, an ordinary temporary and a hidden slice-literal array end
+// with the frame; everything else survives it.
 //
-// This answers the frame question only. Thread and process storage both survive
-// a return, so both answer true here; a destination that outlives the thread
-// needs the stronger question, which this predicate does not answer.
+// Frame question only: thread and process storage both answer true here, so a
+// destination that outlives the thread needs the stronger question, which this
+// predicate does not answer.
 root_outlives_body :: proc(kind: Root_Kind) -> bool {
 	#partial switch kind {
 	case .Local, .Slice_Literal, .Temporary:
@@ -393,13 +393,13 @@ retain_kind_level :: proc(kind: Retain_Kind) -> Escape_Level {
 
 // ------------------------------------------------------- escape levels --
 
-// What a call may leave behind that
-// depends on one parameter, as one totally ordered level: a callee may promise
-// more than its type asks and never less. Written `@(escape=none)` and so on.
+// What a call may leave behind that depends on one parameter, as one totally
+// ordered level: a callee may promise more than its type asks and never less.
+// Written `@(escape=none)` and so on.
 //
-// `Result` is the default and is what today's behaviour already is, so an
-// unannotated signature keeps compiling. Retention defaults to none because it
-// is rare, and making it visible at the boundary is what Phase 4b is for.
+// `Result` is the default, matching today's behaviour, so an unannotated
+// signature keeps compiling. Retention defaults to none because it is rare;
+// making it visible at the boundary is what Phase 4b is for.
 Escape_Level :: enum u8 {
 	// Nothing that depends on this parameter outlives the call, not even a
 	// result. This is what lets a scratch argument stay local at an indirect
@@ -1066,16 +1066,15 @@ Prov_State :: struct {
 	slots:   int,
 	loans:   int,
 	roots:   int,
-	// Bytes per slot row. Rows are byte-padded rather than densely packed so a
-	// row stays an ordinary subslice that `copy` and the word helpers work on.
-	// Padding bits above `loans` are never set, so whole-byte `or` and equality
-	// stay exact.
+	// Bytes per slot row. Byte-padded rather than densely packed, so a row stays
+	// an ordinary subslice `copy` and the word helpers work on; padding bits
+	// above `loans` are never set, so whole-byte `or` and equality stay exact.
 	//
 	// A byte, not a wider word: step 4 multiplies `slots` without necessarily
-	// adding loans, so a body with many content paths and few loans would pay a
-	// whole padded word per row. Measured against the corpus, bytes beat both
-	// 64-bit words and the unpacked form at every size, and cost no measurable
-	// time (the merge loops are short either way).
+	// adding loans, so many content paths with few loans would pay a whole
+	// padded word per row otherwise. Measured against the corpus, bytes beat
+	// both 64-bit words and the unpacked form at every size, at no measurable
+	// cost (the merge loops are short either way).
 	row_words: int,
 	reach:   []u8,
 	invalid: []bool,
@@ -2245,10 +2244,10 @@ add_borrow_notes :: proc(state: ^Prov_State, root: Prov_Root, loan: Prov_Loan, l
 	}
 }
 
-// What is stored where it outlives the
-// statement that stored it must still be valid there. A parameter answers with
-// its own written `@(escape=...)` level, because the caller is the only one who
-// knows how long its storage lives; every other root answers from its kind.
+// A destination that outlives the statement storing into it needs the stored
+// value to still be valid there. A parameter answers with its own written
+// `@(escape=...)` level, since only the caller knows how long its storage
+// lives; every other root answers from its kind.
 @(private = "file")
 check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 	graph := state.graph

@@ -1,6 +1,6 @@
-// The syntax corpora. These run in-process rather than through the CLI
-// because spans and token streams are what they assert, and neither is
-// visible from stdout.
+// The syntax corpora. These run in-process rather than through the CLI because
+// spans and token streams are what they assert, and neither is visible from
+// stdout.
 //
 //   tests/syntax/*.loke             valid syntax: no diagnostics, dumpable
 //   tests/syntax/ambiguity/*.loke   exact dump goldens: the resolved rules, and
@@ -32,8 +32,8 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 		f := parse(&c, 0, tokens)
 		defer destroy_ast(&f)
 
-		// Zero diagnostics is also how "the parser consumed through EOF" is
-		// asserted: anything left over is reported as a stray item.
+		// Zero diagnostics also asserts "the parser consumed through EOF":
+		// anything left over is reported as a stray item.
 		testing.expectf(
 			t,
 			c.error_count == 0,
@@ -44,11 +44,10 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 		)
 		testing.expectf(t, tokens[len(tokens) - 1].kind == .EOF, "%s: no EOF token", path)
 
-		// ponytail: spans are checked on the top-level items, not on every node —
-		// the only exhaustive walk over the tree is `ast_dump`, and a second one
-		// written for the tests would need updating with every new node. Running
-		// the dump covers every node's *existence*; widen this if a span bug ever
-		// gets past it.
+		// ponytail: spans are checked on top-level items, not every node — the only
+		// exhaustive walk is `ast_dump`, and a second one for tests would need
+		// updating with every new node. Running the dump covers every node's
+		// *existence*; widen this if a span bug ever gets past it.
 		previous: u32 = 0
 		for item in f.items {
 			span := item_span(item)
@@ -94,8 +93,8 @@ ambiguity_goldens :: proc(t: ^testing.T) {
 }
 
 // Deterministic mutation fuzzing. Whatever the token stream looks like, the
-// parser must terminate, keep every diagnostic span inside the file, and leave a
-// tree the dump can walk. The seed is printed with any failure, and the run is
+// parser must terminate, keep every diagnostic span inside the file, and leave
+// a tree the dump can walk. The seed is printed on failure, so the run is
 // reproducible from it.
 @(test)
 mutation_fuzzing :: proc(t: ^testing.T) {
@@ -161,8 +160,8 @@ corpus :: proc(t: ^testing.T, pattern: string) -> []string {
 	return paths
 }
 
-// The kinds a token is rewritten to. Delimiters and separators are what break
-// the parser's structure; the rest are there so a substitution is not always a
+// The kinds a token is rewritten to. Delimiters and separators break the
+// parser's structure; the rest keep a substitution from always being a
 // delimiter. `EOF` truncates the stream mid-construct.
 @(private = "file")
 MUTATION_KINDS :: [?]Token_Kind {

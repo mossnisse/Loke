@@ -41,11 +41,11 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 	return link(c, ll_path, opts.output, opts)
 }
 
-// The object-build compile seam (m7-plan step 5). No runtime sources, no
-// libraries, no entry: `clang -c` turns the module's `.ll` into one `.obj` with
-// its runtime and foreign references left unresolved. An assembly import cannot
-// ride along in a single relocatable object, so it is diagnosed with the
-// instruction its final consumer needs.
+// The object-build compile seam (m7-plan step 5): no runtime sources, no
+// libraries, no entry — `clang -c` turns the module's `.ll` into one `.obj`
+// with runtime and foreign references left unresolved. An assembly import
+// can't ride along in a single relocatable object, so it is diagnosed with
+// the instruction its final consumer needs.
 @(private = "file")
 compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string, opts: Options) -> int {
 	for id in package_order(c) {
@@ -95,12 +95,10 @@ Layout_Probe :: struct {
 	expected:    u64,
 }
 
-// `-check-layout`: builds a module that prints LLVM's own size, alignment, and
-// field offsets for every type in the compilation, runs it, and compares the
-// results with the checker's cached layout.
-//
-// Executing LLVM-derived values tests the actual target backend rather than a
-// second copy of the checker's formula.
+// `-check-layout`: builds a module that prints LLVM's own size, alignment,
+// and field offsets for every type, runs it, and compares against the
+// checker's cached layout. Executing LLVM-derived values tests the actual
+// target backend rather than a second copy of the checker's formula.
 check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 	e := Emitter {
 		c            = c,
@@ -250,9 +248,9 @@ layout_probeable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 replace_ext :: proc(path: string, ext: string) -> string {
-	// A dot in a parent directory is not this file's extension. Keeping the
-	// spelling otherwise intact also avoids moving an extensionless output to a
-	// different directory while deriving its `.ll` companion.
+	// A dot in a parent directory isn't this file's extension. Preserving the
+	// spelling otherwise also keeps an extensionless output from moving to a
+	// different directory when deriving its `.ll` companion.
 	separator := max(strings.last_index_byte(path, '/'), strings.last_index_byte(path, '\\'))
 	if i := strings.last_index_byte(path, '.'); i > separator {
 		return strings.concatenate({path[:i], ext})
@@ -261,13 +259,11 @@ replace_ext :: proc(path: string, ext: string) -> string {
 }
 
 // clang does llc + link + CRT startup in one process (decision A5, A7). It
-// finds the Windows SDK itself, but computes a relative, unusable
-// VCToolsInstallDir unless it is run from a developer prompt — so the CRT
-// import libraries are located here.
-//
-// The seed runtime's C sources join the same invocation: one object-and-link
-// seam already existed, and compiling the runtime here keeps it in step with
-// the module beside it.
+// finds the Windows SDK itself but computes a relative, unusable
+// VCToolsInstallDir outside a developer prompt, so the CRT import libraries
+// are located here. The seed runtime's C sources join the same invocation:
+// one object-and-link seam already existed, and compiling the runtime here
+// keeps it in step with the module beside it.
 @(private = "file")
 link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> int {
 	clang := find_clang()

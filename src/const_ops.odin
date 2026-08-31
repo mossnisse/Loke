@@ -100,10 +100,9 @@ fold_arithmetic :: proc(
 	return Const_Value{kind = a.kind, integer = wrap_to_type(c, result, type, storage)}, true
 }
 
-// A typed integer operation is computed exactly and then projected modulo its
-// own width, which is what makes folding agree with the wrapping arithmetic the
-// backend emits (design.md "Integer overflow"). An untyped operation keeps its
-// exact value.
+// A typed integer operation is computed exactly, then projected modulo its own
+// width, matching the wrapping arithmetic the backend emits (design.md
+// "Integer overflow"). An untyped operation keeps its exact value.
 wrap_to_type :: proc(c: ^Compiler, value: Big_Int, type: Type_Id, allocator: mem.Allocator = {}) -> Big_Int {
 	if type_is_untyped(c, type) {
 		return value

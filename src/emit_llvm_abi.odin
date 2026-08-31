@@ -173,15 +173,15 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 	fmt.sbprintln(&e.b, strings.concatenate({" ", struct_body(e, type, info)}))
 }
 
-// The LLVM aggregate body of a struct. A natural record keeps its plain
-// `{ ... }` spelling; a `@(packed)`/`@(align=N)` record is laid out byte-exact so
-// LLVM's own size, alignment, and field offsets equal the checker's cached ones
-// (m7-plan step 2, decision "Attributed LLVM layout"). Field GEP indices stay
-// equal to the logical field index in every form, so field walks are unchanged.
+// The LLVM aggregate body of a struct: a natural record keeps its plain
+// `{ ... }` spelling; a `@(packed)`/`@(align=N)` record is laid out byte-exact
+// so LLVM's size, alignment, and field offsets match the checker's cached
+// ones (m7-plan step 2, decision "Attributed LLVM layout"). Field GEP indices
+// equal the logical field index in every form, so field walks are unchanged.
 @(private = "file")
 struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
-	// The cached alignment and size are read below, so the layout must be computed
-	// first; computing a field's layout can grow the type store, so `info` is then
+	// The cached alignment and size are read below, so layout is computed first;
+	// computing a field's layout can grow the type store, so `info` is
 	// reacquired before its fields are read.
 	natural := record_natural_align(e.c, info_in)
 	type_size(e.c, type)
@@ -204,14 +204,14 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
 
 	b := strings.builder_make()
 	if packed && over_aligned {
-		// Tight packing (needs an LLVM packed body) and a raised alignment (which a
-		// packed body cannot report) at once: each field becomes a byte array so a
+		// Tight packing (needs an LLVM packed body) and a raised alignment (a
+		// packed body can't report) at once: each field becomes a byte array, so a
 		// non-packed body neither re-pads nor drops the alignment, and a trailing
-		// zero-length aligned member forces the record's alignment and size.
-		// Byte members make whole-value `extractvalue` ill-typed, so equality reads
-		// each field through its address instead (`emit_byte_member_struct_equal`,
-		// m7-plan step 6); field GEP indices are unchanged, which is what lets
-		// ordinary access, reflection, and formatting stay on their normal path.
+		// zero-length aligned member forces the record's alignment and size. Byte
+		// members make whole-value `extractvalue` ill-typed, so equality reads each
+		// field through its address instead (`emit_byte_member_struct_equal`,
+		// m7-plan step 6); GEP indices stay unchanged, so ordinary access,
+		// reflection, and formatting are unaffected.
 		strings.write_string(&b, "{")
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
@@ -332,9 +332,9 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		return fmt.aprintf("i%d", type_bits(e.c, under))
 	case .Typeid, .Type:
 		// design.md: an ordinary runtime scalar holding one concrete type's unique
-		// identifier. Zero is nil. A compile-time `type` borrows the spelling: it
-		// reaches the backend only as the `type` member of a `meta.Field`
-		// descriptor, whose values are all folded before anything is emitted.
+		// identifier; zero is nil. A compile-time `type` borrows the spelling,
+		// reaching the backend only as the `type` member of a `meta.Field`
+		// descriptor, whose values are folded before anything is emitted.
 		return "i64"
 	case .Rune:
 		return "i32"
@@ -378,16 +378,15 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 // The union storage type, built so LLVM's own layout matches the checker's
 // cached facts: an alignment-carrying payload head, explicit payload padding,
 // the tag, and tail padding. A bare `[N x i8]` payload would be byte-aligned,
-// which is wrong wherever a union is allocated directly, nested in a struct, or
+// which is wrong when a union is allocated directly, nested in a struct, or
 // used as an array element.
 @(private = "file")
 union_storage_definition :: proc(e: ^Emitter, type: Type_Id) -> string {
 	shape := union_layout(e.c, type)
 	b := strings.builder_make()
 	strings.write_string(&b, "{ ")
-	// A union every variant of which is payloadless has no payload region at
-	// all: its storage is the tag alone, and there is no head to carry an
-	// alignment no payload asks for.
+	// A union whose every variant is payloadless has no payload region: storage
+	// is the tag alone, with no head to carry an alignment nothing asks for.
 	if shape.payload_size > 0 {
 		fmt.sbprintf(&b, "i%d", shape.align * 8)
 		if pad := shape.payload_size - shape.align; pad > 0 {
@@ -686,10 +685,10 @@ emit_foreign_return :: proc(e: ^Emitter) {
 	}
 }
 
-// design.md "`@(c_vararg)`": the C default argument promotions. `f32` widens to
-// `double`; `bool`, an enum, and an integer narrower than 32 bits widen to
-// `i32`; an aggregate follows the ordinary by-value classification. Returns the
-// promoted `<type> <value>` operand.
+// design.md "`@(c_vararg)`": the C default argument promotions — `f32` widens
+// to `double`; `bool`, an enum, and an integer narrower than 32 bits widen to
+// `i32`; an aggregate follows the ordinary by-value classification. Returns
+// the promoted `<type> <value>` operand.
 @(private = "file")
 emit_c_vararg_promote :: proc(e: ^Emitter, type: Type_Id, operand: string) -> string {
 	under := type_underlying(e.c, type)

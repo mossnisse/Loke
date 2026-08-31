@@ -12,12 +12,12 @@
 // `move_only struct` disables both copy entry points. `clone` and `try_clone`
 // remain generated public operations and are never implementation hook names.
 //
-// Narrowing: design.md gives the canonical hook a default argument of
-// `mem.default_allocator()`, and that default is fixed by the language rather
-// than chosen per type. A custom hook is therefore written with a plain
-// `allocator: Allocator` parameter and the compiler supplies the default at
-// every call site that omits it. Writing a default on a lifecycle hook is
-// rejected — including the one the design spells.
+// Narrowing: design.md fixes the canonical hook's default argument as
+// `mem.default_allocator()` — fixed by the language, not chosen per type. A
+// custom hook is therefore written with a plain `allocator: Allocator`
+// parameter, and the compiler supplies the default at every call site that
+// omits it. Writing a default on a lifecycle hook is rejected, including the
+// one the design spells.
 package lokec
 
 // What a type's lifecycle is, cached per nominal type. Resolved lazily because a
@@ -32,24 +32,24 @@ Lifecycle :: struct {
 	// An explicit `move_only struct`: neither public copy entry point exists.
 	clone_disabled:   bool,
 	// A record is managed when it has a drop/copy hook, is move-only, or has a
-	// recursively managed field. A managed value is
-	// what scope exit cleans up and what assignment clones.
+	// recursively managed field — the managed value is what scope exit cleans
+	// up and what assignment clones.
 	managed:          bool,
-	// design.md "string type": a `string` is managed, but its clone and drop are
-	// the runtime's shared-storage retain and release rather than anything a
-	// package could write. There is no hook symbol to find, so the emitter
-	// recognises this flag instead of looking one up.
+	// design.md "string type": a `string` is managed, but its clone/drop are the
+	// runtime's shared-storage retain/release, not anything a package could
+	// write — there is no hook symbol to find, so the emitter recognises this
+	// flag instead of looking one up.
 	//
-	// The same is true of `[dynamic]T` and `map[K]V`, whose clone and drop are
-	// the versioned C helpers driven by a generated operation table. `container`
-	// tells the two apart, because a string's implicit copy is a retain while
-	// a container's is a real deep clone that can fail.
+	// The same holds for `[dynamic]T` and `map[K]V`, whose clone/drop are the
+	// versioned C helpers driven by a generated operation table. `container`
+	// tells the two apart: a string's implicit copy is a retain, a container's
+	// is a real deep clone that can fail.
 	intrinsic:        bool,
 	container:        bool,
-	// A local allocator-region provider (`src/region.odin`). Managed, and
-	// move-only: two owners of one control block would release it twice, and a
-	// bump region has no meaningful copy. So `clone` is disabled here rather than
-	// generated and then trapped at run time.
+	// A local allocator-region provider (`src/region.odin`): managed and
+	// move-only. Two owners of one control block would release it twice, and a
+	// bump region has no meaningful copy — so `clone` is disabled here rather
+	// than generated and trapped at run time.
 	provider:         bool,
 	state:            Size_State,
 }
@@ -214,9 +214,9 @@ type_is_managed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return lifecycle_of(c, type).managed
 }
 
-// A `move_only` type has neither copy entry
-// point, so assignment, copy initialization, and a borrowed-parameter return all
-// have to say so rather than silently producing a shallow copy.
+// A `move_only` type has neither copy entry point, so assignment, copy
+// initialization, and a borrowed-parameter return all have to say so rather
+// than silently producing a shallow copy.
 type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
@@ -261,15 +261,14 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 
 // A user-defined record gets field-wise `try_clone`, `clone`, `move`, and
 // `drop` by default, and `clone` is generated from `try_clone` — user code
-// never replaces it independently (design.md). Both copy entry points are
-// therefore real members with real emitted bodies, so `value.clone()`,
-// generic code, and the catalogue's `Cloneable` find them exactly where a
-// hand-written hook would be.
+// never replaces it independently (design.md). Both entry points are real
+// members with real emitted bodies, so `value.clone()`, generic code, and the
+// catalogue's `Cloneable` find them exactly where a hand-written hook would be.
 //
-// The contribution is keyed on the name being looked up rather than running for
-// every member query. `lifecycle_of` caches its answer, so asking before the
-// subject's own `impl` block is declared would both freeze the wrong
-// classification and install a generated hook beside the custom one.
+// Keyed on the name being looked up rather than running for every member
+// query. `lifecycle_of` caches its answer, so asking before the subject's own
+// `impl` block is declared would freeze the wrong classification and install
+// a generated hook beside the custom one.
 ensure_lifecycle_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	switch identifier_text(k.c, name) {
 	case "try_clone", "clone":
@@ -279,11 +278,11 @@ ensure_lifecycle_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 	contribute_lifecycle_members(k, type)
 }
 
-// Generated bodies copy every managed part, including infallible ones. Their
-// dependencies must be contributed too: records use `clone`, fixed arrays use
-// `try_clone`, and strings retain their backing storage directly.
-// Keyed on the underlying type, exactly as `lifecycle_of` is: a `distinct` name
-// shares its underlying record's lifecycle and canonical copy procedures.
+// Generated bodies copy every managed part, including infallible ones; their
+// dependencies must be contributed too — records use `clone`, fixed arrays use
+// `try_clone`, strings retain their backing storage directly. Keyed on the
+// underlying type, exactly as `lifecycle_of` is: a `distinct` name shares its
+// underlying record's lifecycle and canonical copy procedures.
 contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	type := type_underlying(k.c, written)
 	info := type_of(k.c, type)
@@ -302,9 +301,8 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	// Copyable owning built-ins such as `string`, dynamic arrays, and maps
 	// satisfy `Cloneable` (design.md "standard interface catalogue"). That
 	// interface names the `try_clone` slot, so those types need the member as
-	// much as a record
-	// does — the difference is only what its body lowers to, which
-	// `emit_synth_try_clone` decides from `Lifecycle.intrinsic`.
+	// much as a record does — the difference is only what its body lowers to,
+	// which `emit_synth_try_clone` decides from `Lifecycle.intrinsic`.
 	#partial switch info.kind {
 	case .Struct, .Array, .Union:
 	case .Dynamic_Array, .Map:
@@ -348,8 +346,8 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	add_members(k.c, type, members[:])
 
 	// A union's parts are its variant payloads. The generated body reads the tag
-	// and visits exactly one of them, but any of them may be the active one, so
-	// every payload's own operations have to exist.
+	// and visits exactly one, but any could be active, so every payload's own
+	// operations have to exist.
 	if info.kind == .Union {
 		for variant in info.variants {
 			if variant != TYPE_VOID && type_is_managed(k.c, variant) {
@@ -370,10 +368,10 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 	}
 }
 
-// Both copy entry points for a built-in owning type. There is no field walk and
-// no custom hook to respect: `string` retains a handle and a container calls its
-// versioned helper, so the members exist to be found by name and by slot
-// matching, and the emitter supplies the one body each of them has.
+// Both copy entry points for a built-in owning type. No field walk and no
+// custom hook to respect: `string` retains a handle, a container calls its
+// versioned helper — the members exist to be found by name and slot matching,
+// and the emitter supplies the one body each has.
 @(private = "file")
 contribute_intrinsic_copy_members :: proc(k: ^Checker, type: Type_Id) {
 	// `add_members` keeps the slice it is handed, so this has to outlive the call.
@@ -384,9 +382,9 @@ contribute_intrinsic_copy_members :: proc(k: ^Checker, type: Type_Id) {
 }
 
 // The parts a generated field-wise clone visits, in declaration order: a
-// record's fields, or a fixed array's elements. `clone_part_count` and
-// `clone_part` are the one pair every walk uses, so a struct and an array are
-// never indexed by two different conventions.
+// record's fields or a fixed array's elements. `clone_part_count`/`clone_part`
+// are the one pair every walk uses, so a struct and an array are never
+// indexed by two different conventions.
 clone_part_count :: proc(c: ^Compiler, type: Type_Id) -> int {
 	info := underlying_info(c, type)
 	if info == nil {
@@ -417,9 +415,9 @@ clone_part :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 }
 
 // Can cloning this type actually fail? Only a custom copy hook returns a real
-// error; a generated one is fallible exactly when some part of it reaches one.
-// This is what keeps a generated body a plain copy for the ordinary case
-// instead of a chain of error branches that can never be taken.
+// error; a generated one is fallible exactly when some part reaches one — this
+// keeps a generated body a plain copy in the ordinary case, instead of a
+// chain of error branches that can never be taken.
 type_clone_is_fallible :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false

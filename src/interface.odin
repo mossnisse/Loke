@@ -156,8 +156,8 @@ check_interface_declaration :: proc(k: ^Checker, symbol_id: Symbol_Id) {
 			)
 		}
 	}
-	// Slot names must also be unique across every composed interface, which is
-	// only knowable once composition is resolved; that is checked when the
+	// Slot names must also be unique across every composed interface; that is
+	// only knowable once composition resolves, so it is checked when the
 	// composed interface is applied.
 }
 
@@ -217,9 +217,9 @@ Requirement_Failure :: struct {
 	subject: Type_Id,
 }
 
-// Does `info` hold for these arguments? Silent by default: an application is a
-// predicate, and only a `where` bound or a `dyn` conversion turns a `false` into
-// a diagnostic — which is then reported by `report_interface_failure`.
+// Does `info` hold for these arguments? Silent by default — an application is
+// a predicate; only a `where` bound or a `dyn` conversion turns a `false` into
+// a diagnostic, reported by `report_interface_failure`.
 interface_satisfied :: proc(
 	k: ^Checker,
 	info: ^Interface_Info,
@@ -291,9 +291,9 @@ interface_application_text :: proc(c: ^Compiler, info: ^Interface_Info, args: []
 	return concat(c, text, ")")
 }
 
-// Guards against an interface whose composition names itself. Requirement
-// checking is deliberately non-recursive over types that do not exist yet, but a
-// cyclic *declaration* would still spin.
+// Guards against an interface whose composition names itself: requirement
+// checking is deliberately non-recursive over types that don't exist yet, but
+// a cyclic *declaration* would still spin.
 MAX_INTERFACE_DEPTH :: 32
 
 @(private = "file")
@@ -312,9 +312,9 @@ interface_check :: proc(
 			reason = "this interface composes itself",
 		}, false
 	}
-	// Requirements are hypothetical programs. They deliberately use the real
-	// checker on cloned syntax, while registry gates keep rejected probes from
-	// changing typeids or adding backend-only globals and witness tables.
+	// Requirements are hypothetical programs, deliberately checked with the real
+	// checker on cloned syntax; registry gates keep rejected probes from changing
+	// typeids or adding backend-only globals and witness tables.
 	k.c.speculation_depth += 1
 	defer k.c.speculation_depth -= 1
 
@@ -404,8 +404,8 @@ check_one_requirement :: proc(
 		}
 	}
 
-	// The binding list introduces names standing for values, or for hypothetical
-	// exclusive mutable places. The compiler never constructs either.
+	// The binding list introduces names standing for values, or hypothetical
+	// exclusive mutable places — the compiler never constructs either.
 	for group in requirement.bindings {
 		bound := resolve_type_syntax(k, group.type)
 		if bound == INVALID_TYPE {
@@ -531,10 +531,10 @@ check_slot_requirement :: proc(
 		name = intern_identifier(k.c, requirement.name.text)
 	}
 	// The slot's *candidates* are the interface package's business, but a
-	// `Self.Assoc` written in its signature names the subject's own member. That
-	// is an inherent member, whose visibility answers to the application site, so
-	// the signature resolves there — otherwise `Iterable` would demand that every
-	// iterable publish its `Iterator`.
+	// `Self.Assoc` in its signature names the subject's own inherent member,
+	// whose visibility answers to the application site — so the signature
+	// resolves there, or `Iterable` would demand every iterable publish its
+	// `Iterator`.
 	slot_pkg := k.lookup_pkg
 	k.lookup_pkg = application_pkg
 	wanted_params, wanted_modes, wanted_results, wanted_inout, shape_ok := slot_signature(k, signature, subject)
@@ -564,9 +564,9 @@ check_slot_requirement :: proc(
 }
 
 // design.md: a named slot is matched by an inherent method, or by an extension
-// from the package that declares the slot's owning interface — never from the
-// package that happens to apply the interface. An inherent method belongs to the
-// type itself, so its own visibility does not enter into it; only the extension
+// from the package that declares the slot's owning interface — never the
+// package that happens to apply the interface. An inherent method belongs to
+// the type itself, so its own visibility doesn't matter; only the extension
 // half is package-scoped.
 @(private = "file")
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {

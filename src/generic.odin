@@ -1,16 +1,16 @@
 // Generics: templates, inference, specialization, `where`, and the
 // monomorphization cache.
 //
-// Decision A2 is monomorphization: every distinct argument vector produces its
-// own instance, its own symbol, and its own emitted body. Because type
-// annotations live on the AST nodes (decision A1), an instance also needs its
-// own syntax, which is what `ast_clone.odin` supplies.
+// Decision A2 is monomorphization: every distinct argument vector gets its own
+// instance, symbol, and emitted body. Type annotations live on AST nodes
+// (decision A1), so an instance needs its own syntax too — supplied by
+// `ast_clone.odin`.
 //
-// Substitution is not a rewrite. A clone keeps `$T` exactly as written, and the
+// Substitution is not a rewrite: a clone keeps `$T` exactly as written, and the
 // instance's scope binds `T` to the argument; `resolve_type_syntax` then
 // resolves the clone's parameter, field, and result types to concrete ones. The
 // clone's scope parent is the *declaration's* lexical scope, never the caller's,
-// which is what makes the same instantiation mean the same thing everywhere.
+// so the same instantiation means the same thing everywhere.
 package lokec
 
 import "core:fmt"
@@ -113,8 +113,8 @@ Instantiation_Frame :: struct {
 
 // An instantiated `impl` block waiting for its bodies to be checked.
 // Signatures are installed as soon as the instance exists, so a method is
-// callable from the code that created the instantiation; bodies wait until the
-// requesting package is finished, so a method may itself use the instance.
+// callable right away; bodies wait until the requesting package is finished,
+// so a method may itself use the instance.
 Pending_Impl :: struct {
 	item:      ^Item_Impl,
 	scope:     ^Scope,
@@ -173,10 +173,10 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 	}
 	literal := decl_proc_literal(d)
 	if literal != nil && literal.signature != nil && literal.signature.convention != "" {
-		// A foreign block's member inherited its convention from the block rather
-		// than writing one, and `check_foreign_block` already rejects it as L0624 —
-		// the answer that names the real mistake. Complaining about the inherited
-		// convention as well would be two diagnostics for one error (m7-plan step 6).
+		// A foreign block's member inherited its convention rather than writing one;
+		// `check_foreign_block` already rejects it as L0624, the diagnostic that
+		// names the real mistake. Flagging it here too would double-report one error
+		// (m7-plan step 6).
 		if len(d.symbols) > 0 {
 			if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
 				return
@@ -446,7 +446,7 @@ generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gen
 
 // The same identity as a backend symbol: `Table.int.i32` rather than
 // `Table(int, i32)`, so the emitted name stays readable instead of dissolving
-// into escapes. Distinct argument vectors still produce distinct names, because
+// into escapes. Distinct argument vectors still produce distinct names since
 // each part is separately escaped.
 generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {
 	b := strings.builder_make(c.semantic_allocator)
@@ -502,9 +502,9 @@ bind_generic_name :: proc(k: ^Checker, scope: ^Scope, binding: Generic_Binding) 
 // -------------------------------------------------------- pattern matching --
 
 // Binds every `$` name in a written parameter type from the shape of a supplied
-// argument's type. Returns false only when a binding is impossible; a pattern
-// with no `$` in it is not this function's business, and ordinary conversion
-// ranking still decides whether the argument fits.
+// argument's type. Returns false only when a binding is impossible — a pattern
+// with no `$` is not this function's business, and ordinary conversion ranking
+// still decides whether the argument fits.
 match_type_pattern :: proc(
 	k: ^Checker,
 	pattern: Expr,
@@ -533,9 +533,8 @@ match_type_pattern :: proc(
 			return false
 		}
 		// A `^mut E` argument reaches a `^$E` parameter through capability
-		// weakening; a `^E` argument cannot reach a `^mut $E` parameter. The same
-		// rule slices use, so one helper written on the read-only spelling serves
-		// both capabilities.
+		// weakening, but not the reverse. Slices follow the same rule, so one
+		// helper written on the read-only spelling serves both capabilities.
 		if v.mutable && !info.mutable {
 			return false
 		}
@@ -696,10 +695,9 @@ bind_pattern_name :: proc(
 Inference :: struct {
 	bindings:     []Generic_Binding,
 	runtime_args: []Arg_Info,
-	// Which written arguments were consumed by `$` parameters, and the
-	// concrete type each one was converted to. Overload ordering still ranks
-	// those written arguments even though they do not survive in the runtime
-	// signature.
+	// Which written arguments were consumed by `$` parameters, and the concrete
+	// type each was converted to. Overload ordering still ranks these even
+	// though they don't survive into the runtime signature.
 	compile_time:    []bool,
 	compile_targets: []Type_Id,
 	scope:        ^Scope,
@@ -708,9 +706,9 @@ Inference :: struct {
 }
 
 // Walks a template's written signature left to right, binding every `$` name
-// from the arguments as it goes, so a later parameter type may name an earlier
-// binding. `$` parameters are compile-time inputs and do not survive into the
-// instance's runtime signature.
+// as it goes, so a later parameter type may name an earlier binding. `$`
+// parameters are compile-time inputs and do not survive into the instance's
+// runtime signature.
 infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: []Arg_Info) -> Inference {
 	result := Inference{}
 	literal := decl_proc_literal(template.decl)
@@ -751,11 +749,10 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		}
 	}
 
-	// Inference binds `$` names; ranking is `build_candidate`'s job against the
-	// substituted signature. So an argument a *name* claims goes to its own
-	// parameter, an omitted one with a default is simply not bound here — the
-	// instance's own signature carries the default — and every remaining argument
-	// fills a variadic pack.
+	// Inference binds `$` names; ranking against the substituted signature is
+	// `build_candidate`'s job. A named argument goes to its own parameter, an
+	// omitted one with a default is simply not bound here (the instance's own
+	// signature carries the default), and everything else fills a variadic pack.
 	claimed := make([]bool, len(args), k.c.semantic_allocator)
 	compile_time := make([]bool, len(args), k.c.semantic_allocator)
 	compile_targets := make([]Type_Id, len(args), k.c.semantic_allocator)
@@ -865,10 +862,10 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	return result
 }
 
-// The argument a parameter takes: the one written with its name if there is one,
-// otherwise the next unclaimed positional argument. Named arguments are matched
-// first so that `f(reader, limit = 5)` binds `limit` to its own parameter rather
-// than to the one it sits next to.
+// The argument a parameter takes: the one written with its name if any,
+// otherwise the next unclaimed positional argument. Named arguments match
+// first, so `f(reader, limit = 5)` binds `limit` to its own parameter rather
+// than the one it sits next to.
 @(private = "file")
 claim_argument :: proc(
 	args: []Arg_Info, name: Identifier_Id, next: ^int, claimed: []bool,
@@ -982,9 +979,8 @@ instantiate_generic :: proc(
 	   k.c.instantiation_count >= MAX_INSTANTIATIONS {
 		// Once the ceiling is reached the program is not going to compile, and
 		// letting the traversal continue would report the same runaway thousands
-		// of times over.
-		// A silent overload probe must not consume the one diagnostic or poison a
-		// later direct request for the same instance.
+		// of times over. A silent overload probe must not consume the one
+		// diagnostic or poison a later direct request for the same instance.
 		if report && !k.c.instantiation_limit_hit {
 			k.c.instantiation_limit_hit = true
 			errorf(
@@ -1008,11 +1004,10 @@ instantiate_generic :: proc(
 	instance.provisional = true
 	instance.span = span
 	k.c.instances[key] = instance
-	// Reserve the unique cache entry before resolving its signature. Signature
-	// resolution can recursively instantiate other declarations; reserving here
-	// keeps nested work from crossing the global ceiling while unwinding. A
-	// rejected entry remains negatively cached, so repeated probes do not consume
-	// another slot.
+	// Reserved before resolving the signature, since resolution can recursively
+	// instantiate other declarations and reserving keeps nested work under the
+	// global ceiling while unwinding. A rejected entry stays negatively cached,
+	// so repeated probes cost no further slots.
 	k.c.instantiation_count += 1
 
 	name := generic_instance_name(k.c, template.symbol, bindings)
@@ -1101,13 +1096,11 @@ note_instantiation_stack :: proc(k: ^Checker) {
 	}
 }
 
-// Runs `body` with the checker positioned at an instance: its own scope, the
-// definition's package for method, operator, and extension lookup, and the
-// definition's file for visibility defaults.
-// The checker state an instance displaces, named rather than positional: `pkg`
-// and `lookup` are both `Package_Id`, and `file` and `generic` are both
-// integers, so a positional restore had two pairs that could be swapped without
-// the compiler noticing.
+// The checker state an instance displaces while `body` runs positioned at it:
+// its own scope, the definition's package for method/operator/extension
+// lookup, and its file for visibility defaults. Fields are named rather than
+// positional — `pkg`/`lookup` are both `Package_Id`, `file`/`generic` both
+// integers — so a positional save/restore could swap either pair unnoticed.
 @(private = "file")
 Instance_Context :: struct {
 	scope:       ^Scope,
@@ -1278,10 +1271,9 @@ instantiate_record_application :: proc(k: ^Checker, v: ^Expr_Call, template: ^Ge
 }
 
 // The bootstrap path into the same instance cache an ordinary `Option(int)`
-// application uses: types in, an instance out, with no syntax in between. It is
-// how built-ins, container members, generated hooks, and iteration all reach
-// the *source-declared* `Option` and `Result` rather than a compiler-owned
-// second copy of them.
+// application uses — types in, an instance out, no syntax in between — so
+// built-ins, container members, generated hooks, and iteration all reach the
+// *source-declared* `Option`/`Result` rather than a compiler-owned second copy.
 instantiate_record_types :: proc(k: ^Checker, symbol: Symbol_Id, args: []Type_Id, span: Span) -> Type_Id {
 	template := generic_template_for(k, symbol)
 	if template == nil || len(template.params) != len(args) {

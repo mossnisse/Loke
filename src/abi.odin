@@ -2,16 +2,16 @@ package lokec
 
 // The foreign ABI surface (m7-plan step 3). Two things live here:
 //
-//   - Calling-convention acceptance: `""` (the default `loke`), `"c"`, and
-//     `"stdcall"` are the only spellings a signature may carry; every other is
-//     rejected by name. `loke` keeps LLVM's own aggregate lowering unchanged; a
-//     foreign convention triggers the Windows x64 classification in the emitter.
+//   - Calling-convention acceptance: `""` (default `loke`), `"c"`, and
+//     `"stdcall"` are the only spellings a signature may carry, every other
+//     rejected by name. `loke` keeps LLVM's own aggregate lowering unchanged;
+//     a foreign convention triggers Windows x64 classification in the emitter.
 //
 //   - The foreign-ABI-safety predicate (design.md "Foreign-ABI-safe types"),
 //     one recursive rule reused by foreign parameters, results, globals,
 //     procedure-pointer signatures, exported declarations, and C variadic
-//     arguments. Its diagnostic names the member path that made a type unsafe,
-//     not just the outermost type.
+//     arguments. Its diagnostic names the offending member path, not just the
+//     outermost type.
 
 import "core:fmt"
 
@@ -39,10 +39,10 @@ validate_convention :: proc(k: ^Checker, convention: string, span: Span) -> bool
 }
 
 // design.md "Foreign-ABI-safe types" / "Parameter semantics": every by-value
-// parameter and the result of a foreign-convention signature must be ABI-safe; a
-// `move` parameter and more than one result have no C representation. An `inout`
-// parameter lowers to a pointer, so its pointee need not itself be ABI-safe
-// (m7-plan step 3).
+// parameter and result of a foreign-convention signature must be ABI-safe (a
+// `move` parameter and more than one result have no C representation). An
+// `inout` parameter lowers to a pointer, so its pointee need not be ABI-safe
+// itself (m7-plan step 3).
 check_foreign_signature :: proc(
 	k: ^Checker,
 	params: []Type_Id,
@@ -76,9 +76,9 @@ check_foreign_signature :: proc(
 }
 
 // design.md "Foreign-ABI-safe types". `top_level` is false inside a struct,
-// where a fixed array is permitted (it becomes a C array field); at a parameter,
-// result, or global it is true and a fixed array is rejected because C adjusts
-// such parameters to pointers. On failure `reason` names the member path.
+// where a fixed array is permitted (it becomes a C array field); at a
+// parameter, result, or global it is true, since C adjusts those to pointers.
+// On failure `reason` names the member path.
 foreign_abi_safe :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok: bool, reason: string) {
 	visiting := make([]bool, len(c.types), context.temp_allocator)
 	saw_cycle := false
@@ -203,9 +203,9 @@ abi_walk :: proc(
 		return abi_walk(c, info.element, false, visiting, saw_cycle)
 	case .Struct:
 		// A plain struct with a trivial lifecycle whose fields are recursively
-		// safe. Naming the offending field beats naming the whole record, so a
-		// managed field is found by recursion before the lifecycle check fires;
-		// a custom hook with otherwise-safe fields falls through to it.
+		// safe. Fields are checked before the lifecycle, so a managed field is
+		// named rather than the whole record; a custom hook with otherwise-safe
+		// fields falls through to the lifecycle check.
 		for field in info.fields {
 			sym := symbol_of(c, field)
 			if sym == nil {

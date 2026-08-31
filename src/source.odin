@@ -1,7 +1,7 @@
 // Source manager and diagnostics engine (compiler-plan B2).
 //
-// Every later phase reports through here and every AST node carries a Span back
-// to it. Diagnostics accumulate; nothing in the compiler aborts on the first
+// Every later phase reports through here; every AST node carries a Span back
+// to it. Diagnostics accumulate — nothing in the compiler aborts on the first
 // error.
 package lokec
 
@@ -32,8 +32,8 @@ no_span :: proc() -> Span {
 Source :: struct {
 	path:        string,
 	text:        string,
-	// Non-empty only when `load_source` allocated the text. Tests may register
-	// string literals directly; keeping the owned bytes separate makes the
+	// Non-empty only when `load_source` allocated the text — tests may register
+	// string literals directly, and keeping owned bytes separate keeps the
 	// compilation destructor correct for both cases.
 	owned_text:  []u8,
 	line_starts: []u32, // byte offset of the first character of each line
@@ -80,13 +80,12 @@ Compiler :: struct {
 	target:      Target_Info,
 
 	// Project-wide `-define:NAME=VALUE` configuration, seeded before package
-	// discovery so the first file-scope `when` round already sees it and every
-	// package agrees on what a name means.
+	// discovery so the first file-scope `when` round sees it and every package
+	// agrees on what a name means.
 	defines:     map[string]Const_Value,
 
 	// Package discovery (`src/packages.odin`). `package_by_dir` is keyed by the
-	// canonical directory, so an alias never creates a second instance of a
-	// package.
+	// canonical directory, so an alias never creates a second package instance.
 	collections:    map[string]string,
 	package_by_dir: map[string]Package_Id,
 	root_dir:       string,
@@ -94,8 +93,8 @@ Compiler :: struct {
 	// Every parsed file, so one `destroy_compilation` frees the lot.
 	parsed_files:   [dynamic]^File,
 
-	// Generics (`src/generic.odin`). `instances` is the positive and negative
-	// specialization cache keyed by (declaration symbol, canonical argument
+	// Generics (`src/generic.odin`). `instances` is the positive/negative
+	// specialization cache, keyed by (declaration symbol, canonical argument
 	// vector); the stack and unique-entry count enforce the documented ceiling.
 	generic_templates:     map[Symbol_Id]^Generic_Template,
 	generic_impls:         map[Symbol_Id][dynamic]^Generic_Impl,
@@ -140,8 +139,8 @@ Compiler :: struct {
 	typeid_frozen:        bool,
 
 	// Iteration (`src/iterate.odin`). Range and iterator types are interned per
-	// element type, and the contributed procedures are emitted once for the whole
-	// compilation rather than per package.
+	// element type; contributed procedures are emitted once for the whole
+	// compilation, not per package.
 	range_types:        map[Type_Id]Type_Id,
 	iterator_types:     map[Type_Id]Type_Id,
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
@@ -159,9 +158,9 @@ Compiler :: struct {
 	witness_order: [dynamic]^Witness,
 
 	// Materialised constants (`src/materialize.odin`). One read-only global per
-	// constant that runtime indexing or slicing needs storage for, keyed by the
-	// resolved constant symbol — which M4b's declaration cloning already makes
-	// distinct per generic instance.
+	// constant that runtime indexing/slicing needs storage for, keyed by the
+	// resolved constant symbol (M4b's declaration cloning makes that distinct
+	// per generic instance).
 	materialized:       map[Symbol_Id]^Materialized,
 	materialized_order: [dynamic]^Materialized,
 
@@ -171,16 +170,16 @@ Compiler :: struct {
 	// member selection is allowed through this interface.
 	lifecycle_operations:       map[Type_Id]Lifecycle_Operations,
 	lifecycle_operations_ready: bool,
-	// The threshold is target-specific, not part of the language semantics
-	// (design.md "Copy-cost diagnostics"), so it is an option rather than a rule.
-	// A copy site reports when it duplicates at least this many inline bytes, or
-	// whenever its lifecycle clone may allocate.
+	// Target-specific, not part of the language semantics (design.md "Copy-cost
+	// diagnostics"), so it's an option rather than a rule. A copy site reports
+	// when it duplicates at least this many inline bytes, or when its lifecycle
+	// clone may allocate.
 	copy_cost_threshold: u64,
 	copy_cost_enabled:   bool,
 	// design.md "Panic strategy": `-panic=unwind` registers one logical frame per
-	// procedure that can own a cleanup, so a panic replays the live actions of
-	// every active Loke frame before terminating. `-panic=abort` registers none.
-	// The strategy is a whole-program build selection, never a source construct.
+	// procedure that can own a cleanup, so a panic replays every active Loke
+	// frame's live actions before terminating; `-panic=abort` registers none.
+	// A whole-program build selection, never a source construct.
 	panic_unwind:        bool,
 	// design.md "Build configuration": the whole-program optimization and build
 	// mode the driver selected. The `LOKE_OPTIMIZATION_MODE` and `LOKE_BUILD_MODE`
@@ -207,10 +206,10 @@ Compiler :: struct {
 	// design.md's two provenance analyses run after the whole program settles, so
 	// a forward or mutually recursive callee already has its result summary.
 	checked_bodies: [dynamic]Checked_Body,
-	// The result-provenance summary is compile-time declaration metadata, emitted
-	// for cross-package checking, and it does not change the runtime ABI
-	// (design.md "Temporaries and procedure boundaries"). Keyed per concrete
-	// declaration or generic instance, so two instances may differ.
+	// Compile-time declaration metadata, emitted for cross-package checking; does
+	// not change the runtime ABI (design.md "Temporaries and procedure
+	// boundaries"). Keyed per concrete declaration or generic instance, so two
+	// instances may differ.
 	result_summaries: map[Symbol_Id]^Proc_Summary,
 	// Direct summary dependencies, discovered while building each body's first
 	// provenance graph. The solver schedules only callers of a changed callee.
@@ -228,10 +227,10 @@ Compiler :: struct {
 	default_allocator_arg:    Expr,
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,
-	// An explicitly dropped owner is dead and no longer blocks reset
-	// (design.md). M5a's liveness answers that, one pass and one graph earlier than the
-	// reset check, so the definitely-dead owners at each reset call are recorded
-	// here (`src/lifecycle.odin`, `src/cfg.odin`).
+	// An explicitly dropped owner is dead and no longer blocks reset (design.md).
+	// M5a's liveness answers that one pass and one graph earlier than the reset
+	// check, so the definitely-dead owners at each reset call are recorded here
+	// (`src/lifecycle.odin`, `src/cfg.odin`).
 	reset_dead:               map[^Expr_Call][]Symbol_Id,
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
@@ -404,8 +403,8 @@ truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 //
 // Most passes report in source order already, but the two provenance analyses
 // run over the whole program after checking, so their diagnostics arrive last.
-// A stable sort by position restores one reading order without disturbing the
-// relative order of two diagnostics at the same place.
+// A stable sort by position restores one reading order without disturbing
+// same-position ordering.
 report :: proc(c: ^Compiler) {
 	slice.stable_sort_by(c.diagnostics[:], proc(a, b: Diagnostic) -> bool {
 		if a.span.file != b.span.file {

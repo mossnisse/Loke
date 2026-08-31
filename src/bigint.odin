@@ -2,13 +2,13 @@
 //
 // Untyped folding is exact: an intermediate is never rejected merely because no
 // runtime integer type could hold it. `bi_fits` and `bi_wrap` are where a value
-// meets a width — the range check when materialising a constant, the modulo-2^n
+// meets a width — range check on materializing a constant, modulo-2^n
 // projection when folding a typed operation.
 //
-// The arithmetic is core:math/big. Values are immutable: operations always
-// build new digit buffers. Checking uses the compilation's semantic arena;
-// evaluation uses bounded scratch storage and clones escaping constants into
-// the semantic arena before releasing that scratch storage.
+// Arithmetic is core:math/big; values are immutable, operations always build
+// new digit buffers. Checking uses the compilation's semantic arena; evaluation
+// uses bounded scratch storage, cloning escaping constants into the semantic
+// arena before releasing that scratch.
 package lokec
 
 import big "core:math/big"
@@ -204,11 +204,11 @@ bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 // forever, so a huge count settles on 0 or -1 exactly as design.md requires of
 // the typed operators.
 //
-// core:math/big's own `int_shr_signed` is not used: its negative branch ends in
-// `sub(dest, src, 1)` where it means `sub(dest, dest, 1)`, so it returns
-// `src - 1` whatever the count. The negative case is derived here instead from
-// the logical shift, through `x >> n == ~(~x >> n)` — `~x` is non-negative
-// exactly when `x` is negative, so the inner shift never sees a sign.
+// core:math/big's own `int_shr_signed` is not used: its negative branch means
+// `sub(dest, dest, 1)` but writes `sub(dest, src, 1)`, so it returns `src - 1`
+// regardless of count. The negative case is derived here instead from the
+// logical shift, via `x >> n == ~(~x >> n)` — `~x` is non-negative exactly when
+// `x` is negative, so the inner shift never sees a sign.
 bi_shr :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	context.allocator = arena(c)
 	if bi_sign(a) < 0 {
@@ -270,9 +270,9 @@ bi_wrap :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> Big_In
 	return low
 }
 
-// Saturating extraction for the places that need a machine integer: an array
-// length, a shift count, an enum discriminant. `ok` is false when the value is
-// outside the requested range, and the caller has a diagnostic for that.
+// Extraction for places that need a machine integer: an array length, a shift
+// count, an enum discriminant. `ok` is false when out of range; the caller has
+// a diagnostic for that.
 bi_to_i64 :: proc(c: Value_Storage, v: Big_Int) -> (value: i64, ok: bool) {
 	if !bi_fits(c, v, 64, true) {
 		return 0, false
@@ -303,10 +303,10 @@ bi_to_f64 :: proc(c: Value_Storage, v: Big_Int) -> f64 {
 	return result
 }
 
-// Truncates a finite binary64 value towards zero without first squeezing the
-// result through a machine integer. This is needed for conversions to i128 and
-// u128, and `exact` implements the implicit-constant rule: `1.0` is exactly an
-// integer while `1.5` is not.
+// Truncates a finite binary64 value towards zero without squeezing the result
+// through a machine integer first (needed for conversions to i128 and u128).
+// `exact` implements the implicit-constant rule: `1.0` is exactly an integer,
+// `1.5` is not.
 bi_from_f64_trunc :: proc(c: Value_Storage, value: f64) -> (result: Big_Int, exact, ok: bool) {
 	pattern := transmute(u64)value
 	exponent_bits := int((pattern >> 52) & 0x7ff)

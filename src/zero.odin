@@ -1,11 +1,11 @@
 // Zero values and required results.
 //
 // design.md "Zero values": Loke relies on every semantic zero having an
-// all-zero runtime representation. Container growth, zero-initialized
+// all-zero runtime representation — container growth, zero-initialized
 // allocation, map insertion, globals, and generated cleanup all depend on it.
 // A named union earns a zero only through `@(zero=first_variant)`, so a type
-// may now legitimately have *no* zero, and every operation that manufactures
-// one has to say so instead of quietly producing tag 0.
+// may legitimately have *no* zero, and every zero-manufacturing operation
+// must say so instead of quietly producing tag 0.
 //
 // design.md "Required results": `@(require_results)` on a type declaration
 // makes a bare call statement an error whenever a result carries that type,
@@ -85,8 +85,8 @@ require_type_has_zero :: proc(k: ^Checker, type: Type_Id, span: Span, what: stri
 }
 
 // Does a value of this type have to be handled rather than discarded? Pointers,
-// views, and procedure values do not inherit the property merely because the
-// pointee or the signature mentions it.
+// views, and procedure values don't inherit the property just because the
+// pointee or signature mentions it.
 type_requires_results :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	seen := make(map[Type_Id]bool, context.temp_allocator)
 	return type_requires_results_walk(c, type, &seen)

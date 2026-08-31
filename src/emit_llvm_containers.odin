@@ -36,8 +36,8 @@ emit_container_declarations :: proc(e: ^Emitter) {
 }
 
 // The operation table for one concrete container type, made once and reused.
-// The element and key thunks it points at are generated alongside it, so asking
-// for the table is the only thing a caller has to do.
+// Its element and key thunks are generated alongside it, so requesting the
+// table is all a caller has to do.
 @(private)
 container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 	under := type_underlying(e.c, type)
@@ -76,10 +76,10 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 	return name
 }
 
-// Every part thunk is the same frame: a private definition with one entry
-// block, whose text is parked because a function cannot be defined inside the
-// one that needed it. Only the signature and the body differ, and each body
-// writes its own `ret`.
+// Every part thunk is the same frame — a private definition with one entry
+// block, parked because a function can't be defined inside the one that
+// needed it. Only the signature and body differ, and each body writes its own
+// `ret`.
 @(private = "file")
 container_thunk :: proc(
 	e: ^Emitter,
@@ -140,14 +140,14 @@ container_clone_thunk :: proc(e: ^Emitter, part: Type_Id) -> string {
 	)
 }
 
-// The concrete operation table *freezes* the key's `==`/`hash` selection, so
-// a map that travels between
-// packages keeps one policy. The checker has already rejected a key with no
-// coherent inherent pair, so this only has to emit whichever pair it settled on.
+// The concrete operation table *freezes* the key's `==`/`hash` selection, so a
+// map that travels between packages keeps one policy; the checker has already
+// rejected a key with no coherent inherent pair, so this only emits whichever
+// pair it settled on.
 //
 // Keyed by the key type itself, not its underlying one: a `distinct` key may
-// carry its own inherent `==`/`hash` pair, so `map[Meters]` and `map[f64]` in one
-// program need two thunks and not whichever was emitted first.
+// carry its own inherent `==`/`hash` pair, so `map[Meters]` and `map[f64]` need
+// two thunks, not whichever was emitted first.
 @(private = "file")
 container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 	return container_thunk(
@@ -226,8 +226,7 @@ emit_eager_via_binding :: proc(e: ^Emitter, symbol_id: Symbol_Id, address: strin
 
 // The provider a construction into one destination selects: the declaration's
 // written `via`, or the default when it has no policy. The policy belongs to
-// the declaration, so this is the destination's own symbol rather than
-// anything the source value carries.
+// the destination's own symbol, not anything the source value carries.
 @(private)
 emit_destination_allocator :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 	written := symbol_via_allocator(e.c, symbol_id)
@@ -246,11 +245,11 @@ emit_allocator_operand :: proc(e: ^Emitter, v: ^Expr_Call, index: int) -> string
 }
 
 // `free_all` frees every allocation in the allocator's region, and not every
-// allocator supports it (design.md). It is one call through the provider's
-// reset callback, never a guessed sequence of `free` calls: only the provider
-// knows what its region contains. A provider that answers "no region" fails at
-// run time — a different thing from the compile-time rejection when a dependant
-// would survive the reset.
+// allocator supports it (design.md). One call through the provider's reset
+// callback, never a guessed sequence of `free` calls — only the provider knows
+// what its region contains. A provider that answers "no region" fails at run
+// time, distinct from the compile-time rejection when a dependant would
+// survive the reset.
 @(private)
 emit_region_reset :: proc(e: ^Emitter, v: ^Expr_Call) {
 	handle := emit_expr(e, v.bound[0])
@@ -258,11 +257,10 @@ emit_region_reset :: proc(e: ^Emitter, v: ^Expr_Call) {
 }
 
 // `[dynamic]T{a, b, c}` over the header this expression has already zeroed.
-//
-// Each element is appended as soon as it is evaluated, so the container itself
-// owns the initialized prefix. A temporary unwind action covers that prefix
-// while later expressions run; destination ownership takes over only after the
-// complete literal has been built.
+// Each element is appended as soon as it is evaluated, so the container owns
+// the initialized prefix; a temporary unwind action covers that prefix while
+// later expressions run, and destination ownership takes over only once the
+// literal is complete.
 @(private)
 emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, element: Type_Id) {
 	if len(v.elements) == 0 {
@@ -478,14 +476,14 @@ emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
 
 // ------------------------------------------------------ container bodies --
 
-// One contributed container operation. Every one of them is a call into the
-// versioned C helper with this type's operation table; what differs is how the
+// One contributed container operation. Every one is a call into the versioned
+// C helper with this type's operation table; what differs is how the
 // arguments arrive and what comes back.
 //
-// A fallible operation has two forms. The `try_` one returns the error and the
-// caller decides; the ordinary one has nowhere to report it, so it applies the
-// *allocator's* failure policy, which is what design.md's "Allocation failure"
-// requires of an implicit allocation.
+// A fallible operation has two forms: `try_` returns the error and lets the
+// caller decide, while the ordinary one has nowhere to report it, so it
+// applies the *allocator's* failure policy, as design.md's "Allocation
+// failure" requires of an implicit allocation.
 @(private)
 emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)
@@ -785,9 +783,9 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	return out
 }
 
-// `m[key]` in a place position. If the key is absent, the zero value of the
-// element type is inserted first and the resulting slot is the location
-// (design.md). The insertion allocates, and a place has nowhere to report a failure, so the
+// `m[key]` in a place position. If the key is absent, the element type's zero
+// value is inserted first and the resulting slot is the location (design.md).
+// The insertion allocates, and a place has nowhere to report a failure, so the
 // provider's own policy decides.
 @(private)
 emit_map_place :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
@@ -866,10 +864,10 @@ emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> (s
 	return slot, cleanup
 }
 
-// Finds or creates a map slot. The runtime reports whether its zeroed bytes are
-// a newly inserted inert slot or an existing live value. An inserting index has
-// already required a real element zero; explicit insertion commits its supplied
-// value before treating a new slot as live.
+// Finds or creates a map slot. The runtime reports whether its zeroed bytes
+// are a newly inserted inert slot or an existing live value: an inserting
+// index already required a real element zero, and explicit insertion commits
+// its supplied value before treating a new slot as live.
 @(private = "file")
 emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot: string) -> (string, string) {
 	inserted := alloca(e, "i32")

@@ -11,10 +11,10 @@
 // into a field, a result, or a global.
 //
 // A witness is a mechanism, not a value: one immutable private global per
-// `(Interface, Concrete, arguments)`, named from those parts, whose slot
-// selection always uses inherent members plus extensions in the slot's declaring
-// interface package. The key is compilation-global, so its lookup policy must be
-// too — otherwise the same key could denote different behavior in two packages.
+// `(Interface, Concrete, arguments)`, named from those parts. Slot selection
+// always uses inherent members plus extensions in the slot's declaring
+// interface package — the key is compilation-global, so its lookup policy must
+// be too, or the same key could denote different behavior in two packages.
 package lokec
 
 import "core:fmt"
@@ -666,11 +666,11 @@ witness_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id
 	return strings.to_string(b)
 }
 
-// The backend spelling of a witness. Names rather than symbol and type ids: an
-// id shifts whenever anything earlier in the universe or the type store grows,
-// which made every emitted witness name — and the goldens that pin them — churn
-// on unrelated changes. Uniqueness still comes from `witness_key`, which is what
-// the witness map is keyed by; this only has to be stable and readable.
+// The backend spelling of a witness: names, not symbol/type ids, since an id
+// shifts whenever anything earlier in the universe or type store grows, which
+// churned every emitted witness name — and the goldens pinning them — on
+// unrelated changes. Uniqueness still comes from `witness_key`, the witness
+// map's real key; this only has to be stable and readable.
 @(private = "file")
 witness_llvm_name :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id, args: []Generic_Arg) -> string {
 	b := strings.builder_make(c.semantic_allocator)
@@ -942,18 +942,16 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 
 // ---------------------------------------- any_view checked extractions --
 
-// design.md: `any_view` supports runtime checked extractions and type switches,
-// through the same two spellings a union has — trapping `.(T)` and optional
-// `.as(T)` — on the same `Expr_Checked_Extract` node.
-// design.md "Checked extractions": `value.as(T)` is the optional spelling. It
-// is written with selector/call syntax but is not a call — it resolves to the
-// same `Expr_Checked_Extract` `value.(T)` produces, so the flow graph, the
+// design.md "Checked extractions": `any_view` supports the same two spellings
+// a union has — trapping `.(T)` and optional `.as(T)` — on one
+// `Expr_Checked_Extract` node. `.as(T)` uses selector/call syntax but is not a
+// call: it resolves to the same node `.(T)` produces, so the flow graph, the
 // evaluator, and the emitter keep one extraction path rather than two.
 //
 // `as` is a name users choose, so the receiver's *type* decides which meaning
-// applies: an `any_view` takes the built-in, and every other type keeps its
+// applies: an `any_view` takes the built-in, every other type keeps its
 // declared member. Resolving the receiver first is what makes that true for
-// `f().as(T)`, `a.b.as(T)`, and `xs[0].as(T)` as well as for a plain name.
+// `f().as(T)`, `a.b.as(T)`, and `xs[0].as(T)`, not just a plain name.
 check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
 	if sel.name.text != "as" {
 		return false

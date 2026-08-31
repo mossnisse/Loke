@@ -16,11 +16,11 @@ Emitter :: struct {
 	// MIR, interpreters, and multiple backend invocations.
 	names:        map[Symbol_Id]string,
 	struct_names: map[Type_Id]string,
-	// design.md "@(packed)": the guaranteed alignment of a place, keyed by its
-	// pointer temporary, when it is lower than the pointee's natural alignment —
-	// which is what an access through a packed field is. A load or store then
-	// carries `align 1` so the optimizer never assumes the missing alignment
-	// (m7-plan step 2, decision "Alignment at use sites").
+	// design.md "@(packed)": a place's guaranteed alignment, keyed by its pointer
+	// temporary, when lower than the pointee's natural alignment (true of any
+	// access through a packed field). Such a load/store carries `align 1` so the
+	// optimizer never assumes the missing alignment (m7-plan step 2, decision
+	// "Alignment at use sites").
 	place_align:  map[string]u64,
 
 	// Everything that describes the one function currently being written.
@@ -128,16 +128,14 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 	return strings.to_string(e.b), true
 }
 
-// Every function emitter writes into an isolated buffer. Finalization applies
-// function-local prologue policy before the bytes reach the module builder, so
-// storage can never leak into the next function even as new emitters are added.
+// Every function emitter writes into an isolated buffer, so storage can never
+// leak into the next function even as new emitters are added.
 //
-// A thunk is emitted in the middle of the function that needed it, so the
-// isolation has to cover every field that describes "the function being
-// written" and not just the buffer: an inherited `result_slot`, cleanup scope
-// or loop label would otherwise be the outer function's. Everything listed
-// here is saved, zeroed for the nested function, and put back; anything the
-// module owns, such as `names`, `next` and `globals`, deliberately is not.
+// A thunk emitted mid-body must not inherit the outer function's
+// `result_slot`, cleanup scope, or loop label, so isolation covers every field
+// describing "the function being written," not just the buffer. Everything
+// listed here is saved, zeroed for the nested function, and put back;
+// anything the module owns (`names`, `next`, `globals`) deliberately is not.
 @(private = "file")
 Function_Emission :: struct {
 	parent: strings.Builder,
@@ -178,10 +176,10 @@ Function_State :: struct {
 	param_values: map[Symbol_Id]string,
 	// The current procedure's panic-cleanup registration.
 	unwind: Unwind_State,
-	// Every fixed-size `alloca` this function asked for, in the order it asked.
-	// LLVM retains an alloca until the function returns, so one left where it was
-	// needed would grow the native stack on every iteration of an enclosing loop
-	// at `-opt=none`. They are spliced into the entry block on the way out.
+	// Every fixed-size `alloca` this function asked for, in order asked. LLVM
+	// retains an alloca until the function returns, so one left in place would
+	// grow the native stack on every iteration of an enclosing loop at
+	// `-opt=none`; they are spliced into the entry block on the way out.
 	prologue: [dynamic]string,
 }
 
@@ -523,12 +521,12 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	clear(&e.pending)
 }
 
-// The C entry point. Internal runtime startup belongs here, which is why
+// The C entry point — internal runtime startup belongs here, which is why
 // Loke's `main` is not the C `main`.
 //
-// design.md "Program entry and exit" (m7-plan step 5): the entry is `wmain`, so
-// the process arguments arrive as UTF-16 and are converted to cached UTF-8 by
-// the runtime before anything else runs. `os.args` is then a read, not a
+// design.md "Program entry and exit" (m7-plan step 5): the entry is `wmain`,
+// so arguments arrive as UTF-16 and are converted to cached UTF-8 by the
+// runtime before anything else runs. `os.args` is then a read, not a
 // conversion, and no Loke package needs an initializer.
 @(private = "file")
 emit_entry :: proc(e: ^Emitter) {
@@ -568,10 +566,10 @@ new_label :: proc(e: ^Emitter, prefix: string) -> string {
 // ---------------------------------------------------- instruction spellings --
 //
 // The handful of instructions that produce a value and are emitted everywhere.
-// Each names its own result, so a caller writes what it wants rather than
-// threading a `temp(e)` through a format string. They take the LLVM type as
-// *text*, because that is what the call sites already hold — `llvm_type(e, id)`
-// for a Loke type, or one of the fixed spellings like `CONTAINER_TYPE`.
+// Each names its own result, so a caller writes what it wants instead of
+// threading a `temp(e)` through a format string. The LLVM type is taken as
+// *text*, since that's what call sites already hold — `llvm_type(e, id)` for a
+// Loke type, or a fixed spelling like `CONTAINER_TYPE`.
 
 @(private)
 extract :: proc(e: ^Emitter, aggregate: string, value: string, index: int) -> string {
@@ -580,10 +578,9 @@ extract :: proc(e: ^Emitter, aggregate: string, value: string, index: int) -> st
 	return out
 }
 
-// A plain, naturally aligned load. A place that is known to be *under*-aligned —
-// which is what reaching through a packed field produces — needs the explicit
-// `, align N` form instead, exactly as `store` gets it from `align_suffix`
-// (m7-plan step 2).
+// A plain, naturally aligned load. A place known to be *under*-aligned (e.g.
+// reached through a packed field) needs the explicit `, align N` form
+// instead, exactly as `store` gets it from `align_suffix` (m7-plan step 2).
 @(private)
 load :: proc(e: ^Emitter, type: string, address: string) -> string {
 	out := temp(e)
@@ -661,10 +658,10 @@ branch_if :: proc(e: ^Emitter, cond: string, then_label, else_label: string) {
 // ================================================== coherent formatting ==
 
 // design.md "String format printing": runtime formatting has one formatter
-// per concrete `typeid`. The
-// table is private and parallel to the type-info table, because the public
-// `Type_Info` layout deliberately exposes no code pointers — that is what keeps
-// `base:runtime` from having to know `core:fmt` exists.
+// per concrete `typeid`. The table is private and parallel to the type-info
+// table, because the public `Type_Info` layout deliberately exposes no code
+// pointers — that is what keeps `base:runtime` from having to know
+// `core:fmt` exists.
 FMT_THUNKS :: "@.loke.fmt_thunks"
 
 FMT_THUNK_COUNT :: "@.loke.fmt_thunks.count"
@@ -706,9 +703,9 @@ llvm_name_byte :: proc(ch: u8) -> bool {
 }
 
 // A type-qualified member name, and an instantiation's `Table(int, i32)`,
-// mention punctuation LLVM would need quoting for. Keeping the bytes LLVM
-// already accepts and escaping the rest as `$XX` stays injective — `$` itself is
-// escaped — while leaving the emitted symbol readable in a `tests/ll` golden.
+// mention punctuation LLVM would need quoting for. Keeping bytes LLVM already
+// accepts and escaping the rest as `$XX` (escaping `$` itself too) stays
+// injective while leaving the emitted symbol readable in a `tests/ll` golden.
 llvm_safe :: proc(name: string) -> string {
 	hex := "0123456789abcdef"
 	out := make([dynamic]u8, 0, len(name) + 8)

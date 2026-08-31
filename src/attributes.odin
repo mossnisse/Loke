@@ -2,13 +2,13 @@
 //
 // One table maps every attribute design.md defines to the positions it may
 // appear in and the value shape it takes. Before M7 attributes were parsed and
-// mostly ignored, so a typo was silent; this pass makes an unknown name, an
+// mostly ignored, so a typo was silent; this pass gives an unknown name, an
 // unknown namespace, a misplaced attribute, and a wrong value shape each their
 // own diagnostic. `@(deprecated)` and `@(require_results)` also gain behaviour
-// here (their flags are set in `resolve_declaration_signature`).
+// here (flags set in `resolve_declaration_signature`).
 //
-// The record-layout value validation (power-of-two `@(align=N)`) stays with its
-// own feature: `union @(align=N)` is validated in `src/union.odin`.
+// Record-layout value validation (power-of-two `@(align=N)`) stays with its own
+// feature: `union @(align=N)` is validated in `src/union.odin`.
 package lokec
 
 Attr_Pos :: enum {
@@ -44,7 +44,7 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		specs["public"] = {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
 		specs["private"] = {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
 		// design.md "Required results": on a type declaration the property is
-		// carried by the *type*, so every value of it is checked, not only the
+		// carried by the *type*, so every value of it is checked, not just the
 		// procedures declared beside it.
 		specs["require_results"] = {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None}
 		specs["deprecated"] = {{.Proc_Decl}, .Value_Required}
@@ -86,9 +86,9 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	return "here"
 }
 
-// Validates one attribute list against the position it appears in. Diagnostics
-// only; behaviour (deprecation warnings, required-result errors, layout) is
-// applied by the owning feature.
+// Validates one attribute list against its position. Diagnostics only —
+// behaviour (deprecation warnings, required-result errors, layout) is applied
+// by the owning feature.
 validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_Pos) {
 	seen := make(map[string]bool, len(attributes), context.temp_allocator)
 	for attribute in attributes {
@@ -134,8 +134,8 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 			} else if lit, ok := attribute.value.(^Expr_Literal); !ok ||
 			          (lit.kind != .String && lit.kind != .Raw_String) {
 				// Every base-language value-bearing attribute currently takes a
-				// string. Checking the literal kind here prevents consumers from
-				// silently treating a malformed value as if the attribute were absent.
+				// string; checking the literal kind here stops a malformed value from
+				// silently being treated as if the attribute were absent.
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a string value", name)
 			}
 		case .Deferred:
@@ -143,10 +143,10 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 	}
 }
 
-// The whole-package attribute pass, run once over the settled item view. It
-// visits every attribute-bearing node the checker owns in step 1: the package
-// clause, top-level declarations, procedure parameters, and record type
-// literals with their fields, and foreign blocks with theirs (step 4).
+// The whole-package attribute pass, run once over the settled item view.
+// Visits every attribute-bearing node the checker owns in step 1: the package
+// clause, top-level declarations, procedure parameters, record type literals
+// with their fields, and foreign blocks with theirs (step 4).
 validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
@@ -214,10 +214,10 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 	return d.kind == .Const ? .Const_Decl : .Var_Decl
 }
 
-// design.md "@(deprecated)" and "@(require_results)": records the two pieces of
-// declaration metadata on the symbol, from the declaration's attributes. Called
-// from `resolve_declaration_signature`, so a cross-package use already sees the
-// flag before its own body is checked.
+// design.md "@(deprecated)" and "@(require_results)": records the two pieces
+// of declaration metadata on the symbol, from the declaration's attributes.
+// Called from `resolve_declaration_signature`, so a cross-package use already
+// sees the flag before its own body is checked.
 apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 	sym := symbol_of(k.c, symbol_id)
 	if sym == nil {

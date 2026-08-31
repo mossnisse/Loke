@@ -85,11 +85,10 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
 			return emit_unsafe_builtin(e, v, symbol.builtin)[0]
 		case .Unsafe_Forget:
-			// The whole runtime meaning of the feature is the call that is *not*
-			// made: the operand is evaluated for its side effects, and the
-			// `emit_discarded_temporary` an owned temporary would otherwise get is
-			// skipped. A `move(place)` operand zeroes and kills its source through
-			// `emit_move`, as every other transfer does.
+			// The feature's whole meaning is the call that is *not* made: the operand
+			// is evaluated for its side effects, but skips the `emit_discarded_temporary`
+			// an owned temporary would otherwise get. A `move(place)` operand still
+			// zeroes and kills its source through `emit_move`, like any other transfer.
 			emit_expr(e, v.bound[0])
 			return "0"
 		case .Type_Info_Of:
@@ -326,11 +325,9 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 	return sym != nil && sym.kind == .Builtin ? sym.builtin : Builtin_Kind.None
 }
 
-// `new` and `new_clone` always return an error rather than invoking the
-// allocator failure policy (design.md "Allocation failure"). So there is no
-// branch on failure here — the caller receives a null pointer and a non-nil
-// error and decides.
-//
+// `new` and `new_clone` always return an error instead of invoking the allocator
+// failure policy (design.md "Allocation failure"), so there is no policy branch
+// here — the caller gets a null pointer and a non-nil error and decides.
 @(private = "file")
 emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
 	// `new_clone` creates a new allocation root containing a clone of the value
@@ -359,9 +356,9 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, pointer)
 
 	if kind == .New_Clone {
-		// A failed allocation has nothing to clone into, so the copy is guarded.
-		// Nothing is partially built on that path: this arm only runs for a value
-		// whose clone is the copy its representation already is.
+		// A failed allocation has nothing to clone into, so the copy is guarded. This
+		// arm only runs for a value whose clone is the copy its representation
+		// already is, so nothing is left partially built on that path.
 		store_label, done_label := new_label(e, "newclone.store"), new_label(e, "newclone.done")
 		fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", failed, done_label, store_label)
 		place_label(e, store_label)
@@ -378,9 +375,9 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 
 // The clone-through-a-hook half of `new_clone`, and the only path with a
 // partially cloned allocation to destroy: the hook already cleaned its own
-// temporary, so what is left is the block it was going to be published into.
-// The result travels through storage rather than phi nodes, so the three exits
-// do not need their predecessor labels tracked.
+// temporary, leaving only the block it was going to be published into. The
+// result travels through storage rather than phi nodes, so the three exits
+// need no predecessor-label tracking.
 @(private = "file")
 emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	value_type := llvm_type(e, v.alloc_type)
@@ -453,8 +450,8 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 // order followed by the allocator, so this only has to run them.
 //
 // The header is built in storage and published complete: the provider handle is
-// written first, because the reserve below allocates *through* it, and a failed
-// reserve leaves an empty container bound to that same provider rather than
+// written first because the reserve below allocates *through* it, so a failed
+// reserve leaves an empty container bound to that provider rather than
 // something half-built.
 @(private = "file")
 emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
@@ -521,15 +518,14 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 }
 
 // Deallocation operations such as `free` and `drop` return no status (design.md).
-// The checker has already restricted the operand to a binding holding a
-// fresh allocation base, so the pointee type supplies the size and alignment the
-// provider was given at `new`.
+// The checker restricts the operand to a binding holding a fresh allocation
+// base, so the pointee type supplies the size and alignment given at `new`.
 //
-// ponytail: `free` names no allocator, and design.md makes matching the creating
-// one the program's obligation, so this uses the default record. An allocation
-// made from an arena is released by that region's reset instead; write the
-// allocator argument to `free` when the two must match exactly. Carrying the
-// provider in the allocation itself is the upgrade if that becomes common.
+// ponytail: `free` names no allocator; design.md makes matching the creating one
+// the program's obligation, so this uses the default record. An arena
+// allocation is released by that region's reset instead — write the allocator
+// argument to `free` when the two must match exactly. Carrying the provider in
+// the allocation itself is the upgrade if that becomes common.
 @(private = "file")
 emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	pointer := emit_expr(e, v.bound[0])
@@ -567,10 +563,10 @@ emit_union_failed :: proc(e: ^Emitter, union_type: Type_Id, value: string) -> st
 }
 
 // The checker accepts the same implicit assignment conversions for propagated
-// failures as it does for an ordinary destination. Most of those conversions
-// preserve the LLVM representation; the two erased/view conversions need
-// explicit construction because `or_return` has an extracted SSA value rather
-// than an expression node for `materialize` to annotate.
+// failures as for an ordinary destination. Most preserve the LLVM
+// representation; the two erased/view conversions need explicit construction
+// because `or_return` has an extracted SSA value, not an expression node for
+// `materialize` to annotate.
 @(private = "file")
 emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id, source_address := "") -> string {
 	if from == into || value == "" {
@@ -630,9 +626,9 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	branch(e, done)
 
 	place_label(e, fallback_label)
-	// design.md: `or_else` never copies the error. A managed failure payload of a
-	// *temporary* is dropped here, before the fallback is evaluated, because the
-	// operand's value is discarded on this path. A place still owns its own.
+	// design.md: `or_else` never copies the error, so a managed failure payload of
+	// a *temporary* is dropped here, before the fallback runs, since the operand's
+	// value is discarded on this path. A place still owns its own.
 	if failure_type := info.variants[info.failure_variant];
 	   !v.borrows && type_is_managed(e.c, failure_type) {
 		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
@@ -747,11 +743,10 @@ emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 
 // design.md "Variadic parameters": the callee always receives one read-only
 // slice, so the caller either forwards a compatible spread as-is or builds
-// compiler-owned contiguous storage and hands over a slice of it.
-//
-// The storage is a stack buffer: fixed-size when the element count is static,
-// and a checked dynamic `alloca` when a spread makes it runtime-sized. A pack is
-// a borrow of that buffer, so it never involves a dynamic array.
+// compiler-owned contiguous storage and hands over a slice of it. That storage
+// is a stack buffer — fixed-size when the element count is static, a checked
+// dynamic `alloca` when a spread makes it runtime-sized. A pack is a borrow of
+// that buffer, so it never involves a dynamic array.
 @(private = "file")
 Variadic_Pack :: struct {
 	value:   string,
@@ -1028,12 +1023,11 @@ emit_bound_call :: proc(
 			operands[index] = emit_expr(e, argument)
 		}
 		// design.md "Parameter semantics": an ordinary `value: T` parameter is a
-		// non-owning borrow, so the callee never cleans one up — a `move`
-		// parameter is a different mode and is excluded here. When the argument
-		// is an owned temporary rather than somebody else's place, that cleanup
-		// belongs to the caller, and only the caller can tell the two apart.
-		// A C-variadic call passes arguments past the declared parameter list;
-		// those have no parameter type to clean up against.
+		// non-owning borrow, so the callee never cleans one up (`move` is a
+		// different, excluded mode). When the argument is an owned temporary rather
+		// than somebody else's place, that cleanup belongs to the caller — only the
+		// caller can tell the two apart. A C-variadic call passes arguments past the
+		// declared parameter list, which have no parameter type to clean up against.
 		if mode == .Value && index < len(callee_type.parameters) &&
 		   !expression_is_borrowed_place(e.c, argument) {
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])

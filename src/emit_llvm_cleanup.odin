@@ -7,13 +7,12 @@ import "core:fmt"
 import "core:strings"
 
 @(private)
-// One registered cleanup action. design.md gives explicit `defer` and the
-// implicit drop of a managed local one reverse registration order, so they share
-// one entry and one stack rather than the second mechanism a parallel list would
-// be.
+// One registered cleanup action. design.md gives explicit `defer` and a managed
+// local's implicit drop one reverse registration order, so they share one entry
+// and one stack instead of a second, parallel-list mechanism.
 //
-// `flag` is empty when the CFG proved the slot reached unconditionally: no
-// source or ABI rule requires a flag, so a definite state does not get one.
+// `flag` is empty when the CFG proved the slot reached unconditionally: a
+// definite state needs no flag.
 Deferred :: struct {
 	flag: string,
 	// A written `defer`, or nil for an implicit drop of `place`.
@@ -45,16 +44,13 @@ Deferred :: struct {
 
 // One procedure's runtime-visible cleanup registration.
 //
-// design.md gives a panic no way to resume, so the runtime never unwinds the
-// native stack: it calls back into each still-live frame through a generated
-// thunk. What that thunk needs is the frame's *state* — which actions are
-// currently registered, and where their storage is — so every procedure that
-// owns a cleanup carries two arrays and pushes a `{previous, thunk, context}`
-// record.
-//
-// The arrays are separate allocas rather than fields of one record because
-// their lengths are only known once the whole body has been emitted, and a
-// `getelementptr` over `i8`/`ptr` needs no length in its type.
+// design.md: a panic has no way to resume, so the runtime never unwinds the
+// native stack — it calls back into each still-live frame through a generated
+// thunk. The thunk needs the frame's *state* (which actions are registered, and
+// where their storage is), so a procedure with a cleanup carries two arrays and
+// pushes a `{previous, thunk, context}` record. The arrays are separate allocas,
+// not record fields, because their lengths are known only once the whole body is
+// emitted, and `getelementptr` over `i8`/`ptr` needs no length in its type.
 Unwind_Env_Binding :: struct {
 	symbol: Symbol_Id,
 	index:  int,
@@ -70,10 +66,9 @@ Unwind_State :: struct {
 	frame: string, // the `{previous, cleanup, context}` record this frame pushes
 	ctx:   string, // `[2 x ptr]` = {live, env}, the thunk's one argument
 	thunk: string,
-	// Every action, in source order. A live action's registration point is
-	// always lexically before any later-registered live one — an inner scope's
-	// actions are cleared when it exits — so replaying by descending index is
-	// replaying in reverse registration order.
+	// Every action, in source order. A live action's registration point always
+	// precedes any later live one lexically (an inner scope's actions clear on
+	// exit), so descending-index replay is reverse registration order.
 	actions: [dynamic]Deferred,
 	// Env index per local symbol whose address a cleanup may need.
 	env_index: map[Symbol_Id]int,
@@ -83,7 +78,7 @@ Unwind_State :: struct {
 	env_count: int,
 	// The registration slot of a managed local's implicit drop, and of a written
 	// `defer`, so `move`/`drop` and a re-entered scope can clear the same
-	// registration the existing drop flags clear.
+	// registration the drop flags clear.
 	slot_by_symbol: map[Symbol_Id]int,
 	slot_by_defer:  map[int]int,
 	// True while the thunk itself is being emitted, so replayed code does not

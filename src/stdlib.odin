@@ -2,13 +2,13 @@
 //
 // `Allocator`, `Allocator_Error`, `meta.Field` and `meta.Enum_Value` already
 // have one identity apiece — the universe's, and the descriptor types M4b
-// created. Making them nameable through `core:mem`, `base:runtime` and
-// `base:meta` must therefore *bind* those identities rather than declare new
-// ones: a second nominal type would silently break every M5 provenance fact and
-// every lifecycle signature written against the unqualified spelling.
+// created. Naming them through `core:mem`, `base:runtime` and `base:meta` must
+// therefore *bind* those identities rather than declare new ones: a second
+// nominal type would silently break every M5 provenance fact and every
+// lifecycle signature written against the unqualified spelling.
 //
-// Everything a package can express in Loke stays in its `.loke` files. Only what
-// the compiler already owns is contributed here.
+// Everything a package can express in Loke stays in its `.loke` files; only
+// what the compiler already owns is contributed here.
 package lokec
 
 // The import paths whose members the compiler contributes to. A package reached
@@ -32,68 +32,67 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 	pkg.contributed = true
 	switch pkg.key {
 	case STD_RUNTIME, STD_MEM:
-		// design.md "Allocators": both packages name the allocator surface, and
-		// design.md's own text spells it unqualified in every lifecycle signature.
+		// design.md "Allocators": both packages name the allocator surface, which
+		// design.md's own text spells unqualified in every lifecycle signature.
 		// One `Type_Id` under three spellings, never three types.
 		contribute_type(c, pkg, "Allocator", TYPE_ALLOCATOR)
 		contribute_type(c, pkg, "Allocator_Error", TYPE_ALLOCATOR_ERROR)
-		// The `LOKE_*` enum types are intentionally not bound into `base:runtime`:
-		// doing it eagerly would allocate them for every importer and shift type
-		// numbering. Nothing in M7 needs `runtime.Os` by name; a later milestone
-		// that does can bind it lazily. (m7-plan step 1)
+		// The `LOKE_*` enum types stay unbound from `base:runtime`: binding them
+		// eagerly would allocate one per importer and shift type numbering.
+		// Nothing in M7 needs `runtime.Os` by name; a later milestone that does
+		// can bind it lazily. (m7-plan step 1)
 		if pkg.key == STD_MEM {
-			// An `Allocator` is obtained by the ordinary runtime default expression
-			// `mem.default_allocator()` (design.md). This is the *same* symbol the
-			// generated default argument of a public copy operation names, so an omitted
-			// allocator and a written `mem.default_allocator()` are one call through
-			// one provider.
+			// An `Allocator` comes from the ordinary runtime default expression
+			// `mem.default_allocator()` (design.md) — the same symbol a public copy
+			// operation's generated default argument names, so an omitted allocator
+			// and a written `mem.default_allocator()` are one call through one
+			// provider.
 			contribute_symbol(c, pkg, "default_allocator", c.default_allocator_symbol)
-			// There is no ambient temporary allocator; code creates a `mem.Scratch`
-			// or `mem.Arena` owner and passes its allocator explicitly (design.md
-			// "Allocators"). Both are compiler-owned because the region
-			// lattice has to recognise them, not merely call them.
+			// No ambient temporary allocator: code creates a `mem.Scratch` or
+			// `mem.Arena` owner and passes its allocator explicitly (design.md
+			// "Allocators"). Both are compiler-owned because the region lattice
+			// has to recognise them, not merely call them.
 			contribute_type(c, pkg, "Arena", arena_type(c))
 			contribute_type(c, pkg, "Scratch", scratch_type(c))
 			contribute_symbol(c, pkg, "try_arena", provider_try_proc(k, arena_type(c), "try_arena"))
 			contribute_symbol(c, pkg, "try_scratch", provider_try_proc(k, scratch_type(c), "try_scratch"))
 		}
 	case STD_UNSAFE:
-		// These make the loss of bounds and borrow capability visible at the call
-		// site (design.md "unsafe.raw_data procedure"), which is the whole reason
-		// they are spelled `unsafe.` rather than being implicit conversions.
+		// Makes the loss of bounds and borrow capability visible at the call site
+		// (design.md "unsafe.raw_data procedure") — the whole reason these are
+		// spelled `unsafe.` rather than implicit conversions.
 		contribute_builtin(c, pkg, "raw_data", .Unsafe_Raw_Data)
 		contribute_builtin(c, pkg, "string_view", .Unsafe_String_View)
 		contribute_builtin(c, pkg, "cstring_view", .Unsafe_C_String_View)
 		// Suppressing cleanup is the same kind of visible loss: the resource is
-		// leaked, or it escaped to something else that owns it now (design.md
-		// "Forgotten owners").
+		// leaked, or escaped to whatever owns it now (design.md "Forgotten owners").
 		contribute_builtin(c, pkg, "forget", .Unsafe_Forget)
 	case STD_FMT:
-		// design.md "String format printing": the library owns the protocol, the
-		// writer, the options, and the `print` family. What the compiler owns is
-		// the process sinks and the erased per-`typeid` dispatch — the one thing a
-		// Loke procedure cannot express, because an `any_view` carries only a
-		// pointer and a `typeid`.
+		// design.md "String format printing": the library owns the protocol,
+		// writer, options, and `print` family. The compiler owns the process
+		// sinks and the erased per-`typeid` dispatch — the one thing a Loke
+		// procedure can't express, since an `any_view` carries only a pointer
+		// and a `typeid`.
 		//
-		// These are package-private: `core:fmt`'s own source names them
-		// unqualified, and nothing outside it should reach the dispatch table.
+		// Package-private: `core:fmt`'s own source names them unqualified, and
+		// nothing outside it should reach the dispatch table.
 		contribute_builtin(c, pkg, "stdout_writer", .Fmt_Stdout_Writer, public = false)
 		contribute_builtin(c, pkg, "stderr_writer", .Fmt_Stderr_Writer, public = false)
 		contribute_builtin(c, pkg, "write_bytes", .Fmt_Write_Bytes, public = false)
 		contribute_builtin(c, pkg, "format_any", .Fmt_Format_Any, public = false)
-		// `fmt.to_string(allocator, ...)` has to create a `string` in storage the
-		// *caller* chose, which is the same primitive `core:strings` gets below.
-		// It is contributed here rather than imported from there because
-		// `core:fmt` is in almost every program: importing `core:strings` for one
-		// call measured at 397 to 4923 lines of IR for hello-world, since the whole
-		// imported package is emitted.
+		// `fmt.to_string(allocator, ...)` must create a `string` in storage the
+		// *caller* chose — the same primitive `core:strings` gets below. It's
+		// contributed here rather than imported from there because `core:fmt` is
+		// in almost every program: importing `core:strings` for one call measured
+		// 397 to 4923 lines of IR for hello-world, since the whole package gets
+		// emitted.
 		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
 	case STD_STRINGS:
-		// The standard-library plan's one unexpressible bridge: a copy of
-		// known-valid UTF-8 into string storage taken from a *supplied* allocator,
-		// reporting failure instead of applying a policy. Every built-in text
-		// operation allocates from the default provider, so nothing else in Loke
-		// can answer `strings.copy(text, allocator)`.
+		// The one bridge the standard-library plan can't express in Loke itself:
+		// copying known-valid UTF-8 into string storage from a *supplied*
+		// allocator, reporting failure instead of applying a policy. Every
+		// built-in text operation allocates from the default provider, so nothing
+		// else in Loke can answer `strings.copy(text, allocator)`.
 		//
 		// Package-private: `core:strings` wraps it in `copy`/`try_copy`, and the
 		// rest of the library goes through those.

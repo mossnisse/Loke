@@ -19,8 +19,8 @@ main_body :: proc(f: ^File) -> ^Block {
 	return nil
 }
 
-// The single-package half of `compile_program`, for a package these tests have
-// loaded by hand. None of them uses `when`, so no discovery round is needed.
+// The single-package half of `compile_program`, for packages these tests load
+// by hand — none uses `when`, so no discovery round is needed.
 // design.md "Typed fallibility": the bootstrap instantiates
 // `Result(Unit, Allocator_Error)`, so a test counting generic instances counts
 // this one too.
@@ -497,10 +497,10 @@ main :: proc() {
 	testing.expect(t, sentinel_survived, "the statement after the bad range did not survive recovery")
 }
 
-// Two shapes reach the same place. Nested parentheses recurse in the parser; a
-// long operator chain does not, but builds just as deep a tree for the dump and
-// the checker to walk. Both are one diagnostic, then panic mode — not one per
-// frame unwound, and not a stack overflow later.
+// Two shapes reach the same place: nested parentheses recurse in the parser;
+// a long operator chain doesn't, but builds just as deep a tree for the dump
+// and checker to walk. Both produce one diagnostic then panic mode — not one
+// per frame unwound, and not a stack overflow later.
 @(test)
 parser_depth_is_bounded :: proc(t: ^testing.T) {
 	sources := []string {
@@ -669,14 +669,13 @@ sentinel :: proc() { }
 }
 
 // Two properties the semantic arena must have, both of which a previous
-// allocator broke silently.
-//
-// Odin's map panics unless its allocation is cache-line aligned, so the arena
-// has to honour the alignment an allocation asks for. And it has to serve an
-// allocation of *any* size: `mem.Dynamic_Arena` refused anything larger than
-// its 64 KiB block with `.Invalid_Argument`, which `append` and `make` swallow —
-// the symbol store crossing that threshold silently kept its old length while
-// `new_symbol` went on handing out IDs for elements that were never stored.
+// allocator broke silently: Odin's map panics unless its allocation is
+// cache-line aligned, so the arena must honour the alignment an allocation
+// asks for. And it must serve an allocation of *any* size: `mem.Dynamic_Arena`
+// refused anything past its 64 KiB block with `.Invalid_Argument`, which
+// `append` and `make` swallow — the symbol store crossing that threshold
+// silently kept its old length while `new_symbol` kept handing out IDs for
+// elements that were never stored.
 @(test)
 rejected_generic_candidates_are_negative_cached :: proc(t: ^testing.T) {
 	text := `package main;

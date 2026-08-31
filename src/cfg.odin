@@ -1,17 +1,11 @@
-// A disposable per-procedure control-flow view.
+// A disposable per-procedure control-flow view: annotated AST, not MIR (a real
+// MIR is deferred past v1). Rebuilt per concrete body instance, so generic
+// specializations never share liveness state.
 //
-// Blocks reference the typed AST rather than replacing it: this is a lightweight
-// analysis view, not MIR: the backend receives annotated AST, and a real MIR is
-// deferred past v1.
-// It is rebuilt for each concrete body instance, so a generic specialization
-// never shares liveness state with another one.
-//
-// The events are deliberately few. A managed local becomes live at a completed
-// initialization, dies at a `move` or an explicit `drop`, must be live at a use,
-// and is cleaned up at every point control leaves its declaring scope. Every
-// exit — fallthrough, `return`, `break`, `continue` — emits the cleanup events of
-// the scopes it passes through, innermost first, so the analysis reads one state
-// per cleanup point instead of reconstructing which scopes an abrupt jump left.
+// Events are deliberately few. A managed local goes live at a completed
+// initialization, dies at `move`/`drop`, must be live at a use, and is cleaned
+// up wherever control leaves its declaring scope. Every exit emits the cleanup
+// events of the scopes it passes through, innermost first.
 package lokec
 
 import "core:fmt"
@@ -20,11 +14,9 @@ import "core:slice"
 
 Block_Id :: distinct int
 
-// One walk, three jobs. Only the lifecycle mode is allowed to do semantic work:
-// the provenance modes rebuild the same block topology read-only, so replaying
-// copy classification, copy-cost reports, lifecycle-member contribution, cleanup
-// slots or annotation writes cannot duplicate a diagnostic or disturb a settled
-// annotation.
+// One walk, three jobs. Only Lifecycle does semantic work; the provenance modes
+// rebuild the same topology read-only, so they can't duplicate diagnostics or
+// disturb settled annotations.
 Flow_Mode :: enum u8 {
 	Lifecycle,
 	Prov_Summary,
@@ -40,11 +32,10 @@ Flow_Event_Kind :: enum {
 	Kill,
 	Use,
 	Cleanup,
-	// An allocator-region reset, noted only so the *later* provenance pass can
-	// ask which owners were definitely dead at it. An explicitly dropped owner
-	// no longer blocks a reset (design.md). The two passes run over
-	// separate graphs, so the answer is recorded against the call node both of
-	// them walk.
+	// An allocator-region reset, recorded so the later provenance pass can ask
+	// which owners were definitely dead at it (a dropped owner no longer blocks
+	// a reset — design.md). Keyed on the call node since the two passes use
+	// separate graphs.
 	Reset_Point,
 }
 
@@ -57,9 +48,8 @@ Flow_Event :: struct {
 	target: int,
 	// `Reset_Point`: the call whose liveness answer is being recorded.
 	call:   ^Expr_Call,
-	// The operation being attempted at this event, so a diagnostic can name what
-	// the reader wrote. Which earlier operation consumed the binding is not
-	// tracked: the states are a lattice, not a history.
+	// Names the operation attempted, for diagnostics. Not a history: states are
+	// a lattice, so which earlier op consumed the binding isn't tracked.
 	verb:   string,
 }
 
@@ -72,10 +62,10 @@ Flow_Block :: struct {
 	exit_state:  []Liveness,
 	visited:     bool,
 
-	// Provenance modes. `src/borrow.odin` solves reaching loans forwards and
-	// carrier liveness backwards over these same blocks. The reaching component
-	// is `slots * loans` bits and is the one that multiplies, so it is packed:
-	// one row of `ceil(loans / 8)` bytes per slot.
+	// Provenance modes. `src/borrow.odin` solves reaching loans forward and
+	// carrier liveness backward over these blocks. Reaching is `slots * loans`
+	// bits, the part that multiplies, so it's packed: one `ceil(loans/8)`-byte
+	// row per slot.
 	prov:          [dynamic]Prov_Event,
 	reach_entry:   []u8,
 	reach_exit:    []u8,
@@ -90,12 +80,12 @@ Flow_Block :: struct {
 
 // ------------------------------------------------------ provenance events --
 
-// The event vocabulary the root and region lattices read. It is deliberately
-// separate from the lifecycle events above: the two analyses share the block
-// topology and the source order, not the facts they record.
+// Event vocabulary the root and region lattices read. Kept separate from the
+// lifecycle events above: the two analyses share block topology and source
+// order, not the facts they record.
 Prov_Kind :: enum u8 {
-	// A carrier slot receives a value: the union of its source slots plus one
-	// freshly created loan.
+	// A carrier slot receives a value: union of its source slots plus one fresh
+	// loan.
 	Def,
 	// A carrier slot is read. This is what makes a loan live to its last use.
 	Live,
@@ -107,9 +97,8 @@ Prov_Kind :: enum u8 {
 	Escape,
 	// `free`, which needs an allocation base and ends that allocation root.
 	Free,
-	// A borrow is stored where it outlives the statement that stored it: in
-	// process or thread storage, or in storage the caller owns. `retain` says
-	// which.
+	// A borrow stored somewhere that outlives the statement: process/thread
+	// storage, or caller-owned storage. `retain` says which.
 	Retain,
 	// An allocator region reset: `free_all`, or a call through a parameter marked
 	// `@(allocator_reset)`.
@@ -117,20 +106,18 @@ Prov_Kind :: enum u8 {
 	// An owner backed by a received allocator region is stored somewhere that
 	// outlives that region.
 	Region_Escape,
-	// A value is written into whatever a carrier points at: `p^.view = values`,
-	// or an argument the callee may keep. Which storage that is depends on the
-	// carrier's own loans, so unlike `Def` the destination slots are resolved
-	// while solving. It joins rather than replaces, because the carrier may name
-	// more than one root and the write reaches only one of them.
+	// A value written through a carrier: `p^.view = values`, or an argument the
+	// callee may keep. Unlike `Def`, the destination depends on the carrier's
+	// own loans, so it resolves while solving — and joins rather than replaces,
+	// since the carrier may name more than one root.
 	Publish,
-	// A value is read through a carrier. Its pointee's content slots are only
-	// known after reaching loans have been solved, just like a Publish target.
+	// A value read through a carrier; like a Publish target, its content slots
+	// are only known after reaching loans are solved.
 	Load,
 }
 
-// design.md "Capabilities and the one rule". A read is compatible with a
-// read-only borrow; a write is not; an invalidation ends the borrowed value
-// outright.
+// design.md "Capabilities and the one rule": a read is compatible with a
+// read-only borrow, a write is not, an invalidation ends the value outright.
 Access_Kind :: enum u8 {
 	Read,
 	Write,
@@ -151,26 +138,26 @@ Prov_Event :: struct {
 	// `Retain`: what kind of storage the destination is. `name` is how a
 	// diagnostic spells it and `verb` names the destination.
 	retain: Retain_Kind,
-	// `Retain`: the carrier the destination was written through, when the place
-	// left lexical storage — `p^.view`, `d[0].view`, a `^mut` argument. Its
-	// reaching loans name the destination roots, which only the solver knows, so
-	// `retain` and `root` are answered there instead of here.
-	// `Load`: `into` holds the addressing carriers, `path` is the projection
-	// below their pointees, and `slot` receives the content. `sources` is filled
-	// with the resolved content reads before solving liveness.
+	// `Retain`: the carrier the place was written through when it left lexical
+	// storage (`p^.view`, `d[0].view`, a `^mut` argument). Its reaching loans
+	// name the destination roots, so `retain`/`root` are resolved by the
+	// solver, not here.
+	// `Load`: `into` holds the addressing carriers, `path` the projection below
+	// their pointees, `slot` the content. `sources` fills with resolved content
+	// reads before solving liveness.
 	into: []int,
 	// `Escape`: the allocator region an owning result carries with it.
 	region:         Region_Set,
 	region_content: []Prov_Region_Content,
 	// `Reset`: whether the promise this reset needs is already written. `access`
-	// selects the form -- `Invalidate` for a direct `free_all`, `Write` for a
-	// call that hands one of this body's allocator parameters onward.
+	// selects the form: `Invalidate` for a direct `free_all`, `Write` for
+	// handing an allocator parameter onward.
 	reset_covered: bool,
 	owner_span:    Span,
-	// `Live`: this use re-establishes the loans it names rather than merely
-	// keeping them alive. A loop head re-reads its iterable once per iteration,
-	// so an invalidation recorded in the body must not travel the back edge and
-	// make the next iteration's iterator look already dead.
+	// `Live`: re-establishes the loans it names rather than just keeping them
+	// alive. A loop head re-reads its iterable each iteration, so a body
+	// invalidation must not travel the back edge and kill the next one's
+	// iterator.
 	revives:       bool,
 }
 
@@ -204,18 +191,18 @@ Flow_Cleanup_Kind :: enum {
 	Prov_Root,
 }
 
-// One open lexical scope: where its cleanup registrations start in `in_scope`,
-// and how many region-backed owners were in scope when it opened. Both are
-// restored by `leave_flow_scope` and by nothing else, so an abrupt exit can
-// emit a scope's cleanups without ending the scope itself.
+// One open lexical scope: where its cleanups start in `in_scope`, and how many
+// region-backed owners were in scope when it opened. Only `leave_flow_scope`
+// restores these, so an abrupt exit can emit a scope's cleanups without ending
+// it.
 Flow_Scope :: struct {
 	cleanups: int,
 	owners:   int,
 }
 
-// One registration in the unified cleanup order. Locals and written defers
-// must be kept in one list: a deferred read is valid only when every local it
-// names is still live at the exact point that registration executes.
+// One registration in the unified cleanup order. Locals and defers share one
+// list because a deferred read is valid only when every local it names is
+// still live at the exact point it executes.
 Flow_Cleanup :: struct {
 	kind: Flow_Cleanup_Kind,
 	slot: int,
@@ -225,9 +212,8 @@ Flow_Cleanup :: struct {
 }
 
 // One managed local the lifecycle analysis follows. An allocation root is not
-// one of them: design.md releases `new` storage through `free` or a region
-// reset, and root provenance in `src/borrow.odin` is what decides whether
-// `free` may have it.
+// one: design.md releases `new` storage via `free`/region reset, and root
+// provenance (`src/borrow.odin`) decides whether `free` may have it.
 Tracked_Local :: struct {
 	symbol: Symbol_Id,
 	scope:  int,
@@ -235,9 +221,8 @@ Tracked_Local :: struct {
 	// rather than at a declaration inside the body.
 	live_on_entry: bool,
 	// Filled while reporting: whether this local ever reaches a cleanup point,
-	// and in which states. `conditional_assign` records the other place a hidden
-	// flag can be needed — an assignment whose destination is live on one path
-	// and dead on another.
+	// and in which states. `conditional_assign` marks the other place a hidden
+	// flag is needed: an assignment live on one path, dead on another.
 	seen_cleanup:       bool,
 	live_exit:          bool,
 	dead_exit:          bool,
@@ -259,33 +244,31 @@ Flow_Graph :: struct {
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
-	// One slot per `carrier_shape` path, for a local whose type is not itself a
-	// carrier but can hold one inside it. Ordered by the shape, so two values of
-	// one type pair by index.
+	// One slot per `carrier_shape` path, for a local whose type can hold a
+	// carrier without being one. Ordered by the shape, so values of one type
+	// pair by index.
 	content_by_symbol: map[Symbol_Id][]int,
-	// Which entry of a keyed map shape each constant key of this body uses. A
-	// map's key set is not part of its type, so the type provides the entries and
-	// the body assigns them, first written first. Numbering is shared across the
-	// body's maps, which is harmless: two maps are two roots and their paths are
-	// never compared.
+	// Which entry of a keyed map shape each constant key uses. A map's key set
+	// isn't part of its type, so the type provides the entries and the body
+	// assigns them first-written-first. Numbering is shared across the body's
+	// maps harmlessly: two maps are two roots whose paths are never compared.
 	map_key_entries: map[string]int,
 	call_results:   map[^Expr_Call]Prov_Call_Result,
 	// Direct callees whose result summaries this graph reads. Populated only in
 	// summary mode and copied into compilation metadata before the graph dies.
 	summary_callees: [dynamic]Symbol_Id,
 	// A value temporary lives until the end of its complete expression
-	// (design.md), extended to the complete statement inside a `foreach`
-	// iterable, a `switch` subject, or an `if`/`for`/`switch` initial statement.
-	// One list per statement is exactly that boundary.
+	// (design.md), extended to the complete statement for a `foreach` iterable,
+	// `switch` subject, or header initial statement. One list per statement.
 	temp_roots:     [dynamic]Root_Id,
 	// design.md "Allocator regions and region provenance". One entry per
-	// allocator binding and per region-backed owner; `owners_in_scope` is what a
-	// reset has to answer "would this owner survive it" against.
+	// allocator binding and per region-backed owner; `owners_in_scope` is what
+	// a reset checks survival against.
 	region_of:       map[Symbol_Id]Region_Set,
 	region_content:  map[Symbol_Id][]Prov_Region_Content,
-	// A provider owns its own region, but provider-backed construction also makes
-	// it depend on the parent allocator until the child is dropped. Keeping that
-	// edge separate avoids confusing `child.allocator()` with the parent region.
+	// A provider owns its own region but also depends on the parent allocator
+	// until the child is dropped. Kept separate to avoid confusing
+	// `child.allocator()` with the parent region.
 	provider_parents: map[Symbol_Id]Region_Set,
 	owners_in_scope: [dynamic]Symbol_Id,
 	param_count:     int,
@@ -301,11 +284,11 @@ Flow_Graph :: struct {
 	k:       ^Checker,
 	literal: ^Expr_Proc,
 	current: Block_Id,
-	// A slot in `tracked` is permanent: it names one declaration's state for the
-	// whole analysis. What comes and goes is scope membership, so that is a
-	// separate stack of slots in declaration order, with `scopes` holding one
-	// marker into it per open lexical scope. Leaving a scope cleans up exactly
-	// the slots above its marker and then forgets them.
+	// A slot in `tracked` is permanent, naming one declaration's state for the
+	// whole analysis. Scope membership comes and goes separately: a stack of
+	// slots in declaration order, with `scopes` holding one marker per open
+	// scope. Leaving a scope cleans up the slots above its marker, then forgets
+	// them.
 	in_scope: [dynamic]Flow_Cleanup,
 	scopes:   [dynamic]Flow_Scope,
 	// How many loops enclose the statement being walked, so the copy-cost report
@@ -320,10 +303,9 @@ Flow_Graph :: struct {
 
 NO_BLOCK :: Block_Id(-1)
 
-// In lifecycle mode, nil when the body has nothing to track, which is the
-// ordinary case and saves every unmanaged procedure a graph. A provenance mode
-// always builds one: design.md's one rule applies to a body whose every local is
-// trivial just as much as to a managed one.
+// In lifecycle mode, nil when the body has nothing to track (the ordinary
+// case, saving unmanaged procedures a graph). A provenance mode always builds
+// one: design.md's one rule applies even to a body with only trivial locals.
 build_flow_graph :: proc(
 	k: ^Checker,
 	literal: ^Expr_Proc,
@@ -362,9 +344,9 @@ build_flow_graph :: proc(
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
-	// design.md: a `move` parameter transfers ownership from caller to callee, so
-	// the callee drops it like any owned local. It lives in a scope outside the
-	// body's, which is what makes its cleanup the outermost one.
+	// design.md: a `move` parameter transfers ownership to the callee, which
+	// drops it like any owned local. It lives in a scope outside the body's,
+	// making its cleanup the outermost one.
 	enter_flow_scope(graph)
 	if mode == .Lifecycle {
 		track_move_parameters(graph, literal)
@@ -459,11 +441,10 @@ enter_flow_scope :: proc(graph: ^Flow_Graph) {
 leave_flow_scope :: proc(graph: ^Flow_Graph) {
 	scope := pop(&graph.scopes)
 	emit_cleanups(graph, scope.cleanups)
-	// A local leaving its scope is gone: nothing after this may name it, and the
-	// enclosing scope must not clean it up a second time. Leaving the scope is
-	// the only thing that ends it: an abrupt exit emits the same cleanups on its
-	// way out, but the statements after it are still inside this scope and still
-	// see everything it declared.
+	// A local leaving its scope is gone: nothing after may name it, and the
+	// enclosing scope must not clean it up twice. Leaving the scope is the only
+	// thing that ends it — an abrupt exit runs the same cleanups on the way out,
+	// but statements after it stay in this scope, seeing everything it declared.
 	resize(&graph.in_scope, scope.cleanups)
 	resize(&graph.owners_in_scope, scope.owners)
 }
@@ -482,15 +463,14 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 	for index := len(graph.in_scope) - 1; index >= down_to; index -= 1 {
 		action := graph.in_scope[index]
 		if action.kind == .Defer {
-			// Execute the deferred syntax at scope exit, not at registration. This
-			// gives reads, moves, drops, branches, and nested lexical cleanup their
-			// real position in the ownership dataflow.
-			// Remove this action and the already-run later registrations while it
-			// executes. Besides matching runtime stack popping, this prevents an
-			// already-diagnosed illegal `return` inside a defer from recursively
-			// invoking the same defer during error recovery.
-			// The walk appends into this same backing storage, so the entries
-			// have to be saved, not the dynamic-array header.
+			// Executed at scope exit, not at registration, so reads, moves, drops,
+			// branches, and nested cleanup land at their real dataflow position.
+			// Removed, along with the already-run later registrations, while it
+			// executes: matches runtime stack popping, and stops an already-diagnosed
+			// illegal `return` inside a defer from recursively invoking itself during
+			// error recovery.
+			// The walk appends into this same backing storage, so the entries have to
+			// be saved, not the dynamic-array header.
 			tail := slice.clone(graph.in_scope[index:], graph.alloc)
 			owners := len(graph.owners_in_scope)
 			resize(&graph.in_scope, index)
@@ -519,10 +499,10 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 	}
 }
 
-// An ordinary temporary root lives until the end of its complete expression,
-// and one in a control-flow header until that complete statement ends
-// (design.md). A header's initial statement therefore does not release its
-// own temporaries: `extend` keeps them on the enclosing statement's list.
+// An ordinary temporary root lives until the end of its complete expression;
+// one in a control-flow header, until that whole statement ends (design.md).
+// So a header's initial statement doesn't release its own temporaries —
+// `extend` keeps them on the enclosing statement's list.
 @(private = "file")
 walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	mark := len(graph.temp_roots)
@@ -668,9 +648,9 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 			continue
 		}
 		// Scope exit automatically drops every live managed lexical owner
-		// (design.md). Suppressing that is a property of the value — an
-		// `unsafe.forget` consumes it, and a consumed local is dead here like any
-		// other — never of the declaration.
+		// (design.md). Suppressing that is a property of the value, never of the
+		// declaration — an `unsafe.forget` consumes it, and a consumed local is
+		// dead here like any other.
 		slot, already_tracked := slot_of(graph, id)
 		if !already_tracked {
 			append(&graph.tracked, Tracked_Local {
@@ -748,12 +728,12 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 }
 
 // design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
-// whole statement — its condition, body, and post all see it, nothing after
-// does. `emit_if`/`emit_for`/`emit_switch` already push a scope here, so this is
-// the same boundary the emitter drops the local at.
+// whole statement — condition, body, and post all see it, nothing after does.
+// `emit_if`/`emit_for`/`emit_switch` already push a scope here, matching where
+// the emitter drops the local.
 //
-// The caller pairs this with `defer leave_flow_scope(graph)`, which has to sit
-// in the caller's own scope to close over the whole statement.
+// The caller pairs this with `defer leave_flow_scope(graph)`, in the caller's
+// own scope so it closes over the whole statement.
 @(private = "file")
 enter_flow_header_scope :: proc(graph: ^Flow_Graph, init: Stmt) {
 	enter_flow_scope(graph)
@@ -826,8 +806,8 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	link(graph, head, done)
 	// design.md lists compiler-known iterators among the borrow carriers: both
 	// conversion to a built-in view and compiler-known iteration preserve the
-	// source root. The read happens once per iteration, so the loan has to be
-	// live through the body, not only where the iterable was written.
+	// source root. The read happens once per iteration, so the loan must stay
+	// live through the body, not just at the iterable's write site.
 	if len(iterated) > 0 {
 		graph.current = head
 		prov_emit(graph, Prov_Event{
@@ -1666,12 +1646,11 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 	return slot, true
 }
 
-// Constructing an aggregate puts each element's borrows at that element's own
-// place. A positional element goes to its field, or to its index in an array;
-// a named field element goes to the field it names, and a keyed element whose
-// slot cannot be resolved here joins into every path rather than guessing. An
-// array whose shape kept a single wildcard element path joins into it through
-// the same overlap test.
+// Constructing an aggregate puts each element's borrows at its own place: a
+// positional element at its field or array index, a named field element at
+// the field it names, and a keyed element whose slot can't be resolved here
+// joins into every path rather than guessing. An array with a single wildcard
+// element path joins into it via the same overlap test.
 @(private = "file")
 prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: []int) -> []int {
 	value_type := v.union_from != INVALID_TYPE ? v.union_from : v.type
@@ -1963,10 +1942,10 @@ prov_load_content :: proc(graph: ^Flow_Graph, carriers: []int, path: []Proj_Step
 }
 
 // Consuming a value: what it held travels to wherever it went, so read that
-// before the source is invalidated. The borrows inside it are of other roots and
-// survive; what ends is the source binding's own storage, which is exactly what
+// before invalidating the source. The borrows inside it are of other roots and
+// survive; only the source binding's own storage ends, which is exactly what
 // the invalidation covers (design.md). An explicit `move` around the place is
-// transparent here — it is the same consumption written twice.
+// transparent here — the same consumption, just written twice.
 @(private = "file")
 prov_consume :: proc(graph: ^Flow_Graph, place: Expr, span: Span, verb: string) -> []int {
 	source := place
@@ -2726,15 +2705,14 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 		reset_covered = unmarked == "" && covered,
 	}
 	// A tracked owner whose backing region this may end is a blocker whatever its
-	// carriers do, because its cleanup still has to run. Only owners of a region
-	// this reset can actually reach: a second arena's containers are none of its
-	// business, which is the whole point of giving each local provider a token.
+	// carriers do, because its cleanup still has to run — but only an owner of a
+	// region this reset can actually reach: a second arena's containers are none
+	// of its business, the whole point of giving each local provider a token.
 	//
-	//
-	// An owner is live when it may be used later or still requires cleanup on an
-	// outgoing path; an explicitly dropped owner is dead and no longer blocks
-	// reset (design.md). Scope presence cannot answer that, so the answer
-	// is M5a's, recorded at this same call node one pass earlier.
+	// An owner is live when it may be used later or still needs cleanup on some
+	// outgoing path; an explicitly dropped owner is dead and no longer blocks a
+	// reset (design.md). Scope presence can't answer that, so the answer is
+	// M5a's, recorded at this same call node one pass earlier.
 	dead := graph.k.c.reset_dead[at]
 	for id in graph.owners_in_scope {
 		owner := symbol_of(graph.k.c, id)
@@ -2770,11 +2748,11 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	prov_emit(graph, event)
 }
 
-// A borrow stored where it outlives the
-// statement that stored it. The destination is resolved as a place, so a field,
-// a nested container element, and a write through a tracked alias are all seen,
-// not only a bare identifier. Only a destination that actually receives a borrow
-// is reported, so ordinary global data costs nothing.
+// A borrow stored where it outlives the statement that stored it. The
+// destination is resolved as a place, so a field, a nested container element,
+// and a write through a tracked alias are all seen, not only a bare
+// identifier. Only a destination that actually receives a borrow is reported,
+// so ordinary global data costs nothing.
 @(private = "file")
 prov_retain_escape :: proc(graph: ^Flow_Graph, target: Expr, sources: []int, span: Span) {
 	if len(sources) == 0 {
@@ -3253,14 +3231,12 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 		return nil
 	}
 	mutable := slice_is_mutable(graph.k.c, v.type)
-	// Only a fixed array is sliced out of a root's own inline storage. Slicing a
-	// slice, a pointer or a string view reslices the carrier, so the loans it
-	// already holds are what the result borrows.
-	// `st[low:high]` borrows a subrange view of the string's own storage,
-	// exactly as slicing a fixed array borrows the array's (design.md).
-	// design.md "Dynamic arrays": indexing and slicing produce views into the
-	// current allocation, so a container lends from its own root too — that
-	// borrow is what every relocating operation on it then invalidates.
+	// A fixed array, string, or dynamic array is sliced out of its own root's
+	// storage: `st[low:high]` borrows a subrange view exactly as slicing a fixed
+	// array does, and a dynamic array's range is a borrow of its own root too,
+	// which every relocating operation on it then invalidates (design.md
+	// "Dynamic arrays"). Reslicing a slice or pointer instead keeps the loans
+	// the carrier already holds.
 	operand_kind := underlying_kind(graph.k.c, expr_base(v.operand).type)
 	array := operand_kind == .Array || operand_kind == .String || operand_kind == .Dynamic_Array
 	if root, path, ok := prov_place_of(graph, v.operand); ok && array {
@@ -3854,14 +3830,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 // The caller's half of `@(escape=...)`, which the callee's body check cannot
 // answer: only the caller knows how long the storage behind an argument lives.
 //
-// `static` is direct — the argument has to still be there when the process ends.
-// `stored` says the callee may write the argument into a destination this call
-// hands it, so the call is modelled as exactly that assignment: the same
-// duration check an assignment gets, and the same flow, so the destination
-// carries what the argument borrowed and the existing scope rules answer the
-// rest. Modelling the flow is what makes a caller-local destination work without
-// proving one local outlives another — the loan simply travels, and using it
-// after its root has ended is already an error.
+// `static` is direct — the argument must still exist when the process ends.
+// `stored` means the callee may write the argument into a destination this
+// call hands it, so the call is modelled as that assignment: same duration
+// check, same flow — the destination carries what the argument borrowed, and
+// existing scope rules handle the rest. Modelling the flow lets a caller-local
+// destination work without proving one local outlives another: the loan just
+// travels, and using it after its root ends is already an error.
 @(private = "file")
 prov_call_retention :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]int) {
 	proc_type := prov_call_proc_type(graph, v)
@@ -4072,11 +4047,11 @@ prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
 	return prov_map_entry_step(graph, expr_base(v.bound[0]).type, v.bound[1])
 }
 
-// A container operation is
-// resolved before this point, so the solver asks `Container_Op` rather than
-// recognising a member name. Stored key/value borrows become the receiver's and
-// must satisfy its duration just like an indexed assignment. A fallible write
-// joins the matching previous content because its failure edge changes nothing.
+// A container operation is resolved before this point, so the solver asks
+// `Container_Op` rather than recognising a member name. Stored key/value
+// borrows become the receiver's and must satisfy its duration just like an
+// indexed assignment. A fallible write joins the matching previous content
+// because its failure edge changes nothing.
 @(private = "file")
 prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_Op, actuals: [][]int) {
 	#partial switch op {

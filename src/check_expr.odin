@@ -2590,11 +2590,10 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		check_reflection_builtin(k, v, ident, sym.builtin)
 		return
 	// `iter(source)` and `value.clone()`'s free spelling are closed standard
-	// aliases like any other: the same overload selection as direct method syntax,
-	// rewritten to that member, so there is one emitted call and not two entry
-	// points that could drift. `Iterable`/`foreach` own protocol validation, and a
-	// user customizes copying with `hook(copy)` — never with an unrelated free
-	// procedure.
+	// aliases: the same overload selection as direct method syntax, rewritten to
+	// that member, so one call is emitted rather than two entry points that could
+	// drift. `Iterable`/`foreach` own protocol validation; copying is customized
+	// with `hook(copy)`, never an unrelated free procedure.
 	case .Iter, .Standard_Alias, .Clone, .Try_Clone:
 		check_standard_alias(k, v, ident, expected)
 		return
@@ -2669,12 +2668,11 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 
 // A closed standard free alias such as `format(value, writer, options)` selects
 // exactly the receiver method that `value.format(writer, options)` selects. The
-// alias owns no candidates, and only immutable receivers qualify: mutating and
-// consuming operations remain method-only so ordinary call-site mode markers do
-// not disappear.
+// alias owns no candidates; only immutable receivers qualify, so mutating and
+// consuming operations stay method-only and call-site mode markers don't vanish.
 //
-// `receiver_checked` is used by `len`/`cap`/`hash`, whose built-in path must
-// inspect the receiver before it knows whether to fall back to its method.
+// `receiver_checked` is for `len`/`cap`/`hash`, whose built-in path inspects the
+// receiver before knowing whether to fall back to its method.
 check_standard_alias :: proc(
 	k: ^Checker,
 	v: ^Expr_Call,
@@ -3210,11 +3208,10 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 //   make(map[K]V, reservation: int = 0, allocator = default)
 //       -> (map[K]V, Allocator_Error)
 //
-// Allocator binding: the result is bound to the selected
-// allocator "even when empty", so `make` is also how a program chooses a
-// provider for a container it then fills. The counts are ordinary runtime `int`
-// expressions; `len > cap` and a negative count are program faults, not
-// allocation failures, and are checked where the allocation is made.
+// The result is bound to its allocator even when empty, so `make` is also how
+// a program chooses a provider for a container it then fills. The counts are
+// ordinary runtime `int` expressions; `len > cap` and a negative count are
+// program faults, not allocation failures, checked where the allocation is made.
 //
 // The trailing allocator is recognised by its type rather than by position:
 // `Allocator` is a distinct nominal type, so no count can be mistaken for one
@@ -3381,13 +3378,12 @@ check_message_arg :: proc(k: ^Checker, e: Expr) {
 	}
 }
 
-// One argument against one parameter, with the `@(implicit)` path for an
-// untyped constant that no built-in conversion reaches. Returns the expression
-// to bind, which is the written one unless a conversion wrapped it.
+// One written argument bound against one parameter, with the `@(implicit)`
+// path for an untyped constant no built-in conversion reaches. Returns the
+// expression to bind — the written one unless a conversion wrapped it.
 // design.md "Parameter semantics": `inout` is written at both ends, and the
-// argument is a place, because the callee writes through it. One written
-// argument bound against the parameter it fills — shared, so a call that has a
-// variadic pack enforces the same contract as one that has none.
+// argument is a place because the callee writes through it. Shared, so a call
+// with a variadic pack enforces the same contract as one without.
 bind_written_argument :: proc(
 	k: ^Checker, arg: Argument, target: Type_Id, expected: Param_Mode, prechecked := false,
 ) -> (Expr, bool) {
@@ -3841,10 +3837,9 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 }
 
 // A slice literal has the type it is written with (design.md "Slice
-// literals"): `[]T{...}` produces `[]T` and `[]mut T{...}` produces
-// `[]mut T`; the capability is never inferred against the spelling. The
-// elements go into a hidden fixed-array owner in the surrounding lexical
-// scope, which is what the slice then views.
+// literals"): `[]T{...}` produces `[]T`, `[]mut T{...}` produces `[]mut T` —
+// never inferred from the destination. Elements go into a hidden fixed-array
+// owner in the surrounding lexical scope, which the slice then views.
 @(private = "file")
 check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	// Written without a type — `x: []int = {1, 2}` — would have to infer the

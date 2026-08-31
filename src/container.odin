@@ -156,16 +156,15 @@ Container_Op :: enum {
 }
 
 // design.md "Dynamic arrays": the operation set, contributed as real members so
-// `xs.append(1)` is an ordinary method call. That is not cosmetic — it is what
-// makes the same operations reachable from generic code constrained by the
-// standard catalogue, and it reuses overload ranking, `..T` packing, default
-// arguments, and the `inout`-receiver place rule instead of growing a second
-// call path beside them.
+// `xs.append(1)` is an ordinary method call — not cosmetic, it makes these
+// operations reachable from generic code constrained by the standard
+// catalogue, and reuses overload ranking, `..T` packing, default arguments,
+// and the `inout`-receiver place rule instead of a second call path.
 //
 // The `..T` pack a variadic receives *is* a read-only slice, so `append` clones
-// each element into the container through its selected allocator. A move-only
-// element therefore cannot travel through the variadic form; `insert` takes one
-// value and has the same rule for the same reason.
+// each element in through its selected allocator — a move-only element can't
+// travel through the variadic form, and `insert` takes one value for the same
+// reason.
 ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	info := type_of(k.c, type)
 	if info == nil || .Container in info.contributed {
@@ -207,11 +206,11 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		k, type, "try_insert", .Insert,
 		[]Type_Id{type, TYPE_INT, element}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
 	))
-	// design.md "Typed fallibility": an empty container yields `.none`.
-	// The removed value's provenance is the element's, not the container's: what
-	// comes back holds what that element held. Written as a summary for the same
-	// reason `lookup_value` has one — a synthesised member has no body for the
-	// fixed point to walk.
+	// design.md "Typed fallibility": an empty container yields `.none`. The
+	// removed value's provenance is the element's, not the container's — what
+	// comes back holds what that element held. Written as a summary for the
+	// same reason `lookup_value` has one: a synthesised member has no body for
+	// the fixed point to walk.
 	pop := container_member(
 		k, type, "pop", .Pop,
 		[]Type_Id{type}, []Param_Mode{.Inout}, option_type(k, element), 0,
@@ -279,9 +278,9 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	fails := result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)
 
 	// `find` returns `Option(^mut V)` over the existing value — it never inserts
-	// (design.md). The receiver is `inout` because the pointer it hands back
-	// grants mutation of the stored value. Only its result representation
-	// changed with typed fallibility; the borrow and invalidation rules did not.
+	// (design.md). The receiver is `inout` because the returned pointer grants
+	// mutation of the stored value. Typed fallibility changed only the result
+	// representation; the borrow and invalidation rules did not.
 	find := container_member(
 		k, type, "find", .Map_Find,
 		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
@@ -299,9 +298,9 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		option_type(k, value), 0, .Value,
 	)
 	// A synthesised member has no body, so without a written summary a carrier
-	// payload would fall through to `.Unknown` storage and lose the provenance the
-	// map index it replaces already carried. The payload's provenance is exactly
-	// the receiver's: an owned managed value depends on nothing, while a
+	// payload falls through to `.Unknown` storage, losing the provenance the
+	// map index it replaces already carried. The payload's provenance is
+	// exactly the receiver's: an owned managed value depends on nothing, but a
 	// `map[K]string_view` payload still borrows through the map.
 	set_synth_result_summary(k.c, lookup, 0)
 	append(&members, lookup)
@@ -468,15 +467,14 @@ zero_int_arg :: proc(c: ^Compiler) -> Expr {
 // ------------------------------------------------------- allocator policy --
 
 // design.md "Allocators": a declaration may select the provider its value is
-// built with by writing `T via expression`. This separates the two facts it
-// creates: the *policy* belongs to the declaration and survives drop and
-// move, while the *handle* belongs to the current live value and travels
-// with it.
+// built with by writing `T via expression`, separating two facts: the
+// *policy* belongs to the declaration and survives drop and move, while the
+// *handle* belongs to the current live value and travels with it.
 //
-// So `via` is recorded on the symbol and is what a later revival, an implicit
-// copy into this destination, and a container literal constructed here all
-// select. It is not consulted for a destination that is already live: design.md
-// says a live destination keeps the allocator its value was built with.
+// So `via` is recorded on the symbol and selects for a later revival, an
+// implicit copy into this destination, and a container literal constructed
+// here — but not for a destination that is already live, since design.md says
+// a live destination keeps the allocator its value was built with.
 //
 // `via` is allowed on lexical allocator-binding owners whose canonical clone
 // accepts a destination allocator, and rejected on everything with no

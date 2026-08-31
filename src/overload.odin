@@ -1,11 +1,10 @@
 // Overload resolution.
 //
 // One engine, used by named procedure groups, methods, operators, `init`
-// construction, and indexing. Operator overloads rank using the same algorithm
-// as named procedure overloads (design.md): two implementations would drift, and
-// the error-quality requirement — list every maximal candidate, its conversion
-// vector, and the tie-breaker where selection failed — wants one place that can
-// print them.
+// construction, and indexing. Operator overloads rank with the same algorithm
+// as named ones (design.md) — two implementations would drift, and the
+// error-quality bar (list every maximal candidate, its conversion vector, and
+// the tie-breaker where selection failed) wants one place that can print it.
 //
 // The contract fixed here and not reopened by M4b: viability filters first,
 // structure orders what survives, and constraints never rank.
@@ -45,8 +44,8 @@ Candidate :: struct {
 	// signature. Never summed: the ranks form a vector and argument order does
 	// not break ties.
 	ranks:  []int,
-	// Generic `$` arguments are absent from `args`/`ranks` because those arrays
-	// drive runtime binding. They remain written call arguments and therefore
+	// Generic `$` arguments are absent from `args`/`ranks` — those arrays drive
+	// runtime binding — but they're still written call arguments, so they
 	// participate in overload ordering through this full vector.
 	ordering_ranks: []int,
 	// Which parameter each supplied argument fills.
@@ -202,10 +201,9 @@ common_argument_type :: proc(k: ^Checker, candidates: []Symbol_Id, name: Identif
 			}
 		}
 		if slot < 0 { continue }
-		// A variadic pack's parameter is `[]T`, but one written element wants
-		// `T`, and every argument from the pack's own slot onward is one of
-		// them. A `..` spread supplies the pack itself and needs no context, so
-		// it never reaches here.
+		// A variadic pack's parameter is `[]T`, but a written element wants `T` —
+		// every argument from the pack's slot onward is one of them. A `..` spread
+		// supplies the pack itself and needs no context, so it never reaches here.
 		//
 		// The modes live on the procedure type; a synthesized member leaves its
 		// parameter symbols unnamed, so this is the reading that works for both.
@@ -277,10 +275,9 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	if param == INVALID_TYPE || arg.type == INVALID_TYPE {
 		return RANK_NONE, INVALID_SYMBOL
 	}
-	// A parameter mode is part of the match, not a conversion. A receiver carries
-	// its `inout` mode implicitly, so the call syntax has already supplied it --
-	// but a consuming receiver is written `move(value).method()`, so that written
-	// form is part of the match too, in both directions.
+	// A parameter mode is part of the match, not a conversion. A receiver's `inout`
+	// mode is implicit (already supplied by call syntax), but a consuming receiver
+	// is written `move(value).method()`, so that written form matters too, both ways.
 	if arg.is_receiver {
 		_, moved := arg.expr.(^Expr_Move)
 		if moved != (mode == .Move) {

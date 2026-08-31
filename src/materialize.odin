@@ -5,10 +5,10 @@
 // anyway — indexing by a non-constant index, a slice expression, and `&C` —
 // and **all uses of that constant share one backing object**.
 //
-// That object is read-only. Assigning through it is rejected and a slice of it
-// is `[]T` and never `[]mut T`. `&C`, `&C[i]`, and `&C.field` are permitted and
-// yield a `^T`; `&mut` of any of them is not, which is what keeps a writable
-// pointer out of read-only storage.
+// That object is read-only: assigning through it is rejected, and a slice of
+// it is `[]T`, never `[]mut T`. `&C`, `&C[i]`, and `&C.field` yield a `^T`;
+// `&mut` of any of them does not, keeping a writable pointer out of read-only
+// storage.
 //
 // Identity is the resolved constant symbol. M4b clones each generic declaration
 // before checking it, so two specializations already hold two symbols and get
@@ -26,9 +26,9 @@ Materialized :: struct {
 	name:   string,
 }
 
-// The constant symbol an expression denotes, or INVALID_SYMBOL when it is not a
-// named constant. Only a named constant is materialised: an inline composite
-// literal is already addressable temporary storage and needs no shared object.
+// The constant symbol an expression denotes, or INVALID_SYMBOL if it is not a
+// named constant — an inline composite literal is already addressable
+// temporary storage and needs no shared object.
 constant_symbol_of :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 	base := expr_base(e)
 	if base == nil || !base.is_const {
@@ -44,9 +44,8 @@ constant_symbol_of :: proc(c: ^Compiler, e: Expr) -> Symbol_Id {
 }
 
 // The named constant a place expression is rooted in, and the sub-expression
-// that names it. `&C`, `&C[i]`, and `&C.field` all root in `C`, and one shared
-// object serves all three; anything else roots in ordinary storage and returns
-// INVALID_SYMBOL.
+// naming it. `&C`, `&C[i]`, and `&C.field` all root in `C` and share one
+// object; anything else roots in ordinary storage and returns INVALID_SYMBOL.
 constant_root_of :: proc(c: ^Compiler, e: Expr) -> (Expr, Symbol_Id) {
 	current := e
 	for current != nil {
@@ -74,11 +73,10 @@ constant_symbol :: proc(c: ^Compiler, id: Symbol_Id) -> Symbol_Id {
 	return id
 }
 
-// Registers the one read-only global this constant's runtime uses share. Safe to
-// call from every such use; the first call decides the object.
-//
-// Returns false when the expression is not a named constant, in which case the
-// caller keeps its ordinary temporary-storage behavior.
+// Registers the one read-only global this constant's runtime uses share. Safe
+// to call from every such use; the first call decides the object. Returns
+// false when the expression is not a named constant, in which case the caller
+// keeps its ordinary temporary-storage behavior.
 request_materialization :: proc(k: ^Checker, e: Expr) -> bool {
 	symbol := constant_symbol_of(k.c, e)
 	if symbol == INVALID_SYMBOL {

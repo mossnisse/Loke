@@ -9,9 +9,9 @@ import "core:strings"
 // -------------------------------------------------------------- constants --
 
 // design.md "Zero values": a union constant is a payload written into the
-// storage type's alignment-carrying head plus the variant's tag. Constants are
-// serialized to the same little-endian byte image used for packed/aligned
-// records, then split across the integer head and byte-array tail.
+// storage type's alignment-carrying head plus the variant's tag, serialized to
+// the same little-endian byte image as packed/aligned records and split across
+// the integer head and byte-array tail.
 @(private = "file")
 union_constant :: proc(e: ^Emitter, value: Const_Value, type: Type_Id, info: ^Type_Info) -> string {
 	shape := union_layout(e.c, type)
@@ -159,10 +159,9 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 }
 
 // The `[size x i8]` constant of one field inside a combined `@(packed, align=N)`
-// struct, whose body uses byte arrays so a non-packed LLVM record neither
-// re-pads nor drops the raised alignment. Serialize the complete little-endian
-// value, including nested record padding, rather than changing unsupported
-// fields into zeroes.
+// struct: byte arrays keep a non-packed LLVM record from re-padding or dropping
+// the raised alignment. Serializes the complete little-endian value, including
+// nested padding, rather than zeroing unsupported fields.
 @(private = "file")
 field_byte_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	size := int(type_size(e.c, type))
@@ -295,10 +294,10 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 	return false
 }
 
-// LLVM's decimal float syntax is only exact for values it can round-trip, so
-// every float constant is spelled as its bit pattern. `half` uses the 16-bit
-// form; `float` uses the double pattern, which is exact because the value was
-// already rounded to single precision.
+// LLVM's decimal float syntax only round-trips exactly for some values, so
+// every float constant is spelled as its bit pattern: `half` uses the 16-bit
+// form, `float` the double pattern (exact, since the value was already rounded
+// to single precision).
 @(private = "file")
 llvm_float :: proc(value: f64, bits: u16) -> string {
 	if bits == 16 {
@@ -331,9 +330,9 @@ place_align_of :: proc(e: ^Emitter, address: string, type: Type_Id) -> u64 {
 	return type_align(e.c, type)
 }
 
-// `, align N` when a place is known to be less aligned than its pointee wants —
-// which is what reaching through a packed field produces. Empty otherwise, so
-// every ordinary access keeps its unchanged IR.
+// `, align N` when a place is known less aligned than its pointee wants — what
+// reaching through a packed field produces. Empty otherwise, so ordinary access
+// keeps its unchanged IR.
 @(private = "file")
 align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
 	if a, ok := e.place_align[address]; ok && a < type_align(e.c, type) {
@@ -379,8 +378,8 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 
 	case ^Expr_Selector:
 		// `pkg.name` naming another package's global is a whole symbol, not a field
-		// of its operand: the operand is a package alias with no storage to index
-		// into. Its own name is the address.
+		// of its operand — the operand is a package alias with no storage, so its
+		// own name is the address.
 		if v.resolution.kind == .Value {
 			if name, ok := e.names[v.resolution.symbol]; ok {
 				return name
@@ -466,10 +465,10 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 }
 
 // `xs[i]`: the element's address inside the container's current allocation,
-// bounds-checked against the header's length word. Indexing and slicing
-// produce views into the current allocation (design.md), so this address is exactly
-// as long-lived as that allocation — which is what the M5b invalidation events
-// registered by every relocating operation are there to enforce.
+// bounds-checked against the header's length word. Indexing and slicing produce
+// views into the current allocation (design.md), so this address is exactly as
+// long-lived as that allocation — enforced by the M5b invalidation events every
+// relocating operation registers.
 @(private = "file")
 emit_dynamic_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	operand_type := expr_base(v.operand).type
@@ -1256,14 +1255,14 @@ type_is_erased_view :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	return false
 }
 
-// Two unions are equal when their tags match and the active variant's payloads
-// match. A payloadless variant is settled by the tag alone.
+// Two unions are equal when their tags match and the active variant's payload
+// matches (a payloadless variant is settled by the tag alone).
 //
-// Only the active variant's comparison runs. Computing every variant's
-// comparison and selecting afterwards is smaller IR, but a payload whose
-// equality is a runtime call over a pointer and a length — `string`,
-// `string_view`, or any aggregate holding one — would then run that call over
-// another variant's bytes and read arbitrary memory.
+// Only the active variant's comparison runs. Computing every variant's and
+// selecting afterward would be smaller IR, but a payload whose equality is a
+// runtime call over a pointer and length — `string`, `string_view`, or any
+// aggregate holding one — would then read arbitrary memory from another
+// variant's bytes.
 @(private = "file")
 emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> string {
 	info := type_of(e.c, union_type)
@@ -1313,9 +1312,9 @@ emit_union_equal :: proc(e: ^Emitter, union_type: Type_Id, lhs, rhs: string) -> 
 }
 
 // Whether this record's LLVM members are byte arrays rather than the fields'
-// own types. That is the combined `@(packed, align=N)` body from `struct_body`:
-// tight packing needs an LLVM packed body, a raised alignment cannot be spelled
-// on one, and explicit byte members are what satisfy both at once.
+// own types — the combined `@(packed, align=N)` body from `struct_body`: tight
+// packing needs a packed LLVM body, a raised alignment can't be spelled on one,
+// and byte members satisfy both at once.
 @(private = "file")
 record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -> bool {
 	if !info.packed || len(info.fields) == 0 {
@@ -1591,12 +1590,12 @@ emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: s
 	return out
 }
 
-// `strings.allocate_string(text, allocator)`: the same copy `.copy()` performs,
-// but into storage from the caller's allocator and reporting failure instead of
-// applying that allocator's policy. The bytes come from a `string_view` and are
-// already valid UTF-8, so `loke_rt_v1_string_clone` is the right entry — it
-// copies without re-validating, and records the allocator in the string header
-// so the eventual release returns the block to the same provider.
+// `strings.allocate_string(text, allocator)`: like `.copy()`, but into storage
+// from the caller's allocator, reporting failure instead of following that
+// allocator's policy. The `string_view` bytes are already valid UTF-8, so
+// `loke_rt_v1_string_clone` copies without re-validating and records the
+// allocator in the string header so release returns the block to the same
+// provider.
 @(private)
 emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	data, length := emit_text_parts(e, v.bound[0])
@@ -1672,9 +1671,9 @@ emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, leng
 
 // A multi-pointer carries neither a length nor a read-only capability, and its
 // lifetime is no longer checked after conversion (design.md "unsafe.raw_data
-// procedure"). So each of these is an address extraction and nothing more —
-// except `unsafe.string_view`, which still validates, because the type it
-// produces promises valid UTF-8.
+// procedure") — so each of these is just an address extraction, except
+// `unsafe.string_view`, which still validates since the type it produces
+// promises valid UTF-8.
 @(private)
 emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
 	out := make([]string, 1)

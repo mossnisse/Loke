@@ -4,7 +4,7 @@
 // design.md "Build configuration": `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`,
 // `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_VENDOR`, and
 // `LOKE_VERSION` are predeclared universe constants, readable with no import so
-// that `when (LOKE_OS == .Windows)` compiles anywhere. Their enum types are
+// `when (LOKE_OS == .Windows)` compiles anywhere. Their enum types are
 // synthesized once and bound into `base:runtime` through `src/stdlib.odin`, so
 // `runtime.Os` and the constant's own type are one identity — the same pattern
 // `mem.Arena` uses.
@@ -43,9 +43,9 @@ opt_clang_flag :: proc(mode: Opt_Mode) -> string {
 LOKE_VERSION_STRING :: "0.7.0"
 
 // The synthesized enum types, created lazily and cached so the many
-// `build_universe` calls share one identity apiece. Indexed by the constant that
-// names them, so the mapping has no second spelling to drift from. `.None`
-// indexes a zero entry, which is `INVALID_TYPE`.
+// `build_universe` calls share one identity apiece. Indexed by the constant
+// that names them, so the mapping has no second spelling to drift from.
+// `.None` indexes a zero entry, i.e. `INVALID_TYPE`.
 Build_Config :: struct {
 	ready: bool,
 	types: [Build_Config_Enum]Type_Id,
@@ -94,8 +94,8 @@ enum_const :: proc(c: ^Compiler, which: Build_Config_Enum, index: int) -> Symbol
 // `Build_Mode` and `Optimization_Mode` take their member names from the driver
 // enums the `LOKE_*` constants index with `int(c.build_mode)` and
 // `int(c.opt_mode)`. Spelling them out again would let a new mode land in one
-// list and not the other, and a stale list makes the constant name the wrong
-// member rather than fail to compile.
+// list and not the other — a stale list would then name the constant the
+// wrong member instead of failing to compile.
 build_config_enum_type :: proc(c: ^Compiler, which: Build_Config_Enum) -> Type_Id {
 	bc := &c.build_config
 	if !bc.ready {

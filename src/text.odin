@@ -2,13 +2,12 @@
 // answers to (design.md "string type", "string type conversions", "C string
 // views").
 //
-// These are compiler-defined operations rather than library members because
-// both their operand types and their result types are built in: `bytes()` on a
-// `string` produces the `[]u8` the slice machinery already owns, and `copy()`
-// produces the managed carrier the lifecycle analysis already tracks. Writing
-// them as `core:strings` procedures would need a language feature that does not
-// exist — a method on a built-in type — and would change nothing about what
-// they lower to.
+// These are compiler-defined rather than library members because both operand
+// and result types are built in: `bytes()` on a `string` produces the `[]u8`
+// the slice machinery already owns, and `copy()` produces the managed carrier
+// the lifecycle analysis already tracks. Writing them as `core:strings`
+// procedures would need a nonexistent feature — a method on a built-in type —
+// and would change nothing about what they lower to.
 package lokec
 
 // `^T` and `[^]T` implicitly convert to each other (design.md "Multi-pointers").
@@ -48,10 +47,10 @@ type_is_utf8_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
 // `text.op(...)`. Returns true when the selector named a text operation, so the
 // caller stops looking for an ordinary method.
 check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> bool {
-	// Two cheap filters, so the receiver of an ordinary method call is not
-	// checked twice on the way to failing here. Only these names can name a text
-	// operation at all, and a receiver that is a name already knows its type —
-	// which is what keeps a record's generated `clone` off this path.
+	// Two cheap filters, so an ordinary method call's receiver is not checked
+	// twice on the way to failing here: only these names can name a text
+	// operation, and a receiver that is a name already knows its type — which
+	// keeps a record's generated `clone` off this path.
 	if text_op_named(sel.name.text) == .None && sel.name.text != "from_runes" {
 		return false
 	}
@@ -337,10 +336,10 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		case .String, .String_View, .CString_View:
 			element = TYPE_U8
 		case .Dynamic_Array:
-			// The result carries neither a length nor an owner (design.md), so it
-			// crosses the unsafe boundary exactly as a slice's does. The container
-			// may relocate its storage at any later operation and nothing here
-			// records that -- which is the point of the boundary.
+			// The result carries neither length nor owner (design.md), crossing the
+			// unsafe boundary exactly as a slice's does. The container may relocate
+			// its storage later and nothing here records that — the point of the
+			// boundary.
 			element = info.element
 		}
 		if element == INVALID_TYPE {
@@ -355,10 +354,10 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = multi_pointer_to(k.c, element)
 
 	case .Unsafe_String_View:
-		// An unsafe validate-and-borrow, with optional-ok semantics (design.md
-		// "From [^]u8 and length int to string"). The pointer's owner is unknown to the compiler, so
-		// keeping the storage alive is the programmer's responsibility — but the
-		// bytes are still validated, because the resulting type promises UTF-8.
+		// An unsafe validate-and-borrow, optional-ok (design.md "From [^]u8 and
+		// length int to string"). The owner is unknown to the compiler, so keeping
+		// storage alive is the caller's job — but bytes are still validated, since
+		// the result type promises UTF-8.
 		if info == nil || info.kind != .Multi_Pointer || info.element != TYPE_U8 {
 			errorf(
 				k.c, expr_span(bound[0]), "L0569",
@@ -480,14 +479,13 @@ entity_declaration_span :: proc(k: ^Checker, e: Expr) -> (Span, bool) {
 	return sym.span, true
 }
 
-// design.md "`caller_location()`": it denotes the source location of the code
-// calling the procedure. Its place is the default value of a procedure
-// parameter, where it is evaluated at each call that omits that argument, like
-// any other default.
+// design.md "`caller_location()`": denotes the calling code's source location.
+// It lives as a procedure parameter's default value, evaluated at each call
+// that omits the argument, like any other default.
 //
 // At the declaration it types the parameter and carries the declaration's own
-// span, which nothing observes: every call that omits the argument substitutes
-// its own location first.
+// span, but nothing observes that span: every omitting call substitutes its
+// own location first.
 check_caller_location :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
 	if len(v.args) != 0 {
@@ -541,15 +539,14 @@ variadic_parameter_index :: proc(info: ^Type_Info) -> int {
 
 // design.md "Variadic parameters": zero or more explicit arguments, or one or
 // more `..slice` spreads, or both. The callee always receives one read-only
-// slice, so the packing happens here and the ABI stays the same as a written
-// slice parameter.
+// slice, so packing happens here and the ABI matches a written slice
+// parameter.
 //
-// A sole compatible spread forwards its slice directly, which is what makes
-// `println(..args)` inside a variadic procedure cost nothing.
-// `receiver` is the method-call receiver, which is parameter 0 and is not one of
-// the written arguments; it is nil for a free call. Without it a variadic
-// method would rank its first written argument against its own receiver's type
-// (the contributed `append` is exactly such a method).
+// A sole compatible spread forwards its slice directly, so `println(..args)`
+// inside a variadic procedure costs nothing. `receiver` is the method-call
+// receiver (parameter 0, not a written argument; nil for a free call) —
+// without it a variadic method would rank its first written argument against
+// its own receiver's type (the contributed `append` is exactly such a method).
 bind_variadic_arguments :: proc(
 	k: ^Checker,
 	v: ^Expr_Call,
@@ -590,11 +587,11 @@ bind_variadic_arguments :: proc(
 		ok = ok && passed
 		fixed += 1
 	}
-	// design.md "Named arguments": positional arguments come before named ones,
-	// and no argument can name a pack element — so once a name appears every
+	// design.md "Named arguments": positional arguments precede named ones, and
+	// no argument can name a pack element — so once a name appears, every
 	// remaining argument names a fixed parameter and the pack is empty. A name
-	// cannot skip a fixed slot either: the positional arguments ahead of it
-	// filled the slots to its left, or there would be no fixed slot left to name.
+	// can't skip a fixed slot either: positional arguments ahead of it already
+	// filled the slots to its left.
 	named := 0
 	for fixed + named < len(v.args) && v.args[fixed + named].name.text != "" {
 		arg := v.args[fixed + named]
@@ -710,10 +707,10 @@ bind_variadic_arguments :: proc(
 }
 
 // design.md "Named arguments": a name reaches a declared parameter by that
-// parameter's own name. Every call form asks it here, so a candidate weighed by
-// overload resolution and the call finally bound cannot disagree about which
-// slot a name means. `limit` stops the search short of a variadic pack, whose
-// elements have no names to reach.
+// parameter's own name. Every call form asks it here, so overload resolution
+// and the finally-bound call can't disagree about which slot a name means.
+// `limit` stops the search short of a variadic pack, whose elements have no
+// names to reach.
 //
 // -1 when no parameter carries the name, including a call through a procedure
 // value, which has no parameter symbols to carry one.
@@ -761,12 +758,12 @@ check_spread_argument :: proc(k: ^Checker, arg: Argument, pack: Type_Id, prechec
 // ------------------------------------------------------ runtime metadata --
 
 // `type_info_of(id)` accepts a runtime `typeid` and returns runtime metadata.
-// It does not recover a compile-time `type`, because runtime information
-// cannot flow back into specialization (design.md "`type` and `typeid`").
+// It can't recover a compile-time `type`, since runtime information cannot
+// flow back into specialization (design.md "`type` and `typeid`").
 //
-// The result is a `^runtime.Type_Info`, which is nil for the nil `typeid` and
-// for any id this program has no entry for — a `typeid` is an ordinary scalar
-// and can be forged through unsafe bit operations, so the lookup is checked.
+// The result is a `^runtime.Type_Info`, nil for the nil `typeid` and for any
+// id the program has no entry for — a `typeid` is an ordinary scalar forgeable
+// through unsafe bit operations, so the lookup is checked.
 check_type_info_of :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.value_category = .Value
 	if len(v.args) != 1 {

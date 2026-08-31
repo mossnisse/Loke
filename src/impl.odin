@@ -1,10 +1,10 @@
 // `impl` blocks, methods, associated members, and semantic hooks.
 //
 // Storage: an `impl` block in the subject's own package writes inherent
-// members onto the nominal `Type_Info`, one elsewhere writes into its own
-// package's extension table, and the two are never merged. Extension
-// visibility is package-scoped by design — an unused import must not change
-// or make ambiguous an existing expression.
+// members onto the nominal `Type_Info`; one elsewhere writes into its own
+// package's extension table, and the two never merge. Extension visibility
+// is package-scoped by design — an unused import must not change or make
+// ambiguous an existing expression.
 package lokec
 
 import "core:fmt"
@@ -19,8 +19,7 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 		return
 	}
 	// During discovery the subject's own package may not be loaded yet, so a
-	// failure is pending rather than wrong: it is reported only once no round can
-	// supply anything more.
+	// failure is pending, not wrong: reported only once no round can supply more.
 	// A block written against a generic type — `impl Table($K, $V)` or the
 	// specialized `impl Table(string, int)` — is kept until an instantiation
 	// exists to install it on, rather than resolving a subject that has none yet.
@@ -49,11 +48,11 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	item.declared = true
 	item.subject = subject
 
-	// Inherent or extension is not written; it follows from where the subject is
+	// Inherent vs. extension isn't written; it follows from where the subject is
 	// declared. A block in the subject's own package contributes inherent members
-	// to the nominal type, and one anywhere else — including on a built-in or
-	// foreign subject, which no package declares — is an extension confined to
-	// the package that writes it.
+	// to the nominal type; one anywhere else — including a built-in or foreign
+	// subject, which no package declares — is an extension confined to the
+	// package that writes it.
 	info := type_of(k.c, subject)
 	owner := info == nil ? nil : symbol_of(k.c, info.symbol)
 	own_package := owner != nil && owner.pkg == k.pkg

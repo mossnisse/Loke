@@ -3,22 +3,21 @@
 // Type annotations live on the AST nodes themselves (decision A1), so a second
 // instantiation of a generic declaration — or a second copy of a static
 // `foreach` body — cannot reuse the syntax the first one annotated. Cloning is
-// the only way a declaration body is checked more than once.
+// the only way to check a declaration body more than once.
 //
-// A clone keeps its source spans, so every diagnostic still points at the
-// written code, and drops every semantic annotation: types, constant values,
-// resolutions, bound argument lists, and the symbol IDs of parameters, results,
-// fields, and members. Clones are allocated from the compilation's semantic
-// arena rather than a file arena, because they outlive no file but belong to no
-// one file either.
+// A clone keeps its source spans (diagnostics still point at written code) but
+// drops every semantic annotation: types, constant values, resolutions, bound
+// argument lists, and the symbol IDs of parameters, results, fields, and
+// members. Clones live in the semantic arena, not a file arena, since they
+// outlive no file but belong to no one file either.
 package lokec
 
 // ------------------------------------------------------------------ helpers --
 
-// Storage for a cloned list, which every `clone_*` list helper opens with. An
-// empty list clones to nil rather than to a zero-length allocation, so a source
-// that wrote nothing and a clone of it stay indistinguishable. The caller fills
-// the result; the loop that does so is a no-op when this returns nil.
+// Storage for a cloned list, opened by every `clone_*` list helper. An empty
+// list clones to nil rather than a zero-length allocation, so a source that
+// wrote nothing stays indistinguishable from its clone; the caller's fill loop
+// is a no-op when this returns nil.
 @(private = "file")
 clone_slice :: proc(c: ^Compiler, list: []$T) -> []T {
 	if len(list) == 0 {

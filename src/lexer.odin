@@ -294,9 +294,9 @@ ident_or_keyword :: proc(l: ^Lexer) -> Token {
 	}
 
 	// Contextual keywords (`static`, `self`, `slot`, `using`, `delegate`,
-	// `thread_local`) and the predeclared, shadowable names (`nil`,
-	// `true`, `false`, the built-ins) stay ordinary identifiers here; position
-	// is the parser's problem.
+	// `thread_local`) and the predeclared, shadowable names (`nil`, `true`,
+	// `false`, the built-ins) stay ordinary identifiers here; position is the
+	// parser's problem.
 	kind: Token_Kind = .Ident
 	switch l.src[lo:l.pos] {
 	case "break":
@@ -446,8 +446,8 @@ number :: proc(l: ^Lexer) -> Token {
 	return number_end(l, lo, kind)
 }
 
-// A number never abuts a name: `0b12`, `123abc` and `1_000u` are typos, not two
-// tokens. Consuming the tail keeps the parser from tripping over a stray
+// A number never abuts a name: `0b12`, `123abc` and `1_000u` are typos, not
+// two tokens; consuming the tail keeps the parser from tripping over a stray
 // identifier a line later.
 @(private = "file")
 number_end :: proc(l: ^Lexer, lo: u32, kind: Token_Kind) -> Token {
@@ -682,8 +682,8 @@ OPERATORS :: [?]struct {
 }
 
 // The canonical text a punctuation operator is written with, and "" for every
-// kind the table has no spelling for — the keyword operators (`in`, `or_else`)
-// among them. `OPERATORS` stays the one place a spelling is written down, so a
+// kind the table has no spelling for (the keyword operators `in`, `or_else`
+// included). `OPERATORS` stays the one place a spelling is written down, so a
 // new operator cannot lex and then print as something else.
 operator_spelling :: proc(kind: Token_Kind) -> string {
 	for op in OPERATORS {

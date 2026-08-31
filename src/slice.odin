@@ -5,15 +5,14 @@
 //
 //   []T / []mut T   { ptr data, int len }
 //
-// — so mutability is a static capability only and never reaches the ABI. Like
-// `any_view` and `dyn`, a slice is a compiler-owned struct-shaped type, which is
-// what lets it reuse the existing layout, parameter-passing, and emission paths
-// instead of growing a second aggregate mechanism.
+// — so mutability is a static capability only, never reaching the ABI. Like
+// `any_view` and `dyn`, a slice is a compiler-owned struct-shaped type, letting
+// it reuse the existing layout, parameter-passing, and emission paths instead
+// of growing a second aggregate mechanism.
 //
-// A slice is a *borrow*: it has no allocator, no cleanup, and owns nothing.
-// Its value, layout, bounds and capability behavior are here;
-// the root it borrows, its last use, and what may touch that root meanwhile are
-// `src/borrow.odin`'s.
+// A slice is a *borrow*: no allocator, no cleanup, owns nothing. Its value,
+// layout, bounds, and capability behavior are here; the root it borrows, its
+// last use, and what may touch that root meanwhile are `src/borrow.odin`'s.
 package lokec
 
 SLICE_DATA :: 0
@@ -56,9 +55,9 @@ slice_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	return found ? readonly : under
 }
 
-// Installed on first use rather than at intern time for the same reason
-// `any_view`'s are: a field is a symbol, and interning runs in places where
-// making one is not yet safe. Idempotent, so every entry point may ask.
+// Installed on first use rather than at intern time, same as `any_view`'s: a
+// field is a symbol, and interning runs where making one isn't yet safe.
+// Idempotent, so every entry point may ask.
 ensure_slice_fields :: proc(c: ^Compiler, type: Type_Id) {
 	info := type_of(c, type)
 	if info == nil || info.kind != .Slice || len(info.fields) > 0 {

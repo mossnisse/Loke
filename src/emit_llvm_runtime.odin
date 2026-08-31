@@ -10,21 +10,20 @@ import "core:strings"
 emit_preamble :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, e.c.target.triple)
 	fmt.sbprintln(&e.b, "")
-	// Every defined runtime failure — division by zero, an index out of range, a
-	// nil dereference or nil indirect call — reaches the seed runtime's panic or
-	// abort entry rather than inheriting LLVM poison, a target-specific hardware
-	// exception, or the `llvm.trap` that stood in for both before M6a.
+	// Every defined runtime failure — division by zero, out-of-range index, nil
+	// dereference or nil indirect call — reaches the seed runtime's panic or abort
+	// entry, not LLVM poison, a hardware exception, or the `llvm.trap` that stood in
+	// for both before M6a.
 	emit_runtime_declarations(e)
 	fmt.sbprintln(&e.b, "")
 }
 
-// The seed runtime's allocator surface. An `Allocator` value is a pointer to
-// a `loke_rt_allocator_v1` record and nothing else, so copying a handle
-// preserves the provider's state, its canonical region identity, and its
-// failure policy without any per-copy tag.
+// The seed runtime's allocator surface. An `Allocator` value is a pointer to a
+// `loke_rt_allocator_v1` record and nothing else, so copying a handle preserves
+// the provider's state, region identity, and failure policy with no per-copy tag.
 //
-// The record's own fields are never loaded here: dispatch goes through the
-// runtime helpers, which keeps the layout to one reader and lets the record grow
+// The record's own fields are never loaded here — dispatch goes through the
+// runtime helpers, keeping the layout to one reader and letting the record grow
 // behind its version/size prefix.
 RT_DEFAULT_ALLOCATOR :: "@loke_rt_v1_default_allocator"
 
@@ -66,10 +65,9 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	emit_container_declarations(e)
 }
 
-// design.md "string type" and "string type conversions". The two named types are
-// the frozen carriers: an owning `string` is data, byte length, and owner flags;
-// a borrowed `string_view` is data and byte length, with no allocator and no
-// ownership.
+// design.md "string type" and "string type conversions". The two frozen
+// carriers: an owning `string` is data, byte length, and owner flags; a
+// borrowed `string_view` is data and byte length, with no allocator or ownership.
 STRING_TYPE :: "%loke.string"
 
 STRING_VIEW_TYPE :: "%loke.string_view"
@@ -164,10 +162,10 @@ emit_text_declarations :: proc(e: ^Emitter) {
 
 // ---------------------------------------------------------------- globals --
 
-// A `static` local has one instance for the process's whole life, and a
-// `thread_local` one has one per thread (design.md "Storage modifiers"), so
-// neither lives in the frame. The checker recorded them in declaration order,
-// which is also the order design.md gives thread-local teardown.
+// A `static` local has one instance for the process's whole life, a
+// `thread_local` one per thread (design.md "Storage modifiers") — neither lives
+// in the frame. The checker's declaration order is also design.md's
+// thread-local teardown order.
 @(private)
 emit_static_locals :: proc(e: ^Emitter) {
 	for symbol_id, index in e.c.static_locals {
@@ -302,9 +300,9 @@ panic_message_text :: proc(e: ^Emitter, v: ^Expr_Call, index: int, fallback: str
 }
 
 // design.md "Panics and unwinding" enumerates exactly which runtime faults are
-// panics. They take the program's panic strategy: under `unwind` the runtime
-// replays each active frame's registered cleanup first, and under `abort` no
-// frames were ever registered, so the same call terminates at the fault.
+// panics, and they take the program's panic strategy: under `unwind` the
+// runtime replays each active frame's cleanup first; under `abort` no frames
+// were ever registered, so the same call terminates at the fault.
 @(private)
 emit_panic :: proc(e: ^Emitter, message: string) {
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_panic(ptr %s)", message_global(e, message))
@@ -350,9 +348,9 @@ emit_format_thunks :: proc(e: ^Emitter) {
 		entries[id] = fmt_thunk_name(e, type)
 	}
 
-	// The names a `typeid` prints as. This is the same text `runtime.Type_Info`
-	// carries, but it is a private table so that printing does not oblige a
-	// program to import `base:runtime` for a public record it never names.
+	// The names a `typeid` prints as — the same text `runtime.Type_Info` carries,
+	// but a private table so printing doesn't oblige a program to import
+	// `base:runtime` for a public record it never names.
 	names := make([]string, count + 1)
 	for index in 0 ..< len(names) {
 		names[index] = ""
@@ -395,9 +393,9 @@ emit_format_thunks :: proc(e: ^Emitter) {
 	append(&e.globals, strings.to_string(b))
 }
 
-// design.md gives no spelling for an aggregate, so these are the ones the
-// library's own examples imply: elements between brackets, fields named inside
-// braces, and an enum by the member's own name.
+// design.md gives no spelling for an aggregate, so these follow the library's
+// own examples: elements between brackets, fields named inside braces, an enum
+// by the member's own name.
 @(private = "file")
 emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	frame := begin_function_emission(e)
@@ -569,13 +567,11 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	}
 }
 
-// A union prints as `.name` for a payloadless variant and `.name(payload)` for
-// a payload one — the variant identity a type switch would see, not the payload
-// type's own spelling, because two variants may share a payload type. The chain
-// is over variants for the same reason the enum one is: the tag is not an index
-// into anything the formatter can address.
-//
-// Only the active variant's payload is ever loaded or formatted.
+// A union prints as `.name` for a payloadless variant, `.name(payload)` for a
+// payload one — the variant identity a type switch would see, not the payload
+// type's own spelling, since variants may share a payload type. Chained over
+// variants like the enum case, since the tag isn't an addressable index; only
+// the active variant's payload is ever loaded or formatted.
 @(private = "file")
 emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -607,10 +603,10 @@ emit_format_union :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	place_label(e, done)
 }
 
-// `type_info_of` accepts a runtime `typeid` and returns runtime metadata
-// (design.md), and that metadata carries the type's name — so a `typeid` prints as
-// the name of what it identifies. An id with no entry, including the nil one and
-// a forged one, has no name to print and falls back to its numeric identity.
+// `type_info_of` returns runtime metadata for a `typeid` (design.md), and that
+// metadata carries the type's name — so a `typeid` prints as the name of what
+// it identifies. An id with no entry (nil or forged) has nothing to print and
+// falls back to its numeric identity.
 @(private = "file")
 emit_format_type_name :: proc(e: ^Emitter, id: string) {
 	limit := load(e, "i64", FMT_THUNK_COUNT)
@@ -704,10 +700,10 @@ emit_format_sequence :: proc(e: ^Emitter, element: Type_Id, base, count: string,
 	emit_format_literal(e, "]")
 }
 
-// Map iteration order is unspecified (design.md "Maps"). A printed map is
-// therefore `[key = value, ...]` in whatever order the slot walk finds, which is
-// the same walk `foreach` performs. Both halves go through their own thunks, so
-// a map of maps prints.
+// Map iteration order is unspecified (design.md "Maps"), so a printed map is
+// `[key = value, ...]` in whatever order the slot walk finds — the same walk
+// `foreach` performs. Both halves go through their own thunks, so a map of
+// maps prints.
 @(private = "file")
 emit_format_map :: proc(e: ^Emitter, under: Type_Id, address: string) {
 	info := type_of(e.c, under)
@@ -856,10 +852,9 @@ spill_value :: proc(e: ^Emitter, type: Type_Id, value: string) -> string {
 // keyed by the frozen `typeid`, plus a zero entry at index 0 so the nil id
 // resolves to nothing. `base:runtime` owns the layouts; this fills them.
 //
-// The table is emitted only for a program that asked for it, and every entry is
-// a type the compilation already requested a `typeid` for -- which
-// `close_type_info_requests` has extended to everything the public metadata
-// names, so a member type is always resolvable too.
+// Emitted only for a program that asked for it. Every entry is a type that
+// already requested a `typeid` — `close_type_info_requests` extends this to
+// everything the public metadata names, so a member type is always resolvable.
 TYPE_INFO_TABLE :: "@.loke.type_info"
 
 TYPE_INFO_COUNT :: "@.loke.type_info.count"
@@ -926,10 +921,10 @@ type_info_entry :: proc(e: ^Emitter, record, member, type: Type_Id) -> string {
 	return named_field_constant(e, record, values)
 }
 
-// The public `Type_Kind` a compiler kind maps to. The order is frozen by
-// `base/runtime`'s declaration; adding a member there requires a runtime ABI
-// version bump. The untyped kinds never reach here: a `typeid` is only ever
-// requested for a concrete runtime type.
+// The public `Type_Kind` a compiler kind maps to. Order is frozen by
+// `base/runtime`'s declaration — adding a member there needs a runtime ABI
+// version bump. Untyped kinds never reach here: a `typeid` is only requested
+// for a concrete runtime type.
 @(private = "file")
 public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 	PUBLIC_KINDS :: []string {
@@ -980,8 +975,8 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 	return 0
 }
 
-// The `[]Member_Info` of one aggregate: a struct's public fields, an enum's
-// members, a union's variants, or a procedure's parameters and results, in
+// The `[]Member_Info` of one aggregate — a struct's public fields, an enum's
+// members, a union's variants, or a procedure's parameters and results — in
 // declaration order.
 @(private = "file")
 type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
@@ -1079,9 +1074,9 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 // Enum values use the two raw words without narrowing signed or unsigned
 // 128-bit values (design.md).
 //
-// ponytail: the low word carries the value and the high word its sign
-// extension. Every enum backing this compiler accepts fits in 64 bits today; a
-// 128-bit backing needs the real split here and nowhere else.
+// ponytail: the low word carries the value, the high word its sign extension.
+// Every enum backing this compiler accepts fits in 64 bits today; a 128-bit
+// backing needs the real split here and nowhere else.
 @(private = "file")
 enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: string) {
 	if value.kind != .Integer {
@@ -1099,9 +1094,8 @@ enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: 
 }
 
 // One aggregate constant, filled by *name* against the record's declared
-// fields. design.md's layouts are the ABI authority, so matching by name means a
-// reordered or renamed field produces a differently ordered constant rather than
-// a silently wrong table.
+// fields. design.md's layouts are the ABI authority, so a reordered or renamed
+// field produces a differently ordered constant, not a silently wrong table.
 @(private = "file")
 named_field_constant :: proc(e: ^Emitter, record: Type_Id, values: map[string]string) -> string {
 	info := underlying_info(e.c, record)
@@ -1159,8 +1153,8 @@ emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 // ------------------------------------------- compiler-contributed procedures --
 
 // design.md: built-ins satisfy the same static interface a user type does, so
-// their `iter` and `next` are real procedures rather than a checker fiction.
-// Emitted once for the whole compilation, after every package's items.
+// their `iter` and `next` are real procedures, not a checker fiction. Emitted
+// once for the whole compilation, after every package's items.
 @(private)
 emit_synth_procs :: proc(e: ^Emitter) {
 	for symbol_id in e.c.synth_procs {
@@ -1378,9 +1372,9 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	return single
 }
 
-// One private immutable global per materialised constant, in registration order
-// (design.md "Materialization"). A constant used only at constant indices never
-// registered one and so occupies no space in the program.
+// One private immutable global per materialised constant, in registration
+// order (design.md "Materialization"). A constant used only at constant
+// indices never registered one, so it occupies no space in the program.
 @(private)
 emit_materialized_constants :: proc(e: ^Emitter) {
 	if len(e.c.materialized_order) == 0 {
@@ -1396,9 +1390,9 @@ emit_materialized_constants :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "")
 }
 
-// One private immutable global per `(Interface, Concrete, arguments)`, holding a
-// compiler-generated thunk per slot. A thunk takes the erased receiver pointer
-// and re-types it for the concrete implementation.
+// One private immutable global per `(Interface, Concrete, arguments)`, holding
+// a compiler-generated thunk per slot. A thunk takes the erased receiver
+// pointer and re-types it for the concrete implementation.
 @(private)
 emit_witnesses :: proc(e: ^Emitter) {
 	for witness in e.c.witness_order {
@@ -1481,8 +1475,8 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 }
 
 // design.md: `dyn I` satisfies `I` through compiler-provided forwarding slots.
-// The forwarder takes the view by value, traps on a nil witness, and calls the
-// slot's thunk with the view's own data pointer.
+// The forwarder takes the view by value, traps on a nil witness, and calls
+// the slot's thunk with the view's own data pointer.
 @(private = "file")
 emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	function := begin_function_emission(e)

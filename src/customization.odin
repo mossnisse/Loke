@@ -1,14 +1,14 @@
 // Canonical receiver members and the closed standard free-alias set.
 //
 // `value.f(args)` is the definition-site operation. A standard free spelling
-// such as `len(value)` or `hash(value, seed)` resolves to that same member; it
+// such as `len(value)` or `hash(value, seed)` resolves to that same member and
 // never forms an independent overload group. Ordinary free procedures keep
-// ordinary lexical lookup, and mutating methods are deliberately absent from
-// this alias set so their receiver remains visibly method syntax.
+// ordinary lexical lookup; mutating methods are deliberately absent from this
+// alias set so their receiver stays visibly method syntax.
 package lokec
 
 // Built-in operations must satisfy the same receiver-form interface
-// requirements as user types. Install their canonical `len`, `cap`, and `hash`
+// requirements as user types: install their canonical `len`, `cap`, and `hash`
 // members lazily, alongside the existing iteration and lifecycle contributors.
 ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
 	under := type_underlying(k.c, type)

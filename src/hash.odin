@@ -1,19 +1,19 @@
 // The compiler-contributed `hash` operation.
 //
-// design.md's standard catalogue promises that booleans, integers, floats,
-// runes, pointers, enums, `typeid`, and recursively hashable fixed arrays
-// satisfy `Hashable`. `Hashable` is ordinary Loke source with an ordinary
-// `value.hash(seed) -> uint` requirement, so the compiler has to supply a
-// receiver member for those types rather than special-casing the interface.
+// design.md's standard catalogue promises `Hashable` for booleans, integers,
+// floats, runes, pointers, enums, `typeid`, and recursively hashable fixed
+// arrays. `Hashable` is ordinary Loke source needing an ordinary
+// `value.hash(seed) -> uint`, so the compiler supplies a receiver member for
+// those types rather than special-casing the interface.
 //
 // The mix is 64-bit FNV-1a's step, applied once per scalar and folded over an
-// aggregate's elements. It is not a cryptographic hash and makes no stability
-// promise across compiler versions; what it must do is agree between the
-// compile-time and runtime paths, which is why both spell the same two steps.
+// aggregate's elements. Not a cryptographic hash, no stability promise across
+// compiler versions; it must only agree between the compile-time and runtime
+// paths, hence both spell the same two steps.
 //
-// ponytail: one non-seeded mixing constant. The per-table seed a map threads
-// through `hash` is what varies the result between tables; a per-*process* seed,
-// which is what a hash-flooding defence needs, is not derived here.
+// ponytail: one non-seeded mixing constant. The per-table seed threaded through
+// `hash` varies the result between tables; a per-*process* seed, which a
+// hash-flooding defence needs, is not derived here.
 package lokec
 
 import "core:mem"
@@ -44,16 +44,14 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return false
 }
 
-// A map key needs a coherent `==` and `value.hash(seed: uint) -> uint`; for
-// a user-defined key, both must be inherent implementations belonging to the
-// key type, since a caller-local extension doesn't qualify even when an
-// ordinary interface check in that extension's package would pass
-// (design.md "Maps").
+// A map key needs a coherent `==` and `value.hash(seed: uint) -> uint`; for a
+// user-defined key, both must be inherent to the key type — a caller-local
+// extension doesn't qualify even when an ordinary interface check there would
+// pass (design.md "Maps").
 //
 // So this asks only two questions: does the compiler supply the pair, or does
-// the key type's *own* package declare both? An extension block never enters the
-// answer, which is what makes one `map[K]V` use one policy in every package it
-// travels through.
+// the key type's own package declare both? An extension block never enters the
+// answer, so one `map[K]V` uses one policy in every package it travels through.
 Key_Policy_Kind :: enum { Unresolved, Builtin, Inherent }
 
 // A checked operation choice, shared by CTFE and every backend. This record
@@ -72,12 +70,11 @@ resolve_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> (Key_Policy, strin
 	}
 	hash := inherent_member_named(c, key, "hash")
 	equal := inherent_operator_named(c, key, "==")
-	// design.md "Maps": "A different policy wraps the key in a local `distinct`
-	// type with its own inherent operations." A key that declares either half of
-	// the pair means that policy, so the built-in catalogue answers only for a key
-	// that declares neither. Asking the catalogue first resolves a `distinct`
-	// scalar through to its underlying type and pairs that type's hash with the
-	// key's own `==`, which is the incoherence this check exists to prevent.
+	// design.md "Maps": a different policy wraps the key in a local `distinct`
+	// type with its own inherent operations. A key declaring either half means
+	// that policy, so the catalogue answers only when neither is declared —
+	// checking it first would resolve a `distinct` scalar to its underlying type
+	// and pair that hash with the key's own `==`, the incoherence this prevents.
 	if hash == INVALID_SYMBOL && equal == INVALID_SYMBOL {
 		if type_is_hashable(c, key) {
 			return Key_Policy{kind = .Builtin}, ""
@@ -99,12 +96,11 @@ resolved_map_key_policy :: proc(c: ^Compiler, key: Type_Id) -> Key_Policy {
 	return c.map_key_policies[key]
 }
 
-// An inherent member of the type's own package, never an extension one and never
-// one the compiler contributed: a synthesized `hash` is the built-in policy
-// itself, and finding it here would make every scalar key look user-defined.
-// `members` on the type is exactly the inherent set (`src/impl.odin` keeps
-// extensions in the extending package instead), and it is read from the key type
-// itself rather than its underlying one, because a `distinct` type does not
+// An inherent member of the type's own package — never an extension, and never
+// compiler-contributed (a synthesized `hash` is the built-in policy itself, so
+// finding it here would make every scalar key look user-defined). `members` is
+// exactly the inherent set (extensions live in the extending package per
+// `src/impl.odin`), read from the key type itself since `distinct` types don't
 // inherit the underlying type's operations (design.md "Distinct types").
 @(private = "file")
 inherent_member_named :: proc(c: ^Compiler, type: Type_Id, name: string) -> Symbol_Id {

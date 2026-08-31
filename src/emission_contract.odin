@@ -1,7 +1,7 @@
-// The checked-program boundary. This pass validates registered dependencies;
-// it never resolves names, checks bodies, or repairs missing semantic state.
+// The checked-program boundary. Validates registered dependencies only — never
+// resolves names, checks bodies, or repairs missing semantic state.
 // Node-specific lowering assertions remain in the emitter as a second line of
-// defence. This is deliberately not another AST or a second type checker.
+// defence. Deliberately not another AST or a second type checker.
 package lokec
 
 emission_contract_error :: proc(c: ^Compiler, message: string) -> bool {

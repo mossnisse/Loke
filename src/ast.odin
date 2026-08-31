@@ -1,12 +1,12 @@
 // AST (compiler-plan B4). Every node carries a Span; the checker annotates
-// these same nodes in place, which is the "typed AST" of decision A1.
+// these same nodes in place — the "typed AST" of decision A1.
 //
-// Types and expressions share one node domain. The grammar refuses to separate
-// them — `Generic_Argument = Type | Expression`, `Argument_Value = Expression |
-// Type`, `Primary = "(" Type ")"` — and `Matrix(f32, 4)` and `f(a, b)` are the
-// same token stream. Type positions go through `parse_type`, a restricted entry
-// point into this one domain, so `x: 1 + 2;` is still a parse error. What syntax
-// genuinely cannot decide is left for name resolution in M2.
+// Types and expressions share one node domain: the grammar refuses to
+// separate them (`Generic_Argument = Type | Expression`, `Argument_Value =
+// Expression | Type`, `Primary = "(" Type ")"`), and `Matrix(f32, 4)` and
+// `f(a, b)` are the same token stream. Type positions go through `parse_type`,
+// a restricted entry point into this domain, so `x: 1 + 2;` is still a parse
+// error. What syntax cannot decide is left for name resolution in M2.
 package lokec
 
 import "core:mem"
@@ -25,11 +25,10 @@ Expr_Base :: struct {
 	addressable:  bool,
 	assignable:   bool,
 	immutable:    Immutable_Reason,
-	// The payload type this expression produces before it is wrapped into the
-	// union `type` now names, with the variant it lands in. INVALID_TYPE when no
-	// wrap happens; the emitter evaluates the node at this type and then writes
-	// payload and tag. The index is carried rather than re-derived, because two
-	// variants may share a payload type.
+	// The payload type before it's wrapped into the union `type` now names, with
+	// the variant it lands in (INVALID_TYPE when no wrap happens). The emitter
+	// evaluates at this type, then writes payload and tag; the index is carried,
+	// not re-derived, since two variants may share a payload type.
 	union_from:    Type_Id,
 	union_variant: int,
 	// The concrete type this expression produces before it is erased into the
@@ -128,10 +127,10 @@ Expr_Selector :: struct {
 	variant_index: int,
 }
 
-// The two extraction spellings share one semantic description: a source, a
-// resolved target type, and a mode fixed by the spelling rather than by the
-// destination. `x.(T)` is always `.Trap` and produces one value; `x.as(T)` is
-// always `.Optional` and produces `(T, bool)`.
+// The two extraction spellings share one shape: a source, a resolved target
+// type, and a mode fixed by the spelling, not the destination. `x.(T)` is
+// always `.Trap` and produces one value; `x.as(T)` is always `.Optional` and
+// produces `(T, bool)`.
 Extract_Mode :: enum {
 	Trap,
 	Optional,
@@ -240,10 +239,10 @@ Expr_Call :: struct {
 	// Arguments in parameter order after names and defaults are resolved. This
 	// is what the callee receives; `args` stays the written syntax.
 	bound:      []Expr,
-	// design.md "Argument evaluation": the parameter slots in *evaluation* order
-	// — every supplied argument in `args` source order, then every omitted
-	// default in parameter order. Nil when the two orders coincide, which is
-	// every call written without named arguments.
+	// design.md "Argument evaluation": parameter slots in *evaluation* order —
+	// every supplied argument in `args` source order, then every omitted
+	// default in parameter order. Nil when the two orders coincide (every call
+	// written without named arguments).
 	bound_order: []int,
 	// `field.get(value)` / `field.pointer(value)`, with the struct field the
 	// descriptor selected.
@@ -256,12 +255,12 @@ Expr_Call :: struct {
 	// The variant `union_op == .Construct` writes.
 	variant_index:   int,
 	// Whether that construction clones its payload: a place keeps owning its
-	// value, so the variant receives a copy, exactly as an aggregate literal's
-	// field does.
+	// value, so the variant gets a copy, exactly as an aggregate literal's field
+	// does.
 	variant_clone:   bool,
 	// `value.as(T)`: the optional extraction this call resolved to. Downstream
-	// phases delegate to it rather than treating the call as a call, which is
-	// what keeps `.(T)` and `.as(T)` on one flow, evaluation, and lowering path.
+	// phases delegate to it instead of treating the call as a call, keeping
+	// `.(T)` and `.as(T)` on one flow, evaluation, and lowering path.
 	extract:         ^Expr_Checked_Extract,
 	// A validating text conversion, which has optional-ok results.
 	text_conversion: Text_Conversion,
@@ -935,9 +934,8 @@ Return_Value :: struct {
 	is_inout: bool,
 	expr:     Expr,
 	// Returning a borrowed managed parameter by value clones it, since the callee
-	// owns nothing it could move out (design.md "Parameter semantics"). Returning
-	// an owned local, named result, temporary, or `move` parameter transfers
-	// instead.
+	// owns nothing it could move out (design.md "Parameter semantics"); an owned
+	// local, named result, temporary, or `move` parameter transfers instead.
 	clone_on_return: bool,
 }
 
@@ -1018,14 +1016,15 @@ Duration :: enum {
 	Thread_Local,
 }
 
-// One declaration, covering `x: int;`, `x: int = e;`, `x := e;` and
-// `x: int : e;`. A `nil` entry in `values` is the uninitialised-storage marker
-// `---`; an omitted initialiser leaves `values` empty instead.
-// design.md "Destructuring": `a, b := record;`. Two or more bindings project one
-// record's directly declared fields. The checker resolves the field symbols and
-// the ownership policy once, here; the lifecycle pass, the emitter, and the
-// compile-time evaluator read this decision instead of reclassifying the
-// operand syntactically.
+// One declaration: `x: int;`, `x: int = e;`, `x := e;`, `x: int : e;`. A nil
+// `values` entry is the `---` uninitialised-storage marker; an omitted
+// initialiser leaves `values` empty instead.
+//
+// design.md "Destructuring": `a, b := record;` projects one record's directly
+// declared fields across two or more bindings. The checker resolves the field
+// symbols and ownership policy once, here, so the lifecycle pass, the
+// emitter, and the compile-time evaluator read this decision instead of
+// reclassifying the operand syntactically.
 Destructure :: struct {
 	active: bool,
 	record: Type_Id,
@@ -1148,10 +1147,10 @@ Item_Foreign_Block :: struct {
 	members:    []Item,
 }
 
-// Whether an `impl` block is *inherent* to its subject or *extends* a subject
-// from elsewhere. Not written: `declare_impl_block` derives it from whether the
-// subject's declaring package is this one, so a built-in or foreign subject is
-// always an extension. Until then it is `.Unresolved`.
+// Whether an `impl` block is *inherent* to its subject or *extends* it from
+// elsewhere. Not written: `declare_impl_block` derives it from whether the
+// subject's declaring package is this one — a built-in or foreign subject is
+// always an extension. `.Unresolved` until then.
 Impl_Kind :: enum {
 	Unresolved,
 	Impl,
@@ -1188,9 +1187,8 @@ Item_When :: struct {
 	otherwise:  Item, // `^Item_When` for `else when`, `^Item_Block` for `else`
 	resolved:   bool,
 	taken:      bool, // this node's own condition was true
-	// Reported as unanswerable. Neither branch is selected — a `when` that
-	// cannot choose selects nothing — and the flag only keeps a later round
-	// from reporting the same condition twice.
+	// Reported as unanswerable; neither branch is selected (a `when` that
+	// cannot choose selects nothing). Only guards against re-reporting it.
 	stalled:    bool,
 }
 
@@ -1239,9 +1237,9 @@ File :: struct {
 	package_span: Span,
 	items:        []Item,
 	// The compilation-owned selected view: `items` with every selected `when`
-	// branch and every `Item_Block` flattened in place, in original source order.
-	// Every semantic consumer iterates this, never `items`. `-dump-ast` still
-	// prints `items`.
+	// branch and `Item_Block` flattened in place, in original source order.
+	// Every semantic consumer iterates this, never `items` (`-dump-ast` still
+	// prints `items`).
 	active_items: []Item,
 }
 

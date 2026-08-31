@@ -3,9 +3,9 @@ package lokec
 // The foreign system (design.md "Foreign system", m7-plan step 4): `foreign
 // import` of a library or assembly file, and `foreign <lib> { ... }` blocks of
 // bodiless procedures and globals. A block's members are collected as ordinary
-// package symbols in the same top-level pass as declarations, so name
-// resolution, visibility, and overload ranking need no foreign-specific path —
-// only signature checking, emission, and the ABI-safety rule do.
+// package symbols in the same top-level pass as declarations, so only
+// signature checking, emission, and the ABI-safety rule need a foreign-specific
+// path — not name resolution, visibility, or overload ranking.
 
 // The default calling convention is `loke`, except inside a foreign block
 // where it is `c` (design.md). A block-wide `@(default_calling_convention)`
@@ -19,8 +19,8 @@ foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> s
 
 // Collects a foreign block's members as ordinary package symbols and marks them
 // foreign. Runs in `prepare_package`, beside ordinary declaration collection.
-// The block supplies the visibility default and the calling convention default;
-// a member's own attribute or written convention overrides either.
+// The block supplies visibility and calling-convention defaults; a member's
+// own attribute or written convention overrides either.
 declare_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
 	convention := foreign_default_convention(k, block)
 	block_public, block_sets_visibility := foreign_block_visibility(k, block)
@@ -71,9 +71,9 @@ foreign_block_visibility :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> (pu
 }
 
 // design.md "@(require_results)": a foreign block's policy is copied to every
-// procedure member. `@(link_name)` sets a member's exact external symbol; without
-// it the member's own name is the link name. Runs in `check_package_bodies`,
-// after signatures so the symbols and their kinds exist.
+// procedure member. `@(link_name)` sets a member's exact external symbol;
+// otherwise the member's own name is the link name. Runs in
+// `check_package_bodies`, after signatures so the symbols and kinds exist.
 check_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
 	block_requires := has_attribute(block.attributes, "require_results")
 	for member in block.members {
@@ -147,9 +147,9 @@ resolve_foreign_global :: proc(k: ^Checker, d: ^Decl) {
 }
 
 // design.md "`@(c_vararg)`": the C-variadic marker is valid only on the final
-// parameter of a foreign declaration, written `..any_view`. The parameter never
-// becomes a real slice; the call site passes the concrete arguments (m7-plan
-// step 4).
+// parameter of a foreign declaration, written `..any_view`. The parameter
+// never becomes a real slice; the call site passes the concrete arguments
+// (m7-plan step 4).
 check_c_vararg_param :: proc(k: ^Checker, is_foreign: bool, literal: ^Expr_Proc, position: int, parameter: Parameter) {
 	if !is_foreign {
 		errorf(k.c, parameter.span, "L0627", "`@(c_vararg)` is only allowed on a foreign procedure parameter")

@@ -1,21 +1,21 @@
 // Runtime `foreach` and the iteration protocol.
 //
-// design.md requires built-ins to *satisfy* the same static `Iterable` interface
-// a user type does, not to be implemented through it. So there are two paths and
-// they must agree:
+// design.md requires built-ins to *satisfy* the same static `Iterable`
+// interface a user type does, not be implemented through it, so two paths
+// must agree:
 //
 //   - `foreach` over an integer range or a fixed array lowers directly to an
-//     index loop. No iterator object is built.
-//   - the compiler still contributes associated `Element`/`Iterator` members, an
-//     `iter` overload, and an opaque iterator with `next`, so a value passed
-//     through a generic parameter constrained by `Iterable` works without
-//     relying on the syntax lowering.
+//     index loop; no iterator object is built.
+//   - the compiler still contributes associated `Element`/`Iterator` members,
+//     an `iter` overload, and an opaque iterator with `next`, so a value
+//     passed through a generic parameter constrained by `Iterable` works
+//     without relying on the syntax lowering.
 //
-// A range is a real runtime value, not just syntax: `..<` and `..=` must survive
-// being stored in a variable or passed to a generic procedure, which a
-// syntax-only lowering loses. `Range(T)` is a compiler-owned struct carrying its
-// low endpoint, high endpoint, and closed flag, so it reuses the existing
-// layout, constant, parameter-passing, and emission paths rather than adding a
+// A range is a real runtime value, not just syntax: `..<` and `..=` must
+// survive being stored in a variable or passed generically, which a
+// syntax-only lowering loses. `Range(T)` is a compiler-owned struct carrying
+// its low endpoint, high endpoint, and closed flag, reusing the existing
+// layout, constant, parameter-passing, and emission paths instead of adding a
 // second aggregate model.
 package lokec
 
@@ -57,11 +57,10 @@ Synth_Kind :: enum {
 	// the bound differs, because a slice carries its length rather than having it
 	// baked into the type.
 	Slice_Next,
-	// A dynamic array's `iter` builds the same `{ data, index }` a slice's does,
-	// out of the header's current storage and length words, so `Slice_Next` is
-	// its `next` verbatim. The iterator deliberately does not hold the container:
-	// an iterator is a borrow, and a managed field in it would be followed by a
-	// drop that has no business running.
+	// A dynamic array's `iter` builds the same `{ data, index }` a slice's does
+	// from the header's storage and length, so `Slice_Next` is its `next`
+	// verbatim. The iterator excludes the container on purpose: it's a borrow,
+	// and a managed field would be followed by a drop with no business running.
 	Dynamic_Iter,
 	Dynamic_Iter_Reverse,
 	// design.md "Maps": `{ table, cursor }`, walked by the runtime's slot scan.
@@ -104,11 +103,10 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 
 // ------------------------------------------------------- element records --
 
-// The records a loop binds whole or destructures. They are ordinary anonymous
-// records — `entry.key` and a two-name header are the same element seen two
-// ways (design.md "Element bindings") — so they intern through
-// `anon_record_type` like any record a program writes, rather than through a
-// cache of their own.
+// The records a loop binds whole or destructures: ordinary anonymous records
+// — `entry.key` and a two-name header are the same element seen two ways
+// (design.md "Element bindings") — interned through `anon_record_type` like
+// any record a program writes, not through a cache of their own.
 
 ELEMENT_FIRST :: 0
 ELEMENT_SECOND :: 1
@@ -163,10 +161,10 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 	return type
 }
 
-// `holds` is what the iterator stores, which is the iterable itself except for a
-// dynamic array: that one stores the `{ data, len }` view of its current
-// allocation. The key stays the iterable, so each one keeps its own iterator
-// type and its own single contributed `next`.
+// `holds` is what the iterator stores: the iterable itself, except a dynamic
+// array stores the `{ data, len }` view of its current allocation. The key
+// stays the iterable, so each keeps its own iterator type and contributed
+// `next`.
 @(private = "file")
 array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE) -> Type_Id {
 	if existing, found := c.iterator_types[array]; found {
@@ -216,9 +214,9 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 // --------------------------------------------- compiler-contributed members --
 
 // Installs `Element`, `Iterator`, and the iterator's `next` on a built-in
-// iterable, so interface checking and generic code see exactly what a user type
-// declares by hand. Idempotent through its own contribution flag: the lifecycle
-// hooks append to the same table, so a member count cannot be the guard.
+// iterable, so interface checking and generic code see what a user type
+// declares by hand. Idempotent via its own contribution flag — the lifecycle
+// hooks append to the same table, so a member count can't be the guard.
 ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	under := type_underlying(k.c, type)
 	info := type_of(k.c, under)
@@ -248,8 +246,8 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		iter_kind, reverse_kind, next_kind = .Array_Iter, .Array_Iter_Reverse, .Slice_Next
 	case info.kind == .Dynamic_Array:
 		// design.md "Dynamic arrays": iteration views the current allocation and
-		// stops at the length. That is exactly a slice, so the protocol members are
-		// the slice ones with a different `iter`.
+		// stops at the length — exactly a slice, so the protocol members are the
+		// slice ones with a different `iter`.
 		element = info.element
 		iterator = array_iterator_type(k.c, under, slice_of(k.c, info.element, mutable = false))
 		iter_kind, reverse_kind, next_kind = .Dynamic_Iter, .Dynamic_Iter_Reverse, .Slice_Next
@@ -380,8 +378,8 @@ iteration_proc_matches :: proc(
 }
 
 // One named protocol member, using the declaration's frozen lookup package.
-// This admits an inherent member or an extension visible where the loop/free
-// `iter` call is defined, without consulting an instantiating caller's methods.
+// Admits an inherent member or an extension visible where the loop/free
+// `iter` call is defined, not an instantiating caller's methods.
 iteration_member :: proc(k: ^Checker, type: Type_Id, name: string) -> Symbol_Id {
 	return find_member(k, type, intern_identifier(k.c, name))
 }
@@ -435,9 +433,9 @@ foreach_adapter_named :: proc(name: string) -> (Foreach_Adapter, bool) {
 }
 
 // Rewrites `source.adapter()` in the header to `source`, recording which
-// traversal was asked for. The adapter selects the lowering; it never builds an
-// iterator object of its own. Adapters compose, so this peels a chain: one
-// traversal, with `indexed()` numbering it from the outside.
+// traversal was asked for. The adapter only selects the lowering; it never
+// builds an iterator object. Adapters compose, so this peels a chain down to
+// one traversal, with `indexed()` numbering it from the outside.
 peel_foreach_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> (Foreach_Adapter, Name) {
 	adapter := Foreach_Adapter.None
 	reported: Name
@@ -556,9 +554,9 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return check_foreach_body(k, s)
 }
 
-// design.md "By-reference iteration": a `&` anywhere in the header makes this a
-// place loop, which projects the container's own storage instead of binding an
-// `Element`. Classified before the binding semantics are checked, because the
+// design.md "By-reference iteration": a `&` anywhere in the header makes this
+// a place loop, projecting the container's own storage instead of binding an
+// `Element`. Classified before the binding semantics are checked, since the
 // two shapes read their names differently.
 foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
 	for binding in s.bindings {
@@ -618,9 +616,9 @@ check_adapter_applies :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, n
 	return ok
 }
 
-// design.md "By-reference iteration": the built-in place forms, unchanged. Their
-// names are fixed by the container — a value and an index, or a key and a value —
-// rather than read off an `Element` record.
+// design.md "By-reference iteration": the built-in place forms, unchanged.
+// Their names are fixed by the container — a value and index, or a key and
+// value — not read off an `Element` record.
 @(private = "file")
 check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, info: ^Type_Info) -> Flow_Info {
 	if s.adapter != .None || s.indexed {
@@ -663,10 +661,10 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 			return FLOWS
 		}
 		if key_binding >= 0 {
-			// An immutable key binding is a *borrow* of the stored key rather than a
-			// copy — which is what lets `map[string]V` be iterated at all, and why no
-			// per-iteration clone or drop is needed for it. The loop's whole-container
-			// loan is what keeps that borrow valid across the back-edge.
+			// An immutable key binding *borrows* the stored key rather than copying
+			// it — what lets `map[string]V` be iterated at all, and why no
+			// per-iteration clone or drop is needed. The loop's whole-container loan
+			// keeps that borrow valid across the back-edge.
 			s.bindings[key_binding].symbol = bind_loop_name(k, s.bindings[key_binding], info.key, false)
 		}
 		s.bindings[value_binding].symbol = bind_loop_name(k, s.bindings[value_binding], s.element_type, true)
@@ -828,8 +826,8 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 }
 
 // design.md "Element bindings": one binding names the whole `Element`; two or
-// more require a record `Element` with exactly that many visible fields and bind
-// them positionally. This is the one binder every value loop goes through,
+// more require a record `Element` with exactly that many visible fields,
+// bound positionally. Every value loop goes through this one binder,
 // whatever lowering produced the element.
 @(private = "file")
 check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
@@ -869,9 +867,9 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return check_foreach_block(k, s)
 }
 
-// A field bound in place rather than copied: a map's key, which is immutable and
-// therefore borrows the stored key. That is what lets `map[string]V` be iterated
-// without a per-iteration clone and drop.
+// A field bound in place rather than copied: a map's key, immutable and
+// therefore borrowed — what lets `map[string]V` be iterated without a
+// per-iteration clone and drop.
 @(private = "file")
 foreach_field_borrowed :: proc(s: ^Stmt_Foreach, index: int) -> bool {
 	if s.kind != .Map || s.indexed {
@@ -902,9 +900,9 @@ bind_element_field :: proc(
 		)
 		return false
 	}
-	// By default each iterated value is a copy (design.md). A managed element
-	// would therefore need a per-iteration clone and a per-iteration drop, which
-	// is loop-body cleanup the M5a CFG does not place yet.
+	// By default each iterated value is a copy (design.md), so a managed element
+	// would need a per-iteration clone and drop — loop-body cleanup the M5a CFG
+	// does not place yet.
 	if !borrowed && type_is_managed(k.c, type) {
 		errorf(
 			k.c,

@@ -1,8 +1,8 @@
 // User operator declarations, lookup, and `delegate`.
 //
-// Ranking is the engine in `src/overload.odin` — design.md ranks operator
-// overloads using the same algorithm as named procedure overloads, so there is
-// no second implementation here, only candidate formation.
+// Ranking lives in `src/overload.odin` (design.md ranks operator overloads with
+// the same algorithm as named procedure overloads), so this file only forms
+// candidates.
 //
 // The unshadowable built-in rule lives in `builtin_binary_defined` and its unary
 // sibling: if every operand is a built-in type *and* the built-in table defines
@@ -154,9 +154,8 @@ arity_text :: proc(shape: Operator_Shape) -> string {
 // ------------------------------------------------------------------ lookup --
 
 // Every overload of `symbol` this expression may use: the inherent operators of
-// each operand type, plus the operator set of the lookup package — which holds
-// this package's own file-scope and extension-block declarations, and nothing an
-// import brought in.
+// each operand type, plus the lookup package's operator set (this package's own
+// file-scope and extension-block declarations — nothing an import brought in).
 operator_candidates :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	for operand in operands {
@@ -194,10 +193,9 @@ add_operator_members :: proc(k: ^Checker, members: []Symbol_Id, symbol: string, 
 	}
 }
 
-// The overloads of a receiver-shaped operator — `[]`, `[]=`, `[:]` — that apply
-// to this receiver. The package set holds every declaration of the symbol, so a
-// question about one container ("does it hand out a location?") has to look at
-// the receiver rather than at the whole set.
+// The overloads of a receiver-shaped operator (`[]`, `[]=`, `[:]`) that apply to
+// this receiver: the package set holds every declaration of the symbol, so a
+// question like "does it hand out a location?" must check the receiver alone.
 operator_candidates_for_receiver :: proc(k: ^Checker, symbol: string, receiver: Type_Id) -> []Symbol_Id {
 	all := operator_candidates(k, symbol, []Type_Id{receiver})
 	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
@@ -219,12 +217,11 @@ append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
 
 // -------------------------------------------------- the built-in priority --
 
-// design.md: built-in operations cannot be shadowed. If every operand of an
+// design.md: built-in operations cannot be shadowed — if every operand of an
 // expression is a built-in type and a built-in operation is defined for that
 // operator on those operands, the built-in operation always wins.
 //
-// A `distinct` type is not a built-in type for this rule, even when what it
-// wraps is.
+// A `distinct` type is not built-in for this rule, even when what it wraps is.
 operand_is_builtin :: proc(k: ^Checker, type: Type_Id) -> bool {
 	#partial switch type_kind(k.c, type) {
 	case .Distinct, .Struct, .Union, .Interface, .Dyn, .Invalid:
@@ -233,9 +230,9 @@ operand_is_builtin :: proc(k: ^Checker, type: Type_Id) -> bool {
 	return true
 }
 
-// The operand type the built-in table would work on, without mutating anything:
-// `unify_operands` decides the same thing, but it materialises as it goes and
-// reports, and this question has to be answered before either is allowed.
+// The operand type the built-in table would work on, without mutating anything
+// — `unify_operands` decides the same thing but materialises and reports as it
+// goes, and this must be answered before either is allowed.
 @(private = "file")
 unified_builtin_type :: proc(k: ^Checker, lhs, rhs: Type_Id) -> (Type_Id, bool) {
 	if lhs == rhs {
@@ -293,8 +290,8 @@ builtin_unary_defined :: proc(k: ^Checker, op: Token_Kind, operand: Type_Id) -> 
 // ------------------------------------------------------------- resolution --
 
 // Resolves one operator expression against its candidate set and binds the
-// operands. Returns the chosen overload, or INVALID_SYMBOL when there is no
-// candidate at all — which is what lets the built-in path report instead.
+// operands. Returns the chosen overload, or INVALID_SYMBOL when there are no
+// candidates at all — letting the built-in path report instead.
 resolve_operator :: proc(
 	k: ^Checker,
 	span: Span,
@@ -329,8 +326,8 @@ operator_exists :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> boo
 }
 
 // A fallback is suppressed only by an overload that actually applies to these
-// operands. Merely declaring the same operator for an unrelated type elsewhere
-// in the package must not change this expression.
+// operands — declaring the same operator for an unrelated type elsewhere in the
+// package must not change this expression.
 operator_viable :: proc(
 	k: ^Checker,
 	symbol: string,
@@ -341,8 +338,8 @@ operator_viable :: proc(
 }
 
 // The operand list in parameter order, with every untyped constant materialised
-// and every rank-4 argument wrapped. The operator forms have no defaults, so
-// every slot is filled by a written operand.
+// and every rank-4 argument wrapped. Operator forms have no defaults, so every
+// slot comes from a written operand.
 @(private = "file")
 bind_operator_operands :: proc(k: ^Checker, cand: Candidate, args: []Arg_Info) -> ([]Expr, bool) {
 	sym := symbol_of(k.c, cand.symbol)
@@ -412,10 +409,9 @@ operator_result_is_place :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 // ----------------------------------------------------------------- delegate --
 
 // design.md "Delegating operators": for each listed symbol, generate the
-// overloads found for the underlying type at this declaration's lexical package,
-// with the distinct type substituted in every operand position and in a result
-// of the underlying type. A result of any other type — a comparison's `bool` —
-// is carried through unchanged.
+// overload found for the underlying type, with the distinct type substituted
+// for it in every operand and result position — except a result of another
+// type (a comparison's `bool`), which passes through unchanged.
 check_delegate :: proc(k: ^Checker, item: ^Item_Delegate, subject: Type_Id) {
 	info := type_of(k.c, subject)
 	if info == nil || info.kind != .Distinct {
@@ -446,10 +442,10 @@ delegate_one :: proc(k: ^Checker, item: ^Item_Delegate, subject, underlying: Typ
 		errorf(k.c, item.span, "L0420", "`%s` is already declared for `%s`", symbol, type_name(k.c, subject))
 		return
 	}
-	// The underlying operations are fixed here: an extension in a caller's
-	// package cannot later change what delegation means. Each one keeps its own
-	// signature, so a non-homogeneous operator such as `[]` forwards its index
-	// parameter unchanged rather than having the distinct type forced onto it.
+	// The underlying operations are fixed here — a caller's later extension
+	// cannot change what delegation means. Each keeps its own signature, so a
+	// non-homogeneous operator like `[]` forwards its index parameter unchanged
+	// rather than forcing the distinct type onto it.
 	found := operator_candidates_for_receiver(k, symbol, underlying)
 	if len(found) > 0 {
 		for target in found {
@@ -489,9 +485,9 @@ builtin_delegation_applies :: proc(k: ^Checker, symbol: string, underlying: Type
 }
 
 // design.md: the overload found for the underlying type, with the distinct type
-// substituted for the underlying type in every operand and result position. A
-// result of any other type — a comparison's `bool`, an element type — is carried
-// through unchanged, and so is a parameter that was never the underlying type.
+// substituted for it in every operand and result position. A result of another
+// type (a comparison's `bool`, an element type) and a parameter that was never
+// the underlying type both pass through unchanged.
 @(private = "file")
 register_forwarded_operator :: proc(
 	k: ^Checker,
@@ -518,10 +514,10 @@ register_forwarded_operator :: proc(
 	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, result, shape.result_inout, target)
 }
 
-// The built-in operation, which has no symbol to forward to: one homogeneous
-// overload over the distinct type. `!` is the one delegated form with a single
-// operand; the rest are binary — a unary `-` on a newtype is written by hand, as
-// design.md's example does.
+// The built-in operation has no symbol to forward to: one homogeneous overload
+// over the distinct type. `!` is the only delegated unary form; the rest are
+// binary — a unary `-` on a newtype is written by hand, as design.md's example
+// does.
 @(private = "file")
 register_builtin_delegation :: proc(k: ^Checker, item: ^Item_Delegate, subject, underlying: Type_Id, symbol: string) {
 	op := operator_token(symbol)
@@ -538,9 +534,9 @@ register_builtin_delegation :: proc(k: ^Checker, item: ^Item_Delegate, subject, 
 	install_delegated_operator(k, item, subject, underlying, symbol, params, modes, result, false, INVALID_SYMBOL)
 }
 
-// The generated overload is a compiler-owned symbol, not source: it has no body,
-// and the backend either applies the built-in operation to the unwrapped
-// operands or calls the underlying type's own overload.
+// The generated overload is a compiler-owned symbol, not source — no body; the
+// backend either applies the built-in operation to the unwrapped operands or
+// calls the underlying type's own overload.
 @(private = "file")
 install_delegated_operator :: proc(
 	k: ^Checker,
@@ -577,10 +573,10 @@ install_delegated_operator :: proc(
 	}
 }
 
-// The binary operator a compound assignment applies, or `.EOF` when the kind is
-// not a compound assignment at all. The checker uses that answer to reject the
-// statement, so by the time the evaluator or the backend asks, the result is
-// always one of the eleven.
+// The binary operator a compound assignment applies, or `.EOF` when the kind
+// isn't one. The checker rejects non-compound statements using this answer, so
+// by the time the evaluator or backend asks, the result is always one of the
+// eleven.
 compound_operator :: proc(op: Token_Kind) -> Token_Kind {
 	#partial switch op {
 	case .Plus_Eq:      return .Plus

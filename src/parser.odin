@@ -602,12 +602,11 @@ Member_Context :: enum {
 }
 
 // `Foreign_Decl` and `Impl_Member` are both declarations, `;`, and — inside an
-// `impl` or `extend` — a delegation.
-//
-// grammar.md spells `Foreign_Decl` with an unconditional trailing `;`, which
-// would contradict the brace-bodied constant rule. Parsing it as an ordinary
-// declaration keeps one rule; "a foreign procedure has no body" is a semantic
-// check, and valid code cannot tell the difference.
+// `impl` or `extend` — a delegation. grammar.md spells `Foreign_Decl` with an
+// unconditional trailing `;`, which would contradict the brace-bodied constant
+// rule; parsing it as an ordinary declaration keeps one rule instead. "A
+// foreign procedure has no body" becomes a semantic check, since valid code
+// cannot tell the difference.
 @(private = "file")
 parse_member_list :: proc(p: ^Parser, kind: Member_Context) -> []Item {
 	members := make([dynamic]Item, 0, 0, p.allocator)
@@ -2055,10 +2054,9 @@ parse_argument :: proc(p: ^Parser) -> Argument {
 }
 
 // `Argument_Value = Expression | Type`. A distinctive type prefix commits to
-// `Type`, except when the parsed form proves it is an expression: a procedure
-// literal or a composite type followed by its literal body. Reparse those two
-// expression cases through the ordinary precedence parser so suffixes and
-// operators remain available.
+// `Type`, except when the parse turns out to be a proc literal or a composite
+// type followed by its literal body — both get reparsed through the ordinary
+// precedence parser so suffixes and operators remain available.
 @(private = "file")
 parse_argument_value :: proc(p: ^Parser) -> Expr {
 	if !starts_type(current(p).kind) {
@@ -2988,13 +2986,11 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 }
 
 // `Requirement`. `slot` is contextual: only with `Identifier`, `:`, `proc`
-// behind it.
-//
-// An opening `(` begins `Bindings` only when an identifier and then `,` or `:`
-// follow it. Neither can appear that early in an expression, so the test is
-// exact — and it is what makes grammar.md's advice to "wrap the expression in a
-// second pair of parentheses" actually work. Committing to bindings on the bare
-// `(` leaves `((a + b).c() -> T;)` with no spelling at all.
+// behind it. An opening `(` begins `Bindings` only when an identifier then `,`
+// or `:` follows — neither can appear that early in an expression, so the test
+// is exact, which is what makes grammar.md's advice to "wrap the expression in
+// a second pair of parentheses" actually work. Committing to bindings on any
+// bare `(` would leave `((a + b).c() -> T;)` with no spelling at all.
 @(private = "file")
 parse_requirement :: proc(p: ^Parser) -> Requirement {
 	start := current(p)

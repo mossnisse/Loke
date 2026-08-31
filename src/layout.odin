@@ -1,12 +1,12 @@
 // Natural target layout.
 //
 // One model, cached on `Type_Info`, read by the checker's layout built-ins and
-// by the backend. Target-specific scalar and pointer widths come from
+// the backend. Target-specific scalar and pointer widths come from
 // `Target_Info`; aggregate layout is computed from those cached facts, so the
-// checker and the emitter cannot develop independent ideas about where a field
+// checker and emitter cannot develop independent ideas about where a field
 // lives.
 //
-// This is the *natural* Loke layout only. `@(packed)` and the foreign ABI
+// This is the *natural* Loke layout only — `@(packed)` and the foreign ABI
 // arrive with M7 (B15).
 package lokec
 
@@ -54,44 +54,40 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 
 	size, alignment := u64(0), u64(1)
 	offsets: []u64
-	// Exhaustive on purpose: a size of zero is indistinguishable from a correct
-	// answer, so a new `Type_Kind` has to say which of these two groups it joins
-	// rather than inherit one.
+	// Exhaustive on purpose: a size of zero looks like a correct answer, so a new
+	// `Type_Kind` must say which of these two groups it joins, not inherit one.
 	switch info.kind {
 	case .Void, .Invalid:
 		size, alignment = 0, 1
 
 	case .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String, .Interface, .Type:
-		// No runtime representation at all: an untyped constant is materialised
-		// into a concrete type before anything is laid out, and `interface` and
-		// `type` exist only during compilation.
+		// No runtime representation: an untyped constant is materialised into a
+		// concrete type before layout, and `interface`/`type` are compile-time only.
 
 	case .Bool:
 		size, alignment = 1, 1
 
 	case .Int, .Float, .Rune, .Enum, .Typeid:
-		// A scalar is aligned to its own width, up to the target's ceiling: on
-		// x86-64 that is what makes `i128` 16-aligned and nothing wider exist.
+		// Aligned to its own width, capped at the target's ceiling — on x86-64
+		// that's what makes `i128` 16-aligned and nothing wider exist.
 		size = u64(type_bits(c, type) + 7) / 8
 		alignment = min(size, u64(c.target.max_align))
 
 	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator, .CString_View:
-		// An `Allocator` is a one-word provider handle, and a `cstring_view` is one
+		// `Allocator` is a one-word provider handle; `cstring_view` is one
 		// zero-terminated address (design.md "C string views").
 		size = u64(c.target.pointer_bits) / 8
 		alignment = size
 
 	case .String_View:
-		// An immutable, validated UTF-8 borrow: a pointer plus a byte length
-		// (design.md).
+		// An immutable, validated UTF-8 borrow: pointer plus byte length (design.md).
 		alignment = u64(c.target.pointer_bits) / 8
 		size = 2 * alignment
 
 	case .String:
-		// A runtime string is a data pointer, byte length, and the owner flags
-		// that tell a static literal from a runtime buffer and identify that
-		// buffer's header.
+		// A data pointer, byte length, and owner flags that tell a static literal
+		// from a runtime buffer and identify that buffer's header.
 		alignment = u64(c.target.pointer_bits) / 8
 		size = 3 * alignment
 
@@ -109,7 +105,7 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		size = element * info.count
 
 	case .Union:
-		// One model, shared with the emitter: a payload region carrying the widest
+		// One model, shared with the emitter: a payload region at the widest
 		// variant's alignment, then the tag, then tail padding.
 		shape := union_layout(c, type)
 		size, alignment = shape.size, shape.align
@@ -119,8 +115,8 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 
 	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
 		// A slice's two words are ordinary fields, so it lays out here rather than
-		// carrying a second hand-written shape. The two container headers are the
-		// same idea with four words.
+		// carry a second hand-written shape; the container headers are the same
+		// idea with four words.
 		ensure_slice_fields(c, type)
 		ensure_container_fields(c, type)
 		info = type_of(c, type)
@@ -132,9 +128,9 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 				continue
 			}
 			field_size := type_size(c, symbol.type)
-			// design.md "@(packed)": a packed field is placed at the running cursor
-			// with no alignment padding, and the record's own natural alignment stays
-			// 1. Every other struct aligns each field to its type.
+			// design.md "@(packed)": a packed field sits at the running cursor with
+			// no alignment padding, and the record's own alignment stays 1. Every
+			// other struct aligns each field to its type.
 			field_align := info.packed ? u64(1) : type_align(c, symbol.type)
 			cursor = align_up(cursor, field_align)
 			offsets[index] = cursor

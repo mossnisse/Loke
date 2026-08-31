@@ -5,16 +5,16 @@
 // `mem.Scratch` or `mem.Arena` owner and passes its allocator explicitly.
 //
 // Both are the same thing: one pointer to an address-stable control block in
-// `runtime/arena.c`. Two nominal types because design.md publishes two names and
-// gives them different constructors — an `Arena` may be laid over a caller's
-// fixed buffer, a `Scratch` is always provider-backed.
+// `runtime/arena.c`. Two nominal types because design.md publishes two names
+// with different constructors — an `Arena` may be laid over a caller's fixed
+// buffer, a `Scratch` is always provider-backed.
 //
-// Address stability is the whole point. Copying an allocator value preserves
-// that identity, and every allocation records it (design.md). Here the identity
-// *is* the control block's address, so moving the owner cannot change it, and
+// Address stability is the whole point: copying an allocator value preserves
+// identity, and every allocation records it (design.md). Here the identity
+// *is* the control block's address, so moving the owner can't change it, and
 // the region check has one fact to follow rather than a per-copy tag.
 //
-// The value is move-only. Two owners of one control block would release it
+// The value is move-only: two owners of one control block would release it
 // twice, and there is no meaningful clone of a bump region — so `clone` is
 // disabled in `lifecycle_of` rather than generated and then trapped.
 package lokec
@@ -76,8 +76,8 @@ type_is_region_provider :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	return info != nil && info.provider
 }
 
-// design.md writes both constructors as calls on the type name, which is the
-// ordinary `init` path. Provider-backed construction accepts an explicit parent
+// design.md writes both constructors as calls on the type name, the ordinary
+// `init` path. Provider-backed construction accepts an explicit parent
 // allocator and defaults to the program provider; `Arena(buffer)` remains the
 // fixed-storage overload.
 ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
@@ -88,9 +88,9 @@ ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 	info.contributed += {.Container}
 
 	// design.md "The allocator selects the location of backing storage":
-	// `arena := mem.Arena.from_buffer(buffer[:])` puts a dynamic array's backing storage in
-	// the current stack frame. The buffer is written into, so it is `[]mut u8`.
-	// `mem.Scratch` is always provider-backed.
+	// `arena := mem.Arena.from_buffer(buffer[:])` puts a dynamic array's backing
+	// storage in the current stack frame. The buffer is written into, so it is
+	// `[]mut u8`. `mem.Scratch` is always provider-backed.
 	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
 	if type == k.c.arena_type {
 		buffer := slice_of(k.c, TYPE_U8, mutable = true)

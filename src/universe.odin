@@ -2,13 +2,13 @@
 //
 // Every predeclared name is a real, shadowable symbol in a real scope. Nothing
 // downstream compares an identifier against a hard-coded string to decide
-// whether it is `int`, and `byte` is another symbol for the same `u8` type
-// rather than a second identity.
+// whether it is `int`, and `byte` is another symbol for the same `u8` type,
+// not a second identity.
 package lokec
 
-// One universe per compilation, not per package: `bind_runtime_bootstrap` binds
-// `Unit`, `Option`, and `Result` into it once, and every package has to see
-// them.
+// One universe per compilation, not per package: `bind_runtime_bootstrap`
+// binds `Unit`, `Option`, and `Result` into it once, and every package must
+// see them.
 build_universe :: proc(c: ^Compiler) -> ^Scope {
 	if c.universe != nil {
 		return c.universe
@@ -86,29 +86,29 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 	// only be a second place for those rules to disagree.
 	no_args := intern_proc_type(c, nil, nil, INVALID_TYPE, false, "")
 	// Every predeclared built-in: one name, the kind that selects its checking,
-	// and the type the checker starts from. All of them share `no_args`, because
-	// arity and operand types are settled by `check_builtin_call` rather than by
-	// an interned signature. Order is irrelevant here - the names are distinct, so
-	// none shadows another.
+	// and the type the checker starts from. All share `no_args`, since arity and
+	// operand types are settled by `check_builtin_call`, not an interned
+	// signature. Order is irrelevant — the names are distinct, so none shadows
+	// another.
 	builtins := []struct{name: string, kind: Builtin_Kind, type: Type_Id} {
-		// `assert` and `panic` are ordinary calls whose phase is chosen by execution:
-		// the evaluator diagnoses them, and a runtime occurrence takes the program's
-		// panic strategy like every other defined failure.
+		// `assert` and `panic` are ordinary calls whose phase execution chooses: the
+		// evaluator diagnoses them, and a runtime occurrence takes the program's
+		// panic strategy like any other defined failure.
 		{"assert", .Assert, TYPE_VOID},
 		{"panic", .Panic, TYPE_VOID},
 
-		// design.md "Compile-time built-ins". Each one answers entirely in the
-		// checker and leaves nothing for the backend, but none of them is a separate
-		// syntactic category: they are predeclared, shadowable identifiers like
-		// `size_of` and `transmute`.
+		// design.md "Compile-time built-ins". Each answers entirely in the checker
+		// and leaves nothing for the backend, but none is a separate syntactic
+		// category — they're predeclared, shadowable identifiers like `size_of`
+		// and `transmute`.
 		{"static_assert", .Static_Assert, TYPE_VOID},
 		{"build_config", .Build_Config, TYPE_VOID},
 		{"source_location", .Source_Location, TYPE_VOID},
 		{"caller_location", .Caller_Location, TYPE_VOID},
 
-		// The layout and length queries. Their operands are inspected, not evaluated,
-		// so `check_builtin_call` binds them itself rather than through the ordinary
-		// argument path.
+		// The layout and length queries. Their operands are inspected, not
+		// evaluated, so `check_builtin_call` binds them itself rather than through
+		// the ordinary argument path.
 		{"size_of", .Size_Of, TYPE_INT},
 		{"align_of", .Align_Of, TYPE_INT},
 		{"offset_of", .Offset_Of, TYPE_INT},
@@ -116,33 +116,33 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"cap", .Cap, TYPE_INT},
 
 		// design.md "`type` and `typeid`" and "Compile-time reflection". Their
-		// operands are inspected rather than evaluated, so `check_builtin_call` binds
-		// them itself.
+		// operands are inspected rather than evaluated, so `check_builtin_call`
+		// binds them itself.
 		{"type_of", .Type_Of, TYPE_TYPE},
 		{"typeid_of", .Typeid_Of, TYPE_TYPE},
 		{"fields_of", .Fields_Of, TYPE_TYPE},
 		{"enum_values_of", .Enum_Values_Of, TYPE_TYPE},
 
-		// design.md "`type` and `typeid`": the runtime half of reflection. Its operand
-		// is an ordinary runtime `typeid`, so unlike the compile-time forms above it
-		// is evaluated rather than inspected.
+		// design.md "`type` and `typeid`": the runtime half of reflection. Its
+		// operand is an ordinary runtime `typeid`, so unlike the compile-time forms
+		// above it is evaluated, not inspected.
 		{"type_info_of", .Type_Info_Of, TYPE_VOID},
 
-		// design.md "Iteration protocol": the compiler contributes an `iter` overload
-		// for built-in iterables and finds a user type's own `iter` member, so the
-		// free call in the `Iterable` requirement resolves for both.
+		// design.md "Iteration protocol": the compiler contributes an `iter`
+		// overload for built-in iterables and finds a user type's own `iter`
+		// member, so the free call in the `Iterable` requirement resolves for both.
 		{"iter", .Iter, TYPE_VOID},
 
-		// Receiver-shaped standard customization operations have one definition site:
-		// the method. These predeclared names are closed aliases which the checker
-		// rewrites to that method; they are not a parallel free overload group.
+		// Receiver-shaped standard customization operations have one definition
+		// site: the method. These predeclared names are closed aliases the checker
+		// rewrites to that method, not a parallel free overload group.
 		{"iter_reverse", .Standard_Alias, TYPE_VOID},
 		{"format", .Standard_Alias, TYPE_VOID},
 		{"compare", .Standard_Alias, TYPE_VOID},
 
-		// design.md "Standard customization procedures": the standard aliases for the
-		// two generated copy members. Their result types follow the receiver type, so
-		// the interned type carries none.
+		// design.md "Standard customization procedures": the standard aliases for
+		// the two generated copy members. Their result types follow the receiver
+		// type, so the interned type carries none.
 		{"clone", .Clone, TYPE_VOID},
 		{"try_clone", .Try_Clone, TYPE_VOID},
 
@@ -151,16 +151,15 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"new_clone", .New_Clone, TYPE_VOID},
 		{"free", .Free, TYPE_VOID},
 		{"free_all", .Free_All, TYPE_VOID},
-		// design.md "Dynamic arrays" and "Maps": `make` names a container *type*
-		// and binds the result to the selected allocator. No ordinary signature can
+		// design.md "Dynamic arrays" and "Maps": `make` names a container *type* and
+		// binds the result to the selected allocator. No ordinary signature can
 		// spell a type-valued first operand, so it joins the built-ins here.
 		{"make", .Make, TYPE_VOID},
 
 		// `drop(value)` explicitly cleans up a definitely live lexical owning
-		// variable; it's a compiler special form, not an ordinary procedure, and a
-		// declaration can shadow it to make the special form unavailable in that
-		// scope (design.md "Storage modifiers") - which an ordinary universe symbol
-		// already gives it.
+		// variable; it's a compiler special form, not an ordinary procedure. A
+		// declaration can shadow it to make the form unavailable in that scope
+		// (design.md "Storage modifiers") — free with an ordinary universe symbol.
 		{"drop", .Drop, TYPE_VOID},
 
 		// design.md "Exchange": `exchange(inout destination, replacement)`. Its result
@@ -183,10 +182,10 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 
 	// design.md: `Allocator` is obtained by the ordinary runtime default
 	// expression `mem.default_allocator()`, so the name a program writes is the
-	// one `core:mem` contributes and not a predeclared one. The symbol itself is
-	// still compiler-owned: the generated default argument of a lifecycle hook
-	// names it, which is what makes an omitted allocator and a written
-	// `mem.default_allocator()` one call.
+	// one `core:mem` contributes, not a predeclared one. The symbol is still
+	// compiler-owned: a lifecycle hook's generated default argument names it,
+	// which makes an omitted allocator and a written `mem.default_allocator()`
+	// the same call.
 	c.default_allocator_symbol = new_symbol(c, Symbol {
 		kind      = .Builtin,
 		builtin   = .Default_Allocator,

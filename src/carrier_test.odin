@@ -1,8 +1,7 @@
-// The structural half of carrier
-// shapes. These ask the shape of a type directly rather than compiling a
-// program, because what has to hold is a property of the type graph — the same
-// answer whichever type is queried first, whichever order the fields are
-// written in, and a finite answer for a type that contains itself.
+// The structural half of carrier shapes: they ask the shape of a type
+// directly rather than compiling a program, because what has to hold is a
+// property of the type graph — the same answer whichever type is queried
+// first, whichever field order, and a finite answer for a self-containing type.
 package lokec
 
 import "core:fmt"
@@ -10,8 +9,8 @@ import "core:testing"
 
 // Checks one package of source into the caller's compiler and hands back its
 // file, so a test can look types up by written name. The compiler is filled in
-// place: the checker stores `^Compiler` internally, so it must already live at
-// its final address before anything takes its pointer.
+// place — the checker stores `^Compiler` internally, so it must already live
+// at its final address before anything takes its pointer.
 @(private = "file")
 shaped :: proc(c: ^Compiler, text: string) -> ^File {
 	c^ = test_compiler(text)
@@ -134,8 +133,8 @@ main :: proc() { }`
 }
 
 // `Node` contains a container of itself and a bare borrow. The answer must not
-// depend on which field is written first, nor on whether the recursive edge or
-// the whole type was the first thing asked about.
+// depend on field order, nor on whether the recursive edge or the whole type
+// was asked about first.
 @(test)
 a_recursive_shape_is_finite_and_order_independent :: proc(t: ^testing.T) {
 	forward := `package main;

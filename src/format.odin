@@ -1,12 +1,11 @@
 // Coherent runtime formatting (design.md "String format printing").
 //
 // design.md makes formatting a library protocol: a value type provides a
-// `value.format(writer, options)` method, and the standard free spelling aliases
-// it. What the compiler owns is the
-// *erased* half. `fmt.println(a, b, c)` receives `..any_view`, and an
-// `any_view` carries only a pointer and a `typeid` — so a callee cannot recover
-// a call-site-specific visible overload. Runtime formatting therefore has one
-// formatter per concrete `typeid`:
+// `value.format(writer, options)` method, and the standard free spelling
+// aliases it. The compiler owns the *erased* half: `fmt.println(a, b, c)`
+// receives `..any_view`, and an `any_view` carries only a pointer and a
+// `typeid`, so a callee cannot recover a call-site-specific visible overload.
+// Runtime formatting therefore has one formatter per concrete `typeid`:
 //
 //   - a built-in type gets a compiler-generated formatter;
 //   - a user type gets its own `format` when that method is declared in the
@@ -14,8 +13,8 @@
 //   - a caller-local extension's `format` stays callable explicitly and never
 //     changes what `print` does.
 //
-// The dispatch table is private and parallel to the type-info table. The public
-// `Type_Info` layout deliberately exposes no code pointers, which is also what
+// The dispatch table is private and parallel to the type-info table. The
+// public `Type_Info` layout deliberately exposes no code pointers, which also
 // keeps `base:runtime` from having to know `core:fmt` exists.
 package lokec
 
@@ -55,10 +54,10 @@ formatter_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
 }
 
 // design.md's coherence rule, resolved once for the whole program: an `impl`
-// block in the type's own package supplies its formatter, and a caller-local
-// an extension never does — an `any_view` carries only a pointer and a `typeid`, so
-// a callee has no way to see a call-site-specific overload. `Package.extensions`
-// is where an extension member lives, and nothing here reads it.
+// block in the type's own package supplies its formatter, a caller-local
+// extension never does — an `any_view` carries only a pointer and a `typeid`,
+// so a callee has no way to see a call-site-specific overload. Extension
+// members live in `Package.extensions`, which nothing here reads.
 discover_formatters :: proc(c: ^Compiler) {
 	if !c.format_requested {
 		return

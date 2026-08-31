@@ -1,15 +1,15 @@
 // Compile-time reflection, `type_of`/`typeid_of`, and the `typeid` freeze pass.
 //
 // `meta.Field` and `meta.Enum_Value` are compiler-owned nominal struct types
-// whose values are ordinary `Const_Aggregate`s. Reusing the existing constant
-// representation avoids inventing a third one; what keeps a descriptor out of
-// runtime storage is the `descriptor` marker on its type, which
+// whose values are ordinary `Const_Aggregate`s, reusing the existing constant
+// representation instead of inventing a third one. A descriptor is kept out of
+// runtime storage by the `descriptor` marker on its type, which
 // `type_is_supported` reads.
 //
 // `typeid` is symbolic during checking — a `typeid_of(T)` constant carries the
-// canonical `Type_Id` — and numeric only after `freeze_typeids`. Separating the
-// two is what keeps traversal and instantiation discovery order from changing an
-// observable ID, and keeps zero reserved for the nil `typeid`.
+// canonical `Type_Id` — and numeric only after `freeze_typeids`. This keeps
+// traversal and instantiation discovery order from changing an observable ID,
+// and keeps zero reserved for the nil `typeid`.
 package lokec
 
 import "core:fmt"
@@ -102,10 +102,9 @@ string_view_const :: proc(text: string) -> Const_Value {
 }
 
 // The `[N]meta.Field` a `fields_of(T)` call folds to. Declaration order comes
-// from the resolved nominal type, which already reflects the selected active
-// declaration; visibility is judged at the reflection lookup package, so a
-// descriptor array formed inside the declaring package cannot leak members an
-// importer may not name.
+// from the resolved nominal type. Visibility is judged at the reflection
+// lookup package, so a descriptor array formed inside the declaring package
+// cannot leak members an importer may not name.
 fields_descriptor_array :: proc(k: ^Checker, subject: Type_Id) -> (Type_Id, Const_Value, bool) {
 	info := underlying_info(k.c, subject)
 	if info == nil || info.kind != .Struct || info.descriptor {
@@ -197,17 +196,15 @@ Ranked_Type :: struct {
 
 // After semantic discovery is complete, every requested concrete type is sorted
 // by a stable canonical key and given a deterministic nonzero `u64`. Zero stays
-// the nil `typeid`, and the mapping cannot move because a traversal visited two
-// types in a different order.
+// the nil `typeid`; the mapping can't move on account of traversal order.
 freeze_typeids :: proc(c: ^Compiler) {
 	if c.typeid_frozen {
 		return
 	}
-	// design.md's public metadata names element, key, field, variant, parameter
-	// and result types, so every one of them has to be resolvable through
-	// `type_info_of` too. Closing the set here — before the ids are assigned —
-	// is what makes a recursive walk of the metadata terminate at a real entry
-	// rather than at nil.
+	// design.md's public metadata names element, key, field, variant, parameter,
+	// and result types, so each must be resolvable through `type_info_of` too.
+	// Closing the set here, before ids are assigned, makes a recursive walk of
+	// the metadata terminate at a real entry rather than nil.
 	if c.type_info_requested || c.format_requested {
 		for index := 0; index < len(c.typeid_order); index += 1 {
 			request_referenced_typeids(c, c.typeid_order[index])
@@ -281,8 +278,8 @@ typeid_sort_key :: proc(c: ^Compiler, type: Type_Id) -> string {
 
 // Memoization makes the key proportional to the type graph rather than its
 // expanded tree. `visiting` is an explicit cycle detector: valid recursive
-// types cross a pointer and never recur structurally, while malformed by-value
-// cycles receive one stable sentinel until the finite-size pass rejects them.
+// types cross a pointer and never recur structurally; malformed by-value
+// cycles get one stable sentinel until the finite-size pass rejects them.
 @(private = "file")
 typeid_sort_key_walk :: proc(
 	c: ^Compiler,
@@ -300,10 +297,10 @@ typeid_sort_key_walk :: proc(
 	defer visiting^[type] = false
 
 	result := ""
-	// The predeclared table contains distinct language identities with identical
-	// shapes (`int` and `i64` on a 64-bit target, for example). Their catalogue
-	// position is fixed by the language, but its readable name makes the key
-	// independent of that internal numeric position as well as request order.
+	// The predeclared table holds distinct language identities with identical
+	// shapes (e.g. `int` and `i64` on a 64-bit target). Catalogue position is
+	// fixed by the language, but the readable name keeps the key independent of
+	// both that internal position and request order.
 	if type >= 0 && type < FIRST_DYNAMIC_TYPE {
 		result = fmt.aprintf(
 			"predeclared:%s", type_name(c, type),
@@ -333,9 +330,9 @@ typeid_sort_key_walk :: proc(
 		}
 	}
 	// An anonymous record's `name` is a readable spelling, never an identity: two
-	// packages' unrelated `Token` types both print as `Token`. Its key is the
-	// ordered field names plus each field type's own stable key, which is the
-	// same vector `anon_record_type` interns on.
+	// packages' unrelated `Token` types both print as `Token`. Its key is instead
+	// the ordered field names plus each field type's own stable key — the same
+	// vector `anon_record_type` interns on.
 	if info.anonymous_record {
 		b := strings.builder_make(c.semantic_allocator)
 		strings.write_string(&b, "anon-record")
