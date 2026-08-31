@@ -4,10 +4,10 @@ These programs are small enough to read in one sitting, but each exercises a
 different part of the language:
 
 - `hello.loke` — the smallest useful program.
-- `mandelbrot.loke` — floating-point arithmetic, loops, functions, and a numerical fractal silhouette.
+- `greeting.loke` — prompting, text-file I/O, and typed error handling.
+- `streaming.loke` — bounded reads, fixed-buffer streaming, and explicit close errors.
+- `keys.loke` — raw terminal input and automatic terminal restoration.
 - `game_of_life.loke` — fixed arrays, custom indexing operators, `inout`, and ranges.
-- `robot_arena.loke` — structs, managed strings, enums, methods, and custom operators.
-- `spaceship_manifest.loke` — generics plus compile-time and runtime reflection.
 - `word_frequency.loke` — strings and borrowed views, maps, dynamic arrays, and iteration.
 - `arena_pipeline.loke` — allocators, `via`, local arena and scratch regions, and reusable reset.
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
@@ -17,8 +17,8 @@ different part of the language:
 From the repository root, compile and run any example with:
 
 ```powershell
-.\lokec.exe examples\mandelbrot.loke -o mandelbrot.exe
-.\mandelbrot.exe
+.\lokec.exe examples\hello.loke -o hello.exe
+.\hello.exe
 ```
 
 `compile_time.loke` takes a build value, which changes the size of the tables it
@@ -29,7 +29,7 @@ computes during compilation:
 ```
 
 `fmt.println` takes any number of values of any printable type and separates
-them with a space, so the examples print ordinary readable output. The five
-older programs predate that and print bare integers; their comments describe
-what each number means. `base:` and `core:` packages are found beside the
-compiler automatically, so no collection flags are needed.
+them with a space, so the examples print ordinary readable output.
+`game_of_life.loke` intentionally prints one bare population count per
+generation. `base:` and `core:` packages are found beside the compiler
+automatically, so no collection flags are needed.
