@@ -2,6 +2,53 @@ package lokec
 
 import "core:testing"
 
+// Emission consumes a fully checked program. The general front-end helper only
+// checks the hand-built package's bodies because most semantic tests need the
+// bootstrap's signatures, not its implementation. LLVM tests need both.
+@(private = "file")
+check_emission_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
+	k := Checker{c = c}
+	ensure_runtime_bootstrap(&k)
+	rebuild_active_items(c, package_of(c, pkg_id))
+	prepare_package(&k, pkg_id)
+	for id in package_order(c) {
+		if id == pkg_id { continue }
+		check_package_bodies(&k, id)
+		check_pending_impl_instances(&k)
+	}
+	check_package_bodies(&k, pkg_id)
+	check_pending_impl_instances(&k)
+}
+
+@(test)
+unreferenced_generic_templates_are_not_emitted :: proc(t: ^testing.T) {
+	c := test_compiler(`package main;
+unused :: proc(value: $T) -> T { return value; }
+main :: proc() { }
+`)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name, "<unused-template-test>")
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_emission_package(&c, id)
+	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	// Model a declaration whose signature was never forced by package checking:
+	// the emitter must still recognize the template from its syntax.
+	for &symbol in c.symbols {
+		if symbol.kind == .Proc && identifier_text(&c, symbol.name) == "unused" {
+			symbol.generic = false
+		}
+	}
+	freeze_typeids(&c)
+	finalize_lifecycle_operations(&c)
+	_, valid := emit_llvm_module(&c, id)
+	if !testing.expect(t, valid && c.error_count == 0, "an unreferenced generic template reached LLVM emission") { report(&c) }
+}
+
 @(test)
 maps_declared_only_in_fields_have_key_policies :: proc(t: ^testing.T) {
 	c := test_compiler(`package main;
@@ -27,12 +74,12 @@ main :: proc() {
 	id := new_package(&c, f.package_name, "<field-map-test>")
 	c.root_package = id
 	add_package_file(&c, id, &f)
-	check_one_package(&c, id)
+	check_emission_package(&c, id)
 	if !testing.expect(t, c.error_count == 0) { report(&c); return }
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
 	_, valid := emit_llvm_module(&c, id)
-	testing.expect(t, valid && c.error_count == 0, "field-only map types must reach emission with resolved key policies")
+	if !testing.expect(t, valid && c.error_count == 0, "field-only map types must reach emission with resolved key policies") { report(&c) }
 }
 
 @(test)
@@ -46,7 +93,7 @@ unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
 	id := new_package(&c, f.package_name, "<typeid-contract-test>")
 	c.root_package = id
 	add_package_file(&c, id, &f)
-	check_one_package(&c, id)
+	check_emission_package(&c, id)
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
 	_, valid := emit_llvm_module(&c, id)
@@ -133,7 +180,7 @@ main :: proc() { assert(lookup() == 7); }
 	id := new_package(&c, f.package_name, "<resolved-map-test>")
 	c.root_package = id
 	add_package_file(&c, id, &f)
-	check_one_package(&c, id)
+	check_emission_package(&c, id)
 	if !testing.expect(t, c.error_count == 0) { report(&c); return }
 	for key, policy in c.map_key_policies {
 		if !testing.expect(t, policy.kind == .Inherent) { return }
@@ -190,7 +237,7 @@ main :: proc() {
 	id := new_package(&c, f.package_name, "<lifecycle-contract-test>")
 	c.root_package = id
 	add_package_file(&c, id, &f)
-	check_one_package(&c, id)
+	check_emission_package(&c, id)
 	freeze_typeids(&c)
 	types_before, symbols_before, procs_before := len(c.types), len(c.symbols), len(c.synth_procs)
 	if !testing.expect(t, finalize_lifecycle_operations(&c)) { report(&c); return }
@@ -233,7 +280,7 @@ lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 		id := new_package(&c, f.package_name, "<lifecycle-dependency-test>")
 		c.root_package = id
 		add_package_file(&c, id, &f)
-		check_one_package(&c, id)
+		check_emission_package(&c, id)
 		freeze_typeids(&c)
 		finalize_lifecycle_operations(&c)
 		testing.expect(t, validate_emission_dependencies(&c), "invalid lifecycle test setup")

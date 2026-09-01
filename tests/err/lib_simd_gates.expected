@@ -80,43 +80,49 @@ L0686
 @79:6
 unary `!` does not apply to `bool` lanes
 L0686
-@87:14
+@80:6
+unary `-` does not apply to `u32` lanes
+L0686
+@81:6
+unary `+` does not apply to `i32` lanes
+L0686
+@89:14
 `&&` short-circuits, so it does not apply lane-wise; use `&` on the masks
 L0686
-@88:14
+@90:14
 `||` short-circuits, so it does not apply lane-wise; use `|` on the masks
 L0355
-@95:6
+@97:6
 a condition must be `bool`, found `Simd(bool, 4)`
 L0373
-@102:19
+@104:19
 `Simd(i32, 4)` cannot be converted to `Simd(i32, 2)`
 L0373
-@103:10
+@105:10
 `Simd(i32, 4)` cannot be converted to `f32`
 L0310
-@104:27
+@106:27
 cannot initialise `Simd(i32, 2)` with `Simd(i32, 4)`
 L0392
-@113:6
+@115:6
 no overload of `select` applies to these arguments
 L0392
-@114:6
+@116:6
 no overload of `any` applies to these arguments
 L0392
-@117:6
+@119:6
 no overload of `to_array` applies to these arguments
 L0619
-@125:20
+@127:20
 a foreign parameter is not ABI-safe: `Simd(f32, 4)` is a SIMD vector
 L0619
-@126:20
+@128:20
 a foreign result is not ABI-safe: `Simd(i32, 4)` is a SIMD vector
 L0619
-@127:2
+@129:2
 a foreign global is not ABI-safe: `Simd(u8, 16)` is a SIMD vector
 L0619
-@131:21
+@133:21
 a foreign parameter is not ABI-safe: `Simd(f32, 4)` is a SIMD vector
 L0682
 @39:44

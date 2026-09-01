@@ -2522,10 +2522,23 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	// An exclusive mutable borrow needs a mutable place. A consuming receiver is
 	// an `^Expr_Move` by the rank filter above, and `check_move` has already held
 	// it to `move`'s storage rule -- no partial move, no static-duration source.
-	if chosen.receiver == .Inout && !receiver_base.assignable {
-		report_not_assignable(k, receiver_base, "the receiver of a mutating method")
-		v.type = INVALID_TYPE
-		return
+	if chosen.receiver == .Inout {
+		// A mutating receiver is passed by address just like an explicit `&mut`.
+		// Packed fields are writable but deliberately not addressable: silently
+		// accepting one here can hand a misaligned pointer to the method body.
+		if field, packed := packed_field_reached(k, receiver); packed {
+			errorf(
+				k.c, sel.name.span, "L0614",
+				"cannot take the address of `%s`: it is reached through a packed struct", field,
+			)
+			v.type = INVALID_TYPE
+			return
+		}
+		if !receiver_base.assignable {
+			report_not_assignable(k, receiver_base, "the receiver of a mutating method")
+			v.type = INVALID_TYPE
+			return
+		}
 	}
 	sel.resolution = Resolution{kind = .Method, symbol = cand.symbol}
 	sel.type = chosen.proc_type

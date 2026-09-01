@@ -77,6 +77,8 @@ operators :: proc() {
 	_ = mask < mask;
 	_ = -mask;
 	_ = !mask;
+	_ = -Simd(u32, 4){};
+	_ = +a;
 }
 
 // "`&&` and `||` are rejected: they short-circuit, and there is nothing

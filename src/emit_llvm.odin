@@ -346,7 +346,17 @@ name_synth_procs :: proc(e: ^Emitter) {
 @(private = "file")
 symbol_is_template :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> bool {
 	sym := symbol_of(c, symbol_id)
-	return sym != nil && sym.generic
+	if sym == nil {
+		return false
+	}
+	if sym.generic {
+		return true
+	}
+	// Template registration is lazy. A package can reach emission without an
+	// unused generic declaration's signature ever being checked, so retain the
+	// syntax-level classification at this final boundary. Instances deliberately
+	// keep their cloned generic syntax and are distinguished by `instance_of`.
+	return sym.instance_of == INVALID_SYMBOL && declaration_generic_kind(sym.decl) != .None
 }
 
 @(private = "file")

@@ -40,7 +40,7 @@ main :: proc() {
 	b: Simd(i32, 4) = {3, 7, 4, 6};
 	fmt.println(a + b, a - b, a * b, a / b, a % b);
 	fmt.println(a & b, a | b, a ~ b, a &~ b, ~b);
-	fmt.println(a << 1, a >> 2, -a, +a);
+	fmt.println(a << 1, a >> 2, -a);
 
 	// "A scalar converts to a vector implicitly wherever a vector is expected,
 	// producing the splat", from either side.

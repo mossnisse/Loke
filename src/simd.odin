@@ -371,8 +371,10 @@ check_simd_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id) {
 	element := info.element
 	permitted := false
 	#partial switch v.op {
-	case .Plus, .Minus:
-		permitted = type_is_integer(k.c, element) || type_is_float(k.c, element)
+	case .Minus:
+		permitted =
+			(type_is_integer(k.c, element) && type_signed(k.c, element)) ||
+			type_is_float(k.c, element)
 	case .Tilde:
 		permitted = type_is_integer(k.c, element) || type_is_boolean(k.c, element)
 	}

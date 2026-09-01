@@ -1,8 +1,11 @@
 L0614
-@53:11
+@55:11
+cannot take the address of `count`: it is reached through a packed struct
+L0614
+@60:14
 cannot take the address of `count`: it is reached through a packed struct
 L0392
-@59:2
+@66:2
 a `$` parameter needs a compile-time constant argument
 L0662
 `Point` is not an atomic type

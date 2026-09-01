@@ -13,6 +13,8 @@ Colour :: enum { Red, Green };
 
 Packed :: struct @(packed) { flag: u8, count: i32 }
 
+Packed_Atomic :: struct @(packed) { flag: u8, count: sync.Atomic(i64) }
+
 // A relaxed fence orders nothing, so it is a mistake rather than a no-op.
 relaxed_fence :: proc() {
 	sync.fence(Order.Relaxed);
@@ -53,6 +55,11 @@ packed_field :: proc(value: inout Packed) {
 	other := &mut value.count;
 }
 
+// An implicit `inout` method receiver is still an address-taking operation.
+packed_atomic_receiver :: proc(value: inout Packed_Atomic) {
+	value.count.store(1);
+}
+
 // An ordering must be a constant, and a `$` parameter is what keeps one
 // constant across a wrapper. A runtime value simply does not apply.
 runtime_order :: proc(order: Order) {
@@ -63,11 +70,13 @@ main :: proc() {
 	counter: sync.Atomic(int) = {};
 	colour: sync.Atomic(Colour) = {};
 	packed: Packed = {};
+	packed_atomic: Packed_Atomic = {};
 	relaxed_fence();
 	wrong_order(inout counter);
 	enum_arithmetic(inout colour);
 	unsupported();
 	unsupported_float();
 	packed_field(inout packed);
+	packed_atomic_receiver(inout packed_atomic);
 	runtime_order(Order.Acquire);
 }
