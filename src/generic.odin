@@ -427,7 +427,16 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	if sym := symbol_of(c, template); sym != nil {
-		strings.write_string(&b, identifier_text(c, sym.name))
+		// The owner is part of a generic method's identity, so it is part of the
+		// name a diagnostic prints too — spelled the way source spells it, not the
+		// way the backend mangles it.
+		if sym.owner_type != INVALID_TYPE {
+			strings.write_string(&b, type_name(c, sym.owner_type))
+			strings.write_string(&b, ".")
+			strings.write_string(&b, identifier_text(c, sym.name))
+		} else {
+			strings.write_string(&b, identifier_text(c, sym.name))
+		}
 	}
 	strings.write_string(&b, "(")
 	for binding, index in bindings {
@@ -451,7 +460,17 @@ generic_instance_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gen
 generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Binding) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	if sym := symbol_of(c, template); sym != nil {
-		strings.write_string(&b, identifier_text(c, sym.name))
+		// A *generic method* has one template per instantiated `impl` block, and
+		// those share a name: `Atomic(int).load` and `Atomic(bool).load` are two
+		// templates called `load`. The owner is part of the identity, exactly as it
+		// is for an ordinary member.
+		if sym.owner_type != INVALID_TYPE {
+			owner := llvm_safe(qualified_member_name(c, sym))
+			strings.write_string(&b, owner)
+			delete(owner)
+		} else {
+			strings.write_string(&b, identifier_text(c, sym.name))
+		}
 	}
 	for binding in bindings {
 		strings.write_string(&b, ".")
@@ -791,11 +810,26 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 			position += 1
 			index, found := claim_argument(args, entry.name.id, &next, claimed)
 			if !found {
-				if parameter.default != nil {
+				if parameter.default == nil {
+					result.reason = "it needs more arguments than were supplied"
+					return result
+				}
+				// An omitted *runtime* parameter is simply not bound here: the
+				// instance's own signature carries the default. An omitted `$` one
+				// has to be bound, because its value is what the instance is *of* —
+				// `atomic.load()` is one instance and `atomic.load(.Relaxed)` another.
+				if !entry.is_poly {
 					continue
 				}
-				result.reason = "it needs more arguments than were supplied"
-				return result
+				wanted := resolve_type_syntax(k, parameter.type)
+				bound, bound_ok := bind_default_compile_time_argument(
+					k, entry.name, parameter.default, wanted, scope, &bindings,
+				)
+				if !bound_ok {
+					result.reason = bound
+					return result
+				}
+				continue
 			}
 			arg := args[index]
 			if !entry.is_poly {
@@ -893,6 +927,41 @@ claim_argument :: proc(
 		return index, true
 	}
 	return -1, false
+}
+
+// The default of an omitted `$` parameter, checked in the declaration's own
+// scope and bound as if it had been written at the call. A default that is not
+// a constant is the same mistake a non-constant argument is, and says so in the
+// same words.
+@(private = "file")
+bind_default_compile_time_argument :: proc(
+	k: ^Checker,
+	name: Name,
+	default: Expr,
+	wanted: Type_Id,
+	scope: ^Scope,
+	out: ^[dynamic]Generic_Binding,
+) -> (string, bool) {
+	mark := len(k.c.diagnostics)
+	errors := k.c.error_count
+	type := check_expr(k, default, wanted)
+	// A failed default is reported at the call as an inapplicable candidate, not
+	// twice; the declaration itself is checked where it is written.
+	truncate_diagnostics(k.c, mark)
+	k.c.error_count = errors
+	if type == INVALID_TYPE {
+		return "its omitted `$` argument's default does not check", false
+	}
+	base := expr_base(default)
+	arg := Arg_Info {
+		expr        = default,
+		span        = expr_span(default),
+		name        = INVALID_IDENTIFIER,
+		type        = type,
+		is_const    = base != nil && base.is_const,
+		const_value = base == nil ? Const_Value{} : base.const_value,
+	}
+	return bind_compile_time_argument(k, name, arg, wanted, scope, out)
 }
 
 // A `$N: int` or `$T: type` argument. `type` receives a type; everything else

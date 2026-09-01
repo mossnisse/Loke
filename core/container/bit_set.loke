@@ -1,0 +1,199 @@
+// `Bit_Set(Enum)`: a set of enum members held as bits (design.md's catalogue
+// row for flag sets, and "Iterating an enumeration").
+//
+// A member's bit is its *declaration position*, not its numeric value, so an
+// enum with holes — `enum { A, B = 4, C = 7 }` — still needs exactly three
+// bits. That is also why this is not a hardware register layout: design.md
+// keeps those on integer masks with explicit accessors in version 1.
+//
+// The zero value is the empty set.
+@(public)
+package container;
+
+import "core:fmt";
+
+Bit_Set :: struct($E: type) {
+	// One 64-bit word per 64 members, so an enum of any size works without a
+	// documented ceiling to trip over later.
+	@(private) words: [(len(E.values()) + 63)/64]u64,
+}
+
+impl Bit_Set($E) {
+	// ------------------------------------------------------- construction --
+
+	// Every listed member, and nothing else. `Bit_Set(Direction).of(.North, .West)`.
+	of :: proc(members: ..E) -> Bit_Set(E) {
+		result: Bit_Set(E) = {};
+		foreach (member in members) { result.set(member); }
+		return result;
+	}
+
+	// Every declared member.
+	all :: proc() -> Bit_Set(E) {
+		result: Bit_Set(E) = {};
+		foreach (member in E.values()) { result.set(member); }
+		return result;
+	}
+
+	// ----------------------------------------------------------- queries --
+
+	contains :: proc(self, member: E) -> bool {
+		at := position_of(member);
+		return self.words[at/64] & (u64(1) << uint(at % 64)) != 0;
+	}
+
+	// The number of members present, not the enum's size — `cap` is that.
+	len :: proc(self) -> int {
+		total := 0;
+		foreach (word in self.words) { total += popcount(word); }
+		return total;
+	}
+
+	cap :: proc(self) -> int { return len(E.values()); }
+	is_empty :: proc(self) -> bool { return self.len() == 0; }
+
+	// --------------------------------------------------------- mutation --
+
+	set :: proc(self: inout Bit_Set(E), member: E) {
+		at := position_of(member);
+		self.words[at/64] |= u64(1) << uint(at % 64);
+	}
+
+	unset :: proc(self: inout Bit_Set(E), member: E) {
+		at := position_of(member);
+		self.words[at/64] &~= u64(1) << uint(at % 64);
+	}
+
+	toggle :: proc(self: inout Bit_Set(E), member: E) {
+		at := position_of(member);
+		self.words[at/64] ~= u64(1) << uint(at % 64);
+	}
+
+	clear :: proc(self: inout Bit_Set(E)) {
+		foreach (i in 0 ..< len(self.words)) { self.words[i] = 0; }
+	}
+
+	// -------------------------------------------------------- operators --
+
+	// Union, intersection, difference, and symmetric difference, spelled with the
+	// integer operators they are: `Integral` already gives `|`, `&`, `&~` and `~`
+	// exactly these meanings on the underlying words.
+	union_with :: operator(|) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
+		return combine(left, right, Set_Op.Union);
+	}
+
+	intersect :: operator(&) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
+		return combine(left, right, Set_Op.Intersection);
+	}
+
+	difference :: operator(&~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
+		return combine(left, right, Set_Op.Difference);
+	}
+
+	symmetric_difference :: operator(~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
+		return combine(left, right, Set_Op.Symmetric_Difference);
+	}
+
+	equal :: operator(==) proc(left, right: Bit_Set(E)) -> bool {
+		foreach (word, index in left.words.indexed()) {
+			if (word != right.words[index]) { return false; }
+		}
+		return true;
+	}
+
+	// Every member `self` does not hold. Bits above the last member stay clear,
+	// so a complement never invents a position no member owns.
+	complement :: operator(~) proc(self: Bit_Set(E)) -> Bit_Set(E) {
+		return combine(Bit_Set(E).all(), self, Set_Op.Difference);
+	}
+
+	is_subset_of :: proc(self, other: Bit_Set(E)) -> bool {
+		return combine(self, other, Set_Op.Difference).is_empty();
+	}
+
+	// -------------------------------------------------------- iteration --
+
+	Element  :: E;
+	Iterator :: Bit_Set_Iterator(E);
+
+	iter :: proc(self) -> Bit_Set_Iterator(E) { return {self, 0}; }
+
+	// --------------------------------------------------------- printing --
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "{");
+		written := 0;
+		foreach (member in E.values()) {
+			if (!self.contains(member)) { continue; }
+			if (written > 0) { fmt.format_to(writer, ", "); }
+			fmt.format_to(writer, member);
+			written += 1;
+		}
+		fmt.format_to(writer, "}");
+	}
+}
+
+// Iterating a set yields the members it holds, in declaration order. The
+// iterator carries a copy of the words for the reason `Small_Array`'s does: a
+// `self` receiver is callee-local, so no borrow of it can be returned.
+Bit_Set_Iterator :: struct($E: type) {
+	@(private) held: Bit_Set(E),
+	@(private) at:   int,
+}
+
+impl Bit_Set_Iterator($E) {
+	Element  :: E;
+	Iterator :: Bit_Set_Iterator(E);
+
+	iter :: proc(self) -> Bit_Set_Iterator(E) { return self; }
+
+	next :: proc(self: inout Bit_Set_Iterator(E)) -> Option(E) {
+		members := E.values();
+		for (self.at < len(members)) {
+			member := members[self.at];
+			self.at += 1;
+			if (self.held.contains(member)) { return .some(member); }
+		}
+		return .none;
+	}
+}
+
+@(private)
+Set_Op :: enum { Union, Intersection, Difference, Symmetric_Difference };
+
+@(private)
+combine :: proc(left: Bit_Set($E), right: Bit_Set(E), operation: Set_Op) -> Bit_Set(E) {
+	result: Bit_Set(E) = {};
+	foreach (word, index in left.words.indexed()) {
+		other := right.words[index];
+		switch (operation) {
+		case .Union:                result.words[index] = word | other;
+		case .Intersection:         result.words[index] = word & other;
+		case .Difference:           result.words[index] = word &~ other;
+		case .Symmetric_Difference: result.words[index] = word ~ other;
+		}
+	}
+	return result;
+}
+
+// A member's declaration position. Linear in the number of members, which is
+// what makes an enum with holes work at all; enums are small, and the search is
+// over a compile-time constant array.
+@(private)
+position_of :: proc(member: $E) -> int {
+	foreach (declared, index in E.values().indexed()) {
+		if (declared == member) { return index; }
+	}
+	// design.md "Non-member values": an integer conversion can produce a value
+	// naming no member, and a set has no bit for it.
+	panic("this value names no member of the enumeration");
+}
+
+// The classic SWAR population count: five folds, no table, no loop.
+@(private)
+popcount :: proc(value: u64) -> int {
+	x := value - ((value >> 1) & 0x5555555555555555);
+	x = (x & 0x3333333333333333) + ((x >> 2) & 0x3333333333333333);
+	x = (x + (x >> 4)) & 0x0F0F0F0F0F0F0F0F;
+	return int((x*0x0101010101010101) >> 56);
+}

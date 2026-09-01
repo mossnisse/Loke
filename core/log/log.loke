@@ -1,0 +1,107 @@
+// Logging over the build-selected provider (design.md "Build-selected
+// providers", m8-plan step 3).
+//
+// A `Logger` is an ordinary service handle: one procedure and its state, the
+// same shape `fmt.Writer` has. Nothing about it is compiler-known. What the
+// build selects is which one the package-level procedures below dispatch to,
+// and `-log-level` decides which of them have a body at all.
+//
+// There is no scoped or package-local override of the program logger. A package
+// that needs a different sink, captured test output, or request-specific fields
+// takes a `Logger` parameter or keeps one in a state object.
+@(public)
+package log;
+
+import "core:fmt";
+import "core:mem";
+
+// The compiler contributes:
+//
+//   Level   the severity enumeration, which is also `LOKE_LOG_LEVEL`'s type
+//
+// It is contributed rather than declared so the two are one type: a `when` over
+// `LOKE_LOG_LEVEL <= .Info` compares two values of the same enum, and a second
+// nominal type here would make that comparison impossible to write.
+//
+// Its members, in order, are `Debug`, `Info`, `Warning`, `Error`, and `Off`.
+// `Off` is a threshold only — nothing logs at it — and it is last so that
+// `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled out entirely.
+
+Logger :: struct {
+	@(public) write: proc(state: rawptr, level: Level, message: string_view),
+	@(public) state: rawptr,
+}
+
+// Where a selected logging provider is published. Generated startup writes the
+// factory's result here, once, before `main`; until then it is the zero value
+// and every call goes to the standard sink below. That is also what makes an
+// unselected build need no initialization at all.
+@(private)
+selected: Logger = {};
+
+// The handle the program is logging through, for code that wants to pass it on
+// rather than call the package procedures.
+current :: proc() -> Logger {
+	if (selected.write == nil) { return Logger{standard_write, nil}; }
+	return selected;
+}
+
+// The standard logger: one line per record on the process error stream, with
+// the level in front of it. It is the fallback *and* an ordinary provider — a
+// build may select `log.standard_logger` explicitly to say so.
+standard_logger :: proc() -> Logger {
+	return Logger{standard_write, nil};
+}
+
+@(private)
+standard_write :: proc(state: rawptr, level: Level, message: string_view) {
+	w := fmt.stderr();
+	fmt.format_to(w, "[");
+	fmt.format_to(w, level);
+	fmt.format_to(w, "] ");
+	fmt.format_to(w, message);
+	fmt.format_to(w, "\n");
+}
+
+// The four record procedures. Each guards its own body with the compiled level,
+// so a call below it never reaches the provider.
+//
+// Discarding a callee's body does not discard the caller's expressions: an
+// unguarded call below the level still checks and evaluates its arguments. To
+// remove those too, guard the *call*:
+//
+//     when (LOKE_LOG_LEVEL <= .Debug) { log.debug("state", expensive()); }
+
+debug :: proc(args: ..any_view) {
+	when (LOKE_LOG_LEVEL <= Level.Debug) { record(Level.Debug, ..args); }
+}
+
+info :: proc(args: ..any_view) {
+	when (LOKE_LOG_LEVEL <= Level.Info) { record(Level.Info, ..args); }
+}
+
+warning :: proc(args: ..any_view) {
+	when (LOKE_LOG_LEVEL <= Level.Warning) { record(Level.Warning, ..args); }
+}
+
+error :: proc(args: ..any_view) {
+	when (LOKE_LOG_LEVEL <= Level.Error) { record(Level.Error, ..args); }
+}
+
+// Is anything at this level compiled in? A caller with an expensive argument
+// asks the constant directly in a `when`; this is for a runtime branch over a
+// level held in a variable.
+enabled :: proc(level: Level) -> bool { return LOKE_LOG_LEVEL <= level; }
+
+// ponytail: one allocation per emitted record, because formatting into a
+// caller-supplied buffer needs a `fmt.Writer` over storage this package would
+// have to size arbitrarily, and truncation there would have to cut a rune. If
+// logging volume makes this matter, give `Logger` a bytes-and-count `write`
+// like `fmt.Writer`'s and stream into it instead. A suppressed call allocates
+// nothing: its whole body is discarded.
+@(private)
+record :: proc(level: Level, args: ..any_view) {
+	handle := current();
+	text := fmt.to_string(mem.default_allocator(), ..args);
+	handle.write(handle.state, level, text);
+}

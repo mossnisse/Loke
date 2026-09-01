@@ -31,6 +31,26 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	if unit == INVALID_SYMBOL || option == INVALID_SYMBOL || result == INVALID_SYMBOL {
 		return
 	}
+	// design.md "Shared ownership": `shared(T)`, `weak(T)`, and `try_shared` are
+	// written with no import in sight, so they are universe names over the same
+	// two declarations every program would otherwise have to spell twice. The
+	// construction procedure is bound separately because the *name* `shared` has
+	// to mean the type in `shared(Node)` and the constructor in `shared(node)`;
+	// which one a call means is settled at the call.
+	shared_type := bootstrap_symbol(k, pkg, "Shared")
+	weak_type := bootstrap_symbol(k, pkg, "Weak")
+	shared_new := bootstrap_symbol(k, pkg, "shared_construct")
+	try_shared := bootstrap_symbol(k, pkg, "try_shared")
+	if shared_type == INVALID_SYMBOL || weak_type == INVALID_SYMBOL ||
+	   shared_new == INVALID_SYMBOL || try_shared == INVALID_SYMBOL {
+		return
+	}
+	c.shared_symbol = shared_type
+	c.weak_symbol = weak_type
+	c.shared_construct_symbol = shared_new
+	universe.names[intern_identifier(c, "shared")] = shared_type
+	universe.names[intern_identifier(c, "weak")] = weak_type
+	universe.names[intern_identifier(c, "try_shared")] = try_shared
 	if symbol := symbol_of(c, unit); symbol != nil {
 		c.unit_type = symbol.type
 	}
@@ -80,4 +100,20 @@ result_type :: proc(k: ^Checker, payload, error: Type_Id, span := Span{}) -> Typ
 // The success type of a fallible operation that produces no value.
 unit_type :: proc(c: ^Compiler) -> Type_Id {
 	return c.unit_type
+}
+
+// design.md "Shared ownership": four things about `shared(T)` and `weak(T)` are
+// the language's rather than the library's. Recognising an instance is what the
+// first two need — `nil` is the zero value and compares to it, and a `via`
+// declaration is rejected because the control block already stores its
+// allocator.
+type_is_shared_handle :: proc(c: ^Compiler, id: Type_Id) -> bool {
+	if c.shared_symbol == INVALID_SYMBOL {
+		return false
+	}
+	info := type_of(c, type_underlying(c, id))
+	if info == nil || info.instance_of == INVALID_SYMBOL {
+		return false
+	}
+	return info.instance_of == c.shared_symbol || info.instance_of == c.weak_symbol
 }

@@ -1,0 +1,131 @@
+package main;
+
+import "core:fmt";
+import "core:mem";
+
+// `shared(T)` and `weak(T)` end to end (design.md "Shared ownership", m8-plan
+// step 5). The point of the fixture is that design.md's paragraph runs exactly
+// as it is written: the counts, the single drop, the weak companion, and the
+// `nil` zero value.
+
+Node :: struct {
+	value: int,
+	tag:   string,
+}
+
+// A payload with a drop hook, so "drops the payload one time" is observable
+// rather than asserted.
+Tracked :: struct {
+	id: int,
+}
+
+drops: static int = 0;
+
+impl Tracked {
+	// Only a real payload is counted. Construction assigns into the freshly
+	// zeroed block, and a full assignment drops the destination's previous value
+	// first — here an inert zero that owns nothing. Counting it would say more
+	// about assignment than about shared ownership.
+	retire :: hook(drop) proc(self: inout Tracked) {
+		if (self.id != 0) { drops += 1; }
+	}
+}
+
+main :: proc() {
+	// "`shared(value)` clones the value into a new allocation."
+	handle := shared(Node{7, "seven"});
+	fmt.println(handle.get()^.value, handle.get()^.tag, handle.strong_count());
+
+	// "`clone` and ordinary assignment share the control block instead of
+	// cloning `T`" — one payload and two handles, so both name one address.
+	second := handle;
+	fmt.println(handle.strong_count(), second.strong_count());
+	fmt.println(handle.get() == second.get());
+
+	// "`move` transfers one handle": the count does not change.
+	third := move(second);
+	fmt.println(third.strong_count());
+
+	// "`drop` decrements the count."
+	drop(third);
+	fmt.println(handle.strong_count());
+
+	// `shared(move(value))` moves the value in rather than cloning it.
+	moved_in := Node{9, "nine"};
+	from_move := shared(move(moved_in));
+	fmt.println(from_move.get()^.value, from_move.get()^.tag);
+
+	// "Its zero value is `nil`", and two handles over one block compare equal.
+	empty: shared(Node) = {};
+	fmt.println(empty == nil, empty.strong_count(), handle == nil);
+	also_empty: shared(Node) = nil;
+	fmt.println(also_empty == empty);
+	fourth := handle;
+	fmt.println(fourth == handle, fourth == from_move);
+	drop(fourth);
+
+	// "`weak(T)` is the non-owning companion: it keeps the control block but not
+	// the payload alive, and `upgrade` returns `Option(shared(T))`."
+	watcher := handle.downgrade();
+	fmt.println(handle.weak_count(), watcher.strong_count());
+	switch (revived in watcher.upgrade()) {
+	case .some: fmt.println("upgraded", revived.get()^.value, revived.strong_count());
+	case .none: fmt.println("gone");
+	}
+	fmt.println(handle.strong_count());
+
+	// The payload dies with the last strong handle; the block survives while the
+	// weak handle names it, and `upgrade` then answers honestly.
+	tracked := shared(Tracked{1});
+	watching := tracked.downgrade();
+	fmt.println(drops, watching.strong_count());
+	drop(tracked);
+	fmt.println(drops, watching.strong_count());
+	switch (revived in watching.upgrade()) {
+	case .some: fmt.println("upgraded", revived.get()^.id);
+	case .none: fmt.println("gone");
+	}
+	drop(watching);
+	fmt.println(drops);
+
+	// "Construction uses `mem.default_allocator()` unless the `allocator`
+	// parameter selects another"; `try_shared` reports the failure instead.
+	arena := mem.Arena.init();
+	selected := shared(Node{10, "ten"}, arena.allocator());
+	fmt.println(selected.get()^.value, selected.strong_count());
+	drop(selected);
+
+	switch (attempt in try_shared(Node{11, "eleven"})) {
+	case .ok:  fmt.println("built", attempt.get()^.value);
+	case .err: fmt.println("no memory");
+	}
+
+	// design.md: `shared(T)` "satisfies `Cloneable`", so an explicit `clone` is
+	// the same strong increment an assignment performs.
+	cloned := clone(handle);
+	fmt.println(handle.strong_count(), cloned == handle);
+	drop(cloned);
+
+	// It is an ordinary owning value, so it lives in containers and records and
+	// is cleaned up with them.
+	fleet: [dynamic]shared(Node) = {};
+	fleet.append(handle);
+	fleet.append(handle);
+	fmt.println(fleet.len(), handle.strong_count());
+	drop(fleet);
+	fmt.println(handle.strong_count());
+
+	// A `weak` that never had a payload upgrades to nothing.
+	orphan: weak(Node) = {};
+	fmt.println(orphan == nil, orphan.strong_count());
+	switch (never in orphan.upgrade()) {
+	case .some: fmt.println("upgraded");
+	case .none: fmt.println("gone");
+	}
+}
+
+// design.md permits strong-reference cycles and says they leak until broken.
+// None is built here: `get()` hands back a read-only `^T`, so a payload already
+// inside a handle cannot be given a back-edge, and two payloads cannot each be
+// constructed holding the other. Cycles remain a property of the counts rather
+// than something this library surface can reach.

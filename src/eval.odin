@@ -1054,9 +1054,29 @@ map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Ev
 	return &m.elements[len(m.elements) - 1], true
 }
 
+// The compile-time half of `sort`. An insertion sort: the arrays a constant
+// expression builds are small, and this way the comparison count is the only
+// thing that can fail, once per pair.
+@(private = "file")
+eval_sort :: proc(ev: ^Evaluator, elements: []Eval_Value, descending: bool) -> bool {
+	for i in 1 ..< len(elements) {
+		for j := i; j > 0; j -= 1 {
+			left, right := elements[j], elements[j - 1]
+			before, ok := eval_compare(ev, .Lt, descending ? right : left, descending ? left : right)
+			if !ok {
+				return false
+			}
+			if !before {
+				break
+			}
+			elements[j], elements[j - 1] = elements[j - 1], elements[j]
+		}
+	}
+	return true
+}
+
 // Mutating container operations need a place; immutable receivers can also be
 // procedure results, constants, and other temporary values.
-@(private = "file")
 eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (out: []Eval_Value, success: bool) {
 	defer { if !eval_memory_ok(ev) { success = false } }
 	if len(v.bound) == 0 || v.bound[0] == nil {
@@ -1143,6 +1163,27 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		}
 		if !fallible { return none, true }
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
+
+	case .Sort, .Reverse_Sort:
+		// A `.Value` receiver here is a *copy* of the caller's slice header, so
+		// sorting it would leave the caller's elements untouched. Only the
+		// dynamic array, whose receiver is a place, can be sorted in place.
+		if symbol.receiver != .Inout {
+			eval_fail(ev, v.span, "L0341", "a slice cannot be sorted at compile time")
+			return nil, false
+		}
+		if resolved_element_order_policy(ev.k.c, element).kind == .Inherent {
+			eval_fail(
+				ev, v.span, "L0341",
+				"a compile-time sort compares with the built-in `<`, and `%s` has its own",
+				type_name(ev.k.c, element),
+			)
+			return nil, false
+		}
+		if !eval_sort(ev, self.elements, symbol.container_op == .Reverse_Sort) {
+			return nil, false
+		}
+		return none, true
 
 	case .Insert:
 		at, at_ok := count_argument(ev, v, 1)

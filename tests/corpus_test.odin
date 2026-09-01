@@ -450,6 +450,14 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 			testing.expectf(t, !strings.contains(text, " T main"), "the object defines `main`:\n%s", text)
 			testing.expectf(t, !strings.contains(text, " T wmain"), "the object defines `wmain`:\n%s", text)
 			testing.expectf(t, strings.contains(text, " T widget_add"), "the object does not define `widget_add`:\n%s", text)
+			// design.md "Build modes": an object that selects nothing exports no
+			// initializer, so an existing host needs no change.
+			testing.expectf(
+				t,
+				!strings.contains(text, " T loke_rt_v1_program_init"),
+				"an unselected object build exported an initializer:\n%s",
+				text,
+			)
 			testing.expectf(
 				t,
 				strings.contains(text, "U loke_rt_v1_thread_attach") ||
@@ -489,6 +497,139 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)
 	testing.expectf(t, run_state.exit_code == 0, "the C host got the wrong answer (exit %d)", run_state.exit_code)
+
+	selected_object_build_links_into_a_c_host(t, clang, include_flags)
+	atomics_hold_under_contention(t, clang, include_flags)
+}
+
+// design.md "Concurrency and the memory model" (m8-plan step 4): the atomic
+// claims under real contention. There is no thread API in version 1 Loke, so
+// the threads come from a C host that attaches and detaches each one, which is
+// also the documented way a foreign thread calls into an object build.
+//
+// Every assertion inside is an invariant — a count, a publication, a single run
+// — never an interleaving, because an interleaving is the scheduler's answer
+// rather than the program's.
+@(private)
+atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flags: []string) {
+	obj := fmt.tprintf("%s/conc.obj", TMP)
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string {
+				compiler_path(), "tests/obj/concurrentlib", "-build-mode=obj", "-o", obj,
+			},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "the concurrency object build failed:\n%s", string(stderr)) {
+		return
+	}
+
+	exe := fmt.tprintf("%s/conc-host.exe", TMP)
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, clang, "tests/obj/concurrent_host.c", obj, "-o", exe, "-Wno-override-module", "-rtlib=compiler-rt")
+	runtime_sources, _ := filepath.glob("runtime/*.c")
+	for source in runtime_sources {
+		append(&command, source)
+	}
+	append(&command, "-I", "runtime")
+	for flag in include_flags {
+		append(&command, flag)
+	}
+	link_state, _, link_stderr, link_err := os2.process_exec(
+		os2.Process_Desc{command = command[:]},
+		context.allocator,
+	)
+	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
+		return
+	}
+	if !testing.expectf(t, link_state.exit_code == 0, "the concurrency host link failed:\n%s", string(link_stderr)) {
+		return
+	}
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(
+		t, run_state.exit_code == 0,
+		"an atomic invariant did not hold under contention: failure %d (see `conc_check`)",
+		run_state.exit_code,
+	)
+}
+
+// design.md "Build modes" and "Build-selected providers" (m8-plan step 3): an
+// object build that selects a provider exports `loke_rt_v1_program_init`, and
+// its host calls that once after attaching. Nothing calls it automatically, so
+// the whole contract is what the host does with it — including the second call,
+// which must do nothing.
+@(private)
+selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, include_flags: []string) {
+	obj := fmt.tprintf("%s/hostlib.obj", TMP)
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string {
+				compiler_path(), "tests/obj/providerlib", "-build-mode=obj",
+				"-collection", "obj=tests/obj/providerlib",
+				"-provider", "allocator=obj:provider:allocator_factory",
+				"-provider", "logger=obj:provider:logger_factory",
+				"-o", obj,
+			},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "the selected object build failed:\n%s", string(stderr)) {
+		return
+	}
+
+	nm := filepath.join({filepath.dir(clang), "llvm-nm.exe"}, context.temp_allocator)
+	if os.is_file(nm) {
+		nm_state, symbols, _, nm_err := os2.process_exec(
+			os2.Process_Desc{command = []string{nm, obj}},
+			context.allocator,
+		)
+		if testing.expectf(t, nm_err == nil && nm_state.exit_code == 0, "cannot list %s", obj) {
+			text := string(symbols)
+			testing.expectf(
+				t,
+				strings.contains(text, " T loke_rt_v1_program_init"),
+				"a selected object build exported no initializer:\n%s",
+				text,
+			)
+			testing.expectf(t, !strings.contains(text, " T wmain"), "the object defines `wmain`:\n%s", text)
+		}
+	}
+
+	exe := fmt.tprintf("%s/provider-host.exe", TMP)
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, clang, "tests/obj/provider_host.c", obj, "-o", exe, "-Wno-override-module", "-rtlib=compiler-rt")
+	runtime_sources, _ := filepath.glob("runtime/*.c")
+	for source in runtime_sources {
+		append(&command, source)
+	}
+	append(&command, "-I", "runtime")
+	for flag in include_flags {
+		append(&command, flag)
+	}
+	link_state, _, link_stderr, link_err := os2.process_exec(
+		os2.Process_Desc{command = command[:]},
+		context.allocator,
+	)
+	if !testing.expectf(t, link_err == nil, "cannot run %s", clang) {
+		return
+	}
+	if !testing.expectf(t, link_state.exit_code == 0, "the selected host link failed:\n%s", string(link_stderr)) {
+		return
+	}
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(
+		t, run_state.exit_code == 0,
+		"the selected C host reported failure %d (see `hostlib_report`)", run_state.exit_code,
+	)
 }
 
 // clang plus the `-isystem`/`-L` flags its Windows target needs outside a

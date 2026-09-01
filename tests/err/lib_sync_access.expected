@@ -1,0 +1,6 @@
+L0341
+@15:17
+`atomic_store` has no compile-time meaning
+L0336
+@27:2
+`atomic_fence` is not public in package `sync`

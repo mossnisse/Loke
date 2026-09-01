@@ -3671,9 +3671,23 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			root := prov_new_root(graph, .Allocation, v.span, "this allocation")
 			graph.roots[int(root)].symbol = INVALID_SYMBOL
 			return prov_borrow(graph, root, nil, true, v.span, "pointer")
+		case .Unsafe_Free:
+			// The unchecked release: no allocation root to end, and nothing to
+			// invalidate, because the pointer's provenance is exactly what the
+			// caller is promising instead of proving (design.md "What is not
+			// checked"). The operands are still read.
+			for bound in v.bound {
+				walk_flow_expr(graph, bound)
+			}
+			return nil
 		case .Free:
 			if len(v.bound) >= 1 {
 				sources := walk_flow_expr(graph, v.bound[0])
+				// A written allocator is read like any other operand; only the
+				// pointer names what the release ends.
+				for bound in v.bound[1:] {
+					walk_flow_expr(graph, bound)
+				}
 				prov_emit(graph, Prov_Event{kind = .Free, sources = sources, span = v.span})
 			}
 			return nil
@@ -3693,6 +3707,19 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			if len(v.bound) == 2 {
 				prov_invalidate(graph, v.bound[0], v.span, "exchanged")
 				walk_flow_expr(graph, v.bound[1])
+			}
+			return nil
+		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
+		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
+			// An atomic reads and writes *through* its address operand; what it hands
+			// back is the value in that storage, not a borrow of it. Without this, an
+			// `Atomic(^T)` could never load, because the coarse rule would derive the
+			// loaded pointer from the address of the atomic itself and then reject it
+			// for outliving the receiver.
+			for argument in v.bound {
+				if argument != nil {
+					walk_flow_expr(graph, argument)
+				}
 			}
 			return nil
 		case .Unsafe_Forget:
@@ -4288,6 +4315,17 @@ prov_call_result :: proc(
 		}
 		return type_is_carrier(c, result_type) ? out : prov_value_content(graph, out, result_type, v.span)
 	}
+	// design.md "Shared ownership": "`handle.get()` returns a non-owning `^T`
+	// whose root provenance derives from that handle", and "the borrow may not
+	// outlive the handle used to obtain it". The body cannot show that — the
+	// payload address comes out of a `rawptr` control block — so the language
+	// asserts it here instead of inferring it.
+	if len(actuals) > 0 && prov_receiver_is_shared_handle(graph, v) {
+		if type_is_carrier(c, result_type) {
+			return actuals[0]
+		}
+		return prov_value_content(graph, actuals[0], result_type, v.span)
+	}
 	// A result that is not itself a borrow can still hold one, and its summary is
 	// about the same dependency either way (step 6: reading a container value out
 	// yields what that value borrows).
@@ -4331,6 +4369,19 @@ prov_call_result :: proc(
 		}
 	}
 	return type_is_carrier(c, result_type) ? out : prov_value_content(graph, out, result_type, v.span)
+}
+
+
+// Whether this call's receiver is a `shared(T)` or `weak(T)` handle. Only the
+// receiver is asked about: what the language promises is about the handle a
+// borrow was taken from, not about the method that took it.
+@(private = "file")
+prov_receiver_is_shared_handle :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> bool {
+	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
+	if sym == nil || !sym.has_receiver {
+		return false
+	}
+	return type_is_shared_handle(graph.k.c, sym.owner_type)
 }
 
 // Substitute one result path's parameter dependencies. Parameter paths are

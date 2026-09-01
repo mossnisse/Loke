@@ -1,0 +1,162 @@
+package conc;
+
+import "core:sync";
+
+// The concurrency claims of m8-plan step 4, checked under real contention: a C
+// host spawns threads that call `conc_worker`, and `conc_check` asserts the
+// invariants afterwards.
+//
+// Every assertion here is an invariant — a count, a publication, a single run —
+// never an interleaving. Interleavings are not deterministic and asserting one
+// would be asserting the scheduler.
+
+// Contention on a native-width read-modify-write. If any increment were lost,
+// the total would be below `threads*iterations`.
+@(private)
+counter: static sync.Atomic(int) = {};
+
+// The same, at a width that takes the runtime fallback. Both halves advance and
+// the low half carries into the high one, so a torn update shows up in the
+// total rather than being invisible.
+@(private)
+wide: static sync.Atomic(u128) = {};
+
+// Release/acquire publication: the writer stores `payload` and then publishes,
+// and every reader that observes the publication must observe the payload.
+@(private)
+payload: static int = 0;
+
+@(private)
+published: static sync.Atomic(bool) = {};
+
+@(private)
+publication_failures: static sync.Atomic(int) = {};
+
+// `once` under contention: the action runs exactly once across every thread,
+// and `do` returning means it has *completed*.
+@(private)
+gate: static sync.Once = {};
+
+@(private)
+once_runs: static sync.Atomic(int) = {};
+
+@(private)
+once_incomplete: static sync.Atomic(int) = {};
+
+@(private)
+finished: static sync.Atomic(int) = {};
+
+// Shared ownership under contention (m8-plan step 5): every thread clones and
+// drops the same handle thousands of times, and the payload must be dropped
+// exactly once — after the last strong handle, and never before.
+@(private)
+Payload :: struct {
+	id: int,
+}
+
+@(private)
+payload_drops: static sync.Atomic(int) = {};
+
+impl Payload {
+	// The inert zero is not a payload: construction assigns into freshly zeroed
+	// block storage, and that assignment drops the zero it replaces.
+	retire :: hook(drop) proc(self: inout Payload) {
+		if (self.id != 0) { payload_drops.add(1); }
+	}
+}
+
+@(private)
+holder: static shared(Payload) = {};
+
+@(private)
+watcher: static weak(Payload) = {};
+
+@(private)
+shared_failures: static sync.Atomic(int) = {};
+
+@(private)
+STEP :: u128(1) + (u128(1) << 64);
+
+@(private)
+initialize :: proc() {
+	once_runs.add(1);
+	// Published by `once`: every thread that leaves `do` sees this handle, and
+	// nothing writes it again, so the traffic below is clones and drops only.
+	seed := Payload{1};
+	holder = shared(move(seed));
+	watcher = holder.downgrade();
+}
+
+@(export)
+conc_worker :: proc "c" (index: i32, iterations: i32) {
+	// The first thread publishes; every other one reads what it published.
+	if (index == 0) {
+		payload = 42;
+		published.store(true, sync.Memory_Order.Release);
+	}
+
+	foreach (_ in 0 ..< int(iterations)) {
+		counter.add(1);
+		wide.add(STEP);
+
+		gate.do(initialize);
+		// `do` returned, so the action has completed — not merely started.
+		if (!gate.is_done()) { once_incomplete.add(1); }
+
+		if (published.load(sync.Memory_Order.Acquire) && payload != 42) {
+			publication_failures.add(1);
+		}
+
+		// A clone and a drop of the same handle, from every thread at once. The
+		// payload must still be there — a lost increment or an early release
+		// would show up here or in the counts `conc_check` asserts.
+		held := holder;
+		if (held.get()^.id != 1) { shared_failures.add(1); }
+		switch (revived in watcher.upgrade()) {
+		case .some: if (revived.get()^.id != 1) { shared_failures.add(1); }
+		case .none: shared_failures.add(1);
+		}
+		drop(held);
+	}
+	finished.add(1);
+}
+
+// Waits for every worker, then reports. Each failure has its own code, so a
+// broken invariant names itself in the host's exit status.
+@(export)
+conc_check :: proc "c" (threads: i32, iterations: i32) -> i32 {
+	// A bounded wait: a worker that never arrives must fail the test rather than
+	// hang it.
+	spins := 0;
+	for (finished.load() < int(threads)) {
+		spins += 1;
+		if (spins > 2_000_000_000) { return 1; }
+	}
+
+	expected := int(threads)*int(iterations);
+	if (counter.load() != expected) { return 2; }
+	if (wide.load() != STEP*u128(expected)) { return 3; }
+	if (once_runs.load() != 1) { return 4; }
+	if (once_incomplete.load() != 0) { return 5; }
+	if (publication_failures.load() != 0) { return 6; }
+	if (!published.load()) { return 7; }
+
+	// Every clone was matched by a drop, so the one handle `initialize` made is
+	// all that is left, and nothing released the payload early.
+	if (shared_failures.load() != 0) { return 8; }
+	if (holder.strong_count() != 1) { return 9; }
+	if (holder.weak_count() != 1) { return 10; }
+	if (payload_drops.load() != 0) { return 11; }
+
+	// The last strong handle drops the payload exactly once. The weak handle
+	// keeps the control block, so `upgrade` can still answer — and answers no.
+	retired := exchange(inout holder, {});
+	drop(retired);
+	if (payload_drops.load() != 1) { return 12; }
+	if (watcher.strong_count() != 0) { return 13; }
+	switch (revived in watcher.upgrade()) {
+	case .some: return 14;
+	case .none:
+	}
+	return 0;
+}

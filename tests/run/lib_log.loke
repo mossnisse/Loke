@@ -1,0 +1,47 @@
+package main;
+
+import "core:fmt";
+import "core:log";
+
+// `core:log` and the compiled level (m8-plan step 3, design.md "Compiled log
+// level"). Built with `-log-level=warning`, so `debug` and `info` have no body
+// and `warning` and `error` do.
+
+calls: static int = 0;
+
+// A side effect a caller can count, to tell "the body was discarded" from "the
+// argument was not evaluated". Those are different things, and only one of them
+// a callee-side guard can do.
+expensive :: proc() -> int {
+	calls += 1;
+	return calls;
+}
+
+main :: proc() {
+	// Compiled out: the body is discarded, so nothing reaches the provider.
+	log.debug("debug", expensive());
+	log.info("info", expensive());
+	// Compiled in.
+	log.warning("warning", expensive());
+	log.error("error", expensive());
+
+	// Discarding a callee's body does not discard the caller's expressions: all
+	// four arguments were evaluated, including the two whose calls do nothing.
+	fmt.println("evaluations", calls);
+
+	// A caller-side guard is what removes the call *and* its arguments from
+	// checking and emission. This branch is not selected, so `never_declared` is
+	// neither looked up nor emitted — which is the whole point of proving it with
+	// a name that does not exist.
+	when (LOKE_LOG_LEVEL <= log.Level.Debug) {
+		log.debug("unreachable", never_declared());
+	}
+	when (LOKE_LOG_LEVEL <= log.Level.Warning) {
+		log.warning("guarded", expensive());
+	}
+	fmt.println("evaluations", calls);
+
+	// The runtime query agrees with the constant.
+	fmt.println(log.enabled(log.Level.Debug), log.enabled(log.Level.Warning), log.enabled(log.Level.Error));
+	fmt.println(LOKE_LOG_LEVEL);
+}

@@ -317,9 +317,12 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
-	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of, .Unsafe_Forget,
+	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of, .Unsafe_Forget, .Unsafe_Free,
 	     .Clone, .Try_Clone, .Standard_Alias,
-	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any, .Strings_Allocate:
+	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
+	     .Strings_Allocate,
+	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
+	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		v.type = INVALID_TYPE
 
 	case .Unsafe_Raw_Data:

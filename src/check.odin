@@ -452,7 +452,13 @@ field_is_public :: proc(k: ^Checker, attributes: []Attribute) -> bool {
 // where it is written. A parameter that carries no borrow cannot escape, so the
 // attribute on one is a mistake rather than a no-op — the same rule
 // `@(allocator_reset)` has for a non-`Allocator` parameter.
-check_escape_attribute :: proc(k: ^Checker, attributes: []Attribute, type: Type_Id, span: Span) -> Escape_Level {
+check_escape_attribute :: proc(
+	k: ^Checker,
+	attributes: []Attribute,
+	type: Type_Id,
+	span: Span,
+	generic_instance := false,
+) -> Escape_Level {
 	level, written, ok := attribute_escape_level(k.c, attributes)
 	if !written {
 		return .Result
@@ -464,7 +470,13 @@ check_escape_attribute :: proc(k: ^Checker, attributes: []Attribute, type: Type_
 		)
 		return .Result
 	}
-	if type != INVALID_TYPE && !type_is_carrier(k.c, type) && !type_carries_borrow(k.c, type).any {
+	// A generic signature is written once for every binding of its parameters,
+	// and a container storing `T` needs the level exactly when `T` carries a
+	// borrow. `Small_Array(string_view, N)` needs it and `Small_Array(int, N)`
+	// does not, so demanding that the one declaration be right for both would
+	// make such a container unwritable. The level is simply vacuous where the
+	// bound type carries nothing.
+	if !generic_instance && type != INVALID_TYPE && !type_is_carrier(k.c, type) && !type_carries_borrow(k.c, type).any {
 		errorf(
 			k.c, span, "L0648",
 			"`@(escape=...)` describes what a call may keep of a borrow, and `%s` carries none",
@@ -473,6 +485,21 @@ check_escape_attribute :: proc(k: ^Checker, attributes: []Attribute, type: Type_
 		return .Result
 	}
 	return level
+}
+
+// Is this signature one binding of a declaration written for many? A generic
+// procedure, an instance of one, or any member of an `impl` block on a generic
+// record instance.
+@(private = "file")
+in_generic_signature :: proc(k: ^Checker, literal: ^Expr_Proc) -> bool {
+	if literal.generic_instance || k.generic_depth > 0 {
+		return true
+	}
+	if k.impl_type == INVALID_TYPE {
+		return false
+	}
+	info := type_of(k.c, k.impl_type)
+	return info != nil && info.instance_of != INVALID_SYMBOL
 }
 
 has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
@@ -563,6 +590,12 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL {
 		if declaration_generic_kind(d) != .None {
 			generic_template_for(k, d.symbols[0])
+			// design.md excludes a generic method from `dyn` and from nothing else,
+			// so `value.method($T)` has to be reachable by method syntax. A template
+			// has no resolved parameter types, and the ordinary receiver rule
+			// compares one against the subject — so the receiver is read off the
+			// syntax here, and the instantiation checks the type the usual way.
+			mark_template_receiver(k, d)
 			reject_uninstantiated_generic(k, d)
 			return
 		}
@@ -850,6 +883,30 @@ variadic_position_ok :: proc(k: ^Checker, literal: ^Expr_Proc, position, name_in
 	return true
 }
 
+// A generic `impl` member whose first parameter is written `self` is a method,
+// and method-call syntax has to find it before anything can be instantiated.
+// Only the *shape* is recorded; the instantiated signature still checks that
+// `self` has the subject type, so a `self` of some other type is rejected then
+// rather than silently becoming a receiver here.
+@(private = "file")
+mark_template_receiver :: proc(k: ^Checker, d: ^Decl) {
+		if k.impl_type == INVALID_TYPE {
+		return
+	}
+	literal := decl_proc(d)
+	if literal == nil || literal.signature == nil || len(literal.signature.params) == 0 {
+		return
+	}
+	first := literal.signature.params[0]
+	if len(first.names) == 0 || first.names[0].name.text != "self" {
+		return
+	}
+	if sym := symbol_of(k.c, d.symbols[0]); sym != nil {
+		sym.has_receiver = true
+		sym.receiver = first.mode
+	}
+}
+
 resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol_Id) {
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || literal.signature == nil {
@@ -938,7 +995,9 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			// design.md "`@(allocator_reset)`": a successful call can end every
 			// allocation root within that allocator's region, so the attribute only
 			// makes sense on an `Allocator`.
-			escape := check_escape_attribute(k, parameter.attributes, name_type, parameter.span)
+			escape := check_escape_attribute(
+				k, parameter.attributes, name_type, parameter.span, in_generic_signature(k, literal),
+			)
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
 				!(split && name_index == 0)
 			if resets && type_underlying(k.c, name_type) != TYPE_ALLOCATOR {

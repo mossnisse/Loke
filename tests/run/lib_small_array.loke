@@ -1,0 +1,89 @@
+package main;
+
+import "core:fmt";
+import "core:container";
+import "base:interfaces";
+
+// `Small_Array(T, N)` end to end (m8-plan step 1, design.md "Fixed-capacity
+// arrays"). design.md spells the type unqualified; here it is reached through
+// the package that supplies it, and nothing else about its example changes.
+
+Small :: container.Small_Array(int, 8);
+
+// The `try_` half answers `Result(Unit, Capacity_Error)`; these checks want the
+// variant and, when it failed, the numbers the error carries.
+report :: proc(outcome: Result(Unit, container.Capacity_Error)) {
+	switch (failure in outcome) {
+	case .ok:  fmt.println("ok");
+	case .err: fmt.println(failure.requested_of(), failure.capacity_of(), failure);
+	}
+}
+
+main :: proc() {
+	// design.md's own example.
+	x: Small = {};
+	x.append(1, 2, 3);
+	fmt.println(len(x), cap(x)); // 3 8
+
+	fmt.println(x, x.is_empty(), x.is_full(), x.space());
+
+	// Indexing, in both capabilities, and slicing over the live prefix only.
+	fmt.println(x[0], x[2]);
+	x[1] = 9;
+	fmt.println(x[1]);
+	fmt.println(x[0:2]);
+	fmt.println(x.slice());
+
+	// Iteration, forwards and backwards.
+	foreach (value in x) { fmt.println(value); }
+	foreach (value in x.reversed()) { fmt.println(value); }
+
+	// Growth to the limit, then past it.
+	x.append(4, 5, 6, 7, 8);
+	fmt.println(x, len(x), x.is_full());
+	report(x.try_append(9));
+	fmt.println(x, len(x));
+
+	// Nothing is written unless everything fits.
+	y: Small = {};
+	y.append(1, 2, 3, 4, 5, 6);
+	report(y.try_append(7, 8, 9));
+	fmt.println(y, len(y));
+	report(y.try_append(7, 8));
+	fmt.println(y, len(y));
+
+	// Removal, ordered and not, and the last element.
+	z: container.Small_Array(int, 4) = {};
+	z.append(10, 20, 30, 40);
+	fmt.println(z.pop(), z);
+	fmt.println(z.remove(0), z);
+	z.append(50);
+	fmt.println(z.remove_unordered(0), z);
+	fmt.println(z.try_pop(), z);
+	fmt.println(z.try_pop(), z.try_pop());
+
+	// Insertion at each end and in the middle.
+	w: container.Small_Array(int, 4) = {};
+	w.insert(0, 2);
+	w.insert(0, 1);
+	w.insert(2, 4);
+	w.insert(2, 3);
+	fmt.println(w);
+	report(w.try_insert(0, 0));
+
+	w.clear();
+	fmt.println(w, len(w), w.is_empty());
+
+	// A `Small_Array` of something that is not a number, to prove `T` is free.
+	names: container.Small_Array(string_view, 3) = {};
+	names.append("ada", "grace");
+	fmt.println(names, len(names));
+
+	// design.md: it supplies the same associated members a built-in sequence
+	// does, and satisfies all three sequence interfaces.
+	fmt.println(1 if interfaces.Iterable(Small) else 0);
+	fmt.println(1 if interfaces.Reverse_Iterable(Small) else 0);
+	fmt.println(1 if interfaces.Sequence(Small) else 0);
+	fmt.println(1 if interfaces.Mutable_Sequence(Small) else 0);
+	fmt.println(1 if interfaces.Growable_Sequence(Small) else 0);
+}

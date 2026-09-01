@@ -583,6 +583,12 @@ Builtin_Kind :: enum {
 	// it or for anything it owns (design.md "Storage modifiers"). No signature
 	// can express "consume without cleanup", so it is a built-in too.
 	Unsafe_Forget,
+	// `unsafe.free(pointer, allocator)` releases an allocation whose root the
+	// compiler cannot see — one reached through a `rawptr` field, a parameter, or
+	// foreign code. design.md's `free` bullet names this crossing directly:
+	// "releasing an unchecked or foreign allocation crosses the `core:unsafe` or
+	// foreign-allocator boundary."
+	Unsafe_Free,
 	// `type_info_of(id)` takes a runtime `typeid` and returns runtime metadata
 	// (design.md "`type` and `typeid`"). A `typeid` is an ordinary scalar and
 	// can be forged, so the lookup is checked rather than an unchecked index.
@@ -600,6 +606,20 @@ Builtin_Kind :: enum {
 	// (published as `copy`/`try_copy`) and to `core:fmt`, which can't import
 	// `core:strings` for `to_string` without pulling in the whole package.
 	Strings_Allocate,
+	// design.md "Concurrency and the memory model": the compiler atomic
+	// intrinsics `Atomic(T)` wraps. Contributed package-privately to `core:sync`,
+	// which publishes them as ordinary methods and as `fence`. Each requires a
+	// constant ordering, which is what no ordinary signature can ask for.
+	Atomic_Load,
+	Atomic_Store,
+	Atomic_Exchange,
+	Atomic_Compare_Exchange,
+	Atomic_Add,
+	Atomic_Sub,
+	Atomic_And,
+	Atomic_Or,
+	Atomic_Xor,
+	Atomic_Fence,
 }
 
 Symbol :: struct {
@@ -743,6 +763,18 @@ Build_Config_Enum :: enum u8 {
 	Build_Mode,
 	Optimization_Mode,
 	Vendor,
+	Log_Level,
+}
+
+// design.md "Compiled log level". The member names are `core:log`'s own, and
+// `Off` is last so `LOKE_LOG_LEVEL <= .Error` is false when logging is compiled
+// out entirely.
+Log_Level :: enum u8 {
+	Debug,
+	Info,
+	Warning,
+	Error,
+	Off,
 }
 
 Scope_Kind :: enum {
@@ -845,6 +877,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.pending_impl_instances = make([dynamic]Pending_Impl, 0, 4, c.semantic_allocator)
 	c.interfaces = make(map[Symbol_Id]^Interface_Info, c.semantic_allocator)
 	c.map_key_policies = make(map[Type_Id]Key_Policy, c.semantic_allocator)
+	c.order_policies = make(map[Type_Id]Order_Policy, c.semantic_allocator)
 	c.typeid_requested = make(map[Type_Id]bool, c.semantic_allocator)
 	c.typeid_order = make([dynamic]Type_Id, 0, 8, c.semantic_allocator)
 	c.typeid_values = make(map[Type_Id]u64, c.semantic_allocator)

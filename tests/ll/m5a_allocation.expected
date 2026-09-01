@@ -1,12 +1,14 @@
 @loke_rt_v1_default_allocator = external global { i32, i32, ptr, ptr, ptr, i32, i32 }
+declare ptr @loke_rt_v1_selected_allocator()
 declare ptr @loke_rt_v1_alloc(ptr, i64, i64)
 declare ptr @loke_rt_v1_alloc_zeroed(ptr, i64, i64)
 declare void @loke_rt_v1_free(ptr, ptr, i64, i64)
-call ptr @loke_rt_v1_alloc_zeroed(ptr @loke_rt_v1_default_allocator, i64 8, i64 8)
-call ptr @loke_rt_v1_alloc(ptr @loke_rt_v1_default_allocator, i64 8, i64 8)
-call void @loke_rt_v1_free(ptr @loke_rt_v1_default_allocator, ptr
+call ptr @loke_rt_v1_selected_allocator()
+call ptr @loke_rt_v1_alloc_zeroed(ptr %t387, i64 8, i64 8)
+call ptr @loke_rt_v1_alloc(ptr %t422, i64 8, i64 8)
+call void @loke_rt_v1_free(ptr %t417, ptr
 newclone.store.
 newclone.clone.
 newclone.release.
 newclone.publish.
-@loke.i.Res.try_clone(%struct.Res.45 { i64 2 }, ptr @loke_rt_v1_default_allocator)
+@loke.i.Res.try_clone(%struct.Res.49 { i64 2 }, ptr %t455)

@@ -1,0 +1,25 @@
+[0, 1, 3, 3, 5, 6, 7]
+[7, 6, 5, 3, 3, 1, 0]
+[] 0
+[9]
+[4, 4, 4, 4, 4]
+[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+[apple, fig, pear]
+[2.5, 0.5, -1]
+true false
+true false
+(index: int, found: bool){index = 4, found = true}
+(index: int, found: bool){index = 4, found = false}
+(index: int, found: bool){index = 0, found = false}
+(index: int, found: bool){index = 7, found = false}
+true false
+.some(2) .some(3)
+.none
+.some(0) .some(7)
+.none .none
+true false
+[5, 2, 3, 4, 1]
+[1, 4, 3, 2, 5]
+[7, 7, 7, 7, 7]
+[0, 1, 3, 3, 5, 6, 7] 7 true
+[7, 6, 5, 3, 3, 1, 0]

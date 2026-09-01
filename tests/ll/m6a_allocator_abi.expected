@@ -1,4 +1,5 @@
 @loke.p.in_region(ptr %arg0) {
-call ptr @loke_rt_v1_alloc_zeroed(ptr %t314, i64 32, i64 16)
-call void @loke_rt_v1_free(ptr @loke_rt_v1_default_allocator, ptr
-@loke.p.in_region(ptr @loke_rt_v1_default_allocator)
+call ptr @loke_rt_v1_alloc_zeroed(ptr %t373, i64 32, i64 16)
+call void @loke_rt_v1_free(ptr %t400, ptr
+call ptr @loke_rt_v1_selected_allocator()
+@loke.p.in_region(ptr %t403)

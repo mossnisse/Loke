@@ -663,9 +663,18 @@ emit_discarded_temporary :: proc(e: ^Emitter, expr: Expr, value: string) {
 //
 // `allocator` is the destination's selected provider: its written `via`, or the
 // default when the declaration has no policy.
+// An empty `allocator` means the build-selected default, which is a call
+// rather than a symbol and so cannot be a parameter default.
 @(private)
-emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator := RT_DEFAULT_ALLOCATOR) -> string {
+emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator := "") -> string {
 	entry := emit_lifecycle(e, type)
+	// Resolved once here rather than per branch: every path below that allocates
+	// needs it, and the paths that do not are `return`s above the first use.
+	provider := allocator
+	if provider == "" && (entry.container || entry.clone != INVALID_SYMBOL ||
+	   underlying_kind(e.c, type) == .Array) {
+		provider = emit_default_allocator(e)
+	}
 	// design.md "Dynamic arrays"/"Maps": a container's copy is a deep clone, so
 	// an implicit copy duplicates the storage through the C helper and applies
 	// the allocator's failure policy — there is nowhere here to return an error.
@@ -673,11 +682,11 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		source := alloca(e, CONTAINER_TYPE)
 		destination := alloca(e, CONTAINER_TYPE)
 		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", CONTAINER_TYPE, value, source)
-		ok := emit_try_clone_into(e, type, destination, source, allocator)
+		ok := emit_try_clone_into(e, type, destination, source, provider)
 		fail_label, done_label := new_label(e, "cclone.fail"), new_label(e, "cclone.done")
 		branch_if(e, ok, done_label, fail_label)
 		place_label(e, fail_label)
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", allocator)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
 		branch(e, done_label)
 		place_label(e, done_label)
 		e.terminated = false
@@ -697,7 +706,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	// In particular, an empty array copies successfully without visiting an
 	// element, regardless of the element type's lifecycle.
 	if info := underlying_info(e.c, type); info != nil && info.kind == .Array {
-		return emit_clone_with_policy(e, type, value, allocator)
+		return emit_clone_with_policy(e, type, value, provider)
 	}
 	hook := entry.clone
 	if hook == INVALID_SYMBOL {
@@ -707,7 +716,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, allocator,
+		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, provider,
 	)
 	return out
 }

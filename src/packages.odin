@@ -29,6 +29,10 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		return INVALID_PACKAGE, false
 	}
 	c.root_package = root
+	// design.md "Build-selected providers": a selected provider's package is a
+	// build dependency even where no source imports it, so it is loaded here and
+	// then travels the ordinary discovery, ordering, and checking path.
+	load_provider_packages(c)
 
 	k := Checker{c = c}
 	for {
@@ -71,6 +75,9 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	// provenance": both analyses run once the whole program is checked, over
 	// disposable read-only rebuilds of the same control-flow view.
 	analyze_program_provenance(&k)
+	// The factories are resolved once the whole program is checked, so a factory
+	// declared inside a selected `when` branch has a resolved signature to check.
+	resolve_provider_factories(&k)
 	return root, c.error_count == 0
 }
 
@@ -141,7 +148,6 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	return id, true
 }
 
-@(private = "file")
 load_package_dir :: proc(c: ^Compiler, dir: string, key: string, at: Span) -> (Package_Id, bool) {
 	canonical := canonical_dir(dir)
 	if existing, found := c.package_by_dir[dir_key(canonical)]; found {
@@ -300,7 +306,6 @@ path_tail :: proc(path: string) -> string {
 // An unprefixed path is relative to the importing file; `name:path` resolves
 // under `-collection name=path`. The returned key is the logical identity used
 // for mangling, never the host absolute path.
-@(private = "file")
 resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: string, key: string, ok: bool) {
 	if colon := strings.index_byte(path, ':'); colon > 0 {
 		name := path[:colon]

@@ -1,0 +1,51 @@
+@(public)
+package provider;
+
+import "core:log";
+import "core:mem";
+
+// The factories the object build selects, plus the process-lifetime state they
+// retain (design.md "Build-selected providers").
+
+@(private)
+storage: static [8192]u8 = {};
+
+@(private)
+region: static mem.Arena = {};
+
+@(private)
+allocators: static int = 0;
+
+@(private)
+loggers: static int = 0;
+
+@(private)
+written: static int = 0;
+
+@(private)
+fallback: static Allocator = nil;
+
+allocator_factory :: proc() -> Allocator {
+	allocators += 1;
+	// Nothing is published yet, so this is the runtime's own fallback — kept so
+	// the host can check that publication actually replaced it.
+	fallback = mem.default_allocator();
+	region = mem.Arena.from_buffer(storage[:]);
+	return region.allocator();
+}
+
+logger_factory :: proc() -> log.Logger {
+	loggers += 1;
+	return log.Logger{write, nil};
+}
+
+@(private)
+write :: proc(handle: rawptr, level: log.Level, message: string_view) {
+	written += 1;
+}
+
+allocator_calls :: proc() -> int { return allocators; }
+logger_calls :: proc() -> int { return loggers; }
+records :: proc() -> int { return written; }
+selected_allocator :: proc() -> Allocator { return region.allocator(); }
+fallback_allocator :: proc() -> Allocator { return fallback; }

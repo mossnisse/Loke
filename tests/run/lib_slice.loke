@@ -1,0 +1,72 @@
+package main; import "core:fmt"; import "core:slice";
+
+// `core:slice` end to end (m8-plan step 1).
+//
+// The first two blocks are design.md's "Sorting slices" examples verbatim.
+
+main :: proc() {
+	s := []mut int{1, 6, 3, 5 ,7, 3, 0};
+	slice.sort(s);
+	fmt.println(s);
+
+	r := []mut int{1, 6, 3, 5 ,7, 3, 0};
+	slice.reverse_sort(r);
+	fmt.println(r);
+
+	// The shapes a sort has to get right whatever the algorithm behind it.
+	empty := []mut int{};
+	slice.sort(empty);
+	fmt.println(empty, len(empty));
+
+	one := []mut int{9};
+	slice.sort(one);
+	fmt.println(one);
+
+	equal := []mut int{4, 4, 4, 4, 4};
+	slice.sort(equal);
+	fmt.println(equal);
+
+	reversed := []mut int{9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+	slice.sort(reversed);
+	fmt.println(reversed);
+
+	// Sorting is not restricted to integers: `Ordered` is the whole requirement.
+	words := []mut string_view{"pear", "apple", "fig"};
+	slice.sort(words);
+	fmt.println(words);
+
+	floats := []mut f64{2.5, -1.0, 0.5};
+	slice.reverse_sort(floats);
+	fmt.println(floats);
+
+	fmt.println(slice.is_sorted(s), slice.is_sorted(r));
+	fmt.println(slice.is_reverse_sorted(r), slice.is_reverse_sorted(s));
+
+	// A search over the sorted copy: the index, and whether it is really there.
+	fmt.println(slice.binary_search(s, 5));
+	fmt.println(slice.binary_search(s, 4));
+	fmt.println(slice.binary_search(s, -1));
+	fmt.println(slice.binary_search(s, 100));
+
+	fmt.println(slice.contains(s, 7), slice.contains(s, 8));
+	fmt.println(slice.index_of(s, 3), slice.last_index_of(s, 3));
+	fmt.println(slice.index_of(s, 8));
+	fmt.println(slice.min(s), slice.max(s));
+	fmt.println(slice.min(empty), slice.max(empty));
+	fmt.println(slice.equal(s, s), slice.equal(s, r));
+
+	// Places.
+	scratch := []mut int{1, 2, 3, 4, 5};
+	slice.swap(scratch, 0, 4);
+	fmt.println(scratch);
+	slice.reverse(scratch);
+	fmt.println(scratch);
+	slice.fill(scratch, 7);
+	fmt.println(scratch);
+
+	// An owned copy outlives the view it came from, which is the whole point.
+	owned := slice.clone(s);
+	fmt.println(owned, len(owned), cap(owned) >= len(owned));
+	slice.reverse(owned[:]);
+	fmt.println(owned);
+}

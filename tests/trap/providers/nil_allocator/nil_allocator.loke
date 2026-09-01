@@ -1,0 +1,9 @@
+@(public)
+package nil_allocator;
+
+// design.md "Provider initialization": a null allocator handle terminates the
+// program before application code runs.
+
+factory :: proc() -> Allocator {
+	return nil;
+}

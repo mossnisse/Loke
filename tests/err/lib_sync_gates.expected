@@ -1,0 +1,20 @@
+L0614
+@53:11
+cannot take the address of `count`: it is reached through a packed struct
+L0392
+@59:2
+a `$` parameter needs a compile-time constant argument
+L0662
+`Point` is not an atomic type
+L0662
+`f64` is not an atomic type
+L0664
+this operation does not permit the ordering `Release`
+L0664
+this operation does not permit the ordering `Acquire`
+L0664
+the failure path of a compare-exchange does not permit the ordering `Release`
+L0663
+is arithmetic, which `Colour` does not have
+L0665
+a relaxed fence orders nothing

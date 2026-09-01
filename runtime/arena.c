@@ -250,7 +250,7 @@ loke_rt_arena_v1 *loke_rt_v1_arena_open(const loke_rt_allocator_v1 *parent) {
 	void *storage;
 	loke_rt_arena_v1 *arena;
 	if (parent == 0) {
-		parent = &loke_rt_v1_default_allocator;
+		parent = loke_rt_v1_selected_allocator();
 	}
 	storage = loke_rt_v1_alloc(parent, ARENA_DEFAULT_BLOCK, ARENA_CONTROL_ALIGN);
 	if (storage == 0) {

@@ -45,6 +45,14 @@ options:
                   (default: none)
     -build-mode=exe|obj
                   build an executable, or a relocatable object (default: exe)
+    -provider allocator=<package>:<name>
+    -provider logger=<package>:<name>
+                  select a build provider: a public proc() -> Allocator or
+                  proc() -> Logger. Its package becomes a build dependency even
+                  if no source imports it; each slot may be selected once
+    -log-level=debug|info|warning|error|off
+                  the compiled LOKE_LOG_LEVEL; core:log suppresses every call
+                  below it (default: debug)
 `
 
 Options :: struct {
@@ -70,6 +78,11 @@ Options :: struct {
 	// (m7-plan step 1).
 	opt_mode:   Opt_Mode,
 	build_mode: Build_Mode,
+	// `-provider <slot>=<package>:<name>`, in the order written, so a second
+	// selection for one slot can name both.
+	providers:  [dynamic]string,
+	// `-log-level=<level>`, the compiled `LOKE_LOG_LEVEL` (m8-plan step 3).
+	log_level:  Log_Level,
 }
 
 // design.md "Panic strategy": `unwind` is the default on hosted targets, and
@@ -93,6 +106,7 @@ run :: proc() -> int {
 	c.copy_cost_threshold, c.copy_cost_enabled = opts.copy_cost, opts.copy_cost_enabled
 	c.panic_unwind = opts.panic_unwind
 	c.opt_mode, c.build_mode = opts.opt_mode, opts.build_mode
+	c.log_level = opts.log_level
 	// Configuration is project-wide and immutable, and must be in place before
 	// the first condition is evaluated.
 	if !seed_defines(&c, opts.defines[:]) {
@@ -102,6 +116,14 @@ run :: proc() -> int {
 	if !register_collections(&c, opts.collections[:]) {
 		report(&c)
 		return 1
+	}
+	// design.md "Build-selected providers": selection happens on the command line
+	// and nowhere else, and it is settled before any source is read.
+	for entry in opts.providers {
+		if !select_provider(&c, entry) {
+			report(&c)
+			return 1
+		}
 	}
 
 	// The parse-only modes stop before discovery, so they still describe exactly
@@ -220,6 +242,26 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 			case "aggressive": opts.opt_mode = .Aggressive
 			case:
 				fmt.eprintln("error: -opt needs `none`, `minimal`, `size`, `speed`, or `aggressive`")
+				return opts, false
+			}
+		case arg == "-provider":
+			i += 1
+			if i >= len(args) {
+				fmt.eprintln("error: -provider needs <slot>=<package>:<name>")
+				return opts, false
+			}
+			append(&opts.providers, args[i])
+		case strings.has_prefix(arg, "-provider:"):
+			append(&opts.providers, arg[len("-provider:"):])
+		case strings.has_prefix(arg, "-log-level="):
+			switch arg[len("-log-level="):] {
+			case "debug":   opts.log_level = .Debug
+			case "info":    opts.log_level = .Info
+			case "warning": opts.log_level = .Warning
+			case "error":   opts.log_level = .Error
+			case "off":     opts.log_level = .Off
+			case:
+				fmt.eprintln("error: -log-level needs `debug`, `info`, `warning`, `error`, or `off`")
 				return opts, false
 			}
 		case strings.has_prefix(arg, "-build-mode="):

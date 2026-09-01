@@ -1,0 +1,10 @@
+package main;
+
+import "core:log";
+
+// design.md "Build-selected providers": a slot may be selected at most once,
+// and the second selection is one diagnostic naming both.
+
+main :: proc() {
+	log.error("unreached");
+}

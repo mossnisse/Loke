@@ -33,6 +33,7 @@ emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_remove(ptr, ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_clear(ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_shrink(ptr, ptr, i64)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_sort(ptr, i64, i64, ptr, i32)")
 }
 
 // The operation table for one concrete container type, made once and reused.
@@ -74,6 +75,100 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 	)
 	append(&e.globals, strings.to_string(b))
 	return name
+}
+
+// `xs.sort()` and `s.sort()`: the data pointer, the element count, the element
+// size, one generated comparison, and whether the order is reversed. Everything
+// above that is `runtime/container.c`'s introsort.
+@(private = "file")
+emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	receiver := symbol.params[0]
+	element := container_element(e.c, receiver)
+	through_header := element != INVALID_TYPE
+	if !through_header {
+		element = slice_element(e.c, receiver)
+	}
+
+	argument := through_header ? "ptr" : llvm_type(e, receiver)
+	// `{` is a directive to core:fmt, so the brace is printed separately.
+	fmt.sbprintf(&e.b, "define void %s(%s %%arg0)", name, argument)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+	e.terminated = false
+
+	// Every contributed member is emitted whether or not the program calls it,
+	// and only a call resolves an element's `<`. So no settled comparison here
+	// means this sort has no call site anywhere — a called one would have been
+	// resolved by the checker's gate, or would have stopped the compile before
+	// emission — and the body it needs is the empty one.
+	#partial switch resolved_element_order_policy(e.c, element).kind {
+	case .Builtin, .Inherent:
+	case:
+		fmt.sbprintln(&e.b, "  ret void")
+		fmt.sbprintln(&e.b, "}")
+		return
+	}
+
+	data, count := "", ""
+	if through_header {
+		// A mutating receiver arrives as the header's address, so both words are
+		// loads rather than extracts.
+		storage, length := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
+			storage, CONTAINER_TYPE, CONTAINER_STORAGE,
+		)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
+			length, CONTAINER_TYPE, CONTAINER_LEN,
+		)
+		data, count = temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, storage)
+		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", count, length)
+	} else {
+		data, count = temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", data, argument, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", count, argument, SLICE_LEN)
+	}
+
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_sort(ptr %s, i64 %s, i64 %d, ptr %s, i32 %d)",
+		data, count, type_size(e.c, element), container_less_thunk(e, element),
+		symbol.container_op == .Reverse_Sort ? 1 : 0,
+	)
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+}
+
+// One comparison per element type, memoised exactly as the clone and drop
+// thunks are. The policy behind it was settled during checking, so this never
+// re-decides which `<` a type sorts by.
+@(private = "file")
+container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
+	return container_thunk(
+		e, fmt.aprintf("@loke.cless.%d", int(element)), element,
+		"i32", "ptr %a, ptr %b",
+		proc(e: ^Emitter, element: Type_Id) {
+			llvm := llvm_type(e, element)
+			left := load(e, llvm, "%a")
+			right := load(e, llvm, "%b")
+			before := ""
+			if policy := resolved_element_order_policy(e.c, element); policy.kind == .Inherent {
+				before = temp(e)
+				fmt.sbprintfln(
+					&e.b, "  %s = call i1 %s(%s %s, %s %s)",
+					before, e.names[policy.less], llvm, left, llvm, right,
+				)
+			} else {
+				before = emit_compare(e, .Lt, element, left, right)
+			}
+			out := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, before)
+			fmt.sbprintfln(&e.b, "  ret i32 %s", out)
+		},
+	)
 }
 
 // Every part thunk is the same frame — a private definition with one entry
@@ -230,7 +325,7 @@ emit_eager_via_binding :: proc(e: ^Emitter, symbol_id: Symbol_Id, address: strin
 @(private)
 emit_destination_allocator :: proc(e: ^Emitter, symbol_id: Symbol_Id) -> string {
 	written := symbol_via_allocator(e.c, symbol_id)
-	return written == nil ? RT_DEFAULT_ALLOCATOR : emit_expr(e, written)
+	return written == nil ? emit_default_allocator(e) : emit_expr(e, written)
 }
 
 // The allocator a call selected: the one it was given, or the default provider
@@ -241,7 +336,7 @@ emit_allocator_operand :: proc(e: ^Emitter, v: ^Expr_Call, index: int) -> string
 	if len(v.bound) > index {
 		return emit_expr(e, v.bound[index])
 	}
-	return RT_DEFAULT_ALLOCATOR
+	return emit_default_allocator(e)
 }
 
 // `free_all` frees every allocation in the allocator's region, and not every
@@ -486,6 +581,14 @@ emit_provider_open_check :: proc(e: ^Emitter, control, allocator: string) {
 // failure" requires of an implicit allocation.
 @(private)
 emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	// A sort is the one contributed operation that also serves a `[]mut T`, so it
+	// reads its data and count from whichever of the two receivers it has rather
+	// than from the operation table, which a slice has none of.
+	#partial switch symbol.container_op {
+	case .Sort, .Reverse_Sort:
+		emit_synth_sort(e, symbol, name)
+		return
+	}
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	container := symbol.params[0]
@@ -646,11 +749,12 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// publish a new key whose value could not be constructed.
 		allocator_slot := gep_field(e, CONTAINER_TYPE, "%arg0", CONTAINER_ALLOC)
 		bound_allocator := load(e, "ptr", allocator_slot)
+		fallback := emit_default_allocator(e)
 		unbound, allocator := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", unbound, bound_allocator)
 		fmt.sbprintfln(
 			&e.b, "  %s = select i1 %s, ptr %s, ptr %s",
-			allocator, unbound, RT_DEFAULT_ALLOCATOR, bound_allocator,
+			allocator, unbound, fallback, bound_allocator,
 		)
 		staged := alloca(e, element_llvm)
 		cloned := "true"
@@ -731,7 +835,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call i32 @loke_rt_v1_map_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
 		)
 
-	case .None:
+	case .None, .Sort, .Reverse_Sort:
+		// `.Sort`/`.Reverse_Sort` returned above; reaching here is a dispatch bug.
 		backend_fail(e, "a contributed container member has no operation")
 		fmt.sbprintln(&e.b, "  ret void")
 		fmt.sbprintln(&e.b, "}")

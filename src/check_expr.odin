@@ -491,6 +491,15 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.is_const = true
 		v.const_value = sym.const_value
 		v.immutable = .Constant
+		// design.md "Type alias": `Alias :: Box` gives another name to the type,
+		// and a constant whose value *is* a type is that alias. It has to behave
+		// as the type everywhere the type does — conversion, associated members,
+		// enum members — not only where `resolve_type_syntax` reaches it.
+		if sym.const_value.kind == .Type {
+			v.resolution = Resolution{kind = .Type, symbol = symbol_id}
+			v.denoted_type = sym.const_value.type_value
+			v.value_category = .Type
+		}
 
 	case .Var, .Parameter:
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
@@ -1133,7 +1142,7 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: b
 		return true
 	}
 
-	args, ok := index_arguments(k, v.operand, v.indices)
+	args, ok := index_arguments(k, v.operand, v.indices, candidates)
 	if !ok {
 		v.type = INVALID_TYPE
 		return true
@@ -1369,19 +1378,48 @@ select_by_place :: proc(k: ^Checker, all: []Symbol_Id, place: bool) -> []Symbol_
 
 // The receiver and every index, each checked exactly once.
 @(private = "file")
-index_arguments :: proc(k: ^Checker, receiver: Expr, indices: []Expr) -> ([]Arg_Info, bool) {
+index_arguments :: proc(
+	k: ^Checker,
+	receiver: Expr,
+	indices: []Expr,
+	candidates: []Symbol_Id = nil,
+) -> ([]Arg_Info, bool) {
 	args := make([]Arg_Info, len(indices) + 1, k.c.semantic_allocator)
 	args[0] = arg_from_expr(k, receiver)
 	args[0].is_receiver = true
 	ok := true
 	for index, position in indices {
-		if check_single_expr(k, index) == INVALID_TYPE {
+		expected := agreed_index_param(k, candidates, position, len(indices))
+		if check_single_expr(k, index, expected) == INVALID_TYPE {
 			ok = false
 			continue
 		}
 		args[position + 1] = arg_from_expr(k, index)
 	}
 	return args, ok
+}
+
+// An implicit selector — `counts[.North]` — needs its enum type from context,
+// and a user `operator([])` receiver cannot supply one the way a `map[E]V` key
+// does, because the index type is not known until an overload is chosen. Where
+// every applicable overload declares one and the same type for this index, that
+// type is settled before ranking and serves as the expectation; where they
+// disagree there is nothing to expect and the ordinary diagnostic stands.
+@(private = "file")
+agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, arity: int) -> Type_Id {
+	agreed := INVALID_TYPE
+	for id in candidates {
+		sym := symbol_of(k.c, id)
+		if sym == nil || len(sym.params) != arity + 1 {
+			continue
+		}
+		if agreed == INVALID_TYPE {
+			agreed = sym.params[position + 1]
+		} else if agreed != sym.params[position + 1] {
+			return INVALID_TYPE
+		}
+	}
+	return agreed
 }
 
 // ------------------------------------------------------------------ unary --
@@ -2071,6 +2109,16 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		check_interface_application(k, v, info)
 		return
 	}
+	// design.md "Shared ownership": one name means two things. `shared(Node)` is
+	// the type and `shared(node)` takes ownership of a value, and nothing but the
+	// operand tells them apart — so the call settles it, and everything that is
+	// not a type goes to the constructor group.
+	if k.c.shared_symbol != INVALID_SYMBOL &&
+	   named_callee_symbol(k, v.callee) == k.c.shared_symbol &&
+	   !callee_argument_denotes_type(k, v) {
+		check_group_call(k, v, k.c.shared_construct_symbol, expected)
+		return
+	}
 	// A generic record application denotes a type wherever it appears, which is
 	// what makes `Iterator :: Stack_Iterator(T, N);` an associated type.
 	if generic_template_of_callee(k, v.callee, .Record) != nil {
@@ -2474,6 +2522,8 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 			)
 		}
 	}
+	// A sort needs its element's `<` settled before the backend asks for it.
+	require_sort_order_policy(k, chosen, v.span)
 	fold_standard_customization_call(k, v, chosen)
 }
 
@@ -2492,6 +2542,17 @@ reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -
 	}
 	errorf(k.c, span, "L0412", "`%s` implements `hook(%s)` and is not directly accessible; use %s", identifier_text(k.c, sym.name), hook_name(sym.hook), operation)
 	return true
+}
+
+// Whether a one-argument application is naming a type rather than passing a
+// value. `resolve_type_syntax` is a probe: it stays silent on anything that is
+// not a type, which is what lets this ask without reporting.
+@(private = "file")
+callee_argument_denotes_type :: proc(k: ^Checker, v: ^Expr_Call) -> bool {
+	if len(v.args) != 1 || v.args[0].name.text != "" || v.args[0].mode != .Value {
+		return false
+	}
+	return resolve_type_syntax(k, v.args[0].value) != INVALID_TYPE
 }
 
 // A call through a group: check every argument once, rank the members, then bind
@@ -2543,6 +2604,10 @@ fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Sy
 // backend included — sees an ordinary call to one procedure.
 annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	sym := symbol_of(k.c, chosen)
+	// A sort needs its element's `<` settled before the backend asks for it, and
+	// this is where every call form — method, free alias, group — has arrived at
+	// one declaration.
+	require_sort_order_policy(k, sym, v.span)
 	if base := expr_base(v.callee); base != nil && sym != nil {
 		base.resolution = Resolution{kind = .Value, symbol = chosen}
 		base.value_category = .Value
@@ -2600,7 +2665,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Make:
 		check_make_builtin(k, v, ident)
 		return
-	case .New, .New_Clone, .Free, .Free_All:
+	case .New, .New_Clone, .Free, .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
 		return
 	case .Drop:
@@ -2620,6 +2685,10 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 		return
 	case .Strings_Allocate:
 		check_strings_allocate(k, v, ident)
+		return
+	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
+	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
+		check_atomic_builtin(k, v, ident, sym.builtin)
 		return
 	case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
 		check_fmt_builtin(k, v, ident, sym.builtin)
@@ -3008,11 +3077,13 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
 	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .Cap, .New, .New_Clone, .Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
+	     .Cap, .New, .New_Clone, .Free, .Unsafe_Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter, .Standard_Alias,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Clone, .Try_Clone:
+	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Clone, .Try_Clone,
+	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
+	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return
 	}
 	v.is_const = true
@@ -3051,6 +3122,7 @@ layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id
 //   new(T, allocator)  -> (^T, Allocator_Error)
 //   new_clone(value)   -> (^T, Allocator_Error)
 //   free(pointer)
+//   free(pointer, allocator)
 //   free_all(allocator)
 //
 // An omitted allocator argument is the default provider: the same symbol
@@ -3058,7 +3130,7 @@ layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id
 @(private = "file")
 check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	arity_low, arity_high := 1, 2
-	if kind == .Free || kind == .Free_All {
+	if kind == .Free_All {
 		arity_high = 1
 	}
 	if len(v.args) < arity_low || len(v.args) > arity_high {
@@ -3141,7 +3213,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			)
 		}
 
-	case .Free:
+	case .Free, .Unsafe_Free:
 		pointer := check_single_expr(k, v.args[0].value)
 		if pointer == INVALID_TYPE {
 			v.type = INVALID_TYPE
@@ -3176,7 +3248,9 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
 	     .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .Clone, .Try_Clone, .Standard_Alias:
+	     .Strings_Allocate, .Clone, .Try_Clone, .Standard_Alias,
+	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
+	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return
 	}
 
@@ -3831,6 +3905,22 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	case .Map:
 		check_map_literal(k, v, target, info)
 	case:
+		// design.md "Zero values": the zero value is *written* `{}`, for every type
+		// that has one — not only for an aggregate. `{}` at a scalar is therefore
+		// that zero, and it is the only spelling generic code has for `T`'s zero
+		// when `T` may be bound to a non-aggregate. Anything with elements in it
+		// is still a composite, and still wrong here.
+		if len(v.elements) == 0 {
+			if !require_type_has_zero(k, target, v.span, "`{}`") {
+				v.type = INVALID_TYPE
+				return
+			}
+			if zero, ok := zero_const(k.c, target); ok {
+				v.is_const = true
+				v.const_value = zero
+				return
+			}
+		}
 		errorf(k.c, v.span, "L0376", "`%s` cannot be built from a composite literal", type_name(k.c, target))
 		v.type = INVALID_TYPE
 	}
@@ -4383,6 +4473,13 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			return nil_const(), true
 		}
 	case .Struct, .Array:
+		// design.md "Shared ownership": "Its zero value is `nil`". A handle is one
+		// pointer, so its zero representation *is* the null one; writing it `nil`
+		// is what makes `handle == nil` and `h: shared(T) = nil` mean the obvious
+		// thing on a library record.
+		if value.kind == .Nil && type_is_shared_handle(c, target) {
+			return zero_const(c, target)
+		}
 		if value.kind == .Aggregate && value.aggregate != nil && value.aggregate.type == target {
 			return value, true
 		}
@@ -4413,7 +4510,10 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 			// slice's (design.md "Nil slices"). A nil `Allocator_Error` is success.
 			return true
 		}
-		return false
+		// design.md "Shared ownership": "Its zero value is `nil`" — the one
+		// record type whose zero has that spelling, because it is one pointer and
+		// the language, not the library, says so.
+		return type_is_shared_handle(c, to)
 	}
 	// A mutable carrier implicitly weakens to a read-only one; a read-only
 	// carrier never converts to a mutable one (design.md).

@@ -67,6 +67,21 @@ Type_Info :: struct {
 	members: []Member_Info,
 }
 
+// design.md "Concurrency and the memory model": the ordering an atomic
+// operation asks for. Ordinary source — the compiler needs only the members'
+// values, so there is nothing here for it to own.
+//
+// Declaration order is the strength order, which is what lets a diagnostic name
+// "at least acquire" without a second table.
+@(public)
+Memory_Order :: enum u8 {
+	Relaxed,
+	Acquire,
+	Release,
+	Acquire_Release,
+	Sequentially_Consistent,
+}
+
 // design.md: `source_location` and `caller_location` produce one of these.
 // Line and column are one-based, and both views point at static storage.
 @(public)

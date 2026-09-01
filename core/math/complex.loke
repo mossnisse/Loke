@@ -1,0 +1,159 @@
+// `Complex(T)` and `Quaternion(T)` (design.md "Library numeric types").
+//
+// Deliberately not primitive: these are ordinary structs with ordinary methods,
+// operators, conversion hooks, and formatting, and they get no special
+// relationship with the compiler. design.md's own `Complex_F64` is the `T = f64`
+// case of what is written here.
+//
+// A scalar *constant* converts implicitly through `hook(convert)`; a scalar
+// variable needs the explicit `Complex(f64)(x)`. That is the ordinary
+// conversion rule, not a numeric special case.
+@(public)
+package math;
+
+import "core:fmt";
+import "base:interfaces";
+
+Complex :: struct($T: type) where interfaces.Numeric(T) {
+	real:      T,
+	imaginary: T,
+}
+
+impl Complex($T) {
+	from_components :: proc(real: T, imaginary: T) -> Complex(T) {
+		return {real, imaginary};
+	}
+
+	@(implicit)
+	from_scalar :: hook(convert) proc(value: T) -> Complex(T) {
+		return {value, T(0)};
+	}
+
+	add :: operator(+) proc(left, right: Complex(T)) -> Complex(T) {
+		return {left.real + right.real, left.imaginary + right.imaginary};
+	}
+
+	subtract :: operator(-) proc(left, right: Complex(T)) -> Complex(T) {
+		return {left.real - right.real, left.imaginary - right.imaginary};
+	}
+
+	negate :: operator(-) proc(self: Complex(T)) -> Complex(T) {
+		return {T(0) - self.real, T(0) - self.imaginary};
+	}
+
+	multiply :: operator(*) proc(left, right: Complex(T)) -> Complex(T) {
+		return {
+			left.real*right.real - left.imaginary*right.imaginary,
+			left.real*right.imaginary + left.imaginary*right.real,
+		};
+	}
+
+	// The textbook form. It overflows for operands whose squares do not fit,
+	// which is the price of not having a scaled `hypot` in `core:math` yet.
+	divide :: operator(/) proc(left, right: Complex(T)) -> Complex(T) {
+		denominator := right.real*right.real + right.imaginary*right.imaginary;
+		return {
+			(left.real*right.real + left.imaginary*right.imaginary)/denominator,
+			(left.imaginary*right.real - left.real*right.imaginary)/denominator,
+		};
+	}
+
+	equal :: operator(==) proc(left, right: Complex(T)) -> bool {
+		return left.real == right.real && left.imaginary == right.imaginary;
+	}
+
+	conjugate :: proc(self) -> Complex(T) {
+		return {self.real, T(0) - self.imaginary};
+	}
+
+	// The squared magnitude. There is no `abs`, because it needs a square root
+	// and `core:math` has no elementary functions yet; a caller with one takes
+	// the root of this.
+	norm_squared :: proc(self) -> T {
+		return self.real*self.real + self.imaginary*self.imaginary;
+	}
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.real);
+		fmt.format_to(writer, "+");
+		fmt.format_to(writer, self.imaginary);
+		fmt.format_to(writer, "i");
+	}
+}
+
+// The Hamilton quaternions: one real part and three imaginary units with
+// `i*j == k` and `j*i == -k`, so multiplication does not commute.
+Quaternion :: struct($T: type) where interfaces.Numeric(T) {
+	real: T,
+	i:    T,
+	j:    T,
+	k:    T,
+}
+
+impl Quaternion($T) {
+	from_components :: proc(real: T, i: T, j: T, k: T) -> Quaternion(T) {
+		return {real, i, j, k};
+	}
+
+	@(implicit)
+	from_scalar :: hook(convert) proc(value: T) -> Quaternion(T) {
+		return {value, T(0), T(0), T(0)};
+	}
+
+	add :: operator(+) proc(left, right: Quaternion(T)) -> Quaternion(T) {
+		return {
+			left.real + right.real,
+			left.i + right.i,
+			left.j + right.j,
+			left.k + right.k,
+		};
+	}
+
+	subtract :: operator(-) proc(left, right: Quaternion(T)) -> Quaternion(T) {
+		return {
+			left.real - right.real,
+			left.i - right.i,
+			left.j - right.j,
+			left.k - right.k,
+		};
+	}
+
+	negate :: operator(-) proc(self: Quaternion(T)) -> Quaternion(T) {
+		return {T(0) - self.real, T(0) - self.i, T(0) - self.j, T(0) - self.k};
+	}
+
+	multiply :: operator(*) proc(left, right: Quaternion(T)) -> Quaternion(T) {
+		return {
+			left.real*right.real - left.i*right.i - left.j*right.j - left.k*right.k,
+			left.real*right.i + left.i*right.real + left.j*right.k - left.k*right.j,
+			left.real*right.j - left.i*right.k + left.j*right.real + left.k*right.i,
+			left.real*right.k + left.i*right.j - left.j*right.i + left.k*right.real,
+		};
+	}
+
+	equal :: operator(==) proc(left, right: Quaternion(T)) -> bool {
+		return left.real == right.real
+			&& left.i == right.i
+			&& left.j == right.j
+			&& left.k == right.k;
+	}
+
+	conjugate :: proc(self) -> Quaternion(T) {
+		return {self.real, T(0) - self.i, T(0) - self.j, T(0) - self.k};
+	}
+
+	norm_squared :: proc(self) -> T {
+		return self.real*self.real + self.i*self.i + self.j*self.j + self.k*self.k;
+	}
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.real);
+		fmt.format_to(writer, "+");
+		fmt.format_to(writer, self.i);
+		fmt.format_to(writer, "i+");
+		fmt.format_to(writer, self.j);
+		fmt.format_to(writer, "j+");
+		fmt.format_to(writer, self.k);
+		fmt.format_to(writer, "k");
+	}
+}

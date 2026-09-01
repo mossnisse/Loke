@@ -1,0 +1,120 @@
+// `Little_Endian(T)` and `Big_Endian(T)`: storage wrappers that fix a field's
+// byte order regardless of the target's (design.md "Basic types", catalogue row
+// "Distinct storage wrappers supplied by binary-format libraries").
+//
+// The wrapper is the *stored* form. Nothing arithmetic is defined on it: a
+// caller `store`s a host value into one and `load`s a host value back out, and
+// the byte swap — if the target needs one at all — happens exactly at those two
+// points. That is the whole reason to have the type instead of remembering to
+// swap at each use.
+//
+//     header: struct { magic: endian.Big_Endian(u32) };
+//     header.magic = endian.Big_Endian(u32).store(0xCAFEBABE);
+//     fmt.println(header.magic.load());
+//
+// `T` is an integer type. A one-byte `T` needs no swap and gets none.
+@(public)
+package endian;
+
+import "base:interfaces";
+import "core:fmt";
+
+Little_Endian :: struct($T: type) where interfaces.Integral(T) {
+	// Little-endian bytes of the value, held in a `T` because that is the only
+	// storage of the right size and alignment the language offers. Reading it
+	// directly is meaningless on a big-endian target, which is what `@(private)`
+	// is here to prevent.
+	@(private) stored: T,
+}
+
+impl Little_Endian($T) {
+	// A host value in little-endian storage.
+	store :: proc(value: T) -> Little_Endian(T) {
+		return {host_to(value, Order.Little)};
+	}
+
+	// The host value back. On a little-endian target both directions are the
+	// identity, and the optimizer removes them.
+	load :: proc(self) -> T {
+		return host_to(self.stored, Order.Little);
+	}
+
+	// Explicit only: a silent conversion from `T` would put a host value where a
+	// stored one belongs at every assignment, which is the bug this type exists
+	// to prevent. `Little_Endian(u32)(x)` is the written form.
+	from_host :: hook(convert) proc(value: T) -> Little_Endian(T) {
+		return {host_to(value, Order.Little)};
+	}
+
+	// Two stored values are equal exactly when the values they store are, and
+	// the stored bytes already say so without a swap.
+	equal :: operator(==) proc(left, right: Little_Endian(T)) -> bool {
+		return left.stored == right.stored;
+	}
+
+	// The value, not the storage: printing the swapped bytes would be a puzzle.
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.load());
+	}
+}
+
+Big_Endian :: struct($T: type) where interfaces.Integral(T) {
+	@(private) stored: T,
+}
+
+impl Big_Endian($T) {
+	store :: proc(value: T) -> Big_Endian(T) {
+		return {host_to(value, Order.Big)};
+	}
+
+	load :: proc(self) -> T {
+		return host_to(self.stored, Order.Big);
+	}
+
+	from_host :: hook(convert) proc(value: T) -> Big_Endian(T) {
+		return {host_to(value, Order.Big)};
+	}
+
+	equal :: operator(==) proc(left, right: Big_Endian(T)) -> bool {
+		return left.stored == right.stored;
+	}
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.load());
+	}
+}
+
+// The two byte orders, named here rather than reused from `LOKE_ENDIAN` so this
+// package's public surface does not depend on a compiler-provided enum's
+// spelling.
+Order :: enum { Little, Big };
+
+// The host order, as this package spells it.
+host_order :: proc() -> Order {
+	when (LOKE_ENDIAN == .Big) { return Order.Big; } else { return Order.Little; }
+}
+
+// Host to `wanted`, and `wanted` back to host: a byte swap is its own inverse,
+// so one procedure serves both directions.
+@(private)
+host_to :: proc(value: $T, wanted: Order) -> T where interfaces.Integral(T) {
+	if (host_order() == wanted) { return value; }
+	return byte_swap(value);
+}
+
+// A one-byte value has nothing to swap, and the `when` keeps the wide-mask
+// arithmetic below out of checking for it — `T(0xFF)` does not fit in an `i8`.
+byte_swap :: proc(value: $T) -> T where interfaces.Integral(T) {
+	when (size_of(T) == 1) {
+		return value;
+	} else {
+		width := size_of(T);
+		mask := T(0xFF);
+		result := T(0);
+		foreach (i in 0 ..< width) {
+			part := (value >> uint(8*i)) & mask;
+			result |= part << uint(8*(width - 1 - i));
+		}
+		return result;
+	}
+}

@@ -1,0 +1,156 @@
+// Slice algorithms (design.md "Sorting slices", "Slices").
+//
+// Everything here is ordinary Loke over `[]T` and `[]mut T`. Nothing allocates
+// except `clone`/`try_clone`, which say so in their names by returning an owner.
+//
+// The mutating procedures take `[]mut T`, so passing a read-only `[]T` is the
+// compile-time error design.md promises rather than a silent no-op.
+@(public)
+package slice;
+
+import "base:interfaces";
+import "core:mem";
+
+// ---------------------------------------------------------------- ordering --
+
+// Ascending, in place. No allocation, and no comparator: `Ordered` is the
+// precondition, and design.md's `Ordered` is IEEE-754 for floats, so a slice
+// containing NaN sorts to an unspecified permutation rather than trapping.
+//
+// This is design.md's free spelling of the contributed `values.sort()` member,
+// and it forwards to it: one introsort in the runtime, reached by both, so the
+// two spellings cannot drift apart. The sort is not stable.
+sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
+	values.sort();
+}
+
+// Descending. Sorting with the comparison reversed, not sorting and then
+// reversing: the two differ for equal-comparing elements only, and neither
+// order is stable, so one pass is enough.
+reverse_sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
+	values.reverse_sort();
+}
+
+is_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
+	foreach (i in 1 ..< len(values)) {
+		if (values[i] < values[i - 1]) { return false; }
+	}
+	return true;
+}
+
+is_reverse_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
+	foreach (i in 1 ..< len(values)) {
+		if (values[i - 1] < values[i]) { return false; }
+	}
+	return true;
+}
+
+// The leftmost index at which `wanted` could be inserted while keeping the
+// slice sorted, plus whether it is already there. `values` must be sorted
+// ascending; a caller who has not sorted gets a meaningless answer, not a trap.
+binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
+	where interfaces.Ordered(T) {
+	low := 0;
+	high := len(values);
+	for (low < high) {
+		middle := low + (high - low)/2;
+		if (values[middle] < wanted) { low = middle + 1; } else { high = middle; }
+	}
+	return {index = low, found = low < len(values) && values[low] == wanted};
+}
+
+// ------------------------------------------------------------------ places --
+
+swap :: proc(values: []mut $T, left: int, right: int) {
+	if (left == right) { return; }
+	held := values[left];
+	values[left] = values[right];
+	values[right] = held;
+}
+
+// Reverses the order of the elements in place.
+reverse :: proc(values: []mut $T) {
+	low := 0;
+	high := len(values);
+	for (low + 1 < high) {
+		high -= 1;
+		swap(values, low, high);
+		low += 1;
+	}
+}
+
+fill :: proc(values: []mut $T, @(escape=stored) value: T) {
+	foreach (i in 0 ..< len(values)) { values[i] = value; }
+}
+
+// ----------------------------------------------------------------- queries --
+
+index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.Equatable(T) {
+	foreach (value, i in values.indexed()) {
+		if (value == wanted) { return .some(i); }
+	}
+	return .none;
+}
+
+last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.Equatable(T) {
+	i := len(values);
+	for (i > 0) {
+		i -= 1;
+		if (values[i] == wanted) { return .some(i); }
+	}
+	return .none;
+}
+
+contains :: proc(values: []$T, wanted: T) -> bool where interfaces.Equatable(T) {
+	switch (_ in index_of(values, wanted)) {
+	case .some: return true;
+	case .none: return false;
+	}
+	return false;
+}
+
+equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
+	if (len(left) != len(right)) { return false; }
+	foreach (value, i in left.indexed()) {
+		if (value != right[i]) { return false; }
+	}
+	return true;
+}
+
+// `.none` for an empty slice: there is no minimum of nothing, and returning the
+// zero value would be a wrong answer rather than a missing one.
+min :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
+	if (len(values) == 0) { return .none; }
+	best := values[0];
+	foreach (i in 1 ..< len(values)) {
+		if (values[i] < best) { best = values[i]; }
+	}
+	return .some(best);
+}
+
+max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
+	if (len(values) == 0) { return .none; }
+	best := values[0];
+	foreach (i in 1 ..< len(values)) {
+		if (best < values[i]) { best = values[i]; }
+	}
+	return .some(best);
+}
+
+// --------------------------------------------------------------- ownership --
+
+// design.md "Slices": the way to keep data after its owner expires.
+clone :: proc(values: []$T, allocator: Allocator = mem.default_allocator()) -> [dynamic]T {
+	return try_clone(values, allocator) or_else no_copy(T);
+}
+
+try_clone :: proc(
+	values: []$T, allocator: Allocator = mem.default_allocator(),
+) -> Result([dynamic]T, Allocator_Error) {
+	owned := make([dynamic]T, 0, len(values), allocator) or_return;
+	owned.try_append(..values) or_return;
+	return .ok(move(owned));
+}
+
+@(private)
+no_copy :: proc($T: type) -> [dynamic]T { panic("slice clone allocation failed"); }

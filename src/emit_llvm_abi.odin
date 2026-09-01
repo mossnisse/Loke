@@ -19,6 +19,20 @@ foreign_llvm_name :: proc(sym: ^Symbol) -> string {
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
 	seen := make(map[string]bool)
+	// A `declare` for a name this module also defines is a redefinition to LLVM's
+	// own parser, not a forward declaration. That happens whenever source names a
+	// symbol the compiler itself writes into the module — the generated
+	// `loke_rt_v1_program_init` is the reachable case — or an `@(export)` whose
+	// link name a foreign block also declares. The definition wins; a call to the
+	// name still resolves to it.
+	for symbol_id, name in e.names {
+		if sym := symbol_of(e.c, symbol_id); sym != nil && !sym.is_foreign && sym.kind == .Proc {
+			seen[name] = true
+		}
+	}
+	if any_provider_selected(e.c) {
+		seen["@loke_rt_v1_program_init"] = true
+	}
 	for id in package_order(e.c) {
 		pkg := package_of(e.c, id)
 		if pkg == nil {

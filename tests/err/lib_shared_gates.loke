@@ -1,0 +1,47 @@
+package main;
+
+import "core:mem";
+
+// The compiler-visible half of `shared(T)` (design.md "Shared ownership",
+// m8-plan step 5). Everything else about the type is ordinary library code;
+// these four rules are the language's.
+
+Node :: struct {
+	value: int,
+}
+
+// "The control block stores the allocator, so a `shared(T)` declaration cannot
+// use `via`."
+selects_a_provider :: proc() {
+	arena := mem.Arena.init();
+	held: shared(Node) via arena.allocator() = shared(Node{1});
+}
+
+// "`handle.get()` returns a non-owning `^T` whose root provenance derives from
+// that handle", so the borrow cannot outlive the handle it came from.
+escapes_its_handle :: proc() -> ^Node {
+	held := shared(Node{2});
+	return held.get();
+}
+
+// The same rule inside one body: releasing the handle ends the borrow.
+outlives_its_handle :: proc() -> int {
+	held := shared(Node{3});
+	borrowed := held.get();
+	drop(held);
+	return borrowed^.value;
+}
+
+// A `weak` handle names no payload, so it has no `get` to reach one with.
+reaches_through_weak :: proc() -> int {
+	held := shared(Node{4});
+	watcher := held.downgrade();
+	return watcher.get()^.value;
+}
+
+main :: proc() {
+	selects_a_provider();
+	_ = escapes_its_handle();
+	_ = outlives_its_handle();
+	_ = reaches_through_weak();
+}

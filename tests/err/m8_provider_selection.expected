@@ -1,0 +1,5 @@
+L0658
+@no-span
+the allocator provider `standard_write` names no public declaration in `core:log`
+L0659
+the logger provider `core:log:enabled` is not a factory

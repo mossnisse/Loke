@@ -1,0 +1,33 @@
+0 North
+1 East
+2 South
+3 West
+{North, West} 2 4 false
+true false
+{North, East, West}
+{East, West}
+{East, South, West}
+{East, West}
+{North, East, South, West} 4
+{East, West}
+{North, South}
+{North, South}
+{North, East, South, West}
+{North, South}
+true false
+true false
+{} true 0
+North
+East
+South
+West
+{A, C} 2 3
+{} true
+{North = 3, East = 0, South = 0, West = 1} 4 4
+3 0 1
+North 3
+East 0
+South 0
+West 1
+{North = ?, East = ?, South = söder, West = ?}
+{A = -1, B = 4, C = -1} 3

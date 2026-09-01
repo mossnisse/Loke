@@ -1,0 +1,20 @@
+@(public)
+package tiny;
+
+import "core:mem";
+
+// A selected allocator with room for almost nothing, so any default allocation
+// past the first few bytes fails. That failure is the observation: it can only
+// happen if the allocation reached the *selected* provider rather than the
+// runtime's system-heap fallback.
+
+@(private)
+storage: static [256]u8 = {};
+
+@(private)
+region: static mem.Arena = {};
+
+factory :: proc() -> Allocator {
+	region = mem.Arena.from_buffer(storage[:]);
+	return region.allocator();
+}

@@ -1,0 +1,4 @@
+-provider
+allocator=core:log:standard_write
+-provider
+logger=core:log:enabled

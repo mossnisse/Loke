@@ -1,0 +1,17 @@
+@(public)
+package recursive;
+
+// design.md "Provider initialization": a factory that re-enters initialization
+// fails. The initializer is generated into this same module, so a foreign
+// declaration of it links against that definition; there is no other way for
+// Loke source to reach an entry point the compiler writes.
+foreign import rt "system:kernel32.lib";
+
+foreign rt {
+	loke_rt_v1_program_init :: proc "c" () ---;
+}
+
+factory :: proc() -> Allocator {
+	loke_rt_v1_program_init();
+	return nil;
+}

@@ -1,0 +1,12 @@
+package main;
+
+import "core:log";
+
+// design.md "Compiled log level": discarding a callee's body does not discard
+// the caller's expressions. Built at `-log-level=error`, so `log.debug` has no
+// body at all — and its argument is still checked, because removing that takes
+// a caller-side `when` and this call has none.
+
+main :: proc() {
+	log.debug("state", never_declared());
+}

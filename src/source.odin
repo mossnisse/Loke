@@ -113,6 +113,8 @@ Compiler :: struct {
 	// Checked map key operations, keyed by the underlying key type. Consumers
 	// must use these IDs rather than selecting members again.
 	map_key_policies:      map[Type_Id]Key_Policy,
+	// The `<` one `sort` uses, per element type (`src/container.odin`).
+	order_policies:        map[Type_Id]Order_Policy,
 
 	// Compile-time reflection (`src/reflect.odin`). The descriptor types are
 	// created on first use; `typeid` identity is symbolic during checking and
@@ -224,6 +226,18 @@ Compiler :: struct {
 	// installs as the omitted allocator argument of every lifecycle hook. M6
 	// replaces it with the design's written `= mem.default_allocator()`.
 	default_allocator_symbol: Symbol_Id,
+	// design.md "Build-selected providers": what `-provider` named, resolved to
+	// one factory per slot. An unselected slot keeps the runtime's fallback.
+	providers:                [Provider_Slot]Provider_Selection,
+	// `-log-level`, the value `LOKE_LOG_LEVEL` is predeclared with.
+	log_level:                Log_Level,
+	// `runtime.Memory_Order`, found by name on first use (`src/atomics.odin`).
+	memory_order_type:        Type_Id,
+	// design.md "Shared ownership": the two record templates the universe names
+	// `shared` and `weak` bind to, and the procedure group `shared(value)` means.
+	shared_symbol:            Symbol_Id,
+	weak_symbol:              Symbol_Id,
+	shared_construct_symbol:  Symbol_Id,
 	default_allocator_arg:    Expr,
 	// The constant `0` a defaulted container `shrink` floor uses.
 	zero_int_arg:             Expr,

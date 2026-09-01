@@ -1,0 +1,36 @@
+package main; import "core:fmt";
+
+// A sort on a compile-time path (m8-plan step 2). The evaluator performs the
+// operation the backend writes, from the same `container_op`, so a constant and
+// a run-time call agree.
+
+smallest :: proc() -> int {
+	xs: [dynamic]int = {};
+	xs.append(3, 1, 2, 9, 0);
+	xs.sort();
+	return xs[0];
+}
+
+largest :: proc() -> int {
+	xs: [dynamic]int = {};
+	xs.append(3, 1, 2, 9, 0);
+	xs.reverse_sort();
+	return xs[0];
+}
+
+middle :: proc() -> int {
+	xs: [dynamic]int = {};
+	xs.append(5, 5, 1, 4, 4);
+	xs.sort();
+	return xs[2];
+}
+
+FIRST  :: smallest();
+LAST   :: largest();
+MIDDLE :: middle();
+
+main :: proc() {
+	fmt.println(FIRST, LAST, MIDDLE);
+	fmt.println(smallest(), largest(), middle());
+	fmt.println(FIRST == smallest(), LAST == largest(), MIDDLE == middle());
+}

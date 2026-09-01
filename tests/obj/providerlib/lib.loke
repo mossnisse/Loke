@@ -1,0 +1,28 @@
+package hostlib;
+
+import "core:log";
+import "core:mem";
+import "provider";
+
+// design.md "Build modes": an object build that selects a provider exports
+// `loke_rt_v1_program_init`, and its host calls that once, after attaching a
+// thread and before using any export (m8-plan step 3). This is the export the
+// host uses to check what initialization did.
+//
+// Every failure has its own non-zero code, so a broken step names itself in the
+// host's exit status.
+
+@(export)
+hostlib_report :: proc "c" () -> i32 {
+	if (provider.allocator_calls() != 1) { return 1; }
+	if (provider.logger_calls() != 1) { return 2; }
+	// The published handle, not the runtime's fallback: this is the whole point
+	// of selecting an allocator.
+	if (mem.default_allocator() != provider.selected_allocator()) { return 3; }
+	if (mem.default_allocator() == provider.fallback_allocator()) { return 4; }
+	// Retained provider state is still valid, and logging reaches the selected
+	// logger rather than the standard sink.
+	log.info("from the host");
+	if (provider.records() != 1) { return 5; }
+	return 0;
+}

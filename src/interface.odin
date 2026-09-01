@@ -429,7 +429,14 @@ check_one_requirement :: proc(
 
 	mark := len(k.c.diagnostics)
 	errors := k.c.error_count
+	// `-> inout T` asks for a place, so the expression is checked in a place
+	// position — otherwise a user `operator([])` with both overloads answers with
+	// its value one and no user type could ever satisfy `Mutable_Sequence`
+	// (design.md "Indexing and slicing": the `inout` overload is selected only in
+	// a place position).
+	k.place_position = requirement.result_inout
 	type := check_expr(k, requirement.expr)
+	k.place_position = false
 	captured := k.c.error_count > errors
 	// The scratch checker's own diagnostic says exactly what did not compile, so
 	// it becomes the reason rather than being thrown away for a generic phrase.

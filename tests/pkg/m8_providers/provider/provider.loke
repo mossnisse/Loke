@@ -1,0 +1,70 @@
+@(public)
+package provider;
+
+import "core:fmt";
+import "core:log";
+import "core:mem";
+
+// The two factories a build may select, and the process-lifetime state behind
+// them (design.md "Build-selected providers"). Nothing imports this package:
+// the build names it with `-provider`, which is what makes it a dependency.
+
+// design.md: a factory must return a handle backed by storage that lives as
+// long as the process. A `static` buffer plus a `static` arena over it is that,
+// and it needs no runtime initialization of its own — which is also why the
+// arena is deliberately small: a reservation that the system heap would satisfy
+// must fail here, or the selection would be unobservable.
+@(private)
+storage: static [8192]u8 = {};
+
+@(private)
+region: static mem.Arena = {};
+
+@(private)
+State :: struct {
+	allocator_calls:  int,
+	logger_calls:     int,
+	records:          int,
+	// Observed inside each factory, which is how the order is checked rather
+	// than assumed.
+	logger_at_allocator: bool,
+	allocator_at_logger: bool,
+}
+
+@(private)
+state: static State = {};
+
+allocator_factory :: proc() -> Allocator {
+	state.allocator_calls += 1;
+	// Nothing has been published yet, so this call's own default allocations
+	// would go to the system heap, and logging goes to the standard sink.
+	state.logger_at_allocator = log.current().state != nil;
+	region = mem.Arena.from_buffer(storage[:]);
+	return region.allocator();
+}
+
+logger_factory :: proc() -> log.Logger {
+	state.logger_calls += 1;
+	// The allocator is published first, so by now the default provider is the
+	// arena above rather than the runtime's fallback.
+	state.allocator_at_logger = mem.default_allocator() == region.allocator();
+	return log.Logger{write, nil};
+}
+
+@(private)
+write :: proc(handle: rawptr, level: log.Level, message: string_view) {
+	state.records += 1;
+	if (state.records == 1) {
+		fmt.println(
+			state.allocator_calls,
+			state.logger_calls,
+			state.logger_at_allocator,
+			state.allocator_at_logger,
+		);
+	}
+	fmt.print("provider[");
+	fmt.print(level);
+	fmt.print("] ");
+	fmt.print(message);
+	fmt.print("\n");
+}

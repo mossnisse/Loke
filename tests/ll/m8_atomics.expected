@@ -1,0 +1,19 @@
+declare void @loke_rt_v1_atomic128_load(ptr, ptr, i32)
+declare i32 @loke_rt_v1_atomic128_compare_exchange(ptr, ptr, ptr, i32, i32)
+= load atomic i32, ptr %t
+acquire, align 4
+store atomic i32 %t
+release, align 4
+= atomicrmw add ptr %t
+monotonic, align 4
+= atomicrmw xchg ptr %t
+acq_rel, align 4
+= cmpxchg ptr %t
+seq_cst acquire, align 4
+store atomic i8 %t
+seq_cst, align 1
+= load atomic i8, ptr %t
+call void @loke_rt_v1_atomic128_store(ptr %t
+call void @loke_rt_v1_atomic128_add(ptr %t
+call void @loke_rt_v1_atomic128_load(ptr %t
+fence acq_rel

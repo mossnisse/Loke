@@ -1,0 +1,73 @@
+package main;
+
+import "core:sync";
+
+// The atomic gates (m8-plan step 4, design.md "Concurrency and the memory
+// model"). Every way of being wrong reports once, at the operation.
+
+Order :: sync.Memory_Order;
+
+Point :: struct { x: int, y: int }
+
+Colour :: enum { Red, Green };
+
+Packed :: struct @(packed) { flag: u8, count: i32 }
+
+// A relaxed fence orders nothing, so it is a mistake rather than a no-op.
+relaxed_fence :: proc() {
+	sync.fence(Order.Relaxed);
+}
+
+// A load cannot release what it did not write, and a store cannot acquire what
+// it did not read.
+wrong_order :: proc(counter: inout sync.Atomic(int)) {
+	counter.load(Order.Release);
+	counter.store(1, Order.Acquire);
+	counter.compare_exchange(0, 1, Order.Acquire, Order.Release);
+}
+
+// Arithmetic is integers only: design.md makes an enum member a named constant
+// rather than a number with a name.
+enum_arithmetic :: proc(colour: inout sync.Atomic(Colour)) {
+	colour.add(Colour.Green);
+}
+
+// A record has no atomic width at all.
+unsupported :: proc() {
+	place: sync.Atomic(Point) = {};
+	place.load();
+}
+
+// A float is deliberately not an atomic type: an atomic float would be a
+// bit-pattern operation dressed as arithmetic.
+unsupported_float :: proc() {
+	place: sync.Atomic(f64) = {};
+	place.load();
+}
+
+// design.md `@(packed)`: an individual packed field is not addressable, so
+// there is no way to hand one to an atomic operation.
+packed_field :: proc(value: inout Packed) {
+	holder: sync.Atomic(i32) = {};
+	holder.store(value.count);
+	other := &mut value.count;
+}
+
+// An ordering must be a constant, and a `$` parameter is what keeps one
+// constant across a wrapper. A runtime value simply does not apply.
+runtime_order :: proc(order: Order) {
+	sync.fence(order);
+}
+
+main :: proc() {
+	counter: sync.Atomic(int) = {};
+	colour: sync.Atomic(Colour) = {};
+	packed: Packed = {};
+	relaxed_fence();
+	wrong_order(inout counter);
+	enum_arithmetic(inout colour);
+	unsupported();
+	unsupported_float();
+	packed_field(inout packed);
+	runtime_order(Order.Acquire);
+}

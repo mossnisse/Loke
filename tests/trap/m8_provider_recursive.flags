@@ -1,0 +1,4 @@
+-collection
+trapprov=tests/trap/providers
+-provider
+allocator=trapprov:recursive:factory

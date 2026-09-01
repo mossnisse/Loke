@@ -27,6 +27,16 @@ emit_preamble :: proc(e: ^Emitter) {
 // behind its version/size prefix.
 RT_DEFAULT_ALLOCATOR :: "@loke_rt_v1_default_allocator"
 
+// design.md "Build-selected providers": what a default allocation actually
+// uses. It is the fallback record above until an allocator factory publishes
+// one, so an unselected build behaves exactly as it did before — through one
+// more call, which is deliberate rather than an accident of refactoring.
+emit_default_allocator :: proc(e: ^Emitter) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_selected_allocator()", out)
+	return out
+}
+
 RT_ALLOCATOR_RECORD :: "{ i32, i32, ptr, ptr, ptr, i32, i32 }"
 
 @(private = "file")
@@ -38,6 +48,10 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_free(ptr, ptr, i64, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_reset(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_alloc_failed(ptr)")
+	fmt.sbprintln(&e.b, "declare ptr @loke_rt_v1_selected_allocator()")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_publish_allocator(ptr)")
+	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_provider_init_begin()")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_provider_init_end()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_panic(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
@@ -63,6 +77,7 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	emit_carrier_types(e)
 	emit_text_declarations(e)
 	emit_container_declarations(e)
+	emit_atomic_declarations(e)
 }
 
 // design.md "string type" and "string type conversions". The two frozen

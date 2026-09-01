@@ -1,0 +1,24 @@
+package main;
+
+import "core:slice";
+import "core:container";
+
+// The compile-time gates the step-1 library types install (m8-plan step 1).
+
+Not_Ordered :: struct { value: int }
+
+main :: proc() {
+	// design.md "Sorting slices": the library procedures accept `[]mut T`, and
+	// passing a read-only `[]T` is a compile-time error.
+	readable := []int{1, 6, 3};
+	slice.sort(readable);
+	slice.reverse_sort(readable);
+	slice.fill(readable, 0);
+
+	// An element type with no `<` cannot be sorted.
+	records := []mut Not_Ordered{Not_Ordered{1}};
+	slice.sort(records);
+
+	// A `Small_Array` needs room, and `N > 0` is part of the type.
+	empty: container.Small_Array(int, 0) = {};
+}

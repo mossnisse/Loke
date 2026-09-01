@@ -71,8 +71,24 @@ LOKE_RT_STATIC_ASSERT(sizeof(void *) == 8, pointer_is_eight_bytes);
 LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_allocator_v1) == 40, allocator_record_size);
 LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_allocator_ops_v1) == 32, allocator_ops_size);
 
-/* The one provider M6a installs: the system heap, `.Panic`, no region. */
+/* The fallback provider: the system heap, `.Panic`, no region. It keeps its
+ * symbol and its meaning - an object built before provider selection existed
+ * still names it directly and still gets the system heap. */
 extern loke_rt_allocator_v1 loke_rt_v1_default_allocator;
+
+/* design.md "Build-selected providers": the handle a default allocation uses.
+ * The fallback until an allocator factory publishes one, and that exact handle
+ * afterwards - never a copy of the record, so the provider's identity, state,
+ * and region survive publication. */
+const loke_rt_allocator_v1 *loke_rt_v1_selected_allocator(void);
+void loke_rt_v1_publish_allocator(const loke_rt_allocator_v1 *a);
+
+/* The generated `loke_rt_v1_program_init` brackets its factory calls with
+ * these. `begin` answers 1 when the caller should run them and 0 when
+ * initialization is already complete; a factory that re-enters initialization
+ * does not return. */
+int32_t loke_rt_v1_provider_init_begin(void);
+void loke_rt_v1_provider_init_end(void);
 
 /* ------------------------------------------------------------- regions -- */
 
@@ -328,6 +344,37 @@ void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self);
 int32_t loke_rt_v1_string_to_runes(
 	loke_rt_dynamic_v1 *out, const loke_rt_container_ops_v1 *ops,
 	const uint8_t *data, int64_t len, const loke_rt_allocator_v1 *a);
+
+/* Sorting. `less(a, b)` is 1 when `*a` orders before `*b`; the compiler
+ * generates one per element type, exactly as it generates the clone and drop
+ * thunks in the operation table. `descending` inverts the comparison - it does
+ * not reverse the finished array - and the sort is not stable.
+ *
+ * `data` is the first element and `count` the number of them, so one entry
+ * point serves both a `[dynamic]T` and a `[]mut T`. Nothing here allocates, and
+ * the table is not involved: an element's size and its `less` are everything a
+ * sort needs. */
+typedef int32_t (*loke_rt_less_v1)(const void *a, const void *b);
+
+void loke_rt_v1_sort(
+	void *data, int64_t count, uint64_t elem_size,
+	loke_rt_less_v1 less, int32_t descending);
+
+/* Atomics at a width this target has no usable native lowering for
+ * (`runtime/atomic.c`). Every operand travels by address, so one helper per
+ * operation serves every 128-bit type. `order` is a `runtime.Memory_Order`
+ * value. All of them are indivisible with respect to each other. */
+void loke_rt_v1_atomic128_load(const void *address, void *out, int32_t order);
+void loke_rt_v1_atomic128_store(void *address, const void *value, int32_t order);
+void loke_rt_v1_atomic128_exchange(void *address, const void *value, void *out, int32_t order);
+int32_t loke_rt_v1_atomic128_compare_exchange(
+	void *address, void *expected, const void *desired, int32_t success, int32_t failure);
+void loke_rt_v1_atomic128_add(void *address, const void *value, void *out, int32_t order);
+void loke_rt_v1_atomic128_sub(void *address, const void *value, void *out, int32_t order);
+void loke_rt_v1_atomic128_and(void *address, const void *value, void *out, int32_t order);
+void loke_rt_v1_atomic128_or(void *address, const void *value, void *out, int32_t order);
+void loke_rt_v1_atomic128_xor(void *address, const void *value, void *out, int32_t order);
+void loke_rt_v1_atomic_fence(int32_t order);
 
 int32_t loke_rt_v1_map_reserve(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, int64_t min_capacity);

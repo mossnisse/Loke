@@ -264,6 +264,13 @@ Expr_Call :: struct {
 	extract:         ^Expr_Checked_Extract,
 	// A validating text conversion, which has optional-ok results.
 	text_conversion: Text_Conversion,
+	// design.md "Concurrency and the memory model": an atomic intrinsic call.
+	// The orderings are `Memory_Order` values, settled at check time because the
+	// ordering is part of the instruction rather than an argument to it, and
+	// `atomic_type` is the type the operation runs at.
+	atomic_type:          Type_Id,
+	atomic_order:         int,
+	atomic_failure_order: int,
 	// design.md "Variadic parameters". `variadic_slot` is the packed parameter's
 	// index, or -1. `variadic_forwards` marks the sole-spread case, where
 	// `bound[variadic_slot]` is the slice itself; otherwise the explicit

@@ -145,8 +145,10 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 	}
 	// An ordinary `value: T` parameter is a non-owning immutable borrow
 	// (design.md "Parameter semantics"); consuming it is the caller's `move`
-	// at the call site, not this body's.
-	if sym.kind == .Parameter && sym.mode != .Inout {
+	// at the call site, not this body's. A `move` parameter is the exception:
+	// design.md says an owner received through one "may be used locally or
+	// returned", and moving it onward is how it is stored.
+	if sym.kind == .Parameter && sym.mode == .Value {
 		errorf(
 			k.c,
 			expr_span(e),
@@ -549,7 +551,12 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 // asks to be made more prominent.
 @(private = "file")
 copy_is_expensive :: proc(c: ^Compiler, type: Type_Id) -> (bool, bool) {
-	allocates := type_is_managed(c, type) && type_clone_is_fallible(c, type)
+	// design.md "Shared ownership": "`try_clone` increments the strong count
+	// without a new allocation". The hook's signature is fallible like every
+	// other one, so only the language's knowledge of the type says that copying
+	// a handle is an atomic increment rather than a duplication of `T`.
+	allocates := type_is_managed(c, type) && type_clone_is_fallible(c, type) &&
+		!type_is_shared_handle(c, type)
 	if !c.copy_cost_enabled {
 		return false, allocates
 	}

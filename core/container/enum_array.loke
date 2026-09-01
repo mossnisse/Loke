@@ -1,0 +1,86 @@
+// `Enum_Array(Enum, T)`: one `T` per declared member (design.md's catalogue row
+// for enum iteration, and "Iterating an enumeration").
+//
+// Indexed by the member, not by a number: `counts[.North] += 1`. A member's slot
+// is its declaration position, so an enum with holes costs one slot per member
+// rather than one per representable value.
+//
+// The zero value holds every member's zero value, so no construction is needed.
+@(public)
+package container;
+
+import "core:fmt";
+
+Enum_Array :: struct($E: type, $T: type) {
+	@(private) slots: [len(E.values())]T,
+}
+
+impl Enum_Array($E, $T) {
+	// Every slot set to `value`.
+	filled :: proc(value: T) -> Enum_Array(E, T) {
+		result: Enum_Array(E, T) = {};
+		foreach (i in 0 ..< len(result.slots)) { result.slots[i] = value; }
+		return result;
+	}
+
+	// The number of declared members, which is also the number of slots: an
+	// `Enum_Array` is never partly present.
+	len :: proc(self) -> int { return len(E.values()); }
+	cap :: proc(self) -> int { return len(E.values()); }
+
+	get :: operator([]) proc(self, member: E) -> T {
+		return self.slots[position_of(member)];
+	}
+
+	get_mut :: operator([]) proc(self: inout Enum_Array(E, T), member: E) -> inout T {
+		return inout self.slots[position_of(member)];
+	}
+
+	// -------------------------------------------------------- iteration --
+
+	// Iteration yields `{key, value}` entries, the shape design.md gives a map's
+	// `Element` — an enum-keyed container is a keyed container, so a bare value
+	// would lose the half a caller usually wants.
+	Element  :: Enum_Entry(E, T);
+	Iterator :: Enum_Array_Iterator(E, T);
+
+	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return {self, 0}; }
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "{");
+		foreach (member, index in E.values().indexed()) {
+			// One argument per call: `format_to` puts a space between arguments,
+			// which is right for `println` and wrong inside a literal layout.
+			if (index > 0) { fmt.format_to(writer, ", "); }
+			fmt.format_to(writer, member);
+			fmt.format_to(writer, " = ");
+			fmt.format_to(writer, self.slots[index]);
+		}
+		fmt.format_to(writer, "}");
+	}
+}
+
+Enum_Entry :: struct($E: type, $T: type) {
+	key:   E,
+	value: T,
+}
+
+Enum_Array_Iterator :: struct($E: type, $T: type) {
+	@(private) held: Enum_Array(E, T),
+	@(private) at:   int,
+}
+
+impl Enum_Array_Iterator($E, $T) {
+	Element  :: Enum_Entry(E, T);
+	Iterator :: Enum_Array_Iterator(E, T);
+
+	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return self; }
+
+	next :: proc(self: inout Enum_Array_Iterator(E, T)) -> Option(Enum_Entry(E, T)) {
+		members := E.values();
+		if (self.at >= len(members)) { return .none; }
+		index := self.at;
+		self.at += 1;
+		return .some(Enum_Entry(E, T){members[index], self.held.slots[index]});
+	}
+}

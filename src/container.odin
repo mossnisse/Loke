@@ -144,6 +144,12 @@ Container_Op :: enum {
 	Resize,
 	Reserve,
 	Shrink,
+	// design.md "Slicing and sorting a dynamic array" and "Sorting slices".
+	// Contributed to a mutable slice as well as to a dynamic array, because an
+	// `impl []mut T` written in `core:slice` would be an *extension* visible only
+	// inside that package, and design.md's own `s.sort()` is written in user code.
+	Sort,
+	Reverse_Sort,
 	// The map half. `find` never inserts; `m[key] = v` and every chain rooted in
 	// one are places rather than calls, so they are not members.
 	Map_Find,
@@ -173,6 +179,11 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	if info.kind == .Map {
 		info.contributed += {.Container}
 		ensure_map_members(k, type, info)
+		return
+	}
+	if info.kind == .Slice {
+		info.contributed += {.Container}
+		ensure_slice_members(k, type, info)
 		return
 	}
 	if info.kind != .Dynamic_Array {
@@ -259,6 +270,41 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 		k, type, "try_shrink", .Shrink,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
+	// A sort rearranges the whole container, so its receiver is `inout` like
+	// `append`'s: every outstanding view of it ends at the call.
+	append(&members, container_member(
+		k, type, "sort", .Sort, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
+	))
+	append(&members, container_member(
+		k, type, "reverse_sort", .Reverse_Sort, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
+	))
+	add_members(k.c, type, members[:])
+}
+
+// design.md "Sorting slices": the library procedures accept `[]mut T`, and
+// passing a read-only `[]T` is a compile-time error. That rule is the member
+// set — a read-only slice simply has no `sort` to call, so the rejection is the
+// ordinary one for a member a type does not have.
+//
+// The receiver is a *value*: a slice is a borrow, so the header is copied while
+// the elements it names are the caller's. Making it `inout` instead would force
+// `slice.sort(inout s)` at every call and stop `core:slice`'s own free form —
+// which holds its slice in an ordinary immutable parameter — from forwarding to
+// it at all.
+@(private = "file")
+ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
+	if !info.mutable {
+		return
+	}
+	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+	append(&members, container_member(
+		k, type, "sort", .Sort,
+		[]Type_Id{type}, []Param_Mode{.Value}, INVALID_TYPE, 0, .Value,
+	))
+	append(&members, container_member(
+		k, type, "reverse_sort", .Reverse_Sort,
+		[]Type_Id{type}, []Param_Mode{.Value}, INVALID_TYPE, 0, .Value,
+	))
 	add_members(k.c, type, members[:])
 }
 
@@ -336,6 +382,114 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
 	add_members(k.c, type, members[:])
+}
+
+// -------------------------------------------------------------- ordering --
+
+// How one element type answers `<`. Resolved once per element type during
+// checking and read unchanged by the backend, exactly as a map key's
+// `==`/`hash` pair is: one `[dynamic]T` must sort the same way in every package
+// it travels through, so an extension block in a *caller* never enters the
+// answer.
+// `Unordered` is a *settled* answer, not a missing one: the element has no `<`,
+// it has been reported once, and every later call on that type is answered from
+// here rather than reported again.
+Order_Policy_Kind :: enum { Unresolved, Builtin, Inherent, Unordered }
+
+Order_Policy :: struct {
+	kind: Order_Policy_Kind,
+	less: Symbol_Id,
+}
+
+// Unlike a map key's policy this follows a *delegated* `operator(<)`: a
+// delegation has no body of its own — it is unwrapped at each call site — so it
+// is followed to whatever it forwards to, which is either the underlying type's
+// own operator or the underlying built-in comparison. There is no second
+// operation for it to stay coherent with, which is why a map key's policy stops
+// at a delegation and this one does not.
+@(private = "file")
+resolve_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> (Order_Policy, string) {
+	if element == INVALID_TYPE {
+		return Order_Policy{}, "is not a type"
+	}
+	found := inherent_less_operator(c, element)
+	// A chain of `distinct` types each delegating to the next ends either at a
+	// written operator or at the built-in one; the bound is the chain length.
+	for depth := 0; found != INVALID_SYMBOL && depth < 64; depth += 1 {
+		sym := symbol_of(c, found)
+		if sym == nil {
+			break
+		}
+		if !sym.delegated {
+			return Order_Policy{kind = .Inherent, less = found}, ""
+		}
+		if sym.delegate_target == INVALID_SYMBOL {
+			// Delegating to the built-in comparison on the shared representation.
+			return Order_Policy{kind = .Builtin}, ""
+		}
+		found = sym.delegate_target
+	}
+	if type_is_ordered(c, element) {
+		return Order_Policy{kind = .Builtin}, ""
+	}
+	return Order_Policy{}, "does not satisfy `interfaces.Ordered`: it has no `<`"
+}
+
+@(private = "file")
+inherent_less_operator :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+	info := type_of(c, type)
+	if info == nil {
+		return INVALID_SYMBOL
+	}
+	for member in info.members {
+		if sym := symbol_of(c, member); sym != nil && sym.operator == "<" {
+			return member
+		}
+	}
+	return INVALID_SYMBOL
+}
+
+// A missing choice is a broken phase contract, never permission to repeat
+// member lookup in the backend.
+resolved_element_order_policy :: proc(c: ^Compiler, element: Type_Id) -> Order_Policy {
+	return c.order_policies[element]
+}
+
+// The gate on `sort` and `reverse_sort`. It names the container and its element
+// once, rather than letting a monomorphised comparison fail somewhere inside a
+// sort the caller never wrote.
+require_sort_order_policy :: proc(k: ^Checker, chosen: ^Symbol, span: Span) -> bool {
+	if chosen == nil || chosen.synth != .Container_Op {
+		return true
+	}
+	#partial switch chosen.container_op {
+	case .Sort, .Reverse_Sort:
+	case:
+		return true
+	}
+	receiver := len(chosen.params) > 0 ? chosen.params[0] : INVALID_TYPE
+	element := container_element(k.c, receiver)
+	if element == INVALID_TYPE {
+		element = slice_element(k.c, receiver)
+	}
+	#partial switch resolved_element_order_policy(k.c, element).kind {
+	case .Builtin, .Inherent:
+		return true
+	case .Unordered:
+		return false // already reported, once, at this element
+	}
+	policy, reason := resolve_element_order_policy(k.c, element)
+	if reason == "" {
+		k.c.order_policies[element] = policy
+		return true
+	}
+	k.c.order_policies[element] = Order_Policy{kind = .Unordered}
+	errorf(
+		k.c, span, "L0651",
+		"`%s` cannot be sorted: its element `%s` %s",
+		type_name(k.c, receiver), type_name(k.c, element), reason,
+	)
+	return false
 }
 
 // Any type can be a map key if it satisfies `interfaces.Hashable` with a
@@ -502,6 +656,25 @@ check_via_policy :: proc(k: ^Checker, d: ^Decl, declared: Type_Id) -> bool {
 	}
 	if declared == INVALID_TYPE {
 		return false // the written type already said why
+	}
+	// design.md "Shared ownership": "The control block stores the allocator, so a
+	// `shared(T)` declaration cannot use `via`". The generic rejection below
+	// would say the type has no destination allocation to select, which is the
+	// opposite of the truth — it has one, chosen where the value was made.
+	if type_is_shared_handle(k.c, declared) {
+		errorf(
+			k.c,
+			expr_span(d.via),
+			"L0671",
+			"`%s` stores its allocator in the control block, so a declaration cannot select one with `via`",
+			type_name(k.c, declared),
+		)
+		add_notef(
+			k.c,
+			no_span(),
+			"select it where the value is made: `shared(value, allocator=...)` or `try_shared(value, allocator)`",
+		)
+		return false
 	}
 	if !type_accepts_via(k.c, declared) {
 		errorf(

@@ -1,0 +1,27 @@
+package main; import "core:fmt"; import "core:sync";
+
+// The atomic lowering (m8-plan step 4): native instructions with the requested
+// ordering at the widths this target has them, and versioned runtime helpers at
+// the width it does not.
+
+Order :: sync.Memory_Order;
+
+main :: proc() {
+	a: sync.Atomic(i32) = {};
+	a.store(1, Order.Release);
+	a.add(1, Order.Relaxed);
+	a.exchange(2, Order.Acquire_Release);
+	a.compare_exchange(2, 3, Order.Sequentially_Consistent, Order.Acquire);
+	fmt.println(a.load(Order.Acquire));
+
+	flag: sync.Atomic(bool) = {};
+	flag.store(true);
+	fmt.println(flag.load());
+
+	wide: sync.Atomic(u128) = {};
+	wide.store(u128(1) << 100);
+	wide.add(u128(1));
+	fmt.println(wide.load() == (u128(1) << 100) + 1);
+
+	sync.fence(Order.Acquire_Release);
+}

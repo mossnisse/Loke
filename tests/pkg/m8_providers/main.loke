@@ -1,0 +1,31 @@
+package main;
+
+import "core:fmt";
+import "core:log";
+
+// A program that selects both providers and imports neither (m8-plan step 3).
+// `-provider` is what makes the provider package a build dependency; nothing
+// here mentions it, and `core:log` is imported for the logging surface only.
+
+main :: proc() {
+	// Lazy default binding: this container is allocator-unbound until its first
+	// growth, which is when it asks for the selected provider. The selected one
+	// is a small fixed arena, so a reservation the system heap would satisfy
+	// fails here — which is what proves the container reached the selection
+	// rather than the fallback.
+	xs: [dynamic]int = {};
+	xs.append(1, 2, 3);
+	fmt.println(len(xs), xs);
+
+	switch (_ in xs.try_reserve(200_000)) {
+	case .ok:  fmt.println("reserve ok");
+	case .err: fmt.println("reserve failed");
+	}
+
+	// The build compiles at `warning`, so this call has no body and never
+	// reaches the selected provider — while `warning` and `error` do.
+	log.debug("suppressed");
+	log.info("also suppressed");
+	log.warning("first record");
+	log.error("second record");
+}

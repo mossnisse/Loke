@@ -1,0 +1,28 @@
+package main;
+
+import "core:sync";
+
+// The boundary around the intrinsics (m8-plan step 4): an external package
+// reaches `sync.fence` and nothing else, and an atomic has no compile-time
+// meaning.
+//
+// Importing `core:sync` is itself part of the test: the contributed intrinsics
+// and this package's own source share one scope, and a collision between them
+// would be an ordinary redeclaration error before any of these are reached.
+
+// An atomic operation is a real memory operation, so an executed compile-time
+// path cannot perform one — the same answer a foreign call gets.
+COMPILE_TIME :: at_compile_time();
+
+at_compile_time :: proc() -> int {
+	counter: sync.Atomic(int) = {};
+	counter.store(1);
+	return counter.load();
+}
+
+main :: proc() {
+	// The public wrapper is reachable.
+	sync.fence();
+	// The intrinsic behind it is not.
+	sync.atomic_fence(sync.Memory_Order.Acquire);
+}

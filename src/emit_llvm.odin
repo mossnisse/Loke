@@ -3,6 +3,7 @@
 // Part of the textual LLVM backend; see compiler-architecture.md.
 package lokec
 
+
 import "core:fmt"
 import "core:strings"
 
@@ -108,6 +109,13 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 	// `thread_detach` calls it, so an object build needs it as much as an
 	// executable does.
 	emit_thread_local_teardown(&e)
+	// design.md "Build-selected providers": the initializer exists only where
+	// something is selected. An object build exports it for its host to call; an
+	// executable calls it from its own entry. An unselected build has no
+	// initializer at all, which is what keeps an existing host unchanged.
+	if any_provider_selected(c) {
+		emit_program_init(&e)
+	}
 	// design.md "Build modes" (m7-plan step 5): an object build emits no C entry.
 	// Its foreign host owns process startup and calls the exported procedures; a
 	// generated `main`/`wmain` would collide with the host's own entry.
@@ -365,6 +373,12 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 					if !is_decl || len(d.symbols) == 0 {
 						continue
 					}
+					// A generic method is a template like any other declaration: it has
+					// no body to emit until an instantiation gives its `$` names values,
+					// and its uninstantiated body was never checked.
+					if symbol_is_template(e.c, d.symbols[0]) {
+						continue
+					}
 					if literal := decl_proc_literal(d); literal != nil {
 						emit_proc(e, d.symbols[0], literal)
 					}
@@ -376,6 +390,12 @@ emit_package_items :: proc(e: ^Emitter, pkg: ^Package) {
 		emit_proc(e, literal.symbol, literal)
 	}
 	for instance in pkg.instances {
+		// An instantiated `impl` block installs its members as instances, and a
+		// *generic method* among them is still a template: its `$` names have no
+		// values until it is itself instantiated, and its body was never checked.
+		if symbol_is_template(e.c, instance.symbol) {
+			continue
+		}
 		if literal := decl_proc_literal(instance.decl); literal != nil {
 			emit_proc(e, instance.symbol, literal)
 		}
@@ -539,9 +559,63 @@ emit_entry :: proc(e: ^Emitter) {
 	// same detach that drops managed TLS on a normal return is simply never
 	// reached when a panic terminates the process instead.
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_attach()")
+	// design.md "Executable startup ABI": arguments, then the thread, then the
+	// providers, then `main`. Nothing runs between them.
+	if any_provider_selected(e.c) {
+		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
+	}
 	fmt.sbprintfln(&e.b, "  call void %s()", e.names[entry_symbol(e.c)] or_else "@loke.p.main")
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "  ret i32 0")
+	fmt.sbprintln(&e.b, "}")
+}
+
+// design.md "Build-selected providers": one initializer, run once, on the
+// attached startup thread. The allocator is published first so the logger
+// factory's own default allocations already use it; the allocator factory's own
+// run before anything is published and therefore use the system heap.
+//
+// The runtime owns the once-and-only-once state, because it also owns the
+// answer to "has this already happened" that a foreign host may ask twice.
+@(private = "file")
+emit_program_init :: proc(e: ^Emitter) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	fmt.sbprintln(&e.b, "define void @loke_rt_v1_program_init() {")
+	fmt.sbprintln(&e.b, "entry:")
+	e.terminated = false
+	go, run := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = call i32 @loke_rt_v1_provider_init_begin()", go)
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", run, go)
+	body, done := new_label(e, "init.run"), new_label(e, "init.done")
+	branch_if(e, run, body, done)
+	place_label(e, body)
+
+	if allocator := e.c.providers[.Allocator].factory; allocator != INVALID_SYMBOL {
+		handle := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call ptr %s()", handle, e.names[allocator] or_else "null")
+		// The runtime checks the handle for nil and for a matching record, and
+		// terminates before application code runs when either fails.
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_publish_allocator(ptr %s)", handle)
+	}
+	if logger := e.c.providers[.Logger].factory; logger != INVALID_SYMBOL {
+		slot := log_current_logger_symbol(e.c)
+		result := symbol_of(e.c, logger).result
+		handle := temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call %s %s()",
+			handle, llvm_type(e, result), e.names[logger] or_else "null",
+		)
+		if global, found := e.names[slot]; found {
+			store(e, result, handle, global)
+		} else {
+			backend_fail(e, "the selected logger has nowhere to be published")
+		}
+	}
+	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_provider_init_end()")
+	branch(e, done)
+	place_label(e, done)
+	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 }
 

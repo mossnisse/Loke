@@ -678,12 +678,144 @@ p[n] = 123; // unchecked; the programmer proves that n is valid
 
 ### SIMD vectors
 
-`Simd` is a reserved predeclared name and a reserved member of the public
-`Type_Kind`. Version 1 does not provide SIMD types: an attempted `Simd(T, N)`
-instantiation is a compile-time error identifying the feature as unavailable,
-rather than the name as unknown. No current language rule, runtime facility, or
-standard package depends on a SIMD value. SIMD operations, conversions, and ABI
-behavior are not part of the current language contract.
+`Simd(T, N)` is a fixed-width vector of `N` lanes of `T` on which the ordinary
+arithmetic operators act lane-wise. It is a predeclared name and a member of the
+public `Type_Kind`. It exists so that a program that must be explicit about
+vector width can be, without leaving the language for intrinsics; ordinary
+array code that the optimizer happens to vectorise needs none of this.
+
+`Simd` is a value type with no lifecycle: it owns nothing, it is trivially
+copied, and its zero value is every lane's zero.
+
+#### Element types and lane counts
+
+`T` must be a boolean, an integer, or a floating-point type: `bool`, `i8`
+through `i64`, `u8` through `u64`, `int`, `uint`, `uintptr`, `f16`, `f32`, and
+`f64`. `rune`, 128-bit integers, enums, pointers, and every aggregate are
+rejected, each naming what it is rather than "not a SIMD element". `distinct`
+over a permitted element is itself permitted and keeps its own identity.
+
+`N` must be a constant power of two from 1 through 64, and `N * size_of(T)`
+must not exceed 64 bytes. A lane count outside that range is a compile-time
+error naming the limit. The bounds are the language's, not the target's: a
+vector wider than the target's registers is legal and is split by the backend,
+and a vector narrower than them is legal and is padded. No `Simd` type is
+conditional on a target feature.
+
+A `Simd(bool, N)` is the **lane mask** type. Its lanes are one bit of
+information each; its representation is one byte per lane, so `size_of` and
+`align_of` follow the rules below like any other vector.
+
+#### Layout
+
+`size_of(Simd(T, N))` is `N * size_of(T)`, and `align_of(Simd(T, N))` is
+`size_of(Simd(T, N))` — a vector is aligned to its own size, which is what
+permits an aligned whole-vector load. A `Simd` is therefore not a struct with
+the same fields: `Simd(f32, 3)` has size 12 and alignment 16, while a
+`[3]f32` has size 12 and alignment 4.
+
+`-check-layout` verifies both against the backend like every other type, and
+`meta.Type_Info` reports the element type and lane count for `Type_Kind.Simd`.
+
+#### Construction and conversion
+
+A `Simd` is written as a composite literal with one element per lane, in lane
+order:
+
+```odin
+lanes: Simd(f32, 4) = {1.0, 2.0, 3.0, 4.0};
+zeroes: Simd(f32, 4) = {};
+```
+
+A scalar converts to a vector implicitly wherever a vector is expected,
+producing the **splat** — every lane equal to that scalar. The reverse is not a
+conversion:
+
+```odin
+doubled := lanes * 2.0;                 // 2.0 splats to all four lanes
+biased := lanes + Simd(f32, 4){0.5};    // a one-element literal does not splat
+```
+
+An explicit `Simd(U, N)(v)` converts each lane of `v` from `T` to `U` under the
+same rule the scalar conversion `U(lane)` would use, and requires the same lane
+count. There is no implicit conversion between two vector types, and no
+reinterpretation of one vector type as another: a bit-preserving reinterpretation
+crosses the `core:unsafe` boundary like any other.
+
+#### Operators
+
+Every operator below applies lane-wise and produces a vector of the same lane
+count. Both operands must have the same `Simd` type after splatting; mixing two
+different vector types is an error.
+
+| Operators | Element types | Result |
+|---|---|---|
+| `+`, `-`, `*`, `/` | integer, float | `Simd(T, N)` |
+| `%` | integer | `Simd(T, N)` |
+| unary `-` | signed integer, float | `Simd(T, N)` |
+| `&`, `\|`, `~`, `&~`, unary `~` | integer, `bool` | `Simd(T, N)` |
+| `<<`, `>>` | integer | `Simd(T, N)` |
+| `==`, `!=`, `<`, `<=`, `>`, `>=` | integer, float, `bool` (equality only) | `Simd(bool, N)` |
+| `&&`, `\|\|` | — | rejected |
+
+Three consequences are worth stating outright.
+
+A comparison **yields a lane mask, not a `bool`**. `a < b` on vectors has type
+`Simd(bool, N)`, so it cannot be an `if` condition; reduce it first with
+`simd.any` or `simd.all`. This is why `&&` and `||` are rejected on vectors:
+they short-circuit, and there is nothing lane-wise for a short circuit to mean.
+Use `&` and `|` on the masks instead.
+
+Integer division and remainder by a zero lane, and signed overflow of the
+minimum value by `-1`, are program faults exactly as for scalars, and are
+detected the same way. A shift whose right lane is at or beyond the element's
+width is likewise a fault, matching the scalar rule.
+
+Floating-point lanes follow the scalar floating-point rules unchanged: no
+contraction the source did not write, and no reassociation.
+
+#### Lane access
+
+`v[i]` reads a lane and `v[i] = x` writes one. **The index must be a constant**
+that the compiler can prove is in range; a runtime index is an error naming the
+lane count, because a dynamic lane index has no efficient lowering and hides a
+store-and-reload the source did not ask for. Code with a runtime index takes an
+array instead.
+
+`len(v)` is the lane count, a compile-time constant. A vector is not a sequence:
+it has no iteration, no slicing, and no `[:]`.
+
+#### `core:simd`
+
+`core:simd` supplies what the operators cannot spell:
+
+- `splat(scalar) -> Simd(T, N)`, the explicit spelling of the implicit widening;
+- `from_array(array) -> Simd(T, N)` and `to_array(v) -> [N]T`, the two
+  conversions between a vector and an array of the same element and length;
+- `shuffle(a, b, $indices)` — one vector from two, with a constant index per
+  result lane over the concatenation `a ++ b`;
+- `select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between two vectors;
+- `any(mask) -> bool`, `all(mask) -> bool`, and `count(mask) -> int`, the
+  reductions that turn a lane mask back into control flow;
+- `reduce_add`, `reduce_mul`, `reduce_min`, `reduce_max`, `reduce_and`,
+  `reduce_or`, and `reduce_xor`, each folding a vector to one scalar. The
+  floating-point reductions are ordered, left to right, so a result does not
+  depend on the target's vector width;
+- `min(a, b)`, `max(a, b)`, and `abs(v)`, lane-wise.
+
+#### What SIMD does not do
+
+`Simd(T, N)` is **not foreign-ABI-safe**. It is rejected in a foreign
+signature, in a foreign block's global, and in an `@(export)`, because a
+vector's C classification is target- and extension-dependent in a way the
+foreign-ABI-safe subset deliberately excludes. A binding that must pass vectors
+passes a pointer to an array. Its `loke`-convention classification is the
+backend's own, as every other aggregate's is.
+
+There is no target-feature detection, no runtime dispatch on the available
+instruction set, and no guarantee that any particular operation becomes any
+particular instruction. `Simd` is a portable width contract, not an instruction
+selector.
 
 ### Slices
 
@@ -4323,6 +4455,8 @@ process_owned(move(numbers));
 
 **Both non-default modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and an argument to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs, so a reader sees at the call which arguments may be modified and which are given away.
 
+The written form therefore also selects, as it does for a [consuming receiver](#methods-and-abstractions): a candidate whose parameter is `move` is reachable only from a written `move(expr)`. The reverse is not a mismatch — `move(expr)` into an ordinary value parameter transfers ownership instead of cloning into it — but it is the weaker match, so a written transfer picks the consuming overload wherever both exist.
+
 `move(x)` is an [expression](#assignment-statements) that produces a value,
 writes the inert representation to a lexical `x`, and marks it dead; it is
 equally usable in an assignment or a `return`. It cannot target static-duration
@@ -5122,7 +5256,10 @@ import "core:unsafe"
 
 raw := unsafe.raw_data(bytes);       // checked provenance is discarded
 view := unsafe.cstring_view(raw);    // programmer promises the lifetime
+unsafe.free(block, allocator);       // programmer promises the allocation
 ```
+
+`unsafe.free(pointer)` and `unsafe.free(pointer, allocator)` release an allocation whose root the compiler cannot follow — one reached through a `rawptr`, a parameter, or foreign code. They release exactly what checked `free` releases and check nothing: the caller promises that the pointer is an allocation base from that allocator, that nothing still refers to it, and that it is released once. A handle over an opaque control block, `shared(T)` among them, has no other way to release it.
 
 Everything in `unsafe` is a promise by the programmer that the compiler cannot verify. It does not make the underlying storage owned or extend its lifetime.
 
@@ -5167,10 +5304,14 @@ main :: proc() {
 
 #### Executable startup ABI
 
-The compiler emits the executable's C entry, distinct from Loke's `main`. On Windows, `wmain(int, wchar_t **)` receives UTF-16 arguments, converts them once to process-lifetime cached UTF-8, then attaches the initial thread and calls `main`:
+The compiler emits the executable's C entry, distinct from Loke's `main`. On Windows, `wmain(int, wchar_t **)` receives UTF-16 arguments, converts them once to process-lifetime cached UTF-8, attaches the initial thread, runs [provider initialization](#build-selected-providers), and calls `main`. The four steps are in that order and nothing runs between them:
 
-- `os.args` reads already-valid UTF-8; it needs no conversion or package initializer.
-- An [object build](#build-configuration) emits no entry or argument conversion; `os.args` reports no arguments. Its foreign host owns startup and must supply its own argument mechanism if needed.
+1. **Convert the arguments.** `os.args` reads already-valid UTF-8; it needs no conversion or package initializer.
+2. **Attach the initial thread.** Provider factories are ordinary Loke code and run on an attached thread like any other.
+3. **Initialize the providers**, allocator first and logger second. An unselected slot keeps its fallback and nothing is called for it.
+4. **Call `main`.**
+
+An [object build](#build-configuration) emits no entry and no argument conversion; `os.args` reports no arguments. Its foreign host owns startup and must supply its own argument mechanism if needed. Where such a build selects a provider it exports the initializer described under [Build modes](#build-modes), and its host calls that after attaching a thread and before using any export.
 
 Unpaired surrogates in the incoming vector become U+FFFD.
 
@@ -5522,6 +5663,47 @@ The final build selects exactly one **default allocator provider** and one **log
 
 If none are selected, the runtime supplies the system heap allocator and standard logger. Provider implementations are fixed for the executable or library and may be devirtualized. Their runtime state is initialized before `main` and available until process exit. Packages cannot replace providers or register automatic startup or shutdown code.
 
+#### Selecting a provider
+
+A provider is named on the build command line and nowhere else:
+
+```text
+-provider allocator=<import path>:<name>
+-provider logger=<import path>:<name>
+```
+
+The named declaration is a **factory**: a public, non-generic procedure taking no parameters and returning the slot's handle type — `Allocator` for the allocator slot, `Logger` for the logger slot. Naming one makes its package a build dependency even when no source imports it, which is what lets a program select a provider it never mentions. A slot may be selected at most once; a second selection for the same slot, an import path or name that does not resolve, and a declaration whose signature is not the slot's factory shape are three separate errors.
+
+An import never selects anything. Importing the package a factory lives in has no effect beyond making its other declarations visible.
+
+#### Provider initialization
+
+Initialization runs once, on the attached startup thread, in this order:
+
+1. the allocator factory is called, its result is checked to be a non-nil handle whose record matches the runtime ABI, and the result is **published**;
+2. the logger factory is called and its result retained.
+
+The allocator factory runs before any allocator has been published, so its own default allocations use the system heap; the logger factory runs after, so its default allocations use the published allocator. Logging before the logger is published goes to the standard fallback.
+
+Publication keeps the handle the factory returned, not a copy of what it points at, so the provider's identity, state, and [region](#allocator-regions-and-region-provenance) survive initialization unchanged. Owners that bound the fallback before initialization keep it: an allocator is retained by the owner that bound it, and publication does not reach back into one.
+
+A factory must return a handle backed by storage that lives as long as the process — a `static` or `thread_local` root, or an allocation it does not release. A handle into a factory local, a resettable region, or thread-local storage that is torn down is invalid, and using it after the factory returns is undefined. Retained state receives no automatic shutdown; there is no provider teardown hook.
+
+Initialization completes before any worker thread exists. A repeated call after it has completed does nothing. A factory that re-enters initialization fails; concurrent initialization is outside the contract, because the host is required to initialize before it starts threads. A null allocator handle or a handle whose record does not match the runtime ABI terminates the program before application code runs.
+
+#### Compiled log level
+
+`-log-level=<level>` predeclares the constant `LOKE_LOG_LEVEL`, whose type is `core:log`'s level enumeration and whose default is the lowest level. The `core:log` procedures guard their own bodies with it, so a call below the compiled level never reaches the provider.
+
+Discarding a callee's body does not discard the caller's expressions. An unguarded call below the level still checks and evaluates its arguments; removing those too takes a caller-side [`when`](#when-statements), which is the ordinary rule that a discarded branch is neither checked nor emitted:
+
+```odin
+log.debug("state", expensive());                       // argument still evaluated
+when (LOKE_LOG_LEVEL <= .Debug) {
+	log.debug("state", expensive());                   // neither checked nor emitted
+}
+```
+
 `mem.default_allocator()` obtains the selected allocator handle at runtime. A zero-valued managed owner without `via` binds it lazily when first needed; an omitted allocator argument obtains it when the operation begins. Bound owners retain their allocator. See [Allocators](#allocators).
 
 The `core:log` procedures route to the selected logging provider. The build may also select a minimum compiled log level, allowing lower-level calls to be removed entirely. A package that needs a different sink, captured test output, or
@@ -5723,7 +5905,7 @@ made_map_with_reservation := make(map[string]int, 64) or_else {};
 // Each failure must be handled or explicitly discarded.
 ```
 
-- `free` ends the allocation root designated by a checked base pointer from `new` or `new_clone`. It consumes the operand binding and invalidates every locally tracked pointer or view of that allocation. `free` needs the write capability, so its operand is a `^mut T`; a `^T` weakened from an allocation may still read it but not end it. A pointer obtained with `&` or `&mut` is not an allocation root and cannot be passed to `free` at all. The program must use the allocator that created the allocation; releasing an unchecked or foreign allocation crosses the `core:unsafe` or foreign-allocator boundary.
+- `free` ends the allocation root designated by a checked base pointer from `new` or `new_clone`. It consumes the operand binding and invalidates every locally tracked pointer or view of that allocation. `free` needs the write capability, so its operand is a `^mut T`; a `^T` weakened from an allocation may still read it but not end it. A pointer obtained with `&` or `&mut` is not an allocation root and cannot be passed to `free` at all. The program must use the allocator that created the allocation: `free(pointer)` releases through the default provider, and `free(pointer, allocator)` names another one, exactly as `new` selects it. Releasing an unchecked or foreign allocation crosses the `core:unsafe` or foreign-allocator boundary; [`unsafe.free`](#the-unsafe-package) is that crossing.
 
 ```odin
 switch (ptr in new(int)) {
@@ -5839,6 +6021,8 @@ The atomic reference count makes concurrent handle accounting race-free. It does
 
 Atomic handle accounting also does **not** make concurrent access to `T` safe. `handle.get()` returns a non-owning `^T` whose root provenance derives from that handle; callers must use a mutex, atomics within `T`, immutability, or another protocol before conflicting access. The borrow may not outlive the handle used to obtain it, but the compiler does not correlate aliases obtained from different shared handles.
 
+Four properties of these two types are the language's, not the library's. Their zero value is written `nil` and compares to `nil`, which no other record type does. A declaration of one cannot use `via`, as above. `handle.get()`'s result derives its root provenance from the receiver even though the body reaches the payload through the control block. And a handle is never silently consumed at its last use: sharing is what a copy of one means, so the copy is always made.
+
 Strong-reference cycles are permitted and leak until explicitly broken. `weak(T)` is the non-owning companion: it keeps the control block but not the payload alive, and `upgrade` returns `Option(shared(T))`. Libraries that build cyclic graphs should use weak back-edges or explicit teardown.
 
 Immutable `string` implementations that share backing storage use the same atomic handle-accounting principle: their reference-count operations, when present, are atomic, while the bytes themselves never change. The allocator-lifecycle obligation above still applies, and this requirement does not make mutable containers safe for concurrent access.
@@ -5860,7 +6044,7 @@ A procedure using a foreign calling convention, a variable declared in a foreign
 
 **`int` is not C `int`.** Loke's `int` and `uint` are the natural register width, so they are `i64`/`u64` on every 64-bit target while C's `int` stays 32 bits there. They are foreign-ABI-safe in the sense that the ABI can describe them, not in the sense that they match a C declaration spelled `int`. A binding writes the fixed-width type the C header actually resolves to — `i32` for C `int`, `i64` for C `long long`, `int` only where the C side is `ptrdiff_t`, `ssize_t`, or another register-width type. This is the single most common way a hand-written binding goes wrong, and nothing at the boundary can detect it.
 
-Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_view`, `dyn Interface`, and records with custom lifecycle hooks are not foreign-ABI-safe. Interface declarations and compile-time `type` values have no runtime ABI, and a [generic](#generics) procedure or type is likewise not ABI surface — only a concrete instantiation, wrapped in a procedure with a foreign calling convention, can cross the boundary. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
+Managed containers, `string`, slices, dynamic arrays, maps, tagged unions, `any_view`, `dyn Interface`, [`Simd(T, N)`](#simd-vectors), and records with custom lifecycle hooks are not foreign-ABI-safe. Interface declarations and compile-time `type` values have no runtime ABI, and a [generic](#generics) procedure or type is likewise not ABI surface — only a concrete instantiation, wrapped in a procedure with a foreign calling convention, can cross the boundary. A fixed array is not permitted as a top-level C parameter because C adjusts such parameters to pointers; write `[^]T` or `^T` explicitly. A packed record is safe only when the bound C declaration uses the same target-specific packing convention; portable bindings should instead copy through an ordinary ABI record.
 
 The base language has no overlapping-record or C-union type. Portable bindings pass a C union as `rawptr` and expose typed wrapper accessors. A binding generator may use a target-specific extension for a union passed by value, but that representation is not portable Loke source.
 
@@ -5954,6 +6138,7 @@ The compiler provides a small set of constants in every compilation:
 | `LOKE_BUILD_MODE` | Requested output kind. |
 | `LOKE_DEBUG` | Whether debug information and debug-mode facilities are enabled. |
 | `LOKE_OPTIMIZATION_MODE` | Selected optimization mode. |
+| `LOKE_LOG_LEVEL` | The [compiled log level](#compiled-log-level); `core:log` suppresses everything below it. |
 | `LOKE_VENDOR` | Compiler implementation identifier; the official compiler uses `"loke"`. |
 | `LOKE_VERSION` | Compiler version string. |
 
@@ -5987,6 +6172,10 @@ Configuration values are immutable constants. File selection, generated sources,
 `obj` accepts any root package, requires no `main`, and emits no entry. It produces one relocatable object from the compiled module alone. That object deliberately keeps its runtime and foreign references unresolved: its C consumer supplies the runtime and the libraries at the final link, and owns process startup, which is what makes the runtime dependency explicit rather than hidden. An assembly import cannot ride along inside a single relocatable object, so an `obj` build that contains one is an error naming the file its consumer must assemble and link separately.
 
 A [foreign thread](#threads) that calls into an object build must attach and detach through the documented runtime API, exactly as any other non-Loke thread does.
+
+An `obj` build that [selects a provider](#build-selected-providers) exports one further entry, `loke_rt_v1_program_init`, taking no arguments and returning nothing. Nothing calls it automatically: the host calls it once, on an attached thread, after attaching and before it uses any export or starts a worker thread. Calling it again after it has completed does nothing. An `obj` build that selects nothing exports no initializer and keeps the fallback providers, so an existing host needs no change.
+
+Exactly one selected configuration reaches the final link, because the initializer is one definition: linking two objects that each selected a provider fails on the duplicate.
 
 ## Compile-time built-ins
 

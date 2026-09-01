@@ -1,0 +1,144 @@
+package main;
+
+import "core:fmt";
+import "core:sync";
+
+// `core:sync` end to end (m8-plan step 4, design.md "Concurrency and the memory
+// model").
+//
+// Every supported type, every operation the type has, and every ordering each
+// operation permits. The 128-bit cases matter most: they take the runtime
+// fallback rather than a native instruction, and emitting IR for them is not
+// the same as linking and running them.
+
+Order :: sync.Memory_Order;
+
+Colour :: enum u8 { Red, Green, Blue };
+
+// A 128-bit enum, so the enum path reaches the fallback lowering too.
+Wide :: enum i128 { Low, High = 1 << 100 };
+
+Counter :: sync.Atomic(int);
+
+main :: proc() {
+	// ------------------------------------------------------------- integers --
+
+	a: Counter = {};
+	fmt.println(a.load(), a.value);
+	a.store(5);
+	fmt.println(a.load());
+	fmt.println(a.exchange(7), a.load());
+	fmt.println(a.add(3), a.load());
+	fmt.println(a.sub(2), a.load());
+	fmt.println(a.bit_and(0xF), a.load());
+	fmt.println(a.bit_or(0x10), a.load());
+	fmt.println(a.bit_xor(0x1), a.load());
+
+	// Both compare-exchange outcomes, and both orderings written out.
+	held := a.load();
+	observed, swapped := a.compare_exchange(held, 100, Order.Acquire_Release, Order.Acquire);
+	fmt.println(observed == held, swapped, a.load());
+	missed, failed := a.compare_exchange(held, 200, Order.Sequentially_Consistent, Order.Relaxed);
+	fmt.println(missed, failed, a.load());
+
+	// Every ordering each operation permits.
+	a.store(1, Order.Relaxed);
+	fmt.println(a.load(Order.Relaxed));
+	a.store(2, Order.Release);
+	fmt.println(a.load(Order.Acquire));
+	a.store(3, Order.Sequentially_Consistent);
+	fmt.println(a.load(Order.Sequentially_Consistent));
+	fmt.println(a.add(1, Order.Relaxed), a.load(Order.Relaxed));
+	fmt.println(a.exchange(9, Order.Acquire_Release), a.load(Order.Acquire));
+
+	sync.fence(Order.Acquire);
+	sync.fence(Order.Release);
+	sync.fence(Order.Acquire_Release);
+	sync.fence();
+
+	// ------------------------------------------------------------- widths --
+
+	// One of each native width, so the lowering table is exercised rather than
+	// assumed. Signed and unsigned both, because the storage type differs.
+	b8: sync.Atomic(u8) = {};
+	fmt.println(b8.add(u8(200)), b8.add(u8(100)), b8.load());
+	s8: sync.Atomic(i8) = {};
+	fmt.println(s8.sub(i8(1)), s8.load());
+	b16: sync.Atomic(u16) = {};
+	fmt.println(b16.exchange(u16(0xBEEF)), b16.load());
+	b32: sync.Atomic(i32) = {};
+	fmt.println(b32.bit_or(i32(0x1000)), b32.load());
+	b64: sync.Atomic(u64) = {};
+	fmt.println(b64.add(u64(1) << 40), b64.load() == u64(1) << 40);
+
+	// The fallback widths. Every operation on them takes the runtime path,
+	// loads and stores included.
+	w: sync.Atomic(u128) = {};
+	w.store(u128(1) << 100);
+	fmt.println(w.load() == u128(1) << 100);
+	fmt.println(w.add(u128(5)) == u128(1) << 100);
+	fmt.println(w.load() == (u128(1) << 100) + 5);
+	fmt.println(w.sub(u128(5)) == (u128(1) << 100) + 5);
+	fmt.println(w.exchange(u128(7)) == u128(1) << 100, w.load() == u128(7));
+	fmt.println(w.bit_or(u128(8)) == u128(7), w.load() == u128(15));
+	fmt.println(w.bit_and(u128(9)) == u128(15), w.load() == u128(9));
+	fmt.println(w.bit_xor(u128(1)) == u128(9), w.load() == u128(8));
+	wide_seen, wide_swapped := w.compare_exchange(u128(8), u128(1) << 127);
+	fmt.println(wide_seen == u128(8), wide_swapped, w.load() == u128(1) << 127);
+	wide_missed, wide_failed := w.compare_exchange(u128(0), u128(1));
+	fmt.println(wide_missed == u128(1) << 127, wide_failed);
+
+	sw: sync.Atomic(i128) = {};
+	sw.store(-(i128(1) << 100));
+	fmt.println(sw.load() == -(i128(1) << 100));
+	fmt.println(sw.add(i128(1) << 100) == -(i128(1) << 100), sw.load() == i128(0));
+
+	// -------------------------------------------------- the other atomics --
+
+	flag: sync.Atomic(bool) = {};
+	fmt.println(flag.load());
+	flag.store(true);
+	fmt.println(flag.load(), flag.exchange(false), flag.load());
+	flag_seen, flag_swapped := flag.compare_exchange(false, true);
+	fmt.println(flag_seen, flag_swapped, flag.load());
+
+	letter: sync.Atomic(rune) = {};
+	letter.store('ä');
+	fmt.println(letter.load());
+
+	// An enum over a native width, and one over a fallback width.
+	colour: sync.Atomic(Colour) = {};
+	fmt.println(colour.load());
+	colour.store(Colour.Blue);
+	fmt.println(colour.load(), colour.exchange(Colour.Green), colour.load());
+
+	wide_enum: sync.Atomic(Wide) = {};
+	fmt.println(wide_enum.load());
+	wide_enum.store(Wide.High);
+	fmt.println(wide_enum.load());
+	enum_seen, enum_swapped := wide_enum.compare_exchange(Wide.High, Wide.Low);
+	fmt.println(enum_seen, enum_swapped, wide_enum.load());
+
+	// Pointers, both spellings.
+	target := 42;
+	pointer: sync.Atomic(^int) = {};
+	fmt.println(pointer.load() == nil);
+	pointer.store(&target);
+	fmt.println(pointer.load()^);
+	raw: sync.Atomic(rawptr) = {};
+	fmt.println(raw.exchange(nil) == nil);
+
+	// -------------------------------------------------------------- once --
+
+	fmt.println(gate.is_done());
+	gate.do(bump);
+	gate.do(bump);
+	gate.do(bump);
+	fmt.println(runs, gate.is_done());
+}
+
+runs: static int = 0;
+
+gate: static sync.Once = {};
+
+bump :: proc() { runs += 1; }

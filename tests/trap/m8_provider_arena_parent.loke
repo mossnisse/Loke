@@ -1,0 +1,12 @@
+package main; import "core:fmt"; import "core:mem";
+
+// A local `mem.Arena` takes its blocks from the default provider, so its parent
+// is the selected one too (m8-plan step 3). The selection is a 256-byte arena,
+// which cannot supply an arena block.
+
+main :: proc() {
+	arena := mem.Arena.init();
+	xs: [dynamic]int via arena.allocator() = {};
+	xs.append(1, 2, 3);
+	fmt.println(xs);
+}

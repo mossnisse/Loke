@@ -969,7 +969,7 @@ emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 		e, "loke_rt_v1_string_concat",
 		fmt.aprintf(
 			"ptr %s, i64 %s, ptr %s, i64 %s, ptr %s",
-			left_data, left_len, right_data, right_len, RT_DEFAULT_ALLOCATOR,
+			left_data, left_len, right_data, right_len, emit_default_allocator(e),
 		),
 		fail_is_panic = true,
 	)
@@ -1494,7 +1494,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		data, length := emit_text_parts(e, v.bound[0])
 		out[0] = emit_text_allocating_call(
 			e, "loke_rt_v1_string_clone",
-			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, RT_DEFAULT_ALLOCATOR),
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, emit_default_allocator(e)),
 			fail_is_panic = true,
 		)
 
@@ -1514,17 +1514,18 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		data, length := emit_text_parts(e, v.bound[0])
 		ops := container_ops_global(e, v.type)
 		slot := alloca(e, CONTAINER_TYPE)
+		provider := emit_default_allocator(e)
 		ok := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call i32 @loke_rt_v1_string_to_runes(ptr %s, ptr %s, ptr %s, i64 %s, ptr %s)",
-			ok, slot, ops, data, length, RT_DEFAULT_ALLOCATOR,
+			ok, slot, ops, data, length, provider,
 		)
 		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
 		fail, done := new_label(e, "runes.failed"), new_label(e, "ok")
 		branch_if(e, failed, fail, done)
 		place_label(e, fail)
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
 		fmt.sbprintln(&e.b, "  unreachable")
 		e.terminated = true
 		place_label(e, done)
@@ -1538,7 +1539,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		count := extract(e, storage, slice, SLICE_LEN)
 		return emit_text_optional_ok(
 			e, v.type, "loke_rt_v1_string_from_runes",
-			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, RT_DEFAULT_ALLOCATOR),
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, emit_default_allocator(e)),
 		)
 	}
 	return out
@@ -1568,7 +1569,7 @@ emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments: string, fail_i
 		fail, done := new_label(e, "text.failed"), new_label(e, "ok")
 		branch_if(e, failed, fail, done)
 		place_label(e, fail)
-		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", RT_DEFAULT_ALLOCATOR)
+		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", emit_default_allocator(e))
 		fmt.sbprintln(&e.b, "  unreachable")
 		e.terminated = true
 		place_label(e, done)
@@ -1623,7 +1624,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		data, length := emit_byte_slice_parts(e, v.bound[0])
 		return emit_text_optional_ok(
 			e, v.type, "loke_rt_v1_string_from_bytes",
-			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, RT_DEFAULT_ALLOCATOR),
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, emit_default_allocator(e)),
 		)
 
 	case .View_From_Bytes:
@@ -1650,7 +1651,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, pointer)
 		return emit_text_optional_ok(
 			e, v.type, "loke_rt_v1_string_from_bytes",
-			fmt.aprintf("ptr %s, i64 %s, ptr %s", pointer, length, RT_DEFAULT_ALLOCATOR),
+			fmt.aprintf("ptr %s, i64 %s, ptr %s", pointer, length, emit_default_allocator(e)),
 		)
 	}
 	backend_fail(e, "an unclassified text conversion reached emission")

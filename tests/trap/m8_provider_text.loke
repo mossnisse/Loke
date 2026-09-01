@@ -1,0 +1,14 @@
+package main; import "core:fmt";
+
+// design.md "Concatenation" allocates from `mem.default_allocator()` and
+// follows its failure policy. The selected provider is a 256-byte arena, so a
+// larger string cannot be built — which is what proves text creation reaches
+// the selection and not the runtime's fallback (m8-plan step 3).
+
+main :: proc() {
+	text: string = "0123456789abcdef";
+	foreach (_ in 0 ..< 8) {
+		text = text + text;
+	}
+	fmt.println(len(text));
+}

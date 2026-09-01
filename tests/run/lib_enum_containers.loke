@@ -1,0 +1,78 @@
+package main;
+
+import "core:fmt";
+import "core:container";
+
+// `Bit_Set(Enum)` and `Enum_Array(Enum, T)` end to end (m8-plan step 1,
+// design.md "Iterating an enumeration" and the catalogue's flag-set row).
+
+Direction :: enum{North, East, South, West};
+
+// Holes: a member's slot and bit are its declaration position, not its value,
+// so this enum needs three of each and not eight.
+Sparse :: enum{A, B = 4, C = 7};
+
+Flags :: container.Bit_Set(Direction);
+Counts :: container.Enum_Array(Direction, int);
+
+main :: proc() {
+	// design.md's own enum-iteration example.
+	foreach (direction, index in Direction.values().indexed()) {
+		fmt.println(index, direction);
+	}
+
+	// ------------------------------------------------------------- Bit_Set --
+
+	s := Flags.of(.North, .West);
+	fmt.println(s, len(s), cap(s), s.is_empty());
+	fmt.println(s.contains(.North), s.contains(.East));
+
+	s.set(.East);
+	fmt.println(s);
+	s.unset(.North);
+	fmt.println(s);
+	s.toggle(.South);
+	fmt.println(s);
+	s.toggle(.South);
+	fmt.println(s);
+
+	all := Flags.all();
+	fmt.println(all, len(all));
+	fmt.println(all & s);
+	fmt.println(all &~ s);
+	fmt.println(all ~ s);
+	fmt.println(all | s);
+	fmt.println(~s);
+	fmt.println(s.is_subset_of(all), all.is_subset_of(s));
+	fmt.println(s == s, s == all);
+
+	empty: Flags = {};
+	fmt.println(empty, empty.is_empty(), len(empty));
+
+	foreach (direction in all) { fmt.println(direction); }
+
+	// A set over an enum with holes still costs one bit per member.
+	sparse := container.Bit_Set(Sparse).of(.C, .A);
+	fmt.println(sparse, len(sparse), cap(sparse));
+	sparse.clear();
+	fmt.println(sparse, sparse.is_empty());
+
+	// ---------------------------------------------------------- Enum_Array --
+
+	counts: Counts = {};
+	counts[.North] = 3;
+	counts[.West] += 1;
+	fmt.println(counts, len(counts), cap(counts));
+	fmt.println(counts[.North], counts[.East], counts[.West]);
+
+	foreach (entry in counts) { fmt.println(entry.key, entry.value); }
+
+	names := container.Enum_Array(Direction, string_view).filled("?");
+	names[.South] = "söder";
+	fmt.println(names);
+
+	// The holes again: three slots, keyed by member.
+	labels := container.Enum_Array(Sparse, int).filled(-1);
+	labels[.B] = 4;
+	fmt.println(labels, len(labels));
+}

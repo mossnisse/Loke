@@ -1,0 +1,113 @@
+package main;
+
+import "core:fmt";
+import "core:slice";
+
+// `sort` and `reverse_sort` as contributed members (m8-plan step 2).
+//
+// design.md writes both spellings — `s.sort()` on a dynamic array and the free
+// `slice.sort(s)` — and this file is not `core:slice`, which is the whole point
+// of contributing the member: an `impl [dynamic]T` written there would be an
+// extension visible only inside that package.
+
+// A user element with its own inherent `<`. The comparison the sort uses is
+// this operator, not the field order or the representation.
+Card :: struct { rank: int, name: string_view }
+
+impl Card {
+	before :: operator(<) proc(a, b: Card) -> bool { return a.rank < b.rank; }
+	equal :: operator(==) proc(a, b: Card) -> bool { return a.rank == b.rank; }
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, self.name);
+	}
+}
+
+// A distinct type reaching its underlying `<` through a delegation.
+Meters :: distinct f64;
+
+impl Meters {
+	delegate(<, ==);
+}
+
+sorted_copy :: proc(values: []int) -> [dynamic]int {
+	out := slice.clone(values);
+	out.sort();
+	return move(out);
+}
+
+main :: proc() {
+	// design.md's own example.
+	s: [dynamic]int = {};
+	s.append(1, 6, 3, 5, 7, 3, 0); // [1, 6, 3, 5, 7, 3, 0]
+	s.sort(); // [0, 1, 3, 3, 5, 6, 7]
+	fmt.println(s);
+	s.reverse_sort();
+	fmt.println(s);
+
+	// The free spelling and the member spelling are one implementation.
+	a := []mut int{5, 2, 9, 2, 7};
+	b := []mut int{5, 2, 9, 2, 7};
+	slice.sort(a);
+	b.sort();
+	fmt.println(a, b, slice.equal(a, b));
+	slice.reverse_sort(a);
+	b.reverse_sort();
+	fmt.println(a, b, slice.equal(a, b));
+
+	// The shapes a sort has to get right whatever the algorithm behind it.
+	empty: [dynamic]int = {};
+	empty.sort();
+	fmt.println(empty, len(empty));
+
+	one := [dynamic]int{9};
+	one.sort();
+	fmt.println(one);
+
+	same := [dynamic]int{4, 4, 4, 4, 4, 4, 4};
+	same.sort();
+	fmt.println(same);
+
+	// Long enough to leave the insertion-sort cutoff and exercise the partition,
+	// in the two arrangements a naive quicksort degenerates on.
+	descending: [dynamic]int = {};
+	foreach (i in 0 ..< 64) { descending.append(63 - i); }
+	descending.sort();
+	fmt.println(descending[0], descending[31], descending[63], slice.is_sorted(descending[:]));
+
+	ascending: [dynamic]int = {};
+	foreach (i in 0 ..< 64) { ascending.append(i); }
+	ascending.reverse_sort();
+	fmt.println(ascending[0], ascending[63], slice.is_reverse_sorted(ascending[:]));
+
+	// A few permutations through one deterministic shuffle, so the answer is
+	// checked rather than the order of one hand-written input.
+	mixed: [dynamic]int = {};
+	value := 1;
+	foreach (i in 0 ..< 50) {
+		value = (value*48271) % 2147483647;
+		mixed.append(value % 100);
+	}
+	mixed.sort();
+	fmt.println(len(mixed), slice.is_sorted(mixed[:]), mixed[0] <= mixed[49]);
+
+	// An element wider than a machine word, and one with its own `<`.
+	cards := [dynamic]Card{Card{3, "three"}, Card{1, "one"}, Card{2, "two"}};
+	cards.sort();
+	fmt.println(cards);
+	cards.reverse_sort();
+	fmt.println(cards);
+
+	// A managed element: sorting moves the headers, and every string survives it.
+	words := [dynamic]string{"pear", "apple", "fig", "date"};
+	words.sort();
+	fmt.println(words);
+
+	// A delegated `<`.
+	spans := []mut Meters{Meters(3.5), Meters(-1.0), Meters(0.25)};
+	spans.sort();
+	fmt.println(f64(spans[0]), f64(spans[1]), f64(spans[2]));
+
+	// A borrow of the container ends at the sort, so this is the ordinary
+	// borrow-then-sort-then-read order rather than one live across it.
+	fmt.println(sorted_copy([]int{3, 1, 2}));
+}

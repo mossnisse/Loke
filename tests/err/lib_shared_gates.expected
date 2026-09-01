@@ -1,0 +1,12 @@
+L0671
+@17:25
+`Shared(Node)` stores its allocator in the control block, so a declaration cannot select one with `via`
+L0526
+@24:9
+this borrow cannot be returned: `held` ends when this procedure returns
+L0512
+@31:2
+`held` cannot be dropped here: a read-only borrow of it is still in use
+L0363
+@39:9
+`Weak(Node)` has no field or member `get`

@@ -1,0 +1,12 @@
+L0651
+@11:2
+`[dynamic]Opaque` cannot be sorted
+L0363
+@19:2
+`[]int` has no field or member `sort`
+L0363
+@20:2
+`[]int` has no field or member `reverse_sort`
+L0512
+@28:2
+`numbers` cannot be modified here

@@ -108,6 +108,9 @@ build_config_enum_type :: proc(c: ^Compiler, which: Build_Config_Enum) -> Type_I
 			c, "Optimization_Mode", reflect.enum_field_names(Opt_Mode),
 		)
 		bc.types[.Vendor] = synth_enum(c, "Vendor", {"Loke"})
+		// Appended last so the five above keep their `Type_Id`s: creation order
+		// fixes the numbering, and moving one would move every type after it.
+		bc.types[.Log_Level] = synth_enum(c, "Log_Level", reflect.enum_field_names(Log_Level))
 	}
 	return bc.types[which]
 }
@@ -121,6 +124,9 @@ predeclare_build_config :: proc(c: ^Compiler, universe: ^Scope) {
 	define_universe(c, universe, "LOKE_ENDIAN", enum_const(c, .Endian, 0)) // Little
 	define_universe(c, universe, "LOKE_BUILD_MODE", enum_const(c, .Build_Mode, int(c.build_mode)))
 	define_universe(c, universe, "LOKE_OPTIMIZATION_MODE", enum_const(c, .Optimization_Mode, int(c.opt_mode)))
+	// design.md "Compiled log level": `core:log` guards its own bodies with this,
+	// and a caller-side `when` over it removes the call and its arguments.
+	define_universe(c, universe, "LOKE_LOG_LEVEL", enum_const(c, .Log_Level, int(c.log_level)))
 	define_universe(c, universe, "LOKE_VENDOR", enum_const(c, .Vendor, 0)) // Loke
 	// design.md "Debug selection": M7 accepts no debug build, so `LOKE_DEBUG` is
 	// present and always false. A later debug milestone flips it.

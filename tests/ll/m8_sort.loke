@@ -1,0 +1,26 @@
+package main; import "core:fmt"; import "core:slice";
+
+// The sort lowering (m8-plan step 2): one runtime introsort reached with the
+// data pointer, the count, the element size, one generated comparison per
+// element type, and the descending flag.
+
+Card :: struct { rank: int, tag: int }
+
+impl Card {
+	before :: operator(<) proc(a, b: Card) -> bool { return a.rank < b.rank; }
+}
+
+main :: proc() {
+	numbers: [dynamic]int = {};
+	numbers.append(3, 1, 2);
+	numbers.sort();
+	numbers.reverse_sort();
+
+	view := []mut int{3, 1, 2};
+	slice.sort(view);
+
+	cards := [dynamic]Card{Card{2, 0}, Card{1, 1}};
+	cards.sort();
+
+	fmt.println(numbers, view, len(cards));
+}

@@ -70,9 +70,10 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			out := extract(e, llvm_type(e, expr_base(v.bound[0]).type), source, word)
 			return out
 		case .Default_Allocator:
-			// design.md "Build-selected providers": the default provider is fixed at
-			// build time, so the handle is the runtime's own record.
-			return RT_DEFAULT_ALLOCATOR
+			// design.md "Build-selected providers": the handle the build selected —
+			// the runtime's fallback record until a factory publishes another, and
+			// that factory's own handle afterwards.
+			return emit_default_allocator(e)
 		case .New, .New_Clone:
 			return emit_allocation_pair(e, v, symbol.builtin)[0]
 		case .Make:
@@ -97,7 +98,10 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return emit_fmt_builtin(e, v, symbol.builtin)
 		case .Strings_Allocate:
 			return emit_strings_allocate(e, v)[0]
-		case .Free:
+		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
+		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
+			return emit_atomic_builtin(e, v, symbol.builtin)
+		case .Free, .Unsafe_Free:
 			emit_free(e, v)
 			return "0"
 		case .Free_All:
@@ -461,7 +465,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	for index in 0 ..< counts {
 		values[index] = v.bound[index] == nil ? "" : emit_expr(e, v.bound[index])
 	}
-	allocator := v.bound[counts] == nil ? RT_DEFAULT_ALLOCATOR : emit_expr(e, v.bound[counts])
+	allocator := v.bound[counts] == nil ? emit_default_allocator(e) : emit_expr(e, v.bound[counts])
 
 	header := alloca(e, CONTAINER_TYPE)
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", CONTAINER_TYPE, header)
@@ -521,11 +525,10 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 // The checker restricts the operand to a binding holding a fresh allocation
 // base, so the pointee type supplies the size and alignment given at `new`.
 //
-// ponytail: `free` names no allocator; design.md makes matching the creating one
-// the program's obligation, so this uses the default record. An arena
-// allocation is released by that region's reset instead — write the allocator
-// argument to `free` when the two must match exactly. Carrying the provider in
-// the allocation itself is the upgrade if that becomes common.
+// The allocator is the written one, or the default provider when it was
+// omitted; design.md makes matching the creating allocator the program's
+// obligation either way. An arena allocation is normally released by that
+// region's reset instead.
 @(private = "file")
 emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 	pointer := emit_expr(e, v.bound[0])

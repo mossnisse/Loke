@@ -183,7 +183,7 @@ int32_t loke_rt_v1_dyn_clone(
  * point, so this never overrides a written policy. */
 void loke_rt_v1_dyn_bind(loke_rt_dynamic_v1 *self) {
 	if (self->allocator == 0) {
-		self->allocator = &loke_rt_v1_default_allocator;
+		self->allocator = loke_rt_v1_selected_allocator();
 	}
 }
 
@@ -742,7 +742,7 @@ int32_t loke_rt_v1_map_clone(
 
 void loke_rt_v1_map_bind(loke_rt_map_v1 *self) {
 	if (self->allocator == 0) {
-		self->allocator = &loke_rt_v1_default_allocator;
+		self->allocator = loke_rt_v1_selected_allocator();
 	}
 }
 
@@ -798,7 +798,7 @@ void *loke_rt_v1_map_entry(
 	int32_t replacing = 0;
 
 	*inserted = 0;
-	allocator = self->allocator == 0 ? &loke_rt_v1_default_allocator : self->allocator;
+	allocator = self->allocator == 0 ? loke_rt_v1_selected_allocator() : self->allocator;
 	old = (loke_rt_map_table_v1 *)self->table;
 	t = old;
 	if (t != 0) {
@@ -1077,4 +1077,181 @@ int32_t loke_rt_v1_string_to_runes(
 	}
 	out->len = written;
 	return 1;
+}
+
+/* --------------------------------------------------------------- sorting -- */
+
+/* One introsort over an element size and a generated `less` thunk, which is the
+ * same split the operation table already uses: C owns the byte mechanics, and
+ * what one concrete Loke element compares like arrives as a thunk.
+ *
+ * `descending` inverts the comparison rather than reversing the finished array:
+ * the two differ for equal-comparing elements, and no order here is stable, so
+ * one pass is the whole operation.
+ *
+ * Nothing allocates. The swap and the pivot both work through a fixed stack
+ * buffer, copied in chunks for an element wider than the buffer. */
+
+enum { LOKE_RT_SORT_CHUNK = 64, LOKE_RT_SORT_SMALL = 16 };
+
+typedef struct loke_rt_sort_v1 {
+	char *base;
+	uint64_t size;
+	loke_rt_less_v1 less;
+	int32_t descending;
+} loke_rt_sort_v1;
+
+static char *sort_at(const loke_rt_sort_v1 *s, int64_t index) {
+	return s->base + (uint64_t)index * s->size;
+}
+
+static int32_t sort_before(const loke_rt_sort_v1 *s, const void *a, const void *b) {
+	return s->descending ? s->less(b, a) : s->less(a, b);
+}
+
+static void sort_swap(const loke_rt_sort_v1 *s, int64_t i, int64_t j) {
+	char buffer[LOKE_RT_SORT_CHUNK];
+	char *a = sort_at(s, i);
+	char *b = sort_at(s, j);
+	uint64_t left = s->size;
+	if (i == j) {
+		return;
+	}
+	while (left != 0) {
+		size_t step = left < LOKE_RT_SORT_CHUNK ? (size_t)left : LOKE_RT_SORT_CHUNK;
+		memcpy(buffer, a, step);
+		memcpy(a, b, step);
+		memcpy(b, buffer, step);
+		a += step;
+		b += step;
+		left -= step;
+	}
+}
+
+/* Insertion sort by rotation: the element being placed moves down one swap at a
+ * time, so no copy of it has to be held anywhere. */
+static void sort_insertion(const loke_rt_sort_v1 *s, int64_t low, int64_t high) {
+	int64_t i, j;
+	for (i = low + 1; i < high; i += 1) {
+		for (j = i; j > low && sort_before(s, sort_at(s, j), sort_at(s, j - 1)); j -= 1) {
+			sort_swap(s, j, j - 1);
+		}
+	}
+}
+
+static void sort_sift_down(const loke_rt_sort_v1 *s, int64_t low, int64_t root, int64_t end) {
+	int64_t node = root;
+	for (;;) {
+		int64_t child = 2 * (node - low) + 1 + low;
+		if (child >= end) {
+			return;
+		}
+		if (child + 1 < end &&
+		    sort_before(s, sort_at(s, child), sort_at(s, child + 1))) {
+			child += 1;
+		}
+		if (!sort_before(s, sort_at(s, node), sort_at(s, child))) {
+			return;
+		}
+		sort_swap(s, node, child);
+		node = child;
+	}
+}
+
+/* The guaranteed-O(n log n) fallback the depth limit falls back to. */
+static void sort_heap(const loke_rt_sort_v1 *s, int64_t low, int64_t high) {
+	int64_t node = low + (high - low) / 2;
+	int64_t end = high;
+	while (node > low) {
+		node -= 1;
+		sort_sift_down(s, low, node, high);
+	}
+	while (end - low > 1) {
+		end -= 1;
+		sort_swap(s, low, end);
+		sort_sift_down(s, low, low, end);
+	}
+}
+
+/* Median of three, moved to `low` so the partition loop has its pivot in a slot
+ * it never crosses. */
+static void sort_choose_pivot(const loke_rt_sort_v1 *s, int64_t low, int64_t high) {
+	int64_t mid = low + (high - low) / 2;
+	int64_t last = high - 1;
+	if (sort_before(s, sort_at(s, mid), sort_at(s, low))) {
+		sort_swap(s, mid, low);
+	}
+	if (sort_before(s, sort_at(s, last), sort_at(s, mid))) {
+		sort_swap(s, last, mid);
+		if (sort_before(s, sort_at(s, mid), sort_at(s, low))) {
+			sort_swap(s, mid, low);
+		}
+	}
+	sort_swap(s, low, mid);
+}
+
+/* Hoare partition around the value now at `low`. Comparing against the slot
+ * rather than a copy is what keeps the pivot out of the stack buffer; the loop
+ * never moves it, because both scans stop before crossing it. */
+static int64_t sort_partition(const loke_rt_sort_v1 *s, int64_t low, int64_t high) {
+	int64_t i = low;
+	int64_t j = high;
+	for (;;) {
+		do {
+			i += 1;
+		} while (i < high && sort_before(s, sort_at(s, i), sort_at(s, low)));
+		do {
+			j -= 1;
+		} while (sort_before(s, sort_at(s, low), sort_at(s, j)));
+		if (i >= j) {
+			break;
+		}
+		sort_swap(s, i, j);
+	}
+	sort_swap(s, low, j);
+	return j;
+}
+
+static void sort_introsort(const loke_rt_sort_v1 *s, int64_t low, int64_t high, int32_t depth) {
+	while (high - low > LOKE_RT_SORT_SMALL) {
+		int64_t pivot;
+		if (depth == 0) {
+			sort_heap(s, low, high);
+			return;
+		}
+		depth -= 1;
+		sort_choose_pivot(s, low, high);
+		pivot = sort_partition(s, low, high);
+		/* Recurse into the smaller side and loop on the larger, so the stack
+		 * depth stays logarithmic whatever the partition quality. */
+		if (pivot - low < high - pivot - 1) {
+			sort_introsort(s, low, pivot, depth);
+			low = pivot + 1;
+		} else {
+			sort_introsort(s, pivot + 1, high, depth);
+			high = pivot;
+		}
+	}
+	sort_insertion(s, low, high);
+}
+
+void loke_rt_v1_sort(
+	void *data, int64_t count, uint64_t elem_size,
+	loke_rt_less_v1 less, int32_t descending) {
+	loke_rt_sort_v1 s;
+	int32_t depth = 0;
+	int64_t span = count;
+	if (count < 2 || elem_size == 0 || less == 0) {
+		return;
+	}
+	s.base = (char *)data;
+	s.size = elem_size;
+	s.less = less;
+	s.descending = descending;
+	/* 2*floor(log2(count)), the standard introsort limit. */
+	while (span > 1) {
+		span >>= 1;
+		depth += 2;
+	}
+	sort_introsort(&s, 0, count, depth);
 }

@@ -1,0 +1,284 @@
+// `shared(T)` and `weak(T)` (design.md "Shared ownership", m8-plan step 5).
+//
+// Shared ownership is a library record with custom lifecycle hooks over an
+// atomic control block: `clone` and ordinary assignment increment a count
+// instead of duplicating `T`, `drop` decrements it, and the thread that
+// releases the final strong handle drops the payload exactly once.
+//
+// It lives in `base:runtime` rather than in `core:sync` for one reason: the
+// names `shared`, `weak`, and `try_shared` are *universe* names — design.md
+// writes `x: shared(Node)` with no import in sight — so the package that
+// declares them is loaded by every program. `base:runtime` is the package that
+// already exists for exactly that, beside `Option` and `Result`; making a
+// second one unconditional would put an atomics package in every hello world.
+// The compiler contributes the atomic intrinsics here for the same reason it
+// contributes `allocate_string` to both `core:strings` and `core:fmt`.
+//
+// Four things about these types are the *language's*, not the library's, and
+// the compiler owns them: the zero value is `nil` and compares to `nil`, `via`
+// on such a declaration is an error, `handle.get()` derives its root provenance
+// from the handle, and neither is ever silently moved at its last use.
+//
+// The atomic count makes *handle accounting* race-free. It does not make the
+// payload safe to touch from two threads, and it does not make destruction safe
+// on every thread: the thread that releases the last strong handle runs `T`s
+// drop and uses the control block's allocator. design.md says the compiler does
+// not check that, and it does not.
+@(public)
+package runtime;
+
+// One allocation per shared value: the counts, the allocator that made it, and
+// the payload itself, so a handle is one pointer and the payload address is
+// stable for as long as any handle holds it.
+//
+// `weak` counts the weak handles *plus one for the strong handles as a group*,
+// which is the classic arrangement: the payload dies when `strong` reaches
+// zero, and the block itself is released when `weak` does.
+@(private)
+Shared_Block :: struct($T: type) {
+	strong:    int,
+	weak:      int,
+	allocator: Allocator,
+	payload:   T,
+}
+
+// design.md: "It owns one stable, heap-allocated `T` payload and an atomic
+// strong-reference count. Its zero value is `nil`."
+//
+// The block travels as a `rawptr` rather than a typed pointer so the handle
+// carries no borrow: a `shared(T)` is an owner, and nothing about it should
+// make it look like a view of something else.
+@(public)
+Shared :: struct($T: type) {
+	@(private) block: rawptr,
+}
+
+// design.md: "the non-owning companion: it keeps the control block but not the
+// payload alive, and `upgrade` returns `Option(shared(T))`."
+@(public)
+Weak :: struct($T: type) {
+	@(private) block: rawptr,
+}
+
+// ------------------------------------------------------------ construction --
+
+// `shared(value)` and `shared(move(value))`. The compiler routes the call form
+// of the type name here; the group is what makes the two spellings one name.
+@(private)
+shared_from_clone :: proc(value: $T, allocator: Allocator = default_allocator()) -> Shared(T) {
+	return try_shared_from_clone(value, allocator) or_else shared_no_block(T, allocator);
+}
+
+@(private)
+shared_from_move :: proc(value: move $T, allocator: Allocator = default_allocator()) -> Shared(T) {
+	return try_shared_from_move(move(value), allocator) or_else shared_no_block(T, allocator);
+}
+
+@(public)
+shared_construct :: proc{shared_from_clone, shared_from_move};
+
+// design.md: "use `try_shared` to handle a construction error locally."
+@(private)
+try_shared_from_clone :: proc(
+	value: $T, allocator: Allocator = default_allocator(),
+) -> Result(Shared(T), Allocator_Error) {
+	copy := try_clone(value, allocator) or_return;
+	return try_shared_from_move(move(copy), allocator);
+}
+
+@(private)
+try_shared_from_move :: proc(
+	value: move $T, allocator: Allocator = default_allocator(),
+) -> Result(Shared(T), Allocator_Error) {
+	block := new(Shared_Block(T), allocator) or_return;
+	block^.strong = 1;
+	block^.weak = 1;
+	block^.allocator = allocator;
+	block^.payload = move(value);
+	return .ok(Shared(T){rawptr(block)});
+}
+
+@(public)
+try_shared :: proc{try_shared_from_clone, try_shared_from_move};
+
+// design.md "Typed fallibility": `or_else` needs a value on its right, and a
+// construction that could not allocate has none — the program stops instead,
+// which is the same answer every other allocating library constructor gives.
+@(private)
+shared_no_block :: proc($T: type, allocator: Allocator) -> Shared(T) {
+	panic("shared allocation failed");
+}
+
+// ----------------------------------------------------------------- handles --
+
+impl Shared($T) {
+	// design.md: "`handle.get()` returns a non-owning `^T` whose root provenance
+	// derives from that handle." That is what the `inout` receiver buys: an
+	// `inout` parameter aliases the caller's own storage, so a borrow returned
+	// from it is derived from the caller's handle and cannot outlive it. Method
+	// syntax supplies the marker, so this is still written `handle.get()`.
+	//
+	// It does *not* make concurrent access to `T` safe. A caller needs a mutex,
+	// atomics inside `T`, immutability, or another protocol of its own.
+	get :: proc(self: inout Shared(T)) -> ^T {
+		if (self.block == nil) { panic("this shared handle is nil"); }
+		block := (^mut Shared_Block(T))(self.block);
+		return &block^.payload;
+	}
+
+	// The number of strong handles, for tests and diagnostics. It may be stale
+	// the moment it is read whenever another thread holds a handle.
+	strong_count :: proc(self) -> int {
+		if (self.block == nil) { return 0; }
+		block := (^mut Shared_Block(T))(self.block);
+		return atomic_load(&block^.strong, Memory_Order.Acquire);
+	}
+
+	// The number of weak handles. The group of strong handles counts as one
+	// more, which is what keeps the block alive while any of them exist.
+	weak_count :: proc(self) -> int {
+		if (self.block == nil) { return 0; }
+		block := (^mut Shared_Block(T))(self.block);
+		return atomic_load(&block^.weak, Memory_Order.Acquire) - 1;
+	}
+
+	// A non-owning companion to this handle.
+	downgrade :: proc(self) -> Weak(T) {
+		if (self.block == nil) { return Weak(T){nil}; }
+		block := (^mut Shared_Block(T))(self.block);
+		atomic_add(&mut block^.weak, 1, Memory_Order.Relaxed);
+		return Weak(T){self.block};
+	}
+
+	// design.md: "`try_clone` increments the strong count without a new
+	// allocation. Thus, `clone` and ordinary assignment share the control block
+	// instead of cloning `T`." The allocator is therefore unused: this hook
+	// allocates nothing, and the payload keeps the allocator it was made with.
+	share :: hook(copy) proc(self, allocator: Allocator) -> Result(Shared(T), Allocator_Error) {
+		if (self.block == nil) { return .ok(Shared(T){nil}); }
+		block := (^mut Shared_Block(T))(self.block);
+		// Relaxed is enough to *add* a reference: the new handle is a copy of one
+		// the caller already holds, so nothing new becomes reachable here.
+		atomic_add(&mut block^.strong, 1, Memory_Order.Relaxed);
+		return .ok(Shared(T){self.block});
+	}
+
+	// design.md: "`drop` decrements the count with release ordering. At the final
+	// reference, it performs an acquire fence and drops the payload one time."
+	//
+	// The release makes every write this thread made to the payload visible to
+	// whichever thread runs the final drop; the acquire fence there is what makes
+	// those writes visible to *it* before the payload is destroyed.
+	// design.md: the zero value is `nil`, so `handle == nil` has to be sayable.
+	// The compiler converts `nil` to this type's zero; comparing the blocks is
+	// what makes that answer right, and it also answers the other useful
+	// question — whether two handles name the same value.
+	same :: operator(==) proc(left, right: Shared(T)) -> bool {
+		return left.block == right.block;
+	}
+
+	release :: hook(drop) proc(self: inout Shared(T)) {
+		if (self.block == nil) { return; }
+		block := (^mut Shared_Block(T))(self.block);
+		self.block = nil;
+		if (atomic_sub(&mut block^.strong, 1, Memory_Order.Release) != 1) { return; }
+		fence(Memory_Order.Acquire);
+		// Taking the payload out and letting the temporary die is what drops it
+		// exactly once: the block itself outlives this whenever a weak handle
+		// still names it, so the payload cannot be destroyed by freeing the block.
+		blank: T = {};
+		retired := exchange(inout block^.payload, blank);
+		drop(retired);
+		release_block(block);
+	}
+}
+
+impl Weak($T) {
+	// design.md: `upgrade` returns `Option(shared(T))`. It fails exactly when the
+	// payload is already gone, and the loop is what makes that answer honest
+	// under contention: a count read as non-zero may reach zero before the
+	// increment lands, so the increment has to be the same operation as the test.
+	upgrade :: proc(self) -> Option(Shared(T)) {
+		if (self.block == nil) { return .none; }
+		block := (^mut Shared_Block(T))(self.block);
+		for (true) {
+			held := atomic_load(&block^.strong, Memory_Order.Acquire);
+			if (held == 0) { return .none; }
+			_, won := compare_exchange_strong(
+				&mut block^.strong, held, held + 1,
+			);
+			if (won) {
+				atomic_add(&mut block^.weak, 1, Memory_Order.Relaxed);
+				// The upgraded handle is a *strong* one, and the strong group already
+				// counts as one weak reference; the extra weak count above belongs to
+				// this handle being cloned into a `Shared`, so give it back.
+				atomic_sub(&mut block^.weak, 1, Memory_Order.Relaxed);
+				return .some(Shared(T){self.block});
+			}
+		}
+		return .none;
+	}
+
+	strong_count :: proc(self) -> int {
+		if (self.block == nil) { return 0; }
+		block := (^mut Shared_Block(T))(self.block);
+		return atomic_load(&block^.strong, Memory_Order.Acquire);
+	}
+
+	keep :: hook(copy) proc(self, allocator: Allocator) -> Result(Weak(T), Allocator_Error) {
+		if (self.block == nil) { return .ok(Weak(T){nil}); }
+		block := (^mut Shared_Block(T))(self.block);
+		atomic_add(&mut block^.weak, 1, Memory_Order.Relaxed);
+		return .ok(Weak(T){self.block});
+	}
+
+	same :: operator(==) proc(left, right: Weak(T)) -> bool {
+		return left.block == right.block;
+	}
+
+	release :: hook(drop) proc(self: inout Weak(T)) {
+		if (self.block == nil) { return; }
+		block := (^mut Shared_Block(T))(self.block);
+		self.block = nil;
+		release_block(block);
+	}
+}
+
+// One weak reference given back. The block is released when the last one goes,
+// which is after the payload has already been dropped by the final strong
+// handle.
+@(private)
+release_block :: proc(block: ^mut Shared_Block($T)) {
+	if (atomic_sub(&mut block^.weak, 1, Memory_Order.Release) != 1) { return; }
+	fence(Memory_Order.Acquire);
+	allocator := block^.allocator;
+	// The unchecked release. The block travels as a `rawptr` so a handle carries
+	// no borrow, which is also why the compiler cannot follow this pointer back
+	// to the `new` that made it — design.md's own answer for a case like this.
+	unsafe_free(block, allocator);
+}
+
+// The compare-exchange `upgrade` needs, spelled once so the ordering pair is
+// written in one place. Sequentially consistent on success and acquire on
+// failure: the loop re-reads either way.
+@(private)
+compare_exchange_strong :: proc(
+	place: ^mut int, expected: int, desired: int,
+) -> (observed: int, swapped: bool) {
+	switch (found in atomic_compare_exchange(
+		place, expected, desired,
+		Memory_Order.Sequentially_Consistent, Memory_Order.Acquire,
+	)) {
+	case .some: return {observed = found, swapped = false};
+	case .none: return {observed = expected, swapped = true};
+	}
+	return {observed = expected, swapped = false};
+}
+
+// A standalone barrier, spelled here so this package does not depend on
+// `core:sync` — which depends on nothing, but which every program would then
+// have to load.
+@(private)
+fence :: proc($order: Memory_Order) {
+	atomic_fence(order);
+}

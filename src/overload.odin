@@ -278,19 +278,30 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	// A parameter mode is part of the match, not a conversion. A receiver's `inout`
 	// mode is implicit (already supplied by call syntax), but a consuming receiver
 	// is written `move(value).method()`, so that written form matters too, both ways.
+	_, moved := arg.expr.(^Expr_Move)
+	adjusted := false
 	if arg.is_receiver {
-		_, moved := arg.expr.(^Expr_Move)
 		if moved != (mode == .Move) {
 			return RANK_NONE, INVALID_SYMBOL
 		}
+		adjusted = mode != .Value
 	} else {
 		want_inout := mode == .Inout
 		if want_inout != (arg.mode == .Inout) {
 			return RANK_NONE, INVALID_SYMBOL
 		}
+		// design.md "Parameter semantics": a `move` parameter is written
+		// `move(expr)` at the call site too. The reverse is not a mismatch —
+		// `append(move(row))` transfers into an ordinary value parameter rather
+		// than cloning into it — but it is the weaker match, so a written
+		// transfer picks the consuming overload wherever both exist.
+		if mode == .Move && !moved {
+			return RANK_NONE, INVALID_SYMBOL
+		}
+		adjusted = moved && mode == .Value
 	}
 	if arg.type == param {
-		return arg.is_receiver && mode != .Value ? RANK_ADJUST : RANK_EXACT, INVALID_SYMBOL
+		return adjusted ? RANK_ADJUST : RANK_EXACT, INVALID_SYMBOL
 	}
 	if type_is_untyped(k.c, arg.type) {
 		if assignable(k.c, arg.type, param) {
@@ -432,12 +443,22 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		if rank == RANK_NONE {
 			// A receiver form that does not match is not a type mismatch: the
 			// ordinary sentence would name one type twice and explain nothing.
-			if _, moved := arg.expr.(^Expr_Move); arg.is_receiver && moved != (mode == .Move) {
-				cand.reason = "it borrows its receiver, so `move(...)` gives away more than it takes"
-				if mode == .Move {
-					cand.reason = "it consumes its receiver, which is written `move(...)`"
+			if _, moved := arg.expr.(^Expr_Move); moved != (mode == .Move) {
+				if arg.is_receiver {
+					cand.reason = "it borrows its receiver, so `move(...)` gives away more than it takes"
+					if mode == .Move {
+						cand.reason = "it consumes its receiver, which is written `move(...)`"
+					}
+					return cand
 				}
-				return cand
+				if mode == .Move {
+					cand.reason = fmt.aprintf(
+						"it takes argument %d by `move`, which is written `move(...)`",
+						index + 1,
+						allocator = k.c.semantic_allocator,
+					)
+					return cand
+				}
 			}
 			cand.reason = fmt.aprintf(
 				"argument %d is `%s` where `%s` is wanted",

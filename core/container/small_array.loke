@@ -1,0 +1,256 @@
+// `Small_Array(T, N)`: a growable sequence with inline fixed capacity
+// (design.md "Fixed-capacity arrays").
+//
+// It never allocates. Every operation that would exceed `N` panics, and its
+// `try_` twin reports `Capacity_Error` and leaves the value completely
+// unchanged — the library-wide `try_` contract, applied to a capacity limit
+// instead of an allocator.
+//
+// The zero value is a usable, empty array, so `x: Small_Array(int, 8) = {};`
+// needs no construction.
+@(public)
+package container;
+
+import "core:fmt";
+
+// design.md writes `try_append` as `Result(Unit, Capacity_Error)`, so this is
+// the payload inside that result union, not a second fallible shape. Nothing
+// about it is compiler-known: it is an ordinary record with ordinary queries.
+Capacity_Error :: struct {
+	@(private) requested: int,
+	@(private) capacity:  int,
+}
+
+impl Capacity_Error {
+	// How many elements the operation would have needed room for.
+	requested_of :: proc(self) -> int { return self.requested; }
+	// The fixed `N` it could not exceed.
+	capacity_of :: proc(self) -> int { return self.capacity; }
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		// One argument per call, spacing written out: `format_to` puts a space
+		// between its own arguments, which is right for `println` and wrong inside
+		// a sentence.
+		fmt.format_to(writer, "capacity ");
+		fmt.format_to(writer, self.capacity);
+		fmt.format_to(writer, " exceeded by ");
+		fmt.format_to(writer, self.requested);
+	}
+}
+
+// `N > 0` because a zero-capacity growable array can only panic, and a caller
+// who wants no storage wants no container.
+Small_Array :: struct($T: type, $N: int) where N > 0 {
+	// Elements at `count ..< N` are the zero value, never live: `pop` and
+	// `remove` overwrite what they retire so a managed element is not left
+	// duplicated behind the length.
+	@(private) items: [N]T,
+	@(private) count: int,
+}
+
+impl Small_Array($T, $N) {
+	// ------------------------------------------------------------ sequence --
+
+	Element  :: T;
+	Iterator :: Small_Array_Iterator(T, N);
+
+	len :: proc(self) -> int { return self.count; }
+	cap :: proc(self) -> int { return N; }
+	is_empty :: proc(self) -> bool { return self.count == 0; }
+	is_full :: proc(self) -> bool { return self.count == N; }
+	space :: proc(self) -> int { return N - self.count; }
+
+	get :: operator([]) proc(self, index: int) -> T {
+		self.check_index(index);
+		return self.items[index];
+	}
+
+	get_mut :: operator([]) proc(self: inout Small_Array(T, N), index: int) -> inout T {
+		self.check_index(index);
+		return inout self.items[index];
+	}
+
+	// `x[a:b]` over the live prefix only, which is why this is not the built-in
+	// fixed array's own slicing: the `N - count` trailing zero values are not
+	// elements.
+	span :: operator([:]) proc(self: inout Small_Array(T, N), low: int, high: int) -> []mut T {
+		if (low < 0 || high < low || high > self.count) {
+			panic("Small_Array slice is out of range");
+		}
+		return self.items[low:high];
+	}
+
+	// The whole live prefix as one mutable view.
+	slice :: proc(self: inout Small_Array(T, N)) -> []mut T {
+		return self.items[0:self.count];
+	}
+
+	// ----------------------------------------------------------- iteration --
+
+	// The iterator carries its own copy of the elements. A `self` receiver is a
+	// callee-local read-only binding (design.md "Temporaries and procedure
+	// boundaries"), so no borrow of it can be returned; `N` is small by
+	// construction, which is what makes the copy the right answer here rather
+	// than a workaround.
+	iter :: proc(self) -> Small_Array_Iterator(T, N) {
+		return {self.items, self.count, 0, false};
+	}
+
+	iter_reverse :: proc(self) -> Small_Array_Iterator(T, N) {
+		return {self.items, self.count, 0, true};
+	}
+
+	// ------------------------------------------------------------ mutation --
+
+	append :: proc(self: inout Small_Array(T, N), @(escape=stored) values: ..T) {
+		if (self.count + len(values) > N) {
+			panic("Small_Array is full");
+		}
+		foreach (value in values) {
+			self.items[self.count] = value;
+			self.count += 1;
+		}
+	}
+
+	// Nothing is written unless everything fits, which is the `try_` promise.
+	try_append :: proc(
+		self: inout Small_Array(T, N), @(escape=stored) values: ..T,
+	) -> Result(Unit, Capacity_Error) {
+		wanted := self.count + len(values);
+		if (wanted > N) {
+			return .err(Capacity_Error{wanted, N});
+		}
+		foreach (value in values) {
+			self.items[self.count] = value;
+			self.count += 1;
+		}
+		return .ok({});
+	}
+
+	insert :: proc(self: inout Small_Array(T, N), index: int, @(escape=stored) value: T) {
+		if (index < 0 || index > self.count) {
+			panic("Small_Array index is out of range");
+		}
+		if (self.count == N) { panic("Small_Array is full"); }
+		at := self.count;
+		for (at > index) {
+			self.items[at] = self.items[at - 1];
+			at -= 1;
+		}
+		self.items[index] = value;
+		self.count += 1;
+	}
+
+	// The capacity check happens before anything moves, so a failure leaves the
+	// array untouched; a bad index still panics, as it does everywhere else.
+	try_insert :: proc(
+		self: inout Small_Array(T, N), index: int, @(escape=stored) value: T,
+	) -> Result(Unit, Capacity_Error) {
+		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
+		self.insert(index, value);
+		return .ok({});
+	}
+
+	// The last element, removed. Panics when empty, as an out-of-range index does.
+	//
+	// Every retirement below is one `exchange`: it takes the element out and
+	// leaves the zero value behind as a single operation, so no element is ever
+	// reachable from two indices at once, and — where `T` is a borrow carrier —
+	// the value taken out is not a borrow of `self` that the rest of the body
+	// would then have to leave alone.
+	pop :: proc(self: inout Small_Array(T, N)) -> T {
+		if (self.count == 0) { panic("Small_Array is empty"); }
+		blank: T = {};
+		self.count -= 1;
+		last := self.count;
+		return exchange(inout self.items[last], blank);
+	}
+
+	try_pop :: proc(self: inout Small_Array(T, N)) -> Option(T) {
+		if (self.count == 0) { return .none; }
+		blank: T = {};
+		self.count -= 1;
+		last := self.count;
+		return .some(exchange(inout self.items[last], blank));
+	}
+
+	// Order-preserving: everything after `index` shifts down one place.
+	remove :: proc(self: inout Small_Array(T, N), index: int) -> T {
+		self.check_index(index);
+		blank: T = {};
+		removed := exchange(inout self.items[index], blank);
+		at := index;
+		for (at + 1 < self.count) {
+			self.items[at] = self.items[at + 1];
+			at += 1;
+		}
+		self.count -= 1;
+		self.items[self.count] = blank;
+		return removed;
+	}
+
+	// O(1), at the cost of the order: the last element takes the hole.
+	remove_unordered :: proc(self: inout Small_Array(T, N), index: int) -> T {
+		self.check_index(index);
+		blank: T = {};
+		removed := exchange(inout self.items[index], blank);
+		self.count -= 1;
+		last := self.count;
+		if (index != last) {
+			moved := exchange(inout self.items[last], blank);
+			self.items[index] = moved;
+		}
+		return removed;
+	}
+
+	// Length only. The retired elements are overwritten so nothing stays live
+	// behind the length.
+	clear :: proc(self: inout Small_Array(T, N)) {
+		blank: T = {};
+		foreach (i in 0 ..< self.count) { self.items[i] = blank; }
+		self.count = 0;
+	}
+
+	// --------------------------------------------------------- diagnostics --
+
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "[");
+		foreach (i in 0 ..< self.count) {
+			if (i > 0) { fmt.format_to(writer, ", "); }
+			fmt.format_to(writer, self.items[i]);
+		}
+		fmt.format_to(writer, "]");
+	}
+
+	// ---------------------------------------------------------------- guts --
+
+	@(private)
+	check_index :: proc(self, index: int) {
+		if (index < 0 || index >= self.count) {
+			panic("Small_Array index is out of range");
+		}
+	}
+}
+
+// design.md "Iteration protocol": one iterator serving both directions, because
+// they differ only in which end `at` counts from.
+Small_Array_Iterator :: struct($T: type, $N: int) where N > 0 {
+	@(private) items:   [N]T,
+	@(private) count:   int,
+	@(private) at:      int,
+	@(private) reverse: bool,
+}
+
+impl Small_Array_Iterator($T, $N) {
+	Element  :: T;
+	Iterator :: Small_Array_Iterator(T, N);
+
+	iter :: proc(self) -> Small_Array_Iterator(T, N) { return self; }
+
+	next :: proc(self: inout Small_Array_Iterator(T, N)) -> Option(T) {
+		if (self.at >= self.count) { return .none; }
+		index := self.count - 1 - self.at if self.reverse else self.at;
+		self.at += 1;
+		return .some(self.items[index]);
+	}
+}

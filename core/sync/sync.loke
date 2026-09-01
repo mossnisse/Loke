@@ -1,0 +1,180 @@
+// `Atomic(T)`, `fence`, and `once` (design.md "Concurrency and the memory
+// model", m8-plan step 4).
+//
+// design.md calls `Atomic(T)` a "`core:sync` wrapper over compiler atomic
+// intrinsics", so the split is specified rather than chosen: the compiler owns
+// the operations whose ordering is part of the instruction, and everything
+// here is ordinary Loke over them.
+//
+// **Ordering arguments are `$` parameters throughout.** A constant at the
+// caller does not make an ordinary parameter constant inside this body, and the
+// intrinsics require a constant — so forwarding an ordering through a runtime
+// parameter would not compile, and a `$` one keeps it constant across the
+// boundary.
+//
+// Data races are not checked. design.md is explicit that a race is undefined
+// behaviour and that there are no implicit `Send`/`Sync` interfaces; the
+// compiler lowers the model rather than verifying it.
+@(public)
+package sync;
+
+// The compiler contributes, package-privately:
+//
+//   atomic_load, atomic_store, atomic_exchange, atomic_compare_exchange
+//   atomic_add, atomic_sub, atomic_and, atomic_or, atomic_xor
+//   atomic_fence
+//
+// The fence intrinsic is `atomic_fence` and the public wrapper is `fence`,
+// because a contributed name and a source declaration share one package scope
+// and two `fence`s would be a redeclaration.
+
+// The atomic types are `bool`, the integer and rune types, an enum over a
+// supported integer, and any pointer. The arithmetic operations are integers
+// only, which is design.md's own rule that an enum member is a named constant
+// rather than a number with a name.
+//
+// The zero value is `T`s zero, and nothing has to run before it is usable.
+Atomic :: struct($T: type) {
+	// Public, because a caller that has proven it has exclusive access — during
+	// construction, or after joining every other thread — reads and writes it
+	// without paying for a synchronizing operation. Every *atomic* access goes
+	// through the methods below.
+	@(public) value: T,
+}
+
+impl Atomic($T) {
+	of :: proc(value: T) -> Atomic(T) { return {value}; }
+
+	load :: proc(self, $order: Memory_Order = Memory_Order.Sequentially_Consistent) -> T {
+		return atomic_load(&self.value, order);
+	}
+
+	store :: proc(
+		self: inout Atomic(T), value: T,
+		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) {
+		atomic_store(&mut self.value, value, order);
+	}
+
+	// The previous value.
+	exchange :: proc(
+		self: inout Atomic(T), value: T,
+		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) -> T {
+		return atomic_exchange(&mut self.value, value, order);
+	}
+
+	// design.md: both orderings are preserved across this boundary, which is what
+	// the two `$` parameters are for. `swapped` says whether the write happened,
+	// and `observed` is what was there — the value replaced when it swapped, and
+	// the value that stopped it when it did not.
+	compare_exchange :: proc(
+		self: inout Atomic(T), expected: T, desired: T,
+		$success: Memory_Order = Memory_Order.Sequentially_Consistent,
+		$failure: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) -> (observed: T, swapped: bool) {
+		switch (found in atomic_compare_exchange(&mut self.value, expected, desired, success, failure)) {
+		case .some: return {observed = found, swapped = false};
+		case .none: return {observed = expected, swapped = true};
+		}
+		return {observed = expected, swapped = false};
+	}
+
+	// The five read-modify-writes, each answering the *previous* value.
+	add :: proc(
+		self: inout Atomic(T), value: T,
+		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) -> T {
+		return atomic_add(&mut self.value, value, order);
+	}
+
+	sub :: proc(
+		self: inout Atomic(T), value: T,
+		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) -> T {
+		return atomic_sub(&mut self.value, value, order);
+	}
+
+	bit_and :: proc(
+		self: inout Atomic(T), value: T,
+		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) -> T {
+		return atomic_and(&mut self.value, value, order);
+	}
+
+	bit_or :: proc(
+		self: inout Atomic(T), value: T,
+		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) -> T {
+		return atomic_or(&mut self.value, value, order);
+	}
+
+	bit_xor :: proc(
+		self: inout Atomic(T), value: T,
+		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
+	) -> T {
+		return atomic_xor(&mut self.value, value, order);
+	}
+}
+
+// A standalone barrier. `.Relaxed` orders nothing and is rejected: a fence that
+// does nothing is a mistake, not a no-op.
+fence :: proc($order: Memory_Order = Memory_Order.Sequentially_Consistent) {
+	atomic_fence(order);
+}
+
+// design.md "Storage modifiers" names `once` as the sanctioned way to do
+// runtime initialization: file-scope and `static` storage use constant
+// initialization, so anything that must *run* runs on first use instead.
+//
+// The zero value is an unfired `once`, which is what lets it live in `static`
+// storage with no initializer.
+Once :: struct {
+	@(private) state: Atomic(u32),
+}
+
+@(private)
+ONCE_IDLE :: u32(0);
+
+@(private)
+ONCE_RUNNING :: u32(1);
+
+@(private)
+ONCE_DONE :: u32(2);
+
+impl Once {
+	// Runs `action` exactly once across every thread that reaches this. A caller
+	// that arrives while another thread is still running it waits, so `do`
+	// returning means the action has *completed*, not merely started — which is
+	// the only guarantee that makes it usable for initialization.
+	//
+	// The winner publishes with a release store and every other thread observes
+	// with an acquire load, so whatever the action wrote is visible to all of
+	// them.
+	do :: proc(self: inout Once, action: proc()) {
+		if (self.state.load(Memory_Order.Acquire) == ONCE_DONE) { return; }
+		observed, won := self.state.compare_exchange(
+			ONCE_IDLE, ONCE_RUNNING, Memory_Order.Acquire, Memory_Order.Acquire,
+		);
+		if (won) {
+			action();
+			self.state.store(ONCE_DONE, Memory_Order.Release);
+			return;
+		}
+		if (observed == ONCE_DONE) { return; }
+		// Another thread is running it. Spin on the acquire load rather than
+		// blocking: this is initialization, so the wait is short and there is no
+		// scheduler primitive in version 1 to block on.
+		//
+		// ponytail: a spin, with no yield and no backoff. If a `once` ever guards
+		// something slow, give this a platform wait — the state values already
+		// distinguish "running" from "done", which is what such a wait needs.
+		for (self.state.load(Memory_Order.Acquire) != ONCE_DONE) { }
+	}
+
+	// Has the action completed? A `false` may be stale the moment it is read;
+	// only `true` is a durable answer.
+	is_done :: proc(self) -> bool {
+		return self.state.load(Memory_Order.Acquire) == ONCE_DONE;
+	}
+}

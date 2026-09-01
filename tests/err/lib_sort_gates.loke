@@ -1,0 +1,37 @@
+package main;
+
+// The gates on the contributed `sort` member (m8-plan step 2).
+
+Opaque :: struct { value: int }
+
+// One diagnostic at the container, not one per comparison inside a sort the
+// caller never wrote.
+unordered :: proc() {
+	xs := [dynamic]Opaque{Opaque{1}};
+	xs.sort();
+	xs.reverse_sort();
+}
+
+// design.md "Sorting slices": a read-only slice is not sortable, so it has no
+// `sort` to call.
+read_only :: proc() {
+	readable := []int{3, 1, 2};
+	readable.sort();
+	readable.reverse_sort();
+}
+
+// A sort rearranges the whole container, so it is an invalidating access to it
+// exactly as `append` is.
+borrowed :: proc(out: inout int) {
+	numbers := [dynamic]int{3, 1, 2};
+	view := numbers[:];
+	numbers.sort();
+	out = view[0];
+}
+
+main :: proc() {
+	total := 0;
+	unordered();
+	read_only();
+	borrowed(inout total);
+}

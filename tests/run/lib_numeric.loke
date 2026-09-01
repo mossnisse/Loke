@@ -1,0 +1,79 @@
+package main;
+
+import "core:fmt";
+import "core:math";
+
+// `Complex(T)` and `Quaternion(T)` (m8-plan step 1, design.md "Library numeric
+// types").
+//
+// The first block is design.md's own `Complex_F64` source, verbatim, proving
+// that the library type needs no facility a user could not write; the rest is
+// the generic version of the same thing in `core:math`.
+
+Complex_F64 :: struct {
+	real, imaginary: f64,
+}
+
+impl Complex_F64 {
+	from_components :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
+		return {real, imaginary};
+	}
+
+	add :: operator(+) proc(left, right: Complex_F64) -> Complex_F64 {
+		return {left.real + right.real, left.imaginary + right.imaginary};
+	}
+
+	multiply :: operator(*) proc(left, right: Complex_F64) -> Complex_F64 {
+		return {
+			left.real*right.real - left.imaginary*right.imaginary,
+			left.real*right.imaginary + left.imaginary*right.real,
+		};
+	}
+
+	@(implicit)
+	from_scalar :: hook(convert) proc(value: f64) -> Complex_F64 {
+		return {value, 0};
+	}
+}
+
+C :: math.Complex(f64);
+Q :: math.Quaternion(f64);
+
+main :: proc() {
+	// design.md's example.
+	z := Complex_F64.from_components(1, 2);
+	w := z*z + 2.0;               // `2.0` is a constant, so `from_scalar` applies
+	fmt.println(z.real, z.imaginary);
+	fmt.println(w.real, w.imaginary);
+
+	// The same arithmetic through the library's generic type.
+	g := C.from_components(1, 2);
+	h := g*g + 2.0;
+	fmt.println(g, h);
+	fmt.println(g + g, g - g, -g);
+	fmt.println(g/g);
+	fmt.println(g == C.from_components(1, 2), g == h);
+	fmt.println(g.conjugate(), g.norm_squared());
+
+	// A scalar variable needs the written conversion; only a constant is implicit.
+	scale := 3.0;
+	fmt.println(C(scale));
+
+	// `T` is free: the same source over `f32`.
+	small := math.Complex(f32).from_components(0.5, -0.25);
+	fmt.println(small, small.norm_squared());
+
+	// Quaternions do not commute, which is the whole reason they are not a pair
+	// of complex numbers.
+	i := Q.from_components(0, 1, 0, 0);
+	j := Q.from_components(0, 0, 1, 0);
+	k := Q.from_components(0, 0, 0, 1);
+	fmt.println(i*j, j*i);
+	fmt.println(i*j == k, j*i == -k);
+	fmt.println(i*i, j*j, k*k);
+	fmt.println(i*j*k);
+	fmt.println(i + j, i - j, -i);
+	fmt.println(i.conjugate(), i.norm_squared());
+	fmt.println(Q.from_components(1, 2, 3, 4).norm_squared());
+	fmt.println(i + 1.0);
+}

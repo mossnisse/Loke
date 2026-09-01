@@ -1,0 +1,60 @@
+package main;
+
+import "core:fmt";
+import "core:endian";
+
+// `Little_Endian(T)` and `Big_Endian(T)` (m8-plan step 1, design.md's catalogue
+// row "Distinct storage wrappers supplied by binary-format libraries").
+//
+// The point of the wrapper is that a field's byte order is fixed by its type
+// rather than remembered at each use, so these checks are all round trips:
+// what `store` puts in, `load` takes out, whatever the host order is.
+
+Header :: struct {
+	magic:   endian.Big_Endian(u32),
+	version: endian.Little_Endian(u16),
+	flags:   endian.Big_Endian(u8),
+}
+
+main :: proc() {
+	fmt.println(endian.host_order());
+
+	// The swap itself, which is its own inverse.
+	fmt.println(endian.byte_swap(u32(0x11223344)) == u32(0x44332211));
+	fmt.println(endian.byte_swap(endian.byte_swap(u32(0x11223344))) == u32(0x11223344));
+	fmt.println(endian.byte_swap(u16(0x0102)) == u16(0x0201));
+	fmt.println(endian.byte_swap(u64(1)) == u64(0x0100000000000000));
+	fmt.println(endian.byte_swap(u128(1)) == u128(1) << 120);
+	fmt.println(endian.byte_swap(i16(0x0102)) == i16(0x0201));
+	fmt.println(endian.byte_swap(i32(-1)) == i32(-1));
+
+	// A one-byte value has nothing to swap.
+	fmt.println(endian.byte_swap(u8(0x7F)) == u8(0x7F));
+	fmt.println(endian.byte_swap(i8(-3)) == i8(-3));
+
+	// Round trips through both wrappers.
+	h: Header = {};
+	h.magic = endian.Big_Endian(u32).store(0xCAFEBABE);
+	h.version = endian.Little_Endian(u16).store(513);
+	h.flags = endian.Big_Endian(u8).store(0x81);
+	fmt.println(h.magic.load() == u32(0xCAFEBABE));
+	fmt.println(h.version.load() == u16(513));
+	fmt.println(h.flags.load() == u8(0x81));
+
+	// Formatting shows the value, not the storage.
+	fmt.println(h.magic, h.version, h.flags);
+
+	// The conversion hook is explicit, and produces the same stored value.
+	fmt.println(h.version == endian.Little_Endian(u16)(513));
+	fmt.println(h.magic == endian.Big_Endian(u32)(0xCAFEBABE));
+	fmt.println(h.magic == endian.Big_Endian(u32).store(1));
+
+	// The two wrappers over one value disagree exactly when a swap is needed.
+	le := endian.Little_Endian(u32).store(1);
+	be := endian.Big_Endian(u32).store(1);
+	fmt.println(le.load() == be.load());
+
+	// The zero value is a usable stored zero.
+	zero: endian.Big_Endian(u64) = {};
+	fmt.println(zero.load());
+}

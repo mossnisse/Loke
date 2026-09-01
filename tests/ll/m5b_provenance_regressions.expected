@@ -1,1 +1,2 @@
-call void @loke_rt_v1_free(ptr @loke_rt_v1_default_allocator, ptr
+call ptr @loke_rt_v1_selected_allocator()
+call void @loke_rt_v1_free(ptr %t93, ptr %t92, i64 8, i64 8)
