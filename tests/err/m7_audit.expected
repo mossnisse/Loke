@@ -26,6 +26,3 @@ L0630
 a procedure value needs a body
 @36:7
 
-L0636
-`Simd(T, N)` is specified but not implemented in version 1
-@39:8

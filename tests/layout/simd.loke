@@ -1,0 +1,41 @@
+package main; import "core:fmt";
+
+// design.md "SIMD vectors": a vector is aligned to its own size, so its layout
+// is not the array's with the same element and count. `-check-layout` compares
+// every fact below against LLVM's own.
+
+Lane :: distinct f32;
+
+// A vector inside a record, so its over-alignment moves a following field.
+Frame :: struct {
+	flag:     bool,
+	position: Simd(f32, 4),
+	tail:     u8,
+}
+
+// Every permitted lane width, at the widest count each one allows.
+Widths :: struct {
+	bytes:   Simd(u8, 64),
+	shorts:  Simd(i16, 32),
+	words:   Simd(u32, 16),
+	longs:   Simd(i64, 8),
+	halves:  Simd(f16, 32),
+	singles: Simd(f32, 16),
+	doubles: Simd(f64, 8),
+	mask:    Simd(bool, 64),
+	tagged:  Simd(Lane, 4),
+	single:  Simd(i64, 1),
+	natural: Simd(int, 4),
+}
+
+main :: proc() {
+	frame: Frame = {};
+	widths: Widths = {};
+	fmt.println(size_of(Frame), align_of(Frame), offset_of(Frame, position), offset_of(Frame, tail));
+	fmt.println(size_of(Widths), align_of(Widths));
+	fmt.println(size_of(Simd(f32, 4)), align_of(Simd(f32, 4)));
+	fmt.println(size_of([4]f32), align_of([4]f32));
+	fmt.println(size_of(Simd(bool, 8)), align_of(Simd(bool, 8)));
+	fmt.println(size_of([8]bool), align_of([8]bool));
+	fmt.println(frame.flag, widths.single[0]);
+}

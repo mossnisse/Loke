@@ -1,0 +1,146 @@
+package main;
+
+import "core:simd";
+
+// Every rule design.md's "SIMD vectors" section states as a rejection
+// (m8-plan step 6). The claims that produce a value are in
+// `tests/run/lib_simd.loke`.
+
+Colour :: enum u8 { Red, Green };
+
+Pair :: struct {
+	x: f32,
+	y: f32,
+}
+
+// "`rune`, 128-bit integers, enums, pointers, and every aggregate are rejected,
+// each naming what it is rather than 'not a SIMD element'."
+elements :: proc() {
+	characters: Simd(rune, 4);
+	huge: Simd(i128, 2);
+	tagged: Simd(Colour, 4);
+	addresses: Simd(^int, 2);
+	records: Simd(Pair, 2);
+	nested: Simd(Simd(f32, 4), 2);
+	_ = characters; _ = huge; _ = tagged; _ = addresses; _ = records; _ = nested;
+}
+
+// "`N` must be a constant power of two from 1 through 64, and `N * size_of(T)`
+// must not exceed 64 bytes."
+lane_counts :: proc(runtime_count: int) {
+	odd: Simd(i32, 3);
+	empty: Simd(i32, 0);
+	many: Simd(u8, 128);
+	fat: Simd(f64, 16);
+	dynamic_count: Simd(i32, runtime_count);
+	_ = odd; _ = empty; _ = many; _ = fat; _ = dynamic_count;
+}
+
+// The name and the application are each their own answer.
+shapes :: proc() {
+	bare: Simd;
+	one: Simd(f32);
+	three: Simd(f32, 4, 8);
+	_ = bare; _ = one; _ = three;
+}
+
+// "The index must be a constant that the compiler can prove is in range."
+lanes :: proc(index: int) {
+	v: Simd(f32, 4) = {};
+	_ = v[index];
+	_ = v[4];
+	_ = v[-1];
+}
+
+// "A vector is not a sequence: it has no iteration, no slicing, and no `[:]`."
+not_a_sequence :: proc() {
+	v: Simd(f32, 4) = {};
+	_ = v[:];
+	foreach (lane in v) { _ = lane; }
+}
+
+// "Both operands must have the same `Simd` type after splatting; mixing two
+// different vector types is an error", and each operator applies only to the
+// lanes design.md's table gives it.
+operators :: proc() {
+	a: Simd(i32, 4) = {};
+	narrow: Simd(i32, 2) = {};
+	other: Simd(f32, 4) = {};
+	floats: Simd(f32, 4) = {};
+	mask: Simd(bool, 4) = {};
+
+	_ = a + narrow;
+	_ = a + other;
+	_ = floats % floats;
+	_ = floats & floats;
+	_ = mask + mask;
+	_ = mask < mask;
+	_ = -mask;
+	_ = !mask;
+}
+
+// "`&&` and `||` are rejected: they short-circuit, and there is nothing
+// lane-wise for a short circuit to mean."
+short_circuit :: proc() {
+	a: Simd(i32, 4) = {};
+	b: Simd(i32, 4) = {};
+	if ((a < b) && (b < a)) { }
+	if ((a < b) || (b < a)) { }
+}
+
+// A mask is not a `bool`, so it cannot be a condition.
+conditions :: proc() {
+	a: Simd(i32, 4) = {};
+	b: Simd(i32, 4) = {};
+	if (a < b) { }
+}
+
+// "There is no implicit conversion between two vector types, and no
+// reinterpretation of one vector type as another", and no vector-to-scalar.
+conversions :: proc() {
+	a: Simd(i32, 4) = {};
+	_ = Simd(i32, 2)(a);
+	_ = f32(a);
+	narrowed: Simd(i32, 2) = a;
+	_ = narrowed;
+}
+
+// `core:simd` takes what its own entries describe.
+library :: proc() {
+	a: Simd(i32, 4) = {};
+	narrow: Simd(i32, 2) = {};
+	mask: Simd(bool, 4) = {};
+	_ = simd.select(mask, a, narrow);
+	_ = simd.any(a);
+	_ = simd.reduce_add(mask);
+	_ = simd.from_array([2]Colour{Colour.Red, Colour.Green});
+	_ = simd.to_array(7);
+}
+
+// "`Simd(T, N)` is **not foreign-ABI-safe**. It is rejected in a foreign
+// signature, in a foreign block's global, and in an `@(export)`."
+foreign import kernel32 "system:kernel32.lib";
+
+foreign kernel32 {
+	takes_a_vector :: proc "c" (v: Simd(f32, 4)) ---;
+	gives_a_vector :: proc "c" () -> Simd(i32, 4) ---;
+	a_vector_global: Simd(u8, 16);
+}
+
+@(export)
+exports_a_vector :: proc "c" (v: Simd(f32, 4)) {
+	_ = v;
+}
+
+main :: proc() {
+	elements();
+	lane_counts(4);
+	shapes();
+	lanes(0);
+	not_a_sequence();
+	operators();
+	short_circuit();
+	conditions();
+	conversions();
+	library();
+}

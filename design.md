@@ -710,9 +710,9 @@ information each; its representation is one byte per lane, so `size_of` and
 
 `size_of(Simd(T, N))` is `N * size_of(T)`, and `align_of(Simd(T, N))` is
 `size_of(Simd(T, N))` — a vector is aligned to its own size, which is what
-permits an aligned whole-vector load. A `Simd` is therefore not a struct with
-the same fields: `Simd(f32, 3)` has size 12 and alignment 16, while a
-`[3]f32` has size 12 and alignment 4.
+permits an aligned whole-vector load. A vector is therefore not the array with
+the same element and count: `Simd(f32, 2)` has size 8 and alignment 8, while
+`[2]f32` has size 8 and alignment 4.
 
 `-check-layout` verifies both against the backend like every other type, and
 `meta.Type_Info` reports the element type and lane count for `Type_Kind.Simd`.
@@ -732,9 +732,13 @@ producing the **splat** — every lane equal to that scalar. The reverse is not 
 conversion:
 
 ```odin
-doubled := lanes * 2.0;                 // 2.0 splats to all four lanes
-biased := lanes + Simd(f32, 4){0.5};    // a one-element literal does not splat
+doubled := lanes * 2.0;                 // the scalar splats to all four lanes
+half: Simd(f32, 4) = 0.5;               // {0.5, 0.5, 0.5, 0.5}
+written := Simd(f32, 4){0.5};           // {0.5, 0, 0, 0}: a literal fills lanes
 ```
+
+A literal is not a splat. It lists lanes, and the ones it omits take the lane
+type's zero, exactly as an array literal's do.
 
 An explicit `Simd(U, N)(v)` converts each lane of `v` from `T` to `U` under the
 same rule the scalar conversion `U(lane)` would use, and requires the same lane
@@ -766,10 +770,13 @@ A comparison **yields a lane mask, not a `bool`**. `a < b` on vectors has type
 they short-circuit, and there is nothing lane-wise for a short circuit to mean.
 Use `&` and `|` on the masks instead.
 
-Integer division and remainder by a zero lane, and signed overflow of the
-minimum value by `-1`, are program faults exactly as for scalars, and are
-detected the same way. A shift whose right lane is at or beyond the element's
-width is likewise a fault, matching the scalar rule.
+Every lane obeys the scalar rule for its own operator, unchanged. Integer
+division or remainder by a zero lane is the same program fault it is for a
+scalar, and any zero divisor lane faults the whole operation. Signed
+`MIN / -1` and `MIN % -1` have the same wrapping results scalars give. A shift
+count at or beyond the element's width is defined exactly as it is for a
+scalar — the limit of the repeated one-bit shift — and a shift's right operand
+is a vector too, so `v << 2` splats the count.
 
 Floating-point lanes follow the scalar floating-point rules unchanged: no
 contraction the source did not write, and no reassociation.
@@ -787,21 +794,27 @@ it has no iteration, no slicing, and no `[:]`.
 
 #### `core:simd`
 
-`core:simd` supplies what the operators cannot spell:
+`core:simd` supplies what the operators cannot spell. A lane index is constant,
+so none of these can be written as a loop in ordinary Loke:
 
-- `splat(scalar) -> Simd(T, N)`, the explicit spelling of the implicit widening;
 - `from_array(array) -> Simd(T, N)` and `to_array(v) -> [N]T`, the two
-  conversions between a vector and an array of the same element and length;
-- `shuffle(a, b, $indices)` — one vector from two, with a constant index per
-  result lane over the concatenation `a ++ b`;
-- `select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between two vectors;
-- `any(mask) -> bool`, `all(mask) -> bool`, and `count(mask) -> int`, the
-  reductions that turn a lane mask back into control flow;
-- `reduce_add`, `reduce_mul`, `reduce_min`, `reduce_max`, `reduce_and`,
-  `reduce_or`, and `reduce_xor`, each folding a vector to one scalar. The
-  floating-point reductions are ordered, left to right, so a result does not
-  depend on the target's vector width;
-- `min(a, b)`, `max(a, b)`, and `abs(v)`, lane-wise.
+  conversions between a vector and an array of the same element and length.
+  They are how vector data reaches ordinary code and how ordinary code reaches
+  a vector;
+- `select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between two vectors —
+  what a lane mask is for;
+- `any(mask) -> bool` and `all(mask) -> bool`, which turn a lane mask back into
+  control flow;
+- `reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each folding a
+  vector to one scalar. A floating-point sum and product are ordered, left to
+  right, so their results do not depend on the target's vector width; a minimum
+  and a maximum need no such rule, because they do not depend on order.
+
+The splat needs no procedure: a scalar in a vector position already is one.
+
+Shuffles, lane-wise `min`/`max`/`abs`, bitwise reductions, and a mask popcount
+are not in version 1. Each is additive — a new procedure over the existing
+type — and none needs a language rule that is not already here.
 
 #### What SIMD does not do
 
@@ -5239,7 +5252,10 @@ The analysis is local to one procedure body, together with the recorded summary 
 - pointers or views manufactured or stripped of provenance through
   `core:unsafe`;
 - aliases hidden by foreign code, and what a foreign procedure retains of a borrowed argument after it returns;
-- transferring borrows or unchecked addresses between threads, and keeping a `thread_local` borrow past the end of its thread.
+- transferring borrows or unchecked addresses between threads, and keeping a `thread_local` borrow past the end of its thread;
+- concurrent access to the same storage. A data race is undefined behaviour, and there are no implicit `Send`/`Sync` interfaces: [`Atomic(T)`](#concurrency-and-the-memory-model) makes one location's accesses race-free and nothing else;
+- which thread releases the last [`shared(T)`](#shared-ownership) handle, and therefore which thread runs `T`s `drop` and uses the control block's allocator;
+- everything [`unsafe.free`](#the-unsafe-package) releases: that the pointer is an allocation base from that allocator, that nothing still refers to it, and that it is released once.
 
 If a view has no locally provable lifetime, make an owned copy with `clone`, use `shared(T)`, or keep the lifetime correct as an explicit unsafe obligation.
 
@@ -6575,17 +6591,19 @@ The library supplies the following types, interfaces, and procedures used by thi
 | `fs.File`, `fs.open`, `File.close` | the [`defer`](#defer-statement) and [lifecycle hook](#lifecycle-hooks-and-resource-types) examples | `core:fs`: an ordinary move-only resource whose `drop` closes a live handle. Files are not in `core:os`; there is no `os.open` alias. |
 | `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `len(builder)` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> Result(string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
 | `C_String` | [C string views](#c-string-views) | `core:cstrings`: an owning, zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. UTF-8 is not guaranteed; construction rejects interior zeros. |
-| `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | Inline growable container implemented through ordinary methods and operators. |
+| `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | `core:container`: an inline growable container implemented through ordinary methods and operators, with no compiler support of its own. |
 | `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Reverse_Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |
-| `Little_Endian(T)`, `Big_Endian(T)` | [basic types](#basic-types) | Distinct storage wrappers supplied by binary-format libraries. |
+| `Little_Endian(T)`, `Big_Endian(T)` | [basic types](#basic-types) | `core:endian`: distinct storage wrappers over ordinary conversion hooks. |
 | `meta.Field`, `meta.Enum_Value` | [compile-time reflection](#compile-time-reflection) | Opaque compile-time-only descriptors exported through `base:meta` and constructed only by compiler reflection built-ins. |
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | [allocators](#allocators), fallible operations | `core:mem` / `base:runtime`. The final build selects the provider behind `mem.default_allocator()`. |
 | `Logger` | [build-selected providers](#build-selected-providers) | Ordinary service handle supplied by `core:log`; the final build selects the backend used by the package-level logging procedures. |
 | `Trace_Span`, `Time` | [explicit runtime environments](#explicit-runtime-environments) | Representative runtime handles supplied by tracing and time libraries; they have no compiler-known propagation. |
 | `Source_Code_Location` | `caller_location()`, `source_location()` | `base:runtime`. |
-| `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | flag sets and [enum iteration](#iterating-an-enumeration) | Generic library containers. Hardware register layouts use integer masks and explicit accessors in version 1. |
-| `Complex(T)`, `Quaternion(T)` | [library numeric types](#library-numeric-types) | Deliberately not primitive. |
-| `shared(T)`, `weak(T)` | [shared ownership](#shared-ownership) | Library records with custom lifecycle hooks and an atomic control block. |
-| `Atomic(T)` | [concurrency and the memory model](#concurrency-and-the-memory-model) | `core:sync` wrapper over compiler atomic intrinsics. |
+| `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | flag sets and [enum iteration](#iterating-an-enumeration) | `core:container`: generic library containers over `Enum.values()`. Hardware register layouts use integer masks and explicit accessors in version 1. |
+| `Complex(T)`, `Quaternion(T)` | [library numeric types](#library-numeric-types) | `core:math`: deliberately not primitive, and written entirely with operator declarations and conversion hooks. |
+| `shared(T)`, `weak(T)` | [shared ownership](#shared-ownership) | Library records with custom lifecycle hooks and an atomic control block, declared in `base:runtime` because `shared`, `weak`, and `try_shared` are universe names and their package is therefore loaded by every program. |
+| `Atomic(T)`, `Once`, `fence` | [concurrency and the memory model](#concurrency-and-the-memory-model) | `core:sync` wrappers over compiler atomic intrinsics. |
+| `slice.sort`, `slice.reverse_sort`, and the non-allocating slice queries | [sequence types](#sequence-types) | `core:slice`: free procedures over the `sort` member the compiler contributes to `[dynamic]T` and `[]mut T`, plus ordinary searches and comparisons. |
+| `simd.select`, `simd.any`/`all`, the reductions, and the array conversions | [SIMD vectors](#simd-vectors) | `core:simd`: thin names over compiler intrinsics, because a lane index is constant and none of them can be written as a loop. |
 
 The public APIs and layouts of these types belong to their packages; only the behavior required by the linked normative sections is part of the language contract.

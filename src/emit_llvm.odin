@@ -51,6 +51,9 @@ Emitter :: struct {
 	messages: map[string]string,
 	// Static literal storage, keyed by content so one literal is one global.
 	literals: map[string]string,
+	// The LLVM vector-reduction intrinsics this module declares, keyed by their
+	// mangled name so one shape is declared once.
+	simd_intrinsics: map[string]bool,
 	globals:  [dynamic]string,
 }
 
@@ -77,6 +80,7 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		container_thunks = make(map[string]bool),
 		messages     = make(map[string]string),
 		literals     = make(map[string]string),
+		simd_intrinsics = make(map[string]bool),
 		globals      = make([dynamic]string),
 	}
 	strings.builder_init(&e.b)

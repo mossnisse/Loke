@@ -60,9 +60,10 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 			}
 		}
 		return true
-	case .Array:
+	case .Array, .Simd:
 		// A zero-length array contains no element, so it has a zero whatever the
-		// element type is.
+		// element type is. Every SIMD lane type has a zero, so a vector always
+		// does.
 		return info.count == 0 || type_has_zero_walk(c, info.element, seen)
 	}
 	// Dynamic arrays and maps keep their empty all-zero header whatever they

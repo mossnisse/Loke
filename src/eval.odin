@@ -341,7 +341,7 @@ element_type_at :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 		return INVALID_TYPE
 	}
 	#partial switch info.kind {
-	case .Array:
+	case .Array, .Simd:
 		return info.element
 	case .Struct:
 		if index < len(info.fields) {
@@ -704,6 +704,11 @@ eval_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary) -> (Eval_Value, bool) {
 	if !ok {
 		return Eval_Value{}, false
 	}
+	// design.md "SIMD vectors": `-v` and `~v` are lane-wise, so each lane is the
+	// scalar answer and the whole is an aggregate.
+	if type_is_simd(ev.k.c, v.type) {
+		return eval_simd_unary(ev, v, operand)
+	}
 	value := const_of(operand)
 	folded: Const_Value
 	#partial switch v.op {
@@ -765,6 +770,13 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
 		return Eval_Value{}, false
 	}
 
+	// design.md "SIMD vectors": every operator applies lane-wise, so a vector
+	// operand folds one lane at a time. It cannot go through the shared constant
+	// fold below: an `Eval_Value`s lanes live in `elements`, which `const_of`
+	// does not carry.
+	if type_is_simd(ev.k.c, v.type) || type_is_simd(ev.k.c, left.type) {
+		return eval_simd_binary(ev, v, left, right)
+	}
 	#partial switch v.op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		result, ok := eval_compare(ev, v.op, left, right)
@@ -783,7 +795,107 @@ eval_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, bool) {
 		ev.failed = true
 		return Eval_Value{}, false
 	}
+	// design.md "SIMD vectors": a lane-wise fold answers with an aggregate, so
+	// the result has to be read back as one — a `scalar` here would leave a
+	// vector with no lanes, and the next `v[i]` would find nothing there.
+	if folded.kind == .Aggregate {
+		return value_from_const(ev, folded, v.type)
+	}
 	return scalar(folded, v.type), true
+}
+
+// `-v` and `~v`, one lane at a time. `+v` is the operand.
+@(private = "file")
+eval_simd_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary, operand: Eval_Value) -> (Eval_Value, bool) {
+	if v.op == .Plus {
+		return operand, true
+	}
+	info := underlying_info(ev.k.c, v.type)
+	if info == nil {
+		return Eval_Value{}, false
+	}
+	elements, allocated := eval_elements(ev, int(info.count))
+	if !allocated {
+		return Eval_Value{}, false
+	}
+	for index in 0 ..< int(info.count) {
+		lane := const_of(eval_simd_lane(operand, index))
+		folded: Const_Value
+		#partial switch v.op {
+		case .Minus:
+			if lane.kind == .Float {
+				folded = float_const(-lane.float, lane.float_bits)
+			} else {
+				folded = Const_Value{kind = lane.kind, integer = bi_neg(ev.alloc, lane.integer)}
+			}
+		case .Tilde:
+			if lane.kind == .Boolean {
+				folded = bool_const(!lane.boolean)
+			} else {
+				folded = Const_Value{kind = lane.kind, integer = bi_not(ev.alloc, lane.integer)}
+			}
+		case:
+			eval_fail(ev, v.op_span, "L0341", "this operator has no compile-time meaning")
+			return Eval_Value{}, false
+		}
+		if folded.kind == .Integer || folded.kind == .Rune {
+			folded.integer = wrap_to_type(ev.k.c, folded.integer, info.element)
+		}
+		elements[index] = scalar(folded, info.element)
+	}
+	return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+}
+
+// One lane at a time, at the element type. Either operand may still be the
+// splatted scalar, which is the lane value itself.
+@(private = "file")
+eval_simd_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary, left, right: Eval_Value) -> (Eval_Value, bool) {
+	info := underlying_info(ev.k.c, v.type)
+	if info == nil {
+		return Eval_Value{}, false
+	}
+	comparison := false
+	#partial switch v.op {
+	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
+		comparison = true
+	}
+	// A comparison's result is the mask, so its lanes are `bool` while the
+	// operands' are not.
+	source := underlying_info(ev.k.c, type_is_simd(ev.k.c, left.type) ? left.type : right.type)
+	elements, allocated := eval_elements(ev, int(info.count))
+	if !allocated {
+		return Eval_Value{}, false
+	}
+	for index in 0 ..< int(info.count) {
+		a, b := eval_simd_lane(left, index), eval_simd_lane(right, index)
+		if comparison {
+			result, ok := eval_compare(ev, v.op, a, b)
+			if !ok {
+				eval_fail(ev, v.op_span, "L0341", "this comparison has no compile-time meaning")
+				return Eval_Value{}, false
+			}
+			elements[index] = scalar(bool_const(result), info.element)
+			continue
+		}
+		folded, ok := fold_arithmetic(
+			ev.k.c, v.op, v.op_span, const_of(a), const_of(b), source.element, ev.alloc,
+		)
+		if !ok {
+			if !eval_memory_ok(ev) { return Eval_Value{}, false }
+			ev.failed = true
+			return Eval_Value{}, false
+		}
+		elements[index] = scalar(folded, source.element)
+	}
+	return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+}
+
+@(private = "file")
+eval_simd_lane :: proc(value: Eval_Value, index: int) -> Eval_Value {
+	if value.kind != .Aggregate || index >= len(value.elements) {
+		return value
+	}
+	return value.elements[index]
 }
 
 // Pointer and procedure identity are the evaluator's own, so they cannot be

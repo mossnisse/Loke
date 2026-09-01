@@ -170,6 +170,12 @@ abi_walk :: proc(
 			return false, "an integer wider than 64 bits on the Win64 C ABI", ""
 		}
 		return true, "", ""
+	case .Simd:
+		// design.md "SIMD vectors": "`Simd(T, N)` is **not foreign-ABI-safe**" —
+		// a vector's C classification is target- and extension-dependent in a way
+		// this subset deliberately excludes. A binding passes a pointer to an
+		// array instead.
+		return false, "a SIMD vector", ""
 	case .Float, .Rune, .Bool, .Enum, .Raw_Pointer, .Pointer, .Multi_Pointer, .CString_View:
 		// Scalars and pointers pass as themselves; an enum has integer backing;
 		// a pointer's pointee need not be safe because only an address crosses.

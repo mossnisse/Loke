@@ -101,6 +101,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 			return emit_atomic_builtin(e, v, symbol.builtin)
+		case .Simd_Cast, .Simd_Select, .Simd_Reduce:
+			return emit_simd_builtin(e, v, symbol.builtin)
 		case .Free, .Unsafe_Free:
 			emit_free(e, v)
 			return "0"
@@ -1114,11 +1116,19 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		return value
 	}
 
-	from_float := type_is_float(e.c, from)
-	to_float := type_is_float(e.c, to)
-	from_bits, to_bits := type_bits(e.c, from), type_bits(e.c, to)
-	from_signed := type_signed(e.c, from) || type_is_rune(e.c, from)
-	to_signed := type_signed(e.c, to) || type_is_rune(e.c, to)
+	// design.md "SIMD vectors": a lane-wise conversion, which is the same LLVM
+	// cast instruction over a vector operand — so only the types it reads about
+	// come from the lanes.
+	from_lane, to_lane := from, to
+	if type_is_simd(e.c, from) && type_is_simd(e.c, to) {
+		from_lane = type_underlying(e.c, type_of(e.c, from).element)
+		to_lane = type_underlying(e.c, type_of(e.c, to).element)
+	}
+	from_float := type_is_float(e.c, from_lane)
+	to_float := type_is_float(e.c, to_lane)
+	from_bits, to_bits := type_bits(e.c, from_lane), type_bits(e.c, to_lane)
+	from_signed := type_signed(e.c, from_lane) || type_is_rune(e.c, from_lane)
+	to_signed := type_signed(e.c, to_lane) || type_is_rune(e.c, to_lane)
 
 	operation := ""
 	switch {

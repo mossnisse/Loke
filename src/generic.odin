@@ -641,6 +641,24 @@ match_type_pattern :: proc(
 		return match_type_pattern(k, v.elem, info.element, scope, out)
 
 	case ^Expr_Call:
+		// design.md "SIMD vectors": `Simd($T, $N)` is written like a generic
+		// application but is a predeclared type constructor, so its parts come
+		// from the type itself rather than from a template's bound arguments.
+		if simd_callee(k, v.callee) {
+			if info.kind != .Simd || len(v.args) != 2 {
+				return false
+			}
+			if lanes, is_poly := v.args[1].value.(^Type_Poly); is_poly {
+				arg := Generic_Arg {
+					value      = int_const(k.c, i64(info.count)),
+					value_type = TYPE_INT,
+				}
+				if !bind_pattern_name(k, lanes.name, arg, scope, out) {
+					return false
+				}
+			}
+			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
+		}
 		// `^Table($K, $V)`: the argument must be an instance of that same template,
 		// and its own bound arguments supply the parts.
 		if info.instance_of == INVALID_SYMBOL {

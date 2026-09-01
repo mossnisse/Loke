@@ -1,0 +1,84 @@
+// `core:simd` (design.md "SIMD vectors", m8-plan step 6).
+//
+// The operators on `Simd(T, N)` are the language's, and they cover everything
+// that is lane-wise. What is left is everything that crosses lanes — a
+// reduction, a select, a conversion to or from an array — and none of it can be
+// written as a loop here, because design.md makes a lane index constant. So
+// each of these is one compiler intrinsic with a Loke name.
+@(public)
+package simd;
+
+// The compiler contributes, package-privately:
+//
+//   simd_cast    a vector to its array, or an array to its vector
+//   simd_select  lane-wise choice between two vectors
+//   simd_reduce  a vector folded to one scalar, by a constant `Fold`
+//
+// The fold is a `$` parameter for the reason an atomic ordering is: it selects
+// the instruction, so a constant at the caller has to stay constant across this
+// boundary.
+
+// Which fold `reduce` performs. Only this package names it — every public
+// procedure below is one fold with its own name — so it is `@(private)`.
+@(private)
+Fold :: enum u8 {
+	Add,
+	Mul,
+	Min,
+	Max,
+	Any,
+	All,
+}
+
+// design.md: "the two conversions between a vector and an array of the same
+// element and length. They are how vector data reaches ordinary code and how
+// ordinary code reaches a vector."
+//
+// A vector and its array have the same lanes in the same order and the same
+// bytes; only the alignment differs, and the conversion owns that.
+from_array :: proc(values: [$N]$T) -> Simd(T, N) {
+	return simd_cast(values);
+}
+
+to_array :: proc(vector: Simd($T, $N)) -> [N]T {
+	return simd_cast(vector);
+}
+
+// design.md: "`select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between
+// two vectors — what a lane mask is for." Lane `i` of the result is `a`s where
+// the mask lane is true and `b`s where it is false.
+//
+// Both vectors are evaluated: this is a lane-wise choice, not a branch.
+select :: proc(mask: Simd(bool, $N), when_true: Simd($T, N), when_false: Simd(T, N)) -> Simd(T, N) {
+	return simd_select(mask, when_true, when_false);
+}
+
+// design.md: "`any(mask) -> bool` and `all(mask) -> bool`, which turn a lane
+// mask back into control flow." A comparison on vectors produces a mask rather
+// than a `bool` precisely so that the reduction is written rather than assumed.
+any :: proc(mask: Simd(bool, $N)) -> bool {
+	return simd_reduce(mask, Fold.Any);
+}
+
+all :: proc(mask: Simd(bool, $N)) -> bool {
+	return simd_reduce(mask, Fold.All);
+}
+
+// design.md: "`reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each
+// folding a vector to one scalar. The floating-point reductions are ordered,
+// left to right, so a result does not depend on the target's vector width."
+reduce_add :: proc(vector: Simd($T, $N)) -> T {
+	return simd_reduce(vector, Fold.Add);
+}
+
+reduce_mul :: proc(vector: Simd($T, $N)) -> T {
+	return simd_reduce(vector, Fold.Mul);
+}
+
+reduce_min :: proc(vector: Simd($T, $N)) -> T {
+	return simd_reduce(vector, Fold.Min);
+}
+
+reduce_max :: proc(vector: Simd($T, $N)) -> T {
+	return simd_reduce(vector, Fold.Max);
+}

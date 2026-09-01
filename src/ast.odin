@@ -39,6 +39,10 @@ Expr_Base :: struct {
 	// `string_view`. The source type is kept so the backend narrows the owning
 	// three-word value to the two-word view rather than reinterpreting it.
 	view_from:   Type_Id,
+	// design.md "SIMD vectors": a scalar widened to a vector. The lane type is
+	// kept so the backend evaluates the scalar and then splats it, rather than
+	// looking for a vector-shaped value that was never produced.
+	splat_from:  Type_Id,
 	// Set at construction when this node or any child is an error node, so
 	// recovery never has to re-walk a subtree to find out.
 	has_error:   bool,
@@ -271,6 +275,10 @@ Expr_Call :: struct {
 	atomic_type:          Type_Id,
 	atomic_order:         int,
 	atomic_failure_order: int,
+	// design.md "SIMD vectors": which fold a `simd_reduce` call selected. Like
+	// an atomic ordering, it picks the instruction rather than being an operand
+	// to it, so it is settled at check time.
+	simd_fold:            Simd_Fold,
 	// design.md "Variadic parameters". `variadic_slot` is the packed parameter's
 	// index, or -1. `variadic_forwards` marks the sole-spread case, where
 	// `bound[variadic_slot]` is the slice itself; otherwise the explicit

@@ -1068,8 +1068,21 @@ was enough to make an unrelated corpus program fail.
 
 Stage 4 remains gated on non-Windows targets: `LOKE_OS` is a fixed `.Windows`,
 so the `else` arm of every `when` in `core:fs`, `core:path`, `core:term` and
-`core:os` exists and is never selected. `core:bytes`, `sort`, `time`, `random`,
-`testing` and `log` wait for a concrete need, as planned. A buffered reader,
-`fs.replace_atomic`, `fs.absolute`, symlink support, and a `try_` twin for the
-allocating string transformations are all deliberately absent until a caller
-asks.
+`core:os` exists and is never selected.
+
+M8 closed four of the entries this list used to defer, because design.md's own
+catalogue assumed them rather than merely allowing them: sorting is now a
+contributed `sort`/`reverse_sort` member on `[dynamic]T` and `[]mut T` with
+`core:slice` forwarding to it; `core:log` sits on a build-selected logger;
+`core:sync` supplies `Atomic(T)`, `fence`, and `Once`; and `core:simd` supplies
+what the `Simd(T, N)` operators cannot spell. M8 also added `core:container`
+(`Small_Array`, `Bit_Set`, `Enum_Array`), `core:math` (`Complex`,
+`Quaternion`), and `core:endian`.
+
+`core:bytes`, `time`, `random`, and `testing` still wait for a concrete need, as
+planned. A buffered reader, `fs.replace_atomic`, `fs.absolute`, symlink support,
+and a `try_` twin for the allocating string transformations are all deliberately
+absent until a caller asks. Within `core:simd`, shuffles, lane-wise
+`min`/`max`/`abs`, the bitwise reductions, and a mask popcount are named in
+design.md as version-1 omissions: each is additive over the type that now
+exists.

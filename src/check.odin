@@ -1546,6 +1546,12 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return INVALID_TYPE
 
 	case ^Expr_Call:
+		// design.md "SIMD vectors": `Simd(T, N)` is a predeclared type
+		// constructor, not a generic record, so it is answered before the
+		// template lookup that would find nothing.
+		if simd_callee(k, value.callee) {
+			return resolve_simd_application(k, value)
+		}
 		// `Table(string, int)`: a generic application in type position.
 		template := generic_template_of_callee(k, value.callee, .Record)
 		if template == nil {
@@ -1596,19 +1602,21 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 // M1 parses the whole grammar; the checker compiles a subset, and each
 // milestone retired part of the difference. After M7 the difference is empty:
 // every construct is compiled or has its own diagnostic, so no call site below
-// is reachable from source (m7-plan step 6, "Audit").
+// is reachable from source (m7-plan step 6, "Audit"). M8 closed the last of
+// them: `Simd(T, N)` is a real type now rather than a reserved name, so the
+// message names a compiler defect rather than a milestone that will never
+// arrive for it (m8-plan step 7).
 //
 // The calls stay as invariant guards, not deleted: each sits on a dispatch arm
 // whose union or token set is exhaustively handled above it, so reaching one
 // means a parser or resolver invariant broke — better a diagnostic naming the
-// span than falling through unchecked. `Simd(T, N)`, the one type design.md
-// specifies and v1 leaves out, reports L0636 instead.
+// span than falling through unchecked.
 unsupported_construct :: proc(k: ^Checker, span: Span) {
 	errorf(
 		k.c,
 		span,
 		"L0350",
-		"this construct parses, but is not compiled yet in this milestone",
+		"this construct parses, but the checker has no rule for it; this is a compiler defect",
 	)
 }
 
@@ -1632,9 +1640,9 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return false
 	}
 	if !type_is_supported(k.c, type) {
-		// Unsupported because a component never resolved is not a milestone answer:
-		// whatever rejected that component already said what is wrong with it, and
-		// "not compiled yet" names neither it nor a fix that will ever come.
+		// Unsupported because a component never resolved is not this diagnostic's
+		// answer: whatever rejected that component already said what is wrong with
+		// it, and "the checker has no rule for it" names neither.
 		if !type_mentions_invalid(k.c, type) {
 			unsupported_construct(k, span)
 		}
@@ -1678,7 +1686,8 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 // will never actually fix it.
 report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	if ident, is_ident := syntax.(^Expr_Ident); is_ident {
-		if report_deferred_type_name(k, ident.name, ident.span) {
+		if ident.name == "Simd" {
+			errorf(k.c, ident.span, "L0681", "`Simd` needs its element type and lane count, as in `Simd(f32, 4)`")
 			return
 		}
 		if symbol_is_generic(k, lookup_symbol(k.scope, identifier_of(k.c, ident))) {
@@ -1703,12 +1712,9 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	}
 	// `Name(args)` in type position: a generic application whose head named
 	// nothing. The head is what is unknown, so it gets the same answer a bare name
-	// would rather than "not compiled yet" (m7-plan step 6).
+	// would rather than the compiler-defect guard (m7-plan step 6).
 	if call, is_call := syntax.(^Expr_Call); is_call {
 		if head, head_is_ident := call.callee.(^Expr_Ident); head_is_ident {
-			if report_deferred_type_name(k, head.name, head.span) {
-				return
-			}
 			errorf(k.c, head.span, "L0306", "unknown type `%s`", head.name)
 			return
 		}
@@ -1742,23 +1748,6 @@ unresolved_component :: proc(k: ^Checker, syntax: Expr) -> Expr {
 		if failed(k, value.value) { return value.value }
 	}
 	return nil
-}
-
-// design.md specifies `Simd(T, N)` and reserves it in the public `Type_Kind`,
-// but nothing in the language, runtime, or standard packages depends on it, so
-// it is the one piece of ABI surface v1 leaves out (compiler-plan D). Since it
-// names a real specified type, it gets its own answer rather than "unknown
-// type" or "not compiled yet in this milestone" (m7-plan step 6).
-@(private = "file")
-report_deferred_type_name :: proc(k: ^Checker, name: string, span: Span) -> bool {
-	if name != "Simd" {
-		return false
-	}
-	errorf(
-		k.c, span, "L0636",
-		"`Simd(T, N)` is specified but not implemented in version 1; use a fixed array and let the optimizer vectorise",
-	)
-	return true
 }
 
 // ------------------------------------------------------- declarations --

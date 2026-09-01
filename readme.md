@@ -14,7 +14,7 @@ The normative language specification is in [design.md](design.md), and its gramm
 
 ## The compiler
 
-`lokec` is written in Odin and lives in [src/](src). The build is decomposed in [compiler-plan.md](compiler-plan.md), which records what each milestone M0–M6b delivered; the current milestone is M7, planned in [m7-plan.md](m7-plan.md).
+`lokec` is written in Odin and lives in [src/](src). The build is decomposed in [compiler-plan.md](compiler-plan.md), which records what each milestone M0–M7 delivered; the current milestone is M8, planned in [m8-plan.md](m8-plan.md). M8 is the last of the language: it lands the library types design.md's catalogue assumes, the compiler work they need — sorting, build-selected providers, atomics, shared ownership — and `Simd(T, N)`.
 
 The current phase contracts, allocation ownership, and backend component map are described in [compiler-architecture.md](compiler-architecture.md).
 

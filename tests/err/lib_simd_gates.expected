@@ -1,0 +1,126 @@
+L0682
+@19:19
+`rune` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0682
+@20:13
+`i128` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0682
+@21:15
+`Colour` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0682
+@22:18
+`^int` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0682
+@23:16
+`Pair` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0682
+@24:15
+`Simd(f32, 4)` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0683
+@31:17
+a SIMD lane count is a power of two from 1 through 64, found 3
+L0683
+@32:19
+a SIMD lane count must be a positive constant
+L0683
+@33:17
+a SIMD lane count is a power of two from 1 through 64, found 128
+L0683
+@34:17
+`Simd(f64, 16)` is 128 bytes; a SIMD vector is at most 64
+L0341
+@35:27
+`runtime_count` has no compile-time value
+L0681
+@41:8
+`Simd` needs its element type and lane count, as in `Simd(f32, 4)`
+L0681
+@42:7
+`Simd` takes an element type and a lane count, as in `Simd(f32, 4)`
+L0681
+@43:9
+`Simd` takes an element type and a lane count, as in `Simd(f32, 4)`
+L0684
+@50:8
+a lane index must be a constant; `Simd(f32, 4)` has 4 lanes, and a runtime lane index has no efficient lowering
+L0685
+@51:8
+lane 4 is out of range for `Simd(f32, 4)`
+L0685
+@52:8
+lane -1 is out of range for `Simd(f32, 4)`
+L0362
+@58:6
+`Simd(f32, 4)` cannot be sliced; a user type needs an `operator([:])` overload
+L0456
+@59:19
+`Simd(f32, 4)` is not iterable: it needs associated `Element` and `Iterator` members and an `iter` procedure
+L0686
+@72:8
+`+` applies lane-wise to one vector type; `Simd(i32, 4)` and `Simd(i32, 2)` have different lanes
+L0686
+@73:8
+`+` applies lane-wise to one vector type; `Simd(i32, 4)` and `Simd(f32, 4)` have different lanes
+L0686
+@74:13
+`%` does not apply to `f32` lanes
+L0686
+@75:13
+`&` does not apply to `f32` lanes
+L0686
+@76:11
+`+` does not apply to `bool` lanes
+L0686
+@77:11
+`<` does not apply to `bool` lanes
+L0686
+@78:6
+unary `-` does not apply to `bool` lanes
+L0686
+@79:6
+unary `!` does not apply to `bool` lanes
+L0686
+@87:14
+`&&` short-circuits, so it does not apply lane-wise; use `&` on the masks
+L0686
+@88:14
+`||` short-circuits, so it does not apply lane-wise; use `|` on the masks
+L0355
+@95:6
+a condition must be `bool`, found `Simd(bool, 4)`
+L0373
+@102:19
+`Simd(i32, 4)` cannot be converted to `Simd(i32, 2)`
+L0373
+@103:10
+`Simd(i32, 4)` cannot be converted to `f32`
+L0310
+@104:27
+cannot initialise `Simd(i32, 2)` with `Simd(i32, 4)`
+L0392
+@113:6
+no overload of `select` applies to these arguments
+L0392
+@114:6
+no overload of `any` applies to these arguments
+L0392
+@117:6
+no overload of `to_array` applies to these arguments
+L0619
+@125:20
+a foreign parameter is not ABI-safe: `Simd(f32, 4)` is a SIMD vector
+L0619
+@126:20
+a foreign result is not ABI-safe: `Simd(i32, 4)` is a SIMD vector
+L0619
+@127:2
+a foreign global is not ABI-safe: `Simd(u8, 16)` is a SIMD vector
+L0619
+@131:21
+a foreign parameter is not ABI-safe: `Simd(f32, 4)` is a SIMD vector
+L0682
+@39:44
+`Colour` is not a SIMD lane type; lanes are `bool`, an integer up to 64 bits, or a float
+L0687
+@71:29
+`Add` folds numeric lanes, and `Simd(bool, 4)` is a lane mask

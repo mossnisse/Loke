@@ -881,6 +881,13 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		check_map_index(k, v, info, base_type, place)
 		return
 	}
+	// design.md "SIMD vectors": "`v[i]` reads a lane and `v[i] = x` writes one.
+	// **The index must be a constant**". Answered before the shared array path
+	// because that path permits a runtime index and a vector does not.
+	if info != nil && info.kind == .Simd && len(v.indices) == 1 {
+		check_simd_index(k, v, info, base_type, through_pointer, pointer_mutable)
+		return
+	}
 	// Built-in indexing first; a user `operator([])` supplies what it does not.
 	indexable := info != nil && (info.kind == .Array || info.kind == .Slice)
 	if !indexable || len(v.indices) != 1 {
@@ -1518,6 +1525,10 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			return
 		}
 	}
+	if type_is_simd(k.c, operand) {
+		check_simd_unary(k, v, operand)
+		return
+	}
 	if type_kind(k.c, operand) == .Distinct {
 		operator_mismatch(k, v.op_span, v.op, operand)
 		v.type = INVALID_TYPE
@@ -1720,6 +1731,12 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
+	// design.md "SIMD vectors": lane-wise, with its own operator table and its
+	// own answer for a comparison, so it is settled before the scalar table.
+	if type_is_simd(k.c, lhs) || type_is_simd(k.c, rhs) {
+		check_simd_binary(k, v, lhs, rhs)
+		return
+	}
 	// The built-in operation wins whenever every operand is a built-in type and
 	// the built-in table defines this operator for them.
 	if !builtin_binary_defined(k, v.op, lhs, rhs) {
@@ -1796,6 +1813,9 @@ check_logical :: proc(k: ^Checker, v: ^Expr_Binary) {
 	rhs := check_single_expr(k, v.rhs, TYPE_BOOL)
 	if lhs == INVALID_TYPE || rhs == INVALID_TYPE {
 		v.type = INVALID_TYPE
+		return
+	}
+	if reject_simd_logical(k, v, lhs, rhs) {
 		return
 	}
 	if !type_is_boolean(k.c, lhs) || !type_is_boolean(k.c, rhs) {
@@ -2117,6 +2137,20 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	   named_callee_symbol(k, v.callee) == k.c.shared_symbol &&
 	   !callee_argument_denotes_type(k, v) {
 		check_group_call(k, v, k.c.shared_construct_symbol, expected)
+		return
+	}
+	// `Simd(f32, 4)` denotes a type wherever it appears too, which is what makes
+	// `Simd(i32, 4)(v)` an ordinary written conversion.
+	if simd_callee(k, v.callee) {
+		denoted := resolve_simd_application(k, v)
+		if denoted == INVALID_TYPE {
+			v.type = INVALID_TYPE
+			return
+		}
+		v.type = TYPE_TYPE
+		v.value_category = .Type
+		v.is_const = true
+		v.const_value = type_const(denoted)
 		return
 	}
 	// A generic record application denotes a type wherever it appears, which is
@@ -2665,6 +2699,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Make:
 		check_make_builtin(k, v, ident)
 		return
+	case .Simd_Cast, .Simd_Select, .Simd_Reduce:
+		check_simd_builtin(k, v, ident, sym.builtin)
+		return
 	case .New, .New_Clone, .Free, .Unsafe_Free, .Free_All:
 		check_allocation_builtin(k, v, ident, sym.builtin)
 		return
@@ -2825,7 +2862,6 @@ check_standard_alias :: proc(
 // declaration to name a parameter, and no `inout`/`move`/spread position to
 // fill. Both are permanent properties rather than an unimplemented milestone
 // (m7-plan step 6).
-@(private = "file")
 reject_builtin_argument_shape :: proc(k: ^Checker, arg: Argument) {
 	if arg.name.text != "" {
 		errorf(k.c, arg.span, "L0371", "a built-in takes positional arguments only")
@@ -3033,6 +3069,14 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.const_value = int_const(k.c, i64(len(base.const_value.text)))
 		return
 	}
+	// design.md "SIMD vectors": "`len(v)` is the lane count, a compile-time
+	// constant. A vector is not a sequence" — so it answers here rather than
+	// through a contributed member, which would say it were one.
+	if kind == .Len && type_is_simd(k.c, operand) {
+		v.is_const = true
+		v.const_value = int_const(k.c, i64(type_of(k.c, type_underlying(k.c, operand)).count))
+		return
+	}
 	// `len` and `cap` are standard aliases once their receiver is a runtime type.
 	// Built-in carriers own compiler-contributed methods; user types own the
 	// method they declared. Both spellings therefore select one symbol.
@@ -3078,6 +3122,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		result = type_field_offset(k.c, operand, int(symbol.index))
 	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Cap, .New, .New_Clone, .Free, .Unsafe_Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
+	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter, .Standard_Alias,
@@ -3242,7 +3287,8 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		v.type = TYPE_VOID
 		return
 
-	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Make,
+	case .Simd_Cast, .Simd_Select, .Simd_Reduce,
+	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Make,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
@@ -3896,7 +3942,10 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	#partial switch info.kind {
 	case .Struct:
 		check_struct_literal(k, v, target, info)
-	case .Array:
+	case .Array, .Simd:
+		// design.md "SIMD vectors": "written as a composite literal with one
+		// element per lane, in lane order" — the array's own rule, including the
+		// zero fill that makes `{}` the zero vector.
 		check_array_literal(k, v, target, info)
 	case .Slice:
 		check_slice_literal(k, v, target, info)
@@ -4230,7 +4279,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 	// has length 0 and points at no storage.
 	case .String, .String_View:
 		return Const_Value{kind = .String}, true
-	case .Array:
+	case .Array, .Simd:
 		elements := make([]Const_Value, info.count, c.semantic_allocator)
 		element, ok := zero_const(c, info.element)
 		if !ok {
@@ -4293,6 +4342,19 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	if underlying_kind(k.c, target) == .String_View &&
 	   underlying_kind(k.c, base.type) == .String {
 		base.view_from = base.type
+		base.type = target
+		return true
+	}
+	// design.md "SIMD vectors": "A scalar converts to a vector implicitly
+	// wherever a vector is expected, producing the **splat**." A constant folds
+	// into the vector's own constant below; a runtime scalar is splatted by the
+	// backend, which is what this records.
+	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && !base.is_const {
+		element := type_of(k.c, type_underlying(k.c, target)).element
+		if base.type != element && !materialize(k, e, element) {
+			return false
+		}
+		base.splat_from = expr_base(e).type
 		base.type = target
 		return true
 	}
@@ -4472,6 +4534,27 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
+	case .Simd:
+		// design.md "SIMD vectors": a scalar constant becomes the splat, one lane
+		// per element, converted once at the lane type.
+		if value.kind == .Aggregate {
+			if value.aggregate != nil && value.aggregate.type == target {
+				return value, true
+			}
+			return value, false
+		}
+		lane, fits := convert_const(c, value, info.element, explicit, allocator)
+		if !fits {
+			return value, false
+		}
+		elements := make([]Const_Value, info.count, c.semantic_allocator)
+		for index in 0 ..< int(info.count) {
+			elements[index] = lane
+		}
+		aggregate := new(Const_Aggregate, c.semantic_allocator)
+		aggregate.type = target
+		aggregate.elements = elements
+		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
 	case .Struct, .Array:
 		// design.md "Shared ownership": "Its zero value is `nil`". A handle is one
 		// pointer, so its zero representation *is* the null one; writing it `nil`
@@ -4514,6 +4597,13 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		// record type whose zero has that spelling, because it is one pointer and
 		// the language, not the library, says so.
 		return type_is_shared_handle(c, to)
+	}
+	// design.md "SIMD vectors": "A scalar converts to a vector implicitly
+	// wherever a vector is expected, producing the **splat**". The reverse is not
+	// a conversion, and neither is one vector type to another.
+	if type_is_simd(c, to) && !type_is_simd(c, from) {
+		element := type_of(c, type_underlying(c, to)).element
+		return from == element || assignable(c, from, element)
 	}
 	// A mutable carrier implicitly weakens to a read-only one; a read-only
 	// carrier never converts to a mutable one (design.md).
@@ -4592,6 +4682,21 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true // between a distinct type and what it wraps, either way
 	}
 	source_kind, dest_kind := type_kind(c, source), type_kind(c, dest)
+
+	// design.md "SIMD vectors": "An explicit `Simd(U, N)(v)` converts each lane
+	// of `v` from `T` to `U` under the same rule the scalar conversion `U(lane)`
+	// would use, and requires the same lane count." Nothing else converts to or
+	// from a vector: no reinterpretation, and no vector-to-scalar.
+	if source_kind == .Simd || dest_kind == .Simd {
+		if source_kind != .Simd || dest_kind != .Simd {
+			return false // the scalar splat is the assignable path above
+		}
+		source_info, dest_info := type_of(c, source), type_of(c, dest)
+		if source_info.count != dest_info.count {
+			return false
+		}
+		return convertible(c, source_info.element, dest_info.element)
+	}
 
 	numeric :: proc(kind: Type_Kind) -> bool {
 		#partial switch kind {

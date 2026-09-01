@@ -108,9 +108,14 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		return value.kind == .Nil ? "0" : bi_text(e.c, value.integer)
 	case .Union:
 		return union_constant(e, value, under, info)
-	case .Array:
+	case .Array, .Simd:
+		// A vector constant is LLVM's `<...>` over the same lane values an array
+		// constant writes between brackets; a `Simd(bool, N)` lane is `i8` in
+		// memory, which `simd_lane_llvm_type` answers for both.
+		vector := info.kind == .Simd
+		lane := simd_lane_llvm_type(e, info)
 		b := strings.builder_make()
-		strings.write_string(&b, "[")
+		strings.write_string(&b, vector ? "<" : "[")
 		for index in 0 ..< int(info.count) {
 			if index > 0 {
 				strings.write_string(&b, ",")
@@ -119,9 +124,15 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			if value.aggregate != nil && index < len(value.aggregate.elements) {
 				element = value.aggregate.elements[index]
 			}
-			fmt.sbprintf(&b, " %s %s", llvm_type(e, info.element), llvm_const(e, element, info.element))
+			value := llvm_const(e, element, info.element)
+			if vector && lane == "i8" {
+				// A mask lane is a byte, so `true`/`false` — an `i1`'s spelling — is a
+				// type mismatch in the constant rather than a narrowing.
+				value = value == "true" ? "1" : "0"
+			}
+			fmt.sbprintf(&b, " %s %s", lane, value)
 		}
-		strings.write_string(&b, " ]")
+		strings.write_string(&b, vector ? " >" : " ]")
 		return strings.to_string(b)
 	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
 		if value.kind == .Nil {
@@ -226,7 +237,7 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 			out[index] = u8(raw >> u64(index * 8))
 		}
 		return true
-	case .Array:
+	case .Array, .Simd:
 		stride := int(type_size(e.c, info.element))
 		for index in 0 ..< int(info.count) {
 			start, end := index * stride, (index + 1) * stride
@@ -298,7 +309,6 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 // every float constant is spelled as its bit pattern: `half` uses the 16-bit
 // form, `float` the double pattern (exact, since the value was already rounded
 // to single precision).
-@(private = "file")
 llvm_float :: proc(value: f64, bits: u16) -> string {
 	if bits == 16 {
 		return fmt.aprintf("0xH%04X", f64_to_f16_bits(value))
@@ -707,6 +717,14 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
+	// design.md "SIMD vectors": a scalar widened to every lane.
+	if from := base.splat_from; from != INVALID_TYPE {
+		target := base.type
+		base.splat_from, base.type = INVALID_TYPE, from
+		value := emit_expr(e, expr)
+		base.splat_from, base.type = from, target
+		return emit_simd_splat(e, value, target)
+	}
 	if from := base.union_from; from != INVALID_TYPE {
 		target := base.type
 		base.union_from, base.type = INVALID_TYPE, from
@@ -905,6 +923,9 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary) -> string {
 		operands := [1]Expr{v.operand}
 		return emit_operator_call(e, v.resolution.symbol, operands[:])
 	}
+	if type_is_simd(e.c, v.type) {
+		return emit_simd_unary(e, v)
+	}
 	operand := emit_expr(e, v.operand)
 	type := v.type
 	llvm := llvm_type(e, type)
@@ -938,6 +959,11 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", out, result)
 		return out
+	}
+	// design.md "SIMD vectors": lane-wise, including the comparison whose result
+	// is a mask rather than a `bool`, so it never reaches `emit_compare`.
+	if type_is_simd(e.c, expr_base(v.lhs).type) || type_is_simd(e.c, expr_base(v.rhs).type) {
+		return emit_simd_binary(e, v)
 	}
 	#partial switch v.op {
 	case .And_And, .Or_Or:
@@ -1118,12 +1144,10 @@ emit_shift :: proc(e: ^Emitter, op: Token_Kind, type: Type_Id, signed: bool, cou
 // The LLVM predicate each comparison lowers to, per operand class. The float
 // column is ordered, so a NaN operand compares false — except `!=`, which is
 // `une` and so is true whenever the operands are unordered.
-@(private = "file")
 Compare_Predicate :: struct {
 	signed, unsigned, float: string,
 }
 
-@(private = "file")
 compare_predicate :: proc(op: Token_Kind) -> Compare_Predicate {
 	#partial switch op {
 	case .Eq_Eq:  return {"eq",  "eq",  "oeq"}

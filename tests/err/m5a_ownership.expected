@@ -27,7 +27,7 @@ L0503
 `Only` is move-only, so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0504
 @74:11
-a by-value `foreach` over `Res` copies a managed element, which M5a does not clean up per iteration; iterate `&value` over a `[]mut Res`, or index the sequence
+a by-value `foreach` over `Res` copies a managed element, and the loop body places no per-iteration cleanup for it; iterate `&value` over a `[]mut Res`, or index the sequence
 L0505
 @81:16
 `exchange` replaces the destination, so it is written `exchange(inout place, replacement)`

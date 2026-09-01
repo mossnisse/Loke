@@ -290,7 +290,7 @@ as each milestone starts.
 | **M6a** | **Runtime foundations and strings** ([B14](#b14-runtime--core-library)). Add the versioned C runtime and allocator-provider ABI, implicit `base:`/`core:` roots and nameable runtime/meta/mem/fmt/unsafe packages, logical cross-frame panic cleanup with unwind/abort selection, runtime strings and borrowed text views, multi-pointers, ordinary `..T` plus call-scoped `..any_view` variadics, checked runtime type information, coherent erased formatting, and source locations. | Programs link the compiler-relative runtime; every specified panic follows unwind or abort correctly; text ownership/borrowing is checked; homogeneous and erased variadics run; `fmt` replaces `print_int`; `type_info_of` and source locations expose their frozen runtime layouts. |
 | **M6b** | **Managed containers and regions**. Add dynamic arrays and maps with complete operations/lifecycle/formatting, eager `via` and lazy default allocator binding, iteration and invalidation, address-stable `mem.Arena`/`mem.Scratch` controls as real local regions, successful reset, and the remaining dynamic-array-dependent string/unsafe/evaluator handoffs. | Dynamic arrays and maps preserve value, allocator, failure, and borrow semantics; arena-backed owners cannot escape or survive reset; moving a provider preserves its allocator-record address and region identity; all managed runtime types iterate, format, copy/move/drop, and fail without publishing partial state. |
 | **M7** | **Release + interop**, planned in [m7-plan.md](m7-plan.md). LLVM backend ([B16](#b16-llvm-backend-release)), ABI/layout completeness ([B15](#b15-abi--layout)), foreign/C interop, linking. Optimization and build modes with the `LOKE_*` build constants; one attribute validation table; `@(packed)`/`@(align=N)`; the Windows x64 classification for `"c"`/`"stdcall"` with `@(by_ptr)` and `@(c_vararg)`; foreign imports, blocks and globals; `@(export)` with object output; and `core:os` over a foreign block. | Optimized release builds, identical in behaviour at every optimization level; C libraries link and call, and C links and calls exported Loke code. |
-| **M8** | **Later.** `Simd(T, N)` with lane-wise operators and `core:simd`; the [library types](#d-out-of-scope-for-v1) design.md assumes, including the compiler atomic intrinsics `Atomic(T)` and `shared(T)` need; then Linux/macOS targets, incremental/parallel, debug info, tooling. | Out of v1 scope. |
+| **M8** *(implemented)* | **The rest of design.md**, planned in [m8-plan.md](m8-plan.md). The library types design.md's catalogue assumes and the compiler work they need: `core:slice` with `sort`/`reverse_sort` as contributed members over a runtime introsort; `Small_Array`, `Bit_Set`, `Enum_Array`, `Complex`, `Quaternion`, `Little_Endian`/`Big_Endian` as ordinary Loke; build-selected providers with `core:log` and a compiled log level; compiler atomic intrinsics with `core:sync`; `shared(T)`/`weak(T)`; and `Simd(T, N)` with lane-wise operators and `core:simd`, after a design.md section for it. Linux/macOS targets, incremental/parallel, debug info, and tooling stay out of v1. | Every catalogue entry is implemented or has an explicit deferral; the corpus is green at every optimization level; the memory model is checked under real contention through a C host; a `shared(T)` payload drops exactly once; and no diagnostic names an unarrived milestone. |
 
 Sequencing rationale: M3 precedes M4 because type-checking generics needs
 compile-time evaluation (`where`, lengths, `when`). Package discovery is the
@@ -865,9 +865,9 @@ element in a sequence literal (`L0372`, reported once for the literal rather tha
 once per element); an unknown *generic* type application, which said "not
 compiled yet" where a bare unknown name said "unknown type" (`L0306`); and a
 literal whose written type does not resolve, which was gating the enclosing
-construct instead of reporting the type. `Simd(T, N)` gets its own answer
-(`L0636`) naming it as specified-but-absent in v1, rather than being an unknown
-name.
+construct instead of reporting the type. `Simd(T, N)` was the one type design.md
+specified and M7 left out; it reported `L0636`, which M8 retired by implementing
+the type.
 
 Every remaining `unsupported_construct` call site sits on a dispatch arm whose
 union or token set is exhaustively handled above it — verified case by case
@@ -1051,22 +1051,12 @@ it holds.
   — still long-term goals, but v1 has one lowering consumer and ships on the
   annotated-typed-AST-to-LLVM path. Introduce the small backend-agnostic MIR with
   the second backend rather than maintaining an unused durable representation.
-- **`Simd(T, N)`** — specified in design.md and reserved in the public
-  `Type_Kind`, but nothing in the language, runtime, or standard packages depends
-  on it, so it is the one piece of ABI surface that can be left out without
-  leaving another feature half-built. M8.
-- **The library types design.md assumes** — `Small_Array(T, N)`,
-  `Bit_Set`/`Enum_Array`, `Complex`/`Quaternion`, `Little_Endian`/`Big_Endian`,
-  slice sorting, `Logger`/`core:log`, and
-  `shared(T)`/`weak(T)`/`Atomic(T)`/`core:sync`. `String_Builder` and `C_String`
-  have since shipped with `standard-library-plan.md`, along with `core:strings`,
-  `cstrings`, `strconv`, `io`, `encoding/utf16`, `path`, `fs` and `term`. The
-  rest are ordinary Loke source over facilities M6 already provides, except the
-  last group, which needs compiler atomic intrinsics and their own memory-model
-  fixtures. M8.
-  `core:os` began in M7 and grew with the library: the program model names `os.args`
-  and `os.exit` normatively, and writing them over a foreign block is the proof
-  that the foreign system works.
+- **`Simd(T, N)`** and **the library types design.md assumes** were both deferred
+  here through M7 and both landed in M8; see its row above. `Simd` was the one
+  piece of ABI surface that could be left out without leaving another feature
+  half-built, which is why it went last. `core:os` began in M7 and grew with the
+  library: the program model names `os.args` and `os.exit` normatively, and
+  writing them over a foreign block is the proof that the foreign system works.
 
 Mostly already deferred by design.md's open questions — don't build them:
 recoverable panics / `recover`, first-class tuples, a GC allocator, Unicode

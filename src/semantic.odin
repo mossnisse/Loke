@@ -112,6 +112,11 @@ Type_Kind :: enum {
 	Dynamic_Array,
 	Array,
 	Map,
+	// design.md "SIMD vectors": `Simd(T, N)`, `N` lanes of `T` with the ordinary
+	// operators acting lane-wise. It sits beside `Array` because it is the same
+	// shape — an element type and a count — with its own layout rule and its own
+	// operator set.
+	Simd,
 	Distinct,
 	Proc,
 	Struct,
@@ -589,6 +594,14 @@ Builtin_Kind :: enum {
 	// "releasing an unchecked or foreign allocation crosses the `core:unsafe` or
 	// foreign-allocator boundary."
 	Unsafe_Free,
+	// design.md "SIMD vectors": the `core:simd` operations a lane index being
+	// constant makes unwritable as a loop in ordinary Loke. `Simd_Cast` is both
+	// array directions — its result follows its operand — and `Simd_Reduce`
+	// takes the fold as a constant parameter, exactly as an atomic takes its
+	// ordering.
+	Simd_Cast,
+	Simd_Select,
+	Simd_Reduce,
 	// `type_info_of(id)` takes a runtime `typeid` and returns runtime metadata
 	// (design.md "`type` and `typeid`"). A `typeid` is an ordinary scalar and
 	// can be forged, so the lookup is checked rather than an unchecked index.
@@ -1347,6 +1360,17 @@ array_of :: proc(c: ^Compiler, element: Type_Id, count: u64) -> Type_Id {
 	)
 }
 
+// design.md "SIMD vectors": `Simd(T, N)`. The element and lane count are the
+// whole identity, exactly as for an array — the difference is layout, the
+// operator set, and that it is not a sequence.
+simd_of :: proc(c: ^Compiler, element: Type_Id, count: u64) -> Type_Id {
+	return intern_type(
+		c,
+		Type_Key{kind = .Simd, element = element, count = count},
+		Type_Info{kind = .Simd, element = element, count = count},
+	)
+}
+
 type_of :: proc(c: ^Compiler, id: Type_Id) -> ^Type_Info {
 	index := int(id)
 	if index < 0 || index >= len(c.types) {
@@ -1614,7 +1638,7 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	     .Untyped_String:
 		// No components, so nothing to be invalid below the type itself.
 		return false
-	case .Pointer, .Multi_Pointer, .Slice, .Dynamic_Array, .Array, .Distinct:
+	case .Pointer, .Multi_Pointer, .Slice, .Dynamic_Array, .Array, .Simd, .Distinct:
 		return type_contains_invalid(c, info.element, depth + 1)
 	case .Map:
 		return type_contains_invalid(c, info.key, depth + 1) ||
@@ -1705,7 +1729,7 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 			}
 		}
 		return true
-	case .Pointer, .Array, .Distinct:
+	case .Pointer, .Array, .Simd, .Distinct:
 		return type_is_supported_depth(c, info.element, depth + 1)
 	case .Enum:
 		return true
@@ -1814,6 +1838,8 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 		return fmt.aprintf("[^]%s", type_name(c, info.element), allocator = c.semantic_allocator)
 	case .Array:
 		return fmt.aprintf("[%d]%s", info.count, type_name(c, info.element), allocator = c.semantic_allocator)
+	case .Simd:
+		return simd_type_name(c, info)
 	case .Slice:
 		return fmt.aprintf("[]%s%s", info.mutable ? "mut " : "", type_name(c, info.element), allocator = c.semantic_allocator)
 	case .Dynamic_Array:

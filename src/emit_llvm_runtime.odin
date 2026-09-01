@@ -534,7 +534,9 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 	case .Enum:
 		emit_format_enum(e, under, address)
 
-	case .Array:
+	case .Array, .Simd:
+		// A vector's lanes are contiguous elements in memory exactly as an array's
+		// are, so it prints through the same walk and reads `[1, 2, 3, 4]`.
 		emit_format_sequence(e, info.element, address, fmt.aprintf("%d", info.count), inline_array = true)
 
 	case .Slice:
@@ -965,6 +967,7 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 		case .Pointer:         wanted = "Pointer"
 		case .Multi_Pointer:   wanted = "Multi_Pointer"
 		case .Array:           wanted = "Array"
+		case .Simd:            wanted = "Simd"
 		case .Slice:           wanted = "Slice"
 		case .Dynamic_Array:   wanted = "Dynamic_Array"
 		case .Map:             wanted = "Map"

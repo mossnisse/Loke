@@ -23,6 +23,12 @@ fold_arithmetic :: proc(
 	allocator: mem.Allocator = {},
 ) -> (Const_Value, bool) {
 	storage := value_allocator(c, allocator)
+	// design.md "SIMD vectors": every operator applies lane-wise, so a constant
+	// vector folds lane by lane at the element type. Without this the operands
+	// would reach the integer path with no integer in them and fold to zero.
+	if info := underlying_info(c, type); info != nil && info.kind == .Simd {
+		return fold_simd_lanes(c, op, op_span, a, b, type, info, allocator)
+	}
 	if a.kind == .String || b.kind == .String {
 		// design.md: `+` joins two compile-time strings, and nothing else applies
 		// to them. Runtime text operations belong to `string`, not to this.
@@ -200,4 +206,39 @@ aggregate_equal :: proc(c: ^Compiler, a, b: ^Const_Aggregate, allocator: mem.All
 		}
 	}
 	return true
+}
+
+// One lane at a time, at the element type. An operand that is not an aggregate
+// is the splatted scalar: `convert_const` normally widens it first, but a fold
+// reached through the evaluator may still see the lane value itself.
+@(private = "file")
+fold_simd_lanes :: proc(
+	c: ^Compiler,
+	op: Token_Kind,
+	op_span: Span,
+	a, b: Const_Value,
+	type: Type_Id,
+	info: ^Type_Info,
+	allocator: mem.Allocator,
+) -> (Const_Value, bool) {
+	lane :: proc(value: Const_Value, index: int) -> Const_Value {
+		if value.kind != .Aggregate || value.aggregate == nil {
+			return value
+		}
+		return index < len(value.aggregate.elements) ? value.aggregate.elements[index] : Const_Value{}
+	}
+	elements := make([]Const_Value, info.count, value_allocator(c, allocator))
+	for index in 0 ..< int(info.count) {
+		folded, ok := fold_arithmetic(
+			c, op, op_span, lane(a, index), lane(b, index), info.element, allocator,
+		)
+		if !ok {
+			return Const_Value{}, false
+		}
+		elements[index] = folded
+	}
+	aggregate := new(Const_Aggregate, value_allocator(c, allocator))
+	aggregate.type = type
+	aggregate.elements = elements
+	return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
 }

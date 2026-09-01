@@ -901,14 +901,15 @@ bind_element_field :: proc(
 		return false
 	}
 	// By default each iterated value is a copy (design.md), so a managed element
-	// would need a per-iteration clone and drop — loop-body cleanup the M5a CFG
-	// does not place yet.
+	// would need a per-iteration clone and drop. Nothing places that cleanup, so
+	// the copy is rejected rather than leaked; the message names that limit
+	// rather than a milestone (m8-plan step 7).
 	if !borrowed && type_is_managed(k.c, type) {
 		errorf(
 			k.c,
 			binding.name.span,
 			"L0504",
-			"a by-value `foreach` over `%s` copies a managed element, which M5a does not clean up per iteration; iterate `&value` over a `[]mut %s`, or index the sequence",
+			"a by-value `foreach` over `%s` copies a managed element, and the loop body places no per-iteration cleanup for it; iterate `&value` over a `[]mut %s`, or index the sequence",
 			type_name(k.c, type),
 			type_name(k.c, type),
 		)

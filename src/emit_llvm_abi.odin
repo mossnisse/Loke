@@ -375,6 +375,11 @@ llvm_type :: proc(e: ^Emitter, type: Type_Id) -> string {
 		return CONTAINER_TYPE
 	case .Array:
 		return fmt.aprintf("[%d x %s]", info.count, llvm_type(e, info.element))
+	case .Simd:
+		// design.md "SIMD vectors": `Simd(T, N)` lowers to LLVM's own `<N x T>`,
+		// which is where the lane-wise operators and the vector alignment rule
+		// both come from.
+		return fmt.aprintf("<%d x %s>", info.count, simd_lane_llvm_type(e, info))
 	case .Struct, .Union, .Any_View, .Dyn, .Slice:
 		// A two-word erased view or slice is an ordinary aggregate to the backend.
 		return struct_name(e, under)
@@ -946,4 +951,14 @@ emit_alloc_result :: proc(e: ^Emitter, result: Type_Id, failed: string, value :=
 		union_index_of(e.c, result, "err"), "1",
 		union_index_of(e.c, result, "ok"), value,
 	)
+}
+
+// A vector lane's backend type. It is the element's own spelling except for a
+// lane mask: design.md gives `Simd(bool, N)` one byte per lane, while a scalar
+// `bool` is `i1`.
+simd_lane_llvm_type :: proc(e: ^Emitter, info: ^Type_Info) -> string {
+	if info.kind == .Simd && type_kind(e.c, type_underlying(e.c, info.element)) == .Bool {
+		return "i8"
+	}
+	return llvm_type(e, info.element)
 }

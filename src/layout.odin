@@ -104,6 +104,13 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 		alignment = type_align(c, info.element)
 		size = element * info.count
 
+	case .Simd:
+		// design.md "SIMD vectors": a vector is aligned to its own size, which is
+		// what permits an aligned whole-vector load. That is the one place its
+		// layout differs from the array with the same element and count.
+		size = type_size(c, info.element) * info.count
+		alignment = size
+
 	case .Union:
 		// One model, shared with the emitter: a payload region at the widest
 		// variant's alignment, then the tag, then tail padding.

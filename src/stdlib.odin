@@ -22,6 +22,7 @@ STD_FMT :: "core:fmt"
 STD_STRINGS :: "core:strings"
 STD_LOG :: "core:log"
 STD_SYNC :: "core:sync"
+STD_SIMD :: "core:simd"
 
 // Called once per package, right after its scope exists and before any of its
 // own declarations are collected, so a source declaration colliding with a
@@ -137,6 +138,20 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// fence intrinsic is `atomic_fence` rather than `fence` because a
 		// contributed name and a source declaration share one package scope.
 		contribute_atomic_intrinsics(c, pkg)
+	case STD_SIMD:
+		// design.md "SIMD vectors": `core:simd` "supplies what the operators cannot
+		// spell. A lane index is constant, so none of these can be written as a
+		// loop in ordinary Loke."
+		//
+		// The reduction's fold is a `$` parameter for the reason an atomic's
+		// ordering is: it selects the instruction, so it has to survive the
+		// library boundary as a constant.
+		// `Fold` itself is an ordinary enum in this package's own source: only this
+		// package can reach the intrinsic, so the constant is matched by member
+		// name rather than by binding a second identity for one enum.
+		contribute_builtin(c, pkg, "simd_cast", .Simd_Cast, public = false)
+		contribute_builtin(c, pkg, "simd_select", .Simd_Select, public = false)
+		contribute_builtin(c, pkg, "simd_reduce", .Simd_Reduce, public = false)
 	case STD_LOG:
 		// design.md "Compiled log level": `LOKE_LOG_LEVEL` and `core:log`'s own
 		// `Level` must be one type, or a caller could not compare them. The enum

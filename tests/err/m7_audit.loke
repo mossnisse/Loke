@@ -35,8 +35,5 @@ main :: proc() {
 	// A procedure value needs a body for the same reason a declaration does.
 	f := proc(a: int) -> int ---;
 
-	// design.md specifies `Simd(T, N)`, and version 1 leaves it out.
-	simd: Simd(f32, 4);
-
-	_ = ys; _ = f; _ = simd; _ = stray;
+	_ = ys; _ = f; _ = stray;
 }
