@@ -1,109 +1,420 @@
 # Compiler architecture
 
-Loke keeps the existing pipeline: parsing, an annotated AST, ownership and
-provenance CFG analyses, textual LLVM, then clang and the versioned C runtime.
-Stable semantic IDs, common layout calculations, overload resolution, and
-procedure provenance summaries remain shared infrastructure. There is no MIR.
+This is the durable implementation guide for `lokec`. The normative language
+definition is [design.md](design.md), the accepted syntax is
+[grammar.md](grammar.md), and user-facing build instructions are in
+[readme.md](readme.md). This document explains how the compiler is assembled and
+where to make changes.
 
-## Phase contracts
+Loke v1 is a whole-program Windows x64 compiler written in Odin. It parses into
+one AST, annotates that AST with semantic decisions, runs ownership and
+provenance analyses over a disposable control-flow view, emits textual LLVM IR,
+and invokes clang with a versioned C runtime. There is no durable MIR and no
+second backend.
 
-The checker owns language decisions. Consumers use resolved symbols, bound
-arguments, operation tags, and ownership annotations rather than resolving
-source syntax again.
+## Pipeline at a glance
 
-Map keys are an explicit example. `require_map_key_policy` selects a `Key_Policy`
-once and records it in `Compiler.map_key_policies`. Its kind distinguishes a
-builtin pair from an inherent hash/equality pair; the latter stores exact
-`Symbol_Id`s. CTFE and the container LLVM thunks read that record. An absent
-record is an internal contract error, not a request to repeat member lookup.
-Failed lookups are not cached while discovery is still installing declarations.
+```text
+CLI and build configuration
+        |
+        v
+source loading -> lexing -> parsing
+        |
+        v
+package/import/when fixed point
+        |
+        v
+declaration collection and signature preparation
+        |
+        v
+body checking, overload resolution, CTFE, and monomorphization
+        |
+        v
+ownership/lifecycle analysis -> whole-program borrow and region analysis
+        |
+        v
+typeid freeze -> formatter discovery -> lifecycle snapshot
+        |
+        v
+emission contract -> textual LLVM module
+        |
+        v
+clang/NASM + versioned C runtime -> .exe or .obj
+```
 
-Lifecycle operations follow the same boundary. Checking records the canonical
-`clone` and `try_clone` symbol IDs when it contributes them. After formatter
-discovery, `finalize_lifecycle_operations` copies classification and hook IDs
-into value records and computes transitive copy fallibility. It visits each
-type once and only one element of a nonempty fixed array, without creating types
-or procedures. Unused types receive facts without acquiring new copy bodies.
-LLVM reads these records instead of searching members or populating the
-checker's lazy lifecycle cache. Late lifecycle contributions are rejected.
+The important architectural seam is between checking and consumption. The
+checker chooses symbols, overloads, conversions, map policies, lifecycle
+operations, witnesses, and other runtime dependencies once. Compile-time
+evaluation and LLVM lowering consume those recorded choices; they do not repeat
+source lookup or repair incomplete semantic state.
 
-Speculative interface and overload checks may annotate cloned syntax and cache
-signatures, but do not commit generic bodies or register runtime artifacts.
-Actually executing a CTFE helper is a real use: its persistent body is checked
-with dependency registration enabled. A later real call can promote a previously
-probed signature without inheriting a partially committed body.
+## Driver and phase order
 
-`freeze_typeids` closes runtime type identity. Reusing an existing ID is allowed;
-requesting a new one after freezing produces `L0405` without changing the set.
-Before allocating an emitter, `validate_emission_dependencies` checks:
+The command-line entry point is `run` in `src/main.odin`. It seeds immutable
+build configuration, collection roots, provider selections, panic strategy,
+optimization mode, and build mode before source discovery begins.
 
-- Checking is outside speculation and typeids are frozen, complete, and unique.
-- Committed generic bodies are checked and enrolled in their packages.
-- Synthesized map bodies have resolved key policies and operation targets.
-- Every type has finalized lifecycle facts; recorded copy procedures are
-  registered, and contributed copy procedures have matching operation IDs.
-- Witness targets and materialized constant definitions are present.
+The normal compilation path is:
 
-This validates the registries, not every AST annotation. Local lowering checks
-remain necessary, and a failed emission returns no module. The verifier does not
-repair missing state or invoke the checker.
+1. `compile_program` in `src/packages.odin` initializes semantic stores, loads
+   `base:runtime`, loads the root package, and adds selected provider packages.
+2. Package discovery runs to a fixed point. Each round rebuilds the selected
+   `File.active_items`, discovers newly active imports, rejects import cycles,
+   prepares package declarations, and evaluates file-scope `when` conditions.
+   An unselected branch is parsed but has no semantic effect.
+3. Once the graph is stable, package bodies are checked in dependency order.
+   Generic instances and pending generic `impl` bodies are checked as concrete
+   uses commit them.
+4. Ownership analysis runs per concrete procedure while it is checked.
+   `analyze_program_provenance` then computes cross-procedure result summaries
+   and checks borrows, escapes, allocator regions, and reset effects over the
+   completed program.
+5. The driver validates the executable entry point and exported names. It then
+   freezes runtime `typeid` values, discovers the coherent formatter for each
+   concrete type, and finalizes immutable lifecycle-operation records.
+6. `validate_emission_dependencies` rejects an incomplete checked state before
+   an emitter is allocated. `emit_llvm_module` produces one textual LLVM module
+   containing every package in deterministic dependency order.
+7. `emit_package` writes the module and either stops at `.ll`, compiles a
+   relocatable `.obj`, or links an executable with the C runtime and foreign
+   inputs.
 
-## Allocation ownership
+`-parse-only` and `-dump-ast` deliberately take a shorter path through source
+loading, lexing, and parsing for one file. `-check-layout` stops after the
+semantic closure passes and compares the compiler's layout facts with LLVM.
 
-Parsed files own syntax. The compiler's semantic arena owns IDs, declarations,
-resolved operation records, and published constants. Each CTFE invocation owns
-a separate bounded scratch arena for values, big integer arithmetic, strings,
-frames, and container temporaries. `freeze` copies escaping constants into
-semantic storage before scratch storage is released.
+## Core representations and ownership
 
-The evaluator's 64 MiB budget accounts for allocations, including conservative
-resize charges; arena frees do not refund it. Step and call-depth limits are
-separate. Exceeding a limit produces a diagnostic rather than runtime fallback.
+### Source and syntax
 
-## LLVM components
+`Span` is a byte range into a loaded `Source`. Line and column numbers are
+derived only when diagnostics are rendered. Every AST node has a span, including
+recovery nodes, so later phases never need to reconstruct source locations.
 
-All backend components remain in the `lokec` Odin package. Shared implementation
-helpers are package-private; helpers used by one component stay file-private.
-This is a source-level separation, not a claim of isolated package APIs.
+Each parsed `File` owns a syntax arena. The parser keeps errors in the tree as
+explicit error nodes and continues after synchronization points. Types and
+expressions share the `Expr` node domain because constructs such as generic
+applications and calls cannot always be classified from syntax alone.
+
+### Stable semantic state
+
+`Compiler` is the compilation-wide state owner. Identifiers, symbols, types, and
+packages are referenced by `Identifier_Id`, `Symbol_Id`, `Type_Id`, and
+`Package_Id`; AST annotations contain these stable IDs rather than pointers into
+growable arrays. Semantic declarations, interned data, specialization records,
+and frozen constants live in the compilation-lifetime semantic arena.
+
+Do not keep a `^Symbol` or `^Type_Info` across an operation that may append to
+the corresponding dynamic array. Retain its ID and fetch the pointer again. The
+compile-time evaluator and generic checker can grow semantic stores in places
+that look like ordinary expression checks.
+
+### One annotated AST
+
+There is no separate typed tree. `check.odin` and `check_expr.odin` annotate the
+parsed AST in place with types, constants, value categories, place capabilities,
+resolved symbols, chosen overloads, bound arguments, conversions, and lowering
+tags. Backend code should consume these annotations instead of inferring
+semantics from syntax.
+
+A generic specialization cannot reuse an already annotated template. It clones
+the declaration through `ast_clone.odin`, installs concrete generic bindings in
+the clone's definition-site scope, and checks the clone. Static `foreach` uses
+the same cloning rule for each expansion.
+
+### Disposable control-flow graphs
+
+`cfg.odin` builds a per-procedure `Flow_Graph` whose blocks reference typed AST
+nodes. It is an analysis view, not a lowering IR:
+
+- lifecycle mode records initialization, move, drop, cleanup, and control-flow
+  events used by `lifecycle.odin`;
+- provenance mode rebuilds the same topology without mutating settled lifecycle
+  annotations and records the event stream consumed by `borrow.odin`.
+
+The graph is rebuilt for each concrete generic body and discarded after the
+analysis. LLVM lowering still walks the annotated AST directly.
+
+### Allocation domains
+
+- Source buffers and diagnostics use ordinary process-owned storage.
+- Each parsed file owns its AST arena.
+- Compilation-wide semantic stores use the semantic arena.
+- Each CTFE invocation has bounded scratch storage for frames, mutable values,
+  strings, big integers, and containers. Values that escape evaluation are
+  frozen into semantic storage.
+- LLVM strings and temporary maps belong to the emitter invocation and never
+  become semantic annotations.
+
+## Semantic architecture
+
+### Package preparation and source selection
+
+Packages are directory identities. Imports form a dependency DAG, and package
+order is a deterministic post-order traversal of that graph. `when` selection
+is structural: only `File.active_items` may be collected, checked, or emitted.
+Conditional imports are why package discovery, declaration preparation, and
+compile-time evaluation cooperate in a fixed point rather than running once in
+a simple sequence.
+
+`base:runtime` is loaded before user code because `Unit`, `Option`, `Result`,
+`Shared`, and `Weak` are ordinary Loke declarations whose identities the
+compiler uses. `bootstrap.odin` binds those declarations into the predeclared
+universe instead of synthesizing lookalikes.
+
+### Checking and overload resolution
+
+`check.odin` owns declarations, signatures, statements, scopes, and type syntax.
+`check_expr.odin` owns expressions, contextual typing, conversions, place
+capabilities, and leaf folding. An expected type flows down into untyped
+constants, implicit enum members, `nil`, and typeless composite literals.
+
+All named groups, methods, user operators, `init` conversions, and indexing
+share the candidate engine in `overload.odin`. Feature modules form candidates
+and validate their special rules; overload viability, conversion vectors,
+tie-breakers, and ambiguity reporting remain centralized.
+
+Hypothetical interface and overload checks increment `Compiler.speculation_depth`.
+They may inspect or annotate cloned syntax, but they must not enroll generic
+bodies, witnesses, materialized globals, type IDs, or backend helpers in the
+final program.
+
+### Compile-time execution and generics
+
+Simple constant semantics live in `const_ops.odin` and are shared by the checker
+and evaluator. `eval.odin` is a tree-walking interpreter over already typed AST;
+it adds frames, mutation, calls, loops, containers, and `defer`, but it is not a
+second type checker.
+
+Generic procedures and records are monomorphized. `generic.odin` owns template
+recognition, inference, specialization, `where` evaluation, instance caching,
+and body commitment. Lookup inside an instance is definition-site lookup, so a
+caller's local extension cannot change the meaning of a specialization.
+
+### Ownership, lifecycle, and provenance
+
+Managed values have language-defined clone, move, and drop behavior.
+`hooks.odin` classifies types and records canonical lifecycle operations;
+`lifecycle.odin` assigns copy obligations, tracks liveness, diagnoses invalid
+uses, and determines cleanup slots. Normal exits and panic unwind consume the
+same settled cleanup facts.
+
+`borrow.odin` runs two related dataflow analyses over provenance events:
+
+- root provenance follows which storage a slice, text view, `any_view`, `dyn`,
+  pointer-like result, or aggregate carrier borrows and checks exclusivity,
+  invalidation, retention, and escape;
+- region provenance follows allocator identity through owners and borrows and
+  proves that values do not escape or survive an allocator reset.
+
+Procedure result summaries and escape levels carry these facts through direct,
+generic, and indirect calls. Unknown raw-pointer provenance, `core:unsafe`,
+foreign retention/aliasing, and cross-thread transfer are explicit v1 trust
+boundaries.
+
+### Closed semantic registries
+
+Several semantic choices are compilation-wide records rather than facts to
+rediscover during lowering:
+
+- map key and ordering policies store exact operation `Symbol_Id`s;
+- generic bodies are checked and enrolled in their defining package;
+- materialized constants store their definition and immutable value;
+- erased interface witnesses store concrete slot targets;
+- runtime type identities are requested symbolically and numbered by
+  `freeze_typeids`;
+- formatter discovery selects one coherent formatter per concrete type;
+- lifecycle finalization snapshots clone/drop classification and hook IDs.
+
+`emission_contract.odin` verifies that these registries are closed and mutually
+consistent. It never invokes the checker or fills missing state. Local emitter
+assertions remain a second line of defense, and failed emission returns no
+partial module.
+
+## Runtime and library boundary
+
+The repository has three implementation layers outside `src/`:
+
+| Location | Role |
+| --- | --- |
+| `base/` | Foundational Loke declarations needed by the compiler itself: runtime result/option/shared types, reflection metadata, and structural interfaces. |
+| `core/` | The standard library written in ordinary Loke: formatting, memory, containers, strings, I/O, filesystem, OS, synchronization, SIMD helpers, math, encoding, and related packages. |
+| `runtime/` | The versioned C ABI for allocation, arenas, process arguments, atomics, managed containers, failure, panic, formatting, and text storage. `loke_rt.h` is the ABI contract. |
+
+The rule is to keep a feature in Loke source whenever the language can express
+it. `stdlib.odin` contributes only identities or primitives the compiler already
+owns or that Loke cannot express, such as atomic instructions, erased formatting
+dispatch, allocator-aware string allocation, and selected provider access.
+
+An executable build links the generated module with the sorted C runtime
+sources. An object build emits one relocatable compiler module and leaves its
+runtime and foreign references for the host to supply.
+
+## Source-code map
+
+All Odin files under `src/` belong to the same `lokec` package. The file split is
+for ownership and navigation, not separate package APIs. Helpers shared by
+subsystems are package-private; a helper used only within one component should
+be file-private.
+
+### Driver, source, and syntax
+
+| Files | Responsibility |
+| --- | --- |
+| `main.odin`, `build_config.odin`, `providers.odin` | CLI options, build constants, provider selection, top-level phase order, and exit codes. |
+| `install.odin`, `packages.odin`, `select.odin` | Installation-relative roots, package loading/import graph, dependency order, and `when` selection. |
+| `source.odin` | `Compiler`, source buffers, spans, diagnostics, arenas, and compilation destruction. Start here when locating global state. |
+| `lexer.odin` | Tokens and lexical scanning. |
+| `parser.odin`, `ast.odin`, `ast_dump.odin` | Recursive-descent parsing, syntax node definitions, error recovery, and deterministic syntax dumps. |
+| `semantic.odin`, `universe.odin` | Stable IDs, symbols, types, scopes, packages, type interning, and predeclared names. |
+
+### Checking and language features
+
+| Files | Responsibility |
+| --- | --- |
+| `check.odin`, `check_expr.odin` | Main checker: declarations/statements/type syntax, then expressions/conversions/folding. |
+| `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations, zero-value rules, and required-result classification. |
+| `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and canonical standard operation aliases. |
+| `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
+| `union.odin`, `optional.odin`, `erased.odin` | Tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
+| `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | Built-in slice, managed-container, text, SIMD, and atomic semantics. |
+| `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
+
+### Generics and compile-time features
+
+| Files | Responsibility |
+| --- | --- |
+| `ast_clone.odin`, `generic.odin` | Clean syntax cloning, generic inference, specialization, monomorphization, and instance caches. |
+| `interface.odin` | Structural interface requirements and slot lookup contexts. |
+| `eval.odin` | Bounded typed-AST interpreter for compile-time execution. |
+| `expand.odin`, `reflect.odin` | Static `foreach`, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
+
+### Ownership and memory safety
+
+| Files | Responsibility |
+| --- | --- |
+| `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
+| `cfg.odin` | Disposable control-flow topology and lifecycle/provenance event generation. |
+| `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
+| `region.odin`, `materialize.odin` | `Arena`/`Scratch` semantic types and read-only storage for address-requiring constants. |
+| `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |
+
+### LLVM and toolchain
 
 | File | Responsibility |
 | --- | --- |
-| `src/emit_llvm.odin` | Module orchestration, emitter state, symbol names, procedures, instruction plumbing |
-| `src/emit_llvm_toolchain.odin` | Artifact paths and writing, clang/NASM, host discovery, executable layout probes |
-| `src/emit_llvm_abi.odin` | LLVM type representation and foreign signatures, arguments, returns |
-| `src/emit_llvm_cleanup.odin` | Cleanup registration, panic replay, lifecycle clone/drop |
-| `src/emit_llvm_stmt.odin` | Statements, control flow, bindings, assignment, returns |
-| `src/emit_llvm_expr.odin` | Constants, places, arithmetic, comparisons, text operations |
-| `src/emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation builtins |
-| `src/emit_llvm_containers.odin` | Operation tables, construction, synthesized container/provider bodies |
-| `src/emit_llvm_iteration.odin` | Iteration lowering and synthesized iterator bodies |
-| `src/emit_llvm_runtime.odin` | Runtime declarations, globals, formatting, reflection metadata, erased witnesses |
+| `emission_contract.odin` | Read-only validation of the checked-program boundary. |
+| `emit_llvm.odin` | Module orchestration, emitter state, symbol names, procedures, globals, and instruction plumbing. |
+| `emit_llvm_abi.odin` | LLVM type spelling and foreign signatures, arguments, and returns. |
+| `emit_llvm_stmt.odin` | Statements, control flow, local bindings, assignment, and returns. |
+| `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, and text operations. |
+| `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
+| `emit_llvm_cleanup.odin` | Lifecycle clone/drop, cleanup registration, and panic replay. |
+| `emit_llvm_containers.odin` | Container operation tables, construction, and synthesized element/key bodies. |
+| `emit_llvm_iteration.odin` | Built-in iteration and synthesized iterator bodies. |
+| `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
+| `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
+| `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |
 
-`emit_llvm_module` produces bytes in memory. `emit_package` in the toolchain
-component writes those bytes and invokes external tools. Emission keeps names,
-temporary counters, and cleanup state in `Emitter`, not semantic symbols.
+`emit_llvm_module` is a pure artifact boundary: it consumes a checked
+compilation and returns module text in memory. Filesystem and process policy
+belongs in `emit_llvm_toolchain.odin`. Backend names and temporary values belong
+to `Emitter`, never to semantic symbols.
 
-## Extending this architecture
+## How to make a compiler change
 
-For a new operation, first record its semantic choice on the typed AST, symbol,
-or a dedicated semantic record. Teach CTFE and LLVM to consume that choice, and
-add a boundary check when it introduces a new runtime dependency. Keep ABI
-classification in `abi.odin` and layout in `layout.odin`; backend files translate
-those decisions into LLVM spelling.
+Use the narrowest path that preserves the phase contracts:
 
-Map policies and lifecycle operations now use this pattern. Some builtin
-dispatch and other semantic queries still deserve the same audit.
-The backend components also still share one mutable emitter. Further separation
-can proceed one operation or state owner at a time without replacing the AST.
+1. If syntax changes, update `grammar.md`, tokens/lexer, AST nodes, parser, AST
+   dump, and syntax recovery fixtures together.
+2. Put the language decision in the checker or the relevant semantic feature
+   module. Record the chosen symbol, type, operation, conversion, or policy on
+   the AST or in a semantic registry.
+3. If the feature works at compile time, implement its value semantics in
+   `const_ops.odin` or its evaluator path in `eval.odin`; do not create a second
+   checker inside CTFE.
+4. If it affects ownership, borrowing, retention, or allocator identity, add a
+   CFG/provenance event and update the corresponding solver. Do not infer these
+   facts during LLVM emission.
+5. If it adds a runtime dependency, register that dependency during committed
+   checking and extend `validate_emission_dependencies` when an incomplete
+   registry could otherwise reach lowering.
+6. Lower the already resolved operation in the matching `emit_llvm_*` component.
+   Keep layout in `layout.odin` and foreign ABI classification in `abi.odin`.
+7. Prefer an ordinary implementation in `base/` or `core/` when the language can
+   express the feature. Add a compiler contribution or C runtime primitive only
+   for an actual language/runtime seam.
+8. Add the smallest unit or corpus regression that would have caught the bug,
+   then run the broader suite appropriate to its risk.
 
-## Verification
+Useful navigation commands:
 
-Use `odin test src -define:ODIN_TEST_TRACK_MEMORY=false` for compiler tests and
-`test-all.ps1` for the compiler build, integration corpus, and optimization
-matrix. Boundary tests deliberately remove registry entries and member-lookup
-inputs; they check failures and consumers of resolved IDs.
+```powershell
+rg "^[A-Za-z_][A-Za-z0-9_]* :: proc" src
+rg "L[0-9]{4}" src tests
+rg "resolution\.kind|chosen_overload|container_op" src
+rg "Builtin_Kind|Synth_Kind" src
+rg "@\(test\)" src tests
+```
 
-For structural backend refactors, also compare emitted `.ll` bytes before and
-after using the same source paths, build options, and fixture `.flags`. Identical
-IR is a stronger check of a file split than successful compilation alone; the
-integration suite separately exercises clang, the ABI, and runtime behavior.
+When debugging a backend failure, trace backward from the emitter assertion to
+the AST annotation or semantic registry that should have been settled. The usual
+fix belongs at that earlier boundary, not in a fresh backend lookup.
+
+## Testing and verification
+
+Compiler unit tests live beside the implementation:
+
+- `front_end_test.odin` covers semantic helpers and hand-built packages;
+- `bigint_test.odin` covers exact integer arithmetic;
+- `carrier_test.odin` covers aggregate carrier shapes and provenance;
+- `syntax_corpus_test.odin` runs the valid syntax corpus in process;
+- `emit_llvm_test.odin` checks emission contracts and structural backend rules.
+
+The integration harness is `tests/corpus_test.odin`:
+
+| Directory | Contract |
+| --- | --- |
+| `tests/run/` | Compile, execute, and compare stdout with `.expected`. |
+| `tests/trap/` | Compile and require a failing process result. |
+| `tests/err/` | Match diagnostic count, codes, message fragments, and optional `@line:column` spans. |
+| `tests/syntax/`, `tests/syntax_err/` | Valid syntax and parser recovery. |
+| `tests/ll/` | Require stable shapes in emitted LLVM IR. |
+| `tests/layout/` | Compare compiler and LLVM layout. |
+| `tests/pkg/`, `tests/pkg_err/` | Multi-package success and import/package diagnostics. |
+| `tests/obj/`, `tests/os/` | C-host object linking and real process-argument integration. |
+
+Common commands from the repository root:
+
+```powershell
+odin test src -define:ODIN_TEST_TRACK_MEMORY=false
+odin build src -out:lokec.exe -vet-unused -vet-shadowing
+odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
+.\test-all.ps1
+```
+
+`test-all.ps1` runs unit tests, rebuilds the compiler, runs the baseline corpus,
+and reruns the run/trap corpus at every supported optimization level. Use
+`-SkipOptimizationMatrix` for a quicker baseline check while iterating.
+
+For a structural backend refactor, compare emitted `.ll` with the same source
+path and options before and after the change. Reproducible IR catches naming and
+ordering drift that successful execution may hide.
+
+## Deliberate v1 boundaries
+
+- Windows x64 is the only target and the foreign ABI follows its classification.
+- The backend is annotated AST to textual LLVM; a durable MIR and direct native
+  debug backend should be introduced only with a real second consumer.
+- The compiler shells out to clang and NASM and links a versioned C runtime.
+- Compilation is whole-program and single-process; there is no incremental or
+  parallel package compilation.
+- The compiler remains in Odin; there is no self-hosting path.
+- Debug information, non-Windows targets, recoverable panic, macros, owning type
+  erasure, and a GC allocator are not part of v1.
+- Raw-pointer provenance, `core:unsafe`, foreign retention/aliasing, and
+  cross-thread transfer remain explicit trust boundaries.
+
+These are boundaries, not hidden unfinished phases. New work should extend this
+architecture only when its consumer and semantic contract are concrete. The
+next intended initiatives are summarized in [future-plans.md](future-plans.md).
