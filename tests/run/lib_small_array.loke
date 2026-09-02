@@ -4,8 +4,8 @@ import "core:fmt";
 import "core:container";
 import "base:interfaces";
 
-// `Small_Array(T, N)` end to end (m8-plan step 1, design.md "Fixed-capacity
-// arrays"). design.md spells the type unqualified; here it is reached through
+// `Small_Array(T, N)` end to end (design.md "Fixed-capacity arrays"). design.md
+// spells the type unqualified; here it is reached through
 // the package that supplies it, and nothing else about its example changes.
 
 Small :: container.Small_Array(int, 8);

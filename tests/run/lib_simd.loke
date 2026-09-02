@@ -4,7 +4,7 @@ import "core:fmt";
 import "base:runtime";
 import "core:simd";
 
-// `Simd(T, N)` end to end (design.md "SIMD vectors", m8-plan step 6). Every
+// `Simd(T, N)` end to end (design.md "SIMD vectors"). Every
 // claim design.md's section makes that produces a value is checked here; the
 // ones that produce a diagnostic are in `tests/err/lib_simd_gates.loke`.
 

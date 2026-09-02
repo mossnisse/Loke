@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "Foreign system" (m7-plan step 4): a program calls real C library
+// design.md "Foreign system": a program calls real C library
 // routines through a foreign block. `legacy_stdio_definitions.lib` is part of
 // the MSVC toolchain the compiler already links against; the CRT symbols
 // resolve there. `@(link_name)` binds a Loke name to a different C symbol.

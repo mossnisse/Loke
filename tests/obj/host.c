@@ -1,4 +1,4 @@
-/* The C host owns process entry (m7-plan step 5): it attaches its thread to the
+/* The C host owns process entry: it attaches its thread to the
  * Loke runtime, calls the exported procedures, and detaches. No Loke `main` or
  * `wmain` exists in the linked object; this `main` is the only entry.
  *

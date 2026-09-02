@@ -1,4 +1,4 @@
-// The whole executable test harness (compiler-plan E). Corpora shelling out to
+// The whole executable test harness. Corpora shelling out to
 // the built compiler, plus the parser's own:
 //
 //   tests/run/*.loke + .expected   compile, run, compare stdout
@@ -57,7 +57,7 @@ compiler_path :: proc() -> string {
 // Extra compiler flags applied to every run/trap compile, from the environment.
 // The differential-optimization corpus sets `LOKE_TEST_FLAGS=-opt=speed` (and
 // the other four modes) and requires identical observable results at each
-// (m7-plan step 1, decision "Optimization safety").
+//.
 @(private)
 env_flags :: proc() -> []string {
 	text := os.get_env("LOKE_TEST_FLAGS", context.temp_allocator)
@@ -349,7 +349,7 @@ packages_run :: proc(t: ^testing.T) {
 	}
 }
 
-// design.md "Program entry and exit" (m7-plan step 5): the corpus runs every
+// design.md "Program entry and exit": the corpus runs every
 // other case with no arguments, so this is the one that passes a real vector —
 // including non-ASCII arguments, which is what exercises the UTF-16-to-UTF-8
 // conversion the generated `wmain` performs before the initial thread attaches.
@@ -387,7 +387,7 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 	)
 }
 
-// design.md "Build modes" (m7-plan step 5): `-build-mode=obj` produces one
+// design.md "Build modes": `-build-mode=obj` produces one
 // relocatable module from a non-`main` root. This links it into a C program that
 // owns process entry and supplies the seed runtime, and asserts the object
 // defines no entry symbol of its own.
@@ -397,7 +397,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 
 	// design.md "Build modes": one relocatable object cannot carry an assembled
 	// input, so an `obj` build that imports one says what its consumer must do
-	// (m7-plan step 5). This needs no toolchain, so it runs before the skip below.
+	//. This needs no toolchain, so it runs before the skip below.
 	asm_state, _, asm_stderr, asm_err := os2.process_exec(
 		os2.Process_Desc {
 			command = []string {
@@ -502,7 +502,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 	atomics_hold_under_contention(t, clang, include_flags)
 }
 
-// design.md "Concurrency and the memory model" (m8-plan step 4): the atomic
+// design.md "Concurrency and the memory model": the atomic
 // claims under real contention. There is no thread API in version 1 Loke, so
 // the threads come from a C host that attaches and detaches each one, which is
 // also the documented way a foreign thread calls into an object build.
@@ -558,7 +558,7 @@ atomics_hold_under_contention :: proc(t: ^testing.T, clang: string, include_flag
 	)
 }
 
-// design.md "Build modes" and "Build-selected providers" (m8-plan step 3): an
+// design.md "Build modes" and "Build-selected providers": an
 // object build that selects a provider exports `loke_rt_v1_program_init`, and
 // its host calls that once after attaching. Nothing calls it automatically, so
 // the whole contract is what the host does with it — including the second call,

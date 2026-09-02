@@ -3,7 +3,7 @@ package main;
 import "core:simd";
 
 // Every rule design.md's "SIMD vectors" section states as a rejection
-// (m8-plan step 6). The claims that produce a value are in
+//. The claims that produce a value are in
 // `tests/run/lib_simd.loke`.
 
 Colour :: enum u8 { Red, Green };

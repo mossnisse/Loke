@@ -1,8 +1,8 @@
 package main;
 
-// m7-plan step 6: every construct that used to fall out of a dispatch arm into
-// L0350 "not compiled yet in this milestone" now says what is actually wrong.
-// None of these waits for a later milestone; each is a permanent answer.
+// Every construct that used to fall out of a dispatch arm into L0350 "not
+// compiled yet in this milestone" now says what is actually wrong. None of these
+// waits for a later milestone; each is a permanent answer.
 
 S :: struct { v: int }
 

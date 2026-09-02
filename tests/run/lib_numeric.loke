@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:math";
 
-// `Complex(T)` and `Quaternion(T)` (m8-plan step 1, design.md "Library numeric
+// `Complex(T)` and `Quaternion(T)` (design.md "Library numeric
 // types").
 //
 // The first block is design.md's own `Complex_F64` source, verbatim, proving

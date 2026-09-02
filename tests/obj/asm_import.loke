@@ -1,6 +1,6 @@
 package widget_asm;
 
-// design.md "Build modes" (m7-plan step 5): an assembly import is built and
+// design.md "Build modes": an assembly import is built and
 // joined only by an `exe` build. An `obj` build is one relocatable module, so it
 // diagnoses the import with the instruction its final consumer needs (L0603).
 

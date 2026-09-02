@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:log";
 
-// A program that selects both providers and imports neither (m8-plan step 3).
+// A program that selects both providers and imports neither.
 // `-provider` is what makes the provider package a build dependency; nothing
 // here mentions it, and `core:log` is imported for the logging surface only.
 

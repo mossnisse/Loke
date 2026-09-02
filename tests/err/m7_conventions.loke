@@ -1,6 +1,6 @@
 package main;
 
-// design.md "Calling conventions" / "Foreign-ABI-safe types" (m7-plan step 3):
+// design.md "Calling conventions" / "Foreign-ABI-safe types":
 // only `c` and `stdcall` are accepted conventions, and every by-value parameter
 // and result of a foreign signature must be ABI-safe. An unsafe type names the
 // member path that made it so.

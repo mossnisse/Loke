@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:slice";
 
-// `sort` and `reverse_sort` as contributed members (m8-plan step 2).
+// `sort` and `reverse_sort` as contributed members.
 //
 // design.md writes both spellings — `s.sort()` on a dynamic array and the free
 // `slice.sort(s)` — and this file is not `core:slice`, which is the whole point

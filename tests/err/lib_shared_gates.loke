@@ -2,9 +2,9 @@ package main;
 
 import "core:mem";
 
-// The compiler-visible half of `shared(T)` (design.md "Shared ownership",
-// m8-plan step 5). Everything else about the type is ordinary library code;
-// these four rules are the language's.
+// The compiler-visible half of `shared(T)` (design.md "Shared ownership").
+// Everything else about the type is ordinary library code; these four rules are
+// the language's.
 
 Node :: struct {
 	value: int,

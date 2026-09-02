@@ -1,6 +1,6 @@
 package main;
 
-// design.md "Program entry and exit" (m7-plan step 5): the executable's C entry
+// design.md "Program entry and exit": the executable's C entry
 // is `wmain`, so Windows hands it a UTF-16 argument vector. The runtime converts
 // it once, before the initial thread attaches, which is what makes `os.args` a
 // read rather than a conversion.

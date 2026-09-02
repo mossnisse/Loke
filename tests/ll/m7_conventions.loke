@@ -1,7 +1,7 @@
 package main; import "core:fmt";
 
 // design.md "Calling conventions" / "Parameter semantics and ABI lowering"
-// (m7-plan step 3): the Windows x64 classification of a foreign `"c"`/`"stdcall"`
+//: the Windows x64 classification of a foreign `"c"`/`"stdcall"`
 // signature, pinned against what clang emits for the equivalent C declaration.
 // A register-sized aggregate travels in one integer register; a larger one is
 // indirect, and a larger result uses a hidden `sret` pointer. A direct `_Bool`

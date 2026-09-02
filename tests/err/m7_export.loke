@@ -1,6 +1,6 @@
 package main;
 
-// design.md "@(export)" (m7-plan step 5): the compiler owns the whole symbol
+// design.md "@(export)": the compiler owns the whole symbol
 // table, so two declarations claiming one exported symbol is a source-level
 // diagnostic naming both rather than a link failure naming neither.
 

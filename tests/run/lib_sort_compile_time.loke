@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// A sort on a compile-time path (m8-plan step 2). The evaluator performs the
+// A sort on a compile-time path. The evaluator performs the
 // operation the backend writes, from the same `container_op`, so a constant and
 // a run-time call agree.
 

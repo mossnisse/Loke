@@ -1,7 +1,7 @@
 package main; import "core:fmt";
 
 // Every attributed record shape the checker must agree with LLVM about
-// (m7-plan step 2): a packed struct, an over-aligned struct, their combination,
+//: a packed struct, an over-aligned struct, their combination,
 // each nested in another struct and used as a fixed-array element.
 
 Packed :: struct @(packed) { x: u8, y: i32, z: u16, w: u8 }

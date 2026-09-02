@@ -3,8 +3,8 @@ package main;
 import "core:fmt";
 import "core:container";
 
-// `Bit_Set(Enum)` and `Enum_Array(Enum, T)` end to end (m8-plan step 1,
-// design.md "Iterating an enumeration" and the catalogue's flag-set row).
+// `Bit_Set(Enum)` and `Enum_Array(Enum, T)` end to end (design.md "Iterating an
+// enumeration" and the catalogue's flag-set row).
 
 Direction :: enum{North, East, South, West};
 

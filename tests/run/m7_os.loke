@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:os";
 
-// design.md "Program entry and exit" (m7-plan step 5): `os.args` is a
+// design.md "Program entry and exit": `os.args` is a
 // process-lifetime, read-only view over the argument vector the generated
 // `wmain` converted from UTF-16 to UTF-8 before the initial thread attached.
 //

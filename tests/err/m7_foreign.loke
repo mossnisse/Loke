@@ -1,13 +1,13 @@
 package main;
 
-// design.md "Foreign system" (m7-plan step 4): a foreign procedure has no body,
+// design.md "Foreign system": a foreign procedure has no body,
 // a foreign global has no initializer, `@(by_ptr)` is foreign-only, `@(c_vararg)`
 // marks the final variadic parameter, and a C-variadic call cannot spread.
 //
 // A `move` parameter and a generic member are rejected for the same reason: a C
 // call acquires no cleanup responsibility, and a template has no ABI until it is
 // instantiated. The generic one reports only L0624 — the convention it inherited
-// from the block is not a second mistake (m7-plan step 6).
+// from the block is not a second mistake.
 
 Res :: struct { v: int }
 

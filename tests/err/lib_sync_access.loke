@@ -2,7 +2,7 @@ package main;
 
 import "core:sync";
 
-// The boundary around the intrinsics (m8-plan step 4): an external package
+// The boundary around the intrinsics: an external package
 // reaches `sync.fence` and nothing else, and an atomic has no compile-time
 // meaning.
 //

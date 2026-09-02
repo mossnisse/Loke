@@ -3,8 +3,8 @@ package main;
 import "core:fmt";
 import "core:mem";
 
-// `shared(T)` and `weak(T)` end to end (design.md "Shared ownership", m8-plan
-// step 5). The point of the fixture is that design.md's paragraph runs exactly
+// `shared(T)` and `weak(T)` end to end (design.md "Shared ownership"). The
+// point of the fixture is that design.md's paragraph runs exactly
 // as it is written: the counts, the single drop, the weak companion, and the
 // `nil` zero value.
 

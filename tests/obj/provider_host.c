@@ -1,5 +1,5 @@
 /* The C host of an object build that selects providers (design.md "Build
- * modes", m8-plan step 3). Nothing calls the initializer automatically: this
+ * modes"). Nothing calls the initializer automatically: this
  * host calls it once, after attaching a thread and before using any export.
  *
  * The second call proves the documented no-op: a host that cannot tell whether

@@ -1,7 +1,7 @@
 package main; import "core:fmt";
 
 // The selected allocator factory re-enters provider initialization, which fails
-// (m8-plan step 3).
+//.
 
 main :: proc() {
 	fmt.println("startup should not have reached main");

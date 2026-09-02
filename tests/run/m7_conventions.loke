@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "Calling conventions" (m7-plan step 3): a Loke `"c"`/`"stdcall"`
+// design.md "Calling conventions": a Loke `"c"`/`"stdcall"`
 // procedure round-trips every classified parameter and result shape when called
 // from Loke. The values crossing the Windows x64 classification must survive it.
 

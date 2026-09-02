@@ -6,7 +6,7 @@ import "provider";
 
 // design.md "Build modes": an object build that selects a provider exports
 // `loke_rt_v1_program_init`, and its host calls that once, after attaching a
-// thread and before using any export (m8-plan step 3). This is the export the
+// thread and before using any export. This is the export the
 // host uses to check what initialization did.
 //
 // Every failure has its own non-zero code, so a broken step names itself in the

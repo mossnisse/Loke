@@ -1,6 +1,6 @@
 package main;
 
-// design.md "Attributes" (m7-plan step 1): before M7 attributes were parsed and
+// design.md "Attributes": before M7 attributes were parsed and
 // mostly ignored, so a typo was silent. Every way of writing one wrongly is now
 // its own diagnostic, and the two that carry behaviour report at the use site.
 

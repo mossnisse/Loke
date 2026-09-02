@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:slice";
 
-// `core:slice` end to end (m8-plan step 1).
+// `core:slice` end to end.
 //
 // The first two blocks are design.md's "Sorting slices" examples verbatim.
 

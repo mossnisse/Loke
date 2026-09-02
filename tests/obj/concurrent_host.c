@@ -1,4 +1,4 @@
-/* The threaded host for `tests/obj/concurrentlib` (m8-plan step 4).
+/* The threaded host for `tests/obj/concurrentlib`.
  *
  * A foreign thread that calls into an object build must attach and detach
  * through the runtime API (design.md "Threads"), which is exactly what each

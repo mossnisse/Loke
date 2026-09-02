@@ -1,7 +1,7 @@
 package main; import "core:fmt";
 import "base:runtime";
 
-// design.md "Record layout attributes" (m7-plan step 2): packed fields load and
+// design.md "Record layout attributes": packed fields load and
 // store unaligned, `@(align=N)` raises alignment, and `offset_of`/`size_of`/
 // runtime type info all agree. A nested access through a packed value stays
 // correct, and the value round-trips through a by-value call and a fixed array.
@@ -45,7 +45,7 @@ main :: proc() {
 	fmt.println(ov.n);
 
 	// A combined record's LLVM members are byte arrays, so equality reads each
-	// field through its address rather than by `extractvalue` (m7-plan step 6).
+	// field through its address rather than by `extractvalue`.
 	// Reflection and formatting stay on the ordinary field-GEP path.
 	fmt.println(b == Both{ x = 3, y = 77 }, b == Both{ x = 3, y = 78 });
 	fmt.println(ov == Over{ b = true, n = 123 });

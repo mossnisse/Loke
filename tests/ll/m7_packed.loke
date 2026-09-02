@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "Record layout attributes" (m7-plan step 2): the byte-exact LLVM
+// design.md "Record layout attributes": the byte-exact LLVM
 // bodies and the `align 1` that a packed field's load and store carry.
 
 Packed :: struct @(packed) { x: u8, y: i32 }

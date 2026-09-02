@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:os";
 
-// design.md "Program entry and exit" (m7-plan step 5): `os.exit` terminates
+// design.md "Program entry and exit": `os.exit` terminates
 // immediately. It runs no `defer`, no automatic `drop`, and no thread-local
 // cleanup — the process dies inside the call, so this is true by construction
 // rather than by a rule the compiler enforces. The sibling

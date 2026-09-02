@@ -1,6 +1,6 @@
 package main;
 
-// design.md "@(packed)" (m7-plan step 2): a packed field is not addressable, and
+// design.md "@(packed)": a packed field is not addressable, and
 // `@(packed)` applies to a struct rather than a union. The whole packed value's
 // address stays valid.
 

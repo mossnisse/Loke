@@ -1,6 +1,6 @@
 package main;
 
-// design.md "`@(c_vararg)`" (m7-plan step 4): `printf` passes each concrete
+// design.md "`@(c_vararg)`": `printf` passes each concrete
 // argument with the C default promotions (`f32`->`double`, narrow ints->`i32`).
 // Output goes through the C runtime, so this program uses only `printf` to keep
 // the stream ordering deterministic.

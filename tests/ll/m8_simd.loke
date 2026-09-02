@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:simd";
 
-// The lowering design.md's "SIMD vectors" section commits to (m8-plan step 6):
+// The lowering design.md's "SIMD vectors" section commits to:
 // `<N x T>`, lane-wise instructions, a splat as insert-plus-shuffle, a mask as
 // one byte per lane, and the reductions as LLVM's own intrinsics.
 

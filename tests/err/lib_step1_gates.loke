@@ -3,7 +3,7 @@ package main;
 import "core:slice";
 import "core:container";
 
-// The compile-time gates the step-1 library types install (m8-plan step 1).
+// The compile-time gates the step-1 library types install.
 
 Not_Ordered :: struct { value: int }
 

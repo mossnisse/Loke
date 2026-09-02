@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:sync";
 
-// The atomic lowering (m8-plan step 4): native instructions with the requested
+// The atomic lowering: native instructions with the requested
 // ordering at the widths this target has them, and versioned runtime helpers at
 // the width it does not.
 

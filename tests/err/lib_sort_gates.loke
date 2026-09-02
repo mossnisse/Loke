@@ -1,6 +1,6 @@
 package main;
 
-// The gates on the contributed `sort` member (m8-plan step 2).
+// The gates on the contributed `sort` member.
 
 Opaque :: struct { value: int }
 

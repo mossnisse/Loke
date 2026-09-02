@@ -1,7 +1,7 @@
 package main; import "core:fmt"; import "core:mem";
 
 // A local `mem.Arena` takes its blocks from the default provider, so its parent
-// is the selected one too (m8-plan step 3). The selection is a 256-byte arena,
+// is the selected one too. The selection is a 256-byte arena,
 // which cannot supply an arena block.
 
 main :: proc() {

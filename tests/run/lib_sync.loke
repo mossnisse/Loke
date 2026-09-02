@@ -3,7 +3,7 @@ package main;
 import "core:fmt";
 import "core:sync";
 
-// `core:sync` end to end (m8-plan step 4, design.md "Concurrency and the memory
+// `core:sync` end to end (design.md "Concurrency and the memory
 // model").
 //
 // Every supported type, every operation the type has, and every ordering each

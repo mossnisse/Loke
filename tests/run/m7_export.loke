@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "@(export)" (m7-plan step 5): an exported declaration emits under
+// design.md "@(export)": an exported declaration emits under
 // its written symbol instead of the mangled `@loke.p...` one. That is a linkage
 // change only — Loke callers still reach it by name, and `@(link_name)` renames
 // the symbol without renaming the declaration.

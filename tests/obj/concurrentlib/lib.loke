@@ -2,8 +2,8 @@ package conc;
 
 import "core:sync";
 
-// The concurrency claims of m8-plan step 4, checked under real contention: a C
-// host spawns threads that call `conc_worker`, and `conc_check` asserts the
+// design.md "Concurrency and the memory model", checked under real contention:
+// a C host spawns threads that call `conc_worker`, and `conc_check` asserts the
 // invariants afterwards.
 //
 // Every assertion here is an invariant — a count, a publication, a single run —
@@ -46,7 +46,7 @@ once_incomplete: static sync.Atomic(int) = {};
 @(private)
 finished: static sync.Atomic(int) = {};
 
-// Shared ownership under contention (m8-plan step 5): every thread clones and
+// Shared ownership under contention: every thread clones and
 // drops the same handle thousands of times, and the payload must be dropped
 // exactly once — after the last strong handle, and never before.
 @(private)

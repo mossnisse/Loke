@@ -1,6 +1,6 @@
 package main;
 
-// design.md "Foreign system" (m7-plan step 4): the `declare` a foreign block
+// design.md "Foreign system": the `declare` a foreign block
 // emits for each member, under the Windows x64 classification. A `@(c_vararg)`
 // declaration ends with `...`; a `@(by_ptr)` parameter and a foreign global are
 // pointers/external storage.

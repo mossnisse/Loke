@@ -1,6 +1,6 @@
 package widget;
 
-// design.md "Build modes" (m7-plan step 5): a non-`main` root package compiled
+// design.md "Build modes": a non-`main` root package compiled
 // with `-build-mode=obj`. The object defines the exported symbols and leaves
 // its runtime and CRT references unresolved for the C host to supply.
 
