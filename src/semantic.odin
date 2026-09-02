@@ -871,7 +871,6 @@ Package_Import :: struct {
 Package :: struct {
 	id:             Package_Id,
 	name:           Identifier_Id,
-	canonical_path: string,
 	// The logical canonical import identity — root-relative, or
 	// `collection:relative/path` — which every user symbol is mangled with.
 	// Never an alias and never a host absolute path, so a build is reproducible
@@ -893,9 +892,6 @@ Package :: struct {
 	// order. Named and emitted after the package's own items, so a cross-package
 	// generic call still has a final name before any body is written.
 	instances:      [dynamic]Instance_Decl,
-	// Which discovery work this package has already had. Monotonic, so a later
-	// round only does what a newly selected branch added.
-	collected:      bool,
 	// Whether the compiler already bound its own members into this package's
 	// scope (`src/stdlib.odin`). Discovery re-runs; contribution must not.
 	contributed:    bool,
@@ -1980,13 +1976,12 @@ lookup_symbol_with_scope :: proc(scope: ^Scope, name: Identifier_Id) -> (Symbol_
 	return INVALID_SYMBOL, nil
 }
 
-new_package :: proc(c: ^Compiler, name, canonical_path: string, key := "") -> Package_Id {
+new_package :: proc(c: ^Compiler, name: string, key := "") -> Package_Id {
 	init_semantic_stores(c)
 	id := Package_Id(len(c.packages))
 	pkg := Package {
 		id             = id,
 		name           = intern_identifier(c, name),
-		canonical_path = canonical_path,
 		key            = key,
 		files          = make([dynamic]^File, 0, 4, c.semantic_allocator),
 		extensions     = make(map[Type_Id][]Symbol_Id, c.semantic_allocator),

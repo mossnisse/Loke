@@ -31,7 +31,7 @@ main :: proc() { }
 	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name, "<unused-template-test>")
+	id := new_package(&c, f.package_name)
 	c.root_package = id
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
@@ -71,7 +71,7 @@ main :: proc() {
 	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name, "<field-map-test>")
+	id := new_package(&c, f.package_name)
 	c.root_package = id
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
@@ -90,7 +90,7 @@ unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
 	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name, "<typeid-contract-test>")
+	id := new_package(&c, f.package_name)
 	c.root_package = id
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
@@ -177,7 +177,7 @@ main :: proc() { assert(lookup() == 7); }
 	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name, "<resolved-map-test>")
+	id := new_package(&c, f.package_name)
 	c.root_package = id
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
@@ -234,7 +234,7 @@ main :: proc() {
 	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name, "<lifecycle-contract-test>")
+	id := new_package(&c, f.package_name)
 	c.root_package = id
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
@@ -277,7 +277,7 @@ lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 		c := test_compiler("package main; Record :: struct { value: int } main :: proc() { x: Record; y := x.clone(); }")
 		tokens := lex(&c, 0)
 		f := parse(&c, 0, tokens)
-		id := new_package(&c, f.package_name, "<lifecycle-dependency-test>")
+		id := new_package(&c, f.package_name)
 		c.root_package = id
 		add_package_file(&c, id, &f)
 		check_emission_package(&c, id)

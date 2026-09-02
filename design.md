@@ -6114,8 +6114,6 @@ foreign kernel32 {
 
 The compiler can build and link an imported assembly file. It can use `clang`, `as`, or `nasm`, as applicable to the host. Recognized assembly file extensions are `.asm`, `.s`, and `.S`.
 
-For examples, see `base/runtime/entry_*.asm`.
-
 ```odin
 foreign import lowlevel "lowlevel.asm";
 foreign lowlevel {

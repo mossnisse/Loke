@@ -140,7 +140,7 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	if !ok {
 		return INVALID_PACKAGE, false
 	}
-	id := new_package(c, file.package_name, input, "")
+	id := new_package(c, file.package_name, "")
 	add_package_file(c, id, file)
 	// A single-file root still occupies its directory's identity, so a sibling
 	// importing `.` finds this package rather than loading the directory twice.
@@ -164,7 +164,7 @@ load_package_dir :: proc(c: ^Compiler, dir: string, key: string, at: Span) -> (P
 		return INVALID_PACKAGE, false
 	}
 
-	id := new_package(c, "", canonical, key)
+	id := new_package(c, "", key)
 	c.package_by_dir[dir_key(canonical)] = id
 	pkg := package_of(c, id)
 	for path in paths {

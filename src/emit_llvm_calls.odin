@@ -10,7 +10,7 @@ import "core:fmt"
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	if v.union_op == .Extract && v.extract != nil {
-		return emit_checked_extract(e, v.extract)[0]
+		return emit_any_view_extract(e, v.extract)[0]
 	}
 	if v.is_dyn_call {
 		results := emit_dyn_slot_call(e, v)
@@ -279,7 +279,7 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 	case ^Expr_Call:
 		// `value.as(T)`: one extraction lowering, reached through call syntax.
 		if v.union_op == .Extract && v.extract != nil {
-			return emit_checked_extract(e, v.extract)
+			return emit_any_view_extract(e, v.extract)
 		}
 		// A slot call has no callee symbol and no callee value — the thunk comes
 		// out of the witness table — so it can never take the ordinary call path
@@ -311,7 +311,7 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		single[0] = emit_expr(e, expr)
 		return single
 	case ^Expr_Checked_Extract:
-		return emit_checked_extract(e, v)
+		return emit_any_view_extract(e, v)
 	case ^Expr_Or_Else:
 		return emit_or_else(e, v)
 	case ^Expr_Postfix:
@@ -546,13 +546,6 @@ emit_free :: proc(e: ^Emitter, v: ^Expr_Call) {
 		&e.b, "  call void @loke_rt_v1_free(ptr %s, ptr %s, i64 %d, i64 %d)",
 		allocator, pointer, type_size(e.c, info.element), type_align(e.c, info.element),
 	)
-}
-
-// design.md "Checked extractions": `any_view` only. `.(T)` traps on a mismatch
-// and `.as(T)` produces `Option(T)`.
-@(private = "file")
-emit_checked_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string {
-	return emit_any_view_extract(e, v)
 }
 
 // Whether this union value holds its designated failure variant.

@@ -25,12 +25,6 @@ Expr_Base :: struct {
 	addressable:  bool,
 	assignable:   bool,
 	immutable:    Immutable_Reason,
-	// The payload type before it's wrapped into the union `type` now names, with
-	// the variant it lands in (INVALID_TYPE when no wrap happens). The emitter
-	// evaluates at this type, then writes payload and tag; the index is carried,
-	// not re-derived, since two variants may share a payload type.
-	union_from:    Type_Id,
-	union_variant: int,
 	// The concrete type this expression produces before it is erased into the
 	// `any_view` that `type` now names. The emitter evaluates the node at this
 	// type, takes its address, and pairs it with the frozen `typeid`.

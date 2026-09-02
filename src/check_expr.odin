@@ -2350,63 +2350,22 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 // as plainly as `group` does.
 @(private = "file")
 callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
-	#partial switch v in callee {
-	case ^Expr_Ident:
-		id := lookup_symbol(k.scope, identifier_of(k.c, v))
-		if sym := symbol_of(k.c, id); sym != nil && sym.kind == .Proc_Group {
-			return id
-		}
-	case ^Expr_Selector:
-		ident, is_ident := v.operand.(^Expr_Ident)
-		if !is_ident {
-			return INVALID_SYMBOL
-		}
-		alias := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-		if alias == nil || alias.kind != .Package_Alias {
-			return INVALID_SYMBOL
-		}
-		target := package_of(k.c, alias.pkg)
-		if target == nil || target.scope == nil {
-			return INVALID_SYMBOL
-		}
-		member, found := target.scope.names[intern_identifier(k.c, v.name.text)]
-		if !found {
-			return INVALID_SYMBOL
-		}
-		if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Proc_Group && sym.public {
-			return member
-		}
-	}
-	return INVALID_SYMBOL
+	id := named_callee_symbol(k, callee)
+	sym := symbol_of(k.c, id)
+	return sym != nil && sym.kind == .Proc_Group ? id : INVALID_SYMBOL
 }
 
 // A `pkg.name` callee naming a public built-in of `pkg`, or INVALID_SYMBOL.
 @(private = "file")
+// Only the qualified spelling: `qualify_builtin_callee` rewrites a selector,
+// and a plain identifier is already the form the built-in checkers expect.
 callee_package_builtin :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
-	selector, is_selector := callee.(^Expr_Selector)
-	if !is_selector {
+	if _, is_selector := callee.(^Expr_Selector); !is_selector {
 		return INVALID_SYMBOL
 	}
-	ident, is_ident := selector.operand.(^Expr_Ident)
-	if !is_ident {
-		return INVALID_SYMBOL
-	}
-	alias := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-	if alias == nil || alias.kind != .Package_Alias {
-		return INVALID_SYMBOL
-	}
-	target := package_of(k.c, alias.pkg)
-	if target == nil || target.scope == nil {
-		return INVALID_SYMBOL
-	}
-	member, found := target.scope.names[intern_identifier(k.c, selector.name.text)]
-	if !found {
-		return INVALID_SYMBOL
-	}
-	if sym := symbol_of(k.c, member); sym != nil && sym.kind == .Builtin && sym.public {
-		return member
-	}
-	return INVALID_SYMBOL
+	id := named_callee_symbol(k, callee)
+	sym := symbol_of(k.c, id)
+	return sym != nil && sym.kind == .Builtin ? id : INVALID_SYMBOL
 }
 
 // Rewrites `pkg.builtin(...)` to the identifier form the built-in checkers and

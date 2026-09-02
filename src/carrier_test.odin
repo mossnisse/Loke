@@ -16,7 +16,7 @@ shaped :: proc(c: ^Compiler, text: string) -> ^File {
 	c^ = test_compiler(text)
 	f := new(File)
 	f^ = parse(c, 0, lex(c, 0))
-	pkg_id := new_package(c, "main", "<test>")
+	pkg_id := new_package(c, "main")
 	add_package_file(c, pkg_id, f)
 	check_one_package(c, pkg_id)
 	return f

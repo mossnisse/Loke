@@ -1498,7 +1498,7 @@ prov_result_region_at :: proc(graph: ^Flow_Graph, value: Expr, path: []Proj_Step
 			if matched { return out }
 		}
 	case ^Expr_Composite:
-		value_type := v.union_from != INVALID_TYPE ? v.union_from : v.type
+		value_type := v.type
 		is_array := underlying_kind(graph.k.c, value_type) == .Array
 		out := prov_empty_region(graph)
 		for _, index in v.elements {
@@ -1653,7 +1653,7 @@ prov_slot_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> (int, bool) {
 // element path joins into it via the same overlap test.
 @(private = "file")
 prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: []int) -> []int {
-	value_type := v.union_from != INVALID_TYPE ? v.union_from : v.type
+	value_type := v.type
 	is_array := underlying_kind(graph.k.c, value_type) == .Array
 	per_element := make([][]int, len(v.elements), graph.alloc)
 	// The slot each written element fills, and whether it is known at all. A
@@ -1682,11 +1682,7 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 				sources = prov_join(graph, sources, loans)
 				continue
 			}
-			prefix: []Proj_Step
-			if v.union_from != INVALID_TYPE {
-				prefix = prov_extend(graph, prefix, proj_wild())
-			}
-			prefix = prov_extend(graph, prefix, steps[index])
+			prefix := prov_extend(graph, nil, steps[index])
 			if paths_overlap(graph.prov_slots[slot].path, prefix) {
 				path := graph.prov_slots[slot].path
 				suffix := path[min(len(prefix), len(path)):]

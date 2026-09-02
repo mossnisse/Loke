@@ -741,13 +741,6 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		base.splat_from, base.type = from, target
 		return emit_simd_splat(e, value, target)
 	}
-	if from := base.union_from; from != INVALID_TYPE {
-		target := base.type
-		base.union_from, base.type = INVALID_TYPE, from
-		inner := emit_expr(e, expr)
-		base.union_from, base.type = from, target
-		return emit_union_value(e, target, base.union_variant, inner)
-	}
 	if base.is_const && base.const_value.kind != .Invalid {
 		return llvm_const(e, base.const_value, base.type)
 	}
