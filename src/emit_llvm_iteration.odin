@@ -34,8 +34,7 @@ emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range) -> string {
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", step1, storage, llvm_type(e, element), low, RANGE_LOW)
 	step2 := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", step2, storage, step1, llvm_type(e, element), high, RANGE_HIGH)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, %d", out, storage, step2, closed, RANGE_CLOSED)
+	out := insert(e, storage, step2, "i1", closed, RANGE_CLOSED)
 	return out
 }
 
@@ -644,9 +643,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	reversed := symbol.synth == .Range_Iter_Reverse ||
 	            symbol.synth == .Array_Iter_Reverse ||
 	            symbol.synth == .Dynamic_Iter_Reverse
-	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0)", iterator, name, source)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define %s %s(%s %%arg0)", iterator, name, source)
 	if symbol.synth == .Array_Iter || symbol.synth == .Array_Iter_Reverse {
 		// Iteration is by value, so the iterator owns the array/slice view. A
 		// reverse cursor starts one past the last element and decrements before use.
@@ -661,9 +658,8 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		}
 		first := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %%arg0, %d", first, iterator, source, ITER_ARRAY_DATA)
-		second, out := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", second, iterator, first, index, ITER_ARRAY_INDEX)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, %d", out, iterator, second, reversed ? "true" : "false", ITER_ARRAY_REVERSED)
+		second := insert(e, iterator, first, "i64", index, ITER_ARRAY_INDEX)
+		out := insert(e, iterator, second, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -677,10 +673,9 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		length := extract(e, source, "%arg0", CONTAINER_LEN)
 		filled := emit_ptr_len(e, view_type, storage, length)
 		index := reversed ? length : "0"
-		first, second, out := temp(e), temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, view_type, filled, ITER_ARRAY_DATA)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", second, iterator, first, index, ITER_ARRAY_INDEX)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, %d", out, iterator, second, reversed ? "true" : "false", ITER_ARRAY_REVERSED)
+		first := insert(e, iterator, "undef", view_type, filled, ITER_ARRAY_DATA)
+		second := insert(e, iterator, first, "i64", index, ITER_ARRAY_INDEX)
+		out := insert(e, iterator, second, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -689,9 +684,8 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// `{ table, 0 }`. A null table is the empty map, and the runtime's scan
 		// answers "finished" for it without touching anything.
 		table := extract(e, source, "%arg0", CONTAINER_STORAGE)
-		first, out := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, iterator, table, ITER_MAP_TABLE)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 0, %d", out, iterator, first, ITER_MAP_CURSOR)
+		first := insert(e, iterator, "undef", "ptr", table, ITER_MAP_TABLE)
+		out := insert(e, iterator, first, "i64", "0", ITER_MAP_CURSOR)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -701,11 +695,10 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	high := extract(e, source, "%arg0", RANGE_HIGH)
 	closed := extract(e, source, "%arg0", RANGE_CLOSED)
 	current, bound := reversed ? high : low, reversed ? low : high
-	step1, step2, step3, out := temp(e), temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", step1, iterator, element, current, ITER_RANGE_CURRENT)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", step2, iterator, step1, element, bound, ITER_RANGE_HIGH)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, %d", step3, iterator, step2, closed, ITER_RANGE_CLOSED)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i1 %s, %d", out, iterator, step3, reversed ? "true" : "false", ITER_RANGE_REVERSED)
+	step1 := insert(e, iterator, "undef", element, current, ITER_RANGE_CURRENT)
+	step2 := insert(e, iterator, step1, element, bound, ITER_RANGE_HIGH)
+	step3 := insert(e, iterator, step2, "i1", closed, ITER_RANGE_CLOSED)
+	out := insert(e, iterator, step3, "i1", reversed ? "true" : "false", ITER_RANGE_REVERSED)
 	fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
 	fmt.sbprintln(&e.b, "}")
 }
@@ -721,9 +714,7 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	signed := type_signed(e.c, step) || type_is_rune(e.c, step)
 
 	pair_type := llvm_type(e, option)
-	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define %s %s(ptr %%arg0)", pair_type, name)
 	current_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_CURRENT)
 	current := load(e, element, current_ptr)
 	high_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_HIGH)
@@ -779,90 +770,62 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
+// `next` for an array or a slice. One cursor — `{ data, index, reversed }` —
+// and one forward/reverse step serve both; only the bound and the way an
+// element address is formed differ, which is the whole of the `slice` branch
+// below. They were two 48-line copies that agreed on the other 40.
 @(private)
-emit_synth_array_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slice: bool) {
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	option := symbol.result
 	element := llvm_type(e, option_payload(e.c, option))
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
-	array_type := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
-	data_type := llvm_type(e, array_type)
-	count := type_of(e.c, array_type).count
+	stored := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
+	stored_llvm := llvm_type(e, stored)
 
 	pair_type := llvm_type(e, option)
-	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define %s %s(ptr %%arg0)", pair_type, name)
 	index_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_INDEX)
 	index := load(e, "i64", index_ptr)
 	reversed_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED)
 	reversed := load(e, "i1", reversed_ptr)
+	// A slice carries its own length, so the header is loaded once here and the
+	// data pointer is read back out of it in the yield block. A fixed array's
+	// bound is a constant and its storage is the iterator field itself.
+	slice_value: string
+	bound: string
+	if slice {
+		slice_value = load(e, stored_llvm, gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA))
+		bound = extract(e, stored_llvm, slice_value, SLICE_LEN)
+	} else {
+		bound = fmt.tprintf("%d", type_of(e.c, stored).count)
+	}
 	forward_live, reverse_live, live := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %d", forward_live, index, count)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", forward_live, index, bound)
 	fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", reverse_live, index)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", live, reversed, reverse_live, forward_live)
 	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
 
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	data_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA)
+	base: string
+	if slice {
+		base = extract(e, stored_llvm, slice_value, SLICE_DATA)
+	} else {
+		base = gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA)
+	}
 	previous, at := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", previous, index)
 	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", at, reversed, previous, index)
-	slot, value := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %s", slot, data_type, data_ptr, at)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", value, element, slot)
-	stepped, next_index := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", next_index, reversed, previous, stepped)
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next_index, index_ptr)
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, value))
-
-	fmt.sbprintfln(&e.b, "%s:", stop_label)
-	fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", pair_type)
-	fmt.sbprintln(&e.b, "}")
-}
-
-// The slice half of `next`. Same `{ data, index }` iterator as an array's; the
-// bound is the slice's own length word and the element address goes through its
-// data pointer rather than into an inline array.
-@(private)
-emit_synth_slice_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
-	function := begin_function_emission(e)
-	defer finish_function_emission(e, function)
-	option := symbol.result
-	element := llvm_type(e, option_payload(e.c, option))
-	iterator := llvm_type(e, symbol.params[0])
-	iterator_info := type_of(e.c, symbol.params[0])
-	slice_type := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
-	slice_llvm := llvm_type(e, slice_type)
-
-	pair_type := llvm_type(e, option)
-	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
-	index_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_INDEX)
-	index := load(e, "i64", index_ptr)
-	reversed_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED)
-	reversed := load(e, "i1", reversed_ptr)
-	slice_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_DATA)
-	slice_value := load(e, slice_llvm, slice_ptr)
-	length := extract(e, slice_llvm, slice_value, SLICE_LEN)
-	forward_live, reverse_live, live := temp(e), temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", forward_live, index, length)
-	fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", reverse_live, index)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i1 %s, i1 %s", live, reversed, reverse_live, forward_live)
-	yield_label, stop_label := new_label(e, "next.yield"), new_label(e, "next.stop")
-	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", live, yield_label, stop_label)
-
-	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	data := extract(e, slice_llvm, slice_value, SLICE_DATA)
-	previous, at := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", previous, index)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 %s", at, reversed, previous, index)
-	slot := gep_at(e, element, data, at)
+	slot: string
+	if slice {
+		slot = gep_at(e, element, base, at)
+	} else {
+		slot = temp(e)
+		fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 0, i64 %s", slot, stored_llvm, base, at)
+	}
 	value := load(e, element, slot)
 	stepped, next_index := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
@@ -889,9 +852,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	ops := container_ops_global(e, type_of(e.c, symbol.params[0]).key)
 
 	pair_type := llvm_type(e, option)
-	fmt.sbprintf(&e.b, "define %s %s(ptr %%arg0)", pair_type, name)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define %s %s(ptr %%arg0)", pair_type, name)
 	table_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_TABLE)
 	table := load(e, "ptr", table_ptr)
 	cursor_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_CURSOR)
@@ -918,9 +879,8 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	value_type := llvm_type(e, symbol_of(e.c, entry.fields[ELEMENT_SECOND]).type)
 	key := load(e, key_type, load(e, "ptr", key_out))
 	value := load(e, value_type, load(e, "ptr", value_out))
-	built, whole := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", built, element, key_type, key, ELEMENT_FIRST)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", whole, element, built, value_type, value, ELEMENT_SECOND)
+	built := insert(e, element, "undef", key_type, key, ELEMENT_FIRST)
+	whole := insert(e, element, built, value_type, value, ELEMENT_SECOND)
 	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, whole))
 
 	fmt.sbprintfln(&e.b, "%s:", stop_label)

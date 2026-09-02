@@ -34,6 +34,32 @@ check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	check_package_bodies(&k, pkg_id)
 }
 
+// One parsed, registered, checked single-file program. The `File` lives in the
+// caller's frame because `add_package_file` stores a pointer to it, so this is
+// filled in place rather than returned — which is what collapses the three
+// `defer`s every such test used to spell out into one.
+Checked :: struct {
+	c:      Compiler,
+	f:      File,
+	tokens: []Token,
+	pkg:    Package_Id,
+}
+
+check_source :: proc(p: ^Checked, source: string, name := "") {
+	p.c = test_compiler(source)
+	p.tokens = lex(&p.c, 0)
+	p.f = parse(&p.c, 0, p.tokens)
+	p.pkg = new_package(&p.c, name != "" ? name : p.f.package_name)
+	add_package_file(&p.c, p.pkg, &p.f)
+	check_one_package(&p.c, p.pkg)
+}
+
+destroy_checked :: proc(p: ^Checked) {
+	destroy_ast(&p.f)
+	delete(p.tokens)
+	destroy_compilation(&p.c)
+}
+
 test_compiler :: proc(text: string) -> Compiler {
 	c: Compiler
 	starts := make([dynamic]u32)
@@ -102,23 +128,17 @@ main :: proc() {
     assert(identity(1) != nil);
     assert(bounded(true) == 1);
 }`
-	c := test_compiler(source)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	id := new_package(&c, f.package_name)
-	add_package_file(&c, id, &f)
-	check_one_package(&c, id)
-	if !testing.expectf(t, c.error_count == 0, "probe checking produced %d errors", c.error_count) {
-		report(&c)
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, source)
+	if !testing.expectf(t, p.c.error_count == 0, "probe checking produced %d errors", p.c.error_count) {
+		report(&p.c)
 		return
 	}
-	freeze_typeids(&c)
-	testing.expect(t, typeid_value(&c, TYPE_I8) == 0, "a hypothetical call registered its unexecuted body")
-	testing.expect(t, typeid_value(&c, TYPE_INT) != 0, "a real call lost the probed body's dependencies")
-	testing.expect(t, typeid_value(&c, TYPE_BOOL) != 0, "an executed generic bound lost its dependencies")
+	freeze_typeids(&p.c)
+	testing.expect(t, typeid_value(&p.c, TYPE_I8) == 0, "a hypothetical call registered its unexecuted body")
+	testing.expect(t, typeid_value(&p.c, TYPE_INT) != 0, "a real call lost the probed body's dependencies")
+	testing.expect(t, typeid_value(&p.c, TYPE_BOOL) != 0, "an executed generic bound lost its dependencies")
 }
 
 @(test)
@@ -688,25 +708,19 @@ main :: proc() {
 	sink(choose([2]int{}));
 	sink(choose([6]int{1, 2, 3, 4, 5, 6}));
 }`
-	c := test_compiler(text)
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	pkg_id := new_package(&c, "main")
-	add_package_file(&c, pkg_id, &f)
-	check_one_package(&c, pkg_id)
-	validate_executable(&c, pkg_id)
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, text, "main")
+	validate_executable(&p.c, p.pkg)
 
-	testing.expectf(t, c.error_count == 0, "negative generic cache produced %d diagnostics", c.error_count)
+	testing.expectf(t, p.c.error_count == 0, "negative generic cache produced %d diagnostics", p.c.error_count)
 	testing.expectf(
 		t,
-		c.instantiation_count == 2 + BOOTSTRAP_INSTANCES,
+		p.c.instantiation_count == 2 + BOOTSTRAP_INSTANCES,
 		"one rejected and one selected unique entry should consume the budget, found %d",
-		c.instantiation_count,
+		p.c.instantiation_count,
 	)
-	testing.expectf(t, len(c.instances) == 2 + BOOTSTRAP_INSTANCES, "expected one rejected and one successful cache entry, found %d", len(c.instances))
+	testing.expectf(t, len(p.c.instances) == 2 + BOOTSTRAP_INSTANCES, "expected one rejected and one successful cache entry, found %d", len(p.c.instances))
 }
 
 @(test)
@@ -800,18 +814,12 @@ ownership_worklist_converges_past_sixty_four_back_edges :: proc(t: ^testing.T) {
 	fmt.sbprintln(&b, "}")
 	fmt.sbprintln(&b, "sink :: proc(value: int) {}")
 
-	c := test_compiler(strings.to_string(b))
-	defer destroy_compilation(&c)
-	tokens := lex(&c, 0)
-	defer delete(tokens)
-	f := parse(&c, 0, tokens)
-	defer destroy_ast(&f)
-	pkg_id := new_package(&c, f.package_name)
-	add_package_file(&c, pkg_id, &f)
-	check_one_package(&c, pkg_id)
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, strings.to_string(b))
 
 	found := false
-	for diagnostic in c.diagnostics {
+	for diagnostic in p.c.diagnostics {
 		if diagnostic.code == "L0500" {
 			found = true
 			break

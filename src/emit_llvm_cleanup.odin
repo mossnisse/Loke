@@ -341,9 +341,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	e.prologue = nil
 	u.replaying = true
 
-	fmt.sbprintf(&e.b, "define private void %s(ptr %%ctx)", u.thunk)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define private void %s(ptr %%ctx)", u.thunk)
 	live := load(e, "ptr", "%ctx")
 	env_slot, env := temp(e), temp(e)
 	fmt.sbprintfln(&e.b, "  %s = getelementptr ptr, ptr %%ctx, i64 1", env_slot)
@@ -798,9 +796,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	value_type := llvm_type(e, subject)
 	result := symbol.result
 	pair := llvm_type(e, result)
-	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, value_type)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, value_type)
 	e.terminated = false
 
 	// A user `hook(copy)` is the fallible primitive. The public generated
@@ -986,9 +982,7 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
 	value_type := llvm_type(e, subject)
-	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0, ptr %%arg1)", value_type, name, value_type)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", value_type, name, value_type)
 	e.terminated = false
 
 	cloned := emit_clone_with_policy(e, subject, "%arg0", "%arg1")

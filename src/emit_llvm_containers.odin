@@ -92,10 +92,7 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 
 	argument := through_header ? "ptr" : llvm_type(e, receiver)
-	// `{` is a directive to core:fmt, so the brace is printed separately.
-	fmt.sbprintf(&e.b, "define void %s(%s %%arg0)", name, argument)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define void %s(%s %%arg0)", name, argument)
 	e.terminated = false
 
 	// Every contributed member is emitted whether or not the program calls it,
@@ -188,10 +185,7 @@ container_thunk :: proc(
 	}
 	e.container_thunks[name] = true
 	frame := begin_function_emission(e)
-	// `{` is a directive to core:fmt, so the brace is printed separately.
-	fmt.sbprintf(&e.b, "define private %s %s(%s)", result, name, params)
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define private %s %s(%s)", result, name, params)
 	body(e, part)
 	fmt.sbprintln(&e.b, "}")
 	fmt.sbprintln(&e.b, "")
@@ -511,13 +505,15 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		}
 		fmt.sbprintf(&e.b, "%s %%arg%d", llvm_type(e, parameter), index)
 	}
-	fmt.sbprintln(&e.b, ") {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, ")")
 	e.terminated = false
 
 	switch symbol.provider_op {
 	case .None:
 	case .Open:
+		// Both temporaries are reserved before the open check, whose branch
+		// consumes labels of its own; `insert` would otherwise number the result
+		// after them.
 		opened, out := temp(e), temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
 		emit_provider_open_check(e, opened, "%arg0")
@@ -530,17 +526,18 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		buffer := llvm_type(e, symbol.params[0])
 		data := extract(e, buffer, "%arg0", SLICE_DATA)
 		length := extract(e, buffer, "%arg0", SLICE_LEN)
-		opened, out := temp(e), temp(e)
+		opened := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_arena_open_fixed(ptr %s, i64 %s)", opened, data, length,
 		)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", out, provider, opened, PROVIDER_CONTROL)
+		out := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
 		fmt.sbprintfln(&e.b, "  ret %s %s", provider, out)
 
 	case .Try_Open:
-		opened, value, failed := temp(e), temp(e), temp(e)
+		opened := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call ptr @loke_rt_v1_arena_open(ptr %%arg0)", opened)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", value, provider, opened, PROVIDER_CONTROL)
+		value := insert(e, provider, "undef", "ptr", opened, PROVIDER_CONTROL)
+		failed := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, opened)
 		fmt.sbprintfln(
 			&e.b, "  ret %s %s", result, emit_alloc_result(e, symbol.result, failed, value),
@@ -608,8 +605,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		type := index == 0 && symbol.receiver == .Inout ? "ptr" : llvm_type(e, parameter)
 		fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
 	}
-	fmt.sbprintln(&e.b, ") {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, ")")
 	e.terminated = false
 
 	// A single value entering the container is spilled so the helper can read it

@@ -338,6 +338,18 @@ f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
 
 // ------------------------------------------------------------------ places --
 
+// The read half of `store`, and the only load that can be under-aligned: it
+// takes the `Type_Id` because that is what `align_suffix` needs. `load` remains
+// the right call for a compiler-owned slot, whose alignment is natural by
+// construction; this one is for a written place, which may be reached through a
+// packed field.
+@(private)
+load_place :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s%s", out, llvm_type(e, type), address, align_suffix(e, address, type))
+	return out
+}
+
 @(private)
 store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 	if address == "" || value == "" {
@@ -806,9 +818,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 			return e.names[base.resolution.symbol] or_else "null"
 		}
 		address := emit_address(e, expr)
-		out := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s%s", out, llvm_type(e, base.type), address, align_suffix(e, address, base.type))
-		return out
+		return load_place(e, base.type, address)
 
 	case ^Expr_Unary:
 		return emit_unary(e, v)
@@ -1465,9 +1475,8 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond) -> string {
 
 @(private)
 emit_ptr_len :: proc(e: ^Emitter, storage, data, length: string) -> string {
-	first, out := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, storage, data, SLICE_DATA)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %s, %d", out, storage, first, length, SLICE_LEN)
+	first := insert(e, storage, "undef", "ptr", data, SLICE_DATA)
+	out := insert(e, storage, first, "i64", length, SLICE_LEN)
 	return out
 }
 

@@ -416,9 +416,7 @@ emit_one_format_thunk :: proc(e: ^Emitter, type: Type_Id) {
 	frame := begin_function_emission(e)
 	defer finish_pending_thunk(e, frame)
 
-	fmt.sbprintf(&e.b, "define private void %s(ptr %%data, ptr %%w, ptr %%o)", fmt_thunk_name(e, type))
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, "define private void %s(ptr %%data, ptr %%w, ptr %%o)", fmt_thunk_name(e, type))
 	emit_format_body(e, type, "%data")
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
@@ -1192,9 +1190,9 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		case .Range_Next:
 			emit_synth_range_next(e, symbol, name)
 		case .Array_Next:
-			emit_synth_array_next(e, symbol, name)
+			emit_synth_indexed_next(e, symbol, name, slice = false)
 		case .Slice_Next:
-			emit_synth_slice_next(e, symbol, name)
+			emit_synth_indexed_next(e, symbol, name, slice = true)
 		case .Map_Next:
 			emit_synth_map_next(e, symbol, name)
 		case .Try_Clone:
@@ -1223,8 +1221,7 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 		if index > 0 { fmt.sbprint(&e.b, ", ") }
 		fmt.sbprintf(&e.b, "%s %%arg%d", llvm_type(e, parameter), index)
 	}
-	fmt.sbprintln(&e.b, ") {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, ")")
 
 	#partial switch symbol.synth {
 	case .Standard_Len:
@@ -1260,8 +1257,7 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 @(private)
 emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> string {
 	storage := llvm_type(e, TYPE_ANY_VIEW)
-	first := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, storage, address, ANY_VIEW_DATA)
+	first := insert(e, storage, "undef", "ptr", address, ANY_VIEW_DATA)
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, i64 %d, %d", out, storage, first, typeid_value(e.c, concrete), ANY_VIEW_ID)
 	return out
@@ -1325,10 +1321,8 @@ emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		return "zeroinitializer"
 	}
 	data := emit_expr(e, v.bound[0])
-	first := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, ptr %s, %d", first, storage, data, DYN_DATA)
-	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, ptr %s, %d", out, storage, first, v.dyn_witness.name, DYN_WITNESS)
+	first := insert(e, storage, "undef", "ptr", data, DYN_DATA)
+	out := insert(e, storage, first, "ptr", v.dyn_witness.name, DYN_WITNESS)
 	return out
 }
 
@@ -1455,9 +1449,7 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 		type := mode == .Inout ? "ptr" : llvm_type(e, target.params[position])
 		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
 	}
-	fmt.sbprint(&e.b, ")")
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, ")")
 
 	// The receiver arrives erased. An immutable `self` is a value parameter, so
 	// it is loaded; an `inout self` is already the alias the callee wants.
@@ -1511,9 +1503,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		type := mode == .Inout ? "ptr" : llvm_type(e, symbol.params[position])
 		fmt.sbprintf(&e.b, ", %s %%arg%d", type, position)
 	}
-	fmt.sbprint(&e.b, ")")
-	fmt.sbprintln(&e.b, " {")
-	fmt.sbprintln(&e.b, "entry:")
+	open_function(e, ")")
 
 	view := "%arg0"
 	if receiver_inout {

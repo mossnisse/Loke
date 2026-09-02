@@ -202,6 +202,17 @@ Function_State :: struct {
 	prologue: [dynamic]string,
 }
 
+// `define <signature> {` followed by the entry label. `{` is a `core:fmt`
+// directive and can never appear in a format string, which is why every caller
+// used to split the write in two and comment about it; that trap is now sprung
+// once, here.
+@(private)
+open_function :: proc(e: ^Emitter, format: string, args: ..any) {
+	fmt.sbprintf(&e.b, format, ..args)
+	fmt.sbprintln(&e.b, " {")
+	fmt.sbprintln(&e.b, "entry:")
+}
+
 @(private)
 begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 	state := Function_Emission{parent = e.b, saved = e.fn}
@@ -671,6 +682,15 @@ new_label :: proc(e: ^Emitter, prefix: string) -> string {
 extract :: proc(e: ^Emitter, aggregate: string, value: string, index: int) -> string {
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", out, aggregate, value, index)
+	return out
+}
+
+// The write half of `extract`. `into` is `"undef"` when this is the first field
+// written into a fresh aggregate, and the previous partial value otherwise.
+@(private)
+insert :: proc(e: ^Emitter, aggregate, into, field_type, value: string, index: int) -> string {
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = insertvalue %s %s, %s %s, %d", out, aggregate, into, field_type, value, index)
 	return out
 }
 
