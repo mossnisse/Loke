@@ -1,2 +1,4 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Text files are stored and checked out with LF. `text=auto` alone leaves the
+# working tree at the mercy of each clone's core.autocrlf, which is how this
+# tree ended up half CRLF; `eol=lf` makes it the repository's decision instead.
+* text=auto eol=lf
