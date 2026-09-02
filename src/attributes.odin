@@ -1,4 +1,4 @@
-// Attribute discipline (m7-plan step 1, decision "Attribute discipline").
+// Attribute discipline.
 //
 // One table maps every attribute design.md defines to the positions it may
 // appear in and the value shape it takes. Before M7 attributes were parsed and
@@ -236,10 +236,10 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 	return d.kind == .Const ? .Const_Decl : .Var_Decl
 }
 
-// design.md "@(deprecated)" and "@(require_results)": records the two pieces
-// of declaration metadata on the symbol, from the declaration's attributes.
-// Called from `resolve_declaration_signature`, so a cross-package use already
-// sees the flag before its own body is checked.
+// design.md "`@(deprecated=<string>)`" and "@(require_results)": records the
+// two pieces of declaration metadata on the symbol, from the declaration's
+// attributes. Called from `resolve_declaration_signature`, so a cross-package
+// use already sees the flag before its own body is checked.
 apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 	sym := symbol_of(k.c, symbol_id)
 	if sym == nil {

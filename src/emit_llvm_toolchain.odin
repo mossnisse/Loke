@@ -32,7 +32,7 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 		os.remove(ll_path)
 	}
 
-	// design.md "Build modes" (m7-plan step 5): an object build is one relocatable
+	// design.md "Build modes": an object build is one relocatable
 	// module. `clang -c` compiles the generated `.ll` alone; the seed runtime and
 	// foreign symbols stay unresolved for the C host to supply at its final link.
 	if c.build_mode == .Obj {
@@ -41,7 +41,7 @@ emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int
 	return link(c, ll_path, opts.output, opts)
 }
 
-// The object-build compile seam (m7-plan step 5): no runtime sources, no
+// The object-build compile seam: no runtime sources, no
 // libraries, no entry — `clang -c` turns the module's `.ll` into one `.obj`
 // with runtime and foreign references left unresolved. An assembly import
 // can't ride along in a single relocatable object, so it is diagnosed with
@@ -100,22 +100,7 @@ Layout_Probe :: struct {
 // checker's cached layout. Executing LLVM-derived values tests the actual
 // target backend rather than a second copy of the checker's formula.
 check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
-	e := Emitter {
-		c            = c,
-		names        = make(map[Symbol_Id]string),
-		struct_names = make(map[Type_Id]string),
-		place_align  = make(map[string]u64),
-		cleanups     = make([dynamic]Cleanup_Scope),
-		param_values = make(map[Symbol_Id]string),
-		pending      = make([dynamic]string),
-		pending_thunks = make([dynamic]string),
-		container_ops = make(map[Type_Id]string),
-		container_thunks = make(map[string]bool),
-		messages     = make(map[string]string),
-		literals     = make(map[string]string),
-		globals      = make([dynamic]string),
-	}
-	strings.builder_init(&e.b)
+	e := make_emitter(c)
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
 	fmt.sbprintln(&e.b, `@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"`)
 	fmt.sbprintln(&e.b, "declare i32 @printf(ptr, ...)")
@@ -285,7 +270,7 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	}
 
 	// design.md "Foreign system": every active foreign import joins the link
-	// command, libraries and assembled objects alike (m7-plan step 4). A missing
+	// command, libraries and assembled objects alike. A missing
 	// file or assembler is diagnosed here, by name, before clang runs.
 	foreign_inputs, foreign_ok := collect_foreign_link_inputs(c, exe_path)
 	if !foreign_ok {
@@ -295,7 +280,7 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	command := make([dynamic]string)
 	append(&command, clang, ll_path, "-o", exe_path)
 	// design.md "Build configuration": the selected optimization mode maps to one
-	// `-O` flag on the single clang invocation (m7-plan decision "Release output").
+	// `-O` flag on the single clang invocation.
 	append(&command, opt_clang_flag(opts.opt_mode))
 	for source in sources {
 		append(&command, source)
@@ -328,7 +313,7 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	}
 	if state.exit_code != 0 {
 		// design.md "Foreign system": an unresolved link name is its own failure —
-		// the binding named a symbol the libraries do not define (m7-plan step 4).
+		// the binding named a symbol the libraries do not define.
 		if strings.contains(string(stderr), "unresolved external symbol") ||
 		   strings.contains(string(stderr), "undefined symbol") {
 			errorf(
@@ -348,11 +333,11 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	return 0
 }
 
-// design.md "Library resolution" (m7-plan step 4): every active `foreign import`
-// becomes a link input. A `system:` prefix passes the bare name to the linker's
-// search path; a relative path resolves against the importing file. `.s`/`.S` go
-// to clang, `.asm` is assembled by `nasm`, and anything else is a library file.
-// The inputs are deduplicated and returned in a deterministic order.
+// design.md "Foreign system": every active `foreign import` becomes a link
+// input. A `system:` prefix passes the bare name to the linker's search path; a
+// relative path resolves against the importing file. `.s`/`.S` go to clang,
+// `.asm` is assembled by `nasm`, and anything else is a library file. The
+// inputs are deduplicated and returned in a deterministic order.
 @(private = "file")
 collect_foreign_link_inputs :: proc(c: ^Compiler, exe_path: string) -> (inputs: []string, ok: bool) {
 	out := make([dynamic]string)

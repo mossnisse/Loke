@@ -942,7 +942,7 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 
 // ---------------------------------------- any_view checked extractions --
 
-// design.md "Checked extractions": `any_view` supports the same two spellings
+// design.md "any_view type": `any_view` supports the same two spellings
 // a union has — trapping `.(T)` and optional `.as(T)` — on one
 // `Expr_Checked_Extract` node. `.as(T)` uses selector/call syntax but is not a
 // call: it resolves to the same node `.(T)` produces, so the flow graph, the

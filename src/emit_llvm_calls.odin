@@ -952,8 +952,8 @@ emit_variadic_pack :: proc(e: ^Emitter, v: ^Expr_Call, pack_type: Type_Id) -> Va
 	return Variadic_Pack{value = emit_slice_value(e, pack_type, buffer, total), cleanup = cleanup}
 }
 
-// The call side of the Windows x64 classification (m7-plan step 3). Operands are
-// already evaluated; this materializes each into its ABI register or caller-owned
+// The call side of the Windows x64 classification. Operands are already
+// evaluated; this materializes each into its ABI register or caller-owned
 // temporary, emits the call, and reconstructs the aggregate result the loke
 // caller consumes. `loke`-convention calls never reach here.
 @(private)
@@ -1001,7 +1001,7 @@ emit_bound_call :: proc(
 	pack_cleanup := Deferred{slot = -1}
 	argument_cleanups := make([dynamic]Deferred)
 	defer delete(argument_cleanups)
-	// design.md "Argument evaluation": supplied operands run in source order and
+	// design.md "Evaluation order": supplied operands run in source order and
 	// are staged into their matched slots; omitted defaults follow in parameter
 	// order. Only the final operand list is parameter-ordered.
 	for step in 0 ..< len(bound) {
@@ -1022,12 +1022,13 @@ emit_bound_call :: proc(
 		} else {
 			operands[index] = emit_expr(e, argument)
 		}
-		// design.md "Parameter semantics": an ordinary `value: T` parameter is a
-		// non-owning borrow, so the callee never cleans one up (`move` is a
-		// different, excluded mode). When the argument is an owned temporary rather
-		// than somebody else's place, that cleanup belongs to the caller — only the
-		// caller can tell the two apart. A C-variadic call passes arguments past the
-		// declared parameter list, which have no parameter type to clean up against.
+		// design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
+		// parameter is a non-owning borrow, so the callee never cleans one up
+		// (`move` is a different, excluded mode). When the argument is an owned
+		// temporary rather than somebody else's place, that cleanup belongs to the
+		// caller — only the caller can tell the two apart. A C-variadic call passes
+		// arguments past the declared parameter list, which have no parameter type
+		// to clean up against.
 		if mode == .Value && index < len(callee_type.parameters) &&
 		   !expression_is_borrowed_place(e.c, argument) {
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])

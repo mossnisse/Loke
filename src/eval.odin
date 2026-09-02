@@ -1,4 +1,4 @@
-// The compile-time engine (compiler-plan B10).
+// The compile-time engine.
 //
 // A tree-walking interpreter over the *typed* AST — not a second checker:
 // every node it visits is already name-resolved, typed, and (in the easy
@@ -1952,7 +1952,7 @@ eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Sp
 	// in the caller's.
 	append(&ev.frames, frame)
 	if !eval_memory_ok(ev) { return Eval_Value{}, false }
-	// design.md "Argument evaluation": supplied operands run in source order,
+	// design.md "Evaluation order": supplied operands run in source order,
 	// omitted defaults in parameter order. `order` carries that schedule when a
 	// named argument made the two differ.
 	for step in 0 ..< max(len(args), len(values)) {

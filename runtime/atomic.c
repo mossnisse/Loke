@@ -1,5 +1,5 @@
 /* Atomic operations at widths this target has no usable native lowering for
- * (design.md "Concurrency and the memory model", m8-plan step 4).
+ * (design.md "Concurrency and the memory model").
  *
  * On Windows x64 the machine has `cmpxchg16b`, but reaching it through LLVM's
  * default 128-bit atomic lowering emits calls to `__atomic_load_16` and its

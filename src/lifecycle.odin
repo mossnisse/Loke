@@ -143,8 +143,8 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		add_notef(k.c, sym.span, "declared here; `exchange` replaces a static-duration value instead")
 		return false
 	}
-	// An ordinary `value: T` parameter is a non-owning immutable borrow
-	// (design.md "Parameter semantics"); consuming it is the caller's `move`
+	// An ordinary `value: T` parameter is a non-owning immutable borrow (design.md
+	// "Parameter semantics and ABI lowering"); consuming it is the caller's `move`
 	// at the call site, not this body's. A `move` parameter is the exception:
 	// design.md says an owner received through one "may be used locally or
 	// returned", and moving it onward is how it is stored.
@@ -188,7 +188,7 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	}
 	// `exchange` is a built-in with no written signature, so it has no parameter
 	// name to address and no second modal position — permanently, not pending a
-	// milestone (m7-plan step 6).
+	// milestone.
 	if v.args[0].name.text != "" || v.args[1].name.text != "" {
 		errorf(k.c, v.span, "L0505", "`exchange` takes positional arguments only")
 		v.type = INVALID_TYPE
@@ -230,10 +230,11 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 // ------------------------------------------------- ownership at the call --
 
 // A `move` argument must be marked at the call site too, not just at the
-// declaration (design.md "Parameter semantics"). Method-call syntax supplies an
-// `inout` receiver's marker implicitly, since that borrow ends with the call and
-// leaves the source usable; a consuming receiver leaves the source dead, so it's
-// written `move(value).method()` like any other transfer.
+// declaration (design.md "Parameter semantics and ABI lowering"). Method-call
+// syntax supplies an `inout` receiver's marker implicitly, since that borrow
+// ends with the call and leaves the source usable; a consuming receiver leaves
+// the source dead, so it's written `move(value).method()` like any other
+// transfer.
 require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symbol_Id) {
 	sym := symbol_of(k.c, declaration)
 	if sym == nil {

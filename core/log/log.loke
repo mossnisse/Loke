@@ -1,5 +1,5 @@
 // Logging over the build-selected provider (design.md "Build-selected
-// providers", m8-plan step 3).
+// providers").
 //
 // A `Logger` is an ordinary service handle: one procedure and its state, the
 // same shape `fmt.Writer` has. Nothing about it is compiler-known. What the

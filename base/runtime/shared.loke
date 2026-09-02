@@ -1,4 +1,4 @@
-// `shared(T)` and `weak(T)` (design.md "Shared ownership", m8-plan step 5).
+// `shared(T)` and `weak(T)` (design.md "Shared ownership").
 //
 // Shared ownership is a library record with custom lifecycle hooks over an
 // atomic control block: `clone` and ordinary assignment increment a count

@@ -4299,7 +4299,7 @@ prov_call_result :: proc(
 	result_type: Type_Id,
 ) -> []int {
 	c := graph.k.c
-	// design.md "Named results": an `inout` result is the caller's storage, so
+	// design.md "`inout` results": an `inout` result is the caller's storage, so
 	// the call is a place aliasing whatever the `inout` arguments named. It is not
 	// a carrier type, which is why it is answered before the carrier test.
 	if prov_result_is_inout(graph, v) {

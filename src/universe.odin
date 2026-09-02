@@ -195,7 +195,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		proc_type = no_args,
 	})
 
-	// design.md "Build configuration": the `LOKE_*` constants (m7-plan step 1).
+	// design.md "Build configuration": the `LOKE_*` constants.
 	predeclare_build_config(c, universe)
 
 	return universe

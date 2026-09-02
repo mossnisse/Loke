@@ -87,7 +87,7 @@ ensure_provider_members :: proc(k: ^Checker, type: Type_Id) {
 	}
 	info.contributed += {.Container}
 
-	// design.md "The allocator selects the location of backing storage":
+	// design.md "Allocators":
 	// `arena := mem.Arena.from_buffer(buffer[:])` puts a dynamic array's backing
 	// storage in the current stack frame. The buffer is written into, so it is
 	// `[]mut u8`. `mem.Scratch` is always provider-backed.

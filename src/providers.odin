@@ -1,5 +1,4 @@
-// Build-selected providers (design.md "Build-selected providers", m8-plan
-// step 3).
+// Build-selected providers (design.md "Build-selected providers").
 //
 // The final build selects at most one default-allocator provider and one
 // logging provider, on the command line and nowhere else. Each selection names

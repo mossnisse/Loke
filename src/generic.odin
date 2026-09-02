@@ -176,7 +176,7 @@ reject_uninstantiated_generic :: proc(k: ^Checker, d: ^Decl) {
 		// A foreign block's member inherited its convention rather than writing one;
 		// `check_foreign_block` already rejects it as L0624, the diagnostic that
 		// names the real mistake. Flagging it here too would double-report one error
-		// (m7-plan step 6).
+		//.
 		if len(d.symbols) > 0 {
 			if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
 				return
@@ -1818,21 +1818,12 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 instance_member_named :: proc(k: ^Checker, subject: Type_Id, pkg: Package_Id, kind: Impl_Kind, name: Identifier_Id) -> Symbol_Id {
 	if kind == .Impl {
 		if info := type_of(k.c, subject); info != nil {
-			return member_named_in(k.c, info.members, name)
+			return member_named(k.c, info.members, name)
 		}
 		return INVALID_SYMBOL
 	}
 	if target := package_of(k.c, pkg); target != nil {
-		return member_named_in(k.c, target.extensions[subject], name)
-	}
-	return INVALID_SYMBOL
-}
-
-member_named_in :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
-	for member in members {
-		if sym := symbol_of(c, member); sym != nil && sym.name == name {
-			return member
-		}
+		return member_named(k.c, target.extensions[subject], name)
 	}
 	return INVALID_SYMBOL
 }

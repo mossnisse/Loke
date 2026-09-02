@@ -60,7 +60,7 @@ resolve_union_variants :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) 
 	resolve_union_zero(k, info, value)
 	resolve_union_failure(k, info, value)
 	// `@(packed)` on a union is rejected by the attribute table (L0607); design.md
-	// applies it to a struct only (m7-plan step 2).
+	// applies it to a struct only.
 }
 
 // design.md "Zero values": `@(zero=name)` designates the semantic zero. Only
@@ -111,9 +111,9 @@ resolve_union_zero :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
 	info.zero_designated = true
 }
 
-// design.md "Failure protocol": `@(failure=name)` designates one of exactly two
-// variants as the failure one. `or_else`/`or_return` recognise the shape, never
-// a privileged type name.
+// design.md "The failure protocol and `@(failure=)`": `@(failure=name)`
+// designates one of exactly two variants as the failure one.
+// `or_else`/`or_return` recognise the shape, never a privileged type name.
 @(private = "file")
 resolve_union_failure :: proc(k: ^Checker, info: ^Type_Info, value: ^Type_Record) {
 	attribute, written := record_attribute(value, "failure")
@@ -179,9 +179,9 @@ record_is_packed :: proc(value: ^Type_Record) -> bool {
 	return written
 }
 
-// design.md "@(align=N)": `union @(align=4) {...}` and `struct @(align=4) {...}`.
-// Only a power of two the target supports is accepted; a written alignment under
-// the natural one raises rather than lowers (m7-plan decision on layout).
+// design.md "@(align=N)": `union @(align=4) {...}` and `struct @(align=4)
+// {...}`. Only a power of two the target supports is accepted; a written
+// alignment under the natural one raises rather than lowers.
 record_written_alignment :: proc(k: ^Checker, value: ^Type_Record) -> u64 {
 	attribute, written := record_attribute(value, "align")
 	if !written {

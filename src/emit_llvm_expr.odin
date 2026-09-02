@@ -139,7 +139,7 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 			return "zeroinitializer"
 		}
 		// A `@(packed)`/`@(align=N)` struct's constant must match the byte-exact
-		// body `struct_body` emits (m7-plan step 2).
+		// body `struct_body` emits.
 		packed := info.kind == .Struct && info.packed
 		over_aligned := info.kind == .Struct && info.align > record_natural_align(e.c, info)
 		byte_array := packed && over_aligned
@@ -347,7 +347,7 @@ store :: proc(e: ^Emitter, type: Type_Id, value, address: string) {
 }
 
 // The guaranteed alignment of a place, defaulting to the pointee's natural
-// alignment when nothing lower was recorded (m7-plan step 2).
+// alignment when nothing lower was recorded.
 @(private = "file")
 place_align_of :: proc(e: ^Emitter, address: string, type: Type_Id) -> u64 {
 	if a, ok := e.place_align[address]; ok {
@@ -369,7 +369,7 @@ align_suffix :: proc(e: ^Emitter, address: string, type: Type_Id) -> string {
 
 // Records the effective alignment of the address of `field` reached from a base
 // place, lowering it to 1 through a packed struct so nested access stays
-// unaligned (m7-plan decision "Alignment at use sites").
+// unaligned.
 @(private = "file")
 record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_address: string, field_type: Type_Id) {
 	base_info := underlying_info(e.c, base_type)
@@ -994,8 +994,8 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 }
 
 // Concatenation allocates from `mem.default_allocator()` and follows its
-// failure policy (design.md "Concatenation"). Both operands are already valid
-// UTF-8, so the result needs no validation.
+// failure policy (design.md "Arithmetic operators"). Both operands are already
+// valid UTF-8, so the result needs no validation.
 @(private = "file")
 emit_text_concat :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	left_data, left_len := emit_text_parts(e, v.lhs)
@@ -1260,7 +1260,7 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 		// A combined `@(packed, align=N)` record's LLVM members are byte arrays, so
 		// `extractvalue` yields `[k x i8]` where the field's own type is wanted.
 		// Reading each field through its address instead is the same GEP an ordinary
-		// field access already uses (m7-plan step 6).
+		// field access already uses.
 		if record_uses_byte_members(e, under, info) {
 			return emit_byte_member_struct_equal(e, under, info, lhs, rhs)
 		}
@@ -1358,10 +1358,10 @@ record_uses_byte_members :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info) -
 	return current != nil && current.align > record_natural_align(e.c, current)
 }
 
-// Field-wise equality read through addresses. The value is spilled once and each
-// field is loaded at its own type from the GEP the byte member occupies, so the
-// comparison is the ordinary one and only the way the operands are reached
-// differs (m7-plan step 6).
+// Field-wise equality read through addresses. The value is spilled once and
+// each field is loaded at its own type from the GEP the byte member occupies,
+// so the comparison is the ordinary one and only the way the operands are
+// reached differs.
 @(private = "file")
 emit_byte_member_struct_equal :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, lhs, rhs: string) -> string {
 	llvm := llvm_type(e, type)
@@ -1611,8 +1611,8 @@ emit_text_allocating_call :: proc(e: ^Emitter, callee, arguments: string, fail_i
 	return out
 }
 
-// design.md "Optional-ok results": the value is the zero value on failure, which
-// the runtime has already published into the slot.
+// design.md "string type conversions": the value is the zero value on failure,
+// which the runtime has already published into the slot.
 @(private = "file")
 emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: string) -> []string {
 	slot, ok := emit_text_call_slot(e, callee, arguments)

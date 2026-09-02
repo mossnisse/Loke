@@ -43,7 +43,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// The `LOKE_*` enum types stay unbound from `base:runtime`: binding them
 		// eagerly would allocate one per importer and shift type numbering.
 		// Nothing in M7 needs `runtime.Os` by name; a later milestone that does
-		// can bind it lazily. (m7-plan step 1)
+		// can bind it lazily.
 		if pkg.key == STD_RUNTIME {
 			// `shared(T)` allocates its control block, and `base:runtime` is below
 			// `core:mem` in the dependency order, so it cannot import the package
@@ -84,7 +84,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		contribute_builtin(c, pkg, "string_view", .Unsafe_String_View)
 		contribute_builtin(c, pkg, "cstring_view", .Unsafe_C_String_View)
 		// Suppressing cleanup is the same kind of visible loss: the resource is
-		// leaked, or escaped to whatever owns it now (design.md "Forgotten owners").
+		// leaked, or escaped to whatever owns it now (design.md "`unsafe.forget`").
 		contribute_builtin(c, pkg, "forget", .Unsafe_Forget)
 		// Releasing storage the provenance analysis cannot follow: same visible
 		// loss, and the only release `shared(T)` and any other handle over a
@@ -93,7 +93,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// Reinterpreting bits is the third visible loss: nothing about the source
 		// value says the destination representation is one its type ever admits,
 		// so the spelling is `unsafe.transmute(T, value)` and the operation is
-		// never injected into the universe (design.md "unsafe.transmute procedure").
+		// never injected into the universe (design.md "`unsafe.transmute`").
 		contribute_builtin(c, pkg, "transmute", .Unsafe_Transmute)
 	case STD_FMT:
 		// design.md "String format printing": the library owns the protocol,

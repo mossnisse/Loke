@@ -384,7 +384,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 
 // ------------------------------------------------------- source locations --
 
-// design.md "`source_location()` or `source_location(<entity>)`": returns a
+// design.md "`source_location() or source_location(<entity>)`": returns a
 // `runtime.Source_Code_Location`, for the current location with no arguments or
 // for the declaration of a named entity with one.
 //
@@ -551,7 +551,7 @@ bind_variadic_arguments :: proc(
 	declared := symbol_of(k.c, declaration)
 	ok := true
 
-	// design.md "Argument evaluation": a written argument runs where it is
+	// design.md "Evaluation order": a written argument runs where it is
 	// written. Recorded only when a name reorders the fixed parameters, which is
 	// the one case where written order and slot order can disagree here.
 	slot_order := make([dynamic]int, 0, pack + 1, k.c.semantic_allocator)

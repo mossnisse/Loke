@@ -34,7 +34,6 @@ Interface_Slot :: struct {
 
 Interface_Info :: struct {
 	symbol:    Symbol_Id,
-	decl:      ^Decl,
 	node:      ^Type_Interface,
 	scope:     ^Scope,
 	pkg:       Package_Id,
@@ -70,7 +69,6 @@ interface_info_for :: proc(k: ^Checker, symbol_id: Symbol_Id) -> ^Interface_Info
 
 	info := new(Interface_Info, k.c.semantic_allocator)
 	info.symbol = symbol_id
-	info.decl = sym.decl
 	info.node = node
 	info.pkg = sym.pkg
 	info.file, info.file_node = sym.def_file, sym.def_file_node

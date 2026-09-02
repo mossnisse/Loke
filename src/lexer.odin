@@ -1,4 +1,4 @@
-// Lexer (compiler-plan B3), complete against grammar.md "Lexical structure".
+// Lexer, complete against grammar.md "Lexical structure".
 //
 // Two rules that a hand-written scanner gets wrong by reflex:
 //   * `::` and `:=` are TOKEN PAIRS, not tokens. `x := 1` is `x` `:` `=` `1`.

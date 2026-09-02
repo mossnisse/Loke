@@ -10,7 +10,7 @@ package main; import "core:fmt"; import "core:mem";
 // so moving the owner cannot change either. `free_all` is a reusable reset: the
 // region stays usable afterwards.
 
-// design.md "The allocator selects the location of backing storage": an arena
+// design.md "Allocators": an arena
 // over a local fixed buffer puts a dynamic array's storage in this frame.
 in_frame :: proc() {
 	buffer: [4096]u8 = {};

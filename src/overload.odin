@@ -290,11 +290,11 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		if want_inout != (arg.mode == .Inout) {
 			return RANK_NONE, INVALID_SYMBOL
 		}
-		// design.md "Parameter semantics": a `move` parameter is written
-		// `move(expr)` at the call site too. The reverse is not a mismatch —
-		// `append(move(row))` transfers into an ordinary value parameter rather
-		// than cloning into it — but it is the weaker match, so a written
-		// transfer picks the consuming overload wherever both exist.
+		// design.md "Parameter semantics and ABI lowering": a `move` parameter is
+		// written `move(expr)` at the call site too. The reverse is not a mismatch —
+		// `append(move(row))` transfers into an ordinary value parameter rather than
+		// cloning into it — but it is the weaker match, so a written transfer picks
+		// the consuming overload wherever both exist.
 		if mode == .Move && !moved {
 			return RANK_NONE, INVALID_SYMBOL
 		}

@@ -903,7 +903,7 @@ bind_element_field :: proc(
 	// By default each iterated value is a copy (design.md), so a managed element
 	// would need a per-iteration clone and drop. Nothing places that cleanup, so
 	// the copy is rejected rather than leaked; the message names that limit
-	// rather than a milestone (m8-plan step 7).
+	// rather than a milestone.
 	if !borrowed && type_is_managed(k.c, type) {
 		errorf(
 			k.c,

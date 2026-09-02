@@ -187,7 +187,7 @@ exchanged :: proc() {
 	fmt.println(current.id);
 }
 
-// design.md "Forgotten owners": suppression belongs to the value, not to its
+// design.md "`unsafe.forget`": suppression belongs to the value, not to its
 // declaration. `held` is a deliberate leak and prints nothing; `released` is an
 // ordinary owner that writes its own `drop`; `automatic` is cleaned up at scope
 // exit like every other local.

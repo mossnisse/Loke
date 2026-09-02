@@ -1,4 +1,4 @@
-// Package discovery and the program-level fixed point (compiler-plan B5).
+// Package discovery and the program-level fixed point.
 //
 // A round alternates discovery, collection, and selection: import the edges
 // that are active now, collect what the newly active items declare, answer the

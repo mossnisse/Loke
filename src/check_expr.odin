@@ -465,8 +465,8 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value
 		v.type = sym.proc_type
-		// design.md "@(deprecated)": a warning at each use — a call or a value use
-		// both resolve the name here (m7-plan step 1).
+		// design.md "`@(deprecated=<string>)`": a warning at each use — a call or a
+		// value use both resolve the name here.
 		if sym.deprecated {
 			if sym.deprecated_message != "" {
 				warnf(k.c, v.span, "L0611", "`%s` is deprecated: %s", name, sym.deprecated_message)
@@ -898,7 +898,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 			// The comma form is reserved for a user-defined `operator([])` taking
 			// that many indices, and is a compile-time error on a built-in container
 			// (design.md "Indexing and slicing") — permanently, not pending a
-			// milestone (m7-plan step 6).
+			// milestone.
 			errorf(
 				k.c, v.span, "L0362",
 				"`%s` takes one index; `a[i, j]` is reserved for a user `operator([])` taking that many",
@@ -1155,7 +1155,7 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: b
 		return true
 	}
 	chosen, bound := resolve_operator(k, v.span, "[]", []Type_Id{operand}, args, among = candidates)
-	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
 		return true
 	}
@@ -1190,7 +1190,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	if len(slicers) == 0 {
 		// design.md "Indexing and slicing": slicing a user type is an
 		// `operator([:])` overload and nothing else, so its absence is a permanent
-		// answer rather than a pending milestone (m7-plan step 6).
+		// answer rather than a pending milestone.
 		errorf(
 			k.c, v.span, "L0362",
 			"`%s` cannot be sliced; a user type needs an `operator([:])` overload",
@@ -1212,7 +1212,7 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 		return
 	}
 	chosen, bound := resolve_operator(k, v.span, "[:]", []Type_Id{operand}, args, among = slicers)
-	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
 		return
 	}
@@ -1499,7 +1499,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		}
 		// An individual packed field is not addressable (design.md "@(packed)") —
 		// the base address of a packed value need not meet a field's alignment.
-		// The whole value's address stays valid (m7-plan step 2).
+		// The whole value's address stays valid.
 		if field, packed := packed_field_reached(k, v.operand); packed {
 			errorf(
 				k.c, v.op_span, "L0614",
@@ -1597,7 +1597,7 @@ check_user_unary :: proc(k: ^Checker, v: ^Expr_Unary, operand: Type_Id, expected
 	args := make([]Arg_Info, 1, k.c.semantic_allocator)
 	args[0] = arg_from_expr(k, v.operand)
 	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args, expected)
-	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
 		return true
 	}
@@ -1631,7 +1631,7 @@ check_user_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id, expec
 		negate = true
 	}
 	chosen, bound := resolve_operator(k, v.op_span, symbol, operands, args, negate ? TYPE_BOOL : expected)
-	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+	if chosen == INVALID_SYMBOL {
 		v.type = INVALID_TYPE
 		return true
 	}
@@ -2031,8 +2031,8 @@ builtin_operator_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) ->
 	}
 	#partial switch op {
 	case .Plus:
-		// design.md "Concatenation": two `string`/`string_view` operands in either
-		// order produce an owning `string`.
+		// design.md "Arithmetic operators": two `string`/`string_view` operands in
+		// either order produce an owning `string`.
 		#partial switch underlying_kind(c, type) {
 		case .String, .String_View:
 			return true
@@ -2288,10 +2288,10 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	set_call_result(v, info.result, info.result_inout)
 }
 
-// design.md "Parameter semantics": an `inout` result returns a place, so the
-// call is one — addressable and assignable. Every call spelling settles its
-// result here, because which one reached the procedure does not change what the
-// procedure returns.
+// design.md "Parameter semantics and ABI lowering": an `inout` result returns a
+// place, so the call is one — addressable and assignable. Every call spelling
+// settles its result here, because which one reached the procedure does not
+// change what the procedure returns.
 set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool) {
 	if result == INVALID_TYPE {
 		v.type = TYPE_VOID
@@ -2307,7 +2307,7 @@ set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool) {
 
 // design.md "@(require_results)": a bare call statement discards its results.
 // The policy comes from the selected declaration or, after overload selection,
-// from the procedure group the call went through (m7-plan step 1). An explicit
+// from the procedure group the call went through. An explicit
 // `_ = call()` is an assignment, not this statement, so it is never reached.
 report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 	call, is_call := expr.(^Expr_Call)
@@ -2347,7 +2347,8 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 }
 
 // The procedure group a callee names, or INVALID_SYMBOL. `pkg.group` names one
-// as plainly as `group` does.
+// as plainly as `group` does — `named_callee_symbol` already walks the package
+// alias and requires the member to be public.
 @(private = "file")
 callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	id := named_callee_symbol(k, callee)
@@ -2356,9 +2357,9 @@ callee_group :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 }
 
 // A `pkg.name` callee naming a public built-in of `pkg`, or INVALID_SYMBOL.
-@(private = "file")
 // Only the qualified spelling: `qualify_builtin_callee` rewrites a selector,
 // and a plain identifier is already the form the built-in checkers expect.
+@(private = "file")
 callee_package_builtin :: proc(k: ^Checker, callee: Expr) -> Symbol_Id {
 	if _, is_selector := callee.(^Expr_Selector); !is_selector {
 		return INVALID_SYMBOL
@@ -2836,7 +2837,7 @@ check_standard_alias :: proc(
 // A built-in takes positional value arguments and nothing else: it has no
 // declaration to name a parameter, and no `inout`/`move`/spread position to
 // fill. Both are permanent properties rather than an unimplemented milestone
-// (m7-plan step 6).
+//.
 reject_builtin_argument_shape :: proc(k: ^Checker, arg: Argument) {
 	if arg.name.text != "" {
 		errorf(k.c, arg.span, "L0371", "a built-in takes positional arguments only")
@@ -3429,7 +3430,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.type = result_type(k, container, TYPE_ALLOCATOR_ERROR)
 }
 
-// design.md "unsafe.transmute procedure": `unsafe.transmute(T, value)` reads the
+// design.md "`unsafe.transmute`": `unsafe.transmute(T, value)` reads the
 // storage of `value` as a `T`. It is a `core:unsafe` built-in rather than a
 // predeclared one because reinterpreting bits is not a universally valid
 // conversion — only the equal size and the trivial lifecycle are checked, and
@@ -3699,12 +3700,13 @@ check_message_arg :: proc(k: ^Checker, e: Expr) {
 	}
 }
 
-// One written argument bound against one parameter, with the `@(implicit)`
-// path for an untyped constant no built-in conversion reaches. Returns the
+// One written argument bound against one parameter, with the `@(implicit)` path
+// for an untyped constant no built-in conversion reaches. Returns the
 // expression to bind — the written one unless a conversion wrapped it.
-// design.md "Parameter semantics": `inout` is written at both ends, and the
-// argument is a place because the callee writes through it. Shared, so a call
-// with a variadic pack enforces the same contract as one without.
+// design.md "Parameter semantics and ABI lowering": `inout` is written at both
+// ends, and the argument is a place because the callee writes through it.
+// Shared, so a call with a variadic pack enforces the same contract as one
+// without.
 bind_written_argument :: proc(
 	k: ^Checker, arg: Argument, target: Type_Id, expected: Param_Mode, prechecked := false,
 ) -> (Expr, bool) {
@@ -3775,7 +3777,7 @@ check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id, inout_argume
 bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration: Symbol_Id) -> bool {
 	count := len(info.parameters)
 	// design.md "`@(c_vararg)`": a foreign C-variadic call passes each concrete
-	// argument after the fixed ones, with no slice built (m7-plan step 4).
+	// argument after the fixed ones, with no slice built.
 	if info.c_vararg {
 		return bind_c_vararg_arguments(k, v, info)
 	}
@@ -3795,7 +3797,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	declared := symbol_of(k.c, declaration)
 	ok := true
 	named := false
-	// design.md "Argument evaluation": a written argument runs where it is
+	// design.md "Evaluation order": a written argument runs where it is
 	// written, whatever slot its name selects. The order is recorded here, where
 	// the slot for each source element is already known, so neither the backend
 	// nor the evaluator has to rediscover it.
@@ -3805,7 +3807,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		if arg.mode == .Spread {
 			// design.md "Variadic parameters": a spread fills a variadic pack, and
 			// this callee has none — a permanent answer, not a pending milestone
-			// (m7-plan step 6).
+			//.
 			errorf(k.c, arg.span, "L0371", "`..` needs a variadic parameter to spread into")
 			ok = false
 			continue
@@ -3889,8 +3891,8 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 
 // design.md "`@(c_vararg)`": the fixed parameters bind normally; every argument
 // after them is a concrete C variadic — inferred, required foreign-ABI-safe
-// after the default promotions, and never spread. `v.bound` keeps all of them so
-// the backend emits one true varargs call (m7-plan step 4).
+// after the default promotions, and never spread. `v.bound` keeps all of them
+// so the backend emits one true varargs call.
 @(private = "file")
 bind_c_vararg_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info) -> bool {
 	fixed := len(info.parameters)
@@ -4042,7 +4044,7 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, 
 check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	v.value_category = .Value
 	// design.md: `---` is foreign-declaration syntax, so a procedure *value* never
-	// ends with one — it has nothing to call (m7-plan step 6).
+	// ends with one — it has nothing to call.
 	if v.bodiless {
 		errorf(
 			k.c, v.span, "L0630",
@@ -4098,7 +4100,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 			// `resolve_type_syntax` stays silent so it can be used as a probe; the
 			// literal's written type is a position that requires one, so it says
 			// what is missing here — about the element, which is the failing part
-			// of `[?]T` (m7-plan step 6).
+			// of `[?]T`.
 			report_unresolved_type(k, array.elem)
 			v.type = INVALID_TYPE
 			return
@@ -4111,7 +4113,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		if target == INVALID_TYPE {
 			// `resolve_type_syntax` stays silent so it can be used as a probe; the
 			// literal's written type is a position that requires one, so it says
-			// what is missing here (m7-plan step 6).
+			// what is missing here.
 			report_unresolved_type(k, v.type_expr)
 			v.type = INVALID_TYPE
 			return
@@ -4307,10 +4309,10 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 }
 
 // design.md's array, slice, and dynamic-array literals list their elements
-// positionally; only a struct literal names fields and only a map literal writes
-// `key = value`. A keyed element in a sequence literal is therefore a permanent
-// answer rather than an unimplemented milestone, and it is reported once for the
-// whole literal instead of once per element (m7-plan step 6).
+// positionally; only a struct literal names fields and only a map literal
+// writes `key = value`. A keyed element in a sequence literal is therefore a
+// permanent answer rather than an unimplemented milestone, and it is reported
+// once for the whole literal instead of once per element.
 @(private = "file")
 reject_keyed_element :: proc(k: ^Checker, element: Element, target: Type_Id) {
 	errorf(

@@ -98,7 +98,8 @@ declare_impl_member :: proc(
 		if name_id == INVALID_IDENTIFIER {
 			name_id = intern_identifier(k.c, name.text)
 		}
-		if member_named(k, existing, name_id) != INVALID_SYMBOL || member_named(k, out[:], name_id) != INVALID_SYMBOL {
+		if member_named(k.c, existing, name_id) != INVALID_SYMBOL ||
+		   member_named(k.c, out[:], name_id) != INVALID_SYMBOL {
 			errorf(
 				k.c,
 				name.span,
@@ -183,10 +184,11 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 	}
 }
 
-@(private = "file")
-member_named :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
+// The one member-by-name loop. Takes the `^Compiler` rather than the `^Checker`
+// so `src/generic.odin` reaches the same one from an instance's own package.
+member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
 	for member in members {
-		if sym := symbol_of(k.c, member); sym != nil && sym.name == name {
+		if sym := symbol_of(c, member); sym != nil && sym.name == name {
 			return member
 		}
 	}
@@ -290,10 +292,12 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 	return k.lookup_pkg == INVALID_PACKAGE ? k.pkg : k.lookup_pkg
 }
 
-// Every member of `type` named `name` that this package may use: the type's own
-// inherent members, plus the extensions the lookup package declares. Groups are
-// expanded, so the overload engine sees one flat candidate set.
-member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+// Everything the compiler contributes to `type` on demand, so a lookup sees
+// exactly what a hand-written `impl` would have declared. One list: a member
+// set contributed for `member_candidates` but not for `find_member` would make
+// the same name resolve differently depending on which asked.
+@(private = "file")
+ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
 	// Built-in query and hashing operations are real receiver members. The
 	// standard free spellings select these same symbols rather than maintaining a
 	// second overload group.
@@ -311,6 +315,13 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	// And a local region provider's constructor and `allocator`, for the same
 	// reason: it is a compiler-owned type whose members no source file declares.
 	ensure_provider_members(k, type)
+}
+
+// Every member of `type` named `name` that this package may use: the type's own
+// inherent members, plus the extensions the lookup package declares. Groups are
+// expanded, so the overload engine sees one flat candidate set.
+member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+	ensure_contributed_members(k, type, name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := type_of(k.c, type); info != nil {
 		expand_visible_members(k, type, info.members, name, &out)
@@ -379,11 +390,7 @@ expand_visible_members :: proc(k: ^Checker, subject: Type_Id, members: []Symbol_
 // One named member, without expanding a group: what an associated constant, an
 // associated type, or a directly named procedure resolves to.
 find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_Id {
-	ensure_standard_customization_members(k, type)
-	ensure_iteration_members(k, type)
-	ensure_lifecycle_members(k, type, name)
-	ensure_container_members(k, type)
-	ensure_provider_members(k, type)
+	ensure_contributed_members(k, type, name)
 	if info := type_of(k.c, type); info != nil {
 		if found := visible_member_named(k, info.members, name); found != INVALID_SYMBOL {
 			return found
@@ -399,7 +406,7 @@ find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_I
 
 @(private = "file")
 visible_member_named :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
-	member := member_named(k, members, name)
+	member := member_named(k.c, members, name)
 	sym := symbol_of(k.c, member)
 	return member_is_visible(k, sym) ? member : INVALID_SYMBOL
 }

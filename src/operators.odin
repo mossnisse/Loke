@@ -289,9 +289,10 @@ builtin_unary_defined :: proc(k: ^Checker, op: Token_Kind, operand: Type_Id) -> 
 
 // ------------------------------------------------------------- resolution --
 
-// Resolves one operator expression against its candidate set and binds the
-// operands. Returns the chosen overload, or INVALID_SYMBOL when there are no
-// candidates at all — letting the built-in path report instead.
+// Resolves one operator expression against its candidate set, binds the
+// operands, and checks their modes. Returns INVALID_SYMBOL when there are no
+// candidates at all — letting the built-in path report instead — and also when
+// resolution, binding, or an `inout` operand failed, having reported that.
 resolve_operator :: proc(
 	k: ^Checker,
 	span: Span,
@@ -313,7 +314,7 @@ resolve_operator :: proc(
 		return INVALID_SYMBOL, nil
 	}
 	bound, ok := bind_operator_operands(k, cand, args)
-	if !ok {
+	if !ok || !check_operator_modes(k, cand.symbol, bound) {
 		return INVALID_SYMBOL, nil
 	}
 	return cand.symbol, bound
@@ -375,6 +376,7 @@ bind_operator_operands :: proc(k: ^Checker, cand: Candidate, args: []Arg_Info) -
 }
 
 // An `inout` parameter needs a mutable place, whichever operand fills it.
+@(private = "file")
 check_operator_modes :: proc(k: ^Checker, symbol_id: Symbol_Id, bound: []Expr) -> bool {
 	sym := symbol_of(k.c, symbol_id)
 	info := sym == nil ? nil : type_of(k.c, sym.proc_type)

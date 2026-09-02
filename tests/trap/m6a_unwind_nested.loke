@@ -1,9 +1,10 @@
 package main; import "core:fmt";
 
-// design.md "What the unwind runs": a panic runs each unwound frame's pending
-// scope-exit actions — user `defer`s and the implicit `drop` of every live
-// managed owner — newest frame first, and in reverse registration order within
-// each frame, exactly as a `return` leaving that frame would.
+// design.md "What the unwind runs, and what it does not": a panic runs each
+// unwound frame's pending scope-exit actions — user `defer`s and the implicit
+// `drop` of every live managed owner — newest frame first, and in reverse
+// registration order within each frame, exactly as a `return` leaving that frame
+// would.
 //
 // The paired `m6a_abort_nested` case is the same program under `-panic=abort`,
 // which prints none of this.

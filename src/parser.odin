@@ -1,4 +1,4 @@
-// Parser (compiler-plan B4): recursive descent over grammar.md.
+// Parser: recursive descent over grammar.md.
 //
 // M1 slice 1 covers the whole expression and type grammar. Declarations,
 // statements and top-level items keep their M0 shape until slices 2-4; the
@@ -36,7 +36,7 @@ Parser :: struct {
 	no_composite:   bool,
 	// Set for a constant's value, where a written type *is* the value:
 	// `My_Int :: int` and `Meters :: distinct int` are type aliases
-	// (design.md "Advanced types"). One `parse_postfix` consumes it, so it does
+	// (design.md "Type alias"). One `parse_postfix` consumes it, so it does
 	// not leak into the operands of a larger expression.
 	type_value:     bool,
 	// Panic mode: set when a construct is abandoned, cleared at the next
@@ -593,7 +593,7 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 		path, has_path := expect(p, .String, "L0250", "the library path, as a string literal")
 		if has_path {
 			// The token text keeps its quotes; a library path has no escapes worth
-			// decoding, so slicing them off is the whole unquote (m7-plan step 4).
+			// decoding, so slicing them off is the whole unquote.
 			raw := text_of(p, path)
 			item.path = len(raw) >= 2 ? raw[1:len(raw) - 1] : raw
 		}
@@ -2608,7 +2608,7 @@ parse_proc :: proc(p: ^Parser) -> Expr {
 	convention := ""
 	if at(p, .String) {
 		// The token text includes its quotes; a calling convention is a bare word
-		// with no escapes, so slicing them off is the whole unquote (m7-plan step 3).
+		// with no escapes, so slicing them off is the whole unquote.
 		raw := text_of(p, advance(p))
 		convention = len(raw) >= 2 ? raw[1:len(raw) - 1] : raw
 	}

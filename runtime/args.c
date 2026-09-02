@@ -1,4 +1,4 @@
-/* Process arguments (design.md "Program entry and exit", m7-plan step 5).
+/* Process arguments (design.md "Program entry and exit").
  *
  * Windows hands `wmain` a UTF-16 argument vector, and Loke text is UTF-8 by
  * invariant. The conversion happens once, here, before the initial thread

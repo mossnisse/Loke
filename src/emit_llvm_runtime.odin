@@ -56,9 +56,9 @@ emit_runtime_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_abort(ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_attach()")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_thread_detach()")
-	// design.md "Program entry and exit" (m7-plan step 5): the generated `wmain`
-	// converts the argument vector once; `core:os` reads it through its own foreign
-	// block, so only the initializer is declared here.
+	// design.md "Program entry and exit": the generated `wmain` converts the
+	// argument vector once; `core:os` reads it through its own foreign block, so
+	// only the initializer is declared here.
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_args_init(i32, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_push(ptr, ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_frame_pop(ptr)")
@@ -244,7 +244,7 @@ emit_global :: proc(e: ^Emitter, pkg: ^Package, d: ^Decl) {
 			continue
 		}
 		// design.md "@(export)": an exported global emits under its written or
-		// `@(link_name)` symbol, not the mangled one (m7-plan step 5).
+		// `@(link_name)` symbol, not the mangled one.
 		name := sym.exported \
 			? fmt.aprintf("@%s", sym.link_name) \
 			: llvm_global_name(pkg, identifier_text(e.c, sym.name))

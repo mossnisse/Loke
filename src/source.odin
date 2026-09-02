@@ -1,4 +1,4 @@
-// Source manager and diagnostics engine (compiler-plan B2).
+// Source manager and diagnostics engine.
 //
 // Every later phase reports through here; every AST node carries a Span back
 // to it. Diagnostics accumulate — nothing in the compiler aborts on the first
@@ -185,7 +185,7 @@ Compiler :: struct {
 	panic_unwind:        bool,
 	// design.md "Build configuration": the whole-program optimization and build
 	// mode the driver selected. The `LOKE_OPTIMIZATION_MODE` and `LOKE_BUILD_MODE`
-	// predeclared constants take their value from these (m7-plan step 1).
+	// predeclared constants take their value from these.
 	opt_mode:            Opt_Mode,
 	build_mode:          Build_Mode,
 	// The build-configuration enum types, synthesized once and shared by the

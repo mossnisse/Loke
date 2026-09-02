@@ -1,4 +1,4 @@
-// design.md "Argument evaluation": a written argument runs where it is written,
+// design.md "Evaluation order": a written argument runs where it is written,
 // whatever slot its name selects; an omitted default runs afterwards, in
 // parameter order. Only the operand list the callee receives is
 // parameter-ordered. The same schedule holds at compile time.

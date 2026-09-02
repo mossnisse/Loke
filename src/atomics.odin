@@ -1,5 +1,4 @@
-// Atomic intrinsics (design.md "Concurrency and the memory model", m8-plan
-// step 4).
+// Atomic intrinsics (design.md "Concurrency and the memory model").
 //
 // `Atomic(T)` is a `core:sync` wrapper over these, which is design.md's own
 // split: the library owns the surface, and the compiler owns the one thing a
@@ -11,17 +10,6 @@
 // wrapper's body, which is why the public wrappers take their ordering through
 // `$` parameters and forward it here unchanged.
 package lokec
-
-// Every intrinsic contributed to `core:sync`, asked once rather than matched in
-// four places.
-atomic_builtin_kind :: proc(kind: Builtin_Kind) -> bool {
-	#partial switch kind {
-	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
-	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
-		return true
-	}
-	return false
-}
 
 // The ordering enum, declared as ordinary source in `base:runtime` and found by
 // name. Cached because the lookup walks the package list and every atomic

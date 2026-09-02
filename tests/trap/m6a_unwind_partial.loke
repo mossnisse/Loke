@@ -1,9 +1,9 @@
 package main; import "core:fmt";
 
-// design.md "What the unwind runs": scope-exit cleanup runs for every *fully
-// initialized* managed owner. A declaration whose initializer panics never
-// completed, so it is not dropped; the declarations before it did complete, so
-// they are.
+// design.md "What the unwind runs, and what it does not": scope-exit cleanup
+// runs for every *fully initialized* managed owner. A declaration whose
+// initializer panics never completed, so it is not dropped; the declarations
+// before it did complete, so they are.
 //
 // The registration flag is what makes that distinction runtime-visible: it is
 // set only after the initializer has produced a value.

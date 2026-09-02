@@ -1,9 +1,9 @@
 package main; import "core:fmt";
 
-// design.md "What the unwind runs": file-scope, `static`, and `thread_local`
-// values are *not* dropped during panic termination. Managed TLS is dropped
-// only on normal thread return — that is, by the runtime's thread detach, which
-// a panicking process never reaches.
+// design.md "What the unwind runs, and what it does not": file-scope, `static`,
+// and `thread_local` values are *not* dropped during panic termination. Managed
+// TLS is dropped only on normal thread return — that is, by the runtime's thread
+// detach, which a panicking process never reaches.
 //
 // So the frame's own managed local is dropped here and the TLS value is not.
 

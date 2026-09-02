@@ -2,10 +2,10 @@ package main; import "core:fmt";
 
 // An owned temporary handed to a procedure is the caller's to clean up.
 //
-// design.md "Parameter semantics": an ordinary `value: T` parameter is a
-// non-owning borrow, so the callee never drops one. Every hook here prints, so
-// a missing cleanup is a line that is not in the expected output and a doubled
-// one is a line that appears twice.
+// design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
+// parameter is a non-owning borrow, so the callee never drops one. Every hook
+// here prints, so a missing cleanup is a line that is not in the expected output
+// and a doubled one is a line that appears twice.
 
 Res :: struct { id: int }
 

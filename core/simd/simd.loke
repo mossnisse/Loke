@@ -1,4 +1,4 @@
-// `core:simd` (design.md "SIMD vectors", m8-plan step 6).
+// `core:simd` (design.md "SIMD vectors").
 //
 // The operators on `Simd(T, N)` are the language's, and they cover everything
 // that is lane-wise. What is left is everything that crosses lanes — a

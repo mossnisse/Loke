@@ -1,6 +1,6 @@
 package lokec
 
-// The foreign system (design.md "Foreign system", m7-plan step 4): `foreign
+// The foreign system (design.md "Foreign system"): `foreign
 // import` of a library or assembly file, and `foreign <lib> { ... }` blocks of
 // bodiless procedures and globals. A block's members are collected as ordinary
 // package symbols in the same top-level pass as declarations, so only
@@ -79,12 +79,12 @@ check_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
 	for member in block.members {
 		if _, recovered := member.(^Item_Error); recovered {
 			// The parser already said what it could not read here; L0622 below would
-			// be a second diagnostic for the same span (m7-plan step 6).
+			// be a second diagnostic for the same span.
 			continue
 		}
 		// `parse_member_list` produces a `^Decl` or the recovery node above and
 		// nothing else, so this is an invariant guard rather than a reachable
-		// diagnostic (m7-plan step 6, "Audit").
+		// diagnostic.
 		d, ok := member.(^Decl)
 		if !ok {
 			errorf(k.c, item_span(member), "L0622", "a foreign block holds procedure and variable declarations only")
@@ -149,7 +149,7 @@ resolve_foreign_global :: proc(k: ^Checker, d: ^Decl) {
 // design.md "`@(c_vararg)`": the C-variadic marker is valid only on the final
 // parameter of a foreign declaration, written `..any_view`. The parameter
 // never becomes a real slice; the call site passes the concrete arguments
-// (m7-plan step 4).
+//.
 check_c_vararg_param :: proc(k: ^Checker, is_foreign: bool, literal: ^Expr_Proc, position: int, parameter: Parameter) {
 	if !is_foreign {
 		errorf(k.c, parameter.span, "L0627", "`@(c_vararg)` is only allowed on a foreign procedure parameter")

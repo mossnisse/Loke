@@ -1,6 +1,6 @@
 package lokec
 
-// The foreign ABI surface (m7-plan step 3). Two things live here:
+// The foreign ABI surface. Two things live here:
 //
 //   - Calling-convention acceptance: `""` (default `loke`), `"c"`, and
 //     `"stdcall"` are the only spellings a signature may carry, every other
@@ -42,7 +42,7 @@ validate_convention :: proc(k: ^Checker, convention: string, span: Span) -> bool
 // parameter and result of a foreign-convention signature must be ABI-safe (a
 // `move` parameter and more than one result have no C representation). An
 // `inout` parameter lowers to a pointer, so its pointee need not be ABI-safe
-// itself (m7-plan step 3).
+// itself.
 check_foreign_signature :: proc(
 	k: ^Checker,
 	params: []Type_Id,
@@ -93,7 +93,7 @@ foreign_abi_safe :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok:
 }
 
 // The Windows x64 classification of one by-value foreign parameter or result
-// (m7-plan decision "Win64 classification"), confirmed against clang's own IR.
+//, confirmed against clang's own IR.
 Abi_Pass :: enum {
 	Direct,   // a scalar or pointer, passed as its own LLVM type
 	Bool_I1,  // a direct C `_Bool`: `i1 zeroext` in the signature, one byte stored

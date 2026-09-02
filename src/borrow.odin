@@ -284,7 +284,7 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	// design.md "The allocator selects the location of backing storage": an arena
+	// design.md "Allocators": an arena
 	// laid over a caller's fixed buffer holds that buffer for as long as the arena
 	// lives, so a provider is a borrow carrier like any other.
 	// A provider-backed one borrows nothing and simply carries no loan.

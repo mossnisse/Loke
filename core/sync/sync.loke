@@ -1,5 +1,5 @@
 // `Atomic(T)`, `fence`, and `once` (design.md "Concurrency and the memory
-// model", m8-plan step 4).
+// model").
 //
 // design.md calls `Atomic(T)` a "`core:sync` wrapper over compiler atomic
 // intrinsics", so the split is specified rather than chosen: the compiler owns

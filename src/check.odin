@@ -1,4 +1,4 @@
-// Name resolution and type checking (compiler-plan B6/B8), plus the constant
+// Name resolution and type checking, plus the constant
 // folding that stands in for the compile-time engine until M3.
 //
 // Owns declarations, statements, signatures, and the type syntax that names a
@@ -98,7 +98,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 			case ^Item_Foreign_Block:
 				// design.md "Foreign system": a block's members are collected as
 				// ordinary symbols here, so nothing downstream needs a foreign path
-				// for name resolution or overloads (m7-plan step 4).
+				// for name resolution or overloads.
 				declare_foreign_block(k, v)
 			}
 		}
@@ -185,7 +185,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	// design.md "Attributes": one validation pass over the settled item view, run
 	// after signatures so a procedure group's symbol kind is known, so an unknown,
 	// misplaced, duplicated, or badly shaped attribute is one exact diagnostic
-	// (m7-plan step 1).
+	//.
 	validate_attributes(k, pkg)
 
 	// Phase 2c: a struct or array that contains itself by value has no finite
@@ -211,7 +211,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 				check_impl_block(k, v)
 			case ^Item_Import, ^Item_Foreign_Import, ^Item_Foreign_Block, ^Item_Error:
 				// Foreign imports carry only a link path; foreign blocks were checked
-				// in phase 2b. Neither has a Loke body to check here (m7-plan step 4).
+				// in phase 2b. Neither has a Loke body to check here.
 			case ^Item_Static_Assert:
 				// Checked in phase 3b, once every declaration in the package has been.
 			case:
@@ -316,7 +316,7 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	}
 }
 
-// design.md "@(export)" (m7-plan step 5): whole-program pass over every settled
+// design.md "@(export)": whole-program pass over every settled
 // declaration. An exported symbol emits under its written name (or
 // `@(link_name)`); two claiming the same name is a link-time failure with no
 // source location, so the compiler names both here. An exported procedure needs
@@ -726,8 +726,8 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	if info := type_of(k.c, type); info != nil {
 		info.fields = members[:]
 		// design.md "Record layout attributes": `@(packed)` removes inter-field
-		// padding and `@(align=N)` raises the whole record's alignment (m7-plan
-		// step 2). Both are read here so the cached layout and the emitter agree.
+		// padding and `@(align=N)` raises the whole record's alignment. Both are
+		// read here so the cached layout and the emitter agree.
 		info.packed = record_is_packed(value)
 		info.written_align = record_written_alignment(k, value)
 	}
@@ -947,6 +947,24 @@ mark_template_receiver :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
+// `@(allocator_reset)` only means anything on an `Allocator`. A declaration's
+// signature and a written `proc` type resolve their parameters separately, so
+// both ask here rather than keeping two copies of the rule and its message.
+@(private = "file")
+allocator_reset_ok :: proc(k: ^Checker, marked: bool, type: Type_Id, span: Span) -> bool {
+	if !marked || type_underlying(k.c, type) == TYPE_ALLOCATOR {
+		return marked
+	}
+	errorf(
+		k.c,
+		span,
+		"L0539",
+		"`@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `%s`",
+		type_name(k.c, type),
+	)
+	return false
+}
+
 resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol_Id) {
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || literal.signature == nil {
@@ -974,7 +992,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	for &parameter, position in literal.signature.params {
 		// design.md "`@(c_vararg)`": the final `..any_view` of a foreign
 		// declaration is a checker-only C variadic, not a real slice parameter, so
-		// it never joins the lowered signature (m7-plan step 4).
+		// it never joins the lowered signature.
 		if has_attribute(parameter.attributes, "c_vararg") {
 			check_c_vararg_param(k, is_foreign, literal, position, parameter)
 			saw_c_vararg = true
@@ -1040,16 +1058,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			)
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
 				!(split && name_index == 0)
-			if resets && type_underlying(k.c, name_type) != TYPE_ALLOCATOR {
-				errorf(
-					k.c,
-					parameter.span,
-					"L0539",
-					"`@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `%s`",
-					type_name(k.c, name_type),
-				)
-				resets = false
-			}
+			resets = allocator_reset_ok(k, resets, name_type, parameter.span)
 			// design.md "Variadic parameters": `nums: ..int` is one read-only `[]int`
 			// in the callee — the same as a written slice parameter — which is what
 			// makes `foreach (n in nums)` ordinary slice iteration and shares its ABI.
@@ -1065,8 +1074,8 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				bound.type = name_type
 				bound.index = u32(len(params))
 				bound.mode = mode
-				// A value parameter is immutable addressable storage; an `inout`
-				// parameter is a mutable alias (design.md "Parameter semantics").
+				// A value parameter is immutable addressable storage; an `inout` parameter
+				// is a mutable alias (design.md "Parameter semantics and ABI lowering").
 				bound.immutable = mode == .Value
 				bound.owner_proc = literal
 				bound.allocator_reset = resets
@@ -1510,17 +1519,8 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			}
 			for _ in 0 ..< count {
 				resolved := resolve_type_syntax(k, parameter.type)
-				if marked && type_underlying(k.c, resolved) != TYPE_ALLOCATOR {
-					errorf(
-						k.c,
-						parameter.span,
-						"L0539",
-						"`@(allocator_reset)` marks an `Allocator` parameter whose region a call may end, found `%s`",
-						type_name(k.c, resolved),
-					)
-					marked = false
-				}
-				// design.md "Procedure types": variadic shape is part of the type, so
+				marked = allocator_reset_ok(k, marked, resolved, parameter.span)
+				// design.md "Procedure type": variadic shape is part of the type, so
 				// the parameter is the same read-only slice it is in a declaration.
 				if parameter.mode == .Variadic && resolved != INVALID_TYPE {
 					resolved = slice_of(k.c, resolved, mutable = false)
@@ -1642,10 +1642,10 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 // M1 parses the whole grammar; the checker compiles a subset, and each
 // milestone retired part of the difference. After M7 the difference is empty:
 // every construct is compiled or has its own diagnostic, so no call site below
-// is reachable from source (m7-plan step 6, "Audit"). M8 closed the last of
+// is reachable from source. M8 closed the last of
 // them: `Simd(T, N)` is a real type now rather than a reserved name, so the
 // message names a compiler defect rather than a milestone that will never
-// arrive for it (m8-plan step 7).
+// arrive for it.
 //
 // The calls stay as invariant guards, not deleted: each sits on a dispatch arm
 // whose union or token set is exhaustively handled above it, so reaching one
@@ -1752,7 +1752,7 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	}
 	// `Name(args)` in type position: a generic application whose head named
 	// nothing. The head is what is unknown, so it gets the same answer a bare name
-	// would rather than the compiler-defect guard (m7-plan step 6).
+	// would rather than the compiler-defect guard.
 	if call, is_call := syntax.(^Expr_Call); is_call {
 		if head, head_is_ident := call.callee.(^Expr_Ident); head_is_ident {
 			errorf(k.c, head.span, "L0306", "unknown type `%s`", head.name)
@@ -1975,7 +1975,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		if declared != INVALID_TYPE {
 			check_value_expr_annotated(k, value, declared)
 		} else if d.kind == .Const && type_is_untyped(k.c, type) {
-			// An untyped constant stays untyped (design.md "Untyped types"): it
+			// An untyped constant stays untyped (design.md "Unfixed constants"): it
 			// converts at each use to whatever type can represent it, which is
 			// how `MAX :: 340282366920938463463374607431768211455` can name a
 			// value no default type could hold.
@@ -2065,7 +2065,7 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	signature := literal.signature
 	// A foreign declaration is bodiless by design and is checked by
 	// `check_foreign_block`; reaching here (e.g. a compile-time path forcing the
-	// callee's declaration) must not re-gate it (m7-plan step 4).
+	// callee's declaration) must not re-gate it.
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL {
 		if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
 			return
@@ -2074,7 +2074,7 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	// `---` isn't a value or an initializer; it's declaration syntax for a
 	// foreign procedure with no Loke body (design.md). A foreign block's members
 	// returned above, so a bodiless declaration reaching here is outside one — a
-	// permanent error rather than an unfinished milestone (m7-plan step 6).
+	// permanent error rather than an unfinished milestone.
 	if literal.bodiless {
 		errorf(
 			k.c, literal.span, "L0630",
@@ -2433,7 +2433,7 @@ check_place_setter :: proc(k: ^Checker, s: ^Stmt_Assign, target: ^Expr_Index, va
 		return true
 	}
 	chosen, bound := resolve_operator(k, s.op_span, "[]=", operands, args, among = setters)
-	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+	if chosen == INVALID_SYMBOL {
 		return true
 	}
 	s.place_setter = chosen
@@ -2523,7 +2523,7 @@ check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: 
 	direct_args[1] = arg_from_expr(k, s.rhs[0])
 	if operator_viable(k, compound, operands, direct_args) {
 		chosen, bound := resolve_operator(k, s.op_span, compound, operands, direct_args)
-		if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+		if chosen == INVALID_SYMBOL {
 			return true
 		}
 		s.lhs[0], s.rhs[0] = bound[0], bound[1]
@@ -2547,7 +2547,7 @@ check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: 
 		return false
 	}
 	chosen, bound := resolve_operator(k, s.op_span, binary, operands, args, type)
-	if chosen == INVALID_SYMBOL || !check_operator_modes(k, chosen, bound) {
+	if chosen == INVALID_SYMBOL {
 		return true
 	}
 	result := symbol_of(k.c, chosen)

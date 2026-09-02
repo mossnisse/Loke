@@ -2,7 +2,7 @@ package main; import "core:fmt"; import "core:unsafe";
 
 // `unsafe.forget`.
 //
-// design.md "Forgotten owners": forgetting a value consumes it, marks it dead,
+// design.md "`unsafe.forget`": forgetting a value consumes it, marks it dead,
 // and runs no cleanup hook — for it or for anything it owns transitively. Every
 // hook here prints, so a suppressed cleanup is observable as a line that is not
 // in the expected output.

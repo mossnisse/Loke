@@ -1,5 +1,5 @@
 // Lowering the atomic intrinsics (design.md "Concurrency and the memory
-// model", m8-plan step 4).
+// model").
 //
 // Two paths, chosen by width. A width the target has a native instruction for
 // becomes `load atomic`, `store atomic`, `atomicrmw`, or `cmpxchg` with the

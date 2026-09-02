@@ -14,7 +14,7 @@ foreign_llvm_name :: proc(sym: ^Symbol) -> string {
 }
 
 // One `declare` per foreign procedure and one `external global` per foreign
-// variable, deduplicated by symbol name (m7-plan step 4). The classified
+// variable, deduplicated by symbol name. The classified
 // signature matches the C library's definition under the Windows x64 ABI.
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
@@ -190,7 +190,7 @@ define_struct :: proc(e: ^Emitter, type: Type_Id, emitted: ^map[Type_Id]bool) {
 // The LLVM aggregate body of a struct: a natural record keeps its plain
 // `{ ... }` spelling; a `@(packed)`/`@(align=N)` record is laid out byte-exact
 // so LLVM's size, alignment, and field offsets match the checker's cached
-// ones (m7-plan step 2, decision "Attributed LLVM layout"). Field GEP indices
+// ones. Field GEP indices
 // equal the logical field index in every form, so field walks are unchanged.
 @(private = "file")
 struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
@@ -223,9 +223,9 @@ struct_body :: proc(e: ^Emitter, type: Type_Id, info_in: ^Type_Info) -> string {
 		// non-packed body neither re-pads nor drops the alignment, and a trailing
 		// zero-length aligned member forces the record's alignment and size. Byte
 		// members make whole-value `extractvalue` ill-typed, so equality reads each
-		// field through its address instead (`emit_byte_member_struct_equal`,
-		// m7-plan step 6); GEP indices stay unchanged, so ordinary access,
-		// reflection, and formatting are unaffected.
+		// field through its address instead (`emit_byte_member_struct_equal`).
+		// GEP indices stay unchanged, so ordinary access, reflection, and
+		// formatting are unaffected.
 		strings.write_string(&b, "{")
 		for field, index in info.fields {
 			symbol := symbol_of(e.c, field)
@@ -578,9 +578,9 @@ proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 	return info == nil ? "" : info.convention
 }
 
-// The `define` signature of a foreign-convention procedure under the Windows x64
-// classification (m7-plan step 3). A result larger than one register becomes a
-// hidden leading `sret` pointer and a `void` return; `e.abi_sret` records it.
+// The `define` signature of a foreign-convention procedure under the Windows
+// x64 classification. A result larger than one register becomes a hidden
+// leading `sret` pointer and a `void` return; `e.abi_sret` records it.
 @(private)
 emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) {
 	ret := "void"
@@ -671,7 +671,7 @@ emit_foreign_param_slot :: proc(e: ^Emitter, parameter: Type_Id, index: int) -> 
 	return arg
 }
 
-// The classified `ret` of a foreign-convention procedure (m7-plan step 3): a
+// The classified `ret` of a foreign-convention procedure: a
 // register-sized aggregate result is read back byte-exact as an integer, a
 // larger one has already been written through `sret`.
 @(private)

@@ -1,10 +1,10 @@
 package main; import "core:fmt";
 
-// design.md "Parameter semantics": "Both non-default modes are required at the
-// call site, not just at the declaration." Method syntax supplies an `inout`
-// receiver's marker, because that borrow ends with the call. A consuming
-// receiver leaves the source dead, so it is written `move(value).method()` like
-// every other transfer.
+// design.md "Parameter semantics and ABI lowering": "Both non-default modes are
+// required at the call site, not just at the declaration." Method syntax
+// supplies an `inout` receiver's marker, because that borrow ends with the
+// call. A consuming receiver leaves the source dead, so it is written
+// `move(value).method()` like every other transfer.
 
 Res :: struct { id: int }
 

@@ -66,10 +66,10 @@ check_extract_of :: proc(k: ^Checker, v: ^Expr_Checked_Extract, operand: Type_Id
 
 // ---------------------------------------------------------- optional-ok --
 
-// design.md "Failure protocol": `or_else` and `or_return` accept any two-variant
-// union whose declaration designates one variant as the failure. No
-// declaration is privileged by name, so `Parse :: union @(failure=bad) {...}`
-// works exactly like `Result`.
+// design.md "The failure protocol and `@(failure=)`": `or_else` and `or_return`
+// accept any two-variant union whose declaration designates one variant as the
+// failure. No declaration is privileged by name, so `Parse :: union
+// @(failure=bad) {...}` works exactly like `Result`.
 Fallible :: struct {
 	union_type: Type_Id,
 	info:       ^Type_Info,
@@ -282,7 +282,7 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 
 // ---------------------------------------------------------- type switch --
 
-// design.md "Type switch statement": the cases are types, and for a union the
+// design.md "switch statement": the cases are types, and for a union the
 // only case types allowed are its own variants.
 check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	outer := k.scope

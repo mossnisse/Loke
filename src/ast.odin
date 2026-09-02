@@ -1,4 +1,4 @@
-// AST (compiler-plan B4). Every node carries a Span; the checker annotates
+// AST. Every node carries a Span; the checker annotates
 // these same nodes in place — the "typed AST" of decision A1.
 //
 // Types and expressions share one node domain: the grammar refuses to
@@ -237,7 +237,7 @@ Expr_Call :: struct {
 	// Arguments in parameter order after names and defaults are resolved. This
 	// is what the callee receives; `args` stays the written syntax.
 	bound:      []Expr,
-	// design.md "Argument evaluation": parameter slots in *evaluation* order —
+	// design.md "Evaluation order": parameter slots in *evaluation* order —
 	// every supplied argument in `args` source order, then every omitted
 	// default in parameter order. Nil when the two orders coincide (every call
 	// written without named arguments).
@@ -943,8 +943,9 @@ Return_Value :: struct {
 	is_inout: bool,
 	expr:     Expr,
 	// Returning a borrowed managed parameter by value clones it, since the callee
-	// owns nothing it could move out (design.md "Parameter semantics"); an owned
-	// local, named result, temporary, or `move` parameter transfers instead.
+	// owns nothing it could move out (design.md "Parameter semantics and ABI
+	// lowering"); an owned local, named result, temporary, or `move` parameter
+	// transfers instead.
 	clone_on_return: bool,
 }
 

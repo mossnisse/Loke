@@ -1,5 +1,5 @@
 // Build configuration: the `LOKE_*` predeclared constants and their enum types
-// (m7-plan step 1, decision "Build constants").
+//.
 //
 // design.md "Build configuration": `LOKE_ARCH`, `LOKE_OS`, `LOKE_ENDIAN`,
 // `LOKE_BUILD_MODE`, `LOKE_DEBUG`, `LOKE_OPTIMIZATION_MODE`, `LOKE_VENDOR`, and
@@ -27,7 +27,7 @@ Build_Mode :: enum {
 	Obj,
 }
 
-// The `-opt=` name to clang `-O` flag map (m7-plan decision "Release output").
+// The `-opt=` name to clang `-O` flag map.
 // `-Ofast` is deliberately absent: it changes floating-point semantics.
 opt_clang_flag :: proc(mode: Opt_Mode) -> string {
 	switch mode {
@@ -128,8 +128,8 @@ predeclare_build_config :: proc(c: ^Compiler, universe: ^Scope) {
 	// and a caller-side `when` over it removes the call and its arguments.
 	define_universe(c, universe, "LOKE_LOG_LEVEL", enum_const(c, .Log_Level, int(c.log_level)))
 	define_universe(c, universe, "LOKE_VENDOR", enum_const(c, .Vendor, 0)) // Loke
-	// design.md "Debug selection": M7 accepts no debug build, so `LOKE_DEBUG` is
-	// present and always false. A later debug milestone flips it.
+	// design.md "Debug-mode detection": v1 accepts no debug build, so `LOKE_DEBUG`
+	// is present and always false. A later debug build mode flips it.
 	define_universe(c, universe, "LOKE_DEBUG", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,

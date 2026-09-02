@@ -20,8 +20,7 @@ Emitter :: struct {
 	// design.md "@(packed)": a place's guaranteed alignment, keyed by its pointer
 	// temporary, when lower than the pointee's natural alignment (true of any
 	// access through a packed field). Such a load/store carries `align 1` so the
-	// optimizer never assumes the missing alignment (m7-plan step 2, decision
-	// "Alignment at use sites").
+	// optimizer never assumes the missing alignment.
 	place_align:  map[string]u64,
 
 	// Everything that describes the one function currently being written.
@@ -57,16 +56,10 @@ Emitter :: struct {
 	globals:  [dynamic]string,
 }
 
-// Pure module generation boundary: lowering and LLVM serialization consume the
-// checked compilation and return bytes in memory. Filesystem policy and the
-// external toolchain remain in `emit_package` above.
-emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool) {
-	pkg := package_of(c, package_id)
-	if pkg == nil {
-		errorf(c, no_span(), "L0404", "cannot emit an unknown package")
-		return "", false
-	}
-	if !validate_emission_dependencies(c) { return "", false }
+// Every emitter starts here. The layout probe builds one too, and a field added
+// to `Emitter` but not to a second literal is a silently half-initialized map,
+// so there is exactly one literal.
+make_emitter :: proc(c: ^Compiler) -> Emitter {
 	e := Emitter {
 		c            = c,
 		names        = make(map[Symbol_Id]string),
@@ -84,6 +77,20 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 		globals      = make([dynamic]string),
 	}
 	strings.builder_init(&e.b)
+	return e
+}
+
+// Pure module generation boundary: lowering and LLVM serialization consume the
+// checked compilation and return bytes in memory. Filesystem policy and the
+// external toolchain remain in `emit_package` above.
+emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool) {
+	pkg := package_of(c, package_id)
+	if pkg == nil {
+		errorf(c, no_span(), "L0404", "cannot emit an unknown package")
+		return "", false
+	}
+	if !validate_emission_dependencies(c) { return "", false }
+	e := make_emitter(c)
 
 	emit_preamble(&e)
 	emit_struct_definitions(&e)
@@ -99,7 +106,7 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 	}
 	name_synth_procs(&e)
 	// Foreign `declare`s and `external global`s, once each: a call or a global
-	// reference names one already (m7-plan step 4).
+	// reference names one already.
 	emit_foreign_declarations(&e)
 	// Module-level storage first: a body that names a `static` local needs its
 	// global to exist before the body is emitted.
@@ -120,7 +127,7 @@ emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool)
 	if any_provider_selected(c) {
 		emit_program_init(&e)
 	}
-	// design.md "Build modes" (m7-plan step 5): an object build emits no C entry.
+	// design.md "Build modes": an object build emits no C entry.
 	// Its foreign host owns process startup and calls the exported procedures; a
 	// generated `main`/`wmain` would collide with the host's own entry.
 	if c.build_mode == .Exe {
@@ -172,7 +179,7 @@ Function_State :: struct {
 	result_inout: bool,
 	// design.md "Calling conventions": whether the procedure being emitted uses a
 	// foreign convention, so its signature and `ret` follow the Windows x64
-	// classification (m7-plan step 3) rather than LLVM's own aggregate lowering.
+	// classification rather than LLVM's own aggregate lowering.
 	abi_foreign: bool,
 	// The hidden `sret` result pointer, when the single result is returned
 	// indirectly. Empty otherwise. The body's result slot aliases it directly.
@@ -271,7 +278,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 				// A template has no signature and no body of its own; only its
 				// instances are named and emitted.
 				if decl_proc_literal(v) != nil && len(v.symbols) > 0 && !symbol_is_template(e.c, v.symbols[0]) {
-					// design.md "@(export)" (m7-plan step 5): an exported procedure emits
+					// design.md "@(export)": an exported procedure emits
 					// its definition under the written/`@(link_name)` symbol so a C
 					// consumer can link to it, in place of the mangled name.
 					if sym := symbol_of(e.c, v.symbols[0]); sym != nil && sym.exported {
@@ -296,7 +303,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 			case ^Item_Foreign_Block:
 				// design.md "Foreign system": a member's link name is its external
 				// symbol, so calls and the `declare` share `@<link_name>` with no
-				// package mangling (m7-plan step 4).
+				// package mangling.
 				for member in v.members {
 					d, is_decl := member.(^Decl)
 					if !is_decl {
@@ -526,9 +533,10 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 		e.defer_flags[index] = flag
 	}
 
-	// design.md "Parameter semantics": a `move` parameter transfers ownership to
-	// the callee, so the callee drops it. Its scope sits outside the body's,
-	// which makes its cleanup the outermost one every exit replays.
+	// design.md "Parameter semantics and ABI lowering": a `move` parameter
+	// transfers ownership to the callee, so the callee drops it. Its scope sits
+	// outside the body's, which makes its cleanup the outermost one every exit
+	// replays.
 	push_scope_stmts(e, nil)
 	for parameter, index in symbol.params {
 		_ = parameter
@@ -558,7 +566,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 // The C entry point — internal runtime startup belongs here, which is why
 // Loke's `main` is not the C `main`.
 //
-// design.md "Program entry and exit" (m7-plan step 5): the entry is `wmain`,
+// design.md "Program entry and exit": the entry is `wmain`,
 // so arguments arrive as UTF-16 and are converted to cached UTF-8 by the
 // runtime before anything else runs. `os.args` is then a read, not a
 // conversion, and no Loke package needs an initializer.
@@ -668,7 +676,7 @@ extract :: proc(e: ^Emitter, aggregate: string, value: string, index: int) -> st
 
 // A plain, naturally aligned load. A place known to be *under*-aligned (e.g.
 // reached through a packed field) needs the explicit `, align N` form
-// instead, exactly as `store` gets it from `align_suffix` (m7-plan step 2).
+// instead, exactly as `store` gets it from `align_suffix`.
 @(private)
 load :: proc(e: ^Emitter, type: string, address: string) -> string {
 	out := temp(e)

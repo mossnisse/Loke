@@ -1,4 +1,4 @@
-// Driver: CLI, pipeline, exit codes (compiler-plan B1).
+// Driver: CLI, pipeline, exit codes.
 //
 // Exit codes: 0 success, 1 user diagnostics, 2 internal or toolchain failure.
 package lokec
@@ -9,7 +9,7 @@ import "core:path/filepath"
 import "core:strconv"
 import "core:strings"
 
-USAGE :: `lokec - the Loke compiler (milestone M7)
+USAGE :: `lokec - the Loke compiler
 
 An input is a .loke file or a directory; a directory compiles every .loke file
 directly in it as one package.
@@ -75,13 +75,13 @@ Options :: struct {
 	// `-panic=unwind|abort`, the whole program's panic strategy.
 	panic_unwind: bool,
 	// `-opt=none|minimal|size|speed|aggressive` and `-build-mode=exe|obj`
-	// (m7-plan step 1).
+	//.
 	opt_mode:   Opt_Mode,
 	build_mode: Build_Mode,
 	// `-provider <slot>=<package>:<name>`, in the order written, so a second
 	// selection for one slot can name both.
 	providers:  [dynamic]string,
-	// `-log-level=<level>`, the compiled `LOKE_LOG_LEVEL` (m8-plan step 3).
+	// `-log-level=<level>`, the compiled `LOKE_LOG_LEVEL`.
 	log_level:  Log_Level,
 }
 
@@ -150,7 +150,7 @@ run :: proc() -> int {
 
 	package_id, compiled := compile_program(&c, opts.input)
 	if compiled {
-		// An object build (m7-plan step 5) accepts any root package: its foreign
+		// An object build accepts any root package: its foreign
 		// host owns process entry, so `main` is neither required nor emitted.
 		if opts.build_mode == .Exe {
 			validate_executable(&c, package_id)
@@ -323,7 +323,7 @@ default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	} else {
 		stem = strings.trim_suffix(input, filepath.ext(input))
 	}
-	// An object build defaults to `.obj`, an executable to `.exe` (m7-plan step 5).
+	// An object build defaults to `.obj`, an executable to `.exe`.
 	return strings.concatenate({stem, mode == .Obj ? ".obj" : ".exe"})
 }
 

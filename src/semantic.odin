@@ -1,6 +1,6 @@
-// Stable semantic identities and compilation-owned stores (compiler-plan
-// A8/B5-B8). Syntax nodes contain IDs into these stores, never pointers to
-// reallocating arrays or backend-specific state.
+// Stable semantic identities and compilation-owned stores. Syntax nodes contain
+// IDs into these stores, never pointers to reallocating arrays or
+// backend-specific state.
 package lokec
 
 import "core:fmt"
@@ -178,7 +178,7 @@ Type_Info :: struct {
 	// `union_layout` is asked again by the emitter after that, and both must agree.
 	written_align: u64,
 	// design.md "@(packed)": this struct removes inter-field padding and has a
-	// natural alignment of 1 (an `@(align=N)` may still raise it). (m7-plan step 2)
+	// natural alignment of 1 (an `@(align=N)` may still raise it).
 	packed:        bool,
 	// `move_only struct` suppresses the generated ownership-copy operations.
 	// Containing records inherit the property recursively through lifecycle
@@ -197,7 +197,7 @@ Type_Info :: struct {
 	param_modes: []Param_Mode,
 	// `@(allocator_reset)` is part of the parameter's procedure type: a
 	// reset-capable procedure cannot be stored in a procedure value whose type
-	// hides that effect (design.md "Procedure types").
+	// hides that effect (design.md "Procedure type").
 	param_resets: []bool,
 	// design.md/`@(escape=...)`: what a call may leave behind, per parameter. Part
 	// of procedure type identity for the same reason the reset effect is — an
@@ -639,7 +639,7 @@ Builtin_Kind :: enum {
 	// foreign-allocator boundary."
 	Unsafe_Free,
 	// `unsafe.transmute(T, value)` reinterprets the bits of a same-sized value
-	// (design.md "unsafe.transmute procedure"). Its first argument is a *type*,
+	// (design.md "`unsafe.transmute`"). Its first argument is a *type*,
 	// which no ordinary signature can spell, and reinterpretation is not a safe
 	// universally valid conversion — hence a `core:unsafe` built-in rather than a
 	// predeclared one.
@@ -794,17 +794,17 @@ Symbol :: struct {
 	// design.md "Build configuration": which `LOKE_*` enum this predeclared
 	// constant belongs to, or `.None`. Its enum type is allocated lazily on first
 	// use so a program that never reads build config keeps identical type
-	// numbering (m7-plan step 1).
+	// numbering.
 	build_config_enum: Build_Config_Enum,
-	// design.md "@(deprecated)": the warning message printed at each use of this
-	// procedure, or "" if it is not deprecated (m7-plan step 1).
+	// design.md "`@(deprecated=<string>)`": the warning message printed at each
+	// use of this procedure, or "" if it is not deprecated.
 	deprecated_message: string,
 	deprecated:         bool,
 	// design.md "@(require_results)": each call must use or explicitly discard the
-	// results. Copied to a foreign block's members and applied to a procedure group
-	// after overload selection (m7-plan step 1).
+	// results. Copied to a foreign block's members and applied to a procedure
+	// group after overload selection.
 	require_results:    bool,
-	// design.md "Foreign system" (m7-plan step 4): a foreign declaration has no
+	// design.md "Foreign system": a foreign declaration has no
 	// body. It names an external symbol under `link_name` (its own written name
 	// unless `@(link_name)` renamed it), and the backend emits a
 	// `declare`/`external global` rather than a definition. The source library
@@ -812,7 +812,7 @@ Symbol :: struct {
 	// nothing downstream asks which block a symbol was written in.
 	is_foreign:         bool,
 	link_name:          string,
-	// design.md "@(export)" (m7-plan step 5): the declaration emits its symbol into
+	// design.md "@(export)": the declaration emits its symbol into
 	// the object under `link_name` (its written name unless `@(link_name)` renamed
 	// it) instead of the mangled `@loke.p...`, so a C consumer can link to it.
 	exported:           bool,
@@ -1623,7 +1623,7 @@ type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 }
 
 // The type an untyped value takes when nothing else selects one
-// (design.md "Untyped types").
+// (design.md "Unfixed constants").
 default_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 	#partial switch type_kind(c, id) {
 	case .Untyped_Int:
@@ -1913,7 +1913,7 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 	b := strings.builder_make(c.semantic_allocator)
 	strings.write_string(&b, "proc")
 	// A foreign convention is part of the type, so a `loke` and a `"c"` signature
-	// that otherwise match must not print the same (m7-plan step 3).
+	// that otherwise match must not print the same.
 	if info.convention != "" {
 		fmt.sbprintf(&b, " %q", info.convention)
 	}
