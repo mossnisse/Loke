@@ -1093,6 +1093,53 @@ bit_get :: proc(row: []u8, index: int) -> bool {
 	return row[index >> 3] & (1 << u8(index & 7)) != 0
 }
 
+// Every still-valid loan reachable from a live slot, as (slot, loan index).
+// Four checks — access conflicts, root outlives, reset dependants, and borrow
+// conflicts — walk exactly this set, so what counts as reachable-and-valid is
+// defined once here rather than re-spelled at each of them.
+@(private = "file")
+Live_Loans :: struct {
+	state: ^Prov_State,
+	slots: []int, // nil means every slot in `state`, filtered by `live`
+	live:  []bool,
+	at:    int,
+	index: int,
+	row:   []u8,
+}
+
+@(private = "file")
+live_loans :: proc(state: ^Prov_State, live: []bool, slots: []int = nil) -> Live_Loans {
+	return Live_Loans{state = state, live = live, slots = slots, at = -1, index = -1}
+}
+
+// `it.index < 0` means the next slot's row still has to be fetched.
+@(private = "file")
+next_live_loan :: proc(it: ^Live_Loans) -> (slot: int, index: int, ok: bool) {
+	count := it.slots == nil ? it.state.slots : len(it.slots)
+	for {
+		if it.index < 0 {
+			it.at += 1
+			if it.at >= count {
+				return 0, 0, false
+			}
+			if it.live != nil && !it.live[it.slots == nil ? it.at : it.slots[it.at]] {
+				continue
+			}
+			it.row = reach_row(it.state, it.state.reach, it.slots == nil ? it.at : it.slots[it.at])
+			it.index = 0
+		}
+		if it.index >= it.state.loans {
+			it.index = -1
+			continue
+		}
+		index = it.index
+		it.index += 1
+		if bit_get(it.row, index) && !it.state.invalid[index] {
+			return it.slots == nil ? it.at : it.slots[it.at], index, true
+		}
+	}
+}
+
 @(private = "file")
 bit_mark :: proc(row: []u8, index: int) {
 	row[index >> 3] |= 1 << u8(index & 7)
@@ -1835,22 +1882,14 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 	graph := state.graph
 	#partial switch event.kind {
 	case .Access:
-		for slot in 0 ..< state.slots {
-			if !live[slot] {
+		it := live_loans(state, live)
+		for slot, index in next_live_loan(&it) {
+			loan := graph.loans[index]
+			if !access_conflicts(loan, event) {
 				continue
 			}
-			row := reach_row(state, state.reach, slot)
-			for index in 0 ..< state.loans {
-				if !bit_get(row, index) || state.invalid[index] {
-					continue
-				}
-				loan := graph.loans[index]
-				if !access_conflicts(loan, event) {
-					continue
-				}
-				report_borrow_conflict(state, event, loan, uses[slot])
-				return
-			}
+			report_borrow_conflict(state, event, loan, uses[slot])
+			return
 		}
 	case .Live, .Load:
 		// A read-only reborrow suspends the carrier it was taken from until its
@@ -1868,22 +1907,14 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 			}
 		}
 	case .Root_End:
-		for slot in 0 ..< state.slots {
-			if !live[slot] {
+		it := live_loans(state, live)
+		for slot, index in next_live_loan(&it) {
+			loan := graph.loans[index]
+			if loan.root != event.root {
 				continue
 			}
-			row := reach_row(state, state.reach, slot)
-			for index in 0 ..< state.loans {
-				if !bit_get(row, index) || state.invalid[index] {
-					continue
-				}
-				loan := graph.loans[index]
-				if loan.root != event.root {
-					continue
-				}
-				report_root_outlived(state, event, loan, uses[slot])
-				return
-			}
+			report_root_outlived(state, event, loan, uses[slot])
+			return
 		}
 	case .Escape:
 		// design.md's `bad_owner`, the region half of a return: an owner backed by
@@ -2052,32 +2083,24 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 	// design.md: the proof is that no dependant survives the reset, not that
 	// every allocation was already freed. An allocation whose carriers have no
 	// later use is simply released by it.
-	for slot in 0 ..< state.slots {
-		if !live[slot] {
+	it := live_loans(state, live)
+	for slot, index in next_live_loan(&it) {
+		loan := graph.loans[index]
+		if graph.roots[int(loan.root)].kind != .Allocation {
 			continue
 		}
-		row := reach_row(state, state.reach, slot)
-		for index in 0 ..< state.loans {
-			if !bit_get(row, index) || state.invalid[index] {
-				continue
-			}
-			loan := graph.loans[index]
-			if graph.roots[int(loan.root)].kind != .Allocation {
-				continue
-			}
-			errorf(
-				state.k.c,
-				event.span,
-				"L0537",
-				"this reset ends every allocation in the region, but a %s of one of them is still in use",
-				loan.what,
-			)
-			add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
-			if uses[slot].file != NO_FILE {
-				add_notef(state.k.c, uses[slot], "and is still used here, which keeps it live")
-			}
-			return
+		errorf(
+			state.k.c,
+			event.span,
+			"L0537",
+			"this reset ends every allocation in the region, but a %s of one of them is still in use",
+			loan.what,
+		)
+		add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
+		if uses[slot].file != NO_FILE {
+			add_notef(state.k.c, uses[slot], "and is still used here, which keeps it live")
 		}
+		return
 	}
 }
 
@@ -2092,32 +2115,24 @@ report_live_dependants :: proc(
 	verb: string,
 ) {
 	graph := state.graph
-	for slot in 0 ..< state.slots {
-		if !live[slot] {
+	it := live_loans(state, live)
+	for slot, index in next_live_loan(&it) {
+		loan := graph.loans[index]
+		if loan.root != root {
 			continue
 		}
-		row := reach_row(state, state.reach, slot)
-		for index in 0 ..< state.loans {
-			if !bit_get(row, index) || state.invalid[index] {
-				continue
-			}
-			loan := graph.loans[index]
-			if loan.root != root {
-				continue
-			}
-			descriptor := graph.roots[int(root)]
-			errorf(
-				state.k.c,
-				span,
-				"L0512",
-				"%s cannot be %s here: a %s of it is still in use",
-				root_label(state.k.c, descriptor),
-				verb,
-				loan.what,
-			)
-			add_borrow_notes(state, descriptor, loan, uses[slot])
-			return
-		}
+		descriptor := graph.roots[int(root)]
+		errorf(
+			state.k.c,
+			span,
+			"L0512",
+			"%s cannot be %s here: a %s of it is still in use",
+			root_label(state.k.c, descriptor),
+			verb,
+			loan.what,
+		)
+		add_borrow_notes(state, descriptor, loan, uses[slot])
+		return
 	}
 }
 
@@ -2256,22 +2271,19 @@ check_retention :: proc(state: ^Prov_State, event: Prov_Event) {
 	// the event carries the carrier and the roots are read off here.
 	if len(event.into) > 0 {
 		seen := make(map[Root_Id]bool, 4, context.temp_allocator)
-		for slot in event.into {
-			row := reach_row(state, state.reach, slot)
-			for index in 0 ..< state.loans {
-				if !bit_get(row, index) || state.invalid[index] {
-					continue
-				}
-				target := graph.loans[index].root
-				if seen[target] {
-					continue
-				}
-				seen[target] = true
-				destination := graph.roots[int(target)]
-				into := retain_kind_for_root(destination.kind)
-				if into != .None && report_retention(state, event, into, target, destination) {
-					return
-				}
+		// Named slots rather than live ones: the carrier's own liveness is not
+		// what decides whether its destination retains the stored value.
+		it := live_loans(state, nil, event.into)
+		for _, index in next_live_loan(&it) {
+			target := graph.loans[index].root
+			if seen[target] {
+				continue
+			}
+			seen[target] = true
+			destination := graph.roots[int(target)]
+			into := retain_kind_for_root(destination.kind)
+			if into != .None && report_retention(state, event, into, target, destination) {
+				return
 			}
 		}
 		return

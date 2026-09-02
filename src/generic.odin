@@ -1772,7 +1772,8 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 			if name_id == INVALID_IDENTIFIER {
 				name_id = intern_identifier(k.c, name.text)
 			}
-			if instance_member_named(k, subject, block.pkg, item.kind, name_id) != INVALID_SYMBOL {
+			if member_named(k.c, impl_member_table(k, item.kind, subject, block.pkg), name_id) !=
+			   INVALID_SYMBOL {
 				append(&symbols, INVALID_SYMBOL) // a more specialized block supplied it
 				continue
 			}
@@ -1811,48 +1812,7 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 		}
 		d.symbols = symbols[:]
 	}
-	install_instance_members(k, item.kind, subject, block.pkg, added[:])
-}
-
-@(private = "file")
-instance_member_named :: proc(k: ^Checker, subject: Type_Id, pkg: Package_Id, kind: Impl_Kind, name: Identifier_Id) -> Symbol_Id {
-	if kind == .Impl {
-		if info := type_of(k.c, subject); info != nil {
-			return member_named(k.c, info.members, name)
-		}
-		return INVALID_SYMBOL
-	}
-	if target := package_of(k.c, pkg); target != nil {
-		return member_named(k.c, target.extensions[subject], name)
-	}
-	return INVALID_SYMBOL
-}
-
-@(private = "file")
-install_instance_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, pkg: Package_Id, added: []Symbol_Id) {
-	if len(added) == 0 {
-		return
-	}
-	previous: []Symbol_Id
-	if kind == .Impl {
-		if info := type_of(k.c, subject); info != nil {
-			previous = info.members
-		}
-	} else if target := package_of(k.c, pkg); target != nil {
-		previous = target.extensions[subject]
-	}
-	merged := make([]Symbol_Id, len(previous) + len(added), k.c.semantic_allocator)
-	copy(merged, previous)
-	copy(merged[len(previous):], added)
-	if kind == .Impl {
-		if info := type_of(k.c, subject); info != nil {
-			info.members = merged
-		}
-		return
-	}
-	if target := package_of(k.c, pkg); target != nil {
-		target.extensions[subject] = merged
-	}
+	install_impl_members(k, item.kind, subject, added[:], block.pkg)
 }
 
 // The block instances discovered so far are checked after the package that

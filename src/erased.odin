@@ -725,7 +725,7 @@ find_witness_slot :: proc(
 		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
 			continue
 		}
-		if witness_slot_matches(k, sym, params, modes, result) {
+		if slot_matches(k, sym, params, modes, result, nil) {
 			return candidate
 		}
 	}
@@ -750,33 +750,6 @@ slot_candidates_for_witness :: proc(k: ^Checker, concrete: Type_Id, name: Identi
 		}
 	}
 	return out[:]
-}
-
-@(private = "file")
-witness_slot_matches :: proc(
-	k: ^Checker,
-	sym: ^Symbol,
-	params: []Type_Id,
-	modes: []Param_Mode,
-	result: Type_Id,
-) -> bool {
-	if len(sym.params) != len(params) || sym.result != result {
-		return false
-	}
-	info := type_of(k.c, sym.proc_type)
-	if info == nil || info.convention != "" {
-		return false
-	}
-	for want, index in params {
-		if sym.params[index] != want {
-			return false
-		}
-		have := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-		if have != modes[index] {
-			return false
-		}
-	}
-	return true
 }
 
 // The slot a `dyn` value's method call selects, and its index in the witness.

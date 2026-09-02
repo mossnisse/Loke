@@ -59,7 +59,7 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	item.kind = own_package ? .Impl : .Extend
 
 	members := make([dynamic]Symbol_Id, 0, len(item.members), k.c.semantic_allocator)
-	existing := impl_member_table(k, item.kind, subject)
+	existing := impl_member_table(k, item.kind, subject, k.pkg)
 	for member in item.members {
 		d, is_decl := member.(^Decl)
 		if !is_decl {
@@ -67,7 +67,7 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 		}
 		declare_impl_member(k, item, d, existing, &members)
 	}
-	install_impl_members(k, item.kind, subject, members[:])
+	install_impl_members(k, item.kind, subject, members[:], k.pkg)
 }
 
 @(private = "file")
@@ -151,25 +151,29 @@ bind_member_in_package :: proc(k: ^Checker, name: Name, name_id: Identifier_Id, 
 	k.scope.names[name_id] = id
 }
 
-@(private = "file")
-impl_member_table :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id) -> []Symbol_Id {
+// The member table an `impl`/`extend` block writes into: the type's own
+// inherent members, or one package's extension list. `in_pkg` is the checker's
+// current package for a written block, and the instance's defining package for
+// one `src/generic.odin` materialises — that is the only difference between the
+// two, so there is one table lookup rather than two.
+impl_member_table :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, in_pkg: Package_Id) -> []Symbol_Id {
 	if kind == .Impl {
 		info := type_of(k.c, subject)
 		return info == nil ? nil : info.members
 	}
-	pkg := package_of(k.c, k.pkg)
+	pkg := package_of(k.c, in_pkg)
 	if pkg == nil {
 		return nil
 	}
 	return pkg.extensions[subject]
 }
 
-@(private = "file")
-install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, added: []Symbol_Id) {
+// Appends to whichever table `impl_member_table` reads, in the same package.
+install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, added: []Symbol_Id, in_pkg: Package_Id) {
 	if len(added) == 0 {
 		return
 	}
-	previous := impl_member_table(k, kind, subject)
+	previous := impl_member_table(k, kind, subject, in_pkg)
 	merged := make([]Symbol_Id, len(previous) + len(added), k.c.semantic_allocator)
 	copy(merged, previous)
 	copy(merged[len(previous):], added)
@@ -179,7 +183,7 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 		}
 		return
 	}
-	if pkg := package_of(k.c, k.pkg); pkg != nil {
+	if pkg := package_of(k.c, in_pkg); pkg != nil {
 		pkg.extensions[subject] = merged
 	}
 }

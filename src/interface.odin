@@ -667,14 +667,17 @@ slot_signature :: proc(
 	return params[:], modes[:], result_type, result_inout, true
 }
 
-@(private = "file")
+// One candidate's signature against a slot's written one. `result_inout` is
+// `nil` for a runtime witness, which pairs a concrete member with a slot whose
+// result place-ness the `dyn` header does not carry; an interface requirement
+// passes the value it demands.
 slot_matches :: proc(
 	k: ^Checker,
 	sym: ^Symbol,
 	params: []Type_Id,
 	modes: []Param_Mode,
 	result: Type_Id,
-	result_inout: bool,
+	result_inout: Maybe(bool),
 ) -> bool {
 	if len(sym.params) != len(params) || sym.result != result {
 		return false
@@ -692,5 +695,6 @@ slot_matches :: proc(
 			return false
 		}
 	}
-	return info.result_inout == result_inout
+	want, checked := result_inout.?
+	return !checked || info.result_inout == want
 }
