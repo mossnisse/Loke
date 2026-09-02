@@ -10,20 +10,6 @@
 // and would change nothing about what they lower to.
 package lokec
 
-// `^T` and `[^]T` implicitly convert to each other (design.md "Multi-pointers").
-// Both directions, and only when the element types agree — a multi-pointer is a
-// slimmer view of the same storage, not a reinterpretation of it.
-multi_pointer_converts :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
-	source, dest := underlying_info(c, from), underlying_info(c, to)
-	if source == nil || dest == nil || source.element != dest.element {
-		return false
-	}
-	if source.kind == .Pointer && dest.kind == .Multi_Pointer {
-		return true
-	}
-	return source.kind == .Multi_Pointer && dest.kind == .Pointer
-}
-
 // Whether a type is one of the three text carriers.
 type_is_text :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	#partial switch underlying_kind(c, id) {
@@ -318,7 +304,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of, .Unsafe_Forget, .Unsafe_Free,
-	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
+	     .Unsafe_Transmute, .Simd_Cast, .Simd_Select, .Simd_Reduce,
 	     .Clone, .Try_Clone, .Standard_Alias,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate,
@@ -355,14 +341,14 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 			v.type = INVALID_TYPE
 			return
 		}
-		v.type = multi_pointer_to(k.c, element)
+		v.type = c_pointer_to(k.c, element)
 
 	case .Unsafe_String_View:
 		// An unsafe validate-and-borrow, optional-ok (design.md "From [^]u8 and
 		// length int to string"). The owner is unknown to the compiler, so keeping
 		// storage alive is the caller's job — but bytes are still validated, since
 		// the result type promises UTF-8.
-		if info == nil || info.kind != .Multi_Pointer || info.element != TYPE_U8 {
+		if info == nil || info.kind != .C_Pointer || info.element != TYPE_U8 {
 			errorf(
 				k.c, expr_span(bound[0]), "L0569",
 				"`unsafe.string_view` takes a `[^]u8` and a length, found `%s`",
@@ -384,7 +370,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Unsafe_C_String_View:
 		// design.md "From [^]u8 to cstring_view": an unsafe borrow, and no
 		// validation at all — a `cstring_view` promises no encoding.
-		if info == nil || info.kind != .Multi_Pointer || info.element != TYPE_U8 {
+		if info == nil || info.kind != .C_Pointer || info.element != TYPE_U8 {
 			errorf(
 				k.c, expr_span(bound[0]), "L0569",
 				"`unsafe.cstring_view` takes a `[^]u8`, found `%s`", type_name(k.c, operand),

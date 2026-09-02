@@ -83,7 +83,7 @@ Expr :: union {
 	// Type forms. Named types are `Expr_Ident` / `Expr_Selector`, and a generic
 	// application is an `Expr_Call` — that is the whole point of one domain.
 	^Type_Pointer,
-	^Type_Multi_Pointer,
+	^Type_C_Pointer,
 	^Type_Slice,
 	^Type_Dynamic_Array,
 	^Type_Array,
@@ -402,7 +402,7 @@ Type_Pointer :: struct {
 	elem:       Expr,
 }
 
-Type_Multi_Pointer :: struct {
+Type_C_Pointer :: struct {
 	using base: Expr_Base,
 	elem:       Expr,
 }
@@ -693,7 +693,7 @@ expr_base :: proc(e: Expr) -> ^Expr_Base {
 		return &v.base
 	case ^Type_Pointer:
 		return &v.base
-	case ^Type_Multi_Pointer:
+	case ^Type_C_Pointer:
 		return &v.base
 	case ^Type_Slice:
 		return &v.base

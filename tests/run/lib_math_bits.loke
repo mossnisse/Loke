@@ -1,0 +1,92 @@
+// `core:math` constants, classification, sign, and the scalar comparisons
+// (math-plan step 2). Everything here is exact: bit patterns, predicates, and
+// which argument a tie selects. No transcendental value is printed, and no NaN
+// is printed — the platform C library spells one three different ways depending
+// on the payload, so `is_nan` is printed instead.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:unsafe";
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+main :: proc() {
+	// The typed limits are exactly their IEEE-754 patterns.
+	fmt.println(bits32(math.F32_EPSILON), bits64(math.F64_EPSILON));
+	fmt.println(bits32(math.F32_MAX), bits64(math.F64_MAX));
+	fmt.println(bits32(math.F32_MIN_NORMAL), bits64(math.F64_MIN_NORMAL));
+	fmt.println(bits32(math.F32_MIN_SUBNORMAL), bits64(math.F64_MIN_SUBNORMAL));
+	fmt.println(bits32(math.F32_INFINITY), bits64(math.F64_INFINITY));
+	fmt.println(bits32(math.F32_NAN), bits64(math.F64_NAN));
+
+	// `EPSILON` is the gap from 1 to the next representable value, which is what
+	// makes these two additions differ.
+	fmt.println(1.0 + math.F64_EPSILON > 1.0, 1.0 + math.F64_EPSILON/2.0 > 1.0);
+	fmt.println(f32(1.0) + math.F32_EPSILON > f32(1.0));
+
+	// Classification: quiet NaN, both infinities, both zeros, a subnormal, and an
+	// ordinary finite value, at both widths.
+	fmt.println(math.is_nan(math.F64_NAN), math.is_nan(0.0 - math.F64_NAN));
+	fmt.println(math.is_nan(math.F64_INFINITY), math.is_nan(1.0));
+	fmt.println(math.is_infinite(math.F64_INFINITY), math.is_infinite(0.0 - math.F64_INFINITY));
+	fmt.println(math.is_infinite(math.F64_MAX), math.is_infinite(math.F64_NAN));
+	fmt.println(math.is_finite(0.0), math.is_finite(-0.0), math.is_finite(math.F64_MIN_SUBNORMAL));
+	fmt.println(math.is_finite(math.F64_INFINITY), math.is_finite(math.F64_NAN));
+
+	fmt.println(math.is_nan_f32(math.F32_NAN), math.is_nan_f32(f32(1.0)));
+	fmt.println(math.is_infinite_f32(math.F32_INFINITY), math.is_infinite_f32(math.F32_MAX));
+	fmt.println(math.is_finite_f32(math.F32_MIN_SUBNORMAL), math.is_finite_f32(math.F32_NAN));
+
+	// A signalling NaN is still a NaN, and classification does not quiet it.
+	signalling := unsafe.transmute(f64, u64(0x7ff0000000000001));
+	fmt.println(math.is_nan(signalling), bits64(signalling));
+
+	// Sign: the bit, not `x < 0`. Both zeros differ, and a negative NaN answers.
+	fmt.println(math.sign_bit(-0.0), math.sign_bit(0.0));
+	// `0.0 - x` returns a NaN operand unchanged, so a negative NaN is built from
+	// its pattern rather than negated into existence.
+	fmt.println(math.sign_bit(unsafe.transmute(f64, u64(0xfff8000000000000))),
+	            math.sign_bit(math.F64_NAN));
+	fmt.println(math.sign_bit_f32(f32(-0.0)), math.sign_bit_f32(f32(0.0)));
+
+	// `abs` clears the sign bit: `-0.0` becomes `+0.0`, and a NaN keeps its
+	// payload and its quiet bit rather than being replaced by a canonical one.
+	fmt.println(bits64(math.abs(-0.0)), bits64(math.abs(-2.5)));
+	fmt.println(bits32(math.abs_f32(f32(-0.0))), bits32(math.abs_f32(f32(-2.5))));
+	fmt.println(bits64(math.abs(unsafe.transmute(f64, u64(0xfff8000000000007)))));
+	fmt.println(bits32(math.abs_f32(unsafe.transmute(f32, u32(0xffc00007)))));
+
+	// `copy_sign` composes representations; it computes nothing.
+	fmt.println(math.copy_sign(2.5, -1.0), math.copy_sign(-2.5, 1.0));
+	fmt.println(bits64(math.copy_sign(0.0, -1.0)), bits64(math.copy_sign(-0.0, 1.0)));
+	fmt.println(bits64(math.copy_sign(math.F64_INFINITY, -1.0)));
+	fmt.println(bits32(math.copy_sign_f32(f32(0.0), f32(-1.0))));
+	fmt.println(math.copy_sign_f32(f32(2.5), f32(-1.0)));
+
+	// `min`/`max` select the *second* argument for equal or unordered operands,
+	// which is what makes both signed zeros and a NaN in either position
+	// observable rather than a coin flip.
+	fmt.println(math.min(3, 4), math.max(3, 4), math.min(4, 3), math.max(4, 3));
+	fmt.println(math.min(2.5, 2.5), math.max(2.5, 2.5));
+	fmt.println(bits64(math.min(0.0, -0.0)), bits64(math.min(-0.0, 0.0)));
+	fmt.println(bits64(math.max(0.0, -0.0)), bits64(math.max(-0.0, 0.0)));
+	fmt.println(math.is_nan(math.min(1.0, math.F64_NAN)), math.min(math.F64_NAN, 1.0));
+	fmt.println(math.is_nan(math.max(1.0, math.F64_NAN)), math.max(math.F64_NAN, 1.0));
+	fmt.println(math.min(u8(200), u8(100)), math.max(i64(-9), i64(-10)));
+
+	// Every `clamp` branch, then the two NaN rules: a NaN value passes through,
+	// and a NaN bound is unordered and so does not clamp on that side.
+	fmt.println(math.clamp(-1, 0, 5), math.clamp(9, 0, 5), math.clamp(3, 0, 5));
+	fmt.println(math.clamp(0, 0, 5), math.clamp(5, 0, 5));
+	fmt.println(math.is_nan(math.clamp(math.F64_NAN, 0.0, 5.0)));
+	fmt.println(math.clamp(9.0, math.F64_NAN, 5.0), math.clamp(9.0, 0.0, math.F64_NAN));
+	fmt.println(math.clamp(2.5, 2.5, 2.5));
+
+	// The unfixed constants convert at the point of use, so one spelling serves
+	// both widths. `PI` at f32 is the f64 value rounded once, not twice.
+	fmt.println(bits64(math.PI), bits32(f32(math.PI)));
+	fmt.println(math.TAU == 2.0*math.PI, math.SQRT_TWO*math.SQRT_TWO > 1.9999999);
+	fmt.println(math.E > 2.718281828, math.LN2 < 0.6931471806, math.LN10 > 2.302585092);
+}

@@ -176,7 +176,7 @@ abi_walk :: proc(
 		// this subset deliberately excludes. A binding passes a pointer to an
 		// array instead.
 		return false, "a SIMD vector", ""
-	case .Float, .Rune, .Bool, .Enum, .Raw_Pointer, .Pointer, .Multi_Pointer, .CString_View:
+	case .Float, .Rune, .Bool, .Enum, .Raw_Pointer, .Pointer, .C_Pointer, .CString_View:
 		// Scalars and pointers pass as themselves; an enum has integer backing;
 		// a pointer's pointee need not be safe because only an address crosses.
 		return true, "", ""

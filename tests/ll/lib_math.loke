@@ -1,0 +1,28 @@
+package main;
+
+// math-plan step 3: `core:math` binds the *versioned seed-runtime* wrappers, not
+// the host CRT names, and each width binds its own. A declaration that reached
+// `@sqrt` or that widened an `f32` call through `double` would still print the
+// right answer, so the check is on the generated IR rather than on output.
+
+import "core:math";
+
+main :: proc() {
+	_ = math.sqrt(2.0);
+	_ = math.sqrt_f32(f32(2.0));
+	_ = math.hypot(3.0, 4.0);
+	_ = math.hypot_f32(f32(3.0), f32(4.0));
+	_ = math.pow(2.0, 10.0);
+	_ = math.pow_f32(f32(2.0), f32(10.0));
+	_ = math.sin(1.0);
+	_ = math.sin_f32(f32(1.0));
+	_ = math.mod(7.0, 3.0);
+	_ = math.mod_f32(f32(7.0), f32(3.0));
+	_ = math.exp_f32(f32(1.0));
+	_ = math.tan_f32(f32(1.0));
+	_ = math.acos_f32(f32(0.0));
+	// Classification is a bit test in Loke source, not a runtime call: no
+	// `declare` of any kind belongs to it.
+	_ = math.is_nan(1.0);
+	_ = math.abs_f32(f32(-1.0));
+}

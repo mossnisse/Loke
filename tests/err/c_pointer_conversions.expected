@@ -1,0 +1,12 @@
+L0310
+@8:18
+cannot initialise `^int` with `[^]int`
+L0310
+@9:16
+cannot pass `^int` with `[^]int`
+L0310
+@15:22
+cannot initialise `[^]int` with `^int`
+L0310
+@16:18
+cannot pass `[^]int` with `^int`

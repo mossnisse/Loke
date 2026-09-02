@@ -2,7 +2,7 @@
 // it is an ordinary keyword and must not be swallowed.
 package main;
 
-multi_pointer_capability: [^]mut u8;
+c_pointer_capability: [^]mut u8;
 pointer_without_element: ^mut;
 dyn_without_interface: dyn mut;
 

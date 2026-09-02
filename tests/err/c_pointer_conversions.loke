@@ -1,0 +1,22 @@
+package main;
+
+takes_pointer :: proc(value: ^int) {}
+takes_c_pointer :: proc(value: [^]int) {}
+
+from_c_pointer :: proc() {
+	c_pointer: [^]int = nil;
+	pointer: ^int = c_pointer;
+	takes_pointer(c_pointer);
+}
+
+from_pointer :: proc() {
+	value := 1;
+	pointer := &value;
+	c_pointer: [^]int = pointer;
+	takes_c_pointer(pointer);
+}
+
+main :: proc() {
+	from_c_pointer();
+	from_pointer();
+}

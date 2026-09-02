@@ -22,7 +22,7 @@ import "core:mem"
 HASH_MULTIPLIER :: u64(1099511628211)
 
 // design.md: `bool`, integers, floats, runes, pointers including `rawptr` and
-// multi-pointers, enums, `typeid`, and recursively hashable fixed arrays.
+// C pointers, enums, `typeid`, and recursively hashable fixed arrays.
 type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	under := type_underlying(c, id)
 	info := type_of(c, under)
@@ -31,7 +31,7 @@ type_is_hashable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 	}
 	#partial switch info.kind {
 	case .Bool, .Int, .Float, .Rune, .Enum, .Typeid,
-	     .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc,
+	     .Raw_Pointer, .Pointer, .C_Pointer, .Proc,
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune:
 		return true
 	case .String, .String_View, .Untyped_String:
@@ -180,13 +180,15 @@ hash_scalar_bits :: proc(c: ^Compiler, value: Const_Value, type: Type_Id, alloca
 			return 0
 		}
 		info := type_of(c, under)
-		if info != nil && info.bits == 32 {
-			// Constants live as f64 in the evaluator. Hash the representation of
-			// the declared scalar type, which is what runtime lowering observes.
-			return u64(transmute(u32)f32(value.float))
+		bits := u16(64)
+		if info != nil && info.bits != 0 {
+			bits = info.bits
 		}
-		return transmute(u64)value.float
-	case .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc:
+		// A bit-constructed constant may carry a signalling NaN whose exact
+		// representation cannot round-trip through the evaluator's f64 view.
+		// Hash the retained source-width pattern, exactly as runtime lowering does.
+		return const_float_pattern(value, bits)
+	case .Raw_Pointer, .Pointer, .C_Pointer, .Proc:
 		return 0 // the only compile-time pointer constant is nil
 	}
 	storage := value_allocator(c, allocator)

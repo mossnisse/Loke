@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:unsafe";
 
 Equatable :: interface($T: type) {
 	(a, b: T) a == b -> bool;
@@ -39,4 +39,12 @@ main :: proc() {
 	F32_FOLDED :: hash(f32(1.5), uint(0));
 	runtime_f32: f32 = 1.5;
 	if (hash(runtime_f32, runtime_seed) == F32_FOLDED) { fmt.println(1); } else { fmt.println(0); }
+
+	// A signalling NaN cannot round-trip through the evaluator's numeric f64
+	// field without being quieted. Its retained raw pattern must therefore drive
+	// the folded hash just as it drives runtime lowering.
+	F32_SIGNALLING :: unsafe.transmute(f32, u32(0x7f800001));
+	F32_SIGNALLING_FOLDED :: hash(F32_SIGNALLING, uint(0));
+	runtime_signalling := F32_SIGNALLING;
+	if (hash(runtime_signalling, runtime_seed) == F32_SIGNALLING_FOLDED) { fmt.println(1); } else { fmt.println(0); }
 }

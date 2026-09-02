@@ -1012,8 +1012,8 @@ Four compiler defects were found by writing this library, and fixed with it:
   three;
 - an untyped constant did not rank against an `any_view` parameter, which a
   generic `..any_view` variadic made reachable;
-- `nil` was not accepted as a multi-pointer constant, though design.md lists
-  multi-pointers among the nil-able types. A `[^]u16` out-parameter is how a
+- `nil` was not accepted as a C pointer constant, though design.md lists
+  C pointers among the nil-able types. A `[^]u16` out-parameter is how a
   Windows wide API is asked for a size.
 
 A fifth was found by *renaming* one of those contributions: a constant's folded
@@ -1078,6 +1078,17 @@ contributed `sort`/`reverse_sort` member on `[dynamic]T` and `[]mut T` with
 what the `Simd(T, N)` operators cannot spell. M8 also added `core:container`
 (`Small_Array`, `Bit_Set`, `Enum_Array`), `core:math` (`Complex`,
 `Quaternion`), and `core:endian`.
+
+`core:math` then grew its scalar half: the constants, the bit-level
+classification and sign procedures, the CRT-backed elementary functions over one
+private foreign block into versioned seed-runtime wrappers, and scalar
+`min`/`max`/`clamp`. Each float-specific name has exactly two concrete
+spellings — the unsuffixed `f64` one and an `_f32` twin — rather than a
+procedure group, because design.md's own overload rules leave `f32` vs `f64`
+ambiguous for an untyped literal and `math.sqrt(2.0)` would not compile.
+Hyperbolics, `cbrt`/`fma`/`ldexp`/`frexp`/`modf`, `erf`, `gamma`, lane-wise math
+over `Simd(T, N)`, and integer bit helpers (which want a `core:bits`) are named
+omissions, additive over what now exists.
 
 `core:bytes`, `time`, `random`, and `testing` still wait for a concrete need, as
 planned. A buffered reader, `fs.replace_atomic`, `fs.absolute`, symlink support,

@@ -1219,7 +1219,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Literal, ^Expr_Proc, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Expr_Error,
-	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
+	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 	}
@@ -2940,7 +2940,7 @@ prov_read_through_carrier :: proc(graph: ^Flow_Graph, place: Expr) -> ([]int, []
 			return nil, nil, false
 		}
 		kind := underlying_kind(graph.k.c, expr_base(v.operand).type)
-		if kind == .Slice || kind == .Pointer || kind == .Multi_Pointer {
+		if kind == .Slice || kind == .Pointer || kind == .C_Pointer {
 			carriers := walk_flow_expr(graph, v.operand)
 			for index in v.indices {
 				walk_flow_expr(graph, index)

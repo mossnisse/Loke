@@ -69,14 +69,14 @@ Contextual keywords, reserved only in the positions given:
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords; they may be
 shadowed by a declaration like any other name. So are the built-in procedures,
-including `transmute`, `drop`, `len`, `cap`, `new`, and `make`.
+including `drop`, `len`, `cap`, `new`, and `make`.
 
 ## Compile-time names
 
 There is no `#name` lexical form. The compile-time built-ins — `static_assert`,
 `build_config`, `source_location`, and `caller_location` — are predeclared
 identifiers reached through the ordinary call suffix, exactly like `size_of`
-and `transmute`, and like those they may be shadowed by a declaration.
+and `type_of`, and like those they may be shadowed by a declaration.
 
 ## Operators and punctuation
 
@@ -259,7 +259,7 @@ when it's omitted, is semantic — see [design.md](design.md#storage-modifiers).
 
 ```
 Type = "^" "mut"? Type                                   // pointer
-     | "[" "^" "]" Type                                  // multi-pointer
+     | "[" "^" "]" Type                                  // C pointer
      | "[" "]" "mut"? Type                               // slice
      | "[" "dynamic" "]" Type                            // dynamic array
      | "[" "?" "]" Type                                  // inferred-length array
@@ -667,9 +667,10 @@ same way. No result count depends on the destination.
 
 `move(x)` is a primary form rather than a call because `move` is a keyword — it
 is also a [parameter mode](#procedures), so it has to be reserved anyway.
-`transmute`, `drop`, `len`, `cap`, `new`, `make`, and the rest of the built-ins
-are ordinary identifiers and use the call suffix. `transmute(T, x)` and
-`make([dynamic]int)` pass types as arguments through `Argument_Value`.
+`drop`, `len`, `cap`, `new`, `make`, and the rest of the built-ins are ordinary
+identifiers and use the call suffix. `make([dynamic]int)` and the `core:unsafe`
+member call `unsafe.transmute(T, x)` pass types as arguments through
+`Argument_Value`.
 
 # Resolved ambiguities
 

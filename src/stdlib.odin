@@ -90,6 +90,11 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// loss, and the only release `shared(T)` and any other handle over a
 		// `rawptr` control block can perform.
 		contribute_builtin(c, pkg, "free", .Unsafe_Free)
+		// Reinterpreting bits is the third visible loss: nothing about the source
+		// value says the destination representation is one its type ever admits,
+		// so the spelling is `unsafe.transmute(T, value)` and the operation is
+		// never injected into the universe (design.md "unsafe.transmute procedure").
+		contribute_builtin(c, pkg, "transmute", .Unsafe_Transmute)
 	case STD_FMT:
 		// design.md "String format printing": the library owns the protocol,
 		// writer, options, and `print` family. The compiler owns the process

@@ -1,0 +1,381 @@
+// The elementary functions and the constants (math-plan "The surface").
+//
+// Every float-specific procedure has exactly two concrete spellings: the
+// unsuffixed name takes and returns `f64`, and the `_f32` name takes and
+// returns `f32`. They are deliberately *not* a procedure group — design.md
+// "Operator lookup and overload resolution" leaves `f32` vs `f64` overloads
+// ambiguous for an untyped literal, so `math.sqrt(2.0)` would not compile if
+// they were one. Both widths ship together because Loke has no implicit
+// `f32` -> `f64` widening: an `f32` caller without a twin would write
+// `f32(math.sqrt(f64(x)))`, which rounds twice.
+//
+// `f16` gets nothing. The C library has no `f16` variants.
+//
+// The CRT-backed procedures promise the classifications, signs, poles, and
+// domain results documented on each one. They do not promise correctly rounded
+// transcendental results, identical last bits across platforms, a particular
+// NaN payload, or portable `errno` contents. They never turn a floating-point
+// exception or an `errno` value into a panic.
+@(public)
+package math;
+
+import "base:interfaces";
+import "core:unsafe";
+
+// ------------------------------------------------------------- constants --
+//
+// Unfixed, so each converts at the point of use to whichever floating type the
+// context wants. A limit is a property of one format, so those carry the format
+// in the name instead.
+
+PI       :: 3.14159265358979323846264338327950288;
+TAU      :: 6.28318530717958647692528676655900577;
+E        :: 2.71828182845904523536028747135266250;
+LN2      :: 0.693147180559945309417232121458176568;
+LN10     :: 2.30258509299404568401799145468436421;
+SQRT_TWO :: 1.41421356237309504880168872420969808;
+
+// Infinity and the canonical quiet NaN have no literal spelling, and a decimal
+// literal for a limit is a transcription no reader can check. Every typed limit
+// is therefore its exact IEEE-754 pattern, folded at compile time. The unsafe
+// dependency is an implementation detail: nothing in the public surface below
+// takes or returns anything from `core:unsafe`.
+//
+// `EPSILON` is the gap from `1` to the next representable value; `MIN_NORMAL`
+// is the smallest positive normal value and `MIN_SUBNORMAL` the smallest
+// positive subnormal one. The NaN payload is canonical only for the constant —
+// a procedure may propagate or return another quiet payload.
+F32_EPSILON       :: unsafe.transmute(f32, u32(0x34000000));
+F64_EPSILON       :: unsafe.transmute(f64, u64(0x3cb0000000000000));
+F32_MAX           :: unsafe.transmute(f32, u32(0x7f7fffff));
+F64_MAX           :: unsafe.transmute(f64, u64(0x7fefffffffffffff));
+F32_MIN_NORMAL    :: unsafe.transmute(f32, u32(0x00800000));
+F64_MIN_NORMAL    :: unsafe.transmute(f64, u64(0x0010000000000000));
+F32_MIN_SUBNORMAL :: unsafe.transmute(f32, u32(0x00000001));
+F64_MIN_SUBNORMAL :: unsafe.transmute(f64, u64(0x0000000000000001));
+F32_INFINITY      :: unsafe.transmute(f32, u32(0x7f800000));
+F64_INFINITY      :: unsafe.transmute(f64, u64(0x7ff0000000000000));
+F32_NAN           :: unsafe.transmute(f32, u32(0x7fc00000));
+F64_NAN           :: unsafe.transmute(f64, u64(0x7ff8000000000000));
+
+// The masks the classification and sign procedures are written over. Everything
+// below is a bit test: no CRT call, no rounding, and no quieting of a NaN.
+@(private) F32_SIGN     :: u32(0x80000000);
+@(private) F32_MAGNITUDE :: u32(0x7fffffff);
+@(private) F32_EXPONENT :: u32(0x7f800000);
+@(private) F64_SIGN     :: u64(0x8000000000000000);
+@(private) F64_MAGNITUDE :: u64(0x7fffffffffffffff);
+@(private) F64_EXPONENT :: u64(0x7ff0000000000000);
+
+// --------------------------------------------- classification and sign --
+
+// Whether `x` is a NaN: the maximum exponent with a non-zero significand. True
+// for both quiet and signalling NaNs, and for either sign.
+is_nan :: proc(x: f64) -> bool {
+	return (unsafe.transmute(u64, x) & F64_MAGNITUDE) > F64_EXPONENT;
+}
+
+is_nan_f32 :: proc(x: f32) -> bool {
+	return (unsafe.transmute(u32, x) & F32_MAGNITUDE) > F32_EXPONENT;
+}
+
+// Whether `x` is either infinity.
+is_infinite :: proc(x: f64) -> bool {
+	return (unsafe.transmute(u64, x) & F64_MAGNITUDE) == F64_EXPONENT;
+}
+
+is_infinite_f32 :: proc(x: f32) -> bool {
+	return (unsafe.transmute(u32, x) & F32_MAGNITUDE) == F32_EXPONENT;
+}
+
+// Whether `x` is neither infinite nor a NaN. Zeros and subnormals are finite.
+is_finite :: proc(x: f64) -> bool {
+	return (unsafe.transmute(u64, x) & F64_EXPONENT) != F64_EXPONENT;
+}
+
+is_finite_f32 :: proc(x: f32) -> bool {
+	return (unsafe.transmute(u32, x) & F32_EXPONENT) != F32_EXPONENT;
+}
+
+// The sign bit itself, not `x < 0`: true for `-0.0` and for a negative NaN,
+// which is the whole reason to ask.
+sign_bit :: proc(x: f64) -> bool {
+	return (unsafe.transmute(u64, x) & F64_SIGN) != 0;
+}
+
+sign_bit_f32 :: proc(x: f32) -> bool {
+	return (unsafe.transmute(u32, x) & F32_SIGN) != 0;
+}
+
+// The magnitude of `x`. Clearing the sign bit maps `-0.0` to `+0.0` and leaves
+// a NaN's payload and quiet/signalling bit exactly as they were.
+abs :: proc(x: f64) -> f64 {
+	return unsafe.transmute(f64, unsafe.transmute(u64, x) & F64_MAGNITUDE);
+}
+
+abs_f32 :: proc(x: f32) -> f32 {
+	return unsafe.transmute(f32, unsafe.transmute(u32, x) & F32_MAGNITUDE);
+}
+
+// The magnitude of `magnitude` with the sign bit of `sign`. Both operands keep
+// their payloads: this composes representations, it does not compute.
+copy_sign :: proc(magnitude: f64, sign: f64) -> f64 {
+	return unsafe.transmute(f64,
+		(unsafe.transmute(u64, magnitude) & F64_MAGNITUDE) |
+		(unsafe.transmute(u64, sign) & F64_SIGN));
+}
+
+copy_sign_f32 :: proc(magnitude: f32, sign: f32) -> f32 {
+	return unsafe.transmute(f32,
+		(unsafe.transmute(u32, magnitude) & F32_MAGNITUDE) |
+		(unsafe.transmute(u32, sign) & F32_SIGN));
+}
+
+// ------------------------------------------------------------ comparison --
+//
+// Numeric scalars, not everything that happens to be ordered: strings, enums,
+// and pointers do not acquire arithmetic-looking operations from `core:math`.
+// `core:slice` already has `min`/`max` over a slice; these are the scalar forms.
+
+// `a` when `a < b`, and `b` otherwise. Equal or unordered operands therefore
+// select the second argument — including two signed zeros, and a NaN in either
+// position.
+min :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
+	return a if a < b else b;
+}
+
+// `a` when `b < a`, and `b` otherwise, with the same tie and NaN rule as `min`.
+max :: proc(a, b: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
+	return a if b < a else b;
+}
+
+// `value` brought inside `[low, high]`. Reversed bounds are a caller mistake
+// with no defensible answer, so they panic rather than silently picking one.
+// A NaN `value` is returned unchanged, and a NaN bound is unordered against
+// everything and so does not clamp on that side.
+clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces.Ordered(T) {
+	assert(!(high < low), "math.clamp needs low <= high");
+	if (value < low) { return low; }
+	if (high < value) { return high; }
+	return value;
+}
+
+// ------------------------------------------------ the seed runtime bridge --
+//
+// math-plan "Where the functions come from": binding the public CRT/libm names
+// directly would make `core:math` depend on the host linker's implicit
+// libraries. These versioned wrappers are part of every link already, exactly
+// as `core:os`'s argument accessors are, so this block names them without a
+// `foreign import` of its own. Nothing outside this file may reach them.
+foreign loke_runtime {
+	@(link_name="loke_rt_v1_math_floor_f64")
+	rt_floor_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_floor_f32")
+	rt_floor_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_ceil_f64")
+	rt_ceil_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_ceil_f32")
+	rt_ceil_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_round_f64")
+	rt_round_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_round_f32")
+	rt_round_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_trunc_f64")
+	rt_trunc_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_trunc_f32")
+	rt_trunc_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_sqrt_f64")
+	rt_sqrt_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_sqrt_f32")
+	rt_sqrt_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_exp_f64")
+	rt_exp_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_exp_f32")
+	rt_exp_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_log_f64")
+	rt_log_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_log_f32")
+	rt_log_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_log2_f64")
+	rt_log2_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_log2_f32")
+	rt_log2_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_log10_f64")
+	rt_log10_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_log10_f32")
+	rt_log10_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_sin_f64")
+	rt_sin_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_sin_f32")
+	rt_sin_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_cos_f64")
+	rt_cos_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_cos_f32")
+	rt_cos_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_tan_f64")
+	rt_tan_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_tan_f32")
+	rt_tan_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_asin_f64")
+	rt_asin_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_asin_f32")
+	rt_asin_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_acos_f64")
+	rt_acos_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_acos_f32")
+	rt_acos_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_atan_f64")
+	rt_atan_f64 :: proc "c" (x: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_atan_f32")
+	rt_atan_f32 :: proc "c" (x: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_mod_f64")
+	rt_mod_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_mod_f32")
+	rt_mod_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_hypot_f64")
+	rt_hypot_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_hypot_f32")
+	rt_hypot_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_pow_f64")
+	rt_pow_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_pow_f32")
+	rt_pow_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
+	@(link_name="loke_rt_v1_math_atan2_f64")
+	rt_atan2_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
+	@(link_name="loke_rt_v1_math_atan2_f32")
+	rt_atan2_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
+}
+// --------------------------------------------------- rounding and remainder --
+//
+// A NaN argument propagates to a quiet NaN throughout this section, and an
+// infinite argument to `floor`, `ceil`, `round` or `trunc` returns itself.
+// All four preserve the sign of a zero.
+
+// The largest integral value not greater than `x`.
+floor :: proc(x: f64) -> f64 { return rt_floor_f64(x); }
+floor_f32 :: proc(x: f32) -> f32 { return rt_floor_f32(x); }
+
+// The smallest integral value not less than `x`.
+ceil :: proc(x: f64) -> f64 { return rt_ceil_f64(x); }
+ceil_f32 :: proc(x: f32) -> f32 { return rt_ceil_f32(x); }
+
+// The nearest integral value, with halfway cases rounded *away from zero* —
+// `round(0.5)` is `1` and `round(-0.5)` is `-1`. This is not the current
+// rounding mode's tie rule, which rounds halves to even.
+round :: proc(x: f64) -> f64 { return rt_round_f64(x); }
+round_f32 :: proc(x: f32) -> f32 { return rt_round_f32(x); }
+
+// `x` with its fractional part discarded: the integral value nearest to zero.
+trunc :: proc(x: f64) -> f64 { return rt_trunc_f64(x); }
+trunc_f32 :: proc(x: f32) -> f32 { return rt_trunc_f32(x); }
+
+// The floating remainder: the mathematical result of `x - trunc(x/y)*y`,
+// without computing that overflow-prone expression. Floating types have no `%`
+// operator, so this is that operator's name in Loke terms.
+//
+//   y is zero, or x is infinite  -> NaN
+//   x finite, y infinite         -> x
+//   otherwise                    -> a result whose sign matches x, including
+//                                   an exact zero, which keeps x's zero sign
+mod :: proc(x: f64, y: f64) -> f64 { return rt_mod_f64(x, y); }
+mod_f32 :: proc(x: f32, y: f32) -> f32 { return rt_mod_f32(x, y); }
+
+// ------------------------------------------- roots, powers, logarithms --
+//
+// None of these panics on a floating domain or a pole: the result is a NaN or
+// an infinity, which is what the type can already represent.
+
+// The non-negative square root.
+//
+//   -0.0            -> -0.0   (the sign of zero is preserved)
+//   x < 0           -> NaN
+//   +infinity       -> +infinity
+sqrt :: proc(x: f64) -> f64 { return rt_sqrt_f64(x); }
+sqrt_f32 :: proc(x: f32) -> f32 { return rt_sqrt_f32(x); }
+
+// `sqrt(a*a + b*b)`, computed without the intermediate overflow or underflow
+// that spelling causes. Always non-negative, and an infinite operand wins over
+// a NaN operand: `hypot(infinity, NaN)` is `+infinity`.
+hypot :: proc(a: f64, b: f64) -> f64 { return rt_hypot_f64(a, b); }
+hypot_f32 :: proc(a: f32, b: f32) -> f32 { return rt_hypot_f32(a, b); }
+
+// `base` raised to `exponent`, following the IEC 60559 special-case table:
+//
+//   pow(x, +-0)                          -> 1, for every x including NaN
+//   pow(1, y)                            -> 1, for every y including NaN
+//   pow(x, 1)                            -> x
+//   pow(NaN, y != 0)                     -> NaN
+//   pow(x < 0, y non-integral)           -> NaN
+//   pow(+-0, y < 0 odd integer)          -> +-infinity
+//   pow(+-0, y < 0 otherwise)            -> +infinity
+//   pow(+-0, y > 0 odd integer)          -> +-0
+//   pow(+-0, y > 0 otherwise)            -> +0
+//   pow(-1, +-infinity)                  -> 1
+//   pow(abs(x) < 1, -infinity)           -> +infinity
+//   pow(abs(x) < 1, +infinity)           -> +0
+//   pow(abs(x) > 1, -infinity)           -> +0
+//   pow(abs(x) > 1, +infinity)           -> +infinity
+//   pow(-infinity, y)                    -> pow(-0, -y)
+//   pow(+infinity, y < 0)                -> +0
+//   pow(+infinity, y > 0)                -> +infinity
+pow :: proc(base: f64, exponent: f64) -> f64 { return rt_pow_f64(base, exponent); }
+pow_f32 :: proc(base: f32, exponent: f32) -> f32 { return rt_pow_f32(base, exponent); }
+
+// `e` raised to `x`. Overflow gives `+infinity` and underflow `+0`.
+exp :: proc(x: f64) -> f64 { return rt_exp_f64(x); }
+exp_f32 :: proc(x: f32) -> f32 { return rt_exp_f32(x); }
+
+// The natural logarithm, and the two other bases. All three share the poles:
+//
+//   x < 0           -> NaN
+//   +-0             -> -infinity
+//   +infinity       -> +infinity
+log :: proc(x: f64) -> f64 { return rt_log_f64(x); }
+log_f32 :: proc(x: f32) -> f32 { return rt_log_f32(x); }
+
+log2 :: proc(x: f64) -> f64 { return rt_log2_f64(x); }
+log2_f32 :: proc(x: f32) -> f32 { return rt_log2_f32(x); }
+
+log10 :: proc(x: f64) -> f64 { return rt_log10_f64(x); }
+log10_f32 :: proc(x: f32) -> f32 { return rt_log10_f32(x); }
+
+// ---------------------------------------------------------- trigonometry --
+//
+// Angles are radians. An infinite argument to `sin`, `cos` or `tan` is a NaN:
+// there is no answer to give.
+
+sin :: proc(x: f64) -> f64 { return rt_sin_f64(x); }
+sin_f32 :: proc(x: f32) -> f32 { return rt_sin_f32(x); }
+
+cos :: proc(x: f64) -> f64 { return rt_cos_f64(x); }
+cos_f32 :: proc(x: f32) -> f32 { return rt_cos_f32(x); }
+
+tan :: proc(x: f64) -> f64 { return rt_tan_f64(x); }
+tan_f32 :: proc(x: f32) -> f32 { return rt_tan_f32(x); }
+
+// The inverse sine, in `[-PI/2, PI/2]`. Outside `[-1, 1]` the result is a NaN.
+asin :: proc(x: f64) -> f64 { return rt_asin_f64(x); }
+asin_f32 :: proc(x: f32) -> f32 { return rt_asin_f32(x); }
+
+// The inverse cosine, in `[0, PI]`. Outside `[-1, 1]` the result is a NaN.
+acos :: proc(x: f64) -> f64 { return rt_acos_f64(x); }
+acos_f32 :: proc(x: f32) -> f32 { return rt_acos_f32(x); }
+
+// The inverse tangent of one operand, in `[-PI/2, PI/2]`.
+atan :: proc(x: f64) -> f64 { return rt_atan_f64(x); }
+atan_f32 :: proc(x: f32) -> f32 { return rt_atan_f32(x); }
+
+// The inverse tangent of `y/x`, using the signs of both to place the result in
+// the correct quadrant, in `[-PI, PI]`. The signed-zero and infinity cases are
+// the ones IEC 60559 defines, so `atan2(+0, -0)` is `+PI` and `atan2(-0, +0)`
+// is `-0`.
+atan2 :: proc(y: f64, x: f64) -> f64 { return rt_atan2_f64(y, x); }
+atan2_f32 :: proc(y: f32, x: f32) -> f32 { return rt_atan2_f32(y, x); }
+
+// Degrees to radians and back. One multiply each, and the two conversions every
+// caller otherwise open-codes with a constant that is a digit short.
+to_radians :: proc(degrees: f64) -> f64 { return degrees*(PI/180.0); }
+to_radians_f32 :: proc(degrees: f32) -> f32 { return degrees*f32(PI/180.0); }
+
+to_degrees :: proc(radians: f64) -> f64 { return radians*(180.0/PI); }
+to_degrees_f32 :: proc(radians: f32) -> f32 { return radians*f32(180.0/PI); }

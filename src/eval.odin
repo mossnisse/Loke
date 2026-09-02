@@ -45,6 +45,7 @@ Eval_Value :: struct {
 	integer:    Big_Int,
 	float:      f64,
 	float_bits: u16,
+	float_raw:  u64,
 	boolean:    bool,
 	text:       string,
 	type_value: Type_Id,
@@ -364,6 +365,7 @@ value_from_const :: proc(ev: ^Evaluator, cv: Const_Value, type: Type_Id) -> (Eva
 		integer    = cv.integer,
 		float      = cv.float,
 		float_bits = cv.float_bits,
+		float_raw  = cv.float_raw,
 		boolean    = cv.boolean,
 		text       = cv.text,
 		type_value = cv.type_value,
@@ -447,6 +449,7 @@ freeze :: proc(ev: ^Evaluator, v: Eval_Value, allocator: mem.Allocator = {}) -> 
 		integer    = v.integer,
 		float      = v.float,
 		float_bits = v.float_bits,
+		float_raw  = v.float_raw,
 		boolean    = v.boolean,
 		text       = v.text,
 		type_value = v.type_value,
@@ -483,6 +486,7 @@ const_of :: proc(v: Eval_Value) -> Const_Value {
 		integer    = v.integer,
 		float      = v.float,
 		float_bits = v.float_bits,
+		float_raw  = v.float_raw,
 		boolean    = v.boolean,
 		text       = v.text,
 		type_value = v.type_value,
@@ -497,6 +501,7 @@ scalar :: proc(cv: Const_Value, type: Type_Id) -> Eval_Value {
 		integer    = cv.integer,
 		float      = cv.float,
 		float_bits = cv.float_bits,
+		float_raw  = cv.float_raw,
 		boolean    = cv.boolean,
 		text       = cv.text,
 		type_value = cv.type_value,
@@ -648,7 +653,7 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 
 	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract, ^Expr_Slice, ^Expr_Range,
 	     ^Expr_Move, ^Expr_Proc_Group, ^Expr_Operator,
-	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
+	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 	}
@@ -2140,6 +2145,41 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 			return Eval_Value{}, false
 		}
 		return void, true
+
+	case .Unsafe_Transmute:
+		// The same reinterpretation the checker folds, reached here when the
+		// operand is a local rather than a constant — which is every call inside
+		// an evaluated `core:math` classification procedure.
+		operand, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		frozen, froze := freeze(ev, operand, ev.alloc)
+		if !froze {
+			return Eval_Value{}, false
+		}
+		source := expr_base(v.bound[0]).type
+		raw, encoded := const_scalar_pattern(ev.k.c, frozen, source)
+		result, status := Const_Value{}, Const_Pattern.Unfoldable
+		if encoded {
+			result, status = const_from_pattern(ev.k.c, raw, v.type)
+		}
+		switch status {
+		case .Folded:
+			return scalar(result, v.type), true
+		case .Invalid:
+			eval_fail(
+				ev, v.span, "L0688",
+				"this bit pattern is not a valid `%s`", type_name(ev.k.c, v.type),
+			)
+		case .Unfoldable:
+			eval_fail(
+				ev, v.span, "L0688",
+				"`unsafe.transmute` has no compile-time meaning from `%s` to `%s`",
+				type_name(ev.k.c, source), type_name(ev.k.c, v.type),
+			)
+		}
+		return Eval_Value{}, false
 
 	case .Hash:
 		// The compile-time half of the compiler-contributed `hash`: the same two

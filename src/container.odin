@@ -543,7 +543,7 @@ require_nested_map_key_policies_inner :: proc(k: ^Checker, type: Type_Id, span: 
 		if !require_map_key_policy(k, type, span) { return false }
 		if !require_nested_map_key_policies_inner(k, shape.key, span, seen) { return false }
 		return require_nested_map_key_policies_inner(k, shape.element, span, seen)
-	case .Array, .Dynamic_Array, .Slice, .Pointer, .Multi_Pointer, .Distinct:
+	case .Array, .Dynamic_Array, .Slice, .Pointer, .C_Pointer, .Distinct:
 		return require_nested_map_key_policies_inner(k, shape.element, span, seen)
 	case .Struct:
 		for field in shape.fields {

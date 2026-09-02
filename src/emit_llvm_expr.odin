@@ -94,8 +94,8 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		}
 		return bi_text(e.c, bi_wrap(e.c, value.integer, bits, signed))
 	case .Float:
-		return llvm_float(value.float, info.bits)
-	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator:
+		return llvm_float(const_float_pattern(value, info.bits), info.bits)
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		return "null"
 	case .CString_View:
 		// A string literal can initialize a `cstring_view` because its
@@ -226,13 +226,10 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 		if value.kind != .Float {
 			return false
 		}
-		raw: u64
-		switch info.bits {
-		case 16: raw = u64(f64_to_f16_bits(value.float))
-		case 32: raw = u64(transmute(u32)f32(value.float))
-		case 64: raw = transmute(u64)value.float
-		case: return false
+		if info.bits != 16 && info.bits != 32 && info.bits != 64 {
+			return false
 		}
+		raw := const_float_pattern(value, info.bits)
 		for _, index in out {
 			out[index] = u8(raw >> u64(index * 8))
 		}
@@ -298,7 +295,7 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 			out[index] = u8(id >> u64(index * 8))
 		}
 		return true
-	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .CString_View:
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .CString_View:
 		// Their only byte-serializable compile-time value is nil, handled above.
 		return false
 	}
@@ -309,15 +306,34 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 // every float constant is spelled as its bit pattern: `half` uses the 16-bit
 // form, `float` the double pattern (exact, since the value was already rounded
 // to single precision).
-llvm_float :: proc(value: f64, bits: u16) -> string {
+llvm_float :: proc(pattern: u64, bits: u16) -> string {
 	if bits == 16 {
-		return fmt.aprintf("0xH%04X", f64_to_f16_bits(value))
+		return fmt.aprintf("0xH%04X", u16(pattern))
 	}
-	pattern := transmute(u64)value
 	if bits == 32 {
-		pattern = transmute(u64)f64(f32(value))
+		// LLVM has no 32-bit hex float literal: a `float` constant is written as
+		// the `double` pattern of the same value. The widening is done on the bits
+		// rather than by a hardware conversion, so a signalling NaN's payload
+		// survives — `f64(f32_snan)` would quiet it.
+		return fmt.aprintf("0x%016X", f32_pattern_as_f64(u32(pattern)))
 	}
 	return fmt.aprintf("0x%016X", pattern)
+}
+
+@(private = "file")
+f32_pattern_as_f64 :: proc(pattern: u32) -> u64 {
+	sign := u64(pattern >> 31) << 63
+	exponent := (pattern >> 23) & 0xff
+	mantissa := u64(pattern & 0x7f_ffff) << 29
+	switch exponent {
+	case 0xff:
+		return sign | 0x7ff0_0000_0000_0000 | mantissa // infinity, or a NaN payload
+	case 0:
+		// Zero, or an f32 subnormal, which is an ordinary normal f64: the
+		// hardware conversion is exact and has no NaN to quiet.
+		return transmute(u64)f64(transmute(f32)pattern)
+	}
+	return sign | (u64(exponent) - 127 + 1023) << 52 | mantissa
 }
 
 // ------------------------------------------------------------------ places --
@@ -428,11 +444,11 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 			address, _ := emit_map_read_address(e, v)
 			return address
 		}
-		// A multi-pointer indexes without bounds checking (design.md
-		// "Multi-pointers"). There is no length to check against, which is exactly
+		// A C pointer indexes without bounds checking (design.md
+		// "C pointers"). There is no length to check against, which is exactly
 		// what the type says.
 		if operand_info := underlying_info(e.c, expr_base(v.operand).type);
-		   operand_info != nil && operand_info.kind == .Multi_Pointer {
+		   operand_info != nil && operand_info.kind == .C_Pointer {
 			data := emit_expr(e, v.operand)
 			index := widen_to_i64(e, emit_expr(e, v.indices[0]), expr_base(v.indices[0]).type)
 			out := gep_at(e, llvm_type(e, operand_info.element), data, index)
@@ -554,8 +570,8 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	#partial switch info.kind {
 	case .String, .String_View:
 		return emit_text_subrange(e, v)
-	case .Multi_Pointer:
-		return emit_multi_pointer_slice(e, v)
+	case .C_Pointer:
+		return emit_c_pointer_slice(e, v)
 	}
 	if info.kind == .Slice {
 		value := emit_expr(e, v.operand)
@@ -635,11 +651,11 @@ emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	return emit_ptr_len(e, STRING_VIEW_TYPE, start, count)
 }
 
-// design.md "Multi-pointers": `x[:]`/`x[i:]` stay multi-pointers and carry no
+// design.md "C pointers": `x[:]`/`x[i:]` stay C pointers and carry no
 // bounds; `x[:n]`/`x[i:n]` produce a `[]T` and are checked, because only then is
 // there a length to check against.
 @(private = "file")
-emit_multi_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
+emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	element := underlying_info(e.c, expr_base(v.operand).type).element
 	data := emit_expr(e, v.operand)
 	low := "0"
@@ -842,7 +858,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return emit_move(e, v)
 
 	case ^Expr_Proc_Group, ^Expr_Operator,
-	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
+	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 	}
@@ -1694,9 +1710,94 @@ emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, leng
 	return data, length
 }
 
-// A multi-pointer carries neither a length nor a read-only capability, and its
+// A C pointer carries neither a length nor a read-only capability, and its
 // lifetime is no longer checked after conversion (design.md "unsafe.raw_data
 // procedure") — so each of these is just an address extraction, except
+// `unsafe.transmute(T, value)`: the same bits, read as a `T`. The checker has
+// already settled equal size and a trivial lifecycle on both sides, so the only
+// question left is which LLVM spelling reinterprets these two representations —
+// a register-level cast where one exists, and a stack round trip otherwise,
+// which every optimization level above `none` folds away.
+@(private)
+emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	source := expr_base(v.bound[0]).type
+	value := emit_expr(e, v.bound[0])
+	// A `bool` is `i1` in the backend and one byte of storage, so it is the one
+	// type whose register width is not the width its size promises. Widening to
+	// `i8` at the edges keeps every other case a plain same-width operation, and
+	// keeps the aggregate path storing whole bytes.
+	from := llvm_type(e, source)
+	if underlying_kind(e.c, source) == .Bool {
+		widened := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i8", widened, value)
+		value, from = widened, "i8"
+	}
+	to_bool := underlying_kind(e.c, v.type) == .Bool
+	to := to_bool ? "i8" : llvm_type(e, v.type)
+	result := reinterpret_bits(e, source, v.type, from, to, value)
+	if to_bool {
+		// Bit 0 is the `bool`, and producing a pattern that is one is the caller's
+		// obligation — the checker has already rejected the constant case it can
+		// see, and there is nothing to check at run time.
+		narrowed := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = trunc i8 %s to i1", narrowed, result)
+		return narrowed
+	}
+	return result
+}
+
+@(private = "file")
+reinterpret_bits :: proc(e: ^Emitter, source, target: Type_Id, from, to, value: string) -> string {
+	if from == to {
+		return value
+	}
+	source_ptr := pointer_shaped(e.c, source)
+	target_ptr := pointer_shaped(e.c, target)
+	out := temp(e)
+	switch {
+	case source_ptr && target_ptr:
+		return value // one opaque `ptr` under two Loke spellings
+	case source_ptr:
+		fmt.sbprintfln(&e.b, "  %s = ptrtoint %s %s to %s", out, from, value, to)
+	case target_ptr:
+		fmt.sbprintfln(&e.b, "  %s = inttoptr %s %s to %s", out, from, value, to)
+	case bitcastable(e.c, source) && bitcastable(e.c, target):
+		fmt.sbprintfln(&e.b, "  %s = bitcast %s %s to %s", out, from, value, to)
+	case:
+		// An aggregate on either side. `bitcast` does not accept one, so the bits
+		// travel through equally sized storage — the pointer cast design.md names
+		// as the operation this is akin to, written out. The slot takes whichever
+		// type is more strictly aligned, since both are the same size and each
+		// access wants its own natural alignment satisfied.
+		slot := alloca(e, type_align(e.c, target) > type_align(e.c, source) ? to : from)
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", from, value, slot)
+		return load(e, to, slot)
+	}
+	return out
+}
+
+@(private = "file")
+pointer_shaped :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	#partial switch underlying_kind(c, type) {
+	case .Raw_Pointer, .C_Pointer, .Proc:
+		return true
+	}
+	return false
+}
+
+// Which types LLVM's `bitcast` accepts: first-class, non-aggregate, and not a
+// pointer (those have their own two instructions). A `bool` has already been
+// widened to `i8` by the time this is asked, so its `i1` register width never
+// reaches the instruction.
+@(private = "file")
+bitcastable :: proc(c: ^Compiler, type: Type_Id) -> bool {
+	#partial switch underlying_kind(c, type) {
+	case .Bool, .Int, .Float, .Rune, .Enum, .Simd:
+		return true
+	}
+	return false
+}
+
 // `unsafe.string_view`, which still validates since the type it produces
 // promises valid UTF-8.
 @(private)

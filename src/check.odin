@@ -1325,12 +1325,12 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		value.resolution.kind = .Type
 		return value.denoted_type
 
-	case ^Type_Multi_Pointer:
+	case ^Type_C_Pointer:
 		element := resolve_type_syntax(k, value.elem)
 		if element == INVALID_TYPE {
 			return INVALID_TYPE
 		}
-		value.denoted_type = intern_type(k.c, Type_Key{kind = .Multi_Pointer, element = element}, Type_Info{kind = .Multi_Pointer, element = element})
+		value.denoted_type = intern_type(k.c, Type_Key{kind = .C_Pointer, element = element}, Type_Info{kind = .C_Pointer, element = element})
 		value.resolution.kind = .Type
 		return value.denoted_type
 
@@ -1733,7 +1733,7 @@ unresolved_component :: proc(k: ^Checker, syntax: Expr) -> Expr {
 	#partial switch value in syntax {
 	case ^Type_Pointer:
 		if failed(k, value.elem) { return value.elem }
-	case ^Type_Multi_Pointer:
+	case ^Type_C_Pointer:
 		if failed(k, value.elem) { return value.elem }
 	case ^Type_Slice:
 		if failed(k, value.elem) { return value.elem }
@@ -2827,7 +2827,8 @@ check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered
 	errorf(k.c, s.span, "L0366", "this switch over `%s` does not cover %s", type_name(k.c, subject), missing)
 }
 
-@(private = "file")
+// Also the validity test for an `unsafe.transmute` whose destination is an enum:
+// a constant pattern matching no member is a value the type never admits.
 enum_member_by_value :: proc(c: ^Compiler, type: Type_Id, value: Const_Value) -> Symbol_Id {
 	info := underlying_info(c, type)
 	if info == nil || value.kind != .Integer {

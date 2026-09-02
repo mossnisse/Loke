@@ -5,6 +5,16 @@ existing architecture without weakening diagnostics, semantic consistency, or
 the test corpus. Each initiative below should receive a detailed implementation
 plan when work begins.
 
+## Tutorials
+
+Create practical, beginner-friendly tutorials that teach Loke from the first
+program through packages, testing, foreign-function interfaces, and common
+application patterns. Keep every tutorial executable and verified against the
+current compiler so examples cannot silently become outdated.
+
+Done means a new user can install the toolchain, learn the core language, and
+build a small multi-package program by following the tutorials alone.
+
 ## Language server
 
 Build an LSP server that reuses the real lexer, parser, package loader, checker,
@@ -71,12 +81,13 @@ on the bootstrap implementation used.
 
 ## Suggested order
 
-1. Extract a reusable, incremental compiler-service boundary without changing
+1. Publish introductory tutorials for the existing language and toolchain.
+2. Extract a reusable, incremental compiler-service boundary without changing
    command-line compilation behavior.
-2. Build the language server on that boundary.
-3. Isolate target interfaces and add Linux, then macOS, while retaining one
+3. Build the language server on that boundary.
+4. Isolate target interfaces and add Linux, then macOS, while retaining one
    shared conformance corpus.
-4. Begin self-hosting after those APIs and libraries have stabilized.
+5. Begin self-hosting after those APIs and libraries have stabilized.
 
 The language server and platform ports may overlap once the compiler-service
 boundary exists. Self-hosting should remain last: it multiplies the cost of any

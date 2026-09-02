@@ -1,0 +1,50 @@
+// The rules `unsafe.transmute` checks, and the one thing it does not: what a
+// valid runtime representation is stays the caller's obligation.
+package main;
+
+import "core:unsafe";
+
+Colour :: enum u8 { Red, Green, Blue }
+
+Owner :: struct { text: string }
+
+Plain :: struct { a: u32, b: u32 }
+
+sizes :: proc() {
+	value := u32(1);
+	wider := unsafe.transmute(u64, value);
+	narrower := unsafe.transmute(u8, f64(1.0));
+}
+
+lifecycles :: proc(owner: Owner, plain: Plain) {
+	managed := unsafe.transmute(Plain, owner);
+	back := unsafe.transmute(Owner, plain);
+	text := unsafe.transmute(u64, "abc");
+}
+
+references :: proc(slice: []int) {
+	value := 1;
+	pointer := &value;
+	address := unsafe.transmute(^int, uint(0));
+	number := unsafe.transmute(uint, pointer);
+	parts := unsafe.transmute(u64, slice);
+}
+
+invalid_constants :: proc() {
+	truthy := unsafe.transmute(bool, u8(2));
+	missing := unsafe.transmute(Colour, u8(7));
+	surrogate := unsafe.transmute(rune, i32(0xd800));
+}
+
+shapes :: proc() {
+	only_one := unsafe.transmute(u32);
+	not_a_type := unsafe.transmute(only_one, u32(1));
+}
+
+// Never predeclared: bit reinterpretation is reached through `core:unsafe` and
+// nowhere else, so the bare spelling is an unknown name like any other.
+predeclared :: proc() {
+	bare := transmute(u32, f32(1.0));
+}
+
+main :: proc() {}

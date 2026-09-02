@@ -69,7 +69,7 @@ type_contains_any_view :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	#partial switch info.kind {
 	case .Any_View:
 		return true
-	case .Pointer, .Multi_Pointer, .Slice, .Dynamic_Array, .Array, .Distinct:
+	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Array, .Distinct:
 		return type_contains_any_view(c, info.element, depth + 1)
 	case .Map:
 		return type_contains_any_view(c, info.key, depth + 1) ||
@@ -478,7 +478,7 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 		return v.name_id == name
 	case ^Type_Pointer:
 		return type_syntax_names(v.elem, name)
-	case ^Type_Multi_Pointer:
+	case ^Type_C_Pointer:
 		return type_syntax_names(v.elem, name)
 	case ^Type_Slice:
 		return type_syntax_names(v.elem, name)

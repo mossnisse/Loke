@@ -1,0 +1,42 @@
+L0688
+@15:11
+`unsafe.transmute` needs equal sizes: `u32` is 4 bytes and `u64` is 8
+L0688
+@16:14
+`unsafe.transmute` needs equal sizes: `f64` is 8 bytes and `u8` is 1
+L0688
+@20:37
+an `unsafe.transmute` source type must be bitwise-copyable: `Owner` has a non-trivial lifecycle
+L0688
+@21:27
+an `unsafe.transmute` destination type must be bitwise-copyable: `Owner` has a non-trivial lifecycle
+L0688
+@22:32
+an `unsafe.transmute` source type must be bitwise-copyable: `string` has a non-trivial lifecycle
+L0688
+@28:30
+an `unsafe.transmute` destination type must be bitwise-copyable: `^int` is or contains a reference
+L0688
+@29:35
+an `unsafe.transmute` source type must be bitwise-copyable: `^int` is or contains a reference
+L0688
+@30:33
+an `unsafe.transmute` source type must be bitwise-copyable: `[]int` is or contains a reference
+L0688
+@34:12
+this bit pattern is not a valid `bool`
+L0688
+@35:13
+this bit pattern is not a valid `Colour`
+L0688
+@36:15
+this bit pattern is not a valid `rune`
+L0688
+@40:14
+`unsafe.transmute` takes a destination type and a value, found 1 argument
+L0688
+@41:33
+`unsafe.transmute` names the destination type first
+L0315
+@47:10
+unknown name `transmute`

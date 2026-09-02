@@ -207,7 +207,7 @@ The zero value is:
 - `false` for `bool`
 - `""` for `string`
 - an empty, immediately usable value for `[dynamic]T` and `map[K]V`: `len` and `cap` are 0, and appending or inserting needs no prior construction. Without a `via` declaration it is allocator-unbound until its first allocating operation
-- `nil` for pointer, multi-pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, `any_view`, every `dyn Interface`, `shared(T)`, and `weak(T)` type. A nil slice or view has length 0
+- `nil` for pointer, C pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, `any_view`, every `dyn Interface`, `shared(T)`, and `weak(T)` type. A nil slice or view has length 0
 - the variant `@(zero=name)` designates, for a [union](#unions) that designates one
 
 Aggregate zero values are built recursively from their fields. A type with `hook(drop)` must have an inert zero value on which dropping does nothing; a resource that uses zero for a live handle must instead carry a separate validity field or forbid a zero owning value.
@@ -265,7 +265,6 @@ Imported extensions cannot add other implicit conversions.
 - `^mut T` -> `^T`, `[]mut T` -> `[]T`, and `dyn mut I` -> `dyn I`
 - `^T` / `^mut T` -> `rawptr`
 - `[^]T` -> `rawptr`
-- `[^]T` <-> `^T` / `^mut T`
 - Concrete values to `any_view` when an `any_view` parameter or local destination
   is expected; the result is a checked non-escaping borrow
 - `dyn Derived` -> `dyn Base` when `Derived` composes `Base`; the result keeps
@@ -441,7 +440,9 @@ A view from a `string` is thus `[]u8` and cannot become `[]mut u8`. Other read-o
 
 `inout T` remains a distinct mode rather than a spelling of `^mut T`: it is non-null, bound to the call, marked at the call site, and may invalidate the whole owner it names. An interior `^mut T` may not.
 
-`[^]T` stays outside this axis. It is unchecked and always mutable, and converting to it visibly crosses the `core:unsafe` boundary.
+`[^]T` stays outside this axis. It is unchecked and always mutable. Forming one
+from checked storage normally uses `unsafe.raw_data`; conversions between it and
+checked-pointer syntax must always be written explicitly.
 
 Checked provenance follows a local pointer, its copies, and the records, unions, and containers it is [stored inside](#values-that-contain-borrows). It is lost by storing the pointer in a `rawptr` or `[^]T` place or converting it through `core:unsafe`. A pointer loaded from such a place or received from foreign code is an unchecked address.
 
@@ -544,28 +545,30 @@ x := p^;      // ^ on the right
 Pointer arithmetic is not an operator. `core:mem.ptr_offset` and
 `core:mem.ptr_sub` provide explicit address calculations.
 
-### Multi-pointers
+### C pointers
 
-A multi-pointer describes a foreign (C-like) pointer that acts like an array. `[^]T` is a multi-pointer to `T`. Its zero value is nil.
+A C pointer describes a foreign (C-like) pointer that acts like an array. `[^]T` is a C pointer to `T`. Its zero value is nil.
 
 ```odin
 p: [^]int = nil;
 ```
 
-What multi-pointers support:
+What C pointers support:
 
 - Indexing without bounds checking.
 - Slicing, with bounds checking when both low and high operands are given.
-- Implicit conversions between `^T` and `[^]T`.
 - Implicit conversion to `rawptr`, like all pointers.
+- Explicit conversions to and from `^T` and `^mut T`. These conversions cross
+  the unchecked-address boundary and are never used implicitly by assignment or
+  argument passing.
 
-What multi-pointers DO NOT SUPPORT:
+What C pointers DO NOT SUPPORT:
 
-- Dereferencing, making a multi-pointer closer to a slim slice than a pointer.
+- Dereferencing, making a C pointer closer to a slim slice than a pointer.
 
 The type mainly aids foreign code, documenting intent and easing conversion of C pointers into slices.
 
-The following are the rules for indexing and slicing for multi-pointers, and what type they produce depending on the operands given:
+The following are the rules for indexing and slicing for C pointers, and what type they produce depending on the operands given:
 
 ```odin
 x: [^]T = ...;
@@ -577,7 +580,7 @@ x[i:]  -> [^]T
 x[:n]  -> []T
 x[i:n] -> []T
 
-Interacting with Multi-Pointers is easiest using `unsafe.raw_data`, which makes the loss of bounds and borrow capability visible at the call site.
+Interacting with C pointers is easiest using `unsafe.raw_data`, which makes the loss of bounds and borrow capability visible at the call site.
 
 ```odin
 a: [^]int = nil;
@@ -587,11 +590,11 @@ a = unsafe.raw_data(b[:]);
 fmt.println(a, a[1], b); // 0x7FFCBE9FE688 20 [10, 20, 30]
 ```
 
-The language name for `[^]T` is *multi-pointer*.
+The language name for `[^]T` is *C pointer*.
 
 ### unsafe.raw_data procedure
 
-`unsafe.raw_data` is a `core:unsafe` procedure that returns the underlying data of a built-in data type as a multi-pointer. A multi-pointer carries neither a length nor a read-only capability, and its lifetime is no longer checked after conversion.
+`unsafe.raw_data` is a `core:unsafe` procedure that returns the underlying data of a built-in data type as a C pointer. A C pointer carries neither a length nor a read-only capability, and its lifetime is no longer checked after conversion.
 
 ```odin
 unsafe.raw_data([]$E)              -> [^]E;    // read-only slices; capability is discarded
@@ -669,7 +672,7 @@ x: [5]int = {};
 static_assert(len(x) == 5);
 ```
 
-Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a multi-pointer:
+Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a C pointer:
 
 ```odin
 p := unsafe.raw_data(&x);
@@ -1961,7 +1964,7 @@ must import to name them:
 ```odin
 Type_Kind :: enum u8 {
 	Invalid, Void, Bool, Signed_Int, Unsigned_Int, Float, Rune,
-	Raw_Pointer, Pointer, Multi_Pointer, Array, Slice, Dynamic_Array, Map,
+	Raw_Pointer, Pointer, C_Pointer, Array, Slice, Dynamic_Array, Map,
 	Struct, Enum, Union, Proc, String, String_View, CString_View,
 	Typeid, Any_View, Dyn, Distinct, Simd, Allocator, Allocator_Error,
 }
@@ -3027,7 +3030,7 @@ Formatting stays the `value.format(writer, options)` protocol in `core:fmt`, wit
 
 Built-in satisfaction follows the operations the language already defines:
 
-- `bool`, integers, floats, runes, `string`, `string_view`, pointers including `rawptr` and multi-pointers, enums, `typeid`, and recursively comparable fixed arrays satisfy `Equatable`; records and unions do so when their generated or inherent equality is available;
+- `bool`, integers, floats, runes, `string`, `string_view`, pointers including `rawptr` and C pointers, enums, `typeid`, and recursively comparable fixed arrays satisfy `Equatable`; records and unions do so when their generated or inherent equality is available;
 - integers, floats, runes, `string`, `string_view`, pointers on targets that support pointer ordering, and enums satisfy `Ordered`;
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
@@ -3313,7 +3316,7 @@ unsafe.forget(move(held));  // the device driver owns it now
 ```
 
 - The operand is consumed. A place is written `unsafe.forget(move(place))` and obeys `move`'s rules in full, including the ban on static-duration storage. A value temporary is accepted directly, which is what permits `unsafe.forget(exchange(inout value, {}))` — the way a static-duration owner is forgotten.
-- The operand must own something or be provenance-free. A managed value is accepted even when it contains checked borrows: forgetting it leaks the owned resource and ends the loans inside it. An unmanaged value is accepted only when it carries no checked borrow, which rejects bare pointers, slices, views, `dyn` values, and borrow-only records. An unmanaged value that carries none — an `int`, a plain record, a raw or multi-pointer — is accepted silently, so a generic `T` that may or may not be managed can be written once. Forgetting a raw pointer releases nothing it designates.
+- The operand must own something or be provenance-free. A managed value is accepted even when it contains checked borrows: forgetting it leaks the owned resource and ends the loans inside it. An unmanaged value is accepted only when it carries no checked borrow, which rejects bare pointers, slices, views, `dyn` values, and borrow-only records. An unmanaged value that carries none — an `int`, a plain record, a raw or C pointer — is accepted silently, so a generic `T` that may or may not be managed can be written once. Forgetting a raw pointer releases nothing it designates.
 - **`forget` does not extend a lifetime.** It performs no heap promotion, no address stabilization, and no frame preservation. A borrow of a forgotten owner is invalidated at the `forget`, exactly as it would be at a `drop`, so a borrow can never outlive the value it names.
 - The source binding becomes dead. Using it again, or forgetting it twice, is the ordinary use-after-move error.
 - The result is `Unit`, matching `drop`.
@@ -3508,7 +3511,7 @@ The equality operators == and != apply to operands that are comparable. The orde
 - Floating-point values are comparable and ordered, defined by the IEEE-754 standard.
 - Rune values are comparable and ordered.
 - `string` and `string_view` values are comparable and ordered, lexically byte-wise.
-- Pointer and multi-pointer values are comparable. Equality compares addresses. Ordering compares the addresses as unsigned `uintptr` values, producing a total order within one execution even for pointers to unrelated allocations. Address-space randomization means that this order need not be reproducible between executions. On a target where a pointer cannot be represented losslessly by `uintptr`, ordering pointers is not supported and use of `<`, `<=`, `>`, or `>=` on them is a compile-time error.
+- Pointer and C pointer values are comparable. Equality compares addresses. Ordering compares the addresses as unsigned `uintptr` values, producing a total order within one execution even for pointers to unrelated allocations. Address-space randomization means that this order need not be reproducible between executions. On a target where a pointer cannot be represented losslessly by `uintptr`, ordering pointers is not supported and use of `<`, `<=`, `>`, or `>=` on them is a compile-time error.
 - Enum values are comparable and ordered.
 - Struct values are comparable if all their fields are comparable or a visible comparison overload is provided.
 - Union values are comparable if all their variants are comparable or a visible comparison overload is provided.
@@ -5277,6 +5280,23 @@ unsafe.free(block, allocator);       // programmer promises the allocation
 
 `unsafe.free(pointer)` and `unsafe.free(pointer, allocator)` release an allocation whose root the compiler cannot follow — one reached through a `rawptr`, a parameter, or foreign code. They release exactly what checked `free` releases and check nothing: the caller promises that the pointer is an allocation base from that allocator, that nothing still refers to it, and that it is released once. A handle over an opaque control block, `shared(T)` among them, has no other way to release it.
 
+#### `unsafe.transmute`
+
+`unsafe.transmute(T, value)` reads the storage of `value` as a `T`. Its first argument is a type, as `size_of(T)`'s is, and it needs no addressable operand:
+
+```odin
+f := f32(123);
+u := unsafe.transmute(u32, f);
+```
+
+This is akin to the pointer cast `(^u32)(&f)^`, and it is spelled through `core:unsafe` for the same reason `raw_data` is: reinterpreting bits is not a safe, universally valid conversion, so the loss is visible at the call site. It is never injected into the universe and never implicitly available to ordinary source.
+
+The compiler checks the shape of the conversion and nothing else. The source and destination must be the **same size**, and both must have a **trivial lifecycle**: no copy or drop hook, no managed owner, and recursively bitwise-copyable. Neither side may be or contain a reference — `^T`, a slice, a `string_view`, an `any_view`, or a `dyn` — because a bit cast would hand back a borrow the compiler never saw loaned. This prevents a bit cast from duplicating an owning representation or manufacturing a value whose cleanup invariant was never established.
+
+Producing only a valid destination representation is otherwise the caller's obligation. A scalar integer, float, `bool`, `rune`, or enum result is folded when the operand is a constant, and a constant whose pattern is not a value of the destination type at all — a `bool` outside `{0, 1}`, an enum with no such member, a `rune` outside the scalar-value range — is a compile error rather than a folded invalid value. The same pattern produced at runtime is not diagnosed.
+
+Pointer destinations are limited to `rawptr` and C pointers, and the result is unchecked: dereferencing it is valid only when the input bits already describe suitably aligned, live storage of the destination pointee type.
+
 Everything in `unsafe` is a promise by the programmer that the compiler cannot verify. It does not make the underlying storage owned or extend its lifetime.
 
 # 8. Packages & Visibility
@@ -5468,7 +5488,6 @@ For the full list, see the documentation for package `builtin`. The compiler-def
 | `panic(message)` | Panics at runtime or diagnoses the currently evaluated compile-time call |
 | `new`, `new_clone`, `make`, `free`, `free_all`, `drop` | [Allocation and release](#allocators) |
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
-| `transmute(T, value)` | Bit cast between two same-sized types with a [trivial lifecycle]|
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
 
 `len`, `cap`, `size_of`, `align_of`, and `offset_of` all result in `int`.
@@ -5483,25 +5502,6 @@ required compile-time evaluation.
 spellings but are equally compiler special forms, as described under
 [Managed values and storage](#managed-values-and-storage) and
 [Exchange](#exchange). Every other built-in listed here is an ordinary call.
-
-`transmute(T, value)` is a bit cast conversion between two types of the same size. Both the source and destination must have a **trivial lifecycle**: they have no copy or drop hook, contain no managed owner, and are recursively bitwise-copyable. This prevents a bit cast from duplicating an owning representation or manufacturing a value whose cleanup invariant was never established.
-
-```odin
-f := f32(123);
-u := transmute(u32, f);
-```
-
-It is an ordinary compile-time built-in, not an operator: a predeclared identifier whose first argument is a type, like `size_of(T)`.
-
-This is akin to doing the following pointer cast manipulations:
-
-```odin
-f := f32(123);
-u := (^u32)(&f)^;
-```
-
-Unlike that cast, `transmute` needs no addressable operand. It cannot reinterpret a managed or resource-owning value; low-level code manipulates such representations through raw storage in `core:unsafe` and is then responsible for establishing exactly one initialized owner.
-
 
 ## Error handling
 
@@ -6195,7 +6195,7 @@ Exactly one selected configuration reaches the final link, because the initializ
 
 ## Compile-time built-ins
 
-These four are **ordinary predeclared identifiers**, reached through the ordinary call suffix exactly like `size_of` and `transmute`, and shadowable by a declaration exactly like those. The language has no separate lexical category of directives: there is no `#name` form at all, and a `#` in source outside a comment or literal is an invalid character.
+These four are **ordinary predeclared identifiers**, reached through the ordinary call suffix exactly like `size_of` and `type_of`, and shadowable by a declaration exactly like those. The language has no separate lexical category of directives: there is no `#name` form at all, and a `#` in source outside a comment or literal is an invalid character.
 
 Each one answers entirely at compile time and leaves nothing for the backend to
 emit.

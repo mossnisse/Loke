@@ -29,10 +29,6 @@ Is `()` a new zero-sized type category, or the anonymous spelling of an already-
 
 Does scope-based `defer` provide enough clarity and utility to remain in the final language? Its current semantics are fully defined, including its ordering with automatic cleanup. The remaining question is whether explicit resource types and managed cleanup make most uses unnecessary.
 
-## Multi-pointer terminology
-
-Is *multi-pointer* the clearest name for `[^]T`, or would *bounded-form pointer*, *C pointer*, or another term better communicate its unchecked indexing and foreign-memory role? The syntax and semantics are independent of the eventual name.
-
 ## Pure procedures
 
 Should there be a form of procedure, distinct from `proc`, that is guaranteed by the compiler to be free of side effects?
@@ -720,7 +716,7 @@ are variant names and which the compiler requires to be exhaustive. There is no
 spelling that reads one variant's payload while another is active.
 Interpreting the wrong payload as an owning type can manufacture a container
 header from unrelated bits and later pass an invalid pointer to `drop`.
-`transmute` and raw storage in `core:unsafe` remain available for explicit
+`unsafe.transmute` and raw storage in `core:unsafe` remain available for explicit
 low-level work, and the checked extraction that does exist — `view.(T)` on an
 `any_view`, where the set of types is open — traps rather than guessing.
 
@@ -818,14 +814,19 @@ statement block. A block-closing `}` terminates that form; a trailing semicolon
 is accepted only as a separate empty statement. This keeps termination
 deterministic without requiring a redundant `;` after a block.
 
-### `transmute` is a procedure, not an operator
+### `transmute` is a procedure in `core:unsafe`, not an operator
 
 Odin spells a bit cast `transmute(T)value`, which needs a reserved word and its
-own unary binding rule. Loke writes `transmute(T, value)` and makes `transmute`
-an ordinary predeclared built-in alongside `drop`, `len`, and `new` — types are
-already passable as arguments, so nothing was gained by the operator form except
-a keyword. `move` stays a keyword because it is also a parameter mode and has to
-be reserved regardless.
+own unary binding rule. Loke writes `unsafe.transmute(T, value)` and makes it an
+ordinary call — types are already passable as arguments, so nothing was gained
+by the operator form except a keyword. `move` stays a keyword because it is also
+a parameter mode and has to be reserved regardless.
+
+It is not predeclared either. Reinterpreting bits is not a safe, universally
+valid conversion: nothing about the source value says the destination
+representation is one its type ever admits. That is the same loss `raw_data` and
+`free` make visible, so it is spelled at the same boundary and an import says
+the program does it.
 
 ### Parenthesized control-flow headers
 

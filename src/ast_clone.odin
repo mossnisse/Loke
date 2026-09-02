@@ -343,8 +343,8 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.elem = clone_expr(c, v.elem)
 		return n
 
-	case ^Type_Multi_Pointer:
-		n := new_clone(c, Type_Multi_Pointer, &v.base)
+	case ^Type_C_Pointer:
+		n := new_clone(c, Type_C_Pointer, &v.base)
 		n.elem = clone_expr(c, v.elem)
 		return n
 

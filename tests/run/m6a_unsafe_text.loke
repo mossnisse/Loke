@@ -1,6 +1,6 @@
 package main; import "core:fmt";
 
-// design.md "Multi-pointers" and "unsafe.raw_data procedure": a multi-pointer
+// design.md "C pointers" and "unsafe.raw_data procedure": a C pointer
 // carries neither a length nor a read-only capability, and its lifetime is no
 // longer checked after conversion — which is why every one of these starts at a
 // visible `unsafe.` call site.
@@ -17,14 +17,15 @@ main :: proc() {
 	fmt.println(len(tail));
 	fmt.println(tail[0]);
 
-	// `x[i:]` stays a multi-pointer, so the bound is still absent.
+	// `x[i:]` stays a C pointer, so the bound is still absent.
 	rest := p[2:];
 	fmt.println(rest[0]);
 
-	// A multi-pointer converts implicitly to and from `^T`.
-	single: ^int = p;
+	// Crossing between C pointers and checked-pointer syntax is explicit. The
+	// reconstructed `^T` still has unknown provenance because `p` is unchecked.
+	single := (^int)(p);
 	fmt.println(single^);
-	again: [^]int = single;
+	again := ([^]int)(single);
 	fmt.println(again[0]);
 
 	// Text through the unsafe boundary and back.

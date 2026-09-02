@@ -513,7 +513,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		}
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_f64(ptr %%w, double %s)", widened)
 
-	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator:
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator:
 		value := load(e, "ptr", address)
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_fmt_ptr(ptr %%w, ptr %s)", value)
 
@@ -946,7 +946,7 @@ type_info_entry :: proc(e: ^Emitter, record, member, type: Type_Id) -> string {
 public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 	PUBLIC_KINDS :: []string {
 		"Invalid", "Void", "Bool", "Signed_Int", "Unsigned_Int", "Float", "Rune",
-		"Raw_Pointer", "Pointer", "Multi_Pointer", "Array", "Slice", "Dynamic_Array", "Map",
+		"Raw_Pointer", "Pointer", "C_Pointer", "Array", "Slice", "Dynamic_Array", "Map",
 		"Struct", "Enum", "Union", "Proc", "String", "String_View", "CString_View",
 		"Typeid", "Any_View", "Dyn", "Distinct", "Simd", "Allocator", "Allocator_Error",
 	}
@@ -965,7 +965,7 @@ public_type_kind :: proc(c: ^Compiler, type: Type_Id) -> int {
 		case .Rune:            wanted = "Rune"
 		case .Raw_Pointer:     wanted = "Raw_Pointer"
 		case .Pointer:         wanted = "Pointer"
-		case .Multi_Pointer:   wanted = "Multi_Pointer"
+		case .C_Pointer:       wanted = "C_Pointer"
 		case .Array:           wanted = "Array"
 		case .Simd:            wanted = "Simd"
 		case .Slice:           wanted = "Slice"

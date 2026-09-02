@@ -76,4 +76,78 @@ main :: proc() {
 	fmt.println(i.conjugate(), i.norm_squared());
 	fmt.println(Q.from_components(1, 2, 3, 4).norm_squared());
 	fmt.println(i + 1.0);
+
+	// ---- the floating specializations (math-plan step 4) ----
+	//
+	// `abs`, `inverse`, and a `divide` that does not form `c*c + d*d` exist only
+	// for `Complex(f32)`/`Complex(f64)` and the two `Quaternion` instances; every
+	// other `T` keeps the generic operator above and gains neither.
+	floating();
+}
+
+CF :: math.Complex(f32);
+QF :: math.Quaternion(f32);
+
+// Never print a NaN: `%.17g` spells one three different ways on this platform
+// depending on the payload.
+nan_complex :: proc(z: C) -> bool {
+	return math.is_nan(z.real) && math.is_nan(z.imaginary);
+}
+
+floating :: proc() {
+	// Ordinary values, both widths.
+	fmt.println(C{3.0, 4.0}.abs(), CF{f32(3.0), f32(4.0)}.abs());
+	fmt.println(C{3.0, 4.0}.inverse(), C{3.0, 4.0}*C{3.0, 4.0}.inverse());
+	fmt.println(C{6.0, 4.0}/C{2.0, 0.0}, C{0.0, 1.0}/C{0.0, 1.0});
+	fmt.println(CF{f32(6.0), f32(4.0)}/CF{f32(2.0), f32(0.0)});
+
+	// The regression the Smith rewrite claims: a denominator whose component
+	// squares overflow but whose quotient is perfectly finite. The textbook form
+	// forms `2e400`, gets `+infinity`, and answers `0+0i`.
+	huge := C{1.0e200, 1.0e200};
+	fmt.println(C{1.0e200, 0.0}/huge, huge/huge);
+	fmt.println(huge.abs() > 1.0e200, math.is_infinite(huge.norm_squared()));
+	maximum := C{math.F64_MAX, math.F64_MAX}/C{math.F64_MAX, math.F64_MAX};
+	maximum_f32 := CF{math.F32_MAX, math.F32_MAX}/CF{math.F32_MAX, math.F32_MAX};
+	fmt.println(maximum.real == 1.0, maximum.imaginary == 0.0,
+	            maximum_f32.real == f32(1.0), maximum_f32.imaginary == f32(0.0));
+	mixed := C{math.F64_MAX, math.F64_MAX}/C{math.F64_MIN_SUBNORMAL, math.F64_MIN_SUBNORMAL};
+	mixed_f32 := CF{math.F32_MAX, math.F32_MAX}/CF{math.F32_MIN_SUBNORMAL, math.F32_MIN_SUBNORMAL};
+	fmt.println(math.is_infinite(mixed.real), mixed.imaginary == 0.0,
+	            math.is_infinite_f32(mixed_f32.real), mixed_f32.imaginary == f32(0.0));
+
+	// The same at the other end of the range: subnormal components, where the
+	// squares underflow to zero and the textbook form divides by zero.
+	tiny := C{math.F64_MIN_SUBNORMAL, math.F64_MIN_SUBNORMAL};
+	fmt.println(tiny/tiny, tiny.norm_squared());
+
+	// Zero, infinity, and NaN. A zero denominator divides by zero, which is the
+	// ordinary scalar rule rather than a trap.
+	fmt.println(C{0.0, 0.0}.abs(), C{math.F64_INFINITY, 1.0}.abs());
+	fmt.println(C{math.F64_NAN, math.F64_INFINITY}.abs());
+	fmt.println(math.is_nan(C{math.F64_NAN, 0.0}.abs()));
+	fmt.println(nan_complex(C{1.0, 1.0}/C{0.0, 0.0}));
+
+	// `Quaternion.abs` is the nested `hypot`, so it survives the same overflow.
+	fmt.println(Q{1.0, 2.0, 2.0, 4.0}.abs(), QF{f32(1.0), f32(2.0), f32(2.0), f32(4.0)}.abs());
+	fmt.println(Q{1.0, 2.0, 2.0, 4.0}.inverse());
+	fmt.println(Q{1.0e200, 2.0e200, 2.0e200, 4.0e200}.abs() > 1.0e200);
+	big := Q{1.0e200, 2.0e200, 2.0e200, 4.0e200};
+	fmt.println(big*big.inverse());
+	maximum_q := Q{math.F64_MAX, math.F64_MAX, math.F64_MAX, math.F64_MAX}.inverse();
+	maximum_qf := QF{math.F32_MAX, math.F32_MAX, math.F32_MAX, math.F32_MAX}.inverse();
+	fmt.println(maximum_q.real > 0.0, maximum_q.i < 0.0,
+	            maximum_q.j < 0.0, maximum_q.k < 0.0);
+	fmt.println(maximum_qf.real > f32(0.0), maximum_qf.i < f32(0.0),
+	            maximum_qf.j < f32(0.0), maximum_qf.k < f32(0.0));
+
+	// Quaternion multiplication does not commute, so `inverse` is the operation
+	// and there is deliberately no `/`: the caller writes which side.
+	q := Q{1.0, 2.0, 3.0, 4.0};
+	fmt.println(q*q.inverse(), q.inverse()*q);
+
+	// A zero quaternion divides zero by zero in every component.
+	zero := Q{0.0, 0.0, 0.0, 0.0}.inverse();
+	fmt.println(math.is_nan(zero.real), math.is_nan(zero.i),
+	            math.is_nan(zero.j), math.is_nan(zero.k));
 }

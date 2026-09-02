@@ -1,0 +1,75 @@
+2 -3 3 -2
+2 -2
+1 -1 2 3
+2 -2
+-1 2
+9223372036854775808 9223372036854775808
+9223372036854775808 9223372036854775808
+2147483648
+inf -inf inf
+true true
+true
+1 -1 1
+1.5
+0 9223372036854775808
+true true
+3.5 -3.5
+true
+2 0.5 1
+2 0.5
+5 5
+5
+1024 0.25 3
+1024
+1 0 10 3
+10 2
+true true
+true true
+true true
+true true
+9223372036854775808 0
+true inf
+2147483648 true
+0 inf inf
+true
+inf
+true -inf -inf
+inf true
+-inf -inf true
+-inf true
+inf 0
+0 inf
+1 1 1
+1 1 3.5
+true true
+inf -inf inf
+9223372036854775808 0
+1 1
+inf 0
+0 inf
+-0 -inf inf
+0 inf
+1 1
+0 9223372036854775808 1
+9223372036854775808 0 0
+2147483648 1
+true true
+true true
+true true
+true true
+true true
+true true
+true true true
+true
+true true
+true
+true true
+true 9223372036854775808
+0 true
+true true
+true true
+true
+true
+180 true
+0 0
+true true

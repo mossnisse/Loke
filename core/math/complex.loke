@@ -48,8 +48,10 @@ impl Complex($T) {
 		};
 	}
 
-	// The textbook form. It overflows for operands whose squares do not fit,
-	// which is the price of not having a scaled `hypot` in `core:math` yet.
+	// The textbook form. It overflows for operands whose squares do not fit.
+	// `T` here is any `Numeric` type, integers included, so it cannot reach the
+	// scaled floating `hypot`; the `f32` and `f64` blocks below replace this
+	// member for those two instantiations with one that does not form `c*c+d*d`.
 	divide :: operator(/) proc(left, right: Complex(T)) -> Complex(T) {
 		denominator := right.real*right.real + right.imaginary*right.imaginary;
 		return {
@@ -66,9 +68,9 @@ impl Complex($T) {
 		return {self.real, T(0) - self.imaginary};
 	}
 
-	// The squared magnitude. There is no `abs`, because it needs a square root
-	// and `core:math` has no elementary functions yet; a caller with one takes
-	// the root of this.
+	// The squared magnitude, for any `Numeric` `T`. `abs` needs a square root and
+	// therefore a floating `T`, so it lives in the two exact blocks below; an
+	// integer instantiation still has this.
 	norm_squared :: proc(self) -> T {
 		return self.real*self.real + self.imaginary*self.imaginary;
 	}
@@ -155,5 +157,166 @@ impl Quaternion($T) {
 		fmt.format_to(writer, "j+");
 		fmt.format_to(writer, self.k);
 		fmt.format_to(writer, "k");
+	}
+}
+
+// ------------------------------------------------ the floating instances --
+//
+// math-plan "What `Complex` and `Quaternion` gain". The generic blocks above are
+// constrained by `interfaces.Numeric(T)`, which admits integers and implies no
+// ordering, so nothing in them can call an `f32`/`f64` `hypot`. Narrowing the
+// types would break existing source, so the new operations live in exact
+// specialization blocks instead — a lookup form the language already has, where
+// a block written for one instantiation wins for that instantiation and leaves
+// every other to the unspecialized one.
+//
+// Each pair is the same surface twice: the `f64` block over the unsuffixed
+// scalar procedures and the `f32` block over the `_f32` ones. There is no third
+// spelling, because there is no `f32` -> `f64` widening to hide one behind.
+
+impl Complex(f64) {
+	// `hypot`, not `sqrt(norm_squared())`: the magnitude of a complex number
+	// whose components are large is representable long after the sum of their
+	// squares is not.
+	abs :: proc(self) -> f64 {
+		return hypot(self.real, self.imaginary);
+	}
+
+	// Smith's method: divide through by the larger denominator component, so
+	// `c*c + d*d` is never formed. The guarantee is narrow and testable — finite
+	// non-zero denominator components do not overflow merely because their
+	// squares would. It does not claim bit-for-bit C complex semantics for every
+	// NaN/infinity combination.
+	divide :: operator(/) proc(left, right: Complex(f64)) -> Complex(f64) {
+		// Smith's bounded ratio still leaves one addition in each numerator and
+		// denominator. When the denominator is in the top binade, halve all four
+		// components; when only the numerator is there, halve it and double the
+		// final result. Keeping a tiny denominator unscaled avoids erasing it while
+		// still keeping every intermediate addition finite.
+		a, b := left.real, left.imaginary;
+		c, d := right.real, right.imaginary;
+		result_scale := 1.0;
+		denominator_largest := max(abs(c), abs(d));
+		numerator_largest := max(abs(a), abs(b));
+		if (denominator_largest > F64_MAX/2.0) {
+			a, b = a*0.5, b*0.5;
+			c, d = c*0.5, d*0.5;
+		} else if (numerator_largest > F64_MAX/2.0) {
+			a, b = a*0.5, b*0.5;
+			result_scale = 2.0;
+		}
+		if (abs(d) <= abs(c)) {
+			ratio := d/c;
+			denominator := c + d*ratio;
+			return {
+				((a + b*ratio)/denominator)*result_scale,
+				((b - a*ratio)/denominator)*result_scale,
+			};
+		}
+		ratio := c/d;
+		denominator := c*ratio + d;
+		return {
+			((a*ratio + b)/denominator)*result_scale,
+			((b*ratio - a)/denominator)*result_scale,
+		};
+	}
+
+	// Through the specialised division rather than `conjugate/norm_squared`,
+	// which would reintroduce the overflow that division just removed.
+	inverse :: proc(self) -> Complex(f64) {
+		return Complex(f64){1.0, 0.0}/self;
+	}
+}
+
+impl Complex(f32) {
+	abs :: proc(self) -> f32 {
+		return hypot_f32(self.real, self.imaginary);
+	}
+
+	divide :: operator(/) proc(left, right: Complex(f32)) -> Complex(f32) {
+		a, b := left.real, left.imaginary;
+		c, d := right.real, right.imaginary;
+		result_scale := f32(1.0);
+		denominator_largest := max(abs_f32(c), abs_f32(d));
+		numerator_largest := max(abs_f32(a), abs_f32(b));
+		if (denominator_largest > F32_MAX/f32(2.0)) {
+			a, b = a*f32(0.5), b*f32(0.5);
+			c, d = c*f32(0.5), d*f32(0.5);
+		} else if (numerator_largest > F32_MAX/f32(2.0)) {
+			a, b = a*f32(0.5), b*f32(0.5);
+			result_scale = f32(2.0);
+		}
+		if (abs_f32(d) <= abs_f32(c)) {
+			ratio := d/c;
+			denominator := c + d*ratio;
+			return {
+				((a + b*ratio)/denominator)*result_scale,
+				((b - a*ratio)/denominator)*result_scale,
+			};
+		}
+		ratio := c/d;
+		denominator := c*ratio + d;
+		return {
+			((a*ratio + b)/denominator)*result_scale,
+			((b*ratio - a)/denominator)*result_scale,
+		};
+	}
+
+	inverse :: proc(self) -> Complex(f32) {
+		return Complex(f32){f32(1.0), f32(0.0)}/self;
+	}
+}
+
+impl Quaternion(f64) {
+	// Nested `hypot` rather than the root of the sum of four squares: the same
+	// overflow and underflow argument, one level deeper. The extra rounding is
+	// within the target libm accuracy contract this package promises.
+	abs :: proc(self) -> f64 {
+		return hypot(hypot(self.real, self.i), hypot(self.j, self.k));
+	}
+
+	// `conjugate/norm_squared`, staged so no avoidable overflow happens on the
+	// way: every component is divided by the largest magnitude first, which puts
+	// the normalized sum of squares in `[1, 4]` whatever the input scale was.
+	// A zero quaternion divides zero by zero and yields NaN components, which is
+	// the scalar floating rule rather than a special case.
+	inverse :: proc(self) -> Quaternion(f64) {
+		scale := max(max(abs(self.real), abs(self.i)),
+		             max(abs(self.j), abs(self.k)));
+		real := self.real/scale;
+		i := self.i/scale;
+		j := self.j/scale;
+		k := self.k/scale;
+		sum := real*real + i*i + j*j + k*k;
+		factor: f64;
+		if (scale > 1.0) {
+			factor = (1.0/scale)/sum;
+		} else {
+			factor = 1.0/(scale*sum);
+		}
+		return {real*factor, 0.0 - i*factor, 0.0 - j*factor, 0.0 - k*factor};
+	}
+}
+
+impl Quaternion(f32) {
+	abs :: proc(self) -> f32 {
+		return hypot_f32(hypot_f32(self.real, self.i), hypot_f32(self.j, self.k));
+	}
+
+	inverse :: proc(self) -> Quaternion(f32) {
+		scale := max(max(abs_f32(self.real), abs_f32(self.i)),
+		             max(abs_f32(self.j), abs_f32(self.k)));
+		real := self.real/scale;
+		i := self.i/scale;
+		j := self.j/scale;
+		k := self.k/scale;
+		sum := real*real + i*i + j*j + k*k;
+		factor: f32;
+		if (scale > f32(1.0)) {
+			factor = (f32(1.0)/scale)/sum;
+		} else {
+			factor = f32(1.0)/(scale*sum);
+		}
+		return {real*factor, f32(0.0) - i*factor, f32(0.0) - j*factor, f32(0.0) - k*factor};
 	}
 }

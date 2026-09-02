@@ -2441,7 +2441,7 @@ parse_bracket_type :: proc(p: ^Parser) -> Expr {
 		advance(p)
 		expect(p, .Rbracket, "L0231", "`]` after `[^`")
 		elem := parse_type(p)
-		n := new_expr(p, Type_Multi_Pointer, lo)
+		n := new_expr(p, Type_C_Pointer, lo)
 		n.elem = elem
 		n.has_error = expr_has_error(elem)
 		return n

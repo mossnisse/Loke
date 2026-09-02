@@ -78,7 +78,7 @@ atomic_type_supported :: proc(c: ^Compiler, type: Type_Id) -> bool {
 		return false
 	}
 	#partial switch info.kind {
-	case .Bool, .Rune, .Pointer, .Multi_Pointer, .Raw_Pointer:
+	case .Bool, .Rune, .Pointer, .C_Pointer, .Raw_Pointer:
 		return true
 	case .Int, .Enum:
 		return atomic_width_bits(c, type) != 0
@@ -98,7 +98,7 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 		return 8
 	case .Rune:
 		return 32
-	case .Pointer, .Multi_Pointer, .Raw_Pointer:
+	case .Pointer, .C_Pointer, .Raw_Pointer:
 		return 64
 	case .Int, .Enum:
 		bits := type_bits(c, type_underlying(c, type))

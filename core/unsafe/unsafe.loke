@@ -1,7 +1,30 @@
 // The explicit trust boundary (design.md "What is not checked").
 //
-// `raw_data`, `string_view` and `cstring_view` over multi-pointers and
+// `raw_data`, `string_view` and `cstring_view` over C pointers and
 // unchecked storage arrive with M6a step 4, alongside the text carriers they
 // convert between.
+//
+// # `transmute(T, value)`
+//
+// Reads the storage of `value` as a `T`, with no addressable operand — the
+// pointer cast `(^T)(&value)^` written as one expression. The compiler checks
+// the shape of the conversion and nothing else: the source and destination are
+// the same size, and both have a trivial lifecycle. A managed value, a `^T`, a
+// slice, a view, or a `dyn` is rejected on either side, as is an aggregate
+// containing one: a bit cast may neither duplicate an owning representation nor
+// hand back a borrow nothing loaned.
+//
+// Everything else is the caller's obligation. Producing a valid destination
+// representation is not checked at runtime; a *constant* pattern that is not a
+// value of the destination type at all — a `bool` outside `{0, 1}`, an enum
+// with no such member, a `rune` outside the scalar range — is a compile error
+// instead, since there is no caller left to hold responsible. A scalar integer,
+// float, `bool`, `rune`, or enum result folds when its operand is constant,
+// which is how a package builds an infinity or a NaN: neither has a literal
+// spelling.
+//
+// Pointer destinations are `rawptr` and C pointers only, and the result is
+// unchecked: dereferencing it is valid only when the bits already describe
+// suitably aligned, live storage of the destination pointee type.
 @(public)
 package unsafe;

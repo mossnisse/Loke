@@ -1,0 +1,175 @@
+// The `core:math` elementary functions (math-plan step 3), at both widths.
+//
+// The differential-optimization corpus runs this at every `-opt` level and one
+// `.expected` has to match all of them, so a transcendental result is never
+// printed: a value that gets folded at compile time instead of computed at run
+// time can move in its last digit. Exact operations assert on exact values;
+// everything else prints a tolerance comparison. Special cases are printed as
+// classifications, and never as a NaN — the platform C library spells one three
+// different ways depending on the payload.
+package main;
+
+import "core:fmt";
+import "core:math";
+import "core:unsafe";
+
+// The combined bound the plan specifies: absolute for values near zero,
+// relative over the rest of the dynamic range. A fixed `1e-12` would be neither
+// a meaningful f32 test nor sufficient for a large result.
+close :: proc(got: f64, want: f64) -> bool {
+	return math.abs(got - want) <= 1.0e-290 + 1.0e-14*math.abs(want);
+}
+
+close_f32 :: proc(got: f32, want: f32) -> bool {
+	return math.abs_f32(got - want) <= f32(1.0e-30) + f32(1.0e-6)*math.abs_f32(want);
+}
+
+INF :: math.F64_INFINITY;
+NAN :: math.F64_NAN;
+INF32 :: math.F32_INFINITY;
+NAN32 :: math.F32_NAN;
+
+bits64 :: proc(x: f64) -> u64 { return unsafe.transmute(u64, x); }
+bits32 :: proc(x: f32) -> u32 { return unsafe.transmute(u32, x); }
+
+rounding :: proc() {
+	fmt.println(math.floor(2.5), math.floor(-2.5), math.ceil(2.5), math.ceil(-2.5));
+	fmt.println(math.trunc(2.75), math.trunc(-2.75));
+	// Halfway cases go away from zero, not to even.
+	fmt.println(math.round(0.5), math.round(-0.5), math.round(1.5), math.round(2.5));
+	fmt.println(math.floor_f32(f32(2.5)), math.ceil_f32(f32(-2.5)));
+	fmt.println(math.round_f32(f32(-0.5)), math.trunc_f32(f32(2.75)));
+
+	// All four preserve the sign of a zero and return an infinity unchanged.
+	fmt.println(bits64(math.floor(-0.0)), bits64(math.ceil(-0.0)));
+	fmt.println(bits64(math.round(-0.0)), bits64(math.trunc(-0.0)));
+	fmt.println(bits32(math.trunc_f32(f32(-0.0))));
+	fmt.println(math.floor(INF), math.ceil(0.0 - INF), math.trunc(INF));
+	fmt.println(math.is_nan(math.floor(NAN)), math.is_nan(math.round(NAN)));
+	fmt.println(math.is_nan_f32(math.ceil_f32(NAN32)));
+}
+
+remainder :: proc() {
+	fmt.println(math.mod(7.0, 3.0), math.mod(-7.0, 3.0), math.mod(7.0, -3.0));
+	fmt.println(math.mod_f32(f32(7.5), f32(2.0)));
+	// A non-zero result takes the sign of `x`, and an exact zero keeps the zero
+	// sign of `x` — which is only visible in the bits.
+	fmt.println(bits64(math.mod(6.0, 3.0)), bits64(math.mod(-6.0, 3.0)));
+	// A zero divisor or an infinite `x` is a NaN; a finite `x` modulo an
+	// infinite `y` is `x`.
+	fmt.println(math.is_nan(math.mod(1.0, 0.0)), math.is_nan(math.mod(INF, 3.0)));
+	fmt.println(math.mod(3.5, INF), math.mod(-3.5, INF));
+	fmt.println(math.is_nan_f32(math.mod_f32(f32(1.0), f32(0.0))));
+}
+
+roots :: proc() {
+	// Exact in binary floating point, at both widths.
+	fmt.println(math.sqrt(4.0), math.sqrt(0.25), math.sqrt(1.0));
+	fmt.println(math.sqrt_f32(f32(4.0)), math.sqrt_f32(f32(0.25)));
+	fmt.println(math.hypot(3.0, 4.0), math.hypot(-3.0, -4.0));
+	fmt.println(math.hypot_f32(f32(3.0), f32(4.0)));
+	fmt.println(math.pow(2.0, 10.0), math.pow(2.0, -2.0), math.pow(9.0, 0.5));
+	fmt.println(math.pow_f32(f32(2.0), f32(10.0)));
+	fmt.println(math.exp(0.0), math.log(1.0), math.log2(1024.0), math.log10(1000.0));
+	fmt.println(math.log2_f32(f32(1024.0)), math.log10_f32(f32(100.0)));
+
+	// Approximate results are compared, not printed.
+	fmt.println(close(math.exp(1.0), 2.718281828459045),
+	            close(math.log(2.718281828459045), 1.0));
+	fmt.println(close_f32(math.exp_f32(f32(1.0)), f32(math.E)),
+	            close_f32(math.log_f32(f32(math.E)), f32(1.0)));
+	fmt.println(close(math.sqrt(2.0), math.SQRT_TWO),
+	            close_f32(math.sqrt_f32(f32(2.0)), f32(math.SQRT_TWO)));
+	fmt.println(close(math.pow(2.0, 0.5), math.SQRT_TWO),
+	            close(math.hypot(1.0e300, 1.0e300), 1.4142135623730951e300));
+
+	// `sqrt` preserves the sign of zero, is a NaN below zero, and passes
+	// `+infinity` through.
+	fmt.println(bits64(math.sqrt(-0.0)), bits64(math.sqrt(0.0)));
+	fmt.println(math.is_nan(math.sqrt(-1.0)), math.sqrt(INF));
+	fmt.println(bits32(math.sqrt_f32(f32(-0.0))), math.is_nan_f32(math.sqrt_f32(f32(-1.0))));
+
+	// `hypot` is non-negative, and an infinite operand wins over a NaN one.
+	fmt.println(math.hypot(-0.0, -0.0), math.hypot(INF, NAN), math.hypot(NAN, 0.0 - INF));
+	fmt.println(math.is_nan(math.hypot(NAN, 1.0)));
+	fmt.println(math.hypot_f32(INF32, NAN32));
+
+	// The logarithm poles: negative is a NaN, either zero is `-infinity`.
+	fmt.println(math.is_nan(math.log(-1.0)), math.log(0.0), math.log(-0.0));
+	fmt.println(math.log(INF), math.is_nan(math.log(NAN)));
+	fmt.println(math.log2(0.0), math.log10(-0.0), math.is_nan(math.log2(-2.0)));
+	fmt.println(math.log_f32(f32(0.0)), math.is_nan_f32(math.log_f32(f32(-1.0))));
+
+	// `exp` overflows to `+infinity` and underflows to `+0`.
+	fmt.println(math.exp(1.0e6), bits64(math.exp(-1.0e6)));
+	fmt.println(math.exp(0.0 - INF), math.exp(INF));
+}
+
+// The IEC 60559 table copied into the doc comment of `pow`, checked line by line.
+powers :: proc() {
+	fmt.println(math.pow(3.0, 0.0), math.pow(0.0 - INF, 0.0), math.pow(NAN, 0.0));
+	fmt.println(math.pow(1.0, NAN), math.pow(1.0, INF), math.pow(3.5, 1.0));
+	fmt.println(math.is_nan(math.pow(NAN, 2.0)), math.is_nan(math.pow(-2.0, 0.5)));
+	fmt.println(math.pow(0.0, -3.0), math.pow(-0.0, -3.0), math.pow(-0.0, -2.0));
+	fmt.println(bits64(math.pow(-0.0, 3.0)), bits64(math.pow(-0.0, 2.0)));
+	fmt.println(math.pow(-1.0, INF), math.pow(-1.0, 0.0 - INF));
+	fmt.println(math.pow(0.5, 0.0 - INF), bits64(math.pow(0.5, INF)));
+	fmt.println(bits64(math.pow(2.0, 0.0 - INF)), math.pow(2.0, INF));
+	fmt.println(math.pow(0.0 - INF, -1.0), math.pow(0.0 - INF, 1.0), math.pow(0.0 - INF, 2.0));
+	fmt.println(bits64(math.pow(INF, -1.0)), math.pow(INF, 1.0));
+	fmt.println(math.pow_f32(NAN32, f32(0.0)), math.pow_f32(f32(-1.0), INF32));
+}
+
+trigonometry :: proc() {
+	// Exact: zero passes through with its sign, and `cos(0)` is one.
+	fmt.println(bits64(math.sin(0.0)), bits64(math.sin(-0.0)), math.cos(0.0));
+	fmt.println(bits64(math.tan(-0.0)), math.asin(0.0), math.acos(1.0));
+	fmt.println(bits32(math.sin_f32(f32(-0.0))), math.cos_f32(f32(0.0)));
+
+	// Approximate: compared, not printed.
+	fmt.println(close(math.sin(math.PI/2.0), 1.0), close(math.cos(math.PI), -1.0));
+	fmt.println(close(math.tan(math.PI/4.0), 1.0), close(math.asin(1.0), math.PI/2.0));
+	fmt.println(close(math.acos(0.0), math.PI/2.0), close(math.atan(1.0), math.PI/4.0));
+	fmt.println(close(math.atan2(1.0, 1.0), math.PI/4.0),
+	            close(math.atan2(1.0, -1.0), 3.0*math.PI/4.0));
+	fmt.println(close_f32(math.sin_f32(f32(math.PI)/f32(2.0)), f32(1.0)),
+	            close_f32(math.atan_f32(f32(1.0)), f32(math.PI/4.0)));
+	fmt.println(close_f32(math.tan_f32(f32(math.PI)/f32(4.0)), f32(1.0)),
+	            close_f32(math.acos_f32(f32(0.0)), f32(math.PI/2.0)));
+
+	// An infinite argument to `sin`, `cos` or `tan` has no answer.
+	fmt.println(math.is_nan(math.sin(INF)), math.is_nan(math.cos(0.0 - INF)),
+	            math.is_nan(math.tan(INF)));
+	fmt.println(math.is_nan_f32(math.sin_f32(INF32)));
+
+	// `asin` and `acos` are NaN outside [-1, 1].
+	fmt.println(math.is_nan(math.asin(1.5)), math.is_nan(math.acos(-1.5)));
+	fmt.println(math.is_nan_f32(math.asin_f32(f32(2.0))));
+
+	// `atan` saturates at the ends of its range rather than failing.
+	fmt.println(close(math.atan(INF), math.PI/2.0), close(math.atan(0.0 - INF), 0.0 - math.PI/2.0));
+
+	// The quadrant and signed-zero cases of `atan2`, which are IEC 60559's.
+	fmt.println(close(math.atan2(0.0, -0.0), math.PI), bits64(math.atan2(-0.0, 0.0)));
+	fmt.println(bits64(math.atan2(0.0, 1.0)), close(math.atan2(0.0, -1.0), math.PI));
+	fmt.println(close(math.atan2(1.0, 0.0), math.PI/2.0),
+	            close(math.atan2(-1.0, 0.0), 0.0 - math.PI/2.0));
+	fmt.println(close(math.atan2(INF, INF), math.PI/4.0),
+	            close(math.atan2(INF, 0.0 - INF), 3.0*math.PI/4.0));
+	fmt.println(math.is_nan(math.atan2(NAN, 1.0)));
+	fmt.println(close_f32(math.atan2_f32(f32(1.0), f32(1.0)), f32(math.PI/4.0)));
+
+	// The two conversions, exact at these arguments.
+	fmt.println(math.to_degrees(math.PI), math.to_radians(180.0) == math.PI);
+	fmt.println(math.to_degrees(0.0), math.to_radians(0.0));
+	fmt.println(close_f32(math.to_degrees_f32(f32(math.PI)), f32(180.0)),
+	            close_f32(math.to_radians_f32(f32(90.0)), f32(math.PI/2.0)));
+}
+
+main :: proc() {
+	rounding();
+	remainder();
+	roots();
+	powers();
+	trigonometry();
+}

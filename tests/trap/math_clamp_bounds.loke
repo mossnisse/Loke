@@ -1,0 +1,11 @@
+// math-plan step 2: reversed `clamp` bounds are a caller mistake with no
+// defensible answer, so they panic rather than silently picking one of them.
+package main;
+
+import "core:fmt";
+import "core:math";
+
+main :: proc() {
+	fmt.println(math.clamp(3, 0, 5));
+	fmt.println(math.clamp(3, 5, 0));
+}

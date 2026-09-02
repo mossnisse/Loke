@@ -103,7 +103,7 @@ Type_Kind :: enum {
 	Typeid,
 	Any_View,
 	Pointer,
-	Multi_Pointer,
+	C_Pointer,
 	Slice,
 	// design.md "Allocators": a nominal runtime handle, and a nil-comparable
 	// error code. Both are compiler-owned identities that `core:mem` exports.
@@ -321,6 +321,11 @@ Const_Value :: struct {
 	integer:    Big_Int, // Integer and Rune
 	float:      f64,
 	float_bits: u16,     // the semantic width a Float was last rounded to
+	// The exact encoding of a Float at `float_bits`. `float` alone cannot carry
+	// it: an f32 signalling NaN round-tripped through the f64 field comes back
+	// quiet, so `unsafe.transmute(u32, x)` would not answer the bits it was
+	// handed. Every Float constant carries its pattern; only a bit cast reads it.
+	float_raw:  u64,
 	boolean:    bool,
 	text:       string,
 	type_value: Type_Id,
@@ -344,7 +349,46 @@ bool_const :: proc(value: bool) -> Const_Value {
 }
 
 float_const :: proc(value: f64, bits: u16) -> Const_Value {
-	return Const_Value{kind = .Float, float = round_float(value, bits), float_bits = bits}
+	rounded := round_float(value, bits)
+	return Const_Value{kind = .Float, float = rounded, float_bits = bits, float_raw = float_pattern(rounded, bits)}
+}
+
+// The `unsafe.transmute` direction: exact bits in, the nearest `f64` view of
+// them alongside for every ordinary constant operation.
+float_bits_const :: proc(raw: u64, bits: u16) -> Const_Value {
+	return Const_Value{kind = .Float, float = float_from_pattern(raw, bits), float_bits = bits, float_raw = raw}
+}
+
+// The IEEE-754 encoding of a value already rounded to `bits`, and its inverse.
+// The f16 halves are the hand-rolled pair below; 32 and 64 are hardware widths.
+float_pattern :: proc(value: f64, bits: u16) -> u64 {
+	switch bits {
+	case 16:
+		return u64(f64_to_f16_bits(value))
+	case 32:
+		return u64(transmute(u32)f32(value))
+	}
+	return transmute(u64)value
+}
+
+// The encoding a Float constant is spelled with at `bits`. It carries the exact
+// pattern of the width it was rounded to; any other width re-encodes from the
+// numeric field, which is what every non-NaN value round-trips through anyway.
+const_float_pattern :: proc(value: Const_Value, bits: u16) -> u64 {
+	if value.float_bits == bits {
+		return value.float_raw
+	}
+	return float_pattern(value.float, bits)
+}
+
+float_from_pattern :: proc(raw: u64, bits: u16) -> f64 {
+	switch bits {
+	case 16:
+		return f16_bits_to_f64(u16(raw))
+	case 32:
+		return f64(transmute(f32)u32(raw))
+	}
+	return transmute(f64)raw
 }
 
 nil_const :: proc() -> Const_Value {
@@ -594,6 +638,12 @@ Builtin_Kind :: enum {
 	// "releasing an unchecked or foreign allocation crosses the `core:unsafe` or
 	// foreign-allocator boundary."
 	Unsafe_Free,
+	// `unsafe.transmute(T, value)` reinterprets the bits of a same-sized value
+	// (design.md "unsafe.transmute procedure"). Its first argument is a *type*,
+	// which no ordinary signature can spell, and reinterpretation is not a safe
+	// universally valid conversion — hence a `core:unsafe` built-in rather than a
+	// predeclared one.
+	Unsafe_Transmute,
 	// design.md "SIMD vectors": the `core:simd` operations a lane index being
 	// constant makes unwritable as a loop in ordinary Loke. `Simd_Cast` is both
 	// array directions — its result follows its operand — and `Simd_Reduce`
@@ -1342,13 +1392,13 @@ carrier_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
 	return false
 }
 
-// `[^]T` is a multi-pointer to T value(s) (design.md "Multi-pointers"), an
+// `[^]T` is a C pointer to T value(s) (design.md "C pointers"), an
 // address with neither a length nor a read-only capability.
-multi_pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
+c_pointer_to :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return intern_type(
 		c,
-		Type_Key{kind = .Multi_Pointer, element = element},
-		Type_Info{kind = .Multi_Pointer, element = element, bits = c.target.pointer_bits},
+		Type_Key{kind = .C_Pointer, element = element},
+		Type_Info{kind = .C_Pointer, element = element, bits = c.target.pointer_bits},
 	)
 }
 
@@ -1514,7 +1564,7 @@ type_is_comparable :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		return false
 	}
 	#partial switch info.kind {
-	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc, .Enum,
+	case .Bool, .Int, .Float, .Rune, .Raw_Pointer, .Pointer, .C_Pointer, .Proc, .Enum,
 	     .Untyped_Int, .Untyped_Float, .Untyped_Bool, .Untyped_Rune, .Untyped_Nil,
 	     .Untyped_String:
 		return true
@@ -1570,7 +1620,7 @@ type_is_ordered :: proc(c: ^Compiler, id: Type_Id) -> bool {
 		return true
 	// Ordering compares the addresses as unsigned `uintptr` values, producing a
 	// total order within one execution (design.md).
-	case .Pointer, .Multi_Pointer, .Raw_Pointer:
+	case .Pointer, .C_Pointer, .Raw_Pointer:
 		return true
 	}
 	return false
@@ -1638,7 +1688,7 @@ type_contains_invalid :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 	     .Untyped_String:
 		// No components, so nothing to be invalid below the type itself.
 		return false
-	case .Pointer, .Multi_Pointer, .Slice, .Dynamic_Array, .Array, .Simd, .Distinct:
+	case .Pointer, .C_Pointer, .Slice, .Dynamic_Array, .Array, .Simd, .Distinct:
 		return type_contains_invalid(c, info.element, depth + 1)
 	case .Map:
 		return type_contains_invalid(c, info.key, depth + 1) ||
@@ -1703,10 +1753,10 @@ type_is_supported_depth :: proc(c: ^Compiler, id: Type_Id, depth: int) -> bool {
 		// M6a. Their borrow provenance is checked by `src/borrow.odin` rather than
 		// restricted here.
 		return true
-	case .Multi_Pointer:
-		// A multi-pointer carries neither a length nor a read-only capability, and
+	case .C_Pointer:
+		// A C pointer carries neither a length nor a read-only capability, and
 		// its lifetime is no longer checked after conversion (design.md
-		// "Multi-pointers") — a documented trust boundary, not an unsupported type.
+		// "C pointers") — a documented trust boundary, not an unsupported type.
 		return type_is_supported_depth(c, info.element, depth + 1)
 	case .Interface:
 		return false
@@ -1834,7 +1884,7 @@ type_name :: proc(c: ^Compiler, id: Type_Id) -> string {
 	#partial switch info.kind {
 	case .Pointer:
 		return fmt.aprintf("^%s%s", info.mutable ? "mut " : "", type_name(c, info.element), allocator = c.semantic_allocator)
-	case .Multi_Pointer:
+	case .C_Pointer:
 		return fmt.aprintf("[^]%s", type_name(c, info.element), allocator = c.semantic_allocator)
 	case .Array:
 		return fmt.aprintf("[%d]%s", info.count, type_name(c, info.element), allocator = c.semantic_allocator)

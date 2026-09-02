@@ -89,7 +89,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_move(k, v)
 
 	case ^Expr_Proc_Group, ^Expr_Operator,
-	     ^Type_Pointer, ^Type_Multi_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
+	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
 		// A type in expression position denotes a type, which is legal as a
@@ -850,11 +850,11 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		pointer_mutable = info.mutable
 	}
 	info := type_of(k.c, base_type)
-	// A multi-pointer indexes without bounds checking (design.md "Multi-pointers").
+	// A C pointer indexes without bounds checking (design.md "C pointers").
 	// The loss of the bound is the whole point of the type, and it is visible at
-	// the `unsafe.raw_data` call that produced the multi-pointer.
-	if info != nil && info.kind == .Multi_Pointer && len(v.indices) == 1 {
-		check_multi_pointer_index(k, v, info)
+	// the `unsafe.raw_data` call that produced the C pointer.
+	if info != nil && info.kind == .C_Pointer && len(v.indices) == 1 {
+		check_c_pointer_index(k, v, info)
 		return
 	}
 	// A string cannot be indexed by an integer, because a UTF-8 code point may
@@ -978,7 +978,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 // capability comes from the slice's, not from whether the slice variable itself
 // is assignable: rebinding `s` and writing `s[0]` are different rights.
 @(private = "file")
-check_multi_pointer_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info) {
+check_c_pointer_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info) {
 	if index_type := check_single_expr(k, v.indices[0], TYPE_INT); index_type != INVALID_TYPE {
 		materialize(k, v.indices[0], TYPE_INT)
 		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
@@ -987,7 +987,7 @@ check_multi_pointer_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info)
 	}
 	v.type = info.element
 	// The element is a place through the address, exactly as `p^` is: a
-	// multi-pointer carries no read-only capability either.
+	// C pointer carries no read-only capability either.
 	v.value_category = .Place
 	v.addressable = true
 	v.assignable = true
@@ -1276,10 +1276,10 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 		// `string_view`. It is a borrow of the string's owner and cannot outlive
 		// it, which `src/borrow.odin` checks.
 		return check_text_subrange(k, v)
-	case .Multi_Pointer:
-		// design.md "Multi-pointers": `x[:]` and `x[i:]` stay multi-pointers,
+	case .C_Pointer:
+		// design.md "C pointers": `x[:]` and `x[i:]` stay C pointers,
 		// while `x[:n]` and `x[i:n]` produce a bounds-carrying `[]T`.
-		return check_multi_pointer_slice(k, v, info.element)
+		return check_c_pointer_slice(k, v, info.element)
 	case:
 		return false
 	}
@@ -1326,11 +1326,11 @@ check_text_subrange :: proc(k: ^Checker, v: ^Expr_Slice) -> bool {
 	return true
 }
 
-// Multi-pointer slicing is bounds-checked exactly when both endpoints are
-// given (design.md "Multi-pointers") — which is exactly the case whose result
+// C pointer slicing is bounds-checked exactly when both endpoints are
+// given (design.md "C pointers") — which is exactly the case whose result
 // carries a length.
 @(private = "file")
-check_multi_pointer_slice :: proc(k: ^Checker, v: ^Expr_Slice, element: Type_Id) -> bool {
+check_c_pointer_slice :: proc(k: ^Checker, v: ^Expr_Slice, element: Type_Id) -> bool {
 	ok := true
 	if v.lo != nil && !check_slice_endpoint(k, v.lo) {
 		ok = false
@@ -1342,9 +1342,9 @@ check_multi_pointer_slice :: proc(k: ^Checker, v: ^Expr_Slice, element: Type_Id)
 		v.type = INVALID_TYPE
 		return true
 	}
-	// A multi-pointer has no length, so an omitted high bound cannot produce one:
-	// the result stays a multi-pointer and the loss of bounds stays visible.
-	v.type = v.hi == nil ? multi_pointer_to(k.c, element) : slice_of(k.c, element, mutable = true)
+	// A C pointer has no length, so an omitted high bound cannot produce one:
+	// the result stays a C pointer and the loss of bounds stays visible.
+	v.type = v.hi == nil ? c_pointer_to(k.c, element) : slice_of(k.c, element, mutable = true)
 	v.value_category = .Value
 	v.immutable = .Temporary
 	return true
@@ -2730,6 +2730,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Unsafe_Forget:
 		check_forget_builtin(k, v, ident)
 		return
+	case .Unsafe_Transmute:
+		check_transmute_builtin(k, v, ident)
+		return
 	case .Type_Info_Of:
 		check_type_info_of(k, v)
 		return
@@ -3136,7 +3139,8 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Cap, .New, .New_Clone, .Free, .Unsafe_Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Type_Info_Of,
+	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
+	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter, .Standard_Alias,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Clone, .Try_Clone,
@@ -3305,7 +3309,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
-	     .Type_Info_Of,
+	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .Clone, .Try_Clone, .Standard_Alias,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
@@ -3448,6 +3452,215 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	}
 
 	v.type = result_type(k, container, TYPE_ALLOCATOR_ERROR)
+}
+
+// design.md "unsafe.transmute procedure": `unsafe.transmute(T, value)` reads the
+// storage of `value` as a `T`. It is a `core:unsafe` built-in rather than a
+// predeclared one because reinterpreting bits is not a universally valid
+// conversion — only the equal size and the trivial lifecycle are checked, and
+// what the resulting representation *means* is the caller's obligation.
+@(private = "file")
+check_transmute_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	v.type = INVALID_TYPE
+	if len(v.args) != 2 {
+		errorf(
+			k.c, v.span, "L0688",
+			"`unsafe.%s` takes a destination type and a value, found %d argument%s",
+			ident.name, len(v.args), len(v.args) == 1 ? "" : "s",
+		)
+		return
+	}
+	for arg in v.args {
+		if arg.name.text != "" || arg.mode != .Value {
+			reject_builtin_argument_shape(k, arg)
+			return
+		}
+	}
+	// The destination is a written type, never an expression whose type is taken:
+	// `unsafe.transmute(x, y)` naming a variable is a mistake worth reporting as
+	// one, not a silent `type_of(x)`.
+	target := resolve_type_syntax(k, v.args[0].value)
+	if target == INVALID_TYPE {
+		errorf(
+			k.c, expr_span(v.args[0].value), "L0688",
+			"`unsafe.transmute` names the destination type first",
+		)
+		return
+	}
+	if !gate_type(k, target, expr_span(v.args[0].value)) {
+		return
+	}
+	source := check_single_expr(k, v.args[1].value)
+	if source == INVALID_TYPE {
+		return
+	}
+	if !materialize(k, v.args[1].value, default_type(k.c, source)) {
+		return
+	}
+	source = expr_base(v.args[1].value).type
+	if source == INVALID_TYPE {
+		return
+	}
+	if !transmute_side_ok(k, source, expr_span(v.args[1].value), "source") ||
+	   !transmute_side_ok(k, target, expr_span(v.args[0].value), "destination") {
+		return
+	}
+	if type_size(k.c, source) != type_size(k.c, target) {
+		errorf(
+			k.c, v.span, "L0688",
+			"`unsafe.transmute` needs equal sizes: `%s` is %d byte%s and `%s` is %d",
+			type_name(k.c, source), type_size(k.c, source), type_size(k.c, source) == 1 ? "" : "s",
+			type_name(k.c, target), type_size(k.c, target),
+		)
+		return
+	}
+	bound := make([]Expr, 1, k.c.semantic_allocator)
+	bound[0] = v.args[1].value
+	v.bound = bound
+	v.type = target
+	fold_transmute(k, v, source, target)
+}
+
+// Both sides of a bit cast. A managed value would let the cast duplicate an
+// owning representation or manufacture one whose cleanup invariant was never
+// established; a borrow carrier — `^T`, a slice, a view, a `dyn` — would hand
+// back a reference the borrow analysis never saw loaned. `rawptr` and `[^]T`
+// carry neither, which is why they are the pointer shapes a bit cast may name;
+// dereferencing the result is valid only when the bits already describe
+// suitably aligned, live storage.
+@(private = "file")
+transmute_side_ok :: proc(k: ^Checker, type: Type_Id, span: Span, side: string) -> bool {
+	reason := ""
+	switch {
+	case type_is_managed(k.c, type):
+		reason = "has a non-trivial lifecycle"
+	case type_carries_borrow(k.c, type).any:
+		reason = "is or contains a reference"
+	case underlying_kind(k.c, type) == .Void:
+		reason = "has no storage"
+	}
+	if reason == "" {
+		return true
+	}
+	errorf(
+		k.c, span, "L0688",
+		"an `unsafe.transmute` %s type must be bitwise-copyable: `%s` %s",
+		side, type_name(k.c, type), reason,
+	)
+	return false
+}
+
+// A scalar bit cast of a constant answers at compile time, which is what lets
+// `core:math` build an infinity or a NaN — neither of which has a literal
+// spelling — as a constant rather than a runtime call. An aggregate or a wider
+// value is left to the backend.
+@(private = "file")
+fold_transmute :: proc(k: ^Checker, v: ^Expr_Call, source, target: Type_Id) {
+	base := expr_base(v.args[1].value)
+	if base == nil || !base.is_const || type_size(k.c, target) > 8 {
+		return
+	}
+	raw, encoded := const_scalar_pattern(k.c, base.const_value, source)
+	if !encoded {
+		return
+	}
+	folded, status := const_from_pattern(k.c, raw, target)
+	switch status {
+	case .Unfoldable:
+		return // a pointer or an aggregate: still a valid cast, just not a constant
+	case .Invalid:
+		// A `bool` outside {0, 1}, or an enum with no member for the pattern: the
+		// value would be invalid the moment anything read it, and unlike a runtime
+		// result there is nothing left to be the caller's obligation.
+		errorf(
+			k.c, v.span, "L0688",
+			"this bit pattern is not a valid `%s`", type_name(k.c, target),
+		)
+		v.type = INVALID_TYPE
+		return
+	case .Folded:
+		v.is_const = true
+		v.const_value = folded
+		v.bound = nil
+	}
+}
+
+// Whether a pattern became a constant of the destination type, could not be one
+// at all, or simply has no constant spelling there.
+Const_Pattern :: enum {
+	Folded,
+	Invalid,
+	Unfoldable,
+}
+
+// A scalar constant's storage bits, and whether it has any: an aggregate, a
+// string, or a `nil` does not answer here.
+const_scalar_pattern :: proc(c: ^Compiler, value: Const_Value, type: Type_Id) -> (u64, bool) {
+	info := underlying_info(c, type)
+	if info == nil {
+		return 0, false
+	}
+	#partial switch info.kind {
+	case .Float:
+		if value.kind != .Float {
+			return 0, false
+		}
+		return const_float_pattern(value, info.bits), true
+	case .Bool:
+		if value.kind != .Boolean {
+			return 0, false
+		}
+		return value.boolean ? 1 : 0, true
+	case .Int, .Rune, .Enum:
+		if value.kind != .Integer && value.kind != .Rune {
+			return 0, false
+		}
+		bits := info.kind == .Rune ? u16(32) : info.bits
+		signed := info.kind == .Rune ? true : info.signed
+		pattern, ok := bi_to_u64(c, bi_wrap(c, value.integer, int(bits), signed))
+		return pattern, ok
+	}
+	return 0, false
+}
+
+// The inverse: the constant a pattern denotes in `type`, or `false` when the
+// pattern is not a value of that type at all.
+const_from_pattern :: proc(c: ^Compiler, raw: u64, type: Type_Id) -> (Const_Value, Const_Pattern) {
+	info := underlying_info(c, type)
+	if info == nil {
+		return {}, .Unfoldable
+	}
+	#partial switch info.kind {
+	case .Float:
+		return float_bits_const(raw, info.bits), .Folded
+	case .Bool:
+		if raw > 1 {
+			return {}, .Invalid
+		}
+		return bool_const(raw == 1), .Folded
+	case .Int:
+		return integer_const(c, bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)), .Folded
+	case .Rune:
+		wrapped := bi_wrap(c, bi_from_u64(c, raw), 32, true)
+		// design.md: a `rune` is a scalar Unicode value, so the surrogate range and
+		// anything above U+10FFFF are not runes however the bits were produced.
+		if point, fits := bi_to_i64(c, wrapped); !fits || point < 0 || point > 0x10ffff ||
+		   (point >= 0xd800 && point <= 0xdfff) {
+			return {}, .Invalid
+		}
+		return rune_const(c, wrapped), .Folded
+	case .Enum:
+		wrapped := bi_wrap(c, bi_from_u64(c, raw), int(info.bits), info.signed)
+		candidate := integer_const(c, wrapped)
+		if enum_member_by_value(c, type, candidate) == INVALID_SYMBOL {
+			return {}, .Invalid
+		}
+		return candidate, .Folded
+	}
+	// A pointer, an aggregate, or anything else with no constant spelling: the
+	// cast is still valid, it simply does not fold.
+	return {}, .Unfoldable
 }
 
 // Whether an expression is the folded constant `0`. A length the compiler can
@@ -4285,7 +4498,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		// must be zeroed rather than left as stack garbage (an optimizer otherwise
 		// promotes the undef and `type_info_of` reads past the table).
 		return type_const(INVALID_TYPE), true
-	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error,
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error,
 	     .CString_View:
 		return nil_const(), true
 	// A string's empty value is all zero (design.md "string type"). A nil view
@@ -4520,6 +4733,12 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 	case .Float:
 		#partial switch value.kind {
 		case .Float:
+			// An unchanged width keeps the constant exactly as it is. Re-encoding
+			// from the numeric field would quiet a signalling NaN that
+			// `unsafe.transmute` produced, and this conversion changes nothing.
+			if value.float_bits == info.bits {
+				return value, true
+			}
 			return float_const(value.float, info.bits), true
 		case .Integer, .Rune:
 			return float_const(bi_to_f64(storage, value.integer), info.bits), true
@@ -4530,9 +4749,9 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return type_const(INVALID_TYPE), true
 		}
-	case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
-		// `nil` is the zero value of pointer, multi-pointer, `rawptr`, and
-		// procedure alike (design.md "Zero values"). A multi-pointer is one word
+	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
+		// `nil` is the zero value of pointer, C pointer, `rawptr`, and
+		// procedure alike (design.md "Zero values"). A C pointer is one word
 		// like the others, so the null constant is its zero exactly as it is a
 		// `^T`'s.
 		if value.kind == .Nil {
@@ -4599,7 +4818,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch underlying_kind(c, to) {
-		case .Pointer, .Multi_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice, .Typeid,
+		case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice, .Typeid,
 		     .String, .String_View, .CString_View,
 		     .Allocator, .Allocator_Error:
 			// The zero value of every erased view and `typeid` is nil, and so is a
@@ -4654,11 +4873,6 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	   underlying_kind(c, to) == .String_View {
 		return true
 	}
-	// `^T` and `[^]T` implicitly convert between each other (design.md
-	// "Multi-pointers").
-	if multi_pointer_converts(c, from, to) {
-		return true
-	}
 	if type_is_untyped(c, from) {
 		#partial switch underlying_kind(c, to) {
 		case .Int, .Float, .Rune, .Bool, .Enum:
@@ -4667,11 +4881,11 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	// Any pointer converts to `rawptr` without a written conversion; the reverse
-	// needs one. A multi-pointer converts to `rawptr` like all pointers do
+	// needs one. A C pointer converts to `rawptr` like all pointers do
 	// (design.md).
 	if to == TYPE_RAWPTR {
 		#partial switch underlying_kind(c, from) {
-		case .Pointer, .Multi_Pointer:
+		case .Pointer, .C_Pointer:
 			return true
 		}
 	}
@@ -4723,7 +4937,7 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	pointerish :: proc(kind: Type_Kind) -> bool {
 		#partial switch kind {
-		case .Pointer, .Multi_Pointer, .Raw_Pointer:
+		case .Pointer, .C_Pointer, .Raw_Pointer:
 			return true
 		}
 		return false

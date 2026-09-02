@@ -110,7 +110,7 @@ atomic_storage_type :: proc(e: ^Emitter, type: Type_Id, bits: int) -> string {
 	if underlying_kind(e.c, type) == .Bool {
 		return "i8"
 	}
-	if underlying_kind(e.c, type) == .Pointer || underlying_kind(e.c, type) == .Multi_Pointer ||
+	if underlying_kind(e.c, type) == .Pointer || underlying_kind(e.c, type) == .C_Pointer ||
 	   underlying_kind(e.c, type) == .Raw_Pointer {
 		// A pointer is atomically an integer of its own width: `atomicrmw` has no
 		// pointer form, and `cmpxchg` on `ptr` needs no conversion but is simpler
@@ -129,7 +129,7 @@ atomic_to_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: st
 		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i8", out, value)
 		return out
 	}
-	if kind == .Pointer || kind == .Multi_Pointer || kind == .Raw_Pointer {
+	if kind == .Pointer || kind == .C_Pointer || kind == .Raw_Pointer {
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to %s", out, value, storage)
 		return out
@@ -146,7 +146,7 @@ atomic_from_storage :: proc(e: ^Emitter, type: Type_Id, storage: string, value: 
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i8 %s, 0", out, value)
 		return out
 	}
-	if kind == .Pointer || kind == .Multi_Pointer || kind == .Raw_Pointer {
+	if kind == .Pointer || kind == .C_Pointer || kind == .Raw_Pointer {
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = inttoptr %s %s to ptr", out, storage, value)
 		return out

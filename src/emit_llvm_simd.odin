@@ -396,7 +396,7 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	start := ""
 	if float && (v.simd_fold == .Add || v.simd_fold == .Mul) {
 		start = fmt.aprintf(
-			"%s %s, ", lane, llvm_float(v.simd_fold == .Add ? 0 : 1, u16(type_bits(e.c, info.element))),
+			"%s %s, ", lane, llvm_float(float_pattern(v.simd_fold == .Add ? 0 : 1, u16(type_bits(e.c, info.element))), u16(type_bits(e.c, info.element))),
 		)
 	}
 	return simd_call_reduce(e, name, lane, count, lane, value, start)

@@ -556,8 +556,8 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		dump_child(b, node.elem, depth)
 		fmt.sbprint(b, ")")
 
-	case ^Type_Multi_Pointer:
-		fmt.sbprint(b, "(multi-ptr")
+	case ^Type_C_Pointer:
+		fmt.sbprint(b, "(c-ptr")
 		dump_child(b, node.elem, depth)
 		fmt.sbprint(b, ")")
 

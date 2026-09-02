@@ -9,7 +9,7 @@ mutable_pointer: ^mut int;
 pointer_to_pointer: ^^int;
 nested_mutable_pointer: ^mut ^mut int;
 mixed_pointer: ^mut []mut int;
-multi_pointer: [^]u8;
+c_pointer: [^]u8;
 slice: []int;
 mutable_slice: []mut int;
 dynamic_array: [dynamic]int;

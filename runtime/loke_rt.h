@@ -458,6 +458,53 @@ void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_ptr(const loke_rt_writer_v1 *w, const void *value);
 
+/* --------------------------------------------------------------- math -- */
+
+/* math-plan "Where the functions come from": `core:math` binds these versioned
+ * wrappers rather than the public CRT/libm names, so the package does not depend
+ * on whatever the host linker implicitly supplies. Each delegates to the target
+ * C math implementation; the documented classifications, signs, poles, and
+ * domain results are that implementation's, verified per target rather than
+ * re-derived here. None of them sets a Loke failure or reads `errno`. */
+double loke_rt_v1_math_floor_f64(double x);
+float loke_rt_v1_math_floor_f32(float x);
+double loke_rt_v1_math_ceil_f64(double x);
+float loke_rt_v1_math_ceil_f32(float x);
+double loke_rt_v1_math_round_f64(double x);
+float loke_rt_v1_math_round_f32(float x);
+double loke_rt_v1_math_trunc_f64(double x);
+float loke_rt_v1_math_trunc_f32(float x);
+double loke_rt_v1_math_sqrt_f64(double x);
+float loke_rt_v1_math_sqrt_f32(float x);
+double loke_rt_v1_math_exp_f64(double x);
+float loke_rt_v1_math_exp_f32(float x);
+double loke_rt_v1_math_log_f64(double x);
+float loke_rt_v1_math_log_f32(float x);
+double loke_rt_v1_math_log2_f64(double x);
+float loke_rt_v1_math_log2_f32(float x);
+double loke_rt_v1_math_log10_f64(double x);
+float loke_rt_v1_math_log10_f32(float x);
+double loke_rt_v1_math_sin_f64(double x);
+float loke_rt_v1_math_sin_f32(float x);
+double loke_rt_v1_math_cos_f64(double x);
+float loke_rt_v1_math_cos_f32(float x);
+double loke_rt_v1_math_tan_f64(double x);
+float loke_rt_v1_math_tan_f32(float x);
+double loke_rt_v1_math_asin_f64(double x);
+float loke_rt_v1_math_asin_f32(float x);
+double loke_rt_v1_math_acos_f64(double x);
+float loke_rt_v1_math_acos_f32(float x);
+double loke_rt_v1_math_atan_f64(double x);
+float loke_rt_v1_math_atan_f32(float x);
+double loke_rt_v1_math_mod_f64(double a, double b);
+float loke_rt_v1_math_mod_f32(float a, float b);
+double loke_rt_v1_math_hypot_f64(double a, double b);
+float loke_rt_v1_math_hypot_f32(float a, float b);
+double loke_rt_v1_math_pow_f64(double a, double b);
+float loke_rt_v1_math_pow_f32(float a, float b);
+double loke_rt_v1_math_atan2_f64(double a, double b);
+float loke_rt_v1_math_atan2_f32(float a, float b);
+
 /* ------------------------------------------------------ panic and threads -- */
 
 /* One generated cleanup thunk: replays the live registered actions of one Loke

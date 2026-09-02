@@ -85,6 +85,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			return emit_exchange(e, v)
 		case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
 			return emit_unsafe_builtin(e, v, symbol.builtin)[0]
+		case .Unsafe_Transmute:
+			return emit_transmute(e, v)
 		case .Unsafe_Forget:
 			// The feature's whole meaning is the call that is *not* made: the operand
 			// is evaluated for its side effects, but skips the `emit_discarded_temporary`
@@ -187,7 +189,7 @@ emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
 	#partial switch info.kind {
 	case .Bool:
 		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i64", out, value)
-	case .Raw_Pointer, .Pointer, .Multi_Pointer, .Proc:
+	case .Raw_Pointer, .Pointer, .C_Pointer, .Proc:
 		fmt.sbprintfln(&e.b, "  %s = ptrtoint ptr %s to i64", out, value)
 	case .Float:
 		// design.md: `+0` and `-0` hash identically because they compare equal.
@@ -591,7 +593,7 @@ emit_failure_conversion :: proc(e: ^Emitter, value: string, from, into: Type_Id,
 		}
 		return emit_any_view_value(e, slot, concrete)
 	}
-	// Carrier weakening, procedure escape weakening, pointer/multi-pointer
+	// Carrier weakening, procedure escape weakening, checked/C-pointer
 	// interchange, and pointer-to-rawptr all share one backend representation.
 	return value
 }

@@ -227,7 +227,7 @@ type_syntax_has_poly :: proc(e: Expr) -> bool {
 		return true
 	case ^Type_Pointer:
 		return type_syntax_has_poly(v.elem)
-	case ^Type_Multi_Pointer:
+	case ^Type_C_Pointer:
 		return type_syntax_has_poly(v.elem)
 	case ^Type_Slice:
 		return type_syntax_has_poly(v.elem)
@@ -364,7 +364,7 @@ pattern_specificity :: proc(e: Expr) -> int {
 		return 0
 	case ^Type_Pointer:
 		return 1 + pattern_specificity(v.elem)
-	case ^Type_Multi_Pointer:
+	case ^Type_C_Pointer:
 		return 1 + pattern_specificity(v.elem)
 	case ^Type_Slice:
 		return 1 + pattern_specificity(v.elem)
@@ -559,8 +559,8 @@ match_type_pattern :: proc(
 		}
 		return match_type_pattern(k, v.elem, info.element, scope, out)
 
-	case ^Type_Multi_Pointer:
-		if info.kind != .Multi_Pointer {
+	case ^Type_C_Pointer:
+		if info.kind != .C_Pointer {
 			return false
 		}
 		return match_type_pattern(k, v.elem, info.element, scope, out)

@@ -1,0 +1,102 @@
+// `unsafe.transmute(T, value)` (design.md "The `unsafe` package"): the same
+// bits under a different type, folded when the operand is constant and emitted
+// as a reinterpretation otherwise. Both paths must answer identically, which is
+// what every pair below checks.
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+// Neither infinity nor a NaN has a literal spelling, so a constant of either is
+// built from its exact pattern. This is the whole reason the fold exists.
+F64_INFINITY :: unsafe.transmute(f64, u64(0x7ff0000000000000));
+F32_INFINITY :: unsafe.transmute(f32, u32(0x7f800000));
+F64_NAN      :: unsafe.transmute(f64, u64(0x7ff8000000000000));
+F32_NAN      :: unsafe.transmute(f32, u32(0x7fc00000));
+F32_SIGNALLING :: unsafe.transmute(f32, u32(0x7f800001));
+
+Colour :: enum u8 { Red, Green, Blue }
+
+main :: proc() {
+	// Constant folding, both directions and both widths.
+	fmt.println(unsafe.transmute(u32, f32(1.5)));
+	fmt.println(unsafe.transmute(u64, f64(2.0)));
+	fmt.println(unsafe.transmute(f64, u64(0x4000000000000000)));
+	fmt.println(f64(unsafe.transmute(f32, u32(0x3fc00000))));
+
+	// The same four through variables, which the backend has to answer.
+	single := f32(1.5);
+	double := f64(2.0);
+	pattern64 := u64(0x4000000000000000);
+	pattern32 := u32(0x3fc00000);
+	fmt.println(unsafe.transmute(u32, single));
+	fmt.println(unsafe.transmute(u64, double));
+	fmt.println(unsafe.transmute(f64, pattern64));
+	fmt.println(f64(unsafe.transmute(f32, pattern32)));
+
+	// Signed zero: `-0.0` is the sign bit alone, and the constant must not
+	// collapse into `+0.0` on the way through the compiler's numeric field.
+	fmt.println(unsafe.transmute(u32, f32(-0.0)));
+	fmt.println(unsafe.transmute(u64, f64(-0.0)));
+	negative_zero := f32(-0.0);
+	fmt.println(unsafe.transmute(u32, negative_zero));
+
+	// A NaN payload survives the round trip at both widths. Printing the value
+	// would print the platform C library's NaN spelling, so the bits are printed.
+	fmt.println(unsafe.transmute(u64, F64_NAN));
+	fmt.println(unsafe.transmute(u32, F32_NAN));
+	fmt.println(unsafe.transmute(u32, unsafe.transmute(f32, u32(0x7f800001))));
+	signalling := unsafe.transmute(f32, u32(0x7f800001));
+	fmt.println(unsafe.transmute(u32, signalling));
+	// The same constant through an f32 binding, which is a conversion of
+	// unchanged width and so must not re-encode — and therefore quiet — it.
+	copied: f32 = F32_SIGNALLING;
+	fmt.println(unsafe.transmute(u32, copied), unsafe.transmute(u32, F32_SIGNALLING));
+	fmt.println(unsafe.transmute(u64, F64_INFINITY));
+	fmt.println(unsafe.transmute(u32, F32_INFINITY));
+
+	// A NaN is the one value not equal to itself, which is how the constant is
+	// checked without printing it.
+	fmt.println(F64_NAN == F64_NAN);
+	fmt.println(F32_NAN == F32_NAN);
+	fmt.println(F64_INFINITY > f64(1.0e308));
+
+	// Integers: the pattern is reinterpreted, never converted.
+	fmt.println(unsafe.transmute(u8, i8(-1)));
+	fmt.println(unsafe.transmute(i32, u32(0xffffffff)));
+	signed := i32(-2);
+	fmt.println(unsafe.transmute(u32, signed));
+
+	// `bool`, `rune`, and an enum: the destination types whose valid constant
+	// patterns are a subset of their storage.
+	fmt.println(unsafe.transmute(bool, u8(1)));
+	fmt.println(unsafe.transmute(rune, i32(65)));
+	fmt.println(unsafe.transmute(Colour, u8(2)));
+
+	// A struct of the same size, through storage rather than a register cast.
+	Pair :: struct { low: u32, high: u32 };
+	halves := unsafe.transmute(Pair, u64(0x0000000200000001));
+	fmt.println(halves.low);
+	fmt.println(halves.high);
+	fmt.println(unsafe.transmute(u64, halves));
+
+	// `bool` is the one type whose register width is not its storage width, so
+	// both directions are exercised through variables as well as constants.
+	one := u8(1);
+	flag := true;
+	fmt.println(unsafe.transmute(bool, one), unsafe.transmute(bool, u8(0)));
+	fmt.println(unsafe.transmute(u8, flag), unsafe.transmute(u8, false));
+	fmt.println(unsafe.transmute(Colour, unsafe.transmute(u8, flag)));
+
+	// A one-byte aggregate on the other side of a `bool`, and an `[8]u8` whose
+	// alignment is 1 read as an `f64` whose alignment is 8.
+	Wrapper :: struct { byte: u8 };
+	wrapped := unsafe.transmute(Wrapper, flag);
+	fmt.println(wrapped.byte, unsafe.transmute(bool, wrapped));
+	bytes := unsafe.transmute([8]u8, double);
+	fmt.println(bytes[0], bytes[7], unsafe.transmute(f64, bytes));
+
+	// A `rawptr` destination: unchecked, and here only observed as a pattern.
+	address := unsafe.transmute(rawptr, uint(0));
+	fmt.println(unsafe.transmute(uint, address));
+}
