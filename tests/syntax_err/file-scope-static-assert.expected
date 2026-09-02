@@ -1,0 +1,3 @@
+L0250
+@4:1
+a file-scope assertion is exactly `static_assert(...);`

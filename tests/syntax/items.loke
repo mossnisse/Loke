@@ -64,6 +64,11 @@ when (LOKE_OS == "windows") {
 @(export, link_name = "counter")
 counter: int = 0;
 
+// A file-scope assertion is the predeclared built-in at item position, not a
+// keyword: nothing else admits an expression statement here.
+static_assert(SIZE == 8);
+static_assert(Drawable(Circle), "Circle must draw");
+
 main :: proc() {
 	@(cold)
 	{

@@ -149,6 +149,13 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 		}
 		dump_indent(b, depth)
 		fmt.sbprintln(b, ")")
+
+	case ^Item_Static_Assert:
+		dump_indent(b, depth)
+		fmt.sbprint(b, "(static_assert")
+		dump_attributes(b, node.attributes)
+		dump_child(b, node.call, depth)
+		fmt.sbprintln(b, ")")
 	}
 }
 

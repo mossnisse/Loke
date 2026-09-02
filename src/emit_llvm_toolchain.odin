@@ -513,23 +513,18 @@ msvc_include_dirs :: proc() -> []string {
 // another version's libraries is worse than not finding it at all.
 @(private = "file")
 msvc_tools_dir :: proc() -> string {
-	@(static) cached: string
-	@(static) resolved: bool
-	if resolved {
-		return cached
-	}
-	resolved = true
+	// `newest_matches` allocates through the caller's context. Do not retain
+	// one compiler instance's result in process-wide storage.
 	for candidate in newest_matches(
 		`C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
 		`C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
 	) {
 		if os.is_dir(filepath.join({candidate, "include"})) &&
 		   os.is_dir(filepath.join({candidate, "lib", "x64"})) {
-			cached = candidate
-			return cached
+			return candidate
 		}
 	}
-	return cached
+	return ""
 }
 
 @(private = "file")

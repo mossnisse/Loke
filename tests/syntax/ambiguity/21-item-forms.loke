@@ -34,6 +34,9 @@ when (WINDOWS) {
 @(export)
 counter: int = 0;
 
+static_assert(SIZE == 8);
+static_assert(Drawable(Circle), "Circle must draw");
+
 main :: proc() {
 	@(cold)
 	{

@@ -1,0 +1,54 @@
+package main;
+
+// A validity requirement holds when its expression type-checks; its value is
+// never inspected. `Sized` is therefore satisfied by every sized type, even
+// though the written comparison is false.
+Sized :: interface($T: type) {
+	size_of(T) == 999;
+}
+
+Addable :: interface($T: type) {
+	(a, b: T) a + b -> T;
+}
+
+// Composition: a failure of the outer application names the *inner*
+// interface's requirement line.
+Numeric :: interface($T: type) {
+	Addable(T);
+	T(0) -> T;
+}
+
+Named :: interface($T: type) {
+	slot describe: proc(self) -> int;
+}
+
+Flag :: struct { on: bool }
+
+Labelled :: struct { text: string }
+impl Labelled {
+	describe :: proc(self) -> bool { return true; }
+}
+
+sum :: proc(a, b: $T) -> T where Addable(T) { return a + b; }
+
+// A failed bound only removes a candidate from the overload set; it must not
+// be reported while the other candidate is still viable.
+tag_addable :: proc(v: $T) -> int where Addable(T) { return 1; }
+tag_any :: proc(v: $T) -> int { return 0; }
+tag :: proc{tag_addable, tag_any};
+
+main :: proc() {
+	// Silent: an interface application is a predicate, and `false` is a value.
+	static_assert(Sized(Flag));
+	static_assert(!Addable(Flag));
+	probe := Addable(Flag);
+	_ = probe;
+	_ = tag(Flag{true});
+
+	// Required: each of these must name the requirement that failed.
+	static_assert(Addable(Flag));
+	static_assert(Numeric(Flag), "Flag is not numeric");
+	static_assert(Named(Flag));
+	static_assert(Named(Labelled));
+	_ = sum(Flag{true}, Flag{true});
+}

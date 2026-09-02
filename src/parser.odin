@@ -502,6 +502,14 @@ parse_top_level_item :: proc(p: ^Parser) -> (Item, bool) {
 		return error_item(p, span_of(p, t)), true
 	}
 
+	// design.md: `static_assert` is available at file scope so a type author can
+	// require an interface beside the type. It is the ordinary predeclared
+	// built-in recognized contextually here, not a new keyword or directive, and
+	// no other expression statement is admitted at item position.
+	if is_contextual(p, "static_assert") && peek_token(p, 1).kind == .Lparen {
+		return parse_top_level_static_assert(p, attributes, start), true
+	}
+
 	if !starts_declaration(p) {
 		parse_error(p, span_of(p, t), "L0206", fmt_found(p, t), "expected a declaration")
 		sync_to_item(p)
@@ -512,6 +520,40 @@ parse_top_level_item :: proc(p: ^Parser) -> (Item, bool) {
 		return error_item(p, span_of(p, t)), true
 	}
 	return decl, true
+}
+
+// `Top_Level_Static_Assert`. The call is parsed as an ordinary expression so
+// that its callee, arity, and condition are the checker's business, exactly as
+// in statement position.
+@(private = "file")
+parse_top_level_static_assert :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
+	item := ast_new(p, Item_Static_Assert)
+	item.attributes = attributes
+	item.call = parse_expr(p)
+	// `static_assert` is contextual only for this one exact call form. Parsing an
+	// expression first gives its arguments the ordinary expression grammar, but
+	// no selector, second call, operator, range, or conditional may wrap it and
+	// become a different kind of file-scope expression statement.
+	call, is_call := item.call.(^Expr_Call)
+	exact_call := false
+	if is_call {
+		if ident, is_ident := call.callee.(^Expr_Ident); is_ident {
+			exact_call = ident.name == "static_assert"
+		}
+	}
+	if !exact_call && !expr_has_error(item.call) {
+		parse_error(
+			p,
+			expr_span(item.call),
+			"L0250",
+			"invalid file-scope assertion",
+			"a file-scope assertion is exactly `static_assert(...);`",
+		)
+	}
+	_, terminated := expect(p, .Semicolon, "L0250", "`;` after the assertion")
+	item.has_error = item.call == nil || !exact_call || !terminated
+	item.span = span_to_here(p, start)
+	return item
 }
 
 // `Import_Decl`

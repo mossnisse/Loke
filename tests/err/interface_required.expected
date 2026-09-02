@@ -1,0 +1,21 @@
+L0444
+@49:2
+does not satisfy `Addable(Flag)`
+this requirement does not hold: `+` does not apply to `Flag` and `Flag`
+L0444
+@50:2
+does not satisfy `Numeric(Flag)`
+Flag is not numeric
+L0444
+@51:2
+does not satisfy `Named(Flag)`
+`Flag` has no method `describe` with this signature
+L0444
+@52:2
+does not satisfy `Named(Labelled)`
+`Labelled` has no method `describe` with this signature
+L0444
+@53:6
+while instantiating `sum(Flag)`
+@11:2
+@22:2

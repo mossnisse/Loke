@@ -1,0 +1,6 @@
+// Only the exact built-in call form is a file-scope item.
+package main;
+
+static_assert(true) == static_assert(true);
+
+sentinel :: proc() {}

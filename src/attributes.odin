@@ -23,6 +23,7 @@ Attr_Pos :: enum {
 	Struct_Literal,
 	Union_Literal,
 	Foreign_Block,
+	Static_Assert,
 }
 
 Attr_Shape :: enum {
@@ -39,34 +40,50 @@ Attr_Spec :: struct {
 // design.md "Attributes" and "Layout and ABI attributes". Every base-language
 // attribute, with where it may appear and the value it takes.
 attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
-	@(static) specs: map[string]Attr_Spec
-	if len(specs) == 0 {
-		specs["public"] = {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
-		specs["private"] = {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}
+	// Keep this lookup allocation-free. Compiler instances carry their own
+	// allocators, so a lazily initialized static map would retain storage owned
+	// by whichever instance reached it first and would also race in parallel
+	// test runs.
+	switch name {
+	case "public":
+		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}, true
+	case "private":
+		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}, true
+	case "require_results":
 		// design.md "Required results": on a type declaration the property is
 		// carried by the *type*, so every value of it is checked, not just the
 		// procedures declared beside it.
-		specs["require_results"] = {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None}
-		specs["deprecated"] = {{.Proc_Decl}, .Value_Required}
-		specs["export"] = {{.Proc_Decl, .Var_Decl}, .None}
-		specs["implicit"] = {{.Proc_Decl}, .None}
-		specs["link_name"] = {{.Proc_Decl, .Var_Decl}, .Value_Required}
-		specs["default_calling_convention"] = {{.Foreign_Block}, .Value_Required}
-		specs["allocator_reset"] = {{.Parameter}, .None}
+		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None}, true
+	case "deprecated":
+		return {{.Proc_Decl}, .Value_Required}, true
+	case "export":
+		return {{.Proc_Decl, .Var_Decl}, .None}, true
+	case "implicit":
+		return {{.Proc_Decl}, .None}, true
+	case "link_name":
+		return {{.Proc_Decl, .Var_Decl}, .Value_Required}, true
+	case "default_calling_convention":
+		return {{.Foreign_Block}, .Value_Required}, true
+	case "allocator_reset":
+		return {{.Parameter}, .None}, true
+	case "escape":
 		// The level is a bare identifier rather than a string, so the value shape
 		// is validated by `check_escape_attribute` with the rest of the rule.
-		specs["escape"] = {{.Parameter}, .Deferred}
-		specs["by_ptr"] = {{.Parameter}, .None}
-		specs["c_vararg"] = {{.Parameter}, .None}
-		specs["packed"] = {{.Struct_Literal}, .None}
-		specs["align"] = {{.Struct_Literal, .Union_Literal}, .Deferred}
+		return {{.Parameter}, .Deferred}, true
+	case "by_ptr":
+		return {{.Parameter}, .None}, true
+	case "c_vararg":
+		return {{.Parameter}, .None}, true
+	case "packed":
+		return {{.Struct_Literal}, .None}, true
+	case "align":
+		return {{.Struct_Literal, .Union_Literal}, .Deferred}, true
+	case "zero", "failure":
 		// The value is a bare variant name rather than a string, so the shape is
 		// validated by `src/union.odin` against the union's own variant list.
-		specs["zero"] = {{.Union_Literal}, .Deferred}
-		specs["failure"] = {{.Union_Literal}, .Deferred}
+		return {{.Union_Literal}, .Deferred}, true
 	}
-	spec, ok := specs[name]
-	return spec, ok
+	return {}, false
 }
 
 attr_pos_name :: proc(pos: Attr_Pos) -> string {
@@ -82,6 +99,7 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	case .Struct_Literal: return "a struct type"
 	case .Union_Literal:  return "a union type"
 	case .Foreign_Block:  return "a foreign block"
+	case .Static_Assert:  return "a `static_assert`"
 	}
 	return "here"
 }
@@ -161,6 +179,10 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 						validate_decl_attributes(k, d)
 					}
 				}
+			case ^Item_Static_Assert:
+				// No attribute lists this position, so every one written here is
+				// reported as misplaced by the ordinary table lookup.
+				validate_attribute_list(k, v.attributes, .Static_Assert)
 			case ^Item_Foreign_Block:
 				validate_attribute_list(k, v.attributes, .Foreign_Block)
 				for member in v.members {

@@ -15,15 +15,13 @@ import "core:slice"
 // say. Callers treat "" as "no bundled component", which is diagnosed at the
 // point something actually needs one.
 install_dir :: proc() -> string {
-	@(static) cached: string
-	@(static) resolved: bool
-	if !resolved {
-		resolved = true
-		if dir, err := os2.get_executable_directory(context.allocator); err == nil {
-			cached = dir
-		}
+	// The result is allocated by the caller's context allocator. Caching it in
+	// process-wide storage would let one compiler instance retain another
+	// instance's allocation and would make initialization race between tests.
+	if dir, err := os2.get_executable_directory(context.allocator); err == nil {
+		return dir
 	}
-	return cached
+	return ""
 }
 
 // A component bundled beside the compiler: `runtime`, `base`, `core`.

@@ -656,6 +656,12 @@ clone_item :: proc(c: ^Compiler, item: Item) -> Item {
 		clone_node_base(c, &n.base, &v.base)
 		n.items = clone_items(c, v.items)
 		return n
+
+	case ^Item_Static_Assert:
+		n := new(Item_Static_Assert, c.semantic_allocator)
+		clone_node_base(c, &n.base, &v.base)
+		n.call = clone_expr(c, v.call)
+		return n
 	}
 	return nil
 }

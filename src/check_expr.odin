@@ -2940,7 +2940,7 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 	if len(v.args) == 2 {
 		check_message_arg(k, v.args[1].value)
 		if base := expr_base(v.args[1].value); base != nil && base.const_value.kind == .String {
-			message = concat(k.c, ": ", base.const_value.text)
+			message = base.const_value.text
 		}
 	}
 	folded, evaluated := require_const(k, v.args[0].value, "a `static_assert` condition", "L0387")
@@ -2949,7 +2949,23 @@ check_static_assert :: proc(k: ^Checker, v: ^Expr_Call) {
 		return
 	}
 	if folded.kind == .Boolean && !folded.boolean {
-		errorf(k.c, v.span, "L0387", "static assertion failed%s", message)
+		// design.md: a positively required interface application must name the
+		// requirement that failed, never a bare "static assertion failed". A
+		// negated or otherwise combined condition is not a bare application, so
+		// the adapter declines it and the assertion reports itself.
+		if report_failed_interface_bound(k, v.args[0].value, v.span) {
+			if message != "" {
+				add_notef(k.c, v.span, "%s", message)
+			}
+			return
+		}
+		errorf(
+			k.c,
+			v.span,
+			"L0387",
+			"static assertion failed%s",
+			message == "" ? "" : concat(k.c, ": ", message),
+		)
 	}
 }
 

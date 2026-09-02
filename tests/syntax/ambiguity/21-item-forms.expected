@@ -60,6 +60,8 @@
   (var names=["counter"] @[export] type=(ident "int")
     (int "0")
   )
+  (static_assert (call (ident "static_assert") (binary Eq_Eq (ident "SIZE") (int "8"))))
+  (static_assert (call (ident "static_assert") (call (ident "Drawable") (ident "Circle")) (string "\"Circle must draw\"")))
   (const names=["main"]
     (proc (proc-type)
       (block

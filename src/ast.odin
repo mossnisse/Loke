@@ -1131,6 +1131,7 @@ Item :: union {
 	^Item_Delegate,
 	^Item_When,
 	^Item_Block,
+	^Item_Static_Assert,
 }
 
 Item_Error :: struct {
@@ -1213,6 +1214,14 @@ Item_Block :: struct {
 	items:      []Item,
 }
 
+// `static_assert(condition[, message]);` at file scope. It holds the written
+// call and nothing else: the checker resolves it as the ordinary predeclared
+// built-in, so the item needs no second evaluator and leaves nothing to emit.
+Item_Static_Assert :: struct {
+	using base: Node_Base,
+	call:       Expr,
+}
+
 item_base :: proc(item: Item) -> ^Node_Base {
 	switch v in item {
 	case ^Decl:
@@ -1232,6 +1241,8 @@ item_base :: proc(item: Item) -> ^Node_Base {
 	case ^Item_When:
 		return &v.base
 	case ^Item_Block:
+		return &v.base
+	case ^Item_Static_Assert:
 		return &v.base
 	}
 	return nil

@@ -1,0 +1,15 @@
+L0444
+@7:1
+does not satisfy `Drawable(Circle)`
+this requirement does not hold: `Circle` has no method `draw` with this signature
+L0444
+@8:1
+does not satisfy `Drawable(Square)`
+Square is drawn elsewhere
+L0387
+@9:1
+static assertion failed: the wire layout changed
+L0607
+@21:3
+`@(export)` cannot appear on a `static_assert`
+@25:2

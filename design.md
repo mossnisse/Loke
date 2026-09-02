@@ -1347,7 +1347,7 @@ Each named aggregate type (`struct`, `enum`, or `union`) is distinct.
 
 ```odin
 Foo :: struct {};
-static_assert(Foo != struct{});
+static_assert(Foo != (struct{}));
 ```
 
 #### Delegating operators
@@ -2943,6 +2943,39 @@ operation is diagnosed only when some checked declaration actually requires
 that interface application. The current language has no declaration-site
 conformance claim.
 
+A type author who wants that check anyway asks for it, with a file-scope
+[`static_assert`](#static_assertboolean) beside the type or its `impl` blocks:
+
+```odin
+Shape :: interface($T: type) {
+	slot name: proc(self) -> string;
+	slot area: proc(self) -> f64;
+}
+
+Circle :: struct { r: f64 }
+
+impl Circle {
+	name :: proc(self) -> string { return "circle"; }
+}
+
+static_assert(Shape(Circle));
+
+impl Circle {
+	area :: proc(self) -> f64 { return 3.14159 * self.r * self.r; }
+}
+```
+
+The assertion is checked once the whole package is resolved, so it holds here
+even though half of what satisfies it is written below it. It may equally
+precede the type itself, sit in another file of the package, and it reports the
+specific requirement that failed rather than a bare assertion failure.
+
+It remains an ordinary compile-time assertion and nothing more. It registers no
+conformance, is not consulted by lookup, and does not change what
+`Shape(Circle)` means anywhere else; removing it does not make `Circle` any less
+a `Shape`, and no other package can observe whether it was written. It is a
+check a type author chooses to run, not a claim the type carries.
+
 #### Standard interface catalogue
 
 Version 1 has a small catalogue, exported by `base:interfaces` as ordinary declarations (not compiler predicates) and written with the package qualifier outside it, e.g. `interfaces.Sequence(S)`. The compiler makes built-in operations and associated members visible to the same structural checks used for user types.
@@ -4301,7 +4334,7 @@ foo :: proc() -> (n: int) {
 - An initial statement is not allowed in a `when` statement.
 - `when` statements are allowed at file scope.
 
-The contents of a `when` branch match its location. Inside a procedure, a selected branch contains ordinary statements. At file scope, it contains top-level items, so it may conditionally provide imports, foreign declarations, `impl` blocks, and declarations, but not executable expression statements. In either location the braces used by `when` do not introduce a scope; the selected contents behave as if they had appeared directly at the surrounding location.
+The contents of a `when` branch match its location. Inside a procedure, a selected branch contains ordinary statements. At file scope, it contains top-level items, so it may conditionally provide imports, foreign declarations, `impl` blocks, declarations, and [`static_assert`](#static_assertboolean)s, but not executable expression statements. An assertion in a branch that is not selected is not checked, exactly as a declaration there is not. In either location the braces used by `when` do not introduce a scope; the selected contents behave as if they had appeared directly at the surrounding location.
 
 Example:
 
@@ -6208,6 +6241,14 @@ emit.
 static_assert(SOME_CONST_CONDITION);
 static_assert(N > 0, "N must be positive");
 ```
+
+It is written either as a statement or as a file-scope item, with the same
+meaning in both. At file scope it is checked once the whole package's
+declarations and `impl` signatures are resolved, so it may precede what it names
+and is independent of source-file order and of split `impl` blocks. It emits no
+storage, procedure, or instruction, takes no attributes, and participates in
+file-scope `when` selection like any other item: an assertion in a branch that
+is not selected is not checked.
 
 ### `build_config(<identifier>, default)`
 

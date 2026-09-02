@@ -1,0 +1,3 @@
+L0387
+@4:1
+a file-scope `static_assert` must name the predeclared built-in

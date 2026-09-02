@@ -212,11 +212,51 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 			case ^Item_Import, ^Item_Foreign_Import, ^Item_Foreign_Block, ^Item_Error:
 				// Foreign imports carry only a link path; foreign blocks were checked
 				// in phase 2b. Neither has a Loke body to check here (m7-plan step 4).
+			case ^Item_Static_Assert:
+				// Checked in phase 3b, once every declaration in the package has been.
 			case:
 				unsupported_construct(k, item_span(item))
 			}
 		}
 	}
+
+	// Phase 3b: file-scope assertions. They run after every declaration in the
+	// package has been checked, so an assertion is independent of the order of
+	// its file and of the split `impl` blocks it may be talking about. The item
+	// holds the written call and nothing else, so this is the ordinary built-in
+	// reached the ordinary way -- there is no second evaluator, and nothing is
+	// left for emission.
+	for file in pkg.files {
+		k.file, k.file_node, k.scope = file.file, file, pkg.scope
+		for item in file.active_items {
+			if v, ok := item.(^Item_Static_Assert); ok {
+				check_file_scope_static_assert(k, v)
+			}
+		}
+	}
+}
+
+@(private = "file")
+check_file_scope_static_assert :: proc(k: ^Checker, item: ^Item_Static_Assert) {
+	call, is_call := item.call.(^Expr_Call)
+	if !is_call {
+		return // the parser already rejected the malformed item shape
+	}
+	ident, is_ident := call.callee.(^Expr_Ident)
+	if !is_ident {
+		return // likewise: file-scope syntax admits only the unqualified spelling
+	}
+	symbol := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	if symbol == nil || symbol.kind != .Builtin || symbol.builtin != .Static_Assert {
+		errorf(
+			k.c,
+			ident.span,
+			"L0387",
+			"a file-scope `static_assert` must name the predeclared built-in",
+		)
+		return
+	}
+	check_expr(k, call)
 }
 
 @(private = "file")

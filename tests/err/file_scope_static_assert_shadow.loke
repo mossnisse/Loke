@@ -1,0 +1,6 @@
+package main;
+
+static_assert :: proc(condition: bool) {}
+static_assert(false);
+
+main :: proc() {}

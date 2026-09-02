@@ -163,12 +163,25 @@ Top_Level_Item= Import_Decl
               | Foreign_Block
               | Impl_Block
               | Top_Level_When
+              | Top_Level_Static_Assert
               | Declaration
               | ";"                       // empty item
+
+Top_Level_Static_Assert = Attributes? "static_assert" "(" Argument_List ")" ";"
 
 Top_Level_When = Attributes? "when" "(" Expression ")" Top_Level_Block
                  ("else" (Top_Level_When | Top_Level_Block))?
 Top_Level_Block= Attributes? "{" Top_Level_Item* "}"
+```
+
+`static_assert` is not a keyword. It is matched contextually at item position,
+by the identifier followed by `(`, and the semantic checker still resolves it as
+the predeclared built-in with the same meaning it has as a statement. This is
+the only expression admitted at item position; no other call or expression
+statement may appear there. The `Attributes?` is grammatical only — no attribute
+may appear on this item, and one written there is reported as misplaced.
+
+```
 
 Import_Decl   = Attributes? "import" Identifier? String_Literal ";"
 
