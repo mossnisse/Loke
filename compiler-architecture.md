@@ -117,6 +117,11 @@ resolved symbols, chosen overloads, bound arguments, conversions, and lowering
 tags. Backend code should consume these annotations instead of inferring
 semantics from syntax.
 
+Struct literals retain resolved field indices in source order for both CTFE and
+LLVM. Executable validation retains the entry procedure's `Symbol_Id`; emission
+requires its registered name. Optional extraction reads the checked union's
+failure-variant metadata to identify its success variant.
+
 A generic specialization cannot reuse an already annotated template. It clones
 the declaration through `ast_clone.odin`, installs concrete generic bindings in
 the clone's definition-site scope, and checks the clone. Static `foreach` uses

@@ -296,6 +296,8 @@ create_nominal_type_shell :: proc(k: ^Checker, d: ^Decl) {
 }
 
 validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
+	c.entry_point = INVALID_SYMBOL
+	errors_before := c.error_count
 	pkg := package_of(c, package_id)
 	if pkg == nil || len(pkg.files) == 0 {
 		return
@@ -313,6 +315,8 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 		errorf(c, span, "L0303", "`main` must be a procedure: `main :: proc() { ... }`")
 	} else if info := type_of(c, symbol.proc_type); info == nil || len(info.parameters) != 0 || info.result != INVALID_TYPE {
 		errorf(c, symbol.span, "L0303", "`main` must have no parameters and no results: `main :: proc() { ... }`")
+	} else if c.error_count == errors_before {
+		c.entry_point = entry
 	}
 }
 

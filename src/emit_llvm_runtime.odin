@@ -1265,9 +1265,11 @@ emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> 
 
 // A checked extraction from an `any_view`: compare the stored `typeid`, then
 // read the data pointer as the requested type. `.(T)` traps on a mismatch;
-// `.as(T)` yields a zeroed payload and `false`.
+// `.as(T)` yields `Option(T)`.
 @(private)
 emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Type_Id) -> []string {
+	single := make([]string, 1)
+	single[0] = "zeroinitializer"
 	view := emit_expr(e, v.operand)
 	storage := llvm_type(e, TYPE_ANY_VIEW)
 	data := extract(e, storage, view, ANY_VIEW_DATA)
@@ -1284,7 +1286,6 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 		if type_is_managed(e.c, v.payload) {
 			out = emit_clone_value(e, v.payload, out)
 		}
-		single := make([]string, 1)
 		single[0] = out
 		return single
 	}
@@ -1293,6 +1294,17 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	// is `.none` rather than a zeroed payload paired with `false`. Nothing is
 	// read through the data pointer unless the `typeid` matched.
 	option := as_type
+	info := underlying_info(e.c, option)
+	if info == nil || info.kind != .Union || !info.failure_designated ||
+	   len(info.variants) != 2 || info.failure_variant < 0 || info.failure_variant >= 2 {
+		backend_fail(e, "an optional extraction has no checked failure variant")
+		return single
+	}
+	some := 1 - info.failure_variant
+	if info.variants[some] != v.payload {
+		backend_fail(e, "an optional extraction has the wrong success payload")
+		return single
+	}
 	slot := alloca(e, llvm_type(e, option))
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm_type(e, option), slot)
 	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
@@ -1302,12 +1314,10 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	if type_is_managed(e.c, v.payload) {
 		loaded = emit_clone_value(e, v.payload, loaded)
 	}
-	some := union_variant_index(e.c, option, intern_identifier(e.c, "some"))
 	wrapped := emit_union_value(e, option, some, loaded)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, option), wrapped, slot)
 	branch(e, done_label)
 	place_label(e, done_label)
-	single := make([]string, 1)
 	single[0] = load(e, llvm_type(e, option), slot)
 	return single
 }

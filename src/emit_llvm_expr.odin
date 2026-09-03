@@ -917,11 +917,12 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as
 		slot := index
 		element_type := info.element
 		if info.kind == .Struct {
-			if element.key != nil {
-				key := element.key.(^Expr_Ident)
-				field := struct_field(e.c, as_type, intern_identifier(e.c, key.name))
-				slot = int(symbol_of(e.c, field).index)
+			if len(v.field_indices) != len(v.elements) ||
+			   v.field_indices[index] < 0 || v.field_indices[index] >= len(info.fields) {
+				backend_fail(e, "a struct literal element has no resolved field index")
+				return
 			}
+			slot = v.field_indices[index]
 			element_type = symbol_of(e.c, info.fields[slot]).type
 		}
 		value := emit_expr(e, element.value)

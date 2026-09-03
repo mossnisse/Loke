@@ -374,6 +374,9 @@ Expr_Composite :: struct {
 	using base: Expr_Base,
 	type_expr:  Expr,
 	elements:   []Element,
+	// Struct field slots in source order, resolved during checking. Other
+	// composites use positional indices. Clones must resolve their own fields.
+	field_indices: []int,
 	// A borrowed managed element has value semantics: constructing the aggregate
 	// clones it, while a temporary or explicit move transfers it. Kept parallel
 	// to `elements` so the backend never has to reclassify ownership.

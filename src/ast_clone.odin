@@ -311,6 +311,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n.type_expr = clone_expr(c, v.type_expr)
 		n.elements = clone_elements(c, v.elements)
 		// Re-derived when the cloned literal is checked in its specialization.
+		n.field_indices = nil
 		n.element_clones = nil
 		// Re-derived when the clone is checked at its own substitution.
 		n.backing = INVALID_TYPE

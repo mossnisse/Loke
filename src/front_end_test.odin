@@ -235,6 +235,7 @@ N :: 7;`
 		return
 	}
 	main_decl := first.items[0].(^Decl)
+	testing.expect(t, c.entry_point == main_decl.symbols[0], "executable validation did not record the entry point")
 	call_stmt := decl_proc(main_decl).body.stmts[0].(^Stmt_Expr)
 	call := call_stmt.exprs[0].(^Expr_Call)
 	n_use := call.args[0].value.(^Expr_Ident)
@@ -283,6 +284,7 @@ helper :: proc() { }`
 	testing.expectf(t, c.error_count == 0, "library package was treated as an executable")
 	validate_executable(&c, pkg_id)
 	testing.expectf(t, c.error_count == 2, "executable validation did not enforce package name and entry point")
+	testing.expect(t, c.entry_point == INVALID_SYMBOL, "failed validation recorded an entry point")
 }
 
 @(test)

@@ -3145,6 +3145,8 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 	count := len(info.fields)
 	values := make([]Expr, count, k.c.semantic_allocator)
 	seen := make([]bool, count, k.c.semantic_allocator)
+	v.field_indices = make([]int, len(v.elements), k.c.semantic_allocator)
+	for &slot in v.field_indices { slot = -1 }
 	named := false
 	ok := true
 
@@ -3175,6 +3177,7 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			}
 			seen[symbol.index] = true
 			values[symbol.index] = element.value
+			v.field_indices[index] = int(symbol.index)
 			if !check_value_expr(k, element.value, symbol.type, "initialise") {
 				ok = false
 			} else {
@@ -3203,6 +3206,7 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 		symbol := symbol_of(k.c, info.fields[index])
 		seen[index] = true
 		values[index] = element.value
+		v.field_indices[index] = index
 		if !check_value_expr(k, element.value, symbol.type, "initialise") {
 			ok = false
 		} else {

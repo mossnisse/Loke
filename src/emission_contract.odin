@@ -14,6 +14,9 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 	if c.speculation_depth != 0 {
 		return emission_contract_error(c, "emission was requested during speculative checking")
 	}
+	if c.build_mode == .Exe && !emission_procedure_available(c, c.entry_point) {
+		return emission_contract_error(c, "an executable has no validated entry procedure")
+	}
 	if !c.typeid_frozen {
 		return emission_contract_error(c, "typeids must be frozen before emission")
 	}

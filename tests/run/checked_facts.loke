@@ -1,0 +1,40 @@
+package main;
+import "core:fmt";
+
+Forward :: struct { first, second, omitted: int }
+Reverse :: struct { second, first: int }
+
+named :: proc(seed: $T) -> T {
+    return T{second = 22, first = 11};
+}
+
+next :: proc(counter: inout int) -> int {
+    counter += 1;
+    return counter;
+}
+
+folded_forward :: named(Forward{});
+folded_reverse :: named(Reverse{});
+
+main :: proc() {
+    assert(folded_forward.first == 11 && folded_forward.second == 22);
+    assert(folded_forward.omitted == 0);
+    assert(folded_reverse.first == 11 && folded_reverse.second == 22);
+
+    forward := named(Forward{});
+    reverse := named(Reverse{});
+    assert(forward.first == 11 && forward.second == 22 && forward.omitted == 0);
+    assert(reverse.first == 11 && reverse.second == 22);
+
+    // Field order must not change the written order of side effects.
+    counter := 0;
+    ordered := Forward{second = next(inout counter), first = next(inout counter)};
+    assert(ordered.first == 2 && ordered.second == 1 && ordered.omitted == 0);
+    mixed := Forward{next(inout counter), second = next(inout counter)};
+    assert(mixed.first == 3 && mixed.second == 4 && mixed.omitted == 0);
+
+    view: any_view = 42;
+    assert((view.as(int) or_else -1) == 42);
+    assert(!(view.as(bool) or_else false));
+    fmt.println("checked facts");
+}

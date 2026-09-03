@@ -957,19 +957,13 @@ eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool)
 	}
 	for element, index in v.elements {
 		slot := index
-		if element.key != nil {
-			key, is_ident := element.key.(^Expr_Ident)
-			if !is_ident {
+		if info.kind == .Struct {
+			if len(v.field_indices) != len(v.elements) {
 				return Eval_Value{}, false
 			}
-			field := struct_field(ev.k.c, v.type, intern_identifier(ev.k.c, key.name))
-			symbol := symbol_of(ev.k.c, field)
-			if symbol == nil {
-				return Eval_Value{}, false
-			}
-			slot = int(symbol.index)
+			slot = v.field_indices[index]
 		}
-		if slot >= len(value.elements) {
+		if slot < 0 || slot >= len(value.elements) {
 			return Eval_Value{}, false
 		}
 		computed, ok := eval_expr(ev, element.value)

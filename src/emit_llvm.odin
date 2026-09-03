@@ -583,6 +583,11 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 // conversion, and no Loke package needs an initializer.
 @(private = "file")
 emit_entry :: proc(e: ^Emitter) {
+	entry, found := e.names[e.c.entry_point]
+	if !found || entry == "" {
+		backend_fail(e, "the validated entry procedure has no emitted name")
+		return
+	}
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	fmt.sbprintln(&e.b, "define i32 @wmain(i32 %argc, ptr %argv) {")
@@ -597,7 +602,7 @@ emit_entry :: proc(e: ^Emitter) {
 	if any_provider_selected(e.c) {
 		fmt.sbprintln(&e.b, "  call void @loke_rt_v1_program_init()")
 	}
-	fmt.sbprintfln(&e.b, "  call void %s()", e.names[entry_symbol(e.c)] or_else "@loke.p.main")
+	fmt.sbprintfln(&e.b, "  call void %s()", entry)
 	fmt.sbprintln(&e.b, "  call void @loke_rt_v1_thread_detach()")
 	fmt.sbprintln(&e.b, "  ret i32 0")
 	fmt.sbprintln(&e.b, "}")
@@ -845,13 +850,4 @@ mangled_key :: proc(pkg: ^Package) -> string {
 		return ""
 	}
 	return fmt.aprintf("%s.", llvm_safe(pkg.key))
-}
-
-@(private = "file")
-entry_symbol :: proc(c: ^Compiler) -> Symbol_Id {
-	pkg := package_of(c, c.root_package)
-	if pkg == nil || pkg.scope == nil {
-		return INVALID_SYMBOL
-	}
-	return lookup_symbol(pkg.scope, intern_identifier(c, "main"))
 }

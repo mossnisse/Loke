@@ -19,6 +19,149 @@ check_emission_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	}
 	check_package_bodies(&k, pkg_id)
 	check_pending_impl_instances(&k)
+	if c.build_mode == .Exe && c.error_count == 0 { validate_executable(c, pkg_id) }
+}
+
+@(test)
+composite_consumers_use_checked_field_indices :: proc(t: ^testing.T) {
+	c := test_compiler(`package main;
+Pair :: struct { first, second: int }
+value :: proc() -> int {
+    number := 7;
+    pair := Pair{second = number + 1, first = number};
+    return pair.first * 10 + pair.second;
+}
+main :: proc() { assert(value() == 78); }
+`)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name)
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_emission_package(&c, id)
+	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	value_decl := f.items[1].(^Decl)
+	body := decl_proc(value_decl).body
+	literal := body.stmts[1].(^Decl).values[0].(^Expr_Composite)
+	if !testing.expect(t, len(literal.field_indices) == 2) { return }
+	testing.expect(t, literal.field_indices[0] == 1 && literal.field_indices[1] == 0)
+	cloned := clone_expr(&c, literal).(^Expr_Composite)
+	testing.expect(t, len(cloned.field_indices) == 0, "a syntax clone retained checked field indices")
+	freeze_typeids(&c)
+	finalize_lifecycle_operations(&c)
+	before, emitted := emit_llvm_module(&c, id)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+
+	// Change only the written keys after checking. Both consumers must still
+	// use the original field slots, in the original evaluation order.
+	literal.elements[0].key.(^Expr_Ident).name = "first"
+	literal.elements[1].key.(^Expr_Ident).name = "second"
+	call: Expr_Call
+	call.type = TYPE_INT
+	call.resolution = Resolution{kind = .Call, symbol = value_decl.symbols[0]}
+	checker := Checker{c = &c}
+	value, evaluated := require_const(&checker, &call, "test result")
+	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 78), "CTFE repeated field lookup")
+	after, emitted_again := emit_llvm_module(&c, id)
+	if !testing.expect(t, emitted_again && c.error_count == 0 && before == after,
+	                   "LLVM repeated field lookup") { report(&c); return }
+	literal.field_indices = nil
+	module, missing := emit_llvm_module(&c, id)
+	testing.expect(t, !missing && module == "" && c.error_count == 1,
+	               "missing field indices did not reject the module")
+}
+
+@(test)
+optional_extraction_uses_checked_variant_metadata :: proc(t: ^testing.T) {
+	c := test_compiler(`package main;
+main :: proc() {
+    view: any_view = 42;
+    extracted := view.as(int);
+}
+`)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name)
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_emission_package(&c, id)
+	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	body := decl_proc(f.items[0].(^Decl)).body
+	call := body.stmts[1].(^Decl).values[0].(^Expr_Call)
+	extraction := call.extract
+	if !testing.expect(t, extraction != nil) { return }
+	freeze_typeids(&c)
+	finalize_lifecycle_operations(&c)
+	// Compare extraction instructions, since reflection tables legitimately
+	// retain variant names even though this lowering no longer reads them.
+	previous := ""
+	for pass in 0 ..< 2 {
+		e := make_emitter(&c)
+		e.names[body.stmts[0].(^Decl).symbols[0]] = "%view"
+		emit_expr(&e, call)
+		ir := strings.to_string(e.b)
+		if !testing.expect(t, !e.failed && c.error_count == 0) { report(&c); return }
+		if pass > 0 {
+			testing.expect(t, ir == previous, "LLVM repeated the optional success variant lookup")
+		}
+		previous = ir
+		info := type_of(&c, extraction.type)
+		info.variant_names[0], info.variant_names[1] = info.variant_names[1], info.variant_names[0]
+	}
+	type_of(&c, extraction.type).failure_designated = false
+	module, missing := emit_llvm_module(&c, id)
+	testing.expect(t, !missing && module == "" && c.error_count == 1,
+	               "missing failure metadata did not reject the module")
+}
+
+@(test)
+entry_emission_requires_validated_symbol :: proc(t: ^testing.T) {
+	for scenario in ([]string{"lookup_removed", "missing_symbol", "missing_name", "object"}) {
+		text := scenario == "object" ? "package utility; helper :: proc() { }" : "package main; main :: proc() { }"
+		c := test_compiler(text)
+		if scenario == "object" { c.build_mode = .Obj }
+		tokens := lex(&c, 0)
+		f := parse(&c, 0, tokens)
+		// A nonempty package key makes a hardcoded entry-name fallback observable.
+		id := new_package(&c, f.package_name, "entry_check")
+		c.root_package = id
+		add_package_file(&c, id, &f)
+		check_emission_package(&c, id)
+		freeze_typeids(&c)
+		finalize_lifecycle_operations(&c)
+		before, emitted := emit_llvm_module(&c, id)
+		if !testing.expectf(t, emitted && c.error_count == 0, "%s setup failed", scenario) {
+			report(&c)
+		} else if scenario == "object" {
+			testing.expect(t, c.entry_point == INVALID_SYMBOL && !strings.contains(before, "define i32 @wmain"),
+			               "an object build required or emitted an entry point")
+		} else {
+			testing.expect(t, c.entry_point == f.items[0].(^Decl).symbols[0], "validation lost the entry symbol")
+			switch scenario {
+			case "lookup_removed":
+				delete_key(&package_of(&c, id).scope.names, symbol_of(&c, c.entry_point).name)
+			case "missing_symbol": c.entry_point = INVALID_SYMBOL
+			case "missing_name": f.active_items = nil
+			}
+			after, emitted_again := emit_llvm_module(&c, id)
+			if scenario == "lookup_removed" {
+				testing.expect(t, emitted_again && c.error_count == 0 && before == after,
+				               "LLVM repeated the entry lookup or used a hardcoded name")
+			} else {
+				testing.expectf(t, !emitted_again && after == "" && c.error_count == 1,
+				                "%s did not reject the module", scenario)
+			}
+		}
+		destroy_ast(&f)
+		delete(tokens)
+		destroy_compilation(&c)
+	}
 }
 
 @(test)
@@ -184,6 +327,7 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 	                   "lifecycle_unready", "lifecycle_missing", "lifecycle_incomplete", "lifecycle_hook"}
 	for broken in cases {
 		c: Compiler
+		c.build_mode = .Obj
 		init_semantic_stores(&c)
 		request_typeid(&c, TYPE_INT)
 		freeze_typeids(&c)
