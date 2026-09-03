@@ -629,30 +629,14 @@ slot_signature :: proc(
 				return nil, nil, INVALID_TYPE, false, false
 			}
 		}
-		// `proc(self, canvas: inout Canvas)` is the receiver followed by one typed
-		// parameter, exactly as in an `impl` block: grammar.md's name list would
-		// otherwise swallow `self`.
-		split := position == 0 && parameter.type != nil && len(parameter.names) > 1 &&
-			parameter.names[0].name.text == "self"
 		names := max(len(parameter.names), 1)
 		for index in 0 ..< names {
-			// A receiver written without a type, or split off a name list, takes
-			// the subject's type and its own immutable-borrow mode.
-			if position == 0 && index == 0 {
-				if written == INVALID_TYPE || split {
-					append(&params, subject)
-					append(&modes, split ? Param_Mode.Value : parameter.mode)
-				} else {
-					append(&params, written)
-					append(&modes, parameter.mode)
-				}
-				continue
-			}
-			if written == INVALID_TYPE {
+			resolved, mode, _ := normalize_signature_parameter(k.c, parameter, position, index, written, receiver = subject)
+			if resolved == INVALID_TYPE {
 				return nil, nil, INVALID_TYPE, false, false
 			}
-			append(&params, written)
-			append(&modes, parameter.mode)
+			append(&params, resolved)
+			append(&modes, mode)
 		}
 	}
 	result_type := INVALID_TYPE

@@ -427,8 +427,7 @@ dyn_slot_is_compatible :: proc(k: ^Checker, requirement: Requirement, subject: I
 		}
 		// `proc(self, canvas: inout Canvas)` is the receiver plus one typed
 		// parameter, so the written type belongs to the parameter, not to `self`.
-		split := position == 0 && parameter.type != nil && len(parameter.names) > 1 &&
-			parameter.names[0].name.text == "self"
+		split := parameter_splits_receiver(parameter, position)
 		if position == 0 && !split {
 			// The receiver: immutable `self` (inferred or written) or
 			// `self: inout Subject`. A consuming `move self` cannot be erased.

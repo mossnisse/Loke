@@ -6,7 +6,9 @@ It aims at making it easier to handle memory allocations and complex datatypes a
 
 Loke should be able to use compiled C libraries (C ABI) and have some compatibility C datatypes to make that work.
 
-Procedures and that are called and packages that are improted should not change how the code works for the caller or importer in any unexpected ways. The opposite may be true. Having an parameter with an pointer to data that is manipulated is an nessary evil and is allowed.
+The language should be expressive enough making precompilers/macros and building scripts unecessary.
+
+Procedures and that are called and packages that are imported should not change how the code works for the caller or importer in any unexpected ways. The opposite may be true. Having an parameter with an pointer to data that is manipulated is an nessary evil and is allowed.
 
 Stuff like hidden allocations are allowed but procedures returning values that has to be manually hanndled should be clearly vissible that it is needed.
 

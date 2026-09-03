@@ -260,10 +260,6 @@ I think the default allocator and logger should be choosen in the source code in
 
 change [dynamic] to [dyn] or [+] [*]
 
-## numeric function
-
-should we add max and min value functions for numeric types?
-
 # Differences from Odin and design motivations
 
 This section is non-normative. It records why Loke differs from Odin and why

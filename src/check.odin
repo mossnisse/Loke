@@ -912,9 +912,38 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 	}
 }
 
-// Builds the flattened parameter and result lists a call site binds against,
-// and interns the procedure type — one entry per parameter *name*, so
-// `proc(a, b: int)` has two.
+// A receiver-aware signature reads `proc(self, values: ..int)` as an implicit
+// receiver followed by a typed parameter. Plain procedure types do not split.
+parameter_splits_receiver :: proc(parameter: Parameter, position: int) -> bool {
+	return position == 0 && parameter.type != nil && len(parameter.names) > 1 &&
+		parameter.names[0].name.text == "self"
+}
+
+// Normalize one name from a written parameter group. The caller resolves the
+// group's type and owns bindings, defaults, effects, and diagnostics. An explicit
+// receiver context supplies an omitted receiver type; a split receiver keeps
+// its own value mode even when the rest of the group is inout or variadic.
+normalize_signature_parameter :: proc(
+	c: ^Compiler,
+	parameter: Parameter,
+	position, name_index: int,
+	written: Type_Id,
+	receiver := INVALID_TYPE,
+) -> (type: Type_Id, mode: Param_Mode, split_receiver: bool) {
+	type, mode = written, parameter.mode
+	if receiver != INVALID_TYPE && position == 0 && name_index == 0 {
+		split_receiver = parameter_splits_receiver(parameter, position)
+		if parameter.type == nil || split_receiver { type = receiver }
+		if split_receiver { mode = .Value }
+	}
+	// The runtime parameter for `..T` is always the read-only slice `[]T`,
+	// including static interface slots and written procedure types.
+	if mode == .Variadic && type != INVALID_TYPE {
+		type = slice_of(c, type, mutable = false)
+	}
+	return
+}
+
 // design.md's variadic form is one trailing parameter: everything after it
 // would be unreachable, and two would make the split ambiguous.
 @(private = "file")
@@ -969,6 +998,8 @@ allocator_reset_ok :: proc(k: ^Checker, marked: bool, type: Type_Id, span: Span)
 	return false
 }
 
+// Builds the flattened signature a call site binds against and interns its
+// procedure type — one entry per parameter name, so `proc(a, b: int)` has two.
 resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol_Id) {
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || literal.signature == nil {
@@ -1027,16 +1058,6 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		if parameter_type != INVALID_TYPE && type_mentions_any_view(k.c, parameter_type, allow_top = true) {
 			reject_any_view_position(k, parameter_type, parameter.span, "stored inside another type")
 		}
-		// `proc(self, allocator: Allocator)` is the receiver followed by one typed
-		// parameter, not two parameters of the written type: grammar.md's name list
-		// would swallow `self`, and only an untyped `self` is the receiver form.
-		// The receiver keeps its own immutable-borrow mode whatever the group wrote.
-		split := position == 0 &&
-			k.impl_type != INVALID_TYPE &&
-			parameter.type != nil &&
-			len(parameter.names) > 1 &&
-			parameter.names[0].name.text == "self"
-
 		bindings := make([dynamic]Symbol_Id, 0, len(parameter.names), k.c.semantic_allocator)
 		for parameter_name, name_index in parameter.names {
 			// A `$` parameter is a compile-time input: the instantiation consumed
@@ -1046,31 +1067,24 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				append(&bindings, INVALID_SYMBOL)
 				continue
 			}
-			name_type := parameter_type
-			mode := parameter.mode
-			default := parameter.default
-			if split && name_index == 0 {
-				// The receiver is supplied by the call syntax, so a default written
-				// for the group belongs to the parameters, not to `self`.
-				name_type, mode, default = k.impl_type, .Value, nil
-			}
+			name_type, mode, split_receiver := normalize_signature_parameter(
+				k.c, parameter, position, name_index, parameter_type, receiver = k.impl_type,
+			)
+			// Group defaults and reset effects belong to the typed parameters.
+			default := split_receiver ? nil : parameter.default
+			written_type := split_receiver ? k.impl_type : parameter_type
 			// design.md "`@(allocator_reset)`": a successful call can end every
 			// allocation root within that allocator's region, so the attribute only
 			// makes sense on an `Allocator`.
 			escape := check_escape_attribute(
-				k, parameter.attributes, name_type, parameter.span, in_generic_signature(k, literal),
+				k, parameter.attributes, written_type, parameter.span, in_generic_signature(k, literal),
 			)
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
-				!(split && name_index == 0)
-			resets = allocator_reset_ok(k, resets, name_type, parameter.span)
-			// design.md "Variadic parameters": `nums: ..int` is one read-only `[]int`
-			// in the callee — the same as a written slice parameter — which is what
-			// makes `foreach (n in nums)` ordinary slice iteration and shares its ABI.
+				!split_receiver
+			resets = allocator_reset_ok(k, resets, written_type, parameter.span)
 			if mode == .Variadic && name_type != INVALID_TYPE {
 				if !variadic_position_ok(k, literal, position, name_index, parameter.span) {
-					mode = .Value
-				} else {
-					name_type = slice_of(k.c, name_type, mutable = false)
+					name_type, mode = written_type, .Value
 				}
 			}
 			binding := new_binding_symbol(k, parameter_name.name, .Parameter)
@@ -1508,7 +1522,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		modes := make([dynamic]Param_Mode, 0, len(value.params), k.c.semantic_allocator)
 		resets := make([dynamic]bool, 0, len(value.params), k.c.semantic_allocator)
 		escapes := make([dynamic]Escape_Level, 0, len(value.params), k.c.semantic_allocator)
-		for parameter in value.params {
+		for parameter, position in value.params {
 			// design.md: the reset effect is part of the written procedure type, so
 			// a value of this type keeps it through an indirect call.
 			marked := has_attribute(parameter.attributes, "allocator_reset")
@@ -1517,20 +1531,16 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			// procedure type. Said once here, ahead of the per-name loop, because the
 			// interned type carries the failure silently otherwise.
 			before := k.c.error_count
-			if parameter.type != nil && resolve_type_syntax(k, parameter.type) == INVALID_TYPE &&
+			written := resolve_type_syntax(k, parameter.type)
+			if parameter.type != nil && written == INVALID_TYPE &&
 			   k.c.error_count == before {
 				report_unresolved_type(k, parameter.type)
 			}
-			for _ in 0 ..< count {
-				resolved := resolve_type_syntax(k, parameter.type)
-				marked = allocator_reset_ok(k, marked, resolved, parameter.span)
-				// design.md "Procedure type": variadic shape is part of the type, so
-				// the parameter is the same read-only slice it is in a declaration.
-				if parameter.mode == .Variadic && resolved != INVALID_TYPE {
-					resolved = slice_of(k.c, resolved, mutable = false)
-				}
+			for name_index in 0 ..< count {
+				marked = allocator_reset_ok(k, marked, written, parameter.span)
+				resolved, mode, _ := normalize_signature_parameter(k.c, parameter, position, name_index, written)
 				append(&params, resolved)
-				append(&modes, parameter.mode)
+				append(&modes, mode)
 				append(&resets, marked)
 				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span))
 			}

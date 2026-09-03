@@ -116,6 +116,69 @@ deep_typeids_are_request_order_independent :: proc(t: ^testing.T) {
 }
 
 @(test)
+written_signatures_agree_on_parameter_shapes :: proc(t: ^testing.T) {
+	source := `package main;
+Sink :: struct { value: int }
+Collects :: interface($T: type) {
+    slot append: proc(self, values: ..int) -> int;
+    slot show: proc(self, values: ..any_view) -> int;
+    slot update: proc(self, left, right: inout int);
+    slot defaulted: proc(self, value: int) -> int;
+    slot take: proc(self: move T) -> int;
+    slot place: proc(self: inout T) -> inout int;
+}
+sum :: proc(self, other: int) -> int { return self + other; }
+impl Sink {
+    append :: proc(self, values: ..int) -> int { return values.len(); }
+    show :: proc(self, values: ..any_view) -> int { return values.len(); }
+    update :: proc(self, left, right: inout int) { left += 1; right += 1; }
+    defaulted :: proc(self, value: int = 7) -> int { return value; }
+    take :: proc(self: move Sink) -> int { return self.value; }
+    place :: proc(self: inout Sink) -> inout int { return inout self.value; }
+    plain_type :: proc(self) -> int {
+        // Even inside an impl, a plain proc type gives both names the written type.
+        callback: proc(self, other: int) -> int = sum;
+        return callback(1, 2);
+    }
+}
+main :: proc() {
+    static_assert(Collects(Sink));
+    value := Sink{};
+    callback: proc(self: Sink, values: ..int) -> int = Sink.append;
+    assert(callback(value, 1, 2) == 2);
+    assert(value.append(1, 2) == 2);
+    assert(value.show(1, true) == 2);
+    assert(value.defaulted() == 7);
+    assert(value.plain_type() == 3);
+    left, right := 1, 2;
+    value.update(inout left, inout right);
+}`
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, source)
+	if !testing.expect(t, p.c.error_count == 0, "declaration, procedure type, and slot shapes disagree") {
+		report(&p.c)
+	}
+}
+
+@(test)
+variadic_slots_remain_static_only :: proc(t: ^testing.T) {
+	p: Checked
+	defer destroy_checked(&p)
+	check_source(&p, `package main;
+Collects :: interface($T: type) { slot append: proc(self, values: ..int) -> int; }
+View :: dyn Collects;
+main :: proc() {}`)
+	if !testing.expect(t, len(p.c.diagnostics) == 1, "expected one dyn compatibility diagnostic") {
+		report(&p.c)
+		return
+	}
+	diagnostic := p.c.diagnostics[0]
+	testing.expect(t, diagnostic.code == "L0463" && strings.contains(diagnostic.message, "variadic"),
+	               "a variadic slot became dyn-compatible")
+}
+
+@(test)
 generic_probes_do_not_commit_bodies :: proc(t: ^testing.T) {
 	source := `package main;
 identity :: proc(value: $T) -> typeid { return typeid_of(T); }
