@@ -230,9 +230,9 @@ emit_simd_shift :: proc(
 
 // `-v` and `~v`. LLVM has no vector complement, so it is the exclusive-or the
 // scalar emitter would also produce.
-emit_simd_unary :: proc(e: ^Emitter, v: ^Expr_Unary) -> string {
-	info := underlying_info(e.c, v.type)
-	llvm := llvm_type(e, v.type)
+emit_simd_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string {
+	info := underlying_info(e.c, as_type)
+	llvm := llvm_type(e, as_type)
 	operand := emit_expr(e, v.operand)
 	if v.op == .Plus {
 		return operand
@@ -309,12 +309,12 @@ simd_declare_reduce_with_start :: proc(
 
 // The three `core:simd` intrinsics. Each is one LLVM instruction or intrinsic
 // call — which is the reason they are built in rather than library code.
-emit_simd_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
+emit_simd_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {
 	#partial switch kind {
 	case .Simd_Cast:
-		return emit_simd_cast(e, v)
+		return emit_simd_cast(e, v, as_type)
 	case .Simd_Select:
-		return emit_simd_select(e, v)
+		return emit_simd_select(e, v, as_type)
 	case .Simd_Reduce:
 		return emit_simd_reduce(e, v)
 	}
@@ -326,22 +326,22 @@ emit_simd_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> str
 // the conversion is a store and a reload at the other type. A vector is
 // over-aligned relative to the array, so the vector's storage is what both use.
 @(private = "file")
-emit_simd_cast :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+emit_simd_cast :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	source := expr_base(v.bound[0]).type
-	vector := type_is_simd(e.c, source) ? source : v.type
+	vector := type_is_simd(e.c, source) ? source : as_type
 	value := emit_expr(e, v.bound[0])
 	slot := alloca(e, llvm_type(e, vector))
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, source), value, slot)
 	out := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, v.type), slot)
+	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, as_type), slot)
 	return out
 }
 
 // `select(mask, a, b)`: LLVM's own vector select, whose condition is `<N x i1>`
 // where a lane mask is `<N x i8>`.
 @(private = "file")
-emit_simd_select :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	info := underlying_info(e.c, v.type)
+emit_simd_select :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	info := underlying_info(e.c, as_type)
 	mask := emit_expr(e, v.bound[0])
 	left := emit_expr(e, v.bound[1])
 	right := emit_expr(e, v.bound[2])
@@ -349,7 +349,7 @@ emit_simd_select :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	fmt.sbprintfln(
 		&e.b, "  %s = trunc <%d x i8> %s to <%d x i1>", bits, info.count, mask, info.count,
 	)
-	llvm := llvm_type(e, v.type)
+	llvm := llvm_type(e, as_type)
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = select <%d x i1> %s, %s %s, %s %s",

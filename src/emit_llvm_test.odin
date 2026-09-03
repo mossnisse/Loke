@@ -1,5 +1,6 @@
 package lokec
 
+import "core:strings"
 import "core:testing"
 
 // Emission consumes a fully checked program. The general front-end helper only
@@ -18,6 +19,80 @@ check_emission_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	}
 	check_package_bodies(&k, pkg_id)
 	check_pending_impl_instances(&k)
+}
+
+@(test)
+coercion_emission_preserves_checked_annotations :: proc(t: ^testing.T) {
+	c := test_compiler(`package main;
+main :: proc() {
+    number := 7;
+    text: string = "hello";
+    erased_place: any_view = number;
+    erased_temporary: any_view = number + 1;
+    view: string_view = text;
+    vector: Simd(int, 4) = -number;
+}
+`)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name)
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_emission_package(&c, id)
+	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	freeze_typeids(&c)
+	finalize_lifecycle_operations(&c)
+
+	body := decl_proc(f.items[0].(^Decl)).body
+	number := body.stmts[0].(^Decl).symbols[0]
+	text := body.stmts[1].(^Decl).symbols[0]
+	sources := [4]Type_Id{TYPE_INT, TYPE_INT, TYPE_STRING, TYPE_INT}
+	operations := [4]string{"load i64", "add i64", "load " + STRING_TYPE, "sub i64"}
+	expressions: [4]Expr
+	saved: [4]Expr_Base
+	for index in 0 ..< len(expressions) {
+		expr := body.stmts[index + 2].(^Decl).values[0]
+		expressions[index] = expr
+		saved[index] = expr_base(expr)^
+	}
+	testing.expect(t, saved[0].erased_from == TYPE_INT && saved[0].addressable)
+	testing.expect(t, saved[1].erased_from == TYPE_INT && !saved[1].addressable)
+	testing.expect(t, saved[2].view_from == TYPE_STRING && saved[3].splat_from == TYPE_INT)
+
+	// A source-type request must skip this node's conversion without clearing
+	// its annotations, while its children still use their checked types.
+	for expr, index in expressions {
+		e := make_emitter(&c)
+		e.names[number] = "%number"
+		e.names[text] = "%text"
+		emit_expr_at(&e, expr, sources[index])
+		ir := strings.to_string(e.b)
+		testing.expectf(t, !e.failed && strings.contains(ir, operations[index]),
+		                "source emission used the converted type:\n%s", ir)
+		testing.expect(t, !strings.contains(ir, "insertvalue") &&
+		               !strings.contains(ir, "extractvalue") && !strings.contains(ir, "shufflevector"),
+		               "source emission reapplied the node's conversion")
+	}
+
+	// Independent emitters must see the same checked program and produce the
+	// same module after both source-type and ordinary conversion emission.
+	previous := ""
+	for pass in 0 ..< 2 {
+		module, emitted := emit_llvm_module(&c, id)
+		if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+		if pass > 0 { testing.expect(t, module == previous, "repeated emission changed the LLVM module") }
+		previous = module
+		for expr, index in expressions {
+			base := expr_base(expr)
+			before := saved[index]
+			testing.expect(t, base.type == before.type && base.erased_from == before.erased_from &&
+			               base.view_from == before.view_from && base.splat_from == before.splat_from,
+			               "emission changed checker annotations")
+		}
+	}
 }
 
 @(test)

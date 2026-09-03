@@ -321,6 +321,10 @@ compilation and returns module text in memory. Filesystem and process policy
 belongs in `emit_llvm_toolchain.odin`. Backend names and temporary values belong
 to `Emitter`, never to semantic symbols.
 
+Implicit conversions use `emit_expr_at` with an explicit effective type; address
+and value helpers carry that type without changing the checker's AST annotations.
+Child expressions continue to use their own checked types.
+
 ## How to make a compiler change
 
 Use the narrowest path that preserves the phase contracts:

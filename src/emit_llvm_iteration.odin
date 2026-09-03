@@ -23,13 +23,13 @@ emit_option_some :: proc(e: ^Emitter, option_type: Type_Id, payload: string) -> 
 // so a range keeps its kind after being assigned or passed to a generic
 // procedure.
 @(private)
-emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range) -> string {
-	info := type_of(e.c, v.type)
+emit_range_value :: proc(e: ^Emitter, v: ^Expr_Range, as_type: Type_Id) -> string {
+	info := type_of(e.c, as_type)
 	element := info.element
 	low := emit_expr(e, v.lo)
 	high := emit_expr(e, v.hi)
 	closed := v.op == .Range_Incl ? "true" : "false"
-	storage := llvm_type(e, v.type)
+	storage := llvm_type(e, as_type)
 	step1 := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", step1, storage, llvm_type(e, element), low, RANGE_LOW)
 	step2 := temp(e)
@@ -624,13 +624,18 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 // otherwise.
 @(private)
 spill_iterable :: proc(e: ^Emitter, expr: Expr) -> string {
+	return spill_iterable_at(e, expr, expr_base(expr).type)
+}
+
+@(private)
+spill_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
 	if base.addressable {
-		return emit_address(e, expr)
+		return emit_address_at(e, expr, as_type)
 	}
-	value := emit_expr(e, expr)
-	slot := alloca(e, llvm_type(e, base.type))
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, base.type), value, slot)
+	value := emit_expr_at(e, expr, as_type)
+	slot := alloca(e, llvm_type(e, as_type))
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, as_type), value, slot)
 	return slot
 }
 

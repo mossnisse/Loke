@@ -8,31 +8,31 @@ import "core:fmt"
 // ------------------------------------------------------------------- calls --
 
 @(private)
-emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if v.union_op == .Extract && v.extract != nil {
-		return emit_any_view_extract(e, v.extract)[0]
+		return emit_any_view_extract(e, v.extract, v.extract.type)[0]
 	}
 	if v.is_dyn_call {
 		results := emit_dyn_slot_call(e, v)
 		return len(results) == 0 ? "0" : results[0]
 	}
-	if v.resolution.kind == .Conversion && type_is_dyn(e.c, v.type) {
-		return emit_dyn_value(e, v)
+	if v.resolution.kind == .Conversion && type_is_dyn(e.c, as_type) {
+		return emit_dyn_value(e, v, as_type)
 	}
 	if v.text_conversion != .None {
-		return emit_text_conversion(e, v)[0]
+		return emit_text_conversion(e, v, as_type)[0]
 	}
 	if v.resolution.kind == .Conversion {
-		return emit_conversion(e, v)
+		return emit_conversion(e, v, as_type)
 	}
 	if v.reflect != .None {
 		return emit_descriptor_operation(e, v)
 	}
 	if v.union_op != .None {
-		return emit_union_operation(e, v)
+		return emit_union_operation(e, v, as_type)
 	}
 	if v.text != .None {
-		return emit_text_operation(e, v)[0]
+		return emit_text_operation(e, v, as_type)[0]
 	}
 	symbol := symbol_of(e.c, v.resolution.symbol)
 	if symbol != nil && symbol.kind == .Builtin {
@@ -75,18 +75,18 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 			// that factory's own handle afterwards.
 			return emit_default_allocator(e)
 		case .New, .New_Clone:
-			return emit_allocation_pair(e, v, symbol.builtin)[0]
+			return emit_allocation_pair(e, v, symbol.builtin, as_type)[0]
 		case .Make:
-			return emit_make_container(e, v)[0]
+			return emit_make_container(e, v, as_type)[0]
 		case .Drop:
 			emit_explicit_drop(e, v)
 			return "0"
 		case .Exchange:
-			return emit_exchange(e, v)
+			return emit_exchange(e, v, as_type)
 		case .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View:
-			return emit_unsafe_builtin(e, v, symbol.builtin)[0]
+			return emit_unsafe_builtin(e, v, symbol.builtin, as_type)[0]
 		case .Unsafe_Transmute:
-			return emit_transmute(e, v)
+			return emit_transmute(e, v, as_type)
 		case .Unsafe_Forget:
 			// The feature's whole meaning is the call that is *not* made: the operand
 			// is evaluated for its side effects, but skips the `emit_discarded_temporary`
@@ -99,12 +99,12 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		case .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any:
 			return emit_fmt_builtin(e, v, symbol.builtin)
 		case .Strings_Allocate:
-			return emit_strings_allocate(e, v)[0]
+			return emit_strings_allocate(e, v, as_type)[0]
 		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
-			return emit_atomic_builtin(e, v, symbol.builtin)
+			return emit_atomic_builtin(e, v, symbol.builtin, as_type)
 		case .Simd_Cast, .Simd_Select, .Simd_Reduce:
-			return emit_simd_builtin(e, v, symbol.builtin)
+			return emit_simd_builtin(e, v, symbol.builtin, as_type)
 		case .Free, .Unsafe_Free:
 			emit_free(e, v)
 			return "0"
@@ -274,12 +274,12 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 // operation, an `or_else`, or an `or_return`. Each of those has its own
 // sequence; this is the one place that picks between them.
 @(private)
-emit_producer_value :: proc(e: ^Emitter, expr: Expr) -> []string {
+emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []string {
 	#partial switch v in expr {
 	case ^Expr_Call:
 		// `value.as(T)`: one extraction lowering, reached through call syntax.
 		if v.union_op == .Extract && v.extract != nil {
-			return emit_any_view_extract(e, v.extract)
+			return emit_any_view_extract(e, v.extract, v.extract.type)
 		}
 		// A slot call has no callee symbol and no callee value — the thunk comes
 		// out of the witness table — so it can never take the ordinary call path
@@ -290,28 +290,28 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		// A conversion and a built-in are calls in syntax only, and each has its
 		// own lowering; `emit_call` is what knows the difference.
 		if kind := call_builtin_kind(e, v); kind == .New || kind == .New_Clone {
-			return emit_allocation_pair(e, v, kind)
+			return emit_allocation_pair(e, v, kind, as_type)
 		}
 		if call_builtin_kind(e, v) == .Make {
-			return emit_make_container(e, v)
+			return emit_make_container(e, v, as_type)
 		}
 		if v.text != .None {
-			return emit_text_operation(e, v)
+			return emit_text_operation(e, v, as_type)
 		}
 		if v.text_conversion != .None {
-			return emit_text_conversion(e, v)
+			return emit_text_conversion(e, v, as_type)
 		}
 		if kind := call_builtin_kind(e, v); kind == .Unsafe_String_View {
-			return emit_unsafe_builtin(e, v, kind)
+			return emit_unsafe_builtin(e, v, kind, as_type)
 		}
 		if call_builtin_kind(e, v) == .Strings_Allocate {
-			return emit_strings_allocate(e, v)
+			return emit_strings_allocate(e, v, as_type)
 		}
 		single := make([]string, 1)
-		single[0] = emit_expr(e, expr)
+		single[0] = emit_expr_at(e, expr, as_type)
 		return single
 	case ^Expr_Checked_Extract:
-		return emit_any_view_extract(e, v)
+		return emit_any_view_extract(e, v, as_type)
 	case ^Expr_Or_Else:
 		return emit_or_else(e, v)
 	case ^Expr_Postfix:
@@ -320,7 +320,7 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr) -> []string {
 		}
 	}
 	single := make([]string, 1)
-	single[0] = emit_expr(e, expr)
+	single[0] = emit_expr_at(e, expr, as_type)
 	return single
 }
 
@@ -337,12 +337,12 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 // failure policy (design.md "Allocation failure"), so there is no policy branch
 // here — the caller gets a null pointer and a non-nil error and decides.
 @(private = "file")
-emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
+emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
 	// `new_clone` creates a new allocation root containing a clone of the value
 	// (design.md), so a record whose clone can fail goes through its hook rather
 	// than through a shallow store of the representation.
 	if kind == .New_Clone && emit_lifecycle(e, v.alloc_type).clone_fallible {
-		return emit_new_clone_hook(e, v)
+		return emit_new_clone_hook(e, v, as_type)
 	}
 	// `new(T)` binds only an allocator; `new_clone(v)` binds the value first.
 	allocator := emit_allocator_operand(e, v, kind == .New ? 0 : 1)
@@ -377,7 +377,7 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 	}
 
 	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, v.type, failed, pointer)
+	out[0] = emit_alloc_result(e, as_type, failed, pointer)
 	return out
 }
 
@@ -387,7 +387,7 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> 
 // result travels through storage rather than phi nodes, so the three exits
 // need no predecessor-label tracking.
 @(private = "file")
-emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	value_type := llvm_type(e, v.alloc_type)
 	value := emit_expr(e, v.bound[0])
 	allocator := emit_allocator_operand(e, v, 1)
@@ -450,7 +450,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", code, error_slot)
 	fmt.sbprintfln(&e.b, "  %s = icmp ne i64 %s, 0", broke, code)
 	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, v.type, broke, published)
+	out[0] = emit_alloc_result(e, as_type, broke, published)
 	return out
 }
 
@@ -462,7 +462,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 // reserve leaves an empty container bound to that provider rather than
 // something half-built.
 @(private = "file")
-emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	is_map := type_is_map(e.c, v.alloc_type)
 	counts := is_map ? 1 : 2
 	values := make([]string, counts)
@@ -521,7 +521,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	built := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", built, CONTAINER_TYPE, header)
 	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, v.type, failed, built)
+	out[0] = emit_alloc_result(e, as_type, failed, built)
 	return out
 }
 
@@ -1097,13 +1097,13 @@ emit_bound_call :: proc(
 }
 
 @(private = "file")
-emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if v.text_conversion != .None {
-		return emit_text_conversion(e, v)[0]
+		return emit_text_conversion(e, v, as_type)[0]
 	}
 	source_expr := v.bound[0]
 	source := expr_base(source_expr).type
-	target := v.type
+	target := as_type
 	value := emit_expr(e, source_expr)
 
 	from := type_underlying(e.c, source)
@@ -1148,7 +1148,7 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 
 // `U.name(payload)`: evaluate the payload and write it plus the variant's tag.
 @(private = "file")
-emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	if v.union_op != .Construct || len(v.bound) != 1 {
 		backend_fail(e, "a union call has no construction operand")
 		return "0"
@@ -1157,5 +1157,5 @@ emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	if v.variant_clone {
 		payload = emit_clone_value(e, expr_base(v.bound[0]).type, payload)
 	}
-	return emit_union_value(e, v.type, v.variant_index, payload)
+	return emit_union_value(e, as_type, v.variant_index, payload)
 }

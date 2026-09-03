@@ -351,11 +351,11 @@ emit_region_reset :: proc(e: ^Emitter, v: ^Expr_Call) {
 // later expressions run, and destination ownership takes over only once the
 // literal is complete.
 @(private)
-emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, element: Type_Id) {
+emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, element: Type_Id, as_type: Type_Id) {
 	if len(v.elements) == 0 {
 		return
 	}
-	ops := container_ops_global(e, v.type)
+	ops := container_ops_global(e, as_type)
 	// The destination's own policy is written before the first reservation, so
 	// the literal never allocates through a default-backed provider first.
 	if v.via != nil {
@@ -373,7 +373,7 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 		reserved, address, ops, len(v.elements),
 	)
 	emit_container_policy_failure(e, address, reserved)
-	cleanup := begin_temporary_drop(e, v.type, address)
+	cleanup := begin_temporary_drop(e, as_type, address)
 
 	slot := alloca(e, llvm_type(e, element))
 	for written, index in v.elements {
@@ -399,11 +399,11 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 // zeroed. Each entry is inserted as soon as it is evaluated, so a temporary
 // unwind action lets the map destroy the prefix if a later key/value panics.
 @(private)
-emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, key, element: Type_Id) {
+emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, key, element: Type_Id, as_type: Type_Id) {
 	if len(v.elements) == 0 {
 		return
 	}
-	ops := container_ops_global(e, v.type)
+	ops := container_ops_global(e, as_type)
 	if v.via != nil {
 		provider, slot := emit_expr(e, v.via), temp(e)
 		fmt.sbprintfln(
@@ -419,7 +419,7 @@ emit_map_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, 
 		reserved, address, ops, len(v.elements),
 	)
 	emit_container_policy_failure(e, address, reserved)
-	cleanup := begin_temporary_drop(e, v.type, address)
+	cleanup := begin_temporary_drop(e, as_type, address)
 
 	for written, index in v.elements {
 		key_slot := alloca(e, llvm_type(e, key))

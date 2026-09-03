@@ -84,7 +84,7 @@ emit_atomic_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_atomic_fence(i32)")
 }
 
-emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> string {
+emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {
 	order := Memory_Order(v.atomic_order)
 	if kind == .Atomic_Fence {
 		// A fence has no operand and no width, so both paths agree: LLVM emits the
@@ -97,9 +97,9 @@ emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> s
 	bits := atomic_width_bits(e.c, v.atomic_type)
 	address := emit_expr(e, v.bound[0])
 	if atomic_width_is_native(bits) {
-		return emit_native_atomic(e, v, kind, address, bits, order)
+		return emit_native_atomic(e, v, kind, address, bits, order, as_type)
 	}
-	return emit_fallback_atomic(e, v, kind, address, order)
+	return emit_fallback_atomic(e, v, kind, address, order, as_type)
 }
 
 // The storage type one operation runs at. A `bool` is `i1` in a register and
@@ -162,6 +162,7 @@ emit_native_atomic :: proc(
 	address: string,
 	bits: int,
 	order: Memory_Order,
+	as_type: Type_Id,
 ) -> string {
 	storage := atomic_storage_type(e, v.atomic_type, bits)
 	align := bits / 8
@@ -197,7 +198,7 @@ emit_native_atomic :: proc(
 		pair_type := fmt.aprintf("%s%s, i1 }", "{ ", storage)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 0", observed, pair_type, pair)
 		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, 1", swapped, pair_type, pair)
-		return emit_atomic_exchange_result(e, v, storage, observed, swapped)
+		return emit_atomic_exchange_result(e, v, storage, observed, swapped, as_type)
 	}
 
 	opcode := atomic_rmw_opcode(kind)
@@ -219,6 +220,7 @@ emit_fallback_atomic :: proc(
 	kind: Builtin_Kind,
 	address: string,
 	order: Memory_Order,
+	as_type: Type_Id,
 ) -> string {
 	storage := llvm_type(e, v.atomic_type)
 	helper := atomic_helper_name(kind)
@@ -258,7 +260,7 @@ emit_fallback_atomic :: proc(
 		)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", swapped, status)
 		observed := load(e, storage, expected)
-		return emit_atomic_exchange_result(e, v, storage, observed, swapped)
+		return emit_atomic_exchange_result(e, v, storage, observed, swapped, as_type)
 	}
 
 	value := alloca(e, storage)
@@ -281,9 +283,10 @@ emit_atomic_exchange_result :: proc(
 	storage: string,
 	observed: string,
 	swapped: string,
+	as_type: Type_Id,
 ) -> string {
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, swapped)
 	value := atomic_from_storage(e, v.atomic_type, storage, observed)
-	return emit_option_value(e, v.type, failed, value)
+	return emit_option_value(e, as_type, failed, value)
 }

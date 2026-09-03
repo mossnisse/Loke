@@ -396,6 +396,12 @@ record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_
 // is what makes `&Point{1, 2}` work.
 @(private)
 emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
+	return emit_address_at(e, expr, expr_base(expr).type)
+}
+
+// The storage type can precede an implicit conversion on the same node.
+@(private)
+emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	// design.md "Materialization": every runtime use of one constant shares one
 	// read-only object, so the address is the global the checker registered.
 	if entry := materialization_of(e.c, expr); entry != nil {
@@ -479,26 +485,24 @@ emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
 		return out
 
 	case ^Expr_Composite:
-		slot := alloca(e, llvm_type(e, v.type))
-		emit_composite_into(e, v, slot)
+		slot := alloca(e, llvm_type(e, as_type))
+		emit_composite_into(e, v, slot, as_type)
 		return slot
 
 	case ^Expr_Call:
 		if expr_base(expr).value_category == .Place {
 			// A single `inout` result is already the address of the returned place.
-			return emit_call(e, v)
+			return emit_call(e, v, as_type)
 		}
 		// An ordinary aggregate result selected immediately by a field still needs
 		// addressable temporary storage for that selection.
-		type := expr_base(expr).type
-		slot := alloca(e, llvm_type(e, type))
-		store(e, type, emit_call(e, v), slot)
+		slot := alloca(e, llvm_type(e, as_type))
+		store(e, as_type, emit_call(e, v, as_type), slot)
 		return slot
 	}
 	// Any other addressable expression is materialised into a temporary.
-	type := expr_base(expr).type
-	slot := alloca(e, llvm_type(e, type))
-	store(e, type, emit_expr(e, expr), slot)
+	slot := alloca(e, llvm_type(e, as_type))
+	store(e, as_type, emit_expr_at(e, expr, as_type), slot)
 	return slot
 }
 
@@ -573,7 +577,7 @@ emit_nil_check :: proc(e: ^Emitter, pointer: string) {
 // slice. The base and both bounds are each evaluated once, in written order,
 // then checked as `0 <= lo <= hi <= len` before any address is formed.
 @(private = "file")
-emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
+emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> string {
 	operand_type := expr_base(v.operand).type
 	info := underlying_info(e.c, operand_type)
 	element := info.element
@@ -583,7 +587,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	case .String, .String_View:
 		return emit_text_subrange(e, v)
 	case .C_Pointer:
-		return emit_c_pointer_slice(e, v)
+		return emit_c_pointer_slice(e, v, as_type)
 	}
 	if info.kind == .Slice {
 		value := emit_expr(e, v.operand)
@@ -628,7 +632,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	count := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
 
-	return emit_slice_value(e, v.type, start, count)
+	return emit_slice_value(e, as_type, start, count)
 }
 
 // design.md "From string to X": `st[low:high]` is a subrange *view*. The bounds
@@ -667,7 +671,7 @@ emit_text_subrange :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 // bounds; `x[:n]`/`x[i:n]` produce a `[]T` and are checked, because only then is
 // there a length to check against.
 @(private = "file")
-emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
+emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> string {
 	element := underlying_info(e.c, expr_base(v.operand).type).element
 	data := emit_expr(e, v.operand)
 	low := "0"
@@ -684,7 +688,7 @@ emit_c_pointer_slice :: proc(e: ^Emitter, v: ^Expr_Slice) -> string {
 	panic_if(e, reversed, "slice.bounds", "slice bounds out of range")
 	count := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, %s", count, high, low)
-	return emit_slice_value(e, v.type, start, count)
+	return emit_slice_value(e, as_type, start, count)
 }
 
 @(private = "file")
@@ -721,40 +725,37 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 	if expr == nil {
 		return "0"
 	}
+	return emit_expr_at(e, expr, expr_base(expr).type)
+}
+
+// Emit the checked result type, or a source type recorded by an implicit
+// conversion. Only this node uses the override: children keep their own checked
+// types. Helpers receive it explicitly so checker annotations stay unchanged.
+@(private)
+emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
-	// A variant value becoming a union value. The node is evaluated at the type
-	// it actually produces, then payload and tag are written.
 	// A concrete value becoming an `any_view`: its address plus the frozen
 	// `typeid`. A non-addressable source gets compiler-owned temporary storage.
-	if from := base.erased_from; from != INVALID_TYPE {
-		target := base.type
-		base.erased_from, base.type = INVALID_TYPE, from
-		address := spill_iterable(e, expr)
-		base.erased_from, base.type = from, target
+	if from := base.erased_from; from != INVALID_TYPE && as_type == TYPE_ANY_VIEW {
+		address := spill_iterable_at(e, expr, from)
 		return emit_any_view_value(e, address, from)
 	}
 	// design.md: a `string` borrowed as a `string_view` — the same pointer and
 	// byte length, with the owning word dropped. Nothing is retained: the view
 	// borrows the string and cannot outlive it, which `src/borrow.odin` checks.
-	if from := base.view_from; from != INVALID_TYPE {
-		target := base.type
-		base.view_from, base.type = INVALID_TYPE, from
-		value := emit_expr(e, expr)
-		base.view_from, base.type = from, target
+	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .String_View {
+		value := emit_expr_at(e, expr, from)
 		data := extract(e, STRING_TYPE, value, STRING_DATA)
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 	}
 	// design.md "SIMD vectors": a scalar widened to every lane.
-	if from := base.splat_from; from != INVALID_TYPE {
-		target := base.type
-		base.splat_from, base.type = INVALID_TYPE, from
-		value := emit_expr(e, expr)
-		base.splat_from, base.type = from, target
-		return emit_simd_splat(e, value, target)
+	if from := base.splat_from; from != INVALID_TYPE && type_is_simd(e.c, as_type) {
+		value := emit_expr_at(e, expr, from)
+		return emit_simd_splat(e, value, as_type)
 	}
 	if base.is_const && base.const_value.kind != .Invalid {
-		return llvm_const(e, base.const_value, base.type)
+		return llvm_const(e, base.const_value, as_type)
 	}
 
 	switch v in expr {
@@ -762,7 +763,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return "0"
 
 	case ^Expr_Literal:
-		return llvm_const(e, v.const_value, v.type)
+		return llvm_const(e, v.const_value, as_type)
 
 	case ^Expr_Ident:
 		if name, ok := e.param_values[v.symbol]; ok {
@@ -778,22 +779,22 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 			backend_fail(e, "a resolved value has no storage")
 			return "0"
 		}
-		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, v.type), address)
+		fmt.sbprintfln(&e.b, "  %s = load %s, ptr %s", out, llvm_type(e, as_type), address)
 		return out
 
 	case ^Expr_Slice:
 		if v.resolution.kind == .User_Operator {
 			return emit_operator_call(e, v.resolution.symbol, v.bound)
 		}
-		return emit_builtin_slice(e, v)
+		return emit_builtin_slice(e, v, as_type)
 
 	case ^Expr_Postfix:
 		if v.op == .Or_Return {
-			results := emit_producer_value(e, expr)
+			results := emit_producer_value(e, expr, as_type)
 			return len(results) == 0 ? "0" : results[0]
 		}
-		address := emit_address(e, expr)
-		out := load(e, llvm_type(e, base.type), address)
+		address := emit_address_at(e, expr, as_type)
+		out := load(e, llvm_type(e, as_type), address)
 		return out
 
 	case ^Expr_Selector, ^Expr_Index:
@@ -810,42 +811,42 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 			if base.value_category != .Place {
 				return result
 			}
-			out := load(e, llvm_type(e, base.type), result)
+			out := load(e, llvm_type(e, as_type), result)
 			return out
 		}
 		// `pkg.f` as a value is the procedure itself, not storage holding one.
 		if symbol := symbol_of(e.c, base.resolution.symbol); symbol != nil && symbol.kind == .Proc {
 			return e.names[base.resolution.symbol] or_else "null"
 		}
-		address := emit_address(e, expr)
-		return load_place(e, base.type, address)
+		address := emit_address_at(e, expr, as_type)
+		return load_place(e, as_type, address)
 
 	case ^Expr_Unary:
-		return emit_unary(e, v)
+		return emit_unary(e, v, as_type)
 
 	case ^Expr_Binary:
-		return emit_binary(e, v)
+		return emit_binary(e, v, as_type)
 
 	case ^Expr_Cond:
-		return emit_cond(e, v)
+		return emit_cond(e, v, as_type)
 
 	case ^Expr_Call:
-		result := emit_call(e, v)
+		result := emit_call(e, v, as_type)
 		if base.value_category != .Place {
 			return result
 		}
-		out := load(e, llvm_type(e, base.type), result)
+		out := load(e, llvm_type(e, as_type), result)
 		return out
 
 	case ^Expr_Checked_Extract, ^Expr_Or_Else:
-		return emit_producer_value(e, expr)[0]
+		return emit_producer_value(e, expr, as_type)[0]
 
 	case ^Expr_Composite:
 		if v.backing != INVALID_TYPE {
-			return emit_slice_literal(e, v)
+			return emit_slice_literal(e, v, as_type)
 		}
-		slot := emit_address(e, expr)
-		out := load(e, llvm_type(e, v.type), slot)
+		slot := emit_address_at(e, expr, as_type)
+		out := load(e, llvm_type(e, as_type), slot)
 		return out
 
 	case ^Expr_Proc:
@@ -855,7 +856,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 		return "null"
 
 	case ^Expr_Range:
-		return emit_range_value(e, v)
+		return emit_range_value(e, v, as_type)
 
 	case ^Expr_Move:
 		return emit_move(e, v)
@@ -875,7 +876,7 @@ emit_expr :: proc(e: ^Emitter, expr: Expr) -> string {
 // surrounding lexical scope, so the slice stays valid until that scope exits
 // (design.md "Slice literals"). The hidden root is filled, then viewed whole.
 @(private = "file")
-emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite) -> string {
+emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) -> string {
 	backing := v.backing
 	info := type_of(e.c, backing)
 	root := alloca(e, llvm_type(e, backing))
@@ -890,26 +891,26 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite) -> string {
 		store(e, info.element, emit_expr(e, element.value), slot)
 	}
 
-	return emit_slice_value(e, v.type, root, fmt.aprintf("%d", len(v.elements)))
+	return emit_slice_value(e, as_type, root, fmt.aprintf("%d", len(v.elements)))
 }
 
 @(private = "file")
-emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
+emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string, as_type: Type_Id) {
 	// Start from the zero value so an omitted field is not left undefined.
-	zero, ok := zero_const(e.c, v.type)
+	zero, ok := zero_const(e.c, as_type)
 	if ok {
-		store(e, v.type, llvm_const(e, zero, v.type), address)
+		store(e, as_type, llvm_const(e, zero, as_type), address)
 	}
-	info := underlying_info(e.c, v.type)
+	info := underlying_info(e.c, as_type)
 	if info == nil {
 		return
 	}
 	if info.kind == .Dynamic_Array {
-		emit_dynamic_literal_into(e, v, address, info.element)
+		emit_dynamic_literal_into(e, v, address, info.element, as_type)
 		return
 	}
 	if info.kind == .Map {
-		emit_map_literal_into(e, v, address, info.key, info.element)
+		emit_map_literal_into(e, v, address, info.key, info.element, as_type)
 		return
 	}
 	for element, index in v.elements {
@@ -918,7 +919,7 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 		if info.kind == .Struct {
 			if element.key != nil {
 				key := element.key.(^Expr_Ident)
-				field := struct_field(e.c, v.type, intern_identifier(e.c, key.name))
+				field := struct_field(e.c, as_type, intern_identifier(e.c, key.name))
 				slot = int(symbol_of(e.c, field).index)
 			}
 			element_type = symbol_of(e.c, info.fields[slot]).type
@@ -927,14 +928,14 @@ emit_composite_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: string) {
 		if index < len(v.element_clones) && v.element_clones[index] {
 			value = emit_clone_value(e, element_type, value)
 		}
-		field_address := gep_field(e, llvm_type(e, v.type), address, slot)
-		record_field_align(e, v.type, address, field_address, element_type)
+		field_address := gep_field(e, llvm_type(e, as_type), address, slot)
+		record_field_align(e, as_type, address, field_address, element_type)
 		store(e, element_type, value, field_address)
 	}
 }
 
 @(private = "file")
-emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary) -> string {
+emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string {
 	if v.op == .Amp {
 		return emit_address(e, v.operand)
 	}
@@ -942,11 +943,11 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary) -> string {
 		operands := [1]Expr{v.operand}
 		return emit_operator_call(e, v.resolution.symbol, operands[:])
 	}
-	if type_is_simd(e.c, v.type) {
-		return emit_simd_unary(e, v)
+	if type_is_simd(e.c, as_type) {
+		return emit_simd_unary(e, v, as_type)
 	}
 	operand := emit_expr(e, v.operand)
-	type := v.type
+	type := as_type
 	llvm := llvm_type(e, type)
 	out := temp(e)
 	#partial switch v.op {
@@ -967,7 +968,7 @@ emit_unary :: proc(e: ^Emitter, v: ^Expr_Unary) -> string {
 }
 
 @(private = "file")
-emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
+emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary, as_type: Type_Id) -> string {
 	if v.resolution.kind == .User_Operator {
 		operands := [2]Expr{v.lhs, v.rhs}
 		result := emit_operator_call(e, v.resolution.symbol, operands[:])
@@ -1000,7 +1001,7 @@ emit_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	}
 	lhs := emit_expr(e, v.lhs)
 	rhs := emit_expr(e, v.rhs)
-	return emit_binary_op(e, v.op, v.type, expr_base(v.rhs).type, lhs, rhs)
+	return emit_binary_op(e, v.op, as_type, expr_base(v.rhs).type, lhs, rhs)
 }
 
 // Concatenation allocates from `mem.default_allocator()` and follows its
@@ -1442,7 +1443,7 @@ emit_short_circuit :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 }
 
 @(private = "file")
-emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond) -> string {
+emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond, as_type: Type_Id) -> string {
 	cond := emit_expr(e, v.cond)
 	then_label := new_label(e, "cond.then")
 	else_label := new_label(e, "cond.else")
@@ -1468,7 +1469,7 @@ emit_cond :: proc(e: ^Emitter, v: ^Expr_Cond) -> string {
 	fmt.sbprintfln(
 		&e.b,
 		"  %s = phi %s [ %s, %%%s ], [ %s, %%%s ]",
-		out, llvm_type(e, v.type), then_value, then_exit, else_value, else_exit,
+		out, llvm_type(e, as_type), then_value, then_exit, else_value, else_exit,
 	)
 	return out
 }
@@ -1508,7 +1509,7 @@ emit_text_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: st
 }
 
 @(private)
-emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	out := make([]string, 1)
 	out[0] = "0"
 	switch v.text {
@@ -1530,7 +1531,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		// A read-only `[]u8` over the same storage: the borrow costs nothing and
 		// cannot be widened to `[]mut u8`.
 		data, length := emit_text_parts(e, v.bound[0])
-		out[0] = emit_slice_value(e, v.type, data, length)
+		out[0] = emit_slice_value(e, as_type, data, length)
 
 	case .Copy:
 		data, length := emit_text_parts(e, v.bound[0])
@@ -1554,7 +1555,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		// to report, so failure follows the provider's policy. The helper releases
 		// its partial buffer first, so the panic path leaks nothing.
 		data, length := emit_text_parts(e, v.bound[0])
-		ops := container_ops_global(e, v.type)
+		ops := container_ops_global(e, as_type)
 		slot := alloca(e, CONTAINER_TYPE)
 		provider := emit_default_allocator(e)
 		ok := temp(e)
@@ -1580,7 +1581,7 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		data := extract(e, storage, slice, SLICE_DATA)
 		count := extract(e, storage, slice, SLICE_LEN)
 		return emit_text_optional_ok(
-			e, v.type, "loke_rt_v1_string_from_runes",
+			e, as_type, "loke_rt_v1_string_from_runes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, count, emit_default_allocator(e)),
 		)
 	}
@@ -1640,7 +1641,7 @@ emit_text_optional_ok :: proc(e: ^Emitter, option: Type_Id, callee, arguments: s
 // allocator in the string header so release returns the block to the same
 // provider.
 @(private)
-emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	data, length := emit_text_parts(e, v.bound[0])
 	allocator := emit_expr(e, v.bound[1])
 	slot, ok := emit_text_call_slot(
@@ -1650,14 +1651,14 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, ok)
 	out := make([]string, 1)
-	out[0] = emit_alloc_result(e, v.type, failed, copied)
+	out[0] = emit_alloc_result(e, as_type, failed, copied)
 	return out
 }
 
 // design.md "string type conversions": every one of these validates, so each has
 // optional-ok results and publishes the zero value on failure.
 @(private)
-emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
+emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	switch v.text_conversion {
 	case .None:
 		break
@@ -1665,7 +1666,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	case .String_From_Bytes:
 		data, length := emit_byte_slice_parts(e, v.bound[0])
 		return emit_text_optional_ok(
-			e, v.type, "loke_rt_v1_string_from_bytes",
+			e, as_type, "loke_rt_v1_string_from_bytes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", data, length, emit_default_allocator(e)),
 		)
 
@@ -1682,7 +1683,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
 		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
 		out := make([]string, 1)
-		out[0] = emit_option_value(e, v.type, ok, view)
+		out[0] = emit_option_value(e, as_type, ok, view)
 		return out
 
 	case .String_From_C_View:
@@ -1692,7 +1693,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 		length := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = call i64 @loke_rt_v1_cstring_len(ptr %s)", length, pointer)
 		return emit_text_optional_ok(
-			e, v.type, "loke_rt_v1_string_from_bytes",
+			e, as_type, "loke_rt_v1_string_from_bytes",
 			fmt.aprintf("ptr %s, i64 %s, ptr %s", pointer, length, emit_default_allocator(e)),
 		)
 	}
@@ -1721,7 +1722,7 @@ emit_byte_slice_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, leng
 // a register-level cast where one exists, and a stack round trip otherwise,
 // which every optimization level above `none` folds away.
 @(private)
-emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	source := expr_base(v.bound[0]).type
 	value := emit_expr(e, v.bound[0])
 	// A `bool` is `i1` in the backend and one byte of storage, so it is the one
@@ -1734,9 +1735,9 @@ emit_transmute :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i8", widened, value)
 		value, from = widened, "i8"
 	}
-	to_bool := underlying_kind(e.c, v.type) == .Bool
-	to := to_bool ? "i8" : llvm_type(e, v.type)
-	result := reinterpret_bits(e, source, v.type, from, to, value)
+	to_bool := underlying_kind(e.c, as_type) == .Bool
+	to := to_bool ? "i8" : llvm_type(e, as_type)
+	result := reinterpret_bits(e, source, as_type, from, to, value)
 	if to_bool {
 		// Bit 0 is the `bool`, and producing a pattern that is one is the caller's
 		// obligation — the checker has already rejected the constant case it can
@@ -1803,7 +1804,7 @@ bitcastable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // `unsafe.string_view`, which still validates since the type it produces
 // promises valid UTF-8.
 @(private)
-emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> []string {
+emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
 	out := make([]string, 1)
 	out[0] = "null"
 	operand_kind := underlying_kind(e.c, expr_base(v.bound[0]).type)
@@ -1841,7 +1842,7 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind) -> [
 		fmt.sbprintfln(&e.b, "  %s = select i1 %s, i64 %s, i64 0", kept_len, ok, length)
 		view := emit_ptr_len(e, STRING_VIEW_TYPE, kept_data, kept_len)
 		single := make([]string, 1)
-		single[0] = emit_option_value(e, v.type, ok, view)
+		single[0] = emit_option_value(e, as_type, ok, view)
 		return single
 	}
 	return out

@@ -1267,7 +1267,7 @@ emit_any_view_value :: proc(e: ^Emitter, address: string, concrete: Type_Id) -> 
 // read the data pointer as the requested type. `.(T)` traps on a mismatch;
 // `.as(T)` yields a zeroed payload and `false`.
 @(private)
-emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string {
+emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Type_Id) -> []string {
 	view := emit_expr(e, v.operand)
 	storage := llvm_type(e, TYPE_ANY_VIEW)
 	data := extract(e, storage, view, ANY_VIEW_DATA)
@@ -1292,7 +1292,7 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string
 	// design.md "Typed fallibility": `.as(T)` produces `Option(T)`, so the miss
 	// is `.none` rather than a zeroed payload paired with `false`. Nothing is
 	// read through the data pointer unless the `typeid` matched.
-	option := v.type
+	option := as_type
 	slot := alloca(e, llvm_type(e, option))
 	fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", llvm_type(e, option), slot)
 	then_label, done_label := new_label(e, "anyview.match"), new_label(e, "anyview.done")
@@ -1315,8 +1315,8 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract) -> []string
 // `(dyn I)(&value)`: the data pointer plus the coherent witness for the erased
 // type. A nil concrete pointer produces the nil view and retains no witness.
 @(private)
-emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
-	storage := llvm_type(e, v.type)
+emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	storage := llvm_type(e, as_type)
 	if v.dyn_witness == nil {
 		return "zeroinitializer"
 	}

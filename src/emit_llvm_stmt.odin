@@ -162,11 +162,11 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 // operation. No hook runs between the two moves, so the old value is handed
 // back rather than dropped, and the destination is never observably dead.
 @(private)
-emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+emit_exchange :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	address := emit_address(e, v.bound[0])
 	replacement := emit_expr(e, v.bound[1])
-	previous := load(e, llvm_type(e, v.type), address)
-	store(e, v.type, replacement, address)
+	previous := load(e, llvm_type(e, as_type), address)
+	store(e, as_type, replacement, address)
 	return previous
 }
 

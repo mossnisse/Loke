@@ -1,0 +1,68 @@
+package main;
+
+import "core:fmt";
+import "core:simd";
+
+Box :: struct { number: int, text: string }
+calls: int;
+
+next_int :: proc() -> int { calls += 1; return calls; }
+next_text :: proc() -> string { calls += 1; return "abc"; }
+integer :: proc(value: any_view) -> int { return value.(int); }
+small_integer :: proc(value: any_view) -> i32 { return value.(i32); }
+box_number :: proc(value: any_view) -> int { return value.(Box).number; }
+slice_length :: proc(value: any_view) -> int { return len(value.([]mut int)); }
+text_length :: proc(value: string_view) -> int { return len(value); }
+lanes_equal :: proc(value: Simd(int, 4), expected: int) -> bool {
+    return simd.all(value == expected);
+}
+place :: proc(value: inout int) -> inout int { return value; }
+
+main :: proc() {
+    n := 7;
+    choose := true;
+    box := Box{n, "hello"};
+    numbers := [2]int{n, n + 1};
+    texts := [1]string{"hello"};
+    pointer := &n;
+
+    // Erasure uses the source's storage when it is a place, and otherwise
+    // spills the source representation. Every expression is evaluated once.
+    assert(integer(n) == 7);
+    assert(integer(box.number) == 7);
+    assert(integer(numbers[1]) == 8);
+    assert(integer(pointer^) == 7);
+    assert(integer(n + 1) == 8);
+    assert(integer(-n) == -7);
+    assert(integer(n if choose else 99) == 7);
+    assert(small_integer(i32(n)) == 7);
+    assert(box_number(Box{number = n + 1, text = "x"}) == 8);
+    assert(slice_length(numbers[:]) == 2);
+    assert(integer(next_int()) == 1);
+    assert(calls == 1);
+
+    // Borrowed text must load/produce the owning string before dropping its
+    // allocator word, including branches and calls that return a temporary.
+    assert(text_length(box.text) == 5);
+    assert(text_length(texts[0]) == 5);
+    assert(text_length(box.text if choose else "x") == 5);
+    assert(text_length(box.text + "!") == 6);
+    assert(text_length(next_text()) == 3);
+    assert(calls == 2);
+
+    // Scalar arithmetic, casts, loads, and conditional phi nodes all precede
+    // the splat, including a call whose result is an inout place.
+    assert(lanes_equal(n, 7));
+    assert(lanes_equal(box.number, 7));
+    assert(lanes_equal(numbers[1], 8));
+    assert(lanes_equal(pointer^, 7));
+    assert(lanes_equal(n + 1, 8));
+    assert(lanes_equal(-n, -7));
+    assert(lanes_equal(n if choose else 99, 7));
+    narrow := i32(n);
+    assert(lanes_equal(int(narrow), 7));
+    assert(lanes_equal(place(inout n), 7));
+    assert(lanes_equal(next_int(), 3));
+    assert(calls == 3);
+    fmt.println("ok");
+}
