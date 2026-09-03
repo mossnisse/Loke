@@ -141,6 +141,133 @@ main :: proc() {
 	testing.expect(t, typeid_value(&p.c, TYPE_BOOL) != 0, "an executed generic bound lost its dependencies")
 }
 
+// Only committed emission state: type interning, signature instances, and other
+// semantic caches may grow while answering a hypothetical requirement.
+@(private = "file")
+Probe_Emission_State :: struct {
+	typeids, typeid_order:                   int,
+	witnesses, witness_order:                int,
+	materialized, materialized_order:        int,
+	instances, checked_bodies, static_locals: int,
+	format_requested, type_info_requested:   bool,
+}
+
+@(private = "file")
+probe_emission_state :: proc(c: ^Compiler) -> Probe_Emission_State {
+	state := Probe_Emission_State {
+		typeids             = len(c.typeid_requested),
+		typeid_order        = len(c.typeid_order),
+		witnesses           = len(c.witnesses),
+		witness_order       = len(c.witness_order),
+		materialized        = len(c.materialized),
+		materialized_order  = len(c.materialized_order),
+		checked_bodies      = len(c.checked_bodies),
+		static_locals       = len(c.static_locals),
+		format_requested    = c.format_requested,
+		type_info_requested = c.type_info_requested,
+	}
+	for pkg in c.packages { state.instances += len(pkg.instances) }
+	return state
+}
+
+@(test)
+interface_probes_do_not_register_emission_dependencies :: proc(t: ^testing.T) {
+	// A small core:fmt package reaches its private dispatch intrinsic without
+	// checking the real library's bodies, which already request formatting.
+	source := `package fmt;
+import "base:runtime";
+Writer :: struct {}
+Options :: struct {}
+Record :: struct { value: int }
+Sized :: interface($T: type) { slot size: proc(self) -> int; }
+impl Record { size :: proc(self) -> int { return self.value; } }
+View :: dyn Sized;
+TABLE :: [2]int{1, 2};
+identity :: proc(value: $T) -> typeid { return typeid_of(T); }
+Probe :: interface($T: type) {
+    (value: T) identity(value) -> typeid;
+    (value: ^T) (dyn Sized)(value) -> View;
+    &TABLE -> ^[2]int;
+    typeid_of(T) -> typeid;
+    type_info_of(typeid_of(T));
+    (value: any_view, writer: Writer, options: Options) format_any(value, writer, options);
+}
+Nested :: interface($T: type) { Probe(T); }
+Rejected :: interface($T: type) { Nested(T); T.missing; }
+`
+	p: Checked
+	defer destroy_checked(&p)
+	p.c = test_compiler(source)
+	p.tokens = lex(&p.c, 0)
+	p.f = parse(&p.c, 0, p.tokens)
+	k := Checker{c = &p.c}
+	ensure_runtime_bootstrap(&k)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	p.pkg = new_package(&p.c, p.f.package_name, STD_FMT)
+	add_package_file(&p.c, p.pkg, &p.f)
+	append(&package_of(&p.c, p.pkg).imports, Package_Import {
+		target = symbol_of(&p.c, p.c.result_symbol).pkg,
+		alias  = "runtime",
+	})
+	check_one_package(&p.c, p.pkg)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	scope := package_of(&p.c, p.pkg).scope
+	k = Checker{c = &p.c, pkg = p.pkg, lookup_pkg = p.pkg, scope = scope, file_node = &p.f}
+	record := symbol_of(&p.c, scope.names[intern_identifier(&p.c, "Record")]).type
+	table := scope.names[intern_identifier(&p.c, "TABLE")]
+	args := []Generic_Arg{{is_type = true, type = record}}
+	before := probe_emission_state(&p.c)
+	cached_before := len(p.c.procedure_instances)
+	testing.expect(t, !before.format_requested && !before.type_info_requested,
+	               "the fixture already requested the runtime tables")
+
+	// Rejection happens after every registration path was reached. Repetition
+	// also exercises the signature cache populated by the first accepted probe.
+	for name in ([]string{"Probe", "Nested", "Rejected", "Probe"}) {
+		info := interface_info_for(&k, scope.names[intern_identifier(&p.c, name)])
+		if !testing.expectf(t, info != nil, "missing interface %s", name) { return }
+		held := interface_satisfied(&k, info, args, no_span(), report = false)
+		testing.expectf(t, held == (name != "Rejected"), "%s returned the wrong probe result", name)
+		after := probe_emission_state(&p.c)
+		testing.expectf(t, after == before, "%s changed emission state: before %v, after %v", name, before, after)
+		testing.expectf(t, p.c.speculation_depth == 0, "%s did not restore speculation depth", name)
+		testing.expectf(t, p.c.error_count == 0, "%s leaked a diagnostic", name)
+	}
+	testing.expect(t, len(p.c.procedure_instances) > cached_before,
+	               "the probe did not exercise signature instantiation")
+
+	// Check real uses in the same compilation so cached probe results cannot
+	// hide a missing commitment. CTFE inside a bound is covered separately above.
+	real_source := `package fmt;
+use_dependencies :: proc(value: ^Record, erased: any_view, writer: Writer, options: Options) {
+    id := identity(value^);
+    view := (dyn Sized)(value);
+    address := &TABLE;
+    info := type_info_of(typeid_of(Record));
+    format_any(erased, writer, options);
+}`
+	file_id := append_test_source(&p.c, "<real-use>", real_source)
+	tokens := lex(&p.c, file_id)
+	defer delete(tokens)
+	f := parse(&p.c, file_id, tokens)
+	defer destroy_ast(&f)
+	add_package_file(&p.c, p.pkg, &f)
+	check_one_package(&p.c, p.pkg)
+	if !testing.expect(t, p.c.error_count == 0) { report(&p.c); return }
+	after := probe_emission_state(&p.c)
+	testing.expect(t, after.typeids == before.typeids + 1 && after.typeid_order == before.typeid_order + 1 &&
+	               p.c.typeid_requested[record], "a real use lost the probed typeid")
+	testing.expect(t, after.witnesses == before.witnesses + 1 && after.witness_order == before.witness_order + 1 &&
+	               p.c.witness_order[before.witness_order].concrete == record,
+	               "a real conversion lost the probed witness")
+	testing.expect(t, after.materialized == before.materialized + 1 && after.materialized_order == before.materialized_order + 1 &&
+	               p.c.materialized[table] != nil, "a real address lost the probed constant's storage")
+	testing.expect(t, after.instances == before.instances + 1 && after.checked_bodies == before.checked_bodies + 2,
+	               "a real call did not commit the probed generic body and its caller")
+	testing.expect(t, after.format_requested && after.type_info_requested,
+	               "real uses did not request the formatter and reflection tables")
+}
+
 @(test)
 foreign_abi_walk_defers_by_value_cycles_to_size_check :: proc(t: ^testing.T) {
 	c: Compiler
