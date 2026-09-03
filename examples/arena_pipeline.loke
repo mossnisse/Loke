@@ -21,20 +21,20 @@ smooth :: proc(input: []Sample, scratch: Allocator) -> f64 {
 	window: [dynamic]f64 via scratch = {};
 	foreach (sample in input) {
 		window.append(sample.value);
-		if (len(window) > 3) { window.remove(0); }
+		if (window.len() > 3) { window.remove(0); }
 	}
 	total := 0.0;
 	foreach (v in window) { total += v; }
-	return total / f64(len(window));
+	return total / f64(window.len());
 }
 
 // A caller that owns the region: it may reset one it created without any
 // promise from anyone, because no caller can own anything inside it.
 run_batches :: proc(samples: []Sample) {
 	scratch := mem.Scratch.init();
-	for (start := 0; start < len(samples); start += 4) {
+	for (start := 0; start < samples.len(); start += 4) {
 		stop := start + 4;
-		if (stop > len(samples)) { stop = len(samples); }
+		if (stop > samples.len()) { stop = samples.len(); }
 		fmt.println("batch", start / 4, "mean", smooth(samples[start:stop], scratch.allocator()));
 
 		// Everything the stage allocated is gone in one step. The region stays
@@ -58,7 +58,7 @@ in_frame :: proc() -> int {
 	seen: map[int]bool via arena.allocator();
 	foreach (id in ids) { seen[id] = true; }
 
-	return len(ids) + len(seen);
+	return ids.len() + seen.len();
 }
 
 main :: proc() {
@@ -72,5 +72,5 @@ main :: proc() {
 
 	// The default provider is the system heap, and it is what a container binds
 	// to when no `via` selects anything else. `samples` releases here.
-	fmt.println("samples:", len(samples));
+	fmt.println("samples:", samples.len());
 }

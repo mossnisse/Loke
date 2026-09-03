@@ -1226,7 +1226,9 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 	#partial switch symbol.synth {
 	case .Standard_Len:
 		info := underlying_info(e.c, symbol.params[0])
-		if info.kind == .Array {
+		// A fixed array's and a vector's length are properties of the type, so
+		// neither reads its receiver. Every other carrier stores the count.
+		if info.kind == .Array || info.kind == .Simd {
 			fmt.sbprintfln(&e.b, "  ret %s %d", result, info.count)
 		} else {
 			field := info.kind == .Dynamic_Array || info.kind == .Map ? CONTAINER_LEN :

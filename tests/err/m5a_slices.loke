@@ -43,9 +43,9 @@ main :: proc() {
 	// destination.
 	inferred: []int = {1, 2};
 
-	fmt.println(len(mutable));
-	fmt.println(len(converted));
-	fmt.println(len(back));
+	fmt.println(mutable.len());
+	fmt.println(converted.len());
+	fmt.println(back.len());
 }
 
 runtime_index :: proc() -> int {

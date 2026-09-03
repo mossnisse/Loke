@@ -42,7 +42,7 @@ is_absolute :: proc(path: string_view) -> bool {
 	rest := path.bytes()[volume:];
 	// A UNC volume is already `\\server\share`, which is rooted by construction.
 	if (volume > 2) { return true; }
-	return len(rest) > 0 && is_separator(rest[0]);
+	return rest.len() > 0 && is_separator(rest[0]);
 }
 
 // The leading volume, or "": `C:` for a drive path, `\\server\share` for a UNC
@@ -56,19 +56,19 @@ volume :: proc(path: string_view) -> string_view {
 @(private)
 volume_length :: proc(path: string_view) -> int {
 	bytes := path.bytes();
-	if (len(bytes) >= 2 && bytes[1] == u8(':') && is_drive_letter(bytes[0])) {
+	if (bytes.len() >= 2 && bytes[1] == u8(':') && is_drive_letter(bytes[0])) {
 		return 2;
 	}
-	if (len(bytes) < 5 || !is_separator(bytes[0]) || !is_separator(bytes[1])) {
+	if (bytes.len() < 5 || !is_separator(bytes[0]) || !is_separator(bytes[1])) {
 		return 0;
 	}
 	// `\\server\share`: two elements, both non-empty.
 	at := 2;
-	for (; at < len(bytes) && !is_separator(bytes[at]); at += 1) {}
-	if (at == 2 || at >= len(bytes)) { return 0; }
+	for (; at < bytes.len() && !is_separator(bytes[at]); at += 1) {}
+	if (at == 2 || at >= bytes.len()) { return 0; }
 	at += 1;
 	start := at;
-	for (; at < len(bytes) && !is_separator(bytes[at]); at += 1) {}
+	for (; at < bytes.len() && !is_separator(bytes[at]); at += 1) {}
 	return 0 if at == start else at;
 }
 
@@ -81,7 +81,7 @@ is_drive_letter :: proc(value: u8) -> bool {
 base :: proc(path: string_view) -> string_view {
 	trimmed := without_trailing_separators(path);
 	bytes := trimmed.bytes();
-	at := len(bytes);
+	at := bytes.len();
 	for (; at > 0 && !is_separator(bytes[at - 1]); at -= 1) {}
 	return trimmed[at:];
 }
@@ -92,7 +92,7 @@ directory :: proc(path: string_view) -> string_view {
 	trimmed := without_trailing_separators(path);
 	bytes := trimmed.bytes();
 	volume := volume_length(trimmed);
-	at := len(bytes);
+	at := bytes.len();
 	for (; at > volume && !is_separator(bytes[at - 1]); at -= 1) {}
 	if (at == volume) {
 		return "." if volume == 0 else trimmed[0:volume];
@@ -107,7 +107,7 @@ directory :: proc(path: string_view) -> string_view {
 extension :: proc(path: string_view) -> string_view {
 	name := base(path);
 	bytes := name.bytes();
-	for (at := len(bytes); at > 1; at -= 1) {
+	for (at := bytes.len(); at > 1; at -= 1) {
 		if (bytes[at - 1] == u8('.')) {
 			return name[at - 1:];
 		}
@@ -118,14 +118,14 @@ extension :: proc(path: string_view) -> string_view {
 // The last element without its extension.
 stem :: proc(path: string_view) -> string_view {
 	name := base(path);
-	return name[0:len(name) - len(extension(name))];
+	return name[0:name.len() - extension(name).len()];
 }
 
 @(private)
 without_trailing_separators :: proc(path: string_view) -> string_view {
 	volume := volume_length(path);
 	bytes := path.bytes();
-	end := len(bytes);
+	end := bytes.len();
 	// Never past the root: `C:\` and `\` keep their separator.
 	for (; end > volume + 1 && is_separator(bytes[end - 1]); end -= 1) {}
 	return path[0:end];
@@ -142,7 +142,7 @@ join :: proc(
 ) -> string {
 	builder := strings.init(allocator);
 	foreach (part in parts) {
-		if (len(part) == 0) { continue; }
+		if (part.len() == 0) { continue; }
 		if (builder.len() > 0) { builder.append(SEPARATOR); }
 		builder.append(part);
 	}
@@ -167,14 +167,14 @@ clean :: proc(path: string_view, allocator: Allocator = mem.default_allocator())
 	}
 	volume := volume_length(path);
 	rest := path[volume:];
-	rooted := len(rest) > 0 && is_separator(rest.bytes()[0]);
+	rooted := rest.len() > 0 && is_separator(rest.bytes()[0]);
 
 	// The element stack, as offsets into `rest`: cleaning never invents text.
 	elements := make([dynamic]string_view, 0, 8, allocator) or_else no_elements();
 	foreach (element in split_elements(rest)) {
-		if (len(element) == 0 || element == ".") { continue; }
+		if (element.len() == 0 || element == ".") { continue; }
 		if (element == "..") {
-			if (len(elements) > 0 && elements[len(elements) - 1] != "..") {
+			if (elements.len() > 0 && elements[elements.len() - 1] != "..") {
 				elements.pop();
 				continue;
 			}
@@ -218,11 +218,11 @@ impl Element_Iterator {
 		if (self.done) { return .none; }
 		bytes := self.rest.bytes();
 		at := 0;
-		for (; at < len(bytes) && !is_separator(bytes[at]); at += 1) {}
+		for (; at < bytes.len() && !is_separator(bytes[at]); at += 1) {}
 		element := self.rest[0:at];
-		if (at == len(bytes)) {
+		if (at == bytes.len()) {
 			self.done = true;
-			return .some(element) if len(element) > 0 else .none;
+			return .some(element) if element.len() > 0 else .none;
 		}
 		self.rest = self.rest[at + 1:];
 		return .some(element);

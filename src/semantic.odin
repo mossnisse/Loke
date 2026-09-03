@@ -131,8 +131,8 @@ Type_Kind :: enum {
 Contribution :: enum u8 {
 	Iteration,
 	Lifecycle,
-	// The compiler-owned receiver members behind the closed standard free-alias
-	// set: `len`, `cap`, and `hash` on the built-in types that provide them.
+	// The compiler-owned canonical receiver members: `len`, `cap`, and `hash` on
+	// the built-in types that provide them.
 	Standard_Customization,
 	// design.md "Dynamic arrays" and "Maps": the operation set the compiler
 	// contributes to a container type, so `xs.append(1)` is an ordinary method
@@ -571,32 +571,12 @@ Builtin_Kind :: enum {
 	Size_Of,
 	Align_Of,
 	Offset_Of,
-	Len,
-	// design.md "Dynamic arrays": `cap(value)` is the container header's third
-	// word, and unlike `len` it has no fixed-array or text meaning.
-	Cap,
-	// design.md "Standard interface catalogue": the built-ins promised to satisfy
-	// `Hashable` need an operation to satisfy it *with*, so the compiler
-	// contributes one rather than the catalogue hard-coding a predicate.
-	Hash,
 	// Compile-time reflection (design.md "`type` and `typeid`", "Compile-time
 	// reflection").
 	Type_Of,
 	Typeid_Of,
 	Fields_Of,
 	Enum_Values_Of,
-	// design.md "Iteration protocol": `iter` is a receiver method whose standard
-	// free alias selects the same member, for built-ins and user types alike.
-	Iter,
-	// Closed standard aliases whose implementation is always a receiver method.
-	// Unlike an ordinary free procedure, these symbols contribute no overloads
-	// of their own: the checker rewrites the call to the selected member.
-	Standard_Alias,
-	// `clone(value)` and `try_clone(value)` are standard free aliases for the
-	// type's generated receiver members (design.md "Standard customization
-	// procedures"). Both spellings select one procedure.
-	Clone,
-	Try_Clone,
 	// design.md "Allocators" and "Allocation failure". The explicitly fallible
 	// primitives always return an error and never invoke a failure policy; `free`
 	// returns no status. `free_all` lowers to the provider's reset entry once

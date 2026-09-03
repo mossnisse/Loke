@@ -21,7 +21,7 @@ LIMIT :: 1024 * 1024;
 
 summarize :: proc(path: string_view) -> Result(Unit, io.Error) {
 	bytes := fs.read_bytes(path, limit = LIMIT) or_return;
-	fmt.println("bytes:", len(bytes));
+	fmt.println("bytes:", bytes.len());
 	return .ok(Unit{});
 }
 

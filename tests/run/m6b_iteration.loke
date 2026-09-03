@@ -40,7 +40,7 @@ main :: proc() {
 
 	// Two names destructure the `{key, value}` entry; a managed key is borrowed.
 	measured := 0;
-	foreach (k, v in some_map) { measured += len(k) * v; }
+	foreach (k, v in some_map) { measured += k.len() * v; }
 	fmt.println(measured);
 
 	// An empty container iterates zero times.

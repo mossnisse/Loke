@@ -33,14 +33,14 @@ main :: proc() {
 	// The fallible half reports success through its `Result`.
 	switch (zs in xs.try_clone()) {
 	case .ok:
-		fmt.println(len(zs));
+		fmt.println(zs.len());
 		fmt.println(1);
 	case .err: fmt.println(0);
 	}
 
 	// Maps clone through the same path.
 	m := map[string]int{"a" = 1, "b" = 2};
-	fmt.println(len(m.clone()));
+	fmt.println(m.clone().len());
 
 	// A string clone shares storage; the bytes survive because the handle is
 	// retained rather than aliased. `copy` is the independent-bytes operation.
@@ -77,21 +77,20 @@ main :: proc() {
 	fmt.println(grid[0][0]);
 	fmt.println(other[0][0]);
 
-	// design.md "Standard customization procedures": the free aliases resolve to
-	// the very members the method calls do, for a built-in and a record alike,
-	// and take the same optional allocator.
-	fmt.println(len(clone(xs)));
-	fmt.println(len(xs.clone()));
-	switch (freed in try_clone(xs)) {
+	// design.md "Standard customization procedures": `clone`/`try_clone` are
+	// receiver members on a built-in and a record alike, and take the same
+	// optional allocator.
+	fmt.println(xs.clone().len());
+	switch (freed in xs.try_clone()) {
 	case .ok:
-		fmt.println(len(freed));
+		fmt.println(freed.len());
 		fmt.println(1);
 	case .err: fmt.println(0);
 	}
-	fmt.println(clone(original));
-	fmt.println(clone(holder).text);
+	fmt.println(original.clone());
+	fmt.println(holder.clone().text);
 	arena := mem.Arena.init();
-	fmt.println(len(clone(xs, arena.allocator())));
+	fmt.println(xs.clone(arena.allocator()).len());
 
 	// Satisfaction follows what a type actually owns.
 	fmt.println(1 if is_cloneable(string) else 0);

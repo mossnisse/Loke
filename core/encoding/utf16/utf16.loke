@@ -26,14 +26,14 @@ Error :: enum {
 
 // The text as zero-terminated UTF-16, ready for a wide operating-system call.
 // The terminator is part of the buffer but not of its length contract: callers
-// pass the data pointer, and `len(result) - 1` is the unit count.
+// pass the data pointer, and `result.len() - 1` is the unit count.
 //
 // A `string_view` is valid UTF-8 by construction, so the only failure is
 // allocation.
 encode :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]u16, Error) {
-	units := make([dynamic]u16, 0, len(text) + 1, allocator) or_else no_units();
+	units := make([dynamic]u16, 0, text.len() + 1, allocator) or_else no_units();
 	foreach (codepoint in text) {
 		value := int(codepoint);
 		if (value < 0x10000) {
@@ -69,10 +69,10 @@ decode :: proc(
 ) -> Result(string, Error) {
 	builder := strings.init(allocator);
 	at := 0;
-	for (; at < len(units); at += 1) {
+	for (; at < units.len(); at += 1) {
 		value := int(units[at]);
 		if (value >= 0xD800 && value <= 0xDBFF) {
-			if (at + 1 >= len(units)) { return .err(.Invalid_Data); }
+			if (at + 1 >= units.len()) { return .err(.Invalid_Data); }
 			low := int(units[at + 1]);
 			if (low < 0xDC00 || low > 0xDFFF) { return .err(.Invalid_Data); }
 			combined := 0x10000 + ((value - 0xD800) << 10) + (low - 0xDC00);
@@ -103,5 +103,5 @@ length_of :: proc(units: []u16) -> int {
 	foreach (unit, index in units.indexed()) {
 		if (unit == 0) { return index; }
 	}
-	return len(units);
+	return units.len();
 }

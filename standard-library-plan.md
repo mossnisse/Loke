@@ -392,8 +392,8 @@ count(text, needle: string_view) -> int
 ```
 
 Empty-needle behavior must be documented and tested consistently: it matches at
-byte offset zero, `last_index` answers `.some(len(text))`, and `count` returns
-`len(text) + 1`.
+byte offset zero, `last_index` answers `.some(text.len())`, and `count` returns
+`text.len() + 1`.
 
 ### Borrowing transformations and iterators
 

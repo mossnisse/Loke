@@ -33,11 +33,11 @@ two_discards :: proc() {
 
 main :: proc() {
 	consuming();
-	fmt.println(len(order));
+	fmt.println(order.len());
 	foreach (v in order) { fmt.println(v); }
 	order.clear();
 
 	two_discards();
-	fmt.println(len(order));
+	fmt.println(order.len());
 	foreach (v in order) { fmt.println(v); }
 }

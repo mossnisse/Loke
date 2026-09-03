@@ -61,7 +61,7 @@ main :: proc() {
 	case .ok:
 		fmt.println(true);
 		fmt.println(text);
-		fmt.println(len(text));
+		fmt.println(text.len());
 	case .err:
 		fmt.println(false);
 		fmt.println("");
@@ -71,7 +71,7 @@ main :: proc() {
 	// Appending adds to the end; writing truncates first.
 	fmt.println(succeeded(fs.append_text(file, "andra\n")));
 	both := fs.read_text(file) or_else no_text();
-	fmt.println(len(both));
+	fmt.println(both.len());
 	foreach (line in strings.lines(both)) {
 		fmt.println(line);
 	}
@@ -85,7 +85,7 @@ main :: proc() {
 	switch (bytes in fs.read_bytes(binary)) {
 	case .ok:
 		fmt.println(true);
-		fmt.println(len(bytes));
+		fmt.println(bytes.len());
 		fmt.println(int(bytes[3]));
 	case .err:
 		fmt.println(false);
@@ -103,7 +103,7 @@ main :: proc() {
 	switch (under in fs.read_bytes(binary, limit = 6)) {
 	case .ok:
 		fmt.println(true);
-		fmt.println(len(under));
+		fmt.println(under.len());
 	case .err:
 		fmt.println(false);
 		fmt.println(0);
@@ -111,7 +111,7 @@ main :: proc() {
 	switch (exact in fs.read_bytes(binary, limit = 5)) {
 	case .ok:
 		fmt.println(true);
-		fmt.println(len(exact));
+		fmt.println(exact.len());
 	case .err:
 		fmt.println(false);
 		fmt.println(0);
@@ -119,7 +119,7 @@ main :: proc() {
 	switch (over in fs.read_bytes(binary, limit = 4)) {
 	case .ok:
 		fmt.println(false);
-		fmt.println(len(over));
+		fmt.println(over.len());
 	case .err:
 		// Nothing partial comes back with the failure.
 		fmt.println(io.is(over, .Limit_Exceeded));
@@ -256,7 +256,7 @@ count_entries :: proc(directory: string_view) -> int {
 		case .ok:
 			switch (entry in outcome) {
 			case .some:
-				if (len(entry.name) == 0) { return -3; }
+				if (entry.name.len() == 0) { return -3; }
 				total += 1;
 			case .none: reading = false;
 			}
@@ -291,7 +291,7 @@ clean_up :: proc(directory: string_view) {
 	if (!succeeded(reader.close())) { return; }
 	// Indexed, not `foreach`: a by-value loop over a managed element is L0504,
 	// which is the same limit that shaped `Directory_Reader`.
-	for (index := 0; index < len(names); index += 1) {
+	for (index := 0; index < names.len(); index += 1) {
 		full := path.join([]string_view{directory, names[index]});
 		if (!succeeded(fs.remove(full))) {
 			_ = fs.remove_directory(full);

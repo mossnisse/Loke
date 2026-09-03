@@ -103,7 +103,7 @@ impl Small_Array($T, $N) {
 	// ------------------------------------------------------------ mutation --
 
 	append :: proc(self: inout Small_Array(T, N), @(escape=stored) values: ..T) {
-		if (self.count + len(values) > N) {
+		if (self.count + values.len() > N) {
 			panic("Small_Array is full");
 		}
 		foreach (value in values) {
@@ -116,7 +116,7 @@ impl Small_Array($T, $N) {
 	try_append :: proc(
 		self: inout Small_Array(T, N), @(escape=stored) values: ..T,
 	) -> Result(Unit, Capacity_Error) {
-		wanted := self.count + len(values);
+		wanted := self.count + values.len();
 		if (wanted > N) {
 			return .err(Capacity_Error{wanted, N});
 		}

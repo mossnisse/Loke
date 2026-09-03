@@ -28,7 +28,7 @@ returns_a_temporary :: proc() -> ^Point {
 }
 
 first_half :: proc(values: []int) -> []int {
-	return values[:len(values) / 2];
+	return values[:values.len() / 2];
 }
 
 // The result summary substitutes the actual argument, so the caller's local is

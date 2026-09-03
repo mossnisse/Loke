@@ -23,7 +23,7 @@ main :: proc() {
 	// A dead local is a legal unevaluated operand: the query inspects its type.
 	dead: [4]Point;
 	fmt.println(size_of(dead));
-	fmt.println(len(dead));
+	fmt.println(dead.len());
 
 	fmt.println(size_of(side_effect()));
 }

@@ -10,5 +10,5 @@ main :: proc() {
 	foreach (_ in 0 ..< 8) {
 		text = text + text;
 	}
-	fmt.println(len(text));
+	fmt.println(text.len());
 }

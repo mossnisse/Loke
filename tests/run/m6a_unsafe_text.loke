@@ -14,7 +14,7 @@ main :: proc() {
 	// Indexing is unchecked; slicing with both bounds gives the length back.
 	fmt.println(p[1]);
 	tail := p[1:3];
-	fmt.println(len(tail));
+	fmt.println(tail.len());
 	fmt.println(tail[0]);
 
 	// `x[i:]` stays a C pointer, so the bound is still absent.
@@ -32,13 +32,13 @@ main :: proc() {
 	text: string = "hej";
 	bytes := unsafe.raw_data(text);
 	switch (view in unsafe.string_view(bytes, 3)) {
-	case .some: fmt.println(len(view));
+	case .some: fmt.println(view.len());
 	case .none: fmt.println(-1);
 	}
 
 	terminated := unsafe.cstring_view(bytes);
 	switch (owned in string(terminated)) {
-	case .some: fmt.println(len(owned));
+	case .some: fmt.println(owned.len());
 	case .none: fmt.println(-1);
 	}
 

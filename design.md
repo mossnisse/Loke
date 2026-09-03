@@ -64,7 +64,7 @@ A string literal uses double quotes, a character literal single quotes, and `\` 
 `C:\Windows\notepad.exe`   // raw string, no escapes
 ```
 
-`len(s)` returns the byte length of a string; if `s` is a compile-time constant, so is the result.
+`s.len()` returns the byte length of a string; if `s` is a compile-time constant, so is the result.
 
 #### Escape characters
 
@@ -274,7 +274,7 @@ rune_count := text.rune_count(); // O(n)
 bytes := text.bytes();           // read-only borrowed []u8
 ```
 
-`len(text)` is shorthand for `text.byte_len()` (constant time). A string cannot be indexed by integer, since a code point may span several bytes; use `text.bytes()[i]`, iteration, or Unicode procedures. Grapheme clusters are handled by the Unicode library, not the core string type.
+`text.len()` is shorthand for `text.byte_len()` (constant time). A string cannot be indexed by integer, since a code point may span several bytes; use `text.bytes()[i]`, iteration, or Unicode procedures. Grapheme clusters are handled by the Unicode library, not the core string type.
 
 Repeated concatenation uses `String_Builder` from `core:strings`, a library type over `[dynamic]u8`. The compiler contributes one package-private primitive to that package — a copy of known-valid UTF-8 into string storage taken from a *supplied* allocator — because every built-in text operation allocates from the default provider and a library cannot otherwise honour `strings.copy(text, allocator)`. The UTF-8 algorithms, the growth policy, and the failure policy are ordinary Loke:
 
@@ -290,7 +290,7 @@ message := builder.finish(); // moves the buffer into an immutable string when p
 
 String iteration yields Unicode scalar values (runes) by default; byte iteration is explicit. A string's `Element` is `rune`, so a plain loop binds exactly one name.
 
-**A byte offset comes from `rune_offsets()`, never from a second binding.** The offset is the byte index where the yielded code point begins, so it advances by 1–4 per step and the final offset is not `len(x) - 1`. This offset can be fed back into `x.bytes()`, a slice expression, or a low-level API; a rune ordinal cannot. The two units are therefore separate [adapters](#iteration-adapters) rather than one binding whose meaning depends on the receiver.
+**A byte offset comes from `rune_offsets()`, never from a second binding.** The offset is the byte index where the yielded code point begins, so it advances by 1–4 per step and the final offset is not `x.len() - 1`. This offset can be fed back into `x.bytes()`, a slice expression, or a low-level API; a rune ordinal cannot. The two units are therefore separate [adapters](#iteration-adapters) rather than one binding whose meaning depends on the receiver.
 
 ```odin
 // by runes with byte offsets: `Element` is `struct{value: rune, offset: int}`
@@ -301,7 +301,7 @@ foreach (codepoint, offset in x.rune_offsets()) {
 	// 1 Å     (2 bytes)
 	// 3 ✓     (3 bytes)
 }
-assert(len(x) == 6);
+assert(x.len() == 6);
 
 // by bytes: `index` is an ordinary slice index
 foreach (byte, index in x.bytes().indexed()) {
@@ -324,7 +324,7 @@ Low-level string indices are byte offsets throughout; Unicode procedures state t
 
 #### String format printing
 
-Printing uses the library protocol `value.format(writer, options)`. A type may define how it is printed by declaring an inherent `format` method in the same package as the type. The standard free alias `format(value, writer, options)` selects that same method.
+Printing uses the library protocol `value.format(writer, options)`. A type may define how it is printed by declaring an inherent `format` method in the same package as the type.
 
 Each concrete type has one printed form throughout the program. Declaring more than one eligible inherent `format` method for a type is an error; the compiler provides the format for other printable types. An extension in another package may declare and call its own `format` method, but `print` does not use it.
 
@@ -351,7 +351,7 @@ Safe conversions return managed values or explicit borrows; they never hide a mu
 **A `string` converts implicitly to a `string_view`**, and to a view of any subrange by slicing. The conversion is a zero-cost borrow needing no validation, since a `string` is already valid UTF-8. String literals convert the same way, with static lifetime.
 
 ```odin
-byte_count :: proc(text: string_view) -> int { return len(text); }
+byte_count :: proc(text: string_view) -> int { return text.len(); }
 
 owned := "Hej, världen";
 n := byte_count(owned);       // implicit borrow, no copy
@@ -597,7 +597,7 @@ The built-in `len` procedure returns the array length.
 
 ```odin
 x: [5]int = {};
-static_assert(len(x) == 5);
+static_assert(x.len() == 5);
 ```
 
 Built-in array access is always bounds checked, at compile time for constant indices and at runtime otherwise. Unchecked access crosses the `core:unsafe` boundary and uses a C pointer:
@@ -718,7 +718,7 @@ lane count, because a dynamic lane index has no efficient lowering and hides a
 store-and-reload the source did not ask for. Code with a runtime index takes an
 array instead.
 
-`len(v)` is the lane count, a compile-time constant. A vector is not a sequence:
+`v.len()` is the lane count, a compile-time constant. A vector is not a sequence:
 it has no iteration, no slicing, and no `[:]`.
 
 #### `core:simd`
@@ -802,7 +802,7 @@ x[0] = 10;
 foreach (&value in x) {
 	value += 1;
 }
-length_of_x := len(x);
+length_of_x := x.len();
 ```
 
 #### Slice literals
@@ -877,7 +877,7 @@ cleanup. Procedures receive allocators through ordinary parameters, with
 Copy initialization and assignment use the destination's bound allocator,
 resolving its declaration policy if it is dead or allocator-unbound.
 `move` instead transfers the allocation and its allocator without relocating
-the data. Explicit `clone(value, allocator)` and `try_clone(value, allocator)`
+the data. Explicit `value.clone(allocator)` and `value.try_clone(allocator)`
 select an allocator for a new copy. See [Assignment statements](#assignment-statements)
 and [Managed values and storage](#managed-values-and-storage) for the full rules.
 
@@ -934,9 +934,9 @@ The prefix specifies the failure contract, not a particular error type.
 
 #### Assigning to a dynamic array
 
-`insert` adds an element and shifts later elements upwards. Its index must be in `0..=len(x)`.
+`insert` adds an element and shifts later elements upwards. Its index must be in `0..=x.len()`.
 
-**Indexed assignment does not change the array length.** `x[i] = v` causes an out-of-range panic when `i >= len(x)`. This rule prevents an incorrect index from silently increasing the array length. To assign past the current end, first change the length and then assign:
+**Indexed assignment does not change the array length.** `x[i] = v` causes an out-of-range panic when `i >= x.len()`. This rule prevents an incorrect index from silently increasing the array length. To assign past the current end, first change the length and then assign:
 
 ```odin
 x: [dynamic]int = {};
@@ -945,14 +945,14 @@ x.insert(0, 10);
 
 x.resize(4);                        // [10, 0, 0, 0]
 x[3] = 10;
-fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 10] 4 16
+fmt.eprintln(x[:], x.len(), x.cap()); // [10, 0, 0, 10] 4 16
 
 x[3] = 20;
 x.append(30);
-fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30] 5 16
+fmt.eprintln(x[:], x.len(), x.cap()); // [10, 0, 0, 20, 30] 5 16
 
 x.append(40, 50, 60);
-fmt.eprintln(x[:], len(x), cap(x)); // [10, 0, 0, 20, 30, 40, 50, 60] 8 16
+fmt.eprintln(x[:], x.len(), x.cap()); // [10, 0, 0, 20, 30, 40, 50, 60] 8 16
 ```
 
 Loke has no separate grow-and-assign operation. Use `resize` to grow and zero-fill an array. Use `append` to add elements at the end.
@@ -986,18 +986,18 @@ Along with `len` and `cap`, a dynamic array supports:
 
 ```odin
 x: [dynamic]int = {};
-fmt.println(len(x), cap(x)); // 0 0
+fmt.println(x.len(), x.cap()); // 0 0
 x.append(1, 2, 3); // [1, 2, 3]
-fmt.println(len(x), cap(x)); // 3 8 — the growth policy is implementation-defined; 8 is illustrative
+fmt.println(x.len(), x.cap()); // 3 8 — the growth policy is implementation-defined; 8 is illustrative
 x.resize(5);
 fmt.println(x[:]); // [1, 2, 3, 0, 0] — new elements are zero
-fmt.println(len(x), cap(x)); // 5 8
+fmt.println(x.len(), x.cap()); // 5 8
 x.reserve(32);
-fmt.println(len(x), cap(x)); // 5 32
+fmt.println(x.len(), x.cap()); // 5 32
 x.shrink();
-fmt.println(len(x), cap(x)); // 5 5
+fmt.println(x.len(), x.cap()); // 5 5
 x.clear();
-fmt.println(len(x), cap(x)); // 0 5
+fmt.println(x.len(), x.cap()); // 0 5
 ```
 
 #### Creating and releasing slices and dynamic arrays
@@ -1005,10 +1005,10 @@ fmt.println(len(x), cap(x)); // 0 5
 Managed dynamic arrays need no explicit construction or deletion. Their zero value is usable, literals create managed values, and capacity can be reserved separately:
 
 ```odin
-a: [dynamic]int = {};   // len(a) == 0, cap(a) == 0
+a: [dynamic]int = {};   // a.len() == 0, a.cap() == 0
 b := [dynamic]int{1, 2, 3};
 c: [dynamic]int = {};
-c.resize(6);            // len(c) == 6; new elements are zero
+c.resize(6);            // c.len() == 6; new elements are zero
 c.reserve(32);          // capacity is at least 32
 
 // with an explicit allocator:
@@ -1023,7 +1023,7 @@ temporary.reserve(64);
 drop(b);
 // `b` is dead here; assign a complete new value before using it again.
 b = [dynamic]int{};
-assert(len(b) == 0);
+assert(b.len() == 0);
 ```
 
 The fallible `make` constructor returns an ordinary owning value, cleaned up at
@@ -1045,7 +1045,7 @@ A growable array with inline fixed capacity is the library type `Small_Array(T, 
 ```odin
 x: Small_Array(int, 8) = {};
 x.append(1, 2, 3);
-fmt.println(len(x), cap(x)); // 3 8
+fmt.println(x.len(), x.cap()); // 3 8
 ```
 
 ### Ranges
@@ -1106,7 +1106,7 @@ A map maps keys to values. Its zero value is empty and immediately usable. Like 
 
 **Iteration order is unspecified.** It can differ between iterations of one unmodified map, between maps with the same entries, and between program runs. To get a stable order, collect and sort the keys. Map iteration is not valid on an executed [compile-time path](#compile-time-procedure-evaluation), because compile-time results must be reproducible.
 
-Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `value.hash(seed: uint) -> uint` (equal values produce equal hashes). The standard free alias `hash(value, seed)` selects that same method. Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
+Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `value.hash(seed: uint) -> uint` (equal values produce equal hashes). Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
 
 ```odin
 m: map[string]int = {};
@@ -1204,8 +1204,8 @@ case .none:
 
 The built-in map supports these container operations:
 
-- `len(some_map)` returns the number of entries.
-- `cap(some_map)` returns the current capacity. An insertion can reallocate when it exceeds this capacity.
+- `some_map.len()` returns the number of entries.
+- `some_map.cap()` returns the current capacity. An insertion can reallocate when it exceeds this capacity.
 - `some_map.clear()` removes all entries and retains the capacity.
 - `some_map.reserve(capacity)` reserves capacity for at least the requested number of entries.
 - `some_map.shrink()` removes excess capacity.
@@ -2293,9 +2293,8 @@ Values are not made callable through operator overloading; a callable object exp
 Each call to `next` answers `.some(element)`, or `.none` to end the loop. See
 [Typed fallibility](#typed-fallibility).
 
-The free alias `iter(source)` selects the same method as `source.iter()`. A
-visible [extension block](#methods-and-implementation-blocks) can make a foreign
-type iterable within the package that declares the extension.
+A visible [extension block](#methods-and-implementation-blocks) can make a
+foreign type iterable within the package that declares the extension.
 
 Ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps
 all follow this protocol. The compiler supplies their associated types, `iter`
@@ -2608,19 +2607,25 @@ An explicit call to `try_clone` returns the error and never invokes the policy.
 
 ### Standard customization procedures
 
-Receiver-shaped common behavior is defined canonically as methods. The language reserves a closed set of standard free aliases for the immutable operations in this table:
+Receiver-shaped common behavior is defined canonically as methods, and the
+method is its **only** spelling. These are the operations the language and its
+libraries expect a type to supply:
 
-| Free alias | Canonical method and purpose |
+| Operation | Purpose |
 | --- | --- |
-| `len(value)` | `value.len()` — number of logical elements or bytes |
-| `cap(value)` | `value.cap()` — current capacity when meaningful |
-| `hash(value, seed)` | `value.hash(seed)` — hashing for maps and sets |
-| `format(value, writer, options)` | `value.format(writer, options)` — formatting and printing |
-| `compare(left, right)` | `left.compare(right)` — three-way ordering when useful |
-| `iter(value)` | `value.iter()` — forward iteration using the associated iterator |
-| `iter_reverse(value)` | `value.iter_reverse()` — reverse iteration when supplied |
-| `clone(value, allocator := mem.default_allocator())` | `value.clone(allocator)` — explicit ownership-recursive copy |
-| `try_clone(value, allocator := mem.default_allocator())` | `value.try_clone(allocator)` — fallible ownership-recursive copy |
+| `value.len()` | number of logical elements or bytes |
+| `value.cap()` | current capacity when meaningful |
+| `value.hash(seed)` | hashing for maps and sets |
+| `value.format(writer, options)` | formatting and printing |
+| `left.compare(right)` | three-way ordering when useful |
+| `value.iter()` | forward iteration using the associated iterator |
+| `value.iter_reverse()` | reverse iteration when supplied |
+| `value.clone(allocator := mem.default_allocator())` | explicit ownership-recursive copy |
+| `value.try_clone(allocator := mem.default_allocator())` | fallible ownership-recursive copy |
+
+There is no free spelling for any of them. `len(x)` is not a call; the length of
+`x` is `x.len()`, exactly as its capacity is `x.cap()`. A free procedure named
+`len` is an ordinary declaration with no relationship to this table.
 
 **A clone is ownership-recursive, not deep.** It duplicates the storage the
 value *owns*, recursing into owning fields and elements. It does not follow a
@@ -2635,9 +2640,9 @@ ownership does; `string`'s separate byte-copying operation is
 the same rule [assignment](#assignment-statements) follows, because assignment
 of a copyable type is defined in terms of `try_clone`.
 
-Each alias performs receiver lookup and resolves to the same declaration as its method spelling; it contributes no independent candidates and cannot disagree with the method. Built-in types receive compiler-defined receiver members for the operations they support. For lifecycle-enabled types the compiler-generated public `clone` and `try_clone` members remain the definition sites; a user customizes their implementation with `hook(copy)`, not by adding an unrelated free clone.
+Built-in types receive compiler-defined receiver members for the operations they support. For lifecycle-enabled types the compiler-generated public `clone` and `try_clone` members remain the definition sites; a user customizes their implementation with `hook(copy)`, not by adding an unrelated free clone.
 
-**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible extension block, or a compiler-defined receiver operation. Ordinary `f(x)` remains an ordinary lexical call. Only the closed aliases above perform receiver lookup, and only for immutable receivers; mutators such as `append`, `remove`, `reserve`, and `sort` remain method-only so their implicit receiver borrow cannot hide inside free-call syntax.
+**Method syntax applies only to methods.** `x.f()` resolves to a `self`-receiver procedure in an `impl` block for the type of `x`, a `self`-receiver procedure in a visible extension block, or a compiler-defined receiver operation. Ordinary `f(x)` remains an ordinary lexical call and never performs receiver lookup, whatever `f` is named. So a mutator's implicit receiver borrow cannot hide inside free-call syntax, and neither can a reader's.
 
 A type declares one of these customization operations as a method:
 
@@ -2647,13 +2652,15 @@ impl Ring_Buffer {
 }
 
 buffer: Ring_Buffer = {};
-n := len(buffer);        // standard alias for the method below
-m := buffer.len();       // selects the same declaration
+n := buffer.len();
 ```
 
-Built-in containers receive compiler-defined `len` and `cap` methods, so their method and free-alias spellings also select one operation. Mutators such as `x.append(v)` are receiver methods and have no free aliases.
+Built-in containers receive compiler-defined `len` and `cap` methods, so a user
+type and a built-in are read the same way. A receiver that needs no evaluation
+is not evaluated: a fixed array's and a vector's length are properties of their
+type, so `make_array().len()` folds to a constant and never runs the call.
 
-`iter` and `iter_reverse` are the two entries the [`Iterable`](#iteration-protocol) requirement states in receiver form, because every adapter that continues from them — `indexed()`, `entries()`, `bytes()` — is a method. Their standard free aliases select those methods without creating overload groups.
+`iter` and `iter_reverse` are the two entries the [`Iterable`](#iteration-protocol) requirement states in receiver form, because every adapter that continues from them — `indexed()`, `entries()`, `bytes()` — is a method.
 
 ### Library numeric types
 
@@ -2928,7 +2935,7 @@ a comparator. `Numeric` does not compose `Ordered` and requires no ordering.
 
 `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by copyable owning built-ins and records, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
 
-Formatting stays the `value.format(writer, options)` protocol in `core:fmt`, with its standard free alias. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `struct{key: K, value: V}` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
+Formatting stays the `value.format(writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `struct{key: K, value: V}` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
 
 Built-in satisfaction follows the operations the language already defines:
 
@@ -4651,7 +4658,7 @@ A generic parameter can require a structural shape. Write the shape in the param
 // Only allow read-only slices, binding their element type.
 // A []mut E argument may call this through capability weakening.
 first_slice_value :: proc(values: []$E) -> Option(E) {
-	if (len(values) == 0) {
+	if (values.len() == 0) {
 		return .none;
 	}
 	return .some(values[0]);
@@ -4993,14 +5000,14 @@ A borrow returned from storage reachable through a borrowed parameter derives ro
 
 ```odin
 first_half :: proc(values: []int) -> []int {
-	return values[:len(values)/2];
+	return values[:values.len()/2];
 }
 
 numbers := [dynamic]int{1, 2, 3, 4};
 view := first_half(numbers[:]); // borrows `numbers`
 
 bad := first_half([dynamic]int{1, 2, 3, 4}[:]);
-fmt.println(len(bad));
+fmt.println(bad.len());
 // ERROR: the result outlives the temporary argument, which ends with the
 // statement that built it
 ```
@@ -5008,7 +5015,7 @@ fmt.println(len(bad));
 Passing that same slice to something that consumes it within the statement is allowed, because the borrow never escapes the expression:
 
 ```odin
-fmt.println(len([dynamic]int{1, 2, 3, 4}[:])); // fine
+fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 ```
 
 A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
@@ -5351,7 +5358,6 @@ For the full list, see the documentation for package `builtin`. The compiler-def
 
 | Procedure | Result |
 | --- | --- |
-| `len(value)`, `cap(value)` | Element or byte count, and capacity. Constant when the operand is constant |
 | `size_of(T)`, `align_of(T)` | Size and alignment in bytes; compile-time constants. Accept a type or an expression |
 | `offset_of(T, field)` | Byte offset of a field; a compile-time constant |
 | `type_of(expr)` | The compile-time [`type`](#type-and-typeid) of an expression |
@@ -5364,7 +5370,9 @@ For the full list, see the documentation for package `builtin`. The compiler-def
 | `exchange(inout destination, replacement)` | Replace a live place and return its previous value; see [Exchange](#exchange) |
 | `move(value)` | Keyword form, not a call; see [assignment](#assignment-statements) |
 
-`len`, `cap`, `size_of`, `align_of`, and `offset_of` all result in `int`.
+`size_of`, `align_of`, and `offset_of` all result in `int`. Element counts and
+capacities are receiver members, not built-ins: see
+[Standard customization procedures](#standard-customization-procedures).
 
 `assert` and `panic` execute in the phase of the call that reaches them. In an ordinary runtime call they have their runtime behavior. In a procedure whose result is required at compile time, reaching a failed `assert` or any `panic` produces a compilation diagnostic with the evaluator call stack. `-no-assert` may remove runtime assertions, but it never removes an assertion reached during
 required compile-time evaluation.
@@ -6467,7 +6475,7 @@ The library supplies the following types, interfaces, and procedures used by thi
 | --- | --- | --- |
 | `os.Args`, `os.args`, `os.exit` | [program entry and exit](#program-entry-and-exit) | `core:os`: ordinary Loke over a foreign block, with no compiler-known behavior. `os.args` exposes the [Args surface](#osargs) over [startup-converted arguments](#executable-startup-abi); `os.exit` terminates immediately with the specified status. |
 | `fs.File`, `fs.open`, `File.close` | the [`defer`](#defer-statement) and [lifecycle hook](#lifecycle-hooks-and-resource-types) examples | `core:fs`: an ordinary move-only resource whose `drop` closes a live handle. Files are not in `core:os`; there is no `os.open` alias. |
-| `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `len(builder)` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> Result(string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
+| `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `builder.len()` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> Result(string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
 | `C_String` | [C string views](#c-string-views) | `core:cstrings`: an owning, zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. UTF-8 is not guaranteed; construction rejects interior zeros. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | `core:container`: an inline growable container implemented through ordinary methods and operators, with no compiler support of its own. |
 | `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Reverse_Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |

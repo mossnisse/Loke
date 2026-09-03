@@ -57,7 +57,7 @@ main :: proc() {
 	// The shapes a sort has to get right whatever the algorithm behind it.
 	empty: [dynamic]int = {};
 	empty.sort();
-	fmt.println(empty, len(empty));
+	fmt.println(empty, empty.len());
 
 	one := [dynamic]int{9};
 	one.sort();
@@ -88,7 +88,7 @@ main :: proc() {
 		mixed.append(value % 100);
 	}
 	mixed.sort();
-	fmt.println(len(mixed), slice.is_sorted(mixed[:]), mixed[0] <= mixed[49]);
+	fmt.println(mixed.len(), slice.is_sorted(mixed[:]), mixed[0] <= mixed[49]);
 
 	// An element wider than a machine word, and one with its own `<`.
 	cards := [dynamic]Card{Card{3, "three"}, Card{1, "one"}, Card{2, "two"}};

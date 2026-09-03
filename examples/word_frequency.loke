@@ -26,8 +26,8 @@ count_words :: proc(
 	// bytes. `bytes()` is the explicit byte view.
 	bytes := text.bytes();
 	start := 0;
-	for (i := 0; i <= len(bytes); i += 1) {
-		if (i < len(bytes) && bytes[i] != ' ') { continue; }
+	for (i := 0; i <= bytes.len(); i += 1) {
+		if (i < bytes.len() && bytes[i] != ' ') { continue; }
 		if (i > start) {
 			word := text[start:i];
 			// A read never inserts, so this asks the question without answering it.
@@ -49,7 +49,7 @@ main :: proc() {
 	// One name over a map binds the entry; two names bind key and value.
 	total := 0;
 	foreach (entry in counts) { total += entry.value; }
-	fmt.println("distinct:", len(counts));
+	fmt.println("distinct:", counts.len());
 	fmt.println("total:", total);
 
 	repeated: [dynamic]string_view;

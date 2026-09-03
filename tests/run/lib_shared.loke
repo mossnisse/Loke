@@ -102,7 +102,7 @@ main :: proc() {
 
 	// design.md: `shared(T)` "satisfies `Cloneable`", so an explicit `clone` is
 	// the same strong increment an assignment performs.
-	cloned := clone(handle);
+	cloned := handle.clone();
 	fmt.println(handle.strong_count(), cloned == handle);
 	drop(cloned);
 

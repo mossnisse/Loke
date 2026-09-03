@@ -49,26 +49,6 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Panic:
 			emit_panic(e, panic_message_text(e, v, 0, "explicit panic"))
 			return "0"
-		case .Hash:
-			return emit_hash(e, v.bound[0], v.bound[1])
-		case .Iter:
-			// The checker rewrote the call to name the chosen `iter` overload, so
-			// this arm is only reachable if that failed.
-			backend_fail(e, "an `iter` call has no chosen overload")
-			return "0"
-		case .Clone, .Try_Clone:
-			// Same rewrite: a free `clone(x)` names the type's own hook by the time
-			// it reaches emission, exactly as `x.clone()` does.
-			backend_fail(e, "a free `clone` call has no chosen hook")
-			return "0"
-		case .Len, .Cap:
-			// A slice and the two containers reach here; every other `len` folded.
-			// Both headers keep the length in the same word a slice does, so the
-			// only difference is which one is read.
-			source := emit_expr(e, v.bound[0])
-			word := symbol.builtin == .Cap ? CONTAINER_CAP : SLICE_LEN
-			out := extract(e, llvm_type(e, expr_base(v.bound[0]).type), source, word)
-			return out
 		case .Default_Allocator:
 			// design.md "Build-selected providers": the handle the build selected —
 			// the runtime's fallback record until a factory publishes another, and
@@ -111,7 +91,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Free_All:
 			emit_region_reset(e, v)
 			return "0"
-		case .None, .Size_Of, .Align_Of, .Offset_Of, .Standard_Alias,
+		case .None, .Size_Of, .Align_Of, .Offset_Of,
 		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here

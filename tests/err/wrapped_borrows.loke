@@ -78,7 +78,7 @@ erased_allocator :: proc() {
 }
 
 main :: proc() {
-	fmt.println(len(bare()), len(through_a_switch()), len(through_or_else()));
-	fmt.println(len(converted()), len(converted_through_a_switch()));
+	fmt.println(bare().len(), through_a_switch().len(), through_or_else().len());
+	fmt.println(converted().len(), converted_through_a_switch().len());
 	erased_allocator();
 }

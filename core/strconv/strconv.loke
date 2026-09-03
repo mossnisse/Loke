@@ -81,7 +81,7 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 // spellable; a caller that needs them tests for the words itself.
 parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	trimmed := trim_ascii_space(text);
-	if (len(trimmed) == 0) { return .err(.Invalid_Syntax); }
+	if (trimmed.len() == 0) { return .err(.Invalid_Syntax); }
 	bytes := trimmed.bytes();
 	at := 0;
 	negative := false;
@@ -96,7 +96,7 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	// Digits past the point where a u64 mantissa saturates change the exponent
 	// instead of the mantissa; they are below the precision of the result.
 	saturated := false;
-	for (; at < len(bytes) && is_digit(bytes[at]); at += 1) {
+	for (; at < bytes.len() && is_digit(bytes[at]); at += 1) {
 		digits += 1;
 		if (saturated) {
 			exponent += 1;
@@ -110,9 +110,9 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 		}
 		mantissa = mantissa * 10 + digit;
 	}
-	if (at < len(bytes) && bytes[at] == u8('.')) {
+	if (at < bytes.len() && bytes[at] == u8('.')) {
 		at += 1;
-		for (; at < len(bytes) && is_digit(bytes[at]); at += 1) {
+		for (; at < bytes.len() && is_digit(bytes[at]); at += 1) {
 			digits += 1;
 			if (saturated) { continue; }
 			digit := u64(bytes[at] - u8('0'));
@@ -126,16 +126,16 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	}
 	if (digits == 0) { return .err(.Invalid_Syntax); }
 
-	if (at < len(bytes) && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
+	if (at < bytes.len() && (bytes[at] == u8('e') || bytes[at] == u8('E'))) {
 		at += 1;
 		exponent_negative := false;
-		if (at < len(bytes) && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
+		if (at < bytes.len() && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
 			exponent_negative = bytes[at] == u8('-');
 			at += 1;
 		}
 		written := 0;
 		value := 0;
-		for (; at < len(bytes) && is_digit(bytes[at]); at += 1) {
+		for (; at < bytes.len() && is_digit(bytes[at]); at += 1) {
 			written += 1;
 			// Any exponent past this is already infinity or zero; clamping keeps the
 			// accumulation from wrapping.
@@ -146,7 +146,7 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 		if (written == 0) { return .err(.Invalid_Syntax); }
 		exponent += -value if exponent_negative else value;
 	}
-	if (at != len(bytes)) { return .err(.Trailing_Data); }
+	if (at != bytes.len()) { return .err(.Trailing_Data); }
 
 	value := scale(f64(mantissa), exponent);
 	// Scaling a finite decimal outside f64's range must not quietly manufacture
@@ -199,8 +199,8 @@ is_ascii_space :: proc(value: u8) -> bool {
 trim_ascii_space :: proc(text: string_view) -> string_view {
 	bytes := text.bytes();
 	start := 0;
-	for (; start < len(bytes) && is_ascii_space(bytes[start]); start += 1) {}
-	end := len(bytes);
+	for (; start < bytes.len() && is_ascii_space(bytes[start]); start += 1) {}
+	end := bytes.len();
 	for (; end > start && is_ascii_space(bytes[end - 1]); end -= 1) {}
 	return text[start:end];
 }
@@ -221,18 +221,18 @@ split_number :: proc(text: string_view, base: int) -> Result(Split, Parse_Error)
 	bytes := rest.bytes();
 	at := 0;
 	sign := false;
-	if (len(bytes) > 0 && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
+	if (bytes.len() > 0 && (bytes[at] == u8('+') || bytes[at] == u8('-'))) {
 		sign = bytes[at] == u8('-');
 		at += 1;
 	}
 	selected := 10 if base == 0 else base;
-	if (base == 0 && at + 1 < len(bytes) && bytes[at] == u8('0')) {
+	if (base == 0 && at + 1 < bytes.len() && bytes[at] == u8('0')) {
 		marker := bytes[at + 1];
 		if (marker == u8('b') || marker == u8('B')) { selected = 2; at += 2; }
 		else if (marker == u8('o') || marker == u8('O')) { selected = 8; at += 2; }
 		else if (marker == u8('x') || marker == u8('X')) { selected = 16; at += 2; }
 	}
-	if (at >= len(bytes)) {
+	if (at >= bytes.len()) {
 		return .err(.Invalid_Syntax);
 	}
 	return .ok(Split{rest[at:], selected, sign});

@@ -37,12 +37,12 @@ impl Split_Iterator {
 			self.done = true;
 			return .some(self.rest);
 		}
-		if (len(self.separator) == 0) {
+		if (self.separator.len() == 0) {
 			self.done = true;
 			return .some(self.rest);
 		}
 		part := self.rest[0:at];
-		self.rest = self.rest[at + len(self.separator):];
+		self.rest = self.rest[at + self.separator.len():];
 		return .some(part);
 	}
 }
@@ -64,7 +64,7 @@ impl Fields_Iterator {
 	iter :: proc(self) -> Fields_Iterator { return self; }
 
 	next :: proc(self: inout Fields_Iterator) -> Option(string_view) {
-		start := len(self.rest);
+		start := self.rest.len();
 		foreach (codepoint, offset in self.rest.rune_offsets()) {
 			if (!is_space(codepoint)) {
 				start = offset;
@@ -72,11 +72,11 @@ impl Fields_Iterator {
 			}
 		}
 		rest := self.rest[start:];
-		if (len(rest) == 0) {
+		if (rest.len() == 0) {
 			self.rest = rest;
 			return .none;
 		}
-		end := len(rest);
+		end := rest.len();
 		foreach (codepoint, offset in rest.rune_offsets()) {
 			if (is_space(codepoint)) {
 				end = offset;
@@ -112,14 +112,14 @@ impl Lines_Iterator {
 		case .some: at = found;
 		case .none:
 			self.done = true;
-			if (len(self.rest) == 0) { return .none; }
+			if (self.rest.len() == 0) { return .none; }
 			return .some(self.rest);
 		}
 		line := self.rest[0:at];
-		// A byte read, not a subrange: `len(line) - 1` is the middle of a code
+		// A byte read, not a subrange: `line.len() - 1` is the middle of a code
 		// point whenever the line ends with a multi-byte one.
-		if (len(line) > 0 && line.bytes()[len(line) - 1] == u8('\r')) {
-			line = line[0:len(line) - 1];
+		if (line.len() > 0 && line.bytes()[line.len() - 1] == u8('\r')) {
+			line = line[0:line.len() - 1];
 		}
 		self.rest = self.rest[at + 1:];
 		return .some(line);

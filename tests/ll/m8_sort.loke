@@ -22,5 +22,5 @@ main :: proc() {
 	cards := [dynamic]Card{Card{2, 0}, Card{1, 1}};
 	cards.sort();
 
-	fmt.println(numbers, view, len(cards));
+	fmt.println(numbers, view, cards.len());
 }

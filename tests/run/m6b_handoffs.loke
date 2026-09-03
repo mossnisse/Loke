@@ -12,7 +12,7 @@ main :: proc() {
 	// past ASCII and past the basic multilingual plane.
 	text: string = "hé€𝄞";
 	rs := text.to_runes();
-	fmt.println(len(rs));
+	fmt.println(rs.len());
 	fmt.println(rs[0]);
 	fmt.println(rs[1]);
 	fmt.println(rs[2]);
@@ -21,13 +21,13 @@ main :: proc() {
 
 	// The capacity is the exact rune count, not the byte length: `to_runes`
 	// counts before it reserves.
-	fmt.println(cap(rs) >= 4);
+	fmt.println(rs.cap() >= 4);
 
 	// Empty text allocates nothing at all and still answers a usable container.
 	blank: string = "";
 	empty := blank.to_runes();
-	fmt.println(len(empty));
-	fmt.println(cap(empty));
+	fmt.println(empty.len());
+	fmt.println(empty.cap());
 
 	// Round trip.
 	switch (back in string.from_runes(rs[:])) {

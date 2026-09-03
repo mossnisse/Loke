@@ -57,5 +57,5 @@ main :: proc() {
 	fmt.println(m[1]);
 	m[2] = Choice.number(3);
 
-	fmt.println(blank, partial, nested, p, q, len(filled), len(reserved), len(ys), global);
+	fmt.println(blank, partial, nested, p, q, filled.len(), reserved.len(), ys.len(), global);
 }

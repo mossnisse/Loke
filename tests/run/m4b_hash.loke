@@ -21,30 +21,30 @@ main :: proc() {
 	static_assert(Hashable(^int));
 
 	// The folded and the computed hash agree.
-	FOLDED :: hash(7, uint(0));
+	FOLDED :: 7.hash(uint(0));
 	runtime_seed: uint = 0;
 	runtime_value := 7;
-	if (hash(runtime_value, runtime_seed) == FOLDED) { fmt.println(1); } else { fmt.println(0); }
+	if (runtime_value.hash(runtime_seed) == FOLDED) { fmt.println(1); } else { fmt.println(0); }
 
 	// `+0` and `-0` hash identically because they compare equal.
 	positive := 0.0;
 	negative := -0.0;
-	if (hash(positive, runtime_seed) == hash(negative, runtime_seed)) { fmt.println(1); } else { fmt.println(0); }
+	if (positive.hash(runtime_seed) == negative.hash(runtime_seed)) { fmt.println(1); } else { fmt.println(0); }
 
 	// A fixed array folds over its elements.
 	xs := [3]int{1, 2, 3};
-	if (hash(xs, runtime_seed) == hash([3]int{1, 2, 3}, uint(0))) { fmt.println(1); } else { fmt.println(0); }
+	if (xs.hash(runtime_seed) == [3]int{1, 2, 3}.hash(uint(0))) { fmt.println(1); } else { fmt.println(0); }
 
 	// Compile-time floats use the bit width of their declared type.
-	F32_FOLDED :: hash(f32(1.5), uint(0));
+	F32_FOLDED :: f32(1.5).hash(uint(0));
 	runtime_f32: f32 = 1.5;
-	if (hash(runtime_f32, runtime_seed) == F32_FOLDED) { fmt.println(1); } else { fmt.println(0); }
+	if (runtime_f32.hash(runtime_seed) == F32_FOLDED) { fmt.println(1); } else { fmt.println(0); }
 
 	// A signalling NaN cannot round-trip through the evaluator's numeric f64
 	// field without being quieted. Its retained raw pattern must therefore drive
 	// the folded hash just as it drives runtime lowering.
 	F32_SIGNALLING :: unsafe.transmute(f32, u32(0x7f800001));
-	F32_SIGNALLING_FOLDED :: hash(F32_SIGNALLING, uint(0));
+	F32_SIGNALLING_FOLDED :: F32_SIGNALLING.hash(uint(0));
 	runtime_signalling := F32_SIGNALLING;
-	if (hash(runtime_signalling, runtime_seed) == F32_SIGNALLING_FOLDED) { fmt.println(1); } else { fmt.println(0); }
+	if (runtime_signalling.hash(runtime_seed) == F32_SIGNALLING_FOLDED) { fmt.println(1); } else { fmt.println(0); }
 }

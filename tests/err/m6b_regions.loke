@@ -68,7 +68,7 @@ surviving_owner :: proc() {
 	scratch: [dynamic]u8 via arena.allocator() = {};
 	scratch.append(1);
 	release_scratch(arena.allocator());
-	fmt.println(len(scratch));
+	fmt.println(scratch.len());
 }
 
 // design.md: an owner is dead "when it may be used later or still requires

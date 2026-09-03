@@ -159,7 +159,7 @@ CHUNK :: 4096;
 // `Unexpected_End`, which is the difference between this and `read`.
 read_exact :: proc(reader: inout $R, destination: []mut u8) -> Result(Unit, Error) where Reader(R) {
 	filled := 0;
-	for (; filled < len(destination); ) {
+	for (; filled < destination.len(); ) {
 		switch (outcome in reader.read(destination[filled:])) {
 		case .ok:
 			if (outcome == 0) { return .err(make_error(.Unexpected_End, .Read)); }
@@ -177,7 +177,7 @@ read_exact :: proc(reader: inout $R, destination: []mut u8) -> Result(Unit, Erro
 // Writes every byte, looping over partial writes.
 write_all :: proc(writer: inout $W, source: []u8) -> Result(Unit, Error) where Writer(W) {
 	written := 0;
-	for (; written < len(source); ) {
+	for (; written < source.len(); ) {
 		count := writer.write(source[written:]) or_return;
 		if (count == 0) {
 			return .err(make_error(.Broken_Pipe, .Write));
@@ -214,7 +214,7 @@ read_to_end :: proc(
 			return .err(outcome);
 		}
 		if (count == 0) { return .ok(collected); }
-		if (limit > 0 && len(collected) + count > limit) {
+		if (limit > 0 && collected.len() + count > limit) {
 			drop(collected);
 			return .err(make_error(.Limit_Exceeded, .Read_To_End));
 		}
@@ -233,7 +233,7 @@ copy :: proc(
 	destination: inout $W, source: inout $R, buffer: []mut u8 = nil,
 ) -> Result(u64, Error) where Writer(W), Reader(R) {
 	own: [CHUNK]u8 = {};
-	window := buffer if len(buffer) > 0 else own[:];
+	window := buffer if buffer.len() > 0 else own[:];
 	moved: u64 = 0;
 	for (;;) {
 		count := 0;
@@ -283,7 +283,7 @@ read_line :: proc(
 				ended = true;
 				if (!options.keep_ending) {
 					// The `\r` of a `\r\n` ending goes with it.
-					kept := len(collected) - 1;
+					kept := collected.len() - 1;
 					if (kept >= 0 && collected[kept] == u8('\r')) {
 						collected.resize(kept);
 					}

@@ -8,12 +8,12 @@ package main; import "core:fmt";
 // `.copy()` copies it. `string_view` is the borrowed half, and a `string`
 // converts to one implicitly.
 
-byte_count :: proc(text: string_view) -> int { return len(text); }
+byte_count :: proc(text: string_view) -> int { return text.len(); }
 
 main :: proc() {
 	// A literal is a compile-time constant over static, zero-terminated storage.
 	literal: string = "Hej, världen";
-	fmt.println(len(literal));          // 13 bytes: `ä` takes two of them
+	fmt.println(literal.len());          // 13 bytes: `ä` takes two of them
 	fmt.println(literal.byte_len());    // `len` is shorthand for this
 	fmt.println(literal.rune_count());  // 12 scalar values
 
@@ -23,7 +23,7 @@ main :: proc() {
 
 	// Concatenation allocates and produces an owning `string`.
 	joined := "Hej" + ", " + "värld";
-	fmt.println(len(joined));
+	fmt.println(joined.len());
 	fmt.println(joined.rune_count());
 
 	// Assignment shares the backing storage; `copy` does not.
@@ -38,7 +38,7 @@ main :: proc() {
 
 	// Bytes are a read-only borrow of the same storage.
 	bytes := literal.bytes();
-	fmt.println(len(bytes));
+	fmt.println(bytes.len());
 	fmt.println(int(bytes[0]));
 
 	// design.md "String iteration": `rune_offsets()` carries a byte offset, so it
@@ -52,7 +52,7 @@ main :: proc() {
 	// Validating conversions answer with an `Option`.
 	good := [?]u8{72, 105};
 	switch (valid in string(good[:])) {
-	case .some: fmt.println(len(valid));
+	case .some: fmt.println(valid.len());
 	case .none: fmt.println(-1);
 	}
 
@@ -63,26 +63,26 @@ main :: proc() {
 	}
 
 	switch (view in string_view(good[:])) {
-	case .some: fmt.println(len(view));
+	case .some: fmt.println(view.len());
 	case .none: fmt.println(-1);
 	}
 
 	// A literal has static lifetime, so it initializes a C view directly.
 	terminated: cstring_view = "hej";
 	switch (scanned in string(terminated)) {
-	case .some: fmt.println(len(scanned));
+	case .some: fmt.println(scanned.len());
 	case .none: fmt.println(-1);
 	}
 
 	// And a runtime string reuses the terminator its buffer already carries.
 	switch (back in string(joined.to_c_view())) {
-	case .some: fmt.println(len(back));
+	case .some: fmt.println(back.len());
 	case .none: fmt.println(-1);
 	}
 
 	runes := [?]rune{'A', 0x00C5};
 	switch (built in string.from_runes(runes[:])) {
-	case .some: fmt.println(len(built));
+	case .some: fmt.println(built.len());
 	case .none: fmt.println(-1);
 	}
 }

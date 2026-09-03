@@ -16,7 +16,7 @@ main :: proc() {
 	// The shapes a sort has to get right whatever the algorithm behind it.
 	empty := []mut int{};
 	slice.sort(empty);
-	fmt.println(empty, len(empty));
+	fmt.println(empty, empty.len());
 
 	one := []mut int{9};
 	slice.sort(one);
@@ -66,7 +66,7 @@ main :: proc() {
 
 	// An owned copy outlives the view it came from, which is the whole point.
 	owned := slice.clone(s);
-	fmt.println(owned, len(owned), cap(owned) >= len(owned));
+	fmt.println(owned, owned.len(), owned.cap() >= owned.len());
 	slice.reverse(owned[:]);
 	fmt.println(owned);
 }

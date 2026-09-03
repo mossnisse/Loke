@@ -112,8 +112,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"size_of", .Size_Of, TYPE_INT},
 		{"align_of", .Align_Of, TYPE_INT},
 		{"offset_of", .Offset_Of, TYPE_INT},
-		{"len", .Len, TYPE_INT},
-		{"cap", .Cap, TYPE_INT},
+
 
 		// design.md "`type` and `typeid`" and "Compile-time reflection". Their
 		// operands are inspected rather than evaluated, so `check_builtin_call`
@@ -127,24 +126,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		// operand is an ordinary runtime `typeid`, so unlike the compile-time forms
 		// above it is evaluated, not inspected.
 		{"type_info_of", .Type_Info_Of, TYPE_VOID},
-
-		// design.md "Iteration protocol": the compiler contributes an `iter`
-		// overload for built-in iterables and finds a user type's own `iter`
-		// member, so the free call in the `Iterable` requirement resolves for both.
-		{"iter", .Iter, TYPE_VOID},
-
-		// Receiver-shaped standard customization operations have one definition
-		// site: the method. These predeclared names are closed aliases the checker
-		// rewrites to that method, not a parallel free overload group.
-		{"iter_reverse", .Standard_Alias, TYPE_VOID},
-		{"format", .Standard_Alias, TYPE_VOID},
-		{"compare", .Standard_Alias, TYPE_VOID},
-
-		// design.md "Standard customization procedures": the standard aliases for
-		// the two generated copy members. Their result types follow the receiver
-		// type, so the interned type carries none.
-		{"clone", .Clone, TYPE_VOID},
-		{"try_clone", .Try_Clone, TYPE_VOID},
 
 		// design.md "Allocators": the explicitly fallible primitives.
 		{"new", .New, TYPE_VOID},
@@ -166,10 +147,6 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		// type is the destination's, so the interned type carries none and
 		// `check_exchange_builtin` settles both.
 		{"exchange", .Exchange, TYPE_VOID},
-
-		// The standard free `hash(value, seed)` alias for the canonical receiver
-		// method over the built-in types promised by `Hashable`.
-		{"hash", .Hash, TYPE_UINT},
 	}
 	for entry in builtins {
 		define(c, universe, entry.name, Symbol {

@@ -12,7 +12,7 @@ grow :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
 	view := xs[:];
 	xs.append(4);
-	fmt.println(len(view));
+	fmt.println(view.len());
 }
 
 shift :: proc() {
@@ -26,21 +26,21 @@ truncate :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
 	view := xs[1:];
 	xs.clear();
-	fmt.println(len(view));
+	fmt.println(view.len());
 }
 
 release :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
 	view := xs[:];
 	drop(xs);
-	fmt.println(len(view));
+	fmt.println(view.len());
 }
 
 replace :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
 	view := xs[:];
 	xs = {4, 5};
-	fmt.println(len(view));
+	fmt.println(view.len());
 }
 
 main :: proc() {

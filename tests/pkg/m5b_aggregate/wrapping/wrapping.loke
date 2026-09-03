@@ -32,7 +32,7 @@ retain :: proc(destination: inout Holder, @(escape=stored) values: []int) {
 // is not visible at the call.
 @(public)
 first_half :: proc(values: []int) -> []int {
-	return values[:len(values) / 2];
+	return values[:values.len() / 2];
 }
 
 // The callback contract is part of the written procedure type, so an importer

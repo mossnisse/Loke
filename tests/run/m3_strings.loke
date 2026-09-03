@@ -22,14 +22,14 @@ VERBOSE :: build_config(VERBOSE, false);
 main :: proc() {
 	static_assert(FROZEN == FULL);
 	assert(FROZEN == FULL);
-	static_assert(len(FULL) == 11, "the greeting changed shape");
+	static_assert(FULL.len() == 11, "the greeting changed shape");
 	static_assert(FULL == "hello, loke");
 	static_assert(GREETING < NAME);
-	static_assert(len(ESCAPED) == 11);
+	static_assert(ESCAPED.len() == 11);
 
-	fmt.println(len(FULL));
-	fmt.println(len(ESCAPED));
+	fmt.println(FULL.len());
+	fmt.println(ESCAPED.len());
 	fmt.println(LIMIT);
 	fmt.println(1 if VERBOSE else 0);
-	fmt.println(len(MODE));
+	fmt.println(MODE.len());
 }

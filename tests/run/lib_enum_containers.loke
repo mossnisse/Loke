@@ -24,7 +24,7 @@ main :: proc() {
 	// ------------------------------------------------------------- Bit_Set --
 
 	s := Flags.of(.North, .West);
-	fmt.println(s, len(s), cap(s), s.is_empty());
+	fmt.println(s, s.len(), s.cap(), s.is_empty());
 	fmt.println(s.contains(.North), s.contains(.East));
 
 	s.set(.East);
@@ -37,7 +37,7 @@ main :: proc() {
 	fmt.println(s);
 
 	all := Flags.all();
-	fmt.println(all, len(all));
+	fmt.println(all, all.len());
 	fmt.println(all & s);
 	fmt.println(all &~ s);
 	fmt.println(all ~ s);
@@ -47,13 +47,13 @@ main :: proc() {
 	fmt.println(s == s, s == all);
 
 	empty: Flags = {};
-	fmt.println(empty, empty.is_empty(), len(empty));
+	fmt.println(empty, empty.is_empty(), empty.len());
 
 	foreach (direction in all) { fmt.println(direction); }
 
 	// A set over an enum with holes still costs one bit per member.
 	sparse := container.Bit_Set(Sparse).of(.C, .A);
-	fmt.println(sparse, len(sparse), cap(sparse));
+	fmt.println(sparse, sparse.len(), sparse.cap());
 	sparse.clear();
 	fmt.println(sparse, sparse.is_empty());
 
@@ -62,7 +62,7 @@ main :: proc() {
 	counts: Counts = {};
 	counts[.North] = 3;
 	counts[.West] += 1;
-	fmt.println(counts, len(counts), cap(counts));
+	fmt.println(counts, counts.len(), counts.cap());
 	fmt.println(counts[.North], counts[.East], counts[.West]);
 
 	foreach (entry in counts) { fmt.println(entry.key, entry.value); }
@@ -74,5 +74,5 @@ main :: proc() {
 	// The holes again: three slots, keyed by member.
 	labels := container.Enum_Array(Sparse, int).filled(-1);
 	labels[.B] = 4;
-	fmt.println(labels, len(labels));
+	fmt.println(labels, labels.len());
 }

@@ -115,8 +115,8 @@ main :: proc() {
 	// A managed key is borrowed rather than copied, so it destructures freely.
 	named: map[string]int;
 	named["only"] = 5;
-	foreach (key, value in named) { fmt.println(len(key)*10 + value); }
-	foreach (key in named.keys()) { fmt.println(len(key)); }
+	foreach (key, value in named) { fmt.println(key.len()*10 + value); }
+	foreach (key in named.keys()) { fmt.println(key.len()); }
 
 	// The place forms are unchanged: their names are the container's, not an
 	// element record's.

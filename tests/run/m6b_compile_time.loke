@@ -20,7 +20,7 @@ sum_built :: proc() -> int {
 	xs.resize(6);
 	xs[5] = 7;
 	total := 0;
-	for (i := 0; i < len(xs); i += 1) {
+	for (i := 0; i < xs.len(); i += 1) {
 		total += xs[i];
 	}
 	return total;
@@ -40,7 +40,7 @@ popped :: proc() -> int {
 	case .some: return -2;
 	case .none:
 	}
-	return value * 100 + len(xs);
+	return value * 100 + xs.len();
 }
 
 REMOVED :: removed();
@@ -48,7 +48,7 @@ removed :: proc() -> int {
 	xs: [dynamic]int = {9, 8, 7};
 	taken := xs.remove(1);
 	xs.remove_unordered(0);
-	return taken * 100 + xs[0] * 10 + len(xs);
+	return taken * 100 + xs[0] * 10 + xs.len();
 }
 
 // A map: insertion, replacement, a non-inserting read of a missing key, `in`,
@@ -64,7 +64,7 @@ mapped :: proc() -> int {
 	if ("b" in m) { present = 1; }
 	absent := 0;
 	if (!("zz" in m)) { absent = 1; }
-	return m["a"] * 10000 + m["b"] * 1000 + missing * 100 + present * 10 + absent + len(m);
+	return m["a"] * 10000 + m["b"] * 1000 + missing * 100 + present * 10 + absent + m.len();
 }
 
 // The copying read agrees with its runtime lowering: one probe, no insertion,
@@ -74,14 +74,14 @@ looked_up :: proc() -> int {
 	m: map[string][dynamic]int;
 	m["a"] = {4};
 	held := m.lookup_value("a") or_else {};
-	if (len(held) != 1) { return -1; }
+	if (held.len() != 1) { return -1; }
 	held.append(5);
 	switch (_ in m.lookup_value("zz")) {
 	case .some: return -2;
 	case .none:
 	}
 	// The clone is independent, and the read inserted nothing.
-	return len(held) * 100 + len(m["a"]) * 10 + len(m);
+	return held.len() * 100 + m["a"].len() * 10 + m.len();
 }
 
 FOUND :: found();
@@ -100,17 +100,17 @@ found :: proc() -> int {
 	case .some: taken = removed;
 	case .none: return -3;
 	}
-	return taken * 1000 + m[2] * 10 + len(m);
+	return taken * 1000 + m[2] * 10 + m.len();
 }
 
 // `drop` writes the inert zero representation; a later full assignment revives.
 REVIVED :: revived();
 revived :: proc() -> int {
 	xs: [dynamic]int = {1, 2, 3};
-	before := len(xs);
+	before := xs.len();
 	drop(xs);
 	xs = {7, 7};
-	return before * 10 + len(xs);
+	return before * 10 + xs.len();
 }
 
 // Value semantics: a copy does not alias its source. The copy-cost warning is
@@ -121,7 +121,7 @@ copied :: proc() -> int {
 	xs: [dynamic]int = {1, 2};
 	ys := xs;
 	ys.append(3);
-	return len(xs) * 10 + len(ys);
+	return xs.len() * 10 + ys.len();
 }
 
 Eval_Failure :: union @(failure=err) { ok: int, err: int }
@@ -157,14 +157,14 @@ main :: proc() {
 // different answers for lookup, duplicate literals, replacement and removal.
 Annotated_Key :: struct { id, annotation: int }
 impl Annotated_Key {
-	hash :: proc(self, seed: uint) -> uint { return hash(self.id, seed); }
+	hash :: proc(self, seed: uint) -> uint { return self.id.hash(seed); }
 	equal :: operator(==) proc(a, b: Annotated_Key) -> bool { return equal_ids(a.id, b.id); }
 }
 
 CUSTOM_KEYS :: custom_keys();
 custom_keys :: proc() -> int {
 	m := map[Annotated_Key]int{Annotated_Key{1, 10} = 3, Annotated_Key{1, 20} = 7};
-	if (len(m) != 1 || m[Annotated_Key{1, 30}] != 7) { return -1; }
+	if (m.len() != 1 || m[Annotated_Key{1, 30}] != 7) { return -1; }
 	if (!(Annotated_Key{1, 40} in m)) { return -2; }
 	m[Annotated_Key{1, 50}] = 8;
 	{
@@ -174,7 +174,7 @@ custom_keys :: proc() -> int {
 		}
 	}
 	switch (_ in m.try_insert(Annotated_Key{1, 70}, 7)) {
-	case .ok:  if (len(m) != 1) { return -4; }
+	case .ok:  if (m.len() != 1) { return -4; }
 	case .err: return -4;
 	}
 	value := 0;
@@ -182,7 +182,7 @@ custom_keys :: proc() -> int {
 	case .some: value = removed;
 	case .none: return -5;
 	}
-	if (len(m) != 0) { return -5; }
+	if (m.len() != 0) { return -5; }
 	return value;
 }
 equal_ids :: proc(a, b: int) -> bool { return a == b; }

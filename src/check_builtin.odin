@@ -38,22 +38,11 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Caller_Location:
 		check_caller_location(k, v, ident)
 		return
-	case .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap:
+	case .Size_Of, .Align_Of, .Offset_Of:
 		check_layout_builtin(k, v, ident, sym.builtin, expected)
-		return
-	case .Hash:
-		check_hash_builtin(k, v, ident, expected)
 		return
 	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
-		return
-	// `iter(source)` and `value.clone()`'s free spelling are closed standard
-	// aliases: the same overload selection as direct method syntax, rewritten to
-	// that member, so one call is emitted rather than two entry points that could
-	// drift. `Iterable`/`foreach` own protocol validation; copying is customized
-	// with `hook(copy)`, never an unrelated free procedure.
-	case .Iter, .Standard_Alias, .Clone, .Try_Clone:
-		check_standard_alias(k, v, ident, expected)
 		return
 	case .Make:
 		check_make_builtin(k, v, ident)
@@ -132,92 +121,6 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	}
 	v.bound = bound
 	v.type = sym.type
-}
-
-// A closed standard free alias such as `format(value, writer, options)` selects
-// exactly the receiver method that `value.format(writer, options)` selects. The
-// alias owns no candidates; only immutable receivers qualify, so mutating and
-// consuming operations stay method-only and call-site mode markers don't vanish.
-//
-// `receiver_checked` is for `len`/`cap`/`hash`, whose built-in path inspects the
-// receiver before knowing whether to fall back to its method.
-check_standard_alias :: proc(
-	k: ^Checker,
-	v: ^Expr_Call,
-	ident: ^Expr_Ident,
-	expected := INVALID_TYPE,
-	receiver_checked := false,
-) {
-	v.value_category = .Value
-	if len(v.args) == 0 {
-		errorf(k.c, v.span, "L0322", "`%s` needs a receiver argument", ident.name)
-		v.type = INVALID_TYPE
-		return
-	}
-	first := v.args[0]
-	if first.name.text != "" || first.mode != .Value {
-		errorf(k.c, first.span, "L0322", "`%s`'s receiver is its first plain positional argument", ident.name)
-		v.type = INVALID_TYPE
-		return
-	}
-	if !receiver_checked && check_single_expr(k, first.value) == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	receiver_base := expr_base(first.value)
-	if receiver_base == nil || receiver_base.type == INVALID_TYPE || receiver_base.value_category == .Type {
-		errorf(k.c, expr_span(first.value), "L0322", "`%s` needs a value as its receiver", ident.name)
-		v.type = INVALID_TYPE
-		return
-	}
-
-	args := make([]Arg_Info, len(v.args), k.c.semantic_allocator)
-	args[0] = arg_from_expr(k, first.value)
-	args[0].is_receiver = true
-	if len(v.args) > 1 {
-		tail, ok := collect_call_arguments(k, v.args[1:])
-		if !ok {
-			v.type = INVALID_TYPE
-			return
-		}
-		copy(args[1:], tail)
-	}
-
-	all := method_candidates(k, receiver_base.type, intern_identifier(k.c, ident.name))
-	candidates := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
-	for candidate in all {
-		if sym := symbol_of(k.c, candidate); sym != nil && sym.receiver == .Value {
-			append(&candidates, candidate)
-		}
-	}
-	if len(candidates) == 0 {
-		errorf(
-			k.c, expr_span(first.value), "L0363",
-			"`%s` has no immutable `%s` method for the standard free alias",
-			type_name(k.c, receiver_base.type), ident.name,
-		)
-		v.type = INVALID_TYPE
-		return
-	}
-
-	description := concat(k.c, "standard alias `", concat(k.c, ident.name, "`"))
-	cand, resolved := resolve_overload(k, v.span, description, candidates[:], args, expected)
-	if !resolved {
-		v.type = INVALID_TYPE
-		return
-	}
-	if reject_direct_hook_call(k, v.span, cand.symbol) {
-		v.type = INVALID_TYPE
-		return
-	}
-	annotate_chosen_callee(k, v, cand.symbol)
-	if !bind_chosen_call(k, v, cand, args) {
-		v.type = INVALID_TYPE
-		return
-	}
-	chosen := symbol_of(k.c, cand.symbol)
-	set_call_result(v, chosen.result, chosen.result_inout)
-	fold_standard_customization_call(k, v, chosen)
 }
 
 // A built-in takes positional value arguments and nothing else: it has no
@@ -434,34 +337,6 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = INVALID_TYPE
 		return
 	}
-	// A compile-time string has a length but no runtime type to gate, so it is
-	// answered before the type is inspected.
-	if kind == .Len && operand == TYPE_UNTYPED_STRING {
-		base := expr_base(v.args[0].value)
-		if !base.is_const || base.const_value.kind != .String {
-			errorf(k.c, v.span, "L0386", "`len` needs a compile-time string here")
-			v.type = INVALID_TYPE
-			return
-		}
-		v.is_const = true
-		v.const_value = int_const(k.c, i64(len(base.const_value.text)))
-		return
-	}
-	// design.md "SIMD vectors": "`len(v)` is the lane count, a compile-time
-	// constant. A vector is not a sequence" — so it answers here rather than
-	// through a contributed member, which would say it were one.
-	if kind == .Len && type_is_simd(k.c, operand) {
-		v.is_const = true
-		v.const_value = int_const(k.c, i64(type_of(k.c, type_underlying(k.c, operand)).count))
-		return
-	}
-	// `len` and `cap` are standard aliases once their receiver is a runtime type.
-	// Built-in carriers own compiler-contributed methods; user types own the
-	// method they declared. Both spellings therefore select one symbol.
-	if kind == .Len || kind == .Cap {
-		check_standard_alias(k, v, ident, expected, receiver_checked = true)
-		return
-	}
 	if !gate_type(k, operand, expr_span(v.args[0].value)) {
 		v.type = INVALID_TYPE
 		return
@@ -473,8 +348,6 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		result = type_size(k.c, operand)
 	case .Align_Of:
 		result = type_align(k.c, operand)
-	case .Len:
-		return // handled by the canonical receiver method above
 	case .Offset_Of:
 		// The second operand is a member name, not a lexical value expression:
 		// resolving it as one would find an unrelated variable of the same name.
@@ -499,13 +372,13 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		name.resolution = Resolution{kind = .Field, symbol = field}
 		result = type_field_offset(k.c, operand, int(symbol.index))
 	case .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .Cap, .New, .New_Clone, .Free, .Unsafe_Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
+	     .New, .New_Clone, .Free, .Unsafe_Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .None, .Assert, .Panic, .Hash, .Iter, .Standard_Alias,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Clone, .Try_Clone,
+	     .Strings_Allocate, .None, .Assert, .Panic,
+	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return
@@ -531,9 +404,6 @@ layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id
 	base := expr_base(e)
 	if base.value_category == .Type {
 		return base.denoted_type
-	}
-	if kind == .Len && base.type == TYPE_UNTYPED_STRING {
-		return TYPE_UNTYPED_STRING
 	}
 	return base.type
 }
@@ -667,13 +537,13 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 
 	case .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Make,
+	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Make,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .Hash, .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .Default_Allocator, .Drop,
+	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .Clone, .Try_Clone, .Standard_Alias,
+	     .Strings_Allocate,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return

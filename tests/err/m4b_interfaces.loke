@@ -27,5 +27,5 @@ main :: proc() {
 	b: Boxed(Flag) = {};
 	static_assert(Additive(int, f64));
 	// A record or union needs its own coherent equality and hash pair.
-	fmt.println(int(hash(f, uint(0))));
+	fmt.println(int(f.hash(uint(0))));
 }

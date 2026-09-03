@@ -37,7 +37,7 @@ Bundle :: struct { name: Res, numbers: [dynamic]int }
 transitively :: proc() {
 	fmt.println(2000);
 	bundle := Bundle{make_res(30), [dynamic]int{7, 8, 9}};
-	fmt.println(len(bundle.numbers));
+	fmt.println(bundle.numbers.len());
 	unsafe.forget(move(bundle));
 }
 

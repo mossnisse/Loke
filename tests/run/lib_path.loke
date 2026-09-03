@@ -28,14 +28,14 @@ main :: proc() {
 	fmt.println(path.directory("C:\\"));
 
 	fmt.println(path.extension("a\\b.tar.gz"));
-	fmt.println(len(path.extension("a\\b")));
-	fmt.println(len(path.extension(".config")));
+	fmt.println(path.extension("a\\b").len());
+	fmt.println(path.extension(".config").len());
 	fmt.println(path.stem("a\\b.tar.gz"));
 	fmt.println(path.stem("plain"));
 
-	fmt.println(len(path.volume("C:\\a")));
-	fmt.println(len(path.volume("\\\\server\\share\\a")));
-	fmt.println(len(path.volume("a\\b")));
+	fmt.println(path.volume("C:\\a").len());
+	fmt.println(path.volume("\\\\server\\share\\a").len());
+	fmt.println(path.volume("a\\b").len());
 
 	parts := [?]string_view{"a", "b", "c.txt"};
 	fmt.println(path.join(parts[:]));

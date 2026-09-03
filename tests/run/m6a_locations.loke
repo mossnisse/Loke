@@ -26,7 +26,7 @@ main :: proc() {
 	here := source_location();
 	fmt.println(here.line);
 	fmt.println(here.column);
-	fmt.println(len(here.procedure));
+	fmt.println(here.procedure.len());
 
 	// A named entity gives its *declaration* span, not the span of naming it.
 	fmt.println(source_location(target).line);

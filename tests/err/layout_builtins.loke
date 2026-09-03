@@ -4,7 +4,7 @@ Point :: struct { x: int }
 
 main :: proc() {
 	n := 1;
-	fmt.println(len(n));
+	fmt.println(n.len());
 	fmt.println(offset_of(Point, z));
 	fmt.println(size_of());
 	fmt.println(offset_of(Point, 1 + 2));

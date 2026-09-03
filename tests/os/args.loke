@@ -13,7 +13,7 @@ main :: proc() {
 	for (i := 1; i < count; i += 1) {
 		value := os.args[i];
 		fmt.println(value);
-		fmt.println(len(value));
+		fmt.println(value.len());
 	}
 
 	seen := 0;

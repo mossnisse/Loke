@@ -23,7 +23,7 @@ main :: proc() {
 	// design.md's own example.
 	x: Small = {};
 	x.append(1, 2, 3);
-	fmt.println(len(x), cap(x)); // 3 8
+	fmt.println(x.len(), x.cap()); // 3 8
 
 	fmt.println(x, x.is_empty(), x.is_full(), x.space());
 
@@ -40,17 +40,17 @@ main :: proc() {
 
 	// Growth to the limit, then past it.
 	x.append(4, 5, 6, 7, 8);
-	fmt.println(x, len(x), x.is_full());
+	fmt.println(x, x.len(), x.is_full());
 	report(x.try_append(9));
-	fmt.println(x, len(x));
+	fmt.println(x, x.len());
 
 	// Nothing is written unless everything fits.
 	y: Small = {};
 	y.append(1, 2, 3, 4, 5, 6);
 	report(y.try_append(7, 8, 9));
-	fmt.println(y, len(y));
+	fmt.println(y, y.len());
 	report(y.try_append(7, 8));
-	fmt.println(y, len(y));
+	fmt.println(y, y.len());
 
 	// Removal, ordered and not, and the last element.
 	z: container.Small_Array(int, 4) = {};
@@ -72,12 +72,12 @@ main :: proc() {
 	report(w.try_insert(0, 0));
 
 	w.clear();
-	fmt.println(w, len(w), w.is_empty());
+	fmt.println(w, w.len(), w.is_empty());
 
 	// A `Small_Array` of something that is not a number, to prove `T` is free.
 	names: container.Small_Array(string_view, 3) = {};
 	names.append("ada", "grace");
-	fmt.println(names, len(names));
+	fmt.println(names, names.len());
 
 	// design.md: it supplies the same associated members a built-in sequence
 	// does, and satisfies all three sequence interfaces.

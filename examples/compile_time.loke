@@ -100,7 +100,7 @@ main :: proc() {
 	static_assert(PRIMES[0] == 2);
 	static_assert(PRIMES[1] == 3);
 	static_assert(type_of(PRIME_COUNT) == int);
-	static_assert(len(PRIMES) == PRIME_COUNT);
+	static_assert(PRIMES.len() == PRIME_COUNT);
 
 	fmt.println("limit:", LIMIT);
 	fmt.println("primes below limit:", PRIME_COUNT);

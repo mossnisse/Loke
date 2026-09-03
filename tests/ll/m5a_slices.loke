@@ -14,7 +14,7 @@ main :: proc() {
 	// Two capabilities, one representation.
 	writable: []mut int = data[:];
 	readable: []int = writable;
-	fmt.println(len(readable));
+	fmt.println(readable.len());
 	fmt.println(writable[0]);
 
 	// A hidden fixed-array root in the surrounding scope.

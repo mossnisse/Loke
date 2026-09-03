@@ -48,6 +48,6 @@ main :: proc() {
 	numbers := [4]int{1, 2, 3, 4};
 	view := views.first_half(numbers[:]);
 	fmt.println(view[0]);
-	fmt.println(len(views.head(numbers[:])));
-	fmt.println(len(constant_escapes()));
+	fmt.println(views.head(numbers[:]).len());
+	fmt.println(constant_escapes().len());
 }

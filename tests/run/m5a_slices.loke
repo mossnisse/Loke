@@ -26,7 +26,7 @@ fill :: proc(values: []mut int, with: int) {
 main :: proc() {
 	// Nil is the zero slice, and compares against nil.
 	empty: []int = nil;
-	fmt.println(len(empty));
+	fmt.println(empty.len());
 	if (empty == nil) {
 		fmt.println(1);
 	}
@@ -34,10 +34,10 @@ main :: proc() {
 	fib := [6]int{0, 1, 1, 2, 3, 5};
 
 	// Whole, open, and closed forms.
-	fmt.println(len(fib[:]));
-	fmt.println(len(fib[2:]));
-	fmt.println(len(fib[:2]));
-	fmt.println(len(fib[1:4]));
+	fmt.println(fib[:].len());
+	fmt.println(fib[2:].len());
+	fmt.println(fib[:2].len());
+	fmt.println(fib[1:4].len());
 
 	// The shorthand forms agree.
 	fmt.println(fib[0:6][3]);
@@ -46,13 +46,13 @@ main :: proc() {
 	// Reslicing composes, and the offsets compound.
 	tail := fib[2:];
 	inner := tail[1:3];
-	fmt.println(len(inner));
+	fmt.println(inner.len());
 	fmt.println(inner[0]);
 	fmt.println(inner[1]);
 
 	// `a[offset:][:length]` is the documented chunk form.
 	chunk := fib[1:][:2];
-	fmt.println(len(chunk));
+	fmt.println(chunk.len());
 	fmt.println(chunk[0]);
 
 	// Slicing a mutable addressable array gives `[]mut T`, which weakens.
@@ -70,7 +70,7 @@ main :: proc() {
 
 	// Literals keep the capability they are written with.
 	readable := []int{1, 6, 3};
-	fmt.println(len(readable));
+	fmt.println(readable.len());
 	fmt.println(readable[1]);
 	mutable := []mut int{1, 6, 3};
 	mutable[0] = 99;
@@ -89,7 +89,7 @@ main :: proc() {
 	index := runtime_index();
 	fmt.println(NUMBERS[index]);
 	table := NUMBERS[:];
-	fmt.println(len(table));
+	fmt.println(table.len());
 	fmt.println(table[2]);
 	fmt.println(sum(table));
 }

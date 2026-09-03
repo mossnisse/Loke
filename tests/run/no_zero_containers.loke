@@ -29,7 +29,7 @@ main :: proc() {
 	// type from the member's parameter.
 	m: map[int]Choice;
 	fmt.println(succeeded(m.try_insert(1, .a(3))));
-	fmt.println(len(m), 1 in m);
+	fmt.println(m.len(), 1 in m);
 	switch (v in m.lookup_value(1)) {
 	case .some: fmt.println(v);
 	case .none: fmt.println("missing");
@@ -43,30 +43,30 @@ main :: proc() {
 	case .some: fmt.println("removed", taken);
 	case .none: fmt.println("absent");
 	}
-	fmt.println(len(m));
+	fmt.println(m.len());
 
 	// A dynamic array: appending writes elements and popping moves one out.
 	// Reserving raw capacity initialises nothing.
 	xs: [dynamic]Choice;
 	xs.append(.a(1));
 	xs.append(.b(true), .a(2));
-	fmt.println(len(xs), xs[0], xs[1], xs[2]);
+	fmt.println(xs.len(), xs[0], xs[1], xs[2]);
 	fmt.println(xs.pop() or_else .a(0));
-	fmt.println(len(xs));
+	fmt.println(xs.len());
 	xs.reserve(16);
-	fmt.println(cap(xs) >= 16, len(xs));
+	fmt.println(xs.cap() >= 16, xs.len());
 	xs.remove(0);
-	fmt.println(len(xs), xs[0]);
+	fmt.println(xs.len(), xs[0]);
 	xs.clear();
-	fmt.println(len(xs));
+	fmt.println(xs.len());
 
 	// A capacity with no length allocates storage and initialises nothing.
 	ys := make([dynamic]Choice, 0, 8) or_else {};
-	fmt.println(len(ys), cap(ys) >= 8);
+	fmt.println(ys.len(), ys.cap() >= 8);
 
 	// An empty fixed array of them has a zero, because it holds no element.
 	none: [0]Choice;
-	fmt.println(len(none));
+	fmt.println(none.len());
 
 	// A new map entry is raw inert storage until the supplied no-zero value is
 	// committed. Its zeroed bytes are never passed to the drop hook.
@@ -79,6 +79,6 @@ main :: proc() {
 			1 = .b(Tracked{8}),
 			1 = .a(Tracked{9}),
 		};
-		fmt.println(len(literal));
+		fmt.println(literal.len());
 	}
 }

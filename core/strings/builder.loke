@@ -28,21 +28,21 @@ init :: proc(allocator: Allocator = mem.default_allocator()) -> String_Builder {
 }
 
 impl String_Builder {
-	// Bytes, not runes: this is the buffer's length, and it is what `len(builder)`
+	// Bytes, not runes: this is the buffer's length, and it is what `builder.len()`
 	// resolves to.
-	len :: proc(self) -> int { return len(self.data); }
-	cap :: proc(self) -> int { return cap(self.data); }
+	len :: proc(self) -> int { return self.data.len(); }
+	cap :: proc(self) -> int { return self.data.cap(); }
 
 	// Room for `additional` more bytes, on top of what is already written.
 	reserve :: proc(self: inout String_Builder, additional: int) {
 		if (additional < 0) { panic("reserve count is negative"); }
-		wanted := len(self.data) + additional;
+		wanted := self.data.len() + additional;
 		self.data.reserve(wanted);
 	}
 
 	try_reserve :: proc(self: inout String_Builder, additional: int) -> Result(Unit, Allocator_Error) {
 		if (additional < 0) { panic("reserve count is negative"); }
-		wanted := len(self.data) + additional;
+		wanted := self.data.len() + additional;
 		return self.data.try_reserve(wanted);
 	}
 

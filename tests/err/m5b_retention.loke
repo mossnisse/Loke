@@ -49,7 +49,7 @@ tls_to_process :: proc() {
 local_to_thread_local :: proc(values: []int) {
 	held: thread_local Holder;
 	held.view = values;
-	fmt.println(len(held.view));
+	fmt.println(held.view.len());
 }
 
 // Callee-local storage retained in a destination the caller owns. No contract

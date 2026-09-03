@@ -15,7 +15,7 @@ import "core:fmt";
 Bit_Set :: struct($E: type) {
 	// One 64-bit word per 64 members, so an enum of any size works without a
 	// documented ceiling to trip over later.
-	@(private) words: [(len(E.values()) + 63)/64]u64,
+	@(private) words: [(E.values().len() + 63)/64]u64,
 }
 
 impl Bit_Set($E) {
@@ -49,7 +49,7 @@ impl Bit_Set($E) {
 		return total;
 	}
 
-	cap :: proc(self) -> int { return len(E.values()); }
+	cap :: proc(self) -> int { return E.values().len(); }
 	is_empty :: proc(self) -> bool { return self.len() == 0; }
 
 	// --------------------------------------------------------- mutation --
@@ -70,7 +70,7 @@ impl Bit_Set($E) {
 	}
 
 	clear :: proc(self: inout Bit_Set(E)) {
-		foreach (i in 0 ..< len(self.words)) { self.words[i] = 0; }
+		foreach (i in 0 ..< self.words.len()) { self.words[i] = 0; }
 	}
 
 	// -------------------------------------------------------- operators --
@@ -149,7 +149,7 @@ impl Bit_Set_Iterator($E) {
 
 	next :: proc(self: inout Bit_Set_Iterator(E)) -> Option(E) {
 		members := E.values();
-		for (self.at < len(members)) {
+		for (self.at < members.len()) {
 			member := members[self.at];
 			self.at += 1;
 			if (self.held.contains(member)) { return .some(member); }

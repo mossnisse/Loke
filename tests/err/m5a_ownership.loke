@@ -104,5 +104,5 @@ main :: proc() {
 }
 
 take_all :: proc(value: move Res, counts: ..int) -> int {
-	return value.id + len(counts);
+	return value.id + counts.len();
 }

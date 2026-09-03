@@ -5,7 +5,7 @@ package main; import "core:fmt";
 // `any_view` and materializes a temporary `[]any_view` for the duration of the
 // call; the callee may read, index, iterate, and forward it.
 
-count :: proc(args: ..any_view) -> int { return len(args); }
+count :: proc(args: ..any_view) -> int { return args.len(); }
 
 // Checked extractions still work on an erased element, because an `any_view` is a
 // pointer plus a `typeid` however it was formed.

@@ -16,7 +16,7 @@ impl Key {
 		}
 		return .ok(Key{self.id});
 	}
-	hash :: proc(self, seed: uint) -> uint { return hash(self.id, seed); }
+	hash :: proc(self, seed: uint) -> uint { return self.id.hash(seed); }
 	same :: operator(==) proc(x, y: Key) -> bool { return x.id == y.id; }
 }
 
@@ -48,17 +48,17 @@ main :: proc() {
 	for (i := 0; i < 7; i += 1) {
 		fmt.println(succeeded(m.try_insert(Key{i}, Value{i + 10})));
 	}
-	before := cap(m);
+	before := m.cap();
 
 	// The eighth key needs growth. Its clone fails, so even table metadata stays
 	// unchanged and all seven original entries remain reachable.
 	fmt.println(!succeeded(m.try_insert(Key{99}, Value{80})));
-	fmt.println(cap(m) == before);
-	fmt.println(len(m));
+	fmt.println(m.cap() == before);
+	fmt.println(m.len());
 	fmt.println(m[Key{6}].id);
 
 	// A failed value clone while replacing a key leaves the old value intact.
 	fmt.println(!succeeded(m.try_insert(Key{1}, Value{99})));
-	fmt.println(len(m));
+	fmt.println(m.len());
 	fmt.println(m[Key{1}].id);
 }

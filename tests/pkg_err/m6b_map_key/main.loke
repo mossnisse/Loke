@@ -10,7 +10,7 @@ package main; import "core:fmt"; import "./keys";
 // operation table.
 
 impl keys.Id {
-	hash :: proc(self, seed: uint) -> uint { return hash(self.v, seed); }
+	hash :: proc(self, seed: uint) -> uint { return self.v.hash(seed); }
 	same :: operator(==) proc(x, y: keys.Id) -> bool { return x.v == y.v; }
 }
 

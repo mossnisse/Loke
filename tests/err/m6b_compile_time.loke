@@ -23,7 +23,7 @@ CAPPED :: capped();
 capped :: proc() -> int {
 	xs: [dynamic]int;
 	xs.reserve(8);
-	return cap(xs);
+	return xs.cap();
 }
 
 // design.md "Maps": "**Iteration order is unspecified.**" The evaluator has one
@@ -42,7 +42,7 @@ HUGE :: huge();
 huge :: proc() -> int {
 	xs: [dynamic]int;
 	for (i := 0; i < 100000000; i += 1) { xs.append(i); }
-	return len(xs);
+	return xs.len();
 }
 
 main :: proc() {

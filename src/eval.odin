@@ -2080,30 +2080,6 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		eval_fail(ev, v.span, "L0343", "compile-time panic%s", eval_message(ev, v, 0))
 		return Eval_Value{}, false
 
-	case .Cap:
-		// A capacity is a property of an allocation, and compile-time evaluation
-		// has none — answering the length instead would let a constant folded here
-		// differ from what the same code computes at run time, the same objection
-		// that closes compile-time map iteration.
-		eval_fail(
-			ev, v.span, "L0595",
-			"`cap` has no compile-time meaning: a capacity is a property of an allocation, and there is none here",
-		)
-		return Eval_Value{}, false
-
-	case .Len:
-		// A fixed array's `len` folds long before this. What reaches here is a
-		// container, whose length is a fact the evaluator holds.
-		subject, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
-		return Eval_Value {
-			kind    = .Integer,
-			type    = TYPE_INT,
-			integer = bi_from_i64(ev.alloc, i64(container_length(ev.k.c, subject))),
-		}, true
-
 	case .Drop:
 		// `drop` runs the cleanup operation, writes the inert zero representation,
 		// and marks the variable dead (design.md); the evaluator has no storage to
@@ -2175,26 +2151,6 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 		}
 		return Eval_Value{}, false
 
-	case .Hash:
-		// The compile-time half of the compiler-contributed `hash`: the same two
-		// steps the backend emits, so a folded hash and a runtime one agree.
-		value, value_ok := eval_expr(ev, v.bound[0])
-		seed, seed_ok := eval_expr(ev, v.bound[1])
-		if !value_ok || !seed_ok {
-			return Eval_Value{}, false
-		}
-		frozen_value, froze_value := freeze(ev, value, ev.alloc)
-		frozen_seed, froze_seed := freeze(ev, seed, ev.alloc)
-		if !froze_value || !froze_seed {
-			return Eval_Value{}, false
-		}
-		start, _ := bi_to_u64(ev.alloc, bi_wrap(ev.alloc, frozen_seed.integer, 64, false))
-		mixed := hash_const(ev.k.c, frozen_value, expr_base(v.bound[0]).type, start, ev.alloc)
-		return Eval_Value {
-			kind    = .Integer,
-			type    = TYPE_UINT,
-			integer = bi_from_u64(ev.alloc, mixed),
-		}, true
 	}
 	eval_fail(
 		ev,

@@ -42,7 +42,7 @@ run_generic :: proc(input: []int) -> []int {
 Holder :: struct { view: []int }
 
 take_wrapped :: proc(input: []int, @(escape=none) held: Holder) -> []int {
-	fmt.println(len(held.view));
+	fmt.println(held.view.len());
 	return input;
 }
 

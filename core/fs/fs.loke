@@ -91,7 +91,7 @@ impl File {
 	is_open :: proc(self) -> bool { return self.handle != NO_HANDLE; }
 
 	read :: proc(self: inout File, destination: []mut u8) -> Result(int, io.Error) {
-		if (len(destination) == 0) { return .ok(0); }
+		if (destination.len() == 0) { return .ok(0); }
 		if (self.handle == NO_HANDLE) {
 			return .err(io.make_error(.Invalid_Data, .Read));
 		}
@@ -102,7 +102,7 @@ impl File {
 	}
 
 	write :: proc(self: inout File, source: []u8) -> Result(int, io.Error) {
-		if (len(source) == 0) { return .ok(0); }
+		if (source.len() == 0) { return .ok(0); }
 		if (self.handle == NO_HANDLE) {
 			return .err(io.make_error(.Invalid_Data, .Write));
 		}
@@ -247,11 +247,11 @@ create_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 // `path.volume` finds.
 create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
 	bytes := path.bytes();
-	at := len(lexical.volume(path));
-	for (; at < len(bytes); at += 1) {
+	at := lexical.volume(path).len();
+	for (; at < bytes.len(); at += 1) {
 		if (!is_separator(bytes[at]) || at == 0) { continue; }
 		parent := path[0:at];
-		if (len(parent) == 0) { continue; }
+		if (parent.len() == 0) { continue; }
 		ensure_directory(parent) or_return;
 	}
 	return ensure_directory(path);
@@ -404,7 +404,7 @@ Find_Data :: struct {
 // changed name.
 @(private)
 wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic]u16, io.Error) {
-	if (len(path) == 0) {
+	if (path.len() == 0) {
 		return .err(io.make_error(.Invalid_Path, operation));
 	}
 	switch (units in utf16.encode(path, mem.default_allocator())) {
@@ -472,7 +472,7 @@ close_handle :: proc(handle: Handle) -> Result(Unit, io.Error) {
 
 @(private)
 read_handle :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Error) {
-	wanted := len(destination);
+	wanted := destination.len();
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	read: u32 = 0;
 	if (rt_read_file(handle, unsafe.raw_data(destination), u32(wanted), &mut read, nil) == 0) {
@@ -491,7 +491,7 @@ read_handle :: proc(handle: Handle, destination: []mut u8) -> Result(int, io.Err
 
 @(private)
 write_handle :: proc(handle: Handle, source: []u8) -> Result(int, io.Error) {
-	wanted := len(source);
+	wanted := source.len();
 	if (wanted > MAX_CHUNK) { wanted = MAX_CHUNK; }
 	written: u32 = 0;
 	if (rt_write_file(handle, unsafe.raw_data(source), u32(wanted), &mut written, nil) == 0) {

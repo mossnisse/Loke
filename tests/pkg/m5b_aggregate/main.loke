@@ -38,7 +38,7 @@ invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
 	holder := wrapping.wrap(slot^[:]);
 	fresh: [dynamic]int;
 	table["b"] = move(fresh);
-	return len(holder.view);
+	return holder.view.len();
 }
 
 // The escaping half moved to tests/pkg_err/m5b_aggregate/ once step 6 made the

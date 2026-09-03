@@ -1,0 +1,76 @@
+package main;
+
+import "core:fmt";
+import "base:interfaces";
+
+// design.md "Standard customization procedures": every one of these operations
+// has exactly one spelling, `value.f(args)`. There is no free alias for any of
+// them, so nothing here can drift from the member it selects.
+
+Box :: struct { value: int }
+
+impl Box {
+	len :: proc(self) -> int { return self.value; }
+	cap :: proc(self) -> int { return self.value + 10; }
+	compare :: proc(self, other: Box) -> int { return self.value - other.value; }
+	probe :: proc(self) -> int { return self.value; }
+	hash :: proc(self, seed: uint) -> uint { return self.value.hash(seed); }
+	equals :: operator(==) proc(a, b: Box) -> bool { return a.value == b.value; }
+	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
+		fmt.format_to(writer, "box", self.value);
+	}
+}
+
+// This ordinary lexical procedure deliberately shares a name with a method.
+// `probe(box)` is an ordinary call and never becomes `box.probe()`.
+probe :: proc(value: Box) -> int { return 99; }
+
+make_array :: proc(calls: inout int) -> [3]int {
+	calls += 1;
+	return {1, 2, 3};
+}
+
+main :: proc() {
+	box := Box{7};
+	other := Box{3};
+	fmt.println(box.len(), box.cap(), box.compare(other));
+	fmt.println(box.probe(), probe(box));
+
+	seed := uint(17);
+	fmt.println(1 if box.hash(seed) == box.hash(seed) else 0);
+	fmt.println(1 if interfaces.Hashable(Box) else 0);
+
+	// A fixed array's length is a property of its type, so the receiver is not
+	// evaluated: `calls` stays zero across two calls.
+	xs := [3]int{1, 2, 3};
+	calls := 0;
+	fmt.println(xs.len(), make_array(inout calls).len(), calls);
+	fmt.println(1 if interfaces.Sequence([3]int) else 0);
+
+	view := xs[:];
+	fmt.println(view.len());
+
+	values := [dynamic]int{1, 2, 3};
+	fmt.println(values.len(), 1 if values.cap() >= 3 else 0);
+
+	text: string = "hej";
+	fmt.println(text.len(), 1 if text.hash(seed) == text.hash(seed) else 0);
+
+	// An unfixed string constant takes its default type to select the member.
+	GREETING :: "hejsan";
+	static_assert(GREETING.len() == 6);
+
+	// A vector's `len` is its lane count, folded from the type like an array's.
+	lanes: Simd(f32, 4) = {1, 2, 3, 4};
+	static_assert(lanes.len() == 4);
+	fmt.println(GREETING.len(), lanes.len());
+
+	table := map[string]int{"a" = 1};
+	fmt.println(table.len(), 1 if table.cap() >= 1 else 0);
+
+	reverse := xs.iter_reverse();
+	fmt.println(reverse.next());
+
+	box.format(fmt.stdout(), fmt.Options{});
+	fmt.println();
+}

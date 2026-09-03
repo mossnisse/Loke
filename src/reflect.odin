@@ -493,8 +493,7 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Strings_Allocate,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence,
-	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash, .Type_Of, .Iter,
-	     .Clone, .Try_Clone, .Standard_Alias:
+	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Type_Of:
 		unreachable()
 	}
 }

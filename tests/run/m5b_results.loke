@@ -15,7 +15,7 @@ sum :: proc(values: []int) -> int {
 }
 
 first_half :: proc(values: []int) -> []int {
-	return values[:len(values) / 2];
+	return values[:values.len() / 2];
 }
 
 // design.md: "If a procedure has multiple borrowed arguments, its returned
@@ -49,7 +49,7 @@ inout_borrow :: proc(target: inout int) -> ^mut int {
 // Forward and mutually recursive declarations settle to the same summaries
 // whatever order they are written in: `tail` is used before it is declared.
 skip_zero :: proc(values: []int) -> []int {
-	if (len(values) == 0 || values[0] != 0) { return values; }
+	if (values.len() == 0 || values[0] != 0) { return values; }
 	return tail(values);
 }
 

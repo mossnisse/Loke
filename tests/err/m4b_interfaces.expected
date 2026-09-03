@@ -17,5 +17,5 @@ L0443
 @28:16
 takes 1 argument, found 2
 L0363
-@30:23
-has no immutable `hash` method for the standard free alias
+@30:18
+has no field or member `hash`

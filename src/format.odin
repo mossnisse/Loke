@@ -1,8 +1,7 @@
 // Coherent runtime formatting (design.md "String format printing").
 //
 // design.md makes formatting a library protocol: a value type provides a
-// `value.format(writer, options)` method, and the standard free spelling
-// aliases it. The compiler owns the *erased* half: `fmt.println(a, b, c)`
+// `value.format(writer, options)` method. The compiler owns the *erased* half: `fmt.println(a, b, c)`
 // receives `..any_view`, and an `any_view` carries only a pointer and a
 // `typeid`, so a callee cannot recover a call-site-specific visible overload.
 // Runtime formatting therefore has one formatter per concrete `typeid`:
@@ -126,16 +125,15 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 		if k.c.speculation_depth == 0 {
 			k.c.format_requested = true
 		}
-	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Len, .Cap, .Hash,
+	case .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
-	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Iter, .New, .New_Clone, .Make, .Free,
+	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .New, .New_Clone, .Make, .Free,
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Unsafe_Free,
 	     .Unsafe_Transmute, .Simd_Cast, .Simd_Select, .Simd_Reduce,
 	     .Strings_Allocate,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
-	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence,
-	     .Clone, .Try_Clone, .Standard_Alias:
+	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		v.type = INVALID_TYPE
 		return
 	}

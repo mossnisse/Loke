@@ -9,20 +9,20 @@ Error_Code :: enum { Missing }
 
 read_document :: proc(path: string_view) -> Result(Doc, Error_Code) {
 	owned: string = "report";
-	return .ok(Doc{name = owned, bytes = len(path)});
+	return .ok(Doc{name = owned, bytes = path.len()});
 }
 
 // Consuming: no clone, and no warning.
 consuming :: proc(path: string_view) -> Result(int, Error_Code) {
 	name, bytes := read_document(path) or_return;
-	return .ok(len(name) + bytes);
+	return .ok(name.len() + bytes);
 }
 
 // Cloning: `doc` stays live, so `name` is a copy of its string.
 cloning :: proc(path: string_view) -> Result(int, Error_Code) {
 	doc := read_document(path) or_return;
 	name, bytes := doc;
-	return .ok(len(name) + bytes + len(doc.name));
+	return .ok(name.len() + bytes + doc.name.len());
 }
 
 // A move-only field cannot be cloned out of a place at all.

@@ -11,6 +11,6 @@ main :: proc() {
 	static_assert(LIMIT == 42, "the override did not reach `build_config`");
 	fmt.println(LIMIT);
 	fmt.println(1 if VERBOSE else 0);
-	fmt.println(len(MODE));
-	fmt.println(len(MODE + "/" + MODE));
+	fmt.println(MODE.len());
+	fmt.println((MODE + "/" + MODE).len());
 }

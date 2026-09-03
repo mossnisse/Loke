@@ -137,35 +137,6 @@ inherent_operator_named :: proc(c: ^Compiler, type: Type_Id, symbol_text: string
 	return INVALID_SYMBOL
 }
 
-// ------------------------------------------------------------- checking --
-
-check_hash_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, expected: Type_Id) {
-	v.value_category = .Value
-	if len(v.args) != 2 {
-		errorf(k.c, v.span, "L0322", "`hash` takes 2 arguments, found %d", len(v.args))
-		v.type = INVALID_TYPE
-		return
-	}
-	value_type := check_single_expr(k, v.args[0].value)
-	if value_type == INVALID_TYPE {
-		v.type = INVALID_TYPE
-		return
-	}
-	// An untyped constant takes its default type before hashing, so `hash(1, s)`
-	// and `hash(int(1), s)` agree.
-	if type_is_untyped(k.c, value_type) {
-		value_type = default_type(k.c, value_type)
-		if !materialize(k, v.args[0].value, value_type) {
-			v.type = INVALID_TYPE
-			return
-		}
-	}
-	// The built-in types own compiler-contributed `hash` methods; records and
-	// unions use the method in their inherent `impl`. The free spelling selects
-	// that one member in both cases.
-	check_standard_alias(k, v, ident, expected, receiver_checked = true)
-}
-
 // --------------------------------------------------------- compile time --
 
 // The integer image of one scalar, which is what the mix consumes. `+0` and `-0`

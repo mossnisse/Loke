@@ -63,7 +63,7 @@ totals :: proc() -> int {
 	m["a"] = 1;
 	m["b"] = 2;
 	sum := 0;
-	foreach (k, v in m) { sum += v + len(k); }
+	foreach (k, v in m) { sum += v + k.len(); }
 	return sum;
 }
 

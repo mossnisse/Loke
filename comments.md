@@ -586,6 +586,25 @@ form, a mutual-exclusion rule against `@(public)`, and a rule for opting back ou
 of a file-wide private default. A file that wants its own boundary wants to be a
 package.
 
+### Standard free aliases
+
+A closed set of nine names — `len`, `cap`, `hash`, `format`, `compare`, `iter`,
+`iter_reverse`, `clone`, `try_clone` — used to perform receiver lookup, so
+`len(x)` and `x.len()` selected one declaration. The second spelling bought no
+expressiveness and cost four rules: the closed set itself, a restriction to
+immutable receivers, a matching rule keeping mutators method-only so their
+receiver borrow could not hide in free-call syntax, and a rule that an alias
+contributes no overload candidates of its own. All four exist only to keep the
+two spellings from disagreeing.
+
+The method is now the only spelling. `len(x)` is not a call, a free procedure
+named `len` is an ordinary declaration, and the one remaining rule is the one
+already needed: `f(x)` is a lexical call and `x.f()` is a receiver call. The
+built-in types keep their compiler-contributed `len`, `cap`, and `hash` members,
+which is what `x.len()` selects on a slice exactly as on a user record. A fixed
+array's and a vector's lengths stay properties of their type, so `x.len()` folds
+to a constant and never evaluates `x`.
+
 ### `fallthrough`
 
 Multi-value case lists cover what most C fallthrough chains are written for, and
@@ -847,10 +866,10 @@ language where a written type does not describe the value.
 
 `x.f()` resolves only to a `self` receiver declared in an `impl`
 block, or to a built-in container operation. There is no rule rewriting `f(x)`
-as `x.f()`. Free procedures therefore never acquire a method spelling by
-accident, at the cost of `len(x)` and `x.append(v)` reading differently — which
-is the right trade when `len` is what generic code calls on a type parameter and
-`append` is an operation on a named receiver.
+as `x.f()`, and none rewriting `f(x)` to a receiver either — see
+[Standard free aliases](#standard-free-aliases) above. Free procedures therefore
+never acquire a method spelling by accident, and every receiver operation reads
+the same way: `x.len()` and `x.append(v)` are both calls on a named receiver.
 
 ### `foreach`
 

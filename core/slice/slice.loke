@@ -32,14 +32,14 @@ reverse_sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
 }
 
 is_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
-	foreach (i in 1 ..< len(values)) {
+	foreach (i in 1 ..< values.len()) {
 		if (values[i] < values[i - 1]) { return false; }
 	}
 	return true;
 }
 
 is_reverse_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
-	foreach (i in 1 ..< len(values)) {
+	foreach (i in 1 ..< values.len()) {
 		if (values[i - 1] < values[i]) { return false; }
 	}
 	return true;
@@ -51,12 +51,12 @@ is_reverse_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
 binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 	where interfaces.Ordered(T) {
 	low := 0;
-	high := len(values);
+	high := values.len();
 	for (low < high) {
 		middle := low + (high - low)/2;
 		if (values[middle] < wanted) { low = middle + 1; } else { high = middle; }
 	}
-	return {index = low, found = low < len(values) && values[low] == wanted};
+	return {index = low, found = low < values.len() && values[low] == wanted};
 }
 
 // ------------------------------------------------------------------ places --
@@ -71,7 +71,7 @@ swap :: proc(values: []mut $T, left: int, right: int) {
 // Reverses the order of the elements in place.
 reverse :: proc(values: []mut $T) {
 	low := 0;
-	high := len(values);
+	high := values.len();
 	for (low + 1 < high) {
 		high -= 1;
 		swap(values, low, high);
@@ -80,7 +80,7 @@ reverse :: proc(values: []mut $T) {
 }
 
 fill :: proc(values: []mut $T, @(escape=stored) value: T) {
-	foreach (i in 0 ..< len(values)) { values[i] = value; }
+	foreach (i in 0 ..< values.len()) { values[i] = value; }
 }
 
 // ----------------------------------------------------------------- queries --
@@ -93,7 +93,7 @@ index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.Equata
 }
 
 last_index_of :: proc(values: []$T, wanted: T) -> Option(int) where interfaces.Equatable(T) {
-	i := len(values);
+	i := values.len();
 	for (i > 0) {
 		i -= 1;
 		if (values[i] == wanted) { return .some(i); }
@@ -110,7 +110,7 @@ contains :: proc(values: []$T, wanted: T) -> bool where interfaces.Equatable(T) 
 }
 
 equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
-	if (len(left) != len(right)) { return false; }
+	if (left.len() != right.len()) { return false; }
 	foreach (value, i in left.indexed()) {
 		if (value != right[i]) { return false; }
 	}
@@ -120,18 +120,18 @@ equal :: proc(left: []$T, right: []T) -> bool where interfaces.Equatable(T) {
 // `.none` for an empty slice: there is no minimum of nothing, and returning the
 // zero value would be a wrong answer rather than a missing one.
 min :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
-	if (len(values) == 0) { return .none; }
+	if (values.len() == 0) { return .none; }
 	best := values[0];
-	foreach (i in 1 ..< len(values)) {
+	foreach (i in 1 ..< values.len()) {
 		if (values[i] < best) { best = values[i]; }
 	}
 	return .some(best);
 }
 
 max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
-	if (len(values) == 0) { return .none; }
+	if (values.len() == 0) { return .none; }
 	best := values[0];
-	foreach (i in 1 ..< len(values)) {
+	foreach (i in 1 ..< values.len()) {
 		if (best < values[i]) { best = values[i]; }
 	}
 	return .some(best);
@@ -141,13 +141,15 @@ max :: proc(values: []$T) -> Option(T) where interfaces.Ordered(T) {
 
 // design.md "Slices": the way to keep data after its owner expires.
 clone :: proc(values: []$T, allocator: Allocator = mem.default_allocator()) -> [dynamic]T {
+	// `slice.try_clone` below, not a receiver member: a slice is a borrow and
+	// owns nothing to clone.
 	return try_clone(values, allocator) or_else no_copy(T);
 }
 
 try_clone :: proc(
 	values: []$T, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]T, Allocator_Error) {
-	owned := make([dynamic]T, 0, len(values), allocator) or_return;
+	owned := make([dynamic]T, 0, values.len(), allocator) or_return;
 	owned.try_append(..values) or_return;
 	return .ok(move(owned));
 }

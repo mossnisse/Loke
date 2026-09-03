@@ -1,6 +1,6 @@
 L0363
-@7:18
-has no immutable `len` method for the standard free alias
+@7:14
+has no field or member `len`
 L0363
 @8:31
 `Point` has no field `z`

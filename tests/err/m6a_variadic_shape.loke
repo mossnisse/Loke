@@ -5,7 +5,7 @@ import "core:unsafe";
 // design.md's variadic form is one trailing parameter.
 misplaced :: proc(nums: ..int, tail: int) -> int { return tail; }
 
-show :: proc(args: ..any_view) -> int { return len(args); }
+show :: proc(args: ..any_view) -> int { return args.len(); }
 
 // design.md "any_view type": the `..any_view` exception "does not permit an
 // escape. The slice and its elements borrow the caller's temporary arguments."
@@ -16,11 +16,11 @@ escaping_element :: proc(args: ..any_view) -> any_view { return args[0]; }
 // container type.
 stored: []any_view;
 
-sum :: proc(nums: ..int) -> int { return len(nums); }
+sum :: proc(nums: ..int) -> int { return nums.len(); }
 
 // design.md "Named arguments": a name reaches a fixed parameter, never a pack
 // element, and positional arguments still come first.
-labelled :: proc(a: int, b: int, nums: ..int) -> int { return a + b + len(nums); }
+labelled :: proc(a: int, b: int, nums: ..int) -> int { return a + b + nums.len(); }
 
 main :: proc() {
 	// A spread's operand still has to be the pack's own slice type.

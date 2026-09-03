@@ -1,10 +1,9 @@
-// Canonical receiver members and the closed standard free-alias set.
+// The canonical receiver members the language expects a type to supply.
 //
-// `value.f(args)` is the definition-site operation. A standard free spelling
-// such as `len(value)` or `hash(value, seed)` resolves to that same member and
-// never forms an independent overload group. Ordinary free procedures keep
-// ordinary lexical lookup; mutating methods are deliberately absent from this
-// alias set so their receiver stays visibly method syntax.
+// `value.f(args)` is the only spelling: there is no free `len(value)` or
+// `hash(value, seed)`, so a reader's implicit receiver borrow is as visible as a
+// mutator's. Ordinary free procedures keep ordinary lexical lookup and never
+// perform receiver lookup, whatever they are named.
 package lokec
 
 // Built-in operations must satisfy the same receiver-form interface
@@ -37,7 +36,10 @@ ensure_standard_customization_members :: proc(k: ^Checker, type: Type_Id) {
 @(private = "file")
 standard_len_type :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	#partial switch underlying_kind(c, type) {
-	case .Array, .Slice, .Dynamic_Array, .Map, .String, .String_View:
+	// A vector's `len` is its lane count, folded from the type like a fixed
+	// array's. It stays out of `Sequence` regardless: that also wants iteration
+	// and a runtime index, and a vector has neither (design.md "SIMD vectors").
+	case .Array, .Slice, .Dynamic_Array, .Map, .String, .String_View, .Simd:
 		return true
 	}
 	return false

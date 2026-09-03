@@ -11,8 +11,8 @@ next_text :: proc() -> string { calls += 1; return "abc"; }
 integer :: proc(value: any_view) -> int { return value.(int); }
 small_integer :: proc(value: any_view) -> i32 { return value.(i32); }
 box_number :: proc(value: any_view) -> int { return value.(Box).number; }
-slice_length :: proc(value: any_view) -> int { return len(value.([]mut int)); }
-text_length :: proc(value: string_view) -> int { return len(value); }
+slice_length :: proc(value: any_view) -> int { return value.([]mut int).len(); }
+text_length :: proc(value: string_view) -> int { return value.len(); }
 lanes_equal :: proc(value: Simd(int, 4), expected: int) -> bool {
     return simd.all(value == expected);
 }

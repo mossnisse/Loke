@@ -12,8 +12,8 @@ package main; import "core:fmt";
 
 count_bytes :: proc(parts: []string) -> int {
 	total := 0;
-	for (i := 0; i < len(parts); i += 1) {
-		total += len(parts[i]);
+	for (i := 0; i < parts.len(); i += 1) {
+		total += parts[i].len();
 	}
 	return total;
 }
@@ -21,7 +21,7 @@ count_bytes :: proc(parts: []string) -> int {
 main :: proc() {
 	// A literal builds a container; it is never a constant, because it allocates.
 	xs := [dynamic]int{1, 2, 3};
-	fmt.println(len(xs));
+	fmt.println(xs.len());
 	fmt.println(xs[0] + xs[2]);
 
 	// Indexing is a place: readable, writable, and compound-assignable.
@@ -33,12 +33,12 @@ main :: proc() {
 	ys := make([dynamic]int, 0, 2) or_else {};
 	ys.append(4, 5);
 	ys.append(..xs[:], 6);
-	fmt.println(len(ys));
+	fmt.println(ys.len());
 
 	// Slicing views the current allocation and stops at the length, never at the
 	// capacity: the slots past `len` hold no initialised element.
-	fmt.println(len(ys[:]));
-	fmt.println(len(ys[1:3]));
+	fmt.println(ys[:].len());
+	fmt.println(ys[1:3].len());
 
 	// Removal moves the element out rather than cloning it. `remove` keeps order;
 	// `remove_unordered` fills the hole with the last element.
@@ -46,7 +46,7 @@ main :: proc() {
 	fmt.println(first);
 	swapped := ys.remove_unordered(0);
 	fmt.println(swapped);
-	fmt.println(len(ys));
+	fmt.println(ys.len());
 
 	// An empty container has nothing to pop.
 	empty: [dynamic]int;
@@ -62,32 +62,32 @@ main :: proc() {
 	// Capacity: `reserve` promises only `cap >= n`; `shrink` may keep slack, and
 	// `shrink(min)` keeps at least that floor.
 	empty.reserve(64);
-	fmt.println(cap(empty) >= 64);
+	fmt.println(empty.cap() >= 64);
 	empty.append(1, 2);
 	empty.shrink();
-	fmt.println(cap(empty));
+	fmt.println(empty.cap());
 	empty.reserve(64);
 	empty.shrink(10);
-	fmt.println(cap(empty));
+	fmt.println(empty.cap());
 
 	// `resize` zero-fills a grown tail and destroys a truncated one.
 	empty.resize(5);
-	fmt.println(len(empty));
+	fmt.println(empty.len());
 	fmt.println(empty[4]);
 	empty.resize(1);
-	fmt.println(len(empty));
+	fmt.println(empty.len());
 
 	// Managed elements: insertion clones, removal moves out, `clear` destroys
 	// every live element and keeps the capacity.
 	names: [dynamic]string;
 	names.append("alpha", "be", "c");
 	names.insert(1, "dd");
-	fmt.println(len(names));
+	fmt.println(names.len());
 	fmt.println(names[1]);
 	fmt.println(count_bytes(names[:]));
 	taken := names.remove(0);
 	fmt.println(taken);
 	names.clear();
-	fmt.println(len(names));
-	fmt.println(cap(names) >= 4);
+	fmt.println(names.len());
+	fmt.println(names.cap() >= 4);
 }

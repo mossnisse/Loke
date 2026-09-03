@@ -302,9 +302,8 @@ lookup_package :: proc(k: ^Checker) -> Package_Id {
 // the same name resolve differently depending on which asked.
 @(private = "file")
 ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) {
-	// Built-in query and hashing operations are real receiver members. The
-	// standard free spellings select these same symbols rather than maintaining a
-	// second overload group.
+	// Built-in query and hashing operations are real receiver members, which is
+	// what `x.len()` and `x.hash(seed)` select on a built-in type.
 	ensure_standard_customization_members(k, type)
 	// A built-in iterable's associated members and `iter` are contributed on
 	// demand, so interface checking and generic code see exactly what a user type

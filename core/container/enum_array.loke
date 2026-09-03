@@ -12,21 +12,21 @@ package container;
 import "core:fmt";
 
 Enum_Array :: struct($E: type, $T: type) {
-	@(private) slots: [len(E.values())]T,
+	@(private) slots: [E.values().len()]T,
 }
 
 impl Enum_Array($E, $T) {
 	// Every slot set to `value`.
 	filled :: proc(value: T) -> Enum_Array(E, T) {
 		result: Enum_Array(E, T) = {};
-		foreach (i in 0 ..< len(result.slots)) { result.slots[i] = value; }
+		foreach (i in 0 ..< result.slots.len()) { result.slots[i] = value; }
 		return result;
 	}
 
 	// The number of declared members, which is also the number of slots: an
 	// `Enum_Array` is never partly present.
-	len :: proc(self) -> int { return len(E.values()); }
-	cap :: proc(self) -> int { return len(E.values()); }
+	len :: proc(self) -> int { return E.values().len(); }
+	cap :: proc(self) -> int { return E.values().len(); }
 
 	get :: operator([]) proc(self, member: E) -> T {
 		return self.slots[position_of(member)];
@@ -78,7 +78,7 @@ impl Enum_Array_Iterator($E, $T) {
 
 	next :: proc(self: inout Enum_Array_Iterator(E, T)) -> Option(Enum_Entry(E, T)) {
 		members := E.values();
-		if (self.at >= len(members)) { return .none; }
+		if (self.at >= members.len()) { return .none; }
 		index := self.at;
 		self.at += 1;
 		return .some(Enum_Entry(E, T){members[index], self.held.slots[index]});

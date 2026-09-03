@@ -34,22 +34,22 @@ main :: proc() {
 	// A representable capacity that cannot be allocated. The header and every
 	// element are unchanged, and the container is still usable afterwards.
 	fmt.println(xs.try_reserve(1152921504606846976) != nil);
-	fmt.println(len(xs));
-	fmt.println(cap(xs));
+	fmt.println(xs.len());
+	fmt.println(xs.cap());
 	fmt.println(xs[2]);
 
 	fmt.println(xs.try_resize(1152921504606846976) != nil);
-	fmt.println(len(xs));
+	fmt.println(xs.len());
 
 	fmt.println(xs.try_append(4) == nil);
-	fmt.println(len(xs));
+	fmt.println(xs.len());
 	fmt.println(xs[3]);
 
 	// The third element's clone fails, so the two already cloned into the
 	// container are destroyed and nothing is published.
 	items: [dynamic]Res;
 	fmt.println(items.try_append(Res{1}, Res{2}, Res{3}) != nil);
-	fmt.println(len(items));
+	fmt.println(items.len());
 
 	// And the container still works.
 	fmt.println(items.try_append(Res{7}) == nil);

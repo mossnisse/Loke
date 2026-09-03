@@ -35,7 +35,7 @@ from_string :: proc(
 			return .err(.Contains_Zero);
 		}
 	}
-	buffer := make([dynamic]u8, 0, len(text) + 1, allocator) or_else no_buffer();
+	buffer := make([dynamic]u8, 0, text.len() + 1, allocator) or_else no_buffer();
 	switch (added in buffer.try_append(..text.bytes())) {
 	case .ok:
 	case .err: drop(buffer); return .err(.Out_Of_Memory);
@@ -58,12 +58,12 @@ impl C_String {
 	// foreign side holds the pointer is the caller's obligation, and is the whole
 	// reason this type exists.
 	view :: proc(self) -> cstring_view {
-		if (len(self.data) == 0) { return ""; }
+		if (self.data.len() == 0) { return ""; }
 		return unsafe.cstring_view(unsafe.raw_data(self.data));
 	}
 
 	// Excludes the terminator.
 	len :: proc(self) -> int {
-		return 0 if len(self.data) == 0 else len(self.data) - 1;
+		return 0 if self.data.len() == 0 else self.data.len() - 1;
 	}
 }

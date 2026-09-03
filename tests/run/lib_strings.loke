@@ -57,10 +57,10 @@ main :: proc() {
 	// Trimming borrows: no allocation, and Unicode whitespace counts.
 	padded: string_view = "  hi \t";
 	fmt.println(strings.trim_space(padded));
-	fmt.println(len(strings.trim_left_space(padded)));
+	fmt.println(strings.trim_left_space(padded).len());
 	fmt.println(strings.trim_right_space("hi  ") == "hi");
 	fmt.println(strings.trim("xxhixx", "x"));
-	fmt.println(len(strings.trim_space("   ")));
+	fmt.println(strings.trim_space("   ").len());
 
 	switch (halves in strings.cut("key=value", "=")) {
 	case .some:
@@ -72,7 +72,7 @@ main :: proc() {
 	switch (halves in strings.cut("key", "=")) {
 	case .some:
 		fmt.println(halves.before);
-		fmt.println(len(halves.after));
+		fmt.println(halves.after.len());
 		fmt.println(true);
 	case .none:
 		// No separator: the whole text is what a caller keeps.
@@ -83,7 +83,7 @@ main :: proc() {
 
 	// Iterators.
 	foreach (part in strings.split("a,b,,c", ",")) {
-		fmt.println(len(part));
+		fmt.println(part.len());
 	}
 	foreach (field in strings.fields("  one\ttwo   three ")) {
 		fmt.println(field);
@@ -102,7 +102,7 @@ main :: proc() {
 	fmt.println(strings.join(parts[:], "-"));
 	fmt.println(strings.join(parts[:]));
 	fmt.println(strings.repeat("ab", 3));
-	fmt.println(len(strings.repeat("ab", 0)));
+	fmt.println(strings.repeat("ab", 0).len());
 	fmt.println(strings.replace("a.b.c", ".", "/"));
 	fmt.println(strings.replace("a.b.c", ".", "/", 1));
 	fmt.println(strings.to_upper("hej å"));

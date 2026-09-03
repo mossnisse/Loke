@@ -14,17 +14,17 @@ main :: proc() {
 
 	// Indexing copies into owning UTF-8 storage, so the result is a `string`.
 	first := os.args[0];
-	fmt.println(len(first) > 0);
+	fmt.println(first.len() > 0);
 
 	// Out of range in either direction is the empty string, not a fault.
-	fmt.println(len(os.args[-1]));
-	fmt.println(len(os.args[os.args.len()]));
+	fmt.println(os.args[-1].len());
+	fmt.println(os.args[os.args.len()].len());
 
 	// Iteration borrows: the runtime owns the bytes for the whole process.
 	count := 0;
 	foreach (a in os.args) {
 		count += 1;
-		fmt.println(len(a) == len(first));
+		fmt.println(a.len() == first.len());
 	}
 	fmt.println(count);
 }

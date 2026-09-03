@@ -8,10 +8,10 @@ package main; import "core:fmt";
 // not frame storage the surrounding scope keeps alive.
 
 first_half :: proc(values: []int) -> []int {
-	return values[:len(values)/2];
+	return values[:values.len()/2];
 }
 
-length :: proc(values: []int) -> int { return len(values); }
+length :: proc(values: []int) -> int { return values.len(); }
 
 main :: proc() {
 	// Used during the statement that built the temporary: allowed.
@@ -19,7 +19,7 @@ main :: proc() {
 
 	// Escaping it: rejected.
 	bad := first_half([dynamic]int{1, 2, 3, 4}[:]);
-	fmt.println(len(bad));
+	fmt.println(bad.len());
 
 	// A slice literal is different: its hidden array is frame storage that
 	// follows the surrounding scope, so this one is fine.

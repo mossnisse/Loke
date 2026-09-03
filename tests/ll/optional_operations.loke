@@ -29,7 +29,7 @@ main :: proc() {
 	xs.append(1);
 	m["a"] = move(xs);
 	switch (held in m.lookup_value("a")) {
-	case .some: fmt.println(len(held) + 1);
+	case .some: fmt.println(held.len() + 1);
 	case .none: fmt.println(0);
 	}
 }

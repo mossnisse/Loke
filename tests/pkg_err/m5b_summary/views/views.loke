@@ -6,7 +6,7 @@ package views;
 // substitutes its own roots into it.
 @(public)
 first_half :: proc(values: []int) -> []int {
-	return values[:len(values) / 2];
+	return values[:values.len() / 2];
 }
 
 // A generic instance gets its own summary, keyed on the instance rather than on

@@ -16,7 +16,7 @@ Id :: struct { a: int, b: int }
 
 impl Id {
 	hash :: proc(self, seed: uint) -> uint {
-		return hash(self.a, hash(self.b, seed));
+		return self.a.hash(self.b.hash(seed));
 	}
 	same :: operator(==) proc(x, y: Id) -> bool {
 		return x.a == y.a && x.b == y.b;
@@ -27,7 +27,7 @@ impl Id {
 // is immutable and an ordinary `value:` parameter can be read through it.
 borrowed_len :: proc(m: map[string][dynamic]int) -> int {
 	switch (held in m.lookup_value("a")) {
-	case .some: return len(held);
+	case .some: return held.len();
 	case .none: return -1;
 	}
 	return -1;
@@ -57,7 +57,7 @@ main :: proc() {
 		"Bob" = { 0, 0 },
 		"Chloe" = { 1, 1 },
 	};
-	fmt.println(len(m));
+	fmt.println(m.len());
 
 	// design.md's own example, verbatim in behaviour.
 	m["Bob"] = Test{3, 3};
@@ -65,13 +65,13 @@ main :: proc() {
 	m["Chloe"].x = 0;
 	fmt.println(m["Chloe"].x);
 	m["Dana"].x = 7;
-	fmt.println(len(m));
+	fmt.println(m.len());
 	fmt.println(m["Dana"].x);
 	fmt.println(m["Dana"].y);
 
 	// A read of a missing key is the zero value and does not insert.
 	fmt.println(m["nobody"].x);
-	fmt.println(len(m));
+	fmt.println(m.len());
 
 	// The three membership forms. `lookup_value` is the `Option` read: it never
 	// inserts, and its payload is an independently owned value rather than a
@@ -86,7 +86,7 @@ main :: proc() {
 	case .some: fmt.println(true);
 	case .none: fmt.println(false);
 	}
-	fmt.println(len(m));
+	fmt.println(m.len());
 	fmt.println("Chloe" in m);
 	fmt.println("nobody" in m);
 	// `or_else` over the same producer.
@@ -105,7 +105,7 @@ main :: proc() {
 	case .some: fmt.println(true);
 	case .none: fmt.println(false);
 	}
-	fmt.println(len(m));
+	fmt.println(m.len());
 
 	// Removal moves the stored value out and drops the key.
 	switch (taken in m.remove("Bob")) {
@@ -118,12 +118,12 @@ main :: proc() {
 	case .some: fmt.println(true);
 	case .none: fmt.println(false);
 	}
-	fmt.println(len(m));
+	fmt.println(m.len());
 
 	// Capacity and clearing.
 	counts: map[string]int;
 	counts.reserve(64);
-	fmt.println(cap(counts) >= 64);
+	fmt.println(counts.cap() >= 64);
 	counts["a"] = 1;
 	counts["a"] += 5;
 	fmt.println(counts["a"]);
@@ -133,10 +133,10 @@ main :: proc() {
 	}
 	fmt.println(counts["b"]);
 	counts.shrink();
-	fmt.println(len(counts));
-	fmt.println(cap(counts) >= 2);
+	fmt.println(counts.len());
+	fmt.println(counts.cap() >= 2);
 	counts.clear();
-	fmt.println(len(counts));
+	fmt.println(counts.len());
 
 	// A user key with an inherent coherent pair.
 	ids: map[Id]int;
@@ -145,7 +145,7 @@ main :: proc() {
 	fmt.println(ids[Id{1, 2}]);
 	fmt.println(ids[Id{3, 4}]);
 	fmt.println(Id{9, 9} in ids);
-	fmt.println(len(ids));
+	fmt.println(ids.len());
 
 	// Managed keys and values: both halves are cloned on insertion and
 	// destroyed exactly once by `clear` or by the map's own drop.
@@ -154,7 +154,7 @@ main :: proc() {
 	names["two"] = "second";
 	names["one"] = "replaced";
 	fmt.println(names["one"]);
-	fmt.println(len(names));
+	fmt.println(names.len());
 
 	// A managed payload read through `lookup_value` is cloned exactly once,
 	// inside the operation: the result owns its own storage, the map keeps its
@@ -165,16 +165,16 @@ main :: proc() {
 	first.append(2);
 	owned["a"] = move(first);
 	copied := owned.lookup_value("a") or_else {};
-	fmt.println(len(copied) > 0);
-	fmt.println(len(copied));
+	fmt.println(copied.len() > 0);
+	fmt.println(copied.len());
 	copied.append(3);
-	fmt.println(len(copied));
-	fmt.println(len(owned["a"]));
+	fmt.println(copied.len());
+	fmt.println(owned["a"].len());
 	vacant := owned.lookup_value("b") or_else {};
-	fmt.println(len(vacant) > 0);
-	fmt.println(len(vacant));
+	fmt.println(vacant.len() > 0);
+	fmt.println(vacant.len());
 	// The source map survives the result's cleanup.
-	fmt.println(len(owned));
+	fmt.println(owned.len());
 	// An immutable parameter and a temporary receiver both read without `inout`.
 	fmt.println(borrowed_len(owned));
 	fmt.println(built().lookup_value("k") or_else -1);
@@ -200,14 +200,14 @@ main :: proc() {
 	}
 
 	names.clear();
-	fmt.println(len(names));
+	fmt.println(names.len());
 
 	// Growth past the load threshold, so the table rehashes several times.
 	wide: map[int]int;
 	for (i := 0; i < 200; i += 1) {
 		wide[i] = i * 2;
 	}
-	fmt.println(len(wide));
+	fmt.println(wide.len());
 	fmt.println(wide[7]);
 	fmt.println(wide[199]);
 	total := 0;
@@ -218,7 +218,7 @@ main :: proc() {
 		}
 	}
 	fmt.println(total);
-	fmt.println(len(wide));
+	fmt.println(wide.len());
 	fmt.println(wide[3]);
 	fmt.println(0 in wide);
 
@@ -240,7 +240,7 @@ inout_slots :: proc() {
 	bump(inout slots["direct"]);
 	bump_either(inout slots["group"]);
 	add_all(inout slots["variadic"], 1, 2, 3);
-	fmt.println(len(slots));
+	fmt.println(slots.len());
 	fmt.println(slots["direct"]);
 	fmt.println(slots["group"]);
 	fmt.println(slots["variadic"]);
@@ -250,7 +250,7 @@ key_copies, key_drops, value_copies, value_drops: int;
 Tracked_Key :: struct { id: int }
 Tracked_Value :: struct { id: int }
 impl Tracked_Key {
-	hash :: proc(self, seed: uint) -> uint { return hash(self.id, seed); }
+	hash :: proc(self, seed: uint) -> uint { return self.id.hash(seed); }
 	equal :: operator(==) proc(a, b: Tracked_Key) -> bool { return a.id == b.id; }
 	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked_Key, Allocator_Error) {
 		key_copies += 1;
@@ -359,7 +359,7 @@ lookup_regions :: proc() {
 	held := m.lookup_value(1) or_else {};
 	drop(m);
 	free_all(arena.allocator());
-	assert(len(held) == 1 && held[0] == 9);
+	assert(held.len() == 1 && held[0] == 9);
 }
 
 // design.md "Maps": "A different policy wraps the key in a local `distinct`
@@ -368,7 +368,7 @@ lookup_regions :: proc() {
 // program keeps the built-in policy its own underlying type has.
 Folded :: distinct u64;
 impl Folded {
-	hash :: proc(self, seed: uint) -> uint { return hash(u64(self) / 2, seed); }
+	hash :: proc(self, seed: uint) -> uint { return (u64(self) / 2).hash(seed); }
 	same :: operator(==) proc(a, b: Folded) -> bool { return u64(a) / 2 == u64(b) / 2; }
 }
 
@@ -379,6 +379,6 @@ distinct_keys :: proc() {
 	plain: map[u64]int;
 	plain[2] = 5;
 	plain[3] = 6;
-	fmt.println(len(folded), folded[Folded(2)]);
-	fmt.println(len(plain), plain[2]);
+	fmt.println(folded.len(), folded[Folded(2)]);
+	fmt.println(plain.len(), plain[2]);
 }

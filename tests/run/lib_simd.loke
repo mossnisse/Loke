@@ -17,9 +17,9 @@ main :: proc() {
 	zeroes: Simd(f32, 4) = {};
 	fmt.println(lanes, zeroes);
 
-	// "`len(v)` is the lane count, a compile-time constant."
-	static_assert(len(lanes) == 4);
-	fmt.println(len(lanes));
+	// "`v.len()` is the lane count, a compile-time constant."
+	static_assert(lanes.len() == 4);
+	fmt.println(lanes.len());
 
 	// "`size_of(Simd(T, N))` is `N * size_of(T)`, and `align_of` is the size" —
 	// unlike the array with the same element and count.
@@ -51,7 +51,7 @@ main :: proc() {
 
 	// "A comparison yields a lane mask, not a `bool`."
 	mask := a > b;
-	fmt.println(mask, mask[0], len(mask));
+	fmt.println(mask, mask[0], mask.len());
 	fmt.println(a == b, a != b, a < b, a <= b, a >= b);
 	// Masks combine with the bitwise operators, which is what `&&` and `||`
 	// would have been for.

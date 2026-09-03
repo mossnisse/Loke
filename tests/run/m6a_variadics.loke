@@ -44,22 +44,22 @@ consume :: proc(values: ..Res) {
 // site exactly as it is without one, and the callee owns the only copy: the
 // value is destroyed once, inside `hand_over`, and not again in `main`.
 hand_over :: proc(value: move Res, counts: ..int) {
-	fmt.println(value.id + len(counts));
+	fmt.println(value.id + counts.len());
 }
 
 // design.md "Named arguments": a name reaches a fixed parameter — there is no
 // way to name a pack element, so a name means the pack is empty. The written
 // order is still the evaluation order.
 labelled :: proc(a: int, b: int, nums: ..int) -> int {
-	return a * 100 + b * 10 + len(nums);
+	return a * 100 + b * 10 + nums.len();
 }
 loud :: proc(n: int) -> int { fmt.println(n); return n; }
 // The same name through a group and through method syntax, where the receiver
 // occupies slot 0 and is not one of the written arguments.
-labelled_f :: proc(a: f64, nums: ..f64) -> int { return int(a) * 1000 + len(nums); }
+labelled_f :: proc(a: f64, nums: ..f64) -> int { return int(a) * 1000 + nums.len(); }
 either :: proc { labelled, labelled_f };
 impl Res {
-	tally :: proc(self, a: int, nums: ..int) -> int { return self.id + a * 10 + len(nums); }
+	tally :: proc(self, a: int, nums: ..int) -> int { return self.id + a * 10 + nums.len(); }
 }
 
 main :: proc() {

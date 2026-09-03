@@ -9,7 +9,7 @@ main :: proc() {
 	xs: [dynamic]int;
 	xs.reserve(16);
 	xs.append(1);
-	fmt.println(len(xs));
-	fmt.println(cap(xs) >= 16);
+	fmt.println(xs.len());
+	fmt.println(xs.cap() >= 16);
 	fmt.println(xs[1]);
 }

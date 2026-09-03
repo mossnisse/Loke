@@ -65,7 +65,7 @@ main :: proc() {
 	high: u8 = 255;
 	foreach (v in low ..= high) { fmt.println(int(v)); }
 	maximum := low ..= high;
-	it := iter(maximum);
+	it := maximum.iter();
 	switch (first in it.next()) {
 	case .some: fmt.println(int(first));
 	case .none:

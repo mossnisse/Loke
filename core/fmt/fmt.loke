@@ -1,7 +1,7 @@
 // Formatted output (design.md "String format printing", "Formatting is a
 // library protocol").
 //
-// The protocol is a `format(value, writer, options)` procedure. `Writer` is a
+// The protocol is a `value.format(writer, options)` method. `Writer` is a
 // byte sink — one procedure and its state — and `Options` is what a formatter
 // reads to spell a scalar. Both layouts are shared with the seed runtime, which
 // is where a formatter's bytes finally go.

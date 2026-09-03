@@ -38,14 +38,14 @@ impl Input {
 	// UTF-8 console reader needs a buffer that survives between calls, which this
 	// deliberately non-owning value does not have.
 	read :: proc(self: inout Input, destination: []mut u8) -> Result(int, io.Error) {
-		if (len(destination) == 0) { return .ok(0); }
+		if (destination.len() == 0) { return .ok(0); }
 		return read_handle(self.handle, destination);
 	}
 }
 
 impl Output {
 	write :: proc(self: inout Output, source: []u8) -> Result(int, io.Error) {
-		if (len(source) == 0) { return .ok(0); }
+		if (source.len() == 0) { return .ok(0); }
 		return write_handle(self.handle, source);
 	}
 }
@@ -213,7 +213,7 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 @(private)
 read_handle :: proc(handle: int, destination: []mut u8) -> Result(int, io.Error) {
 	read: u32 = 0;
-	if (rt_read_file(handle, unsafe.raw_data(destination), u32(len(destination)), &mut read, nil) == 0) {
+	if (rt_read_file(handle, unsafe.raw_data(destination), u32(destination.len()), &mut read, nil) == 0) {
 		error := from_last_error(.Read);
 		if (io.is(error, .Broken_Pipe)) {
 			return .err(io.make_error(.End_Of_Input, .Read));
@@ -229,7 +229,7 @@ read_handle :: proc(handle: int, destination: []mut u8) -> Result(int, io.Error)
 @(private)
 write_handle :: proc(handle: int, source: []u8) -> Result(int, io.Error) {
 	written: u32 = 0;
-	if (rt_write_file(handle, unsafe.raw_data(source), u32(len(source)), &mut written, nil) == 0) {
+	if (rt_write_file(handle, unsafe.raw_data(source), u32(source.len()), &mut written, nil) == 0) {
 		return .err(from_last_error(.Write));
 	}
 	return .ok(int(written));

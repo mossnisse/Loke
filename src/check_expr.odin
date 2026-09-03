@@ -658,6 +658,19 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			v.operand = implicit_pointer_deref(k, v.operand, pointee_type, pointer_mutable)
 			return
 		}
+		// A receiver is a context that needs a type, so an unfixed constant takes
+		// its default one here exactly as it does in an argument (design.md
+		// "Unfixed constants"). This is what lets `TEXT.len()` select `string`'s
+		// member; the fold keeps the result constant.
+		if type_is_untyped(k.c, operand) {
+			materialized := default_type(k.c, operand)
+			if materialized != operand && materialized != INVALID_TYPE {
+				materialize(k, v.operand, materialized)
+				if select_method(k, v, materialized, callee_position) {
+					return
+				}
+			}
+		}
 		errorf(k.c, v.span, "L0363", "`%s` has no field or member `%s`", type_name(k.c, operand), v.name.text)
 		v.type = INVALID_TYPE
 		return
@@ -2590,15 +2603,15 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 	set_call_result(v, chosen.result, chosen.result_inout)
 }
 
-// A fixed array's length is a property of its type and does not evaluate the
-// receiver. Preserve that rule through both the method and free-alias spellings
-// even though both now resolve to a real compiler-contributed member.
+// A fixed array's and a vector's length are properties of their type and do not
+// evaluate the receiver. Preserve that rule even though the call resolves to a
+// real compiler-contributed member.
 fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
 	if chosen == nil || chosen.synth != .Standard_Len || len(chosen.params) == 0 {
 		return
 	}
 	info := underlying_info(k.c, chosen.params[0])
-	if info == nil || info.kind != .Array {
+	if info == nil || (info.kind != .Array && info.kind != .Simd) {
 		return
 	}
 	v.is_const = true
@@ -2610,8 +2623,8 @@ fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Sy
 annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	sym := symbol_of(k.c, chosen)
 	// A sort needs its element's `<` settled before the backend asks for it, and
-	// this is where every call form — method, free alias, group — has arrived at
-	// one declaration.
+	// this is where every call form — method, group — has arrived at one
+	// declaration.
 	require_sort_order_policy(k, sym, v.span)
 	if base := expr_base(v.callee); base != nil && sym != nil {
 		base.resolution = Resolution{kind = .Value, symbol = chosen}

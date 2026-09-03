@@ -15,13 +15,13 @@ Short_Reader :: struct {
 impl Short_Reader {
 	@(public)
 	read :: proc(self: inout Short_Reader, destination: []mut u8) -> Result(int, io.Error) {
-		if (len(destination) == 0) { return .ok(0); }
-		if (self.at >= len(self.source)) {
+		if (destination.len() == 0) { return .ok(0); }
+		if (self.at >= self.source.len()) {
 			return .err(io.make_error(.End_Of_Input, .Read));
 		}
-		count := len(destination);
+		count := destination.len();
 		if (count > self.most) { count = self.most; }
-		if (count > len(self.source) - self.at) { count = len(self.source) - self.at; }
+		if (count > self.source.len() - self.at) { count = self.source.len() - self.at; }
 		foreach (index in 0 ..< count) {
 			destination[index] = self.source[self.at + index];
 		}
@@ -38,7 +38,7 @@ Short_Writer :: struct {
 impl Short_Writer {
 	@(public)
 	write :: proc(self: inout Short_Writer, source: []u8) -> Result(int, io.Error) {
-		count := len(source);
+		count := source.len();
 		if (count > self.most) { count = self.most; }
 		self.collected.append(..source[0:count]);
 		return .ok(count);
@@ -109,7 +109,7 @@ main :: proc() {
 	sink: Short_Writer = {};
 	sink.most = 3;
 	if (!succeeded(io.write_string(inout sink, "hello, värld"))) { fmt.println("write failed"); }
-	fmt.println(len(sink.collected));
+	fmt.println(sink.collected.len());
 	fmt.println(text_of(sink.collected[:]));
 
 	// read_exact fills the whole destination, and reports a short stream.
@@ -127,7 +127,7 @@ main :: proc() {
 	switch (bytes in io.read_to_end(inout whole)) {
 	case .ok:
 		fmt.println(true);
-		fmt.println(len(bytes));
+		fmt.println(bytes.len());
 	case .err:
 		fmt.println(false);
 		fmt.println(0);
@@ -144,7 +144,7 @@ main :: proc() {
 	switch (edge_bytes in io.read_to_end(inout edge, limit = 5)) {
 	case .ok:
 		fmt.println(true);
-		fmt.println(len(edge_bytes));
+		fmt.println(edge_bytes.len());
 	case .err:
 		fmt.println(false);
 		fmt.println(0);
@@ -176,7 +176,7 @@ main :: proc() {
 	}
 
 	kept := reader_over("keep\n", 5);
-	fmt.println(len(io.read_line(inout kept, options = io.Line_Options{true}) or_else no_line()));
+	fmt.println((io.read_line(inout kept, options = io.Line_Options{true}) or_else no_line()).len());
 
 	combined: Error_After_Byte = {};
 	switch (combined_error in io.read_line(inout combined)) {

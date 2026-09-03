@@ -46,8 +46,8 @@ no_string :: proc() -> string { panic("string allocation failed"); }
 
 // All of these are byte offsets, and all of them are non-allocating.
 //
-// The empty needle matches at offset zero, `last_index` answers `len(text)`,
-// and `count` answers `len(text) + 1` — one match before every byte and one
+// The empty needle matches at offset zero, `last_index` answers `text.len()`,
+// and `count` answers `text.len() + 1` — one match before every byte and one
 // after the last.
 
 contains :: proc(text: string_view, needle: string_view) -> bool {
@@ -59,13 +59,13 @@ contains :: proc(text: string_view, needle: string_view) -> bool {
 }
 
 starts_with :: proc(text: string_view, prefix: string_view) -> bool {
-	if (len(prefix) > len(text)) { return false; }
+	if (prefix.len() > text.len()) { return false; }
 	return matches_at(text.bytes(), 0, prefix.bytes());
 }
 
 ends_with :: proc(text: string_view, suffix: string_view) -> bool {
-	if (len(suffix) > len(text)) { return false; }
-	return matches_at(text.bytes(), len(text) - len(suffix), suffix.bytes());
+	if (suffix.len() > text.len()) { return false; }
+	return matches_at(text.bytes(), text.len() - suffix.len(), suffix.bytes());
 }
 
 // Searching compares **bytes**, never subranges: slicing a view at an offset
@@ -80,14 +80,14 @@ matches_at :: proc(text: []u8, offset: int, needle: []u8) -> bool {
 	return true;
 }
 
-// ponytail: a naive O(len(text) * len(needle)) scan. Every first-release caller
+// ponytail: a naive O(text.len() * needle.len()) scan. Every first-release caller
 // searches short needles in short lines; a two-way or Boyer-Moore search goes
 // here when a measurement asks for one, behind this same signature.
 index :: proc(text: string_view, needle: string_view) -> Option(int) {
-	if (len(needle) == 0) { return .some(0); }
-	if (len(needle) > len(text)) { return .none; }
+	if (needle.len() == 0) { return .some(0); }
+	if (needle.len() > text.len()) { return .none; }
 	haystack, wanted := text.bytes(), needle.bytes();
-	last := len(text) - len(needle);
+	last := text.len() - needle.len();
 	for (offset := 0; offset <= last; offset += 1) {
 		if (matches_at(haystack, offset, wanted)) {
 			return .some(offset);
@@ -97,10 +97,10 @@ index :: proc(text: string_view, needle: string_view) -> Option(int) {
 }
 
 last_index :: proc(text: string_view, needle: string_view) -> Option(int) {
-	if (len(needle) == 0) { return .some(len(text)); }
-	if (len(needle) > len(text)) { return .none; }
+	if (needle.len() == 0) { return .some(text.len()); }
+	if (needle.len() > text.len()) { return .none; }
 	haystack, wanted := text.bytes(), needle.bytes();
-	for (offset := len(text) - len(needle); offset >= 0; offset -= 1) {
+	for (offset := text.len() - needle.len(); offset >= 0; offset -= 1) {
 		if (matches_at(haystack, offset, wanted)) {
 			return .some(offset);
 		}
@@ -127,13 +127,13 @@ index_rune :: proc(text: string_view, value: rune) -> Option(int) {
 
 // Non-overlapping occurrences, left to right.
 count :: proc(text: string_view, needle: string_view) -> int {
-	if (len(needle) == 0) { return len(text) + 1; }
+	if (needle.len() == 0) { return text.len() + 1; }
 	total := 0;
 	rest := text;
 	// `break` inside a variant switch leaves the switch, so the loop's own exit
 	// is a condition rather than a jump out of a case.
 	searching := true;
-	for (; searching && len(rest) >= len(needle); ) {
+	for (; searching && rest.len() >= needle.len(); ) {
 		at := 0;
 		switch (found in index(rest, needle)) {
 		case .some: at = found;
@@ -141,7 +141,7 @@ count :: proc(text: string_view, needle: string_view) -> int {
 		}
 		if (!searching) { continue; }
 		total += 1;
-		rest = rest[at + len(needle):];
+		rest = rest[at + needle.len():];
 	}
 	return total;
 }
@@ -163,7 +163,7 @@ trim_left_space :: proc(text: string_view) -> string_view {
 	foreach (codepoint, offset in text.rune_offsets()) {
 		if (!is_space(codepoint)) { return text[offset:]; }
 	}
-	return text[len(text):];
+	return text[text.len():];
 }
 
 // There is no reverse rune iteration, so the forward walk remembers where the
@@ -184,7 +184,7 @@ trim_space :: proc(text: string_view) -> string_view {
 
 // Trims any scalar value that appears in `cutset` from both ends.
 trim :: proc(text: string_view, cutset: string_view) -> string_view {
-	start := len(text);
+	start := text.len();
 	end := 0;
 	foreach (codepoint, offset in text.rune_offsets()) {
 		if (!contains_rune(cutset, codepoint)) {
@@ -192,7 +192,7 @@ trim :: proc(text: string_view, cutset: string_view) -> string_view {
 			end = offset + rune_size(codepoint);
 		}
 	}
-	if (start >= end) { return text[len(text):]; }
+	if (start >= end) { return text[text.len():]; }
 	return text[start:end];
 }
 
@@ -223,7 +223,7 @@ Cut :: struct { before: string_view, after: string_view }
 
 cut :: proc(text: string_view, separator: string_view) -> Option(Cut) {
 	switch (at in index(text, separator)) {
-	case .some: return .some(Cut{text[0:at], text[at + len(separator):]});
+	case .some: return .some(Cut{text[0:at], text[at + separator.len():]});
 	case .none: return .none;
 	}
 	return .none;
@@ -256,7 +256,7 @@ repeat :: proc(
 ) -> string {
 	if (times < 0) { panic("repeat count is negative"); }
 	builder := init(allocator);
-	builder.reserve(len(text) * times);
+	builder.reserve(text.len() * times);
 	for (i := 0; i < times; i += 1) {
 		builder.append(text);
 	}
@@ -278,7 +278,7 @@ replace :: proc(
 	// `break` inside a variant switch leaves the switch, so the loop's own exit
 	// is a condition rather than a jump out of a case.
 	searching := true;
-	for (; searching && len(old) > 0 && (limit < 0 || done < limit); ) {
+	for (; searching && old.len() > 0 && (limit < 0 || done < limit); ) {
 		at := 0;
 		switch (found in index(rest, old)) {
 		case .some: at = found;
@@ -287,7 +287,7 @@ replace :: proc(
 		if (!searching) { continue; }
 		builder.append(rest[0:at]);
 		builder.append(new);
-		rest = rest[at + len(old):];
+		rest = rest[at + old.len():];
 		done += 1;
 	}
 	builder.append(rest);
@@ -301,7 +301,7 @@ replace :: proc(
 // tables can arrive without changing a caller.
 to_upper :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
 	builder := init(allocator);
-	builder.reserve(len(text));
+	builder.reserve(text.len());
 	foreach (codepoint in text) {
 		if (codepoint >= 'a' && codepoint <= 'z') {
 			builder.append(rune(int(codepoint) - 32));
@@ -314,7 +314,7 @@ to_upper :: proc(text: string_view, allocator: Allocator = mem.default_allocator
 
 to_lower :: proc(text: string_view, allocator: Allocator = mem.default_allocator()) -> string {
 	builder := init(allocator);
-	builder.reserve(len(text));
+	builder.reserve(text.len());
 	foreach (codepoint in text) {
 		if (codepoint >= 'A' && codepoint <= 'Z') {
 			builder.append(rune(int(codepoint) + 32));

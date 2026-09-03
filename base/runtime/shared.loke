@@ -82,7 +82,7 @@ shared_construct :: proc{shared_from_clone, shared_from_move};
 try_shared_from_clone :: proc(
 	value: $T, allocator: Allocator = default_allocator(),
 ) -> Result(Shared(T), Allocator_Error) {
-	copy := try_clone(value, allocator) or_return;
+	copy := value.try_clone(allocator) or_return;
 	return try_shared_from_move(move(copy), allocator);
 }
 

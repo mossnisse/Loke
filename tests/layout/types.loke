@@ -32,6 +32,6 @@ main :: proc() {
 	h: Handle;
 	f: Callback;
 	e: Empty;
-	fmt.println(size_of(Pair) + align_of(Mixed) + offset_of(Nested, tail) + len(c.grid));
+	fmt.println(size_of(Pair) + align_of(Mixed) + offset_of(Nested, tail) + c.grid.len());
 	fmt.println(size_of(p) + size_of(m) + size_of(n) + size_of(s) + size_of(w) + size_of(h) + size_of(f) + size_of(e));
 }

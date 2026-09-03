@@ -15,7 +15,7 @@ main :: proc() {
 	// rather than the fallback.
 	xs: [dynamic]int = {};
 	xs.append(1, 2, 3);
-	fmt.println(len(xs), xs);
+	fmt.println(xs.len(), xs);
 
 	switch (_ in xs.try_reserve(200_000)) {
 	case .ok:  fmt.println("reserve ok");

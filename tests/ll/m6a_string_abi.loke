@@ -16,5 +16,5 @@ share :: proc(text: string) -> string {
 
 main :: proc() {
 	literal: string = "hej";
-	fmt.println(len(share(literal)));
+	fmt.println(share(literal).len());
 }
