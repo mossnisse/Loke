@@ -1785,7 +1785,6 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 				lookup_pkg = block.pkg,
 				owner_type = subject,
 				public     = declaration_is_public(k, d),
-				implicit   = has_attribute(d.attributes, "implicit"),
 				kind       = decl_proc_literal(d) != nil ? Symbol_Kind.Proc : Symbol_Kind.Const,
 				def_scope  = k.scope,
 				def_file   = k.file,

@@ -19,8 +19,7 @@ RANK_EXACT :: 0 // exact type and parameter-mode match
 RANK_ADJUST :: 1 // a capability adjustment that does not create a value
 RANK_CONST_KIND :: 2 // an untyped constant converted without changing its kind
 RANK_BUILTIN :: 3 // any other built-in implicit conversion
-RANK_IMPLICIT :: 4 // a user `@(implicit)` conversion, reachable only from a constant
-RANK_NONE :: 5 // no conversion at all: the candidate is not viable
+RANK_NONE :: 4 // no conversion at all: the candidate is not viable
 
 // One supplied argument, checked exactly once before any candidate sees it.
 // Ranking is a pure predicate over these facts, so asking N candidates cannot
@@ -51,8 +50,6 @@ Candidate :: struct {
 	// Which parameter each supplied argument fills.
 	slots:  []int,
 	filled: []bool,
-	// The `@(implicit)` `init` overload a rank-4 argument goes through.
-	via:    []Symbol_Id,
 	// The arguments this candidate actually ranked. A generic candidate ranks the
 	// runtime subset: its `$` arguments were consumed at instantiation time.
 	args:   []Arg_Info,
@@ -271,9 +268,9 @@ constant_conversion_preserves_kind :: proc(c: ^Compiler, from, to: Type_Id) -> b
 }
 
 @(private = "file")
-argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mode) -> (int, Symbol_Id) {
+argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mode) -> int {
 	if param == INVALID_TYPE || arg.type == INVALID_TYPE {
-		return RANK_NONE, INVALID_SYMBOL
+		return RANK_NONE
 	}
 	// A parameter mode is part of the match, not a conversion. A receiver's `inout`
 	// mode is implicit (already supplied by call syntax), but a consuming receiver
@@ -282,13 +279,13 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	adjusted := false
 	if arg.is_receiver {
 		if moved != (mode == .Move) {
-			return RANK_NONE, INVALID_SYMBOL
+			return RANK_NONE
 		}
 		adjusted = mode != .Value
 	} else {
 		want_inout := mode == .Inout
 		if want_inout != (arg.mode == .Inout) {
-			return RANK_NONE, INVALID_SYMBOL
+			return RANK_NONE
 		}
 		// design.md "Parameter semantics and ABI lowering": a `move` parameter is
 		// written `move(expr)` at the call site too. The reverse is not a mismatch —
@@ -296,12 +293,12 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		// cloning into it — but it is the weaker match, so a written transfer picks
 		// the consuming overload wherever both exist.
 		if mode == .Move && !moved {
-			return RANK_NONE, INVALID_SYMBOL
+			return RANK_NONE
 		}
 		adjusted = moved && mode == .Value
 	}
 	if arg.type == param {
-		return adjusted ? RANK_ADJUST : RANK_EXACT, INVALID_SYMBOL
+		return adjusted ? RANK_ADJUST : RANK_EXACT
 	}
 	if type_is_untyped(k.c, arg.type) {
 		if assignable(k.c, arg.type, param) {
@@ -314,28 +311,20 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 					wanted = any_view_source_type(k.c, arg.type)
 				}
 				if _, fits := convert_const(k.c, arg.const_value, wanted, false); !fits {
-					return RANK_NONE, INVALID_SYMBOL
+					return RANK_NONE
 				}
 			}
 			if constant_conversion_preserves_kind(k.c, arg.type, param) {
-				return RANK_CONST_KIND, INVALID_SYMBOL
+				return RANK_CONST_KIND
 			}
-			return RANK_BUILTIN, INVALID_SYMBOL
+			return RANK_BUILTIN
 		}
-		// Rank 4 sits below every built-in conversion, so a constant always
-		// prefers a compatible built-in destination.
-		if arg.is_const {
-			overload, applicable := implicit_conversion_overload(k, arg, param)
-			if applicable {
-				return RANK_IMPLICIT, overload
-			}
-		}
-		return RANK_NONE, INVALID_SYMBOL
+		return RANK_NONE
 	}
 	if assignable(k.c, arg.type, param) {
-		return RANK_BUILTIN, INVALID_SYMBOL
+		return RANK_BUILTIN
 	}
-	return RANK_NONE, INVALID_SYMBOL
+	return RANK_NONE
 }
 
 // ----------------------------------------------------------------- candidates --
@@ -355,7 +344,6 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		args   = args,
 		ranks  = make([]int, len(args), k.c.semantic_allocator),
 		slots  = make([]int, len(args), k.c.semantic_allocator),
-		via    = make([]Symbol_Id, len(args), k.c.semantic_allocator),
 	}
 	sym := symbol_of(k.c, symbol_id)
 	if sym == nil {
@@ -439,7 +427,7 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			cand.reason = "`..` spreads into a variadic parameter"
 			return cand
 		}
-		rank, via := argument_rank(k, arg, want, mode)
+		rank := argument_rank(k, arg, want, mode)
 		if rank == RANK_NONE {
 			// A receiver form that does not match is not a type mismatch: the
 			// ordinary sentence would name one type twice and explain nothing.
@@ -470,7 +458,6 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		}
 		cand.ranks[index] = rank
-		cand.via[index] = via
 	}
 
 	for slot in 0 ..< count {
@@ -526,7 +513,7 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 		runtime_index := 0
 		for arg, index in args {
 			if inference.compile_time[index] {
-				rank, _ := argument_rank(k, arg, inference.compile_targets[index], .Value)
+				rank := argument_rank(k, arg, inference.compile_targets[index], .Value)
 				if rank == RANK_NONE {
 					cand.viable = false
 					cand.reason = fmt.aprintf(
@@ -812,15 +799,11 @@ vector_text :: proc(c: ^Compiler, ranks: []int) -> string {
 	return strings.to_string(b)
 }
 
-// ------------------------------------------------- implicit conversions --
-// Filled in by `src/impl.odin` once `init` groups exist; declared here so the
-// ranking function has one seam rather than a conditional.
-
 // --------------------------------------------------------------- binding --
 
 // Writes the chosen candidate onto the call node: the parameter-order argument
 // list the backend evaluates, with every untyped constant materialised at its
-// parameter's type and every rank-4 argument wrapped in its conversion.
+// parameter's type.
 bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: []Arg_Info) -> bool {
 	sym := symbol_of(k.c, cand.symbol)
 	if sym == nil {
@@ -852,13 +835,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 	for arg, index in args {
 		slot := cand.slots[index]
 		value := arg.expr
-		if cand.ranks[index] == RANK_IMPLICIT && cand.via[index] == INVALID_SYMBOL {
-			implicit_conversion_overload(k, arg, sym.params[slot], report = true)
-			ok = false
-			continue
-		} else if cand.via[index] != INVALID_SYMBOL {
-			value = wrap_implicit_conversion(k, value, cand.via[index])
-		} else if !materialize_argument(k, value, sym.params[slot]) {
+		if !materialize_argument(k, value, sym.params[slot]) {
 			ok = false
 			continue
 		}

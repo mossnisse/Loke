@@ -338,9 +338,8 @@ operator_viable :: proc(
 	return overload_has_viable(k, operator_candidates(k, symbol, operands), args)
 }
 
-// The operand list in parameter order, with every untyped constant materialised
-// and every rank-4 argument wrapped. Operator forms have no defaults, so every
-// slot comes from a written operand.
+// The operand list in parameter order, with every untyped constant materialised.
+// Operator forms have no defaults, so every slot comes from a written operand.
 @(private = "file")
 bind_operator_operands :: proc(k: ^Checker, cand: Candidate, args: []Arg_Info) -> ([]Expr, bool) {
 	sym := symbol_of(k.c, cand.symbol)
@@ -352,13 +351,7 @@ bind_operator_operands :: proc(k: ^Checker, cand: Candidate, args: []Arg_Info) -
 	for arg, index in args {
 		slot := cand.slots[index]
 		value := arg.expr
-		if cand.ranks[index] == RANK_IMPLICIT && cand.via[index] == INVALID_SYMBOL {
-			implicit_conversion_overload(k, arg, sym.params[slot], report = true)
-			ok = false
-			continue
-		} else if cand.via[index] != INVALID_SYMBOL {
-			value = wrap_implicit_conversion(k, value, cand.via[index])
-		} else if !materialize_argument(k, value, sym.params[slot]) {
+		if !materialize_argument(k, value, sym.params[slot]) {
 			ok = false
 		}
 		bound[slot] = value

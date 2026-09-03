@@ -33,7 +33,6 @@ Complex :: struct { real, imaginary: f64 }
 impl Complex {
 	components :: proc(real, imaginary: f64) -> Complex { return {real, imaginary}; }
 
-	@(implicit)
 	from_scalar :: hook(convert) proc(value: f64) -> Complex { return {value, 0}; }
 
 	// A first parameter typed `^T` is not a receiver: no method sugar.
@@ -76,8 +75,8 @@ main :: proc() {
 
 	z := Complex.components(3.0, 4.0);
 	fmt.println(int(magnitude2(z)));
-	// `2.0` is an untyped float constant, so `@(implicit)` applies.
-	fmt.println(int(magnitude2(2.0)));
+	// A scalar reaches `Complex` through the written conversion, constant or not.
+	fmt.println(int(magnitude2(Complex(2.0))));
 	scale: f64 = 5.0;
 	fmt.println(int(magnitude2(Complex(scale))));
 	Complex.bump(&mut z);

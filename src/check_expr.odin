@@ -2637,9 +2637,8 @@ annotate_chosen_callee :: proc(k: ^Checker, v: ^Expr_Call, chosen: Symbol_Id) {
 	v.resolution = Resolution{kind = .Call, symbol = chosen, chosen_overload = chosen}
 }
 
-// One written argument bound against one parameter, with the `@(implicit)` path
-// for an untyped constant no built-in conversion reaches. Returns the
-// expression to bind — the written one unless a conversion wrapped it.
+// One written argument bound against one parameter, returned as the expression
+// to bind.
 // design.md "Parameter semantics and ABI lowering": `inout` is written at both
 // ends, and the argument is a place because the callee writes through it.
 // Shared, so a call with a variadic pack enforces the same contract as one
@@ -2678,16 +2677,6 @@ check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id, inout_argume
 	k.place_position, k.insert_position = false, false
 	if type == INVALID_TYPE || target == INVALID_TYPE {
 		return e, false
-	}
-	if type_is_untyped(k.c, type) && !assignable(k.c, type, target) {
-		arg := arg_from_expr(k, e)
-		overload, applicable := implicit_conversion_overload(k, arg, target, report = true)
-		if overload != INVALID_SYMBOL {
-			return wrap_implicit_conversion(k, e, overload), true
-		}
-		if applicable {
-			return e, false
-		}
 	}
 	if !materialize(k, e, target) {
 		return e, false

@@ -5,9 +5,8 @@
 // relationship with the compiler. design.md's own `Complex_F64` is the `T = f64`
 // case of what is written here.
 //
-// A scalar *constant* converts implicitly through `hook(convert)`; a scalar
-// variable needs the explicit `Complex(f64)(x)`. That is the ordinary
-// conversion rule, not a numeric special case.
+// A scalar converts through `hook(convert)`, written out: `Complex(f64)(x)`.
+// That is the ordinary conversion rule, not a numeric special case.
 @(public)
 package math;
 
@@ -24,7 +23,6 @@ impl Complex($T) {
 		return {real, imaginary};
 	}
 
-	@(implicit)
 	from_scalar :: hook(convert) proc(value: T) -> Complex(T) {
 		return {value, T(0)};
 	}
@@ -97,7 +95,6 @@ impl Quaternion($T) {
 		return {real, i, j, k};
 	}
 
-	@(implicit)
 	from_scalar :: hook(convert) proc(value: T) -> Quaternion(T) {
 		return {value, T(0), T(0), T(0)};
 	}

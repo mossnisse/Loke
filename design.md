@@ -211,10 +211,9 @@ Assigning between different types requires an explicit conversion unless an impl
 
 ##### Implicit type conversions
 
-The following list defines the implicit conversions. User-defined implicit
-conversions apply only to unfixed constants through an inherent
-[`@(implicit)` conversion hook](#implicit-conversion-from-constants).
-Imported extensions cannot add other implicit conversions.
+The following list defines the implicit conversions. There are no
+user-defined ones: a `hook(convert)` applies only where it is written, and
+imported extensions cannot add conversions.
 
 - `^mut T` -> `^T`, `[]mut T` -> `[]T`, and `dyn mut I` -> `dyn I`
 - `^T` / `^mut T` -> `rawptr`
@@ -235,8 +234,6 @@ Imported extensions cannot add other implicit conversions.
   [Borrows and lifetimes](#borrows-and-lifetimes)
 - Unfixed strings -> `string`, `string_view`, or `cstring_view` when the
   destination supplies the required lifetime
-- Unfixed constants into a user type through an eligible `@(implicit)`
-  conversion hook
 
 ### Unfixed constants
 
@@ -2194,9 +2191,8 @@ Candidates are ranked with the same algorithm as named-procedure overloads. Cand
 1. Borrow, dereference, or mutable-to-read-only adjustment that creates no value.
 2. Contextual conversion of a compatible unfixed constant preserving its kind (integer→integer, floating→floating, boolean→`bool`, rune→rune, string→string).
 3. Any other built-in implicit conversion, including unfixed integer constant → floating type.
-4. A user [`@(implicit)`](#implicit-conversion-from-constants) conversion. Reachable only for an unfixed-constant argument, so it applies at most once and cannot chain.
 
-Rank 4 sits below every built-in conversion so a constant prefers a built-in destination: for `foo :: proc{foo_f64, foo_complex}`, `foo(2.0)` selects `foo_f64` at rank 2, not `Complex_F64` at rank 4. The default type of an unfixed constant does not participate in ranking: `foo(7)` picks an integer over a floating overload, but `i8` vs `int` overloads (or `f32` vs `f64` for `7.0`) remain ambiguous.
+Only built-in conversions rank. A user `hook(convert)` never enters ranking at all, because it applies only where it is written, so no candidate is reachable through one. The default type of an unfixed constant does not participate in ranking either: `foo(7)` picks an integer over a floating overload, but `i8` vs `int` overloads (or `f32` vs `f64` for `7.0`) remain ambiguous.
 
 The ranks form a vector; they are not summed and argument order does not break ties. A is better than B when A is no worse for every argument and strictly better for at least one. Crossed vectors like `(0, 3)` and `(3, 0)` are intentionally ambiguous.
 
@@ -2482,38 +2478,6 @@ distance_k := Kilometers(distance_m); // explicit user conversion
 
 A conversion hook takes exactly one value, has no receiver, and returns its target type. It must be inherent to the target's package; an extension cannot change conversion meaning from another package. Conversion hooks may overload by source type, but a source/target pair has exactly one hook. A built-in conversion pair cannot also have a hook, so `int(x)` and other built-in conversions never change meaning based on declarations or imports. The hook implementation is reached through `Target(value)`, not called directly by its declaration name.
 
-#### Implicit conversion from constants
-
-Adding `@(implicit)` to a `hook(convert)` declaration lets it apply without being written, **but only when the argument is an unfixed constant**; a runtime value of the same type always requires the explicit form.
-
-The parameter type must be a built-in numeric, boolean, rune, or string type, so an unfixed constant kind can reach it. The constant must convert to that parameter type under the ordinary [unfixed-constant rule](#unfixed-constants). So an unfixed floating constant can reach an `@(implicit)` conversion whose parameter is floating-point, but not one whose parameter is an integer.
-
-```odin
-impl Complex_F64 {
-	from_components :: proc(real, imaginary: f64) -> Complex_F64 {
-		return {real, imaginary};
-	}
-
-	@(implicit)
-	from_scalar :: hook(convert) proc(value: f64) -> Complex_F64 {
-		return {value, 0};
-	}
-}
-
-z := Complex_F64.from_components(1, 2);
-w := z*z + 2.0;              // OK: `2.0` is an unfixed float constant
-
-scale: f64 = read_scale();
-bad := z + scale;            // ERROR: no operator `+` for (Complex_F64, f64)
-good := z + Complex_F64(scale);
-```
-
-Restricting the rule to constants keeps [library numeric types](#library-numeric-types) usable (`z*z + 2.0` means what it looks like) while giving up a general implicit-conversion facility:
-
-- runtime conversions stay explicit and do not depend on declarations in scope;
-- chains cannot form, since an unfixed constant takes at most one user conversion;
-- narrowing is already caught by the constant-representability rule at compile time.
-
 #### Resolving `T(...)`
 
 `T(value)` means conversion only and takes exactly one plain value argument. The compiler first applies a non-overridable built-in conversion when the source/target pair has one. Otherwise it resolves the target type's inherent `hook(convert)` declarations with the ordinary overload rules. Equal-ranked hooks are ambiguous rather than ordered by declaration.
@@ -2687,21 +2651,20 @@ impl Complex_F64 {
 		};
 	}
 
-	@(implicit)
 	from_scalar :: hook(convert) proc(value: f64) -> Complex_F64 {
 		return {value, 0};
 	}
 }
 
 z := Complex_F64.from_components(1, 2);
-w := z*z + 2.0;               // `2.0` is a constant, so `from_scalar` applies
+w := z*z + Complex_F64(2.0);  // the conversion hook, written
 ```
 
-Library numeric types have no special compiler relationship. A scalar constant
-may be converted by an `@(implicit)` conversion hook; a scalar variable requires
-an explicit conversion such as `Complex_F64(x)`. Generic numeric families and
-third-party numeric types use the same construction, conversion, and operator
-rules as other user-defined types.
+Library numeric types have no special compiler relationship. A scalar reaches
+`Complex_F64` through the written conversion `Complex_F64(x)`, constant or not:
+there are no user-defined implicit conversions, so an operand that changes type
+says so. Generic numeric families and third-party numeric types use the same
+construction, conversion, and operator rules as other user-defined types.
 
 ## Interfaces and polymorphism
 
@@ -6183,7 +6146,6 @@ The lists below identify attributes by their declaration targets. Struct and uni
 ```odin
     @(deprecated=<string>)
     @(export)
-    @(implicit)
     @(link_name=<string>)
     @(require_results)
 ```
@@ -6229,12 +6191,6 @@ Union literals may designate a [zero variant](#zero-values-and-zero) and a
 [failure variant](#the-failure-protocol-and-failure).
 
 ### Attribute reference
-
-#### `@(implicit)`
-
-`@(implicit)` permits an implicit use of a target type's one-argument `hook(convert)`. The argument must be an unfixed constant. The parameter type must be a built-in numeric, Boolean, rune, or string type. A runtime value requires the explicit `Target(value)` form. See [Implicit conversion from constants](#implicit-conversion-from-constants).
-
-`@(implicit)` on a declaration that is not an appropriately typed `hook(convert)` is an error.
 
 #### `@(default_calling_convention=<string>)`
 

@@ -58,8 +58,6 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Proc_Decl}, .Value_Required}, true
 	case "export":
 		return {{.Proc_Decl, .Var_Decl}, .None}, true
-	case "implicit":
-		return {{.Proc_Decl}, .None}, true
 	case "link_name":
 		return {{.Proc_Decl, .Var_Decl}, .Value_Required}, true
 	case "default_calling_convention":

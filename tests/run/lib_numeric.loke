@@ -30,7 +30,6 @@ impl Complex_F64 {
 		};
 	}
 
-	@(implicit)
 	from_scalar :: hook(convert) proc(value: f64) -> Complex_F64 {
 		return {value, 0};
 	}
@@ -42,20 +41,20 @@ Q :: math.Quaternion(f64);
 main :: proc() {
 	// design.md's example.
 	z := Complex_F64.from_components(1, 2);
-	w := z*z + 2.0;               // `2.0` is a constant, so `from_scalar` applies
+	w := z*z + Complex_F64(2.0);  // the written conversion reaches `from_scalar`
 	fmt.println(z.real, z.imaginary);
 	fmt.println(w.real, w.imaginary);
 
 	// The same arithmetic through the library's generic type.
 	g := C.from_components(1, 2);
-	h := g*g + 2.0;
+	h := g*g + C(2.0);
 	fmt.println(g, h);
 	fmt.println(g + g, g - g, -g);
 	fmt.println(g/g);
 	fmt.println(g == C.from_components(1, 2), g == h);
 	fmt.println(g.conjugate(), g.norm_squared());
 
-	// A scalar variable needs the written conversion; only a constant is implicit.
+	// Every scalar needs the written conversion, constant or not.
 	scale := 3.0;
 	fmt.println(C(scale));
 
@@ -75,7 +74,7 @@ main :: proc() {
 	fmt.println(i + j, i - j, -i);
 	fmt.println(i.conjugate(), i.norm_squared());
 	fmt.println(Q.from_components(1, 2, 3, 4).norm_squared());
-	fmt.println(i + 1.0);
+	fmt.println(i + Q(1.0));
 
 	// ---- the floating specializations (math-plan step 4) ----
 	//

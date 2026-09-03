@@ -711,9 +711,6 @@ Symbol :: struct {
 	// receiver, so it leaves this false and gets no method-call sugar.
 	has_receiver: bool,
 	receiver:     Param_Mode,
-	// `@(implicit)` on a `hook(convert)` declaration: reachable from an untyped
-	// constant without being written.
-	implicit:     bool,
 	// A closed compiler-controlled semantic role. Ordinary procedure names have
 	// no hook meaning; operators continue to use the symbolic field below.
 	hook:         Hook_Kind,

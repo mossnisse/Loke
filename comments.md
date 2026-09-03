@@ -677,21 +677,24 @@ interoperate without silently allocating. Closed owning sets use unions;
 libraries that need open ownership can first validate an explicit owner record
 around raw storage and their own callback record.
 
-### General user-defined implicit conversions
+### User-defined implicit conversions
 
-`@(implicit)` applies only to a one-argument `init` overload and only where the
-argument is an untyped constant. The
-motivating case was always literals entering library numeric types — `z*z + 2.0`
-should mean what it looks like — and that is a property of literals, not of
-`f64`. A general facility would additionally have converted runtime values
-silently based on what happened to be imported.
+There are none, at either scale. A general facility would have converted runtime
+values silently based on what happened to be imported, so it was cut early; what
+survived it was `@(implicit)`, a narrowed form that applied a one-argument
+`hook(convert)` to an unfixed constant only. That went too.
 
-Narrowing it removed three rules that only existed to contain the general
-version: the cap on conversion chain depth (a constant is not a user type, so no
-chain can form), the argument that lookup terminates, and the advice that
-implementations warn about lossy implicit conversions (constant representability
-is already checked at compile time). Promoting a variable is written
-`Complex_F64(x)`, which is what the reader needs to see anyway.
+Its motivating case was literals entering library numeric types: `z*z + 2.0`
+should mean what it looks like. But the version that does is `z*z +
+Complex_F64(2.0)`, which is four characters longer and needs no language feature.
+Against that, `@(implicit)` cost an attribute, a rank below every built-in
+conversion in overload resolution, an interaction with the unfixed-constant
+rule, and a standing proof obligation that conversions cannot chain.
+
+Removing it also removed the rules that existed only to contain the general
+version: the cap on conversion chain depth, the argument that lookup terminates,
+and the advice that implementations warn about lossy implicit conversions.
+A conversion now happens exactly where one is written.
 
 ### A read-only-data attribute
 

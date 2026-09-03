@@ -122,7 +122,6 @@ declare_impl_member :: proc(
 			def_file_node = k.file_node,
 			owner_type = item.subject,
 			public     = declaration_is_public(k, d),
-			implicit   = has_attribute(d.attributes, "implicit"),
 			hook       = decl_hook_kind(d),
 			kind       = decl_proc_literal(d) != nil ? Symbol_Kind.Proc : Symbol_Kind.Const,
 		}
@@ -255,37 +254,7 @@ check_associated_member :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl) {
 			continue
 		}
 		validate_semantic_hook(k, item, d, sym, symbol_id)
-		if !sym.implicit {
-			continue
-		}
-		if sym.hook != .Convert || !implicit_conversion_is_valid(k, sym) {
-			errorf(
-				k.c,
-				sym.span,
-				"L0413",
-				"`@(implicit)` needs a `hook(convert)` whose parameter is a built-in numeric, boolean, rune, or string type",
-			)
-		}
 	}
-}
-
-@(private = "file")
-implicit_conversion_is_valid :: proc(k: ^Checker, sym: ^Symbol) -> bool {
-	if sym.kind != .Proc || len(sym.params) != 1 || sym.result == INVALID_TYPE {
-		return false
-	}
-	if sym.result != sym.owner_type {
-		return false
-	}
-	param := sym.params[0]
-	if type_kind(k.c, param) == .Distinct {
-		return false // a distinct type is not a built-in one an untyped constant reaches
-	}
-	#partial switch type_kind(k.c, param) {
-	case .Int, .Float, .Rune, .Bool, .String, .Untyped_String:
-		return true
-	}
-	return false
 }
 
 // ---------------------------------------------------------------- lookup --
@@ -441,73 +410,6 @@ hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symb
 		}
 	}
 	return out[:]
-}
-
-// ------------------------------------------- implicit constant conversions --
-
-// The `@(implicit)` conversion hook on `target` that an untyped
-// constant argument can reach, or INVALID_SYMBOL. Ranked below every built-in
-// conversion, so a constant always prefers a compatible built-in destination.
-implicit_conversion_overload :: proc(k: ^Checker, arg: Arg_Info, target: Type_Id, report := false) -> (Symbol_Id, bool) {
-	if !arg.is_const || !type_is_untyped(k.c, arg.type) {
-		return INVALID_SYMBOL, false
-	}
-	usable := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-	for candidate in hook_candidates(k, target, .Convert) {
-		sym := symbol_of(k.c, candidate)
-		if sym == nil || !sym.implicit || !implicit_conversion_is_valid(k, sym) {
-			continue
-		}
-		// The constant must convert implicitly to that parameter type under the
-		// ordinary untyped-constant rule, which is why an untyped float cannot
-		// reach an integer-parameter conversion.
-		if !assignable(k.c, arg.type, sym.params[0]) {
-			continue
-		}
-		if _, fits := convert_const(k.c, arg.const_value, sym.params[0], false); !fits {
-			continue
-		}
-		append(&usable, candidate)
-	}
-	if len(usable) == 0 {
-		return INVALID_SYMBOL, false
-	}
-	description := fmt.aprintf("implicit conversion to `%s`", type_name(k.c, target), allocator = k.c.semantic_allocator)
-	args := []Arg_Info{arg}
-	cand, resolved := resolve_overload(k, arg.span, description, usable[:], args, target, report)
-	return resolved ? cand.symbol : INVALID_SYMBOL, true
-}
-
-// Wraps `value` in a call to the chosen `@(implicit)` conversion, so the rest of
-// the compiler sees an ordinary call and needs no rank-4 special case.
-wrap_implicit_conversion :: proc(k: ^Checker, value: Expr, overload: Symbol_Id) -> Expr {
-	sym := symbol_of(k.c, overload)
-	if sym == nil || len(sym.params) != 1 || sym.result == INVALID_TYPE {
-		return value
-	}
-	if !materialize_argument(k, value, sym.params[0]) {
-		return value
-	}
-	span := expr_span(value)
-	callee := new(Expr_Ident, k.c.semantic_allocator)
-	callee.span = span
-	callee.name = identifier_text(k.c, sym.name)
-	callee.name_id = sym.name
-	callee.symbol = overload
-	callee.type = sym.proc_type
-	callee.resolution = Resolution{kind = .Value, symbol = overload}
-	callee.value_category = .Value
-
-	bound := make([]Expr, 1, k.c.semantic_allocator)
-	bound[0] = value
-	call := new(Expr_Call, k.c.semantic_allocator)
-	call.span = span
-	call.callee = callee
-	call.bound = bound
-	call.type = sym.result
-	call.value_category = .Value
-	call.resolution = Resolution{kind = .Call, symbol = overload, chosen_overload = overload}
-	return call
 }
 
 // ------------------------------------------------------------- backend name --

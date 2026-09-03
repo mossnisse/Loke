@@ -72,7 +72,6 @@ impl Tally {
 Complex :: struct { real, imaginary: f64 }
 
 impl Complex {
-	@(implicit)
 	from_scalar :: hook(convert) proc(value: f64) -> Complex { return {value, 0}; }
 	add :: operator(+) proc(a, b: Complex) -> Complex {
 		return {a.real + b.real, a.imaginary + b.imaginary};
@@ -82,9 +81,7 @@ impl Complex {
 Scalar :: struct { value: i32 }
 
 impl Scalar {
-	@(implicit)
 	from_i32 :: hook(convert) proc(value: i32) -> Scalar { return {value}; }
-	@(implicit)
 	from_f32 :: hook(convert) proc(value: f32) -> Scalar { return {i32(value) + 100}; }
 }
 
@@ -158,13 +155,13 @@ main :: proc() {
 	unwrapped := Cell(t);
 	fmt.println(int(unwrapped.count));
 
-	// `z + 2.0` reaches the constant-only `init` conversion.
+	// A scalar operand is written as the conversion it is.
 	z := Complex(3.0);
-	fmt.println(int((z + 2.0).real));
+	fmt.println(int((z + Complex(2.0)).real));
 
-	// The implicit init group uses ordinary overload ranking.
-	fmt.println(int(scalar_value(7)));
-	fmt.println(int(scalar_value(2.5)));
+	// The conversion-hook group uses ordinary overload ranking.
+	fmt.println(int(scalar_value(Scalar(7))));
+	fmt.println(int(scalar_value(Scalar(2.5))));
 
 	qualified := _int{31};
 	pointee := 32;

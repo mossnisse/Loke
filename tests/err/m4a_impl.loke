@@ -4,7 +4,6 @@ Complex :: struct { real, imaginary: f64 }
 Point :: struct { x: int }
 
 impl Complex {
-	@(implicit)
 	from_scalar :: hook(convert) proc(value: f64) -> Complex { return {value, 0}; }
 
 	// `init` is an ordinary member, so this return type has no special meaning.
@@ -15,14 +14,6 @@ impl Complex {
 
 	length :: proc(self) -> f64 { return self.real; }
 	grow :: proc(self: inout Complex) { self.real = self.real + 1.0; }
-
-	// `@(implicit)` needs a built-in parameter type.
-	@(implicit)
-	from_point :: hook(convert) proc(p: Point) -> Complex { return {0, 0}; }
-
-	// `@(implicit)` applies only to conversion hooks, not ordinary procedures.
-	@(implicit)
-	orphan_scalar :: proc(value: i32) -> Complex { return {f64(value), 0}; }
 
 	// An `impl` member is a constant, a procedure, or an associated type.
 	counter: int;
@@ -46,7 +37,7 @@ CONST :: Complex{1.0, 0.0};
 magnitude :: proc(z: Complex) -> f64 { return z.real; }
 
 main :: proc() {
-	// `@(implicit)` is reachable only from an untyped constant.
+	// A conversion hook is never applied without being written.
 	scale: f64 = 5.0;
 	fmt.println(int(magnitude(scale)));
 
@@ -64,15 +55,13 @@ main :: proc() {
 	p := Point(1, 2);
 	// `Complex` has no member `magnitude`.
 	q := Complex.magnitude;
-	fmt.println(take_ambiguous(1));
+	fmt.println(take_ambiguous(Ambiguous(1)));
 }
 
 Ambiguous :: struct { value: int }
 
 impl Ambiguous {
-	@(implicit)
 	from_i8 :: hook(convert) proc(value: i8) -> Ambiguous { return {int(value)}; }
-	@(implicit)
 	from_i16 :: hook(convert) proc(value: i16) -> Ambiguous { return {int(value)}; }
 }
 
