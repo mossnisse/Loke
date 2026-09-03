@@ -1,0 +1,134 @@
+package main; import "core:fmt";
+
+// Per-iteration ownership of a yielded `Element` (design.md "Element bindings",
+// "Iteration adapters").
+//
+// A value loop owns what it yields for one step. A built-in traversal copies the
+// element out of the container's storage; an iterator's `next` hands over one it
+// already owns. Either way the loop disposes of it at the end of the step —
+// falling out, `continue`, `break`, `return`, a propagated error — exactly once.
+//
+// `Tracked` prints on every copy and every drop, so the transcript *is* the
+// assertion: a direct loop, a stored view, and an explicit `next()` walk must
+// produce the same one-copy-one-drop pairs.
+
+Tracked :: struct {
+	id: int,
+}
+
+impl Tracked {
+	copy_tracked :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		fmt.println(100 + self.id);
+		return .ok(Tracked{self.id});
+	}
+	drop_tracked :: hook(drop) proc(self: inout Tracked) {
+		fmt.println(200 + self.id);
+	}
+}
+
+Pair :: struct {
+	left:  Tracked,
+	right: Tracked,
+}
+
+fill :: proc(table: inout map[int]Tracked) {
+	table[1] = Tracked{1};
+}
+
+Stop :: enum{Early};
+
+// A propagated error leaves the loop mid-step: the element it owned is disposed
+// of on the way out, once.
+scan :: proc(table: map[int]Tracked, stop: int) -> Result(int, Stop) {
+	foreach (v in table.values()) {
+		if (v.id == stop) {
+			return .err(.Early);
+		}
+	}
+	return .ok(0);
+}
+
+main :: proc() {
+	table: map[int]Tracked;
+	fill(inout table);
+
+	// A direct value loop over the map copies the value half only; the key is an
+	// unmanaged `int`.
+	fmt.println(0);
+	foreach (k, v in table) { fmt.println(300 + v.id + k); }
+
+	// The stored view is the same traversal reached through the protocol.
+	fmt.println(1);
+	view := table.values();
+	foreach (v in view) { fmt.println(400 + v.id); }
+
+	// And so is the explicit walk.
+	fmt.println(2);
+	walker := view.iter();
+	walking := true;
+	for (walking) {
+		switch (step in walker.next()) {
+		case .some: fmt.println(500 + step.id);
+		case .none: walking = false;
+		}
+	}
+
+	// An ignored field is still produced and disposed of.
+	fmt.println(3);
+	foreach (_, _ in table.entries()) { fmt.println(600); }
+
+	// `continue` and `break` each dispose of the step's element once.
+	fmt.println(4);
+	foreach (v in table.values()) { continue; }
+	fmt.println(5);
+	foreach (v in table.values()) { break; }
+
+	// A propagated error unwinds mid-step.
+	fmt.println(6);
+	_ = scan(table, 1);
+
+	// A managed key destructured beside a managed value: both halves are copied
+	// per step, and both are disposed of.
+	fmt.println(7);
+	named: map[string]Tracked;
+	named["k"] = Tracked{9};
+	foreach (k, v in named) { fmt.println(700 + k.len() + v.id); }
+	fmt.println(8);
+	foreach (e in named.entries()) { fmt.println(800 + e.key.len() + e.value.id); }
+	fmt.println(9);
+	foreach (k in named.keys()) { fmt.println(900 + k.len()); }
+
+	// A record element whose fields are each managed: destructuring moves the
+	// fields out of the copy, so each is disposed of exactly once.
+	fmt.println(10);
+	pairs: [dynamic]Pair;
+	pairs.append(Pair{Tracked{3}, Tracked{4}});
+	foreach (left, right in pairs) { fmt.println(1000 + left.id + right.id); }
+	fmt.println(11);
+	foreach (p in pairs) { fmt.println(1100 + p.left.id + p.right.id); }
+	fmt.println(12);
+	foreach (_, right in pairs) { fmt.println(1200 + right.id); }
+
+	// `indexed()` wraps the owned element in a record of its own; the wrapped
+	// value is still disposed of once per step.
+	fmt.println(13);
+	foreach (v, i in table.values().indexed()) { fmt.println(1300 + v.id + i); }
+
+	// A sequence's own `next` agrees with a loop over the same sequence: both
+	// copy the element out of the container's storage and hand over an owner.
+	fmt.println(14);
+	singles: [dynamic]Tracked;
+	singles.append(Tracked{5});
+	fmt.println(15);
+	foreach (v in singles) { fmt.println(1400 + v.id); }
+	fmt.println(16);
+	steps := singles.iter();
+	stepping := true;
+	for (stepping) {
+		switch (one in steps.next()) {
+		case .some: fmt.println(1500 + one.id);
+		case .none: stepping = false;
+		}
+	}
+	fmt.println(17);
+}

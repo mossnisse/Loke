@@ -3804,6 +3804,35 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			}
 			continue
 		}
+		if index == 0 && prov_op_returns_view(container_op) {
+			// design.md "Iteration adapters": a view holds the map's table, so it
+			// borrows the map for as long as it lives -- exactly as the `[]T` a
+			// dynamic array hands out borrows that container. The borrow is
+			// read-only: a view yields copies, and a live one is what stops the map
+			// being mutated under it.
+			//
+			// The two components are separate. What the *stored elements* borrow
+			// travels with the view as well: a `map[K]string_view` yields views of
+			// someone else's bytes, and an owned copy of one still obeys that
+			// source's lifetime, not the map's.
+			held := walk_flow_expr(graph, argument)
+			if root, path, ok := prov_place_of(graph, argument); ok {
+				prov_access(graph, root, path, .Read, expr_span(argument))
+				held = prov_join(
+					graph, held, prov_borrow(graph, root, path, false, expr_span(argument), "view"),
+				)
+			} else if prov_expr_is_temporary(argument) {
+				// A view of a temporary map borrows storage that ends with the
+				// statement that built it, exactly as slicing one does.
+				held = prov_join(
+					graph, held,
+					prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "view"),
+				)
+			}
+			actuals[index] = held
+			borrowed = prov_join(graph, borrowed, held)
+			continue
+		}
 		if prov_argument_is_inout(graph, v, index) {
 			if root, path, ok := prov_place_of(graph, argument); ok {
 				prov_walk_subscripts(graph, argument)
@@ -4032,6 +4061,17 @@ prov_parameter_label :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> s
 		identifier_text(graph.k.c, sym.name),
 		allocator = graph.k.c.semantic_allocator,
 	)
+}
+
+// Which operations hand back a borrowed view of the container rather than a
+// value out of it.
+@(private = "file")
+prov_op_returns_view :: proc(op: Container_Op) -> bool {
+	#partial switch op {
+	case .Map_Entries, .Map_Keys, .Map_Values:
+		return true
+	}
+	return false
 }
 
 // Which operations hand an element back out. Their result is the element, so it

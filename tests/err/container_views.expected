@@ -1,0 +1,24 @@
+L0526
+@11:9
+this view cannot be returned: `local` ends when this procedure returns
+L0511
+@29:2
+this write of `table` is not compatible with the read-only view of it that is still in use
+L0512
+@34:2
+`table` cannot be modified here: a read-only view of it is still in use
+L0512
+@40:2
+`table` cannot be modified here: a read-only view of it is still in use
+L0512
+@51:2
+`other` cannot be dropped here: a read-only view of it is still in use
+L0512
+@58:11
+`source` cannot be moved here: a read-only view of it is still in use
+L0513
+@64:16
+this view is used after this temporary has ended
+L0512
+@76:2
+`bytes` cannot be dropped here: a read-only string view of it is still in use

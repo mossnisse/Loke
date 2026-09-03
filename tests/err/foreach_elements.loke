@@ -38,11 +38,15 @@ main :: proc() {
 	// `indexed()` numbers a traversal, so it comes last and only once.
 	foreach (v, i in xs.indexed().indexed()) { fmt.println(v); }
 
-	// An adapter that is not a traversal of this iterable.
-	foreach (k in xs.keys()) { fmt.println(k); }
+	// `reversed()` is the one header adapter with a restriction of its own.
 	foreach (v in table.reversed()) { fmt.println(v); }
 	foreach (v in text.reversed()) { fmt.println(v); }
+
+	// A container view is an ordinary member, so asking a type that has none for
+	// one is the ordinary member diagnostic -- inside a loop header as outside it.
+	foreach (k in xs.keys()) { fmt.println(k); }
 	foreach (v in xs.rune_offsets()) { fmt.println(v); }
+	foreach (v in table.runes()) { fmt.println(v); }
 
 	// An adapter yields values, so it has no place form.
 	foreach (&v, i in xs.indexed()) { fmt.println(v); }
@@ -52,6 +56,7 @@ main :: proc() {
 
 	// A user type has neither the protocol nor a container view.
 	foreach (v in Plain{1}) { fmt.println(v); }
+	foreach (v in Plain{1}.values()) { fmt.println(v); }
 
 	// indexed(Triple) has the two fields `value` and `index`; the wrapped
 	// record's own arity must not leak through the adapter.

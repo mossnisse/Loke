@@ -100,6 +100,28 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 		// converted to the mutable form (design.md "string type conversions").
 		v.type = slice_of(k.c, TYPE_U8, mutable = false)
 
+	case .Runes:
+		// design.md "String iteration": the rune traversal *is* the string's own
+		// `Element`, so `runes()` hands back a borrowed `string_view` rather than a
+		// wrapper of its own. Nothing is copied and nothing is allocated.
+		if !type_is_utf8_text(k.c, operand) {
+			text_operand_error(k, v, sel, operand)
+			return true
+		}
+		v.type = TYPE_STRING_VIEW
+		ensure_iteration_members(k, TYPE_STRING_VIEW)
+
+	case .Rune_Offsets:
+		// The byte offset a code point begins at is a second traversal, so it needs
+		// an `Element` and an `Iterator` of its own. The view holds the borrowed
+		// bytes and nothing else.
+		if !type_is_utf8_text(k.c, operand) {
+			text_operand_error(k, v, sel, operand)
+			return true
+		}
+		v.type = container_view_type(k.c, TYPE_STRING_VIEW, .Rune_Offsets)
+		ensure_iteration_members(k, v.type)
+
 	case .Copy:
 		if !type_is_utf8_text(k.c, operand) {
 			text_operand_error(k, v, sel, operand)
@@ -141,6 +163,10 @@ text_op_named :: proc(name: string) -> Text_Op {
 		return .Rune_Count
 	case "bytes":
 		return .Bytes
+	case "runes":
+		return .Runes
+	case "rune_offsets":
+		return .Rune_Offsets
 	case "copy":
 		return .Copy
 	case "to_c_view":

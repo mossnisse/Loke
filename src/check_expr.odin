@@ -2542,9 +2542,36 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 			)
 		}
 	}
+	// design.md "Iteration adapters": a map view yields owned elements, so the
+	// halves it copies need a copy entry point. The view itself costs nothing;
+	// what it cannot do is produce a `move_only` key or value.
+	#partial switch chosen.container_op {
+	case .Map_Entries, .Map_Keys, .Map_Values:
+		require_copyable_view_element(k, chosen, v.span)
+	}
 	// A sort needs its element's `<` settled before the backend asks for it.
 	require_sort_order_policy(k, chosen, v.span)
 	fold_standard_customization_call(k, v, chosen)
+}
+
+@(private = "file")
+require_copyable_view_element :: proc(k: ^Checker, chosen: ^Symbol, span: Span) {
+	subject := chosen.params[0]
+	halves := [2]struct{copied: bool, type: Type_Id, what: string}{
+		{chosen.container_op != .Map_Values, container_key(k.c, subject), "key"},
+		{chosen.container_op != .Map_Keys, container_element(k.c, subject), "value"},
+	}
+	for half in halves {
+		if !half.copied || !type_clone_disabled(k.c, half.type) {
+			continue
+		}
+		errorf(
+			k.c, span, "L0491",
+			"`%s` is move-only, so this view cannot copy the %s out of the map; iterate `&value`, or remove the entries",
+			type_name(k.c, half.type), half.what,
+		)
+		return
+	}
 }
 
 reject_direct_hook_call :: proc(k: ^Checker, span: Span, symbol_id: Symbol_Id) -> bool {

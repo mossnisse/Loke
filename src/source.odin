@@ -147,6 +147,10 @@ Compiler :: struct {
 	// compilation, not per package.
 	range_types:        map[Type_Id]Type_Id,
 	iterator_types:     map[Type_Id]Type_Id,
+	// The container views `entries()`, `keys()`, `values()`, and
+	// `rune_offsets()` answer with. Keyed by source and kind because one map has
+	// three of them.
+	view_types:         map[View_Key]Type_Id,
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,

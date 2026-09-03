@@ -1,0 +1,100 @@
+package main; import "core:fmt";
+
+// A container view borrows its source (design.md "Iteration adapters",
+// "Borrows and lifetimes"). A live view or an iterator made from one keeps the
+// source borrowed, so the source cannot be mutated, dropped, or moved while it
+// is in use, and the view cannot outlive what it borrows.
+
+escaping :: proc() -> string_view {
+	// The bytes are this frame's, so the view of them cannot leave.
+	local: string = "local";
+	return local.runes();
+}
+
+leaked :: proc(table: map[int]int) -> map[int]int {
+	// A view of a parameter is fine; a view of a local of this frame is not.
+	made: map[int]int;
+	made[1] = 1;
+	view := made.keys();
+	foreach (k in view) { fmt.println(k); }
+	return made;
+}
+
+main :: proc() {
+	table: map[int]int;
+	table[1] = 10;
+
+	// Mutating the source while a view of it is live.
+	view := table.values();
+	table[2] = 20;
+	foreach (v in view) { fmt.println(v); }
+
+	// Mutating it through a contributed operation, likewise.
+	keys := table.keys();
+	table.clear();
+	foreach (k in keys) { fmt.println(k); }
+
+	// A view whose iterator has been taken is still a live borrow of the map.
+	entries := table.entries();
+	walker := entries.iter();
+	table.reserve(16);
+	switch (step in walker.next()) {
+	case .some: fmt.println(step.key);
+	case .none:
+	}
+	foreach (e in entries) { fmt.println(e.value); }
+
+	// Dropping the source out from under a live view.
+	other: map[int]int;
+	other[3] = 30;
+	seen := other.entries();
+	drop(other);
+	foreach (e in seen) { fmt.println(e.key); }
+
+	// Moving it, likewise.
+	source: map[int]int;
+	source[4] = 40;
+	moved := source.values();
+	taken := move(source);
+	foreach (v in moved) { fmt.println(v); }
+	fmt.println(taken.len());
+
+	// A view of a temporary cannot outlive the statement that made it.
+	kept := build().keys();
+	foreach (k in kept) { fmt.println(k); }
+
+	// A view of a local cannot escape the frame.
+	fmt.println(escaping().byte_len());
+
+	// A copy taken out of a view is owned, but a borrow *inside* it keeps its own
+	// source's lifetime: the `string_view` here views `bytes`, not the map.
+	borrowed: map[int]string_view;
+	bytes: string = "hello";
+	borrowed[1] = bytes[0:2];
+	seen_view: string_view = "";
+	foreach (v in borrowed.values()) { seen_view = v; }
+	drop(bytes);
+	fmt.println(seen_view.byte_len());
+
+	// Accepted: the use after the last borrow. `settled` is dead by the write.
+	settled := table.keys();
+	foreach (k in settled) { fmt.println(k); }
+	table[5] = 50;
+	fmt.println(table.len());
+	fmt.println(leaked(table).len());
+
+	// Accepted: an owned copy outlives the map it came out of. Only its borrowed
+	// parts are tied to a source, and a `string` has none.
+	owning: map[int]string;
+	owning[1] = "kept";
+	saved: string = "";
+	foreach (v in owning.values()) { saved = v; }
+	drop(owning);
+	fmt.println(saved.byte_len());
+}
+
+build :: proc() -> map[int]int {
+	made: map[int]int;
+	made[7] = 70;
+	return made;
+}

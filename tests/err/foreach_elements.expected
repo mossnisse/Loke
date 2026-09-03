@@ -14,26 +14,32 @@ L0460
 @39:22
 `indexed()` numbers the traversal it wraps, so it comes last and only once
 L0460
-@42:19
-`keys()` is not a traversal of `[3]int`
-L0460
-@43:22
+@42:22
 `reversed()` is not a traversal of `map[int]int`
 L0460
-@44:21
+@43:21
 `reversed()` is not a traversal of `string`
+L0363
+@47:16
+`[3]int` has no field or member `keys`
+L0363
+@48:16
+`[3]int` has no field or member `rune_offsets`
+L0363
+@49:16
+`map[int]int` has no field or member `runes`
 L0460
-@45:19
-`rune_offsets()` is not a traversal of `[3]int`
-L0460
-@48:2
+@52:2
 an adapter yields values, so it cannot be iterated by reference
 L0456
-@51:21
+@55:21
 is a type, so it is not iterable; write `.values()` for its members
 L0456
-@54:16
-`Plain` is not iterable
-L0454
 @58:16
+`Plain` is not iterable
+L0363
+@59:16
+`Plain` has no field or member `values`
+L0454
+@63:16
 has 2 fields, so a static `foreach` over it binds 1 or 2 names, not 3

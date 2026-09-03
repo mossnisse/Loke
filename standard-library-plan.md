@@ -680,10 +680,12 @@ presence and failure are different answers, and a directory walk has to
 distinguish "no more entries" from "the enumeration broke". `read_directory`
 returns a **move-only streaming reader**, not an owning array.
 This is not a preference: a `[dynamic]Directory_Entry` whose entries own their
-name `string` cannot be iterated by value today, because `foreach` over a managed
-element is rejected (L0504, the M5a limit that already forced `os.Args.Element`
-to be `string_view` rather than `string`). An owning array the caller cannot loop
-over is not the simpler option. The reader yields one entry at a time, borrows
+name `string` would have every step retain and release that name, and a
+directory walk that only reads each name should not pay for a copy of it. The
+reader borrows instead. (When this was written a by-value `foreach` over a
+managed element was rejected outright; that limit is gone — the loop now owns
+and disposes of its copy — but the reason for streaming is the copy itself, not
+the old rejection.) The reader yields one entry at a time, borrows
 its name into a caller-visible buffer valid until the next `next`, and closes its
 platform search handle in `drop`. A caller wanting an array collects one itself.
 
@@ -1045,10 +1047,12 @@ was enough to make an unrelated corpus program fail.
   public, or the `where` bound passes and the instantiated body then fails to
   find the member. That asymmetry is a compiler wart worth its own fix; the
   library documents the requirement rather than working around it.
-- **`foreach` over a managed element is rejected (L0504).** This is why
-  `Directory_Reader` streams borrowed names instead of returning an owning
-  array, exactly as this plan predicted, and why `tests/run/lib_fs.loke` indexes
-  its `[dynamic]string` rather than looping over it.
+- **A by-value `foreach` over a managed element copies it per step.** The loop
+  owns that copy and disposes of it at the end of the step, so the rejection this
+  plan was written against is gone; what remains is the cost. It is still why
+  `Directory_Reader` streams borrowed names instead of returning an owning array,
+  and why `tests/run/lib_fs.loke` indexes its `[dynamic]string` rather than
+  retaining each name it only reads.
 
 ### Deviations from the plan
 

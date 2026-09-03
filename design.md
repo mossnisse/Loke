@@ -287,7 +287,9 @@ message := builder.finish(); // moves the buffer into an immutable string when p
 
 String iteration yields Unicode scalar values (runes) by default; byte iteration is explicit. A string's `Element` is `rune`, so a plain loop binds exactly one name.
 
-**A byte offset comes from `rune_offsets()`, never from a second binding.** The offset is the byte index where the yielded code point begins, so it advances by 1–4 per step and the final offset is not `x.len() - 1`. This offset can be fed back into `x.bytes()`, a slice expression, or a low-level API; a rune ordinal cannot. The two units are therefore separate [adapters](#iteration-adapters) rather than one binding whose meaning depends on the receiver.
+**A byte offset comes from `rune_offsets()`, never from a second binding.** The offset is the byte index where the yielded code point begins, so it advances by 1–4 per step and the final offset is not `x.len() - 1`. This offset can be fed back into `x.bytes()`, a slice expression, or a low-level API; a rune ordinal cannot. The two units are therefore separate [views](#iteration-adapters) rather than one binding whose meaning depends on the receiver.
+
+`x.runes()` names the same traversal a bare loop over `x` performs, and answers the `string_view` over the same bytes. `x.rune_offsets()` answers a borrowed view whose `Element` carries the offset beside the value. Both are ordinary values that can be stored and passed; neither copies or allocates.
 
 ```odin
 // by runes with byte offsets: `Element` is `struct{value: rune, offset: int}`
@@ -2359,6 +2361,14 @@ The iterator still produces the whole element when fields are ignored.
 Destructuring moves its fields into the bindings without another copy and
 disposes of anything left over normally.
 
+A value loop owns the `Element` it yields for the length of one step. A built-in
+traversal copies the element out of the container's storage; an iterator's `next`
+hands over one it already owns. Either way the loop disposes of it at the end of
+the step — on falling out, on `continue`, on `break`, on `return`, on a
+propagated error, and while unwinding from a panic — exactly once. A move-only
+element therefore cannot be iterated by value out of a built-in container, since
+there is no copy to make; iterate `&value` instead.
+
 A value loop never invents an index, key, or byte offset. To receive that
 information, use an iterable or adapter whose `Element` contains it.
 
@@ -2386,27 +2396,64 @@ instead be a separate adapter with its own `Element` and `Iterator`.
 Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps
 the same collection borrowed for the whole loop.
 
-In version 1, adapters and the container views below are `foreach` header forms.
-They cannot be stored in variables or passed to procedures. Their names are
-reserved in a loop header, so `foreach` treats `x.values()` as the container view
-even if `x` declares another member with that name. For built-in containers the
-compiler may lower the selected traversal directly without creating an iterator
-object. A traversal that must be stored or passed is an ordinary user-defined
-iterable type.
+In version 1, `indexed()` and `reversed()` are `foreach` header forms: they
+select the traversal the loop lowers to and cannot be stored in a variable or
+passed to a procedure. Those two names are the only ones a loop header reads
+specially. For built-in containers the compiler may lower the selected traversal
+directly without creating an iterator object. A traversal that must be stored or
+passed is an ordinary iterable value — either a container view below, or a
+user-defined iterable type.
 
-Built-in containers also provide these non-copying, non-allocating views:
+Built-in containers also provide these views:
 
-| Adapter | `Element` |
-| --- | --- |
-| `map.entries()` | `struct{key: K, value: V}` — the map's own `Element` |
-| `map.keys()` | `K` |
-| `map.values()` | `V` |
-| `text.runes()` | `rune` — the string's own `Element` |
-| `text.rune_offsets()` | `struct{value: rune, offset: int}` |
-| `text.bytes()` | `u8` |
+| View | Result | `Element` |
+| --- | --- | --- |
+| `map.entries()` | opaque borrowed map view | `struct{key: K, value: V}` — the map's own `Element` |
+| `map.keys()` | opaque borrowed map view | `K` |
+| `map.values()` | opaque borrowed map view | `V` |
+| `text.runes()` | `string_view` | `rune` — the string's own `Element` |
+| `text.rune_offsets()` | opaque borrowed text view | `struct{value: rune, offset: int}` |
+| `text.bytes()` | `[]u8` | `u8` |
 
-A map's default `Element` is its `{key, value}` entry. A user type gets the same
-two-binding syntax by returning any visible two-field record from `next`.
+These are ordinary methods answering ordinary values. Each result exposes
+`Element`, `Iterator`, and `iter()`, so it can be stored in a variable, passed to
+a procedure, returned where its lifetime permits, consumed by generic code
+constrained by [`Iterable`](#standard-interface-catalogue), or stepped by hand
+through `next`. Every call to `iter()` starts a fresh traversal.
+
+```odin
+scores := map[string]int{"a" = 1, "b" = 2};
+
+total :: proc(numbers: $S) -> int where interfaces.Iterable(S), S.Element == int {
+	sum := 0;
+	foreach (n in numbers) { sum += n; }
+	return sum;
+}
+
+view := scores.values();          // borrows `scores`, allocates nothing
+fmt.println(total(view));         // 3
+fmt.println(total(view));         // 3 again: `iter()` restarts
+```
+
+Creating or copying a view allocates nothing and copies no element. The copy is
+per step: yielding a managed `Element` follows ordinary copy semantics and may
+allocate, exactly as a by-value loop over the container itself does. A view
+borrows its source, so the source cannot be mutated, dropped, or moved while the
+view or an iterator made from it is live, and a view may not outlive it.
+
+The map views and rune traversal are forward-only; `bytes()` yields a slice,
+which reverses like any other. Map order remains unspecified, and a rune offset
+remains a byte offset. The text views apply to `string` and `string_view`.
+
+A map's default `Element` is its `{key, value}` entry, so `m.entries()` and a
+bare loop over `m` are the same traversal. A user type gets the same two-binding
+syntax by returning any visible two-field record from `next`.
+
+Because these are ordinary methods, a type that declares its own `keys`,
+`values`, `entries`, `runes`, `rune_offsets`, or `bytes` member keeps it, and
+that member means the same thing inside a `foreach` header as outside one.
+[`Enum.values()`](#iterating-an-enumeration) remains an ordinary constant
+expression.
 
 #### By-reference iteration
 
@@ -2907,7 +2954,7 @@ Built-in satisfaction follows the operations the language already defines:
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
 - copyable owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, plus recursively copyable owning aggregates, satisfy `Cloneable`;
-- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; a map does not, because its order is unspecified, and text does not, because a backward decoder is not part of version 1;
+- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; a map does not, because its order is unspecified, and text does not, because a backward decoder is not part of version 1. The [container views](#iteration-adapters) satisfy `Iterable` on the same terms, with the `Element` each one names, and none satisfies `Reverse_Iterable`;
 - fixed arrays, slices, and dynamic arrays satisfy `Sequence`; fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Sequence` when supplied as mutable places; dynamic arrays satisfy `Growable_Sequence`. The standard `Small_Array(T, N)` library type supplies the same associated members and satisfies all three sequence interfaces.
 
 No nominal `implements` list is involved; the catalogue records capability boundaries, not a requirement that every built-in belong to an interface.
@@ -3779,7 +3826,7 @@ foreach (entry in some_map) {
 }
 ```
 
-Every binding list names the fields of one [`Element`](#element-bindings), so a second binding exists only when the element is a two-field record. An index, a key, or an offset comes from an [adapter](#iteration-adapters):
+Every binding list names the fields of one [`Element`](#element-bindings), so a second binding exists only when the element is a two-field record. An index, a key, or an offset comes from an [adapter or a container view](#iteration-adapters):
 
 ```odin
 foreach (character, ordinal in some_string.indexed()) {
@@ -3805,9 +3852,12 @@ foreach (value in some_map.values()) {     // values alone, no entry record
 }
 ```
 
+`some_map.values()` is a [view](#iteration-adapters) — an ordinary borrowed value
+the loop iterates, not header syntax.
+
 `foreach (value, index in some_array)` is an error unless the array's element is a two-field record, in which case it destructures that record. Element bindings are positional and mean nothing else, so a loop over `[dynamic]Point` binds `x` and `y`, not a value and an index.
 
-By default, each iterated value is a copy. Assignment to the copy does not modify the source.
+By default, each iterated value is a copy the loop owns for one step and disposes of at the end of it. Assignment to the copy does not modify the source. A by-reference loop projects the container's own storage instead and copies nothing; a map key bound beside `&value` is borrowed in place, because it is immutable.
 
 When the iterable is a place or borrow carrier, evaluating it establishes an implicit iterator loan that lives through the whole loop and ends with the `foreach` statement. Iteration by value holds an immutable loan; by reference, an exclusive mutable loan. So competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule. Value-only iteration such as an integer range needs no loan.
 

@@ -291,6 +291,13 @@ type_is_carrier :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type_is_region_provider(c, type) {
 		return true
 	}
+	// design.md "Storage roots and borrow carriers" lists the compiler-known
+	// views and iterators. A map view and a map iterator hold a raw table
+	// pointer, so nothing structural says they hold a loan; this marker is what
+	// makes them followed like the `[]T` a dynamic array hands out.
+	if info := underlying_info(c, type); info != nil && info.is_view {
+		return true
+	}
 	#partial switch underlying_kind(c, type) {
 	case .Pointer, .Slice, .String_View, .CString_View, .Any_View, .Dyn:
 		// design.md "C string views": a view from `to_c_view()` lives only for that

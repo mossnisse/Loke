@@ -201,6 +201,8 @@ Text_Op :: enum {
 	Byte_Len,   // O(1), and what `len(text)` is shorthand for
 	Rune_Count, // O(n) Unicode scalar values
 	Bytes,      // a read-only borrowed []u8
+	Runes,      // a borrowed `string_view`, iterated as Unicode scalar values
+	Rune_Offsets, // a borrowed view yielding `(value: rune, offset: int)`
 	Copy,       // an independent managed byte copy
 	To_C_View,  // a zero-terminated borrow for the complete expression
 	To_Runes,   // `st.to_runes()`, a `[dynamic]rune` by copy
@@ -845,22 +847,17 @@ Foreach_Kind :: enum {
 	// `Element` is the `struct{key, value}` entry, which two bindings destructure.
 	Map,
 	// Yields Unicode scalar values (design.md "String iteration"). A byte offset
-	// comes from `rune_offsets()`, never from a second binding.
+	// comes from `text.rune_offsets()`, which is an ordinary iterable value.
 	Text,
 	Protocol,
 }
 
 // design.md "Iteration adapters": an alternative traversal of the same iterable.
-// Recognized in the `foreach` header, where it selects the traversal the loop
-// lowers to rather than building an iterator object.
+// Only the two header adapters live here. The container views are ordinary
+// values now, so `m.keys()` is a call whose result the loop iterates.
 Foreach_Adapter :: enum {
 	None,
 	Reversed,
-	Entries,
-	Keys,
-	Values,
-	Runes,
-	Rune_Offsets,
 }
 
 Stmt_Foreach :: struct {
@@ -874,9 +871,8 @@ Stmt_Foreach :: struct {
 	// `indexed()`, which numbers whatever traversal precedes it and so is always
 	// the outermost adapter.
 	indexed:       bool,
-	// The complete `Element` one binding names: a record for a map entry, an
-	// `indexed()` pair, or a `rune_offsets()` pair, and the yielded value itself
-	// otherwise.
+	// The complete `Element` one binding names: a record for a map entry or an
+	// `indexed()` pair, and the yielded value itself otherwise.
 	element_type:  Type_Id,
 	count:         u64,       // a fixed array's length
 	iterator_type: Type_Id,   // the protocol path's opaque iterator

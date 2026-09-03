@@ -25,27 +25,33 @@ L0503
 L0503
 @69:6
 `Only` is move-only, so this assignment cannot copy it; write `move(...)` to transfer ownership instead
-L0504
-@74:11
-a by-value `foreach` over `Res` copies a managed element, and the loop body places no per-iteration cleanup for it; iterate `&value` over a `[]mut Res`, or index the sequence
+L0491
+@75:19
+`Only` is move-only, so a by-value `foreach` cannot copy it out of the container; iterate `&value`, or remove the elements
+L0491
+@79:19
+`Only` is move-only, so this view cannot copy the value out of the map
+L0491
+@82:20
+`Only` is move-only, so this view cannot copy the value out of the map
 L0505
-@81:16
+@89:16
 `exchange` replaces the destination, so it is written `exchange(inout place, replacement)`
 L0500
-@83:7
+@91:7
 `h` cannot be exchanged here: it has already been moved, dropped, or released
 L0498
-@89:7
+@97:7
 `drop` cannot be applied to `static` storage, which is always live
 L0498
-@90:12
+@98:12
 `move` cannot be applied to `thread_local` storage, which is always live
 L0506
-@91:18
+@99:18
 a `static` declaration is initialised once, before any code runs, so its initialiser must be a compile-time constant
 L0500
-@98:14
+@106:14
 `d` cannot be used here: it is live on only some of the paths that reach this point
 L0501
-@103:23
+@111:23
 `value` is a `move` parameter, so this argument is written `move(...)`

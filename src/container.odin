@@ -159,6 +159,12 @@ Container_Op :: enum {
 	Map_Clear,
 	Map_Reserve,
 	Map_Shrink,
+	// design.md "Iteration adapters": the three borrowed traversals. Each answers
+	// with an opaque view that allocates nothing and copies no element; the copy
+	// happens per step, inside the view's `next`.
+	Map_Entries,
+	Map_Keys,
+	Map_Values,
 }
 
 // design.md "Dynamic arrays": the operation set, contributed as real members so
@@ -381,6 +387,24 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 		k, type, "try_shrink", .Map_Shrink,
 		[]Type_Id{type, TYPE_INT}, []Param_Mode{.Inout, .Value}, fails, 1,
 	))
+	// design.md "Iteration adapters": three ordinary methods answering three
+	// ordinary values. Their receiver is immutable — a view reads the table, and
+	// a live one is what stops the map being mutated under it — and the result
+	// borrows through it, which is what the summary records.
+	views := [3]struct{name: string, op: Container_Op, kind: View_Kind}{
+		{"entries", .Map_Entries, .Entries},
+		{"keys", .Map_Keys, .Keys},
+		{"values", .Map_Values, .Values},
+	}
+	for view in views {
+		result := container_view_type(k.c, type, view.kind)
+		ensure_iteration_members(k, result)
+		member := container_member(
+			k, type, view.name, view.op, []Type_Id{type}, []Param_Mode{.Value}, result, 0, .Value,
+		)
+		set_synth_result_summary(k.c, member, 0)
+		append(&members, member)
+	}
 	add_members(k.c, type, members[:])
 }
 

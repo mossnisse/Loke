@@ -1392,6 +1392,13 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		if !fallible { return none, true }
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
+	case .Map_Entries, .Map_Keys, .Map_Values:
+		// design.md "Iteration adapters": a view borrows the map's table, and a
+		// folded map has no table to borrow. Iterating the map itself is the
+		// compile-time traversal, and it needs no view.
+		eval_fail(ev, v.span, "L0341", "a map view has no compile-time meaning; iterate the map itself")
+		return nil, false
+
 	case .Map_Lookup_Value:
 		// The copying read: one probe, no insertion, and an independently owned
 		// payload on a hit — the same single clone the backend performs.

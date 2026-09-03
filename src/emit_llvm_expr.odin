@@ -1534,6 +1534,19 @@ emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 		data, length := emit_text_parts(e, v.bound[0])
 		out[0] = emit_slice_value(e, as_type, data, length)
 
+	case .Runes:
+		// design.md "String iteration": the rune traversal is the string's own, so
+		// this is the same borrow `bytes()` takes, viewed as text rather than bytes.
+		data, length := emit_text_parts(e, v.bound[0])
+		out[0] = emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+
+	case .Rune_Offsets:
+		// The view holds the borrowed bytes and nothing else; the cursor belongs to
+		// the iterator its `iter` makes.
+		data, length := emit_text_parts(e, v.bound[0])
+		view := emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
+		out[0] = insert(e, llvm_type(e, as_type), "undef", STRING_VIEW_TYPE, view, VIEW_SOURCE)
+
 	case .Copy:
 		data, length := emit_text_parts(e, v.bound[0])
 		out[0] = emit_text_allocating_call(

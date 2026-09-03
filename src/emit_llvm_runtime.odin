@@ -1185,7 +1185,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_standard_customization(e, symbol, name)
 		case .Range_Iter, .Range_Iter_Reverse,
 		     .Array_Iter, .Array_Iter_Reverse,
-		     .Dynamic_Iter, .Dynamic_Iter_Reverse, .Map_Iter:
+		     .Dynamic_Iter, .Dynamic_Iter_Reverse, .Map_Iter,
+		     .Map_View_Iter, .Text_Iter:
 			emit_synth_iter(e, symbol, name)
 		case .Range_Next:
 			emit_synth_range_next(e, symbol, name)
@@ -1193,8 +1194,10 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_indexed_next(e, symbol, name, slice = false)
 		case .Slice_Next:
 			emit_synth_indexed_next(e, symbol, name, slice = true)
-		case .Map_Next:
+		case .Map_Next, .Map_Keys_Next, .Map_Values_Next:
 			emit_synth_map_next(e, symbol, name)
+		case .Text_Next, .Rune_Offsets_Next:
+			emit_synth_text_next(e, symbol, name)
 		case .Try_Clone:
 			emit_synth_try_clone(e, symbol, name)
 		case .Clone:

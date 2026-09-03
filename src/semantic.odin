@@ -237,6 +237,15 @@ Type_Info :: struct {
 	// A compiler-owned `Range(T)` value: low endpoint, high endpoint, and the
 	// closed/half-open flag, so `..<` and `..=` survive being stored or passed.
 	is_range:      bool,
+	// A compiler-owned borrowed view or iterator over another value: the map
+	// views, the rune-offset view, and the opaque iterators. Their storage is a
+	// raw pointer or a `string_view`, so nothing structural says "this holds a
+	// loan"; this marker is what makes the borrow analysis follow them
+	// (design.md "Storage roots and borrow carriers").
+	is_view:       bool,
+	// Which traversal a container view names. `.None` on an iterator, which is a
+	// carrier for the same reason but names no traversal of its own.
+	view_kind:     View_Kind,
 	// A compiler-owned reflection descriptor. Its values are ordinary constant
 	// aggregates, and this is the marker that forbids materializing one into
 	// runtime storage (design.md "Compile-time reflection").
@@ -919,6 +928,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.typeid_values = make(map[Type_Id]u64, c.semantic_allocator)
 	c.range_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
+	c.view_types = make(map[View_Key]Type_Id, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)

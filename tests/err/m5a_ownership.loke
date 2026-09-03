@@ -68,11 +68,19 @@ main :: proc() {
 	g := f;
 	g = f;
 
-	// A by-value `foreach` over a managed element has no per-iteration cleanup
-	// site in M5a.
-	table := [2]Res{Res{11}, Res{12}};
+	// A by-value `foreach` copies the element out of the container's storage, and
+	// a move-only element has no copy to make. A map view yields owned halves, so
+	// it refuses for the same reason.
+	table := [2]Only{Only{11}, Only{12}};
 	foreach (item in table) {
 		fmt.println(item.id);
+	}
+	locked: map[int]Only;
+	foreach (item in locked.values()) {
+		fmt.println(item.id);
+	}
+	foreach (entry in locked.entries()) {
+		fmt.println(entry.value.id);
 	}
 
 	// `exchange` replaces a definitely live value, and its marker is written at

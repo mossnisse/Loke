@@ -17,16 +17,8 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	}
 	// An expansion binds the same `Element` a runtime loop does, so it reads the
 	// same adapter (design.md "Static `foreach` expansion").
-	adapter, adapter_name := peel_foreach_adapter(k, s)
+	adapter, _ := peel_foreach_adapter(k, s)
 	s.adapter = adapter
-	if adapter != .None && adapter != .Reversed {
-		errorf(
-			k.c, adapter_name.span, "L0454",
-			"`%s()` is not a compile-time traversal; a static `foreach` takes `indexed()` or `reversed()`",
-			adapter_name.text,
-		)
-		return FLOWS
-	}
 	// design.md: mixing a runtime and a compile-time binding in one header is an
 	// error, and a static binding is immutable, so `&` cannot apply to one.
 	for binding in s.bindings {

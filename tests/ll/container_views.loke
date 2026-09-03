@@ -1,0 +1,16 @@
+package main; import "core:fmt";
+
+// A container view is one word of borrowed storage: creating it allocates
+// nothing and copies no element (design.md "Iteration adapters").
+
+main :: proc() {
+	table: map[int]int;
+	table[1] = 10;
+	view := table.values();
+	foreach (v in view) { fmt.println(v); }
+	text := "AÅ✓";
+	offsets := text.rune_offsets();
+	foreach (p in offsets) { fmt.println(p.offset); }
+	runes: string_view = text.runes();
+	foreach (r in runes) { fmt.println(r); }
+}

@@ -796,6 +796,16 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		e.terminated = true
 		return
 
+	case .Map_Entries, .Map_Keys, .Map_Values:
+		// design.md "Iteration adapters": a view is the table pointer and nothing
+		// else — no allocation, no element copy, and no second header for anything
+		// to drop. The `iter` it answers to turns it into `{ table, 0 }`.
+		table := extract(e, llvm_type(e, container), "%arg0", CONTAINER_STORAGE)
+		view := insert(e, result, "undef", "ptr", table, VIEW_SOURCE)
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, view)
+		fmt.sbprintln(&e.b, "}")
+		return
+
 	case .Map_Remove:
 		key_type := container_key(e.c, container)
 		key_slot := value_storage(e, key_type, "%arg1")

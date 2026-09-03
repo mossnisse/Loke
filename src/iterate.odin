@@ -37,6 +37,27 @@ ITER_ARRAY_REVERSED :: 2
 ITER_MAP_TABLE :: 0
 ITER_MAP_CURSOR :: 1
 
+// Every contributed view holds exactly one thing: the map's table pointer, or
+// the text's `string_view`. Iterating one adds a cursor beside it.
+VIEW_SOURCE :: 0
+ITER_TEXT_VIEW :: 0
+ITER_TEXT_OFFSET :: 1
+
+// Which traversal a contributed view names. The map's own `Element` is its
+// entry, so `entries()` and a bare map loop agree by construction.
+View_Kind :: enum {
+	None,
+	Entries,
+	Keys,
+	Values,
+	Rune_Offsets,
+}
+
+View_Key :: struct {
+	source: Type_Id,
+	kind:   View_Kind,
+}
+
 // A procedure the compiler contributes rather than the user writing it. It has
 // a real symbol and a real emitted body; the backend knows how to write each
 // shape (the same seam `delegate` uses for its forwarding overloads).
@@ -66,6 +87,19 @@ Synth_Kind :: enum {
 	// design.md "Maps": `{ table, cursor }`, walked by the runtime's slot scan.
 	Map_Iter,
 	Map_Next,
+	// The key- and value-only walks of the same scan. They differ from `Map_Next`
+	// only in which half of the slot they yield, so they share its cursor shape.
+	Map_Keys_Next,
+	Map_Values_Next,
+	// A map view's `iter`: `{ table, 0 }` read out of the view rather than out of
+	// a map header.
+	Map_View_Iter,
+	// design.md "String iteration": `{ view, offset }` decoded through the
+	// runtime's UTF-8 step. `Text_Iter` serves a `string`, a `string_view`, and
+	// the rune-offset view, because all three carry the same `{ data, len }`.
+	Text_Iter,
+	Text_Next,
+	Rune_Offsets_Next,
 	// design.md "Lifecycle hooks and resource types": a record that writes no
 	// `try_clone` still has one, and `clone` is always generated from it.
 	Try_Clone,
@@ -196,7 +230,7 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	}
 	element := map_entry_type(c, subject)
 	name := intern_identifier(c, fmt.aprintf("Map_Iterator(%s)", type_name(c, subject), allocator = c.semantic_allocator))
-	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element})
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_view = true})
 	fields := make([]Symbol_Id, 2, c.semantic_allocator)
 	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE, public = true)
 	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR, public = true)
@@ -208,6 +242,96 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 		info.mangled = fmt.aprintf("Map_Iterator.%s", llvm_safe(type_name(c, subject)), allocator = c.semantic_allocator)
 	}
 	c.iterator_types[subject] = type
+	return type
+}
+
+// --------------------------------------------------------- container views --
+
+// design.md "Iteration adapters": `entries()`, `keys()`, `values()`, and
+// `rune_offsets()` are ordinary borrowed values, not header syntax. Each is an
+// opaque one-field record — a map's table pointer, or a text `string_view` —
+// so creating or copying one allocates nothing and copies no element.
+container_view_type :: proc(c: ^Compiler, source: Type_Id, kind: View_Kind) -> Type_Id {
+	key := View_Key{source = source, kind = kind}
+	if existing, found := c.view_types[key]; found {
+		return existing
+	}
+	label, held, element := "", INVALID_TYPE, INVALID_TYPE
+	switch kind {
+	case .None:
+		return INVALID_TYPE
+	case .Entries:
+		label, held, element = "Map_Entries", TYPE_RAWPTR, map_entry_type(c, source)
+	case .Keys:
+		label, held, element = "Map_Keys", TYPE_RAWPTR, type_of(c, source).key
+	case .Values:
+		label, held, element = "Map_Values", TYPE_RAWPTR, type_of(c, source).element
+	case .Rune_Offsets:
+		label, held, element = "Rune_Offsets", TYPE_STRING_VIEW, rune_offset_type(c)
+	}
+	// The rune-offset view is one type for every text carrier, so it is named for
+	// the traversal alone; a map view is named for the map it walks.
+	spelling := kind == .Rune_Offsets ? label :
+	            fmt.aprintf("%s(%s)", label, type_name(c, source), allocator = c.semantic_allocator)
+	name := intern_identifier(c, spelling)
+	type := new_type(c, Type_Info{
+		kind = .Struct, name = name, element = element, is_view = true, view_kind = kind,
+	})
+	fields := make([]Symbol_Id, 1, c.semantic_allocator)
+	fields[VIEW_SOURCE] = new_field(c, "source", held, VIEW_SOURCE)
+	if info := type_of(c, type); info != nil {
+		info.fields = fields
+		// The map this views. `next` needs its operation table, and the raw table
+		// pointer alone cannot name it.
+		info.key = kind == .Rune_Offsets ? INVALID_TYPE : source
+		info.mangled = kind == .Rune_Offsets ? label :
+		               fmt.aprintf("%s.%s", label, llvm_safe(type_name(c, source)), allocator = c.semantic_allocator)
+	}
+	c.view_types[key] = type
+	return type
+}
+
+// `{ table, cursor }` again, for a traversal that yields one half of the slot.
+@(private = "file")
+map_view_iterator_type :: proc(c: ^Compiler, view: Type_Id, label: string) -> Type_Id {
+	if existing, found := c.iterator_types[view]; found {
+		return existing
+	}
+	info := type_of(c, view)
+	subject := info.key
+	name := intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, subject), allocator = c.semantic_allocator))
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = info.element, is_view = true})
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
+	fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
+	if made := type_of(c, type); made != nil {
+		made.fields = fields
+		made.key = subject
+		made.mangled = fmt.aprintf("%s.%s", label, llvm_safe(type_name(c, subject)), allocator = c.semantic_allocator)
+	}
+	c.iterator_types[view] = type
+	return type
+}
+
+// design.md "String iteration": one cursor over the borrowed bytes, advanced 1
+// to 4 at a time by the runtime's decoder. A `string`, a `string_view`, and the
+// rune-offset view all reach the same shape, so they share one iterator type
+// per yielded `Element`.
+@(private = "file")
+text_iterator_type :: proc(c: ^Compiler, cache_key: Type_Id, element: Type_Id, label: string) -> Type_Id {
+	if existing, found := c.iterator_types[cache_key]; found {
+		return existing
+	}
+	name := intern_identifier(c, label)
+	type := new_type(c, Type_Info{kind = .Struct, name = name, element = element, is_view = true})
+	fields := make([]Symbol_Id, 2, c.semantic_allocator)
+	fields[ITER_TEXT_VIEW] = new_field(c, "view", TYPE_STRING_VIEW, ITER_TEXT_VIEW)
+	fields[ITER_TEXT_OFFSET] = new_field(c, "offset", TYPE_INT, ITER_TEXT_OFFSET)
+	if info := type_of(c, type); info != nil {
+		info.fields = fields
+		info.mangled = label
+	}
+	c.iterator_types[cache_key] = type
 	return type
 }
 
@@ -258,8 +382,42 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		element = map_entry_type(k.c, under)
 		iterator = map_iterator_type(k.c, under)
 		iter_kind, next_kind = .Map_Iter, .Map_Next
+	case info.kind == .String || info.kind == .String_View:
+		// design.md "String iteration": the `Element` is a `rune`, so a value that
+		// left the header — a stored `runes()` view, a generic parameter — decodes
+		// through the same protocol the direct lowering does.
+		element = TYPE_RUNE
+		iterator = text_iterator_type(k.c, TYPE_STRING_VIEW, TYPE_RUNE, "Text_Iterator")
+		iter_kind, next_kind = .Text_Iter, .Text_Next
+	case info.view_kind != .None:
+		element = info.element
+		switch info.view_kind {
+		case .Rune_Offsets:
+			iterator = text_iterator_type(k.c, under, element, "Rune_Offset_Iterator")
+			iter_kind, next_kind = .Text_Iter, .Rune_Offsets_Next
+		case .Entries:
+			// The entry view yields exactly the map's own `Element`, so it reuses the
+			// map's iterator rather than emitting a second copy of the same walk.
+			iterator = map_iterator_type(k.c, info.key)
+			iter_kind, next_kind = .Map_View_Iter, .Map_Next
+		case .Keys:
+			iterator = map_view_iterator_type(k.c, under, "Map_Keys_Iterator")
+			iter_kind, next_kind = .Map_View_Iter, .Map_Keys_Next
+		case .Values:
+			iterator = map_view_iterator_type(k.c, under, "Map_Values_Iterator")
+			iter_kind, next_kind = .Map_View_Iter, .Map_Values_Next
+		case .None:
+			return
+		}
 	case:
 		return
+	}
+
+	// A built-in traversal hands back an owned `Element`, so a managed one needs
+	// its copy and drop entry points before the iterator's body asks. An
+	// unmanaged element copies bitwise and has neither.
+	if type_is_managed(k.c, element) {
+		contribute_lifecycle_members(k, element)
 	}
 
 	member_count := reverse_kind == .None ? 3 : 4
@@ -273,6 +431,10 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		sym.has_receiver = true
 		sym.receiver = .Value
 	}
+	// An iterator over a container borrows it (design.md "Iteration protocol"),
+	// and a synthesised member has no body for the provenance fixed point to
+	// walk — so the dependency on the receiver is written here.
+	set_synth_result_summary(k.c, members[2], 0)
 	if reverse_kind != .None {
 		members[3] = synth_proc(
 			k.c, "iter_reverse", reverse_kind, under,
@@ -282,11 +444,19 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 			sym.has_receiver = true
 			sym.receiver = .Value
 		}
+		set_synth_result_summary(k.c, members[3], 0)
 	}
 	add_members(k.c, under, members)
 
 	// `next(self: inout Iterator) -> Option(Element)` — the shape the protocol
-	// requires, on the opaque iterator.
+	// requires, on the opaque iterator. Two iterables can share one iterator
+	// type — a `string` and a `string_view`, a map and its entry view — so the
+	// iterator carries its own contribution flag rather than being written twice.
+	iterator_info := type_of(k.c, iterator)
+	if iterator_info == nil || .Iteration in iterator_info.contributed {
+		return
+	}
+	iterator_info.contributed += {.Iteration}
 	next_members := make([]Symbol_Id, 1, k.c.semantic_allocator)
 	next := synth_proc(
 		k.c, "next", next_kind, iterator,
@@ -408,9 +578,10 @@ associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id 
 
 // -------------------------------------------------------- runtime foreach --
 
-// design.md "Iteration adapters": the names a `foreach` header recognizes as an
-// alternative traversal of its iterable. They are the compiler-contributed
-// surface, so inside a header they always mean the adapter.
+// design.md "Iteration adapters": the two names a `foreach` header recognizes as
+// an alternative traversal of its iterable. The container views are ordinary
+// values and are not recognized here, so a member with one of their names means
+// inside a header exactly what it means outside one.
 @(private = "file")
 foreach_adapter_named :: proc(name: string) -> (Foreach_Adapter, bool) {
 	switch name {
@@ -418,16 +589,6 @@ foreach_adapter_named :: proc(name: string) -> (Foreach_Adapter, bool) {
 		return .None, true
 	case "reversed":
 		return .Reversed, false
-	case "entries":
-		return .Entries, false
-	case "keys":
-		return .Keys, false
-	case "values":
-		return .Values, false
-	case "runes":
-		return .Runes, false
-	case "rune_offsets":
-		return .Rune_Offsets, false
 	}
 	return .None, false
 }
@@ -450,11 +611,6 @@ peel_foreach_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> (Foreach_Adapter,
 		}
 		peeled, is_indexed := foreach_adapter_named(selector.name.text)
 		if peeled == .None && !is_indexed {
-			break
-		}
-		// `Enum.values()` is the members array, not a map's value view: it is an
-		// ordinary constant expression and the loop iterates its result.
-		if peeled == .Values && type_is_enum(k.c, resolve_type_syntax(k, selector.operand)) {
 			break
 		}
 		// A rejected chain is still consumed, so the header reports once rather
@@ -570,42 +726,25 @@ foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
 // The `Element` this loop yields, after the header's adapter.
 @(private = "file")
 foreach_element_type :: proc(k: ^Checker, s: ^Stmt_Foreach, under: Type_Id, info: ^Type_Info) -> Type_Id {
-	yielded := s.kind == .Text ? TYPE_RUNE : info.element
-	traversed := yielded
-	#partial switch s.adapter {
-	case .Rune_Offsets:
-		traversed = rune_offset_type(k.c)
-	case .Keys:
-		traversed = info.key
-	case .Values:
-		traversed = info.element
-	case:
-		if s.kind == .Map {
-			traversed = map_entry_type(k.c, under)
-		}
+	traversed := s.kind == .Text ? TYPE_RUNE : info.element
+	if s.kind == .Map {
+		traversed = map_entry_type(k.c, under)
 	}
 	// `indexed()` numbers whatever traversal precedes it, so it wraps last.
 	return s.indexed ? indexed_element_type(k.c, traversed) : traversed
 }
 
 // design.md "Iteration adapters": `indexed()` and `reversed()` are contributed to
-// every iterable, and the rest are views of one container's own storage.
+// every iterable. `reversed()` is the one with a restriction of its own.
 @(private = "file")
 check_adapter_applies :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, name: Name) -> bool {
-	ok := false
-	#partial switch s.adapter {
-	case .None:
+	if s.adapter == .None {
 		return true
-	case .Reversed:
-		// A map's order is unspecified, and walking UTF-8 backwards needs a decoder
-		// the version 1 runtime does not have.
-		ok = s.kind == .Array || s.kind == .Slice || s.kind == .Dynamic ||
-		     s.kind == .Range || s.kind == .Stored_Range
-	case .Entries, .Keys, .Values:
-		ok = s.kind == .Map
-	case .Runes, .Rune_Offsets:
-		ok = s.kind == .Text
 	}
+	// A map's order is unspecified, and walking UTF-8 backwards needs a decoder
+	// the version 1 runtime does not have.
+	ok := s.kind == .Array || s.kind == .Slice || s.kind == .Dynamic ||
+	      s.kind == .Range || s.kind == .Stored_Range
 	if !ok {
 		errorf(
 			k.c, name.span, "L0460",
@@ -746,17 +885,6 @@ check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range,
 // `value.iter()`, and `next(self: inout Iterator) -> (Element, bool)`.
 @(private = "file")
 check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
-	// Only `indexed()` and `reversed()` are contributed to a user iterable; the
-	// container views belong to one built-in's storage.
-	#partial switch s.adapter {
-	case .Entries, .Keys, .Values, .Runes, .Rune_Offsets:
-		errorf(
-			k.c, expr_span(s.iterable), "L0460",
-			"that traversal belongs to a built-in container, not to `%s`",
-			type_name(k.c, subject),
-		)
-		return FLOWS
-	}
 	if s.bindings[0].is_ref {
 		// design.md "By-reference iteration": by-reference `foreach` is a
 		// built-in-container facility, and the protocol has only value-producing
@@ -835,8 +963,22 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if !gate_type(k, element, expr_span(s.iterable)) {
 		return FLOWS
 	}
+	// design.md "Element bindings": a value loop yields an owned `Element`. A
+	// built-in traversal copies it out of container storage, so a move-only
+	// element has nothing for it to produce; a protocol iterator's `next` already
+	// hands one over and needs no copy.
+	if s.kind != .Protocol && !require_copyable_element(k, s, element) {
+		return FLOWS
+	}
+	// The loop disposes of its element at the end of every step, so the drop and
+	// (for a copied one) the clone have to exist. `indexed()` wraps the traversal
+	// in a record of its own, which is why this is asked here and not only where
+	// the iterable's members were contributed.
+	if type_is_managed(k.c, element) {
+		contribute_lifecycle_members(k, element)
+	}
 	if len(s.bindings) == 1 {
-		if !bind_element_field(k, s, 0, element, borrowed = foreach_field_borrowed(s, 0)) {
+		if !bind_element_field(k, s, 0, element) {
 			return FLOWS
 		}
 		return check_foreach_block(k, s)
@@ -860,58 +1002,36 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		if field == nil {
 			return FLOWS
 		}
-		if !bind_element_field(k, s, index, field.type, borrowed = foreach_field_borrowed(s, index)) {
+		if !bind_element_field(k, s, index, field.type) {
 			return FLOWS
 		}
 	}
 	return check_foreach_block(k, s)
 }
 
-// A field bound in place rather than copied: a map's key, immutable and
-// therefore borrowed — what lets `map[string]V` be iterated without a
-// per-iteration clone and drop.
+// design.md "Standard interface catalogue": a copy needs a copy entry point, and
+// a `move_only` element has none. The direct built-in traversals read the
+// container's own storage, so this is where their copy is refused.
 @(private = "file")
-foreach_field_borrowed :: proc(s: ^Stmt_Foreach, index: int) -> bool {
-	if s.kind != .Map || s.indexed {
-		return false
-	}
-	#partial switch s.adapter {
-	case .Keys:
+require_copyable_element :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> bool {
+	if !type_clone_disabled(k.c, element) {
 		return true
-	case .None, .Entries:
-		return len(s.bindings) > 1 && index == 0
 	}
+	errorf(
+		k.c, expr_span(s.iterable), "L0491",
+		"`%s` is move-only, so a by-value `foreach` cannot copy it out of the container; iterate `&value`, or remove the elements",
+		type_name(k.c, element),
+	)
 	return false
 }
 
 @(private = "file")
-bind_element_field :: proc(
-	k: ^Checker,
-	s: ^Stmt_Foreach,
-	index: int,
-	type: Type_Id,
-	borrowed: bool,
-) -> bool {
+bind_element_field :: proc(k: ^Checker, s: ^Stmt_Foreach, index: int, type: Type_Id) -> bool {
 	binding := s.bindings[index]
 	if binding.is_ref {
 		errorf(
 			k.c, binding.name.span, "L0457",
 			"a value binding names a copy of the element, so it cannot take `&`",
-		)
-		return false
-	}
-	// By default each iterated value is a copy (design.md), so a managed element
-	// would need a per-iteration clone and drop. Nothing places that cleanup, so
-	// the copy is rejected rather than leaked; the message names that limit
-	// rather than a milestone.
-	if !borrowed && type_is_managed(k.c, type) {
-		errorf(
-			k.c,
-			binding.name.span,
-			"L0504",
-			"a by-value `foreach` over `%s` copies a managed element, and the loop body places no per-iteration cleanup for it; iterate `&value` over a `[]mut %s`, or index the sequence",
-			type_name(k.c, type),
-			type_name(k.c, type),
 		)
 		return false
 	}

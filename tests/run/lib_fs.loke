@@ -289,8 +289,8 @@ clean_up :: proc(directory: string_view) {
 	// The reader holds a search handle over the directory being emptied, so it is
 	// closed before anything is removed.
 	if (!succeeded(reader.close())) { return; }
-	// Indexed, not `foreach`: a by-value loop over a managed element is L0504,
-	// which is the same limit that shaped `Directory_Reader`.
+	// Indexed rather than `foreach`, so the loop borrows each stored name instead
+	// of retaining a copy of it for the step.
 	for (index := 0; index < names.len(); index += 1) {
 		full := path.join([]string_view{directory, names[index]});
 		if (!succeeded(fs.remove(full))) {
