@@ -659,6 +659,13 @@ match_type_pattern :: proc(
 			}
 			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
+		// `Range($T)` is the same shape: one part, taken from the type itself.
+		if range_callee(k, v.callee) {
+			if !info.is_range || len(v.args) != 1 {
+				return false
+			}
+			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
+		}
 		// `^Table($K, $V)`: the argument must be an instance of that same template,
 		// and its own bound arguments supply the parts.
 		if info.instance_of == INVALID_SYMBOL {

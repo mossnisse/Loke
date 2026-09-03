@@ -1053,9 +1053,9 @@ The range operators [`..<` and `..=`](#other-operators) produce a value of the
 compiler-provided generic type written `Range(T)` here and in diagnostics:
 `a..<b` is half-open and excludes `b`, `a..=b` is closed and includes it. Both
 endpoints are unified to one type under the ordinary binary-operand rule, and
-`T` must be an integer or rune type. The spelling is notation for this
-specification; unlike [`Simd(T, N)`](#simd-vectors) the name is not in scope,
-for the reason given below.
+`T` must be an integer or rune type. `Range` is a predeclared name, like
+[`Simd(T, N)`](#simd-vectors) and shadowable the same way, so the type is
+writable wherever a type is.
 
 A range is an ordinary first-class value, not a piece of loop syntax. It may be
 bound to a variable, passed to a parameter, and inferred into a `$` parameter,
@@ -1076,21 +1076,19 @@ satisfies [`Iterable`](#standard-interface-catalogue) with `Element` equal to
 interface. It is not a [`Sequence`](#standard-interface-catalogue): a range
 stores no elements, so it has neither `len` nor indexing.
 
-The type is **inferred, never written**. `Range` is not a name in scope, so a
-range-typed declaration takes its type from its initializer (`r := 0 ..< 3;`)
-and a procedure receives one through a `$` parameter. This keeps the type an
-ordinary value without committing a spelling for it in version 1.
-
-The one thing that spelling would buy is a written result type, so a range is
-returnable only where the result type is itself inferred:
+The type is usually inferred — a range-typed declaration takes its type from
+its initializer (`r := 0 ..< 3;`) and a generic procedure receives one through
+a `$` parameter — but it can also be written, which is what makes a range a
+result type, a field type, and a matchable pattern:
 
 ```odin
-clamp_span :: proc(r: $R, limit: int) -> R { ... }   // OK: R is bound by the argument
-window :: proc(n: int) -> Range(int) { ... }         // ERROR: `Range` is not a name
+clamp_span :: proc(r: $R, limit: int) -> R { ... }   // R is bound by the argument
+window :: proc(n: int) -> Range(int) { return 0 ..< n; }
+low_of :: proc(r: Range($T)) -> T { return r.low; }
 ```
 
-A procedure that must hand a range back to a caller who did not supply one
-returns its endpoints, or a record of its own, instead.
+`Range` takes exactly one argument, the endpoint type, held to the same integer
+or rune rule the operators are.
 
 Ranges are also accepted, as syntax rather than as values, in [`switch` case
 lists](#switch-statement) and in [designated array

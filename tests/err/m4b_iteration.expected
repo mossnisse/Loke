@@ -19,3 +19,9 @@ is not iterable
 L0456
 @63:16
 needs `next
+L0689
+@68:24
+Range` takes one endpoint type
+L0458
+@69:32
+a range needs integer or rune endpoints

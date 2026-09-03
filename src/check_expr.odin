@@ -2152,10 +2152,15 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		check_group_call(k, v, k.c.shared_construct_symbol, expected)
 		return
 	}
-	// `Simd(f32, 4)` denotes a type wherever it appears too, which is what makes
-	// `Simd(i32, 4)(v)` an ordinary written conversion.
-	if simd_callee(k, v.callee) {
-		denoted := resolve_simd_application(k, v)
+	// `Simd(f32, 4)` and `Range(int)` denote a type wherever they appear too,
+	// which is what makes `Simd(i32, 4)(v)` an ordinary written conversion.
+	if simd_callee(k, v.callee) || range_callee(k, v.callee) {
+		denoted := INVALID_TYPE
+		if range_callee(k, v.callee) {
+			denoted = resolve_range_application(k, v)
+		} else {
+			denoted = resolve_simd_application(k, v)
+		}
 		if denoted == INVALID_TYPE {
 			v.type = INVALID_TYPE
 			return

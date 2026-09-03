@@ -1606,6 +1606,11 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if simd_callee(k, value.callee) {
 			return resolve_simd_application(k, value)
 		}
+		// design.md "Ranges": `Range(T)` is predeclared the same way, so a range
+		// is spellable wherever a result or field type has to be written.
+		if range_callee(k, value.callee) {
+			return resolve_range_application(k, value)
+		}
 		// `Table(string, int)`: a generic application in type position.
 		template := generic_template_of_callee(k, value.callee, .Record)
 		if template == nil {

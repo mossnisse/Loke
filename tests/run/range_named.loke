@@ -1,0 +1,30 @@
+package main; import "core:fmt";
+
+// design.md "Ranges": `Range(T)` is a predeclared name, so a range is spellable
+// as a result type, a parameter type, and a field type.
+Span :: struct { bounds: Range(int) }
+
+window :: proc(n: int) -> Range(int) {
+	return 0 ..< n;
+}
+
+letters :: proc() -> Range(rune) {
+	return 'a' ..= 'c';
+}
+
+low_of :: proc(r: Range($T)) -> T {
+	return r.low;
+}
+
+main :: proc() {
+	w := window(3);
+	fmt.println(w.low);
+	fmt.println(w.high);
+	fmt.println(w.closed);
+	foreach (i in w) { fmt.println(i); }
+	foreach (ch in letters()) { fmt.println(ch); }
+
+	s := Span{window(2)};
+	fmt.println(low_of(s.bounds));
+	fmt.println(low_of(letters()));
+}

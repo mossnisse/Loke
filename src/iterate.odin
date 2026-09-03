@@ -135,6 +135,48 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return type
 }
 
+// `Range` is a predeclared name rather than a symbol in a package, for the same
+// reason `Simd` is: design.md writes `Range(int)` with no import in sight. It is
+// shadowable — a program that declares its own `Range` gets its own.
+range_callee :: proc(k: ^Checker, callee: Expr) -> bool {
+	ident, is_ident := callee.(^Expr_Ident)
+	if !is_ident || ident.name != "Range" {
+		return false
+	}
+	return lookup_symbol(k.scope, identifier_of(k.c, ident)) == INVALID_SYMBOL
+}
+
+// `Range(T)` in type position. Reports rather than staying silent: as with
+// `Simd`, once the name is the predeclared one there is no other reading of the
+// spelling to fall back to.
+resolve_range_application :: proc(k: ^Checker, v: ^Expr_Call) -> Type_Id {
+	if v.denoted_type != INVALID_TYPE {
+		return v.denoted_type
+	}
+	if len(v.args) != 1 || v.args[0].name.text != "" {
+		errorf(k.c, v.span, "L0689", "`Range` takes one endpoint type, as in `Range(int)`")
+		return INVALID_TYPE
+	}
+	element := resolve_type_syntax(k, v.args[0].value)
+	if element == INVALID_TYPE {
+		report_unresolved_type(k, v.args[0].value)
+		return INVALID_TYPE
+	}
+	if !type_is_integer(k.c, element) && !type_is_rune(k.c, element) {
+		errorf(
+			k.c, expr_span(v.args[0].value), "L0458",
+			"a range needs integer or rune endpoints, found `%s`",
+			type_name(k.c, element),
+		)
+		return INVALID_TYPE
+	}
+	v.denoted_type = range_type(k.c, element)
+	ensure_iteration_members(k, v.denoted_type)
+	v.resolution.kind = .Type
+	v.value_category = .Type
+	return v.denoted_type
+}
+
 // ------------------------------------------------------- element records --
 
 // The records a loop binds whole or destructures: ordinary anonymous records

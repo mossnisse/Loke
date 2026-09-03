@@ -62,3 +62,8 @@ main :: proc() {
 	foreach (v in Broken_Iter{}) { fmt.println(v); }
 	foreach (v in Broken_Next{}) { fmt.println(v); }
 }
+
+// The written `Range(T)` takes one endpoint type, held to the same rule the
+// range operators are.
+bad_arity :: proc() -> Range(int, int) { return 0 ..< 1; }
+bad_element :: proc() -> Range(f32) { return 0.0 ..< 1.0; }
