@@ -1,6 +1,6 @@
 package main; import "core:fmt"; import "core:mem"; import "base:interfaces";
 
-// design.md "standard interface catalogue": "copyable owning built-ins such as
+// design.md "Standard interface catalogue": "copyable owning built-ins such as
 // `string`, dynamic arrays, maps ... satisfy `Cloneable`". They carry the same
 // `try_clone`/`clone` members a record does; only the emitted body differs — a
 // retain for `string`, the versioned helper for a container.

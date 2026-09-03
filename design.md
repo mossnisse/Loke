@@ -1135,7 +1135,10 @@ m.remove(key);
 A lookup of a missing key returns the zero value. Use `lookup_value` or the `in` operator to test whether the key exists:
 
 ```odin
-elem, ok := m.lookup_value(key); // `ok` is true if the element for that key exists
+switch (elem in m.lookup_value(key)) {
+case .some: fmt.println(elem);
+case .none: // no element for that key
+}
 ```
 
 or
@@ -1709,7 +1712,7 @@ Examples:
 
 ```odin
 proc(x: int) -> bool
-proc(c: proc(x: int) -> bool) -> (i32, f32);
+proc(c: proc(x: int) -> bool) -> (count: i32, ratio: f32);
 ```
 
 A variable can have a procedure type:
@@ -2352,11 +2355,10 @@ foreach (key, value in table) {   // `Element` is a two-field record
 }
 ```
 
-For destructuring, the element must be a record with exactly the same number of
-directly declared, visible fields. Bindings are flat and cannot nest; promoted
-fields are not flattened. Any binding may be `_`. This is the language's only
-destructuring form, and it appears only in a `foreach` header. Value bindings are
-immutable locals.
+This is the general [destructuring](#destructuring) rule applied to the element,
+so the element must be a record with exactly the same number of directly
+declared, visible fields. Bindings are flat and cannot nest; promoted fields are
+not flattened. Any binding may be `_`. Value bindings are immutable locals.
 
 The iterator still produces the whole element when fields are ignored.
 Destructuring moves its fields into the bindings without another copy and
@@ -4455,9 +4457,9 @@ rule](#capabilities-and-the-one-rule).
 A call can name its arguments. Named arguments show the parameter for each value and do not depend on parameter order:
 
 ```odin
-create_window :: proc(title: string, x, y: int, width, height: int, monitor: ^Monitor) -> (^Window, Window_Error) {...};
+create_window :: proc(title: string, x, y: int, width, height: int, monitor: ^Monitor) -> Result(^mut Window, Window_Error) {...};
 
-window, err := create_window(title="Hellope Title", monitor=nil, width=854, height=480, x=0, y=0);
+window := create_window(title="Hellope Title", monitor=nil, width=854, height=480, x=0, y=0) or_return;
 ```
 
 One call can contain positional and named arguments. Positional arguments must occur before named arguments.
@@ -4474,10 +4476,10 @@ foo(134, "hellope", x=true, y=4.5);
 A parameter can have a default value. The call uses the default when it omits that argument:
 
 ```odin
-create_window :: proc(title: string, x := 0, y := 0, width := 854, height := 480, monitor: ^Monitor = nil) -> (^Window, Window_Error) {...};
+create_window :: proc(title: string, x := 0, y := 0, width := 854, height := 480, monitor: ^Monitor = nil) -> Result(^mut Window, Window_Error) {...};
 
-window1, err1 := create_window("Title1");
-window2, err2 := create_window(title="Title1", width=640, height=360);
+window1 := create_window("Title1") or_return;
+window2 := create_window(title="Title1", width=640, height=360) or_return;
 ```
 
 An input parameter's default is an ordinary expression, not necessarily a
@@ -4506,10 +4508,10 @@ provider implementation is selected once by the final build, while its returned
 read_file :: proc(
 	path: string,
 	allocator := mem.default_allocator(),
-) -> ([]byte, Error) {...}
+) -> Result([dynamic]u8, Error) {...}
 
-data, err := files.read_file("data.bin");
-scratch_data, scratch_err := files.read_file("scratch.bin", allocator=scratch);
+data := files.read_file("data.bin") or_return;
+scratch_data := files.read_file("scratch.bin", allocator=scratch) or_return;
 ```
 
 The compiler-provided [`caller_location()`](#caller_location) expression is also

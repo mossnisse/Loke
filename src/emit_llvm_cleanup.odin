@@ -823,7 +823,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 
-	// design.md "standard interface catalogue": the copyable owning built-ins
+	// design.md "Standard interface catalogue": the copyable owning built-ins
 	// satisfy `Cloneable`, so `string`, `[dynamic]T` and `map[K]V` carry the same
 	// `try_clone` member a record does. Its body is the one intrinsic copy the
 	// implicit paths already use — a retain, or the versioned container helper.

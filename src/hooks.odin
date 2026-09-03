@@ -299,7 +299,7 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 		return
 	}
 	// Copyable owning built-ins such as `string`, dynamic arrays, and maps
-	// satisfy `Cloneable` (design.md "standard interface catalogue"). That
+	// satisfy `Cloneable` (design.md "Standard interface catalogue"). That
 	// interface names the `try_clone` slot, so those types need the member as
 	// much as a record does — the difference is only what its body lowers to,
 	// which `emit_synth_try_clone` decides from `Lifecycle.intrinsic`.

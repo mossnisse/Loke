@@ -1,5 +1,5 @@
-// UTF-8 to UTF-16 and back (standard-library-plan "later packages", pulled
-// forward by stage 2).
+// UTF-8 to UTF-16 and back (standard-library-plan "Package layout", pulled
+// forward by stage 2 from the later-packages list there).
 //
 // Windows is a wide-character operating system: every path, environment
 // variable, and console record it hands out is UTF-16. The library's public

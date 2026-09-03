@@ -52,9 +52,10 @@ silently changed.
 
 ### Errors are values
 
-Absence alone uses `(T, bool)`, following the language's optional-ok convention.
-A failure with useful information returns an error value whose zero value is
-`nil`, so it composes with `or_return`.
+Absence alone answers `Option(T)`. A failure with useful information answers
+`Result(T, Error)`, whose failure variant carries the error value, so it
+composes with `or_return`. Neither is a trailing status: `nil` is not a failure
+and a trailing `bool` is not one either.
 
 The `try_` prefix keeps its existing meaning: it is the fallible version of an
 operation that would otherwise apply an allocation or capacity failure policy.
@@ -150,17 +151,16 @@ core:testing
 Nested paths are taxonomy, not inheritance. For example,
 `core:encoding/json` does not automatically import `core:encoding`.
 
-### This split contradicts `design.md` and `design.md` must change
+### Files are in `core:fs`, not `core:os`
 
-`design.md`'s "Library types assumed by this specification" table assigns
-`os.open`, `os.close`, and `os.Handle` to `core:os`, and the `defer` section
-uses `os.open`/`os.close` in its example. Files belong in `core:fs`: `core:os`
-is process state, and a package that owns the argument vector should not also
-own file handles.
+`design.md` originally assigned `os.open`, `os.close`, and `os.Handle` to
+`core:os`, in the "Library types assumed by this specification" table and in the
+`defer` example. Files belong in `core:fs`: `core:os` is process state, and a
+package that owns the argument vector should not also own file handles.
 
-The first `core:fs` commit therefore amends both `design.md` sites — the table
-row and the `defer` example — in the same change. No `os.open` alias is kept;
-one spelling for opening a file is the point of moving it.
+The first `core:fs` commit amended both `design.md` sites, and they now name
+`fs.File`, `fs.open`, and `File.close`. No `os.open` alias is kept; one spelling
+for opening a file is the point of moving it.
 
 ## Shared I/O contract
 
@@ -215,18 +215,15 @@ Operation :: enum {
 	Other,
 }
 
-Error_Info :: struct {
-	code:        Code,
-	native_code: u32,
-	operation:   Operation,
+Error :: struct {
+	@(private) code:        Code,
+	@(private) native_code: u32,
+	@(private) operation:   Operation,
 }
-
-Error :: union {Error_Info}; // nil is success
 
 make_error(code: Code, operation: Operation,
 	native_code: u32 = 0) -> Error
-from_allocator_error(error: Allocator_Error,
-	operation: Operation) -> Error
+from_allocator_error(operation: Operation) -> Error
 is(error: Error, code: Code) -> bool
 code_of(error: Error) -> Code
 operation_of(error: Error) -> Operation
@@ -250,29 +247,26 @@ coherence rule.
 public visibility only: `core:fs`, `core:term`, `core:os`, and third-party
 `Reader`/`Writer` implementations cannot call a package-private `core:io`
 constructor. The constructors accept only owned scalar data, so exposing them
-does not weaken the error's lifetime guarantee. `Error_Info`'s representation
-and fields remain package-private; access is through the constructors and
-query procedures.
+does not weaken the error's lifetime guarantee. `Error`'s fields remain
+package-private; access is through the constructors and query procedures.
 
 `Out_Of_Memory` is not a second allocation-failure vocabulary. Every `io`, `fs`,
 `term`, and `os` procedure that allocates takes an allocator parameter and uses
-the `try_` form internally; a non-nil `mem.Allocator_Error` is converted at that
+the `try_` form internally; an `.err(mem.Allocator_Error)` is converted at that
 one call site with `from_allocator_error`, after the partial result is destroyed.
-No procedure returns both an `Allocator_Error` and an `io.Error`.
+No procedure's failure payload is both an `Allocator_Error` and an `io.Error`.
 
 The first release uses synchronous, blocking byte streams. Both are written with
-`slot` requirements: an expression requirement's result is a single `Type` and
-there is no tuple type, so `-> (int, Error)` is not expressible that way — and
-`slot` is also what dyn-compatibility requires, which is what makes
-`dyn io.Writer` exist for the formatting adapter and for `io.copy`.
+`slot` requirements, which is what dyn-compatibility requires, and that is what
+makes `dyn io.Writer` exist for the formatting adapter and for `io.copy`.
 
 ```odin
 Reader :: interface($Self: type) {
-	slot read: proc(self: inout Self, destination: []mut u8) -> (int, Error);
+	slot read: proc(self: inout Self, destination: []mut u8) -> Result(int, Error);
 }
 
 Writer :: interface($Self: type) {
-	slot write: proc(self: inout Self, source: []u8) -> (int, Error);
+	slot write: proc(self: inout Self, source: []u8) -> Result(int, Error);
 }
 ```
 
@@ -284,8 +278,9 @@ The contracts are:
 - a count is always between zero and the supplied slice length;
 - an empty slice succeeds immediately with a zero count;
 - a read reports `End_Of_Input` only when it produced no more bytes;
-- an implementation may return a positive count and an error together, and a
-  caller must consume the count before handling the error;
+- an implementation that made progress reports the count and surfaces the
+  failure on the *next* call, because a `Result` carries one or the other and
+  progress must never be lost;
 - a zero count with no error is permitted only for an empty slice;
 - `write` may write only a prefix; `write_all` handles partial writes; and
 - implementations retry an interrupted platform call where doing so is safe
@@ -296,14 +291,14 @@ Core helpers:
 ```odin
 Line_Options :: struct { keep_ending: bool }
 
-copy(destination, source, buffer: []mut u8 = nil) -> (u64, Error)
-read_exact(reader, destination) -> Error
+copy(destination, source, buffer: []mut u8 = nil) -> Result(u64, Error)
+read_exact(reader, destination) -> Result(Unit, Error)
 read_to_end(reader, allocator: Allocator = mem.default_allocator(),
-	limit: int = 0) -> ([dynamic]u8, Error)
-write_all(writer, source) -> Error
-write_string(writer, text: string_view) -> Error
+	limit: int = 0) -> Result([dynamic]u8, Error)
+write_all(writer, source) -> Result(Unit, Error)
+write_string(writer, text: string_view) -> Result(Unit, Error)
 read_line(reader, allocator: Allocator = mem.default_allocator(),
-	options: Line_Options = {}) -> (string, Error)
+	options: Line_Options = {}) -> Result(string, Error)
 ```
 
 Every default argument names a type. `{}` takes its type from context and `:=`
@@ -346,8 +341,8 @@ adapter within its own body; the raw pointer is never a value a caller holds.
 `dyn io.Writer` existing at all depends on `Writer` being declared with `slot`.
 
 ```odin
-write_formatted(writer, args: ..any_view) -> Error
-write_formatted_line(writer, args: ..any_view) -> Error
+write_formatted(writer, args: ..any_view) -> Result(Unit, Error)
+write_formatted_line(writer, args: ..any_view) -> Result(Unit, Error)
 ```
 
 Both shipped as written: the latch conversion is accepted, and the adapter never
@@ -389,15 +384,15 @@ All returned indices are byte offsets:
 contains(text, needle: string_view) -> bool
 starts_with(text, prefix: string_view) -> bool
 ends_with(text, suffix: string_view) -> bool
-index(text, needle: string_view) -> (int, bool)
-last_index(text, needle: string_view) -> (int, bool)
-index_byte(text: string_view, byte: u8) -> (int, bool)
-index_rune(text: string_view, value: rune) -> (int, bool)
+index(text, needle: string_view) -> Option(int)
+last_index(text, needle: string_view) -> Option(int)
+index_byte(text: string_view, value: u8) -> Option(int)
+index_rune(text: string_view, value: rune) -> Option(int)
 count(text, needle: string_view) -> int
 ```
 
 Empty-needle behavior must be documented and tested consistently: it matches at
-byte offset zero, `last_index` returns `len(text)`, and `count` returns
+byte offset zero, `last_index` answers `.some(len(text))`, and `count` returns
 `len(text) + 1`.
 
 ### Borrowing transformations and iterators
@@ -409,7 +404,8 @@ trim_space(text) -> string_view
 trim_left_space(text) -> string_view
 trim_right_space(text) -> string_view
 trim(text, cutset: string_view) -> string_view
-cut(text, separator: string_view) -> (before, after: string_view, ok: bool)
+Cut :: struct { before: string_view, after: string_view }
+cut(text, separator: string_view) -> Option(Cut)
 split(text, separator: string_view) -> Split_Iterator
 fields(text) -> Fields_Iterator
 lines(text) -> Lines_Iterator
@@ -425,7 +421,7 @@ a later `core:unicode` package.
 ```odin
 copy(text: string_view, allocator: Allocator = ...) -> string
 try_copy(text: string_view, allocator: Allocator = ...)
-	-> (string, Allocator_Error)
+	-> Result(string, Allocator_Error)
 join(parts: []string_view, separator: string_view = "",
 	allocator: Allocator = ...) -> string
 repeat(text: string_view, times: int, allocator: Allocator = ...) -> string
@@ -501,11 +497,11 @@ impl String_Builder {
 	clear        :: proc(self: inout String_Builder);
 	finish       :: proc(self: inout String_Builder) -> string;
 	try_finish   :: proc(self: inout String_Builder)
-		-> (string, Allocator_Error);
+		-> Result(string, Allocator_Error);
 	copy_string :: proc(self, allocator: Allocator
 		= mem.default_allocator()) -> string;
 	try_copy_string :: proc(self, allocator: Allocator
-		= mem.default_allocator()) -> (string, Allocator_Error);
+		= mem.default_allocator()) -> Result(string, Allocator_Error);
 }
 ```
 
@@ -519,11 +515,12 @@ policy. `copy_string` and `try_copy_string` do not change the builder.
 
 The compiler contributes one package-private `core:strings` primitive that
 copies a known-valid `string_view` into string storage with a supplied allocator
-and returns `Allocator_Error`. This is the minimal unexpressible bridge to the
-built-in string allocation ABI; UTF-8 algorithms and allocation policy remain
-ordinary Loke. Stage 0 must prove this primitive before the builder API is
-frozen. Arbitrary byte append is deliberately absent because it could break the
-UTF-8 invariant; callers validate bytes first or use a byte buffer.
+and answers `Result(string, Allocator_Error)`. This is the minimal unexpressible
+bridge to the built-in string allocation ABI; UTF-8 algorithms and allocation
+policy remain ordinary Loke. Stage 0 must prove this primitive before the
+builder API is frozen. Arbitrary byte append is deliberately absent because it
+could break the UTF-8 invariant; callers validate bytes first or use a byte
+buffer.
 
 The type's public name in source should be `strings.String_Builder`. A shorter
 `strings.Builder` alias can be considered only after real programs show that it
@@ -543,8 +540,10 @@ the whole surface is methods in one `impl` block for the same reason
 ```odin
 C_String :: struct { /* private representation */ }
 
+Error :: enum { Contains_Zero, Out_Of_Memory }
+
 from_string :: proc(text: string_view, allocator := mem.default_allocator())
-	-> (C_String, Error)
+	-> Result(C_String, Error)
 
 impl C_String {
 	view :: proc(self) -> cstring_view;
@@ -552,10 +551,11 @@ impl C_String {
 }
 ```
 
-`cstrings.Error` is nil on success and distinguishes `Contains_Zero` from
-`Out_Of_Memory`. The constructor rejects an interior zero; a Loke `string` may
-legitimately contain U+0000 even though a retained C string cannot. The package
-must never create a view whose apparent length is shorter than the owned data.
+`cstrings.Error` distinguishes `Contains_Zero` from `Out_Of_Memory`, and reaches
+a caller as the failure payload of `Result`. The constructor rejects an interior
+zero; a Loke `string` may legitimately contain U+0000 even though a retained C
+string cannot. The package must never create a view whose apparent length is
+shorter than the owned data.
 
 `from_bytes` and a `bytes()` accessor are not in the first release. `design.md`
 only owes `view()`, and the one motivating case — handing a foreign API a string
@@ -569,17 +569,19 @@ Parsing does not belong in `strings`: it interprets text as another type.
 First-release procedures:
 
 ```odin
-parse_bool(text: string_view) -> (bool, bool)
-parse_i64(text: string_view, base := 0) -> (i64, Parse_Error)
-parse_u64(text: string_view, base := 0) -> (u64, Parse_Error)
-parse_int(text: string_view, base := 0) -> (int, Parse_Error)
-parse_uint(text: string_view, base := 0) -> (uint, Parse_Error)
-parse_f64(text: string_view) -> (f64, Parse_Error)
+parse_bool(text: string_view) -> Option(bool)
+parse_i64(text: string_view, base := 0) -> Result(i64, Parse_Error)
+parse_u64(text: string_view, base := 0) -> Result(u64, Parse_Error)
+parse_int(text: string_view, base := 0) -> Result(int, Parse_Error)
+parse_uint(text: string_view, base := 0) -> Result(uint, Parse_Error)
+parse_f64(text: string_view) -> Result(f64, Parse_Error)
 ```
 
 `Parse_Error` distinguishes invalid syntax, invalid base, overflow, and trailing
-data, and is nil on success. Parsing consumes the whole string after permitted
-surrounding ASCII whitespace. A separate scanner API can later parse a prefix.
+data, and reaches a caller as the failure payload of `Result`. `parse_bool` has
+only one way to fail, so it answers `Option(bool)` instead. Parsing consumes the
+whole string after permitted surrounding ASCII whitespace. A separate scanner
+API can later parse a prefix.
 
 `base == 0` recognizes the language prefixes `0b`, `0o`, and `0x`; otherwise
 the accepted range is 2 through 36. Underscore rules should match Loke literals
@@ -612,16 +614,16 @@ Open_Options :: struct {
 	append:      bool,
 }
 
-open(path: string_view, options: Open_Options) -> (File, io.Error)
-open_read(path: string_view) -> (File, io.Error)
-create(path: string_view) -> (File, io.Error)
-append(path: string_view) -> (File, io.Error)
+open(path: string_view, options: Open_Options) -> Result(File, io.Error)
+open_read(path: string_view) -> Result(File, io.Error)
+create(path: string_view) -> Result(File, io.Error)
+append(path: string_view) -> Result(File, io.Error)
 
-read(file: inout File, destination: []mut u8) -> (int, io.Error)
-write(file: inout File, source: []u8) -> (int, io.Error)
-seek(file: inout File, offset: i64, origin: Seek_Origin) -> (u64, io.Error)
-flush(file: inout File) -> io.Error
-close(file: inout File) -> io.Error
+read(file: inout File, destination: []mut u8) -> Result(int, io.Error)
+write(file: inout File, source: []u8) -> Result(int, io.Error)
+seek(file: inout File, offset: i64, origin: Seek_Origin) -> Result(u64, io.Error)
+flush(file: inout File) -> Result(Unit, io.Error)
+close(file: inout File) -> Result(Unit, io.Error)
 ```
 
 Because structural interface satisfaction is determined by the static type,
@@ -635,20 +637,20 @@ multiple writes from multiple processes into one atomic transaction.
 
 ```odin
 read_bytes(path, allocator := mem.default_allocator(), limit := 0)
-	-> ([dynamic]u8, io.Error)
+	-> Result([dynamic]u8, io.Error)
 read_text(path, allocator := mem.default_allocator(), limit := 0)
-	-> (string, io.Error)
-write_bytes(path, data: []u8) -> io.Error
-write_text(path, text: string_view) -> io.Error
-append_bytes(path, data: []u8) -> io.Error
-append_text(path, text: string_view) -> io.Error
+	-> Result(string, io.Error)
+write_bytes(path, data: []u8) -> Result(Unit, io.Error)
+write_text(path, text: string_view) -> Result(Unit, io.Error)
+append_bytes(path, data: []u8) -> Result(Unit, io.Error)
+append_text(path, text: string_view) -> Result(Unit, io.Error)
 ```
 
 `read_text` validates UTF-8. `write_*` truncates an existing file only after it
 has successfully opened the target. It does not promise atomic replacement.
 `read_bytes` and `read_text` use the same `limit` contract as `io.read_to_end`:
-exceeding a nonzero limit returns `Limit_Exceeded`, destroys partial storage, and
-returns the zero result.
+exceeding a nonzero limit answers `.err(Limit_Exceeded)` and destroys partial
+storage.
 An explicit `replace_atomic` helper may be added later with precisely documented
 same-filesystem and durability guarantees.
 
@@ -662,21 +664,21 @@ by methods. `file.is_open()` was added alongside them, because a caller that has
 closed explicitly has no other way to ask.
 
 ```odin
-metadata(path) -> (Metadata, io.Error)
-exists(path) -> (bool, io.Error)
-remove(path) -> io.Error
-rename(old_path, new_path) -> io.Error
-create_directory(path) -> io.Error
-create_directories(path) -> io.Error
-remove_directory(path) -> io.Error
+metadata(path) -> Result(Metadata, io.Error)
+exists(path) -> Result(bool, io.Error)
+remove(path) -> Result(Unit, io.Error)
+rename(old_path, new_path) -> Result(Unit, io.Error)
+create_directory(path) -> Result(Unit, io.Error)
+create_directories(path) -> Result(Unit, io.Error)
+remove_directory(path) -> Result(Unit, io.Error)
 read_directory(path, allocator := mem.default_allocator())
-	-> (Directory_Reader, io.Error)
+	-> Result(Directory_Reader, io.Error)
 ```
 
-`Directory_Reader.next` returns `(Directory_Entry, bool, io.Error)`: presence
-and failure are different answers, and a directory walk has to distinguish "no
-more entries" from "the enumeration broke". `read_directory` returns a
-**move-only streaming reader**, not an owning array.
+`Directory_Reader.next` answers `Result(Option(Directory_Entry), io.Error)`:
+presence and failure are different answers, and a directory walk has to
+distinguish "no more entries" from "the enumeration broke". `read_directory`
+returns a **move-only streaming reader**, not an owning array.
 This is not a preference: a `[dynamic]Directory_Entry` whose entries own their
 name `string` cannot be iterated by value today, because `foreach` over a managed
 element is rejected (L0504, the M5a limit that already forced `os.Args.Element`
@@ -685,8 +687,8 @@ over is not the simpler option. The reader yields one entry at a time, borrows
 its name into a caller-visible buffer valid until the next `next`, and closes its
 platform search handle in `drop`. A caller wanting an array collects one itself.
 
-`exists` returns false only for a definite not-found result; permission and I/O
-failures remain errors. `Metadata` initially exposes kind, byte size, and
+`exists` answers `.ok(false)` only for a definite not-found result; permission
+and I/O failures remain errors. `Metadata` initially exposes kind, byte size, and
 modified time. Symlink behavior must be explicit when symlink support is added;
 the first Windows implementation must not accidentally claim portable symlink
 semantics.
@@ -734,9 +736,9 @@ stdout() -> Output
 stderr() -> Output
 
 read_line(allocator := mem.default_allocator(),
-	options: io.Line_Options = {}) -> (string, io.Error)
+	options: io.Line_Options = {}) -> Result(string, io.Error)
 prompt(label: string_view, allocator := mem.default_allocator(),
-	options: io.Line_Options = {}) -> (string, io.Error)
+	options: io.Line_Options = {}) -> Result(string, io.Error)
 ```
 
 `Input` satisfies `io.Reader`; `Output` satisfies `io.Writer`. These lightweight
@@ -756,9 +758,10 @@ fallible stream output uses `term.stdout()` with `io.write_all` or
 ```odin
 Raw_Mode :: struct { /* move-only, private state */ }
 
-begin_raw(input := stdin()) -> (Raw_Mode, io.Error)
-read_key(mode: inout Raw_Mode) -> (Key_Event, io.Error)
-close(mode: inout Raw_Mode) -> io.Error
+begin_raw(input := stdin(), options: Raw_Options = {})
+	-> Result(Raw_Mode, io.Error)
+read_key(mode: inout Raw_Mode) -> Result(Key_Event, io.Error)
+close(mode: inout Raw_Mode) -> Result(Unit, io.Error)
 ```
 
 `Raw_Mode.drop` restores the exact previous terminal mode on ordinary return,
@@ -777,13 +780,13 @@ This is the one place the library pays for a guarantee the language does not
 make; the plan's rule against hidden process behavior still holds, because
 nothing is registered until a caller asks for raw mode.
 
-`begin_raw` on redirected input returns `Not_A_Terminal`.
+`begin_raw` on redirected input answers `.err(Not_A_Terminal)`.
 
 Only one `Raw_Mode` may be live in a process. The process-level control handler
 has one authoritative saved console mode; allowing another scope to overwrite
 it would make out-of-order cleanup or a control event restore the wrong mode.
-A second `begin_raw` therefore returns `Already_Exists` and leaves the terminal
-unchanged.
+A second `begin_raw` therefore answers `.err(Already_Exists)` and leaves the
+terminal unchanged.
 
 `Key_Event` contains a Unicode rune for text input, a `Key` enum for special
 keys, and explicit modifier flags. The first `Key` set should cover arrows,
@@ -803,15 +806,17 @@ operations should be:
 
 ```odin
 get_environment(name: string_view,
-	allocator := mem.default_allocator()) -> (string, bool, io.Error)
-set_environment(name, value: string_view) -> io.Error
-unset_environment(name: string_view) -> io.Error
-working_directory(allocator := mem.default_allocator()) -> (string, io.Error)
-set_working_directory(path: string_view) -> io.Error
-executable_path(allocator := mem.default_allocator()) -> (string, io.Error)
+	allocator := mem.default_allocator()) -> Result(Option(string), io.Error)
+set_environment(name, value: string_view) -> Result(Unit, io.Error)
+unset_environment(name: string_view) -> Result(Unit, io.Error)
+working_directory(allocator := mem.default_allocator())
+	-> Result(string, io.Error)
+set_working_directory(path: string_view) -> Result(Unit, io.Error)
+executable_path(allocator := mem.default_allocator())
+	-> Result(string, io.Error)
 ```
 
-The boolean from `get_environment` distinguishes a missing variable from a
+The `Option` from `get_environment` distinguishes a missing variable from a
 present empty value. Its owning result uses the supplied allocator. Environment
 names and values must become valid UTF-8 or the operation returns invalid data.
 A process-spawning API is deferred until handle inheritance, quoting, environment
@@ -942,7 +947,7 @@ import "core:fs";
 import "core:io";
 import "core:term";
 
-run :: proc() -> io.Error {
+run :: proc() -> Result(Unit, io.Error) {
 	name := term.prompt("Name: ") or_return;
 
 	// The file does not exist on the first run, which is not a failure here.
@@ -952,13 +957,13 @@ run :: proc() -> io.Error {
 	}
 
 	line := "Hello, " + name + "!\n";
-	fs.write_text("greetings.txt", old + line) or_return;
-	return nil;
+	return fs.write_text("greetings.txt", old + line);
 }
 
 main :: proc() {
-	if (error := run(); error != nil) {
-		fmt.eprintln("error:", error);
+	switch (outcome in run()) {
+	case .ok:
+	case .err: fmt.eprintln("error:", outcome);
 	}
 }
 ```
@@ -995,7 +1000,7 @@ implementation had to change, and why, so the difference is not left implicit.
 
 ### The compiler grew one primitive, and lost five bugs
 
-`allocate_string(text: string_view, allocator: Allocator) -> (string,
+`allocate_string(text: string_view, allocator: Allocator) -> Result(string,
 Allocator_Error)` is contributed package-privately to `core:strings` and to
 `core:fmt`. It is the plan's "minimal unexpressible bridge": every built-in text
 operation allocates from the default provider, so without it no library
@@ -1003,8 +1008,10 @@ procedure could honour an allocator argument and still produce a `string`.
 
 Four compiler defects were found by writing this library, and fixed with it:
 
-- a multi-result slot called through `dyn` crashed the backend, because the
-  multi-value path had no arm for a slot call. `dyn io.Writer` needs one;
+- a slot returning an aggregate result crashed the backend when called through
+  `dyn`, because that lowering path had no arm for a slot call. `dyn io.Writer`
+  needs one. (The stream slots returned two values when this was found; they
+  answer `Result` now, and the same path carries it.);
 - a generic procedure could not be called with an omitted defaulted argument,
   with a named argument, or with a variadic pack, because inference required
   exactly one written argument per written parameter. The generic helpers here —
@@ -1054,8 +1061,8 @@ was enough to make an unrelated corpus program fail.
   `native_code_of`: `code` cannot be both a procedure and the `Code` enum.
 - `fs` read/write/seek/flush/close are `File` members rather than free
   procedures, because a `slot` requirement is satisfied by a member.
-- `Directory_Reader.next` answers `(entry, ok, error)`: a walk has to tell "no
-  more entries" from "the enumeration broke".
+- `Directory_Reader.next` answers `Result(Option(Directory_Entry), io.Error)`:
+  a walk has to tell "no more entries" from "the enumeration broke".
 - Case conversion is ASCII-only, marked in the source with its upgrade path.
 - `os.set_environment` with an empty value removes the variable on Windows. That
   is the platform's behavior, and it is documented at the call rather than
