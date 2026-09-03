@@ -7,7 +7,7 @@
 // may legitimately have *no* zero, and every zero-manufacturing operation
 // must say so instead of quietly producing tag 0.
 //
-// design.md "Required results": `@(require_results)` on a type declaration
+// design.md "@(require_results)": `@(require_results)` on a type declaration
 // makes a bare call statement an error whenever a result carries that type,
 // however deeply a value aggregate wraps it.
 package lokec

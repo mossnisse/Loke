@@ -170,7 +170,7 @@ Type_Info :: struct {
 	zero_designated:    bool,
 	failure_designated: bool,
 	failure_variant:    int,
-	// design.md "Required results": `@(require_results)` on a type declaration.
+	// design.md "@(require_results)": `@(require_results)` on a type declaration.
 	// A bare call statement is rejected when any result type requires handling.
 	requires_results: bool,
 	// A validated `union @(align=N)` or `struct @(align=N)`, or 0. Kept apart from

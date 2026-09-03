@@ -144,7 +144,7 @@ Container_Op :: enum {
 	Resize,
 	Reserve,
 	Shrink,
-	// design.md "Slicing and sorting a dynamic array" and "Sorting slices".
+	// design.md "Dynamic array container operations" and "Sorting slices".
 	// Contributed to a mutable slice as well as to a dynamic array, because an
 	// `impl []mut T` written in `core:slice` would be an *extension* visible only
 	// inside that package, and design.md's own `s.sort()` is written in user code.

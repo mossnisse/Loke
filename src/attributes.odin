@@ -50,7 +50,7 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 	case "private":
 		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}, true
 	case "require_results":
-		// design.md "Required results": on a type declaration the property is
+		// design.md "@(require_results)": on a type declaration the property is
 		// carried by the *type*, so every value of it is checked, not just the
 		// procedures declared beside it.
 		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None}, true

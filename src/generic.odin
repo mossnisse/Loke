@@ -1277,7 +1277,7 @@ instantiate_record_body :: proc(
 	} else {
 		resolve_union_variants(k, type, record)
 	}
-	// design.md "Required results": the property is declared once and every
+	// design.md "@(require_results)": the property is declared once and every
 	// instance carries it, so `Result(int, Error)` is checked like `Result` is.
 	apply_type_metadata(k, clone, type)
 	if !check_where_clauses(k, record.where_clauses, instance.span, name, report) {
