@@ -3330,11 +3330,20 @@ prov_temp_root :: proc(graph: ^Flow_Graph, span: Span) -> Root_Id {
 	return root
 }
 
+// A field of a temporary, or an element of one, is part of that temporary: the
+// whole ends with the statement that built it, so a borrow reaching in through a
+// selector or an index has the same root a borrow of the whole does. Without
+// this, `build().items[:]` had no root at all and escaped unchecked.
 @(private = "file")
 prov_expr_is_temporary :: proc(e: Expr) -> bool {
-	#partial switch _ in e {
+	#partial switch v in e {
 	case ^Expr_Composite, ^Expr_Call:
 		return true
+	case ^Expr_Selector:
+		// `pkg.name` is a whole global, not a field of its operand.
+		return v.resolution.kind != .Value && prov_expr_is_temporary(v.operand)
+	case ^Expr_Index:
+		return prov_expr_is_temporary(v.operand)
 	}
 	return false
 }
