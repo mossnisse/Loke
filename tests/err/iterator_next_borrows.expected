@@ -1,0 +1,18 @@
+L0512
+@15:2
+`modified` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@21:2
+`dropped` cannot be dropped here: a read-only borrow of it is still in use
+L0512
+@27:11
+`moved` cannot be moved here: a read-only borrow of it is still in use
+L0512
+@35:2
+`projected` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@42:2
+`forwarded` cannot be dropped here: a read-only borrow of it is still in use
+L0512
+@48:2
+`builtin` cannot be modified here: a read-only borrow of it is still in use

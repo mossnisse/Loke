@@ -1,0 +1,30 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+advance :: proc(it: inout $I) { fmt.println(it.next()); }
+
+main :: proc() {
+	xs: container.Small_Array(int, 4) = {};
+	xs.append(10, 20);
+	it := xs.iter();
+	// Mutating the cursor repeatedly is legal while it borrows the source.
+	fmt.println(it.next());
+	advance(inout it);
+	fmt.println(it.next());
+	// An owned result does not extend the source's loan past the final call.
+	back := xs.iter_reverse();
+	last := back.next();
+	xs.append(30);
+	fmt.println(last, xs.len());
+	drop(xs);
+
+	y := [dynamic]int{1, 2};
+	Dynamic :: [dynamic]int;
+	holder: (it: Dynamic.Iterator) = {it = y.iter()};
+	fmt.println(holder.it.next());
+	advance(inout holder.it);
+	y.append(3);
+	fmt.println(y.len());
+}

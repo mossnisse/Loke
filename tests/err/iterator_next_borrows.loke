@@ -1,0 +1,50 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+Small :: container.Small_Array(int, 4);
+
+advance :: proc(it: inout $I) { fmt.println(it.next()); }
+
+main :: proc() {
+	// An explicit next() keeps the source borrowed just as foreach does.
+	modified: Small = {};
+	modified.append(10, 20);
+	first := modified.iter();
+	modified.append(30);
+	fmt.println(first.next());
+
+	dropped: Small = {};
+	dropped.append(10, 20);
+	second := dropped.iter();
+	drop(dropped);
+	fmt.println(second.next());
+
+	moved: Small = {};
+	moved.append(10, 20);
+	third := moved.iter_reverse();
+	taken := move(moved);
+	fmt.println(third.next());
+	fmt.println(taken.len());
+
+	// A field receiver must read the borrows carried by that field.
+	projected: Small = {};
+	projected.append(10, 20);
+	holder: (it: Small.Iterator) = {it = projected.iter()};
+	projected.clear();
+	fmt.println(holder.it.next());
+
+	// Forwarding through an ordinary inout parameter must keep them too.
+	forwarded: Small = {};
+	forwarded.append(10, 20);
+	fourth := forwarded.iter();
+	drop(forwarded);
+	advance(inout fourth);
+
+	// Compiler-contributed iterators obey the same rule.
+	builtin := [dynamic]int{10, 20};
+	fifth := builtin.iter();
+	builtin.append(30);
+	fmt.println(fifth.next());
+}

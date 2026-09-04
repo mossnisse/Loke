@@ -3790,6 +3790,11 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		// Any user operation whose `self` parameter is `inout` also invalidates
 		// element and view borrows of the receiver (design.md).
 		if index == 0 && receiver == .Inout {
+			// The callee can read borrows held inside its mutable receiver, as
+			// `iterator.next()` reads its slice. Keep those sources live through
+			// the call separately from the borrow of the receiver's own storage
+			// used by result substitution below.
+			borrowed = prov_join(graph, borrowed, prov_carrier_slots(graph, argument))
 			prov_invalidate(graph, argument, v.span, "modified")
 			if root, path, ok := prov_place_of(graph, argument); ok {
 				if prov_op_removes_element(container_op) {
@@ -3838,6 +3843,9 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 		if prov_argument_is_inout(graph, v, index) {
 			if root, path, ok := prov_place_of(graph, argument); ok {
+				// An explicit `inout` argument has the same read capability as a
+				// mutable receiver, including when it forwards an iterator.
+				borrowed = prov_join(graph, borrowed, prov_carrier_slots(graph, argument))
 				prov_walk_subscripts(graph, argument)
 				prov_access(graph, root, path, .Write, expr_span(argument))
 				// An `inout` parameter aliases the caller's root, so a borrow returned

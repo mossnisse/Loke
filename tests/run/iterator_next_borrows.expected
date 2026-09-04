@@ -1,0 +1,7 @@
+.some(10)
+.some(20)
+.none
+.some(20) 3
+.some(1)
+.some(2)
+3
