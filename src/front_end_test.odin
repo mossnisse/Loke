@@ -144,8 +144,9 @@ impl Sink {
 main :: proc() {
     static_assert(Collects(Sink));
     value := Sink{};
-    callback: proc(self: Sink, values: ..int) -> int = Sink.append;
-    assert(callback(value, 1, 2) == 2);
+    // An immutable receiver is a borrow of the caller's value, so the qualified
+    // form is a call spelling rather than a stored method value.
+    assert(Sink.append(value, 1, 2) == 2);
     assert(value.append(1, 2) == 2);
     assert(value.show(1, true) == 2);
     assert(value.defaulted() == 7);

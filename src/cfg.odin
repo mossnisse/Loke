@@ -1590,9 +1590,12 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 			kind = .Static
 		}
 	case .Parameter:
-		// An `inout` parameter aliases the caller's root, while the default
-		// parameter binding is a callee-local read-only value (design.md).
-		if sym.mode == .Inout {
+		// An `inout` parameter and an immutable receiver both alias the caller's
+		// root, while the default parameter binding is a callee-local read-only
+		// value (design.md "Receiver forms", "Temporaries and procedure
+		// boundaries"). This is what lets `proc(self) -> []T` return a slice of
+		// the receiver's own inline storage.
+		if param_mode_is_pointer(sym.mode) {
 			kind = .Param
 		}
 	case .Const:
@@ -3864,6 +3867,32 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 					graph, receiver, expr_base(argument).type, value, result_type, v.span,
 				)
 			}
+		} else if index == 0 && receiver == .Borrow {
+			// design.md "Receiver forms": an immutable receiver designates the
+			// caller's value, so a borrow the method returns derives from the
+			// caller's root just as an `inout` receiver's does. The difference is
+			// only the capability: this loan is read-only and invalidates nothing,
+			// which is what lets several of them be live at once.
+			//
+			// What the receiver itself carries travels with the result as well —
+			// a method on a record of views can hand one of those views back, and
+			// that copy obeys the view's own source, not the receiver's storage.
+			held := walk_flow_expr(graph, argument)
+			if root, path, ok := prov_place_of(graph, argument); ok {
+				prov_walk_subscripts(graph, argument)
+				prov_access(graph, root, path, .Read, expr_span(argument))
+				held = prov_join(
+					graph, held, prov_borrow(graph, root, path, false, expr_span(argument), "borrow"),
+				)
+			} else if prov_expr_is_temporary(argument) {
+				// A method on a temporary borrows storage that ends with the
+				// statement that built it, exactly as slicing one does.
+				held = prov_join(
+					graph, held,
+					prov_borrow(graph, prov_temp_root(graph, expr_span(argument)), nil, false, v.span, "borrow"),
+				)
+			}
+			actuals[index] = held
 		} else {
 			actuals[index] = walk_flow_expr(graph, argument)
 		}

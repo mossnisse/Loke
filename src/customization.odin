@@ -65,10 +65,14 @@ standard_receiver_member :: proc(
 	result: Type_Id,
 ) -> Symbol_Id {
 	modes := make([]Param_Mode, len(params), c.semantic_allocator)
+	// design.md "Receiver forms": the immutable receiver is a borrow of the
+	// caller's value, so it carries `.Borrow` here exactly as a written `self`
+	// does. The remaining parameters keep the zero value, `.Value`.
+	if len(modes) > 0 { modes[0] = .Borrow }
 	id := synth_proc(c, name, kind, owner, params, modes, result)
 	if sym := symbol_of(c, id); sym != nil {
 		sym.has_receiver = true
-		sym.receiver = .Value
+		sym.receiver = .Borrow
 	}
 	return id
 }

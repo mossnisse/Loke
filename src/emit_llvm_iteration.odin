@@ -609,14 +609,20 @@ bind_indexed_value :: proc(
 @(private = "file")
 emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	iter_sym := symbol_of(e.c, s.iter_symbol)
-	subject := emit_expr(e, s.iterable)
+	// design.md "Receiver forms": `iter` takes an immutable receiver, so the
+	// source is handed over as the address of the caller's storage rather than
+	// copied. A temporary source is materialised by `emit_address`, and lives as
+	// long as the frame — at least the statement the borrow is bounded by.
+	subject_by_ptr := param_mode_is_pointer(symbol_param_mode(e.c, iter_sym, 0))
+	subject := subject_by_ptr ? emit_address(e, s.iterable) : emit_expr(e, s.iterable)
+	subject_type := subject_by_ptr ? "ptr" : llvm_type(e, iter_sym.params[0])
 	iterator_type := llvm_type(e, s.iterator_type)
 	iterator := alloca(e, iterator_type)
 	made := temp(e)
 	fmt.sbprintfln(
 		&e.b,
 		"  %s = call %s %s(%s %s)",
-		made, iterator_type, e.names[s.iter_symbol], llvm_type(e, iter_sym.params[0]), subject,
+		made, iterator_type, e.names[s.iter_symbol], subject_type, subject,
 	)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", iterator_type, made, iterator)
 
@@ -698,7 +704,10 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	reversed := symbol.synth == .Range_Iter_Reverse ||
 	            symbol.synth == .Array_Iter_Reverse ||
 	            symbol.synth == .Dynamic_Iter_Reverse
-	open_function(e, "define %s %s(%s %%arg0)", iterator, name, source)
+	open_function(e, "define %s %s(%s %%arg0)", iterator, name, synth_param_llvm(e, symbol, 0))
+	// Every shape below reads the receiver's words as a value; an immutable
+	// receiver arrives as a pointer to the caller's storage, so it is loaded once.
+	self := synth_receiver_value(e, symbol)
 	if symbol.synth == .Array_Iter || symbol.synth == .Array_Iter_Reverse {
 		// Iteration is by value, so the iterator owns the array/slice view. A
 		// reverse cursor starts one past the last element and decrements before use.
@@ -708,11 +717,11 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			if source_info.kind == .Array {
 				index = fmt.aprintf("%d", source_info.count)
 			} else {
-				index = extract(e, source, "%arg0", SLICE_LEN)
+				index = extract(e, source, self, SLICE_LEN)
 			}
 		}
 		first := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %%arg0, %d", first, iterator, source, ITER_ARRAY_DATA)
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, source, self, ITER_ARRAY_DATA)
 		second := insert(e, iterator, first, "i64", index, ITER_ARRAY_INDEX)
 		out := insert(e, iterator, second, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
@@ -724,8 +733,8 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// Capacity and allocator stay behind, keeping the iterator a borrow, not a
 		// second header.
 		view_type := llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.result).fields[ITER_ARRAY_DATA]).type)
-		storage := extract(e, source, "%arg0", CONTAINER_STORAGE)
-		length := extract(e, source, "%arg0", CONTAINER_LEN)
+		storage := extract(e, source, self, CONTAINER_STORAGE)
+		length := extract(e, source, self, CONTAINER_LEN)
 		filled := emit_ptr_len(e, view_type, storage, length)
 		index := reversed ? length : "0"
 		first := insert(e, iterator, "undef", view_type, filled, ITER_ARRAY_DATA)
@@ -738,7 +747,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	if symbol.synth == .Map_View_Iter {
 		// A view already *is* the table pointer, so its `iter` only pairs it with a
 		// fresh cursor. Every `iter()` starts a new traversal.
-		table := extract(e, source, "%arg0", VIEW_SOURCE)
+		table := extract(e, source, self, VIEW_SOURCE)
 		first := insert(e, iterator, "undef", "ptr", table, ITER_MAP_TABLE)
 		out := insert(e, iterator, first, "i64", "0", ITER_MAP_CURSOR)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
@@ -750,10 +759,10 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// borrowed `{ data, len }`; only where it sits in the receiver differs.
 		view := ""
 		if underlying_info(e.c, symbol.params[0]).kind == .Struct {
-			view = extract(e, source, "%arg0", VIEW_SOURCE)
+			view = extract(e, source, self, VIEW_SOURCE)
 		} else {
-			data := extract(e, source, "%arg0", STRING_DATA)
-			length := extract(e, source, "%arg0", STRING_LEN)
+			data := extract(e, source, self, STRING_DATA)
+			length := extract(e, source, self, STRING_LEN)
 			view = emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
 		}
 		first := insert(e, iterator, "undef", STRING_VIEW_TYPE, view, ITER_TEXT_VIEW)
@@ -765,7 +774,7 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	if symbol.synth == .Map_Iter {
 		// `{ table, 0 }`. A null table is the empty map, and the runtime's scan
 		// answers "finished" for it without touching anything.
-		table := extract(e, source, "%arg0", CONTAINER_STORAGE)
+		table := extract(e, source, self, CONTAINER_STORAGE)
 		first := insert(e, iterator, "undef", "ptr", table, ITER_MAP_TABLE)
 		out := insert(e, iterator, first, "i64", "0", ITER_MAP_CURSOR)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
@@ -773,9 +782,9 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 	element := llvm_type(e, type_of(e.c, symbol.params[0]).element)
-	low := extract(e, source, "%arg0", RANGE_LOW)
-	high := extract(e, source, "%arg0", RANGE_HIGH)
-	closed := extract(e, source, "%arg0", RANGE_CLOSED)
+	low := extract(e, source, self, RANGE_LOW)
+	high := extract(e, source, self, RANGE_HIGH)
+	closed := extract(e, source, self, RANGE_CLOSED)
 	current, bound := reversed ? high : low, reversed ? low : high
 	step1 := insert(e, iterator, "undef", element, current, ITER_RANGE_CURRENT)
 	step2 := insert(e, iterator, step1, element, bound, ITER_RANGE_HIGH)

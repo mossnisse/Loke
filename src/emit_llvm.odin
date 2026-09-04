@@ -474,7 +474,7 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 				fmt.sbprint(&e.b, ", ")
 			}
 			mode := symbol_param_mode(e.c, symbol, index)
-			type := mode == .Inout ? "ptr" : llvm_type(e, parameter)
+			type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, parameter)
 			fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
 		}
 		fmt.sbprintln(&e.b, ") {")
@@ -488,13 +488,14 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	e.b = strings.builder_make()
 
 	// A value parameter is immutable but addressable, so it gets storage of its
-	// own; an `inout` parameter is already the alias.
+	// own; an `inout` parameter, and an immutable receiver, are already the alias
+	// to the caller's storage (design.md "Receiver forms").
 	for parameter, index in symbol.params {
 		binding := symbol.param_symbols[index]
 		if binding == INVALID_SYMBOL {
 			continue
 		}
-		if symbol_param_mode(e.c, symbol, index) == .Inout {
+		if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) {
 			bind_local(e, binding, fmt.aprintf("%%arg%d", index))
 			continue
 		}

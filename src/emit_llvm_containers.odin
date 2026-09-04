@@ -91,8 +91,8 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		element = slice_element(e.c, receiver)
 	}
 
-	argument := through_header ? "ptr" : llvm_type(e, receiver)
-	open_function(e, "define void %s(%s %%arg0)", name, argument)
+	argument := llvm_type(e, receiver)
+	open_function(e, "define void %s(%s %%arg0)", name, synth_param_llvm(e, symbol, 0))
 	e.terminated = false
 
 	// Every contributed member is emitted whether or not the program calls it,
@@ -125,9 +125,12 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, storage)
 		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", count, length)
 	} else {
+		// A slice receiver is a borrow of the caller's header, so the two words are
+		// read out of the loaded header rather than out of a by-value argument.
+		self := synth_receiver_value(e, symbol)
 		data, count = temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", data, argument, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %%arg0, %d", count, argument, SLICE_LEN)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, argument, self, SLICE_DATA)
+		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", count, argument, self, SLICE_LEN)
 	}
 
 	fmt.sbprintfln(
@@ -246,10 +249,18 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 			value := load(e, llvm_type(e, key), "%p")
 			out := ""
 			if hook := key_policy_member(e, key, false); hook != INVALID_SYMBOL {
+				// A user `hash` takes an immutable receiver, which wants the address
+				// of the key (design.md "Receiver forms"). The thunk was handed that
+				// address, so it forwards it rather than the loaded value.
+				receiver_type, receiver := llvm_type(e, key), value
+				if sym := symbol_of(e.c, hook);
+				   sym != nil && param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
+					receiver_type, receiver = "ptr", "%p"
+				}
 				out = temp(e)
 				fmt.sbprintfln(
 					&e.b, "  %s = call i64 %s(%s %s, i64 %%seed)",
-					out, e.names[hook], llvm_type(e, key), value,
+					out, e.names[hook], receiver_type, receiver,
 				)
 			} else {
 				out = emit_hash_value(e, key, value, "%seed")
@@ -600,10 +611,10 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if index > 0 {
 			fmt.sbprint(&e.b, ", ")
 		}
-		// A mutating receiver arrives as the header's address; an immutable one
-		// arrives by value, like every other `value:` parameter.
-		type := index == 0 && symbol.receiver == .Inout ? "ptr" : llvm_type(e, parameter)
-		fmt.sbprintf(&e.b, "%s %%arg%d", type, index)
+		// Both receiver modes arrive as the address of the caller's storage
+		// (design.md "Receiver forms"); every other parameter crosses by value.
+		_ = parameter
+		fmt.sbprintf(&e.b, "%s %%arg%d", synth_param_llvm(e, symbol, index), index)
 	}
 	open_function(e, ")")
 	e.terminated = false
@@ -700,11 +711,15 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	case .Map_Lookup_Value:
 		// design.md "Maps": one probe, no insertion, and an independently owned
-		// payload on a hit. The receiver arrives by value, so it is spilled to give
-		// the C probe an address to read; nothing here writes through it.
+		// payload on a hit. The immutable receiver is already the address of the
+		// caller's header, which is what the C probe reads; nothing writes through
+		// it (design.md "Receiver forms").
 		key_type := container_key(e.c, container)
-		header := alloca(e, CONTAINER_TYPE)
-		fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", CONTAINER_TYPE, header)
+		header := "%arg0"
+		if !param_mode_is_pointer(symbol_param_mode(e.c, symbol, 0)) {
+			header = alloca(e, CONTAINER_TYPE)
+			fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", CONTAINER_TYPE, header)
+		}
 		key_slot := value_storage(e, key_type, "%arg1")
 		found := temp(e)
 		fmt.sbprintfln(
@@ -800,7 +815,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// design.md "Iteration adapters": a view is the table pointer and nothing
 		// else — no allocation, no element copy, and no second header for anything
 		// to drop. The `iter` it answers to turns it into `{ table, 0 }`.
-		table := extract(e, llvm_type(e, container), "%arg0", CONTAINER_STORAGE)
+		table := extract(e, llvm_type(e, container), synth_receiver_value(e, symbol), CONTAINER_STORAGE)
 		view := insert(e, result, "undef", "ptr", table, VIEW_SOURCE)
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, view)
 		fmt.sbprintln(&e.b, "}")

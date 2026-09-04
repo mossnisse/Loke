@@ -603,10 +603,22 @@ container_member :: proc(
 	defaulted: int,
 	receiver := Param_Mode.Inout,
 ) -> Symbol_Id {
-	id := synth_proc(k.c, name, .Container_Op, owner, params, modes, result)
+	// design.md "Receiver forms": a synthesized immutable receiver is the same
+	// borrow a written `self` is, so it carries the same mode — otherwise a
+	// built-in container's `iter` would not compare equal to a user type's.
+	// Callers still spell it `.Value`, which is the shape of the parameter; this
+	// is the one place that becomes the receiver mode.
+	signature_modes, receiver_mode := modes, receiver
+	if receiver == .Value && len(modes) > 0 && modes[0] == .Value {
+		adjusted := make([]Param_Mode, len(modes), k.c.semantic_allocator)
+		copy(adjusted, modes)
+		adjusted[0] = .Borrow
+		signature_modes, receiver_mode = adjusted, .Borrow
+	}
+	id := synth_proc(k.c, name, .Container_Op, owner, params, signature_modes, result)
 	if sym := symbol_of(k.c, id); sym != nil {
 		sym.has_receiver = true
-		sym.receiver = receiver
+		sym.receiver = receiver_mode
 		sym.container_op = op
 		if defaulted > 0 {
 			sym.param_defaults[defaulted] = zero_int_arg(k.c)

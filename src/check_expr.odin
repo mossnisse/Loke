@@ -621,7 +621,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		}
 		// design.md: associated procedures and constants without `self` are
 		// accessed through the type name, and so is `Type.method(value)`.
-		if select_associated_member(k, v, subject) {
+		if select_associated_member(k, v, subject, callee_position) {
 			return
 		}
 		errorf(k.c, v.span, "L0408", "`%s` has no member `%s`", type_name(k.c, subject), v.name.text)
@@ -733,10 +733,28 @@ implicit_pointer_deref :: proc(
 // `Type.member`: an associated constant, an associated type, or a procedure
 // reached through the type name.
 @(private = "file")
-select_associated_member :: proc(k: ^Checker, v: ^Expr_Selector, subject: Type_Id) -> bool {
+select_associated_member :: proc(
+	k: ^Checker, v: ^Expr_Selector, subject: Type_Id, callee_position: bool,
+) -> bool {
 	member := find_member(k, subject, intern_identifier(k.c, v.name.text))
 	if member == INVALID_SYMBOL {
 		return false
+	}
+	// design.md "Receiver forms": an immutable receiver designates the caller's
+	// value, so the method takes a pointer to it and no written procedure type
+	// spells that first parameter. `Type.method(value)` is still a call spelling;
+	// only storing the method as a value has no type to be stored in. An `inout`
+	// or `move` receiver is written as itself and stays storable.
+	if sym := symbol_of(k.c, member);
+	   !callee_position && sym != nil && sym.kind == .Proc && sym.has_receiver &&
+	   sym.receiver == .Borrow {
+		errorf(
+			k.c, v.span, "L0408",
+			"`%s` takes an immutable receiver, so it is called rather than stored; write `%s.%s(value)`",
+			v.name.text, type_name(k.c, subject), v.name.text,
+		)
+		v.type = INVALID_TYPE
+		return true
 	}
 	// A member's own signature or value may be needed before the phase that
 	// would ordinarily reach it, and both need the block's subject *and its own
@@ -2517,6 +2535,14 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 			v.type = INVALID_TYPE
 			return
 		}
+	}
+	// design.md "Materialization" and "Receiver forms": an immutable receiver is
+	// the address of the caller's value, and a named constant has no storage of
+	// its own. Its runtime uses share one read-only object, exactly as a constant
+	// reached by a runtime index does. A receiver whose length is a property of
+	// its type folds instead and never asks.
+	if chosen.receiver == .Borrow && receiver_base.is_const {
+		request_materialization(k, receiver)
 	}
 	sel.resolution = Resolution{kind = .Method, symbol = cand.symbol}
 	sel.type = chosen.proc_type

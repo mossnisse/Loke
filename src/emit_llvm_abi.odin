@@ -572,6 +572,45 @@ symbol_param_mode :: proc(c: ^Compiler, symbol: ^Symbol, index: int) -> Param_Mo
 	return info.param_modes[index]
 }
 
+// The LLVM type of one parameter of a compiler-synthesized member. design.md
+// "Receiver forms": an immutable receiver arrives as a pointer to the caller's
+// storage, exactly as an `inout` one does.
+@(private)
+synth_param_llvm :: proc(e: ^Emitter, symbol: ^Symbol, index: int) -> string {
+	if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) {
+		return "ptr"
+	}
+	return llvm_type(e, symbol.params[index])
+}
+
+// The receiver of a synthesized member as a *value*. The bodies below read
+// their receiver's words with `extractvalue`, so one that arrived as a pointer
+// is loaded once here rather than every body learning both spellings.
+@(private)
+synth_receiver_value :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
+	if !param_mode_is_pointer(symbol_param_mode(e.c, symbol, 0)) {
+		return "%arg0"
+	}
+	return load(e, llvm_type(e, symbol.params[0]), "%arg0")
+}
+
+// The receiver operand for a direct call to `hook` when the caller holds the
+// receiver as a value. design.md "Receiver forms": an immutable receiver wants
+// the address of the value, so a held one is spilled here — once, and LLVM folds
+// the round trip away. A caller that already has the address passes it straight.
+@(private)
+call_receiver_operand :: proc(
+	e: ^Emitter, hook: Symbol_Id, type: Type_Id, value: string,
+) -> (receiver_type: string, receiver: string) {
+	sym := symbol_of(e.c, hook)
+	if sym == nil || !param_mode_is_pointer(symbol_param_mode(e.c, sym, 0)) {
+		return llvm_type(e, type), value
+	}
+	slot := alloca(e, llvm_type(e, type))
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, type), value, slot)
+	return "ptr", slot
+}
+
 @(private)
 proc_convention_of :: proc(e: ^Emitter, symbol: ^Symbol) -> string {
 	info := type_of(e.c, symbol.proc_type)
@@ -787,7 +826,7 @@ foreign_call_type :: proc(e: ^Emitter, callee_type: ^Type_Info, has_sret: bool) 
 		}
 		need_comma = true
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		if mode == .Inout || param_is_by_ptr(callee_type, index) {
+		if param_mode_is_pointer(mode) || param_is_by_ptr(callee_type, index) {
 			fmt.sbprint(&b, "ptr")
 			continue
 		}
@@ -855,7 +894,7 @@ emit_foreign_call :: proc(
 		parameter := callee_type.parameters[index]
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
 		// An `inout` or `@(by_ptr)` parameter both cross as a pointer to storage.
-		if mode == .Inout {
+		if param_mode_is_pointer(mode) {
 			append(&args, fmt.aprintf("ptr %s", operand))
 			continue
 		}

@@ -1276,9 +1276,9 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		return eval_one(ev, eval_alloc_ok(ev, symbol.result))
 
 	case .Sort, .Reverse_Sort:
-		// A `.Value` receiver here is a *copy* of the caller's slice header, so
-		// sorting it would leave the caller's elements untouched. Only the
-		// dynamic array, whose receiver is a place, can be sorted in place.
+		// A slice's receiver is an immutable borrow of the caller's slice *header*,
+		// so sorting through it would leave the caller's elements untouched. Only
+		// the dynamic array, whose receiver is a place, can be sorted in place.
 		if symbol.receiver != .Inout {
 			eval_fail(ev, v.span, "L0341", "a slice cannot be sorted at compile time")
 			return nil, false

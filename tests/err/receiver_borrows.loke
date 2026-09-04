@@ -1,0 +1,40 @@
+package main; import "core:fmt";
+
+// The rejections that bound an immutable receiver's borrow (design.md "Receiver
+// forms", "Temporaries and procedure boundaries").
+
+Inline :: struct {
+	items: [4]int,
+	count: int,
+}
+
+impl Inline {
+	view :: proc(self) -> []int { return self.items[0:self.count]; }
+	sum :: proc(self) -> int { return self.items[0] + self.items[1]; }
+	push :: proc(self: inout Inline, value: int) {
+		self.items[self.count] = value;
+		self.count += 1;
+	}
+}
+
+// A borrow of the receiver's own storage cannot outlive the receiver.
+escaped :: proc() -> []int {
+	local: Inline = {};
+	return local.view();
+}
+
+main :: proc() {
+	x: Inline = {};
+	x.push(1);
+
+	// A mutation conflicts with a receiver-derived view that is still in use.
+	v := x.view();
+	x.push(2);
+	fmt.println(v.len());
+
+	// So does dropping the source out from under it.
+	y: Inline = {};
+	w := y.view();
+	drop(y);
+	fmt.println(w.len());
+}

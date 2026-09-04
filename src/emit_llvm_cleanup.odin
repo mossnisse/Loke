@@ -711,10 +711,11 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 		backend_fail(e, fmt.aprintf("an implicit copy of `%s` has no `clone` member", type_name(e.c, type)))
 		return "0"
 	}
+	receiver_type, receiver := call_receiver_operand(e, hook, type, value)
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		out, llvm_type(e, type), e.names[hook], llvm_type(e, type), value, provider,
+		out, llvm_type(e, type), e.names[hook], receiver_type, receiver, provider,
 	)
 	return out
 }
@@ -769,10 +770,11 @@ emit_clone_call :: proc(
 	e: ^Emitter, hook: Symbol_Id, subject: Type_Id, value, allocator: string,
 ) -> (cloned: string, failed: string) {
 	result := clone_result_of(e, hook)
+	receiver_type, receiver := call_receiver_operand(e, hook, subject, value)
 	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, llvm_type(e, result), e.names[hook], llvm_type(e, subject), value, allocator,
+		returned, llvm_type(e, result), e.names[hook], receiver_type, receiver, allocator,
 	)
 	slot := emit_union_spill(e, result, returned)
 	failed = emit_union_failed(e, result, returned)
@@ -796,13 +798,22 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	value_type := llvm_type(e, subject)
 	result := symbol.result
 	pair := llvm_type(e, result)
-	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, value_type)
+	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, synth_param_llvm(e, symbol, 0))
 	e.terminated = false
+	// The body below works with the receiver as a value; an immutable receiver
+	// arrives as its address (design.md "Receiver forms"), so it is loaded once.
+	subject_value := synth_receiver_value(e, symbol)
 
 	// A user `hook(copy)` is the fallible primitive. The public generated
-	// `try_clone` member is a stable wrapper around it.
+	// `try_clone` member is a stable wrapper around it. Both take the same
+	// receiver mode, so the address is forwarded rather than round-tripped.
 	if hook := operations.custom_try_clone; hook != INVALID_SYMBOL {
-		fmt.sbprintfln(&e.b, "  %%custom = call %s %s(%s %%arg0, ptr %%arg1)", pair, e.names[hook], value_type)
+		hook_type, hook_receiver := value_type, subject_value
+		if hook_sym := symbol_of(e.c, hook);
+		   hook_sym != nil && param_mode_is_pointer(symbol_param_mode(e.c, hook_sym, 0)) {
+			hook_type, hook_receiver = "ptr", "%arg0"
+		}
+		fmt.sbprintfln(&e.b, "  %%custom = call %s %s(%s %s, ptr %%arg1)", pair, e.names[hook], hook_type, hook_receiver)
 		fmt.sbprintfln(&e.b, "  ret %s %%custom", pair)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -813,13 +824,13 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// handle, so asking about failure alone would hand back a second owner of one
 	// allocation with the count still at 1.
 	if !operations.managed {
-		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", "%arg0"))
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", subject_value))
 		fmt.sbprintln(&e.b, "}")
 		return
 	}
 
 	if info := underlying_info(e.c, subject); info != nil && info.kind == .Union {
-		emit_union_try_clone_body(e, subject, info, result, pair, value_type)
+		emit_union_try_clone_body(e, subject, info, result, pair, value_type, subject_value)
 		return
 	}
 
@@ -829,7 +840,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// implicit paths already use — a retain, or the versioned container helper.
 	if operations.intrinsic {
 		self, built := alloca(e, value_type), alloca(e, value_type)
-		fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
+		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", value_type, subject_value, self)
 		// A failed container clone leaves the destination untouched, so the zero
 		// value is what travels back beside the error.
 		fmt.sbprintfln(&e.b, "  store %s zeroinitializer, ptr %s", value_type, built)
@@ -846,7 +857,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// to drop what the destination already holds, and a drop hook takes a place.
 	self := alloca(e, value_type)
 	out := temp(e)
-	fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", value_type, subject_value, self)
 	alloca_named(e, out, value_type)
 	// Every hook must handle the inert zero value (design.md), and a cleanup that
 	// runs before a part is written must see that zero rather than garbage.
@@ -982,10 +993,10 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
 	value_type := llvm_type(e, subject)
-	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", value_type, name, value_type)
+	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", value_type, name, synth_param_llvm(e, symbol, 0))
 	e.terminated = false
 
-	cloned := emit_clone_with_policy(e, subject, "%arg0", "%arg1")
+	cloned := emit_clone_with_policy(e, subject, synth_receiver_value(e, symbol), "%arg1")
 	fmt.sbprintfln(&e.b, "  ret %s %s", value_type, cloned)
 	fmt.sbprintln(&e.b, "}")
 }
@@ -1116,11 +1127,12 @@ emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: s
 @(private = "file")
 emit_union_try_clone_body :: proc(
 	e: ^Emitter, subject: Type_Id, info: ^Type_Info, result: Type_Id, pair, value_type: string,
+	subject_value: string,
 ) {
 	shape := union_layout(e.c, subject)
 	self := alloca(e, value_type)
-	fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", value_type, self)
-	tag := emit_union_tag(e, subject, "%arg0")
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", value_type, subject_value, self)
+	tag := emit_union_tag(e, subject, subject_value)
 
 	for variant, index in info.variants {
 		if variant == TYPE_VOID || !type_is_managed(e.c, variant) {
@@ -1156,6 +1168,6 @@ emit_union_try_clone_body :: proc(
 	}
 
 	// Every remaining tag holds a payload the representation already copies.
-	fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", "%arg0"))
+	fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", subject_value))
 	fmt.sbprintln(&e.b, "}")
 }

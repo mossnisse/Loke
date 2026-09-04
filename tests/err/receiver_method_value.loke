@@ -1,0 +1,20 @@
+package main; import "core:fmt";
+
+// design.md "Receiver forms": an immutable receiver crosses as the address of
+// the caller's value, and no written procedure type spells that first
+// parameter. `Type.method(value)` stays a call spelling; storing the method as
+// a value does not.
+
+Counter :: struct { value: int }
+
+impl Counter {
+	read :: proc(self) -> int { return self.value; }
+	bump :: proc(self: inout Counter) { self.value += 1; }
+}
+
+main :: proc() {
+	c := Counter{1};
+	fmt.println(Counter.read(c));
+	stored := Counter.read;
+	fmt.println(stored);
+}

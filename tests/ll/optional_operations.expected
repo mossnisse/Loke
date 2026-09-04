@@ -1,4 +1,4 @@
-lookup_value(%loke.container
+lookup_value(ptr
 call ptr @loke_rt_v1_map_find(ptr
 mlookup.hit
 mlookup.done

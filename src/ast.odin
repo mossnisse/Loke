@@ -457,11 +457,18 @@ Type_Poly :: struct {
 	constraint: Expr,
 }
 
+// design.md "Receiver forms": `Borrow` is the immutable receiver `self`. It is
+// last so the existing discriminants keep their values, since a mode number
+// reaches the type identity key (`typeid_sort_key_walk`).
+//
+// `Borrow` never appears as an *argument* mode: method syntax supplies the
+// receiver with no marker, exactly as a `Value` argument is written.
 Param_Mode :: enum {
 	Value,
 	Inout,
 	Move,
 	Variadic,
+	Borrow,
 }
 
 // `"$"? (Identifier | "_")`

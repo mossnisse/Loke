@@ -204,6 +204,25 @@ emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
 	return out
 }
 
+// Whether a call's result may name its receiver's storage. A result that holds
+// no borrow cannot, whatever the summary says; beyond that the callee's
+// result-provenance summary decides, and a callee without one is treated
+// conservatively (design.md "Temporaries and procedure boundaries").
+@(private = "file")
+result_may_borrow_receiver :: proc(c: ^Compiler, callee: Symbol_Id, result: Type_Id) -> bool {
+	if result == INVALID_TYPE {
+		return false
+	}
+	if !type_is_carrier(c, result) && !type_carries_borrow(c, result).any {
+		return false
+	}
+	summary, found := result_summary(c, callee)
+	if !found {
+		return true
+	}
+	return len(summary.params) == 0 || summary.params[0]
+}
+
 // An operator, index, or slice call. Operator lookup has already chosen one
 // named procedure, so this is an ordinary direct call — except for a `delegate`
 // overload, which has no body and applies the underlying type's operation to the
@@ -368,7 +387,6 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 // need no predecessor-label tracking.
 @(private = "file")
 emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
-	value_type := llvm_type(e, v.alloc_type)
 	value := emit_expr(e, v.bound[0])
 	allocator := emit_allocator_operand(e, v, 1)
 	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
@@ -398,10 +416,11 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 		return failed
 	}
 	clone_result := symbol_of(e.c, hook).result
+	receiver_type, receiver := call_receiver_operand(e, hook, v.alloc_type, value)
 	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, llvm_type(e, clone_result), e.names[hook], value_type, value, allocator,
+		returned, llvm_type(e, clone_result), e.names[hook], receiver_type, receiver, allocator,
 	)
 	clone_slot := emit_union_spill(e, clone_result, returned)
 	failed := emit_union_failed(e, clone_result, returned)
@@ -997,7 +1016,7 @@ emit_bound_call :: proc(
 			continue
 		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		if mode == .Inout {
+		if param_mode_is_pointer(mode) {
 			operands[index] = emit_address(e, argument)
 		} else {
 			operands[index] = emit_expr(e, argument)
@@ -1013,6 +1032,26 @@ emit_bound_call :: proc(
 		   !expression_is_borrowed_place(e.c, argument) {
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&argument_cleanups, entry) }
+		}
+		// design.md "Receiver forms" and "Temporaries and procedure boundaries": an
+		// immutable receiver is a borrow of the caller's storage, not a copy of it,
+		// so a temporary one is still the caller's to clean up — but *when* depends
+		// on whether the call hands part of it back. A result that cannot name the
+		// receiver (an owned copy, a scalar) lets the temporary go at the same
+		// boundary a by-value argument uses. A result that can borrow it has to
+		// outlive the call, so that temporary belongs to the enclosing scope
+		// instead: later than the complete expression it is bounded by, which
+		// costs a delayed drop rather than a dangling one. `emit_address` has
+		// already given it a slot either way.
+		if mode == .Borrow && index < len(callee_type.parameters) &&
+		   !expression_is_borrowed_place(e.c, argument) &&
+		   emit_lifecycle(e, callee_type.parameters[index]).managed {
+			if result_may_borrow_receiver(e.c, symbol_id, callee_type.result) {
+				register_scope_place(e, callee_type.parameters[index], operands[index])
+			} else {
+				entry := begin_temporary_drop(e, callee_type.parameters[index], operands[index])
+				if entry.place != "" { append(&argument_cleanups, entry) }
+			}
 		}
 		// design.md: method-call syntax supplies the receiver's `move` marker
 		// implicitly, so the source is read and then killed here rather than by an
@@ -1044,7 +1083,7 @@ emit_bound_call :: proc(
 			fmt.sbprint(&e.b, ", ")
 		}
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
-		type := mode == .Inout ? "ptr" : llvm_type(e, callee_type.parameters[index])
+		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, callee_type.parameters[index])
 		fmt.sbprintf(&e.b, "%s %s", type, operand)
 	}
 	fmt.sbprintln(&e.b, ")")

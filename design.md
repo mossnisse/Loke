@@ -2049,6 +2049,10 @@ There are three receiver modes:
 | `self: inout Type` | Exclusive mutable borrow of the caller's variable |
 | `self: move Type` | Consumes the receiver |
 
+Both borrowing receivers designate the caller's storage rather than a copy of it, so both cross the ABI as one pointer, and a borrow either one returns derives from the caller's root under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). An immutable receiver is still unwritable through `self`, and a method called on a temporary keeps that temporary alive for as long as the borrow it hands back.
+
+Because no written procedure type spells that first parameter, an immutable-receiver method is called rather than stored: `Type.method(value)` remains a call spelling, while binding it to a procedure value is rejected. An `inout` or `move` receiver is written as itself and stays storable.
+
 The first two are reached through `value.method()`, with the `inout` marker supplied implicitly: that borrow ends with the call and leaves the source usable. A consuming method is reached through `move(value).method()`. The marker is written for the same reason it is written at any other call site (see [Parameter semantics](#parameter-semantics-and-abi-lowering)) — the call leaves the source dead, and a reader must see where a value is given away. Writing `move(...)` also selects: it reaches only `move self` overloads, and a bare receiver reaches only the other two.
 
 A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. The immutable receiver may be written `self: Type` when clearer; it is the same mode.
@@ -4301,6 +4305,7 @@ The source-level parameter mode is decided before ABI lowering:
 | `value: T` | Immutable local binding; no ownership transfer |
 | `value: []T` | Immutable borrowed view with read-only elements |
 | `value: []mut T` | Immutable borrowed view whose elements may be modified |
+| `self` | Immutable borrow of the caller's value (see [Receiver forms](#receiver-forms)) |
 | `value: inout T` | Exclusive mutable borrow of the caller's variable |
 | `value: move T` | Ownership transfer from caller to callee |
 
@@ -5032,7 +5037,7 @@ fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
 
 The default parameter binding itself is a callee-local read-only value. Taking `&parameter` borrows that local and cannot produce a returned pointer. An
-`inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result summary below records; a call through a procedure value, which has no summary, conservatively derives
+`inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root, and so does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The two differ only in capability — the receiver's loan is read-only and invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result summary below records; a call through a procedure value, which has no summary, conservatively derives
 from all of them.
 
 A checked pointer to an allocation root created by `new` or `new_clone` may be

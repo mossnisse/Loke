@@ -468,10 +468,10 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	members[1] = new_associated_type(k.c, "Iterator", iterator, under)
 	// design.md "Iteration protocol": `iter` takes a receiver, so `source.iter()`
 	// is the protocol spelling and the free `iter(source)` overload still finds it.
-	members[2] = synth_proc(k.c, "iter", iter_kind, under, []Type_Id{under}, []Param_Mode{.Value}, iterator)
+	members[2] = synth_proc(k.c, "iter", iter_kind, under, []Type_Id{under}, []Param_Mode{.Borrow}, iterator)
 	if sym := symbol_of(k.c, members[2]); sym != nil {
 		sym.has_receiver = true
-		sym.receiver = .Value
+		sym.receiver = .Borrow
 	}
 	// An iterator over a container borrows it (design.md "Iteration protocol"),
 	// and a synthesised member has no body for the provenance fixed point to
@@ -480,11 +480,11 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	if reverse_kind != .None {
 		members[3] = synth_proc(
 			k.c, "iter_reverse", reverse_kind, under,
-			[]Type_Id{under}, []Param_Mode{.Value}, iterator,
+			[]Type_Id{under}, []Param_Mode{.Borrow}, iterator,
 		)
 		if sym := symbol_of(k.c, members[3]); sym != nil {
 			sym.has_receiver = true
-			sym.receiver = .Value
+			sym.receiver = .Borrow
 		}
 		set_synth_result_summary(k.c, members[3], 0)
 	}
@@ -945,7 +945,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	iter := iteration_member(k, subject, "iter")
 	iter_sym := symbol_of(k.c, iter)
 	if element == INVALID_TYPE || iterator == INVALID_TYPE ||
-	   !iteration_proc_matches(k, iter_sym, subject, .Value, iterator) {
+	   !iteration_proc_matches(k, iter_sym, subject, .Borrow, iterator) {
 		errorf(
 			k.c,
 			expr_span(s.iterable),
@@ -959,7 +959,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	// it, and it produces the same `Iterator` (design.md "Iteration adapters").
 	if s.adapter == .Reversed {
 		reverse := iteration_member(k, subject, "iter_reverse")
-		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Value, iterator) {
+		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Borrow, iterator) {
 			errorf(
 				k.c,
 				expr_span(s.iterable),

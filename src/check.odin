@@ -935,6 +935,16 @@ normalize_signature_parameter :: proc(
 		split_receiver = parameter_splits_receiver(parameter, position)
 		if parameter.type == nil || split_receiver { type = receiver }
 		if split_receiver { mode = .Value }
+		// design.md "Receiver forms": a plain `self` is an immutable *borrow* of
+		// the caller's value, not a callee-local copy of it, so it gets its own
+		// mode rather than sharing `.Value` with an ordinary parameter. `inout`
+		// and `move` receivers already say what they are. A first parameter that
+		// is not the subject-typed `self` is an ordinary parameter and keeps
+		// `.Value`, which is why both the name and the type are checked here.
+		if mode == .Value && type == receiver && len(parameter.names) > 0 &&
+		   parameter.names[0].name.text == "self" {
+			mode = .Borrow
+		}
 	}
 	// The runtime parameter for `..T` is always the read-only slice `[]T`,
 	// including static interface slots and written procedure types.
@@ -1094,7 +1104,9 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				bound.mode = mode
 				// A value parameter is immutable addressable storage; an `inout` parameter
 				// is a mutable alias (design.md "Parameter semantics and ABI lowering").
-				bound.immutable = mode == .Value
+				// An immutable receiver is a borrow of the caller's storage, and just
+				// as unwritable through `self`.
+				bound.immutable = mode == .Value || mode == .Borrow
 				bound.owner_proc = literal
 				bound.allocator_reset = resets
 				bound.escape = escape

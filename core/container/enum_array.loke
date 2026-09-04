@@ -44,7 +44,11 @@ impl Enum_Array($E, $T) {
 	Element  :: Enum_Entry(E, T);
 	Iterator :: Enum_Array_Iterator(E, T);
 
-	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return {self, 0}; }
+	// The iterator borrows the slots rather than carrying a copy of the whole
+	// array: a `self` receiver designates the caller's value (design.md
+	// "Receiver forms"), so a view of its inline storage is derived from the
+	// caller's root.
+	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return {self.slots[:], 0}; }
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, "{");
@@ -65,9 +69,12 @@ Enum_Entry :: struct($E: type, $T: type) {
 	value: T,
 }
 
+// A borrow of the array's slots plus the traversal position. The array cannot
+// be mutated, moved, or dropped while this is live, which is the ordinary borrow
+// rule rather than anything this type arranges.
 Enum_Array_Iterator :: struct($E: type, $T: type) {
-	@(private) held: Enum_Array(E, T),
-	@(private) at:   int,
+	@(private) slots: []T,
+	@(private) at:    int,
 }
 
 impl Enum_Array_Iterator($E, $T) {
@@ -81,6 +88,6 @@ impl Enum_Array_Iterator($E, $T) {
 		if (self.at >= members.len()) { return .none; }
 		index := self.at;
 		self.at += 1;
-		return .some(Enum_Entry(E, T){members[index], self.held.slots[index]});
+		return .some(Enum_Entry(E, T){members[index], self.slots[index]});
 	}
 }

@@ -1,0 +1,116 @@
+package main;
+
+import "core:fmt";
+import "base:interfaces";
+
+// An immutable receiver is a borrow of the caller's value (design.md "Receiver
+// forms"), so a view of the receiver's own inline storage is derived from the
+// caller's root. Before this rule, `proc(self) -> []T` had no way to exist and
+// a container's `iter` copied its backing array instead.
+
+Inline :: struct($T: type, $N: int) where N > 0 {
+	items: [N]T,
+	count: int,
+}
+
+impl Inline($T, $N) {
+	Element  :: T;
+	Iterator :: Inline_Iterator(T);
+
+	// The borrow the whole rule is for: a slice of storage that lives inside the
+	// receiver, with no `inout` and no copy.
+	view :: proc(self) -> []T { return self.items[0:self.count]; }
+	first :: proc(self) -> ^T { return &self.items[0]; }
+	len :: proc(self) -> int { return self.count; }
+
+	// An iterator that borrows rather than carrying a copy, so its size does not
+	// grow with `N`.
+	iter :: proc(self) -> Inline_Iterator(T) { return {self.view(), 0}; }
+
+	push :: proc(self: inout Inline(T, N), value: T) {
+		self.items[self.count] = value;
+		self.count += 1;
+	}
+}
+
+Inline_Iterator :: struct($T: type) {
+	items: []T,
+	at:    int,
+}
+
+impl Inline_Iterator($T) {
+	Element  :: T;
+	Iterator :: Inline_Iterator(T);
+	iter :: proc(self) -> Inline_Iterator(T) { return self; }
+	next :: proc(self: inout Inline_Iterator(T)) -> Option(T) {
+		if (self.at >= self.items.len()) { return .none; }
+		value := self.items[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
+
+// A record whose field is already a borrow. Handing that field back copies the
+// view rather than borrowing the receiver's own storage, but the result still
+// keeps the receiver borrowed for as long as it is used: a borrowed parameter's
+// carrier paths are not separated from its storage, and an `inout` parameter is
+// conservative in exactly the same way, so an immutable receiver matches it.
+Holder :: struct {
+	held: []int,
+}
+
+impl Holder {
+	held_view :: proc(self) -> []int { return self.held; }
+}
+
+forward :: proc(source: $S) -> int where interfaces.Iterable(S), S.Element == int {
+	total := 0;
+	foreach (n in source) { total += n; }
+	return total;
+}
+
+make_inline :: proc() -> Inline(int, 4) {
+	built: Inline(int, 4) = {};
+	built.push(3);
+	built.push(4);
+	return built;
+}
+
+main :: proc() {
+	x: Inline(int, 4) = {};
+	x.push(1);
+	x.push(2);
+
+	// A view of inline storage names the caller's storage, not a copy of it.
+	v := x.view();
+	fmt.println(v.len(), v[0], v[1]);
+	fmt.println(x.first()^);
+
+	// The receiver's loan ends with the call, so an ordinary mutation after it
+	// is legal.
+	fmt.println(x.len());
+	x.push(9);
+	fmt.println(x.len());
+
+	// ...and after a returned view's last use as well.
+	w := x.view();
+	fmt.println(w[2]);
+	x.push(10);
+	fmt.println(x.len());
+
+	// Borrowing iteration: no allocation, no copy of the backing array.
+	foreach (n in x) { fmt.println(n); }
+	fmt.println(forward(x));
+
+	// A method on a temporary: the borrow may be consumed within the complete
+	// expression that built the receiver.
+	fmt.println(make_inline().view().len());
+	fmt.println(make_inline().len());
+
+	// A view the receiver already holds comes back unchanged, and stays usable
+	// for as long as the holder does.
+	numbers := [dynamic]int{5, 6, 7};
+	holder := Holder{numbers[:]};
+	copied := holder.held_view();
+	fmt.println(copied.len(), copied[0]);
+}

@@ -438,9 +438,17 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return out
 
 	case ^Expr_Index:
-		// An `operator([])` returning `inout T` hands back the address itself.
+		// design.md "Indexing and slicing": an `operator([])` returning `inout T`
+		// hands back the address itself, and only that overload denotes a place. A
+		// value-returning one produces a value, which needs temporary storage like
+		// any other — asking for its address is what an immutable receiver does.
 		if v.resolution.kind == .User_Operator {
-			return emit_operator_call(e, v.resolution.symbol, v.bound)
+			if sym := symbol_of(e.c, v.resolution.symbol); sym != nil && sym.result_inout {
+				return emit_operator_call(e, v.resolution.symbol, v.bound)
+			}
+			slot := alloca(e, llvm_type(e, as_type))
+			store(e, as_type, emit_operator_call(e, v.resolution.symbol, v.bound), slot)
+			return slot
 		}
 		// A slice element lives in the root, reached through the data word, and its
 		// bound is the runtime length rather than a static count.

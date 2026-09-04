@@ -453,11 +453,11 @@ generated_hook :: proc(k: ^Checker, type: Type_Id, name: string, kind: Synth_Kin
 	result := fallible ? result_type(k, type, TYPE_ALLOCATOR_ERROR) : type
 	id := synth_proc(
 		k.c, name, kind, type,
-		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Value, .Value}, result,
+		[]Type_Id{type, TYPE_ALLOCATOR}, []Param_Mode{.Borrow, .Value}, result,
 	)
 	if sym := symbol_of(k.c, id); sym != nil {
 		sym.has_receiver = true
-		sym.receiver = .Value
+		sym.receiver = .Borrow
 		sym.param_defaults[1] = default_allocator_arg(k.c)
 	}
 	entry := lifecycle_of(k.c, type)
@@ -599,7 +599,7 @@ validate_semantic_hook :: proc(k: ^Checker, item: ^Item_Impl, d: ^Decl, sym: ^Sy
 			errorf(k.c, sym.span, "L0488", "a `move_only` type cannot also declare `hook(copy)`")
 			return
 		}
-		require_hook_shape(k, sym, subject, "copy", "proc(self, allocator: Allocator) -> Result(T, Allocator_Error)", 2, 1, .Value)
+		require_hook_shape(k, sym, subject, "copy", "proc(self, allocator: Allocator) -> Result(T, Allocator_Error)", 2, 1, .Borrow)
 	case .Convert:
 		if sym.has_receiver || len(sym.params) != 1 || sym.result != subject {
 			errorf(k.c, sym.span, "L0411", "`hook(convert)` takes one value without a receiver and returns `%s`", type_name(k.c, subject))

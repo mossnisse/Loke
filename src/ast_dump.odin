@@ -706,7 +706,9 @@ dump_parameter :: proc(b: ^strings.Builder, param: Parameter, depth: int) {
 	fmt.sbprint(b, " (param")
 	dump_attributes(b, param.attributes)
 	switch param.mode {
-	case .Value:
+	// `.Borrow` is the immutable receiver, which the parser never writes: it is
+	// derived from `self` in the semantic signature, and dumping is syntax.
+	case .Value, .Borrow:
 	case .Inout:
 		fmt.sbprint(b, " inout")
 	case .Move:

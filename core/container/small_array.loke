@@ -52,7 +52,7 @@ impl Small_Array($T, $N) {
 	// ------------------------------------------------------------ sequence --
 
 	Element  :: T;
-	Iterator :: Small_Array_Iterator(T, N);
+	Iterator :: Small_Array_Iterator(T);
 
 	len :: proc(self) -> int { return self.count; }
 	cap :: proc(self) -> int { return N; }
@@ -87,17 +87,22 @@ impl Small_Array($T, $N) {
 
 	// ----------------------------------------------------------- iteration --
 
-	// The iterator carries its own copy of the elements. A `self` receiver is a
-	// callee-local read-only binding (design.md "Temporaries and procedure
-	// boundaries"), so no borrow of it can be returned; `N` is small by
-	// construction, which is what makes the copy the right answer here rather
-	// than a workaround.
-	iter :: proc(self) -> Small_Array_Iterator(T, N) {
-		return {self.items, self.count, 0, false};
+	// The whole live prefix as one read-only view. The immutable counterpart of
+	// `slice`: a `self` receiver is a borrow of the caller's value (design.md
+	// "Receiver forms"), so a view of its inline storage is derived from the
+	// caller's root and needs no `inout`.
+	view :: proc(self) -> []T {
+		return self.items[0:self.count];
 	}
 
-	iter_reverse :: proc(self) -> Small_Array_Iterator(T, N) {
-		return {self.items, self.count, 0, true};
+	// The iterator borrows the live prefix. It allocates nothing, copies no
+	// element, and its size does not depend on `N`.
+	iter :: proc(self) -> Small_Array_Iterator(T) {
+		return {self.view(), 0, false};
+	}
+
+	iter_reverse :: proc(self) -> Small_Array_Iterator(T) {
+		return {self.view(), 0, true};
 	}
 
 	// ------------------------------------------------------------ mutation --
@@ -234,22 +239,24 @@ impl Small_Array($T, $N) {
 
 // design.md "Iteration protocol": one iterator serving both directions, because
 // they differ only in which end `at` counts from.
-Small_Array_Iterator :: struct($T: type, $N: int) where N > 0 {
-	@(private) items:   [N]T,
-	@(private) count:   int,
+// A borrow of the array's live prefix plus the traversal state. The array it
+// came from cannot be mutated, moved, or dropped while this is live, which is
+// the ordinary borrow rule rather than anything this type arranges.
+Small_Array_Iterator :: struct($T: type) {
+	@(private) items:   []T,
 	@(private) at:      int,
 	@(private) reverse: bool,
 }
 
-impl Small_Array_Iterator($T, $N) {
+impl Small_Array_Iterator($T) {
 	Element  :: T;
-	Iterator :: Small_Array_Iterator(T, N);
+	Iterator :: Small_Array_Iterator(T);
 
-	iter :: proc(self) -> Small_Array_Iterator(T, N) { return self; }
+	iter :: proc(self) -> Small_Array_Iterator(T) { return self; }
 
-	next :: proc(self: inout Small_Array_Iterator(T, N)) -> Option(T) {
-		if (self.at >= self.count) { return .none; }
-		index := self.count - 1 - self.at if self.reverse else self.at;
+	next :: proc(self: inout Small_Array_Iterator(T)) -> Option(T) {
+		if (self.at >= self.items.len()) { return .none; }
+		index := self.items.len() - 1 - self.at if self.reverse else self.at;
 		self.at += 1;
 		return .some(self.items[index]);
 	}

@@ -20,6 +20,16 @@ convention_is_foreign :: proc(convention: string) -> bool {
 	return convention == "c" || convention == "stdcall"
 }
 
+// design.md "Receiver forms" and "Parameter semantics and ABI lowering": an
+// `inout` parameter and an immutable receiver both designate the caller's
+// storage, so both cross as one pointer. Every definition, call, thunk, and
+// synthesized member asks here, so no two of them can classify the same
+// parameter differently. Redundant materialization of a small receiver is left
+// to the inliner rather than bought back with a second ABI.
+param_mode_is_pointer :: proc(mode: Param_Mode) -> bool {
+	return mode == .Inout || mode == .Borrow
+}
+
 // design.md "Calling conventions": `"c"` and `"stdcall"` are the two foreign
 // spellings; `loke` is written as the empty string. Everything else is a typo
 // or an unimplemented convention and is rejected by name (L0618).

@@ -1,0 +1,3 @@
+L0408
+@18:12
+`read` takes an immutable receiver, so it is called rather than stored

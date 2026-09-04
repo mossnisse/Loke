@@ -1,10 +1,10 @@
-@loke.i.map$5bint$5dint.values(%loke.container %arg0) {
+@loke.i.map$5bint$5dint.values(ptr %arg0) {
 @loke.i.Map_Values.map$245bint$245dint.iter(
 @loke.i.Map_Values_Iterator.map$245bint$245dint.next(ptr %arg0) {
 = type { %loke.string_view }
 @loke.i.Rune_Offsets.iter(
 @loke.i.Rune_Offset_Iterator.next(ptr %arg0) {
-@loke.i.string_view.iter(%loke.string_view %arg0) {
+@loke.i.string_view.iter(ptr %arg0) {
 @loke.i.Text_Iterator.next(ptr %arg0) {
 call i64 @loke_rt_v1_map_scan(
 call i64 @loke_rt_v1_rune_at(
