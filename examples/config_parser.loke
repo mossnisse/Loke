@@ -23,7 +23,9 @@ impl Reader {
 		return {name, 0};
 	}
 
-	drop :: proc(self: inout Reader) {
+	// `hook(drop)` is what makes this the type's cleanup rather than an
+	// ordinary method that happens to be called `drop`.
+	close :: hook(drop) proc(self: inout Reader) {
 		fmt.println("close", self.name, "lines read:", self.line);
 	}
 }
@@ -111,8 +113,8 @@ main :: proc() {
 		fmt.println("height still:", settings["height"]);
 	} // `defer` first, then the drop
 
-	// A missing key reads as zero, which is often not the answer you want.
-	// `Option` distinguishes "absent" from "present and zero".
+	// A read requires its key — `settings["colour"]` would panic — and `Option`
+	// distinguishes "absent" from "present and zero".
 	fmt.println("depth:", settings.lookup_value("depth"));
 	fmt.println("colour:", settings.lookup_value("colour"));
 

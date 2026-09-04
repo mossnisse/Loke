@@ -1,0 +1,19 @@
+distinct: 13
+total: 18
+the 4
+quick 1
+brown 1
+fox 2
+jumps 1
+over 1
+lazy 1
+dog 2
+while 1
+sleeps 1
+and 1
+runs 1
+on 1
+repeated: [the, fox, dog]
+fox: 102
+cat: 0
+cat present: false

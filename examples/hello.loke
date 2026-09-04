@@ -1,8 +1,8 @@
-package main; 
+package main;
 import "core:fmt";
 
 main :: proc() {
 	x := 40;
 	y: int = x + 2;
-	fmt.println("The aswer is", y);
+	fmt.println("The answer is", y);
 }

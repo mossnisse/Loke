@@ -1,0 +1,5 @@
+batch 0 mean 3
+batch 1 mean 9
+batch 2 mean 12.75
+in frame: 32
+samples: 10

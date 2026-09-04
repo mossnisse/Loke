@@ -864,3 +864,322 @@ expected_path :: proc(path: string) -> string {
 normalise :: proc(s: string) -> string {
 	return strings.trim_space(strings.replace_all(s, "\r\n", "\n") or_else s)
 }
+
+// ------------------------------------------------------------- examples --
+
+// The programs under `examples/` are what `examples/README.md` teaches from, so
+// they are the one corpus a reader compiles by hand. They are built from their
+// real sources rather than from copies, which is the only way the check and the
+// documentation cannot drift apart.
+@(private)
+Example_Check :: enum {
+	// Run with no arguments and compare stdout with `tests/examples/<name>.expected`.
+	Output,
+	// Compiled here; its behaviour is asserted by its own test below, because it
+	// needs arguments, standard input, or a directory of its own.
+	Driven,
+	// Compiled here; the rest needs a real console and is checked by hand
+	// (`examples/README.md`, "Checking keys by hand").
+	Interactive,
+}
+
+// Every example must say how it is checked. A new one with no entry fails this
+// test rather than quietly going unchecked.
+@(test)
+examples_compile_and_run :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+
+	Entry :: struct {
+		name:  string,
+		check: Example_Check,
+	}
+	checks := []Entry {
+		{"arena_pipeline", .Output},
+		{"compile_time",   .Output},
+		{"config_parser",  .Output},
+		{"game_of_life",   .Output},
+		{"greeting",       .Driven},
+		{"hello",          .Output},
+		{"keys",           .Interactive},
+		{"shapes",         .Output},
+		{"streaming",      .Driven},
+		{"word_frequency", .Output},
+	}
+
+	sources, _ := filepath.glob("examples/*.loke")
+	testing.expectf(
+		t,
+		len(sources) == len(checks),
+		"examples/ holds %d programs but %d are classified",
+		len(sources),
+		len(checks),
+	)
+	for source in sources {
+		name := filepath.stem(source)
+		classified := false
+		for entry in checks {
+			if entry.name == name {
+				classified = true
+				break
+			}
+		}
+		testing.expectf(t, classified, "examples/%s.loke has no test classification", name)
+	}
+
+	for entry in checks {
+		source := fmt.tprintf("examples/%s.loke", entry.name)
+		exe := fmt.tprintf("%s/example-%s.exe", TMP, entry.name)
+		if !compile_example(t, source, exe, nil) {
+			continue
+		}
+		if entry.check != .Output {
+			continue
+		}
+		expect_example_output(
+			t, source, exe, nil, "",
+			fmt.tprintf("tests/examples/%s.expected", entry.name),
+		)
+	}
+
+	// The one example that takes a build value. The tables it computes during
+	// compilation change size with it, so the default run alone would not show
+	// that `-define` reached compile-time code at all.
+	sieve := fmt.tprintf("%s/example-compile_time-sieve200.exe", TMP)
+	if compile_example(t, "examples/compile_time.loke", sieve, []string{"-define:SIEVE_LIMIT=200"}) {
+		expect_example_output(
+			t, "examples/compile_time.loke (SIEVE_LIMIT=200)", sieve, nil, "",
+			"tests/examples/compile_time.sieve200.expected",
+		)
+	}
+}
+
+// `greeting` reads a line from standard input and appends to a file in the
+// working directory, so it needs both — and the point of the example is that the
+// second run finds what the first one wrote, which only shows up across two runs
+// in a directory nothing else touches.
+@(test)
+example_greeting_appends_to_its_file :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	dir := fmt.tprintf("%s/example-greeting", TMP)
+	os2.remove_all(dir)
+	os.make_directory(dir)
+
+	// Built into the directory it runs in, so the redirect below needs no path.
+	if !compile_example(t, "examples/greeting.loke", fmt.tprintf("%s/greeting.exe", dir), nil) {
+		return
+	}
+
+	// The file does not exist on the first run, which the example treats as an
+	// empty history rather than a failure.
+	if !run_greeting(t, dir, "Ada\n") {
+		return
+	}
+	expect_file_contents(t, fmt.tprintf("%s/greetings.txt", dir), "Hello, Ada!\n", "after the first run")
+
+	if !run_greeting(t, dir, "Bo\n") {
+		return
+	}
+	expect_file_contents(
+		t, fmt.tprintf("%s/greetings.txt", dir),
+		"Hello, Ada!\nHello, Bo!\n", "after the second run",
+	)
+}
+
+// The redirect goes through the shell rather than `Process_Desc.stdin`: os2
+// hands a supplied handle straight to `CreateProcessW`, and a handle from
+// `os2.open` is not marked inheritable, so the child receives an invalid one and
+// the example reports `Not_A_Terminal` instead of reading a name.
+@(private)
+run_greeting :: proc(t: ^testing.T, dir, input: string) -> bool {
+	if !testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/stdin.txt", dir), transmute([]u8)input),
+		"cannot write the greeting input file",
+	) {
+		return false
+	}
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{
+			command     = []string{"cmd", "/c", ".\\greeting.exe < stdin.txt"},
+			working_dir = dir,
+		},
+		context.allocator,
+	)
+	if !testing.expect(t, err == nil, "cannot run the greeting example") {
+		return false
+	}
+	if !testing.expectf(
+		t, state.exit_code == 0,
+		"greeting exited with %d\n%s", state.exit_code, string(stderr),
+	) {
+		return false
+	}
+	// The example reports a failure and still exits 0, so the exit code alone
+	// cannot tell a successful run from a reported one.
+	return testing.expectf(
+		t, normalise(string(stderr)) == "",
+		"greeting reported %q", normalise(string(stderr)),
+	)
+}
+
+// `streaming` is about what happens at the edges: no argument, a file it can
+// read, a file that is not there, and one past its own read limit. Each is a
+// different path out of `run`, and three of them report through stderr.
+@(test)
+example_streaming_reads_its_input :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	dir := fmt.tprintf("%s/example-streaming", TMP)
+	os2.remove_all(dir)
+	os.make_directory(dir)
+
+	exe, exe_ok := filepath.abs(fmt.tprintf("%s/example-streaming.exe", TMP), context.allocator)
+	if !testing.expect(t, exe_ok, "cannot resolve the streaming executable path") {
+		return
+	}
+	if !compile_example(t, "examples/streaming.loke", exe, nil) {
+		return
+	}
+
+	// Three lines, seventeen bytes: both numbers are checked, because the bounded
+	// whole-file read and the fixed-buffer pass are separate walks over the same
+	// file.
+	if !testing.expect(
+		t,
+		os.write_entire_file(
+			fmt.tprintf("%s/three.txt", dir),
+			transmute([]u8)string("alpha\nbeta\ngamma\n"),
+		),
+		"cannot write the streaming input file",
+	) {
+		return
+	}
+	// One byte past `LIMIT`, which is what makes the bounded read fail rather
+	// than merely being large.
+	over_limit := make([]u8, 1024 * 1024 + 1, context.allocator)
+	defer delete(over_limit)
+	for index in 0 ..< len(over_limit) {
+		over_limit[index] = 'x'
+	}
+	if !testing.expect(
+		t,
+		os.write_entire_file(fmt.tprintf("%s/big.txt", dir), over_limit),
+		"cannot write the over-limit input file",
+	) {
+		return
+	}
+
+	expect_streaming(t, dir, exe, nil, 0, "", "usage: streaming <path>", "no argument")
+	expect_streaming(t, dir, exe, []string{"three.txt"}, 0, "bytes: 17\nlines: 3", "", "a readable file")
+	expect_streaming(t, dir, exe, []string{"nope.txt"}, 1, "", "Not_Found", "a missing file")
+	expect_streaming(t, dir, exe, []string{"big.txt"}, 1, "", "Limit_Exceeded", "a file past the read limit")
+}
+
+// stdout is compared whole; stderr only has to carry the reason, so the exact
+// wording of an `io.Error` stays the standard library's business.
+@(private)
+expect_streaming :: proc(
+	t: ^testing.T,
+	dir, exe: string,
+	args: []string,
+	exit_code: int,
+	stdout_text, stderr_contains, what: string,
+) {
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, exe)
+	for arg in args {
+		append(&command, arg)
+	}
+	state, stdout, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = command[:], working_dir = dir},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "streaming with %s: cannot run", what) {
+		return
+	}
+	testing.expectf(
+		t, state.exit_code == exit_code,
+		"streaming with %s: exited with %d, expected %d", what, state.exit_code, exit_code,
+	)
+	testing.expectf(
+		t, normalise(string(stdout)) == normalise(stdout_text),
+		"streaming with %s: expected %q, got %q", what, stdout_text, normalise(string(stdout)),
+	)
+	if stderr_contains != "" {
+		testing.expectf(
+			t, strings.contains(normalise(string(stderr)), stderr_contains),
+			"streaming with %s: %q does not report %q",
+			what, normalise(string(stderr)), stderr_contains,
+		)
+	}
+}
+
+@(private)
+compile_example :: proc(t: ^testing.T, source, exe: string, flags: []string) -> bool {
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, compiler_path(), source, "-o", exe)
+	for flag in env_flags() {
+		append(&command, flag)
+	}
+	for flag in flags {
+		append(&command, flag)
+	}
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = command[:]},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "%s: cannot run %s", source, compiler_path()) {
+		return false
+	}
+	return testing.expectf(t, state.exit_code == 0, "%s: compile failed\n%s", source, string(stderr))
+}
+
+@(private)
+expect_example_output :: proc(
+	t: ^testing.T,
+	label, exe: string,
+	args: []string,
+	working_dir, expected_file: string,
+) {
+	expected, has_expected := os.read_entire_file(expected_file)
+	if !testing.expectf(t, has_expected, "%s: missing %s", label, expected_file) {
+		return
+	}
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, exe)
+	for arg in args {
+		append(&command, arg)
+	}
+	state, stdout, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = command[:], working_dir = working_dir},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "%s: cannot run %s", label, exe) {
+		return
+	}
+	testing.expectf(
+		t, state.exit_code == 0,
+		"%s: exited with %d\n%s", label, state.exit_code, string(stderr),
+	)
+	testing.expectf(
+		t,
+		normalise(string(stdout)) == normalise(string(expected)),
+		"%s: expected %q, got %q",
+		label,
+		normalise(string(expected)),
+		normalise(string(stdout)),
+	)
+}
+
+@(private)
+expect_file_contents :: proc(t: ^testing.T, path, expected, what: string) {
+	actual, ok := os.read_entire_file(path)
+	if !testing.expectf(t, ok, "%s: %s was not written", what, path) {
+		return
+	}
+	testing.expectf(
+		t,
+		normalise(string(actual)) == normalise(expected),
+		"%s: %s holds %q, expected %q",
+		what, path, normalise(string(actual)), normalise(expected),
+	)
+}

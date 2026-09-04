@@ -1,0 +1,13 @@
+open settings.ini
+error: none
+width: 1280
+close settings.ini lines read: 3
+open broken.ini
+error: not a number
+height still: 720
+leaving the broken load
+close broken.ini lines read: 1
+depth: .some(32)
+colour: .none
+depth or 8: 32
+colour or 8: 8

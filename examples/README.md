@@ -33,3 +33,31 @@ them with a space, so the examples print ordinary readable output.
 `game_of_life.loke` intentionally prints one bare population count per
 generation. `base:` and `core:` packages are found beside the compiler
 automatically, so no collection flags are needed.
+
+## How these are checked
+
+`odin test tests` compiles all ten from these sources — not from copies — and
+compares the output of the ones that produce a fixed result. `greeting` is run
+twice in a scratch directory with supplied input, so the second run has to find
+what the first wrote; `streaming` is run against a real file, a missing one, and
+one past its own read limit. Every example must be classified in
+`tests/corpus_test.odin`, so a new one cannot arrive unchecked.
+
+### Checking `keys` by hand
+
+`keys` is the one example a test cannot drive: it needs a real console, and
+redirected input is `Not_A_Terminal` on purpose. Run it from a terminal —
+
+```powershell
+.\lokec.exe examples\keys.loke -o keys.exe
+.\keys.exe
+```
+
+— and confirm three things:
+
+1. ordinary keys, arrows, and modified keys are each reported once, with
+   `ctrl+`/`alt+` prefixes where they apply;
+2. Escape prints `escape` and exits;
+3. the terminal is left usable: typing echoes again, and Ctrl+C works. Closing
+   the window mid-run must also leave a usable terminal, which is the console
+   control handler rather than the drop.

@@ -32,16 +32,22 @@ count_lines :: proc(path: string_view) -> Result(int, io.Error) {
 
 	lines := 0;
 	window: [4096]u8 = {};
-	for (;;) {
+	reading := true;
+	for (reading) {
 		count := 0;
 		switch (outcome in file.read(window[:])) {
 		case .ok:
 			count = outcome;
 		case .err:
-			if (io.is(outcome, .End_Of_Input)) { break; }
-			// The close still runs: `file` is a managed local, and its `drop`
-			// closes a live handle on every path out of this procedure.
-			return .err(outcome);
+			// `break` exits the innermost `for`, `foreach`, or `switch`
+			// (design.md "break statement"), and here that is the switch —
+			// so end-of-input clears the loop's own condition instead.
+			if (!io.is(outcome, .End_Of_Input)) {
+				// The close still runs: `file` is a managed local, and its `drop`
+				// closes a live handle on every path out of this procedure.
+				return .err(outcome);
+			}
+			reading = false;
 		}
 		foreach (index in 0 ..< count) {
 			if (window[index] == u8('\n')) { lines += 1; }

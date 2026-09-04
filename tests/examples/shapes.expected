@@ -1,0 +1,8 @@
+circle compactness: 1
+square compactness: 0.7853981633974475
+circle area 3.14159265358979 perimeter 6.28318530717958
+rectangle area 4 perimeter 8
+rectangle area 4 perimeter 10
+total area: 11.14159265358979
+square is square: true
+wide is square: false

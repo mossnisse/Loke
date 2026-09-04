@@ -1,0 +1,16 @@
+limit: 200
+primes below limit: 46
+first: 2 last: 199
+agree: true
+bytes of table: 368
+Reading is 40 bytes, aligned 8
+celsius at offset 16
+table is large
+colour: Green
+colour: Blue
+reading:
+  sensor = probe-1
+  celsius = 21.5 (f64)
+  samples = 128
+  verified = true
+printed from line 136 of examples/compile_time.loke

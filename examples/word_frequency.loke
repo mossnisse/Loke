@@ -30,10 +30,17 @@ count_words :: proc(
 		if (i < bytes.len() && bytes[i] != ' ') { continue; }
 		if (i > start) {
 			word := text[start:i];
-			// A read never inserts, so this asks the question without answering it.
-			if (!(word in counts)) { order.append(word); }
-			// As an assignment target the same syntax does insert.
-			counts[word] += 1;
+			// No index position creates a missing element: `counts[word] += 1` names
+			// a location inside a stored entry and panics when there is none.
+			// Whole-element assignment is the one form that inserts, so the `in`
+			// test picks between them — and records first-seen order on the same
+			// branch that creates the entry.
+			if (word in counts) {
+				counts[word] += 1;
+			} else {
+				order.append(word);
+				counts[word] = 1;
+			}
 		}
 		start = i + 1;
 	}
@@ -68,7 +75,9 @@ main :: proc() {
 	case .none:
 	}
 	fmt.println("fox:", counts["fox"]);
-	fmt.println("cat:", counts["cat"]);        // a missing key reads as zero
+	// A read requires the key: `counts["cat"]` would panic. `lookup_value`
+	// answers `Option(V)` instead, and `or_else` supplies the absent case.
+	fmt.println("cat:", counts.lookup_value("cat") or_else 0);
 	fmt.println("cat present:", "cat" in counts);
 
 	// Every allocation above — both containers and their tables — is released

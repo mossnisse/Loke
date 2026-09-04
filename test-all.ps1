@@ -22,6 +22,9 @@ try {
     & odin build src -out:lokec.exe -vet-unused -vet-shadowing
     if ($LASTEXITCODE -ne 0) { throw "compiler build failed ($LASTEXITCODE)" }
 
+    # This is also the example gate: the ten programs under examples/ are
+    # compiled from their real sources here, and the ones with fixed output are
+    # compared against it. They are the only corpus that doubles as documentation.
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', $null, 'Process')
     & odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
     if ($LASTEXITCODE -ne 0) { throw "baseline integration tests failed ($LASTEXITCODE)" }
