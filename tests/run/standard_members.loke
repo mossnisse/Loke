@@ -40,8 +40,8 @@ main :: proc() {
 	fmt.println(1 if box.hash(seed) == box.hash(seed) else 0);
 	fmt.println(1 if interfaces.Hashable(Box) else 0);
 
-	// A fixed array's length is a property of its type, so the receiver is not
-	// evaluated: `calls` stays zero across two calls.
+	// A fixed array's length is a property of its type, but the call is ordinary:
+	// the receiver is still evaluated exactly once.
 	xs := [3]int{1, 2, 3};
 	calls := 0;
 	fmt.println(xs.len(), make_array(inout calls).len(), calls);

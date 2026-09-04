@@ -2599,7 +2599,7 @@ buffer: Ring_Buffer = {};
 n := buffer.len();
 ```
 
-Built-in containers receive compiler-defined `len` and `cap` methods, so a user type and a built-in are read the same way. A receiver that needs no evaluation is not evaluated: a fixed array's and a vector's length are properties of their type, so `make_array().len()` folds to a constant and never runs the call.
+Built-in containers receive compiler-defined `len` and `cap` methods, so a user type and a built-in are read the same way. Every method call evaluates its receiver exactly once, whatever the method reads: a fixed array's and a vector's length are properties of their type, so `make_array().len()` needs nothing from the returned array, but it still runs `make_array()`. An unevaluated operand belongs to an explicit operation that says so, such as [`size_of`](#compile-time-layout-queries).
 
 `iter` and `iter_reverse` are the two entries the [`Iterable`](#iteration-protocol) requirement states in receiver form, because every adapter that continues from them — `indexed()`, `entries()`, `bytes()` — is a method.
 

@@ -2578,6 +2578,21 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	fold_standard_customization_call(k, v, chosen)
 }
 
+// A fixed array's and a vector's length are properties of their type, so the
+// call has a constant value. The call itself stays ordinary: the backend still
+// evaluates the receiver exactly once, for its effects.
+fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
+	if chosen == nil || chosen.synth != .Standard_Len || len(chosen.params) == 0 {
+		return
+	}
+	info := underlying_info(k.c, chosen.params[0])
+	if info == nil || (info.kind != .Array && info.kind != .Simd) {
+		return
+	}
+	v.is_const = true
+	v.const_value = int_const(k.c, i64(info.count))
+}
+
 @(private = "file")
 require_copyable_view_element :: proc(k: ^Checker, chosen: ^Symbol, span: Span) {
 	subject := chosen.params[0]
@@ -2666,21 +2681,6 @@ materialize_call_receiver :: proc(k: ^Checker, v: ^Expr_Call) {
 	if chosen != nil && chosen.has_receiver && chosen.receiver == .Borrow && expr_base(v.bound[0]).is_const {
 		request_materialization(k, v.bound[0])
 	}
-}
-
-// A fixed array's and a vector's length are properties of their type and do not
-// evaluate the receiver. Preserve that rule even though the call resolves to a
-// real compiler-contributed member.
-fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Symbol) {
-	if chosen == nil || chosen.synth != .Standard_Len || len(chosen.params) == 0 {
-		return
-	}
-	info := underlying_info(k.c, chosen.params[0])
-	if info == nil || (info.kind != .Array && info.kind != .Simd) {
-		return
-	}
-	v.is_const = true
-	v.const_value = int_const(k.c, i64(info.count))
 }
 
 // Rewrites the callee to name the selected overload, so every later phase — the

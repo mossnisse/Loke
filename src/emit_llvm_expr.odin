@@ -763,6 +763,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return emit_simd_splat(e, value, as_type)
 	}
 	if base.is_const && base.const_value.kind != .Invalid {
+		emit_const_len_receiver(e, expr)
 		return llvm_const(e, base.const_value, as_type)
 	}
 
@@ -1868,4 +1869,24 @@ emit_unsafe_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 		return single
 	}
 	return out
+}
+
+// design.md "Standard customization procedures": a fixed array's and a vector's
+// length come from the type, so the call folds to a constant — but it is still
+// an ordinary method call, so its receiver is evaluated exactly once. Only a
+// bare name has nothing to run.
+@(private = "file")
+emit_const_len_receiver :: proc(e: ^Emitter, expr: Expr) {
+	call, is_call := expr.(^Expr_Call)
+	if !is_call || len(call.bound) == 0 || call.bound[0] == nil {
+		return
+	}
+	if chosen := symbol_of(e.c, call.resolution.chosen_overload); chosen == nil || chosen.synth != .Standard_Len {
+		return
+	}
+	receiver := call.bound[0]
+	if _, is_name := receiver.(^Expr_Ident); is_name {
+		return
+	}
+	emit_discarded_temporary(e, receiver, emit_expr(e, receiver))
 }

@@ -604,8 +604,9 @@ named `len` is an ordinary declaration, and the one remaining rule is the one
 already needed: `f(x)` is a lexical call and `x.f()` is a receiver call. The
 built-in types keep their compiler-contributed `len`, `cap`, and `hash` members,
 which is what `x.len()` selects on a slice exactly as on a user record. A fixed
-array's and a vector's lengths stay properties of their type, so `x.len()` folds
-to a constant and never evaluates `x`.
+array's and a vector's lengths stay properties of their type, but `x.len()` is
+still an ordinary call and still evaluates `x`; the unevaluated operand is
+`size_of`'s job, not a method call's.
 
 ### `fallthrough`
 
