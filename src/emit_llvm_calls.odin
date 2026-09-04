@@ -1033,26 +1033,13 @@ emit_bound_call :: proc(
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&argument_cleanups, entry) }
 		}
-		// design.md "Receiver forms" and "Temporaries and procedure boundaries": an
-		// immutable receiver is a borrow of the caller's storage, not a copy of it,
-		// so a temporary one is still the caller's to clean up — but *when* depends
-		// on whether the call hands part of it back. A result that cannot name the
-		// receiver (an owned copy, a scalar) lets the temporary go at the same
-		// boundary a by-value argument uses. A result that can borrow it has to
-		// outlive the call, so that temporary belongs to the enclosing scope
-		// instead: later than the complete expression it is bounded by, which
-		// costs a delayed drop rather than a dangling one. `emit_address` has
-		// already given it a slot either way.
-		if mode == .Borrow && index < len(callee_type.parameters) &&
-		   !expression_is_borrowed_place(e.c, argument) &&
-		   emit_lifecycle(e, callee_type.parameters[index]).managed {
-			if result_may_borrow_receiver(e.c, symbol_id, callee_type.result) {
-				register_scope_place(e, callee_type.parameters[index], operands[index])
-			} else {
-				entry := begin_temporary_drop(e, callee_type.parameters[index], operands[index])
-				if entry.place != "" { append(&argument_cleanups, entry) }
-			}
-		}
+		// design.md "Receiver forms": an immutable receiver is a borrow of the
+		// caller's storage, not a copy of it, so a temporary one is still the
+		// caller's to clean up. `emit_address` gave it a slot and registered it in
+		// the full-expression frame, which outlives the call whether or not the
+		// result borrows it — so the split between a delayed scope drop and a
+		// call-local one is gone, and with it the case that dropped a receiver
+		// before its enclosing expression finished.
 		// design.md: method-call syntax supplies the receiver's `move` marker
 		// implicitly, so the source is read and then killed here rather than by an
 		// `Expr_Move` the caller wrote.

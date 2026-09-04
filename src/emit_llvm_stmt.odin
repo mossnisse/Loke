@@ -32,7 +32,13 @@ emit_statements :: proc(e: ^Emitter, stmts: []Stmt) {
 			fmt.sbprintfln(&e.b, "unreachable.%d:", next_id(e))
 			e.terminated = false
 		}
+		// The full-expression boundary of a statement written in a block. A
+		// statement reached any other way — an initial statement, a loop update —
+		// declares its own boundary where that construct decides it, which is why
+		// this is here rather than in `emit_stmt`.
+		push_temporaries(e)
 		emit_stmt(e, stmt)
+		pop_temporaries(e)
 	}
 }
 
@@ -87,6 +93,9 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 		emit_return_values(e, s)
 
 	case ^Stmt_Branch:
+		// Whatever the enclosing statement still holds is owed on this path too:
+		// a frame opened by an initial statement outlives the body that breaks.
+		drain_temporaries(e, 0)
 		if s.kind == .Break {
 			run_cleanups(e, e.break_depth)
 			branch(e, e.break_label)
@@ -476,7 +485,11 @@ emit_if :: proc(e: ^Emitter, s: ^Stmt_If) {
 	if s.init != nil {
 		emit_stmt(e, s.init)
 	}
+	// design.md: the condition's own temporaries end with the condition, before
+	// either branch runs.
+	push_temporaries(e)
 	cond := emit_expr(e, s.cond)
+	pop_temporaries(e)
 	then_label := new_label(e, "if.then")
 	else_label := new_label(e, "if.else")
 	done_label := new_label(e, "if.done")
@@ -521,7 +534,13 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 
 	place_label(e, head)
 	if s.cond != nil {
-		branch_if(e, emit_expr(e, s.cond), body, done)
+		// Once per evaluation, not once per loop: the storage is one reused
+		// alloca, so a boundary outside the head would drop the last iteration's
+		// value and leak the rest.
+		push_temporaries(e)
+		cond := emit_expr(e, s.cond)
+		pop_temporaries(e)
+		branch_if(e, cond, body, done)
 	} else {
 		branch(e, body)
 	}
@@ -532,7 +551,9 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 
 	place_label(e, post)
 	if s.post != nil {
+		push_temporaries(e)
 		emit_stmt(e, s.post)
+		pop_temporaries(e)
 	}
 	branch(e, head)
 
@@ -804,6 +825,9 @@ emit_return_values :: proc(e: ^Emitter, s: ^Stmt_Return) {
 
 @(private)
 emit_epilogue :: proc(e: ^Emitter) {
+	// The result is already in result storage, so an owned one survives both
+	// halves of cleanup — and a drop hook that panics cannot take it with it.
+	drain_temporaries(e, 0)
 	run_cleanups(e, 0)
 	// This frame is leaving normally, so it is no longer one a panic can call
 	// back into.

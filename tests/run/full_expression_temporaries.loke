@@ -1,0 +1,94 @@
+package main; import "core:fmt";
+
+// design.md "Borrows and lifetimes": a borrow of an owned temporary "may be used
+// during that expression, including by a called procedure, but cannot escape
+// it". The checker enforces the escape; this is the emitter half — the boundary
+// at which a temporary something *borrowed from* is destroyed.
+//
+// `takes(build().items[:])` builds a container, slices it, passes the slice, and
+// used to leak the container. The same expression written `takes(build())`,
+// where the temporary is the argument itself, was always cleaned up — the gap
+// was the borrow, not the temporary.
+
+Box :: move_only struct { tag: int, items: [dynamic]int }
+
+impl Box {
+	release :: hook(drop) proc(self: inout Box) { fmt.println("drop", self.tag); }
+	view :: proc(self) -> []int { return self.items[:]; }
+}
+
+build :: proc(tag: int) -> Box {
+	b := Box{tag, [dynamic]int{}};
+	b.items.append(1, 2, 3);
+	return b;
+}
+
+takes :: proc(xs: []int) -> int { return xs.len(); }
+two   :: proc(a: []int, b: []int) -> int { return a.len() + b.len(); }
+
+// An owned result must survive the statement's own temporary cleanup.
+returns_owner :: proc() -> Box {
+	fmt.println(takes(build(81).items[:]));
+	return build(82);
+}
+
+returns_len :: proc() -> int {
+	return takes(build(83).items[:]);
+}
+
+Err :: enum { bad }
+fails :: proc(xs: []int) -> Result(int, Err) { return .err(Err.bad); }
+works :: proc(xs: []int) -> Result(int, Err) { return .ok(xs.len()); }
+
+or_returns :: proc() -> Result(int, Err) {
+	a := works(build(91).items[:]) or_return;
+	b := fails(build(92).items[:]) or_return;
+	return .ok(a + b);
+}
+
+main :: proc() {
+	// A borrowed-from temporary, through a field and through a method.
+	fmt.println(takes(build(11).view()));
+	fmt.println(takes(build(12).items[:]));
+
+	// Reverse completed-initialization order, within one expression and across
+	// two calls in one.
+	fmt.println(two(build(21).items[:], build(22).items[:]));
+	fmt.println(takes(build(23).items[:]) + takes(build(24).items[:]));
+
+	// Nothing binds the result: the temporary is still cleaned up exactly once.
+	takes(build(31).items[:]);
+
+	// One drop per iteration, not one per loop: the storage is a reused alloca.
+	for (i := 0; i < 3; i += 1) {
+		fmt.println(takes(build(40 + i).items[:]));
+	}
+
+	// A condition cleans up on every evaluation, before branching.
+	if (takes(build(51).items[:]) > 0) { fmt.println("taken"); }
+	j := 0;
+	for (; takes(build(60 + j).items[:]) > 0 && j < 2; j += 1) {
+		fmt.println(j);
+	}
+
+	// Leaving the loop early still owes the drop.
+	for (k := 0; k < 5; k += 1) {
+		if (takes(build(70 + k).items[:]) > 0 && k == 1) { break; }
+	}
+
+	// A returned owner outlives cleanup; a temporary in the return expression
+	// does not.
+	{
+		owner := returns_owner();
+		fmt.println(owner.items.len());
+	}
+	fmt.println(returns_len());
+
+	// A failing `or_return` leaves through the same boundary a return does.
+	switch (v in or_returns()) {
+	case .ok:  fmt.println("ok", v);
+	case .err: fmt.println("err");
+	}
+
+	fmt.println("end");
+}

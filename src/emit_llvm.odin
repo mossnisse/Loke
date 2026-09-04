@@ -186,6 +186,12 @@ Function_State :: struct {
 	abi_sret:    string,
 	defer_flags: []string,
 	cleanups:    [dynamic]Cleanup_Scope,
+	// design.md "Borrows and lifetimes": a value temporary lives until the end of
+	// its complete expression, which is narrower than any lexical scope. One
+	// frame per full expression, because the storage is a hoisted alloca a loop
+	// reuses — registering these in the surrounding scope would drop only the
+	// last value and leak every earlier iteration.
+	temporaries: [dynamic][dynamic]Deferred,
 	break_label:    string,
 	continue_label: string,
 	break_depth:    int,

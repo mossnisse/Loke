@@ -1,0 +1,26 @@
+package main; import "core:fmt";
+
+// design.md "Panic during unwinding": a temporary registered at a
+// full-expression boundary is a frame the runtime can call back into, so a
+// later argument that panics still destroys the owners built before it, in
+// reverse registration order.
+
+Box :: move_only struct { tag: int, items: [dynamic]int }
+
+impl Box {
+	release :: hook(drop) proc(self: inout Box) { fmt.println("drop", self.tag); }
+}
+
+build :: proc(tag: int) -> Box {
+	b := Box{tag, [dynamic]int{}};
+	b.items.append(1, 2, 3);
+	return b;
+}
+
+two  :: proc(a: []int, b: []int) -> int { return a.len() + b.len(); }
+boom :: proc(xs: []int) -> []int { return xs[10:]; }
+
+main :: proc() {
+	fmt.println(two(build(1).items[:], boom(build(2).items[:])));
+	fmt.println("unreachable");
+}

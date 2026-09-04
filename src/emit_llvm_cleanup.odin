@@ -460,6 +460,68 @@ drop_temporary_value :: proc(e: ^Emitter, entry: Deferred) {
 	emit_drop_place(e, entry.type, entry.place)
 }
 
+// ------------------------------------------------ full-expression frames --
+
+// design.md "Borrows and lifetimes": a borrow of an owned temporary "may be used
+// during that expression, including by a called procedure, but cannot escape
+// it". The checker enforces the escape; these frames are the emitter half — the
+// boundary at which a temporary something *borrowed from* is destroyed.
+//
+// The boundary has to be the complete expression rather than the enclosing
+// scope: the storage is a hoisted alloca, so a loop reuses one slot and a
+// scope-registered drop would run once on the last value and leak every earlier
+// iteration. Every construct that evaluates an expression therefore declares its
+// own frame, which is why this is a mechanism and not a flag.
+@(private)
+push_temporaries :: proc(e: ^Emitter) {
+	append(&e.temporaries, make([dynamic]Deferred))
+}
+
+// Destroys what the frame still owns, in reverse completed-initialization order.
+@(private)
+pop_temporaries :: proc(e: ^Emitter) {
+	if len(e.temporaries) == 0 {
+		return
+	}
+	if !e.terminated {
+		drain_temporaries(e, len(e.temporaries) - 1)
+	}
+	entries := e.temporaries[len(e.temporaries) - 1]
+	delete(entries)
+	pop(&e.temporaries)
+}
+
+// The frames above `down_to`, innermost first, without closing them: an exit
+// that branches away owes their drops on *its* path, while the frame stays open
+// for the fall-through path that will pop it.
+@(private)
+drain_temporaries :: proc(e: ^Emitter, down_to: int) {
+	for depth := len(e.temporaries) - 1; depth >= down_to; depth -= 1 {
+		entries := e.temporaries[depth]
+		for index := len(entries) - 1; index >= 0; index -= 1 {
+			drop_temporary_value(e, entries[index])
+		}
+	}
+}
+
+// An owned temporary that a larger expression borrows from. It belongs to the
+// innermost open frame; with none open the enclosing lexical scope is the only
+// boundary there is, which is exactly the extended lifetime design.md gives a
+// `foreach` iterable, a `switch` subject, and an initial statement — those
+// survive until their complete *statement* ends.
+@(private)
+register_temporary_place :: proc(e: ^Emitter, type: Type_Id, place: string) {
+	if !emit_lifecycle(e, type).managed {
+		return
+	}
+	if len(e.temporaries) == 0 {
+		register_scope_place(e, type, place)
+		return
+	}
+	entry := begin_temporary_drop(e, type, place)
+	append(&e.temporaries[len(e.temporaries) - 1], entry)
+}
+
 // -------------------------------------------------------------- cleanups --
 
 @(private)

@@ -502,12 +502,30 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		// addressable temporary storage for that selection.
 		slot := alloca(e, llvm_type(e, as_type))
 		store(e, as_type, emit_call(e, v, as_type), slot)
+		hold_addressed_temporary(e, expr, as_type, slot)
 		return slot
 	}
 	// Any other addressable expression is materialised into a temporary.
 	slot := alloca(e, llvm_type(e, as_type))
 	store(e, as_type, emit_expr_at(e, expr, as_type), slot)
+	hold_addressed_temporary(e, expr, as_type, slot)
 	return slot
+}
+
+// The two branches above are where an owned value becomes addressable storage,
+// which is the one thing every borrowing form has in common: slicing, indexing,
+// field selection, a conversion, an operator, and an immutable receiver all
+// reach their operand through here. Registering the owner once, here, is what
+// gives `takes(build()[:])` a boundary — the borrow is the caller's to keep
+// alive, and the storage is nobody's to name.
+//
+// A place names storage someone else owns, and is not ours to destroy.
+@(private = "file")
+hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: string) {
+	if expression_is_borrowed_place(e.c, expr) {
+		return
+	}
+	register_temporary_place(e, type, place)
 }
 
 // `xs[i]`: the element's address inside the container's current allocation,

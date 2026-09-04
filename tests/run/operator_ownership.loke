@@ -112,6 +112,13 @@ main :: proc() {
 	report("place or_else fallback");
 
 	// --- or_return -------------------------------------------------------
+	//
+	// Each block below reads `(outcome or_else Owned{0}).id`, selecting a field
+	// from an owned temporary rather than binding it. That temporary is the
+	// shape that used to leak: nothing named it, so nothing dropped it. It is
+	// destroyed at the end of its complete expression now, which is the extra
+	// drop in every `or_return` row against the `or_else` rows above — those
+	// bind their result to a local and were never affected.
 	reset();
 	{
 		outcome := place_or_return();

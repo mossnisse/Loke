@@ -358,17 +358,24 @@ lookup_regressions :: proc() {
 		assert(value_drops == 6 && key.id == 1);
 	}
 	assert(key_drops == 6);
+	// design.md "Borrows and lifetimes": a temporary in a `switch` subject
+	// survives until that complete statement ends, so the map `tracked_map()`
+	// built is still alive while the case body runs and is destroyed with the
+	// switch. Its drop used to happen before the body, which is why these
+	// counts read one lower inside a case than after it — the totals either
+	// side of the statement are unchanged.
 	{
 		switch (held in tracked_map().lookup_value(1)) {
-		case .some: assert(held.id == 2 && value_copies == 6 && value_drops == 7);
+		case .some: assert(held.id == 2 && value_copies == 6 && value_drops == 6);
 		case .none: assert(false);
 		}
 	}
 	assert(value_drops == 8);
 	switch (_ in tracked_map().lookup_value(9)) {
 	case .some: assert(false);
-	case .none: assert(value_copies == 6 && value_drops == 9);
+	case .none: assert(value_copies == 6 && value_drops == 8);
 	}
+	assert(value_drops == 9);
 
 	// The formal key type supplies context to positional and named literals.
 	grid: map[[2]int]int;
