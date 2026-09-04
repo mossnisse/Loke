@@ -10,15 +10,15 @@ L0459
 L0457
 @36:15
 the index binding is a counter and cannot be taken by reference
-L0460
-@39:22
-`indexed()` numbers the traversal it wraps, so it comes last and only once
-L0460
-@42:22
-`reversed()` is not a traversal of `map[int]int`
-L0460
-@43:21
-`reversed()` is not a traversal of `string`
+L0363
+@39:16
+has no field or member `reversed`
+L0363
+@42:16
+`map[int]int` has no field or member `reversed`
+L0363
+@43:16
+`string` has no field or member `reversed`
 L0363
 @47:16
 `[3]int` has no field or member `keys`

@@ -1,0 +1,32 @@
+package main;
+import "core:container";
+import "core:fmt";
+import "base:interfaces";
+Small :: container.Small_Array(int, 4);
+increment :: proc(xs: inout $S) where interfaces.Mutable_Iterable(S) {
+	foreach (&value in xs) { value += 1; }
+}
+main :: proc() {
+	xs: Small = {};
+	xs.append(10, 20, 30);
+	foreach (&value, index in xs) { value += index; }
+	fmt.println(xs);
+	increment(inout xs);
+	fmt.println(xs);
+	foreach (&value in xs) {
+		value += 10;
+		if (value == 21) { continue; }
+		break;
+	}
+	fmt.println(xs);
+	iterator := xs.iter_mut();
+	switch (p in iterator.next()) { case .some: p^ += 100; case .none: }
+	switch (p in iterator.next()) { case .some: p^ += 200; case .none: }
+	fmt.println(xs);
+	array := [2]int{1, 2};
+	increment(inout array);
+	fmt.println(array);
+	grown := [dynamic]int{3, 4};
+	increment(inout grown);
+	fmt.println(grown);
+}

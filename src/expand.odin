@@ -15,10 +15,6 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		errorf(k.c, s.span, "L0454", "a `foreach` binds at least one name")
 		return FLOWS
 	}
-	// An expansion binds the same `Element` a runtime loop does, so it reads the
-	// same adapter (design.md "Static `foreach` expansion").
-	adapter, _ := peel_foreach_adapter(k, s)
-	s.adapter = adapter
 	// design.md: mixing a runtime and a compile-time binding in one header is an
 	// error, and a static binding is immutable, so `&` cannot apply to one.
 	for binding in s.bindings {
@@ -254,6 +250,28 @@ fold_static_iterable :: proc(k: ^Checker, iterable: Expr) -> ([]Const_Value, Typ
 	type := check_single_expr(k, iterable)
 	if type == INVALID_TYPE {
 		return nil, INVALID_TYPE, false
+	}
+	if call, is_call := iterable.(^Expr_Call); is_call {
+		if sym := symbol_of(k.c, call.resolution.chosen_overload); sym != nil && sym.synth == .Adapter_View {
+			elements, _, ok := fold_static_iterable(k, call.bound[0])
+			if !ok { return nil, INVALID_TYPE, false }
+			kind := type_of(k.c, type).adapter_kind
+			element_type := associated_type_of(k, type, "Element")
+			out := make([]Const_Value, len(elements), k.c.semantic_allocator)
+			for element, index in elements {
+				if kind == .Reversed {
+					out[len(elements) - 1 - index] = element
+				} else {
+					pair := new(Const_Aggregate, k.c.semantic_allocator)
+					pair.type = element_type
+					pair.elements = make([]Const_Value, 2, k.c.semantic_allocator)
+					pair.elements[0] = element
+					pair.elements[1] = int_const(k.c, i64(index))
+					out[index] = Const_Value{kind = .Aggregate, aggregate = pair}
+				}
+			}
+			return out, element_type, true
+		}
 	}
 	if written, is_range := iterable.(^Expr_Range); is_range {
 		return fold_static_range(k, written, type)

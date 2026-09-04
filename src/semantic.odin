@@ -129,6 +129,7 @@ Type_Kind :: enum {
 
 // A member set the compiler installs on a type rather than the user writing it.
 Contribution :: enum u8 {
+	Mutable_Iteration,
 	Iteration,
 	Lifecycle,
 	// The compiler-owned canonical receiver members: `len`, `cap`, and `hash` on
@@ -246,6 +247,8 @@ Type_Info :: struct {
 	// Which traversal a container view names. `.None` on an iterator, which is a
 	// carrier for the same reason but names no traversal of its own.
 	view_kind:     View_Kind,
+	adapter_kind:  Adapter_Kind,
+	adapter_by_value: bool,
 	// A compiler-owned reflection descriptor. Its values are ordinary constant
 	// aggregates, and this is the marker that forbids materializing one into
 	// runtime storage (design.md "Compile-time reflection").
@@ -737,6 +740,7 @@ Symbol :: struct {
 	delegated:           bool,
 	delegate_underlying: Type_Id,
 	delegate_target:     Symbol_Id,
+	iteration_target:    Symbol_Id,
 	// Signature resolution already reported why this procedure has no usable
 	// type, so the gate must not report a second time for the same mistake.
 	signature_error: bool,
@@ -929,6 +933,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.range_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.iterator_types = make(map[Type_Id]Type_Id, c.semantic_allocator)
 	c.view_types = make(map[View_Key]Type_Id, c.semantic_allocator)
+	c.adapter_members = make(map[Adapter_Key]Symbol_Id, c.semantic_allocator)
 	c.carrier_reach = make(map[Type_Id]Carrier_Reach, c.semantic_allocator)
 	c.carrier_shapes = make(map[Type_Id][]Carrier_Path, c.semantic_allocator)
 	c.synth_procs = make([dynamic]Symbol_Id, 0, 8, c.semantic_allocator)

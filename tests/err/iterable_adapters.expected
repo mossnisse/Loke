@@ -1,0 +1,6 @@
+L0512
+@8:2
+`xs` cannot be modified here: a read-only borrow of it is still in use
+L0512
+@13:2
+`y` cannot be dropped here: a read-only borrow of it is still in use

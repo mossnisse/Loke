@@ -53,6 +53,7 @@ impl Small_Array($T, $N) {
 
 	Element  :: T;
 	Iterator :: Small_Array_Iterator(T);
+	Mut_Iterator :: Small_Array_Mut_Iterator(T);
 
 	len :: proc(self) -> int { return self.count; }
 	cap :: proc(self) -> int { return N; }
@@ -103,6 +104,10 @@ impl Small_Array($T, $N) {
 
 	iter_reverse :: proc(self) -> Small_Array_Iterator(T) {
 		return {self.view(), 0, true};
+	}
+
+	iter_mut :: proc(self: inout Small_Array(T, N)) -> Small_Array_Mut_Iterator(T) {
+		return {self.slice(), 0};
 	}
 
 	// ------------------------------------------------------------ mutation --
@@ -246,6 +251,22 @@ Small_Array_Iterator :: struct($T: type) {
 	@(private) items:   []T,
 	@(private) at:      int,
 	@(private) reverse: bool,
+}
+
+// A mutable traversal borrows the same inline prefix. Each pointer returned by
+// next() is a loan of the iterator and must end before it is advanced again.
+Small_Array_Mut_Iterator :: struct($T: type) {
+	@(private) items: []mut T,
+	@(private) at: int,
+}
+
+impl Small_Array_Mut_Iterator($T) {
+	next :: proc(self: inout Small_Array_Mut_Iterator(T)) -> Option(^mut T) {
+		if (self.at >= self.items.len()) { return .none; }
+		index := self.at;
+		self.at += 1;
+		return .some(&mut self.items[index]);
+	}
 }
 
 impl Small_Array_Iterator($T) {

@@ -2322,8 +2322,11 @@ Every iterable has one default `Element` and `Iterator`. An adapter selects a di
 | `source.indexed()` | `struct{value: Element, index: int}`, zero-based |
 | `source.reversed()` | the source `Element`, in reverse order |
 
-`indexed()` starts at zero and advances only after `next` succeeds. It numbers the traversal before it, so it may appear only once and must be last:
-`source.reversed().indexed()` numbers the reversed traversal from zero.
+`indexed()` starts at zero and advances only after `next` succeeds.
+`source.reversed().indexed()` numbers the reversed traversal from zero. Repeated
+indexing wraps the previous element in another `{value, index}` record. An
+indexed view is forward-only: reversing it would require knowing the end index.
+A reversed view supports reversal again, restoring the original traversal.
 
 `reversed()` requires [`Reverse_Iterable`](#standard-interface-catalogue) and a
 receiver method named `iter_reverse`. A forward-only iterable is rejected;
@@ -2332,8 +2335,15 @@ reversal never buffers or allocates. `iter_reverse` returns the type's declared
 
 Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps the same collection borrowed for the whole loop.
 
-In version 1, `indexed()` and `reversed()` are `foreach` header forms: they select the traversal the loop lowers to and cannot be stored in a variable or passed to a procedure. Those two names are the only ones a loop header reads specially. For built-in containers the compiler may lower the selected traversal directly without creating an iterator object. A traversal that must be stored or
-passed is an ordinary iterable value — either a container view below, or a user-defined iterable type.
+`indexed()` and `reversed()` return ordinary iterable values. They can be stored,
+passed, returned where their lifetime permits, and traversed repeatedly. Creating
+or copying an adapter allocates nothing and copies no element. Inline containers
+are borrowed; ranges and existing view descriptors are held by value, so a chain
+does not borrow its intermediate temporary descriptors. Calling `iter()` starts
+a fresh traversal. The compiler may eliminate adapter and iterator objects or
+lower a resolved traversal directly. Member lookup always happens first: a user
+member named `indexed` or `reversed` has the same meaning inside and outside a
+loop header. Static expansion applies the same adapters to compile-time sources.
 
 Built-in containers also provide these views:
 
@@ -2385,16 +2395,27 @@ expression.
 
 #### By-reference iteration
 
-In version 1, only built-in containers support iteration by reference. Mutable
-fixed arrays, mutable slices, dynamic arrays, and map values allow:
+Mutable fixed arrays, mutable slices, dynamic arrays, map values, and user-defined
+containers implementing `Mutable_Iterable` allow:
 
 ```odin
 foreach (&value in collection) { ... }
 ```
 
-These loops project places from the container's storage; they do not call a
-`next_ref` protocol. A user collection instead exposes a mutable slice, an
-indexed `inout` operation, or a method that performs the traversal.
+The user-defined protocol has associated `Element` and `Mut_Iterator` types,
+`iter_mut :: proc(self: inout Self) -> Mut_Iterator`, and
+`next :: proc(self: inout Mut_Iterator) -> Option(^mut Element)`. The source is
+mutably borrowed for the whole traversal. Each successful `next()` lends one
+element; that reference must end before advancing or dropping the iterator.
+In a reference loop, the binding and pointers taken from it are confined to the
+current iteration, including exits by `break` and `continue`.
+
+Fixed arrays, mutable slices, and dynamic arrays expose the same protocol and
+satisfy `Mutable_Iterable`; their loops may still lower directly. Maps retain
+their key/value place forms below: a key is immutable and an entry cannot be
+yielded as a mutable whole. `Small_Array.iter_mut()` borrows its inline live
+prefix, allocates nothing, copies no element, and has a size independent of its
+capacity, just like its immutable iterator.
 
 Place loops may also receive information supplied by the container:
 
@@ -2805,6 +2826,13 @@ Reverse_Iterable :: interface($Self: type) {
 	slot iter_reverse: proc(self) -> Self.Iterator;
 }
 
+Mutable_Iterable :: interface($Self: type) {
+	Self.Element -> type;
+	Self.Mut_Iterator -> type;
+	slot iter_mut: proc(self: inout Self) -> Self.Mut_Iterator;
+	Iterator(Self.Mut_Iterator, ^mut Self.Element);
+}
+
 Sequence :: interface($Self: type) {
 	Iterable(Self);
 	(value: Self) value.len() -> int;
@@ -2835,7 +2863,7 @@ Built-in satisfaction follows the operations the language already defines:
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
 - copyable owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, plus recursively copyable owning aggregates, satisfy `Cloneable`;
-- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; a map does not, because its order is unspecified, and text does not, because a backward decoder is not part of version 1. The [container views](#iteration-adapters) satisfy `Iterable` on the same terms, with the `Element` each one names, and none satisfies `Reverse_Iterable`;
+- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; a map does not, because its order is unspecified, and text does not, because a backward decoder is not part of version 1. The [container views](#iteration-adapters) satisfy `Iterable` on the same terms, with the `Element` each one names. Reversed views also satisfy `Reverse_Iterable`; indexed, text, and map views do not. Fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Iterable`;
 - fixed arrays, slices, and dynamic arrays satisfy `Sequence`; fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Sequence` when supplied as mutable places; dynamic arrays satisfy `Growable_Sequence`. The standard `Small_Array(T, N)` library type supplies the same associated members and satisfies all three sequence interfaces.
 
 No nominal `implements` list is involved; the catalogue records capability boundaries, not a requirement that every built-in belong to an interface.
@@ -6091,7 +6119,7 @@ The library supplies the following types, interfaces, and procedures used by thi
 | `String_Builder` | [string type](#string-type) | `core:strings`, built from `[dynamic]u8`. Its zero value is a usable, allocator-unbound builder, and every operation is a method so that `builder.len()` resolves. The compiler contributes one package-private primitive to `core:strings`: `allocate_string(text: string_view, allocator: Allocator) -> Result(string, Allocator_Error)`, the only way a library can create a `string` in storage it selected. |
 | `C_String` | [C string views](#c-string-views) | `core:cstrings`: an owning, zero-terminated `[dynamic]u8` buffer for foreign APIs that retain strings. UTF-8 is not guaranteed; construction rejects interior zeros. |
 | `Small_Array(T, N)` | [fixed-capacity arrays](#fixed-capacity-arrays) | `core:container`: an inline growable container implemented through ordinary methods and operators, with no compiler support of its own. |
-| `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Reverse_Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |
+| `interfaces.Equatable`, `Ordered`, `Hashable`, `Numeric`, `Integral`, `Cloneable`, `Iterator`, `Iterable`, `Reverse_Iterable`, `Mutable_Iterable`, `Sequence`, `Mutable_Sequence`, `Growable_Sequence` | [standard interface catalogue](#standard-interface-catalogue) | Ordinary structural declarations exported by `base:interfaces`; the compiler exposes built-in operations, associated members, and opaque iterators needed to satisfy them. |
 | `Little_Endian(T)`, `Big_Endian(T)` | [basic types](#basic-types) | `core:endian`: distinct storage wrappers over ordinary conversion hooks. |
 | `meta.Field`, `meta.Enum_Value` | [compile-time reflection](#compile-time-reflection) | Opaque compile-time-only descriptors exported through `base:meta` and constructed only by compiler reflection built-ins. |
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | [allocators](#allocators), fallible operations | `core:mem` / `base:runtime`. The final build selects the provider behind `mem.default_allocator()`. |

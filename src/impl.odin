@@ -278,6 +278,7 @@ ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_
 	// demand, so interface checking and generic code see exactly what a user type
 	// declares by hand (design.md "Iteration protocol").
 	ensure_iteration_members(k, type)
+	ensure_mutable_iteration_members(k, type)
 	// The generated `try_clone`/`clone` are contributed the same way, so a record
 	// without a hand-written hook still has both copy entry points.
 	ensure_lifecycle_members(k, type, name)
@@ -301,6 +302,11 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
 		if members, found := pkg.extensions[type]; found {
 			expand_visible_members(k, type, members, name, &out)
+		}
+	}
+	if len(out) == 0 {
+		if adapter := iteration_adapter_member(k, type, name); adapter != INVALID_SYMBOL {
+			append(&out, adapter)
 		}
 	}
 	return out[:]
@@ -370,10 +376,12 @@ find_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> Symbol_I
 	}
 	if pkg := package_of(k.c, lookup_package(k)); pkg != nil {
 		if members, present := pkg.extensions[type]; present {
-			return visible_member_named(k, members, name)
+			if found := visible_member_named(k, members, name); found != INVALID_SYMBOL {
+				return found
+			}
 		}
 	}
-	return INVALID_SYMBOL
+	return iteration_adapter_member(k, type, name)
 }
 
 @(private = "file")

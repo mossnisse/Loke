@@ -63,6 +63,10 @@ View_Key :: struct {
 // shape (the same seam `delegate` uses for its forwarding overloads).
 Synth_Kind :: enum {
 	None,
+	Adapter_View,
+	Adapter_Iter,
+	Indexed_Next,
+	Iterator_Copy,
 	// Compiler-owned canonical receiver methods for the built-in `len`, `cap`,
 	// and `hash` operations. Their free spellings resolve to these same symbols.
 	Standard_Len,
@@ -78,6 +82,7 @@ Synth_Kind :: enum {
 	// the bound differs, because a slice carries its length rather than having it
 	// baked into the type.
 	Slice_Next,
+	Slice_Mut_Next,
 	// A dynamic array's `iter` builds the same `{ data, index }` a slice's does
 	// from the header's storage and length, so `Slice_Next` is its `next`
 	// verbatim. The iterator excludes the container on purpose: it's a borrow,
@@ -237,8 +242,8 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 	return type
 }
 
-// `holds` is what the iterator stores: the iterable itself, except a dynamic
-// array stores the `{ data, len }` view of its current allocation. The key
+// `holds` is what the iterator stores: a slice for runtime arrays, or the
+// iterable itself for slices and compile-time descriptor arrays. The key
 // stays the iterable, so each keeps its own iterator type and contributed
 // `next`.
 @(private = "file")
@@ -257,6 +262,7 @@ array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
 		info.mangled = fmt.aprintf("Array_Iterator.%s", llvm_safe(type_name(c, array)), allocator = c.semantic_allocator)
+		info.descriptor = type_is_compile_time_only(c, element)
 	}
 	c.iterator_types[array] = type
 	return type
@@ -402,8 +408,14 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		iter_kind, reverse_kind, next_kind = .Range_Iter, .Range_Iter_Reverse, .Range_Next
 	case info.kind == .Array:
 		element = info.element
-		iterator = array_iterator_type(k.c, under)
-		iter_kind, reverse_kind, next_kind = .Array_Iter, .Array_Iter_Reverse, .Array_Next
+		held := under
+		next_kind = .Array_Next
+		if !type_is_compile_time_only(k.c, element) {
+			held = slice_of(k.c, element, mutable = false)
+			next_kind = .Slice_Next
+		}
+		iterator = array_iterator_type(k.c, under, held)
+		iter_kind, reverse_kind = .Array_Iter, .Array_Iter_Reverse
 	case info.kind == .Slice:
 		// The iterator holds the slice by value, so `iter` is the array one
 		// verbatim: `{ data, 0 }`. Only `next`'s bound is different.
@@ -519,17 +531,12 @@ add_members :: proc(c: ^Compiler, type: Type_Id, added: []Symbol_Id) {
 	if info == nil || len(added) == 0 {
 		return
 	}
-	if len(info.members) == 0 {
-		info.members = added
-		return
-	}
 	merged := make([]Symbol_Id, len(info.members) + len(added), c.semantic_allocator)
 	copy(merged, info.members)
 	copy(merged[len(info.members):], added)
 	info.members = merged
 }
 
-@(private = "file")
 new_associated_type :: proc(c: ^Compiler, name: string, value, owner: Type_Id) -> Symbol_Id {
 	return new_symbol(c, Symbol {
 		name        = intern_identifier(c, name),
@@ -570,7 +577,6 @@ synth_proc :: proc(
 	return id
 }
 
-@(private = "file")
 iteration_proc_matches :: proc(
 	k: ^Checker,
 	sym: ^Symbol,
@@ -620,67 +626,6 @@ associated_type_of :: proc(k: ^Checker, type: Type_Id, name: string) -> Type_Id 
 
 // -------------------------------------------------------- runtime foreach --
 
-// design.md "Iteration adapters": the two names a `foreach` header recognizes as
-// an alternative traversal of its iterable. The container views are ordinary
-// values and are not recognized here, so a member with one of their names means
-// inside a header exactly what it means outside one.
-@(private = "file")
-foreach_adapter_named :: proc(name: string) -> (Foreach_Adapter, bool) {
-	switch name {
-	case "indexed":
-		return .None, true
-	case "reversed":
-		return .Reversed, false
-	}
-	return .None, false
-}
-
-// Rewrites `source.adapter()` in the header to `source`, recording which
-// traversal was asked for. The adapter only selects the lowering; it never
-// builds an iterator object. Adapters compose, so this peels a chain down to
-// one traversal, with `indexed()` numbering it from the outside.
-peel_foreach_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> (Foreach_Adapter, Name) {
-	adapter := Foreach_Adapter.None
-	reported: Name
-	for {
-		call, is_call := s.iterable.(^Expr_Call)
-		if !is_call || len(call.args) != 0 {
-			break
-		}
-		selector, is_selector := call.callee.(^Expr_Selector)
-		if !is_selector || selector.operand == nil {
-			break
-		}
-		peeled, is_indexed := foreach_adapter_named(selector.name.text)
-		if peeled == .None && !is_indexed {
-			break
-		}
-		// A rejected chain is still consumed, so the header reports once rather
-		// than failing again on the leftover call.
-		if is_indexed {
-			if s.indexed || adapter != .None {
-				errorf(
-					k.c, selector.name.span, "L0460",
-					"`indexed()` numbers the traversal it wraps, so it comes last and only once",
-				)
-			}
-			s.indexed = true
-		} else {
-			if adapter != .None {
-				errorf(
-					k.c, selector.name.span, "L0460",
-					"a `foreach` takes one traversal, and `%s()` is a second one",
-					selector.name.text,
-				)
-			}
-			adapter = peeled
-		}
-		reported = selector.name
-		s.iterable = selector.operand
-	}
-	return adapter, reported
-}
-
 check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if len(s.bindings) == 0 {
 		errorf(k.c, s.span, "L0456", "a `foreach` binds at least one name")
@@ -691,8 +636,12 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
 
-	adapter, adapter_name := peel_foreach_adapter(k, s)
-	s.adapter = adapter
+	// Resolve calls before selecting a direct lowering: an ordinary user
+	// member named `indexed` or `reversed` must retain its own meaning.
+	if _, is_call := s.iterable.(^Expr_Call); is_call {
+		if check_single_expr(k, s.iterable) == INVALID_TYPE { return FLOWS }
+	}
+	adapter_name := peel_resolved_adapter(k, s)
 
 	// A written range keeps its endpoints: the direct lowering never builds a
 	// `Range(T)` value for it.
@@ -712,7 +661,8 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		return FLOWS
 	}
 
-	subject := check_single_expr(k, s.iterable)
+	subject := expr_base(s.iterable).type
+	if subject == INVALID_TYPE { subject = check_single_expr(k, s.iterable) }
 	if subject == INVALID_TYPE {
 		return FLOWS
 	}
@@ -924,22 +874,10 @@ check_range_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, written: ^Expr_Range,
 }
 
 // design.md "Iteration protocol": associated `Element` and `Iterator`,
-// `value.iter()`, and `next(self: inout Iterator) -> (Element, bool)`.
+// `value.iter()`, and `next(self: inout Iterator) -> Option(Element)`.
 @(private = "file")
 check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
-	if s.bindings[0].is_ref {
-		// design.md "By-reference iteration": by-reference `foreach` is a
-		// built-in-container facility, and the protocol has only value-producing
-		// `next`.
-		errorf(
-			k.c,
-			s.bindings[0].name.span,
-			"L0457",
-			"`%s` cannot be iterated by reference; expose a mutable slice or an indexed `inout` operation instead",
-			type_name(k.c, subject),
-		)
-		return FLOWS
-	}
+	if foreach_is_place_loop(s) { return check_mutable_protocol_foreach(k, s, subject) }
 	element := associated_type_of(k, subject, "Element")
 	iterator := associated_type_of(k, subject, "Iterator")
 	iter := iteration_member(k, subject, "iter")
@@ -1110,7 +1048,6 @@ report_arity_mismatch :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id, i
 	}
 }
 
-@(private = "file")
 check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	k.loop_depth += 1
 	body := check_scoped_block(k, s.body)
@@ -1118,7 +1055,6 @@ check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return Flow_Info{can_fall_through = true, returns = body.returns}
 }
 
-@(private = "file")
 bind_loop_name :: proc(k: ^Checker, binding: Foreach_Binding, type: Type_Id, mutable: bool) -> Symbol_Id {
 	if binding.name.text == "_" || binding.name.text == "" {
 		return INVALID_SYMBOL

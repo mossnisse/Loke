@@ -1,0 +1,44 @@
+package main;
+import "core:container";
+import "core:fmt";
+import "base:interfaces";
+show :: proc(source: $S) where interfaces.Iterable(S) { foreach (value in source) { fmt.println(value); } }
+identity :: proc(value: $T) -> T { return value; }
+Identity :: struct { value: int, }
+impl Identity {
+	indexed :: proc(self) -> [1]int { return {self.value}; }
+	reversed :: proc(self) -> [1]int { return {self.value + 1}; }
+}
+main :: proc() {
+	xs: container.Small_Array(int, 4) = {};
+	xs.append(10, 20, 30);
+	indexed := xs.indexed();
+	foreach (value, index in indexed) { fmt.println(value, index); }
+	reversed := identity(xs.reversed());
+	show(reversed);
+	chain := xs.reversed().indexed();
+	foreach (value, index in chain) { fmt.println(value, index); }
+	forward := xs.reversed().reversed();
+	show(forward);
+	values := [3]int{1, 2, 3};
+	stored := values.indexed();
+	foreach (value, index in stored) { fmt.println(value, index); }
+	text: string = "hi";
+	letters := text.indexed();
+	foreach (letter, index in letters) { fmt.println(letter, index); }
+	// Calls on temporary view descriptors retain the source, not the descriptor.
+	walker := xs.reversed().indexed().iter();
+	fmt.println(walker.next());
+	// A range is already an independent value and can be stored in an adapter.
+	range := (4 ..< 7).reversed();
+	show(range);
+	// User methods mean the same thing inside and outside a foreach header.
+	custom := Identity{8};
+	show(custom.indexed());
+	foreach (value in custom.indexed()) { fmt.println(value); }
+	foreach (value in custom.reversed()) { fmt.println(value); }
+	// Repeated indexing wraps the previous element, just like any other record.
+	foreach (pair, outer in values.indexed().indexed()) { fmt.println(pair.value, pair.index, outer); }
+	STATIC :: [2]int{5, 6};
+	foreach ($pair, $outer in STATIC.reversed().indexed().indexed()) { fmt.println(pair.value, pair.index, outer); }
+}

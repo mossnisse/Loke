@@ -1,0 +1,17 @@
+package main;
+import "core:fmt";
+Box :: struct { data: [2]int, }
+impl Box {
+	view :: proc(self) -> []int { return self.data[:]; }
+}
+X :: Box{[2]int{10, 20}};
+Generic :: struct($T: type) { data: [2]T, }
+impl Generic($T) {
+	view :: proc(self) -> []T { return self.data[:]; }
+}
+Y :: Generic(int){[2]int{30, 40}};
+main :: proc() {
+	fmt.println(Box.view(X));
+	fmt.println(X.view());
+	fmt.println(Generic(int).view(Y));
+}

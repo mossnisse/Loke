@@ -69,6 +69,13 @@ Reverse_Iterable :: interface($Self: type) {
 	slot iter_reverse: proc(self) -> Self.Iterator;
 }
 
+Mutable_Iterable :: interface($Self: type) {
+	Self.Element -> type;
+	Self.Mut_Iterator -> type;
+	slot iter_mut: proc(self: inout Self) -> Self.Mut_Iterator;
+	Iterator(Self.Mut_Iterator, ^mut Self.Element);
+}
+
 Sequence :: interface($Self: type) {
 	Iterable(Self);
 	(value: Self) value.len() -> int;

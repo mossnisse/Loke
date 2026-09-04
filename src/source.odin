@@ -151,6 +151,7 @@ Compiler :: struct {
 	// `rune_offsets()` answer with. Keyed by source and kind because one map has
 	// three of them.
 	view_types:         map[View_Key]Type_Id,
+	adapter_members:    map[Adapter_Key]Symbol_Id,
 	// Carrier shapes (`src/borrow.odin`), asked during provenance analysis after
 	// every body is checked. Both are pure functions of the type graph.
 	carrier_reach:      map[Type_Id]Carrier_Reach,

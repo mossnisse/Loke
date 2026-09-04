@@ -1,0 +1,53 @@
+package main;
+import "core:container";
+import "core:fmt";
+
+copies: int;
+Tracked :: struct { id: int, }
+impl Tracked {
+	copy_item :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		copies += 1;
+		return .ok(Tracked{self.id});
+	}
+	drop_item :: hook(drop) proc(self: inout Tracked) {}
+}
+
+drops: int;
+Sequence :: struct { count: int, }
+Cursor :: struct { at: int, count: int, active: bool, }
+impl Sequence {
+	Element :: int;
+	Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {0, self.count, true}; }
+}
+impl Cursor {
+	next :: proc(self: inout Cursor) -> Option(int) {
+		if (self.at >= self.count) { return .none; }
+		self.at += 1;
+		return .some(self.at);
+	}
+	finish :: hook(drop) proc(self: inout Cursor) { if (self.active) { drops += 1; } }
+}
+
+main :: proc() {
+	xs: container.Small_Array(Tracked, 64) = {};
+	xs.append(Tracked{1}, Tracked{2});
+	copies = 0;
+	view := xs.reversed().indexed();
+	it := view.iter();
+	fmt.println(copies);
+	fmt.println(size_of(it) < size_of(xs));
+	// Keep it live until here, then end the immutable traversal before mutation.
+	drop(it);
+	foreach (&value in xs) { value.id += 1; }
+	fmt.println(copies);
+	// Capacity never appears in either iterator type.
+	fmt.println(size_of(container.Small_Array(int, 4).Iterator) == size_of(container.Small_Array(int, 128).Iterator));
+	fmt.println(size_of(container.Small_Array(int, 4).Mut_Iterator) == size_of(container.Small_Array(int, 128).Mut_Iterator));
+	sequence := Sequence{3};
+	indexed := sequence.indexed();
+	foreach (value, index in indexed) { if (value == 2) { break; } }
+	fmt.println(drops);
+	foreach (value, index in indexed) { continue; }
+	fmt.println(drops);
+}

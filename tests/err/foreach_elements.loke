@@ -35,10 +35,10 @@ main :: proc() {
 	// A place loop's index is the loop's own counter, never a place.
 	foreach (x, &y in points) { fmt.println(x); }
 
-	// `indexed()` numbers a traversal, so it comes last and only once.
-	foreach (v, i in xs.indexed().indexed()) { fmt.println(v); }
+	// Indexed views are forward-only: reversing them needs an end index.
+	foreach (v in xs.indexed().reversed()) { fmt.println(v); }
 
-	// `reversed()` is the one header adapter with a restriction of its own.
+	// `reversed()` requires an iterable that provides reverse traversal.
 	foreach (v in table.reversed()) { fmt.println(v); }
 	foreach (v in text.reversed()) { fmt.println(v); }
 

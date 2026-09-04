@@ -2120,6 +2120,7 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 
 @(private = "file")
 check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
+	defer materialize_call_receiver(k, v)
 	v.value_category = .Value
 
 	// A built-in is not a value, so it is recognised before the callee is
@@ -2536,14 +2537,6 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 			return
 		}
 	}
-	// design.md "Materialization" and "Receiver forms": an immutable receiver is
-	// the address of the caller's value, and a named constant has no storage of
-	// its own. Its runtime uses share one read-only object, exactly as a constant
-	// reached by a runtime index does. A receiver whose length is a property of
-	// its type folds instead and never asks.
-	if chosen.receiver == .Borrow && receiver_base.is_const {
-		request_materialization(k, receiver)
-	}
 	sel.resolution = Resolution{kind = .Method, symbol = cand.symbol}
 	sel.type = chosen.proc_type
 	v.resolution = Resolution{kind = .Call, symbol = cand.symbol, chosen_overload = cand.symbol}
@@ -2659,6 +2652,20 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 	}
 	chosen := symbol_of(k.c, cand.symbol)
 	set_call_result(v, chosen.result, chosen.result_inout)
+}
+
+// Every call spelling passes an immutable receiver by address, including
+// `Type.method(CONSTANT)` and calls resolved through a procedure group.
+@(private = "file")
+materialize_call_receiver :: proc(k: ^Checker, v: ^Expr_Call) {
+	if v.type == INVALID_TYPE || v.is_const || len(v.bound) == 0 || v.bound[0] == nil {
+		return
+	}
+	chosen := symbol_of(k.c, v.resolution.chosen_overload)
+	if type_is_compile_time_only(k.c, expr_base(v.bound[0]).type) { return }
+	if chosen != nil && chosen.has_receiver && chosen.receiver == .Borrow && expr_base(v.bound[0]).is_const {
+		request_materialization(k, v.bound[0])
+	}
 }
 
 // A fixed array's and a vector's length are properties of their type and do not

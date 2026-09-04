@@ -55,9 +55,11 @@ emit_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		e.break_label, e.continue_label = outer_break, outer_continue
 		e.break_depth, e.continue_depth = outer_break_depth, outer_continue_depth
 	}
-	e.break_depth = len(e.cleanups)
 	push_scope(e, nil)
 	defer pop_scope(e)
+	// `break` lands inside the loop scope; its common exit disposes of the
+	// iterator once. Only iteration-local values are unwound by the branch.
+	e.break_depth = len(e.cleanups)
 
 	if s.kind == .Protocol {
 		emit_protocol_foreach(e, s)
@@ -625,9 +627,13 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		made, iterator_type, e.names[s.iter_symbol], subject_type, subject,
 	)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", iterator_type, made, iterator)
+	if subject_by_ptr && !expression_is_borrowed_place(e.c, s.iterable) {
+		register_scope_place(e, iter_sym.params[0], subject)
+	}
+	register_scope_place(e, s.iterator_type, iterator)
 
 	counter := ""
-	if s.indexed {
+	if s.indexed || (foreach_is_place_loop(s) && len(s.bindings) == 2) {
 		counter = alloca(e, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", counter)
 	}
@@ -659,10 +665,18 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	begin_iteration(e)
 	// `next` handed over an owned `Element`, so nothing here is a copy: the loop
 	// takes what it was given and disposes of it at the end of the step.
-	value := emit_union_payload(e, option, yielded, slot)
-	fields := []Foreach_Field{{type = yielded, value = value}}
-	numbered := counter == "" ? "" : load(e, "i64", counter)
-	bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
+	if foreach_is_place_loop(s) {
+		address := emit_union_payload(e, option, pointer_to(e.c, yielded, true), slot)
+		bind_foreach_place(e, s.bindings[0].symbol, address)
+		if len(s.bindings) == 2 {
+			bind_foreach_field(e, s.bindings[1].symbol, Foreach_Field{type = TYPE_INT, value = load(e, "i64", counter)})
+		}
+	} else {
+		value := emit_union_payload(e, option, yielded, slot)
+		fields := []Foreach_Field{{type = yielded, value = value}}
+		numbered := counter == "" ? "" : load(e, "i64", counter)
+		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
+	}
 	emit_scoped_block(e, s.body)
 	end_iteration(e)
 	branch(e, post)
@@ -721,7 +735,12 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			}
 		}
 		first := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, source, self, ITER_ARRAY_DATA)
+		held_type, held := source, self
+		if source_info := underlying_info(e.c, symbol.params[0]); source_info.kind == .Array && !type_is_compile_time_only(e.c, source_info.element) {
+			held_type = llvm_type(e, symbol_of(e.c, type_of(e.c, symbol.result).fields[ITER_ARRAY_DATA]).type)
+			held = emit_ptr_len(e, held_type, "%arg0", fmt.aprintf("%d", source_info.count))
+		}
+		fmt.sbprintfln(&e.b, "  %s = insertvalue %s undef, %s %s, %d", first, iterator, held_type, held, ITER_ARRAY_DATA)
 		second := insert(e, iterator, first, "i64", index, ITER_ARRAY_INDEX)
 		out := insert(e, iterator, second, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
 		fmt.sbprintfln(&e.b, "  ret %s %s", iterator, out)
@@ -870,7 +889,9 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	option := symbol.result
-	element := llvm_type(e, option_payload(e.c, option))
+	by_ref := symbol.synth == .Slice_Mut_Next
+	payload := option_payload(e.c, option)
+	element := llvm_type(e, by_ref ? type_of(e.c, payload).element : payload)
 	iterator := llvm_type(e, symbol.params[0])
 	iterator_info := type_of(e.c, symbol.params[0])
 	stored := symbol_of(e.c, iterator_info.fields[ITER_ARRAY_DATA]).type
@@ -919,8 +940,8 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 	}
 	// The element is still the container's, so a managed one is cloned out of it:
 	// what `next` hands back is owned, exactly as a by-value loop's copy is.
-	value := load(e, element, slot)
-	if payload := option_payload(e.c, option); emit_lifecycle(e, payload).managed {
+	value := by_ref ? slot : load(e, element, slot)
+	if !by_ref && emit_lifecycle(e, payload).managed {
 		value = emit_clone_value(e, payload, value)
 	}
 	stepped, next_index := temp(e), temp(e)

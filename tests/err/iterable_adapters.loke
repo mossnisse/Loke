@@ -1,0 +1,15 @@
+package main;
+import "core:container";
+import "core:fmt";
+main :: proc() {
+	xs: container.Small_Array(int, 4) = {};
+	xs.append(1, 2);
+	view := xs.reversed().indexed();
+	xs.append(3);
+	foreach (value in view) { fmt.println(value); }
+	y := [dynamic]int{4, 5};
+	indexed := y.indexed();
+	it := indexed.iter();
+	drop(y);
+	fmt.println(it.next());
+}

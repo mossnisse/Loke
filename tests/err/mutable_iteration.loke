@@ -1,0 +1,28 @@
+package main;
+import "core:container";
+import "core:fmt";
+Small :: container.Small_Array(int, 4);
+main :: proc() {
+	xs: Small = {};
+	xs.append(1, 2);
+	foreach (&value in xs) {
+		xs.append(3);
+		value += 1;
+	}
+	iterator := xs.iter_mut();
+	first := iterator.next();
+	second := iterator.next();
+	fmt.println(first, second);
+	saved: ^mut int;
+	foreach (&value in xs) {
+		saved = &mut value;
+		break;
+	}
+	fmt.println(saved^);
+	y: Small = {};
+	y.append(7);
+	it := y.iter_mut();
+	p := it.next();
+	drop(y);
+	fmt.println(p);
+}

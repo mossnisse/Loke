@@ -797,6 +797,9 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 @(private = "file")
 walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	iterated := walk_flow_expr(graph, s.iterable)
+	// The traversal also borrows container storage, but copying an element
+	// preserves its existing borrows without borrowing the container itself.
+	elements := iterated
 	if graph.mode != .Lifecycle {
 		iterated = prov_iterate(graph, s, iterated)
 	}
@@ -822,22 +825,34 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	// stored inside an element travels into the binding instead of vanishing.
 	if graph.mode != .Lifecycle {
 		for binding in s.bindings {
-			prov_bind_value(graph, binding.symbol, iterated, expr_span(s.iterable))
+			loans := iterated
+			if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 { loans = elements }
+			prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
 		}
 	}
-	walk_flow_loop_body(graph, s.body, head, done)
+	walk_flow_loop_body(graph, s.body, head, done, s.kind == .Protocol ? s.bindings : nil)
 	link(graph, graph.current, head)
 	graph.current = done
 }
 
 @(private = "file")
-walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_Id) {
+walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_Id, bindings: []Foreach_Binding = nil) {
 	outer_break, outer_continue := graph.break_block, graph.continue_block
 	outer_break_depth, outer_continue_depth := graph.break_depth, graph.continue_depth
 	graph.break_block, graph.continue_block = done, head
 	graph.break_depth, graph.continue_depth = len(graph.in_scope), len(graph.in_scope)
 	graph.loop_depth += 1
+	enter_flow_scope(graph)
+	if graph.mode != .Lifecycle {
+		for binding in bindings {
+			if binding.is_ref && binding.symbol != INVALID_SYMBOL {
+				root := prov_root_for_symbol(graph, binding.symbol)
+				append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = binding.name.span})
+			}
+		}
+	}
 	walk_flow_block(graph, body)
+	leave_flow_scope(graph)
 	graph.loop_depth -= 1
 	graph.break_block, graph.continue_block = outer_break, outer_continue
 	graph.break_depth, graph.continue_depth = outer_break_depth, outer_continue_depth
@@ -3193,6 +3208,11 @@ prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 	// every competing name (design.md "Capabilities and the one rule").
 	root, path, ok := prov_place_of(graph, v.operand)
 	if !ok {
+		// Taking an element's address borrows through its slice/pointer; it
+		// does not load the element's value (which may carry no borrows).
+		if carriers, _, through := prov_read_through_carrier(graph, v.operand); through {
+			return carriers
+		}
 		loans := walk_flow_expr(graph, v.operand)
 		if len(loans) > 0 || !prov_expr_is_temporary(v.operand) {
 			return loans
@@ -3289,12 +3309,9 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 // binding is written `ref` over a mutable sequence.
 @(private = "file")
 prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> []int {
-	if len(iterated) > 0 {
-		return iterated
-	}
 	root, path, ok := prov_place_of(graph, s.iterable)
 	if !ok {
-		return nil
+		return iterated
 	}
 	mutable := false
 	for binding in s.bindings {
@@ -3302,7 +3319,7 @@ prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> [
 	}
 	span := expr_span(s.iterable)
 	prov_access(graph, root, path, mutable ? .Write : .Read, span)
-	return prov_borrow(graph, root, path, mutable, span, "iterator")
+	return prov_join(graph, iterated, prov_borrow(graph, root, path, mutable, span, "iterator"))
 }
 
 // A root that ends with the statement that created it.
@@ -3806,7 +3823,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 						graph, root, prov_element_path(graph, v, path, container_op),
 					)
 				} else {
-					actuals[index] = prov_borrow(graph, root, path, true, expr_span(argument), "borrow")
+					actuals[index] = prov_join(graph, prov_carrier_slots(graph, argument),
+						prov_borrow(graph, root, path, true, expr_span(argument), "borrow"))
 				}
 				borrowed = prov_join(graph, borrowed, actuals[index])
 			}
@@ -3850,7 +3868,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				prov_access(graph, root, path, .Write, expr_span(argument))
 				// An `inout` parameter aliases the caller's root, so a borrow returned
 				// from it is derived from that root (design.md).
-				actuals[index] = prov_borrow(graph, root, path, true, expr_span(argument), "borrow")
+				actuals[index] = prov_join(graph, prov_carrier_slots(graph, argument),
+					prov_borrow(graph, root, path, true, expr_span(argument), "borrow"))
 				borrowed = prov_join(graph, borrowed, actuals[index])
 				continue
 			}
@@ -3886,6 +3905,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// a method on a record of views can hand one of those views back, and
 			// that copy obeys the view's own source, not the receiver's storage.
 			held := walk_flow_expr(graph, argument)
+			if callee := symbol_of(c, v.resolution.chosen_overload);
+			   callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
+			   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value)) {
+				actuals[index] = held
+				borrowed = prov_join(graph, borrowed, held)
+				continue
+			}
 			if root, path, ok := prov_place_of(graph, argument); ok {
 				prov_walk_subscripts(graph, argument)
 				prov_access(graph, root, path, .Read, expr_span(argument))
