@@ -102,6 +102,25 @@ y: f64 = 1;        // OK: integer constant rounded to `f64`
 z: f64 = 0.1;      // OK: rounded once to `f64`
 ```
 
+### Range literals
+
+A range is written with two endpoints: `low ..< high` excludes the high
+endpoint, and `low ..= high` includes it. Both forms include the low endpoint
+and produce an ordinary [`Range(T)`](#ranges) value:
+
+```odin
+half   := 0 ..< 3;      // Range(int): 0, 1, 2
+closed := 0 ..= 3;      // Range(int): 0, 1, 2, 3
+letters := 'a' ..= 'c'; // Range(rune): a, b, c
+```
+
+The endpoints unify to one integer or rune type under the ordinary
+binary-operand rule. These forms use the binary [range operators](#other-operators),
+so endpoints may also be runtime expressions, as in `start ..< start + count`.
+See [Ranges](#ranges) for the type's fields and supported interfaces. The same
+spelling in [`switch` case lists](#switch-statement) and [designated array
+initializers](#fixed-arrays) is matching syntax and does not construct a range value.
+
 ## Comments
 
 A line comment runs from `//` to the newline; a block comment is `/* ... */` and may nest. Comments may not appear inside a string or character literal.
@@ -1049,17 +1068,11 @@ fmt.println(x.len(), x.cap()); // 3 8
 
 ### Ranges
 
-The range operators [`..<` and `..=`](#other-operators) produce a value of the
-compiler-provided generic type written `Range(T)` here and in diagnostics:
-`a..<b` is half-open and excludes `b`, `a..=b` is closed and includes it. Both
-endpoints are unified to one type under the ordinary binary-operand rule, and
-`T` must be an integer or rune type. `Range` is a predeclared name, like
-[`Simd(T, N)`](#simd-vectors) and shadowable the same way, so the type is
+The range operators [`..<` and `..=`](#other-operators) produce a value of the compiler-provided generic type written `Range(T)` here and in diagnostics:
+`a..<b` is half-open and excludes `b`, `a..=b` is closed and includes it. Both endpoints are unified to one type under the ordinary binary-operand rule, and  `T` must be an integer or rune type. `Range` is a predeclared name, like [`Simd(T, N)`](#simd-vectors) and shadowable the same way, so the type is
 writable wherever a type is.
 
-A range is an ordinary first-class value, not a piece of loop syntax. It may be
-bound to a variable, passed to a parameter, and inferred into a `$` parameter,
-and it keeps its half-open or closed kind wherever it travels:
+A range is an ordinary first-class value, not a piece of loop syntax. It may be bound to a variable, passed to a parameter, and inferred into a `$` parameter, and it keeps its half-open or closed kind wherever it travels:
 
 ```odin
 half   := 0 ..< 3;      // Range(int)
@@ -1069,17 +1082,10 @@ foreach (i in half) { fmt.println(i); }      // 0 1 2
 foreach (ch in closed) { fmt.println(ch); }  // a b c
 ```
 
-`Range(T)` has three public fields — `low: T`, `high: T`, and `closed: bool` —
-so code that must inspect a range rather than walk it reads them directly. It
-satisfies [`Iterable`](#standard-interface-catalogue) with `Element` equal to
-`T`, which is what lets a range reach generic code written against that
-interface. It is not a [`Sequence`](#standard-interface-catalogue): a range
-stores no elements, so it has neither `len` nor indexing.
+`Range(T)` has three public fields — `low: T`, `high: T`, and `closed: bool` — so code that must inspect a range rather than walk it reads them directly. It satisfies [`Iterable`](#standard-interface-catalogue) with `Element` equal to
+`T`, which is what lets a range reach generic code written against that interface. It is not a [`Sequence`](#standard-interface-catalogue): a range stores no elements, so it has neither `len` nor indexing.
 
-The type is usually inferred — a range-typed declaration takes its type from
-its initializer (`r := 0 ..< 3;`) and a generic procedure receives one through
-a `$` parameter — but it can also be written, which is what makes a range a
-result type, a field type, and a matchable pattern:
+The type is usually inferred — a range-typed declaration takes its type from its initializer (`r := 0 ..< 3;`) and a generic procedure receives one through  a `$` parameter — but it can also be written, which is what makes a range a result type, a field type, and a matchable pattern:
 
 ```odin
 clamp_span :: proc(r: $R, limit: int) -> R { ... }   // R is bound by the argument
@@ -1087,13 +1093,10 @@ window :: proc(n: int) -> Range(int) { return 0 ..< n; }
 low_of :: proc(r: Range($T)) -> T { return r.low; }
 ```
 
-`Range` takes exactly one argument, the endpoint type, held to the same integer
-or rune rule the operators are.
+`Range` takes exactly one argument, the endpoint type, held to the same integer or rune rule the operators are.
 
-Ranges are also accepted, as syntax rather than as values, in [`switch` case
-lists](#switch-statement) and in [designated array
-initializers](#fixed-arrays). Those positions match endpoints against a subject
-or an index and never construct a `Range(T)`.
+Ranges are also accepted, as syntax rather than as values, in [`switch` case lists](#switch-statement) and in [designated array
+initializers](#fixed-arrays). Those positions match endpoints against a subject or an index and never construct a `Range(T)`.
 
 ## Map types
 
@@ -1308,21 +1311,12 @@ Entry :: (key: string_view, value: int);   // an alias, not a new nominal type
 lookup :: proc(k: string_view) -> (value: int, found: bool) { ... }
 ```
 
-Its identity is **structural**: the ordered sequence of its `(field name, field
-type)` pairs. Two records with the same fields in the same order are the same
-type wherever they are written; the same fields in a different order are
-different types. A field name is part of the type, so `(a: int, b: int)` and
-`(x: int, y: int)` are unrelated.
+Its identity is **structural**: the ordered sequence of its `(field name, field type)` pairs. Two records with the same fields in the same order are the same type wherever they are written; the same fields in a different order are different types. A field name is part of the type, so `(a: int, b: int)` and `(x: int, y: int)` are unrelated.
 
-Every field is named and public. There is no `using`, no private field, no
-layout attribute, no default, and none of the parameter-only modes — a `struct`
-declaration is what carries those. Copy, move, drop, equality, formatting, and
-reflection derive structurally, exactly as they do for a `struct` with no user
+Every field is named and public. There is no `using`, no private field, no layout attribute, no default, and none of the parameter-only modes — a `struct` declaration is what carries those. Copy, move, drop, equality, formatting, and  reflection derive structurally, exactly as they do for a `struct` with no user
 hooks.
 
-A record is constructed by a [contextually typed](#struct-literals) composite
-literal, or through an alias used as an ordinary literal prefix. There is no
-inline shape-prefixed literal:
+A record is constructed by a [contextually typed](#struct-literals) composite literal, or through an alias used as an ordinary literal prefix. There is no inline shape-prefixed literal:
 
 ```odin
 entry: Entry = {key = "port", value = 8080};
@@ -1330,15 +1324,11 @@ named := Entry{key = "port", value = 8080};
 return .ok({key = k, value = v});
 ```
 
-A parenthesised group is a record type only when it is **labelled**. `(T)` in
-expression position stays grouping and is not a type, and `Foo(x: int)` is not a
-generic application.
+A parenthesised group is a record type only when it is **labelled**. `(T)` in  expression position stays grouping and is not a type, and `Foo(x: int)` is not a generic application.
 
 #### Destructuring
 
-Two or more bindings on the left of `:=` or `=`, with one record on the right,
-project that record's fields positionally. A single binding takes the whole
-value. `foreach`'s binding list is the same rule.
+Two or more bindings on the left of `:=` or `=`, with one record on the right, project that record's fields positionally. A single binding takes the whole value. `foreach`'s binding list is the same rule.
 
 ```odin
 q, r := divmod(17, 5);
@@ -1346,32 +1336,22 @@ low, high = minmax(a, b);
 foreach (key, value in table) { ... }
 ```
 
-The record must have exactly as many **directly declared** fields as there are
-bindings, and every one must be visible at the use site. Promoted (`using`)
-fields are not flattened, private fields are not filtered out, and `_` does not
-bypass visibility. Destructuring is flat: a binding takes a whole field,
-whatever that field's own shape is.
+The record must have exactly as many **directly declared** fields as there are  bindings, and every one must be visible at the use site. Promoted (`using`)
+fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is.
 
 Ownership follows the operand's category, exactly as every other binding does:
 
 - A **place** clones. `x, y := point` copy-initialises each binding and `point`
-  stays live and drops normally. Each retained field must be copyable, and the
-  copy-cost diagnostic applies per cloned field. This projects fields; it does
-  not call the containing record's copy hook.
+  stays live and drops normally. Each retained field must be copyable, and the copy-cost diagnostic applies per cloned field. This projects fields; it does not call the containing record's copy hook.
 - A **temporary** or `move(...)` consumes. Retained fields transfer without
   cloning. The containing record must have neither a custom `hook(copy)` nor a
   custom `hook(drop)` — decomposing a value whose hooks own its lifecycle is
   rejected rather than given an exception; its *fields* may have hooks of their
   own.
 
-`_` discards. It clones nothing from a place; in a consuming form the discarded
-field drops exactly once, in reverse declaration order, after every retained
-binding is published.
+`_` discards. It clones nothing from a place; in a consuming form the discarded  field drops exactly once, in reverse declaration order, after every retained binding is published.
 
-Retained fields are prepared in declaration order before any binding is
-published, and an assignment keeps the ordinary prepare-then-write rule. On the
-cloning path a failed clone cleans its partial field temporaries and leaves the
-source untouched.
+Retained fields are prepared in declaration order before any binding is published, and an assignment keeps the ordinary  prepare-then-write rule. On the  cloning path a failed clone cleans its partial field temporaries and leaves the source untouched.
 
 ```odin
 // The temporary is consumed: nothing is cloned.
@@ -1486,23 +1466,18 @@ Value :: union {
 v: Value = .text("Hello");
 ```
 
-The colon is mandatory. Writing a bare type is not a union variant: the name is
-the variant's identity, so two variants may carry the same payload type and
-remain distinct.
+The colon is mandatory. Writing a bare type is not a union variant: the name is the variant's identity, so two variants may carry the same payload type and remain distinct.
 
 ```odin
 Pair :: union { left: i32, right: i32 }   // two arms, one payload type
 ```
 
-A variant's identity is its **declaration index**, never its payload type. That
-is what makes `Result(int, int)` an ordinary union rather than a contradiction,
-and what a `switch` compares against.
+A variant's identity is its **declaration index**, never its payload type. That is what makes `Result(int, int)` an ordinary union rather than a contradiction, and what a `switch` compares against.
 
 #### Constructing a variant
 
 `.name(payload)` builds a variant where the union type is known from context;
-`U.name(payload)` names the union explicitly. A payloadless variant is written
-without the call: `.name`, or `U.name`.
+`U.name(payload)` names the union explicitly. A payloadless variant is written without the call: `.name`, or `U.name`.
 
 ```odin
 v = .number(7);
@@ -1510,13 +1485,11 @@ v = Value.number(7);
 v = .absent;
 ```
 
-Record-field initialization rules apply to the payload: a place argument clones
-it and must be copyable; a temporary or `move(x)` transfers it.
+Record-field initialization rules apply to the payload: a place argument clones it and must be copyable; a temporary or `move(x)` transfers it.
 
 #### Inspecting a union
 
-A union is inspected with a `switch`, whose cases are variant names. There is no
-extraction operator: `v.(T)` and `v.as(T)` belong to
+A union is inspected with a `switch`, whose cases are variant names. There is no extraction operator: `v.(T)` and `v.as(T)` belong to
 [`any_view`](#any_view-type), where the set of possible types is genuinely open.
 
 ```odin
@@ -1536,26 +1509,17 @@ case .absent:
 }
 ```
 
-The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while
-`type_of(p)` reflects the case binding's static narrowing.
+The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while `type_of(p)` reflects the case binding's static narrowing.
 
-A switch with a case for every variant is **exhaustive**, and no path reaches
-the end of the statement. That is what lets an exhaustive switch be the last
-statement of a value-returning procedure. A switch that omits a variant and has
-no default case is rejected, and names the variants it did not cover. There is
-no nil case, because a union has no nil state.
+A switch with a case for every variant is **exhaustive**, and no path reaches the end of the statement. That is what lets an exhaustive switch be the last statement of a value-returning procedure. A switch that omits a variant and has no default case is rejected, and names the variants it did not cover. There is no nil case, because a union has no nil state.
 
 Writing `_` as the binding name acquires no binding.
 
 #### Switch ownership
 
-A switch over a **place** borrows it: the binding is immutable and non-owning,
-and the place keeps its value.
+A switch over a **place** borrows it: the binding is immutable and non-owning, and the place keeps its value.
 
-A switch over a **temporary** — or over `move(subject)` — consumes it. The
-active payload transfers into the case's own binding, which is an ordinary
-managed local from there on: it can be moved out, and it drops exactly once on
-every exit of its case. A case with no binding owns the whole union instead.
+A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary  managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
 
 #### Zero values and `@(zero=)`
 
@@ -1592,12 +1556,8 @@ Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
 
 #### Representation
 
-A union's storage is its payload region, then the tag, then whatever padding the
-alignment asks for. The tag is the narrowest unsigned integer that indexes
-`0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The
-first declared variant has tag 0, and there is no nil tag. A union with no
-variants keeps one byte. A tag wider than every payload raises the union's
-alignment, as any other member would.
+A union's storage is its payload region, then the tag, then whatever padding the alignment asks for. The tag is the narrowest unsigned integer that indexes
+`0 ..< variant_count`: 256 variants still fit in one byte and 257 need two. The first declared variant has tag 0, and there is no nil tag. A union with no variants keeps one byte. A tag wider than every payload raises the union's alignment, as any other member would.
 
 ### Enumerations
 
@@ -1637,10 +1597,7 @@ Enum members are named constants, not numbers with a name: they may have holes, 
 
 #### Non-member values
 
-**Conversion between an enum and its backing integer type is unchecked in both
-directions.** `Foo(n)` reinterprets `n` as a `Foo` and `int(f)` reads the
-representation back; neither tests membership, and this holds for a constant
-operand as much as a runtime one. An enum type therefore ranges over every value its backing type can hold, and a value that names no declared member is an ordinary, representable value of that type — not undefined behavior.
+**Conversion between an enum and its backing integer type is unchecked in both directions.** `Foo(n)` reinterprets `n` as a `Foo` and `int(f)` reads the representation back; neither tests membership, and this holds for a constant operand as much as a runtime one. An enum type therefore ranges over every value its backing type can hold, and a value that names no declared member is an ordinary, representable value of that type — not undefined behavior.
 
 ```odin
 Foo :: enum { A, B, C }
@@ -1650,8 +1607,7 @@ f := Foo(n);          // no check: `f` is a `Foo` naming no member
 assert(int(f) == 200);
 ```
 
-This is deliberate: enum values arrive from foreign calls, files, and wire
-formats, and a conversion that trapped would make every such boundary fallible. Code converting an untrusted integer should validate it — by comparing against the members, or by switching with an explicit `case:` — before treating it as a member. See [exhaustive switch](#exhaustive-switch).
+This is deliberate: enum values arrive from foreign calls, files, and wire  formats, and a conversion that trapped would make every such boundary fallible. Code converting an untrusted integer should validate it — by comparing against the members, or by switching with an explicit `case:` — before treating it as a member. See [exhaustive switch](#exhaustive-switch).
 
 Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_Snake_Case`, and the core library follows suit. The convention is not compiler-enforced, but the spelling of a compiler-provided member is normative.
 
@@ -1783,16 +1739,9 @@ Index_Type :: proc($Count: uint) -> type {
 Index :: Index_Type(1000);
 ```
 
-A `type` value has no runtime representation or zero value. It may be bound by a
-constant, used as a `$` parameter, or returned by a procedure whose every call
-is evaluated at compile time. It cannot be the type of a variable, ordinary
-non-`$` parameter, record field, container element, foreign declaration, or
-runtime procedure value; compiler-defined reflection descriptors are the only
-records allowed to carry it internally. A procedure whose signature contains `type` or a compile-time reflection descriptor is itself compile-time-only and cannot be exported or stored in a procedure value.
+A `type` value has no runtime representation or zero value. It may be bound by a constant, used as a `$` parameter, or returned by a procedure whose every call is evaluated at compile time. It cannot be the type of a variable, ordinary non-`$` parameter, record field, container element, foreign declaration, or runtime procedure value; compiler-defined reflection descriptors are the only records allowed to carry it internally. A procedure whose signature contains `type` or a compile-time reflection descriptor is itself compile-time-only and cannot be exported or stored in a procedure value.
 
-Two `type` values support `==` and `!=` during compilation; equality means the
-same Loke type identity after aliases are resolved. They have no ordering and
-cannot be elements or keys of runtime or materialized containers.
+Two `type` values support `==` and `!=` during compilation; equality means the same Loke type identity after aliases are resolved. They have no ordering and cannot be elements or keys of runtime or materialized containers.
 
 `typeid` is an ordinary runtime scalar holding the unique identifier of one concrete runtime type. It is not usable as a type and does not make a generic procedure, keeping runtime reflection from becoming a second spelling of specialization.
 
@@ -1814,7 +1763,7 @@ main :: proc() {
 	u := u8(123);
 	id := typeid_of(type_of(u));
 	info: ^runtime.Type_Info;
-info = type_info_of(id);
+    info = type_info_of(id);
 }
 ```
 
@@ -1830,8 +1779,7 @@ back into specialization. A `typeid` is an ordinary scalar and can be forged, so
 the lookup is checked: the nil `typeid`, and any id this program has no entry
 for, produce a nil result.
 
-The metadata layouts are public and belong to `base:runtime`, which a program
-must import to name them:
+The metadata layouts are public and belong to `base:runtime`, which a program must import to name them:
 
 ```odin
 Type_Kind :: enum u8 {
@@ -1867,16 +1815,7 @@ Type_Info :: struct {
 }
 ```
 
-Every view and slice above points at shared static storage, so `type_info_of`
-hands back a read-only `^runtime.Type_Info` and a `^Type_Info` owns
-nothing and needs no cleanup. Aggregate member tables expose public fields only,
-procedure entries keep written parameter and result order, union variants keep
-declaration order, and unused scalar, relation, and member fields are zero. An
-enum member's raw value is carried in `value_low`/`value_high` so that a signed
-or unsigned 128-bit value survives; the owning type's `bits` and `signed` say how
-to read them. Adding a field or an enum member to these records is a runtime ABI
-change, because generated metadata tables are written against exactly this field
-order.
+Every view and slice above points at shared static storage, so `type_info_of` hands back a read-only `^runtime.Type_Info` and a `^Type_Info` owns nothing and needs no cleanup. Aggregate member tables expose public fields only, procedure entries keep written parameter and result order, union variants keep declaration order, and unused scalar, relation, and member fields are zero. An enum member's raw value is carried in `value_low`/`value_high` so that a signed or unsigned 128-bit value survives; the owning type's `bits` and `signed` say how to read them. Adding a field or an enum member to these records is a runtime ABI change, because generated metadata tables are written against exactly this field order.
 
 ### Compile-time reflection
 
@@ -2376,35 +2315,25 @@ information, use an iterable or adapter whose `Element` contains it.
 
 #### Iteration adapters
 
-Every iterable has one default `Element` and `Iterator`. An adapter selects a
-different traversal and has its own pair. The compiler provides these adapters
-for every iterable:
+Every iterable has one default `Element` and `Iterator`. An adapter selects a different traversal and has its own pair. The compiler provides these adapters for every iterable:
 
 | Adapter | `Element` |
 | --- | --- |
 | `source.indexed()` | `struct{value: Element, index: int}`, zero-based |
 | `source.reversed()` | the source `Element`, in reverse order |
 
-`indexed()` starts at zero and advances only after `next` succeeds. It numbers
-the traversal before it, so it may appear only once and must be last:
+`indexed()` starts at zero and advances only after `next` succeeds. It numbers the traversal before it, so it may appear only once and must be last:
 `source.reversed().indexed()` numbers the reversed traversal from zero.
 
 `reversed()` requires [`Reverse_Iterable`](#standard-interface-catalogue) and a
 receiver method named `iter_reverse`. A forward-only iterable is rejected;
 reversal never buffers or allocates. `iter_reverse` returns the type's declared
-`Iterator`. A reverse traversal that needs another iterator representation must
-instead be a separate adapter with its own `Element` and `Iterator`.
+`Iterator`. A reverse traversal that needs another iterator representation must instead be a separate adapter with its own `Element` and `Iterator`.
 
-Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps
-the same collection borrowed for the whole loop.
+Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps the same collection borrowed for the whole loop.
 
-In version 1, `indexed()` and `reversed()` are `foreach` header forms: they
-select the traversal the loop lowers to and cannot be stored in a variable or
-passed to a procedure. Those two names are the only ones a loop header reads
-specially. For built-in containers the compiler may lower the selected traversal
-directly without creating an iterator object. A traversal that must be stored or
-passed is an ordinary iterable value — either a container view below, or a
-user-defined iterable type.
+In version 1, `indexed()` and `reversed()` are `foreach` header forms: they select the traversal the loop lowers to and cannot be stored in a variable or passed to a procedure. Those two names are the only ones a loop header reads specially. For built-in containers the compiler may lower the selected traversal directly without creating an iterator object. A traversal that must be stored or
+passed is an ordinary iterable value — either a container view below, or a user-defined iterable type.
 
 Built-in containers also provide these views:
 
@@ -2418,10 +2347,7 @@ Built-in containers also provide these views:
 | `text.bytes()` | `[]u8` | `u8` |
 
 These are ordinary methods answering ordinary values. Each result exposes
-`Element`, `Iterator`, and `iter()`, so it can be stored in a variable, passed to
-a procedure, returned where its lifetime permits, consumed by generic code
-constrained by [`Iterable`](#standard-interface-catalogue), or stepped by hand
-through `next`. Every call to `iter()` starts a fresh traversal.
+`Element`, `Iterator`, and `iter()`, so it can be stored in a variable, passed to a procedure, returned where its lifetime permits, consumed by generic code constrained by [`Iterable`](#standard-interface-catalogue), or stepped by hand through `next`. Every call to `iter()` starts a fresh traversal.
 
 ```odin
 scores := map[string]int{"a" = 1, "b" = 2};
@@ -2531,8 +2457,7 @@ A conversion hook takes exactly one value, has no receiver, and returns its targ
 
 `T(value)` means conversion only and takes exactly one plain value argument. The compiler first applies a non-overridable built-in conversion when the source/target pair has one. Otherwise it resolves the target type's inherent `hook(convert)` declarations with the ordinary overload rules. Equal-ranked hooks are ambiguous rather than ordered by declaration.
 
-Zero- and multi-argument type calls are invalid. Construction uses a composite
-literal or named constructor instead.
+Zero- and multi-argument type calls are invalid. Construction uses a composite literal or named constructor instead.
 
 ### Lifecycle hooks and resource types
 
@@ -2543,14 +2468,9 @@ The hook signatures are fixed:
 - `hook(drop)`: `proc(self: inout T)`
 - `hook(copy)`: `proc(self, allocator: Allocator) -> Result(T, Allocator_Error)`
 
-A custom copy hook must allocate all cloned storage through fallible operations
-on the supplied allocator and return any error without publishing a partial
-result. Generated field-wise cloning calls `try_clone` recursively for each
-owning field. On failure it destroys the partial temporary and returns `.err`
-without a partial value.
+A custom copy hook must allocate all cloned storage through fallible operations on the supplied allocator and return any error without publishing a partial result. Generated field-wise cloning calls `try_clone` recursively for each owning field. On failure it destroys the partial temporary and returns `.err` without a partial value.
 
-The compiler generates two public copy operations. Neither name is a hook, and
-user code cannot replace either declaration:
+The compiler generates two public copy operations. Neither name is a hook, and user code cannot replace either declaration:
 
 | Operation | Signature | Failure behavior |
 | --- | --- | --- |
@@ -2562,8 +2482,7 @@ Allocator selection follows these rules:
 - `value.clone()` uses the program default; `value.clone(allocator)` uses the
   supplied allocator.
 - Assignment and copy initialization use the destination's bound allocator.
-  If the destination is dead or allocator-unbound, they resolve its declaration
-  allocation policy instead.
+  If the destination is dead or allocator-unbound, they resolve its declaration allocation policy instead.
 - A non-allocating copy hook ignores the allocator and returns `.ok`.
 
 Assignment and copy initialization invoke the failure policy only after cloning
@@ -2574,13 +2493,9 @@ byte-copy operation is `copy`.
 
 A custom copy hook may panic for ordinary faults but must not invoke an allocator failure policy for its own allocations; recoverable allocation inside the hook uses `try_` operations.
 
-The compiler checks hook signatures, declaration in the owning type's package,
-and coherent operation lookup: one copy hook, one drop hook, and one `==`/`hash`
-pair per type across packages.
+The compiler checks hook signatures, declaration in the owning type's package, and coherent operation lookup: one copy hook, one drop hook, and one `==`/`hash` pair per type across packages.
 
-Allocator discipline, valid ownership, and equal values producing equal hashes
-are programmer obligations not checked by the compiler. Violations have the
-following consequences:
+Allocator discipline, valid ownership, and equal values producing equal hashes are programmer obligations not checked by the compiler. Violations have the following consequences:
 
 - A copy hook that panics follows ordinary [panic semantics](#panics-and-unwinding).
 - Invalid ownership, such as a clone sharing storage it does not own or a drop hook leaving a live alias, causes undefined behavior.
@@ -2607,22 +2522,18 @@ impl File {
 
 A `drop` hook runs **exactly once per completed initialization** that is not transferred or already consumed. The compiler tracks [ownership](#managed-values-and-storage), using runtime state only where control flow requires it, never by testing for zero. Hooks must accept the inert zero value: `{}` and zero-initialized static storage are completed initializations. In `File`, `valid` distinguishes an inert value from a valid zero handle.
 
-Copy assignment of a copyable type has the following order, with self-assignment
-handled by the compiler:
+Copy assignment of a copyable type has the following order, with self-assignment handled by the compiler:
 
 1. Evaluate `source.try_clone(destination_allocator)` once.
 2. On `.err`, invoke the policy specified under
    [Allocation failure](#allocation-failure), leaving the destination unchanged.
-3. On `.ok`, drop the previous destination value and transfer the cloned value
-   into the destination.
+3. On `.ok`, drop the previous destination value and transfer the cloned value into the destination.
 
 An explicit call to `try_clone` returns the error and never invokes the policy.
 
 ### Standard customization procedures
 
-Receiver-shaped common behavior is defined canonically as methods, and the
-method is its **only** spelling. These are the operations the language and its
-libraries expect a type to supply:
+Receiver-shaped common behavior is defined canonically as methods, and the method is its **only** spelling. These are the operations the language and its libraries expect a type to supply:
 
 | Operation | Purpose |
 | --- | --- |
@@ -2640,8 +2551,7 @@ There is no free spelling for any of them. `len(x)` is not a call; the length of
 `x` is `x.len()`, exactly as its capacity is `x.cap()`. A free procedure named
 `len` is an ordinary declaration with no relationship to this table.
 
-**A clone is ownership-recursive, not deep.** It duplicates the storage the
-value *owns*, recursing into owning fields and elements. It does not follow a
+**A clone is ownership-recursive, not deep.** It duplicates the storage the value *owns*, recursing into owning fields and elements. It does not follow a
 non-owning pointer, slice, or view, and a component whose own documented copy
 semantics share — immutable [`string`](#string-type) and
 [`shared(T)`](#shared-ownership) — shares rather than duplicates. So cloning a
@@ -2668,10 +2578,7 @@ buffer: Ring_Buffer = {};
 n := buffer.len();
 ```
 
-Built-in containers receive compiler-defined `len` and `cap` methods, so a user
-type and a built-in are read the same way. A receiver that needs no evaluation
-is not evaluated: a fixed array's and a vector's length are properties of their
-type, so `make_array().len()` folds to a constant and never runs the call.
+Built-in containers receive compiler-defined `len` and `cap` methods, so a user type and a built-in are read the same way. A receiver that needs no evaluation is not evaluated: a fixed array's and a vector's length are properties of their type, so `make_array().len()` folds to a constant and never runs the call.
 
 `iter` and `iter_reverse` are the two entries the [`Iterable`](#iteration-protocol) requirement states in receiver form, because every adapter that continues from them — `indexed()`, `entries()`, `bytes()` — is a method.
 
@@ -2709,26 +2616,18 @@ z := Complex_F64.from_components(1, 2);
 w := z*z + Complex_F64(2.0);  // the conversion hook, written
 ```
 
-Library numeric types have no special compiler relationship. A scalar reaches
-`Complex_F64` through the written conversion `Complex_F64(x)`, constant or not:
-there are no user-defined implicit conversions, so an operand that changes type
-says so. Generic numeric families and third-party numeric types use the same
-construction, conversion, and operator rules as other user-defined types.
+Library numeric types have no special compiler relationship. A scalar reaches `Complex_F64` through the written conversion `Complex_F64(x)`, constant or not:
+there are no user-defined implicit conversions, so an operand that changes type says so. Generic numeric families and third-party numeric types use the same construction, conversion, and operator rules as other user-defined types.
 
 ## Interfaces and polymorphism
 
 ### Interfaces as reusable constraints
 
-An `interface` gives a name to a reusable compile-time predicate over types. An
-application such as `Additive(T)` is a constant `bool`: it is true exactly when
-the substituted requirements hold. It can therefore appear anywhere a
-compile-time Boolean is accepted, including a [`where`](#where-clauses) clause
+An `interface` gives a name to a reusable compile-time predicate over types. An application such as `Additive(T)` is a constant `bool`: it is true exactly when the substituted requirements hold. It can therefore appear anywhere a compile-time Boolean is accepted, including a [`where`](#where-clauses) clause
 or `static_assert`.
 
-Satisfaction is structural. A type satisfies an interface when its operations
-and members meet the requirements; no `implements` declaration is consulted.
-The interface declaration is compile-time metadata rather than a runtime value
-type. Runtime polymorphism is requested explicitly with
+Satisfaction is structural. A type satisfies an interface when its operations and members meet the requirements; no `implements` declaration is consulted.
+The interface declaration is compile-time metadata rather than a runtime value type. Runtime polymorphism is requested explicitly with
 [`dyn Interface`](#borrowed-dynamic-interface-values).
 
 ```odin
@@ -2769,12 +2668,8 @@ Mutable_Indexable :: interface($T: type, $Element: type) {
 
 Only `inout` is admitted in a binding list. A consuming operation can be required as a named slot with a `move self` receiver, but there is no hypothetical `move` binding, since checking a capability must not consume the evidence used for the remaining requirements.
 
-**Validity form** `expr;` requires only that the expression compiles. It does
-not test the expression's value. In particular, `false;` is a satisfied validity
-requirement because `false` is well-formed. A truth-valued restriction belongs
-in the consuming declaration's `where` clause; giving reusable interfaces their
-own value predicates would require a distinct truth-requirement form rather
-than changing the meaning of existing validity requirements.
+**Validity form** `expr;` requires only that the expression compiles. It does not test the expression's value. In particular, `false;` is a satisfied validity requirement because `false` is well-formed. A truth-valued restriction belongs in the consuming declaration's `where` clause; giving reusable interfaces their
+own value predicates would require a distinct truth-requirement form rather than changing the meaning of existing validity requirements.
 
 An associated constant is an ordinary expression requirement: `T.ZERO -> Element;` asks for a member `ZERO` on `T` whose value converts to `Element`. When the required result is `type`, the member must evaluate to a compile-time type; it is then an **associated type** usable in later requirements and in constrained generic code:
 
@@ -2802,13 +2697,10 @@ Associated types need no separate grammar, since types are compile-time values a
 **Named slot form** `slot name: proc(...);` declares a method requirement:
 
 - Its first parameter must be `self` in one of the three
-  [receiver modes](#receiver-forms). A pointer parameter merely named `self` is
-  not a receiver.
+  [receiver modes](#receiver-forms). A pointer parameter merely named `self` is not a receiver.
 - An interface eligible for runtime use permits only immutable `self` and
   `self: inout Subject` receivers.
-- After substituting interface arguments, checking selects one matching
-  inherent or same-package extension method. Modes, results, and calling
-  convention must match exactly; default arguments do not participate.
+- After substituting interface arguments, checking selects one matching inherent or same-package extension method. Modes, results, and calling convention must match exactly; default arguments do not participate.
 - Slot names must be unique across the interface and everything it composes.
   Witness members are never overload groups.
 
@@ -2823,15 +2715,9 @@ Requirement checking is non-recursive at the point of use and does not prove req
 Evaluating an interface application as an ordinary Boolean may simply produce
 false. When the program positively requires it to hold — as a bare `where`
 bound, a direct `static_assert`, or a conversion to `dyn Interface` — a failure
-must report the concrete application and the specific interface-body line that
-did not hold. A diagnostic reading only "constraint not satisfied" or "static
-assertion failed" is a defect.
+must report the concrete application and the specific interface-body line that did not hold. A diagnostic reading only "constraint not satisfied" or "static assertion failed" is a defect.
 
-Because satisfaction is implicit, declaring a type does not cause it to be
-checked against every interface in scope. A misspelled or incorrectly typed
-operation is diagnosed only when some checked declaration actually requires
-that interface application. The current language has no declaration-site
-conformance claim.
+Because satisfaction is implicit, declaring a type does not cause it to be checked against every interface in scope. A misspelled or incorrectly typed operation is diagnosed only when some checked declaration actually requires that interface application. The current language has no declaration-site conformance claim.
 
 A type author who wants that check anyway asks for it, with a file-scope
 [`static_assert`](#static_assertboolean) beside the type or its `impl` blocks:
@@ -2855,13 +2741,9 @@ impl Circle {
 }
 ```
 
-The assertion is checked once the whole package is resolved, so it holds here
-even though half of what satisfies it is written below it. It may equally
-precede the type itself, sit in another file of the package, and it reports the
-specific requirement that failed rather than a bare assertion failure.
+The assertion is checked once the whole package is resolved, so it holds here even though half of what satisfies it is written below it. It may equally precede the type itself, sit in another file of the package, and it reports the specific requirement that failed rather than a bare assertion failure.
 
-It remains an ordinary compile-time assertion: it registers no conformance, is
-not consulted by lookup, and is unobservable outside its package. It is a check
+It remains an ordinary compile-time assertion: it registers no conformance, is not consulted by lookup, and is unobservable outside its package. It is a check
 a type author chooses to run, not a claim the type carries.
 
 #### Standard interface catalogue
@@ -2940,10 +2822,7 @@ Growable_Sequence :: interface($Self: type) {
 }
 ```
 
-`Ordered` means the `<` operation is available; it does not promise a mathematical
-total order, so floating-point types satisfy it with IEEE-754 comparisons. An
-algorithm needing a total or strict-weak order states that precondition or takes
-a comparator. `Numeric` does not compose `Ordered` and requires no ordering.
+`Ordered` means the `<` operation is available; it does not promise a mathematical total order, so floating-point types satisfy it with IEEE-754 comparisons. An algorithm needing a total or strict-weak order states that precondition or takes a comparator. `Numeric` does not compose `Ordered` and requires no ordering.
 
 `Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by copyable owning built-ins and records, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
 
@@ -2966,18 +2845,12 @@ No nominal `implements` list is involved; the catalogue records capability bound
 Two mechanisms determine whether a generic declaration is applicable:
 
 - **[`where` clauses](#where-clauses)** filter an otherwise matched declaration
-  with compile-time Boolean expressions. `N > 2` and `Additive(T)` are the same
-  kind of bound. An interface declaration does not add a third constraint
-  mechanism; it defines a named, reusable Boolean predicate whose failure can
-  identify an individual structural requirement.
+  with compile-time Boolean expressions. `N > 2` and `Additive(T)` are the same kind of bound. An interface declaration does not add a third constraint mechanism; it defines a named, reusable Boolean predicate whose failure can identify an individual structural requirement.
 - **[Specialization](#specialization)** matches and destructures structural
   shape in a parameter type, as in `values: []$E` or
-  `table: ^Table($Key, $Value)`. Because it binds parts and participates in
-  overload specificity, it is not merely another predicate.
+  `table: ^Table($Key, $Value)`. Because it binds parts and participates in overload specificity, it is not merely another predicate.
 
-Use an interface when a capability is reused, when constrained code needs its
-members or slots, or when a per-requirement diagnostic is valuable. Use a
-direct `where` expression for a local value relation such as `N > 2`.
+Use an interface when a capability is reused, when constrained code needs its members or slots, or when a per-requirement diagnostic is valuable. Use a direct `where` expression for a local value relation such as `N > 2`.
 
 ### Runtime polymorphism
 
@@ -3063,28 +2936,13 @@ x: int; // declares an uninitialized `int`; `x` starts dead
 y, z: int; // both variables start dead
 ```
 
-A lexical local variable without an initializer starts **dead and uninitialized**. Its
-declaration reserves storage but does not write a value to that storage. A full
-assignment completes its initialization and makes it live. An explicit
-initializer, including `{}` when the zero value is wanted, makes the variable
-live at its declaration.
+A lexical local variable without an initializer starts **dead and uninitialized**. Its declaration reserves storage but does not write a value to that storage. A full assignment completes its initialization and makes it live. An explicit initializer, including `{}` when the zero value is wanted, makes the variable live at its declaration.
 
-An ordinary expression may read, borrow, take the address of, move, or drop a
-local variable only where the compiler can prove that the local is live on every path to
-that expression. Otherwise the use is a compile-time error; ordinary Loke code
-never evaluates an uninitialized value. A dead local may be named only as the
-destination of a full assignment. Field and element assignments do not
-partially initialize a dead aggregate.
+An ordinary expression may read, borrow, take the address of, move, or drop a local variable only where the compiler can prove that the local is live on every path to that expression. Otherwise the use is a compile-time error; ordinary Loke code never evaluates an uninitialized value. A dead local may be named only as the destination of a full assignment. Field and element assignments do not partially initialize a dead aggregate.
 
-Liveness is not required in an **unevaluated operand**. `type_of(expression)`,
-the expression forms of `size_of` and `align_of`, and the entity operand of
-`source_location` inspect only a declaration or static type. Their operands must
-resolve and type-check, but they do not read storage, create a borrow, or require
-the named local to be live.
+Liveness is not required in an **unevaluated operand**. `type_of(expression)`, the expression forms of `size_of` and `align_of`, and the entity operand of `source_location` inspect only a declaration or static type. Their operands must resolve and type-check, but they do not read storage, create a borrow, or require the named local to be live.
 
-Parameters start live. File-scope, `static`, and `thread_local` variables use
-the constant-initialization rule under [Storage modifiers](#storage-modifiers)
-and therefore still receive their zero value when they omit an initializer.
+Parameters start live. File-scope, `static`, and `thread_local` variables use the constant-initialization rule under [Storage modifiers](#storage-modifiers) and therefore still receive their zero value when they omit an initializer.
 
 ```odin
 count: int;
@@ -3099,17 +2957,16 @@ count = 0;             // full assignment makes it definitely live
 fmt.println(count);    // OK
 ```
 
-Each declaration in a scope must have a unique name. A local declaration must not
-shadow a local variable or parameter in an outer scope. Copying a parameter into
-a mutable local requires a different name; see [Local copies of parameters](#local-copies-of-parameters).
+Each declaration in a scope must have a unique name. A local declaration must not shadow a local variable or parameter in an outer scope. Copying a parameter into a mutable local requires a different name; see [Local copies of parameters](#local-copies-of-parameters).
 
 This restriction applies only to local scopes. A local declaration may shadow a file-scope declaration, an imported package name, or a predeclared identifier such as `byte`, `nil`, or `len`. The program cannot use the shadowed name in that local scope.
 
 ```odin
 x := 10;
-x := 20; // Redeclaration of `x` in this scope
+x := 20; // ERROR: `x` is already declared in this scope
+x = 20;  // OK: assignment to the existing `x`
 y, z := 20, 30;
-test, z := 20, 30; // not allowed since `z` exists already
+test, z := 20, 30; // ERROR: `z` is already declared in this scope
 ```
 
 ### Managed values and storage
@@ -3214,8 +3071,7 @@ The compiler performs dataflow analysis and classifies a lexical local as defini
 
 A later lifecycle operation on a conditionally live variable requires state distinguishing its live and dead paths. The representation is implementation-defined: a hidden drop flag, a register, or branch-specific cleanup. Flags are not required for every variable and need not occupy addressable bytes.
 
-A full assignment to a dead variable completes an initialization and makes it live. A full assignment to a live variable replaces its value using the normal assignment lifecycle. If the destination is conditionally live, generated code uses the runtime state to select the live-destination or dead-destination assignment lifecycle, including allocator selection and failure behavior. A dead or conditionally-live variable cannot otherwise be read, borrowed,
-addressed, moved, or explicitly dropped.
+A full assignment to a dead variable completes an initialization and makes it live. A full assignment to a live variable replaces its value using the normal assignment lifecycle. If the destination is conditionally live, generated code uses the runtime state to select the live-destination or dead-destination assignment lifecycle, including allocator selection and failure behavior. A dead or conditionally-live variable cannot otherwise be read, borrowed, addressed, moved, or explicitly dropped.
 
 A never-initialized dead variable contains unspecified bytes. A move or `drop` writes the inert zero representation to its source, but that does not make a dead variable readable: a zero value can also be a valid live value, so liveness is never inferred from the bytes. A `drop` hook runs once per completed initialization that is not transferred or already consumed. See [Zero values](#zero-values).
 
@@ -3305,15 +3161,9 @@ Compile-time knowledge is a property of a binding, not a second family of value 
 
 There are three ways to introduce compile-time information:
 
-- `name :: expression` binds the compile-time result of an expression. Inside a
-  generic declaration it is evaluated separately for each specialization that
-  reaches the declaration.
-- `$name` introduces a **specialization binding**. On an explicit procedure or
-  type parameter the caller supplies a compile-time value. In a parameter type
-  or static `foreach` binding the compiler infers one. `$` appears only where the
-  name is introduced; subsequent uses write `name` normally.
-- A type name is itself a compile-time value of the compile-time-only [`type`](#type-and-typeid)
-  type.
+- `name :: expression` binds the compile-time result of an expression. Inside a generic declaration it is evaluated separately for each specialization that reaches the declaration.
+- `$name` introduces a **specialization binding**. On an explicit procedure or type parameter the caller supplies a compile-time value. In a parameter type or static `foreach` binding the compiler infers one. `$` appears only where the name is introduced; subsequent uses write `name` normally.
+- A type name is itself a compile-time value of the compile-time-only [`type`](#type-and-typeid) type.
 
 Outside a compiler-evaluated call, an ordinary variable — including an immutable parameter — is a runtime binding even when a caller passes a constant; only a `$` parameter is part of specialization. During compile-time evaluation ordinary parameters are evaluator locals that may hold the supplied constants, but this creates no reusable specialization, so a constant argument in runtime code never silently generates another procedure body.
 
@@ -3329,8 +3179,7 @@ An ordinary runtime expression may consume a compile-time value. The reverse is 
 
 ### Compile-time procedure evaluation
 
-A normal `proc` may be evaluated by the compiler when its result is required in a compile-time context. There is no second `comptime proc` declaration kind.
-The same procedure may be called at runtime when its signature and result are runtime-representable:
+A normal `proc` may be evaluated by the compiler when its result is required in a compile-time context. There is no second `comptime proc` declaration kind. The same procedure may be called at runtime when its signature and result are runtime-representable:
 
 ```odin
 hash_name :: proc(text: string_view) -> u64 {
@@ -3345,9 +3194,7 @@ CLICKED_ID :: hash_name("clicked"); // evaluated by the compiler
 id := hash_name(user_text);         // ordinary runtime call
 ```
 
-There is no operation that reports whether the current call is being evaluated
-by the compiler. A procedure cannot choose different semantics only because
-the phase changed.
+There is no operation that reports whether the current call is being evaluated by the compiler. A procedure cannot choose different semantics only because the phase changed.
 
 A compile-time call requires every value it reads from outside its own locals to be compile-time known. Its executed path may use ordinary expressions, procedures, local variables, mutation, control flow, recursion, and temporary managed containers. It may not:
 
@@ -3356,11 +3203,9 @@ A compile-time call requires every value it reads from outside its own locals to
 - observe a runtime address, convert a pointer to an integer, or retain a pointer to evaluator-owned storage;
 - use a runtime allocator or transfer an evaluator-owned managed value into the generated program.
 
-Temporary strings, arrays, maps, and other managed values use compiler-owned storage while evaluation runs. This storage has no Loke `Allocator`, cannot be observed by the program, and is reclaimed by the compiler. A final result must be a compile-time-only value or a constant that satisfies the materialization rules above. Compiler resource exhaustion is a compilation diagnostic, not an
-`Allocator_Error` visible to the program.
+Temporary strings, arrays, maps, and other managed values use compiler-owned storage while evaluation runs. This storage has no Loke `Allocator`, cannot be observed by the program, and is reclaimed by the compiler. A final result must be a compile-time-only value or a constant that satisfies the materialization rules above. Compiler resource exhaustion is a compilation diagnostic, not an `Allocator_Error` visible to the program.
 
-An evaluator-produced immutable string may be frozen into static storage exactly as though its bytes had appeared in a string literal; the emitted string value must therefore have an inert `drop`. This does not generalize to mutable managed owners: a dynamic array, map, or other value that would retain an allocation at runtime is not a materializable constant. It must be converted to a fixed array,
-immutable string, or ordinary record before the compile-time call returns.
+An evaluator-produced immutable string may be frozen into static storage exactly as though its bytes had appeared in a string literal; the emitted string value must therefore have an inert `drop`. This does not generalize to mutable managed owners: a dynamic array, map, or other value that would retain an allocation at runtime is not a materializable constant. It must be converted to a fixed array, immutable string, or ordinary record before the compile-time call returns.
 
 Only the path actually evaluated must satisfy these execution restrictions; all branches must still parse and type-check unless discarded by `when`. A panic or failed `assert` reached during compile-time evaluation is a compilation error reported with the compile-time call stack. Implementations may impose documented step, recursion, and memory limits, but exceeding one must be diagnosed rather than silently moving the call to runtime.
 
@@ -3681,11 +3526,7 @@ b[0] = 99;
 assert(a[0] == 1);
 ```
 
-`move(value)` transfers ownership without a copy. The operation writes the inert
-zero representation to the lexical source and marks it dead until a later full
-assignment. Applying `move` to file-scope, `static`, or `thread_local` storage,
-or to a subplace rooted in such storage, is a compile-time error. Use
-[`exchange`](#exchange) when the source must remain live with a replacement.
+`move(value)` transfers ownership without a copy. The operation writes the inert zero representation to the lexical source and marks it dead until a later full assignment. Applying `move` to file-scope, `static`, or `thread_local` storage, or to a subplace rooted in such storage, is a compile-time error. Use [`exchange`](#exchange) when the source must remain live with a replacement.
 
 ```odin
 c := move(a); // transfers the allocation; `a` is now dead
@@ -3706,21 +3547,11 @@ If assignment cloning needs storage, `try_clone` uses the live destination's all
 previous := exchange(inout current, {});
 ```
 
-The destination must be a definitely live variable or addressable place. Its type supplies the context for `replacement`. The compiler evaluates the destination place once and then evaluates `replacement` completely before modifying the destination. If evaluation or construction of the replacement
-fails or panics, the destination remains unchanged. Once the replacement is
-ready, the compiler moves the old value into result storage and moves the
-replacement into the destination as one lifecycle operation. No user code runs
-between those two moves, and the destination is never observably dead.
+The destination must be a definitely live variable or addressable place. Its type supplies the context for `replacement`. The compiler evaluates the destination place once and then evaluates `replacement` completely before modifying the destination. If evaluation or construction of the replacement fails or panics, the destination remains unchanged. Once the replacement is ready, the compiler moves the old value into result storage and moves the replacement into the destination as one lifecycle operation. No user code runs between those two moves, and the destination is never observably dead.
 
 An owning variable used as `replacement` must use `move(source)` to transfer ownership. The result follows ordinary ownership rules, including temporary cleanup if ignored.
 
-`exchange` is permitted for lexical and static-duration destinations. It is the
-only operation that can move the current value out of file-scope, `static`, or
-`thread_local` storage, because it simultaneously leaves a completed live
-replacement. Like any `inout` operation, it is rejected while an incompatible
-borrow of the destination is live. It is not an atomic memory operation and
-provides no inter-thread synchronization; concurrent code uses `Atomic(T)` or a
-lock.
+`exchange` is permitted for lexical and static-duration destinations. It is the only operation that can move the current value out of file-scope, `static`, or `thread_local` storage, because it simultaneously leaves a completed live replacement. Like any `inout` operation, it is rejected while an incompatible borrow of the destination is live. It is not an atomic memory operation and provides no inter-thread synchronization; concurrent code uses `Atomic(T)` or a lock.
 
 ```odin
 cache: Cache; // file-scope, always live
@@ -3854,8 +3685,7 @@ foreach (value in some_map.values()) {     // values alone, no entry record
 }
 ```
 
-`some_map.values()` is a [view](#iteration-adapters) — an ordinary borrowed value
-the loop iterates, not header syntax.
+`some_map.values()` is a [view](#iteration-adapters) — an ordinary borrowed value the loop iterates, not header syntax.
 
 `foreach (value, index in some_array)` is an error unless the array's element is a two-field record, in which case it destructures that record. Element bindings are positional and mean nothing else, so a loop over `[dynamic]Point` binds `x` and `y`, not a value and an index.
 
@@ -3911,8 +3741,7 @@ String iteration cannot use a reference binding because strings are immutable.
 
 #### Static `foreach` expansion
 
-A `foreach` whose bindings carry `$` is a compile-time expansion rather than a
-runtime loop:
+A `foreach` whose bindings carry `$` is a compile-time expansion rather than a runtime loop:
 
 ```odin
 print_record :: proc(value: ^$T) {
@@ -3926,10 +3755,7 @@ The iterable must be compile-time known, finite, and produce compile-time values
 
 Every binding uses `$`; mixing runtime and compile-time bindings in one header is an error. Static bindings are immutable and cannot use `&`. The body is parsed once but checked after substitution, and an empty iterable instantiates no body. Diagnostics inside an expansion must show the element and its source descriptor or index.
 
-`break` and `continue` cannot target a static expansion. Ordinary runtime loops
-inside its body may use them normally. Static `foreach` is a statement inside a
-procedure; it does not synthesize identifiers or declarations at file scope,
-and does not expose tokens or an abstract syntax tree to compile-time code.
+`break` and `continue` cannot target a static expansion. Ordinary runtime loops inside its body may use them normally. Static `foreach` is a statement inside a procedure; it does not synthesize identifiers or declarations at file scope, and does not expose tokens or an abstract syntax tree to compile-time code.
 
 #### Reverse iteration
 
@@ -4080,19 +3906,9 @@ case: // intentionally ignore `.number`
 }
 ```
 
-A switch over an enum must either list every member or include `case:`. A
-variant switch must either cover every variant or include `case:`; one that
-covers every variant needs no default, and no path reaches the end of it.
-The default may be empty; writing it is the explicit acknowledgement that the
-remaining cases are intentionally ignored.
+A switch over an enum must either list every member or include `case:`. A variant switch must either cover every variant or include `case:`; one that covers every variant needs no default, and no path reaches the end of it. The default may be empty; writing it is the explicit acknowledgement that the remaining cases are intentionally ignored.
 
-**Exhaustiveness is a check over declared members, not over values.** Because
-[conversion into an enum is unchecked](#non-member-values), a subject may hold a
-value that names no member and so matches no case. A switch whose cases do not
-match runs no case and falls through to the statement after it — the same thing
-a value switch with no matching case and no default does. This is defined
-behavior, not a gap, but it means a member-complete switch is silently a no-op
-for such a value:
+**Exhaustiveness is a check over declared members, not over values.** Because [conversion into an enum is unchecked](#non-member-values), a subject may hold a value that names no member and so matches no case. A switch whose cases do not match runs no case and falls through to the statement after it — the same thing a value switch with no matching case and no default does. This is defined behavior, not a gap, but it means a member-complete switch is silently a no-op for such a value:
 
 ```odin
 switch (Foo(200)) {
@@ -4103,10 +3919,7 @@ case .C: fmt.println("C");
 // nothing runs, and control continues here
 ```
 
-A switch over a value from outside the program should write `case:` and handle
-the unexpected value there. A variant switch does not have this problem: a
-union's tag is written only by the language, so covering every variant covers
-every value.
+A switch over a value from outside the program should write `case:` and handle the unexpected value there. A variant switch does not have this problem: a union's tag is written only by the language, so covering every variant covers every value.
 
 ### defer statement
 
@@ -4136,9 +3949,7 @@ main :: proc() {
 }
 ```
 
-A `defer` statement can defer a complete block or an `if` statement. For a
-deferred `if`, the condition is evaluated when the deferred action runs, not
-when the `defer` is registered:
+A `defer` statement can defer a complete block or an `if` statement. For a deferred `if`, the condition is evaluated when the deferred action runs, not when the `defer` is registered:
 
 ```odin
 {
@@ -4154,8 +3965,7 @@ when the `defer` is registered:
 }
 ```
 
-A deferred operation that returns a `Result` must handle that result within the
-deferred action. It cannot propagate failure with `or_return`:
+A deferred operation that returns a `Result` must handle that result within the deferred action. It cannot propagate failure with `or_return`:
 
 ```odin
 read_file :: proc() -> Result(Unit, io.Error) {
@@ -4171,9 +3981,7 @@ read_file :: proc() -> Result(Unit, io.Error) {
 }
 ```
 
-`file` is a managed local, so its `drop` closes any still-live handle on scope
-exit. The explicit close above observes a close failure; reporting that failure
-does not replace the procedure's return value.
+`file` is a managed local, so its `drop` closes any still-live handle on scope exit. The explicit close above observes a close failure; reporting that failure does not replace the procedure's return value.
 
 Defer cannot change a procedure's named return values, since it runs after they have been returned:
 
@@ -4330,7 +4138,7 @@ An ordinary `value: T` parameter borrows a managed owner and is not a copy site.
 
 ```text
 warning: this binding copies 8192 bytes from `source`
-note: the copy could not be elided
+note: the copy could not be elided 
 help: use `move(source)` if `source` is no longer needed
 help: take a pointer or `shared(T)` if the two names should share one value
 ```
@@ -4370,29 +4178,11 @@ process_owned(move(numbers));
 
 The written form therefore also selects, as it does for a [consuming receiver](#methods-and-abstractions): a candidate whose parameter is `move` is reachable only from a written `move(expr)`. The reverse is not a mismatch — `move(expr)` into an ordinary value parameter transfers ownership instead of cloning into it — but it is the weaker match, so a written transfer picks the consuming overload wherever both exist.
 
-`move(x)` is an [expression](#assignment-statements) that produces a value,
-writes the inert representation to a lexical `x`, and marks it dead; it is
-equally usable in an assignment or a `return`. It cannot target static-duration
-storage. `inout x` is not an expression and produces no value; it selects a
-parameter mode and may appear only in an argument position, in a procedure
-[result](#inout-results) — of which an
-[`operator([])` overload](#indexing-and-slicing) is the common case — and where
-a mutable receiver is
-passed. Method-call syntax supplies an `inout` marker implicitly for its
-receiver: `numbers.sort()` may call an `inout self` method with no marker before
-the receiver — the one place call-site mode visibility yields to method syntax,
-and it yields only for a borrow that ends with the call. A [consuming
-receiver](#receiver-forms) is written `move(value).method()` like any other
-transfer, because it leaves the source dead. Non-receiver arguments get no
-exception at all. See [Borrows and lifetimes](#borrows-and-lifetimes) for the
-complete rule.
+`move(x)` is an [expression](#assignment-statements) that produces a value, writes the inert representation to a lexical `x`, and marks it dead; it is equally usable in an assignment or a `return`. It cannot target static-duration storage. `inout x` is not an expression and produces no value; it selects a parameter mode and may appear only in an argument position, in a procedure [result](#inout-results) — of which an [`operator([])` overload](#indexing-and-slicing) is the common case — and where a mutable receiver is passed. Method-call syntax supplies an `inout` marker implicitly for its receiver: `numbers.sort()` may call an `inout self` method with no marker before the receiver — the one place call-site mode visibility yields to method syntax, and it yields only for a borrow that ends with the call. A [consuming receiver](#receiver-forms) is written `move(value).method()` like any other transfer, because it leaves the source dead. Non-receiver arguments get no exception at all. See [Borrows and lifetimes](#borrows-and-lifetimes) for the complete rule.
 
 #### Local copies of parameters
 
-An immutable parameter can be copied into a mutable local with a different name,
-subject to the type's ordinary copy rules. Modifying the local binding does not
-modify the caller's binding. An `inout` parameter instead permits modifying the
-caller's variable directly.
+An immutable parameter can be copied into a mutable local with a different name, subject to the type's ordinary copy rules. Modifying the local binding does not modify the caller's binding. An `inout` parameter instead permits modifying the caller's variable directly.
 
 ```odin
 foo :: proc(x: int) {
@@ -4428,9 +4218,7 @@ fmt.println(sum(..odds));        // 9, passing a slice as varargs
 
 A procedure returns at most one value. `Results` is one `Result_Type`, never a list, and the result is anonymous — there is no name to fill in and no result local to assign. A procedure with a result must `return expression;` on every path that leaves it; a bare `return;` there is an error.
 
-To hand back several values, return one [anonymous
-record](#anonymous-records) and [destructure](#destructuring) it at the call
-site:
+To hand back several values, return one [anonymous record](#anonymous-records) and [destructure](#destructuring) it at the call site:
 
 ```odin
 swap :: proc(x, y: int) -> (first: int, second: int) {
@@ -4444,8 +4232,7 @@ The parenthesised result spelling is therefore one record type, at any arity. An
 
 #### `inout` results
 
-A result may be declared `inout T`. The procedure then returns a **mutable borrow of a place** rather than a value, and the corresponding `return` expression is written `return inout place`. Any procedure may declare one;
-[`operator([])`](#indexing-and-slicing) is the common case rather than the only one, and it is what makes `grid[3, 2] = 1.0` and `&grid[3, 2]` work.
+A result may be declared `inout T`. The procedure then returns a **mutable borrow of a place** rather than a value, and the corresponding `return` expression is written `return inout place`. Any procedure may declare one; [`operator([])`](#indexing-and-slicing) is the common case rather than the only one, and it is what makes `grid[3, 2] = 1.0` and `&grid[3, 2]` work.
 
 ```odin
 pick :: proc(xs: inout [4]int, index: int) -> inout int {
@@ -4459,11 +4246,7 @@ pointer^ = 99;                      // writes `values[2]`
 
 The returned expression must denote an assignable place of exactly the declared type; there is no result conversion, and a value expression is rejected. A call whose result is `inout T` is itself a place: it may be assigned to, have its address taken, and be passed as an `inout` argument. It is not a first-class reference type — the mode may be written on a result, never on a variable, field, or container element.
 
-An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and
-its lifetime follows exactly the rules a returned `^T` follows under
-[Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries):
-it derives root provenance from the procedure's `inout` parameters, `inout` receiver, and other borrowed arguments, or from an allocation or static root.
-An ordinary `value: T` parameter is a callee-local binding, so a place projected out of one carries no caller provenance and the result cannot outlive the call expression.
+An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and its lifetime follows exactly the rules a returned `^T` follows under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries): it derives root provenance from the procedure's `inout` parameters, `inout` receiver, and other borrowed arguments, or from an allocation or static root. An ordinary `value: T` parameter is a callee-local binding, so a place projected out of one carries no caller provenance and the result cannot outlive the call expression.
 
 ```odin
 escape :: proc() -> inout int {
@@ -4472,8 +4255,7 @@ escape :: proc() -> inout int {
 }
 ```
 
-Because the borrow is mutable, the caller's root is exclusively loaned for as long as any copy of the result is live, under [the one
-rule](#capabilities-and-the-one-rule).
+Because the borrow is mutable, the caller's root is exclusively loaned for as long as any copy of the result is live, under [the one rule](#capabilities-and-the-one-rule).
 
 #### Named arguments
 
@@ -4505,27 +4287,15 @@ window1 := create_window("Title1") or_return;
 window2 := create_window(title="Title1", width=640, height=360) or_return;
 ```
 
-An input parameter's default is an ordinary expression, not necessarily a
-compile-time-known value. The expression is evaluated once for each call that
-omits that argument; it is not evaluated when the caller supplies the
-argument. Names in the expression are resolved in the lexical scope of the
-procedure declaration.
+An input parameter's default is an ordinary expression, not necessarily a compile-time-known value. The expression is evaluated once for each call that omits that argument; it is not evaluated when the caller supplies the argument. Names in the expression are resolved in the lexical scope of the procedure declaration.
 
-A default may additionally reference `self` and ordinary parameters declared to
-its left. It may not reference its own parameter or any parameter to its right,
-even when a later parameter is supplied by name at a particular call. This makes
-every referenced parameter initialized before the default is evaluated and
-keeps the meaning independent of the caller's argument ordering. `$` parameters
-are compile-time values and may be referenced when they are declared to the
-left under the same rule.
+A default may additionally reference `self` and ordinary parameters declared to its left. It may not reference its own parameter or any parameter to its right, even when a later parameter is supplied by name at a particular call. This makes every referenced parameter initialized before the default is evaluated and keeps the meaning independent of the caller's argument ordering. `$` parameters are compile-time values and may be referenced when they are declared to the left under the same rule.
 
 Only ordinary value parameters may have defaults. An `inout` parameter needs a caller-owned place, a `move` parameter must show the ownership transfer at the call site, and a variadic parameter is supplied by its argument sequence; defaults on any of those three forms are therefore rejected.
 
 Defaults belong to a named declaration, not its procedure type. A call to a directly named procedure, method, or procedure group may omit arguments and uses that declaration's defaults; a call through a procedure value (a callback, or any expression typed only as a procedure type) must supply every non-variadic parameter. This is why defaults do not participate in procedure-type compatibility.
 
-Allocator-taking procedures conventionally default to the program provider. The
-provider implementation is selected once by the final build, while its returned
-`Allocator` remains an ordinary runtime value:
+Allocator-taking procedures conventionally default to the program provider. The provider implementation is selected once by the final build, while its returned `Allocator` remains an ordinary runtime value:
 
 ```odin
 read_file :: proc(
@@ -4537,9 +4307,7 @@ data := files.read_file("data.bin") or_return;
 scratch_data := files.read_file("scratch.bin", allocator=scratch) or_return;
 ```
 
-The compiler-provided [`caller_location()`](#caller_location) expression is also
-valid as a default and denotes the source location of the call. Defaults exist only for parameters; a result is anonymous, so there is no result
-local to give one.
+The compiler-provided [`caller_location()`](#caller_location) expression is also valid as a default and denotes the source location of the call. Defaults exist only for parameters; a result is anonymous, so there is no result local to give one.
 
 #### Explicit procedure overloading
 
@@ -4552,8 +4320,7 @@ int_to_string  :: proc(i: int)  -> string {...};
 to_string :: proc{bool_to_string, int_to_string};
 ```
 
-Each member retains its ordinary name and may be called directly. A call through the group uses the [overload-resolution rules](#operator-lookup-and-overload-resolution). An unresolved tie is
-a compile-time error.
+Each member retains its ordinary name and may be called directly. A call through the group uses the [overload-resolution rules](#operator-lookup-and-overload-resolution). An unresolved tie is a compile-time error.
 
 ```odin
 foo :: proc{
@@ -4568,12 +4335,7 @@ foo :: proc{
 
 Generics let a procedure or data type bind compile-time type or value parameters and use them throughout its definition.
 
-The `$` prefix always introduces a specialization-time input or pattern name. It
-is used by explicit generic parameters, inferred type-shape parameters, and
-static `foreach` bindings. It is required at the binding site and is not written
-when the bound name is subsequently used. A computed local result uses the
-ordinary constant spelling `name :: expression`; `$` is not a second constant
-declaration operator.
+The `$` prefix always introduces a specialization-time input or pattern name. It is used by explicit generic parameters, inferred type-shape parameters, and static `foreach` bindings. It is required at the binding site and is not written when the bound name is subsequently used. A computed local result uses the ordinary constant spelling `name :: expression`; `$` is not a second constant declaration operator.
 
 Generics are compile-time constructs and are **not part of an ABI**. A generic procedure or type has no runtime representation before instantiation. It cannot have `@(export)`, use a foreign [calling convention](#calling-conventions), occur in a `foreign` block, or be stored in a procedure value.
 
@@ -4686,6 +4448,7 @@ Table_Slot :: struct($Key, $Value: type) {
 	key:      Key,
 	value:    Value,
 }
+
 Table :: struct($Key, $Value: type) {
 	count:     int,
 	allocator: mem.Allocator,
@@ -4804,11 +4567,9 @@ Loke checks the lifetime of locally visible borrows. The model is based on **sto
 
 ### Storage roots and borrow carriers
 
-Every ordinary variable and value temporary owns its inline storage. It is a storage root for borrows of that storage. A root may additionally own a backing allocation or another resource, as a dynamic array or `File` does, but that is a separate lifecycle property. An allocator-created allocation is also a storage
-root even though it is reached through a pointer.
+Every ordinary variable and value temporary owns its inline storage. It is a storage root for borrows of that storage. A root may additionally own a backing allocation or another resource, as a dynamic array or `File` does, but that is a separate lifecycle property. An allocator-created allocation is also a storage root even though it is reached through a pointer.
 
-Cleanup policy does not change which value is the root. A borrow of an
-automatic owner and a borrow of one that will be forgotten are checked borrows in exactly the same way — and forgetting an owner invalidates its borrows just as dropping it would.
+Cleanup policy does not change which value is the root. A borrow of an automatic owner and a borrow of one that will be forgotten are checked borrows in exactly the same way — and forgetting an owner invalidates its borrows just as dropping it would.
 
 A **borrow carrier** is a value that refers to another root without owning that root. The built-in carriers are:
 
@@ -4819,14 +4580,12 @@ A **borrow carrier** is a value that refers to another root without owning that 
 - default and `inout` parameter access paths for the duration of a call;
 - an [`inout` result](#inout-results), a mutable borrow returned to the caller.
 
-Copying a borrow carrier copies the view and its root provenance, never the pointee.
-It creates no cleanup obligation. The carrier variable owns only its own pointer, length, or witness-table bits.
+Copying a borrow carrier copies the view and its root provenance, never the pointee. It creates no cleanup obligation. The carrier variable owns only its own pointer, length, or witness-table bits.
 
 Root provenance is compile-time metadata, not part of a value's layout or ABI. It identifies the root and the capability through which it is accessed.
 The following operations preserve root provenance:
 
-- `&place` creates a checked immutable `^T` borrow of the root containing
-  `place`, and `&mut place` an exclusive `^mut T` one;
+- `&place` creates a checked immutable `^T` borrow of the root containing `place`, and `&mut place` an exclusive `^mut T` one;
 - slicing creates a checked `[]T` or `[]mut T` borrow of the sliced root;
 - conversion to a built-in view and compiler-known iteration preserve the source root;
 - a borrow returned from a Loke procedure derives root provenance from its borrowed arguments as described below;
@@ -4847,34 +4606,15 @@ These are not two names for the same property: root provenance answers "which st
 view --borrows--> value --backed by--> R
 ```
 
-The root analysis prevents `view` from outliving, conflicting with, or surviving
-invalidation of `value`. The region analysis prevents `value` from outliving or
-surviving reset of `R`. Resetting `R` is rejected while either the owner or a
-checked borrow transitively depending on it is live. Passing either analysis
-does not waive the other.
+The root analysis prevents `view` from outliving, conflicting with, or surviving invalidation of `value`. The region analysis prevents `value` from outliving or surviving reset of `R`. Resetting `R` is rejected while either the owner or a checked borrow transitively depending on it is live. Passing either analysis does not waive the other.
 
 Operations propagate the two dependencies differently:
 
-- Borrowing an owner creates a root dependency on that owner; its region
-  dependency is inherited transitively rather than copied onto the borrow as a
-  second ownership claim.
-- Moving an owner is forbidden while one of its checked borrows is live. The
-  move transfers the owner's region dependency to the destination, but does not
-  make the destination borrow the source variable.
-- Cloning creates a new owner. An allocating clone receives the destination
-  allocator's region provenance; a documented logical clone that retains shared
-  storage retains that allocation's region provenance.
-- Returning a borrow propagates root provenance from borrowed parameters.
-  Returning a moved owner propagates region provenance from the moved value.
-  Constructing an owning result with an allocator parameter propagates that
-  allocator's region provenance. These cases are recorded separately in the
-  procedure's result-provenance summary.
-- Storing a borrow inside a record, union, or container preserves its root
-  provenance along that value's carrier path. Converting it through
-  `core:unsafe`, or storing it in a `rawptr` or `[^]T` field, loses checked root
-  provenance as described under [What is not checked](#what-is-not-checked).
-  Losing provenance does not extend the root or allocator region and therefore
-  cannot make an otherwise invalid lifetime safe.
+- Borrowing an owner creates a root dependency on that owner; its region dependency is inherited transitively rather than copied onto the borrow as a second ownership claim.
+- Moving an owner is forbidden while one of its checked borrows is live. The move transfers the owner's region dependency to the destination, but does not make the destination borrow the source variable.
+- Cloning creates a new owner. An allocating clone receives the destination allocator's region provenance; a documented logical clone that retains shared storage retains that allocation's region provenance.
+- Returning a borrow propagates root provenance from borrowed parameters. Returning a moved owner propagates region provenance from the moved value. Constructing an owning result with an allocator parameter propagates that allocator's region provenance. These cases are recorded separately in the procedure's result-provenance summary.
+- Storing a borrow inside a record, union, or container preserves its root provenance along that value's carrier path. Converting it through `core:unsafe`, or storing it in a `rawptr` or `[^]T` field, loses checked root provenance as described under [What is not checked](#what-is-not-checked). Losing provenance does not extend the root or allocator region and therefore cannot make an otherwise invalid lifetime safe.
 
 For example, the two rejected returns below fail for different reasons:
 
@@ -4898,24 +4638,14 @@ The pointee's cleanup policy does not decide whether a pointer is a borrow: a `&
 
 #### Values that contain borrows
 
-Putting a borrow inside a value does not discard what the borrow owes. A struct, union, fixed array, or container whose fields reach a built-in carrier *carries* those borrows: `Holder :: struct { view: []int }` is checked wherever a bare
-`[]int` is, and `return Holder{local[:]}` is rejected for the same reason
-`return local[:]` is. An `Option` or a `Result` is a union like any other, so
-wrapping a borrow in one keeps it, and unwrapping it — a case binding,
-`or_else`, `or_return` — hands the same borrow on.
+Putting a borrow inside a value does not discard what the borrow owes. A struct, union, fixed array, or container whose fields reach a built-in carrier *carries* those borrows: `Holder :: struct { view: []int }` is checked wherever a bare `[]int` is, and `return Holder{local[:]}` is rejected for the same reason `return local[:]` is. An `Option` or a `Result` is a union like any other, so wrapping a borrow in one keeps it, and unwrapping it — a case binding, `or_else`, `or_return` — hands the same borrow on.
 
-The compiler enumerates a type's **carrier paths**: the projection paths from the value to each built-in carrier reachable inside it. A record contributes one path per field, a union one per alternative, a small fixed array one path per element,
-a dynamic array one wildcard element path standing for every element, and a map separate key and value paths under an entry step. A map's key set is not part of its type the way an array's length is, so the type provides a small number of entries and each procedure body decides which of its constant keys uses which. Each path
+The compiler enumerates a type's **carrier paths**: the projection paths from the value to each built-in carrier reachable inside it. A record contributes one path per field, a union one per alternative, a small fixed array one path per element, a dynamic array one wildcard element path standing for every element, and a map separate key and value paths under an entry step. A map's key set is not part of its type the way an array's length is, so the type provides a small number of entries and each procedure body decides which of its constant keys uses which. Each path
 keeps its own capability, so a record holding one `[]int` and one `[]mut int` has no single aggregate capability. A field that reaches no carrier contributes nothing, so a recursive type built from scalars enumerates to nothing at all.
 
-The enumeration is bounded: it stops at a fixed depth, a fixed array longer than a small limit contributes one wildcard element path rather than one per element,
-a map whose entry would be wide keeps a single wildcard entry, and a type with more paths than the limit collapses to one path for the whole value. An unknown index or key, and a constant key past the entry limit, use a wildcard step, which
-overlaps every element or entry: such a read sees all of them and such a write joins into all of them rather than replacing any. A cut path stands for every carrier beneath it and joins what they hold, so a limit costs precision and
-never a check.
+The enumeration is bounded: it stops at a fixed depth, a fixed array longer than a small limit contributes one wildcard element path rather than one per element, a map whose entry would be wide keeps a single wildcard entry, and a type with more paths than the limit collapses to one path for the whole value. An unknown index or key, and a constant key past the entry limit, use a wildcard step, which overlaps every element or entry: such a read sees all of them and such a write joins into all of them rather than replacing any. A cut path stands for every carrier beneath it and joins what they hold, so a limit costs precision and never a check.
 
-A user record is still not a new *carrier*; it is a value that contains carriers.
-Version 1 has no user-defined provenance annotation, so a record of `rawptr` or
-`[^]T` fields carries nothing to check, and one reconstructed from storage the compiler does not track carries unknown provenance rather than none.
+A user record is still not a new *carrier*; it is a value that contains carriers. Version 1 has no user-defined provenance annotation, so a record of `rawptr` or `[^]T` fields carries nothing to check, and one reconstructed from storage the compiler does not track carries unknown provenance rather than none.
 
 ### Capabilities and the one rule
 
@@ -4936,9 +4666,7 @@ A mutable borrow permits reads and writes through that borrow. While one is live
 
 `inout T` remains a distinct mode rather than a spelling of `^mut T`: it is non-null, bound to the call, marked at the call site, and may invalidate the whole owner it names. An interior `^mut T` or `[]mut T` may not.
 
-`[^]T` stays outside this axis. It is unchecked and always mutable. Forming one
-from checked storage normally uses `unsafe.raw_data`; conversions between it and
-checked-pointer syntax must always be written explicitly.
+`[^]T` stays outside this axis. It is unchecked and always mutable. Forming one from checked storage normally uses `unsafe.raw_data`; conversions between it and checked-pointer syntax must always be written explicitly.
 
 > A checked borrow may be used only while its root is live, and every access to
 > the root while the borrow is live must be compatible with the borrow's
@@ -4946,11 +4674,9 @@ checked-pointer syntax must always be written explicitly.
 
 #### Weakening and read-only reborrows
 
-A mutable carrier implicitly weakens to the read-only carrier of the same shape.
-The reverse never happens: a read-only carrier does not strengthen, whatever the storage behind it was declared as.
+A mutable carrier implicitly weakens to the read-only carrier of the same shape. The reverse never happens: a read-only carrier does not strengthen, whatever the storage behind it was declared as.
 
-Where the weakening happens decides what it costs. A **fresh** borrow — `&mut x`
-written straight into a `^T`, or `xs[0:2]` into a `[]T` — is simply created read-only; the destination settles a capability the borrowing expression never committed to, and nothing is suspended.
+Where the weakening happens decides what it costs. A **fresh** borrow — `&mut x` written straight into a `^T`, or `xs[0:2]` into a `[]T` — is simply created read-only; the destination settles a capability the borrowing expression never committed to, and nothing is suspended.
 
 Weakening an **existing** mutable carrier is a read-only reborrow of it. While the reborrow is live, the carrier it was taken from is suspended and may not be used; after the reborrow's last use, the source is usable again. Without this a mutable alias could write behind the reborrow's back:
 
@@ -4962,27 +4688,21 @@ source[0] = 50;              // ERROR: `source` is suspended here
 fmt.println(reborrow[1]);    // ... because this keeps the reborrow live
 ```
 
-Moving the last use of `reborrow` above the write makes the same program legal.
-The diagnostic names both ends: where the reborrow was taken, and the later use that keeps it live.
+Moving the last use of `reborrow` above the write makes the same program legal. The diagnostic names both ends: where the reborrow was taken, and the later use that keeps it live.
 
 #### Places and overlap
 
 Borrow compatibility is decided for **places**, not only for variable names. A place consists of its storage root and a normalized projection path through fields, indices, ranges, and dereferences. Places with different roots do not overlap. Within one root, a path overlaps itself and every prefix or descendant of itself.
 
-The compiler may prove distinct struct fields and distinct constant fixed-array indices or ranges disjoint. It composes nested slices and reslices before making that comparison. Union fields, dynamic indices or ranges, opaque dereferences, and user-defined indexing or slicing are conservative projections: they overlap every path that might designate the same storage. A checked pointer whose source
-is known retains the possible root and projection paths from that source.
+The compiler may prove distinct struct fields and distinct constant fixed-array indices or ranges disjoint. It composes nested slices and reslices before making that comparison. Union fields, dynamic indices or ranges, opaque dereferences, and user-defined indexing or slicing are conservative projections: they overlap every path that might designate the same storage. A checked pointer whose source is known retains the possible root and projection paths from that source.
 
-An operation on a complete root or container header overlaps every descendant.
-Consequently, proving two element paths disjoint can permit simultaneous loans of those elements, but cannot permit moving, dropping, replacing, freeing, or otherwise invalidating their common root while either loan is live.
+An operation on a complete root or container header overlaps every descendant. Consequently, proving two element paths disjoint can permit simultaneous loans of those elements, but cannot permit moving, dropping, replacing, freeing, or otherwise invalidating their common root while either loan is live.
 
-A value taken out of a container carries what that element held, not a borrow of the container it came from: `pop`, `remove`, `remove_unordered`, and a map's
-`remove` hand back the element's own dependencies. The removal still invalidates borrows of the container's storage, which is a separate question from what the removed value refers to.
+A value taken out of a container carries what that element held, not a borrow of the container it came from: `pop`, `remove`, `remove_unordered`, and a map's `remove` hand back the element's own dependencies. The removal still invalidates borrows of the container's storage, which is a separate question from what the removed value refers to.
 
-Moving, dropping, freeing, fully assigning, or exchanging a root invalidates borrows of its previous value. Container operations such as `append`, `resize`, `reserve`, `shrink`, `clear`, `remove`, map insertion, and any user operation whose `self` parameter is `inout` also invalidate element and view borrows. Reallocation is
-a common reason, but changing which logical elements exist is sufficient.
+Moving, dropping, freeing, fully assigning, or exchanging a root invalidates borrows of its previous value. Container operations such as `append`, `resize`, `reserve`, `shrink`, `clear`, `remove`, map insertion, and any user operation whose `self` parameter is `inout` also invalidate element and view borrows. Reallocation is a common reason, but changing which logical elements exist is sufficient.
 
-A borrow is live from its creation to its last use within the procedure body.
-Copies of a borrow extend the same loan to the last use of any copy. A borrow that is never used again stops constraining its root immediately.
+A borrow is live from its creation to its last use within the procedure body. Copies of a borrow extend the same loan to the last use of any copy. A borrow that is never used again stops constraining its root immediately.
 
 ```odin
 numbers := [dynamic]int{1, 2, 3};
@@ -5036,44 +4756,23 @@ fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 
 A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
 
-The default parameter binding itself is a callee-local read-only value. Taking `&parameter` borrows that local and cannot produce a returned pointer. An
-`inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root, and so does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The two differ only in capability — the receiver's loan is read-only and invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result summary below records; a call through a procedure value, which has no summary, conservatively derives
-from all of them.
+The default parameter binding itself is a callee-local read-only value. Taking `&parameter` borrows that local and cannot produce a returned pointer. An `inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root, and so does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The two differ only in capability — the receiver's loan is read-only and invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result summary below records; a call through a procedure value, which has no summary, conservatively derives from all of them.
 
-A checked pointer to an allocation root created by `new` or `new_clone` may be
-returned because the allocation is not callee-local storage. The pointer's root
-provenance and the allocation root's region provenance follow the result. This transfers release responsibility
-by API convention, not by making `^T` an owning type; the compiler does not
-require every manually allocated root to be freed.
+A checked pointer to an allocation root created by `new` or `new_clone` may be returned because the allocation is not callee-local storage. The pointer's root provenance and the allocation root's region provenance follow the result. This transfers release responsibility by API convention, not by making `^T` an owning type; the compiler does not require every manually allocated root to be freed.
 
-For a direct call to a named Loke declaration or generic instantiation, the
-compiler records a result-provenance summary with the declaration. For each
-result it records two independent components when applicable:
+For a direct call to a named Loke declaration or generic instantiation, the compiler records a result-provenance summary with the declaration. For each result it records two independent components when applicable:
 
-- root provenance: borrowed parameters, static storage, `thread_local` storage,
-  a fresh allocation root, or unknown root provenance;
-- region provenance: allocator parameters, the region dependency of a moved or
-  shared owner, a non-resettable static region, or unknown region provenance.
+- root provenance: borrowed parameters, static storage, `thread_local` storage, a fresh allocation root, or unknown root provenance;
+- region provenance: allocator parameters, the region dependency of a moved or shared owner, a non-resettable static region, or unknown region provenance.
 
 Where a parameter reaches a borrow through its own
-[carrier paths](#values-that-contain-borrows), the summary records which of those
-paths the result may name, so a helper returning one field of a record argument
-substitutes that field's root rather than everything the argument holds.
+[carrier paths](#values-that-contain-borrows), the summary records which of those paths the result may name, so a helper returning one field of a record argument substitutes that field's root rather than everything the argument holds.
 
-At a direct call, the compiler substitutes the actual argument roots and
-allocator regions into the corresponding component. The summary is compile-time
-declaration metadata, is emitted for cross-package checking, and does not change
-the runtime ABI. Its meaning is transitive across direct calls and independent
-of declaration order, including forward and mutually recursive declarations.
-Each concrete generic instantiation has its own summary.
+At a direct call, the compiler substitutes the actual argument roots and allocator regions into the corresponding component. The summary is compile-time declaration metadata, is emitted for cross-package checking, and does not change the runtime ABI. Its meaning is transitive across direct calls and independent of declaration order, including forward and mutually recursive declarations.Each concrete generic instantiation has its own summary.
 
 An ordinary procedure value carries no such metadata. At a call through one, a returned pointer, slice, view, or [`inout` result](#inout-results) is conservatively derived from every borrowed argument the type does not exclude with [`@(escape=none)`](#escapelevel) (unknown root provenance if there is none), and an owning result retains the region provenance of every moved owner and allocator argument (unknown if none). Fresh-allocation root provenance is never preserved, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through indirect calls uses a move-only resource wrapper, not bare `^T`. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
 
-Allocator-wide invalidation is the one effect propagated through arbitrary
-ordinary procedure wrappers. A parameter marked
-[`@(allocator_reset)`](#allocator_reset) states that a successful call may end
-every allocation root in that allocator region. At the call, the compiler
-rejects the reset while a value or checked borrow from the region is live.
+Allocator-wide invalidation is the one effect propagated through arbitrary ordinary procedure wrappers. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may end every allocation root in that allocator region. At the call, the compiler rejects the reset while a value or checked borrow from the region is live.
 
 #### Escape levels
 
@@ -5087,15 +4786,11 @@ What a call may keep of one argument is written on the parameter as
 | `stored` | it may also be retained in storage the caller owns |
 | `static` | it may also be retained in storage that outlives the process |
 
-An unwritten parameter is `result`, so an existing signature keeps its meaning.
-The level is an upper bound on the body: a procedure whose result borrows a parameter written `@(escape=none)`, or which retains a parameter beyond its declared level, is rejected at the parameter's declaration.
+An unwritten parameter is `result`, so an existing signature keeps its meaning. The level is an upper bound on the body: a procedure whose result borrows a parameter written `@(escape=none)`, or which retains a parameter beyond its declared level, is rejected at the parameter's declaration.
 
-The level belongs to the procedure type, as [`@(allocator_reset)`](#allocator_reset)
-does, which is what makes it useful where there is no body to infer from. A `none` parameter keeps a scratch argument out of the result of a call through a procedure value, a procedure-typed parameter, or a generic instantiation.
+The level belongs to the procedure type, as [`@(allocator_reset)`](#allocator_reset) does, which is what makes it useful where there is no body to infer from. A `none` parameter keeps a scratch argument out of the result of a call through a procedure value, a procedure-typed parameter, or a generic instantiation.
 
-The levels are part of the type's identity, so two procedure types differing only in a level are different types — but the difference orders one way. A callee may be assigned, passed, or returned as a procedure type whose levels are the same or
-*higher* than its own, because it promises at least what that type asks; the
-reverse is a type mismatch and needs no separate rule. What governs a call is always the type of the value called, so a procedure stored in a weaker type is called under the weaker promise, whatever its own body was written to keep.
+The levels are part of the type's identity, so two procedure types differing only in a level are different types — but the difference orders one way. A callee may be assigned, passed, or returned as a procedure type whose levels are the same or *higher* than its own, because it promises at least what that type asks; the reverse is a type mismatch and needs no separate rule. What governs a call is always the type of the value called, so a procedure stored in a weaker type is called under the weaker promise, whatever its own body was written to keep.
 
 `@(escape=...)` describes what a call keeps of a *borrow*. Writing it on a parameter whose type reaches no borrow carrier is an error rather than a no-op.
 
@@ -5109,37 +4804,13 @@ A borrow written into storage that outlives the statement writing it is
 - storage the caller owns, reached through an `inout` parameter, or through a
   `^mut T` or `[]mut T` the call received.
 
-A destination is a place, not a name: a field of a global, a container element,
-and a write through a pointer are all destinations. Where the place is reached
-through a carrier — `p^.view`, `d[0].view` — the storage it names is whatever that
-carrier borrows, so both the question and the borrow reach every root the carrier
-may point at. What is written lands where the pointer points, not in the pointer,
-and takes the destination's own capability as any other assignment does.
+A destination is a place, not a name: a field of a global, a container element, and a write through a pointer are all destinations. Where the place is reached through a carrier — `p^.view`, `d[0].view` — the storage it names is whatever that carrier borrows, so both the question and the borrow reach every root the carrier may point at. What is written lands where the pointer points, not in the pointer, and takes the destination's own capability as any other assignment does.
 
-What a root proves depends on where it lives. A local, a value temporary, or a
-literal's hidden array ends with the frame and satisfies none of the three.
-Static and materialized storage satisfies all of them. `thread_local` storage
-satisfies a thread-duration destination and not a process-duration one. An
-allocation lives until it is released, which the release rules already police, so
-retaining one is ordinary rather than proof of anything, and unknown provenance
-proves nothing.
+What a root proves depends on where it lives. A local, a value temporary, or a literal's hidden array ends with the frame and satisfies none of the three. Static and materialized storage satisfies all of them. `thread_local` storage satisfies a thread-duration destination and not a process-duration one. An allocation lives until it is released, which the release rules already police, so retaining one is ordinary rather than proof of anything, and unknown provenance proves nothing.
 
-A parameter is answered by its written level and by nothing else, because only
-the caller knows how long the storage behind it lives. Retaining one in
-caller-owned storage requires `@(escape=stored)`, and in static or thread storage
-`@(escape=static)`. The body is checked against the level it declares, and the
-call site is checked against the argument actually supplied.
+A parameter is answered by its written level and by nothing else, because only the caller knows how long the storage behind it lives. Retaining one in caller-owned storage requires `@(escape=stored)`, and in static or thread storage `@(escape=static)`. The body is checked against the level it declares, and the call site is checked against the argument actually supplied.
 
-At a call, a parameter written `stored` or `static` is treated as the assignment
-the callee is permitted to make: the argument's borrows reach every destination
-the call can write — an `inout` parameter or receiver, or a mutable carrier whose
-pointee or element could hold the borrow — and each of those asks the same
-question the assignment would. A destination that cannot hold a borrow at all,
-such as `inout int`, is not one. A destination in static or thread storage
-needs a source that outlives it; a destination the caller merely passes on needs
-the caller's own parameter to carry the contract; and a destination that is one of
-the caller's own locals needs no contract at all, because the borrow simply
-travels there and using it after its root has ended is already an error:
+At a call, a parameter written `stored` or `static` is treated as the assignment the callee is permitted to make: the argument's borrows reach every destination the call can write — an `inout` parameter or receiver, or a mutable carrier whose pointee or element could hold the borrow — and each of those asks the same question the assignment would. A destination that cannot hold a borrow at all, such as `inout int`, is not one. A destination in static or thread storage needs a source that outlives it; a destination the caller merely passes on needs the caller's own parameter to carry the contract; and a destination that is one of the caller's own locals needs no contract at all, because the borrow simply travels there and using it after its root has ended is already an error:
 
 ```odin
 keep :: proc(destination: inout Holder, @(escape=stored) values: []int) {
@@ -5154,14 +4825,11 @@ held: Holder;
 fmt.println(held.view[0]); // ERROR: `numbers` has ended
 ```
 
-Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a
-retention. A root outlives itself.
+Writing a value into its own root, as `self.rest = self.rest[n:]` does, is not a retention. A root outlives itself.
 
 ### What is not checked
 
-The analysis is local to one procedure body, together with the recorded summary and declared levels of the procedures that body calls. Storing a borrow in a record field, container, global, or callback state is part of what it checks; see
-[Values that contain borrows](#values-that-contain-borrows) and
-[Retaining a borrow](#retaining-a-borrow). These cases remain the programmer's responsibility:
+The analysis is local to one procedure body, together with the recorded summary and declared levels of the procedures that body calls. Storing a borrow in a record field, container, global, or callback state is part of what it checks; see [Values that contain borrows](#values-that-contain-borrows) and [Retaining a borrow](#retaining-a-borrow). These cases remain the programmer's responsibility:
 
 - dereferencing `rawptr`, `[^]T`, or a `^T` with unknown provenance;
 - pointers or views manufactured or stripped of provenance through
@@ -5319,16 +4987,10 @@ All declarations in a package are private to that package by default. A package'
 
 **Loke has two visibility levels: package and public.** It has no file-private visibility. The package is the encapsulation boundary. Put code in a separate package when it needs a separate visibility boundary.
 
-Struct fields use the same two levels. A field inherits the default selected by
-the package declaration in its source file and may override that default with
-`@(public)` or `@(private)`. Code in the declaring package may read, write, and
-initialize package-visible fields; importing packages may do so only for public
-fields. Positional aggregate construction does not bypass this rule: an
-initializer that supplies an inaccessible field is rejected. The file-level
-default chooses a field's visibility but does not create file-private access.
+Struct fields use the same two levels. A field inherits the default selected by the package declaration in its source file and may override that default with
+`@(public)` or `@(private)`. Code in the declaring package may read, write, and initialize package-visible fields; importing packages may do so only for public fields. Positional aggregate construction does not bypass this rule: an initializer that supplies an inaccessible field is rejected. The file-level default chooses a field's visibility but does not create file-private access.
 
-One predicate answers this question for reflection descriptors, field reads and
-writes, `offset_of`, and both aggregate literal forms, so no path can reach a field another path hides.
+One predicate answers this question for reflection descriptors, field reads and writes, `offset_of`, and both aggregate literal forms, so no path can reach a field another path hides.
 
 #### Authoring a package
 
@@ -5357,10 +5019,7 @@ true  // unfixed boolean constant equivalent to the expression 0==0
 nil   // unfixed nil value used for certain values
 ```
 
-`---` is declaration syntax with two separate roles: the
-[uninitialized-storage marker](#zero-values) in `x: T = ---`, and the body of a
-[foreign procedure](#foreign-system) that has no Loke body. It is an initializer
-but not an expression, so it cannot be assigned, passed, or used in the inferred
+`---` is declaration syntax with two separate roles: the[uninitialized-storage marker](#zero-values) in `x: T = ---`, and the body of a [foreign procedure](#foreign-system) that has no Loke body. It is an initializer but not an expression, so it cannot be assigned, passed, or used in the inferred
 `x := ---` form, which is rejected.
 
 ### Built-in procedures
@@ -5390,23 +5049,17 @@ For the full list, see the documentation for package `builtin`. The compiler-def
 capacities are receiver members, not built-ins: see
 [Standard customization procedures](#standard-customization-procedures).
 
-`assert` and `panic` execute in the phase of the call that reaches them. In an ordinary runtime call they have their runtime behavior. In a procedure whose result is required at compile time, reaching a failed `assert` or any `panic` produces a compilation diagnostic with the evaluator call stack. `-no-assert` may remove runtime assertions, but it never removes an assertion reached during
-required compile-time evaluation.
+`assert` and `panic` execute in the phase of the call that reaches them. In an ordinary runtime call they have their runtime behavior. In a procedure whose result is required at compile time, reaching a failed `assert` or any `panic` produces a compilation diagnostic with the evaluator call stack. `-no-assert` may remove runtime assertions, but it never removes an assertion reached during required compile-time evaluation.
 
 [`static_assert`](#static_assertboolean) independently requires its operand and check at compile time, even when it appears inside code that otherwise executes at runtime. `static_assert(false, message)` is therefore the compile-time unconditional-failure form. Neither spelling silently changes phase.
 
-`move`, `drop`, and `exchange` operate on a **place** rather than only on values.
-`move` is a keyword and looks like one; `drop` and `exchange` keep call
-spellings but are equally compiler special forms, as described under
-[Managed values and storage](#managed-values-and-storage) and
-[Exchange](#exchange). Every other built-in listed here is an ordinary call.
+`move`, `drop`, and `exchange` operate on a **place** rather than only on values. `move` is a keyword and looks like one; `drop` and `exchange` keep call spellings but are equally compiler special forms, as described under [Managed values and storage](#managed-values-and-storage) and [Exchange](#exchange). Every other built-in listed here is an ordinary call.
 
 ## Error handling
 
 ### Typed fallibility
 
-Absence and failure are **types**, not a trailing result. A procedure that may have no answer returns `Option(T)`; one that may fail returns `Result(T, E)`.
-Both are ordinary [unions](#unions) declared in `base:runtime`, and both are recognised by their *shape* rather than by their names:
+Absence and failure are **types**, not a trailing result. A procedure that may have no answer returns `Option(T)`; one that may fail returns `Result(T, E)`. Both are ordinary [unions](#unions) declared in `base:runtime`, and both are recognised by their *shape* rather than by their names:
 
 ```odin
 Unit :: struct {}
@@ -5419,8 +5072,7 @@ Result :: union($T, $E: type) @(failure=err) { ok: T, err: E }
 
 `Option` designates `none` as both its zero and its failure, so an `Option` has an all-zero "absent" value and participates in the failure protocol. `Result` designates `err` as its failure and requires its results to be handled; it has no zero, because neither arm is one.
 
-A **fallible expression** is one whose type is a union of exactly two variants with `@(failure=name)` written on it. That is the only thing
-[`or_else`](#or_else-expression) and [`or_return`](#or_return-operator) look for, so a user-declared union is a first-class participant:
+A **fallible expression** is one whose type is a union of exactly two variants with `@(failure=name)` written on it. That is the only thing [`or_else`](#or_else-expression) and [`or_return`](#or_return-operator) look for, so a user-declared union is a first-class participant:
 
 ```odin
 Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
@@ -5444,11 +5096,7 @@ A place operand therefore requires a copyable payload: a move-only one must be w
 ### or_else expression
 
 `or_else` is an infix binary operator that supplies a fallback for a
-[fallible expression](#typed-fallibility). The left operand's success variant
-must carry a payload; the fallback must be assignable to that payload type, and
-is evaluated only on the failure path. The result is the payload. Ordinary
-value semantics apply to the fallback: selecting a managed place clones it and
-leaves the place live, while a temporary or `move(x)` transfers ownership.
+[fallible expression](#typed-fallibility). The left operand's success variant must carry a payload; the fallback must be assignable to that payload type, and is evaluated only on the failure path. The result is the payload. Ordinary value semantics apply to the fallback: selecting a managed place clones it and leaves the place live, while a temporary or `move(x)` transfers ownership.
 
 ```odin
 m: map[string]int = {};
@@ -5458,9 +5106,7 @@ i := m.lookup_value("hellope") or_else 123;
 assert(i == 123);
 ```
 
-It applies to every producer of that shape — a container read, a validating
-conversion, an erased extraction, and any procedure returning `Option` or
-`Result`:
+It applies to every producer of that shape — a container read, a validating conversion, an erased extraction, and any procedure returning `Option` or `Result`:
 
 ```odin
 n := numbers.pop() or_else 0;
@@ -5471,30 +5117,17 @@ view: any_view = 42;
 number := view.as(int) or_else 0;
 ```
 
-`or_else` **discards** the failure on both paths. A managed failure payload of a
-temporary is dropped before the fallback is evaluated; a place keeps its own.
-There is no form that binds the failure to a name — code that needs the error
-uses `or_return` or a `switch`.
+`or_else` **discards** the failure on both paths. A managed failure payload of a temporary is dropped before the fallback is evaluated; a place keeps its own. There is no form that binds the failure to a name — code that needs the error uses `or_return` or a `switch`.
 
 ### or_return operator
 
-`or_return` propagates the failure of a [fallible expression](#typed-fallibility)
-out of the enclosing procedure. The operand is evaluated exactly once.
+`or_return` propagates the failure of a [fallible expression](#typed-fallibility) out of the enclosing procedure. The operand is evaluated exactly once.
 
-On success it yields the success payload; a payloadless success yields `Unit`,
-so `or_return` is an expression in every case and no second spelling is needed
-for the no-value one.
+On success it yields the success payload; a payloadless success yields `Unit`, so `or_return` is an expression in every case and no second spelling is needed for the no-value one.
 
-On failure, control returns from the innermost enclosing procedure. That
-procedure's result must itself be a fallible union, and the operand's failure
-payload must be assignable to its failure payload. An assignable conversion that
-creates a borrowed view is also subject to the ordinary return-escape rules: its
-source must outlive the returned view.
+On failure, control returns from the innermost enclosing procedure. That procedure's result must itself be a fallible union, and the operand's failure payload must be assignable to its failure payload. An assignable conversion that creates a borrowed view is also subject to the ordinary return-escape rules: its source must outlive the returned view.
 
-The operand's temporaries are destroyed before the return completes, and the
-ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a
-procedure or inside a deferred statement. A nested procedure propagates only
-from itself, never from its lexical parent.
+The operand's temporaries are destroyed before the return completes, and the ordinary `defer` and cleanup rules run. `or_return` cannot appear outside a procedure or inside a deferred statement. A nested procedure propagates only from itself, never from its lexical parent.
 
 ```odin
 Error_Code :: enum { Something_Bad, Something_Worse, The_Worst }
@@ -5620,14 +5253,9 @@ when (LOKE_LOG_LEVEL <= .Debug) {
 
 `mem.default_allocator()` obtains the selected allocator handle at runtime. A zero-valued managed owner without `via` binds it lazily when first needed; an omitted allocator argument obtains it when the operation begins. Bound owners retain their allocator. See [Allocators](#allocators).
 
-The `core:log` procedures route to the selected logging provider. The build may also select a minimum compiled log level, allowing lower-level calls to be removed entirely. A package that needs a different sink, captured test output, or
-request-specific fields takes an ordinary `Logger` parameter or retains one in a
-state object; there is no scoped or package-local override of the program logger.
+The `core:log` procedures route to the selected logging provider. The build may also select a minimum compiled log level, allowing lower-level calls to be removed entirely. A package that needs a different sink, captured test output, or request-specific fields takes an ordinary `Logger` parameter or retains one in a state object; there is no scoped or package-local override of the program logger.
 
-Only provider *implementation* is selected at build time. Per-request allocators,
-scratch arenas, log fields, trace spans, clocks used for simulation, deadlines,
-cancellation, random-number state, and similar values have runtime identity and
-are passed explicitly.
+Only provider *implementation* is selected at build time. Per-request allocators, scratch arenas, log fields, trace spans, clocks used for simulation, deadlines, cancellation, random-number state, and similar values have runtime identity and are passed explicitly.
 
 ### Explicit runtime environments
 
@@ -5646,8 +5274,7 @@ handle :: proc(env: inout Request_Env, request: Request) -> Response {
 }
 ```
 
-Long-lived subsystems normally retain stable dependencies such as an allocator, logger, or clock in their own record. Short-lived state stays in a request or task environment and is moved explicitly when work is transferred to another thread.
-Nothing is inherited only because one procedure called another.
+Long-lived subsystems normally retain stable dependencies such as an allocator, logger, or clock in their own record. Short-lived state stays in a request or task environment and is moved explicitly when work is transferred to another thread. Nothing is inherited only because one procedure called another.
 
 [Procedure literals do not capture](#procedures), so immediate callbacks take typed state explicitly:
 
@@ -5726,35 +5353,19 @@ An unfreed allocation root whose checked carriers have no later use does not by 
 
 An allocator value has a region identity alongside its allocation procedures and failure policy. Copying it preserves that identity and every allocation records it, letting the compiler recognize that two local allocator values refer to the same region; when it cannot prove them distinct, it conservatively treats the regions as possibly identical. Across a call the identity is propagated through an `@(allocator_reset)` parameter: a procedure that resets an allocator received as a parameter must mark it, and the compiler verifies this transitively. The attribute is part of procedure-type compatibility, so indirect calls preserve the effect.
 
-An owning value also carries compile-time **region provenance**. This provenance
-is not part of its source type or ABI, but the region that supplies its backing
-storage must outlive the value. An owner backed by a region created in the
-current procedure may not be returned, assigned to `static`, `thread_local`, or
-file-scope storage, placed in an escaping aggregate or container, or otherwise
-retained past that region. Moving the owner does not erase this dependency.
+An owning value also carries compile-time **region provenance**. This provenance is not part of its source type or ABI, but the region that supplies its backing storage must outlive the value. An owner backed by a region created in the current procedure may not be returned, assigned to `static`, `thread_local`, or file-scope storage, placed in an escaping aggregate or container, or otherwise retained past that region. Moving the owner does not erase this dependency.
 
-Region provenance is distinct from the root provenance carried by a borrow.
-Their complete composition rule is specified under
-[How root and region provenance compose](#how-root-and-region-provenance-compose).
-This section defines the region half: it constrains owner escape and allocator
-reset, but does not itself grant borrow capabilities or decide whether aliases
+Region provenance is distinct from the root provenance carried by a borrow. Their complete composition rule is specified under [How root and region provenance compose](#how-root-and-region-provenance-compose). This section defines the region half: it constrains owner escape and allocator reset, but does not itself grant borrow capabilities or decide whether aliases
 may overlap.
 
-Procedure checking is conservatively polymorphic over an owning argument's region
-provenance. Result provenance follows these rules:
+Procedure checking is conservatively polymorphic over an owning argument's region provenance. Result provenance follows these rules:
 
-- An owner received through a `move` parameter may be used locally or returned,
-  but not retained in longer-lived storage. A returned owner keeps the moved
-  value's region dependency.
-- Returning an ordinary borrowed managed parameter follows the clone rule under
-  [Parameter semantics](#parameter-semantics-and-abi-lowering). A mutable clone
-  takes the result allocator's region provenance; a shared-storage logical clone
+- An owner received through a `move` parameter may be used locally or returned, but not retained in longer-lived storage. A returned owner keeps the moved value's region dependency.
+- Returning an ordinary borrowed managed parameter follows the clone rule under [Parameter semantics](#parameter-semantics-and-abi-lowering). A mutable clone takes the result allocator's region provenance; a shared-storage logical clone
   keeps the source allocation's provenance.
-- An owning result built with an allocator parameter derives its region
-  provenance from that argument.
+- An owning result built with an allocator parameter derives its region provenance from that argument.
 
-No written lifetime parameter is required. Diagnostics must identify the
-allocator region, the escaping owner, and the shorter-lived region root.
+No written lifetime parameter is required. Diagnostics must identify the allocator region, the escaping owner, and the shorter-lived region root.
 
 For example, returning `bytes` below is rejected because moving the array into result storage would leave it live while scope cleanup destroys its allocator region:
 
@@ -5854,16 +5465,9 @@ Each allocator carries one of two **failure policies**:
 | `.Panic` | Raise a runtime panic reporting the requested size and the allocator. The default. |
 | `.Trap` | Abort the process immediately without unwinding. For freestanding and embedded targets. |
 
-The policy is part of the allocator value and follows an explicitly supplied
-allocator into a subsystem. `.Panic` raises an ordinary [panic](#panics-and-unwinding)
-and therefore follows the program's panic strategy, unwinding or not accordingly;
-`.Trap` aborts immediately without unwinding whatever that strategy is. In either
-case a partially constructed temporary is cleaned up when unwinding permits it, and
-an existing assignment destination is not modified before all required allocation
-and cloning succeeds.
+The policy is part of the allocator value and follows an explicitly supplied allocator into a subsystem. `.Panic` raises an ordinary [panic](#panics-and-unwinding) and therefore follows the program's panic strategy, unwinding or not accordingly; `.Trap` aborts immediately without unwinding whatever that strategy is. In either case a partially constructed temporary is cleaned up when unwinding permits it, and an existing assignment destination is not modified before all required allocation and cloning succeeds.
 
-An explicitly fallible form returns the failure to the caller. A procedure
-returning a compatible `Result` may propagate it with `or_return`:
+An explicitly fallible form returns the failure to the caller. A procedure returning a compatible `Result` may propagate it with `or_return`:
 
 ```odin
 copy := source.try_clone() or_return;
