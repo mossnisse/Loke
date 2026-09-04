@@ -278,14 +278,28 @@ emit_destructure_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	// design.md "Assignment statements": every value is prepared, then every
 	// destination address, then the writes happen.
 	addresses := make([]string, len(s.lhs))
+	map_destinations := make([]Map_Assignment_Destination, len(s.lhs))
 	for target, index in s.lhs {
 		if index >= len(plan.retained) || !plan.retained[index] {
 			continue
 		}
+		if entry := inserting_map_index(target); entry != nil {
+			map_destinations[index] = prepare_map_assignment(e, entry, len(s.lhs) > 1)
+			continue
+		}
 		addresses[index] = emit_address(e, target)
 	}
-	for _, index in s.lhs {
-		if index >= len(plan.retained) || !plan.retained[index] || addresses[index] == "" {
+	for target, index in s.lhs {
+		if index >= len(plan.retained) || !plan.retained[index] {
+			continue
+		}
+		// A destructured half lands in a map entry the same way a whole value
+		// does: `m[key] = elem` commits its value rather than taking an address.
+		if entry := inserting_map_index(target); entry != nil {
+			emit_map_insert_store(e, map_destinations[index], values[index], guards[index])
+			continue
+		}
+		if addresses[index] == "" {
 			continue
 		}
 		field := symbol_of(e.c, plan.fields[index])
@@ -329,7 +343,9 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 		return
 	}
 	values := make([]string, len(s.rhs))
+	map_guards := make([]Deferred, len(s.rhs))
 	for value, index in s.rhs {
+		map_guards[index] = Deferred{slot = -1}
 		values[index] = emit_expr(e, value)
 		// design.md: the clone happens before the destination is touched, so a
 		// failure leaves a previously live destination unchanged.
@@ -339,16 +355,31 @@ emit_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 				emit_destination_allocator(e, place_root_symbol(e.c, s.lhs[index])),
 			)
 		}
+		if index < len(s.lhs) && inserting_map_index(s.lhs[index]) != nil {
+			map_guards[index] = hold_temporary_value(e, expr_base(s.lhs[index]).type, values[index])
+		}
 	}
 
 	addresses := make([]string, len(s.lhs))
+	map_destinations := make([]Map_Assignment_Destination, len(s.lhs))
 	for target, index in s.lhs {
 		if is_discard(target) {
+			continue
+		}
+		if entry := inserting_map_index(target); entry != nil {
+			map_destinations[index] = prepare_map_assignment(e, entry, len(s.lhs) > 1)
 			continue
 		}
 		addresses[index] = emit_address(e, target)
 	}
 	for target, index in s.lhs {
+		// design.md "Maps": `m[key] = elem` writes the whole element, so it is an
+		// insertion rather than a store into an address — an absent key has no
+		// slot to take one from until the value is committed.
+		if entry := inserting_map_index(target); entry != nil && index < len(values) {
+			emit_map_insert_store(e, map_destinations[index], values[index], map_guards[index])
+			continue
+		}
 		if addresses[index] == "" || index >= len(values) {
 			if is_discard(target) && index < len(values) {
 				emit_discarded_temporary(e, s.rhs[index], values[index])
@@ -419,6 +450,17 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	op := compound_operator(s.op)
 	result := emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
 	store(e, type, result, address)
+}
+
+// The destination of `m[key] = elem`, the one assignment target that creates
+// its own element instead of naming one.
+@(private = "file")
+inserting_map_index :: proc(target: Expr) -> ^Expr_Index {
+	index, ok := target.(^Expr_Index)
+	if !ok || !index.map_inserts {
+		return nil
+	}
+	return index
 }
 
 // `_` as a destination: written to nothing, and the value it would have taken

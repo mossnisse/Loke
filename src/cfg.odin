@@ -4181,7 +4181,7 @@ prov_map_call_step :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> Proj_Step {
 @(private = "file")
 prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_Op, actuals: [][]int) {
 	#partial switch op {
-	case .Append, .Insert, .Map_Try_Insert, .Clear, .Map_Clear:
+	case .Append, .Insert, .Map_Try_Insert, .Map_Find_Or_Insert, .Clear, .Map_Clear:
 	case:
 		return
 	}
@@ -4215,7 +4215,9 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 		if type_carries_borrow(graph.k.c, info.element).any && len(actuals) > 2 {
 			stored = actuals[2]
 		}
-	case .Map_Try_Insert:
+	// `find_or_insert` stores the same two halves `try_insert` does; only its
+	// result differs (design.md "Map container operations").
+	case .Map_Try_Insert, .Map_Find_Or_Insert:
 		if type_carries_borrow(graph.k.c, info.key).any && len(actuals) > 1 {
 			stored = actuals[1]
 		}
@@ -4234,7 +4236,7 @@ prov_container_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call, op: Container_
 	if !ok {
 		return
 	}
-	if op == .Map_Try_Insert {
+	if op == .Map_Try_Insert || op == .Map_Find_Or_Insert {
 		entry := prov_extend(graph, path, prov_map_call_step(graph, v))
 		if len(actuals) > 1 && len(actuals[1]) > 0 {
 			written := prov_extend(graph, entry, proj_field(PROJ_MAP_KEY))

@@ -1,0 +1,9 @@
+package main;
+import "core:container";
+
+main :: proc() {
+	values: container.Small_Array(int, 1) = {};
+	values.append(1);
+	// Full capacity must not hide the invalid index behind a returned error.
+	_ = values.try_insert(-1, 2);
+}

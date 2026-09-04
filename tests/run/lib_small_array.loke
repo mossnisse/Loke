@@ -59,8 +59,26 @@ main :: proc() {
 	fmt.println(z.remove(0), z);
 	z.append(50);
 	fmt.println(z.remove_unordered(0), z);
-	fmt.println(z.try_pop(), z);
+	fmt.println(z.pop(), z);
+	fmt.println(z.pop(), z.pop());
+	fmt.println(z.len(), z.pop() or_else -1);
+	// The old spelling remains an alias, including for an empty array.
+	z.append(7);
 	fmt.println(z.try_pop(), z.try_pop());
+
+	// One generic absence contract for built-in and library containers.
+	growable: [dynamic]int = {};
+	fmt.println(take_last(inout growable), take_last(inout z));
+	growable.append(8);
+	z.append(8);
+	fmt.println(take_last(inout growable), take_last(inout z));
+
+	// A removed owning value survives reuse of the vacated inline slot.
+	owned: container.Small_Array([dynamic]int, 2) = {};
+	owned.append([dynamic]int{1, 2});
+	last := owned.pop() or_else [dynamic]int{};
+	owned.append([dynamic]int{3});
+	fmt.println(last, owned[0]);
 
 	// Insertion at each end and in the middle.
 	w: container.Small_Array(int, 4) = {};
@@ -70,6 +88,7 @@ main :: proc() {
 	w.insert(2, 3);
 	fmt.println(w);
 	report(w.try_insert(0, 0));
+	fmt.println(w);
 
 	w.clear();
 	fmt.println(w, w.len(), w.is_empty());
@@ -86,4 +105,8 @@ main :: proc() {
 	fmt.println(1 if interfaces.Sequence(Small) else 0);
 	fmt.println(1 if interfaces.Mutable_Sequence(Small) else 0);
 	fmt.println(1 if interfaces.Growable_Sequence(Small) else 0);
+}
+
+take_last :: proc(values: inout $S) -> Option(int) {
+	return values.pop();
 }

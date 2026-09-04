@@ -50,12 +50,12 @@ through_or_return :: proc() -> Boxed {
 // borrows the bytes it was built from whichever side of the wrapper it is on.
 converted :: proc() -> string_view {
 	local := [3]u8{107, 101, 121};
-	return string_view(local[:]) or_else "";
+	return string_view.from_utf8(local[:]) or_else "";
 }
 
 converted_through_a_switch :: proc() -> string_view {
 	local := [3]u8{107, 101, 121};
-	switch (view in string_view(local[:])) {
+	switch (view in string_view.from_utf8(local[:])) {
 	case .some: return view;
 	case .none: return "";
 	}

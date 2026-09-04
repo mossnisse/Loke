@@ -52,7 +52,7 @@ impl Args {
 		if (index < 0 || index >= rt_args_count()) {
 			return "";
 		}
-		return string(rt_args_at(index)) or_else "";
+		return string.from_utf8(rt_args_at(index)) or_else "";
 	}
 
 	iter :: proc(self) -> Args_Iterator {

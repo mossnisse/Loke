@@ -51,11 +51,9 @@ main :: proc() {
 	local: Choice;
 	uninitialised: Choice = ---;
 
-	// A map read answers the zero for a missing key, and an inserting index
-	// starts a new entry at it.
-	m: map[int]Choice;
-	fmt.println(m[1]);
-	m[2] = Choice.number(3);
+	// A map of a no-zero element is indexed like any other: no map operation
+	// manufactures a zero, so nothing here is rejected. `tests/run/
+	// no_zero_containers.loke` runs it.
 
 	fmt.println(blank, partial, nested, p, q, filled.len(), reserved.len(), ys.len(), global);
 }

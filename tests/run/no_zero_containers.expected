@@ -4,6 +4,11 @@ true
 .b(true)
 removed .b(true)
 0
+.b(true)
+.a(5) 1
+.a(6)
+.a(6) 2
+.a(6)
 3 .a(1) .b(true) .a(2)
 .a(2)
 2

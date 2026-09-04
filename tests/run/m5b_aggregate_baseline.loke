@@ -659,7 +659,7 @@ append_with_contract :: proc(
 KEY_BYTES :: [3]u8{107, 101, 121};
 map_key_from_parameter :: proc(bytes: []u8) -> map[string_view]int {
 	table: map[string_view]int;
-	view := string_view(bytes) or_else "";
+	view := string_view.from_utf8(bytes) or_else "";
 	table[view] = 7;
 	return table;
 }

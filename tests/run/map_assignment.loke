@@ -1,0 +1,38 @@
+package main;
+import "core:fmt";
+
+Pair :: struct { first: int, second: int }
+Resource :: struct { id: int }
+impl Resource {
+	release :: hook(drop) proc(self: inout Resource) { fmt.println("drop", self.id); }
+}
+Choice :: union { a: Resource, b: Resource }
+
+main :: proc() {
+	// All destination expressions precede all writes, including map keys and
+	// the receiver of a nested map assignment (design.md "Assignment statements").
+	m: map[int]int;
+	i := 0;
+	i, m[i] = 1, 42;
+	fmt.println(i, m.lookup_value(0), m.lookup_value(1));
+	j := 2;
+	j, m[j] = Pair{3, 43};
+	fmt.println(j, m.lookup_value(2), m.lookup_value(3));
+	tables: [2]map[int]int;
+	i = 0;
+	i, tables[i][0] = 1, 44;
+	fmt.println(tables[0].lookup_value(0), tables[1].lookup_value(0));
+
+	// The prepared key must survive replacement of its original owning value.
+	names: map[string]int;
+	key: string = "old";
+	key, names[key] = "new", 45;
+	fmt.println(key, names.lookup_value("old"), names.lookup_value("new"));
+
+	// Whole-entry assignment needs the managed union's lifecycle operations
+	// even when no literal or container method has previously requested them.
+	owned: map[int]Choice;
+	owned[1] = .a(Resource{7});
+	owned[1] = .b(Resource{8});
+	drop(owned);
+}

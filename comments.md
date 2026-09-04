@@ -800,8 +800,15 @@ additive one. That silently regrouped `x in values + extra` as
 
 Odin prohibits `m[key].field = value`. Loke permits it because indexing a user
 type can already return an `inout` place, and built-in maps should follow the
-same place rules. Assignment through a missing key inserts a zero value first;
-`m.find(key)` is the non-inserting lookup, answering `Option(^mut V)`.
+same place rules. It writes a field of an element that must already be there:
+creating one to hold a partial update was a way to end up with a half-written
+object nobody asked for, and it made the read depend on whether the element type
+had a zero at all. So the whole-element assignment `m[key] = elem` is the one
+index form that creates an entry — it writes the value, so nothing is
+manufactured — and every other position panics for a missing key, as a dynamic
+array's index does. `m.find(key)` answers `Option(^mut V)` without inserting,
+and `m.find_or_insert(key, elem)` answers the slot either way, so a caller that
+wants a default names the default rather than inheriting the element's zero.
 
 ### `string` borrows as `string_view`
 

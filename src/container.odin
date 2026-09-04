@@ -150,9 +150,10 @@ Container_Op :: enum {
 	// inside that package, and design.md's own `s.sort()` is written in user code.
 	Sort,
 	Reverse_Sort,
-	// The map half. `find` never inserts; `m[key] = v` and every chain rooted in
-	// one are places rather than calls, so they are not members.
+	// The map half. `find` never inserts and `find_or_insert` always answers a
+	// slot; `m[key] = v` is a place rather than a call, so it is not a member.
 	Map_Find,
+	Map_Find_Or_Insert,
 	Map_Lookup_Value,
 	Map_Try_Insert,
 	Map_Remove,
@@ -315,9 +316,10 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 }
 
 // design.md "Map container operations": `len`, `cap`, `clear`, `reserve`,
-// `shrink`, and the non-inserting `find`. Insertion is a *place* — `m[key] = v`
-// and every field or index chain rooted in one — so the only call form of it is
-// the recoverable `try_insert`.
+// `shrink`, the non-inserting `find`, and `find_or_insert`, which is the one
+// call form that creates an entry from a lookup. The only *place* that inserts
+// is the whole-element assignment `m[key] = v`; `try_insert` is the recoverable
+// call form of that.
 @(private = "file")
 ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	key, value := info.key, info.element
@@ -356,6 +358,21 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	// `map[K]string_view` payload still borrows through the map.
 	set_synth_result_summary(k.c, lookup, 0)
 	append(&members, lookup)
+	// design.md "Maps": the third lookup form. `find` answers `.none` for an
+	// absent key and `m[key]` panics for one; this inserts the element it is
+	// given and answers the slot either way, so the caller names the default it
+	// creates rather than the language manufacturing a zero.
+	for spelling in ([2]struct{name: string, result: Type_Id}{
+		{"find_or_insert", pointer_to(k.c, value, true)},
+		{"try_find_or_insert", result_type(k, pointer_to(k.c, value, true), TYPE_ALLOCATOR_ERROR)},
+	}) {
+		inserting := container_member(
+			k, type, spelling.name, .Map_Find_Or_Insert,
+			[]Type_Id{type, key, value}, []Param_Mode{.Inout, .Value, .Value}, spelling.result, 0,
+		)
+		set_synth_result_summary(k.c, inserting, 0)
+		append(&members, inserting)
+	}
 	append(&members, container_member(
 		k, type, "try_insert", .Map_Try_Insert,
 		[]Type_Id{type, key, value}, []Param_Mode{.Inout, .Value, .Value}, fails, 0,
@@ -626,7 +643,7 @@ container_member :: proc(
 	}
 	// Synthesized members participate in ordinary named-argument binding too.
 	#partial switch op {
-	case .Map_Find, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove:
+	case .Map_Find, .Map_Find_Or_Insert, .Map_Lookup_Value, .Map_Try_Insert, .Map_Remove:
 		key_symbol := new_symbol(k.c, Symbol{
 			name = intern_identifier(k.c, "key"), kind = .Parameter,
 			type = params[1], mode = modes[1],

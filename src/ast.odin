@@ -154,9 +154,10 @@ Expr_Index :: struct {
 	// A user `operator([])`: the arguments in parameter order, receiver first.
 	// The resolution names the overload; an `inout` result makes this a place.
 	bound:      []Expr,
-	// design.md "Maps": `m[key]` in a *place* position inserts the zero value
-	// when the key is absent, while a read of the same syntax does not. Which one
-	// this occurrence is comes from its position, so the checker records it.
+	// design.md "Maps": the whole-element assignment `m[key] = elem` is the one
+	// index form that creates an entry; every other position names an element
+	// that must already be there. Which one this occurrence is comes from its
+	// position, so the checker records it.
 	map_inserts: bool,
 }
 
@@ -221,13 +222,13 @@ Union_Op :: enum {
 	Extract,
 }
 
-// design.md "string type conversions": the conversions that validate their
-// input, and therefore have optional-ok results rather than a plain value.
+// design.md "string type conversions": named UTF-8 constructors validate their
+// input and return Option(T). These are not type-call conversions.
 Text_Conversion :: enum {
 	None,
-	String_From_Bytes,  // `string(bytes)`   — validate and copy
-	View_From_Bytes,    // `string_view(bytes)` — validate and borrow
-	String_From_C_View, // `string(cview)`   — scan, validate, and copy
+	String_From_Bytes,  // `string.from_utf8(bytes)` — validate and copy
+	View_From_Bytes,    // `string_view.from_utf8(bytes)` — validate and borrow
+	String_From_C_View, // `string.from_utf8(cview)` — scan, validate, and copy
 }
 
 // A call, a conversion, or a generic application — syntax cannot tell them

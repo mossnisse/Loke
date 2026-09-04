@@ -1,0 +1,10 @@
+package main; import "core:fmt";
+
+// design.md "Maps": a read requires the key to be present and panics for a
+// missing one, exactly as a dynamic array's index panics out of range.
+// `m.lookup_value(key)` is the form that answers `Option(V)` instead.
+main :: proc() {
+	m := map[string]int{"a" = 1};
+	fmt.println(m["a"]);
+	fmt.println(m["b"]);
+}

@@ -1,0 +1,18 @@
+package main;
+
+Point :: struct { x: int }
+Box :: struct { values: map[int]Point }
+bump :: proc(p: inout Point) { p.x += 1; }
+impl Box {
+	field :: proc(self) { self.values[0].x = 1; }
+	compound :: proc(self) { self.values[0].x += 1; }
+	argument :: proc(self) { bump(inout self.values[0]); }
+	pointer :: proc(self) { p := &mut self.values[0]; p^.x = 1; }
+}
+main :: proc() {
+	b := Box{map[int]Point{0 = Point{1}}};
+	b.field();
+	b.compound();
+	b.argument();
+	b.pointer();
+}

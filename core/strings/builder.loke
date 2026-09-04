@@ -111,7 +111,7 @@ impl String_Builder {
 	) -> Result(string, Allocator_Error) {
 		// Unreachable through the public surface, which never admits a partial
 		// rune. The diverging fallback is a guard, not a policy.
-		view := string_view(self.data[:]) or_else not_utf8();
+		view := string_view.from_utf8(self.data[:]) or_else not_utf8();
 		selected := mem.default_allocator() if allocator == nil else allocator;
 		return allocate_string(view, selected);
 	}

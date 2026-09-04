@@ -42,10 +42,11 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_ident(k, v)
 
 	case ^Expr_Selector:
-		// `m["Dana"].x = 7` first inserts a zero element for "Dana" and then
-		// assigns `.x` (design.md "Maps"), so a place position reaches through a
-		// field chain to the map index that roots it.
-		k.place_position = place
+		// A place position reaches through a field chain to the index that roots
+		// it, but only the whole-element `m[key] = elem` creates an entry: writing
+		// `m["Dana"].x` names a field of an element that must already be there
+		// (design.md "Maps").
+		k.place_position, k.insert_position = place, false
 		check_selector(k, v, expected)
 		k.place_position = false
 
@@ -861,9 +862,11 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 @(private = "file")
 check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	v.value_category = .Value
-	// A chain such as `m[key][i] = v` roots in the map index, which is the one
-	// that inserts; the inner subscript expressions are ordinary values.
-	k.place_position = place
+	// A chain such as `outer[key][i] = v` inserts into the innermost map only:
+	// `outer[key]` names an element that must already be there, and the operand
+	// of any index is checked as one (design.md "Maps").
+	inserts := place && k.insert_position
+	k.place_position, k.insert_position = place, false
 	operand := check_single_expr(k, v.operand)
 	k.place_position = false
 	if operand == INVALID_TYPE {
@@ -909,7 +912,7 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		return
 	}
 	if info != nil && info.kind == .Map && len(v.indices) == 1 {
-		check_map_index(k, v, info, base_type, place)
+		check_map_index(k, v, info, place, inserts)
 		return
 	}
 	// design.md "SIMD vectors": "`v[i]` reads a lane and `v[i] = x` writes one.
@@ -1092,63 +1095,43 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 
 // design.md "Maps": one syntax, two behaviours chosen by position.
 //
-// As an assignment target, `m[key]` inserts: an absent key gets the zero
-// value of the element type first, and the resulting slot is the location. A
-// read does not insert, returns the zero value for a missing key, and is always
-// single-valued; `m.lookup_value(key)` is the `(V, bool)` form of that read.
+// `m[key] = elem` is the one index form that creates an entry, and it can: the
+// whole element is written, so nothing is manufactured. Every other position —
+// a read, a field or index chain, a compound assignment, an `inout` argument,
+// and `&m[key]` — names a location inside an element that must already be
+// there, and panics for a missing key exactly as a dynamic array's index does.
 //
-// Insertion may reallocate the map, so the index is a mutable borrow of `m`
-// for the duration of the statement — which is what the receiver access
+// Insertion may reallocate the map, so an inserting index is a mutable borrow
+// of `m` for the duration of the statement — which is what the receiver access
 // recorded by `src/cfg.odin` makes true.
 @(private = "file")
-check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, container: Type_Id, place: bool) {
+check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, place, inserts: bool) {
 	if !check_value_expr(k, v.indices[0], info.key, "look up") {
 		v.type = INVALID_TYPE
 		return
 	}
-	// `&m[key]` is not a special lookup form and does not insert (design.md), so
-	// the address-of place position is excluded here rather than at the `&`.
-	v.map_inserts = place && k.insert_position
+	v.map_inserts = inserts
 	v.type = info.element
-	// A place position that does not insert is the address-of one, and a key
-	// that is not there has no address to give. `&` is always single-valued —
-	// every addressable operand yields exactly one pointer — so a container
-	// whose lookup may fail supplies a method instead, as the built-in map does
-	// with `m.find(key)` (design.md).
-	if place && !k.insert_position {
-		errorf(
-			k.c, v.span, "L0638",
-			"a map element has no address, because the key may be absent and `&` never inserts one",
-		)
-		add_notef(k.c, v.span, "use `m.find(key)`, which returns `(^V, bool)`")
-		v.type = INVALID_TYPE
-		return
-	}
-	// design.md "Zero values": both behaviours manufacture the element's zero —
-	// a read answers with it for a missing key, and an insertion starts the new
-	// entry at it — so a no-zero element has neither.
-	if !require_type_has_zero(
-		k, info.element, v.span,
-		place ? "an inserting map index" : "a map read, which answers the zero for a missing key",
-	) {
-		v.type = INVALID_TYPE
-		return
-	}
+	// Indexing exposes synthesized reads and insertion for both managed halves,
+	// just as a map literal does, even when the RHS transfers a temporary.
+	contribute_lifecycle_members(k, info.key)
+	contribute_lifecycle_members(k, info.element)
 	if place {
-		// An inserting place is a location: assignable, and addressable so a
-		// field or index chain rooted in it works.
+		// A stored element is addressable, but keeps the capability of the map
+		// through which it was reached, including an immutable receiver.
 		v.value_category = .Place
 		v.addressable = true
-		v.assignable = true
-		v.immutable = .None
-		if !expr_base(v.operand).assignable {
+		v.assignable = expr_base(v.operand).assignable
+		v.immutable = expr_base(v.operand).immutable
+		if inserts && !expr_base(v.operand).assignable {
 			report_not_assignable(k, expr_base(v.operand), "an inserting map index")
 			v.type = INVALID_TYPE
 		}
 		return
 	}
-	// A read produces a value, not a location: `&m[key]` is deliberately not a
-	// non-inserting lookup, and `m.find(key)` is.
+	// A read produces a value: `m.lookup_value(key)` is the form that answers
+	// `Option(V)` instead of panicking, and `m.find(key)` the one that answers a
+	// pointer.
 	v.value_category = .Value
 	v.addressable = false
 	v.assignable = false
@@ -2734,10 +2717,11 @@ bind_written_argument :: proc(
 
 check_argument_value :: proc(k: ^Checker, e: Expr, target: Type_Id, inout_argument := false) -> (Expr, bool) {
 	// design.md "Indexing and slicing" and "Maps": an `inout` argument is a place
-	// the callee really writes, so it selects an `inout` indexing overload and
-	// makes `m[key]` insert, exactly as an assignment destination does. Every
-	// path that binds an argument goes through here, so the rule is stated once.
-	k.place_position, k.insert_position = inout_argument, inout_argument
+	// the callee really writes, so it selects an `inout` indexing overload. It
+	// does not insert: `inout m[key]` hands the callee an element that must
+	// already be there. Every path that binds an argument goes through here, so
+	// the rule is stated once.
+	k.place_position, k.insert_position = inout_argument, false
 	type := check_single_expr(k, e, target)
 	k.place_position, k.insert_position = false, false
 	if type == INVALID_TYPE || target == INVALID_TYPE {
@@ -2969,12 +2953,6 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 // target, which is what lets stage 2 run.
 @(private = "file")
 builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) -> bool {
-	// design.md "string type conversions": a conversion that validates its input
-	// has optional-ok semantics rather than producing a value that may not hold
-	// the invariant its type promises.
-	if check_text_conversion(k, v, target, source) {
-		return true
-	}
 	base := expr_base(v.args[0].value)
 	// Constant folding must not reintroduce a representation-only conversion
 	// that runtime values do not have. Two distinct identities meet only through
@@ -3011,6 +2989,10 @@ check_conversion_hook_call :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id, 
 	usable := hook_candidates(k, target, .Convert)
 	if len(usable) == 0 {
 		errorf(k.c, expr_span(v.args[0].value), "L0373", "`%s` cannot be converted to `%s`", type_name(k.c, attempted), type_name(k.c, target))
+		if (target == TYPE_STRING || target == TYPE_STRING_VIEW) &&
+		   (slice_element(k.c, attempted) == TYPE_U8 || (target == TYPE_STRING && underlying_kind(k.c, attempted) == .CString_View)) {
+			add_notef(k.c, v.span, "use `%s.from_utf8(bytes)`, which returns `Option(%s)`", type_name(k.c, target), type_name(k.c, target))
+		}
 		v.type = INVALID_TYPE
 		return
 	}

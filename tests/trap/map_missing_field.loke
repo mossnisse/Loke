@@ -1,0 +1,14 @@
+package main; import "core:fmt";
+
+Point :: struct { x: int, y: int }
+
+// design.md "Maps": part of an element cannot be written into an element that
+// is not there, so a field chain panics rather than inserting a zero and then
+// updating part of it. `m[key] = elem` is the form that creates the entry.
+main :: proc() {
+	m := map[string]Point{"a" = Point{1, 2}};
+	m["a"].x = 7;
+	fmt.println(m["a"].x);
+	m["b"].x = 9;
+	fmt.println(m.len());
+}

@@ -205,20 +205,19 @@ Every operation that manufactures a zero is rejected for a no-zero type:
   fill nothing, so `make(T, 0, capacity)` reserves storage for a no-zero
   element
 - growing a container with `resize`
-- a map read, which answers the zero for a missing key
-- an inserting map index, which starts a new entry at the zero
 
-A map of a no-zero element is therefore not indexed at all, in either position.
-It is still an ordinary map: `try_insert` writes the value, `lookup_value`,
-`find` and `remove` answer an `Option`, and `in` tests for a key. A dynamic
-array of one is unrestricted apart from a written length and `resize`.
+A map of a no-zero element is indexed like any other, because no map operation
+manufactures a zero: [`m[key]`](#maps) reads an entry that must already exist,
+`m[key] = elem` stores the value it is given, and `find_or_insert` takes the
+element to insert as an argument. A dynamic array of one is unrestricted apart
+from a written length and `resize`.
 
 The diagnostic names the operation and suggests the two ways out: give the union
 a zero with `@(zero=first_variant)`, or construct the value explicitly.
 
 #### Type conversion
 
-`T(v)` converts `v` to type `T`:
+`T(v)` converts `v` to type `T` and always produces `T`. Operations that validate input and return `Option(T)` use named constructors instead:
 
 ```odin
 i := 123;
@@ -279,7 +278,7 @@ message := first + " world";
 
 A string literal uses static storage; a runtime string owns a managed backing buffer. The representation (reference counting, small-string optimization, interning) is implementation-defined and does not change semantics. If backing storage is shared, its reference count is atomic and the last drop deallocates through the string's allocator; transferring such a string between threads is valid only when its allocator permits deallocation on either thread (not checked in version 1). To avoid shared ownership, pass `[]u8` or `string_view`, neither of which owns.
 
-A `string` always holds valid UTF-8; arbitrary bytes use `[]u8` or `[dynamic]u8`, and converting bytes to a string validates and returns an error on invalid UTF-8.
+A `string` always holds valid UTF-8; arbitrary bytes use `[]u8` or `[dynamic]u8`. The named constructor `string.from_utf8(bytes)` validates a byte slice and returns `.none` for invalid UTF-8.
 
 String operations name their unit:
 
@@ -348,13 +347,13 @@ Each concrete type has one printed form throughout the program. Declaring more t
 
 ### C string views
 
-`cstring_view` is a non-owning, zero-terminated byte view — what C `char const *` maps to. It does not promise UTF-8, since foreign strings often use other encodings. A view from foreign code has no owner known to the compiler, so keeping it alive is the programmer's responsibility (see [foreign boundary](#what-is-not-checked)). Converting it to `string` scans for the terminator, validates UTF-8, and copies into owned storage.
+`cstring_view` is a non-owning, zero-terminated byte view — what C `char const *` maps to. It does not promise UTF-8, since foreign strings often use other encodings. A view from foreign code has no owner known to the compiler, so keeping it alive is the programmer's responsibility (see [foreign boundary](#what-is-not-checked)). `string.from_utf8(view)` scans for the terminator, validates UTF-8, and copies into owned storage.
 
 A string literal may initialize a `cstring_view` (its bytes have static lifetime). A runtime `string` uses `to_c_view()`, which adds a terminator only when needed and returns a temporary valid for the enclosing expression; the temporary cannot be assigned, returned, or stored:
 
 ```odin
 static_name: cstring_view = "Hellope";
-text := string(static_name) or_else ""; // validates and copies, or uses the fallback
+text := string.from_utf8(static_name) or_else ""; // validates and copies, or uses the fallback
 c_api(runtime_name.to_c_view());   // temporary lives through this call
 ```
 
@@ -378,18 +377,27 @@ m := byte_count(owned[5:]);   // a subrange view
 
 Use `string_view` to read text and `string` to store it. The conversion runs one way only: a `string_view` becomes a `string` with `.copy()`, which allocates because the result must own its bytes.
 
-A validating conversion answers with an [`Option`](#typed-fallibility): the
+A validating constructor answers with an [`Option`](#typed-fallibility): the
 payload on valid input, `.none` on invalid. Handle it with a `switch` or with
 `or_else`:
 
 ```odin
-switch (text in string(bytes)) {
+switch (text in string.from_utf8(bytes)) {
 case .some: fmt.println(text);
 case .none:
 	// `bytes` was not valid UTF-8.
 }
-text = string(bytes) or_else "";
+text = string.from_utf8(bytes) or_else "";
 ```
+
+`string.from_utf8(bytes)` accepts a `[]u8` (including a mutable slice) or a
+`cstring_view` and returns `Option(string)`, validating and copying into owned
+storage. A C string view is scanned for its terminator first.
+`string_view.from_utf8(bytes)` accepts a byte slice and returns
+`Option(string_view)`, validating without copying and retaining the slice's
+borrow. Both accept the named argument `bytes`. The former type-call spellings
+`string(bytes)` and `string_view(bytes)` are invalid; type calls never return an
+optional wrapper implicitly.
 
 Legend:
 
@@ -420,7 +428,7 @@ A view from a `string` is `[]u8` and cannot become `[]mut u8`, by the ordinary
 
 | To | Action | Code |
 | --- | --- | --- |
-| `Option(string)` | validate and copy | `string(st)` |
+| `Option(string)` | validate and copy | `string.from_utf8(st)` |
 | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
 
 #### From a string literal to X
@@ -434,8 +442,8 @@ A view from a `string` is `[]u8` and cannot become `[]mut u8`, by the ordinary
 
 | To | Action | Code |
 | --- | --- | --- |
-| `Option(string)` | validate and copy | `string(st)` |
-| `Option(string_view)` | validate and borrow | `string_view(st)` |
+| `Option(string)` | validate and copy | `string.from_utf8(st)` |
+| `Option(string_view)` | validate and borrow | `string_view.from_utf8(st)` |
 | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
 
 #### From []rune to string
@@ -454,7 +462,7 @@ A view from a `string` is `[]u8` and cannot become `[]mut u8`, by the ordinary
 
 | Action | Code |
 | --- | --- |
-| validate and copy, `Option(string)` | `string(ptr[0:length])` |
+| validate and copy, `Option(string)` | `string.from_utf8(ptr[0:length])` |
 | unsafe validate and borrow, `Option(string_view)` | `unsafe.string_view(ptr, length)` |
 
 ## Pointer types
@@ -948,7 +956,10 @@ It returns a [`Result`](#typed-fallibility), never a bare `bool`:
   uses a library-declared error such as `Capacity_Error`.
 - A no-payload success uses `Result(Unit, E)`.
 
-The prefix specifies the failure contract, not a particular error type.
+The prefix specifies the failure contract, not a particular error type. Ordinary
+absence is separate: `pop() -> Option(T)` returns `.none` for an empty container,
+for both dynamic arrays and `Small_Array`. A caller that requires an element can
+use `pop() or_else ...` to choose its own fallback.
 
 #### Assigning to a dynamic array
 
@@ -1058,7 +1069,9 @@ Where a container must deliberately outlive its scope uncleaned, [`unsafe.forget
 
 #### Fixed-capacity arrays
 
-A growable array with inline fixed capacity is the library type `Small_Array(T, N)`, not a second built-in array form. It implements the ordinary indexing, slicing, iteration, and container procedures through the same abstraction facilities available to user code. It never allocates; operations that would exceed `N` panic, while their `try_` forms leave the value unchanged and return `.err` — `try_append` is `Result(Unit, Capacity_Error)`, with `Capacity_Error` an ordinary library union carrying `@(failure=...)`, not a compiler-known type.
+A growable array with inline fixed capacity is the library type `Small_Array(T, N)`, not a second built-in array form. It implements the ordinary indexing, slicing, iteration, and container procedures through the same abstraction facilities available to user code. Its backing storage never allocates; operations that would exceed `N` panic, while their `try_` forms leave the value unchanged on capacity failure and return `.err`. `try_append` and `try_insert` return `Result(Unit, Capacity_Error)`, with `Capacity_Error` an ordinary library record describing the requested length and capacity. Element copying follows the ordinary copy rules.
+
+`append` and `insert` are thin wrappers over their `try_` forms. An invalid insertion index panics in either form, including when the array is full. `pop()` removes the last element and returns `.some(value)`, or returns `.none` without changing an empty array, just like a dynamic array. The existing `try_pop()` spelling remains a compatibility alias with the same `Option(T)` result.
 
 ```odin
 x: Small_Array(int, 8) = {};
@@ -1132,7 +1145,7 @@ To remove an element:
 m.remove(key);
 ```
 
-A lookup of a missing key returns the zero value. Use `lookup_value` or the `in` operator to test whether the key exists:
+A read requires the key to be present: `m[key]` panics for a missing key, exactly as a dynamic array's index panics out of range. Use `lookup_value` or the `in` operator to read a key that may be absent:
 
 ```odin
 switch (elem in m.lookup_value(key)) {
@@ -1153,9 +1166,11 @@ independently owned element — a managed payload is cloned once, inside the
 operation, so the map keeps its own storage. Its receiver is immutable, so an
 immutable parameter or a temporary map can be read through it without `inout`.
 
-`m[key]` as a read answers the element's zero for a missing key, so a caller
-that needs to tell absence apart takes `lookup_value` instead. A no-zero element
-type has no zero to answer with, and `m[key]` is rejected for it entirely.
+`m[key]` as a read panics for a missing key, so a caller that must tell absence
+apart takes `lookup_value` instead, and one that wants a default writes
+`m.lookup_value(key) or_else default`. Nothing about the read depends on the
+element type: a no-zero element is read exactly like any other, because the read
+never manufactures a value.
 
 A map literal initializes a map:
 
@@ -1183,13 +1198,14 @@ m := map[string]Test{
 
 m["Bob"] = { 3, 3 };
 m["Chloe"].x = 0;    // allowed: assigns the field of the stored value
-m["Dana"].x = 7;     // inserts a zero `Test` for "Dana", then assigns `.x`
+m["Dana"].x = 7;     // panics: "Dana" has no element whose `.x` could be written
 ```
 
 The two forms differ when the key is missing:
 
-- **`m[key]` as an assignment target inserts.** If the key is absent, a zero element is inserted first and its slot is the location — the same behavior `m[key] = elem` has, extended to field and index chains. It applies to the target of an assignment or compound assignment and to an `inout` argument. Insertion may reallocate the map, so the index is a mutable borrow of `m` for the statement. This differs from [dynamic-array assignment](#assigning-to-a-dynamic-array), where an index past the end panics rather than growing the array; a map key is not positional.
-- **A non-inserting lookup is `m.find(key)`,** not `&m[key]`. It answers `Option(^mut V)`, a pointer to the existing slot:
+- **`m[key] = elem` inserts or updates.** It is the one index form that creates an entry, and it can: the whole element is written, so nothing is manufactured. Insertion may reallocate the map, so the index is a mutable borrow of `m` for the statement. This differs from [dynamic-array assignment](#assigning-to-a-dynamic-array), where an index past the end panics rather than growing the array; a map key is not positional.
+- **Every other index position requires the entry.** A field or element chain (`m[key].x = 7`), a compound assignment (`m[key] += 1`), an `inout` argument, and `&m[key]` all name a location inside a stored element, and each panics for a missing key exactly as a read does. Part of an element cannot be written into an element that is not there, and a partly updated element is never created by accident.
+- **A lookup that does not panic is `m.find(key)`.** It answers `Option(^mut V)`, a pointer to the existing slot:
 
 ```odin
 switch (value in m.find("Bob")) {
@@ -1198,7 +1214,12 @@ case .none:
 }
 ```
 
-  `&m[key]` is not a special lookup form: `&` always returns one pointer, and a key that is not there has no address to give. Use `find` for a non-inserting lookup.
+`&m[key]` is the same pointer without the `Option`, and panics where `find` answers `.none`. `m.find_or_insert(key, elem)` is the third form: it answers `^mut V`, inserting `elem` under `key` first when the key is absent. Its second argument is an ordinary one, evaluated whether or not the insertion happens. An operation that wants an entry either way therefore names the default it creates:
+
+```odin
+counts: map[string]int = {};
+counts.find_or_insert(word, 0)^ += 1;
+```
 
 #### Map container operations
 
@@ -1209,7 +1230,9 @@ The built-in map supports these container operations:
 - `some_map.clear()` removes all entries and retains the capacity.
 - `some_map.reserve(capacity)` reserves capacity for at least the requested number of entries.
 - `some_map.shrink()` removes excess capacity.
+- `some_map.try_insert(key, elem)` inserts or updates the entry, returning the [allocation error](#allocation-failure) rather than following the policy. It is the recoverable call form of `m[key] = elem`.
 - `some_map.find(key)` returns `Option(^mut V)`: a pointer to the existing value, or `.none`. It does not insert.
+- `some_map.find_or_insert(key, elem)` returns `^mut V`: a pointer to the existing value, or to `elem` after inserting it under `key`. Allocation failure follows the [policy](#allocation-failure); `try_find_or_insert` returns the error instead.
 - `some_map.lookup_value(key)` returns `Option(V)`: an independently owned copy of the existing value, or `.none`. It does not insert, and its receiver is immutable.
 
 ## Structured and algebraic types
@@ -2181,7 +2204,7 @@ When both a value and an `inout` overload are visible, position selects between 
 1. In a **place position** — the target of an assignment or compound assignment, the operand of `&`, or an `inout` argument — the `inout` overload is required; if none exists, `operator([]=)` is used; if neither, the expression is not assignable.
 2. Everywhere else the value overload is preferred, even for a mutable receiver.
 
-The same rule applies to built-in indexing of maps and dynamic arrays. Place position selects *which operation runs*, not whether a missing element is created — that is the container's property: a dynamic array traps on an out-of-range index, while a map inserts a zero element for an absent key. `&` is a place position but never creates an element; a container wanting a non-inserting address supplies a method, as the map does with [`m.find(key)`](#maps).
+The same rule applies to built-in indexing of maps and dynamic arrays. Place position selects *which operation runs*, and no index position creates a missing element: a dynamic array traps on an out-of-range index, and a map panics for an absent key. The one map form that creates an entry is the whole-element assignment [`m[key] = elem`](#maps), which stores a written value rather than handing out a location. A container wanting a lookup that does not panic supplies a method, as the map does with [`m.find(key)`](#maps).
 
 `operator([]=)` is for containers with no location to hand out — computed, compressed, proxied, or validating storage. It takes the receiver, the index list, and the new value last, and returns nothing:
 
@@ -2476,7 +2499,7 @@ A conversion hook takes exactly one value, has no receiver, and returns its targ
 
 #### Resolving `T(...)`
 
-`T(value)` means conversion only and takes exactly one plain value argument. The compiler first applies a non-overridable built-in conversion when the source/target pair has one. Otherwise it resolves the target type's inherent `hook(convert)` declarations with the ordinary overload rules. Equal-ranked hooks are ambiguous rather than ordered by declaration.
+`T(value)` means conversion only, takes exactly one plain value argument, and produces `T`. The compiler first applies a non-overridable built-in conversion when the source/target pair has one. Otherwise it resolves the target type's inherent `hook(convert)` declarations with the ordinary overload rules. Equal-ranked hooks are ambiguous rather than ordered by declaration. A validating operation that returns `Option(T)` belongs to a named constructor, such as `string.from_utf8(bytes)`, under the same rule as a user-defined constructor.
 
 Zero- and multi-argument type calls are invalid. Construction uses a composite literal or named constructor instead.
 
@@ -3347,7 +3370,7 @@ Eager arithmetic and bitwise operations have a compound-assignment shorthand suc
 For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x` and `&mut x` a `^mut T`. The operand must be addressable. The following operands are addressable:
 
 - a variable or pointer dereference
-- an index of a slice, dynamic array, or addressable fixed array
+- an index of a slice, dynamic array, addressable fixed array, or map; an absent map key panics rather than yielding a pointer
 - a visible [`operator([])` that returns `inout T`](#indexing-and-slicing)
 - a field of an addressable, non-packed struct
 - a trapping checked extraction `x.(T)` from an addressable `any_view`; `x.as(T)` produces a value rather than a place
@@ -3358,7 +3381,7 @@ For an operand `x` of type `T`, `&x` returns a `^T` pointer to `x` and `&mut x` 
 
 An `any_view` is not addressable. An individual field of an `@(packed)` struct is not addressable.
 
-Both forms are always single-valued: every addressable operand yields exactly one pointer. A container whose lookup may fail supplies a method instead, as the built-in map does with [`m.find(key)`](#maps).
+Both forms are always single-valued: every addressable operand yields exactly one pointer. A container whose caller must handle an absent element rather than panic supplies a method instead, as the built-in map does with [`m.find(key)`](#maps).
 
 For an operand `x` of pointer type `^T`, `x^` denotes the `T` pointed to. Explicit `x^` and implicit dereferences such as `x.field` test for nil and raise a runtime panic before accessing memory; an implementation may use a hardware fault only if it preserves the same observable behavior. Dereferencing a non-nil address that is dangling, misaligned, or otherwise invalid is undefined behavior, and can arise only through an unchecked lifetime hole, raw-pointer manipulation, or foreign code.
 
@@ -5108,7 +5131,7 @@ Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
 
 There is no truthiness rule and no nil status: `nil` is not a failure, a trailing `bool` is not a status, and a procedure returning `(int, ^Node)` returns two ordinary values.
 
-A producer's result count is its own, and a destination never changes it. Where two behaviours are wanted they are two operations: `m[key]` reads the zero for a missing key and `m.lookup_value(key)` answers `Option(V)`; `view.(T)` traps on a mismatch and `view.as(T)` answers `Option(T)`.
+A producer's result count is its own, and a destination never changes it. Where two behaviours are wanted they are two operations: `m[key]` panics for a missing key and `m.lookup_value(key)` answers `Option(V)`; `view.(T)` traps on a mismatch and `view.as(T)` answers `Option(T)`.
 
 #### Operator ownership
 
@@ -5138,7 +5161,7 @@ It applies to every producer of that shape — a container read, a validating co
 
 ```odin
 n := numbers.pop() or_else 0;
-text := string(bytes) or_else "";
+text := string.from_utf8(bytes) or_else "";
 data := files.read_bytes("data.bin") or_else no_bytes();
 
 view: any_view = 42;
@@ -5506,6 +5529,11 @@ The explicitly fallible primitives `make`, `new`, and `new_clone`, and the
 `try_` forms of implicitly allocating operations return `Result(T, Allocator_Error)`
 (with `Unit` for a no-payload success) and do not invoke the allocator failure
 policy. There is no sticky allocation-error flag or implicit error side channel.
+Fallible operations are the implementation foundation: a policy-following form
+wraps the same fallible operation and applies the selected allocator's policy
+only when it reports failure. Both forms remain available. Implicit copying
+also uses this foundation, so removing explicit operation pairs would not
+remove the need for allocator failure policies.
 Deallocation operations such as `free` and
 `drop` return no status. An owner records the allocator needed by `drop`; passing
 `free` the wrong allocation or allocator is a programmer error detected by

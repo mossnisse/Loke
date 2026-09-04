@@ -3,10 +3,13 @@ import "core:mem";
 
 // Maps end to end (m6b-plan step 3).
 //
-// design.md "Maps": one syntax with two behaviours chosen by position. A read
-// never inserts and answers the zero value for a missing key; the same syntax as
-// an assignment target inserts, and so does every field or index chain rooted in
-// one. `find` is the non-inserting lookup, and `&m[key]` deliberately is not.
+// design.md "Maps": one syntax with two behaviours chosen by position. The
+// whole-element assignment `m[key] = elem` is the one index form that creates an
+// entry; every other position — a read, a field chain, a compound assignment, an
+// `inout` argument, and `&m[key]` — names an element that must already be there,
+// and panics for a missing key (`tests/trap/map_missing_key.loke` and
+// `tests/trap/map_missing_field.loke`). `find`, `find_or_insert` and
+// `lookup_value` are the three call forms.
 
 Test :: struct { x: int, y: int }
 
@@ -64,13 +67,18 @@ main :: proc() {
 	fmt.println(m["Bob"].x);
 	m["Chloe"].x = 0;
 	fmt.println(m["Chloe"].x);
-	m["Dana"].x = 7;
+
+	// A field of an element that is not there has nothing to write, so "Dana"
+	// is created by the whole-element assignment instead.
+	m["Dana"] = Test{7, 0};
+	m["Dana"].y = 1;
 	fmt.println(m.len());
 	fmt.println(m["Dana"].x);
 	fmt.println(m["Dana"].y);
 
-	// A read of a missing key is the zero value and does not insert.
-	fmt.println(m["nobody"].x);
+	// `&m[key]` is an ordinary address of the existing slot.
+	dana := &m["Dana"];
+	fmt.println(dana^.x);
 	fmt.println(m.len());
 
 	// The three membership forms. `lookup_value` is the `Option` read: it never
@@ -132,11 +140,29 @@ main :: proc() {
 	case .err: fmt.println(false);
 	}
 	fmt.println(counts["b"]);
+	// `find_or_insert` is the third lookup: the slot either way, and the caller
+	// names the default it creates.
+	counts.find_or_insert("c", 0)^ += 1;
+	counts.find_or_insert("c", 0)^ += 1;
+	fmt.println(counts["c"]);
+	switch (slot in counts.try_find_or_insert("c", 99)) {
+	case .ok:  fmt.println(slot^);
+	case .err: fmt.println(-1);
+	}
+	counts.remove("c");
 	counts.shrink();
 	fmt.println(counts.len());
 	fmt.println(counts.cap() >= 2);
 	counts.clear();
 	fmt.println(counts.len());
+
+	// A destructured half lands in a map entry the same way a whole value does:
+	// it inserts, and replaces an existing element without leaking it.
+	halves: map[string]int;
+	halves["x"], halves["y"] = Test{1, 2};
+	fmt.println(halves["x"], halves["y"], halves.len());
+	halves["x"], halves["y"] = Test{3, 4};
+	fmt.println(halves["x"], halves["y"], halves.len());
 
 	// A user key with an inherent coherent pair.
 	ids: map[Id]int;
@@ -231,15 +257,17 @@ bump_f :: proc(n: inout f64) { n += 1.0; }
 bump_either :: proc { bump, bump_f }
 add_all :: proc(n: inout int, xs: ..int) { foreach (x in xs) { n += x; } }
 
-// design.md "Maps": an `inout` argument is a place the callee writes, so
-// `m[key]` inserts for one exactly as it does for an assignment target — and it
-// does so however the callee is spelled: named directly, reached through an
-// overload group, or fixed ahead of a variadic pack.
+// design.md "Maps": an `inout` argument is a place the callee writes, and it
+// names an element that must already be there — the callee is handed a slot,
+// not an insertion. That holds however the callee is spelled: named directly,
+// reached through an overload group, or fixed ahead of a variadic pack.
 inout_slots :: proc() {
 	slots: map[string]int;
+	slots["direct"] = 0;
+	slots["group"] = 0;
 	bump(inout slots["direct"]);
 	bump_either(inout slots["group"]);
-	add_all(inout slots["variadic"], 1, 2, 3);
+	add_all(inout slots.find_or_insert("variadic", 0)^, 1, 2, 3);
 	fmt.println(slots.len());
 	fmt.println(slots["direct"]);
 	fmt.println(slots["group"]);

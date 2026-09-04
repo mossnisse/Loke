@@ -1,5 +1,5 @@
 define i64 @loke.p.reads(ptr %arg0)
 define i64 @loke.p.writes(ptr %arg0)
-%struct.dyn.dyn$20Mixed.102 = type { ptr, ptr }
-define i64 @loke.p.observe(%struct.dyn.dyn$20Mixed.102 %arg0)
-define i64 @loke.p.modify(%struct.dyn.dyn$20Mixed.102 %arg0)
+%struct.dyn.dyn$20Mixed.108 = type { ptr, ptr }
+define i64 @loke.p.observe(%struct.dyn.dyn$20Mixed.108 %arg0)
+define i64 @loke.p.modify(%struct.dyn.dyn$20Mixed.108 %arg0)

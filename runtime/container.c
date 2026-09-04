@@ -782,8 +782,7 @@ void *loke_rt_v1_map_find(
 /* Finds or inserts the raw slot shared by inserting indexes and explicit map
  * insertion. A new slot starts as zeroed inert bytes; the caller uses `inserted`
  * to avoid dropping them and commits a live supplied value before any hook can
- * observe the entry. For an inserting index, semantic checking has established
- * that those bytes are the element's real zero value. NULL is allocation or key
+ * observe the entry, including by unwinding. NULL is allocation or key
  * clone failure, before any new entry is published. */
 void *loke_rt_v1_map_entry(
 	loke_rt_map_v1 *self, const loke_rt_container_ops_v1 *ops, const void *key, int32_t *inserted) {

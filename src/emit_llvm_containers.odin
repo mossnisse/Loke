@@ -753,20 +753,61 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintln(&e.b, "}")
 		return
 
+	case .Map_Find_Or_Insert:
+		// design.md "Maps": the slot either way. An existing entry is answered
+		// without touching the table; an absent key inserts the supplied element,
+		// which the map must then own, so it is cloned exactly as `try_insert`
+		// clones. Nothing manufactures a zero, so a no-zero element is insertable.
+		key_slot := value_storage(e, container_key(e.c, container), "%arg1")
+		found, present := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %%arg0, ptr %s, ptr %s)", found, ops, key_slot,
+		)
+		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", present, found)
+		hit_label, miss_label := new_label(e, "mfoi.hit"), new_label(e, "mfoi.miss")
+		branch_if(e, present, hit_label, miss_label)
+		place_label(e, hit_label)
+		emit_map_slot_result(e, symbol.result, result, found, fallible)
+
+		place_label(e, miss_label)
+		staged := alloca(e, element_llvm)
+		cloned := "true"
+		if emit_lifecycle(e, element).managed {
+			cloned = emit_try_clone_into(
+				e, element, staged, value_storage(e, element, "%arg2"), emit_map_allocator(e, "%arg0"),
+			)
+		} else {
+			store(e, element, "%arg2", staged)
+		}
+		clone_ready, clone_failed := new_label(e, "mfoi.cloned"), new_label(e, "mfoi.clone_failed")
+		branch_if(e, cloned, clone_ready, clone_failed)
+		place_label(e, clone_failed)
+		emit_map_slot_failure(e, symbol.result, result, "%arg0", fallible)
+
+		place_label(e, clone_ready)
+		place, _ := emit_map_entry(e, ops, "%arg0", key_slot)
+		missing := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+		entry_failed, entry_ok := new_label(e, "mfoi.failed"), new_label(e, "mfoi.ok")
+		branch_if(e, missing, entry_failed, entry_ok)
+		place_label(e, entry_failed)
+		emit_drop_place(e, element, staged)
+		emit_map_slot_failure(e, symbol.result, result, "%arg0", fallible)
+
+		place_label(e, entry_ok)
+		// The key was absent a moment ago, so this slot is new: inert bytes with
+		// no live value to drop before the clone is committed.
+		store(e, element, load(e, element_llvm, staged), place)
+		emit_map_slot_result(e, symbol.result, result, place, fallible)
+		fmt.sbprintln(&e.b, "}")
+		return
+
 	case .Map_Try_Insert:
 		key_type := container_key(e.c, container)
 		// Stage the value clone before asking the runtime for an inserting place.
 		// A fallible clone must leave an existing entry untouched, and must not
 		// publish a new key whose value could not be constructed.
-		allocator_slot := gep_field(e, CONTAINER_TYPE, "%arg0", CONTAINER_ALLOC)
-		bound_allocator := load(e, "ptr", allocator_slot)
-		fallback := emit_default_allocator(e)
-		unbound, allocator := temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", unbound, bound_allocator)
-		fmt.sbprintfln(
-			&e.b, "  %s = select i1 %s, ptr %s, ptr %s",
-			allocator, unbound, fallback, bound_allocator,
-		)
+		allocator := emit_map_allocator(e, "%arg0")
 		staged := alloca(e, element_llvm)
 		cloned := "true"
 		if emit_lifecycle(e, element).managed {
@@ -909,44 +950,118 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	return out
 }
 
-// `m[key]` in a place position. If the key is absent, the element type's zero
-// value is inserted first and the resulting slot is the location (design.md).
-// The insertion allocates, and a place has nowhere to report a failure, so the
-// provider's own policy decides.
+// The map's own provider, or the build-selected default when it is unbound.
+@(private = "file")
+emit_map_allocator :: proc(e: ^Emitter, header: string) -> string {
+	bound := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC))
+	unbound, allocator := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", unbound, bound)
+	fmt.sbprintfln(
+		&e.b, "  %s = select i1 %s, ptr %s, ptr %s", allocator, unbound, emit_default_allocator(e), bound,
+	)
+	return allocator
+}
+
+// `find_or_insert` answers the slot itself; `try_find_or_insert` answers it as
+// `.ok` (design.md "Map container operations").
+@(private = "file")
+emit_map_slot_result :: proc(e: ^Emitter, result_type: Type_Id, result, slot: string, fallible: bool) {
+	if fallible {
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, result_type, "false", slot))
+	} else {
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, slot)
+	}
+	e.terminated = true
+}
+
+// Its failure: the error for the `try_` spelling, and the provider's own policy
+// for the one that has nowhere to report it (design.md "Allocation failure").
+@(private = "file")
+emit_map_slot_failure :: proc(e: ^Emitter, result_type: Type_Id, result, header: string, fallible: bool) {
+	if fallible {
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_alloc_result(e, result_type, "true", "null"))
+		e.terminated = true
+		return
+	}
+	provider := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC))
+	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+	fmt.sbprintfln(&e.b, "  ret %s null", result)
+	e.terminated = true
+}
+
+// `m[key] = elem` (design.md "Maps"): the one index form that creates an entry.
+// The written value is committed into the slot the runtime hands back, so no
+// element zero is ever manufactured and a no-zero element inserts like any
+// other. A new slot holds inert bytes; only an existing entry holds a live
+// value that replacement must drop first. The insertion allocates, and an
+// assignment has nowhere to report a failure, so the provider's policy decides.
+// Capture the receiver and key with the other assignment destinations. Delay
+// insertion until the write phase, without reevaluating either expression.
 @(private)
-emit_map_place :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
+Map_Assignment_Destination :: struct {
+	container: Type_Id,
+	header, key_slot: string,
+	key_cleanup: Deferred,
+}
+
+@(private)
+prepare_map_assignment :: proc(e: ^Emitter, v: ^Expr_Index, snapshot_key: bool) -> Map_Assignment_Destination {
 	container := expr_base(v.operand).type
-	ops := container_ops_global(e, container)
 	header := emit_address(e, v.operand)
 	key_slot, cleanup := emit_map_key_slot(e, v, container)
-	place, _ := emit_map_entry(e, ops, header, key_slot)
-	drop_temporary_value(e, cleanup)
-	failed := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", failed, place)
-	fail_label, done_label := new_label(e, "mplace.fail"), new_label(e, "mplace.done")
-	branch_if(e, failed, fail_label, done_label)
+	key := container_key(e.c, container)
+	// An earlier destination can replace the variable supplying this key. Keep
+	// an independent snapshot when a multiple assignment may write it first.
+	if snapshot_key && type_is_managed(e.c, key) && expression_is_borrowed_place(e.c, v.indices[0]) {
+		value := emit_clone_value(e, key, load(e, llvm_type(e, key), key_slot))
+		store(e, key, value, key_slot)
+		cleanup = begin_temporary_drop(e, key, key_slot)
+	}
+	return Map_Assignment_Destination{container, header, key_slot, cleanup}
+}
+
+@(private)
+emit_map_insert_store :: proc(e: ^Emitter, destination: Map_Assignment_Destination, value: string, guard: Deferred) {
+	container, header, key_slot := destination.container, destination.header, destination.key_slot
+	element := container_element(e.c, container)
+	ops := container_ops_global(e, container)
+	place, inserted := emit_map_entry(e, ops, header, key_slot)
+	missing := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", missing, place)
+	fail_label, store_label, done_label :=
+		new_label(e, "mset.fail"), new_label(e, "mset.store"), new_label(e, "mset.done")
+	branch_if(e, missing, fail_label, store_label)
 	place_label(e, fail_label)
-	provider, slot := temp(e), temp(e)
-	fmt.sbprintfln(
-		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i32 0, i32 %d",
-		slot, CONTAINER_TYPE, header, CONTAINER_ALLOC,
-	)
-	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", provider, slot)
+	provider := load(e, "ptr", gep_field(e, CONTAINER_TYPE, header, CONTAINER_ALLOC))
 	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
+	branch(e, done_label)
+	place_label(e, store_label)
+	is_new := temp(e)
+	replace_label, write_label := new_label(e, "mset.replace"), new_label(e, "mset.write")
+	fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", is_new, inserted)
+	branch_if(e, is_new, write_label, replace_label)
+	place_label(e, replace_label)
+	emit_drop_place(e, element, place)
+	branch(e, write_label)
+	place_label(e, write_label)
+	store(e, element, value, place)
+	// The map owns a live value before a user key destructor can panic. The
+	// incoming value's guard covers all failures before this ownership transfer.
+	finish_temporary_drop(e, guard)
+	drop_temporary_value(e, destination.key_cleanup)
 	branch(e, done_label)
 	place_label(e, done_label)
 	e.terminated = false
-	return place
 }
 
-// The address a non-inserting read of `m[key]` produces: the existing slot, or a
-// zeroed temporary of this frame. A lookup of a missing key returns the zero
-// value (design.md), and reading one must not create an entry.
+// The address of `m[key]` in every position but that one: the existing slot.
+// A read, a field or index chain, a compound assignment, an `inout` argument
+// and `&m[key]` all name a location inside an element that must already be
+// there, so a missing key panics exactly as a dynamic array's index does
+// (design.md "Maps").
 @(private)
-emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
+emit_map_element_address :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	container := expr_base(v.operand).type
-	element := container_element(e.c, container)
-	element_llvm := llvm_type(e, element)
 	ops := container_ops_global(e, container)
 	header := emit_address(e, v.operand)
 	key_slot, cleanup := emit_map_key_slot(e, v, container)
@@ -956,23 +1071,18 @@ emit_map_read_address :: proc(e: ^Emitter, v: ^Expr_Index) -> (string, string) {
 		&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
 	)
 	drop_temporary_value(e, cleanup)
-	zero_slot := alloca(e, element_llvm)
-	if zero, ok := zero_const(e.c, element); ok {
-		fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", element_llvm, llvm_const(e, zero, element), zero_slot)
-	}
-	present, source := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", present, found)
-	fmt.sbprintfln(&e.b, "  %s = select i1 %s, ptr %s, ptr %s", source, present, found, zero_slot)
-	return source, present
+	absent := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq ptr %s, null", absent, found)
+	panic_if(e, absent, "mkey", "map key not found")
+	return found
 }
 
-// `m[key]` as a read. Always one value: `m.lookup_value(key)` is the `(V, bool)`
+// `m[key]` as a read. Always one value: `m.lookup_value(key)` is the `Option(V)`
 // form, and it is a call rather than an index.
 @(private)
 emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 	element_llvm := llvm_type(e, container_element(e.c, expr_base(v.operand).type))
-	source, _ := emit_map_read_address(e, v)
-	return load(e, element_llvm, source)
+	return load(e, element_llvm, emit_map_element_address(e, v))
 }
 
 // The C helper borrows the spilled key. Only an owned temporary needs cleanup;
@@ -990,10 +1100,9 @@ emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> (s
 	return slot, cleanup
 }
 
-// Finds or creates a map slot. The runtime reports whether its zeroed bytes
-// are a newly inserted inert slot or an existing live value: an inserting
-// index already required a real element zero, and explicit insertion commits
-// its supplied value before treating a new slot as live.
+// Finds or creates a map slot. The runtime distinguishes a newly inserted
+// inert slot from an existing live value. Every inserting caller must commit
+// its supplied value before invoking hooks that could observe the new entry.
 @(private = "file")
 emit_map_entry :: proc(e: ^Emitter, ops, header, key_slot: string) -> (string, string) {
 	inserted := alloca(e, "i32")

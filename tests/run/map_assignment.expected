@@ -1,0 +1,6 @@
+1 .some(42) .none
+3 .some(43) .none
+.some(44) .none
+new .some(45) .none
+drop 7
+drop 8

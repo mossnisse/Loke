@@ -1,0 +1,14 @@
+package main;
+import "core:fmt";
+
+Resource :: struct { id: int }
+impl Resource {
+	release :: hook(drop) proc(self: inout Resource) { fmt.println("drop", self.id); }
+}
+key :: proc() -> int { panic("key evaluation failed"); return 0; }
+main :: proc() {
+	// Prepared RHS values remain owned when destination preparation fails.
+	m: map[int]Resource;
+	m[0] = Resource{9};
+	m[key()] = Resource{7};
+}

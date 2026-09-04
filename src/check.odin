@@ -29,9 +29,12 @@ Checker :: struct {
 	// overload returning `inout T` is required before ordinary ranking. The flag
 	// is consumed by the node it is set for and never inherited by its operands.
 	place_position: bool,
-	// design.md "Maps": a place position that really writes — an assignment
-	// target, a compound assignment, or an `inout` argument — makes `m[key]`
-	// insert. `&m[key]` is a place position for overload selection only.
+	// design.md "Maps": the whole-element assignment `m[key] = elem` is the one
+	// index form that creates an entry, so this is set only for the destination
+	// of a plain assignment, and cleared on the way down through a field or
+	// index chain. Every other place position — a compound assignment, an
+	// `inout` argument, `&m[key]` — names a location inside an element that must
+	// already be there.
 	insert_position: bool,
 	// How many generic instantiations enclose the code being checked. A `where`
 	// clause needs generic parameters in scope, which is either a template being
@@ -2499,7 +2502,9 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		errorf(k.c, s.op_span, "L0360", "a compound assignment takes one destination and one value")
 		return
 	}
-	type := check_assign_target(k, s.lhs[0], INVALID_TYPE)
+	// design.md "Maps": `m[key] += 1` reads and writes one element, so the entry
+	// must already be there; only `m[key] = elem` creates one.
+	type := check_assign_target(k, s.lhs[0], INVALID_TYPE, inserts = false)
 	if type == INVALID_TYPE {
 		check_expr(k, s.rhs[0])
 		return
@@ -2602,7 +2607,7 @@ check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: 
 // The destination half of an assignment. A `_` on the left is a discard, which
 // is a legal destination with no storage.
 @(private = "file")
-check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id) -> Type_Id {
+check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id, inserts := true) -> Type_Id {
 	if ident, is_ident := target.(^Expr_Ident); is_ident && ident.name == "_" {
 		ident.type = from
 		ident.immutable = .Discard
@@ -2611,7 +2616,7 @@ check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id) -> Type_Id
 	}
 	// An assignment destination is a place position, which is what selects an
 	// `inout` indexing overload before ordinary ranking.
-	k.place_position, k.insert_position = true, true
+	k.place_position, k.insert_position = true, inserts
 	type := check_single_expr(k, target)
 	k.place_position, k.insert_position = false, false
 	if type == INVALID_TYPE {

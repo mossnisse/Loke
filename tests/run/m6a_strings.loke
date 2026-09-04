@@ -51,31 +51,31 @@ main :: proc() {
 
 	// Validating conversions answer with an `Option`.
 	good := [?]u8{72, 105};
-	switch (valid in string(good[:])) {
+	switch (valid in string.from_utf8(good[:])) {
 	case .some: fmt.println(valid.len());
 	case .none: fmt.println(-1);
 	}
 
 	invalid := [?]u8{0xC3, 0x28};
-	switch (_ in string(invalid[:])) {
+	switch (_ in string.from_utf8(invalid[:])) {
 	case .some: fmt.println(-1);
 	case .none: fmt.println(0);
 	}
 
-	switch (view in string_view(good[:])) {
+	switch (view in string_view.from_utf8(good[:])) {
 	case .some: fmt.println(view.len());
 	case .none: fmt.println(-1);
 	}
 
 	// A literal has static lifetime, so it initializes a C view directly.
 	terminated: cstring_view = "hej";
-	switch (scanned in string(terminated)) {
+	switch (scanned in string.from_utf8(terminated)) {
 	case .some: fmt.println(scanned.len());
 	case .none: fmt.println(-1);
 	}
 
 	// And a runtime string reuses the terminator its buffer already carries.
-	switch (back in string(joined.to_c_view())) {
+	switch (back in string.from_utf8(joined.to_c_view())) {
 	case .some: fmt.println(back.len());
 	case .none: fmt.println(-1);
 	}

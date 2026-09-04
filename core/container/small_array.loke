@@ -1,10 +1,10 @@
 // `Small_Array(T, N)`: a growable sequence with inline fixed capacity
 // (design.md "Fixed-capacity arrays").
 //
-// It never allocates. Every operation that would exceed `N` panics, and its
-// `try_` twin reports `Capacity_Error` and leaves the value completely
-// unchanged — the library-wide `try_` contract, applied to a capacity limit
-// instead of an allocator.
+// Its backing storage never allocates. Operations that would exceed `N` panic;
+// their `try_` forms report `Capacity_Error` and leave the value completely
+// unchanged on capacity failure — the library-wide `try_` contract, applied to
+// a capacity limit. Element copying follows the ordinary copy rules.
 //
 // The zero value is a usable, empty array, so `x: Small_Array(int, 8) = {};`
 // needs no construction.
@@ -113,12 +113,9 @@ impl Small_Array($T, $N) {
 	// ------------------------------------------------------------ mutation --
 
 	append :: proc(self: inout Small_Array(T, N), @(escape=stored) values: ..T) {
-		if (self.count + values.len() > N) {
-			panic("Small_Array is full");
-		}
-		foreach (value in values) {
-			self.items[self.count] = value;
-			self.count += 1;
+		switch (_ in self.try_append(..values)) {
+		case .ok:
+		case .err: panic("Small_Array is full");
 		}
 	}
 
@@ -138,10 +135,21 @@ impl Small_Array($T, $N) {
 	}
 
 	insert :: proc(self: inout Small_Array(T, N), index: int, @(escape=stored) value: T) {
+		switch (_ in self.try_insert(index, value)) {
+		case .ok:
+		case .err: panic("Small_Array is full");
+		}
+	}
+
+	// Validate the index even when full. Capacity failure leaves the array
+	// untouched; a bad index is always a programmer error.
+	try_insert :: proc(
+		self: inout Small_Array(T, N), index: int, @(escape=stored) value: T,
+	) -> Result(Unit, Capacity_Error) {
 		if (index < 0 || index > self.count) {
 			panic("Small_Array index is out of range");
 		}
-		if (self.count == N) { panic("Small_Array is full"); }
+		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
 		at := self.count;
 		for (at > index) {
 			self.items[at] = self.items[at - 1];
@@ -149,39 +157,27 @@ impl Small_Array($T, $N) {
 		}
 		self.items[index] = value;
 		self.count += 1;
-	}
-
-	// The capacity check happens before anything moves, so a failure leaves the
-	// array untouched; a bad index still panics, as it does everywhere else.
-	try_insert :: proc(
-		self: inout Small_Array(T, N), index: int, @(escape=stored) value: T,
-	) -> Result(Unit, Capacity_Error) {
-		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		self.insert(index, value);
 		return .ok({});
 	}
 
-	// The last element, removed. Panics when empty, as an out-of-range index does.
+	// The last element, removed, or .none when empty, like a dynamic array.
 	//
 	// Every retirement below is one `exchange`: it takes the element out and
 	// leaves the zero value behind as a single operation, so no element is ever
 	// reachable from two indices at once, and — where `T` is a borrow carrier —
 	// the value taken out is not a borrow of `self` that the rest of the body
 	// would then have to leave alone.
-	pop :: proc(self: inout Small_Array(T, N)) -> T {
-		if (self.count == 0) { panic("Small_Array is empty"); }
-		blank: T = {};
-		self.count -= 1;
-		last := self.count;
-		return exchange(inout self.items[last], blank);
-	}
-
-	try_pop :: proc(self: inout Small_Array(T, N)) -> Option(T) {
+	pop :: proc(self: inout Small_Array(T, N)) -> Option(T) {
 		if (self.count == 0) { return .none; }
 		blank: T = {};
 		self.count -= 1;
 		last := self.count;
 		return .some(exchange(inout self.items[last], blank));
+	}
+
+	// Compatibility spelling; absence has the same contract in both forms.
+	try_pop :: proc(self: inout Small_Array(T, N)) -> Option(T) {
+		return self.pop();
 	}
 
 	// Order-preserving: everything after `index` shifts down one place.

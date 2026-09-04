@@ -141,7 +141,7 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symb
 		if arg.name.text != "" {
 			info.name = intern_identifier(k.c, arg.name.text)
 		}
-		k.place_position, k.insert_position = arg.mode == .Inout, arg.mode == .Inout
+		k.place_position, k.insert_position = arg.mode == .Inout, false
 		// A typeless aggregate and a contextual `.name` both need a destination
 		// type before they can be checked at all. Supply it only when every
 		// candidate agrees; scalar constants keep their untyped conversion ranks

@@ -168,7 +168,7 @@ read_text :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result(string, io.Error) {
 	bytes := read_bytes(path, allocator, limit) or_return;
-	switch (view in string_view(bytes[:])) {
+	switch (view in string_view.from_utf8(bytes[:])) {
 	case .some:
 		switch (text in strings.try_copy(view, allocator)) {
 		case .ok:

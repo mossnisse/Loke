@@ -202,7 +202,7 @@ main :: proc() {
 		fmt.println(false);
 		fmt.println(0);
 	}
-	fmt.println(string(window[:]) or_else no_text());
+	fmt.println(string.from_utf8(window[:]) or_else no_text());
 	fmt.println(succeeded(handle.close()));
 	// Close is idempotent, and the value is inert afterwards.
 	fmt.println(succeeded(handle.close()));

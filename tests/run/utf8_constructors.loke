@@ -1,0 +1,37 @@
+package main;
+import "core:fmt";
+import "core:unsafe";
+
+Text :: string;
+Packet :: struct { count: int }
+impl Packet {
+	from_utf8 :: proc(bytes: []u8) -> Option(Packet) { return .some(Packet{bytes.len()}); }
+}
+decode :: proc($T: type, bytes: []u8) -> Option(T) { return T.from_utf8(bytes); }
+main :: proc() {
+	// Ordinary type calls retain their target type.
+	static_assert(type_of(string("text")) == string);
+	static_assert(type_of(string_view("text")) == string_view);
+	static_assert(type_of(i64(1)) == i64);
+	bytes := [2]u8{65, 66};
+	static_assert(type_of(string.from_utf8(bytes[:])) == Option(string));
+	static_assert(type_of(string_view.from_utf8(bytes[:])) == Option(string_view));
+	owned := Text.from_utf8(bytes = bytes[:]) or_else "";
+	bytes[0] = 67;
+	fmt.println(owned);
+	fmt.println(string_view.from_utf8(bytes[:]) or_else "");
+	fmt.println(decode(string, bytes[:]) or_else "");
+	fmt.println((decode(Packet, bytes[:]) or_else Packet{}).count);
+	invalid := [2]u8{0xc3, 0x28};
+	fmt.println(string.from_utf8(invalid[:]) == .none);
+	fmt.println(string_view.from_utf8(invalid[:]) == .none);
+	empty: []u8;
+	fmt.println((string.from_utf8(empty) or_else "bad").len());
+	terminated: cstring_view = "hello";
+	fmt.println(string.from_utf8(terminated) or_else "bad");
+	bad_c := [2]u8{0xff, 0};
+	cbytes := unsafe.cstring_view(unsafe.raw_data(bad_c[:]));
+	fmt.println(string.from_utf8(cbytes) == .none);
+	with_zero := [3]u8{65, 0, 66};
+	fmt.println((string.from_utf8(with_zero[:]) or_else "bad").len());
+}

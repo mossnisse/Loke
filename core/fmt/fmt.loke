@@ -105,7 +105,7 @@ to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
 	emit(Writer{collect, &mut collector}, ..args);
 	// Every formatter writes UTF-8; a `format` overload that does not is the
 	// one way here, and a wrong one.
-	view := string_view(collector.bytes[:]) or_else no_view();
+	view := string_view.from_utf8(collector.bytes[:]) or_else no_view();
 	// The compiler contributes `allocate_string`: a copy of known-valid UTF-8
 	// into string storage from a *supplied* allocator. `core:strings` wraps the
 	// same primitive as `clone`.

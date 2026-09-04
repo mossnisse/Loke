@@ -76,7 +76,7 @@ reader_over :: proc(text: string_view, most: int) -> Short_Reader {
 // Every stream below is built from valid UTF-8 and every helper below is
 // expected to reach its end, so a failure at either is a bug in the test.
 text_of :: proc(bytes: []u8) -> string {
-	switch (text in string(bytes)) {
+	switch (text in string.from_utf8(bytes)) {
 	case .some: return text;
 	case .none: panic("the test produced invalid UTF-8");
 	}

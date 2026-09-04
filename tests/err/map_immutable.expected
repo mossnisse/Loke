@@ -1,0 +1,12 @@
+L0358
+@7:24
+a value parameter is immutable and cannot be an assignment destination
+L0358
+@8:27
+a value parameter is immutable and cannot be an assignment destination
+L0358
+@9:38
+a value parameter is immutable and cannot be an `inout` argument
+L0358
+@10:36
+a value parameter is immutable and cannot be borrowed with `&mut`

@@ -1,0 +1,8 @@
+package main;
+import "core:container";
+
+main :: proc() {
+	values: container.Small_Array(int, 1) = {};
+	values.append(1);
+	values.insert(0, 2);
+}

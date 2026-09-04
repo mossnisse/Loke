@@ -1,0 +1,25 @@
+package main;
+import "core:fmt";
+
+Key :: struct { id: int, temporary: bool }
+impl Key {
+	hash :: proc(self, seed: uint) -> uint { return self.id.hash(seed); }
+	equal :: operator(==) proc(a, b: Key) -> bool { return a.id == b.id; }
+	copy_key :: hook(copy) proc(self, allocator: Allocator) -> Result(Key, Allocator_Error) {
+		return .ok(Key{self.id, false});
+	}
+	release :: hook(drop) proc(self: inout Key) {
+		if (self.temporary) { panic("temporary key drop"); }
+	}
+}
+Resource :: struct { id: int }
+impl Resource {
+	release :: hook(drop) proc(self: inout Resource) { fmt.println("drop", self.id); }
+}
+Choice :: union { a: Resource, b: Resource }
+main :: proc() {
+	// The map must own a live payload before dropping the temporary key.
+	// Unwinding must never drop a zero that this union does not possess.
+	m: map[Key]Choice;
+	m[Key{1, true}] = .a(Resource{7});
+}

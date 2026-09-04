@@ -51,15 +51,17 @@ removed :: proc() -> int {
 	return taken * 100 + xs[0] * 10 + xs.len();
 }
 
-// A map: insertion, replacement, a non-inserting read of a missing key, `in`,
-// `find`, and removal.
+// A map: insertion, replacement, `find_or_insert` for a key that is not there,
+// `in`, `find`, and removal. A read of a missing key is an error on an executed
+// compile-time path, exactly as it panics at run time (design.md "Maps").
 MAPPED :: mapped();
 mapped :: proc() -> int {
 	m: map[string]int;
 	m["a"] = 1;
 	m["b"] = 2;
 	m["a"] = 5;
-	missing := m["zz"];
+	missing := m.find_or_insert("zz", 0)^;
+	m.remove("zz");
 	present := 0;
 	if ("b" in m) { present = 1; }
 	absent := 0;

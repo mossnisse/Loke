@@ -37,18 +37,27 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	// twice on the way to failing here: only these names can name a text
 	// operation, and a receiver that is a name already knows its type — which
 	// keeps a record's generated `clone` off this path.
-	if text_op_named(sel.name.text) == .None && sel.name.text != "from_runes" {
+	if text_op_named(sel.name.text) == .None && sel.name.text != "from_runes" && sel.name.text != "from_utf8" {
 		return false
 	}
 	if ident, is_ident := sel.operand.(^Expr_Ident); is_ident {
 		sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
-		if sym != nil && sym.kind != .Type && !type_is_text(k.c, sym.type) {
+		if sym != nil && sym.kind != .Type && sym.const_value.kind != .Type && !type_is_text(k.c, sym.type) {
 			return false
 		}
 	}
 
-	// `string.from_runes(...)` selects through the type name, not through a value.
+	// Resolve aliases and generic type parameters before inspecting the type
+	// category; built-in type syntax already has that category from parsing.
+	if sel.name.text == "from_utf8" || sel.name.text == "from_runes" {
+		if check_single_expr(k, sel.operand) == INVALID_TYPE { return false }
+	}
+	// Named validating constructors select through the type, not a value.
 	if base := expr_base(sel.operand); base != nil && base.value_category == .Type {
+		if sel.name.text == "from_utf8" && (base.denoted_type == TYPE_STRING || base.denoted_type == TYPE_STRING_VIEW) {
+			check_from_utf8(k, v, base.denoted_type)
+			return true
+		}
 		if type_underlying(k.c, base.denoted_type) != TYPE_STRING || sel.name.text != "from_runes" {
 			return false
 		}
@@ -225,17 +234,25 @@ set_optional_ok_results :: proc(k: ^Checker, v: ^Expr_Call, value: Type_Id) {
 	v.type = option_type(k, value, v.span)
 }
 
-// The validating conversions of design.md's conversion tables. Each has
-// optional-ok semantics: on invalid input, `value` is the zero value and `ok`
-// is false (design.md).
-//
-//   string(bytes)        []u8         validate and copy
-//   string_view(bytes)   []u8         validate and borrow
-//   string(cview)        cstring_view scan, validate, and copy
-//
-// Returns true when the pair was one of them, so the ordinary built-in
-// conversion table is not asked about it a second time.
-check_text_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) -> bool {
+// design.md "string type conversions": validation belongs to a named
+// constructor returning Option(T); a type call T(value) always produces T.
+@(private = "file")
+check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
+	v.value_category = .Value
+	name := target == TYPE_STRING ? "string.from_utf8" : "string_view.from_utf8"
+	if len(v.args) != 1 {
+		errorf(k.c, v.span, "L0561", "`%s` takes one argument, found %d", name, len(v.args))
+		v.type = INVALID_TYPE
+		return
+	}
+	arg := v.args[0]
+	if arg.mode != .Value || (arg.name.text != "" && arg.name.text != "bytes") {
+		errorf(k.c, arg.span, "L0561", "`%s` takes one value argument named `bytes`", name)
+		v.type = INVALID_TYPE
+		return
+	}
+	source := check_single_expr(k, arg.value, slice_of(k.c, TYPE_U8, mutable = false))
+	if source == INVALID_TYPE { v.type = INVALID_TYPE; return }
 	target_kind := underlying_kind(k.c, target)
 	source_kind := underlying_kind(k.c, source)
 	op := Text_Conversion.None
@@ -247,14 +264,16 @@ check_text_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_I
 	case target_kind == .String && source_kind == .CString_View:
 		op = .String_From_C_View
 	case:
-		return false
+		accepted := target == TYPE_STRING ? "a `[]u8` or `cstring_view`" : "a `[]u8`"
+		errorf(k.c, expr_span(arg.value), "L0561", "`%s` takes %s, found `%s`", name, accepted, type_name(k.c, source))
+		v.type = INVALID_TYPE
+		return
 	}
-	v.resolution = Resolution{kind = .Conversion}
+	v.resolution = Resolution{kind = .Builtin_Operator}
 	v.text_conversion = op
 	v.bound = make([]Expr, 1, k.c.semantic_allocator)
 	v.bound[0] = v.args[0].value
 	set_optional_ok_results(k, v, target)
-	return true
 }
 
 // ----------------------------------------------------------- core:strings --

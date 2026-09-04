@@ -306,7 +306,7 @@ read_line :: proc(
 		ended = true;
 	}
 	// The byte-to-text boundary: a line is only a `string` if it is valid UTF-8.
-	switch (view in string_view(collected[:])) {
+	switch (view in string_view.from_utf8(collected[:])) {
 	case .some:
 		text := strings.try_copy(view, allocator) or_else "";
 		drop(collected);

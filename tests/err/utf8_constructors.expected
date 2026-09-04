@@ -1,0 +1,27 @@
+L0373
+@6:14
+use `string.from_utf8(bytes)`, which returns `Option(string)`
+L0373
+@7:19
+use `string_view.from_utf8(bytes)`, which returns `Option(string_view)`
+L0373
+@8:14
+L0373
+@9:12
+L0561
+@10:7
+`string.from_utf8` takes one argument, found 0
+L0561
+@11:24
+`string.from_utf8` takes a `[]u8` or `cstring_view`, found `untyped int`
+L0561
+@12:29
+`string_view.from_utf8` takes a `[]u8`, found `cstring_view`
+L0561
+@13:24
+L0561
+@14:24
+`string.from_utf8` takes one value argument named `bytes`
+L0561
+@15:7
+`string.from_utf8` takes one argument, found 2

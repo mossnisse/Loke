@@ -24,9 +24,9 @@ succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
 }
 
 main :: proc() {
-	// A map: `try_insert` writes the value, and every read answers an `Option`.
-	// None of them needs an element zero, and the contextual `.a(3)` takes its
-	// type from the member's parameter.
+	// A map: nothing here manufactures a zero, so a no-zero element is indexed,
+	// inserted and read like any other. The contextual `.a(3)` takes its type
+	// from the member's parameter.
 	m: map[int]Choice;
 	fmt.println(succeeded(m.try_insert(1, .a(3))));
 	fmt.println(m.len(), 1 in m);
@@ -44,6 +44,17 @@ main :: proc() {
 	case .none: fmt.println("absent");
 	}
 	fmt.println(m.len());
+
+	// The index forms: `m[key] = elem` writes a whole element, and every other
+	// position reads or writes one that is there.
+	m[2] = .b(true);
+	fmt.println(m[2]);
+	m[2] = .a(5);
+	fmt.println(m[2], m.len());
+	fmt.println(m.find_or_insert(3, .a(6))^);
+	fmt.println(m.find_or_insert(3, .a(7))^, m.len());
+	slot := &m[3];
+	fmt.println(slot^);
 
 	// A dynamic array: appending writes elements and popping moves one out.
 	// Reserving raw capacity initialises nothing.

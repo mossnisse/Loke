@@ -1,0 +1,16 @@
+package main;
+Text :: string;
+main :: proc() {
+	bytes := [2]u8{65, 66};
+	cview: cstring_view = "hello";
+	a := string(bytes[:]);
+	b := string_view(bytes[:]);
+	c := string(cview);
+	d := Text(bytes[:]);
+	e := string.from_utf8();
+	f := string.from_utf8(1);
+	g := string_view.from_utf8(cview);
+	h := string.from_utf8(input = bytes[:]);
+	i := string.from_utf8(inout bytes);
+	j := string.from_utf8(bytes[:], bytes[:]);
+}

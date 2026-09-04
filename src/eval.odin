@@ -596,8 +596,8 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 		if !ok {
 			return Eval_Value{}, false
 		}
-		// design.md "Maps": a read never inserts and answers the zero value for a
-		// missing key. It is a value position, so it does not need the place.
+		// design.md "Maps": a read never inserts and requires the key to be there.
+		// It is a value position, so it does not need the place.
 		if type_is_map(ev.k.c, operand.type) {
 			return eval_map_read(ev, v, &operand)
 		}
@@ -1136,8 +1136,9 @@ eval_map_key_equal :: proc(ev: ^Evaluator, map_type: Type_Id, a, b: Eval_Value) 
 	return result.boolean, true
 }
 
-// The stored value slot for `key`, inserting a zero entry when it is missing.
-// design.md: `m[key] = v` and every chain rooted in one is an inserting place.
+// The stored value slot for `key`, adding an entry when it is missing. Every
+// caller — `m[key] = v`, `try_insert`, `find_or_insert` — commits its own value
+// into the slot, so the placeholder is never read.
 @(private = "file")
 map_entry_place :: proc(ev: ^Evaluator, m: ^Eval_Value, key: Eval_Value) -> (^Eval_Value, bool) {
 	at, ok := map_find(ev, m, key)
@@ -1440,6 +1441,29 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		}
 		return eval_one(ev, eval_option(ev, symbol.result, pointer, true))
 
+	// design.md "Map container operations": the slot, inserting `elem` first when
+	// the key is absent. `try_find_or_insert` differs only in its result, and a
+	// compile-time map never fails to allocate.
+	case .Map_Find_Or_Insert:
+		key, key_ok := argument(ev, v, 1)
+		value, value_ok := argument(ev, v, 2)
+		if !key_ok || !value_ok {
+			return nil, false
+		}
+		at, found_ok := map_find(ev, self, key)
+		if !found_ok {
+			return nil, false
+		}
+		if at < 0 {
+			slot, slot_ok := map_entry_place(ev, self, key)
+			if !slot_ok {
+				return nil, false
+			}
+			slot^ = value
+			return eval_one(ev, eval_map_slot(ev, symbol.result, slot))
+		}
+		return eval_one(ev, eval_map_slot(ev, symbol.result, &self.elements[at + MAP_ENTRY_VALUE]))
+
 	case .Map_Try_Insert:
 		key, key_ok := argument(ev, v, 1)
 		value, value_ok := argument(ev, v, 2)
@@ -1493,7 +1517,10 @@ eval_map_read :: proc(ev: ^Evaluator, v: ^Expr_Index, m: ^Eval_Value) -> (Eval_V
 	if at >= 0 {
 		return m.elements[at + MAP_ENTRY_VALUE], true
 	}
-	return zero_value(ev, container_element(ev.k.c, m.type))
+	// design.md "Maps": a read requires the key to be present. What panics at run
+	// time is a compile-time error on an executed path.
+	eval_fail(ev, v.span, "L0343", "this key is not in the map")
+	return Eval_Value{}, false
 }
 
 // `key in m`, and its negation.
@@ -1566,9 +1593,9 @@ eval_place :: proc(ev: ^Evaluator, e: Expr) -> (^Eval_Value, bool) {
 		if !ok {
 			return nil, false
 		}
-		// design.md: an assignment target *inserts*, and so does every field or
-		// index chain rooted in one; `map_inserts` is the checker's answer to
-		// which position this is.
+		// design.md: the whole-element assignment `m[key] = elem` inserts; every
+		// other position names an element that must already be there.
+		// `map_inserts` is the checker's answer to which position this is.
 		if type_is_map(ev.k.c, base.type) {
 			key, key_ok := eval_expr(ev, v.indices[0])
 			if !key_ok {
@@ -1751,6 +1778,17 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 @(private = "file")
 eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	return eval_named_union(ev, type, "ok", Eval_Value{kind = .Aggregate, type = unit_type(ev.k.c)})
+}
+
+// The `^mut V` a `find_or_insert` answers, wrapped in `.ok` for the `try_`
+// spelling, whose failure a compile-time map never reaches.
+@(private = "file")
+eval_map_slot :: proc(ev: ^Evaluator, result: Type_Id, slot: ^Eval_Value) -> (Eval_Value, bool) {
+	if type_is_union(ev.k.c, result) {
+		payload := union_variant_payload(ev.k.c, result, union_index_of(ev.k.c, result, "ok"))
+		return eval_named_union(ev, result, "ok", Eval_Value{kind = .Nil, type = payload, target = slot})
+	}
+	return Eval_Value{kind = .Nil, type = result, target = slot}, true
 }
 
 // `.some(payload)` or `.none`, for a container read that may find nothing.

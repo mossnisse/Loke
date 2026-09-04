@@ -45,7 +45,7 @@ main :: proc() {
 
 	// A Loke string may contain U+0000; a retained C string may not.
 	with_zero := [?]u8{u8('a'), 0, u8('b')};
-	text := string(with_zero[:]) or_else no_text();
+	text := string.from_utf8(with_zero[:]) or_else no_text();
 	fmt.println(true);
 	fmt.println(text.len());
 	switch (rejected in cstrings.from_string(text)) {

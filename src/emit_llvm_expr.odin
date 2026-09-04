@@ -461,14 +461,10 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 			return emit_dynamic_element_address(e, v)
 		}
 		if type_is_map(e.c, expr_base(v.operand).type) {
-			// design.md: only a real place position inserts. A read reached through
-			// a field chain — `m[key].x` as a value — still needs an address, and it
-			// is the existing slot's or a zeroed temporary's.
-			if v.map_inserts {
-				return emit_map_place(e, v)
-			}
-			address, _ := emit_map_read_address(e, v)
-			return address
+			// design.md "Maps": every index but the whole-element assignment names
+			// an element that must already be there, and that one never asks for an
+			// address — `src/emit_llvm_stmt.odin` commits its value into the slot.
+			return emit_map_element_address(e, v)
 		}
 		// A C pointer indexes without bounds checking (design.md
 		// "C pointers"). There is no length to check against, which is exactly
@@ -807,8 +803,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return out
 
 	case ^Expr_Selector, ^Expr_Index:
-		// A read does not insert, and a missing key returns the zero value
-		// (design.md "Maps"). The address of that zero is a temporary of this frame.
+		// A read does not insert and panics for a missing key (design.md "Maps").
 		if index, is_index := expr.(^Expr_Index); is_index && !index.map_inserts &&
 		   index.operand != nil && type_is_map(e.c, expr_base(index.operand).type) {
 			return emit_map_lookup(e, index)
@@ -1678,8 +1673,8 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> [
 	return out
 }
 
-// design.md "string type conversions": every one of these validates, so each has
-// optional-ok results and publishes the zero value on failure.
+// design.md "string type conversions": each named constructor validates and
+// returns Option(T), with .none for invalid input.
 @(private)
 emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	switch v.text_conversion {

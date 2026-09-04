@@ -37,7 +37,7 @@ main :: proc() {
 	}
 
 	terminated := unsafe.cstring_view(bytes);
-	switch (owned in string(terminated)) {
+	switch (owned in string.from_utf8(terminated)) {
 	case .some: fmt.println(owned.len());
 	case .none: fmt.println(-1);
 	}

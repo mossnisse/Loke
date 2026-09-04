@@ -503,14 +503,14 @@ container_append_parameter_escape :: proc(
 map_key_escape :: proc() -> map[string_view]int {
 	local := [3]u8{107, 101, 121};
 	table: map[string_view]int;
-	table[string_view(local[:]) or_else ""] = 7;
+	table[string_view.from_utf8(local[:]) or_else ""] = 7;
 	return table;
 }
 map_key_alias_escape :: proc() -> map[string_view]int {
 	local := [3]u8{107, 101, 121};
 	table: map[string_view]int;
 	alias := &mut table;
-	alias^[string_view(local[:]) or_else ""] = 7;
+	alias^[string_view.from_utf8(local[:]) or_else ""] = 7;
 	return table;
 }
 
