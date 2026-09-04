@@ -305,6 +305,11 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 		}
 	}
 	if len(out) == 0 {
+		// An interface bound on the enclosing declaration reaches implementations
+		// the caller's own visibility hides; nothing else does.
+		if required := required_slot_candidates(k, type, name); len(required) > 0 {
+			return required
+		}
 		if adapter := iteration_adapter_member(k, type, name); adapter != INVALID_SYMBOL {
 			append(&out, adapter)
 		}

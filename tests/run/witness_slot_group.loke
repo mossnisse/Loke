@@ -1,0 +1,32 @@
+package main; import "core:fmt";
+
+// design.md "Borrowed dynamic interface values": a witness slot is filled by the
+// same lookup that decided satisfaction. A group's *members* are the candidates,
+// never the group itself — witness construction used its own copy of the
+// candidate walk, which skipped that flattening and left the slot empty for a
+// type whose satisfying method arrives through an overload group.
+
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+Counter :: struct { value: int }
+
+impl Counter {
+	size_plain  :: proc(self) -> int { return self.value; }
+	size_scaled :: proc(self, factor: int) -> int { return self.value * factor; }
+	size :: proc{size_plain, size_scaled};
+}
+
+observe :: proc(view: dyn Sized) -> int { return view.size(); }
+
+main :: proc() {
+	c := Counter{7};
+
+	// Static satisfaction picks the arity-matching member of the group.
+	fmt.println(c.size());
+	fmt.println(c.size(3));
+
+	// The erased path must pick the same one.
+	fmt.println(observe((dyn Sized)(&c)));
+}

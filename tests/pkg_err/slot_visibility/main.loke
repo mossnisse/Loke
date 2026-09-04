@@ -1,0 +1,35 @@
+package main; import "core:fmt";
+import "./iface"; import "./widget";
+
+// The slot capability is exactly the required slot, on exactly the bound type.
+// Everything else keeps ordinary visibility (design.md "Exported names").
+
+// A private member that is not a slot of the required interface.
+leak :: proc(w: $T) -> int where iface.Readable(T) {
+	return w.secret();
+}
+
+// A successful arm of a disjunction is not a requirement.
+maybe :: proc(w: $T) -> int where iface.Readable(T) || iface.Unrelated(T) {
+	return w.read();
+}
+
+// A bound over one type says nothing about another. `Readable(Widget)` is true
+// here, but this declaration never required it.
+Local :: struct { n: int }
+impl Local { value :: proc(self) -> int { return self.n; } }
+
+other :: proc(w: $T, v: widget.Widget) -> int where iface.Unrelated(T) {
+	return v.read();
+}
+
+// No bound, no access.
+plain :: proc(w: widget.Widget) -> int { return w.read(); }
+
+main :: proc() {
+	w := widget.make(5);
+	fmt.println(leak(w));
+	fmt.println(maybe(w));
+	fmt.println(other(Local{1}, w));
+	fmt.println(plain(w));
+}

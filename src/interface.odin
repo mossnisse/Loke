@@ -572,8 +572,8 @@ check_slot_requirement :: proc(
 // from the package that declares the slot's owning interface — never the
 // package that happens to apply the interface. An inherent method belongs to
 // the type itself, so its own visibility doesn't matter; only the extension
-// half is package-scoped.
-@(private = "file")
+// half is package-scoped. Shared with runtime witness construction, which must
+// select the same implementation satisfaction promised.
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
 	ensure_iteration_members(k, subject)
 	ensure_lifecycle_members(k, type_underlying(k.c, subject), name)
@@ -610,6 +610,65 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 		}
 		append(out, member)
 	}
+}
+
+// design.md "Interfaces as reusable constraints": a `where I(T)` bound promises
+// that `T` has I's slots, and satisfaction accepted an implementation under the
+// *interface's* visibility rather than the instantiating caller's — an inherent
+// method's own visibility does not matter (`slot_candidates`). Ordinary lookup in
+// the instantiated body asks the caller's package instead, so it would reject
+// exactly what the bound guaranteed. A required slot falls back here.
+//
+// Only a bare top-level application is a requirement. A negated bound, or one
+// arm of a disjunction, promises nothing and so grants nothing; neither reaches
+// this shape. Nilling `proc_literal` for the walk is also the recursion guard —
+// resolving a slot signature can select members, and a nested lookup finds no
+// clauses to expand.
+required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []Symbol_Id {
+	literal := k.proc_literal
+	if literal == nil || len(literal.where_clauses) == 0 {
+		return nil
+	}
+	k.proc_literal = nil
+	defer k.proc_literal = literal
+
+	for clause in literal.where_clauses {
+		call, is_call := clause.(^Expr_Call)
+		if !is_call {
+			continue
+		}
+		info := interface_info_for(k, named_callee_symbol(k, call.callee))
+		if info == nil || len(call.args) != len(info.params) || len(call.args) == 0 {
+			continue
+		}
+		args := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
+		bound := true
+		for arg, index in call.args {
+			denoted := resolve_type_syntax(k, arg.value)
+			if denoted == INVALID_TYPE {
+				bound = false
+				break
+			}
+			args[index] = Generic_Arg{is_type = true, type = denoted}
+		}
+		// The subject is the first argument; a bound over some other type says
+		// nothing about this one.
+		if !bound || args[0].type != type {
+			continue
+		}
+		flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)
+		interface_slots(k, info, args, &flattened)
+		for entry in flattened {
+			owner := interface_info_for(k, entry.owner)
+			if entry.name != name || owner == nil {
+				continue
+			}
+			if found := slot_candidates(k, type, name, owner.pkg); len(found) > 0 {
+				return found
+			}
+		}
+	}
+	return nil
 }
 
 // The flattened parameter and result lists a slot's written signature asks for,

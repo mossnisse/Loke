@@ -1,0 +1,23 @@
+package iface;
+
+import "../widget";
+
+@(public)
+Readable :: interface($Self: type) {
+	slot read: proc(self) -> int;
+}
+
+// Composition: a bound on `Described` reaches `read` through `Readable`, and
+// each slot keeps its own declaring package.
+@(public)
+Described :: interface($Self: type) {
+	Readable(Self);
+	slot label: proc(self) -> int;
+}
+
+// Extensions declared beside the interface may supply its slots. These are
+// package-private, so only the slot capability reaches them.
+impl widget.Tag {
+	read  :: proc(self) -> int { return self.id; }
+	label :: proc(self) -> int { return self.id * 2; }
+}

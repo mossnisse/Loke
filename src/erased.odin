@@ -719,7 +719,7 @@ find_witness_slot :: proc(
 	modes: []Param_Mode,
 	result: Type_Id,
 ) -> Symbol_Id {
-	for candidate in slot_candidates_for_witness(k, concrete, name, owner_pkg) {
+	for candidate in slot_candidates(k, concrete, name, owner_pkg) {
 		sym := symbol_of(k.c, candidate)
 		if sym == nil || sym.kind != .Proc || !sym.has_receiver {
 			continue
@@ -729,26 +729,6 @@ find_witness_slot :: proc(
 		}
 	}
 	return INVALID_SYMBOL
-}
-
-@(private = "file")
-slot_candidates_for_witness :: proc(k: ^Checker, concrete: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
-	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
-	if info := underlying_info(k.c, concrete); info != nil {
-		for member in info.members {
-			if sym := symbol_of(k.c, member); sym != nil && sym.name == name {
-				append(&out, member)
-			}
-		}
-	}
-	if pkg := package_of(k.c, owner_pkg); pkg != nil {
-		for member in pkg.extensions[concrete] {
-			if sym := symbol_of(k.c, member); sym != nil && sym.name == name {
-				append(&out, member)
-			}
-		}
-	}
-	return out[:]
 }
 
 // The slot a `dyn` value's method call selects, and its index in the witness.

@@ -2750,7 +2750,14 @@ Associated types need no separate grammar, since types are compile-time values a
 
 A slot is both a static callable requirement and a potential
 [witness](#runtime-polymorphism) entry. It is available through method syntax
-in constrained generic code.
+in constrained generic code, and reached by the slot's own lookup rather than
+the caller's: a bound that positively requires the interface calls the
+implementation satisfaction selected, including one whose ordinary visibility
+the instantiating package could not see. The capability is exactly the required
+slot on the required type. An unrelated private member, a member offered only by
+a negated bound or by one arm of a disjunction, and every ordinary call outside a
+constrained declaration all keep the [visibility rules](#exported-names); a
+`static_assert` grants nothing, since it constrains no declaration.
 
 Method and operator requirements are written as ordinary calls on bound values; lifecycle requirements name the hook (the standard [`Cloneable`](#standard-interface-catalogue) requires the fixed `try_clone` slot). Interfaces compose by naming one another. A bare interface application in an interface body is a composition requirement: the application must evaluate to true, not merely compile. This is the deliberate exception to ordinary validity-form checking.
 

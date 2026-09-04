@@ -1,0 +1,11 @@
+package iface;
+
+@(public)
+Readable :: interface($Self: type) {
+	slot read: proc(self) -> int;
+}
+
+@(public)
+Unrelated :: interface($Self: type) {
+	slot value: proc(self) -> int;
+}

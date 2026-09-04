@@ -1,0 +1,19 @@
+package widget;
+
+@(public)
+Widget :: struct { @(public) value: int }
+
+impl Widget {
+	// Package-private, and the only implementation of `Readable`'s slot.
+	read :: proc(self) -> int { return self.value; }
+
+	// Package-private and not a slot of anything: no bound reaches it.
+	secret :: proc(self) -> int { return self.value * 100; }
+}
+
+// Carries no members of its own; the interface's package supplies them.
+@(public)
+Tag :: struct { @(public) id: int }
+
+@(public)
+make :: proc(v: int) -> Widget { return Widget{v}; }
