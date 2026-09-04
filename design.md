@@ -4041,15 +4041,15 @@ read_file :: proc() -> Result(Unit, io.Error) {
 
 `file` is a managed local, so its `drop` closes any still-live handle on scope exit. The explicit close above observes a close failure; reporting that failure does not replace the procedure's return value.
 
-Defer cannot change a procedure's named return values, since it runs after they have been returned:
+A result is anonymous, so there is no result local for a `defer` to reach — and the deferred statement runs after the return expression has been evaluated, so mutating what it named changes nothing the caller sees:
 
 ```odin
-foo :: proc() -> (n: int) {
+foo :: proc() -> int {
+	n := 123;
 	defer {
-		n = 456; // This does not change the returned value of `n`.
+		n = 456; // Runs after the result is taken; the caller still sees 123.
 	}
-	n = 123;
-	return;
+	return n;
 }
 ```
 
@@ -4257,12 +4257,12 @@ foo :: proc(x: int) {
 A variadic procedure accepts a variable number of arguments:
 
 ```odin
-sum :: proc(nums: ..int) -> (result: int) {
-	result = 0;
+sum :: proc(nums: ..int) -> int {
+	result := 0;
 	foreach (n in nums) {
 		result += n;
 	}
-	return;
+	return result;
 }
 fmt.println(sum());              // 0
 fmt.println(sum(1, 2));          // 3
@@ -4408,12 +4408,12 @@ An explicit generic parameter is supplied by the caller. A parameter of type `ty
 Prefix a parameter name with `$` to require a compile-time argument. The following example uses two compile-time parameters to initialize an array of known length:
 
 ```odin
-make_f32_array :: proc($N: int, $val: f32) -> (res: [N]f32) {
-	res = {};
+make_f32_array :: proc($N: int, $val: f32) -> [N]f32 {
+	res: [N]f32 = {};
 	foreach (i in 0..<N) {
 		res[i] = val*val;
 	}
-	return;
+	return res;
 }
 
 array := make_f32_array(3, 2);
@@ -4466,17 +4466,17 @@ An inferred generic parameter is bound from the type or shape of a runtime argum
 #### Procedures with inferred generic parameters
 
 ```odin
-foo :: proc($N: $I, $T: type) -> (res: [N]T) {
+foo :: proc($N: $I, $T: type) -> [N]T {
 	// `N` is the constant value passed
 	// `I` is the type of `N`
 	// `T` is the type passed
+	res: [N]T = {};
 	fmt.println("Generating an array of type", typeid_of(type_of(res)),
 	            "from the value", N, "of type", typeid_of(I));
-	res = {};
 	foreach (i in 0..<N) {
 		res[i] = i*i;
 	}
-	return;
+	return res;
 }
 
 T :: int;
