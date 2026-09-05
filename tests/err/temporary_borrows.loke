@@ -13,6 +13,12 @@ first_half :: proc(values: []int) -> []int {
 
 length :: proc(values: []int) -> int { return values.len(); }
 
+Buf :: struct { data: [4]int }
+
+impl Buf {
+	view :: proc(self) -> []int { return self.data[:]; }
+}
+
 main :: proc() {
 	// Used during the statement that built the temporary: allowed.
 	fmt.println(length([dynamic]int{1, 2, 3}[:]));
@@ -25,4 +31,10 @@ main :: proc() {
 	// follows the surrounding scope, so this one is fine.
 	literal := []int{1, 2, 3}[:];
 	fmt.println(length(literal));
+
+	// A method called on a temporary keeps it alive through the complete
+	// expression and no longer: the receiver form promises no extension.
+	fmt.println(Buf{{1, 2, 3, 4}}.view().len());
+	from_method := Buf{{1, 2, 3, 4}}.view();
+	fmt.println(from_method.len());
 }
