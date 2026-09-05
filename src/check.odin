@@ -69,6 +69,11 @@ Flow_Info :: struct {
 	returns:          bool,
 	breaks:           bool,
 	continues:        bool,
+	// Set when this statement falls through *only* because an enum can hold a
+	// non-member value: a member-complete switch with no default whose cases
+	// all terminate. It carries the span the missing-return diagnostic blames,
+	// since the signature is not where the answer is.
+	open_enum_exit:   ^Stmt_Switch,
 }
 
 FLOWS :: Flow_Info{can_fall_through = true}
@@ -2198,7 +2203,15 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
 	literal.defer_count = k.defer_slots
 	if symbol.result != INVALID_TYPE && flow.can_fall_through {
-		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")
+		if s := flow.open_enum_exit; s != nil {
+			errorf(
+				k.c, s.span, "L0365",
+				"this switch covers every member of `%s`, but an enum can hold a non-member value, so control can fall past it; add `case:` to return or panic there",
+				type_name(k.c, expr_base(s.subject).type),
+			)
+		} else {
+			errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")
+		}
 	}
 }
 
@@ -2223,6 +2236,8 @@ check_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 		flow.breaks ||= result.breaks
 		flow.continues ||= result.continues
 		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
+		// Only the last statement can be the one control falls out of.
+		flow.open_enum_exit = result.open_enum_exit
 		if !flow.can_fall_through {
 			// Statements after a terminator are still checked, but they cannot
 			// restore fallthrough.
@@ -2809,13 +2824,15 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
 	}
 
+	member_complete := false
 	if !has_default {
-		check_exhaustive(k, s, subject, covered)
+		member_complete = check_exhaustive(k, s, subject, covered)
 	}
 	return Flow_Info {
 		can_fall_through = !has_default || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,
 		continues        = flow.continues,
+		open_enum_exit   = member_complete && !any_case_falls ? s : nil,
 	}
 }
 
@@ -2873,10 +2890,10 @@ check_case_value :: proc(
 // design.md "Exhaustive switch": a switch over an enum with no default must
 // name every member.
 @(private = "file")
-check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: map[u32]bool) {
+check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered: map[u32]bool) -> (complete: bool) {
 	if !type_is_enum(k.c, subject) {
 		errorf(k.c, s.span, "L0366", "a switch over `%s` needs a default case", type_name(k.c, subject))
-		return
+		return false
 	}
 	info := underlying_info(k.c, subject)
 	missing := ""
@@ -2895,12 +2912,13 @@ check_exhaustive :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id, covered
 		}
 	}
 	if count == 0 {
-		return
+		return true
 	}
 	if count > 3 {
 		missing = concat(k.c, missing, ", ...")
 	}
 	errorf(k.c, s.span, "L0366", "this switch over `%s` does not cover %s", type_name(k.c, subject), missing)
+	return false
 }
 
 // Also the validity test for an `unsafe.transmute` whose destination is an enum:

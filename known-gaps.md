@@ -20,7 +20,8 @@ investigation once.
   an enum is unchecked — so a subject holding a non-member value matches no case
   and falls out of the bottom. A *variant* switch covering every variant is the
   case where no path reaches the end, and the compiler already accepts that one
-  with no trailing return.
+  with no trailing return. The diagnostic now says this at the switch rather
+  than at the signature, so it no longer reads as a missing feature.
 - **Overlapping range cases are accepted.** Correct: cases are tried top to
   bottom and the first match wins (`design.md` "switch statement"). Only
   duplicate constant values are diagnosed.
