@@ -4771,7 +4771,51 @@ Putting a borrow inside a value does not discard what the borrow owes. A struct,
 The compiler enumerates a type's **carrier paths**: the projection paths from the value to each built-in carrier reachable inside it. A record contributes one path per field, a union one per alternative, a small fixed array one path per element, a dynamic array one wildcard element path standing for every element, and a map separate key and value paths under an entry step. A map's key set is not part of its type the way an array's length is, so the type provides a small number of entries and each procedure body decides which of its constant keys uses which. Each path
 keeps its own capability, so a record holding one `[]int` and one `[]mut int` has no single aggregate capability. A field that reaches no carrier contributes nothing, so a recursive type built from scalars enumerates to nothing at all.
 
-The enumeration is bounded: it stops at a fixed depth, a fixed array longer than a small limit contributes one wildcard element path rather than one per element, a map whose entry would be wide keeps a single wildcard entry, and a type with more paths than the limit collapses to one path for the whole value. An unknown index or key, and a constant key past the entry limit, use a wildcard step, which overlaps every element or entry: such a read sees all of them and such a write joins into all of them rather than replacing any. A cut path stands for every carrier beneath it and joins what they hold, so a limit costs precision and never a check.
+#### Minimum provenance precision
+
+Version 1 guarantees the following carrier-path precision. These are minimum
+analysis budgets for conforming implementations, not limits on legal type sizes.
+Each guarantee applies while the other budgets are also satisfied:
+
+| Dimension | Minimum guarantee |
+| --- | --- |
+| Aggregate nesting | Preserve carrier leaves reached in at most **4 projection steps**. A record field, union alternative, or array element costs one step; a map entry plus its key/value projection costs two. The carrier itself costs no step. |
+| Carrier paths | Preserve at least **64 paths per value type**, after applying the other shape rules. Fields without borrows cost no paths. |
+| Fixed arrays | Distinguish every element of arrays of **1 through 8 elements**, when selected by a compile-time-known index. |
+| Map entry width | Distinguish constant keys when the nonrecursive key and value shapes together contain at most **2 carrier paths**, measured before replicating entries. |
+| Constant map keys | Distinguish at least the first **4 distinct supported constant keys encountered per procedure**, shared across its maps. Supported keys are strings, booleans, runes, and integers representable in signed 64 bits. Key identities are local to the body; result contracts merge map entries across calls while preserving enclosing paths and the key/value distinction. |
+
+The reference compiler uses exactly these budgets. At greater depth it joins
+all carriers below the cut path; beyond 64 paths it joins the whole value.
+Arrays longer than 8 elements use one wildcard element path for **all** elements,
+including element zero. Maps with wider or recursive entry shapes use one
+wildcard entry. Exceeding a budget therefore may reject a program that an
+implementation with greater precision can accept; portable code must not rely
+on independence beyond these guarantees. Recursive procedure result inference
+settles to a fixed point and has no call-depth cutoff.
+
+An unknown index or key, and a constant key past the entry budget, use a wildcard
+step, which overlaps every element or entry: a read sees all of them and a write
+joins into all of them rather than replacing any. Dynamic arrays use wildcard
+elements regardless of a constant index; union alternatives share a wildcard
+projection. These are conservative shape rules, not claims that distinct runtime
+elements alias. A cut path joins what its carriers hold, so lost precision never
+waives a lifetime or capability check.
+
+When a rejected borrow or result contract carries provenance merged by one of
+these limits, the diagnostic must name the limit and explain the merge. This
+explanation follows assignments and procedure result contracts, including calls
+through stored callbacks; unrelated values do not acquire the explanation.
+The note describes a possible conservative dependency, not proof that the
+program would be safe with a larger budget. Ordinary failures with no such
+precision loss do not receive a limit note.
+
+For example, a helper returning `values[0]` from `[8][]Entry` can retain only
+element zero's source. Changing its parameter to `[9][]Entry` makes the reference
+compiler retain every element's source, so a short-lived sibling can prevent
+returning the result. That rejection names the **8-element** limit. Passing the
+required slice directly, before combining it with other elements, preserves its
+provenance without depending on an aggregate budget.
 
 A user record is still not a new *carrier*; it is a value that contains carriers. Version 1 has no user-defined provenance annotation, so a record of `rawptr` or `[^]T` fields carries nothing to check, and one reconstructed from storage the compiler does not track carries unknown provenance rather than none.
 

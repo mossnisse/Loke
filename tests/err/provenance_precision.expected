@@ -1,0 +1,8 @@
+L0526
+@12:9
+`local` ends when this procedure returns
+L0513
+@25:14
+`inner`, the local it borrows, has ended
+provenance precision limit: fixed arrays longer than 8 elements merge element borrows
+this conservative dependency may cause the rejection

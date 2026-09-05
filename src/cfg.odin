@@ -68,6 +68,8 @@ Flow_Block :: struct {
 	// row per slot.
 	prov:          [dynamic]Prov_Event,
 	reach_entry:   []u8,
+	precision_entry: []Precision_Loss,
+	precision_exit: []Precision_Loss,
 	reach_exit:    []u8,
 	invalid_entry: []bool,
 	invalid_exit:  []bool,
@@ -125,6 +127,7 @@ Access_Kind :: enum u8 {
 }
 
 Prov_Event :: struct {
+	precision: Precision_Loss,
 	kind:    Prov_Kind,
 	span:    Span,
 	slot:    int,
@@ -1820,6 +1823,7 @@ prov_content_slots :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> []int {
 		entry.content_type = path.truncated ? INVALID_TYPE : path.type
 		entry.content_shape = sym.type
 		entry.content_truncated = path.truncated
+		entry.precision = path.precision
 		append(&graph.prov_slots, entry)
 		slots[index] = len(graph.prov_slots) - 1
 		if unknown_root != NO_ROOT {
@@ -1875,6 +1879,7 @@ prov_temp_content :: proc(graph: ^Flow_Graph, type: Type_Id) -> []int {
 		entry.content_type = path.truncated ? INVALID_TYPE : path.type
 		entry.content_shape = type
 		entry.content_truncated = path.truncated
+		entry.precision = path.precision
 		append(&graph.prov_slots, entry)
 		slots[index] = len(graph.prov_slots) - 1
 	}
@@ -1912,6 +1917,7 @@ prov_project_content :: proc(
 	content := prov_temp_content(graph, result_type)
 	for slot in content {
 		full := prov_concat_path(graph, path, graph.prov_slots[slot].path)
+		graph.prov_slots[slot].precision |= path_precision(full)
 		selected := prov_select_content(graph, sources, source_type, full)
 		prov_emit(graph, Prov_Event{kind = .Live, sources = selected, span = span})
 		prov_define_one_content(graph, slot, selected, span)
@@ -2032,7 +2038,7 @@ prov_define_content :: proc(
 		   (indistinct || path_is_indistinct(entry.path) || partial_truncated_write)) {
 			sources = prov_join(graph, prov_one(graph, slot), sources)
 		}
-		prov_define_one_content(graph, slot, sources, span)
+		prov_define_one_content(graph, slot, sources, span, path_precision(written))
 	}
 }
 
@@ -2069,9 +2075,9 @@ path_has_exact_prefix :: proc(path, prefix: []Proj_Step) -> bool {
 // mutable borrow published into a read-only field weakens exactly as it would
 // at a read-only local.
 @(private = "file")
-prov_define_one_content :: proc(graph: ^Flow_Graph, slot: int, sources: []int, span: Span) {
+prov_define_one_content :: proc(graph: ^Flow_Graph, slot: int, sources: []int, span: Span, precision: Precision_Loss = {}) {
 	prov_weaken(graph, sources, graph.prov_slots[slot].content_type, slot, span)
-	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span})
+	prov_emit(graph, Prov_Event{kind = .Def, slot = slot, loan = NO_LOAN, sources = sources, span = span, precision = precision})
 }
 
 @(private = "file")
@@ -3114,7 +3120,9 @@ prov_map_entry_step :: proc(graph: ^Flow_Graph, map_type: Type_Id, key: Expr) ->
 	}
 	entry := len(graph.map_key_entries)
 	if entry >= MAP_KEY_SLOTS {
-		return proj_wild() // out of entries; the wildcard answers for the rest
+		step := proj_wild()
+		step.precision = {.Map_Keys}
+		return step
 	}
 	graph.map_key_entries[name] = entry
 	return proj_range(i64(entry), i64(entry) + 1)
@@ -4543,6 +4551,12 @@ prov_substitute_result :: proc(
 			graph, root, nil, type_carries_borrow(graph.k.c, type).mutable,
 			v.span, carrier_noun(graph.k.c, type),
 		))
+	}
+	if dependencies.precision != {} && len(out) > 0 {
+		slot := prov_temp_slot(graph)
+		graph.prov_slots[slot].precision = dependencies.precision
+		prov_define_one_content(graph, slot, out, v.span)
+		return prov_one(graph, slot)
 	}
 	return out
 }

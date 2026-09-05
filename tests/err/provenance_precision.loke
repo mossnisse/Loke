@@ -1,0 +1,28 @@
+package main;
+import "core:fmt";
+
+head9 :: proc(values: [9][]int) -> []int { return values[0]; }
+forward9 :: proc(values: [9][]int) -> []int { f := head9; return f(values); }
+
+returned :: proc(input: []int) -> []int {
+	local := [1]int{2};
+	values: [9][]int = {};
+	values[0] = input;
+	values[8] = local[:];
+	return forward9(values);
+}
+
+local_use :: proc() {
+	outer := [1]int{1};
+	view: []int;
+	{
+		inner := [1]int{2};
+		values: [9][]int = {};
+		values[0] = outer[:];
+		values[8] = inner[:];
+		view = values[0];
+	}
+	fmt.println(view[0]);
+}
+
+main :: proc() {}

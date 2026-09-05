@@ -63,6 +63,7 @@ check_proc_contracts :: proc(k: ^Checker) {
 			errorf(k.c, check.span, "L0666", "procedure result provenance does not satisfy the inferred contract of `%s`",
 				identifier_text(k.c, symbol_of(k.c, b.proc_contract).name))
 			add_notef(k.c, symbol_of(k.c, b.proc_contract).span, "result contract inferred from this declaration")
+			add_precision_notes(k.c, check.span, actual.precision | bound.precision)
 		}
 	}
 }

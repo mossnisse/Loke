@@ -1,0 +1,23 @@
+package main;
+
+head8 :: proc(values: [8][]int) -> []int { return values[0]; }
+forward8 :: proc(input: []int) -> []int {
+	local := [1]int{2};
+	values: [8][]int = {};
+	values[0] = input;
+	values[7] = local[:];
+	f := head8;
+	return f(values);
+}
+// Beyond the precision guarantee, returning the element itself remains exact.
+separate :: proc(input: []int) -> []int {
+	local := [1]int{2};
+	values: [9][]int = {};
+	values[8] = local[:];
+	return input;
+}
+main :: proc() {
+	values := [1]int{7};
+	assert(forward8(values[:])[0] == 7);
+	assert(separate(values[:])[0] == 7);
+}

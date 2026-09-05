@@ -152,6 +152,7 @@ Proj_Kind :: enum u8 {
 }
 
 Proj_Step :: struct {
+	precision: Precision_Loss,
 	kind: Proj_Kind,
 	lo:   i64,
 	hi:   i64,
@@ -218,6 +219,7 @@ Prov_Loan :: struct {
 // temporary whose value refers to a root. Reaching-loan state is per slot, so
 // overwriting one carrier ends only the value that was overwritten.
 Prov_Slot :: struct {
+	precision: Precision_Loss,
 	symbol: Symbol_Id,
 	name:   string,
 	span:   Span,
@@ -480,6 +482,8 @@ attribute_escape_level :: proc(c: ^Compiler, attributes: []Attribute) -> (Escape
 // package body is checked. Generic instantiation and member synthesis have
 // finished by then, so a cached answer cannot describe a type whose structure
 // was still incomplete when it was computed.
+// design.md "Minimum provenance precision": these budgets are public
+// guarantees. Keep the boundary tests and diagnostic explanations in sync.
 CARRIER_DEPTH :: 4
 CARRIER_WIDTH :: 64
 // How many elements of a fixed array get a path of their own. Which index holds
@@ -493,8 +497,8 @@ CARRIER_ARRAY_ELEMENTS :: 8
 PROJ_MAP_KEY :: 0
 PROJ_MAP_VALUE :: 1
 
-// How many constant keys of one body get an entry of their own, above the
-// wildcard entry that answers for an unknown or overflowing key. A map's key set
+// How many constant keys of one body get an entry of their own. An unknown or
+// overflowing key uses a wildcard step overlapping every entry. A map's key set
 // is not part of its type the way an array's length is, so this is the type
 // providing somewhere to put them and the body deciding which key goes where.
 MAP_KEY_SLOTS :: 4
@@ -524,6 +528,7 @@ map_shape_is_keyed :: proc(c: ^Compiler, type: Type_Id) -> bool {
 }
 
 Carrier_Path :: struct {
+	precision: Precision_Loss,
 	steps: []Proj_Step,
 	// The leaf carrier's own type, or INVALID_TYPE for a truncated path.
 	type: Type_Id,
@@ -624,7 +629,7 @@ carrier_shape :: proc(c: ^Compiler, type: Type_Id) -> []Carrier_Path {
 		// Too wide to be worth a slot each. One path covering the whole value
 		// keeps the answer sound and the slot count bounded.
 		whole := make([]Carrier_Path, 1, c.semantic_allocator)
-		whole[0] = carrier_truncated(nil, type_carries_borrow(c, type))
+		whole[0] = carrier_truncated(nil, type_carries_borrow(c, type), {.Width})
 		shape = whole
 	}
 	c.carrier_shapes[type] = shape
@@ -644,6 +649,7 @@ carrier_shape_walk :: proc(
 	}
 	if type_is_carrier(c, type) {
 		append(out, Carrier_Path {
+			precision = path_precision(prefix),
 			steps   = carrier_steps(c, prefix, nil),
 			type    = type,
 			mutable = carrier_is_mutable(c, type),
@@ -655,7 +661,7 @@ carrier_shape_walk :: proc(
 		return // a scalar subtree, and the one place a cycle of scalars stops
 	}
 	if depth >= CARRIER_DEPTH {
-		append(out, carrier_truncated(carrier_steps(c, prefix, nil), reach))
+		append(out, carrier_truncated(carrier_steps(c, prefix, nil), reach, {.Depth}))
 		return
 	}
 	info := underlying_info(c, type)
@@ -688,7 +694,9 @@ carrier_shape_walk :: proc(
 			}
 			return
 		}
-		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {proj_wild()}), depth + 1, out)
+		step := proj_wild()
+		if info.count > CARRIER_ARRAY_ELEMENTS { step.precision = {.Array_Elements} }
+		carrier_shape_walk(c, info.element, carrier_steps(c, prefix, {step}), depth + 1, out)
 	case .Dynamic_Array:
 		// One edge for every element: which index holds what is not a static
 		// fact, and one path per element would not be finite here.
@@ -706,6 +714,7 @@ carrier_shape_walk :: proc(
 		}
 		for entry in 0 ..< entries {
 			step := entries == 1 ? proj_wild() : proj_range(i64(entry), i64(entry) + 1)
+			if entries == 1 { step.precision = {.Map_Width} }
 			base := carrier_steps(c, prefix, {step})
 			carrier_shape_walk(c, info.key, carrier_steps(c, base, {proj_field(PROJ_MAP_KEY)}), depth + 2, out)
 			carrier_shape_walk(c, info.element, carrier_steps(c, base, {proj_field(PROJ_MAP_VALUE)}), depth + 2, out)
@@ -714,8 +723,8 @@ carrier_shape_walk :: proc(
 }
 
 @(private = "file")
-carrier_truncated :: proc(steps: []Proj_Step, reach: Carrier_Reach) -> Carrier_Path {
-	return Carrier_Path{steps = steps, type = INVALID_TYPE, mutable = reach.mutable, truncated = true}
+carrier_truncated :: proc(steps: []Proj_Step, reach: Carrier_Reach, loss: Precision_Loss) -> Carrier_Path {
+	return Carrier_Path{steps = steps, type = INVALID_TYPE, mutable = reach.mutable, truncated = true, precision = loss | path_precision(steps)}
 }
 
 @(private = "file")
@@ -862,6 +871,7 @@ merge_region_provenance :: proc(into: ^Region_Set, from: Region_Set) -> bool {
 // Every field is a *possibility*, so the join is a union and the lattice is
 // finite, which is what makes the whole-program fixed point below terminate.
 Result_Dependencies :: struct {
+	precision: Precision_Loss,
 	// Which borrowed parameters the result may name storage of.
 	params:  []bool,
 	// Which of that parameter's content paths, when it holds its borrows inside
@@ -942,6 +952,8 @@ new_result_provenance :: proc(c: ^Compiler, param_count: int, type: Type_Id, wit
 				path = summary_path,
 				dependencies = new_result_dependencies(c, param_count),
 			}
+			out.content[index].dependencies.precision = path_precision(summary_path.steps)
+			out.precision |= out.content[index].dependencies.precision
 		}
 	}
 	if with_content {
@@ -987,7 +999,10 @@ widen_summary_map_path :: proc(c: ^Compiler, type: Type_Id, path: []Proj_Step) {
 	case .Array, .Dynamic_Array:
 		widen_summary_map_path(c, info.element, path[1:])
 	case .Map:
+		loss := path[0].precision
+		if path[0].kind == .Range { loss |= {.Map_Summary} }
 		path[0] = proj_wild()
+		path[0].precision = loss
 		if len(path) > 1 {
 			if steps_overlap(path[1], proj_field(PROJ_MAP_KEY)) {
 				widen_summary_map_path(c, info.key, path[2:])
@@ -1032,7 +1047,7 @@ result_summary :: proc(c: ^Compiler, declaration: Symbol_Id) -> (Result_Provenan
 // fixed point's termination signal.
 @(private = "file")
 merge_provenance :: proc(into: ^Result_Dependencies, from: Result_Dependencies) -> bool {
-	changed := false
+	changed := merge_precision(&into.precision, from.precision)
 	for value, index in from.params {
 		if value && index < len(into.params) && !into.params[index] {
 			into.params[index] = true
@@ -1068,6 +1083,12 @@ merge_provenance :: proc(into: ^Result_Dependencies, from: Result_Dependencies) 
 // later use); a loan is live exactly where a slot that may hold it is.
 @(private = "file")
 Prov_State :: struct {
+	// A parallel, flow-sensitive explanation lattice. Definitions replace
+	// these flags, joins union them, and summaries carry them across calls.
+	// They are never consulted by the acceptance rules.
+	precision: []Precision_Loss,
+	merged_precision: Precision_Loss,
+	diagnostic_precision: Precision_Loss,
 	graph:   ^Flow_Graph,
 	k:       ^Checker,
 	slots:   int,
@@ -1267,6 +1288,7 @@ check_declared_escape :: proc(k: ^Checker, literal: ^Expr_Proc) {
 				identifier_text(k.c, bound.name),
 				identifier_text(k.c, sym.name),
 			)
+			add_precision_notes(k.c, bound.span, summary.result.precision)
 		}
 	}
 }
@@ -1314,6 +1336,7 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 			continue
 		}
 		copy(state.reach, block.reach_entry)
+		copy(state.precision, block.precision_entry)
 		copy(state.invalid, block.invalid_entry)
 		for event in block.prov {
 			if event.kind == .Escape {
@@ -1340,6 +1363,12 @@ collect_escape_provenance :: proc(state: ^Prov_State, summary: ^Proc_Summary) ->
 				}
 				for source in event.sources {
 					slot := graph.prov_slots[source]
+					changed = merge_precision(&into.precision, state.precision[source]) || changed
+					for &content in into.content {
+						if slot.content_shape != into.content_type || paths_overlap(slot.path, content.path.steps) {
+							changed = merge_precision(&content.dependencies.precision, state.precision[source]) || changed
+						}
+					}
 					row := reach_row(state, state.reach, source)
 					for index in 0 ..< state.loans {
 						if !bit_get(row, index) {
@@ -1434,7 +1463,7 @@ merge_param_paths :: proc(
 	loan_path := make([]Proj_Step, len(loan.path), state.graph.alloc)
 	copy(loan_path, loan.path)
 	widen_summary_map_path(state.k.c, sym.type, loan_path)
-	changed := false
+	changed := merge_precision(&into.precision, path_precision(loan_path))
 	for path, position in shape {
 		if !paths_overlap(path.steps, loan_path) {
 			continue
@@ -1484,6 +1513,8 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 	width := max(state.slots * state.row_words, 1)
 	for block in graph.blocks {
 		block.reach_entry = make([]u8, width, graph.alloc)
+		block.precision_entry = make([]Precision_Loss, state.slots, graph.alloc)
+		block.precision_exit = make([]Precision_Loss, state.slots, graph.alloc)
 		block.reach_exit = make([]u8, width, graph.alloc)
 		block.invalid_entry = make([]bool, state.loans, graph.alloc)
 		block.invalid_exit = make([]bool, state.loans, graph.alloc)
@@ -1494,6 +1525,7 @@ prepare_state :: proc(state: ^Prov_State) -> bool {
 		block.prov_visited = false
 	}
 	state.reach = make([]u8, width, graph.alloc)
+	state.precision = make([]Precision_Loss, state.slots, graph.alloc)
 	state.invalid = make([]bool, state.loans, graph.alloc)
 	state.live = make([]bool, max(state.slots, 1), graph.alloc)
 	state.uses = make([]Span, max(state.slots, 1), graph.alloc)
@@ -1515,6 +1547,7 @@ solve_reaching :: proc(state: ^Prov_State) {
 		block := graph.blocks[id]
 		queued[id] = false
 		mem.zero_slice(state.reach)
+		mem.zero_slice(state.precision)
 		mem.zero_slice(state.invalid)
 		if id != 0 {
 			seen := false
@@ -1524,6 +1557,7 @@ solve_reaching :: proc(state: ^Prov_State) {
 					continue
 				}
 				words_or(state.reach, source.reach_exit)
+				for loss, slot in source.precision_exit { state.precision[slot] |= loss }
 				for value, index in source.invalid_exit {
 					state.invalid[index] ||= value
 				}
@@ -1536,19 +1570,23 @@ solve_reaching :: proc(state: ^Prov_State) {
 			// A borrowed parameter arrives already holding the caller's root.
 			for entry in graph.entry_defs {
 				bit_mark(reach_row(state, state.reach, entry.slot), int(entry.loan))
+				state.precision[entry.slot] |= graph.prov_slots[entry.slot].precision
 			}
 		}
 		copy(block.reach_entry, state.reach)
+		copy(block.precision_entry, state.precision)
 		copy(block.invalid_entry, state.invalid)
 		for event in block.prov {
 			run_prov_event(state, event, state.reach, state.invalid)
 		}
 		if block.prov_visited &&
+		   precision_equal(block.precision_exit, state.precision) &&
 		   words_equal(block.reach_exit, state.reach) &&
 		   bools_equal(block.invalid_exit, state.invalid) {
 			continue
 		}
 		copy(block.reach_exit, state.reach)
+		copy(block.precision_exit, state.precision)
 		copy(block.invalid_exit, state.invalid)
 		block.prov_visited = true
 		for successor in block.succs {
@@ -1576,10 +1614,13 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 	#partial switch event.kind {
 	case .Def:
 		mem.zero_slice(state.merged)
+		loss := graph.prov_slots[event.slot].precision | path_precision(event.path) | event.precision
 		for source in event.sources {
+			loss |= state.precision[source]
 			words_or(state.merged, reach_row(state, reach, source))
 		}
 		if event.loan != NO_LOAN {
+			loss |= path_precision(graph.loans[int(event.loan)].path)
 			// A loan ID names one syntactic creation site, which can execute again
 			// after an earlier assignment, reset, or loop iteration invalidated its
 			// previous instance. The fresh definition starts a new valid instance;
@@ -1588,6 +1629,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 			bit_mark(state.merged, int(event.loan))
 		}
 		copy(reach_row(state, reach, event.slot), state.merged)
+		state.precision[event.slot] = loss
 	case .Load:
 		load_pointee_content(state, event, reach)
 	case .Publish:
@@ -1596,7 +1638,9 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 		// conservative in the rejecting direction, and monotone, so the fixed
 		// point still settles.
 		mem.zero_slice(state.merged)
+		state.merged_precision = path_precision(event.path)
 		for source in event.sources {
+			state.merged_precision |= state.precision[source]
 			words_or(state.merged, reach_row(state, reach, source))
 		}
 		for slot in event.into {
@@ -1675,6 +1719,7 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, reads: ^[dynamic]int = nil) {
 	graph := state.graph
 	mem.zero_slice(state.merged)
+	loss := graph.prov_slots[event.slot].precision | path_precision(event.path)
 	for carrier in event.into {
 		row := reach_row(state, reach, carrier)
 		for loan, loan_index in graph.loans {
@@ -1703,6 +1748,7 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 						continue
 					}
 					found = true
+					loss |= state.precision[index]
 					words_or(state.merged, reach_row(state, reach, index))
 					if reads != nil {
 						seen := false
@@ -1716,11 +1762,13 @@ load_pointee_content :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8,
 				}
 			}
 			if !found {
+				loss |= state.precision[carrier] | path_precision(loan.path)
 				bit_mark(state.merged, loan_index)
 			}
 		}
 	}
 	copy(reach_row(state, reach, event.slot), state.merged)
+	state.precision[event.slot] = loss
 }
 
 // Forward reaching determines which stored values each indirect read uses.
@@ -1736,6 +1784,7 @@ resolve_content_reads :: proc(state: ^Prov_State) {
 			continue
 		}
 		copy(state.reach, block.reach_entry)
+		copy(state.precision, block.precision_entry)
 		copy(state.invalid, block.invalid_entry)
 		for &event in block.prov {
 			if event.kind == .Load {
@@ -1814,6 +1863,7 @@ publish_into_loan :: proc(state: ^Prov_State, reach: []u8, loan: Prov_Loan) {
 		}
 		if paths_overlap(slot.path, loan.path) {
 			words_or(reach_row(state, reach, index), state.merged)
+			state.precision[index] |= state.merged_precision | slot.precision | path_precision(loan.path)
 		}
 	}
 }
@@ -1866,6 +1916,7 @@ report_provenance :: proc(state: ^Prov_State) {
 		}
 
 		copy(state.reach, block.reach_entry)
+		copy(state.precision, block.precision_entry)
 		copy(state.invalid, block.invalid_entry)
 		for event, index in block.prov {
 			check_prov_event(state, event, live_after[index], use_after[index])
@@ -1888,6 +1939,17 @@ access_conflicts :: proc(loan: Prov_Loan, event: Prov_Event) -> bool {
 @(private = "file")
 check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, uses: []Span) {
 	graph := state.graph
+	before := len(state.k.c.diagnostics)
+	state.diagnostic_precision = path_precision(event.path)
+	for source in event.sources { state.diagnostic_precision |= state.precision[source] }
+	defer {
+		if len(state.k.c.diagnostics) > before {
+			add_precision_notes(state.k.c, event.span, state.diagnostic_precision)
+			if event.region.crowded {
+				add_notef(state.k.c, event.span, "provenance precision limit: more than 64 local allocator regions merge region identities")
+			}
+		}
+	}
 	#partial switch event.kind {
 	case .Access:
 		it := live_loans(state, live)
@@ -1897,6 +1959,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				continue
 			}
 			report_borrow_conflict(state, event, loan, uses[slot])
+			state.diagnostic_precision |= state.precision[slot]
 			return
 		}
 	case .Live, .Load:
@@ -1911,6 +1974,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 					continue
 				}
 				report_suspended_reborrow(state, event, reborrow, uses[reborrow.derived])
+				state.diagnostic_precision |= state.precision[reborrow.derived]
 				return
 			}
 		}
@@ -1922,6 +1986,7 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 				continue
 			}
 			report_root_outlived(state, event, loan, uses[slot])
+			state.diagnostic_precision |= state.precision[slot]
 			return
 		}
 	case .Escape:
@@ -2104,6 +2169,7 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 			"this reset ends every allocation in the region, but a %s of one of them is still in use",
 			loan.what,
 		)
+		state.diagnostic_precision |= state.precision[slot]
 		add_notef(state.k.c, loan.span, "the %s is created here", loan.what)
 		if uses[slot].file != NO_FILE {
 			add_notef(state.k.c, uses[slot], "and is still used here, which keeps it live")
@@ -2140,6 +2206,7 @@ report_live_dependants :: proc(
 			loan.what,
 		)
 		add_borrow_notes(state, descriptor, loan, uses[slot])
+		state.diagnostic_precision |= state.precision[slot]
 		return
 	}
 }

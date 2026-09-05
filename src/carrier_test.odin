@@ -5,6 +5,7 @@
 package lokec
 
 import "core:fmt"
+import "core:strings"
 import "core:testing"
 
 // Checks one package of source into the caller's compiler and hands back its
@@ -192,6 +193,7 @@ main :: proc() { }`
 	over := carrier_shape(&c, named_type(&c, f, "One"))
 	testing.expectf(t, len(over) == 1, "expected one path past the limit, got %d", len(over))
 	testing.expect(t, over[0].truncated, "a path past the depth limit was not marked truncated")
+	testing.expect(t, .Depth in over[0].precision, "depth cutoff lost its diagnostic reason")
 	testing.expectf(
 		t,
 		len(over[0].steps) == CARRIER_DEPTH,
@@ -271,7 +273,146 @@ main :: proc() { }`
 	for path in shape {
 		entry := path.steps[len(path.steps) - 3]
 		testing.expect(t, entry.kind == .Wild, "a wide map value was given keyed entries")
+		testing.expect(t, .Map_Width in path.precision, "map width cutoff lost its diagnostic reason")
 	}
+}
+
+@(test)
+minimum_carrier_precision_boundaries :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	f := shaped(&c, `package main;
+Eight :: struct { values: [8][]int }
+Nine :: struct { values: [9][]int }
+SixtyFour :: struct { values: [8][8][]int }
+SixtyFive :: struct { first: SixtyFour, last: []int }
+Pair :: struct { first, second: []int }
+MapPairs :: struct { entries: map[int]Pair }
+Leaf :: struct { value: []int }
+Two :: struct { value: Leaf }
+Three :: struct { value: Two }
+Four :: struct { value: Three }
+main :: proc() {}`)
+	testing.expect(t, c.error_count == 0, "boundary types should check")
+	eight := carrier_shape(&c, named_type(&c, f, "Eight"))
+	testing.expect(t, len(eight) == 8, "eight elements must remain independent")
+	for path in eight { testing.expect(t, path.precision == {}, "exact array reported precision loss") }
+	nine := carrier_shape(&c, named_type(&c, f, "Nine"))
+	testing.expect(t, len(nine) == 1 && .Array_Elements in nine[0].precision, "nine elements must explain their merge")
+	full := carrier_shape(&c, named_type(&c, f, "SixtyFour"))
+	testing.expect(t, len(full) == 64, "64 paths must remain independent")
+	for path in full { testing.expect(t, path.precision == {}, "exact width reported precision loss") }
+	over := carrier_shape(&c, named_type(&c, f, "SixtyFive"))
+	testing.expect(t, len(over) == 1 && .Width in over[0].precision, "65 paths must explain their merge")
+	pairs := carrier_shape(&c, named_type(&c, f, "MapPairs"))
+	testing.expect(t, len(pairs) == 8, "two-path map entries must distinguish four keys")
+	for path in pairs { testing.expect(t, path.precision == {}, "two-path map entry reported precision loss") }
+	deep := carrier_shape(&c, named_type(&c, f, "Four"))
+	testing.expect(t, len(deep) == 1 && len(deep[0].steps) == 4 && deep[0].precision == {}, "four projection steps must stay precise")
+}
+
+@(test)
+precision_explanations_follow_values_and_overwrites :: proc(t: ^testing.T) {
+	cases := []struct { body: string, note: string } {
+		{`bad :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    large: [9][]int = {}; large[8] = local[:];
+    return local[:];
+}`, ""},
+		{`bad :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    large: [9][]int = {}; large[0] = input; large[8] = local[:];
+    view := large[0];
+    view = local[:];
+    return view;
+}`, ""},
+		{`head :: proc(values: [9][]int) -> []int { return values[0]; }
+forward :: proc(values: [9][]int) -> []int { f := head; return f(values); }
+bad :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    large: [9][]int = {}; large[0] = input; large[8] = local[:];
+    return forward(large);
+}`, "fixed arrays longer than 8 elements"},
+		{`Holder :: struct { view: []int }
+bad :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    large: [9][]int = {}; large[0] = input; large[8] = local[:];
+    holder := Holder{input};
+    pointer := &mut holder;
+    pointer^.view = large[0];
+    return pointer^.view;
+}`, "fixed arrays longer than 8 elements"},
+		{`bad :: proc(input: []int, choose: bool) -> []int {
+    local := [1]int{2};
+    large: [9][]int = {}; large[0] = input; large[8] = local[:];
+    view := input;
+    if (choose) { view = large[0]; }
+    return view;
+}`, "fixed arrays longer than 8 elements"},
+		{`bad :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    values: map[int][]int = {};
+    values[0] = input; values[1] = input; values[2] = input; values[3] = input;
+    values[4] = local[:];
+    return values[0];
+}`, "only 4 constant map keys per procedure"},
+		{`Wide :: struct { matrix: [8][8][]int, other: []int }
+bad :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    value: Wide = {}; value.matrix[0][0] = input; value.other = local[:];
+    return value.matrix[0][0];
+}`, "more than 64 carrier paths"},
+		{`Leaf :: struct { wanted, other: []int }
+Two :: struct { value: Leaf }
+Three :: struct { value: Two }
+Four :: struct { value: Three }
+Five :: struct { value: Four }
+bad :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    value: Five = {};
+    value.value.value.value.value.wanted = input;
+    value.value.value.value.value.other = local[:];
+    return value.value.value.value.value.wanted;
+}`, "below 4 aggregate projection steps"},
+	}
+	for item in cases {
+		c: Compiler
+		source := strings.concatenate({"package main;\n", item.body, "\nmain :: proc() {}"})
+		defer delete(source)
+		_ = shaped(&c, source)
+		defer destroy_compilation(&c)
+		if !testing.expectf(t, c.error_count == 0, "precision fixture did not type check: %v", c.diagnostics[:]) { continue }
+		k := Checker{c = &c}
+		analyze_program_provenance(&k)
+		if !testing.expectf(t, c.error_count == 1, "expected one lifetime rejection, got %d", c.error_count) { continue }
+		found := false
+		for diagnostic in c.diagnostics {
+			for note in diagnostic.notes {
+				if strings.contains(note.message, "provenance precision") {
+					testing.expect(t, item.note != "", "an unrelated or overwritten value added a precision note")
+					found ||= item.note != "" && strings.contains(note.message, item.note)
+				}
+			}
+		}
+		testing.expect(t, found == (item.note != ""), "the affected value lost its precision explanation")
+	}
+}
+
+@(test)
+four_constant_map_keys_preserve_independence :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	_ = shaped(&c, `package main;
+read :: proc(input: []int) -> []int {
+    local := [1]int{2};
+    values: map[int][]int = {};
+    values[0] = input; values[1] = input; values[2] = input; values[3] = local[:];
+    return values[0];
+}
+main :: proc() {}`)
+	k := Checker{c = &c}
+	analyze_program_provenance(&k)
+	testing.expectf(t, c.error_count == 0, "four constant keys lost independence: %v", c.diagnostics[:])
 }
 
 @(test)
