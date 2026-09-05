@@ -510,6 +510,7 @@ check_escape_attribute :: proc(
 	type: Type_Id,
 	span: Span,
 	generic_instance := false,
+	borrowing := false,
 ) -> Escape_Level {
 	level, written, ok := attribute_escape_level(k.c, attributes)
 	if !written {
@@ -528,7 +529,7 @@ check_escape_attribute :: proc(
 	// does not, so demanding that the one declaration be right for both would
 	// make such a container unwritable. The level is simply vacuous where the
 	// bound type carries nothing.
-	if !generic_instance && type != INVALID_TYPE && !type_is_carrier(k.c, type) && !type_carries_borrow(k.c, type).any {
+	if !generic_instance && !borrowing && type != INVALID_TYPE && !type_is_carrier(k.c, type) && !type_carries_borrow(k.c, type).any {
 		errorf(
 			k.c, span, "L0648",
 			"`@(escape=...)` describes what a call may keep of a borrow, and `%s` carries none",
@@ -1096,6 +1097,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			// makes sense on an `Allocator`.
 			escape := check_escape_attribute(
 				k, parameter.attributes, written_type, parameter.span, in_generic_signature(k, literal),
+				borrowing = mode == .Borrow || mode == .Inout,
 			)
 			resets := has_attribute(parameter.attributes, "allocator_reset") &&
 				!split_receiver
@@ -1161,6 +1163,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		literal.signature.convention, resets_list[:],
 		param_by_ptr = by_ptr_list[:], c_vararg = saw_c_vararg,
 		param_escapes = escapes_list[:],
+		proc_contract = !is_foreign && literal.body != nil && result_needs_contract(k.c, result_type, result_inout) ? symbol_id : INVALID_SYMBOL,
 	)
 	// Parameter/result binding creation may grow the symbol store. Reacquire by
 	// ID rather than retaining a pointer across append.
@@ -1562,7 +1565,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 				append(&params, resolved)
 				append(&modes, mode)
 				append(&resets, marked)
-				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span))
+				append(&escapes, check_escape_attribute(k, parameter.attributes, resolved, parameter.span, borrowing = mode == .Borrow || mode == .Inout))
 			}
 		}
 		result_type := INVALID_TYPE
@@ -2653,6 +2656,7 @@ check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id, inserts :=
 		)
 		return INVALID_TYPE
 	}
+	if from != INVALID_TYPE { record_proc_contract_check(k.c, from, type, expr_span(target)) }
 	return type
 }
 

@@ -1727,7 +1727,8 @@ Procedure types are compatible only when the following match:
 - parameter and result types;
 - parameter modes and variadic shape;
 - type-level parameter effects, including `@(allocator_reset)` and
-  [`@(escape=<level>)`](#escapelevel).
+  [`@(escape=<level>)`](#escapelevel);
+- any inferred [result contract](#procedure-result-contracts) required by the destination.
 
 A reset-capable procedure cannot be stored in a procedure value whose type hides
 that effect. The escape level likewise determines what an indirect call may keep
@@ -1737,10 +1738,11 @@ Visibility and deprecation are declaration-only attributes and do not participat
 in type compatibility. Omitted-argument defaults are also declaration metadata;
 every call through a procedure value supplies the full parameter list.
 
-Result-provenance summaries are also declaration metadata rather than part of a
-procedure type. A direct call can use the summary, but converting a declaration
-to a procedure value erases it and activates the conservative indirect-call
-rule under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries).
+An inferred procedure type retains its declaration's result-provenance contract.
+`callback := choose` and `Callback :: type_of(choose)` preserve it without adding
+anything to the runtime code pointer. Converting to a plain written procedure
+signature erases that refinement and activates the conservative indirect-call
+rule under [Procedure result contracts](#procedure-result-contracts).
 
 ### `type` and `typeid`
 
@@ -2011,9 +2013,14 @@ There are three receiver modes:
 | `self: inout Type` | Exclusive mutable borrow of the caller's variable |
 | `self: move Type` | Consumes the receiver |
 
-Both borrowing receivers designate the caller's storage rather than a copy of it, so both cross the ABI as one pointer, and a borrow either one returns derives from the caller's root under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). An immutable receiver is still unwritable through `self`, and a method called on a temporary keeps that temporary alive for as long as the borrow it hands back.
+Both borrowing receivers designate the caller's storage rather than a copy of it, so both cross the ABI as one pointer, and a borrow either one returns derives from the caller's root under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). An immutable receiver is still unwritable through `self`. A method called on a temporary keeps that temporary alive through the complete expression; a borrow it returns cannot outlive that expression.
 
-Because no written procedure type spells that first parameter, an immutable-receiver method is called rather than stored: `Type.method(value)` remains a call spelling, while binding it to a procedure value is rejected. An `inout` or `move` receiver is written as itself and stays storable.
+The immutable receiver mode is written `borrow T` in a procedure type. Thus
+`method := Type.method` stores an unbound method, and a written callback type can
+use `proc(self: borrow Type) -> Result`. Calling `method(value)` supplies the
+receiver explicitly, with no argument marker. This mode is distinct from a
+value parameter: it aliases the caller's storage and crosses the ABI as one
+pointer. An `inout` or `move` receiver retains its corresponding parameter mode.
 
 The first two are reached through `value.method()`, with the `inout` marker supplied implicitly: that borrow ends with the call and leaves the source usable. A consuming method is reached through `move(value).method()`. The marker is written for the same reason it is written at any other call site (see [Parameter semantics](#parameter-semantics-and-abi-lowering)) — the call leaves the source dead, and a reader must see where a value is given away. Writing `move(...)` also selects: it reaches only `move self` overloads, and a bare receiver reaches only the other two.
 
@@ -4224,6 +4231,7 @@ The source-level parameter mode is decided before ABI lowering:
 | `value: T` | Immutable local binding; no ownership transfer |
 | `value: []T` | Immutable borrowed view with read-only elements |
 | `value: []mut T` | Immutable borrowed view whose elements may be modified |
+| `value: borrow T` | Immutable alias of the caller's storage |
 | `self` | Immutable borrow of the caller's value (see [Receiver forms](#receiver-forms)) |
 | `value: inout T` | Exclusive mutable borrow of the caller's variable |
 | `value: move T` | Ownership transfer from caller to callee |
@@ -4285,7 +4293,16 @@ sort_in_place(inout numbers);
 process_owned(move(numbers));
 ```
 
-**Both non-default modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and an argument to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs, so a reader sees at the call which arguments may be modified and which are given away.
+**The `inout` and `move` modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and an argument to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs, so a reader sees at the call which arguments may be modified and which are given away.
+
+`value: borrow T` is an immutable alias of the caller's storage, in any parameter
+position. Unlike the default value binding, `&value` can be returned subject to
+the caller's lifetime. It uses the same mode as an immutable receiver, takes no
+call-site marker, and performs no copy. It can borrow a temporary for the
+complete expression, but cannot extend that temporary's lifetime. Constants
+are materialized as for `&`; packed fields cannot supply an aligned borrow.
+It cannot have a default. `@(escape=...)` may constrain this borrow even when
+`T` itself contains no pointer or view.
 
 The written form therefore also selects, as it does for a [consuming receiver](#methods-and-abstractions): a candidate whose parameter is `move` is reachable only from a written `move(expr)`. The reverse is not a mismatch — `move(expr)` into an ordinary value parameter transfers ownership instead of cloning into it — but it is the weaker match, so a written transfer picks the consuming overload wherever both exist.
 
@@ -4867,7 +4884,7 @@ fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len()); // fine
 
 A [slice literal](#slice-literals) behaves differently, and the difference is what its backing storage is: its hidden `[N]T` is an ordinary frame owner in the surrounding lexical scope, while a `[dynamic]T` temporary owns an allocation that nothing keeps alive past the statement.
 
-The default parameter binding itself is a callee-local read-only value. Taking `&parameter` borrows that local and cannot produce a returned pointer. An `inout` parameter aliases the caller's root, so a borrow returned from it is derived from that root, and so does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The two differ only in capability — the receiver's loan is read-only and invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result summary below records; a call through a procedure value, which has no summary, conservatively derives from all of them.
+The default parameter binding itself is a callee-local read-only value. Taking `&parameter` borrows that local and cannot produce a returned pointer. An `inout` or `borrow` parameter aliases the caller's root, so a borrow returned from it is derived from that root, as does an [immutable receiver](#receiver-forms): a plain `self` designates the caller's value, which is what lets `proc(self) -> []T` hand back a view of the receiver's own inline storage. The immutable loan invalidates nothing, so several may be live at once. Where a procedure has several borrowed arguments, which of them a returned borrow derives from is what the result contract below records; a procedure value retains this precision when its type carries that contract.
 
 A checked pointer to an allocation root created by `new` or `new_clone` may be returned because the allocation is not callee-local storage. The pointer's root provenance and the allocation root's region provenance follow the result. This transfers release responsibility by API convention, not by making `^T` an owning type; the compiler does not require every manually allocated root to be freed.
 
@@ -4879,9 +4896,54 @@ For a direct call to a named Loke declaration or generic instantiation, the comp
 Where a parameter reaches a borrow through its own
 [carrier paths](#values-that-contain-borrows), the summary records which of those paths the result may name, so a helper returning one field of a record argument substitutes that field's root rather than everything the argument holds.
 
-At a direct call, the compiler substitutes the actual argument roots and allocator regions into the corresponding component. The summary is compile-time declaration metadata, is emitted for cross-package checking, and does not change the runtime ABI. Its meaning is transitive across direct calls and independent of declaration order, including forward and mutually recursive declarations.Each concrete generic instantiation has its own summary.
+At a direct call, the compiler substitutes the actual argument roots and allocator regions into the corresponding component. The summary is compile-time API metadata, is emitted for cross-package checking, and does not change the runtime ABI. Its meaning is transitive and independent of declaration order, including forward and mutually recursive declarations. Each concrete generic instantiation has its own summary.
 
-An ordinary procedure value carries no such metadata. At a call through one, a returned pointer, slice, view, or [`inout` result](#inout-results) is conservatively derived from every borrowed argument the type does not exclude with [`@(escape=none)`](#escapelevel) (unknown root provenance if there is none), and an owning result retains the region provenance of every moved owner and allocator argument (unknown if none). Fresh-allocation root provenance is never preserved, so such a result cannot be passed to checked `free`; an API transferring allocation responsibility through indirect calls uses a move-only resource wrapper, not bare `^T`. Foreign results likewise begin with unknown provenance unless a wrapper establishes an owned resource.
+#### Procedure result contracts
+
+An inferred callback type retains the declaration's result contract. This
+includes parameter and result carrier paths, static and fresh-allocation roots,
+and allocator-region dependencies. Indirect calls through this type substitute
+the same provenance as direct calls; the value is still one code pointer.
+
+```odin
+choose :: proc(input, scratch: []int) -> []int { return input; }
+Chooser :: type_of(choose);
+
+read :: proc(callback: Chooser, input: []int) -> []int {
+	scratch := [2]int{7, 8};
+	return callback(input, scratch[:]); // result derives only from input
+}
+
+callback := choose; // also retains the inferred contract
+```
+
+`type_of(choose)` exposes the inferred contract as part of the public API: an
+exported alias can be used for parameters, fields, containers, and results.
+Copies and generic forwarding preserve it. Changing which storage a published
+procedure may return can therefore break clients that rely on its previous
+contract. Contracts refer to concrete declarations or generic instantiations;
+aliases of the same contract share type identity. Different declarations may
+be substituted when their result dependencies fit within the destination's
+contract, including each independently tracked result field. These bounds are
+checked after inference settles, even for forward and recursive declarations.
+The usual parameter-mode, escape-level, and allocator-reset checks also apply.
+
+A plain written `proc(...) -> T` signature has no inferred result contract.
+Converting to it explicitly weakens the callback's type; converting back cannot
+recover the lost promise. A conditional between distinct inferred callback
+types uses their common plain signature unless an expected callback type
+constrains both branches. An API that needs a stable, body-independent bound
+can continue to write [`@(escape=none)`](#escapelevel) on excluded parameters.
+
+At a call through a plain procedure type, a returned pointer, slice, view, or
+[`inout` result](#inout-results) conservatively derives from every borrowed
+argument the type does not exclude with `@(escape=none)` (unknown root provenance
+if there is none). An owning result retains the region provenance of every
+moved owner and allocator argument (unknown if none). Fresh-allocation root
+provenance is erased in this case, so such a result cannot be passed to checked
+`free`; an API transferring allocation responsibility through an erased callback
+uses a move-only resource wrapper. Foreign results likewise begin with unknown
+provenance unless a wrapper establishes an owned resource.
 
 Allocator-wide invalidation is the one effect propagated through arbitrary ordinary procedure wrappers. A parameter marked [`@(allocator_reset)`](#allocator_reset) states that a successful call may end every allocation root in that allocator region. At the call, the compiler rejects the reset while a value or checked borrow from the region is live.
 

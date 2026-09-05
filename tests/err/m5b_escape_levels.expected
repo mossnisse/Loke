@@ -6,7 +6,7 @@ L0644
 `scratch` is written `@(escape=none)`, but the result of `indirect_liar` may borrow it
 L0310
 @25:72
-cannot initialise `proc([]int, @(escape=none) []int) -> []int` with `proc([]int, []int) -> []int`
+cannot initialise `proc([]int, @(escape=none) []int) -> []int` with `proc([]int, []int) -> []int [result contract: honest]`
 L0648
 @31:16
 `@(escape=...)` describes what a call may keep of a borrow, and `int` carries none

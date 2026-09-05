@@ -2063,7 +2063,7 @@ eval_invoke :: proc(ev: ^Evaluator, symbol_id: Symbol_Id, args: []Expr, site: Sp
 			copied: Eval_Value
 			copied, ok = copy_value(ev, values[index])
 			if ok { slot, ok = eval_slot(ev, copied) }
-		} else if mode == .Inout {
+		} else if mode == .Inout || (mode == .Borrow && argument != nil && expr_base(argument).addressable) {
 			slot, ok = eval_place(ev, argument)
 		} else {
 			value: Eval_Value

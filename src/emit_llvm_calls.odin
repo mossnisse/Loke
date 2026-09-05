@@ -1018,6 +1018,12 @@ emit_bound_call :: proc(
 		mode := index < len(callee_type.param_modes) ? callee_type.param_modes[index] : Param_Mode.Value
 		if param_mode_is_pointer(mode) {
 			operands[index] = emit_address(e, argument)
+			if _, composite := argument.(^Expr_Composite); mode == .Borrow && composite {
+				// A composite borrowed directly by this call is owned by the
+				// complete expression. Ordinary composite construction transfers
+				// into its destination and must not register this extra cleanup.
+				hold_addressed_temporary(e, argument, callee_type.parameters[index], operands[index])
+			}
 		} else {
 			operands[index] = emit_expr(e, argument)
 		}

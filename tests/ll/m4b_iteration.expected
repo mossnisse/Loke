@@ -1,6 +1,6 @@
-%struct.Range.int.101 = type { i64, i64, i1 }
+%struct.Range.int.102 = type { i64, i64, i1 }
 %t374 = select i1 false, i1 %t376, i1 %t375
-%t395 = insertvalue %struct.Range.int.101 %t394, i1 true, 2
+%t395 = insertvalue %struct.Range.int.102 %t394, i1 true, 2
 %t406 = select i1 %t400, i1 %t408, i1 %t407
 br i1 %t387, label %foreach.done.372, label %foreach.step.388
 foreach.head.

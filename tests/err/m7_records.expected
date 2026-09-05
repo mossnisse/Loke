@@ -24,4 +24,4 @@ L0508
 so it cannot be taken apart by a destructure
 L0310
 @65:34
-cannot initialise `proc() -> (x: int, y: int)` with `proc() -> (a: int, b: int)`
+cannot initialise `proc() -> (x: int, y: int)` with `proc() -> (a: int, b: int) [result contract: labelled]`

@@ -396,6 +396,13 @@ record_field_align :: proc(e: ^Emitter, base_type: Type_Id, base_address, field_
 // is what makes `&Point{1, 2}` work.
 @(private)
 emit_address :: proc(e: ^Emitter, expr: Expr) -> string {
+	if expression_converts_storage(expr) {
+		type := expr_base(expr).type
+		slot := alloca(e, llvm_type(e, type))
+		store(e, type, emit_expr(e, expr), slot)
+		register_temporary_place(e, type, slot)
+		return slot
+	}
 	return emit_address_at(e, expr, expr_base(expr).type)
 }
 
@@ -520,7 +527,7 @@ emit_address_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 // alive, and the storage is nobody's to name.
 //
 // A place names storage someone else owns, and is not ours to destroy.
-@(private = "file")
+@(private)
 hold_addressed_temporary :: proc(e: ^Emitter, expr: Expr, type: Type_Id, place: string) {
 	if expression_is_borrowed_place(e.c, expr) {
 		return

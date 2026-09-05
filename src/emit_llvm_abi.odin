@@ -664,9 +664,9 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 // The LLVM type (with any ABI attribute) one foreign parameter occupies.
 @(private = "file")
 foreign_param_type :: proc(e: ^Emitter, symbol: ^Symbol, parameter: Type_Id, index: int) -> string {
-	// design.md: `inout T` and `@(by_ptr) T` both cross as a pointer.
+	// design.md: `borrow T`, `inout T`, and `@(by_ptr) T` cross as a pointer.
 	proc_info := type_of(e.c, symbol.proc_type)
-	if symbol_param_mode(e.c, symbol, index) == .Inout || param_is_by_ptr(proc_info, index) {
+	if param_mode_is_pointer(symbol_param_mode(e.c, symbol, index)) || param_is_by_ptr(proc_info, index) {
 		return "ptr"
 	}
 	switch abi_pass(e.c, parameter) {

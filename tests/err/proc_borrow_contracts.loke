@@ -1,0 +1,65 @@
+package main;
+import "core:fmt";
+
+first :: proc(a, b: []int) -> []int { return a; }
+second :: proc(a, b: []int) -> []int { return b; }
+First :: type_of(first);
+
+wrong_assignment :: proc() {
+	f := first;
+	f = second;
+}
+wrong_argument :: proc(f: First) {}
+bad_call :: proc() { wrong_argument(second); }
+bad_return :: proc() -> First { return second; }
+bad_cast :: proc() { f := First(second); }
+erased :: proc(f: proc(a, b: []int) -> []int) -> First { return f; }
+
+Inline :: struct { items: [2]int }
+impl Inline { view :: proc(self) -> []int { return self.items[:]; } }
+wrong_mode :: proc() { f: proc(self: Inline) -> []int = Inline.view; }
+write_borrow :: proc(value: borrow Inline) { value.items[0] = 9; }
+escape :: proc() -> []int {
+	value: Inline = {};
+	f := Inline.view;
+	return f(value);
+}
+invalidate :: proc() {
+	value: Inline = {};
+	f := Inline.view;
+	view := f(value);
+	drop(value);
+	fmt.println(view[0]);
+}
+temporary :: proc() {
+	f := Inline.view;
+	view := f(Inline{{1, 2}});
+	fmt.println(view[0]);
+}
+main :: proc() {}
+
+Pair :: struct { first, second: []int }
+ordered :: proc(a, b: []int) -> Pair { return {a, b}; }
+swapped :: proc(a, b: []int) -> Pair { return {b, a}; }
+wrong_fields :: proc() { f := ordered; f = swapped; }
+
+destructure :: proc() {
+	f := first;
+	n := 0;
+	f, n = Both{second, 1};
+}
+
+false_none :: proc(@(escape=none) value: borrow int) -> ^int { return &value; }
+Second :: type_of(second);
+Both :: struct { callback: Second, count: int }
+
+address_of_view :: proc(value: borrow string_view) -> ^string_view { return &value; }
+converted_temporary :: proc() {
+	text: string = "hello";
+	view := address_of_view(text);
+	fmt.println(view^.len());
+}
+
+choose_region :: proc(first, second: Allocator) -> Allocator { return first; }
+other_region :: proc(first, second: Allocator) -> Allocator { return second; }
+wrong_region :: proc() { f := choose_region; f = other_region; }

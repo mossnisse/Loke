@@ -1,9 +1,8 @@
 package main; import "core:fmt";
 
 // design.md "Receiver forms": an immutable receiver crosses as the address of
-// the caller's value, and no written procedure type spells that first
-// parameter. `Type.method(value)` stays a call spelling; storing the method as
-// a value does not.
+// the caller's value. A stored method needs `borrow Counter`, not a
+// value parameter, because the two modes have different ABI and provenance.
 
 Counter :: struct { value: int }
 
@@ -15,6 +14,6 @@ impl Counter {
 main :: proc() {
 	c := Counter{1};
 	fmt.println(Counter.read(c));
-	stored := Counter.read;
+	stored: proc(self: Counter) -> int = Counter.read;
 	fmt.println(stored);
 }

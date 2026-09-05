@@ -394,6 +394,11 @@ typeid_sort_key_walk :: proc(
 	if info.c_vararg {
 		fmt.sbprint(&b, ":cvararg")
 	}
+	if sym := symbol_of(c, info.proc_contract); sym != nil {
+		pkg := package_of(c, sym.pkg)
+		path := int(sym.span.file) < len(c.sources) ? c.sources[sym.span.file].path : ""
+		fmt.sbprintf(&b, ":contract{%s:%s:%s:%d}", pkg == nil ? "" : pkg.key, path, identifier_text(c, sym.name), sym.span.lo)
+	}
 	result = strings.to_string(b)
 	memo^[type] = result
 	return result

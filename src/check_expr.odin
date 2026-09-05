@@ -622,7 +622,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		}
 		// design.md: associated procedures and constants without `self` are
 		// accessed through the type name, and so is `Type.method(value)`.
-		if select_associated_member(k, v, subject, callee_position) {
+		if select_associated_member(k, v, subject) {
 			return
 		}
 		errorf(k.c, v.span, "L0408", "`%s` has no member `%s`", type_name(k.c, subject), v.name.text)
@@ -735,27 +735,11 @@ implicit_pointer_deref :: proc(
 // reached through the type name.
 @(private = "file")
 select_associated_member :: proc(
-	k: ^Checker, v: ^Expr_Selector, subject: Type_Id, callee_position: bool,
+	k: ^Checker, v: ^Expr_Selector, subject: Type_Id,
 ) -> bool {
 	member := find_member(k, subject, intern_identifier(k.c, v.name.text))
 	if member == INVALID_SYMBOL {
 		return false
-	}
-	// design.md "Receiver forms": an immutable receiver designates the caller's
-	// value, so the method takes a pointer to it and no written procedure type
-	// spells that first parameter. `Type.method(value)` is still a call spelling;
-	// only storing the method as a value has no type to be stored in. An `inout`
-	// or `move` receiver is written as itself and stays storable.
-	if sym := symbol_of(k.c, member);
-	   !callee_position && sym != nil && sym.kind == .Proc && sym.has_receiver &&
-	   sym.receiver == .Borrow {
-		errorf(
-			k.c, v.span, "L0408",
-			"`%s` takes an immutable receiver, so it is called rather than stored; write `%s.%s(value)`",
-			v.name.text, type_name(k.c, subject), v.name.text,
-		)
-		v.type = INVALID_TYPE
-		return true
 	}
 	// A member's own signature or value may be needed before the phase that
 	// would ordinarily reach it, and both need the block's subject *and its own
@@ -1977,6 +1961,10 @@ unify_operands :: proc(k: ^Checker, lhs, rhs: Expr, op_span: Span) -> (Type_Id, 
 	if lt == rt {
 		return lt, true
 	}
+	if type_kind(k.c, lt) == .Proc && type_kind(k.c, rt) == .Proc {
+		plain := erase_proc_contract(k.c, lt)
+		if plain == erase_proc_contract(k.c, rt) { return plain, true }
+	}
 	left_untyped := type_is_untyped(k.c, lt)
 	right_untyped := type_is_untyped(k.c, rt)
 
@@ -2078,6 +2066,14 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 	else_type := check_single_expr(k, v.otherwise, expected)
 	if cond == INVALID_TYPE || then_type == INVALID_TYPE || else_type == INVALID_TYPE {
 		v.type = INVALID_TYPE
+		return
+	}
+	// An explicit callback contract constrains both arms. Without one, distinct
+	// procedure contracts meet at their shared written signature.
+	if type_kind(k.c, expected) == .Proc && assignable(k.c, then_type, expected) && assignable(k.c, else_type, expected) {
+		materialize(k, v.then, expected)
+		materialize(k, v.otherwise, expected)
+		v.type = expected
 		return
 	}
 	result, unified := unify_operands(k, v.then, v.otherwise, v.span)
@@ -2706,6 +2702,7 @@ bind_written_argument :: proc(
 	if !passed {
 		return value, false
 	}
+	if expected == .Borrow && !check_borrow_argument(k, value) { return value, false }
 	if arg.mode == .Inout {
 		if base := expr_base(value); base != nil && !base.assignable {
 			report_not_assignable(k, base, "an `inout` argument")
@@ -2971,6 +2968,7 @@ builtin_conversion :: proc(k: ^Checker, v: ^Expr_Call, target, source: Type_Id) 
 		return false
 	}
 	v.resolution = Resolution{kind = .Conversion}
+	record_proc_contract_check(k.c, source, target, v.span)
 	v.bound = make([]Expr, 1, k.c.semantic_allocator)
 	v.bound[0] = v.args[0].value
 	v.type = target
@@ -3553,6 +3551,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		return true
 	}
 	if !type_is_untyped(k.c, base.type) {
+		record_proc_contract_check(k.c, base.type, target, base.span)
 		return true
 	}
 	// `a if c else b` with a runtime condition is the one untyped node that is

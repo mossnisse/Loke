@@ -427,7 +427,7 @@ Parameter    = Attributes? Parameter_Names
              | Attributes? Parameter_Names ":" "=" Expression
 Parameter_Names = Parameter_Name ("," Parameter_Name)*
 Parameter_Name  = "$"? (Identifier | "_")
-Parameter_Mode  = "inout" | "move"
+Parameter_Mode  = "borrow" | "inout" | "move"
 
 Results      = Result_Type                                // exactly one, or none
 Result_Type  = "inout"? Type
@@ -439,7 +439,9 @@ enclosing `impl` block or interface `slot`); a leading `self` therefore ends
 otherwise swallow the receiver. The receiver keeps an immutable borrow mode
 regardless of the group's `Parameter_Mode`; one wanting another mode writes its
 own type, as `self: inout Type`. `..T` is a variadic parameter; variadic,
-`inout`, and `move` parameters cannot have defaults. A value parameter's
+`borrow`, `inout`, and `move` parameters cannot have defaults. `borrow` is
+contextual in the parameter-mode position; it remains an ordinary identifier
+elsewhere. A value parameter's
 `= Expression` default may reference the receiver and parameters to its left
 only — see [design.md](design.md#default-values) for when it's evaluated. A result
 is anonymous: `Results` is one `Result_Type`, so there is no result name and no

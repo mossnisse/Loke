@@ -1,0 +1,12 @@
+@(public)
+package api;
+
+pick :: proc(a, scratch: []int) -> []int { return a; }
+Pick :: type_of(pick);
+Callbacks :: struct { pick: Pick }
+invoke :: proc(callback: Pick, a: []int) -> []int {
+	scratch := [2]int{8, 9};
+	return callback(a, scratch[:]);
+}
+make_callbacks :: proc() -> Callbacks { return {pick}; }
+forward :: proc(callback: $T) -> T { return callback; }

@@ -1,0 +1,45 @@
+L0666
+@10:6
+inferred contract of `first`
+L0666
+@13:37
+inferred contract of `first`
+L0666
+@14:40
+inferred contract of `first`
+L0666
+@15:27
+inferred contract of `first`
+L0310
+@16:65
+cannot return
+L0310
+@20:57
+proc(borrow Inline)
+L0358
+@21:46
+immutable
+L0526
+@25:9
+`value` ends when this procedure returns
+L0512
+@31:2
+`value` cannot be dropped
+L0513
+@37:14
+this temporary has ended
+L0666
+@44:44
+inferred contract of `ordered`
+L0666
+@49:2
+inferred contract of `first`
+L0644
+@52:35
+`value` is written `@(escape=none)`
+L0513
+@60:14
+this temporary has ended
+L0666
+@65:50
+inferred contract of `choose_region`

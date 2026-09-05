@@ -846,6 +846,7 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 			}
 		}
 		bound[slot] = value
+		if proc_parameter_mode(k.c, sym.proc_type, slot) == .Borrow && !check_borrow_argument(k, value) { ok = false }
 	}
 	for slot in 0 ..< count {
 		if !cand.filled[slot] && slot < len(sym.param_defaults) {
@@ -856,18 +857,6 @@ bind_chosen_call :: proc(k: ^Checker, v: ^Expr_Call, cand: Candidate, written: [
 		}
 	}
 	v.bound = bound
-	if sym.synth == .Refs_View && len(bound) == 1 && bound[0] != nil {
-		if field, packed := packed_field_reached(k, bound[0]); packed {
-			errorf(k.c, expr_span(bound[0]), "L0614",
-				"cannot take the address of `%s`: it is reached through a packed struct", field)
-			ok = false
-		}
-		// Like slicing and `&`, `refs()` needs the named constant's one shared
-		// read-only object, including when the receiver is a field of it.
-		if root, id := constant_root_of(k.c, bound[0]); id != INVALID_SYMBOL {
-			request_materialization(k, root)
-		}
-	}
 	require_argument_ownership(k, v, cand.symbol)
 	return ok
 }

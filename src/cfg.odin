@@ -2544,7 +2544,7 @@ prov_handle_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> (Region_Set, bo
 }
 
 // The region component of one call result. Direct summaries are substituted by
-// position. A procedure value has no declaration summary, so an owning result
+// position. A plain procedure type has no result contract, so an owning result
 // conservatively retains every moved-owner and allocator argument region.
 @(private = "file")
 prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id) -> Region_Set {
@@ -2573,10 +2573,7 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 	if call_provider_op(c, v) == .Open_Fixed {
 		return out
 	}
-	callee := v.resolution.chosen_overload
-	if callee == INVALID_SYMBOL {
-		callee = v.resolution.symbol
-	}
+	callee := call_contract_declaration(c, v)
 	direct := prov_has_direct_body(c, callee)
 	prov_note_summary_dependency(graph, callee, direct)
 	if summary, found := result_summary(c, callee); found {
@@ -2599,9 +2596,10 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 		if argument == nil {
 			continue
 		}
-		if type_underlying(c, expr_base(argument).type) == TYPE_ALLOCATOR {
+		if type_underlying(c, expr_base(argument).type) == TYPE_ALLOCATOR && (!allocator_result || !direct) {
 			// An owning result constructed with an allocator argument derives that
-			// allocator's region at the call site.
+			// allocator's region at the call site. A returned allocator handle has
+			// no new owner: its known summary already identifies its region.
 			region_merge(&out, prov_region_of(graph, argument))
 			continue
 		}
@@ -2635,10 +2633,7 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, summary: Regio
 // use the conservative whole-result region in that case.
 @(private = "file")
 prov_call_region_content :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []Prov_Region_Content {
-	callee := v.resolution.chosen_overload
-	if callee == INVALID_SYMBOL {
-		callee = v.resolution.symbol
-	}
+	callee := call_contract_declaration(graph.k.c, v)
 	summary, found := result_summary(graph.k.c, callee)
 	if !found || len(summary.region_content) == 0 {
 		return nil
@@ -3913,7 +3908,8 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 					graph, receiver, expr_base(argument).type, value, result_type, v.span,
 				)
 			}
-		} else if index == 0 && receiver == .Borrow {
+		} else if (index == 0 && receiver == .Borrow) ||
+		          proc_parameter_mode(c, prov_call_proc_type(graph, v), index) == .Borrow {
 			// design.md "Receiver forms": an immutable receiver designates the
 			// caller's value, so a borrow the method returns derives from the
 			// caller's root just as an `inout` receiver's does. The difference is
@@ -3932,13 +3928,13 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				borrowed = prov_join(graph, borrowed, held)
 				continue
 			}
-			if root, path, ok := prov_place_of(graph, argument); ok {
+			if root, path, ok := prov_place_of(graph, argument); ok && !expression_converts_storage(argument) {
 				prov_walk_subscripts(graph, argument)
 				prov_access(graph, root, path, .Read, expr_span(argument))
 				held = prov_join(
 					graph, held, prov_borrow(graph, root, path, false, expr_span(argument), "borrow"),
 				)
-			} else if prov_expr_is_temporary(argument) || (callee != nil && callee.synth == .Refs_View) {
+			} else {
 				// A method on a temporary borrows storage that ends with the
 				// statement that built it, exactly as slicing one does.
 				held = prov_join(
@@ -4384,7 +4380,7 @@ prov_store_call_results :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]
 
 // design.md "Temporaries and procedure boundaries". At a direct call the actual
 // argument roots are substituted into the callee's result summary. At a call
-// through a procedure value there is no summary, so a returned carrier is
+// through a plain procedure type there is no summary, so a returned carrier is
 // conservatively derived from every borrowed argument, and fresh-allocation
 // provenance is erased -- which is what keeps an indirect result away from
 // checked `free`.
@@ -4453,10 +4449,7 @@ prov_call_result :: proc(
 	if !type_is_carrier(c, result_type) && !type_carries_borrow(c, result_type).any {
 		return nil
 	}
-	callee := v.resolution.chosen_overload
-	if callee == INVALID_SYMBOL {
-		callee = v.resolution.symbol
-	}
+	callee := call_contract_declaration(c, v)
 	direct := prov_has_direct_body(c, callee)
 	prov_note_summary_dependency(graph, callee, direct)
 	out: []int

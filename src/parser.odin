@@ -2730,6 +2730,17 @@ parse_parameter :: proc(p: ^Parser) -> Parameter {
 		return param
 	}
 
+	// `borrow` is contextual here, so an ordinary type or procedure named
+	// `borrow` remains usable elsewhere (and `value: borrow` is still a type).
+	if is_contextual(p, "borrow") && (starts_type(peek_token(p, 1).kind) ||
+	   peek_token(p, 1).kind == .Ident || peek_token(p, 1).kind == .Lparen) {
+		advance(p)
+		param.mode = .Borrow
+		param.type = parse_type(p)
+		param.span = span_to_here(p, start)
+		return param
+	}
+
 	#partial switch current(p).kind {
 	case .Inout:
 		advance(p)

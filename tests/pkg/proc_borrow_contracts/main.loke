@@ -1,0 +1,14 @@
+package main;
+import "api";
+import "core:fmt";
+
+equivalent :: proc(a, scratch: []int) -> []int { return a; }
+
+main :: proc() {
+	values := [2]int{3, 4};
+	callbacks := api.make_callbacks();
+	callbacks.pick = equivalent;
+	fmt.println(api.invoke(callbacks.pick, values[:])[0]);
+	f := api.forward(api.pick);
+	fmt.println(api.invoke(f, values[:])[1]);
+}

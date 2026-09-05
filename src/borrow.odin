@@ -40,7 +40,7 @@
 //   an owning result with an
 //     allocator argument                    yes     no borrow edge at all
 //   a call through a procedure
-//     value                         yes    yes     conservative in both
+//     value                         yes    yes     inferred contract, or conservative
 //
 // Operations absent from both columns are design.md's "What is not checked":
 // a carrier stored in a record field, a global or callback state, a retained
@@ -1226,6 +1226,7 @@ analyze_program_provenance :: proc(k: ^Checker) {
 			}
 		}
 	}
+	check_proc_contracts(k)
 	for body in k.c.checked_bodies {
 		if body.clean {
 			analyze_provenance(k, body.literal)

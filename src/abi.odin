@@ -68,7 +68,7 @@ check_foreign_signature :: proc(
 		case .Move:
 			errorf(k.c, span, "L0621", "a foreign parameter cannot use `move`: a C call acquires no cleanup responsibility")
 			continue
-		case .Inout, .Variadic:
+		case .Borrow, .Inout, .Variadic:
 			continue
 		}
 		if index < len(by_ptr) && by_ptr[index] {

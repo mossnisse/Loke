@@ -301,6 +301,7 @@ be file-private.
 | --- | --- |
 | `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
 | `cfg.odin` | Disposable control-flow topology and lifecycle/provenance event generation. |
+| `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
 | `region.odin`, `materialize.odin` | `Arena`/`Scratch` semantic types and read-only storage for address-requiring constants. |
 | `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |

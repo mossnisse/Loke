@@ -205,6 +205,9 @@ Type_Info :: struct {
 	// indirect call must not launder a promise through a type that hides it. Nil
 	// means every parameter is at the default.
 	param_escapes: []Escape_Level,
+	// A compile-time reference to an inferred result contract. No runtime data
+	// accompanies the code pointer; plain written signatures erase this bound.
+	proc_contract: Symbol_Id,
 	// Foreign ABI adapters are part of procedure type identity. Erasing either
 	// one changes the LLVM function type at an indirect call site.
 	param_by_ptr: []bool,
@@ -1063,6 +1066,7 @@ intern_proc_type :: proc(
 	param_by_ptr: []bool = nil,
 	c_vararg := false,
 	param_escapes: []Escape_Level = nil,
+	proc_contract := INVALID_SYMBOL,
 ) -> Type_Id {
 	init_semantic_stores(c)
 	for info, index in c.types {
@@ -1075,6 +1079,7 @@ intern_proc_type :: proc(
 		   equal_reset_effects(info.param_resets, param_resets) &&
 		   equal_reset_effects(info.param_by_ptr, param_by_ptr) &&
 		   equal_escape_levels(info.param_escapes, param_escapes) &&
+		   info.proc_contract == proc_contract &&
 		   info.c_vararg == c_vararg {
 			return Type_Id(index)
 		}
@@ -1105,6 +1110,7 @@ intern_proc_type :: proc(
 		param_modes   = mode_copy,
 		param_resets  = reset_copy,
 		param_escapes = escape_copy,
+		proc_contract = proc_contract,
 		param_by_ptr  = by_ptr_copy,
 		c_vararg      = c_vararg,
 		result        = result,
@@ -1145,6 +1151,11 @@ proc_param_escape :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Escap
 	return info.param_escapes[index]
 }
 
+proc_parameter_mode :: proc(c: ^Compiler, proc_type: Type_Id, index: int) -> Param_Mode {
+	info := underlying_info(c, proc_type)
+	return info != nil && index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
+}
+
 // design.md `@(escape=<level>)`: a callee may promise more than the type its
 // value is stored in asks, never less. Levels are part of procedure type
 // identity, but assigning a stricter type to a weaker one is safe — every
@@ -1171,6 +1182,9 @@ proc_escape_weakens_to :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		if proc_param_escape(c, from, index) > proc_param_escape(c, to, index) {
 			return false
 		}
+	}
+	if b.proc_contract != INVALID_SYMBOL && a.proc_contract == INVALID_SYMBOL {
+		return false
 	}
 	return true
 }
@@ -1927,6 +1941,9 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 		if index < len(info.param_modes) && info.param_modes[index] == .Inout {
 			strings.write_string(&b, "inout ")
 		}
+		if index < len(info.param_modes) && info.param_modes[index] == .Borrow {
+			strings.write_string(&b, "borrow ")
+		}
 		strings.write_string(&b, type_name(c, parameter))
 	}
 	strings.write_string(&b, ")")
@@ -1936,6 +1953,9 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 			strings.write_string(&b, "inout ")
 		}
 		strings.write_string(&b, type_name(c, info.result))
+	}
+	if sym := symbol_of(c, info.proc_contract); sym != nil {
+		fmt.sbprintf(&b, " [result contract: %s]", identifier_text(c, sym.name))
 	}
 	return strings.to_string(b)
 }
