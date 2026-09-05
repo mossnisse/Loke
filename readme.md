@@ -192,6 +192,10 @@ modes:
 .\test-all.ps1
 ```
 
+Known divergences between the specification and the compiler are recorded in
+[known-gaps.md](known-gaps.md), each with a reproduction. The test corpus does
+not cover them, which is why they are written down.
+
 Use `.\test-all.ps1 -SkipOptimizationMatrix` for unit tests, a rebuild, and the
 baseline integration suite only. The suites can also be run separately:
 
