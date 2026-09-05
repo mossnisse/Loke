@@ -903,6 +903,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"keys",           .Interactive},
 		{"shapes",         .Output},
 		{"streaming",      .Driven},
+		{"tokens",         .Output},
 		{"word_frequency", .Output},
 	}
 

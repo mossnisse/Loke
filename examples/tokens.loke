@@ -1,0 +1,113 @@
+package main;
+import "core:fmt";
+
+// One value with several shapes, and matching on spans rather than points.
+//
+// A union variant carries its own payload, and a variant `switch` is the only
+// way to read one — there is no unchecked "take the int out". A `case` list
+// matches ranges as readily as single values, which is what turns a classifier
+// into a table of spans instead of a chain of comparisons.
+
+// `end:` is a variant with no payload. It is a real variant rather than a null:
+// a `Token` is always exactly one of these four, and the empty one is as
+// ordinary as the others.
+Token :: union {
+	number: int,
+	word:   string_view,
+	symbol: rune,
+	end:,
+}
+
+Class :: enum { Digit, Letter, Space, Symbol }
+
+// Ranges in a case list are matching syntax, not `Range` values: `..=` and
+// `..<` mean here what they mean in a `foreach` header, and a case list mixes
+// spans and single values freely. Cases are tried top to bottom and the first
+// match wins (design.md "switch statement").
+classify :: proc(ch: rune) -> Class {
+	switch (ch) {
+	case '0' ..= '9':                   return .Digit;
+	case 'a' ..= 'z', 'A' ..= 'Z', '_': return .Letter;
+	case ' ', '\t':                     return .Space;
+	// A `rune` has far more values than any case list can name, so this switch
+	// needs a default. A switch over an enum or a union does not.
+	case:                               return .Symbol;
+	}
+}
+
+// Half-open spans tile with no gap and no double cover, which is what `..<`
+// is for: each `high` is the next case's `low`, written once.
+magnitude :: proc(value: int) -> string_view {
+	switch (value) {
+	case    0 ..<    10: return "ones";
+	case   10 ..<   100: return "tens";
+	case  100 ..<  1000: return "hundreds";
+	case 1000 ..< 10000: return "thousands";
+	case:                return "out of range";
+	}
+}
+
+// A `Result` carries one payload, and so does a union variant, so a scan step
+// that produces two facts returns a record holding both.
+Scan :: struct { token: Token, next: int }
+
+// The scan advances one byte at a time, which is right for the ASCII source
+// below and would not be for text in general — `word_frequency.loke` iterates
+// code points where that distinction matters.
+next_token :: proc(text: string_view, from: int) -> Scan {
+	bytes := text.bytes();
+	i := from;
+	for (i < bytes.len() && classify(rune(bytes[i])) == .Space) { i += 1; }
+	if (i >= bytes.len()) { return {.end, i}; }
+
+	switch (classify(rune(bytes[i]))) {
+	case .Digit:
+		value := 0;
+		for (i < bytes.len() && classify(rune(bytes[i])) == .Digit) {
+			value = value*10 + int(bytes[i] - '0');
+			i += 1;
+		}
+		return {.number(value), i};
+	case .Letter:
+		start := i;
+		for (i < bytes.len() && classify(rune(bytes[i])) == .Letter) { i += 1; }
+		// The view borrows `text`. Nothing is copied, and nothing outlives it:
+		// a parameter may reach the result by default, and no more than that.
+		return {.word(text[start:i]), i};
+	case:
+	}
+	// A space cannot arrive here: the run above skipped every one.
+	return {.symbol(rune(bytes[i])), i + 1};
+}
+
+main :: proc() {
+	source := "width = 1280; height = 720; label = pixel_ratio";
+
+	tokens: [dynamic]Token;
+	cursor := 0;
+	scanning := true;
+	for (scanning) {
+		scan := next_token(source, cursor);
+		cursor = scan.next;
+		// `break` here would leave the switch, not the loop (design.md "break
+		// statement"), so the end variant clears the loop's own condition.
+		switch (v in scan.token) {
+		case .end: scanning = false;
+		case:      tokens.append(scan.token);
+		}
+	}
+
+	// One binding names the payload, and its type differs in every arm: `v` is
+	// an `int` here, a `string_view` there, a `rune` below.
+	foreach (token, index in tokens.indexed()) {
+		switch (v in token) {
+		case .number: fmt.println(index, "number", v, magnitude(v));
+		case .word:   fmt.println(index, "word", v);
+		case .symbol: fmt.println(index, "symbol", v);
+		case .end:    fmt.println(index, "end");
+		}
+	}
+
+	fmt.println("tokens:", tokens.len());
+	fmt.println("magnitudes:", magnitude(7), magnitude(700), magnitude(7000), magnitude(-1));
+}

@@ -20,8 +20,8 @@ impl Board {
 alive_neighbours :: proc(board: Board, x, y: int) -> int {
 	total := 0;
 	// A range is an ordinary value, not loop syntax, so the neighbourhood offsets
-	// are built once and walked twice. `..=` includes its high endpoint; the
-	// `..<` below excludes it, which is what makes it match a length.
+	// are built once and walked twice. `..=` includes its high endpoint, where
+	// `..<` excludes it — which is what makes `..<` the one that matches a length.
 	offsets := -1 ..= 1;
 	foreach (dy in offsets) {
 		foreach (dx in offsets) {

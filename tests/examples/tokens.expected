@@ -1,0 +1,13 @@
+0 word width
+1 symbol =
+2 number 1280 thousands
+3 symbol ;
+4 word height
+5 symbol =
+6 number 720 hundreds
+7 symbol ;
+8 word label
+9 symbol =
+10 word pixel_ratio
+tokens: 11
+magnitudes: ones hundreds thousands out of range

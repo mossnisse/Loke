@@ -54,8 +54,8 @@ parse_entry :: proc(line: string_view) -> Result(Entry, Error) {
 	separator := -1;
 	// A binding list names the fields of the element, so an index is not free:
 	// `indexed()` is the view that yields one alongside each byte.
-	foreach (byte, i in bytes.indexed()) {
-		if (byte == '=') { separator = i; break; }
+	foreach (b, i in bytes.indexed()) {
+		if (b == '=') { separator = i; break; }
 	}
 	if (separator < 0) { return .err(.Missing_Separator); }
 
