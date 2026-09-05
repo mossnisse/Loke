@@ -213,10 +213,16 @@ int32_t loke_rt_v1_string_concat(
 	const uint8_t *b_data, int64_t b_len,
 	const loke_rt_allocator_v1 *allocator) {
 	publish_empty(out);
-	if (a_len + b_len == 0) {
+	int64_t total;
+	/* A sum that is not representable is a failure, not a wrapped-negative
+	 * length handed to the provider. */
+	if (!loke_rt_v1_checked_add(a_len, b_len, &total)) {
+		return 0;
+	}
+	if (total == 0) {
 		return 1;
 	}
-	uint8_t *bytes = allocate_buffer(out, a_len + b_len, allocator);
+	uint8_t *bytes = allocate_buffer(out, total, allocator);
 	if (bytes == 0) {
 		return 0;
 	}

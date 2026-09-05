@@ -111,6 +111,10 @@ void loke_rt_v1_fmt_i128(
 void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value) {
 	char buffer[64];
 	int used = snprintf(buffer, sizeof(buffer), "%.17g", value);
+	/* `snprintf` answers the length it wanted, not the length it wrote. */
+	if (used > (int)sizeof(buffer) - 1) {
+		used = (int)sizeof(buffer) - 1;
+	}
 	if (used > 0) {
 		loke_rt_v1_fmt_bytes(w, (const uint8_t *)buffer, used);
 	}

@@ -335,7 +335,9 @@ int32_t loke_rt_v1_dyn_insert(
 	int64_t index, const void *src, int64_t count) {
 	dyn_grow_undo undo;
 	int64_t need, tail;
-	uint64_t tail_bytes;
+	/* Read again on the rollback path, where the checked product may not have
+	 * been computed at all. */
+	uint64_t tail_bytes = 0;
 
 	if (index < 0 || index > self->len) {
 		loke_rt_v1_container_fault("this insert index is out of range");
@@ -811,32 +813,46 @@ void *loke_rt_v1_map_entry(
 	 * dropping anything and leave every old header/table byte untouched. */
 	if (t == 0 || self->len + 1 > self->cap ||
 	    t->occupied + t->tombstones + 1 > t->slot_count - t->slot_count / 8) {
-		if (!map_slots_for(self->len + 1, &slots) || !map_block_shape(ops, slots, &shape)) {
+		if (!map_slots_for(self->len + 1, &slots)) {
 			return 0;
 		}
-		/* Do not rebuild merely to clear tombstones when the existing table still
-		 * has an empty slot. That is an optimization, not an insertion requirement. */
-		if (old == 0 || slots > old->slot_count) {
-			fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc_zeroed(
-				allocator, shape.block_size, shape.block_align);
-			if (fresh == 0) {
+		/* The rebuild is not optional. Nothing else in this file clears a
+		 * tombstone, so a table whose empty slots have all become one probes to
+		 * the end of every run and never recovers. Never below the current size,
+		 * which `reserve` promised; and never at a size the live entries already
+		 * half fill, or a table sitting at its load limit rebuilds every other
+		 * insertion instead of amortizing one over a linear run of them. */
+		if (old != 0 && slots < old->slot_count) {
+			slots = old->slot_count;
+		}
+		while (slots / 2 <= self->len) {
+			if (slots > INT64_MAX / 2) {
 				return 0;
 			}
-			*fresh = shape;
-			fresh->seed = map_next_seed(fresh);
-			if (old != 0) {
-				uint8_t *old_controls = map_controls(old);
-				int64_t old_slot;
-				for (old_slot = 0; old_slot < old->slot_count; old_slot += 1) {
-					if (old_controls[old_slot] == LOKE_RT_MAP_OCCUPIED) {
-						map_place_moved(
-							fresh, ops, map_key_at(old, ops, old_slot), map_value_at(old, ops, old_slot));
-					}
+			slots *= 2;
+		}
+		if (!map_block_shape(ops, slots, &shape)) {
+			return 0;
+		}
+		fresh = (loke_rt_map_table_v1 *)loke_rt_v1_alloc_zeroed(
+			allocator, shape.block_size, shape.block_align);
+		if (fresh == 0) {
+			return 0;
+		}
+		*fresh = shape;
+		fresh->seed = map_next_seed(fresh);
+		if (old != 0) {
+			uint8_t *old_controls = map_controls(old);
+			int64_t old_slot;
+			for (old_slot = 0; old_slot < old->slot_count; old_slot += 1) {
+				if (old_controls[old_slot] == LOKE_RT_MAP_OCCUPIED) {
+					map_place_moved(
+						fresh, ops, map_key_at(old, ops, old_slot), map_value_at(old, ops, old_slot));
 				}
 			}
-			t = fresh;
-			replacing = 1;
 		}
+		t = fresh;
+		replacing = 1;
 	}
 
 	controls = map_controls(t);
