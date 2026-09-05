@@ -7,11 +7,11 @@ different part of the language:
 - `greeting.loke` — prompting, text-file I/O, and typed error handling.
 - `streaming.loke` — bounded reads, fixed-buffer streaming, and explicit close errors.
 - `keys.loke` — raw terminal input and automatic terminal restoration.
-- `game_of_life.loke` — fixed arrays, custom indexing operators, `inout`, and ranges.
-- `word_frequency.loke` — strings and borrowed views, maps, dynamic arrays, and iteration.
+- `game_of_life.loke` — fixed arrays, custom indexing operators, `inout`, and ranges as values.
+- `word_frequency.loke` — strings and borrowed views, maps, dynamic arrays, and closed-range iteration.
 - `arena_pipeline.loke` — allocators, `via`, local arena and scratch regions, and reusable reset.
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
-- `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, and lifecycle hooks.
+- `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, lifecycle hooks, and `indexed()`.
 - `compile_time.loke` — ordinary procedures run during compilation, `build_config`, `static_assert`, `when`, static expansion over reflection, and folded layout.
 
 From the repository root, compile and run any example with:

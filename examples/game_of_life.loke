@@ -19,8 +19,12 @@ impl Board {
 
 alive_neighbours :: proc(board: Board, x, y: int) -> int {
 	total := 0;
-	for (dy := -1; dy <= 1; dy += 1) {
-		for (dx := -1; dx <= 1; dx += 1) {
+	// A range is an ordinary value, not loop syntax, so the neighbourhood offsets
+	// are built once and walked twice. `..=` includes its high endpoint; the
+	// `..<` below excludes it, which is what makes it match a length.
+	offsets := -1 ..= 1;
+	foreach (dy in offsets) {
+		foreach (dx in offsets) {
 			if (dx == 0 && dy == 0) { continue; }
 			nx, ny := x + dx, y + dy;
 			if (nx >= 0 && nx < WIDTH && ny >= 0 && ny < HEIGHT && board[nx, ny]) {
@@ -33,8 +37,8 @@ alive_neighbours :: proc(board: Board, x, y: int) -> int {
 
 tick :: proc(board: Board) -> Board {
 	next: Board;
-	for (y := 0; y < HEIGHT; y += 1) {
-		for (x := 0; x < WIDTH; x += 1) {
+	foreach (y in 0 ..< HEIGHT) {
+		foreach (x in 0 ..< WIDTH) {
 			neighbours := alive_neighbours(board, x, y);
 			next[x, y] = neighbours == 3 || (board[x, y] && neighbours == 2);
 		}
@@ -44,8 +48,8 @@ tick :: proc(board: Board) -> Board {
 
 population :: proc(board: Board) -> int {
 	total := 0;
-	for (y := 0; y < HEIGHT; y += 1) {
-		for (x := 0; x < WIDTH; x += 1) {
+	foreach (y in 0 ..< HEIGHT) {
+		foreach (x in 0 ..< WIDTH) {
 			if (board[x, y]) { total += 1; }
 		}
 	}

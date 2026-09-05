@@ -32,6 +32,8 @@ smooth :: proc(input: []Sample, scratch: Allocator) -> f64 {
 // promise from anyone, because no caller can own anything inside it.
 run_batches :: proc(samples: []Sample) {
 	scratch := mem.Scratch.init();
+	// A range walks by one, so a strided walk is what the three-part `for` is
+	// still for. Neither form is the fallback: each says what it means.
 	for (start := 0; start < samples.len(); start += 4) {
 		stop := start + 4;
 		if (stop > samples.len()) { stop = samples.len(); }
@@ -52,7 +54,7 @@ in_frame :: proc() -> int {
 	arena := mem.Arena.from_buffer(buffer[:]);
 
 	ids: [dynamic]int via arena.allocator() = {};
-	for (i := 0; i < 16; i += 1) { ids.append(i * i); }
+	foreach (i in 0 ..< 16) { ids.append(i * i); }
 
 	// This map's table lives in the same frame-local buffer.
 	seen: map[int]bool via arena.allocator();
@@ -63,7 +65,7 @@ in_frame :: proc() -> int {
 
 main :: proc() {
 	samples: [dynamic]Sample;
-	for (i := 0; i < 10; i += 1) {
+	foreach (i in 0 ..< 10) {
 		samples.append(Sample{i, f64(i) * 1.5});
 	}
 
