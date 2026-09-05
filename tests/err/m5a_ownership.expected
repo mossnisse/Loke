@@ -27,7 +27,7 @@ L0503
 `Only` is move-only, so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0491
 @75:19
-`Only` is move-only, so a by-value `foreach` cannot copy it out of the container; iterate `&value`, or remove the elements
+`Only` is move-only, so a by-value `foreach` cannot copy it out of the container; iterate `source.refs()` for read-only access, `&value` for mutable access, or remove the elements
 L0491
 @79:19
 `Only` is move-only, so this view cannot copy the value out of the map

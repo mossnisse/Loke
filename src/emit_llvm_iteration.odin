@@ -889,7 +889,7 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	option := symbol.result
-	by_ref := symbol.synth == .Slice_Mut_Next
+	by_ref := symbol.synth == .Slice_Mut_Next || symbol.synth == .Slice_Ref_Next
 	payload := option_payload(e.c, option)
 	element := llvm_type(e, by_ref ? type_of(e.c, payload).element : payload)
 	iterator := llvm_type(e, symbol.params[0])

@@ -3309,6 +3309,7 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 // binding is written `ref` over a mutable sequence.
 @(private = "file")
 prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> []int {
+	if iteration_lends_source(graph.k.c, expr_base(s.iterable).type) { return iterated }
 	root, path, ok := prov_place_of(graph, s.iterable)
 	if !ok {
 		return iterated
@@ -3822,6 +3823,15 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// used by result substitution below.
 			borrowed = prov_join(graph, borrowed, prov_carrier_slots(graph, argument))
 			prov_invalidate(graph, argument, v.span, "modified")
+			if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil &&
+			   (callee.synth == .Slice_Ref_Next ||
+			   (callee.synth == .Indexed_Next && iteration_lends_source(c, expr_base(argument).type))) {
+				// The returned read-only pointer names the held slice's storage,
+				// never the cursor. Advancing or dropping this iterator cannot
+				// invalidate an element already handed back.
+				actuals[index] = prov_carrier_slots(graph, argument)
+				continue
+			}
 			if root, path, ok := prov_place_of(graph, argument); ok {
 				if prov_op_removes_element(container_op) {
 					// What a removal hands back is what that element held, not a
@@ -3914,9 +3924,10 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// a method on a record of views can hand one of those views back, and
 			// that copy obeys the view's own source, not the receiver's storage.
 			held := walk_flow_expr(graph, argument)
-			if callee := symbol_of(c, v.resolution.chosen_overload);
-			   callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
-			   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value)) {
+			callee := symbol_of(c, v.resolution.chosen_overload)
+			if callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
+			   callee.synth == .Refs_Iter || callee.synth == .Refs_Iter_Reverse ||
+			   ((callee.synth == .Adapter_View || callee.synth == .Refs_View) && type_of(c, callee.result).adapter_by_value)) {
 				actuals[index] = held
 				borrowed = prov_join(graph, borrowed, held)
 				continue
@@ -3927,7 +3938,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				held = prov_join(
 					graph, held, prov_borrow(graph, root, path, false, expr_span(argument), "borrow"),
 				)
-			} else if prov_expr_is_temporary(argument) {
+			} else if prov_expr_is_temporary(argument) || (callee != nil && callee.synth == .Refs_View) {
 				// A method on a temporary borrows storage that ends with the
 				// statement that built it, exactly as slicing one does.
 				held = prov_join(

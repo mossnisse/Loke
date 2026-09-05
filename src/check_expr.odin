@@ -1448,7 +1448,7 @@ agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, 
 // design.md "@(packed)": whether a place expression is a field reached through a
 // packed struct at any level of its selector chain, and the field name to name in
 // the diagnostic. The whole packed value is fine; only a field of it is rejected.
-@(private = "file")
+@(private)
 packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
 	cur := operand
 	for {

@@ -1052,7 +1052,9 @@ was enough to make an unrelated corpus program fail.
   plan was written against is gone; what remains is the cost. It is still why
   `Directory_Reader` streams borrowed names instead of returning an owning array,
   and why `tests/run/lib_fs.loke` indexes its `[dynamic]string` rather than
-  retaining each name it only reads.
+  retaining each name it only reads. The later `refs()` traversal provides an
+  ordinary read-only alternative for arrays and slices: it yields `^T` without
+  copying the element, including when `T` is move-only.
 
 ### Deviations from the plan
 

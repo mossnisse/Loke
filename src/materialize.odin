@@ -1,8 +1,8 @@
 // Constant materialization.
 //
 // design.md "Materialization": a constant is a value, not a variable, and an
-// ordinary use is substituted with no storage involved. Three uses need storage
-// anyway — indexing by a non-constant index, a slice expression, and `&C` —
+// ordinary use is substituted with no storage involved. Four uses need storage:
+// indexing by a non-constant index, a slice expression, `&C`, and `refs()`;
 // and **all uses of that constant share one backing object**.
 //
 // That object is read-only: assigning through it is rejected, and a slice of

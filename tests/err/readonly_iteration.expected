@@ -1,0 +1,27 @@
+L0640
+@7:36
+read-only `^T`
+L0310
+@12:23
+cannot initialise `^mut int` with `^int`
+L0512
+@20:3
+`values` cannot be modified here
+L0512
+@30:2
+`values` cannot be dropped here
+L0526
+@37:9
+`values` ends when this procedure returns
+L0513
+@43:19
+this temporary has ended
+L0641
+@50:2
+a read-only reborrow of it is still in use
+L0513
+@60:9
+this temporary has ended
+L0614
+@66:19
+reached through a packed struct

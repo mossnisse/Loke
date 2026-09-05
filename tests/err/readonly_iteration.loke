@@ -1,0 +1,67 @@
+package main;
+import "core:fmt";
+
+// design.md "Borrowing iteration": the element pointer is read-only and
+// keeps the original storage borrowed, even after advancing the iterator.
+write_element :: proc(values: []int) {
+	foreach (item in values.refs()) { item^ = 9; }
+}
+
+strengthen :: proc(values: []int) {
+	foreach (item in values.refs()) {
+		mutable: ^mut int = item;
+		fmt.println(mutable^);
+	}
+}
+
+invalidate_during_loop :: proc() {
+	values := [dynamic]int{1, 2};
+	foreach (item in values.refs()) {
+		values.append(3);
+		fmt.println(item^);
+	}
+}
+
+retained_after_drop :: proc() {
+	values := [dynamic]int{1, 2};
+	walker := values.refs().iter();
+	item := walker.next() or_else nil;
+	drop(walker);
+	drop(values);
+	fmt.println(item^);
+}
+
+escape_local :: proc() -> ^int {
+	values := [2]int{1, 2};
+	walker := values.refs().iter();
+	return walker.next() or_else nil;
+}
+
+make_values :: proc() -> [dynamic]int { return [dynamic]int{1, 2}; }
+escape_temporary :: proc() {
+	refs := make_values().refs();
+	foreach (item in refs) { fmt.println(item^); }
+}
+
+mutate_slice :: proc() {
+	values := [2]int{1, 2};
+	source := values[:];
+	refs := source.refs();
+	source[0] = 9;
+	foreach (item in refs) { fmt.println(item^); }
+}
+
+main :: proc() {}
+
+conditional_temporary :: proc(flag: bool) -> ^int {
+	left := [2]int{1, 2};
+	right := [2]int{3, 4};
+	walker := (left if flag else right).refs().iter();
+	return walker.next() or_else nil;
+}
+
+Packed :: struct @(packed) { tag: u8, items: [2]int }
+packed_storage :: proc() {
+	value: Packed = {};
+	foreach (item in value.items.refs()) { fmt.println(item^); }
+}

@@ -1,0 +1,27 @@
+move-only 10
+0 3
+1 7
+reverse 7
+reverse 3
+indexed read 3
+tracked 11
+tracked 13
+tracked 11
+tracked 13
+copies 0
+generic 6 6
+repeat 6
+0 3
+1 2
+2 1
+returned 6
+retained 1 2
+resumed 4
+past view 1
+indexed retained 1 2
+constant 21 true
+temporary 4
+temporary 5
+empty 0
+library 17
+custom 17

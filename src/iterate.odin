@@ -67,6 +67,9 @@ Synth_Kind :: enum {
 	Adapter_Iter,
 	Indexed_Next,
 	Iterator_Copy,
+	Refs_View,
+	Refs_Iter,
+	Refs_Iter_Reverse,
 	// Compiler-owned canonical receiver methods for the built-in `len`, `cap`,
 	// and `hash` operations. Their free spellings resolve to these same symbols.
 	Standard_Len,
@@ -83,6 +86,7 @@ Synth_Kind :: enum {
 	// baked into the type.
 	Slice_Next,
 	Slice_Mut_Next,
+	Slice_Ref_Next,
 	// A dynamic array's `iter` builds the same `{ data, index }` a slice's does
 	// from the header's storage and length, so `Slice_Next` is its `next`
 	// verbatim. The iterator excludes the container on purpose: it's a borrow,
@@ -511,6 +515,10 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		return
 	}
 	iterator_info.contributed += {.Iteration}
+	// An element borrowed by `refs()` or `iter_mut()` needs no value-copy
+	// iterator. Do not emit an unusable `next` body that would clone a move-only
+	// element merely because lookup also contributed its container's members.
+	if (next_kind == .Array_Next || next_kind == .Slice_Next) && type_clone_disabled(k.c, element) { return }
 	next_members := make([]Symbol_Id, 1, k.c.semantic_allocator)
 	next := synth_proc(
 		k.c, "next", next_kind, iterator,
@@ -820,7 +828,7 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 				k.c,
 				s.bindings[0].name.span,
 				"L0480",
-				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s`",
+				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s` for mutation, or iterate `source.refs()` for read-only access",
 				type_name(k.c, subject),
 				type_name(k.c, info.element),
 			)
@@ -997,10 +1005,15 @@ require_copyable_element :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id
 	if !type_clone_disabled(k.c, element) {
 		return true
 	}
+	info := underlying_info(k.c, expr_base(s.iterable).type)
+	remedy := "iterate `&value`, or remove the elements"
+	if info != nil && (info.kind == .Array || info.kind == .Slice || info.kind == .Dynamic_Array) {
+		remedy = "iterate `source.refs()` for read-only access, `&value` for mutable access, or remove the elements"
+	}
 	errorf(
 		k.c, expr_span(s.iterable), "L0491",
-		"`%s` is move-only, so a by-value `foreach` cannot copy it out of the container; iterate `&value`, or remove the elements",
-		type_name(k.c, element),
+		"`%s` is move-only, so a by-value `foreach` cannot copy it out of the container; %s",
+		type_name(k.c, element), remedy,
 	)
 	return false
 }

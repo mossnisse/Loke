@@ -4,7 +4,7 @@ package lokec
 
 import "core:fmt"
 
-Adapter_Kind :: enum { None, Indexed, Reversed }
+Adapter_Kind :: enum { None, Indexed, Reversed, Refs }
 Adapter_Key :: struct { source: Type_Id, kind: Adapter_Kind, pkg: Package_Id }
 
 // Preserve the existing direct loop lowering only after ordinary member
@@ -35,6 +35,7 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 }
 
 iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	if identifier_text(k.c, name) == "refs" { return sequence_refs_member(k, source) }
 	kind := Adapter_Kind.None
 	switch identifier_text(k.c, name) {
 	case "indexed": kind = .Indexed
@@ -84,7 +85,8 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		element = indexed_element_type(c, element)
 		result_iterator = new_type(c, Type_Info{
 			kind = .Struct, name = intern_identifier(c, fmt.aprintf("Indexed_Iterator(%s)", type_name(c, iterator), allocator = c.semantic_allocator)),
-			key = iterator, element = element,
+			key = iterator, element = element, adapter_kind = .Indexed,
+			is_view = iteration_lends_source(c, source),
 		})
 		iterator_fields := make([]Symbol_Id, 2, c.semantic_allocator)
 		iterator_fields[0] = new_field(c, "iterator", iterator, 0, public = false)

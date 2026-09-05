@@ -284,6 +284,7 @@ be file-private.
 | `union.odin`, `optional.odin`, `erased.odin` | Tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | Built-in slice, managed-container, text, SIMD, and atomic semantics. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
+| `iteration_adapters.odin`, `iteration_refs.odin` | Ordinary iterable adapters and read-only element borrowing over arrays and slices. |
 
 ### Generics and compile-time features
 
@@ -316,7 +317,7 @@ be file-private.
 | `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
 | `emit_llvm_cleanup.odin` | Lifecycle clone/drop, cleanup registration, and panic replay. |
 | `emit_llvm_containers.odin` | Container operation tables, construction, and synthesized element/key bodies. |
-| `emit_llvm_iteration.odin` | Built-in iteration and synthesized iterator bodies. |
+| `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
 | `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |
 | `emit_llvm_toolchain.odin` | `.ll`/`.obj`/`.exe` artifact policy, clang/NASM discovery and invocation, foreign inputs, and layout probes. |

@@ -1190,7 +1190,8 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		e.terminated = false
 		name := e.names[symbol_id]
 		switch symbol.synth {
-		case .Adapter_View, .Adapter_Iter, .Indexed_Next, .Iterator_Copy:
+		case .Adapter_View, .Adapter_Iter, .Indexed_Next, .Iterator_Copy,
+		     .Refs_View, .Refs_Iter, .Refs_Iter_Reverse:
 			emit_synth_adapter(e, symbol, name)
 		case .Standard_Len, .Standard_Cap, .Standard_Hash:
 			emit_synth_standard_customization(e, symbol, name)
@@ -1203,7 +1204,7 @@ emit_synth_procs :: proc(e: ^Emitter) {
 			emit_synth_range_next(e, symbol, name)
 		case .Array_Next:
 			emit_synth_indexed_next(e, symbol, name, slice = false)
-		case .Slice_Next, .Slice_Mut_Next:
+		case .Slice_Next, .Slice_Mut_Next, .Slice_Ref_Next:
 			emit_synth_indexed_next(e, symbol, name, slice = true)
 		case .Map_Next, .Map_Keys_Next, .Map_Values_Next:
 			emit_synth_map_next(e, symbol, name)

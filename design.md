@@ -2331,7 +2331,10 @@ hands over one it already owns. Either way the loop disposes of it at the end of
 the step — on falling out, on `continue`, on `break`, on `return`, on a
 propagated error, and while unwinding from a panic — exactly once. A move-only
 element therefore cannot be iterated by value out of a built-in container, since
-there is no copy to make; iterate `&value` instead.
+there is no copy to make. Use the read-only [`refs()` traversal](#borrowing-iteration)
+to inspect it, or iterate `&value` when mutable access is required. For arrays
+and slices, the value iterator has no `next` member when its element is move-only,
+so the container does not satisfy `Iterable`; its borrowing traversals remain available.
 
 A value loop never invents an index, key, or byte offset. To receive that
 information, use an iterable or adapter whose `Element` contains it.
@@ -2415,6 +2418,54 @@ Because these are ordinary methods, a type that declares its own `keys`,
 that member means the same thing inside a `foreach` header as outside one.
 [`Enum.values()`](#iterating-an-enumeration) remains an ordinary constant
 expression.
+
+#### Borrowing iteration
+
+Fixed arrays, dynamic arrays, and both `[]T` and `[]mut T` slices provide
+`source.refs()`. It returns an ordinary borrowed iterable whose `Element` is
+`^T`: each step hands back an immutable pointer to the original element. Creating,
+copying, and iterating this view allocate nothing and copy no elements. It works
+with move-only elements and with immutable procedure parameters:
+
+```odin
+Entry :: move_only struct { id: int }
+
+sum :: proc(items: []Entry) -> int {
+	total := 0;
+	foreach (item in items.refs()) {
+		total += item^.id;
+	}
+	return total;
+}
+```
+
+`refs()` holds a read-only slice of the source storage. It satisfies `Iterable`
+and `Reverse_Iterable`, with `next(self: inout Iterator) -> Option(^T)`, and
+composes with the ordinary adapters:
+
+```odin
+foreach (item, index in items.refs().indexed()) { use(item^, index); }
+foreach (item in items.refs().reversed()) { use(item^); }
+```
+
+The view can be stored, copied, passed, and returned wherever its source lifetime
+permits. Each `view.iter()` starts a fresh traversal; copying an iterator copies
+its current cursor. A pointer yielded by this traversal borrows the original
+storage, so it remains valid after advancing or dropping the iterator or view.
+The source cannot be mutated, moved, dropped, or invalidated while the view,
+iterator, or any yielded pointer still uses it. Weakening a mutable slice through
+`refs()` follows the ordinary read-only reborrow rule. A temporary source ends
+with its complete expression, except that a `foreach` iterable lives for the
+whole loop. A named constant source is materialized in shared read-only storage,
+as for slicing it. Packed fields cannot supply aligned element pointers.
+
+These are runtime borrowing traversals; static `foreach` expands compile-time
+values rather than lending runtime element storage. No new loop syntax or
+interface is required. A user-defined container can provide its own `refs`
+method, or expose a read-only slice and reuse this one, as in
+`small.view().refs()` for `Small_Array`. An ordinary visible member named `refs`
+takes precedence over the compiler contribution. Arbitrary iterables, maps, and
+strings do not acquire `refs()`; for text bytes use `text.bytes().refs()`.
 
 #### By-reference iteration
 
@@ -3181,8 +3232,10 @@ A constant is a value, not a variable, and an ordinary use of one is substituted
 
 - indexing by a non-constant index
 - a slice expression
+- taking its address with `&`
+- a borrowing traversal with `refs()`
 
-**A constant used in either of those ways is materialized into read-only storage.** All uses of that constant share one backing object. A constant that is never used in one of those ways occupies no space in the program.
+**A constant used in any of those ways is materialized into read-only storage.** All uses of that constant share one backing object. A constant that is never used in one of those ways occupies no space in the program.
 
 ```odin
 NUMBERS :: [?]int{7, 42, 628};
@@ -3761,7 +3814,7 @@ foreach (character in str) {
 }
 ```
 
-Use the address operator to iterate by reference over a mutable array, dynamic array, or slice. A slice must have type `[]mut T`. A `[]T` slice supports only iteration by value.
+Use the address operator to iterate by reference over a mutable array, dynamic array, or slice. A slice must have type `[]mut T`. To borrow elements read-only, including from `[]T`, iterate `source.refs()` and read each `^T` through `value^`; see [Borrowing iteration](#borrowing-iteration).
 
 ```odin
 mutable_slice := []mut int{1, 4, 9};

@@ -11,6 +11,34 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	open_function(e, "define %s %s(ptr %%arg0)", result, name)
 	e.terminated = false
 	#partial switch symbol.synth {
+	case .Refs_View:
+		view := type_of(e.c, symbol.result)
+		slice_type := llvm_type(e, symbol_of(e.c, view.fields[0]).type)
+		source_info := underlying_info(e.c, source)
+		items: string
+		if source_info.kind == .Array {
+			items = emit_ptr_len(e, slice_type, "%arg0", fmt.aprintf("%d", source_info.count))
+		} else {
+			self := load(e, llvm_type(e, source), "%arg0")
+			if source_info.kind == .Slice {
+				items = self
+			} else {
+				data := extract(e, llvm_type(e, source), self, CONTAINER_STORAGE)
+				length := extract(e, llvm_type(e, source), self, CONTAINER_LEN)
+				items = emit_ptr_len(e, slice_type, data, length)
+			}
+		}
+		value := insert(e, result, "undef", slice_type, items, 0)
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
+	case .Refs_Iter, .Refs_Iter_Reverse:
+		slice_type := llvm_type(e, symbol_of(e.c, info.fields[0]).type)
+		items := load(e, slice_type, gep_field(e, llvm_type(e, source), "%arg0", 0))
+		reversed := symbol.synth == .Refs_Iter_Reverse
+		index := reversed ? extract(e, slice_type, items, SLICE_LEN) : "0"
+		value := insert(e, result, "undef", slice_type, items, ITER_ARRAY_DATA)
+		value = insert(e, result, value, "i64", index, ITER_ARRAY_INDEX)
+		value = insert(e, result, value, "i1", reversed ? "true" : "false", ITER_ARRAY_REVERSED)
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
 	case .Adapter_View:
 		view := type_of(e.c, symbol.result)
 		held_type, held := "ptr", "%arg0"
