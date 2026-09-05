@@ -894,6 +894,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		check: Example_Check,
 	}
 	checks := []Entry {
+		{"aliasing",       .Output},
 		{"arena_pipeline", .Output},
 		{"compile_time",   .Output},
 		{"config_parser",  .Output},

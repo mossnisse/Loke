@@ -1,0 +1,85 @@
+package main;
+import "core:fmt";
+
+// Two mutable borrows that provably do not overlap, and one handed back out of
+// a procedure.
+//
+// Borrow checking here is decided for *places*: a storage root plus a
+// normalized path of fields, indices, and ranges through it (design.md "Places
+// and overlap"). Two paths that the compiler can prove distinct are two
+// separate loans, so the routines below never need a split helper, a copy, or
+// an index passed instead of the thing itself.
+
+Counter :: struct { key: string_view, hits: int }
+
+// The result is `inout int`: a mutable borrow of a place in the caller's own
+// storage, not a value and not an index. The interesting part is the miss
+// path — the loop borrows an element, gives up on it, and then *grows* the
+// array before borrowing again. The first borrow is dead by then, so growing
+// is allowed; a borrow constrains its root only up to its last use.
+//
+// `@(escape=stored)` is the one thing the caller has to be told: the view in
+// `key` is kept in a `Counter` that outlives the call, so the level is written
+// on the parameter that does it rather than on the type of everything it
+// touches (design.md "Retaining a borrow").
+tally :: proc(counters: inout [dynamic]Counter, @(escape=stored) key: string_view) -> inout int {
+	foreach (i in 0 ..< counters.len()) {
+		if (counters[i].key == key) { return inout counters[i].hits; }
+	}
+	counters.append(Counter{key, 0});
+	return inout counters[counters.len() - 1].hits;
+}
+
+// `lanes` is loaned mutably and `labels` only readably, so this can write
+// through one while reading the other. Which parameter the returned view
+// borrows is recorded per parameter, so no annotation ties them together:
+// the result names `labels`, and `lanes` is free again the moment the call
+// ends (design.md "Temporaries and procedure boundaries").
+accumulate :: proc(lanes: []mut int, labels: []string_view, by: int) -> []string_view {
+	foreach (i in 0 ..< lanes.len()) { lanes[i] += by; }
+	return labels[0:lanes.len()];
+}
+
+total :: proc(lanes: []int) -> int {
+	sum := 0;
+	foreach (lane in lanes) { sum += lane; }
+	return sum;
+}
+
+main :: proc() {
+	events := [8]string_view{
+		"open", "read", "read", "close",
+		"open", "read", "error", "close",
+	};
+
+	// Each `tally` call writes straight through the borrow it returns. On a
+	// hit it names an existing element; on a miss it names one that did not
+	// exist when the call started.
+	counters := [dynamic]Counter{};
+	foreach (event in events) { tally(inout counters, event) += 1; }
+	foreach (counter in counters[:]) { fmt.println(counter.key, counter.hits); }
+
+	// One array, two mutable slices of it, alive at the same time. The ranges
+	// are constant and touch at 3, so they are disjoint and each is its own
+	// loan — there is no split call here, and no unsafe step.
+	lanes := [6]int{0, 0, 0, 0, 0, 0};
+	names := [6]string_view{"n", "e", "s", "w", "up", "down"};
+	front := lanes[0:3];
+	back := lanes[3:6];
+	accumulate(front, names[0:3], 2);
+	accumulate(back, names[3:6], 5);
+	fmt.println(total(front), total(back), total(lanes[:]));
+
+	// The same rule one level down: distinct constant indices are distinct
+	// places, so both elements are loaned mutably at once.
+	first := &mut lanes[0];
+	last := &mut lanes[5];
+	first^ += 100;
+	last^ += 100;
+	fmt.println(first^, last^);
+
+	// A read-only loan of the whole array cannot coexist with those, and it
+	// does not have to: both writers are finished above, so the whole root is
+	// readable again here.
+	fmt.println(total(lanes[:]));
+}

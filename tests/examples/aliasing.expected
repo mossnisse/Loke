@@ -1,0 +1,7 @@
+open 2
+read 3
+close 2
+error 1
+6 15 21
+102 105
+221

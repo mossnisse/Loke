@@ -9,6 +9,7 @@ different part of the language:
 - `keys.loke` — raw terminal input and automatic terminal restoration.
 - `game_of_life.loke` — fixed arrays, custom indexing operators, `inout`, and ranges as values.
 - `word_frequency.loke` — strings and borrowed views, maps, dynamic arrays, and closed-range iteration.
+- `aliasing.loke` — places and overlap: disjoint mutable slices and elements loaned at once, a mutable borrow returned as an `inout` result, and `@(escape=stored)`.
 - `arena_pipeline.loke` — allocators, `via`, local arena and scratch regions, and reusable reset.
 - `shapes.loke` — interfaces dispatched two ways: specialized generics and erased `dyn`.
 - `config_parser.loke` — unions, `or_return`, optional-ok, `or_else`, `defer`, lifecycle hooks, and `indexed()`.
@@ -37,7 +38,7 @@ automatically, so no collection flags are needed.
 
 ## How these are checked
 
-`odin test tests` compiles all eleven from these sources — not from copies — and
+`odin test tests` compiles all twelve from these sources — not from copies — and
 compares the output of the ones that produce a fixed result. `greeting` is run
 twice in a scratch directory with supplied input, so the second run has to find
 what the first wrote; `streaming` is run against a real file, a missing one, and
