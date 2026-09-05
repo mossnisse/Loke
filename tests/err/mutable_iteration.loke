@@ -13,7 +13,7 @@ main :: proc() {
 	first := iterator.next();
 	second := iterator.next();
 	fmt.println(first, second);
-	saved: ^mut int;
+	saved: ^mut int = nil;
 	foreach (&value in xs) {
 		saved = &mut value;
 		break;

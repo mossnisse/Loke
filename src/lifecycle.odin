@@ -747,6 +747,7 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 		local := &graph.tracked[event.slot]
 		#partial switch event.kind {
 		case .Init:
+			local.ever_written = true
 			state[event.slot] = .Live
 		case .Assign:
 			// design.md: assignment drops the destination's previous value, so what
@@ -757,15 +758,19 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 			if state[event.slot] == .Conditional {
 				local.conditional_assign = true
 			}
+			local.ever_written = true
 			state[event.slot] = .Live
 		case .Kill:
 			if state[event.slot] != .Live {
-				report_not_live(k, event, state[event.slot])
+				report_not_live(k, event, state[event.slot], local.ever_written)
 			}
 			state[event.slot] = .Dead
 		case .Use:
-			if state[event.slot] != .Live {
-				report_not_live(k, event, state[event.slot])
+			// `x: T = ---` asserts that something else fills the storage, so an
+			// ordinary read, borrow, or address of it is accepted (design.md
+			// "Built-in values"). `move` and `drop` still are not: they are `.Kill`.
+			if state[event.slot] != .Live && !local.unchecked {
+				report_not_live(k, event, state[event.slot], local.ever_written)
 			}
 		case .Cleanup:
 			// Every cleanup point of one local votes: any disagreement between
@@ -807,17 +812,16 @@ record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event
 }
 
 @(private = "file")
-report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness) {
+report_not_live :: proc(k: ^Checker, event: Flow_Event, state: Liveness, ever_written: bool) {
 	action := event.verb == "" ? "used" : event.verb
 	if state == .Dead {
-		errorf(
-			k.c,
-			event.span,
-			"L0500",
-			"`%s` cannot be %s here: it has already been moved, dropped, or released",
-			event.name,
-			action,
-		)
+		// design.md "Variable declarations": a local starts dead, so one nothing
+		// ever assigns holds no value rather than having lost one.
+		message := "`%s` cannot be %s here: it has no value yet"
+		if ever_written {
+			message = "`%s` cannot be %s here: it has already been moved, dropped, or released"
+		}
+		errorf(k.c, event.span, "L0500", message, event.name, action)
 		return
 	}
 	errorf(
@@ -839,6 +843,11 @@ assign_cleanup_slots :: proc(k: ^Checker, graph: ^Flow_Graph) {
 	for local in graph.tracked {
 		sym := symbol_of(k.c, local.symbol)
 		if sym == nil {
+			continue
+		}
+		// Definite initialization follows every local; only a managed one has a
+		// cleanup a hidden flag could have to disambiguate.
+		if !type_is_managed(k.c, sym.type) {
 			continue
 		}
 		// Reaching a cleanup point live is what gives a local an implicit drop.

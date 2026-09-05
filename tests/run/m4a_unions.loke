@@ -127,7 +127,7 @@ side :: proc(p: Pair_Of_Ints) -> int {
 
 main :: proc() {
 	// A union always holds a variant; the designated zero is the first one.
-	m: Maybe_Int;
+	m: Maybe_Int = {};
 	fmt.println(m);
 	fmt.println(Maybe_Int.present(5));
 

@@ -153,11 +153,12 @@ main :: proc() {
 	report("place subject");
 
 	// --- a move-only payload leaves through `move` ------------------------
-	// `taken` has no initialiser, so it starts at the zero `Handle` and the
-	// assignment drops that one: two drops, no copy.
+	// `taken` starts at the zero `Handle`, and the assignment drops that one:
+	// two drops, no copy. The zero is written, because a local with no
+	// initialiser would be dead on the `.shut` path.
 	reset();
 	{
-		taken: Handle;
+		taken: Handle = {};
 		switch (value in opened(10)) {
 		case .open: taken = move(value);
 		case .shut:

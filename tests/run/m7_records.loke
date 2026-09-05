@@ -59,7 +59,7 @@ open_handle :: proc() -> Handle { return Handle{valid = true, id = 4}; }
 // design.md "Iteration adapters": `foreach` binds record fields by the same
 // rule, and its map key stays borrowed.
 totals :: proc() -> int {
-	m: map[string]int;
+	m: map[string]int = {};
 	m["a"] = 1;
 	m["b"] = 2;
 	sum := 0;

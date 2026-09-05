@@ -44,7 +44,7 @@ succeeded :: proc(outcome: Result(Unit, Allocator_Error)) -> bool {
 }
 
 main :: proc() {
-	m: map[Key]Value;
+	m: map[Key]Value = {};
 	for (i := 0; i < 7; i += 1) {
 		fmt.println(succeeded(m.try_insert(Key{i}, Value{i + 10})));
 	}

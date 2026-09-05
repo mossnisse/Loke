@@ -69,7 +69,7 @@ erased_allocator :: proc() {
 	view: any_view = allocator;
 	switch (restored in view.as(Allocator)) {
 	case .some:
-		xs: [dynamic]int via restored;
+		xs: [dynamic]int via restored = {};
 		xs.append(1);
 		free_all(allocator);
 		fmt.println(xs[0]);

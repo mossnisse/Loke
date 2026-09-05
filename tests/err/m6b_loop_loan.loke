@@ -32,7 +32,7 @@ write_while_walking :: proc() {
 }
 
 map_while_walking :: proc() {
-	m: map[int]int;
+	m: map[int]int = {};
 	m[1] = 2;
 	foreach (key, value in m) {
 		fmt.println(key + value);
@@ -41,7 +41,7 @@ map_while_walking :: proc() {
 }
 
 map_insert_while_walking :: proc() {
-	m: map[int]int;
+	m: map[int]int = {};
 	m[1] = 2;
 	foreach (key, value in m) {
 		m[key + 1] = value;

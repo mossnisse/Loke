@@ -3,10 +3,9 @@ package main; import "core:fmt";
 // design.md "Zero values": a union with no `@(zero=)` has no zero value, and
 // every operation that would manufacture one says so.
 //
-// A declaration with no initialiser is one of them, wherever its storage lives:
-// a local is filled where it is reached exactly as a static one is filled before
-// the program runs. `---` asks for the storage without the value, and is the way
-// to hold one of these before it is assigned.
+// A static-duration declaration with no initialiser is one of them: it is filled
+// before the program runs. A lexical local is not, because it starts dead and
+// manufactures nothing; `---` also asks for the storage without a value.
 
 Choice :: union { number: i32, flag: bool }
 Holder :: struct { id: int, choice: Choice }
@@ -42,12 +41,12 @@ main :: proc() {
 	reserved := make([dynamic]Choice, 0, 8);
 
 	// So does growth. Reserving capacity does not, and is accepted.
-	ys: [dynamic]Choice;
+	ys: [dynamic]Choice = {};
 	ys.reserve(4);
 	ys.resize(4);
 
-	// A local with no initialiser is filled with the zero where it is reached,
-	// so it needs one; `---` asks for the storage alone and is accepted.
+	// A local with no initialiser starts dead, so it needs no zero; `---` asks
+	// for the storage alone and goes unchecked as well. Neither is used below.
 	local: Choice;
 	uninitialised: Choice = ---;
 

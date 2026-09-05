@@ -90,7 +90,7 @@ erased_allocator_region :: proc() {
 	view: any_view = allocator;
 	switch (restored in view.as(Allocator)) {
 	case .some:
-		xs: [dynamic]int via restored;
+		xs: [dynamic]int via restored = {};
 		xs.append(1);
 		free_all(allocator);
 		fmt.println(xs[0]);
@@ -115,9 +115,9 @@ Region_Owner :: struct { data: [dynamic]int }
 
 local_region_moved_into_field :: proc() -> Region_Owner {
 	arena := mem.Arena.init();
-	values: [dynamic]int via arena.allocator();
+	values: [dynamic]int via arena.allocator() = {};
 	values.append(1);
-	held: Region_Owner;
+	held: Region_Owner = {};
 	held.data = move(values);
 	return held;
 }

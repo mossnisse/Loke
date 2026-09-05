@@ -52,7 +52,7 @@ main :: proc() {
 	// The zero of a union that designates one is that variant.
 	reset();
 	{
-		inert: Boxed;
+		inert: Boxed = {};
 		fmt.println(inert);
 	}
 	fmt.println("zero", copies, drops);

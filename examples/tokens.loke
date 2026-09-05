@@ -83,7 +83,7 @@ next_token :: proc(text: string_view, from: int) -> Scan {
 main :: proc() {
 	source := "width = 1280; height = 720; label = pixel_ratio";
 
-	tokens: [dynamic]Token;
+	tokens: [dynamic]Token = {};
 	cursor := 0;
 	scanning := true;
 	for (scanning) {

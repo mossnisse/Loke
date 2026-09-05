@@ -30,7 +30,7 @@ grow_integer :: proc() -> int {
 
 ARRAY :: grow_array();
 grow_array :: proc() -> int {
-	xs: [dynamic]int;
+	xs: [dynamic]int = {};
 	xs.resize(1000000);
 	return xs.len();
 }

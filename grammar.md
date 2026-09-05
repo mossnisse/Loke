@@ -241,7 +241,8 @@ Semicolon_Constant_Value = Operator_Declaration
                          | Expression
 ```
 
-`x: T;` declares a zero-initialized variable; `x: T = e;` / `x: = e;` add an
+`x: T;` declares a variable with no initializer — a lexical local starts dead,
+static-duration storage starts at its zero value; `x: T = e;` / `x: = e;` add an
 initializer; `x: T: e;` declares a constant. `x: T = ---;` uses the
 uninitialized-storage marker, which is not an expression and so cannot appear
 in inferred `x := ...` form. The second `Variable_Decl` alternative is

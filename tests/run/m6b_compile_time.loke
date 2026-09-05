@@ -14,7 +14,7 @@ package main; import "core:fmt";
 
 SUM :: sum_built();
 sum_built :: proc() -> int {
-	xs: [dynamic]int;
+	xs: [dynamic]int = {};
 	xs.append(1, 2, 3);
 	xs.insert(0, 10);
 	xs.resize(6);
@@ -35,7 +35,7 @@ popped :: proc() -> int {
 	case .some: value = popped;
 	case .none: return -1;
 	}
-	empty: [dynamic]int;
+	empty: [dynamic]int = {};
 	switch (_ in empty.pop()) {
 	case .some: return -2;
 	case .none:
@@ -56,7 +56,7 @@ removed :: proc() -> int {
 // compile-time path, exactly as it panics at run time (design.md "Maps").
 MAPPED :: mapped();
 mapped :: proc() -> int {
-	m: map[string]int;
+	m: map[string]int = {};
 	m["a"] = 1;
 	m["b"] = 2;
 	m["a"] = 5;
@@ -73,7 +73,7 @@ mapped :: proc() -> int {
 // and an independently owned payload on a hit.
 LOOKED_UP :: looked_up();
 looked_up :: proc() -> int {
-	m: map[string][dynamic]int;
+	m: map[string][dynamic]int = {};
 	m["a"] = {4};
 	held := m.lookup_value("a") or_else {};
 	if (held.len() != 1) { return -1; }
@@ -190,7 +190,7 @@ custom_keys :: proc() -> int {
 equal_ids :: proc(a, b: int) -> bool { return a == b; }
 
 temporary_map :: proc() -> map[[2]int]int {
-	m: map[[2]int]int;
+	m: map[[2]int]int = {};
 	m[{1, 2}] = 73;
 	return m;
 }

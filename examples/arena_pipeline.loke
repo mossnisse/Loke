@@ -50,21 +50,21 @@ run_batches :: proc(samples: []Sample) {
 // rest. The arena borrows that buffer for as long as it lives, and the borrow
 // analysis is what enforces it.
 in_frame :: proc() -> int {
-	buffer: [1024]u8 = {};
+	buffer: [2048]u8 = {};
 	arena := mem.Arena.from_buffer(buffer[:]);
 
 	ids: [dynamic]int via arena.allocator() = {};
 	foreach (i in 0 ..< 16) { ids.append(i * i); }
 
 	// This map's table lives in the same frame-local buffer.
-	seen: map[int]bool via arena.allocator();
+	seen: map[int]bool via arena.allocator() = {};
 	foreach (id in ids) { seen[id] = true; }
 
 	return ids.len() + seen.len();
 }
 
 main :: proc() {
-	samples: [dynamic]Sample;
+	samples: [dynamic]Sample = {};
 	foreach (i in 0 ..< 10) {
 		samples.append(Sample{i, f64(i) * 1.5});
 	}

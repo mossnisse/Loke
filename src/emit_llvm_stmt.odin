@@ -141,25 +141,29 @@ emit_local_decl :: proc(e: ^Emitter, d: ^Decl) {
 			continue
 		}
 		slot := declare_local(e, symbol_id)
-		if i < len(d.values) && d.values[i] == nil {
-			continue // `---`: storage without an initial value
-		}
-		if i < len(d.values) && d.values[i] != nil {
-			value := emit_expr(e, d.values[i])
-			if i < len(d.value_clones) && d.value_clones[i] {
-				value = emit_clone_value(e, sym.type, value, emit_destination_allocator(e, symbol_id))
-			}
-			store(e, sym.type, value, slot)
-			register_implicit_drop(e, symbol_id)
+		// design.md "Variable declarations": a local with no initializer, and one
+		// written `= ---`, both start dead. Nothing is written to the storage —
+		// not even a zero — and a later full assignment initializes it.
+		if i >= len(d.values) || d.values[i] == nil {
+			// design.md "Managed values and storage": the declaration allocation
+			// policy is retained while dead, so a written `via` still binds here.
+			emit_eager_via_binding(e, symbol_id, slot)
+			register_implicit_drop(e, symbol_id, live = false)
 			continue
 		}
-		zero, ok := zero_const(e.c, sym.type)
-		if ok {
-			store(e, sym.type, llvm_const(e, zero, sym.type), slot)
+		value := emit_expr(e, d.values[i])
+		if i < len(d.value_clones) && d.value_clones[i] {
+			value = emit_clone_value(e, sym.type, value, emit_destination_allocator(e, symbol_id))
 		}
-		// design.md "Allocators": a written `via` is *eager*, selected at declaration —
-		// later operations on this container allocate through it, not the lazy default.
-		emit_eager_via_binding(e, symbol_id, slot)
+		store(e, sym.type, value, slot)
+		// design.md "Allocators": a written `via` is *eager*, selected at the
+		// declaration. `x: T via a = {}` is the zero the declaration used to get
+		// implicitly, and an empty container literal writes no allocator of its
+		// own, so the policy binds here. A value that arrives already owning
+		// storage keeps the allocator it was built with.
+		if composite, empty_literal := d.values[i].(^Expr_Composite); empty_literal && len(composite.elements) == 0 {
+			emit_eager_via_binding(e, symbol_id, slot)
+		}
 		register_implicit_drop(e, symbol_id)
 	}
 }

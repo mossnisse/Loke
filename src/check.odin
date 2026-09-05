@@ -1932,16 +1932,14 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			errorf(k.c, d.span, "L0306", "this declaration needs a type or an initialiser")
 			return
 		}
-		// design.md "Zero values": a declaration with no initialiser starts at its
-		// type's zero value — a local is filled where reached, a static one before
-		// the program runs — and a no-zero type has none to start at. `---` asks
-		// for storage without a value and carries `nil` in `d.values`, so it never
-		// arrives here.
-		what := "a declaration with no initialiser"
+		// design.md "Zero values": only a static-duration declaration with no
+		// initialiser manufactures a zero, before the program runs, so only it
+		// needs the type to have one. A lexical local starts dead and manufactures
+		// nothing. `---` asks for storage without a value and carries `nil` in
+		// `d.values`, so it never arrives here either.
 		if d.top_level || d.duration != .None {
-			what = "a declaration with static duration"
+			require_type_has_zero(k, declared, d.span, "a declaration with static duration")
 		}
-		require_type_has_zero(k, declared, d.span, what)
 		assign_symbol_types(k.c, d, declared)
 		return
 	}
@@ -2832,6 +2830,9 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if !has_default {
 		member_complete = check_exhaustive(k, s, subject, covered)
 	}
+	// Only a default closes a value switch: an open enum admits a value outside
+	// its declared members, so covering every one of them still falls through.
+	s.exhaustive = has_default
 	return Flow_Info {
 		can_fall_through = !has_default || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,

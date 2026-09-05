@@ -17,7 +17,7 @@ impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { if (self.id != 0) { fmt.println("drop", self.id); } }
 }
 main :: proc() {
-	m: map[Key]Resource;
+	m: map[Key]Resource = {};
 	m[Key{0}] = Resource{1};
 	// The completed result must stay protected while its temporary key is
 	// dropped. A panic here drops the result, but never drops that key twice.

@@ -58,7 +58,7 @@ main :: proc() {
 	fmt.println(1 if flag else 0);
 
 	// arrays
-	xs: [4]int;
+	xs: [4]int = {};
 	xs[0] = 10;
 	xs[3] = 40;
 	fmt.println(xs[0] + xs[3]);

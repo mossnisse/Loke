@@ -201,7 +201,9 @@ caller's local extension cannot change the meaning of a specialization.
 Managed values have language-defined clone, move, and drop behavior.
 `hooks.odin` classifies types and records canonical lifecycle operations;
 `lifecycle.odin` assigns copy obligations, tracks liveness, diagnoses invalid
-uses, and determines cleanup slots. Normal exits and panic unwind consume the
+uses, and determines cleanup slots. Liveness follows every local, because a
+local starts dead and definite initialization is checked for all of them; only
+a managed one also carries a scope-exit cleanup obligation. Normal exits and panic unwind consume the
 same settled cleanup facts.
 
 `borrow.odin` runs two related dataflow analyses over provenance events:

@@ -20,6 +20,6 @@ Pair :: struct { first: Resource, second: Resource }
 main :: proc() {
 	// The first retained field transfers to the map before the key panics;
 	// the second field still belongs to the assignment's unwind guard.
-	m: map[Key]Resource;
+	m: map[Key]Resource = {};
 	m[Key{1, true}], m[Key{2, false}] = Pair{Resource{7}, Resource{8}};
 }

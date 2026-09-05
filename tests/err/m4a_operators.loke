@@ -41,7 +41,7 @@ main :: proc() {
 	b := Vec{3, 4};
 	a -= b;
 
-	s: Sparse;
+	s: Sparse = {};
 	// `[]=` cannot supply an address.
 	p := &s[1];
 	// A user `[:]` needs both endpoints written.

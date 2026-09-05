@@ -97,7 +97,7 @@ main :: proc() {
 	case .some: fmt.println(d);
 	case .none: fmt.println(-1);
 	}
-	m: map[int]int;
+	m: map[int]int = {};
 	m[1] = 10;
 	m[2] = 20;
 	fmt.println(sum_entries(m));

@@ -223,6 +223,14 @@ Tracked_Local :: struct {
 	// A `move` parameter arrives owned, so it is live before the first statement
 	// rather than at a declaration inside the body.
 	live_on_entry: bool,
+	// `x: T = ---` declares storage whose uses go unchecked (design.md "Built-in
+	// values"). The state is still followed, so nothing is dropped for storage a
+	// foreign write filled; only the not-live diagnostic is suppressed.
+	unchecked:     bool,
+	// Whether any path completes an initialization of this local. A local no
+	// path ever writes is dead because it was never initialized, not because
+	// something consumed it, and the diagnostic says so.
+	ever_written:  bool,
 	// Filled while reporting: whether this local ever reaches a cleanup point,
 	// and in which states. `conditional_assign` marks the other place a hidden
 	// flag is needed: an assignment live on one path, dead on another.
@@ -641,15 +649,16 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		if sym == nil || sym.kind != .Var {
 			continue
 		}
-		if !type_is_managed(graph.k.c, sym.type) {
-			continue
-		}
 		// Static-duration storage is always live after initialization and the
 		// compiler never drops it automatically (design.md), so there is no state
 		// to follow and no scope-exit obligation.
 		if sym.duration != .None {
 			continue
 		}
+		// Every local is followed, because design.md "Variable declarations" makes
+		// definite initialization a property of all of them. Only a managed one
+		// carries a scope-exit obligation.
+		managed := type_is_managed(graph.k.c, sym.type)
 		// Scope exit automatically drops every live managed lexical owner
 		// (design.md). Suppressing that is a property of the value, never of the
 		// declaration — an `unsafe.forget` consumes it, and a consumed local is
@@ -666,11 +675,19 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		// A deferred statement's AST is expanded at each distinct exit. Reuse its
 		// declaration's state slot, but register the runtime activation in each
 		// expanded cleanup path.
-		append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
+		if managed {
+			append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
+		}
 		// The implicit action is placed at the declaration point, where
-		// initialization completes (design.md). `---` leaves storage
-		// uninitialised and so registers nothing.
-		if len(d.values) == 1 && d.values[0] == nil {
+		// initialization completes (design.md). A declaration with no initializer
+		// completes none: the local starts dead and a later full assignment
+		// initializes it. `x: T = ---` starts dead as well, and only stops the
+		// diagnostic.
+		initializer, written := declared_initializer(d, symbol_index)
+		if written && initializer == nil {
+			graph.tracked[slot].unchecked = true
+		}
+		if !written || initializer == nil {
 			continue
 		}
 		event := Flow_Event {
@@ -679,17 +696,26 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 			span = sym.span,
 			name = identifier_text(graph.k.c, sym.name),
 		}
-		initializer: Expr
-		if len(d.values) == 1 && len(d.symbols) > 1 {
-			if symbol_index == 0 {
-				initializer = d.values[0]
-			}
-		} else if symbol_index < len(d.values) {
-			initializer = d.values[symbol_index]
-		}
-		_ = initializer
 		emit(graph, event)
 	}
+}
+
+// The initializer belonging to one binding of a declaration, and whether the
+// declaration wrote one at all. One value spread over several bindings
+// initializes each of them; `written` with a nil expression is the `---`
+// marker (src/ast.odin).
+@(private = "file")
+declared_initializer :: proc(d: ^Decl, symbol_index: int) -> (initializer: Expr, written: bool) {
+	if len(d.values) == 0 {
+		return nil, false
+	}
+	if len(d.values) == 1 && len(d.symbols) > 1 {
+		return d.values[0], true
+	}
+	if symbol_index < len(d.values) {
+		return d.values[symbol_index], true
+	}
+	return nil, false
 }
 
 @(private = "file")
@@ -876,13 +902,9 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		!expression_is_borrowed_place(graph.k.c, s.subject)
 	entry := graph.current
 	merge := new_flow_block(graph)
-	// A `switch` without a default can fall past every case, so the entry
+	// A switch that is not exhaustive can fall past every case, so the entry
 	// reaches the merge directly.
-	has_default := false
 	for c in s.cases {
-		if len(c.values) == 0 {
-			has_default = true
-		}
 		graph.current = new_flow_block(graph)
 		link(graph, entry, graph.current)
 		outer_break, outer_break_depth := graph.break_block, graph.break_depth
@@ -901,7 +923,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		graph.break_block, graph.break_depth = outer_break, outer_break_depth
 		link(graph, graph.current, merge)
 	}
-	if !has_default {
+	if !s.exhaustive {
 		link(graph, entry, merge)
 	}
 	graph.current = merge
@@ -1298,6 +1320,15 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 		}
 		return prov_variant_content(graph, v, loans)
 	}
+	// design.md "Variable declarations": an unevaluated operand inspects a
+	// declaration or a static type. It reads no storage, creates no borrow, and
+	// does not require a named local to be live, so neither pass walks into it.
+	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
+		#partial switch sym.builtin {
+		case .Size_Of, .Align_Of, .Offset_Of, .Type_Of, .Source_Location:
+			return nil
+		}
+	}
 	if graph.mode != .Lifecycle {
 		return prov_call(graph, v)
 	}
@@ -1328,11 +1359,15 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			}
 			return nil
 		case .Drop, .Free:
+			// `drop` consumes the binding. `free` ends an allocation root rather
+			// than a value, and provenance (`src/borrow.odin`) already reports a
+			// second release and a surviving alias in the allocation's own terms,
+			// so here it is only a use: the pointer must hold a value to release.
 			if len(v.bound) == 1 {
 				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
 					if slot, tracked := slot_of(graph, ident.symbol); tracked {
 						emit(graph, Flow_Event {
-							kind = .Kill,
+							kind = sym.builtin == .Free ? .Use : .Kill,
 							slot = slot,
 							span = v.span,
 							name = ident.name,

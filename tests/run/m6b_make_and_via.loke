@@ -57,8 +57,8 @@ main :: proc() {
 	// A written policy on a local managed owner. The provider is selected when
 	// the declaration is evaluated, and the declaration keeps it across drop and
 	// revival even though the handle itself travels with the value.
-	kept: [dynamic]Res via chosen();
-	table: map[int]Res via mem.default_allocator();
-	held: Res via chosen();
+	kept: [dynamic]Res via chosen() = {};
+	table: map[int]Res via mem.default_allocator() = {};
+	held: Res via chosen() = {};
 	fmt.println(held.id);
 }

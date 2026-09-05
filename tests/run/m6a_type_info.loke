@@ -44,7 +44,7 @@ main :: proc() {
 		fmt.println(u.bits);
 		fmt.println(1 if u.signed else 0);
 	}
-	empty: typeid;
+	empty: typeid = {};
 	fmt.println(0 if type_info_of(empty) == nil else 1);
 	forged := forge(999999);
 	fmt.println(0 if type_info_of(forged) == nil else 1);

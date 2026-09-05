@@ -118,7 +118,7 @@ main :: proc() {
 	// The named form is always available.
 	fmt.println(int(Vec.add(a, b).x));
 
-	g: Grid;
+	g: Grid = {};
 	g[1, 2] = 7;
 	fmt.println(int(g[1, 2]));
 	p := &mut g[0, 0];
@@ -126,7 +126,7 @@ main :: proc() {
 	fmt.println(int(g[0, 0]));
 	fmt.println(int(g[0:7]));
 
-	s: Sparse;
+	s: Sparse = {};
 	s[3] = 4;
 	fmt.println(int(s.total));
 	fmt.println(int(s[1]));

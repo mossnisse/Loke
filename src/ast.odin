@@ -934,6 +934,11 @@ Stmt_Switch :: struct {
 	binding_symbol: Symbol_Id,
 	subject:    Expr,
 	cases:      []Switch_Case,
+	// A variant switch covering every variant, or any switch with a default:
+	// no path reaches past the cases without entering one. An open enum keeps
+	// this false even with every member covered, since a value outside the
+	// declared set still falls through.
+	exhaustive: bool,
 }
 
 Stmt_Defer :: struct {

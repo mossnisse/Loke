@@ -6,7 +6,7 @@ package main; import "core:fmt";
 // range like any other (m6b-plan decision "Checked sizes").
 
 main :: proc() {
-	xs: [dynamic]int;
+	xs: [dynamic]int = {};
 	xs.reserve(16);
 	xs.append(1);
 	fmt.println(xs.len());

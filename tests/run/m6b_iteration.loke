@@ -44,8 +44,8 @@ main :: proc() {
 	fmt.println(measured);
 
 	// An empty container iterates zero times.
-	empty: [dynamic]int;
-	none: map[int]int;
+	empty: [dynamic]int = {};
+	none: map[int]int = {};
 	steps := 0;
 	foreach (v in empty) { steps += 1; }
 	foreach (k, v in none) { steps += 1; }
@@ -58,15 +58,15 @@ main :: proc() {
 	fmt.println(xs);
 	fmt.println(empty);
 	fmt.println(none);
-	one: map[string]int;
+	one: map[string]int = {};
 	one["only"] = 5;
 	fmt.println(one);
 
-	nested: [dynamic][dynamic]int;
+	nested: [dynamic][dynamic]int = {};
 	inner: [dynamic]int = {1, 2};
 	nested.append(inner);
 	fmt.println(nested);
-	deep: map[int][dynamic]int;
+	deep: map[int][dynamic]int = {};
 	deep[7] = {8, 9};
 	fmt.println(deep);
 }

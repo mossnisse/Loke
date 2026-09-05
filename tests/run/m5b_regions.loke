@@ -85,11 +85,11 @@ Split_Regions :: struct {
 
 move_default_region_sibling :: proc() -> [dynamic]int {
 	arena := mem.Arena.init();
-	local: [dynamic]int via arena.allocator();
+	local: [dynamic]int via arena.allocator() = {};
 	local.append(1);
-	stable: [dynamic]int via mem.default_allocator();
+	stable: [dynamic]int via mem.default_allocator() = {};
 	stable.append(2);
-	held: Split_Regions;
+	held: Split_Regions = {};
 	held.local = move(local);
 	held.stable = move(stable);
 	return held.stable;

@@ -13,7 +13,7 @@ escaping :: proc() -> string_view {
 
 leaked :: proc(table: map[int]int) -> map[int]int {
 	// A view of a parameter is fine; a view of a local of this frame is not.
-	made: map[int]int;
+	made: map[int]int = {};
 	made[1] = 1;
 	view := made.keys();
 	foreach (k in view) { fmt.println(k); }
@@ -21,7 +21,7 @@ leaked :: proc(table: map[int]int) -> map[int]int {
 }
 
 main :: proc() {
-	table: map[int]int;
+	table: map[int]int = {};
 	table[1] = 10;
 
 	// Mutating the source while a view of it is live.
@@ -45,14 +45,14 @@ main :: proc() {
 	foreach (e in entries) { fmt.println(e.value); }
 
 	// Dropping the source out from under a live view.
-	other: map[int]int;
+	other: map[int]int = {};
 	other[3] = 30;
 	seen := other.entries();
 	drop(other);
 	foreach (e in seen) { fmt.println(e.key); }
 
 	// Moving it, likewise.
-	source: map[int]int;
+	source: map[int]int = {};
 	source[4] = 40;
 	moved := source.values();
 	taken := move(source);
@@ -68,7 +68,7 @@ main :: proc() {
 
 	// A copy taken out of a view is owned, but a borrow *inside* it keeps its own
 	// source's lifetime: the `string_view` here views `bytes`, not the map.
-	borrowed: map[int]string_view;
+	borrowed: map[int]string_view = {};
 	bytes: string = "hello";
 	borrowed[1] = bytes[0:2];
 	seen_view: string_view = "";
@@ -85,7 +85,7 @@ main :: proc() {
 
 	// Accepted: an owned copy outlives the map it came out of. Only its borrowed
 	// parts are tied to a source, and a `string` has none.
-	owning: map[int]string;
+	owning: map[int]string = {};
 	owning[1] = "kept";
 	saved: string = "";
 	foreach (v in owning.values()) { saved = v; }
@@ -94,7 +94,7 @@ main :: proc() {
 }
 
 build :: proc() -> map[int]int {
-	made: map[int]int;
+	made: map[int]int = {};
 	made[7] = 70;
 	return made;
 }

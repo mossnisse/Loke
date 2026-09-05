@@ -24,8 +24,8 @@ main :: proc() {
 	fmt.println(int(view.as(i32) or_else 0));
 	fmt.println(int(view.(i32)));
 
-	m: map[string][dynamic]int;
-	xs: [dynamic]int;
+	m: map[string][dynamic]int = {};
+	xs: [dynamic]int = {};
 	xs.append(1);
 	m["a"] = move(xs);
 	switch (held in m.lookup_value("a")) {

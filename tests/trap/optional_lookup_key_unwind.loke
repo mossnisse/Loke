@@ -5,7 +5,7 @@ impl Resource {
 	release :: hook(drop) proc(self: inout Resource) { if (self.id != 0) { fmt.println("drop", self.id); } }
 }
 make_map :: proc() -> map[int]Resource {
-	m: map[int]Resource;
+	m: map[int]Resource = {};
 	m[1] = Resource{1};
 	return m;
 }

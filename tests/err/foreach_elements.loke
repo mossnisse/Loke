@@ -22,7 +22,7 @@ main :: proc() {
 	xs := [3]int{1, 2, 3};
 	points := [1]Point{{1, 2}};
 	text: string = "hi";
-	table: map[int]int;
+	table: map[int]int = {};
 
 	// A scalar element has no fields to bind, and the note names the traversal
 	// that carries what the second name used to mean.

@@ -621,8 +621,11 @@ run_one_cleanup :: proc(e: ^Emitter, entry: Deferred) {
 // A managed local declaration places an implicit conditional
 // `defer drop(value)` at the declaration point (design.md). Registration is
 // what fixes its position in the one reverse order every exit replays.
+// `live` is false for a declaration that completes no initialization: the
+// cleanup is still registered, because a later full assignment can make the
+// place live before the scope ends, but the place holds nothing yet.
 @(private)
-register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
+register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id, live := true) {
 	sym := symbol_of(e.c, symbol_id)
 	if sym == nil {
 		return
@@ -631,7 +634,7 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 	// as well as cleanup, so it is set whenever one exists.
 	flag := drop_flag_of(e, symbol_id)
 	if flag != "" {
-		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+		fmt.sbprintfln(&e.b, "  store i1 %v, ptr %s", live, flag)
 	}
 	if !sym.drop_at_exit || len(e.cleanups) == 0 {
 		return

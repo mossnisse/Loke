@@ -26,7 +26,7 @@ main :: proc() {
 	p: Pair;
 	m: Mixed;
 	n: Nested;
-	c: Cells;
+	c: Cells = {};
 	s: Small;
 	w: Wide;
 	h: Handle;

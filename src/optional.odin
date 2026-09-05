@@ -445,6 +445,9 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 			report_uncovered_variants(k, s, subject, seen_variants[:])
 		}
 	}
+	// The flow graph needs the same answer: without it, the entry block reaches
+	// the merge past every case and a local each case assigns looks conditional.
+	s.exhaustive = exhaustive
 	return Flow_Info {
 		can_fall_through = !exhaustive || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,

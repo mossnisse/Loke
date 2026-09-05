@@ -82,7 +82,7 @@ reset_through_wrapper :: proc() {
 // liveness can, and does.
 dropped_owner_permits_reset :: proc() {
 	arena := mem.Arena.init();
-	raw: [dynamic]u8 via arena.allocator();
+	raw: [dynamic]u8 via arena.allocator() = {};
 	raw.append(1, 2, 3);
 	fmt.println(raw.len());
 	drop(raw);

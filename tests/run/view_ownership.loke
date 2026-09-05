@@ -49,7 +49,7 @@ scan :: proc(table: map[int]Tracked, stop: int) -> Result(int, Stop) {
 }
 
 main :: proc() {
-	table: map[int]Tracked;
+	table: map[int]Tracked = {};
 	fill(inout table);
 
 	// A direct value loop over the map copies the value half only; the key is an
@@ -90,7 +90,7 @@ main :: proc() {
 	// A managed key destructured beside a managed value: both halves are copied
 	// per step, and both are disposed of.
 	fmt.println(7);
-	named: map[string]Tracked;
+	named: map[string]Tracked = {};
 	named["k"] = Tracked{9};
 	foreach (k, v in named) { fmt.println(700 + k.len() + v.id); }
 	fmt.println(8);
@@ -101,7 +101,7 @@ main :: proc() {
 	// A record element whose fields are each managed: destructuring moves the
 	// fields out of the copy, so each is disposed of exactly once.
 	fmt.println(10);
-	pairs: [dynamic]Pair;
+	pairs: [dynamic]Pair = {};
 	pairs.append(Pair{Tracked{3}, Tracked{4}});
 	foreach (left, right in pairs) { fmt.println(1000 + left.id + right.id); }
 	fmt.println(11);
@@ -117,7 +117,7 @@ main :: proc() {
 	// A sequence's own `next` agrees with a loop over the same sequence: both
 	// copy the element out of the container's storage and hand over an owner.
 	fmt.println(14);
-	singles: [dynamic]Tracked;
+	singles: [dynamic]Tracked = {};
 	singles.append(Tracked{5});
 	fmt.println(15);
 	foreach (v in singles) { fmt.println(1400 + v.id); }

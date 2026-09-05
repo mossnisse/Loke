@@ -64,7 +64,7 @@ copy_empty_borrow :: proc(value: Empty_Arrays) -> Empty_Arrays { return value; }
 empty_array_copies :: proc() {
 	// An empty managed array has no element hooks to call, even when its
 	// element has a custom (potentially failing) copy. Keep the other fields.
-	value: Empty_Arrays;
+	value: Empty_Arrays = {};
 	value.marker = 7;
 	switch (fallible in value.try_clone()) {
 	case .ok: assert(fallible.marker == 7);
@@ -81,7 +81,7 @@ empty_array_copies :: proc() {
 	wrapper := Empty_Wrapper{move(value)};
 	wrapper_copy := wrapper.clone();
 	assert(wrapper_copy.value.marker == 7);
-	items: [0]Empty_Element;
+	items: [0]Empty_Element = {};
 	items_copy := items;
 	items_copy = items;
 	assert(empty_copies == 0 && empty_drops == 0);
@@ -93,7 +93,7 @@ main :: proc() {
 	// Zero inline size alone does not mean trivial: a *present* element must
 	// still run its hooks. The empty-array handling must not erase these calls.
 	{
-		present: [1]Empty_Element;
+		present: [1]Empty_Element = {};
 		present_copy := present;
 		assert(empty_copies == 1);
 	}

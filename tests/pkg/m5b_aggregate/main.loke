@@ -16,7 +16,7 @@ integrated :: proc(table: inout map[string][dynamic]int) -> int {
 	slot := table.find("a") or_else nil;
 	if (slot == nil) { return -1; }
 	holder := wrapping.wrap(slot^[:]);
-	held: wrapping.Holder;
+	held: wrapping.Holder = {};
 	wrapping.retain(inout held, wrapping.unwrap(holder));
 	chooser: proc(values: []int) -> []int = wrapping.first_half;
 	return chooser(held.view)[0];
@@ -36,7 +36,7 @@ invalidated_root :: proc(table: inout map[string][dynamic]int) -> int {
 	slot := table.find("a") or_else nil;
 	if (slot == nil) { return -1; }
 	holder := wrapping.wrap(slot^[:]);
-	fresh: [dynamic]int;
+	fresh: [dynamic]int = {};
 	table["b"] = move(fresh);
 	return holder.view.len();
 }
@@ -62,8 +62,8 @@ across_a_package :: proc(input: []int) -> []int {
 }
 
 main :: proc() {
-	table: map[string][dynamic]int;
-	entries: [dynamic]int;
+	table: map[string][dynamic]int = {};
+	entries: [dynamic]int = {};
 	entries.append(11);
 	entries.append(22);
 	table["a"] = move(entries);

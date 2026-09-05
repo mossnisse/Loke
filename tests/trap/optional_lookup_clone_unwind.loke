@@ -12,7 +12,7 @@ impl Failing {
 }
 
 make_map :: proc() -> map[int]Failing {
-	m: map[int]Failing;
+	m: map[int]Failing = {};
 	m[1] = Failing{1};
 	return m;
 }

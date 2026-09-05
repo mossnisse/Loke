@@ -104,7 +104,7 @@ escape_through_the_other_field :: proc() -> []int {
 // A container carries what its elements hold, so what the value read back
 // borrows is the local array and not the local table.
 map_from_a_local :: proc() -> []int {
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	numbers := [3]int{1, 2, 3};
 	table["a"] = Holder{numbers[:]};
 	switch (held in table.lookup_value("a")) {
@@ -114,7 +114,7 @@ map_from_a_local :: proc() -> []int {
 }
 
 array_from_a_local :: proc() -> []int {
-	holders: [dynamic]Holder;
+	holders: [dynamic]Holder = {};
 	numbers := [3]int{1, 2, 3};
 	holders.append(Holder{numbers[:]});
 	return holders[0].view;
@@ -123,7 +123,7 @@ array_from_a_local :: proc() -> []int {
 // A container-held borrow is a live borrow of its source.
 container_held_borrow :: proc() -> int {
 	numbers := [3]int{1, 2, 3};
-	holders: [dynamic]Holder;
+	holders: [dynamic]Holder = {};
 	holders.append(Holder{numbers[:]});
 	numbers[0] = 9;
 	return holders[0].view[0];
@@ -132,7 +132,7 @@ container_held_borrow :: proc() -> int {
 // An entry pointer is a borrow of the container's storage, so it cannot outlive
 // the container even when what the entry holds would.
 entry_pointer_escapes :: proc(values: []int) -> ^mut Holder {
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	return table.find("a") or_else nil;
 }
@@ -160,7 +160,7 @@ unknown_write :: proc(values: []int) -> []int {
 // array rather than the container it was taken out of.
 pop_a_local :: proc() -> []int {
 	local := [3]int{1, 2, 3};
-	holders: [dynamic]Holder;
+	holders: [dynamic]Holder = {};
 	holders.append(Holder{local[:]});
 	switch (held in holders.pop()) {
 	case .some: return held.view;
@@ -174,7 +174,7 @@ pop_a_local :: proc() -> []int {
 // holds; and past the entry limit the keys share one step again.
 reads_the_local_key :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	table["b"] = Holder{local[:]};
 	return table["b"].view;
@@ -182,7 +182,7 @@ reads_the_local_key :: proc(values: []int) -> []int {
 
 unknown_key :: proc(values: []int, which: string) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	table["b"] = Holder{local[:]};
 	return table[which].view;
@@ -190,7 +190,7 @@ unknown_key :: proc(values: []int, which: string) -> []int {
 
 unknown_key_write :: proc(values: []int, which: string) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["b"] = Holder{local[:]};
 	table[which] = Holder{values};
 	return table["b"].view;
@@ -198,7 +198,7 @@ unknown_key_write :: proc(values: []int, which: string) -> []int {
 
 overflowing_keys :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	table["b"] = Holder{values};
 	table["c"] = Holder{values};
@@ -299,7 +299,7 @@ slice_read_keeps_content_live :: proc() -> int {
 
 published_content_read :: proc() -> []int {
 	local := [3]int{1, 2, 3};
-	held: Holder;
+	held: Holder = {};
 	p := &mut held;
 	p^.view = local[:];
 	return p^.view;
@@ -419,14 +419,14 @@ result_fields_may_alias :: proc() -> int {
 // correspondence to export. The caller deliberately encounters the keys in
 // the opposite order from the callee.
 result_map :: proc(a: []int, b: []int) -> map[string]Holder {
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["b"] = Holder{b};
 	table["a"] = Holder{a};
 	return move(table);
 }
 map_result_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	seed: map[string]int;
+	seed: map[string]int = {};
 	seed["a"] = 1;
 	table := result_map(values, local[:]);
 	return table["b"].view;
@@ -440,7 +440,7 @@ map_parameter_get_b :: proc(table: map[string]Holder) -> []int {
 }
 map_parameter_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	table["b"] = Holder{local[:]};
 	return map_parameter_get_b(table);
@@ -454,7 +454,7 @@ Cutoff_C :: struct { b: Cutoff_B }
 Cutoff_D :: struct { c: Cutoff_C }
 truncated_partial_write_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	held: Cutoff_D;
+	held: Cutoff_D = {};
 	held.c.b.a.p.left = local[:];
 	held.c.b.a.p.right = values;
 	return held.c.b.a.p.left;
@@ -464,14 +464,14 @@ truncated_partial_write_escape :: proc(values: []int) -> []int {
 // edge retains the old value even when that same key is being replaced.
 map_try_insert_other_entry_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{local[:]};
 	err := table.try_insert("b", Holder{values});
 	return table["a"].view;
 }
 map_try_insert_failure_edge_escape :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["b"] = Holder{local[:]};
 	err := table.try_insert("b", Holder{values});
 	return table["b"].view;
@@ -502,13 +502,13 @@ container_append_parameter_escape :: proc(
 // erase the local borrow carried by the inserted key.
 map_key_escape :: proc() -> map[string_view]int {
 	local := [3]u8{107, 101, 121};
-	table: map[string_view]int;
+	table: map[string_view]int = {};
 	table[string_view.from_utf8(local[:]) or_else ""] = 7;
 	return table;
 }
 map_key_alias_escape :: proc() -> map[string_view]int {
 	local := [3]u8{107, 101, 121};
-	table: map[string_view]int;
+	table: map[string_view]int = {};
 	alias := &mut table;
 	alias^[string_view.from_utf8(local[:]) or_else ""] = 7;
 	return table;

@@ -5,7 +5,7 @@ import "lib";
 main :: proc() {
 	fmt.println(lib.EXPORTED);
 	fmt.println(lib.also_exported());
-	v: lib.Visible;
+	v: lib.Visible = {};
 	v.n = 3;
 	fmt.println(v.n);
 }

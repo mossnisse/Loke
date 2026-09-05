@@ -61,7 +61,7 @@ main :: proc() {
 	fmt.println(rows[1][0]);
 
 	// Runtime indexing and mutation through a place.
-	xs: [4]int;
+	xs: [4]int = {};
 	for (i := 0; i < 4; i += 1) {
 		xs[i] = i * i;
 	}

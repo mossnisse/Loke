@@ -51,8 +51,8 @@ count_words :: proc(
 main :: proc() {
 	text: string = TEXT;
 
-	counts: map[string_view]int;
-	order:  [dynamic]string_view;
+	counts: map[string_view]int = {};
+	order: [dynamic]string_view = {};
 	count_words(text, inout counts, inout order);
 
 	// One name over a map binds the entry; two names bind key and value.
@@ -61,7 +61,7 @@ main :: proc() {
 	fmt.println("distinct:", counts.len());
 	fmt.println("total:", total);
 
-	repeated: [dynamic]string_view;
+	repeated: [dynamic]string_view = {};
 	foreach (word in order) {
 		fmt.println(word, counts[word]);
 		if (counts[word] > 1) { repeated.append(word); }

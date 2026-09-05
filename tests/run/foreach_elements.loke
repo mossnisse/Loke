@@ -58,7 +58,7 @@ STATIC_INTS :: [3]int{1, 2, 3};
 STATIC_TRIPLES :: [1]Triple{{7, 8, 9}};
 
 static_values :: proc() -> [dynamic]int {
-	values: [dynamic]int;
+	values: [dynamic]int = {};
 	values.append(4, 5, 6);
 	return values;
 }
@@ -102,7 +102,7 @@ main :: proc() {
 	foreach (b, index in text.bytes().indexed()) { fmt.println(index*1000 + int(b)); }
 
 	// A map's `Element` is its `{key, value}` entry.
-	table: map[int]int;
+	table: map[int]int = {};
 	table[2] = 20;
 	sum := 0;
 	foreach (key, value in table) { sum += key*100 + value; }
@@ -113,7 +113,7 @@ main :: proc() {
 	foreach (entry, i in table.indexed()) { fmt.println(i*1000 + entry.value); }
 
 	// A managed key is borrowed rather than copied, so it destructures freely.
-	named: map[string]int;
+	named: map[string]int = {};
 	named["only"] = 5;
 	foreach (key, value in named) { fmt.println(key.len()*10 + value); }
 	foreach (key in named.keys()) { fmt.println(key.len()); }
@@ -139,8 +139,8 @@ main :: proc() {
 
 	// Empty iterables run zero times.
 	steps := 0;
-	empty: [dynamic]int;
-	none: map[int]int;
+	empty: [dynamic]int = {};
+	none: map[int]int = {};
 	foreach (v, i in empty.indexed()) { steps += 1; }
 	foreach (k, v in none) { steps += 1; }
 	foreach (v in empty.reversed()) { steps += 1; }

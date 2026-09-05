@@ -22,7 +22,7 @@ LIMIT :: build_config(SIEVE_LIMIT, 50);
 // compiler-owned storage, charged against the evaluator's own memory and step
 // budget, and it cannot escape into the generated program.
 count_primes :: proc(limit: int) -> int {
-	sieve: [dynamic]bool;
+	sieve: [dynamic]bool = {};
 	sieve.resize(limit + 1);
 	total := 0;
 	foreach (n in 2 ..= limit) {
@@ -38,8 +38,8 @@ count_primes :: proc(limit: int) -> int {
 PRIME_COUNT :: count_primes(LIMIT);
 
 collect_primes :: proc(limit: int) -> [PRIME_COUNT]int {
-	out: [PRIME_COUNT]int;
-	sieve: [dynamic]bool;
+	out: [PRIME_COUNT]int = {};
+	sieve: [dynamic]bool = {};
 	sieve.resize(limit + 1);
 	next := 0;
 	foreach (n in 2 ..= limit) {

@@ -47,7 +47,7 @@ tls_to_process :: proc() {
 
 // Nor does a local reach thread storage.
 local_to_thread_local :: proc(values: []int) {
-	held: thread_local Holder;
+	held: thread_local Holder = {};
 	held.view = values;
 	fmt.println(held.view.len());
 }
@@ -86,7 +86,7 @@ caller_forwards_without_the_contract :: proc(destination: inout Holder, values: 
 // A caller-local destination needs no contract — but what it was handed still
 // has to be there when it is read.
 caller_outlives_the_source :: proc() -> int {
-	held: Holder;
+	held: Holder = {};
 	{
 		numbers := [3]int{1, 2, 3};
 		keep(inout held, numbers[:]);
@@ -98,7 +98,7 @@ caller_outlives_the_source :: proc() -> int {
 // survives a call with no body to look at.
 caller_through_a_value :: proc() -> int {
 	action: proc(destination: inout Holder, @(escape=stored) values: []int) = keep;
-	held: Holder;
+	held: Holder = {};
 	{
 		numbers := [3]int{1, 2, 3};
 		action(inout held, numbers[:]);
@@ -136,7 +136,7 @@ caller_points_at_a_global :: proc() {
 // so what is written through it lands where it points rather than in the
 // pointer. Both the write and the call are the same question.
 write_through_a_pointer_variable :: proc() -> int {
-	held: Holder;
+	held: Holder = {};
 	p := &mut held;
 	{
 		numbers := [3]int{1, 2, 3};
@@ -146,7 +146,7 @@ write_through_a_pointer_variable :: proc() -> int {
 }
 
 call_through_a_pointer_variable :: proc() -> int {
-	held: Holder;
+	held: Holder = {};
 	{
 		numbers := [3]int{1, 2, 3};
 		p := &mut held;

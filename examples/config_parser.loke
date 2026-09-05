@@ -94,7 +94,7 @@ describe :: proc(outcome: Result(Unit, Error)) -> string_view {
 }
 
 main :: proc() {
-	settings: map[string_view]int;
+	settings: map[string_view]int = {};
 
 	{
 		reader := Reader.init("settings.ini");

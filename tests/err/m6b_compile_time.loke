@@ -11,7 +11,7 @@ package main; import "core:fmt";
 // anything else would need an allocation no constant can own.
 ESCAPED :: built();
 built :: proc() -> [dynamic]int {
-	xs: [dynamic]int;
+	xs: [dynamic]int = {};
 	xs.append(1, 2);
 	return xs;
 }
@@ -21,7 +21,7 @@ built :: proc() -> [dynamic]int {
 // computes at run time.
 CAPPED :: capped();
 capped :: proc() -> int {
-	xs: [dynamic]int;
+	xs: [dynamic]int = {};
 	xs.reserve(8);
 	return xs.cap();
 }
@@ -30,7 +30,7 @@ capped :: proc() -> int {
 // definite order, and exposing it would promise what the language refuses to.
 WALKED :: walked();
 walked :: proc() -> int {
-	m: map[int]int;
+	m: map[int]int = {};
 	m[1] = 2;
 	total := 0;
 	foreach (key, value in m) { total += key + value; }
@@ -40,7 +40,7 @@ walked :: proc() -> int {
 // The ceiling is reached deterministically and reported at it.
 HUGE :: huge();
 huge :: proc() -> int {
-	xs: [dynamic]int;
+	xs: [dynamic]int = {};
 	for (i := 0; i < 100000000; i += 1) { xs.append(i); }
 	return xs.len();
 }

@@ -10,16 +10,16 @@ import "./wrapping";
 // The root is this body's own dynamic array, and the wrapped view is returned
 // past its cleanup.
 escaping_root :: proc() -> []int {
-	numbers: [dynamic]int;
+	numbers: [dynamic]int = {};
 	numbers.append(1);
 	return wrapping.unwrap(wrapping.wrap(numbers[:]));
 }
 
 // The same through a container: the element read back out borrows the local.
 escaping_element :: proc() -> []int {
-	numbers: [dynamic]int;
+	numbers: [dynamic]int = {};
 	numbers.append(1);
-	holders: [dynamic]wrapping.Holder;
+	holders: [dynamic]wrapping.Holder = {};
 	holders.append(wrapping.wrap(numbers[:]));
 	return holders[0].view;
 }
@@ -28,7 +28,7 @@ escaping_element :: proc() -> []int {
 // body's local in a destination the caller owns, and no contract on an
 // unconstrained parameter makes that valid.
 escaping_retention :: proc(destination: inout wrapping.Holder) {
-	numbers: [dynamic]int;
+	numbers: [dynamic]int = {};
 	numbers.append(1);
 	wrapping.retain(inout destination, numbers[:]);
 }

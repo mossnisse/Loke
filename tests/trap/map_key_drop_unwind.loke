@@ -20,6 +20,6 @@ Choice :: union { a: Resource, b: Resource }
 main :: proc() {
 	// The map must own a live payload before dropping the temporary key.
 	// Unwinding must never drop a zero that this union does not possess.
-	m: map[Key]Choice;
+	m: map[Key]Choice = {};
 	m[Key{1, true}] = .a(Resource{7});
 }

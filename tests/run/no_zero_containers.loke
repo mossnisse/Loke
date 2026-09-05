@@ -27,7 +27,7 @@ main :: proc() {
 	// A map: nothing here manufactures a zero, so a no-zero element is indexed,
 	// inserted and read like any other. The contextual `.a(3)` takes its type
 	// from the member's parameter.
-	m: map[int]Choice;
+	m: map[int]Choice = {};
 	fmt.println(succeeded(m.try_insert(1, .a(3))));
 	fmt.println(m.len(), 1 in m);
 	switch (v in m.lookup_value(1)) {
@@ -58,7 +58,7 @@ main :: proc() {
 
 	// A dynamic array: appending writes elements and popping moves one out.
 	// Reserving raw capacity initialises nothing.
-	xs: [dynamic]Choice;
+	xs: [dynamic]Choice = {};
 	xs.append(.a(1));
 	xs.append(.b(true), .a(2));
 	fmt.println(xs.len(), xs[0], xs[1], xs[2]);
@@ -76,13 +76,13 @@ main :: proc() {
 	fmt.println(ys.len(), ys.cap() >= 8);
 
 	// An empty fixed array of them has a zero, because it holds no element.
-	none: [0]Choice;
+	none: [0]Choice = {};
 	fmt.println(none.len());
 
 	// A new map entry is raw inert storage until the supplied no-zero value is
 	// committed. Its zeroed bytes are never passed to the drop hook.
 	{
-		tracked: map[int]Tracked_Choice;
+		tracked: map[int]Tracked_Choice = {};
 		_ = tracked.try_insert(1, .a(Tracked{7}));
 	}
 	{

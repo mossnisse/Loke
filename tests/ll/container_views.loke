@@ -4,7 +4,7 @@ package main; import "core:fmt";
 // nothing and copies no element (design.md "Iteration adapters").
 
 main :: proc() {
-	table: map[int]int;
+	table: map[int]int = {};
 	table[1] = 10;
 	view := table.values();
 	foreach (v in view) { fmt.println(v); }

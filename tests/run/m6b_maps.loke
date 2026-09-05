@@ -37,7 +37,7 @@ borrowed_len :: proc(m: map[string][dynamic]int) -> int {
 }
 
 built :: proc() -> map[string]int {
-	out: map[string]int;
+	out: map[string]int = {};
 	out["k"] = 42;
 	return out;
 }
@@ -129,7 +129,7 @@ main :: proc() {
 	fmt.println(m.len());
 
 	// Capacity and clearing.
-	counts: map[string]int;
+	counts: map[string]int = {};
 	counts.reserve(64);
 	fmt.println(counts.cap() >= 64);
 	counts["a"] = 1;
@@ -158,14 +158,14 @@ main :: proc() {
 
 	// A destructured half lands in a map entry the same way a whole value does:
 	// it inserts, and replaces an existing element without leaking it.
-	halves: map[string]int;
+	halves: map[string]int = {};
 	halves["x"], halves["y"] = Test{1, 2};
 	fmt.println(halves["x"], halves["y"], halves.len());
 	halves["x"], halves["y"] = Test{3, 4};
 	fmt.println(halves["x"], halves["y"], halves.len());
 
 	// A user key with an inherent coherent pair.
-	ids: map[Id]int;
+	ids: map[Id]int = {};
 	ids[Id{1, 2}] = 7;
 	ids[Id{3, 4}] = 8;
 	fmt.println(ids[Id{1, 2}]);
@@ -175,7 +175,7 @@ main :: proc() {
 
 	// Managed keys and values: both halves are cloned on insertion and
 	// destroyed exactly once by `clear` or by the map's own drop.
-	names: map[string]string;
+	names: map[string]string = {};
 	names["one"] = "first";
 	names["two"] = "second";
 	names["one"] = "replaced";
@@ -185,8 +185,8 @@ main :: proc() {
 	// A managed payload read through `lookup_value` is cloned exactly once,
 	// inside the operation: the result owns its own storage, the map keeps its
 	// own, and neither frees the other's. One clone, not zero and not two.
-	owned: map[string][dynamic]int;
-	first: [dynamic]int;
+	owned: map[string][dynamic]int = {};
+	first: [dynamic]int = {};
 	first.append(1);
 	first.append(2);
 	owned["a"] = move(first);
@@ -215,7 +215,7 @@ main :: proc() {
 
 	// A carrier payload still borrows through the map, exactly as the index it
 	// replaces does: `lookup_value` trades no place provenance for `unknown`.
-	views: map[int]string_view;
+	views: map[int]string_view = {};
 	views[1] = "borrowed";
 	fmt.println(views[1]);
 	switch (seen in views.lookup_value(1)) {
@@ -229,7 +229,7 @@ main :: proc() {
 	fmt.println(names.len());
 
 	// Growth past the load threshold, so the table rehashes several times.
-	wide: map[int]int;
+	wide: map[int]int = {};
 	for (i := 0; i < 200; i += 1) {
 		wide[i] = i * 2;
 	}
@@ -262,7 +262,7 @@ add_all :: proc(n: inout int, xs: ..int) { foreach (x in xs) { n += x; } }
 // not an insertion. That holds however the callee is spelled: named directly,
 // reached through an overload group, or fixed ahead of a variadic pack.
 inout_slots :: proc() {
-	slots: map[string]int;
+	slots: map[string]int = {};
 	slots["direct"] = 0;
 	slots["group"] = 0;
 	bump(inout slots["direct"]);
@@ -295,7 +295,7 @@ impl Tracked_Value {
 }
 
 tracked_map :: proc() -> map[int]Tracked_Value {
-	m: map[int]Tracked_Value;
+	m: map[int]Tracked_Value = {};
 	m[1] = Tracked_Value{2};
 	return m;
 }
@@ -303,7 +303,7 @@ tracked_map :: proc() -> map[int]Tracked_Value {
 lookup_regressions :: proc() {
 	{
 		key := Tracked_Key{1};
-		m: map[Tracked_Key]Tracked_Value;
+		m: map[Tracked_Key]Tracked_Value = {};
 		m[key] = Tracked_Value{1};
 		assert(key_copies == 1 && key_drops == 0);
 		assert(value_copies == 0 && value_drops == 0);
@@ -378,7 +378,7 @@ lookup_regressions :: proc() {
 	assert(value_drops == 9);
 
 	// The formal key type supplies context to positional and named literals.
-	grid: map[[2]int]int;
+	grid: map[[2]int]int = {};
 	grid[{1, 2}] = 17;
 	assert((grid.lookup_value(key = {1, 2}) or_else -1) == 17);
 	switch (ptr in grid.find({1, 2})) {
@@ -389,7 +389,7 @@ lookup_regressions :: proc() {
 
 lookup_regions :: proc() {
 	arena := mem.Arena.init();
-	m: map[int][dynamic]int via arena.allocator();
+	m: map[int][dynamic]int via arena.allocator() = {};
 	m[1] = {9};
 	held := m.lookup_value(1) or_else {};
 	drop(m);
@@ -408,10 +408,10 @@ impl Folded {
 }
 
 distinct_keys :: proc() {
-	folded: map[Folded]int;
+	folded: map[Folded]int = {};
 	folded[Folded(2)] = 5;
 	folded[Folded(3)] = 6;
-	plain: map[u64]int;
+	plain: map[u64]int = {};
 	plain[2] = 5;
 	plain[3] = 6;
 	fmt.println(folded.len(), folded[Folded(2)]);

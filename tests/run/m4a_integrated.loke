@@ -84,7 +84,7 @@ main :: proc() {
 	fmt.println(moved_or_zero(third));
 	fmt.println(describe(third));
 
-	ledger: Ledger;
+	ledger: Ledger = {};
 	ledger[2] = 9;
 	fmt.println(int(ledger[2]));
 	fmt.println(int(ledger[0]));

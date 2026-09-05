@@ -47,7 +47,7 @@ main :: proc() {
 
 	// The third element's clone fails, so the two already cloned into the
 	// container are destroyed and nothing is published.
-	items: [dynamic]Res;
+	items: [dynamic]Res = {};
 	fmt.println(items.try_append(Res{1}, Res{2}, Res{3}) != nil);
 	fmt.println(items.len());
 

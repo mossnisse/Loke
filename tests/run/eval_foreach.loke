@@ -61,7 +61,7 @@ squares :: proc() -> int {
 
 // A temporary managed container, filled and walked while evaluation runs.
 weighted :: proc(n: int) -> int {
-	xs: [dynamic]int;
+	xs: [dynamic]int = {};
 	foreach (i in 0 ..< n) { xs.append(i * 3); }
 	total := 0;
 	foreach (value, index in xs.indexed()) { total += value + index; }
@@ -142,6 +142,6 @@ main :: proc() {
 	fmt.println(WIDTHS, widths("mörk"));
 	fmt.println(CORNERS, corners());
 	fmt.println(TAGGED, tagged());
-	sized: Sized;
+	sized: Sized = {};
 	fmt.println(sized.cells.len(), int(Level.Mid));
 }

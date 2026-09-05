@@ -40,7 +40,7 @@ main :: proc() {
 	// A container-holding record is managed, so this local's scope exit drops
 	// every part exactly once. Both containers are empty and unbound, so both
 	// drops release no storage.
-	value: Record;
+	value: Record = {};
 	value.id = 3;
 	fmt.println(value.id);
 

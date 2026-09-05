@@ -172,7 +172,7 @@ any_view // erased view of any value
 
 #### Zero values
 
-Most runtime value types have a zero value, written `{}`. A declaration with no initializer receives it: a local variable where it is reached, and a file-scope, `static`, or `thread_local` variable before the program runs. Writing `x: T = ---;` asks for the storage without the value instead, and nothing is dropped for it.
+Most runtime value types have a zero value, written `{}`. A file-scope, `static`, or `thread_local` declaration with no initializer receives it before the program runs. A lexical local does not: it starts dead, and a full assignment must complete its initialization before any use (see [Variable declarations](#variable-declarations)). Writing `x: T = ---;` asks for the storage alone: it too starts dead, but its uses go unchecked, and nothing is dropped for it.
 
 The zero value is:
 
@@ -196,8 +196,10 @@ its own zero.
 
 Every operation that manufactures a zero is rejected for a no-zero type:
 
-- a declaration with no initializer, wherever its storage lives; `x: T = ---;`
-  asks for the storage alone and is accepted
+- a static-duration declaration with no initializer, which is zero-initialized
+  before the program runs. A lexical local of a no-zero type needs no
+  initializer, because it starts dead and manufactures nothing; `x: T = ---;`
+  asks for the storage alone and is accepted at either duration
 - a field an aggregate literal omits
 - `new(T)`, which hands back zeroed storage
 - a `make` **length**, which fills that many slots; a capacity, a map
@@ -1558,8 +1560,13 @@ Maybe :: union @(zero=none) { none:, some: int }
 m: Maybe;              // accepted: the zero is `.none`
 
 Choice :: union { a: i32, b: bool }
-c: Choice;             // rejected: `Choice` has no zero value
+c: Choice;             // rejected: a file-scope variable is zero-initialized
 d: Choice = ---;       // accepted: storage, with no value in it yet
+
+use :: proc() {
+	local: Choice;     // accepted: a lexical local starts dead instead
+	local = .a(1);     // and a full assignment initializes it
+}
 ```
 
 See [Types with no zero value](#types-with-no-zero-value) for how the property
@@ -3054,7 +3061,7 @@ y, z: int; // both variables start dead
 
 A lexical local variable without an initializer starts **dead and uninitialized**. Its declaration reserves storage but does not write a value to that storage. A full assignment completes its initialization and makes it live. An explicit initializer, including `{}` when the zero value is wanted, makes the variable live at its declaration.
 
-An ordinary expression may read, borrow, take the address of, move, or drop a local variable only where the compiler can prove that the local is live on every path to that expression. Otherwise the use is a compile-time error; ordinary Loke code never evaluates an uninitialized value. A dead local may be named only as the destination of a full assignment. Field and element assignments do not partially initialize a dead aggregate.
+An ordinary expression may read, borrow, take the address of, move, or drop a local variable only where the compiler can prove that the local is live on every path to that expression. Otherwise the use is a compile-time error; ordinary Loke code never evaluates an uninitialized value. A dead local may be named only as the destination of a full assignment. Field and element assignments do not partially initialize a dead aggregate. `x: T = ---;` declares a dead local whose uses the compiler does not check; see [`---`](#built-in-values).
 
 Liveness is not required in an **unevaluated operand**. `type_of(expression)`, the expression forms of `size_of` and `align_of`, and the entity operand of `source_location` inspect only a declaration or static type. Their operands must resolve and type-check, but they do not read storage, create a borrow, or require the named local to be live.
 
@@ -5034,7 +5041,7 @@ keep :: proc(destination: inout Holder, @(escape=stored) values: []int) {
 	destination.view = values;
 }
 
-held: Holder;
+held: Holder = {};
 {
 	numbers := [3]int{1, 2, 3};
 	keep(inout held, numbers[:]);
@@ -5236,8 +5243,12 @@ true  // unfixed boolean constant equivalent to the expression 0==0
 nil   // unfixed nil value used for certain values
 ```
 
-`---` is declaration syntax with two separate roles: the[uninitialized-storage marker](#zero-values) in `x: T = ---`, and the body of a [foreign procedure](#foreign-system) that has no Loke body. It is an initializer but not an expression, so it cannot be assigned, passed, or used in the inferred
+`---` is declaration syntax with two separate roles: the [unspecified-contents marker](#zero-values) in `x: T = ---`, and the body of a [foreign procedure](#foreign-system) that has no Loke body. It is an initializer but not an expression, so it cannot be assigned, passed, or used in the inferred
 `x := ---` form, which is rejected.
+
+As an initializer it is an **unsafe assertion**, and the only one a declaration makes. A [local with no initializer](#variable-declarations) starts dead and the compiler proves a value reaches every use; `x: T = ---` starts dead as well, but the compiler stops checking, so reading, borrowing, or addressing it is accepted and its contents are unspecified until something writes them. Its purpose is storage another party fills, such as a foreign out-parameter reached through `&mut x`, which a checked dead local cannot provide.
+
+What `---` suppresses is the diagnostic, not the lifecycle. The variable stays dead until a full assignment initializes it, so nothing is dropped for storage that only a foreign write ever filled, an assignment to it uses the dead-destination lifecycle and never drops unspecified bytes, and `drop(x)` and `move(x)` remain errors on it. A managed type wants a full assignment rather than `---`.
 
 ### Built-in procedures
 

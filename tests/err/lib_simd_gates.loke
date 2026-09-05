@@ -16,31 +16,31 @@ Pair :: struct {
 // "`rune`, 128-bit integers, enums, pointers, and every aggregate are rejected,
 // each naming what it is rather than 'not a SIMD element'."
 elements :: proc() {
-	characters: Simd(rune, 4);
-	huge: Simd(i128, 2);
-	tagged: Simd(Colour, 4);
-	addresses: Simd(^int, 2);
-	records: Simd(Pair, 2);
-	nested: Simd(Simd(f32, 4), 2);
+	characters: Simd(rune, 4) = {};
+	huge: Simd(i128, 2) = {};
+	tagged: Simd(Colour, 4) = {};
+	addresses: Simd(^int, 2) = {};
+	records: Simd(Pair, 2) = {};
+	nested: Simd(Simd(f32, 4), 2) = {};
 	_ = characters; _ = huge; _ = tagged; _ = addresses; _ = records; _ = nested;
 }
 
 // "`N` must be a constant power of two from 1 through 64, and `N * size_of(T)`
 // must not exceed 64 bytes."
 lane_counts :: proc(runtime_count: int) {
-	odd: Simd(i32, 3);
-	empty: Simd(i32, 0);
-	many: Simd(u8, 128);
-	fat: Simd(f64, 16);
-	dynamic_count: Simd(i32, runtime_count);
+	odd: Simd(i32, 3) = {};
+	empty: Simd(i32, 0) = {};
+	many: Simd(u8, 128) = {};
+	fat: Simd(f64, 16) = {};
+	dynamic_count: Simd(i32, runtime_count) = {};
 	_ = odd; _ = empty; _ = many; _ = fat; _ = dynamic_count;
 }
 
 // The name and the application are each their own answer.
 shapes :: proc() {
-	bare: Simd;
-	one: Simd(f32);
-	three: Simd(f32, 4, 8);
+	bare: Simd = {};
+	one: Simd(f32) = {};
+	three: Simd(f32, 4, 8) = {};
 	_ = bare; _ = one; _ = three;
 }
 

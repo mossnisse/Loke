@@ -277,7 +277,7 @@ impl Key {
 }
 Grid :: struct { entries: map[string]f32, nested: [1]map[Key]int, next: ^Grid }
 main :: proc() {
-    g: Grid;
+    g: Grid = {};
     p := g.entries.find("a");
     value := g.entries.lookup_value("a");
     g.nested[0][{1}] = 7;
@@ -442,9 +442,9 @@ impl Resource {
 Nested :: struct { parts: [2]Resource, empty: [0]Resource, text: string }
 Empty :: struct { parts: [0]Resource }
 main :: proc() {
-    x: Nested;
+    x: Nested = {};
     y := x.clone();
-    z: Empty;
+    z: Empty = {};
     w := z.clone();
 }
 `)
@@ -493,7 +493,7 @@ main :: proc() {
 @(test)
 lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 	for broken in ([]string{"missing_operation", "wrong_operation", "missing_body", "late_contribution"}) {
-		c := test_compiler("package main; Record :: struct { value: int } main :: proc() { x: Record; y := x.clone(); }")
+		c := test_compiler("package main; Record :: struct { value: int } main :: proc() { x: Record = {}; y := x.clone(); }")
 		tokens := lex(&c, 0)
 		f := parse(&c, 0, tokens)
 		id := new_package(&c, f.package_name)

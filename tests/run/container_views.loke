@@ -69,7 +69,7 @@ passthrough :: proc(view: $V) -> V {
 }
 
 main :: proc() {
-	table: map[int]int;
+	table: map[int]int = {};
 	table[2] = 20;
 	table[5] = 50;
 
@@ -115,7 +115,7 @@ main :: proc() {
 	fmt.println(numbered);
 
 	// An empty source runs zero times.
-	empty: map[int]int;
+	empty: map[int]int = {};
 	blank: string = "";
 	fmt.println(count(empty.keys()) + count(empty.values()) + count(empty.entries()));
 	fmt.println(count(blank.runes()) + count(blank.rune_offsets()));
@@ -163,7 +163,7 @@ main :: proc() {
 	foreach ($colour, $index in Colour.values().indexed()) { fmt.println(index); }
 
 	// A copy taken out of a view is owned, so it outlives the map it came from.
-	owning: map[int]string;
+	owning: map[int]string = {};
 	owning[1] = "kept";
 	saved: string = "";
 	foreach (v in owning.values()) { saved = v; }
@@ -171,11 +171,11 @@ main :: proc() {
 	fmt.println(saved.byte_len());
 
 	// By-reference loops are unchanged, including the borrowed key.
-	named: map[string]int;
+	named: map[string]int = {};
 	named["only"] = 5;
 	foreach (key, &value in named) { value += key.len(); }
 	fmt.println(named["only"]);
-	numbers: [dynamic]int;
+	numbers: [dynamic]int = {};
 	numbers.append(1, 2);
 	foreach (&n, i in numbers) { n = n*10 + i; }
 	foreach (n in numbers) { fmt.println(n); }

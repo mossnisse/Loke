@@ -87,7 +87,7 @@ map_entry_pointer :: proc(table: inout map[string]Holder) -> ^mut Holder {
 // POSITIVE. The move transfers the caller's borrow with the owner; the result
 // does not borrow the dead source binding.
 move_an_owner :: proc(values: []int) -> Owner {
-	owner: Owner;
+	owner: Owner = {};
 	owner.view = values;
 	return move(owner);
 }
@@ -145,7 +145,7 @@ overwrite_one_element :: proc(values: []int) -> []int {
 // POSITIVE. A removal hands back what the element held, so this borrows the
 // caller's argument and not the local container it came out of.
 pop_an_element :: proc(values: []int) -> []int {
-	holders: [dynamic]Holder;
+	holders: [dynamic]Holder = {};
 	holders.append(Holder{values});
 	switch (held in holders.pop()) {
 	case .some: return held.view;
@@ -157,7 +157,7 @@ pop_an_element :: proc(values: []int) -> []int {
 // POSITIVE. The same for a map, where the value's content is what travels and a
 // key's is not.
 remove_a_value :: proc(values: []int) -> []int {
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	switch (held in table.remove("a")) {
 	case .some: return held.view;
@@ -171,7 +171,7 @@ remove_a_value :: proc(values: []int) -> []int {
 // type provides the entries and this body decides which key uses which.
 constant_keys_are_independent :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	table["b"] = Holder{local[:]};
 	return table["a"].view;
@@ -181,7 +181,7 @@ constant_keys_are_independent :: proc(values: []int) -> []int {
 // argument rather than as part of a place.
 constant_key_lookup :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	table["b"] = Holder{local[:]};
 	switch (held in table.lookup_value("a")) {
@@ -194,7 +194,7 @@ constant_key_lookup :: proc(values: []int) -> []int {
 // POSITIVE. A known key replaces what it held, so the local is gone from it.
 overwrite_a_key :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["b"] = Holder{local[:]};
 	table["b"] = Holder{values};
 	return table["b"].view;
@@ -226,7 +226,7 @@ retain_through_a_pointer :: proc(destination: ^mut Holder, @(escape=stored) valu
 // borrow travels into it and both end together.
 local_through_a_pointer :: proc() -> int {
 	numbers := [4]int{9, 8, 7, 6};
-	held: Holder;
+	held: Holder = {};
 	retain_through_a_pointer(&mut held, numbers[:]);
 	return held.view[0];
 }
@@ -236,7 +236,7 @@ local_through_a_pointer :: proc() -> int {
 // the same point, so the borrow that travels into `held` is still valid.
 local_through_a_pointer_variable :: proc() -> int {
 	numbers := [4]int{5, 4, 3, 2};
-	held: Holder;
+	held: Holder = {};
 	p := &mut held;
 	retain_through_a_pointer(p, numbers[:]);
 	p^.view = numbers[1:];
@@ -307,7 +307,7 @@ main :: proc() {
 
 	fmt.println(extract(inject(numbers[:]))[2]);
 
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{numbers[:]};
 	fmt.println(map_value_read(table)[3]);
 	fmt.println(map_entry_pointer(inout table).view.len());
@@ -326,7 +326,7 @@ main :: proc() {
 	alloc_bare();
 	alloc_wrapped();
 
-	holder: Holder;
+	holder: Holder = {};
 	retain_into_inout(inout holder, others[:]);
 	set_promised_global(KEPT[:]);
 	fmt.println(holder.view[0]);
@@ -372,7 +372,7 @@ main :: proc() {
 	assert(field_beside_map_parameter(numbers[:])[0] == 1);
 	assert(truncated_whole_replacement(numbers[:])[0] == 1);
 	assert(map_try_insert_keeps_unrelated_key(numbers[:])[0] == 1);
-	retained_elements: [dynamic]Holder;
+	retained_elements: [dynamic]Holder = {};
 	append_with_contract(inout retained_elements, numbers[:]);
 	assert(retained_elements[0].view[0] == 1);
 	keyed := map_key_from_parameter(KEY_BYTES[:]);
@@ -489,7 +489,7 @@ Outer :: struct { pair: Pair }
 
 projected_pointer_read :: proc(values: []int) -> []int {
 	local := [3]int{1, 2, 3};
-	outer: Outer;
+	outer: Outer = {};
 	outer.pair.left = values;
 	outer.pair.right = local[:];
 	p := &outer.pair;
@@ -512,7 +512,7 @@ result_many :: proc(a: []int, b: []int) -> (first: []int, second: []int) {
 }
 result_generic :: proc(pair: $T) -> T { return T{pair.right, pair.left}; }
 result_named :: proc(a: []int, b: []int) -> Pair {
-	out: Pair;
+	out: Pair = {};
 	out.left = b;
 	out.right = a;
 	return out;
@@ -536,7 +536,7 @@ nested_result_field :: proc(values: []int) -> []int {
 
 assigned_result_field :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
-	outer: Outer;
+	outer: Outer = {};
 	outer.pair = result_reverse(local[:], values);
 	return outer.pair.left;
 }
@@ -607,7 +607,7 @@ union_result_field :: proc(values: []int) -> []int {
 
 Result_With_Map :: struct { entries: map[string]Holder, view: []int }
 result_with_map :: proc(a: []int, b: []int) -> Result_With_Map {
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["b"] = Holder{b};
 	return Result_With_Map{move(table), a};
 }
@@ -620,7 +620,7 @@ Parameter_With_Map :: struct { entries: map[string]Holder, view: []int }
 parameter_view :: proc(value: Parameter_With_Map) -> []int { return value.view; }
 field_beside_map_parameter :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["b"] = Holder{local[:]};
 	value := Parameter_With_Map{move(table), values};
 	return parameter_view(value);
@@ -632,7 +632,7 @@ Replace_C :: struct { b: Replace_B }
 Replace_D :: struct { c: Replace_C }
 truncated_whole_replacement :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
-	held: Replace_D;
+	held: Replace_D = {};
 	held.c.b.a.pair.left = local[:];
 	held.c.b.a.pair = Pair{values, values};
 	return held.c.b.a.pair.left;
@@ -642,7 +642,7 @@ truncated_whole_replacement :: proc(values: []int) -> []int {
 // `b` must not contaminate the caller-backed value still stored under `a`.
 map_try_insert_keeps_unrelated_key :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["a"] = Holder{values};
 	err := table.try_insert("b", Holder{local[:]});
 	return table["a"].view;
@@ -658,7 +658,7 @@ append_with_contract :: proc(
 
 KEY_BYTES :: [3]u8{107, 101, 121};
 map_key_from_parameter :: proc(bytes: []u8) -> map[string_view]int {
-	table: map[string_view]int;
+	table: map[string_view]int = {};
 	view := string_view.from_utf8(bytes) or_else "";
 	table[view] = 7;
 	return table;
@@ -691,7 +691,7 @@ Distinct_Local_Retainer :: distinct proc(
 	@(escape=stored) values: []int,
 );
 distinct_callback_local :: proc(values: []int) -> []int {
-	held: Holder;
+	held: Holder = {};
 	action := Distinct_Local_Retainer(retain_for_distinct_callback);
 	action(inout held, values);
 	return held.view;
@@ -700,7 +700,7 @@ distinct_callback_local :: proc(values: []int) -> []int {
 content_after_clear :: proc() -> int {
 	local := [3]int{1, 2, 3};
 	other := [3]int{4, 5, 6};
-	held: [dynamic]Holder;
+	held: [dynamic]Holder = {};
 	held.append(Holder{local[:]});
 	held.clear();
 	held.append(Holder{other[:]});
@@ -711,7 +711,7 @@ content_after_clear :: proc() -> int {
 content_after_whole_replacement :: proc() -> int {
 	local := [3]int{1, 2, 3};
 	other := [3]int{4, 5, 6};
-	held: [dynamic]Holder;
+	held: [dynamic]Holder = {};
 	held.append(Holder{local[:]});
 	held = [dynamic]Holder{};
 	held.append(Holder{other[:]});
@@ -722,7 +722,7 @@ content_after_whole_replacement :: proc() -> int {
 map_content_after_clear :: proc() -> int {
 	local := [3]int{1, 2, 3};
 	other := [3]int{4, 5, 6};
-	table: map[string]Holder;
+	table: map[string]Holder = {};
 	table["old"] = Holder{local[:]};
 	table.clear();
 	table["new"] = Holder{other[:]};
@@ -731,7 +731,7 @@ map_content_after_clear :: proc() -> int {
 }
 
 copy_survives_clear :: proc(values: []int) -> []int {
-	held: [dynamic]Holder;
+	held: [dynamic]Holder = {};
 	held.append(Holder{values});
 	copy := held[0];
 	held.clear();
@@ -739,7 +739,7 @@ copy_survives_clear :: proc(values: []int) -> []int {
 }
 
 bare_map_lookup :: proc(values: []int) -> []int {
-	table: map[string][]int;
+	table: map[string][]int = {};
 	table["a"] = values;
 	switch (result in table.lookup_value("a")) {
 	case .some: return result;
@@ -749,7 +749,7 @@ bare_map_lookup :: proc(values: []int) -> []int {
 }
 
 bare_map_index :: proc(values: []int) -> []int {
-	table: map[string][]int;
+	table: map[string][]int = {};
 	table["a"] = values;
 	return table["a"];
 }

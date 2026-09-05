@@ -31,7 +31,7 @@ main :: proc() {
 	fmt.println(p.y, read_y(p));
 
 	// Fixed-array element and nested packed field.
-	arr: [3]Packed;
+	arr: [3]Packed = {};
 	arr[2] = p;
 	fmt.println(arr[2].y);
 	o := Outer{ head = 9, inner = p };

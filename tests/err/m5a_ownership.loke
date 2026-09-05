@@ -75,7 +75,7 @@ main :: proc() {
 	foreach (item in table) {
 		fmt.println(item.id);
 	}
-	locked: map[int]Only;
+	locked: map[int]Only = {};
 	foreach (item in locked.values()) {
 		fmt.println(item.id);
 	}

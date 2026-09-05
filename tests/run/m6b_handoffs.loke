@@ -43,6 +43,6 @@ main :: proc() {
 	fmt.println(p[0]);
 	fmt.println(p[2]);
 	// An unbound, never-allocated container has no storage to point at.
-	none: [dynamic]u8;
+	none: [dynamic]u8 = {};
 	fmt.println(unsafe.raw_data(none) == unsafe.raw_data(none));
 }

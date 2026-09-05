@@ -15,7 +15,7 @@ Token :: move_only struct { id: int }
 
 main :: proc() {
 	v: Value = .number(1);
-	m: map[string]int;
+	m: map[string]int = {};
 
 	// The obsolete optional-ok arities.
 	c, present := m["x"];
@@ -31,7 +31,7 @@ main :: proc() {
 	q := p.lookup_value("x");
 
 	// A move-only element cannot be copied out.
-	tokens: map[int]Token;
+	tokens: map[int]Token = {};
 	r := tokens.lookup_value(1);
 
 	fmt.println(c, present, d, e, f, q, r);

@@ -34,7 +34,7 @@ bump :: proc(t: inout Table, at: int, by: int = 2) {
 }
 
 built :: proc() -> Table {
-	t: Table;
+	t: Table = {};
 	bump(inout t, 0, 5);
 	bump(inout t, 1);
 	return t;
@@ -54,7 +54,7 @@ main :: proc() {
 	fmt.println(sum_to(4));
 	fmt.println(fib(7));
 
-	t: Table;
+	t: Table = {};
 	bump(inout t, 3, 9);
 	fmt.println(t.cells[3]);
 

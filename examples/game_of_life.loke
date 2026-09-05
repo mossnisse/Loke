@@ -36,7 +36,7 @@ alive_neighbours :: proc(board: Board, x, y: int) -> int {
 }
 
 tick :: proc(board: Board) -> Board {
-	next: Board;
+	next: Board = {};
 	foreach (y in 0 ..< HEIGHT) {
 		foreach (x in 0 ..< WIDTH) {
 			neighbours := alive_neighbours(board, x, y);
@@ -73,7 +73,7 @@ seed_glider_gun :: proc(board: inout Board) {
 }
 
 main :: proc() {
-	board: Board;
+	board: Board = {};
 	seed_glider_gun(inout board);
 	// One line per generation: the live-cell population of Gosper's gun.
 	foreach (generation in 0 ..< GENERATIONS) {

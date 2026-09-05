@@ -147,7 +147,7 @@ main :: proc() {
 // Map value copies keep their stored dependency, not a borrow of the map entry,
 // so clearing the container while either copy remains live is valid.
 map_lookup_carrier :: proc() {
-	m: map[int]string_view;
+	m: map[int]string_view = {};
 	m[1] = "hello";
 	value := m.lookup_value(1);
 	m.clear();
@@ -155,7 +155,7 @@ map_lookup_carrier :: proc() {
 }
 
 map_index_carrier :: proc() {
-	m: map[int]string_view;
+	m: map[int]string_view = {};
 	m[1] = "hello";
 	value := m[1];
 	m.clear();
