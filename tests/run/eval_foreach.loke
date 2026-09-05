@@ -1,0 +1,147 @@
+package main; import "core:fmt";
+
+// `foreach` at compile time (design.md "Compile-time procedure evaluation").
+//
+// Every procedure below runs twice from one body: once folded into a constant,
+// once called from `main`. Each line prints the pair, so a traversal that
+// disagreed with itself across the two would print two different numbers.
+
+// A range, its endpoints counted out rather than materialized.
+sum_to :: proc(n: int) -> int {
+	total := 0;
+	foreach (i in 0 ..= n) { total += i; }
+	return total;
+}
+
+// `reversed()` mirrors the value; `indexed()` numbers what it wrapped, counting
+// up from zero either way (design.md "Reverse iteration").
+digits :: proc(n: int) -> int {
+	packed := 0;
+	foreach (value, index in (0 ..< n).reversed().indexed()) {
+		packed = packed * 100 + value * 10 + index;
+	}
+	return packed;
+}
+
+// An inclusive range ending at the type's maximum: the loop finishes after the
+// high endpoint rather than needing a `high + 1` the type cannot hold.
+saturated :: proc() -> int {
+	packed := 0;
+	foreach (b in (u8(253) ..= u8(255)).reversed()) { packed = packed * 1000 + int(b); }
+	return packed;
+}
+
+// `break` and `continue` mean in an evaluated loop what they mean in a run one.
+early :: proc() -> int {
+	total := 0;
+	foreach (i in 0 ..< 100) {
+		if (i == 3) { continue; }
+		if (i > 5) { break; }
+		total += i;
+	}
+	return total;
+}
+
+// A fixed array by value, then by reference: `&cell` names the array's own
+// storage, so the write lands there and the second pass sees it.
+doubled :: proc() -> int {
+	cells := [4]int{1, 2, 3, 4};
+	foreach (&cell in cells) { cell = cell * 2; }
+	packed := 0;
+	foreach (cell in cells.reversed()) { packed = packed * 10 + cell; }
+	return packed;
+}
+
+// A by-reference loop's second name is its step counter, not a field.
+squares :: proc() -> int {
+	cells := [4]int{0, 0, 0, 0};
+	foreach (&cell, index in cells) { cell = index * index; }
+	return cells[0] + cells[1] + cells[2] + cells[3];
+}
+
+// A temporary managed container, filled and walked while evaluation runs.
+weighted :: proc(n: int) -> int {
+	xs: [dynamic]int;
+	foreach (i in 0 ..< n) { xs.append(i * 3); }
+	total := 0;
+	foreach (value, index in xs.indexed()) { total += value + index; }
+	return total;
+}
+
+// design.md "String iteration": the default traversal yields code points, so a
+// two-byte one counts once and hashes by its scalar value.
+hash_name :: proc(name: string_view) -> int {
+	hash := 0;
+	foreach (point in name) { hash = hash * 31 + int(point); }
+	return hash;
+}
+
+// design.md's own compile-time example, folded from the spec as written: the
+// borrowing views are the operand's storage seen as bytes or as text, so both
+// are walkable while evaluation runs.
+fnv1a :: proc(text: string_view) -> u64 {
+	hash: u64 = 14695981039346656037;
+	foreach (b in text.bytes()) { hash = (hash ~ u64(b)) * 1099511628211; }
+	return hash;
+}
+widths :: proc(text: string_view) -> int {
+	total := 0;
+	foreach (point in text.runes()) { if (int(point) > 127) { total += 2; } else { total += 1; } }
+	return total * 100 + text.byte_len() * 10 + text.rune_count();
+}
+
+// Several names destructure the element's fields.
+Point :: struct { x: int, y: int }
+corners :: proc() -> int {
+	points := [2]Point{Point{x = 1, y = 2}, Point{x = 3, y = 4}};
+	total := 0;
+	foreach (x, y in points) { total += x * 10 + y; }
+	return total;
+}
+
+// A static expansion is not a loop: its checked copies run in iterable order,
+// and they run in an evaluated body exactly as in a compiled one.
+Color :: enum { Red, Green, Blue }
+tagged :: proc() -> int {
+	total := 0;
+	foreach ($member, $index in Color.values().indexed()) {
+		total += int(member) * 10 + index;
+	}
+	return total;
+}
+
+SUM_TO    :: sum_to(6);
+DIGITS    :: digits(3);
+SATURATED :: saturated();
+EARLY     :: early();
+DOUBLED   :: doubled();
+SQUARES   :: squares();
+WEIGHTED  :: weighted(4);
+HASHED    :: hash_name("mörk");
+FNV1A     :: fnv1a("clicked");
+WIDTHS    :: widths("mörk");
+CORNERS   :: corners();
+TAGGED    :: tagged();
+
+// The constants are constant enough to be an array length and an enum value.
+Sized :: struct { cells: [sum_to(3)]int }
+Level :: enum { Low = early(), Mid }
+
+main :: proc() {
+	static_assert(SUM_TO == 21);
+	static_assert(EARLY == 12);
+	fmt.println(SUM_TO, sum_to(6));
+	fmt.println(DIGITS, digits(3));
+	fmt.println(SATURATED, saturated());
+	fmt.println(EARLY, early());
+	fmt.println(DOUBLED, doubled());
+	fmt.println(SQUARES, squares());
+	fmt.println(WEIGHTED, weighted(4));
+	fmt.println(HASHED, hash_name("mörk"));
+	fmt.println(FNV1A, fnv1a("clicked"));
+	fmt.println(WIDTHS, widths("mörk"));
+	fmt.println(CORNERS, corners());
+	fmt.println(TAGGED, tagged());
+	sized: Sized;
+	fmt.println(sized.cells.len(), int(Level.Mid));
+}

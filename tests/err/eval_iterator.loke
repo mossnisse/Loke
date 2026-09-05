@@ -1,0 +1,21 @@
+package main; import "core:fmt";
+
+// Where compile-time `foreach` stops. The built-in traversals walk storage the
+// evaluator holds, but a protocol iterator is `iter`/`next` — synthesized for
+// the container views, written by hand for everything else — and neither is a
+// body this can run. Refused by its own reason rather than the general one, so
+// the boundary is visible when someone reaches it.
+TOTAL :: total();
+
+total :: proc() -> int {
+	cells := [3]int{1, 2, 3};
+	sum := 0;
+	foreach (cell in cells.refs()) {
+		sum += cell^;
+	}
+	return sum;
+}
+
+main :: proc() {
+	fmt.println(TOTAL);
+}

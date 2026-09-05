@@ -15,6 +15,7 @@ import "core:fmt"
 import "core:mem"
 import "core:mem/virtual"
 import "core:strings"
+import "core:unicode/utf8"
 
 // Documented ceilings. Exceeding one is a diagnostic, never a silent fallback
 // to generating runtime code.
@@ -1861,6 +1862,11 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	if callee != nil && callee.kind == .Builtin {
 		return eval_builtin(ev, v, callee)
 	}
+	// A text built-in has a compiler-written body too: the checker recorded which
+	// operation this is, and the string it reads is already in hand.
+	if v.text != .None {
+		return eval_text_op(ev, v)
+	}
 	// Standard built-in customization members likewise have compiler-written
 	// bodies — execute the operation directly during compile-time evaluation.
 	if chosen := symbol_of(ev.k.c, v.resolution.chosen_overload); chosen != nil &&
@@ -1893,6 +1899,46 @@ eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		return Eval_Value{kind = .Invalid, type = TYPE_VOID}, true
 	}
 	return result, true
+}
+
+// The borrowing text views are the storage the operand already is, seen as
+// bytes or as text (design.md "String iteration"), so neither copies anything.
+@(private = "file")
+eval_text_op :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
+	if len(v.bound) == 0 || v.bound[0] == nil {
+		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
+		return Eval_Value{}, false
+	}
+	subject, ok := eval_expr(ev, v.bound[0])
+	if !ok {
+		return Eval_Value{}, false
+	}
+	#partial switch v.text {
+	case .Byte_Len:
+		return eval_count_value(ev, len(subject.text)), true
+
+	case .Rune_Count:
+		return eval_count_value(ev, utf8.rune_count_in_string(subject.text)), true
+
+	case .Bytes:
+		elements, allocated := eval_elements(ev, len(subject.text))
+		if !allocated {
+			return Eval_Value{}, false
+		}
+		for byte_value, index in transmute([]u8)subject.text {
+			elements[index] = Eval_Value{
+				kind    = .Integer,
+				type    = TYPE_U8,
+				integer = bi_from_i64(ev.alloc, i64(byte_value)),
+			}
+		}
+		return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+
+	case .Runes:
+		return Eval_Value{kind = .String, type = v.type, text = subject.text}, true
+	}
+	eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
+	return Eval_Value{}, false
 }
 
 @(private = "file")
@@ -2348,18 +2394,7 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 		return flow
 
 	case ^Stmt_Foreach:
-		// Map iteration order is unspecified (design.md "Maps"). The evaluator's
-		// one definite order — insertion — would make a compile-time answer depend
-		// on something the language refuses to promise, and disagree with the same
-		// loop at run time. Rejected here by its own reason, not the general one
-		// below, so this case stays closed once `foreach` does become evaluable.
-		if s.kind == .Map {
-			eval_fail(
-				ev, s.span, "L0593",
-				"a map cannot be iterated at compile time: its iteration order is unspecified",
-			)
-			return .Fail
-		}
+		return eval_foreach(ev, s)
 	}
 	eval_fail(ev, stmt_span(stmt), "L0341", "this statement has no compile-time meaning")
 	return .Fail
@@ -2585,6 +2620,223 @@ eval_for :: proc(ev: ^Evaluator, s: ^Stmt_For) -> Eval_Flow {
 			}
 		}
 	}
+}
+
+// design.md "foreach statement": every traversal is a finite sequence of
+// yielded values, so the kind only decides where the next one comes from. A
+// range walks its endpoints rather than materializing them — a counted `for`
+// over the same span allocates nothing per step either — while the other
+// evaluable kinds already hold their elements.
+@(private = "file")
+eval_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
+	#partial switch s.kind {
+	case .Static:
+		// An expansion is not a loop: its checked copies run in iterable order,
+		// each with its `$` bindings already constant.
+		for copy_block in s.expansion {
+			if flow := eval_block(ev, copy_block); flow != .Normal {
+				return flow
+			}
+		}
+		return .Normal
+
+	case .Range:
+		return eval_range_foreach(ev, s)
+
+	case .Array, .Slice, .Dynamic:
+		// A `&` loop names the container's own storage, so it needs the place;
+		// a value loop copies out of whatever the iterable produced.
+		if foreach_is_place_loop(s) {
+			container, ok := eval_place(ev, s.iterable)
+			if !ok {
+				return .Fail
+			}
+			return eval_sequence_foreach(ev, s, container.elements)
+		}
+		container, ok := eval_expr(ev, s.iterable)
+		if !ok {
+			return .Fail
+		}
+		return eval_sequence_foreach(ev, s, container.elements)
+
+	case .Text:
+		return eval_text_foreach(ev, s)
+
+	case .Map:
+		// Map iteration order is unspecified (design.md "Maps"). The evaluator's
+		// one definite order — insertion — would make a compile-time answer depend
+		// on something the language refuses to promise, and disagree with the same
+		// loop at run time.
+		eval_fail(
+			ev, s.span, "L0593",
+			"a map cannot be iterated at compile time: its iteration order is unspecified",
+		)
+		return .Fail
+
+	case .Protocol:
+		// `iter`/`next` are the synthesized bodies of the built-in views and the
+		// user procedures of everything else; neither is a body this can run.
+		eval_fail(ev, s.span, "L0341", "a user iterator has no compile-time meaning yet")
+		return .Fail
+	}
+	eval_fail(ev, s.span, "L0341", "this `foreach` has no compile-time meaning")
+	return .Fail
+}
+
+// The endpoints are taken once and the values counted out from the low one, so
+// an inclusive range ending at the type's maximum needs no representable
+// `high + 1`. `reversed()` mirrors the value and leaves `indexed()` counting up
+// from zero (design.md "Reverse iteration").
+@(private = "file")
+eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
+	written, is_range := s.iterable.(^Expr_Range)
+	if !is_range {
+		eval_fail(ev, expr_span(s.iterable), "L0341", "this range has no compile-time meaning")
+		return .Fail
+	}
+	lo, lo_ok := eval_expr(ev, written.lo)
+	if !lo_ok {
+		return .Fail
+	}
+	hi, hi_ok := eval_expr(ev, written.hi)
+	if !hi_ok {
+		return .Fail
+	}
+	if lo.kind != .Integer && lo.kind != .Rune {
+		eval_fail(ev, expr_span(s.iterable), "L0341", "this range has no compile-time meaning")
+		return .Fail
+	}
+	span := bi_sub(ev.alloc, hi.integer, lo.integer)
+	if written.op == .Range_Incl {
+		span = bi_add(ev.alloc, span, bi_from_i64(ev.alloc, 1))
+	}
+	last := bi_sub(ev.alloc, span, bi_from_i64(ev.alloc, 1))
+	count, fits := bi_to_i64(ev.alloc, span)
+	if !fits {
+		// More values than a count can hold is more than the step budget allows,
+		// so the loop ends on that ceiling rather than on this bound. The value
+		// itself stays in arbitrary precision, where mirroring it is exact.
+		count = max(i64)
+	}
+	for index in 0 ..< int(min(count, i64(max(int)))) {
+		offset := bi_from_i64(ev.alloc, i64(index))
+		if s.adapter == .Reversed {
+			offset = bi_sub(ev.alloc, last, offset)
+		}
+		value := lo
+		value.integer = bi_add(ev.alloc, lo.integer, offset)
+		flow := eval_foreach_step(ev, s, &value, index)
+		if flow != .Normal {
+			return flow == .Break ? .Normal : flow
+		}
+	}
+	return .Normal
+}
+
+// design.md "String iteration": the default traversal yields Unicode scalar
+// values, so the bytes decode once and the loop walks the result.
+@(private = "file")
+eval_text_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
+	subject, ok := eval_expr(ev, s.iterable)
+	if !ok {
+		return .Fail
+	}
+	elements, allocated := eval_elements(ev, utf8.rune_count_in_string(subject.text))
+	if !allocated {
+		return .Fail
+	}
+	next := 0
+	for point in subject.text {
+		elements[next] = Eval_Value{
+			kind    = .Rune,
+			type    = TYPE_RUNE,
+			integer = bi_from_i64(ev.alloc, i64(point)),
+		}
+		next += 1
+	}
+	return eval_sequence_foreach(ev, s, elements)
+}
+
+// `reversed()` flips only the element a step reaches, so an `indexed()` over it
+// still counts from zero (design.md "Reverse iteration").
+@(private = "file")
+eval_sequence_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, elements: []Eval_Value) -> Eval_Flow {
+	for index in 0 ..< len(elements) {
+		at := s.adapter == .Reversed ? len(elements) - 1 - index : index
+		flow := eval_foreach_step(ev, s, &elements[at], index)
+		if flow != .Normal {
+			return flow == .Break ? .Normal : flow
+		}
+	}
+	return .Normal
+}
+
+// One step: bind what this iteration yields, then run the body. `continue` ends
+// the step and nothing more, exactly as it does in a counted `for`.
+@(private = "file")
+eval_foreach_step :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value, index: int) -> Eval_Flow {
+	if !eval_step(ev, s.span) {
+		return .Fail
+	}
+	if !bind_foreach_element(ev, s, element, index) {
+		return .Fail
+	}
+	flow := eval_block(ev, s.body)
+	return flow == .Continue ? .Normal : flow
+}
+
+// design.md "Element bindings": one name takes the whole element and several
+// destructure its fields. A value binding owns its copy for the step, while a
+// `&` binding *is* the container's storage, so a write through it lands there.
+@(private = "file")
+bind_foreach_element :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Value, index: int) -> bool {
+	frame := current_frame(ev)
+	if frame == nil {
+		eval_fail(ev, s.span, "L0341", "a `foreach` needs a compile-time frame")
+		return false
+	}
+	if foreach_is_place_loop(s) {
+		if s.bindings[0].symbol != INVALID_SYMBOL {
+			frame.locals[s.bindings[0].symbol] = element
+		}
+		// The place form's second name is the step counter, not a field of the
+		// element.
+		if len(s.bindings) == 2 {
+			return bind_local(ev, frame, s.bindings[1].symbol, eval_count_value(ev, index))
+		}
+		return true
+	}
+	value, copied := copy_value(ev, element^)
+	if !copied {
+		return false
+	}
+	if s.indexed {
+		pair, allocated := eval_elements(ev, 2)
+		if !allocated {
+			return false
+		}
+		pair[ELEMENT_FIRST] = value
+		pair[ELEMENT_SECOND] = eval_count_value(ev, index)
+		value = Eval_Value{kind = .Aggregate, type = s.element_type, elements = pair}
+	}
+	if len(s.bindings) == 1 {
+		return bind_local(ev, frame, s.bindings[0].symbol, value)
+	}
+	if value.kind != .Aggregate || len(value.elements) != len(s.bindings) {
+		eval_fail(ev, s.span, "L0341", "this element has no compile-time fields to destructure")
+		return false
+	}
+	for binding, slot in s.bindings {
+		if !bind_local(ev, frame, binding.symbol, value.elements[slot]) {
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+eval_count_value :: proc(ev: ^Evaluator, count: int) -> Eval_Value {
+	return Eval_Value{kind = .Integer, type = TYPE_INT, integer = bi_from_i64(ev.alloc, i64(count))}
 }
 
 @(private = "file")

@@ -25,7 +25,7 @@ count_primes :: proc(limit: int) -> int {
 	sieve: [dynamic]bool;
 	sieve.resize(limit + 1);
 	total := 0;
-	for (n := 2; n <= limit; n += 1) {
+	foreach (n in 2 ..= limit) {
 		if (sieve[n]) { continue; }
 		total += 1;
 		for (m := n * n; m <= limit; m += n) { sieve[m] = true; }
@@ -42,7 +42,7 @@ collect_primes :: proc(limit: int) -> [PRIME_COUNT]int {
 	sieve: [dynamic]bool;
 	sieve.resize(limit + 1);
 	next := 0;
-	for (n := 2; n <= limit; n += 1) {
+	foreach (n in 2 ..= limit) {
 		if (sieve[n]) { continue; }
 		out[next] = n;
 		next += 1;
