@@ -429,13 +429,7 @@ assemble_nasm :: proc(c: ^Compiler, source, exe_path: string, span: Span) -> (ob
 // earlier one. A stable hash of the canonical, case-folded Windows path keeps
 // those objects distinct while deduplicating alternate spellings of one file.
 assembly_object_path :: proc(source, exe_path: string) -> string {
-	canonical := filepath.clean(source)
-	key := strings.to_lower(canonical)
-	hash := u64(14695981039346656037) // FNV-1a offset basis
-	for index in 0 ..< len(key) {
-		hash = (hash ~ u64(key[index])) * HASH_MULTIPLIER
-	}
-	name := fmt.aprintf("%s.%x.obj", filepath.stem(source), hash)
+	name := fmt.aprintf("%s.%x.obj", filepath.stem(source), path_digest(filepath.clean(source)))
 	return filepath.join({filepath.dir(exe_path), name})
 }
 

@@ -507,6 +507,22 @@ default_output_resolves_a_dot_directory :: proc(t: ^testing.T) {
 	}
 }
 
+// The two properties the cross-volume package key leans on: one directory's
+// name is not its identity, and Windows spellings of one path are.
+@(test)
+path_digest_separates_paths_and_folds_case :: proc(t: ^testing.T) {
+	testing.expect(
+		t,
+		path_digest("C:/a/util") != path_digest("D:/x/util"),
+		"two `util` directories on two volumes digest alike",
+	)
+	testing.expect(
+		t,
+		path_digest("C:/A/Util") == path_digest("c:/a/util"),
+		"one path spelled two ways digests differently",
+	)
+}
+
 @(test)
 lexer_golden :: proc(t: ^testing.T) {
 	text := `name 123 1.5 "text" ` + "`raw`" + ` 'x'

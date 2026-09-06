@@ -10,6 +10,7 @@
 // driver was given a matching `-collection name=path`.
 package lokec
 
+import "core:fmt"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -435,14 +436,25 @@ collection_prefix :: proc(path: string) -> string {
 	return path
 }
 
-// The logical identity of a package inside the root tree. A directory outside
-// it keeps its own name, which is enough to keep symbols apart without putting
-// a host path into the binary.
+// The logical identity of a package that belongs to no registered collection:
+// its path relative to the root package. A directory outside the root tree gets
+// a `..`-prefixed spelling and therefore an identity that travels with the
+// project's layout — which is the most a package inside no collection can be
+// given, since its own name is not unique and its absolute path is the host's.
+// A package meant to keep one name wherever it is used is registered as a
+// collection, and `package_key` names it from there.
+//
+// `rel` has no answer across Windows volumes. The directory's own name would
+// not be unique there — two `util` directories on two drives would mangle
+// alike, and LLVM would see one definition twice — so it is qualified by a
+// digest of the path rather than spelling the path out.
 @(private = "file")
 root_relative_key :: proc(c: ^Compiler, dir: string) -> string {
 	relative, err := filepath.rel(c.root_dir, dir)
 	if err != nil {
-		return filepath.base(dir)
+		return fmt.aprintf(
+			"%s.%x", filepath.base(dir), path_digest(dir), allocator = c.semantic_allocator,
+		)
 	}
 	cleaned := strings.replace_all(relative, "\\", "/") or_else relative
 	if cleaned == "." {
@@ -558,4 +570,17 @@ canonical_dir :: proc(path: string) -> string {
 @(private = "file")
 dir_key :: proc(dir: string) -> string {
 	return strings.to_lower(dir)
+}
+
+// A digest of a case-folded path, for the two places that need one path to stay
+// distinct from another whose visible name matches it. FNV-1a, not
+// cryptographic and not stable across compiler versions: it only has to be a
+// function of the path within one build.
+path_digest :: proc(path: string) -> u64 {
+	key := strings.to_lower(path, context.temp_allocator)
+	digest := u64(14695981039346656037) // FNV-1a offset basis
+	for index in 0 ..< len(key) {
+		digest = (digest ~ u64(key[index])) * HASH_MULTIPLIER
+	}
+	return digest
 }
