@@ -937,27 +937,37 @@ main :: proc() {
 	)
 }
 
+// An empty group names nothing, which is the error. The trailing comma is not:
+// grammar.md gives every delimited list a `","?`, and an attribute group is one.
 @(test)
-attribute_groups_require_elements_and_no_trailing_comma :: proc(t: ^testing.T) {
+attribute_groups_require_elements :: proc(t: ^testing.T) {
 	text := `package main;
 
 main :: proc() {
 	@() x := 1;
 	@(cold,) y := 2;
-	sink(3);
+	@(a b) z := 3;
+	sink(4);
 }
 `
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 
 	if testing.expectf(t, c.error_count == 2, "expected two diagnostics, got %d", c.error_count) {
-		for diagnostic in c.diagnostics {
-			testing.expectf(t, diagnostic.code == "L0249", "unexpected code %s", diagnostic.code)
-		}
+		testing.expectf(t, c.diagnostics[0].code == "L0249", "unexpected code %s", c.diagnostics[0].code)
+		// A missing separator, like every other delimited list.
+		testing.expectf(t, c.diagnostics[1].code == "L0253", "unexpected code %s", c.diagnostics[1].code)
 	}
+	body := main_body(&f)
+	testing.expectf(
+		t,
+		body != nil && len(body.stmts) == 4,
+		"recovery lost a statement after a malformed attribute group",
+	)
 }
 
 @(test)
@@ -981,6 +991,181 @@ sentinel :: proc() { }
 	if ok && testing.expect(t, len(sentinel.names) == 1, "the sentinel declaration has no name") {
 		testing.expectf(t, sentinel.names[0].text == "sentinel", "recovered %s instead of sentinel", sentinel.names[0].text)
 	}
+}
+
+// `no_composite` belongs to a `where` clause's own top level, which is all
+// grammar.md restricts. A block bounds its statements the way brackets bound an
+// expression, so the flag lifts inside one — and restoring it on the way out is
+// also what stops a control-flow header's `close_header` from clearing it for
+// the rest of the clause, which used to hand the declaration's `{` to a
+// composite literal.
+@(test)
+a_where_clause_restricts_only_its_own_top_level :: proc(t: ^testing.T) {
+	text := `package main;
+Cfg :: struct { a: int }
+nested :: proc() -> int where proc() { c := Cfg{a = 1}; } { return 1; }
+header :: proc() -> int where proc() { if (a) { } } == Cfg { return 1; }
+top_level :: proc() -> int where Cfg { return 1; }
+`
+	c := test_compiler(text)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+
+	testing.expectf(
+		t,
+		c.error_count == 0,
+		"expected no diagnostics, got %d, first: %s",
+		c.error_count,
+		c.error_count > 0 ? c.diagnostics[0].message : "",
+	)
+	// `top_level` is the case the flag exists for: its `{` is the body, so the
+	// declaration is complete and nothing spills past it.
+	testing.expectf(t, len(f.items) == 4, "the clause swallowed a declaration: %d items", len(f.items))
+}
+
+// One bad element used to stop a member list where it stood: a missing comma
+// became "expected `}` to close the body" plus a spurious file-scope "expected a
+// declaration", and a junk element cost five diagnostics on the same token. Each
+// list now names the missing separator, resumes at the next element, and leaves
+// the declaration after it alone.
+@(test)
+member_lists_recover_at_the_next_element :: proc(t: ^testing.T) {
+	cases := []struct {
+		body: string,
+		code: string,
+	}{
+		{"S :: struct { a: int b: int }", "L0253"},
+		{"S :: struct { a: int, 123, b: int }", "L0241"},
+		{"U :: union { a: int b: int }", "L0253"},
+		{"U :: union { a: int, 123, b: int }", "L0239"},
+		{"E :: enum { A B }", "L0253"},
+		{"G :: proc { a b };", "L0253"},
+		{"f :: proc(a: int b: int) {}", "L0253"},
+		{"S :: struct($T: type $U: type) { a: T }", "L0253"},
+		{"I :: interface($Self: type) { (a: Self b: Self) a == b -> bool; }", "L0253"},
+	}
+	for k in cases {
+		text := strings.concatenate({"package main;\n", k.body, "\nsentinel :: proc() { }\n"})
+		defer delete(text)
+		c := test_compiler(text)
+		defer destroy_compilation(&c)
+		tokens := lex(&c, 0)
+		defer delete(tokens)
+		f := parse(&c, 0, tokens)
+		defer destroy_ast(&f)
+
+		if !testing.expectf(
+			t,
+			c.error_count == 1,
+			"%s: expected one diagnostic, got %d",
+			k.body,
+			c.error_count,
+		) {
+			continue
+		}
+		testing.expectf(
+			t,
+			c.diagnostics[0].code == k.code,
+			"%s: expected %s, got %s",
+			k.body,
+			k.code,
+			c.diagnostics[0].code,
+		)
+		if !testing.expectf(
+			t,
+			len(f.items) == 2,
+			"%s: recovery lost the sentinel declaration",
+			k.body,
+		) {
+			continue
+		}
+		// Resynchronising skips whatever sat between the elements, so the list is
+		// short a member. A node that says it is clean would have a later phase
+		// walk it and diagnose the absence as if the author had written it.
+		d, is_decl := f.items[0].(^Decl)
+		if !testing.expectf(t, is_decl && len(d.values) == 1, "%s: no declared value", k.body) {
+			continue
+		}
+		testing.expectf(
+			t,
+			expr_has_error(d.values[0]),
+			"%s: the recovered node does not carry the error",
+			k.body,
+		)
+	}
+}
+
+// The value ended at its own `}` is not the same question as "was the last token
+// consumed a `}`" — after a nested `struct { ... }` it always is, whether or not
+// the outer body was ever closed. Guessing from the token skipped the
+// resynchronisation and left the stray `)` to be reported a second time at file
+// scope.
+@(test)
+an_unclosed_body_still_resynchronises :: proc(t: ^testing.T) {
+	cases := []string{
+		"S :: struct { a: struct { b: int } )",
+		"S :: struct { a: enum { A } )",
+		"S :: struct { a: union { b: int } )",
+	}
+	for body in cases {
+		text := strings.concatenate({"package main;\n", body, "\n"})
+		defer delete(text)
+		c := test_compiler(text)
+		defer destroy_compilation(&c)
+		tokens := lex(&c, 0)
+		defer delete(tokens)
+		f := parse(&c, 0, tokens)
+		defer destroy_ast(&f)
+
+		if !testing.expectf(t, c.error_count == 1, "%s: expected one diagnostic, got %d", body, c.error_count) {
+			continue
+		}
+		testing.expectf(
+			t,
+			c.diagnostics[0].code == "L0239",
+			"%s: expected L0239, got %s",
+			body,
+			c.diagnostics[0].code,
+		)
+	}
+}
+
+// `resync_list` counted a stray `}` down past zero, and every later outer-level
+// test then failed: the `,` that ends the element was never found, so the rest
+// of the list was swallowed without a word about the brace.
+@(test)
+list_recovery_survives_a_stray_brace :: proc(t: ^testing.T) {
+	text := `package main;
+main :: proc() {
+	a := f(1 g(}) , 4);
+}
+`
+	c := test_compiler(text)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+
+	testing.expectf(t, c.error_count == 1, "expected one diagnostic, got %d", c.error_count)
+
+	body := main_body(&f)
+	if !testing.expect(t, body != nil && len(body.stmts) == 1, "the statement did not survive") {
+		return
+	}
+	d, is_decl := body.stmts[0].(^Decl)
+	if !testing.expect(t, is_decl && len(d.values) == 1, "the initializer did not survive") {
+		return
+	}
+	call, is_call := d.values[0].(^Expr_Call)
+	if !testing.expect(t, is_call, "the initializer is not a call") {
+		return
+	}
+	// The second argument is what the runaway scan used to eat.
+	testing.expectf(t, len(call.args) == 2, "recovered %d arguments, expected 2", len(call.args))
 }
 
 // Two properties the semantic arena must have, both of which a previous

@@ -20,6 +20,7 @@ import "core:mem"
 // ponytail: 128 is what the checker and the AST dump can walk on a default 1 MB
 // stack, measured — their frames are fat with format-call temporaries. Split
 // those two switches into per-family helpers if a real program ever needs more.
+@(private = "file")
 MAX_NEST :: 128
 
 @(private = "file")
@@ -39,8 +40,11 @@ Parser :: struct {
 	// (design.md "Type alias"). One `parse_postfix` consumes it, so it does
 	// not leak into the operands of a larger expression.
 	type_value:     bool,
-	// Panic mode: set when a construct is abandoned, cleared at the next
-	// statement or item. Stops one failure from reporting once per stack frame.
+	// Panic mode, entered only by the depth guard and cleared at the next
+	// statement or item: past `MAX_NEST` the frames unwinding behind the limit
+	// would each report their own missing delimiter. Ordinary failures do not set
+	// it — they resynchronise where they stand, and `next_element` is what keeps
+	// them to one diagnostic.
 	suppress:       bool,
 	allocator:      mem.Allocator,
 }
@@ -226,6 +230,7 @@ expect_member_name :: proc(p: ^Parser, code: string, what: string) -> (Token, bo
 	return expect(p, .Ident, code, what)
 }
 
+@(private = "file")
 expect :: proc(p: ^Parser, kind: Token_Kind, code: string, what: string) -> (Token, bool) {
 	if at(p, kind) {
 		return advance(p), true
@@ -322,11 +327,70 @@ resync_list :: proc(p: ^Parser, close: Token_Kind) -> bool {
 		case .Lbrace:
 			brace += 1
 		case .Rbrace:
-			brace -= 1
+			// Only reachable inside a nested group — at the outer level the check
+			// above already returned. There the brace is noise to skip, not a
+			// boundary, and `sync_to_boundary` clamps for the same reason: letting
+			// the count go negative disables the outer-level test for the rest of
+			// the scan, so the `,` that ends this element is never found.
+			brace = max(brace - 1, 0)
 		}
 		advance(p)
 	}
 	return false
+}
+
+// The separator step every comma-separated list ends an element with: take the
+// `,`, stop at the list's own close or at a boundary an enclosing construct
+// owns, or say what is missing and resynchronise to the next element. `bad` says
+// the element already reported something, in which case a second diagnostic here
+// describes nothing new.
+//
+// `more` is true when another element may follow. `separated` is false when this
+// had to resynchronise: whatever the elements themselves looked like, tokens
+// between them were skipped, so the node the caller builds is not clean and must
+// say so — otherwise a later phase walks a list that silently lost a member.
+@(private = "file")
+next_element :: proc(
+	p: ^Parser,
+	close: Token_Kind,
+	bad: bool,
+	what: string,
+) -> (more: bool, separated: bool) {
+	if allow(p, .Comma) {
+		return true, true
+	}
+	if at(p, close) || at(p, .EOF) {
+		return false, true
+	}
+	#partial switch current(p).kind {
+	case .Semicolon, .Rparen, .Rbrace, .Rbracket:
+		return false, true // the missing close is the useful error, not this token
+	}
+	if !bad {
+		parse_error(
+			p,
+			span_of(p, current(p)),
+			"L0253",
+			fmt_found(p, current(p)),
+			"expected %s",
+			what,
+		)
+	}
+	return resync_list(p, close), false
+}
+
+// Recovery has nothing to skip when the parser already stands where the next
+// declaration, item, or enclosing boundary begins — scanning on from there
+// consumes it. Asking this beats guessing from the last token consumed, which
+// after a nested `struct { ... }` is that inner body's `}` and says nothing
+// about whether the value's own brace was ever reached.
+@(private = "file")
+at_construct_start :: proc(p: ^Parser) -> bool {
+	#partial switch current(p).kind {
+	case .EOF, .Semicolon, .Rbrace, .At, .Import, .Foreign, .Impl, .When:
+		return true
+	}
+	return starts_declaration(p)
 }
 
 @(private = "file")
@@ -436,19 +500,17 @@ parse_attributes :: proc(p: ^Parser) -> []Attribute {
 				attribute.value = parse_expr(p)
 			}
 			attribute.span = span_to_here(p, start)
-			append(&list, attribute)
-
-			if !allow(p, .Comma) {
-				break
+			// Nothing was named, so there is no attribute to record.
+			named := len(attribute.path) > 0
+			if named {
+				append(&list, attribute)
 			}
-			if at(p, .Rparen) {
-				parse_error(
-					p,
-					span_of(p, current(p)),
-					"L0249",
-					"trailing comma",
-					"an attribute group cannot end with a comma",
-				)
+
+			bad := !named || expr_has_error(attribute.value)
+			// An attribute group carries no error flag of its own; the diagnostic
+			// this reports is the whole record of a malformed one.
+			more, _ := next_element(p, .Rparen, bad, "`,` or `)` after the attribute")
+			if !more {
 				break
 			}
 		}
@@ -773,6 +835,7 @@ starts_declaration :: proc(p: ^Parser) -> bool {
 
 // `Ident ("," Ident)* ":"` from `offset`. The bounded scan a declaration, a
 // result item, and an anonymous record field group all ask for.
+@(private = "file")
 scans_name_list_colon :: proc(p: ^Parser, offset: int) -> bool {
 	offset := offset
 	for {
@@ -794,6 +857,7 @@ scans_name_list_colon :: proc(p: ^Parser, offset: int) -> bool {
 // A parenthesised type is a record iff its first group is labelled. `(T)` in
 // expression position stays grouping, so this looks one field group past the
 // `(` and no further.
+@(private = "file")
 starts_anon_record_type :: proc(p: ^Parser) -> bool {
 	return at(p, .Lparen) && scans_name_list_colon(p, 1)
 }
@@ -931,9 +995,14 @@ finish_constant :: proc(p: ^Parser, d: ^Decl, start: Token) -> (^Decl, bool) {
 	d.values = values
 
 	// A malformed value is not also asked for its `;` — that second diagnostic
-	// describes nothing new. Resynchronise and keep the node instead.
+	// describes nothing new. Resynchronise and keep the node instead, unless the
+	// parser already stands where the next construct begins: a value that
+	// recovered inside its own body has ended there, and scanning on from it
+	// swallows whatever follows.
 	if expr_has_error(value) {
-		sync_to_item(p)
+		if !at_construct_start(p) {
+			sync_to_item(p)
+		}
 		d.has_error = true
 		d.span = span_to_here(p, start)
 		return d, true
@@ -1036,6 +1105,15 @@ parse_block :: proc(p: ^Parser) -> (^Block, bool) {
 	if !ok {
 		return nil, false
 	}
+
+	// Braces bound the statements the same way brackets and an argument list's
+	// parentheses bound an expression, so a `where` clause's restriction lifts
+	// here too — it belongs to that clause's own top level. Restoring it on the
+	// way out is also what undoes `close_header`'s write, which is otherwise the
+	// clause's last word on the flag.
+	outer := p.no_composite
+	p.no_composite = false
+	defer p.no_composite = outer
 
 	stmts := make([dynamic]Stmt, 0, 0, p.allocator)
 	for !at(p, .EOF) && !at(p, .Rbrace) {
@@ -1978,31 +2056,12 @@ parse_composite_body :: proc(p: ^Parser, type_expr: Expr, lo: u32) -> Expr {
 		el.span = span_to_here(p, start)
 		append(&elements, el)
 
-		if !allow(p, .Comma) {
-			if at(p, .Rbrace) {
-				break
-			}
-			if expr_has_error(el.key) || expr_has_error(el.value) {
-				malformed = true
-				if !resync_list(p, .Rbrace) {
-					break
-				}
-				continue
-			}
-			if at(p, .Semicolon) || at(p, .Rparen) || at(p, .Rbracket) {
-				break // an enclosing boundary; the missing `}` is the useful error
-			}
-			parse_error(
-				p,
-				span_of(p, current(p)),
-				"L0253",
-				fmt_found(p, current(p)),
-				"expected `,` or `}` after the composite element",
-			)
-			malformed = true
-			if !resync_list(p, .Rbrace) {
-				break
-			}
+		bad := expr_has_error(el.key) || expr_has_error(el.value)
+		malformed = malformed || bad
+		more, separated := next_element(p, .Rbrace, bad, "`,` or `}` after the composite element")
+		malformed = malformed || !separated
+		if !more {
+			break
 		}
 	}
 	_, closed := expect(p, .Rbrace, "L0227", "`}` to close the composite literal")
@@ -2031,31 +2090,13 @@ parse_argument_list :: proc(p: ^Parser) -> ([]Argument, bool) {
 	for !at(p, .Rparen) && !at(p, .EOF) {
 		arg := parse_argument(p)
 		append(&args, arg)
-		if !allow(p, .Comma) {
-			if at(p, .Rparen) {
-				break
-			}
-			if expr_has_error(arg.value) {
-				malformed = true
-				if !resync_list(p, .Rparen) {
-					break
-				}
-				continue
-			}
-			if at(p, .Semicolon) || at(p, .Rbrace) || at(p, .Rbracket) {
-				break // an enclosing boundary; the missing `)` is the useful error
-			}
-			parse_error(
-				p,
-				span_of(p, current(p)),
-				"L0253",
-				fmt_found(p, current(p)),
-				"expected `,` or `)` after the argument",
-			)
-			malformed = true
-			if !resync_list(p, .Rparen) {
-				break
-			}
+
+		bad := expr_has_error(arg.value)
+		malformed = malformed || bad
+		more, separated := next_element(p, .Rparen, bad, "`,` or `)` after the argument")
+		malformed = malformed || !separated
+		if !more {
+			break
 		}
 	}
 	_, closed := expect(p, .Rparen, "L0217", "`)` to close the argument list")
@@ -2266,6 +2307,7 @@ starts_type :: proc(kind: Token_Kind) -> bool {
 	return false
 }
 
+@(private = "file")
 parse_type :: proc(p: ^Parser) -> Expr {
 	p.depth += 1
 	defer p.depth -= 1
@@ -2667,12 +2709,16 @@ parse_proc_group :: proc(p: ^Parser, lo: u32) -> Expr {
 	advance(p) // `{`
 
 	names := make([dynamic]Name, 0, 0, p.allocator)
+	bad := false
 	for !at(p, .Rbrace) && !at(p, .EOF) {
 		name, ok := expect(p, .Ident, "L0244", "a procedure name")
 		if ok {
 			append(&names, name_of(p, name))
 		}
-		if !allow(p, .Comma) {
+		bad = bad || !ok
+		more, separated := next_element(p, .Rbrace, !ok, "`,` or `}` after the procedure name")
+		bad = bad || !separated
+		if !more {
 			break
 		}
 	}
@@ -2680,7 +2726,7 @@ parse_proc_group :: proc(p: ^Parser, lo: u32) -> Expr {
 
 	e := new_expr(p, Expr_Proc_Group, lo)
 	e.names = names[:]
-	e.has_error = !closed
+	e.has_error = !closed || bad
 	return e
 }
 
@@ -2691,30 +2737,41 @@ parse_parameter_list :: proc(p: ^Parser) -> ([]Parameter, bool) {
 	}
 
 	params := make([dynamic]Parameter, 0, 0, p.allocator)
+	bad := false
 	for !at(p, .Rparen) && !at(p, .EOF) {
-		append(&params, parse_parameter(p))
-		if !allow(p, .Comma) {
+		param, ok := parse_parameter(p)
+		// Nothing was recognised, so there is no parameter to record — only the
+		// receiver `self` is legitimately nameless.
+		if ok || len(param.names) > 0 {
+			append(&params, param)
+		}
+		bad = bad || !ok
+		more, separated := next_element(p, .Rparen, !ok, "`,` or `)` after the parameter")
+		bad = bad || !separated
+		if !more {
 			break
 		}
 	}
 	_, closed := expect(p, .Rparen, "L0212", "`)` to close the parameter list")
-	return params[:], closed
+	return params[:], closed && !bad
 }
 
 // `Parameter`. A parameter with no type at all is the receiver `self`, whose
 // type comes from the enclosing block.
 @(private = "file")
-parse_parameter :: proc(p: ^Parser) -> Parameter {
+parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 	start := current(p)
 
 	param: Parameter
 	param.attributes = parse_attributes(p)
+	named := true
 	names := make([dynamic]Param_Name, 0, 0, p.allocator)
 	for {
 		entry: Param_Name
 		entry.is_poly = allow(p, .Dollar)
 		name, ok := expect(p, .Ident, "L0237", "a parameter name")
 		if !ok {
+			named = false
 			break
 		}
 		entry.name = name_of(p, name)
@@ -2727,7 +2784,7 @@ parse_parameter :: proc(p: ^Parser) -> Parameter {
 
 	if !allow(p, .Colon) {
 		param.span = span_to_here(p, start)
-		return param
+		return param, named
 	}
 
 	// `borrow` is contextual here, so an ordinary type or procedure named
@@ -2738,7 +2795,7 @@ parse_parameter :: proc(p: ^Parser) -> Parameter {
 		param.mode = .Borrow
 		param.type = parse_type(p)
 		param.span = span_to_here(p, start)
-		return param
+		return param, named && !expr_has_error(param.type)
 	}
 
 	#partial switch current(p).kind {
@@ -2764,7 +2821,7 @@ parse_parameter :: proc(p: ^Parser) -> Parameter {
 		}
 	}
 	param.span = span_to_here(p, start)
-	return param
+	return param, named && !expr_has_error(param.type) && !expr_has_error(param.default)
 }
 
 // `Results = Result_Type`. design.md: a procedure returns at most one value, so
@@ -2836,22 +2893,25 @@ parse_where_clause :: proc(p: ^Parser) -> []Expr {
 // `Generic_Parameters`: `($T, $U: type, $N: int)`. Commas separate names inside
 // a group until its `:`, and groups from each other after the type.
 @(private = "file")
-parse_generic_params :: proc(p: ^Parser) -> []Generic_Param {
+parse_generic_params :: proc(p: ^Parser) -> ([]Generic_Param, bool) {
 	if !at(p, .Lparen) {
-		return nil
+		return nil, true
 	}
 	advance(p)
 
 	params := make([dynamic]Generic_Param, 0, 0, p.allocator)
+	bad := false
 	for !at(p, .Rparen) && !at(p, .EOF) {
 		start := current(p)
 		group: Generic_Param
 
+		named := true
 		names := make([dynamic]Name, 0, 0, p.allocator)
 		for {
 			expect(p, .Dollar, "L0240", "`$` before a generic parameter name")
 			name, ok := expect(p, .Ident, "L0240", "a generic parameter name")
 			if !ok {
+				named = false
 				break
 			}
 			append(&names, name_of(p, name))
@@ -2859,18 +2919,32 @@ parse_generic_params :: proc(p: ^Parser) -> []Generic_Param {
 				break
 			}
 		}
+		// No name was recognised, so the `:` and the type would be asked for at
+		// the same token the name was.
+		if !named {
+			bad = true
+			more, _ := next_element(p, .Rparen, true, "")
+			if !more {
+				break
+			}
+			continue
+		}
 		group.names = names[:]
-		expect(p, .Colon, "L0240", "`:` and the generic parameter's type")
+		_, typed := expect(p, .Colon, "L0240", "`:` and the generic parameter's type")
 		group.type = parse_type(p)
 		group.span = span_to_here(p, start)
 		append(&params, group)
 
-		if !allow(p, .Comma) {
+		malformed := !typed || expr_has_error(group.type)
+		bad = bad || malformed
+		more, separated := next_element(p, .Rparen, malformed, "`,` or `)` after the generic parameter")
+		bad = bad || !separated
+		if !more {
 			break
 		}
 	}
-	expect(p, .Rparen, "L0240", "`)` to close the generic parameters")
-	return params[:]
+	_, closed := expect(p, .Rparen, "L0240", "`)` to close the generic parameters")
+	return params[:], closed && !bad
 }
 
 // `Struct_Type` and `Union_Type`: one node, since they differ only in body.
@@ -2879,7 +2953,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	keyword := advance(p) // `struct` or `union`
 	lo := keyword.lo
 
-	generics := parse_generic_params(p)
+	generics, generics_ok := parse_generic_params(p)
 	attributes := parse_attributes(p)
 	where_clauses := parse_where_clause(p)
 
@@ -2887,6 +2961,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 
 	fields: []Field
 	variants: []Variant
+	members_ok := true
 	if keyword.kind == .Union {
 		list := make([dynamic]Variant, 0, 0, p.allocator)
 		for !at(p, .Rbrace) && !at(p, .EOF) {
@@ -2894,10 +2969,15 @@ parse_record :: proc(p: ^Parser) -> Expr {
 			entry: Variant
 			name, named := expect(p, .Ident, "L0239", "a variant name")
 			if !named {
-				break
+				members_ok = false
+				more, _ := next_element(p, .Rbrace, true, "")
+				if !more {
+					break
+				}
+				continue
 			}
 			entry.name = name_of(p, name)
-			expect(p, .Colon, "L0239", "`:` after the variant name")
+			_, typed := expect(p, .Colon, "L0239", "`:` after the variant name")
 			// A payloadless variant is written `name:` — nothing follows the colon
 			// but the separator or the closing brace.
 			if !at(p, .Comma) && !at(p, .Rbrace) && !at(p, .EOF) {
@@ -2905,13 +2985,18 @@ parse_record :: proc(p: ^Parser) -> Expr {
 			}
 			entry.span = span_to_here(p, start)
 			append(&list, entry)
-			if !allow(p, .Comma) {
+
+			malformed := !typed || expr_has_error(entry.type)
+			members_ok = members_ok && !malformed
+			more, separated := next_element(p, .Rbrace, malformed, "`,` or `}` after the variant")
+			members_ok = members_ok && separated
+			if !more {
 				break
 			}
 		}
 		variants = list[:]
 	} else {
-		fields = parse_field_list(p)
+		fields, members_ok = parse_field_list(p)
 	}
 	_, closed := expect(p, .Rbrace, "L0239", "`}` to close the body")
 
@@ -2922,14 +3007,15 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	e.where_clauses = where_clauses
 	e.fields = fields
 	e.variants = variants
-	e.has_error = !opened || !closed
+	e.has_error = !opened || !closed || !generics_ok || !members_ok
 	return e
 }
 
 // `Field_List`. `using` is contextual here: a field may also be named `using`.
 @(private = "file")
-parse_field_list :: proc(p: ^Parser) -> []Field {
+parse_field_list :: proc(p: ^Parser) -> ([]Field, bool) {
 	fields := make([dynamic]Field, 0, 0, p.allocator)
+	bad := false
 	for !at(p, .Rbrace) && !at(p, .EOF) {
 		start := current(p)
 
@@ -2938,6 +3024,18 @@ parse_field_list :: proc(p: ^Parser) -> []Field {
 		if is_contextual(p, "using") && peek_token(p, 1).kind == .Ident {
 			advance(p)
 			field.is_using = true
+		}
+
+		// Something that cannot begin a field is one diagnostic, not three: asking
+		// for the `:` and the type at the same token describes nothing new.
+		if !at(p, .Ident) && !at(p, .Type) {
+			expect_member_name(p, "L0241", "a field name")
+			bad = true
+			more, _ := next_element(p, .Rbrace, true, "")
+			if !more {
+				break
+			}
+			continue
 		}
 
 		names := make([dynamic]Name, 0, 0, p.allocator)
@@ -2952,16 +3050,20 @@ parse_field_list :: proc(p: ^Parser) -> []Field {
 			}
 		}
 		field.names = names[:]
-		expect(p, .Colon, "L0241", "`:` and the field's type")
+		_, typed := expect(p, .Colon, "L0241", "`:` and the field's type")
 		field.type = parse_type(p)
 		field.span = span_to_here(p, start)
 		append(&fields, field)
 
-		if !allow(p, .Comma) {
+		malformed := !typed || expr_has_error(field.type)
+		bad = bad || malformed
+		more, separated := next_element(p, .Rbrace, malformed, "`,` or `}` after the field")
+		bad = bad || !separated
+		if !more {
 			break
 		}
 	}
-	return fields[:]
+	return fields[:], !bad
 }
 
 // `Enum_Type`. A backing type may precede the body; a `Type` never starts with
@@ -2978,6 +3080,7 @@ parse_enum :: proc(p: ^Parser) -> Expr {
 	_, opened := expect(p, .Lbrace, "L0239", "`{` to open the enum body")
 
 	fields := make([dynamic]Enum_Field, 0, 0, p.allocator)
+	bad := false
 	for !at(p, .Rbrace) && !at(p, .EOF) {
 		start := current(p)
 		field: Enum_Field
@@ -2990,7 +3093,12 @@ parse_enum :: proc(p: ^Parser) -> Expr {
 		}
 		field.span = span_to_here(p, start)
 		append(&fields, field)
-		if !allow(p, .Comma) {
+
+		malformed := !ok || expr_has_error(field.value)
+		bad = bad || malformed
+		more, separated := next_element(p, .Rbrace, malformed, "`,` or `}` after the enum member")
+		bad = bad || !separated
+		if !more {
 			break
 		}
 	}
@@ -2999,7 +3107,7 @@ parse_enum :: proc(p: ^Parser) -> Expr {
 	e := new_expr(p, Type_Enum, lo)
 	e.backing = backing
 	e.fields = fields[:]
-	e.has_error = !opened || !closed || expr_has_error(backing)
+	e.has_error = !opened || !closed || bad || expr_has_error(backing)
 	return e
 }
 
@@ -3018,13 +3126,16 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 			"an interface declares its generic parameters, as in `interface($Self: type)`",
 		)
 	}
-	generics := parse_generic_params(p)
+	generics, generics_ok := parse_generic_params(p)
 	_, opened := expect(p, .Lbrace, "L0239", "`{` to open the interface body")
 
 	requirements := make([dynamic]Requirement, 0, 0, p.allocator)
+	bad := false
 	for !at(p, .Rbrace) && !at(p, .EOF) {
 		before := p.index
-		append(&requirements, parse_requirement(p))
+		requirement, ok := parse_requirement(p)
+		append(&requirements, requirement)
+		bad = bad || !ok
 		if p.index == before {
 			advance(p) // requirements end in `;`, so force progress
 		}
@@ -3034,7 +3145,7 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 	e := new_expr(p, Type_Interface, lo)
 	e.generic_params = generics
 	e.requirements = requirements[:]
-	e.has_error = !opened || !closed
+	e.has_error = !opened || !closed || !generics_ok || bad
 	return e
 }
 
@@ -3045,7 +3156,7 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 // a second pair of parentheses" actually work. Committing to bindings on any
 // bare `(` would leave `((a + b).c() -> T;)` with no spelling at all.
 @(private = "file")
-parse_requirement :: proc(p: ^Parser) -> Requirement {
+parse_requirement :: proc(p: ^Parser) -> (Requirement, bool) {
 	start := current(p)
 	requirement: Requirement
 
@@ -3058,44 +3169,55 @@ parse_requirement :: proc(p: ^Parser) -> Requirement {
 		requirement.name = name_of(p, advance(p))
 		advance(p) // `:`
 		requirement.slot_type = parse_type(p)
-		if _, ok := expect(p, .Semicolon, "L0242", "`;` after the requirement"); !ok {
+		_, terminated := expect(p, .Semicolon, "L0242", "`;` after the requirement")
+		if !terminated {
 			sync_to_statement(p) // to the next `;`, or the body's `}`
 		}
 		requirement.span = span_to_here(p, start)
-		return requirement
+		return requirement, terminated && !expr_has_error(requirement.slot_type)
 	}
 
+	bindings_ok := true
 	if at(p, .Lparen) &&
 	   peek_token(p, 1).kind == .Ident &&
 	   (peek_token(p, 2).kind == .Comma || peek_token(p, 2).kind == .Colon) {
-		requirement.bindings = parse_bindings(p)
+		requirement.bindings, bindings_ok = parse_bindings(p)
 	}
 	requirement.expr = parse_expr(p)
 	if allow(p, .Arrow) {
 		requirement.result_inout = allow(p, .Inout)
 		requirement.result = parse_type(p)
 	}
-	if _, ok := expect(p, .Semicolon, "L0242", "`;` after the requirement"); !ok {
+	_, terminated := expect(p, .Semicolon, "L0242", "`;` after the requirement")
+	if !terminated {
 		sync_to_statement(p) // to the next `;`, or the body's `}`
 	}
 	requirement.span = span_to_here(p, start)
-	return requirement
+	ok :=
+		bindings_ok &&
+		terminated &&
+		!expr_has_error(requirement.expr) &&
+		!expr_has_error(requirement.result)
+	return requirement, ok
 }
 
 // `Bindings`: `(a, b: T, c: inout U)`
 @(private = "file")
-parse_bindings :: proc(p: ^Parser) -> []Binding_Group {
+parse_bindings :: proc(p: ^Parser) -> ([]Binding_Group, bool) {
 	advance(p) // `(`
 
 	groups := make([dynamic]Binding_Group, 0, 0, p.allocator)
+	bad := false
 	for !at(p, .Rparen) && !at(p, .EOF) {
 		start := current(p)
 		group: Binding_Group
 
+		named := true
 		names := make([dynamic]Name, 0, 0, p.allocator)
 		for {
 			name, ok := expect(p, .Ident, "L0242", "a binding name")
 			if !ok {
+				named = false
 				break
 			}
 			append(&names, name_of(p, name))
@@ -3103,19 +3225,33 @@ parse_bindings :: proc(p: ^Parser) -> []Binding_Group {
 				break
 			}
 		}
+		// As in a generic parameter group: with no name recognised, the `:` and
+		// the type would be asked for at the same token the name was.
+		if !named {
+			bad = true
+			more, _ := next_element(p, .Rparen, true, "")
+			if !more {
+				break
+			}
+			continue
+		}
 		group.names = names[:]
-		expect(p, .Colon, "L0242", "`:` and the binding's type")
+		_, typed := expect(p, .Colon, "L0242", "`:` and the binding's type")
 		group.is_inout = allow(p, .Inout)
 		group.type = parse_type(p)
 		group.span = span_to_here(p, start)
 		append(&groups, group)
 
-		if !allow(p, .Comma) {
+		malformed := !typed || expr_has_error(group.type)
+		bad = bad || malformed
+		more, separated := next_element(p, .Rparen, malformed, "`,` or `)` after the binding group")
+		bad = bad || !separated
+		if !more {
 			break
 		}
 	}
-	expect(p, .Rparen, "L0242", "`)` to close the bindings")
-	return groups[:]
+	_, closed := expect(p, .Rparen, "L0242", "`)` to close the bindings")
+	return groups[:], closed && !bad
 }
 
 // `Operator_Decl`: `operator(+) proc ...`, definition or `---` declaration.
@@ -3170,7 +3306,7 @@ parse_hook :: proc(p: ^Parser) -> Expr {
 		case "copy":    role = .Copy
 		case "drop":    role = .Drop
 		case:
-			parse_error(p, role_span, "L0243", role_text, "expected one of `convert`, `copy`, or `drop`")
+			parse_error(p, role_span, "L0243", fmt_found(p, role_token), "expected one of `convert`, `copy`, or `drop`")
 		}
 	}
 	_, closed := expect(p, .Rparen, "L0243", "`)` after the hook role")

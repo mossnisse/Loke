@@ -14,6 +14,14 @@ The grammar is written to be parsed top-down with a small fixed lookahead. Rules
 needing more than one token of lookahead are marked and listed under
 [Resolved ambiguities](#resolved-ambiguities).
 
+A comma-separated list ends with an optional `","?` exactly when a delimiter
+closes it — `)`, `]`, or `}`. That is what makes the comma unambiguous, and it
+is why `Expression_List`, `Identifier_List`, `Where_Clause`, a `foreach` binding
+list (which `in` ends) and a case selector list (which `:` ends) have no `","?`:
+with no closing delimiter there is nothing to tell a trailing comma from a
+missing element. Every delimited list carries it, so adding one to the grammar
+means writing it.
+
 # Lexical structure
 
 ## Source encoding
@@ -138,7 +146,7 @@ A raw string literal contains no escapes and may span lines.
 
 ```
 Attributes     = Attribute_Group+
-Attribute_Group= "@" "(" Attribute ("," Attribute)* ")"
+Attribute_Group= "@" "(" Attribute ("," Attribute)* ","? ")"
 Attribute      = Identifier ("." Identifier)* ("=" Attribute_Value)?
 Attribute_Value= Expression
 ```
@@ -293,7 +301,7 @@ Record_Type    = "(" Record_Field ("," Record_Field)* ","? ")"
 Record_Field   = Identifier_List ":" Type
 
 Type_Name      = Identifier ("." Identifier)?            // optionally package-qualified
-Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ")"
+Type_Arguments = "(" Generic_Argument ("," Generic_Argument)* ","? ")"
 Generic_Argument = Type | Expression                     // type or compile-time value
 
 Type_Definition = Struct_Type | Move_Only_Struct_Type | Enum_Type | Union_Type
@@ -347,7 +355,7 @@ Union_Type  = "union" Generic_Parameters? Attributes? Where_Clause? "{" Union_Va
 Union_Variants = Union_Variant ("," Union_Variant)* ","?
 Union_Variant  = Identifier ":" Type?
 
-Generic_Parameters = "(" Generic_Parameter ("," Generic_Parameter)* ")"
+Generic_Parameters = "(" Generic_Parameter ("," Generic_Parameter)* ","? ")"
 Generic_Parameter  = Generic_Name ("," Generic_Name)* ":" Type
 Generic_Name       = "$" Identifier
 
@@ -373,7 +381,7 @@ Requirement  = Bindings? Expression ("->" Requirement_Result)? ";"
              | "slot" Identifier ":" Proc_Type ";"
 
 Requirement_Result = "inout"? Type
-Bindings           = "(" Binding_Group ("," Binding_Group)* ")"
+Bindings           = "(" Binding_Group ("," Binding_Group)* ","? ")"
 Binding_Group      = Identifier ("," Identifier)* ":" "inout"? Type
 ```
 
@@ -598,7 +606,7 @@ Suffix = "^"                                          // dereference
        | "[" Index_Or_Slice "]"
        | "or_return"
 
-Index_Or_Slice = Expression ("," Expression)*          // index; comma form is user-defined
+Index_Or_Slice = Expression ("," Expression)* ","?     // index; comma form is user-defined
                | Expression? ":" Expression?           // slice
 ```
 
