@@ -163,6 +163,14 @@ bigint_literal_spellings :: proc(t: ^testing.T) {
 		testing.expectf(t, ok, "%s does not parse", s.text)
 		testing.expectf(t, bi_eq_i64(&c, value, s.value), "%s folded to %s", s.text, text(&c, value))
 	}
+
+	// Only what the lexer spells. `-define:NAME=VALUE` reaches here with any
+	// text at all and reads a rejection as "this value is a string".
+	rejected := []string{"0X10", "0B10", "0O10", "12abc", "", "0x"}
+	for bad in rejected {
+		_, ok := bi_parse_int_literal(&c, bad)
+		testing.expectf(t, !ok, "`%s` parsed as an integer", bad)
+	}
 }
 
 @(test)

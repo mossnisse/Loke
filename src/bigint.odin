@@ -70,19 +70,23 @@ bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 
 // Decodes an integer literal per grammar.md: decimal, or a `0b`/`0o`/`0x`
 // prefix, with `_` allowed as a separator anywhere but the first character.
+// The prefix letter is lower case, as grammar.md writes it; the digits of a hex
+// literal are not.
+//
 // Unlike M0's `parse_int_text` this cannot overflow, so `ok` is false only for
-// a spelling the lexer would not have produced.
+// text that is not an integer literal at all — which `-define:NAME=VALUE` hands
+// it on purpose, to tell an integer value from a string one.
 bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int, ok: bool) {
 	context.allocator = arena(c)
 	radix := i8(10)
 	digits := text
 	if len(text) > 2 && text[0] == '0' {
 		switch text[1] {
-		case 'b', 'B':
+		case 'b':
 			radix, digits = 2, text[2:]
-		case 'o', 'O':
+		case 'o':
 			radix, digits = 8, text[2:]
-		case 'x', 'X':
+		case 'x':
 			radix, digits = 16, text[2:]
 		}
 	}
