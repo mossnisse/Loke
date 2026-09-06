@@ -1,0 +1,15 @@
+package main; import "core:fmt";
+
+// A record's fields share one namespace, the way an enum's members (L0304) and
+// a union's variants (L0422) do. The repeat used to be silent: `s.x` and
+// `offset_of(S, x)` both answered with the first field, and the second was a
+// hole nothing could reach -- a literal setting `x` twice is L0376.
+S :: struct { x: int, x: i32 }
+
+// The same thing written as one group of names.
+T :: struct { a, a: int }
+
+main :: proc() {
+	fmt.println(size_of(S));
+	fmt.println(size_of(T));
+}

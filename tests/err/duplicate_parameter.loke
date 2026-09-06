@@ -1,0 +1,14 @@
+package main; import "core:fmt";
+
+// Parameters share one namespace too, and the body's scope is written blind, so
+// `a` in the body used to bind the second one with nothing said at all.
+f :: proc(a: int, a: int) -> int { return a; }
+
+// With differing types the only symptom was an unrelated complaint about the
+// returned type, naming neither parameter.
+g :: proc(b: int, c: i32, b: i32) -> i32 { return b; }
+
+main :: proc() {
+	fmt.println(f(1, 2));
+	fmt.println(g(1, 2, 3));
+}

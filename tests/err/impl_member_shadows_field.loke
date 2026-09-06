@@ -1,0 +1,24 @@
+package main; import "core:fmt";
+
+C :: struct { v: int }
+
+// A member taking a field's name is unreachable rather than ambiguous: `c.v` is
+// the field, and `c.v()` is "`int` is not callable", so the block declared a
+// procedure nothing could ever call.
+impl C {
+	v :: proc(self: C) -> int { return 99; }
+}
+
+D :: struct { w: int }
+
+// Two members with the same name were already caught. The subject's own fields
+// were the half of the namespace nothing checked.
+impl D {
+	get :: proc(self: D) -> int { return self.w; }
+	get :: proc(self: D) -> i32 { return 0; }
+}
+
+main :: proc() {
+	fmt.println(C{ v = 7 }.v);
+	fmt.println(D{ w = 1 }.get());
+}

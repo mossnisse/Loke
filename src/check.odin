@@ -741,6 +741,16 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		public := field_is_public(k, field.attributes)
 		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
+			// A record's fields share one namespace, the way an enum's members
+			// (L0304) and a union's variants (L0422) do. A repeat is not harmless:
+			// the first field answers `s.x` and `offset_of`, and the second can never
+			// be named or initialised -- a literal setting `x` twice is L0376 -- so it
+			// is a hole nothing can reach.
+			if name.text != "_" && member_named(k.c, members[:], identifier_id_of(k.c, name)) != INVALID_SYMBOL {
+				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
+				append(&bindings, INVALID_SYMBOL)
+				continue
+			}
 			binding := new_binding_symbol(k, name, .Field)
 			if bound := symbol_of(k.c, binding); bound != nil {
 				bound.type = field_type
@@ -1125,6 +1135,18 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 					name_type, mode = written_type, .Value
 				}
 			}
+			// Parameters share one namespace too, and `install_symbols` writes the
+			// body's scope blind, so two named `a` used to leave the body's `a` bound
+			// to the second one with nothing said. The binding is still made: every
+			// written parameter owns a position, and this program is not going to be
+			// emitted anyway.
+			if parameter_name.name.text != "_" &&
+			   member_named(k.c, param_symbols[:], identifier_id_of(k.c, parameter_name.name)) != INVALID_SYMBOL {
+				errorf(
+					k.c, parameter_name.name.span, "L0304",
+					"`%s` is already a parameter of this procedure", parameter_name.name.text,
+				)
+			}
 			binding := new_binding_symbol(k, parameter_name.name, .Parameter)
 			if bound := symbol_of(k.c, binding); bound != nil {
 				bound.type = name_type
@@ -1241,6 +1263,12 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 		}
 		install_symbols(k.scope, k.c, parameter.symbols)
 	}
+}
+
+// A written name's interned id, interning it if the parser left that to the
+// checker. The duplicate checks above need the id before a symbol exists.
+identifier_id_of :: proc(c: ^Compiler, name: Name) -> Identifier_Id {
+	return name.id == INVALID_IDENTIFIER ? intern_identifier(c, name.text) : name.id
 }
 
 @(private = "file")

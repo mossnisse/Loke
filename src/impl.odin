@@ -111,6 +111,18 @@ declare_impl_member :: proc(
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
+		// A member sharing a field's name is unreachable rather than ambiguous:
+		// `c.v` is the field, and `c.v()` is "`int` is not callable", so the block
+		// would declare a procedure nothing can call. The subject's fields are
+		// resolved by now -- resolving the subject is what this block just did.
+		if subject_field_named(k, item.subject, name_id) != INVALID_SYMBOL {
+			errorf(
+				k.c, name.span, "L0409",
+				"`%s` already has a field `%s`", type_name(k.c, item.subject), name.text,
+			)
+			append(&symbols, INVALID_SYMBOL)
+			continue
+		}
 		sym := Symbol {
 			name       = name_id,
 			span       = name.span,
@@ -189,6 +201,14 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 
 // The one member-by-name loop. Takes the `^Compiler` rather than the `^Checker`
 // so `src/generic.odin` reaches the same one from an instance's own package.
+// The subject's own fields, which share the namespace its members are
+// declared into.
+@(private = "file")
+subject_field_named :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> Symbol_Id {
+	info := type_of(k.c, type_underlying(k.c, subject))
+	return info == nil ? INVALID_SYMBOL : member_named(k.c, info.fields, name)
+}
+
 member_named :: proc(c: ^Compiler, members: []Symbol_Id, name: Identifier_Id) -> Symbol_Id {
 	for member in members {
 		if sym := symbol_of(c, member); sym != nil && sym.name == name {
