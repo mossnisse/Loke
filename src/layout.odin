@@ -50,6 +50,22 @@ compute_layout :: proc(c: ^Compiler, type: Type_Id) {
 	if info == nil || info.layout_state != .Unchecked {
 		return // computed, or on the stack below this call
 	}
+	// A record's own layout is not an input to its definition. `info.fields` is
+	// what the aggregate case below walks, and `resolve_declaration_signature`
+	// is what fills it -- so a query arriving while that is still running reads
+	// an empty list and caches the answer for good. `size_of(S)` written inside
+	// `S`'s own definition returned 0 for a record LLVM laid out at eight bytes,
+	// and only `-check-layout` ever noticed. Recursion through a pointer never
+	// arrives here: `^S` lays out as an address without asking about `S`.
+	if info.kind == .Struct || info.kind == .Union {
+		if sym := symbol_of(c, info.symbol); sym != nil && sym.decl != nil && sym.decl.sig_state == .Checking {
+			errorf(c, sym.span, "L0364", "the layout of `%s` is written in terms of its own layout", type_name(c, type))
+			// Answered like any other query, so this is said once and every later
+			// one gets the same already-diagnosed zero.
+			info.size, info.align, info.layout_state = 0, 1, .Finite
+			return
+		}
+	}
 	info.layout_state = .Checking
 
 	size, alignment := u64(0), u64(1)

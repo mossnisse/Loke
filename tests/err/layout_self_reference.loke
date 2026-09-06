@@ -1,0 +1,19 @@
+package main; import "core:fmt";
+
+// A record's own layout is not an input to its own definition. `compute_layout`
+// used to run while the fields were still being resolved, read the empty field
+// list, and cache the answer: `size_of(S)` was 0 for a record LLVM laid out at
+// eight bytes, and only `-check-layout` ever saw the divergence. The constant
+// cycle detector behind L0324 does not reach this one, because the cycle passes
+// through a type's layout rather than through constants alone.
+S :: struct { a: [N]int, b: i64 }
+N :: size_of(S);
+
+// Recursion through a pointer is not a cycle and must stay legal: `^Node` lays
+// out as an address without asking anything about `Node`.
+Node :: struct { next: ^Node, value: int }
+
+main :: proc() {
+	fmt.println(N);
+	fmt.println(size_of(Node));
+}

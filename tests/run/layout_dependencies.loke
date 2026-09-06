@@ -1,0 +1,21 @@
+package main; import "core:fmt";
+
+// The negative space around the layout-cycle rule in
+// `tests/err/layout_self_reference.loke`: both of these ask a record for its
+// layout from inside another record's definition, and neither is a cycle.
+
+// A forward reference. `Head`'s field type needs `Tail`'s size, and `Tail` is
+// declared below it -- naming `Tail` is what resolves its signature first.
+Head :: struct { pad: [size_of(Tail)]i8 }
+Tail :: struct { x: i64, y: i64 }
+
+// Recursion through a pointer: `^Node` lays out as an address, so computing
+// `Node` never asks about `Node`.
+Node :: struct { next: ^Node, value: int }
+
+main :: proc() {
+	fmt.println(size_of(Head));
+	fmt.println(size_of(Tail));
+	fmt.println(size_of(Node));
+	fmt.println(align_of(Node));
+}
