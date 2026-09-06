@@ -3,7 +3,8 @@
 //
 //   tests/run/*.loke + .expected   compile, run, compare stdout
 //   tests/ll/*.loke  + .expected   compile with -emit-ll, assert the generated
-//                                  IR still contains each listed shape
+//                                  IR still contains each listed shape; a `*`
+//                                  matches any run inside one IR line
 //   tests/err/*.loke + .expected   compile, assert exact diagnostic count plus
 //                                  code/message substrings and @line:column spans;
 //                                  a `!`-prefixed line must *not* appear
@@ -263,9 +264,59 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 			if line == "" {
 				continue
 			}
-			testing.expectf(t, strings.contains(string(ir), line), "%s: IR does not contain %q", path, line)
+			testing.expectf(t, ir_contains(string(ir), line), "%s: IR does not contain %q", path, line)
 		}
 	}
+}
+
+// A `*` matches any run of characters inside one IR line. A type name carries
+// its `Type_Id` (`%struct.Point.49`), and which id a type gets is decided by the
+// order packages are prepared in, so a fixture quoting one asserted that order
+// rather than the shape it meant to pin. The wildcard stops at a line ending: a
+// fragment quoted from one instruction must still be found in one instruction,
+// not assembled from two.
+@(private)
+ir_contains :: proc(ir: string, pattern: string) -> bool {
+	if !strings.contains(pattern, "*") {
+		return strings.contains(ir, pattern)
+	}
+	segments := strings.split(pattern, "*", context.temp_allocator)
+	for line in strings.split_lines(ir, context.temp_allocator) {
+		if ir_line_matches(line, segments) {
+			return true
+		}
+	}
+	return false
+}
+
+@(private = "file")
+ir_line_matches :: proc(line: string, segments: []string) -> bool {
+	rest := line
+	for segment in segments {
+		// Empty where the pattern begins or ends with `*`, or writes two in a row.
+		if segment == "" {
+			continue
+		}
+		at := strings.index(rest, segment)
+		if at < 0 {
+			return false
+		}
+		rest = rest[at + len(segment):]
+	}
+	return true
+}
+
+// The matcher's interesting property is what it refuses: a `*` that crossed a
+// line ending would let two unrelated instructions satisfy one quoted shape.
+@(test)
+ir_wildcard_stays_inside_one_line :: proc(t: ^testing.T) {
+	ir := "%t1 = getelementptr %struct.Point.49, ptr %p\n%t2 = add i64 %a, %b\n"
+	testing.expect(t, ir_contains(ir, "%t1 = getelementptr %struct.Point.*, ptr %p"))
+	testing.expect(t, ir_contains(ir, "getelementptr %struct.Point.49, ptr %p"))
+	testing.expect(t, ir_contains(ir, "*add i64*"))
+	// Both halves are present, one per line, so only the line bound rejects this.
+	testing.expect(t, !ir_contains(ir, "%t1 = *%b"))
+	testing.expect(t, !ir_contains(ir, "%struct.Point.*, ptr %q"))
 }
 
 // Unwind environments assign slots on first use. Keep thunk emission in that
