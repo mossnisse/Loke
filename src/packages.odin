@@ -124,7 +124,6 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 		return
 	}
 	saved_pkg, saved_lookup, saved_scope := k.pkg, k.lookup_pkg, k.scope
-	rebuild_active_items(k.c, package_of(k.c, id))
 	prepare_package(k, id)
 	k.pkg, k.lookup_pkg, k.scope = saved_pkg, saved_lookup, saved_scope
 }
