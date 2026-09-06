@@ -2002,7 +2002,7 @@ An extension participates in lookup only inside the package that declares it, an
 
 Inside that package, `v.to_string()` and `vendor.Vector2.to_string(v)` both name the extension. A public extension procedure is also exported under its own package, so an importer may call `format.to_string(v)`; importing `format` does not make `v.to_string()` valid in the importer or add its operators to lookup, so an unused import cannot change an existing expression.
 
-The exported name uses the ordinary package namespace, so two public extension procedures in one package need distinct names. To offer one overloaded export, give private extensions distinct names and assemble public wrappers into a procedure group. An inherent `impl` member gets no package-level alias: outside its package it is reached through its owning type, `vendor.Vector2.length_squared(v)`.
+The exported name uses the ordinary package namespace, so two public extension procedures in one package need distinct names. A generic subject is the one case where a single written name still exports several procedures: monomorphization gives it one instance per argument vector, so `extend Cell($T)` exports one `unwrap` per instantiation under that one name, as a procedure group whose members the call's own arguments select between. To offer one overloaded export otherwise, give private extensions distinct names and assemble public wrappers into a procedure group. An inherent `impl` member gets no package-level alias: outside its package it is reached through its owning type, `vendor.Vector2.length_squared(v)`.
 
 To get method syntax for a foreign extension, declare a small local forwarding extension — an explicit opt-in, with ordinary ambiguity diagnostics.
 

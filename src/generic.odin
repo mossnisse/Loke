@@ -1820,11 +1820,7 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 			// As for an ordinary extension block, a public extension procedure also
 			// gets its plain package-qualified spelling.
 			if item.kind == .Extend && public {
-				if pkg := package_of(k.c, block.pkg); pkg != nil && pkg.scope != nil {
-					if _, taken := pkg.scope.names[name_id]; !taken {
-						pkg.scope.names[name_id] = id
-					}
-				}
+				register_instance_extension_name(k, block, name_id, id, name.span)
 			}
 			append(&symbols, id)
 			append(&added, id)
@@ -1832,6 +1828,64 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 		d.symbols = symbols[:]
 	}
 	install_impl_members(k, item.kind, subject, added[:], block.pkg)
+}
+
+// The package-qualified spelling of a public member of an instantiated `extend`
+// block (design.md "Methods and implementation blocks"). A generic subject has
+// one instance per argument vector, so that one spelling names one procedure per
+// instance: they collect into an ordinary procedure group, and the call's own
+// arguments pick the instance exactly as method syntax already does. A name that
+// already means something else keeps its meaning — the qualified spelling is a
+// convenience, never a claim on the package's namespace.
+@(private = "file")
+register_instance_extension_name :: proc(
+	k: ^Checker, block: ^Generic_Impl, name: Identifier_Id, member: Symbol_Id, span: Span,
+) {
+	pkg := package_of(k.c, block.pkg)
+	if pkg == nil || pkg.scope == nil {
+		return
+	}
+	existing, taken := pkg.scope.names[name]
+	if !taken {
+		pkg.scope.names[name] = member
+		return
+	}
+	sym := symbol_of(k.c, existing)
+	if sym == nil {
+		return
+	}
+	// A group this same template already built: the new instance joins it.
+	if sym.kind == .Proc_Group && sym.instance_of == block.template {
+		members := make([]Symbol_Id, len(sym.members) + 1, k.c.semantic_allocator)
+		copy(members, sym.members)
+		members[len(sym.members)] = member
+		sym.members = members
+		return
+	}
+	// The first instance's own member: the two become the group. `sym` must not
+	// be read past `new_symbol`, which may move the symbol store.
+	if sym.kind != .Proc || instance_template_of(k.c, sym.owner_type) != block.template {
+		return
+	}
+	members := make([]Symbol_Id, 2, k.c.semantic_allocator)
+	members[0], members[1] = existing, member
+	pkg.scope.names[name] = new_symbol(k.c, Symbol {
+		name        = name,
+		span        = span,
+		kind        = .Proc_Group,
+		pkg         = block.pkg,
+		lookup_pkg  = block.pkg,
+		public      = true,
+		instance_of = block.template,
+		members     = members,
+	})
+}
+
+// The template an instance type came from, or INVALID_SYMBOL for anything else.
+@(private = "file")
+instance_template_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+	info := type_of(c, type)
+	return info == nil ? INVALID_SYMBOL : info.instance_of
 }
 
 // The block instances discovered so far are checked after the package that

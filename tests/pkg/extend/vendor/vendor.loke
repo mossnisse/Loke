@@ -8,6 +8,14 @@ Vector2 :: struct {
 	x, y: i32,
 }
 
+// A generic subject: one instance per argument vector, so an extension member
+// on it has one procedure per instance under one package-qualified name.
+@(public)
+Cell :: struct($T: type) {
+	@(public)
+	value: T,
+}
+
 @(public)
 Other :: struct {
 	@(public)

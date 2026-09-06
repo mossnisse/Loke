@@ -23,3 +23,14 @@ impl vendor.Other {
 use_here :: proc(v: vendor.Vector2) -> i32 {
 	return v.doubled();
 }
+
+// Every instantiation contributes its own `unwrap`, and they share the one
+// package-qualified spelling: `adapter.unwrap` resolves like any other group.
+impl vendor.Cell($T) {
+	unwrap :: proc(self) -> T { return self.value; }
+}
+
+// The method spelling stays package-local, exactly as `doubled` does.
+unwrap_here :: proc(c: vendor.Cell($T)) -> T {
+	return c.unwrap();
+}
