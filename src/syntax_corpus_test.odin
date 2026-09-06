@@ -28,6 +28,7 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 		text := string(data)
 
 		c := test_compiler(text)
+		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
 		f := parse(&c, 0, tokens)
 		defer destroy_ast(&f)
@@ -81,6 +82,7 @@ ambiguity_goldens :: proc(t: ^testing.T) {
 		}
 
 		c := test_compiler(string(data))
+		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
 		f := parse(&c, 0, tokens)
 		defer destroy_ast(&f)
@@ -110,6 +112,7 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 		text := string(data)
 
 		source := test_compiler(text)
+		defer destroy_compilation(&source)
 		base := lex(&source, 0)
 		if len(base) < 3 {
 			continue
@@ -120,6 +123,7 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 			mutated := mutate(base, &state)
 
 			c := test_compiler(text)
+			defer destroy_compilation(&c)
 			f := parse(&c, 0, mutated)
 
 			for diagnostic in c.diagnostics {

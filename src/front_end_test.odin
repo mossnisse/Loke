@@ -515,6 +515,7 @@ static self slot using delegate thread_local manual
 + - * / % & &~ | ~ << >> && || ! == != < <= > >= = += -= *= /= %= |= ~= &= &~= <<= >>= : ; , . .. ..= ..< -> --- ? $ ^ @ ( ) [ ] { }
 /* nested /* block */ comment */`
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	expected := []Token_Kind {
 		.Ident, .Int, .Float, .String, .Raw_String, .Rune,
@@ -563,6 +564,7 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 	}
 	for test_case in cases {
 		c := test_compiler(test_case.text)
+		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
 		testing.expectf(t, c.error_count == 1, "`%s`: expected one diagnostic, got %d", test_case.text, c.error_count)
 		code := len(c.diagnostics) == 1 ? c.diagnostics[0].code : "<none>"
@@ -573,6 +575,7 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 
 	// The valid neighbours of every rule above still lex.
 	valid := test_compiler("0b101 0o777 0xff 1e9 1.5e+3 1_000 " + `"é\U0001f600\xff"`)
+	defer destroy_compilation(&valid)
 	tokens := lex(&valid, 0)
 	testing.expectf(t, valid.error_count == 0, "valid literals produced %d diagnostics", valid.error_count)
 	testing.expectf(t, len(tokens) == 8, "expected seven literals, got %d tokens", len(tokens) - 1)
@@ -582,6 +585,7 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 malformed_escape_stays_in_bounds :: proc(t: ^testing.T) {
 	text := `package main; main :: proc() { bad := "abc\`
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -600,6 +604,7 @@ main :: proc() {
 	sink(2);
 }`
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -653,6 +658,7 @@ main :: proc() {
 }
 `
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -685,6 +691,7 @@ A, B :: 1;
 bad: static int : 2;
 `
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -707,6 +714,7 @@ main :: proc() {
 }
 `
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -748,6 +756,7 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 
 	for text in sources {
 		c := test_compiler(text)
+		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
 		f := parse(&c, 0, tokens)
 		defer destroy_ast(&f)
@@ -781,6 +790,7 @@ main :: proc() {
 }
 `
 	invalid := test_compiler(invalid_text)
+	defer destroy_compilation(&invalid)
 	invalid_tokens := lex(&invalid, 0)
 	invalid_file := parse(&invalid, 0, invalid_tokens)
 	defer destroy_ast(&invalid_file)
@@ -804,6 +814,7 @@ main :: proc() {
 }
 `
 	valid := test_compiler(valid_text)
+	defer destroy_compilation(&valid)
 	valid_tokens := lex(&valid, 0)
 	valid_file := parse(&valid, 0, valid_tokens)
 	defer destroy_ast(&valid_file)
@@ -821,6 +832,7 @@ worker :: proc() @(cold) {
 }
 `
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -838,6 +850,7 @@ main :: proc() {
 }
 `
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -866,6 +879,7 @@ main :: proc() {
 }
 `
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
@@ -884,6 +898,7 @@ Bad :: struct($T: type) where { }
 sentinel :: proc() { }
 `
 	c := test_compiler(text)
+	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
