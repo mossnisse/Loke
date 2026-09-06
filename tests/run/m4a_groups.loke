@@ -19,6 +19,12 @@ tone_two :: proc(t: Tone, by: int) -> int { return int(t) + by; }
 place :: proc{place_one, place_two};
 tone :: proc{tone_one, tone_two};
 
+// design.md rank 1: `^mut T` weakening to `^T` creates no value, so it outranks
+// the erasure to `any_view` instead of tying with it.
+through_ptr :: proc(p: ^int) -> int { return p^; }
+through_view :: proc(v: any_view) -> int { return 0; }
+reach :: proc{through_ptr, through_view};
+
 pad :: proc(i: int, by: int = 5) -> int { return i + by; }
 pad3 :: proc(i: int, j: int, k: int) -> int { return i * j * k; }
 padded :: proc{pad, pad3};
@@ -37,4 +43,6 @@ main :: proc() {
 	fmt.println(padded(by = 40, i = 2));
 	fmt.println(place({1, 2}), place({1, 2}, 100));
 	fmt.println(tone(.High), tone(.High, 100));
+	cell := 9;
+	fmt.println(reach(&mut cell));
 }

@@ -336,12 +336,27 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		return RANK_NONE
 	}
 	if assignable(k.c, arg.type, param) {
-		return RANK_BUILTIN
+		// design.md rank 1: a mutable carrier weakening to a read-only one creates
+		// no value, so it outranks every other built-in conversion.
+		return carrier_weakens_to(k.c, arg.type, param) ? RANK_ADJUST : RANK_BUILTIN
 	}
 	return RANK_NONE
 }
 
 // ----------------------------------------------------------------- candidates --
+
+// Reached from both sides of arity: too many supplied, and a parameter left
+// with no argument and no default.
+@(private = "file")
+arity_reason :: proc(c: ^Compiler, count: int, supplied: int) -> string {
+	return fmt.aprintf(
+		"it takes %d argument%s, found %d",
+		count,
+		count == 1 ? "" : "s",
+		supplied,
+		allocator = c.semantic_allocator,
+	)
+}
 
 // Places every supplied argument, fills the rest from defaults, and ranks what
 // remains. A candidate that cannot place an argument at all is not viable and
@@ -416,13 +431,7 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 		} else if pack >= 0 && slot >= pack {
 			slot = pack
 		} else if slot >= count {
-			cand.reason = fmt.aprintf(
-				"it takes %d argument%s, found %d",
-				count,
-				count == 1 ? "" : "s",
-				len(args),
-				allocator = k.c.semantic_allocator,
-			)
+			cand.reason = arity_reason(k.c, count, len(args))
 			return cand
 		}
 		cand.filled[slot] = true
@@ -483,13 +492,7 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			continue
 		}
 		if slot >= len(sym.param_defaults) || sym.param_defaults[slot] == nil {
-			cand.reason = fmt.aprintf(
-				"it takes %d argument%s, found %d",
-				count,
-				count == 1 ? "" : "s",
-				len(args),
-				allocator = k.c.semantic_allocator,
-			)
+			cand.reason = arity_reason(k.c, count, len(args))
 			return cand
 		}
 		cand.omitted += 1
@@ -585,34 +588,26 @@ compare_vectors :: proc(a, b: []int) -> int {
 	return 0
 }
 
-TIE_BREAKERS :: [4]string {
-	"a fixed-arity candidate beats a variadic one",
-	"a candidate requiring fewer omitted default arguments wins",
-	"a non-parametric candidate beats a parametric one",
-	"a structural specialization beats an unspecialized parameter",
-}
-
 // The four tie-breakers, in order, for candidates whose vectors are identical.
-// Returns -1/1 for a decision and 0 for none, plus how many tie-breakers were
-// consulted without deciding.
+// Returns -1 when `a` wins, 1 when `b` does, and 0 when none of them decides.
 @(private = "file")
-tie_break :: proc(a, b: ^Candidate) -> (int, int) {
+tie_break :: proc(a, b: ^Candidate) -> int {
 	if a.variadic != b.variadic {
-		return a.variadic ? 1 : -1, 0
+		return a.variadic ? 1 : -1
 	}
 	if a.omitted != b.omitted {
-		return a.omitted < b.omitted ? -1 : 1, 1
+		return a.omitted < b.omitted ? -1 : 1
 	}
 	if a.parametric != b.parametric {
-		return a.parametric ? 1 : -1, 2
+		return a.parametric ? 1 : -1
 	}
 	// design.md tie-breaker 4: between parametric candidates a structural
 	// specialization beats an unspecialized parameter. Neither more specialized
 	// than the other stays ambiguous.
 	if a.specificity != b.specificity {
-		return a.specificity > b.specificity ? -1 : 1, 3
+		return a.specificity > b.specificity ? -1 : 1
 	}
-	return 0, 4
+	return 0
 }
 
 @(private = "file")
@@ -623,8 +618,7 @@ candidate_better :: proc(a, b: ^Candidate) -> bool {
 	case 1, 2:
 		return false
 	}
-	decision, _ := tie_break(a, b)
-	return decision == -1
+	return tie_break(a, b) == -1
 }
 
 // ------------------------------------------------------------------- entry --
@@ -777,10 +771,11 @@ report_ambiguity :: proc(k: ^Checker, span: Span, description: string, all: []Ca
 	add_notef(k.c, no_span(), "selection failed at %s", failing_tie_breaker(all, maximal))
 }
 
+// A tie-breaker that decides leaves its loser dominated, and a dominated
+// candidate is not maximal — so a pair that reaches here was separated by none
+// of them. That leaves two answers: crossed vectors, or the last tie-breaker.
 @(private = "file")
 failing_tie_breaker :: proc(all: []Candidate, maximal: []int) -> string {
-	breakers := TIE_BREAKERS
-	worst := -1
 	for index in maximal {
 		for other in maximal {
 			if other == index {
@@ -789,14 +784,9 @@ failing_tie_breaker :: proc(all: []Candidate, maximal: []int) -> string {
 			if compare_vectors(candidate_ranks(&all[index]), candidate_ranks(&all[other])) == 2 {
 				return "crossed conversion vectors, which are ambiguous by design"
 			}
-			_, consulted := tie_break(&all[index], &all[other])
-			worst = max(worst, consulted)
 		}
 	}
-	if worst < 0 || worst >= len(breakers) {
-		return "tie-breaker 4, where no candidate is more structurally specialized"
-	}
-	return breakers[worst]
+	return "tie-breaker 4, where no candidate is more structurally specialized"
 }
 
 @(private = "file")
