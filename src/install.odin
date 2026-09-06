@@ -30,6 +30,8 @@ install_component :: proc(name: string) -> string {
 	if dir == "" {
 		return ""
 	}
+	// `install_dir` allocates, and only the joined path outlives this call.
+	defer delete(dir)
 	return filepath.join({dir, name})
 }
 

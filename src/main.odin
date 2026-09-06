@@ -1,6 +1,7 @@
 // Driver: CLI, pipeline, exit codes.
 //
-// Exit codes: 0 success, 1 user diagnostics, 2 internal or toolchain failure.
+// Exit codes: 0 success, 1 a user error (diagnostics or a bad command line),
+// 2 an internal or toolchain failure.
 package lokec
 
 import "core:fmt"
@@ -18,6 +19,8 @@ usage:
     lokec <file.loke | directory> [options]
 
 options:
+    -h, --help    print this message and stop
+    -version      print the compiler version and stop
     -o <path>     output executable (default: input name with .exe)
     -emit-ll      write the LLVM IR next to the output and stop
     -keep-temps   keep the generated .ll after linking
@@ -25,6 +28,7 @@ options:
     -dump-ast     print a deterministic syntax tree and stop after parsing
     -check-layout compare every folded size/alignment/offset with LLVM's own
     -collection name=path
+    -collection:name=path
                   register an import-path prefix; base: and core: are seeded
                   from the directories beside the compiler, and an explicit
                   entry replaces one of those
@@ -47,6 +51,7 @@ options:
                   build an executable, or a relocatable object (default: exe)
     -provider allocator=<package>:<name>
     -provider logger=<package>:<name>
+    -provider:<slot>=<package>:<name>
                   select a build provider: a public proc() -> Allocator or
                   proc() -> Logger. Its package becomes a build dependency even
                   if no source imports it; each slot may be selected once
@@ -56,6 +61,9 @@ options:
 `
 
 Options :: struct {
+	// `-h`/`--help` and `-version` stop before anything is compiled.
+	help:       bool,
+	version:    bool,
 	input:      string,
 	output:     string,
 	emit_ll:    bool,
@@ -96,9 +104,19 @@ main :: proc() {
 @(private = "file")
 run :: proc() -> int {
 	opts, args_ok := parse_args(os.args[1:])
+	// Asking for help is a successful run, so the text goes to stdout; a usage
+	// error prints the same text on stderr and fails.
+	if opts.help {
+		fmt.print(USAGE)
+		return 0
+	}
+	if opts.version {
+		fmt.printfln("lokec %s", LOKE_VERSION_STRING)
+		return 0
+	}
 	if !args_ok {
 		fmt.eprint(USAGE)
-		return 2
+		return 1
 	}
 
 	c: Compiler
@@ -195,6 +213,12 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 	for i := 0; i < len(args); i += 1 {
 		arg := args[i]
 		switch {
+		case arg == "-h", arg == "-help", arg == "--help":
+			opts.help = true
+			return opts, true
+		case arg == "-version", arg == "--version":
+			opts.version = true
+			return opts, true
 		case arg == "-o":
 			i += 1
 			if i >= len(args) {
@@ -313,10 +337,19 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 // A directory keeps its complete final component, dots included; only a file
 // sheds its extension. Either host separator is trimmed from a directory so
 // `package\` and `package/` both produce the sibling `package.exe`.
+//
+// A directory ending in `.` or `..` is resolved first, because those spell no
+// component of their own: `lokec .` names the directory it runs in and must not
+// produce a file called `..exe`. Every other spelling is kept as written.
 default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 	stem := input
 	if info, err := os.stat(input, context.temp_allocator); err == nil && info.is_dir {
 		trimmed := strings.trim_right(input, "/\\")
+		if base := filepath.base(trimmed); base == "." || base == ".." {
+			if absolute, ok := filepath.abs(trimmed, context.temp_allocator); ok {
+				trimmed = filepath.clean(absolute, context.temp_allocator)
+			}
+		}
 		if trimmed != "" {
 			stem = trimmed
 		}
@@ -391,7 +424,10 @@ register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	c.collections = make(map[string]string, len(entries) + 2, c.semantic_allocator)
 	for name in ([]string{"base", "core"}) {
 		if bundled := install_component(name); bundled != "" {
-			c.collections[name] = bundled
+			// Cloned like an explicit entry, so the whole map has one owner and
+			// the heap path `install_component` returns is not left behind.
+			c.collections[name] = strings.clone(bundled, c.semantic_allocator)
+			delete(bundled)
 		}
 	}
 

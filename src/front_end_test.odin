@@ -3,6 +3,7 @@ package lokec
 import "base:runtime"
 import "core:fmt"
 import "core:mem"
+import "core:path/filepath"
 import "core:strings"
 import "core:testing"
 
@@ -487,6 +488,23 @@ default_output_keeps_a_dotted_directory_name :: proc(t: ^testing.T) {
 		"dotted directory defaulted to %q",
 		actual,
 	)
+}
+
+// `.` and `..` name a directory without spelling any component of it, so the
+// sibling executable takes its name from the resolved path rather than from the
+// dots themselves — `..exe` is not a name.
+@(test)
+default_output_resolves_a_dot_directory :: proc(t: ^testing.T) {
+	for input in ([]string{".", "./", `.\`}) {
+		actual := default_output_path(input, .Exe)
+		testing.expectf(
+			t,
+			filepath.base(actual) != "..exe" && strings.has_suffix(actual, ".exe"),
+			"%q defaulted to %q",
+			input,
+			actual,
+		)
+	}
 }
 
 @(test)
