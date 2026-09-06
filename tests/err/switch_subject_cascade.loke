@@ -1,0 +1,16 @@
+package main;
+
+// A switch whose subject does not resolve knows nothing about control flow.
+// Claiming it falls through blamed the procedure for a missing return it has.
+f :: proc(n: int) -> int {
+	switch (undefined_thing) {
+	case 1:
+		return 1;
+	case:
+		return 0;
+	}
+}
+
+main :: proc() {
+	_ = f(1);
+}

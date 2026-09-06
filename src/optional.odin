@@ -294,7 +294,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 	subject := check_single_expr(k, s.subject)
 	if subject == INVALID_TYPE {
-		return Flow_Info{can_fall_through = true}
+		return Flow_Info{}
 	}
 	// design.md: a dynamic interface is a borrowed view and supports no type
 	// switch in version 1.
@@ -306,7 +306,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 			"`%s` is a borrowed view and has no type switch; add a slot for the behavior, or switch on an `any_view`",
 			type_name(k.c, subject),
 		)
-		return Flow_Info{can_fall_through = true}
+		return Flow_Info{}
 	}
 	erased := subject == TYPE_ANY_VIEW
 	// design.md "Unions": a switch over a place borrows it, and a switch over a
@@ -320,7 +320,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 			"a type switch needs a union or an `any_view`, found `%s`",
 			type_name(k.c, subject),
 		)
-		return Flow_Info{can_fall_through = true}
+		return Flow_Info{}
 	}
 
 	covered := make(map[Type_Id]bool, 8, context.temp_allocator)
@@ -422,7 +422,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 			k.scope.names[name] = entry.binding_symbol
 		}
 		k.switch_depth += 1
-		case_flow := check_case_body(k, entry.stmts)
+		case_flow := check_stmts(k, entry.stmts)
 		k.switch_depth -= 1
 		k.scope = case_scope
 

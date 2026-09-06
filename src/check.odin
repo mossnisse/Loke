@@ -2325,20 +2325,22 @@ check_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 	if b == nil {
 		return FLOWS
 	}
+	return check_stmts(k, b.stmts)
+}
+
+// The combined flow of a statement sequence: a block's, or one switch case's.
+check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 	flow := FLOWS
-	for stmt in b.stmts {
+	for stmt in stmts {
 		result := check_stmt(k, stmt)
 		flow.returns ||= result.returns
 		flow.breaks ||= result.breaks
 		flow.continues ||= result.continues
+		// Statements after a terminator are still checked, but they cannot
+		// restore fallthrough.
 		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
 		// Only the last statement can be the one control falls out of.
 		flow.open_enum_exit = result.open_enum_exit
-		if !flow.can_fall_through {
-			// Statements after a terminator are still checked, but they cannot
-			// restore fallthrough.
-			continue
-		}
 	}
 	return flow
 }
@@ -2530,7 +2532,8 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	for target, index in s.lhs {
 		// A discard destination constrains nothing; its value is still evaluated
 		// for whatever it does on the way.
-		if ident, is_ident := target.(^Expr_Ident); is_ident && ident.name == "_" {
+		if is_discard(target) {
+			ident := target.(^Expr_Ident)
 			ident.type = check_single_expr(k, s.rhs[index])
 			ident.immutable = .Discard
 			if type_is_untyped(k.c, ident.type) {
@@ -2757,7 +2760,8 @@ check_user_compound :: proc(
 // is a legal destination with no storage.
 @(private = "file")
 check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id, inserts := true) -> Type_Id {
-	if ident, is_ident := target.(^Expr_Ident); is_ident && ident.name == "_" {
+	if is_discard(target) {
+		ident := target.(^Expr_Ident)
 		ident.type = from
 		ident.immutable = .Discard
 		ident.value_category = .Invalid
@@ -2858,12 +2862,6 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 		}
 	}
 	else_flow := check_stmt(k, s.otherwise)
-	switch {
-	case then_flow.can_fall_through && else_flow.can_fall_through:
-	case then_flow.can_fall_through:
-	case else_flow.can_fall_through:
-	case:
-	}
 	return Flow_Info {
 		can_fall_through = then_flow.can_fall_through || else_flow.can_fall_through,
 		returns          = then_flow.returns || else_flow.returns,
@@ -2928,7 +2926,9 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 	subject := check_single_expr(k, s.subject)
 	if subject == INVALID_TYPE {
-		return FLOWS
+		// Nothing is known about this switch, and claiming it falls through would
+		// blame the procedure for a missing return it may well have.
+		return Flow_Info{}
 	}
 	if type_is_untyped(k.c, subject) {
 		materialize(k, s.subject, default_type(k.c, subject))
@@ -2936,7 +2936,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 	if !type_is_comparable(k.c, subject) {
 		errorf(k.c, expr_span(s.subject), "L0355", "`%s` is not comparable", type_name(k.c, subject))
-		return FLOWS
+		return Flow_Info{}
 	}
 
 	seen := make([dynamic]Const_Value, 0, 8, context.temp_allocator)
@@ -2957,7 +2957,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		k.switch_depth += 1
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
-		case_flow := check_case_body(k, entry.stmts)
+		case_flow := check_stmts(k, entry.stmts)
 		k.scope = case_scope
 		k.switch_depth -= 1
 		flow.returns ||= case_flow.returns
@@ -2978,18 +2978,6 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		continues        = flow.continues,
 		open_enum_exit   = member_complete && !any_case_falls ? s : nil,
 	}
-}
-
-check_case_body :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
-	flow := FLOWS
-	for stmt in stmts {
-		result := check_stmt(k, stmt)
-		flow.returns ||= result.returns
-		flow.breaks ||= result.breaks
-		flow.continues ||= result.continues
-		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
-	}
-	return flow
 }
 
 @(private = "file")
