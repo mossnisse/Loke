@@ -194,6 +194,15 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 		}
 		append(&pkg.files, file)
 	}
+	// The view is built here rather than at the next round's top, so `import`
+	// items are visible to the discovery pass that loaded this package and the
+	// graph stops being walked one level per round. Nothing is checked earlier
+	// than before: `prepare_package` does reach the package a round sooner, but
+	// declaring an `impl` block waits on the package's own `when` items now, and
+	// that is what the round of slack used to stand in for -- badly, since it
+	// never covered the root package, whose blocks always raced its own
+	// selection.
+	rebuild_active_items(c, pkg)
 	return id, len(pkg.files) > 0
 }
 
@@ -243,13 +252,8 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 	// reallocates the store. Nothing here retains a `^Package` across a load; the
 	// index walk also picks up the new packages in the same pass.
 	//
-	// A package loaded here has no selected view until the next round's top, so
-	// its own imports are found a round later and the graph is walked one level
-	// per round. Building the view at load time to collapse that is wrong, however
-	// cheap it looks: it also hands the package to `prepare_package` a round
-	// early, and `declare_impl_block` resolves the subject's fields — which a
-	// `when` branch selected later in that same round may be what declares.
-	// `core:fs` writes exactly that shape.
+	// A package loaded here already has its selected view, so its own imports are
+	// found before this pass ends rather than one round later.
 	for index := 1; index < len(c.packages); index += 1 {
 		id := Package_Id(index)
 		for position := 0; position < len(package_of(c, id).files); position += 1 {
