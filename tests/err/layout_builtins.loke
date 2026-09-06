@@ -8,4 +8,8 @@ main :: proc() {
 	fmt.println(offset_of(Point, z));
 	fmt.println(size_of());
 	fmt.println(offset_of(Point, 1 + 2));
+	// A layout operand is read as a type first and as a value only if that reading
+	// stays silent, so a broken array length is one complaint rather than one per
+	// reading.
+	fmt.println(size_of([absent]i32));
 }

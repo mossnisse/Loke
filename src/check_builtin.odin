@@ -395,8 +395,19 @@ layout_operand_type :: proc(k: ^Checker, e: Expr, kind: Builtin_Kind) -> Type_Id
 	if e == nil {
 		return INVALID_TYPE
 	}
+	// Types and expressions share one node domain, so which reading applies is not
+	// a question the syntax answers: the type reading is tried first and the value
+	// reading is the fallback. `resolve_type_syntax` stays silent for a node that
+	// simply is not type syntax, so a complaint means it *was* type syntax and was
+	// broken -- and reading the same node again as a value would find the same
+	// thing and say it twice. `size_of([BAD]i32)` reported the unknown length
+	// once per reading, because the array case checks the length expression.
+	before := k.c.error_count
 	if denoted := resolve_type_syntax(k, e); denoted != INVALID_TYPE {
 		return denoted
+	}
+	if k.c.error_count != before {
+		return INVALID_TYPE
 	}
 	if check_single_expr(k, e) == INVALID_TYPE {
 		return INVALID_TYPE
