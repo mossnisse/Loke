@@ -399,7 +399,11 @@ instance_key :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Generic_Bind
 		if binding.arg.is_type {
 			fmt.sbprintf(&b, "T%d", u32(binding.arg.type))
 		} else {
-			fmt.sbprintf(&b, "V%d:%s", u32(binding.arg.value_type), const_key_text(c, binding.arg.value))
+			// Length-prefixed: a string argument may contain the `|` and `V<id>:`
+			// this composes with, and without a prefix-free encoding two different
+			// argument vectors share one key — and one instance.
+			text := const_key_text(c, binding.arg.value)
+			fmt.sbprintf(&b, "V%d:%d:%s", u32(binding.arg.value_type), len(text), text)
 		}
 	}
 	return strings.to_string(b)
@@ -472,17 +476,15 @@ generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gene
 			strings.write_string(&b, identifier_text(c, sym.name))
 		}
 	}
+	// `.` separates the parts, so it cannot survive inside one: a package-qualified
+	// type name has one, and so may a string argument. The owner prefix keeps its
+	// own dots, which are structural.
 	for binding in bindings {
 		strings.write_string(&b, ".")
-		if binding.arg.is_type {
-			escaped := llvm_safe(type_name(c, binding.arg.type))
-			strings.write_string(&b, escaped)
-			delete(escaped)
-		} else {
-			escaped := llvm_safe(const_key_text(c, binding.arg.value))
-			strings.write_string(&b, escaped)
-			delete(escaped)
-		}
+		part := binding.arg.is_type ? type_name(c, binding.arg.type) : const_key_text(c, binding.arg.value)
+		escaped := llvm_safe(part, dots = false)
+		strings.write_string(&b, escaped)
+		delete(escaped)
 	}
 	return strings.to_string(b)
 }
@@ -763,19 +765,10 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	runtime := make([dynamic]Arg_Info, 0, len(args), k.c.semantic_allocator)
 	result.scope = scope
 
-	outer_scope, outer_pkg, outer_lookup, outer_impl := k.scope, k.pkg, k.lookup_pkg, k.impl_type
-	outer_file, outer_file_node := k.file, k.file_node
-	k.scope = scope
-	k.pkg = template.pkg
-	k.lookup_pkg = template.lookup_pkg
-	k.impl_type = template.impl_type
-	if template.file_node != nil {
-		k.file, k.file_node = template.file, template.file_node
-	}
-	defer {
-		k.scope, k.pkg, k.lookup_pkg, k.impl_type = outer_scope, outer_pkg, outer_lookup, outer_impl
-		k.file, k.file_node = outer_file, outer_file_node
-	}
+	// Inference resolves the template's own written types, so it runs positioned
+	// at the template exactly as instantiation does.
+	saved := enter_instance(k, template, scope)
+	defer leave_instance(k, saved)
 
 	// This is a property of the written call, before `$` arguments disappear
 	// from an instantiated signature. Delaying it until `build_candidate` would

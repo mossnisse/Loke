@@ -10,7 +10,17 @@ first :: proc(values: ..$T) -> T {
 	return values[0];
 }
 
+// An instance's identity is composed from its arguments, so a string argument
+// containing a composer's own separator must still name one instance: `|V<id>:`
+// in the cache key (22 is `string`'s type id, which the key embeds), `.` in the
+// emitted symbol.
+show :: proc($a: string, $b: string) { fmt.println(a, b); }
+
 main :: proc() {
 	values := [?]int{7, 8};
 	fmt.println(take(1), first(..values[:]));
+	show("x|V22:y", "z");
+	show("x", "y|V22:z");
+	show("a.b", "c");
+	show("a", "b.c");
 }

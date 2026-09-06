@@ -834,12 +834,14 @@ llvm_name_byte :: proc(ch: u8) -> bool {
 // mention punctuation LLVM would need quoting for. Keeping bytes LLVM already
 // accepts and escaping the rest as `$XX` (escaping `$` itself too) stays
 // injective while leaving the emitted symbol readable in a `tests/ll` golden.
-llvm_safe :: proc(name: string) -> string {
+// `dots = false` for a part that a `.` joins to others, so the separator stays
+// unambiguous: `show("a.b", "c")` and `show("a", "b.c")` are two symbols.
+llvm_safe :: proc(name: string, dots := true) -> string {
 	hex := "0123456789abcdef"
 	out := make([dynamic]u8, 0, len(name) + 8)
 	for i in 0 ..< len(name) {
 		ch := name[i]
-		if llvm_name_byte(ch) {
+		if llvm_name_byte(ch) && (dots || ch != '.') {
 			append(&out, ch)
 			continue
 		}
