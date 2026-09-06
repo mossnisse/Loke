@@ -126,27 +126,55 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	// Aliases first: an `impl vendor.Vector2` block names its subject through
 	// one, so the alias has to exist before the block can resolve it.
 	bind_import_aliases(k, pkg)
-	// Last, and only once this package has chosen every branch. Declaring a block
-	// resolves its subject, and resolving a record resolves its fields -- which a
-	// `when` branch not selected yet may be what declares. A signature resolves
-	// exactly once (`resolve_declaration_signature` returns on any `sig_state`
-	// but `.Unchecked`), so doing it early does not merely report early, it
-	// freezes a subject whose fields never resolved. `core:fs` writes that shape:
-	// `impl File`, and `File.handle` has the type its `when (LOKE_OS)` declares.
+	// Last, and one block at a time: only those whose subject has stopped
+	// changing shape. Declaring a block resolves its subject, and resolving a
+	// record resolves its fields -- which a `when` branch not selected yet may be
+	// what declares. A signature resolves exactly once
+	// (`resolve_declaration_signature` returns on any `sig_state` but
+	// `.Unchecked`), so doing it early does not merely report early, it freezes a
+	// subject whose fields never resolved. `core:fs` writes that shape: `impl
+	// File`, and `File.handle` has the type its `when (LOKE_OS)` declares.
+	//
+	// The question belongs to the subject's package, not to this one. `impl
+	// vendor.Cell` resolves `Cell` in `vendor`'s scope, so it is `vendor`'s
+	// selection that has to have settled -- and `vendor`'s imports' too, since a
+	// field may be spelled `other.Thing`.
 	//
 	// Nothing is lost by waiting. A block still undeclared once selection has
 	// settled is declared by `resolve_impl_signatures`, which is also what turns
 	// an unresolvable subject from pending into a diagnostic.
-	if !package_has_pending_whens(pkg) {
-		for file in pkg.files {
-			k.file, k.file_node = file.file, file
-			for item in file.active_items {
-				if impl, ok := item.(^Item_Impl); ok {
-					declare_impl_block(k, impl)
-				}
+	for file in pkg.files {
+		k.file, k.file_node = file.file, file
+		for item in file.active_items {
+			impl, ok := item.(^Item_Impl)
+			if ok && !package_closure_has_pending_whens(k.c, impl_subject_package(k, impl)) {
+				declare_impl_block(k, impl)
 			}
 		}
 	}
+}
+
+// The package whose scope this `impl` subject is written in, read off the
+// syntax rather than resolved -- resolving is the very thing being gated. An
+// unbound alias answers this package, which costs nothing: the subject will not
+// resolve either, and `declare_impl_block` leaves such a block for a later
+// round.
+@(private = "file")
+impl_subject_package :: proc(k: ^Checker, item: ^Item_Impl) -> Package_Id {
+	subject := item.type
+	if call, is_call := subject.(^Expr_Call); is_call {
+		subject = call.callee // `impl vendor.Table($K, $V)`
+	}
+	selector, is_selector := subject.(^Expr_Selector)
+	if !is_selector {
+		return k.pkg
+	}
+	ident, is_ident := selector.operand.(^Expr_Ident)
+	if !is_ident {
+		return k.pkg
+	}
+	sym := symbol_of(k.c, lookup_symbol(k.scope, identifier_of(k.c, ident)))
+	return sym != nil && sym.kind == .Package_Alias ? sym.pkg : k.pkg
 }
 
 // design.md: an import name is a lexical alias and nothing more. Two names for

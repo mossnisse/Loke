@@ -1,0 +1,28 @@
+package main; import "core:fmt";
+
+import "./vendor";
+import "./far";
+
+// Declaring an `impl` block resolves its subject, and resolving a record
+// resolves its fields -- so a block must wait for the package that declares
+// those fields to have chosen every branch. That package is the subject's, not
+// this one: `main` has no `when` at all, and both blocks below used to freeze a
+// record whose field type had not been declared yet, reporting `unknown type
+// Slot` against a line in a file `main` does not own.
+
+// The `when` is in the subject's own package.
+impl vendor.Cell {
+	get :: proc(self: vendor.Cell) -> int { return int(self.value); }
+}
+
+// The subject's package is settled; the one it imports is not.
+impl far.Box {
+	get :: proc(self: far.Box) -> int { return int(self.value); }
+}
+
+main :: proc() {
+	fmt.println(vendor.Cell{ value = 7 }.get());
+	fmt.println(size_of(vendor.Cell));
+	fmt.println(far.Box{ value = 9 }.get());
+	fmt.println(size_of(far.Box));
+}

@@ -1,0 +1,11 @@
+package vendor;
+
+DEBUG :: build_config(DEBUG, false);
+
+when (DEBUG) {
+	@(public) Slot :: i64;
+} else {
+	@(public) Slot :: i32;
+}
+
+@(public) Cell :: struct { @(public) value: Slot }

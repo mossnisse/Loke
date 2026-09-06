@@ -89,6 +89,37 @@ package_has_pending_whens :: proc(pkg: ^Package) -> bool {
 	return false
 }
 
+// Whether any file-scope `when` is still pending in this package or in anything
+// it imports. Resolving a record resolves its fields, and a field type is named
+// in the record's own package through the record's own imports -- so whether a
+// declaration there has stopped changing shape is not a question one package
+// answers alone.
+package_closure_has_pending_whens :: proc(c: ^Compiler, id: Package_Id) -> bool {
+	seen := make([]bool, len(c.packages), context.temp_allocator)
+	return closure_has_pending_whens(c, id, seen)
+}
+
+@(private = "file")
+closure_has_pending_whens :: proc(c: ^Compiler, id: Package_Id, seen: []bool) -> bool {
+	if id == INVALID_PACKAGE || int(id) >= len(seen) || seen[id] {
+		return false
+	}
+	seen[id] = true
+	pkg := package_of(c, id)
+	if pkg == nil {
+		return false
+	}
+	if package_has_pending_whens(pkg) {
+		return true
+	}
+	for edge in pkg.imports {
+		if closure_has_pending_whens(c, edge.target, seen) {
+			return true
+		}
+	}
+	return false
+}
+
 // One activation round. Returns true when a branch was chosen, which is what
 // makes the surrounding fixed point terminate.
 activate_when_items :: proc(k: ^Checker, pkg: ^Package) -> bool {

@@ -1,0 +1,5 @@
+package far; import "../vendor";
+
+// `far` has no `when` of its own. What decides `Box`'s field type is one step
+// further out, in the package `far` imports.
+@(public) Box :: struct { @(public) value: vendor.Slot }
