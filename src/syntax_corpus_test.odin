@@ -20,8 +20,12 @@ import "core:testing"
 @(test)
 syntax_corpus_parses :: proc(t: ^testing.T) {
 	paths := corpus(t, "tests/syntax/*.loke")
+	defer delete_corpus(paths)
 	for path in paths {
+		// The text backs the compiler's `Source`, so it outlives the compilation:
+		// registered first, it is released last.
 		data, readable := os.read_entire_file(path)
+		defer delete(data)
 		if !testing.expectf(t, readable, "%s: cannot read", path) {
 			continue
 		}
@@ -30,6 +34,7 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 		c := test_compiler(text)
 		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
+		defer delete(tokens)
 		f := parse(&c, 0, tokens)
 		defer destroy_ast(&f)
 
@@ -63,7 +68,9 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 			testing.expectf(t, span.lo >= previous, "%s: item spans are out of order", path)
 			previous = span.lo
 		}
-		testing.expectf(t, len(ast_dump(&f)) > 0, "%s: the dump did not complete", path)
+		dump := ast_dump(&f)
+		defer delete(dump)
+		testing.expectf(t, len(dump) > 0, "%s: the dump did not complete", path)
 	}
 }
 
@@ -72,11 +79,14 @@ syntax_corpus_parses :: proc(t: ^testing.T) {
 @(test)
 ambiguity_goldens :: proc(t: ^testing.T) {
 	paths := corpus(t, "tests/syntax/ambiguity/*.loke")
+	defer delete_corpus(paths)
 	for path in paths {
 		data, readable := os.read_entire_file(path)
-		expected, has_expected := os.read_entire_file(
-			strings.concatenate({strings.trim_suffix(path, ".loke"), ".expected"}),
-		)
+		defer delete(data)
+		golden := strings.concatenate({strings.trim_suffix(path, ".loke"), ".expected"})
+		defer delete(golden)
+		expected, has_expected := os.read_entire_file(golden)
+		defer delete(expected)
 		if !testing.expectf(t, readable && has_expected, "%s: missing source or golden", path) {
 			continue
 		}
@@ -84,12 +94,19 @@ ambiguity_goldens :: proc(t: ^testing.T) {
 		c := test_compiler(string(data))
 		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
+		defer delete(tokens)
 		f := parse(&c, 0, tokens)
 		defer destroy_ast(&f)
 
 		testing.expectf(t, c.error_count == 0, "%s: an ambiguity fixture must be valid", path)
 		dump := ast_dump(&f)
-		want := strings.replace_all(string(expected), "\r\n", "\n") or_else string(expected)
+		defer delete(dump)
+		// `replace_all` hands its input straight back when there is nothing to
+		// replace, so the result is only ours to free when it allocated.
+		want, converted := strings.replace_all(string(expected), "\r\n", "\n")
+		defer if converted {
+			delete(want)
+		}
 		testing.expectf(t, dump == want, "%s: dump changed:\n%s", path, dump)
 	}
 }
@@ -103,9 +120,11 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 	ITERATIONS :: 200
 
 	paths := corpus(t, "tests/syntax/*.loke")
+	defer delete_corpus(paths)
 	state: u64 = 0x9e3779b97f4a7c15
 	for path in paths {
 		data, readable := os.read_entire_file(path)
+		defer delete(data)
 		if !readable {
 			continue
 		}
@@ -114,6 +133,7 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 		source := test_compiler(text)
 		defer destroy_compilation(&source)
 		base := lex(&source, 0)
+		defer delete(base)
 		if len(base) < 3 {
 			continue
 		}
@@ -138,18 +158,30 @@ mutation_fuzzing :: proc(t: ^testing.T) {
 					span.hi,
 				)
 			}
+			dump := ast_dump(&f)
 			testing.expectf(
 				t,
-				len(ast_dump(&f)) > 0,
+				len(dump) > 0,
 				"seed %d, %s: the dump did not complete",
 				seed,
 				path,
 			)
 
+			// Released here rather than deferred: 200 iterations per file would
+			// otherwise all pile up before the enclosing scope ends.
+			delete(dump)
 			destroy_ast(&f)
 			delete(mutated)
 		}
 	}
+}
+
+@(private = "file")
+delete_corpus :: proc(paths: []string) {
+	for path in paths {
+		delete(path)
+	}
+	delete(paths)
 }
 
 @(private = "file")
