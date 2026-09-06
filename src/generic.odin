@@ -667,16 +667,13 @@ match_type_pattern :: proc(
 			return match_type_pattern(k, v.args[0].value, info.element, scope, out)
 		}
 		// `^Table($K, $V)`: the argument must be an instance of that same template,
-		// and its own bound arguments supply the parts.
+		// and its own bound arguments supply the parts. `pkg.Table($K, $V)` names
+		// the template as plainly as the bare spelling does, which is why this asks
+		// `named_callee_symbol` rather than insisting on a lone identifier.
 		if info.instance_of == INVALID_SYMBOL {
 			return false
 		}
-		callee, is_ident := v.callee.(^Expr_Ident)
-		if !is_ident {
-			return false
-		}
-		wanted := lookup_symbol(scope, identifier_of(k.c, callee))
-		if wanted != info.instance_of {
+		if named_callee_symbol(k, v.callee) != info.instance_of {
 			return false
 		}
 		if len(v.args) != len(info.instance_args) {
