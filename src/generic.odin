@@ -1784,6 +1784,22 @@ declare_instance_impl_members :: proc(k: ^Checker, item: ^Item_Impl, subject: Ty
 				append(&symbols, INVALID_SYMBOL) // a more specialized block supplied it
 				continue
 			}
+			if member_named(k.c, added[:], name_id) != INVALID_SYMBOL {
+				errorf(
+					k.c, name.span, "L0409",
+					"`%s` already has a member `%s`", type_name(k.c, subject), name.text,
+				)
+				append(&symbols, INVALID_SYMBOL)
+				continue
+			}
+			if subject_field_named(k, subject, name_id) != INVALID_SYMBOL {
+				errorf(
+					k.c, name.span, "L0409",
+					"`%s` already has a field `%s`", type_name(k.c, subject), name.text,
+				)
+				append(&symbols, INVALID_SYMBOL)
+				continue
+			}
 			id := new_symbol(k.c, Symbol {
 				name       = name_id,
 				span       = name.span,

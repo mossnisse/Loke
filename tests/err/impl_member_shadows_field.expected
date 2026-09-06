@@ -4,3 +4,9 @@ L0409
 L0409
 @18:2
 `D` already has a member `get`
+L0409
+@26:2
+`Generic(int)` already has a field `value`
+L0409
+@28:2
+`Generic(int)` already has a member `get`

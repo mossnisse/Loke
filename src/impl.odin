@@ -203,7 +203,6 @@ install_impl_members :: proc(k: ^Checker, kind: Impl_Kind, subject: Type_Id, add
 // so `src/generic.odin` reaches the same one from an instance's own package.
 // The subject's own fields, which share the namespace its members are
 // declared into.
-@(private = "file")
 subject_field_named :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	info := type_of(k.c, type_underlying(k.c, subject))
 	return info == nil ? INVALID_SYMBOL : member_named(k.c, info.fields, name)

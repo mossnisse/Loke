@@ -4,3 +4,9 @@ L0304
 L0304
 @10:18
 `a` is already a field of this record
+L0304
+@14:15
+`x` is already a field of this record
+L0304
+@15:10
+`a` is already a field of this record

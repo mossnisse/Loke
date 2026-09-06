@@ -9,7 +9,14 @@ S :: struct { x: int, x: i32 }
 // The same thing written as one group of names.
 T :: struct { a, a: int }
 
+// Anonymous records have the same field namespace, even though their types are
+// interned structurally rather than declared as nominal structs.
+U :: (x: int, x: i32);
+V :: (a, a: int);
+
 main :: proc() {
 	fmt.println(size_of(S));
 	fmt.println(size_of(T));
+	fmt.println(size_of(U));
+	fmt.println(size_of(V));
 }

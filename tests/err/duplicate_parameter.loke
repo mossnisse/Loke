@@ -8,7 +8,14 @@ f :: proc(a: int, a: int) -> int { return a; }
 // returned type, naming neither parameter.
 g :: proc(b: int, c: i32, b: i32) -> i32 { return b; }
 
+// Generic instances remove `$` parameters from their runtime signature, but
+// their written names still share the procedure's parameter namespace.
+h :: proc($d: int, d: int) -> int { return d; }
+i :: proc($e: int, $e: int) -> int { return e; }
+
 main :: proc() {
 	fmt.println(f(1, 2));
 	fmt.println(g(1, 2, 3));
+	fmt.println(h(1, 2));
+	fmt.println(i(3, 3));
 }

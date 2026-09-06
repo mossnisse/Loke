@@ -809,6 +809,7 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 @(private = "file")
 resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 	specs := make([dynamic]Anon_Record_Field, 0, len(value.fields), context.temp_allocator)
+	names := make([dynamic]Identifier_Id, 0, len(value.fields), context.temp_allocator)
 	bad := false
 	for &field in value.fields {
 		field_type := resolve_type_syntax(k, field.type)
@@ -819,7 +820,15 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 		}
 		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
-			append(&specs, Anon_Record_Field{name = intern_identifier(k.c, name.text), type = field_type})
+			name_id := identifier_id_of(k.c, name)
+			if name.text != "_" && identifier_list_contains(names[:], name_id) {
+				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
+				continue
+			}
+			if name.text != "_" {
+				append(&names, name_id)
+			}
+			append(&specs, Anon_Record_Field{name = name_id, type = field_type})
 		}
 	}
 	if bad || len(specs) == 0 {
@@ -1090,6 +1099,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	escapes_list := make([dynamic]Escape_Level, 0, 4, k.c.semantic_allocator)
 	by_ptr_list := make([dynamic]bool, 0, 4, k.c.semantic_allocator)
 	param_symbols := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
+	param_names := make([dynamic]Identifier_Id, 0, 4, context.temp_allocator)
 	defaults := make([dynamic]Expr, 0, 4, k.c.semantic_allocator)
 
 	// design.md "Receiver forms", set below by whichever name is the receiver, so
@@ -1135,6 +1145,19 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		}
 		bindings := make([dynamic]Symbol_Id, 0, len(parameter.names), k.c.semantic_allocator)
 		for parameter_name, name_index in parameter.names {
+			// Use the written names rather than runtime symbols: a generic instance
+			// removes `$` parameters below, but their names still occupy this namespace.
+			name_id := identifier_id_of(k.c, parameter_name.name)
+			if parameter_name.name.text != "_" {
+				if identifier_list_contains(param_names[:], name_id) {
+					errorf(
+						k.c, parameter_name.name.span, "L0304",
+						"`%s` is already a parameter of this procedure", parameter_name.name.text,
+					)
+				} else {
+					append(&param_names, name_id)
+				}
+			}
 			// A `$` parameter is a compile-time input: the instantiation consumed
 			// its argument and bound the name as a constant, so the instance's
 			// runtime signature does not carry it.
@@ -1162,18 +1185,6 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				if !variadic_position_ok(k, literal, position, name_index, parameter.span) {
 					name_type, mode = written_type, .Value
 				}
-			}
-			// Parameters share one namespace too, and `install_symbols` writes the
-			// body's scope blind, so two named `a` used to leave the body's `a` bound
-			// to the second one with nothing said. The binding is still made: every
-			// written parameter owns a position, and this program is not going to be
-			// emitted anyway.
-			if parameter_name.name.text != "_" &&
-			   member_named(k.c, param_symbols[:], identifier_id_of(k.c, parameter_name.name)) != INVALID_SYMBOL {
-				errorf(
-					k.c, parameter_name.name.span, "L0304",
-					"`%s` is already a parameter of this procedure", parameter_name.name.text,
-				)
 			}
 			binding := new_binding_symbol(k, parameter_name.name, .Parameter)
 			if bound := symbol_of(k.c, binding); bound != nil {
@@ -1297,6 +1308,16 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 // checker. The duplicate checks above need the id before a symbol exists.
 identifier_id_of :: proc(c: ^Compiler, name: Name) -> Identifier_Id {
 	return name.id == INVALID_IDENTIFIER ? intern_identifier(c, name.text) : name.id
+}
+
+@(private = "file")
+identifier_list_contains :: proc(names: []Identifier_Id, wanted: Identifier_Id) -> bool {
+	for name in names {
+		if name == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 @(private = "file")

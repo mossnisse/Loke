@@ -18,7 +18,19 @@ impl D {
 	get :: proc(self: D) -> i32 { return 0; }
 }
 
+Generic :: struct($T: type) { value: T }
+
+// Instantiated generic blocks use a separate symbol-creation path, but obey the
+// same field/member namespace as ordinary blocks.
+impl Generic($T) {
+	value :: proc(self) -> T { return self.value; }
+	get :: proc(self) -> T { return self.value; }
+	get :: proc(self) -> T { return self.value; }
+}
+
 main :: proc() {
 	fmt.println(C{ v = 7 }.v);
 	fmt.println(D{ w = 1 }.get());
+	g: Generic(int) = {1};
+	fmt.println(g.value);
 }
