@@ -198,6 +198,20 @@ is_ident_part :: proc(ch: u8) -> bool {
 	return is_ident_start(ch) || is_digit(ch)
 }
 
+// A quoted string or character literal reaches here unclosed: it ends at the
+// line, whatever it was in the middle of.
+@(private = "file")
+at_literal_end :: proc(l: ^Lexer) -> bool {
+	return at_end(l) || peek(l) == '\n' || peek(l) == '\r'
+}
+
+@(private = "file")
+skip_ident_tail :: proc(l: ^Lexer) {
+	for !at_end(l) && is_ident_part(peek(l)) {
+		l.pos += 1
+	}
+}
+
 @(private = "file")
 skip_trivia :: proc(l: ^Lexer) {
 	for !at_end(l) {
@@ -289,9 +303,7 @@ next_token :: proc(l: ^Lexer) -> Token {
 @(private = "file")
 ident_or_keyword :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
-	for !at_end(l) && is_ident_part(peek(l)) {
-		l.pos += 1
-	}
+	skip_ident_tail(l)
 
 	// Contextual keywords (`static`, `self`, `slot`, `using`, `delegate`,
 	// `thread_local`) and the predeclared, shadowable names (`nil`, `true`,
@@ -432,7 +444,11 @@ number :: proc(l: ^Lexer) -> Token {
 			offset = 2
 		}
 		if !is_digit(peek(l, offset)) {
+			// Same rule as `number_end`: take the whole bad word, so `1einvalid`
+			// is one diagnostic covering all of it rather than `1e` plus a
+			// stray name.
 			l.pos += offset
+			skip_ident_tail(l)
 			errorf(l.c, span_from(l, lo), "L0112", "an exponent needs at least one digit")
 			return Token{kind = .Error, lo = lo, hi = l.pos}
 		}
@@ -455,9 +471,7 @@ number_end :: proc(l: ^Lexer, lo: u32, kind: Token_Kind) -> Token {
 		return Token{kind = kind, lo = lo, hi = l.pos}
 	}
 	bad := l.pos
-	for !at_end(l) && is_ident_part(peek(l)) {
-		l.pos += 1
-	}
+	skip_ident_tail(l)
 	errorf(l.c, span_from(l, lo), "L0113", "unexpected `%s` in a number", l.src[bad:l.pos])
 	return Token{kind = .Error, lo = lo, hi = l.pos}
 }
@@ -472,6 +486,13 @@ escape :: proc(l: ^Lexer) -> bool {
 		return false
 	}
 	ch := peek(l)
+	// A line ending is not something a backslash escapes. Leaving it unconsumed
+	// is what lets the caller end the literal here instead of scanning into the
+	// next line looking for a closing quote.
+	if ch == '\n' || ch == '\r' {
+		errorf(l.c, span_from(l, lo), "L0105", "incomplete escape sequence")
+		return false
+	}
 	switch ch {
 	case 'a', 'b', 'e', 'f', 'n', 'r', 't', 'v', '\\', '"', '\'':
 		l.pos += 1
@@ -529,7 +550,7 @@ string_literal :: proc(l: ^Lexer) -> Token {
 	l.pos += 1
 	valid := true
 	for {
-		if at_end(l) || peek(l) == '\n' || peek(l) == '\r' {
+		if at_literal_end(l) {
 			errorf(l.c, Span{file = l.file, lo = lo, hi = lo + 1}, "L0104", "unterminated string literal")
 			return Token{kind = .Error, lo = lo, hi = l.pos}
 		}
@@ -540,7 +561,9 @@ string_literal :: proc(l: ^Lexer) -> Token {
 		case '\\':
 			escape_ok := escape(l)
 			valid = escape_ok && valid
-			if !escape_ok && at_end(l) {
+			// The escape failed *because* the literal ended, and has said so
+			// already. Looping back would report that same ending again.
+			if !escape_ok && at_literal_end(l) {
 				return Token{kind = .Error, lo = lo, hi = l.pos}
 			}
 		case:
@@ -573,13 +596,22 @@ raw_string_literal :: proc(l: ^Lexer) -> Token {
 rune_literal :: proc(l: ^Lexer) -> Token {
 	lo := l.pos
 	l.pos += 1
-	if at_end(l) || peek(l) == '\n' || peek(l) == '\r' {
+	if at_literal_end(l) {
 		errorf(
 			l.c,
 			Span{file = l.file, lo = lo, hi = lo + 1},
 			"L0106",
 			"unterminated character literal",
 		)
+		return Token{kind = .Error, lo = lo, hi = l.pos}
+	}
+
+	// `''` is terminated, just empty. Without this the branch below reads the
+	// closing quote as the character and the recovery scan runs on to the end
+	// of the line, dropping whatever else was written there.
+	if peek(l) == '\'' {
+		l.pos += 1
+		errorf(l.c, span_from(l, lo), "L0107", "a character literal holds exactly one character")
 		return Token{kind = .Error, lo = lo, hi = l.pos}
 	}
 
@@ -623,7 +655,10 @@ rune_literal :: proc(l: ^Lexer) -> Token {
 
 // Longest match wins. `:` is never combined with anything: `::` and `:=` are
 // token pairs by design.
-@(private = "file")
+//
+// `operator` takes the first entry that matches, so longest match is a property
+// of this order, not of the code: an entry must never precede one it is a
+// prefix of. `operator_table_is_ordered_longest_first` is what holds that.
 OPERATORS :: [?]struct {
 	text: string,
 	kind: Token_Kind,

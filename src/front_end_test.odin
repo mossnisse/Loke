@@ -558,6 +558,26 @@ static self slot using delegate thread_local manual
 	}
 }
 
+// grammar.md promises longest match, but `operator` scans `OPERATORS` in order
+// and takes the first entry that matches. Nothing else fails if a new operator
+// is appended after one that is a prefix of it — it simply never lexes.
+@(test)
+operator_table_is_ordered_longest_first :: proc(t: ^testing.T) {
+	table := OPERATORS
+	for op, i in table {
+		for later in table[i + 1:] {
+			testing.expectf(
+				t,
+				!strings.has_prefix(later.text, op.text),
+				"`%s` is listed before `%s`, so `%s` can never lex",
+				op.text,
+				later.text,
+				later.text,
+			)
+		}
+	}
+}
+
 // A malformed literal is one bad token, never a good token plus junk the parser
 // then has to explain.
 @(test)
@@ -574,6 +594,10 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 		{"1_000u", "L0113"},
 		{"1e", "L0112"},
 		{"1.5e+", "L0112"},
+		{"1einvalid", "L0112"}, // the bad exponent takes the whole word, like `123abc`
+		{"1e_5", "L0112"},
+		{"''", "L0107"}, // terminated, just empty
+
 		{`"\ud800"`, "L0114"}, // a surrogate half
 		{`"\U00110000"`, "L0114"}, // past the last code point
 		{`"\uZZZZ"`, "L0105"},
@@ -595,6 +619,35 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 	tokens := lex(&valid, 0)
 	testing.expectf(t, valid.error_count == 0, "valid literals produced %d diagnostics", valid.error_count)
 	testing.expectf(t, len(tokens) == 8, "expected seven literals, got %d tokens", len(tokens) - 1)
+}
+
+// A backslash escapes no line ending, so a string missing its closing quote is
+// one bad line rather than two: the code below it still reaches the parser.
+@(test)
+a_string_missing_its_quote_stops_at_the_line_end :: proc(t: ^testing.T) {
+	text := "bad := \"abc\\\n\tgood := 1;\n"
+	c := test_compiler(text)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	survived := false
+	for token in tokens {
+		if token.kind == .Ident && text[token.lo:token.hi] == "good" {
+			survived = true
+		}
+	}
+	testing.expect(t, survived, "the unterminated string swallowed the line after it")
+	// One literal, one diagnostic: the escape reports the ending, so the loop
+	// must not report it a second time.
+	testing.expectf(t, c.error_count == 1, "expected one diagnostic, got %d", c.error_count)
+
+	// The same shape at end of input, which is what the early return in
+	// `string_literal` was written for in the first place.
+	eof := test_compiler("bad := \"abc\\")
+	defer destroy_compilation(&eof)
+	eof_tokens := lex(&eof, 0)
+	defer delete(eof_tokens)
+	testing.expectf(t, eof.error_count == 1, "at end of input: expected one diagnostic, got %d", eof.error_count)
 }
 
 @(test)
