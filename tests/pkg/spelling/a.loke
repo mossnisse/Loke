@@ -1,0 +1,19 @@
+package main; import "core:fmt";
+
+// Two things this directory pins.
+//
+// This file sorts first, so a package key taken from the import spelling would
+// name the directory below `lib`. `z.LOKE` reaches the same directory through
+// the `myc:` collection it actually lives in, and the directory is what decides:
+// the key is `myc:lib` whichever import the discovery walk binds first.
+//
+// `z.LOKE` also spells its extension in upper case. Windows is the only v1
+// target and its filesystem is case-insensitive, so a file matched
+// case-sensitively would be silently invisible and `through_collection` would be
+// an unknown name.
+import direct "lib";
+
+main :: proc() {
+	fmt.println(direct.value());
+	fmt.println(through_collection());
+}

@@ -1,0 +1,4 @@
+package lib;
+
+@(public)
+value :: proc() -> int { return 5; }

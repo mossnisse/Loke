@@ -148,23 +148,25 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	return id, true
 }
 
-load_package_dir :: proc(c: ^Compiler, dir: string, key: string, at: Span) -> (Package_Id, bool) {
+// `written` is the import path as the source spelled it, used only to name the
+// package in a diagnostic. The identity the package keeps is derived from its
+// directory, by `package_key`.
+load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -> (Package_Id, bool) {
 	canonical := canonical_dir(dir)
 	if existing, found := c.package_by_dir[dir_key(canonical)]; found {
 		return existing, true
 	}
 	if !is_directory(canonical) {
-		errorf(c, at, "L0327", "cannot find package `%s`", key == "" ? dir : key)
+		errorf(c, at, "L0327", "cannot find package `%s`", written == "" ? dir : written)
 		return INVALID_PACKAGE, false
 	}
-	paths, _ := filepath.glob(strings.concatenate({canonical, "/*.loke"}))
-	slice.sort(paths)
+	paths := package_sources(canonical)
 	if len(paths) == 0 {
 		errorf(c, at, "L0327", "`%s` holds no `.loke` files", canonical)
 		return INVALID_PACKAGE, false
 	}
 
-	id := new_package(c, "", key)
+	id := new_package(c, "", package_key(c, canonical))
 	c.package_by_dir[dir_key(canonical)] = id
 	pkg := package_of(c, id)
 	for path in paths {
@@ -190,6 +192,26 @@ load_package_dir :: proc(c: ^Compiler, dir: string, key: string, at: Span) -> (P
 		append(&pkg.files, file)
 	}
 	return id, len(pkg.files) > 0
+}
+
+// Every `.loke` file directly in one directory, sorted, so one directory always
+// produces one package in one order. The extension is matched
+// case-insensitively: Windows is the only v1 target and its filesystem is too,
+// so a file named `helper.LOKE` must not be silently invisible.
+@(private = "file")
+package_sources :: proc(dir: string) -> []string {
+	entries, err := filepath.glob(strings.concatenate({dir, "/*"}))
+	if err != nil {
+		return nil
+	}
+	paths := make([dynamic]string, 0, len(entries))
+	for entry in entries {
+		if strings.to_lower(filepath.ext(entry), context.temp_allocator) == ".loke" {
+			append(&paths, entry)
+		}
+	}
+	slice.sort(paths[:])
+	return paths[:]
 }
 
 @(private = "file")
@@ -317,8 +339,64 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 		return strings.concatenate({root, "/", rest}), path, true
 	}
 	source_dir := filepath.dir(c.sources[file.file].path)
-	resolved := canonical_dir(strings.concatenate({source_dir, "/", path}))
-	return resolved, root_relative_key(c, resolved), true
+	return canonical_dir(strings.concatenate({source_dir, "/", path})), path, true
+}
+
+// A package's identity is a function of its directory, never of the import that
+// happened to reach it first. Two spellings of one directory — `core:log` and a
+// relative `../core/log`, say — resolve to one package, so deriving the key from
+// the spelling would let the discovery order decide the emitted symbol names,
+// and renaming a source file would rename another package's exports.
+//
+// The root package keeps the empty key its fixed entry name depends on. A
+// directory genuinely inside a registered collection is named `collection:path`;
+// the longest matching root wins, so a collection nested in another keeps its
+// own name, and the scan runs over sorted names so map order cannot decide it.
+// Anything else — including a path that escaped its collection with `..` — is
+// named relative to the root package rather than claiming a collection it is
+// not in.
+@(private = "file")
+package_key :: proc(c: ^Compiler, canonical: string) -> string {
+	if c.root_dir != "" && dir_key(canonical) == dir_key(c.root_dir) {
+		return ""
+	}
+	names := make([dynamic]string, 0, len(c.collections), context.temp_allocator)
+	for name in c.collections {
+		append(&names, name)
+	}
+	slice.sort(names[:])
+	best, best_root := "", -1
+	for name in names {
+		root := canonical_dir(c.collections[name])
+		rest, under := path_under(root, canonical)
+		if under && len(root) > best_root {
+			best = strings.concatenate({name, ":", rest}, c.semantic_allocator)
+			best_root = len(root)
+		}
+	}
+	if best_root >= 0 {
+		return best
+	}
+	return root_relative_key(c, canonical)
+}
+
+// `sub` spelled relative to `root`, when `sub` is `root` or lies inside it. Both
+// are canonical, so this is a prefix test on a directory boundary — case-blind,
+// for the same reason `dir_key` is.
+@(private = "file")
+path_under :: proc(root: string, sub: string) -> (rest: string, ok: bool) {
+	if root == "" {
+		return "", false
+	}
+	lower_root := strings.to_lower(root, context.temp_allocator)
+	lower_sub := strings.to_lower(sub, context.temp_allocator)
+	if lower_sub == lower_root {
+		return "", true
+	}
+	if len(sub) > len(root) && strings.has_prefix(lower_sub, lower_root) && sub[len(root)] == '/' {
+		return sub[len(root) + 1:], true
+	}
+	return "", false
 }
 
 @(private = "file")

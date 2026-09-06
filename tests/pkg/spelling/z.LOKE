@@ -1,0 +1,3 @@
+package main; import through "myc:lib";
+
+through_collection :: proc() -> int { return through.value(); }

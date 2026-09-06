@@ -349,6 +349,46 @@ packages_run :: proc(t: ^testing.T) {
 	}
 }
 
+// A package's mangled prefix comes from its directory, not from whichever import
+// spelling the discovery walk bound first: `tests/pkg/spelling` reaches one
+// directory both relatively, from the file that sorts first, and through the
+// collection it lives in. `packages_run` already proves the program builds and
+// runs; this asserts the name it built.
+@(test)
+package_keys_come_from_the_directory :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/spelling-ir.exe", TMP)
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string {
+				compiler_path(), "tests/pkg/spelling", "-o", exe, "-emit-ll",
+				"-collection", "myc=tests/pkg/spelling",
+			},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "compile failed:\n%s", string(stderr)) {
+		return
+	}
+	ir, read_ok := os.read_entire_file(fmt.tprintf("%s/spelling-ir.ll", TMP))
+	if !testing.expect(t, read_ok, "no IR was emitted") {
+		return
+	}
+	testing.expect(
+		t,
+		strings.contains(string(ir), "@loke.p.myc$3alib.value"),
+		"the collection the package lives in did not name it",
+	)
+	testing.expect(
+		t,
+		!strings.contains(string(ir), "@loke.p.lib.value"),
+		"the relative import spelling decided the package key",
+	)
+}
+
 // design.md "Program entry and exit": the corpus runs every
 // other case with no arguments, so this is the one that passes a real vector —
 // including non-ASCII arguments, which is what exercises the UTF-16-to-UTF-8
