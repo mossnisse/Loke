@@ -87,6 +87,17 @@ impl Scalar {
 
 scalar_value :: proc(value: Scalar) -> i32 { return value.value; }
 
+Vector_Scale :: struct { value: i32 }
+
+impl Vector_Scale {
+	// Built-in priority is about the whole operand pair. A SIMD destination does
+	// not suppress this mixed direct compound overload merely because `+=` also
+	// exists for a vector and one of its own lanes.
+	add_to_vector :: operator(+=) proc(left: inout Simd(i32, 4), right: Vector_Scale) {
+		left += right.value;
+	}
+}
+
 // These qualified names used to collide after punctuation was replaced by `_`.
 _int :: struct { value: i32 }
 
@@ -162,6 +173,11 @@ main :: proc() {
 	// The conversion-hook group uses ordinary overload ranking.
 	fmt.println(int(scalar_value(Scalar(7))));
 	fmt.println(int(scalar_value(Scalar(2.5))));
+
+	vector: Simd(i32, 4) = {1, 2, 3, 4};
+	scale := Vector_Scale{10};
+	vector += scale;
+	fmt.println(vector);
 
 	qualified := _int{31};
 	pointee := 32;

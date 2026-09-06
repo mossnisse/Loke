@@ -11,8 +11,12 @@ main :: proc() {
 	// The extension is not, but its named procedure is.
 	fmt.println(int(adapter.use_here(v)));
 	fmt.println(int(adapter.doubled(v)));
-	// One extension member, two instances, one qualified name.
-	number := vendor.Cell(i32){7};
-	text := vendor.Cell(string){"cell"};
-	fmt.println(int(adapter.unwrap(number)), adapter.unwrap(text), int(adapter.unwrap_here(number)));
+	// One extension member, two instances, one qualified name. The argument is
+	// deliberately the first thing to instantiate each `Cell`: callee lookup must
+	// already find the stable group, then see the member the argument adds to it.
+	fmt.println(
+		int(adapter.unwrap(vendor.Cell(i32){7})),
+		adapter.unwrap(vendor.Cell(string){"cell"}),
+		int(adapter.unwrap_here(vendor.Cell(i32){7})),
+	);
 }

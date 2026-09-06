@@ -129,7 +129,13 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 // Checks every written argument once, with no destination type. An untyped
 // constant therefore stays untyped until a candidate is chosen, which is exactly
 // what rank 2 needs to see.
-collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symbol_Id = nil, offset := 0) -> ([]Arg_Info, bool) {
+collect_call_arguments :: proc(
+	k: ^Checker,
+	args: []Argument,
+	candidates: []Symbol_Id = nil,
+	offset := 0,
+	live_group: Symbol_Id = INVALID_SYMBOL,
+) -> ([]Arg_Info, bool) {
 	out := make([]Arg_Info, len(args), k.c.semantic_allocator)
 	ok := true
 	for arg, index in args {
@@ -148,7 +154,16 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symb
 		// and ambiguous overloads gain no preference.
 		expected := INVALID_TYPE
 		if argument_needs_context(arg.value) {
-			expected = common_argument_type(k, candidates, info.name, index + offset)
+			context_candidates := candidates
+			// A synthetic generic-extension group grows while earlier explicitly
+			// typed arguments are checked. Later contextual arguments must see the
+			// newly materialised member too.
+			if live_group != INVALID_SYMBOL {
+				if group := symbol_of(k.c, live_group); group != nil && group.kind == .Proc_Group {
+					context_candidates = group.members
+				}
+			}
+			expected = common_argument_type(k, context_candidates, info.name, index + offset)
 		}
 		info.type = check_single_expr(k, arg.value, expected)
 		k.place_position, k.insert_position = false, false
@@ -167,7 +182,6 @@ collect_call_arguments :: proc(k: ^Checker, args: []Argument, candidates: []Symb
 // literal, an implicit `.name` selector — an enum member, a record member, or a
 // payloadless union variant — and `.name(payload)`, which is that selector in
 // callee position.
-@(private = "file")
 argument_needs_context :: proc(e: Expr) -> bool {
 	#partial switch v in e {
 	case ^Expr_Composite:

@@ -143,6 +143,14 @@ check_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: string) ->
 	if type == INVALID_TYPE || target == INVALID_TYPE {
 		return false
 	}
+	return materialize_value_expr(k, e, target, what)
+}
+
+// Finishes a value expression that has already been checked. Overload selection
+// sometimes needs its source type before it can decide whether the built-in or
+// user path owns the operation; checking it again would duplicate side effects
+// in the checker and diagnostics.
+materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: string) -> bool {
 	if !materialize(k, e, target) {
 		return false
 	}
@@ -2629,10 +2637,17 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 	// same path.
 	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
 	description := concat(k.c, "`", concat(k.c, identifier_text(k.c, sym.name), "`"))
-	args, args_ok := collect_call_arguments(k, v.args, members)
+	args, args_ok := collect_call_arguments(k, v.args, members, live_group = group)
 	if !args_ok {
 		v.type = INVALID_TYPE
 		return
+	}
+	// Checking an explicitly typed argument may instantiate a generic subject and
+	// add its public extension procedure to this synthetic group. Read the group
+	// again rather than resolving against the member snapshot from before the
+	// arguments existed.
+	if current := symbol_of(k.c, group); current != nil && current.kind == .Proc_Group {
+		members = current.members
 	}
 	cand, resolved := resolve_overload(k, v.span, description, members, args, expected)
 	if !resolved {

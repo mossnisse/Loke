@@ -2625,6 +2625,26 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		unsupported_construct(k, s.op_span)
 		return
 	}
+	// SIMD has a built-in operator table, but whether this *operation* is built in
+	// still depends on the right operand. Read its type once before built-in
+	// priority is decided, so a mixed `Simd + User_Type` direct compound overload
+	// remains reachable while a scalar or matching vector keeps the lane-wise path.
+	if type_is_simd(k.c, type) && compound_applies(k.c, op, type) {
+		hint := argument_needs_context(s.rhs[0]) ? type : INVALID_TYPE
+		rhs_type := check_single_expr(k, s.rhs[0], hint)
+		if rhs_type == INVALID_TYPE {
+			return
+		}
+		info := underlying_info(k.c, type)
+		builtin_rhs := info != nil &&
+			(type_underlying(k.c, rhs_type) == type_underlying(k.c, type) ||
+			 (!type_is_simd(k.c, rhs_type) && assignable(k.c, rhs_type, info.element)))
+		if !builtin_rhs && check_user_compound(k, s, op, type, rhs_type) {
+			return
+		}
+		materialize_value_expr(k, s.rhs[0], type, "assign")
+		return
+	}
 	// The built-in compound operation wins where it is defined; otherwise a
 	// direct `+=` overload, and failing that the binary `+` fallback.
 	if !operand_is_builtin(k, type) || !compound_applies(k.c, op, type) {
@@ -2667,10 +2687,16 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 // an ordinary assignment; a direct compound overload can skip the temporary
 // or allocation that implies (design.md).
 @(private = "file")
-check_user_compound :: proc(k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: Type_Id) -> bool {
-	rhs_type := check_single_expr(k, s.rhs[0])
+check_user_compound :: proc(
+	k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: Type_Id,
+	prechecked_rhs: Type_Id = INVALID_TYPE,
+) -> bool {
+	rhs_type := prechecked_rhs
 	if rhs_type == INVALID_TYPE {
-		return true // already reported; re-checking it would report a second time
+		rhs_type = check_single_expr(k, s.rhs[0])
+		if rhs_type == INVALID_TYPE {
+			return true // already reported; re-checking it would report a second time
+		}
 	}
 	operands := []Type_Id{type, rhs_type}
 

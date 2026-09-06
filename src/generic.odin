@@ -1634,6 +1634,7 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 	block.file, block.file_node = k.file, k.file_node
 	block.args = written
 	block.specificity = specificity
+	register_generic_extension_groups(k, block)
 	append(blocks, block)
 	item.declared = true
 	// A block declared after an instance already exists still applies to it, so
@@ -1644,6 +1645,58 @@ register_generic_impl :: proc(k: ^Checker, item: ^Item_Impl, template: Symbol_Id
 		}
 	}
 	return true
+}
+
+// A public procedure on a generic extension has a stable package name before
+// any concrete subject exists. Calls resolve this empty group first; checking an
+// explicitly typed argument instantiates the subject and fills the same group
+// before overload selection. Without the placeholder, callee lookup necessarily
+// ran too early to see the first instance.
+@(private = "file")
+register_generic_extension_groups :: proc(k: ^Checker, block: ^Generic_Impl) {
+	if block.item.kind != .Extend {
+		return
+	}
+	pkg := package_of(k.c, block.pkg)
+	if pkg == nil || pkg.scope == nil {
+		return
+	}
+	for member in block.item.members {
+		d, is_decl := member.(^Decl)
+		if !is_decl || d.kind != .Const || decl_proc_literal(d) == nil || !declaration_is_public(k, d) {
+			continue
+		}
+		for name in d.names {
+			if name.text == "_" {
+				continue
+			}
+			name_id := name.id
+			if name_id == INVALID_IDENTIFIER {
+				name_id = intern_identifier(k.c, name.text)
+			}
+			if existing, taken := pkg.scope.names[name_id]; taken {
+				sym := symbol_of(k.c, existing)
+				if sym != nil && sym.kind == .Proc_Group && sym.instance_of == block.template {
+					continue
+				}
+				// The qualified spelling is a convenience and does not displace an
+				// ordinary declaration that already owns this package name.
+				continue
+			}
+			pkg.scope.names[name_id] = new_symbol(k.c, Symbol {
+				name          = name_id,
+				span          = name.span,
+				kind          = .Proc_Group,
+				pkg           = block.pkg,
+				lookup_pkg    = block.pkg,
+				def_scope     = block.scope,
+				def_file      = block.file,
+				def_file_node = block.file_node,
+				public        = true,
+				instance_of   = block.template,
+			})
+		}
+	}
 }
 
 // Installs every matching block's members on a fresh instance, most specialized
@@ -1854,8 +1907,14 @@ register_instance_extension_name :: proc(
 	if sym == nil {
 		return
 	}
-	// A group this same template already built: the new instance joins it.
+	// The stable group registered with the generic block: the new instance joins
+	// it without changing what the package-qualified callee denotes.
 	if sym.kind == .Proc_Group && sym.instance_of == block.template {
+		for existing_member in sym.members {
+			if existing_member == member {
+				return
+			}
+		}
 		members := make([]Symbol_Id, len(sym.members) + 1, k.c.semantic_allocator)
 		copy(members, sym.members)
 		members[len(sym.members)] = member
