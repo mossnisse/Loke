@@ -21,6 +21,9 @@ main :: proc() {
 	when ("no") {
 		fmt.println(1);
 	}
+	// Neither branch of the rejected `when` below was selected, so this names
+	// nothing. Were `else` treated as the answer, `F` would resolve to 7.
+	fmt.println(F);
 }
 
 // An unanswerable condition selects neither branch, so nothing inside either
@@ -29,4 +32,13 @@ when (ALSO_MISSING) {
 	D :: 4;
 } else {
 	E :: not_declared_anywhere;
+}
+
+// A *rejected* condition settles the same way. `false` is not the answer here —
+// the checker refused the condition — so the `else` branch is not selected
+// either, and `F` never enters the package scope.
+when ("neither") {
+	F :: 6;
+} else {
+	F :: 7;
 }

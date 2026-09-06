@@ -1168,6 +1168,11 @@ Item_Foreign_Block :: struct {
 	using base: Node_Base,
 	library:    Name,
 	members:    []Item,
+	// Whether the block's members have been collected. The discovery fixed point
+	// re-prepares a package each round, and the block's own attribute check
+	// reports before any member guard is reached, so without this a contradictory
+	// `@(public)`/`@(private)` block is diagnosed once per round.
+	declared:   bool,
 }
 
 // Whether an `impl` block is *inherent* to its subject or *extends* it from

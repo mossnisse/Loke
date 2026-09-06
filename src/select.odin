@@ -107,8 +107,17 @@ resolve_item_when :: proc(k: ^Checker, item: ^Item_When) -> bool {
 		return false
 	}
 	value, ok := check_when_condition(k, item.cond)
+	if !ok {
+		// A rejected condition has no answer either, so it settles the same way an
+		// unanswerable one does: reported, and selecting neither branch — which is
+		// what `check_when_stmt` already does at procedure scope. Treating `false`
+		// as the answer would check the `else` branch on the strength of a
+		// condition the checker just refused.
+		item.stalled = true
+		return true
+	}
 	item.resolved = true
-	item.taken = ok && value
+	item.taken = value
 	return true
 }
 
@@ -223,11 +232,40 @@ callee_is_builtin :: proc(k: ^Checker, callee: Expr, kind: Builtin_Kind) -> bool
 // The first name in `e` that does not resolve, or "" when they all do. Only
 // value positions are visited: a selector's field and a `build_config` key are
 // tokens, not lookups.
+//
+// Type syntax is walked for the same reason expression syntax is: `size_of(^T)`
+// depends on `T` exactly as `size_of(T)` does, and answering "" for it would
+// evaluate the condition a round before the branch that supplies `T` is
+// selected. The forms covered are the composable ones, matching
+// `type_syntax_has_poly`; a record, enum, or interface written inside a `when`
+// condition declares its own members rather than naming an outer one.
 first_unresolved_name :: proc(k: ^Checker, e: Expr) -> string {
 	if e == nil {
 		return ""
 	}
 	#partial switch v in e {
+	case ^Type_Pointer:
+		return first_unresolved_name(k, v.elem)
+	case ^Type_C_Pointer:
+		return first_unresolved_name(k, v.elem)
+	case ^Type_Slice:
+		return first_unresolved_name(k, v.elem)
+	case ^Type_Dynamic_Array:
+		return first_unresolved_name(k, v.elem)
+	case ^Type_Distinct:
+		return first_unresolved_name(k, v.elem)
+	case ^Type_Dyn:
+		return first_unresolved_name(k, v.interface_expr)
+	case ^Type_Array:
+		if missing := first_unresolved_name(k, v.length); missing != "" {
+			return missing
+		}
+		return first_unresolved_name(k, v.elem)
+	case ^Type_Map:
+		if missing := first_unresolved_name(k, v.key); missing != "" {
+			return missing
+		}
+		return first_unresolved_name(k, v.value)
 	case ^Expr_Ident:
 		if lookup_symbol(k.scope, identifier_of(k.c, v)) == INVALID_SYMBOL {
 			return v.name

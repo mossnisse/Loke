@@ -5,7 +5,8 @@
 //   tests/ll/*.loke  + .expected   compile with -emit-ll, assert the generated
 //                                  IR still contains each listed shape
 //   tests/err/*.loke + .expected   compile, assert exact diagnostic count plus
-//                                  code/message substrings and @line:column spans
+//                                  code/message substrings and @line:column spans;
+//                                  a `!`-prefixed line must *not* appear
 //   tests/trap/*.loke              compile, run, expect a non-zero exit
 //   tests/layout/*.loke            compile with -check-layout: the checker's
 //                                  size/alignment/offsets must agree with LLVM's
@@ -836,6 +837,21 @@ check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, mode, sent
 	for raw_line in strings.split_lines(normalise(string(expected))) {
 		line := strings.trim_space(raw_line)
 		if line == "" {
+			continue
+		}
+		// A leading `!` asserts the opposite: the diagnostics must *not* say this.
+		// The count assertion below cannot see a surplus note, so a rule about what
+		// a diagnostic leaves out needs its own line.
+		if strings.has_prefix(line, "!") {
+			absent := line[1:]
+			testing.expectf(
+				t,
+				!strings.contains(output, absent),
+				"%s: diagnostics should not mention %q\n--- got ---\n%s",
+				path,
+				absent,
+				output,
+			)
 			continue
 		}
 		if strings.has_prefix(line, "@") {

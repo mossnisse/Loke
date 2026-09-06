@@ -1,0 +1,17 @@
+package main; import "core:fmt";
+
+import "core:strings";
+
+// An import name is a lexical alias in the importing package's scope, so a
+// declaration of the same name is a collision, not a shadow.
+//
+// Reported once. Package discovery re-prepares every package until the import
+// graph and `when` selection settle, and the round count is the depth of the
+// graph — `core:strings` reaches deeper than `core:fmt` does, so a collision
+// re-reported per round would multiply by however much of the standard library
+// happens to be loaded.
+strings :: 3;
+
+main :: proc() {
+	fmt.println(strings);
+}

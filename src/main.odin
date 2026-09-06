@@ -415,9 +415,10 @@ is_config_name :: proc(name: string) -> bool {
 //
 // Seeds go in first, and an explicit entry replaces one outright, letting a
 // project substitute its own standard tree. Duplicate *explicit* entries are
-// still an error; replacing a seed is not. A missing bundled directory is
-// diagnosed only when an import actually needs it, so an installation without
-// the standard tree can still compile a program that never imports it.
+// still an error; replacing a seed is not. A seed names the bundled directory
+// without checking that it is there: whether one is missing is a question for
+// whoever loads a package under it, and `base:runtime` — which every program
+// loads — is the one that always asks.
 @(private = "file")
 register_collections :: proc(c: ^Compiler, entries: []string) -> bool {
 	init_semantic_stores(c)

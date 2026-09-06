@@ -1,5 +1,8 @@
 package main; import "core:fmt";
 
+// `main` reaches the cycle but is not in it, so the notes list `a -> b -> a`
+// and stop there. The scan starts wherever the package order puts it, and the
+// route it took to arrive is not a set of imports anyone can fix.
 import "a";
 
 main :: proc() {

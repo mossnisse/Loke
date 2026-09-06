@@ -877,6 +877,10 @@ Package :: struct {
 	extensions:     map[Type_Id][]Symbol_Id,
 	operators:      map[string]^Operator_Set,
 	imports:        [dynamic]Package_Import,
+	// How many of `imports` already had their alias bound. The edge list only
+	// grows, and each edge is bound exactly once, so a later discovery round
+	// starts here instead of re-reporting an alias that already collided.
+	bound_aliases:  int,
 	// Procedure literals lifted out of expression position, owned by the package
 	// that declared them: a compiler-global list would be discarded by the next
 	// package checked.

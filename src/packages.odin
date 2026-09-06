@@ -58,9 +58,11 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		}
 	}
 
+	// No rebuild here: the loop only exits after a round that changed nothing, so
+	// the view its top built is still current, and a stalled `when` contributes
+	// nothing to a view either way.
 	for index in 1 ..< len(c.packages) {
 		report_stalled_whens(&k, &c.packages[index])
-		rebuild_active_items(c, &c.packages[index])
 	}
 	// Ordinary body checking waits until selection and the import graph are
 	// stable, so an unconditional body may name a declaration a selected branch
@@ -240,6 +242,14 @@ discover_imports :: proc(c: ^Compiler, k: ^Checker) -> bool {
 	// `c.packages` grows while this runs — loading a target appends to it, which
 	// reallocates the store. Nothing here retains a `^Package` across a load; the
 	// index walk also picks up the new packages in the same pass.
+	//
+	// A package loaded here has no selected view until the next round's top, so
+	// its own imports are found a round later and the graph is walked one level
+	// per round. Building the view at load time to collapse that is wrong, however
+	// cheap it looks: it also hands the package to `prepare_package` a round
+	// early, and `declare_impl_block` resolves the subject's fields — which a
+	// `when` branch selected later in that same round may be what declares.
+	// `core:fs` writes exactly that shape.
 	for index := 1; index < len(c.packages); index += 1 {
 		id := Package_Id(index)
 		for position := 0; position < len(package_of(c, id).files); position += 1 {
@@ -367,6 +377,13 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 		}
 		return resolved, .Ok
 	}
+	// A `-provider` selection has no importing file, so an unprefixed path has
+	// nothing to be relative to. Answering here rather than leaving the caller to
+	// re-test the prefix keeps the precondition in one place: the caller reports
+	// it, because a selection and an `import` name the offender differently.
+	if file == nil {
+		return "", .No_Collection
+	}
 	source_dir := filepath.dir(c.sources[file.file].path)
 	return canonical_dir(strings.concatenate({source_dir, "/", path})), .Ok
 }
@@ -487,8 +504,23 @@ visit_for_cycle :: proc(c: ^Compiler, id: Package_Id, state: []u8, path: ^[dynam
 		return true
 	}
 	if state[id] == 1 {
+		// `path` is the route from wherever the outer scan started, which may reach
+		// the cycle through edges that are not in it. The cycle is the tail that
+		// leaves `id`, so it begins just after the approach arrives there; listing
+		// the approach as well would blame imports that are perfectly fine.
+		//
+		// The last edge is the arrival that closed the cycle, so it is not the
+		// approach — searching without it also leaves the whole path as the answer
+		// when the scan happened to start on `id` itself.
+		cycle := path[:]
+		for edge, index in cycle[:len(cycle) - 1] {
+			if edge.target == id {
+				cycle = cycle[index + 1:]
+				break
+			}
+		}
 		errorf(c, path[len(path) - 1].span, "L0330", "import cycle")
-		for edge in path {
+		for edge in cycle {
 			add_notef(c, edge.span, "`%s` imports `%s` here", package_label(c, edge), identifier_text(c, package_of(c, edge.target).name))
 		}
 		return false

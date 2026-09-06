@@ -1,0 +1,22 @@
+package main; import "core:fmt";
+
+// design.md "Exported names": `@(public)` and `@(private)` on one foreign block
+// contradict each other, and the block supplies no visibility default at all
+// once they do.
+//
+// The `core:fmt` import is load-bearing. Package discovery runs to a fixed point
+// and re-prepares every package each round, so a block whose attributes are
+// checked outside the per-member guard would be diagnosed once per round — and
+// the number of rounds is the depth of an import graph this file barely uses.
+
+foreign import libc "system:legacy_stdio_definitions.lib";
+
+@(public)
+@(private)
+foreign libc {
+	puts :: proc "c" (s: cstring_view) -> i32 ---;
+}
+
+main :: proc() {
+	fmt.println(1);
+}

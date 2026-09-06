@@ -141,7 +141,12 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 // instance, which is why the alias symbol only carries a `Package_Id`.
 @(private = "file")
 bind_import_aliases :: proc(k: ^Checker, pkg: ^Package) {
-	for edge in pkg.imports {
+	// Only the edges a previous round did not reach. Binding is one-way and the
+	// list only grows, so re-walking the whole of it would re-report a collision
+	// once per discovery round.
+	defer pkg.bound_aliases = len(pkg.imports)
+	for index in pkg.bound_aliases ..< len(pkg.imports) {
+		edge := pkg.imports[index]
 		if edge.target == INVALID_PACKAGE || edge.alias == "" {
 			continue
 		}

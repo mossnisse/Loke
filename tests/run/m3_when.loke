@@ -4,10 +4,21 @@ DEBUG :: build_config(DEBUG, false);
 
 when (DEBUG) {
 	LEVEL :: 2;
+	Row :: struct { a: i64 };
 	extra :: proc() -> int { return 100; }
 } else {
 	LEVEL :: 1;
+	Row :: struct { a: i32 };
 	extra :: proc() -> int { return 200; }
+}
+
+// The same dependency, reached through type syntax rather than named directly.
+// `Row` is only declared once the branch above is selected, so this condition is
+// pending until then — exactly as `size_of(Row)` would be.
+when (size_of([2]Row) == 8) {
+	WIDTH :: 44;
+} else {
+	WIDTH :: 55;
 }
 
 // A condition that needs a declaration the selected branch above supplied.
@@ -23,6 +34,7 @@ when (LEVEL > 1) {
 main :: proc() {
 	fmt.println(LEVEL);
 	fmt.println(NAME);
+	fmt.println(WIDTH);
 	fmt.println(extra());
 
 	// Procedure-scope `when`: no new scope, and it contributes flow and defer.

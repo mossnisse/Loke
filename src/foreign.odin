@@ -22,6 +22,13 @@ foreign_default_convention :: proc(k: ^Checker, block: ^Item_Foreign_Block) -> s
 // The block supplies visibility and calling-convention defaults; a member's
 // own attribute or written convention overrides either.
 declare_foreign_block :: proc(k: ^Checker, block: ^Item_Foreign_Block) {
+	// Discovery re-prepares a package once per round. `foreign_block_visibility`
+	// reports before any per-member guard is reached, so the collection has to be
+	// gated as a whole rather than member by member.
+	if block.declared {
+		return
+	}
+	block.declared = true
 	convention := foreign_default_convention(k, block)
 	block_public, block_sets_visibility := foreign_block_visibility(k, block)
 

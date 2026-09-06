@@ -10,6 +10,12 @@ L0389
 L0389
 @21:8
 a `when` condition must be `bool`, found `untyped string`
+L0315
+@26:14
+unknown name `F`
 L0389
-@28:7
+@31:7
 `ALSO_MISSING` is not declared, so this `when` condition cannot be answered
+L0389
+@40:7
+a `when` condition must be `bool`, found `untyped string`

@@ -107,11 +107,9 @@ load_provider_packages :: proc(c: ^Compiler) {
 		}
 		// A relative import path resolves against the importing *file*, and a
 		// selection has none — it comes from the command line. So a provider is
-		// named through a collection, always.
-		dir, why := "", Import_Resolution.No_Collection
-		if strings.index_byte(selection.path, ':') > 0 {
-			dir, why = resolve_import_path(c, nil, selection.path)
-		}
+		// named through a collection, always, which is what the nil file makes
+		// `resolve_import_path` answer.
+		dir, why := resolve_import_path(c, nil, selection.path)
 		switch why {
 		case .No_Collection:
 			errorf(
