@@ -1,0 +1,32 @@
+package main; import "core:fmt";
+
+// An `impl` subject whose fields a `when` branch declares.
+//
+// Declaring a block resolves its subject, and resolving a record resolves its
+// fields. A signature resolves exactly once, so doing that before the branch is
+// selected does not report early -- it freezes a `Cell` whose `value` never got
+// a type. The block therefore waits until this package has chosen every branch.
+//
+// The root package is where this bites: it is prepared in the first discovery
+// round, before any `when` has been activated at all. `core:fs` writes the same
+// shape with `impl File` over a handle type its `when (LOKE_OS)` declares.
+
+DEBUG :: build_config(DEBUG, false);
+
+when (DEBUG) {
+	Slot :: i64;
+} else {
+	Slot :: i32;
+}
+
+Cell :: struct { value: Slot }
+
+impl Cell {
+	get :: proc(self: Cell) -> Slot { return self.value; }
+}
+
+main :: proc() {
+	c := Cell{ value = 7 };
+	fmt.println(c.get());
+	fmt.println(size_of(Cell));
+}

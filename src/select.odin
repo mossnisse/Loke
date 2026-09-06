@@ -75,6 +75,20 @@ collect_pending_whens :: proc(items: []Item, out: ^[dynamic]^Item_When) {
 	}
 }
 
+// Whether any file-scope `when` in this package is still waiting for an answer.
+// A stalled one is not: it has settled on selecting neither branch, so nothing
+// is owed to whoever is waiting for the package to stop changing shape.
+package_has_pending_whens :: proc(pkg: ^Package) -> bool {
+	for file in pkg.files {
+		pending := make([dynamic]^Item_When, 0, 4, context.temp_allocator)
+		collect_pending_whens(file.items, &pending)
+		if len(pending) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // One activation round. Returns true when a branch was chosen, which is what
 // makes the surrounding fixed point terminate.
 activate_when_items :: proc(k: ^Checker, pkg: ^Package) -> bool {

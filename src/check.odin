@@ -126,11 +126,24 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	// Aliases first: an `impl vendor.Vector2` block names its subject through
 	// one, so the alias has to exist before the block can resolve it.
 	bind_import_aliases(k, pkg)
-	for file in pkg.files {
-		k.file, k.file_node = file.file, file
-		for item in file.active_items {
-			if impl, ok := item.(^Item_Impl); ok {
-				declare_impl_block(k, impl)
+	// Last, and only once this package has chosen every branch. Declaring a block
+	// resolves its subject, and resolving a record resolves its fields -- which a
+	// `when` branch not selected yet may be what declares. A signature resolves
+	// exactly once (`resolve_declaration_signature` returns on any `sig_state`
+	// but `.Unchecked`), so doing it early does not merely report early, it
+	// freezes a subject whose fields never resolved. `core:fs` writes that shape:
+	// `impl File`, and `File.handle` has the type its `when (LOKE_OS)` declares.
+	//
+	// Nothing is lost by waiting. A block still undeclared once selection has
+	// settled is declared by `resolve_impl_signatures`, which is also what turns
+	// an unresolvable subject from pending into a diagnostic.
+	if !package_has_pending_whens(pkg) {
+		for file in pkg.files {
+			k.file, k.file_node = file.file, file
+			for item in file.active_items {
+				if impl, ok := item.(^Item_Impl); ok {
+					declare_impl_block(k, impl)
+				}
 			}
 		}
 	}
