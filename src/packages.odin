@@ -267,8 +267,9 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 		errorf(c, imported.span, "L0329", "this import path is not a string")
 		return
 	}
-	dir, key, resolved := resolve_import_path(c, file, path)
-	if !resolved {
+	dir, why := resolve_import_path(c, file, path)
+	switch why {
+	case .No_Collection:
 		errorf(
 			c,
 			imported.span,
@@ -278,8 +279,19 @@ bind_import_edge :: proc(c: ^Compiler, id: Package_Id, file: ^File, imported: ^I
 			collection_prefix(path),
 		)
 		return
+	case .Outside_Collection:
+		errorf(
+			c,
+			imported.span,
+			"L0329",
+			"`%s` leaves the `%s` collection; a prefixed path names a package inside it",
+			path,
+			collection_prefix(path),
+		)
+		return
+	case .Ok:
 	}
-	target, loaded := load_package_dir(c, dir, key, imported.span)
+	target, loaded := load_package_dir(c, dir, path, imported.span)
 	if !loaded {
 		return
 	}
@@ -328,18 +340,34 @@ path_tail :: proc(path: string) -> string {
 // An unprefixed path is relative to the importing file; `name:path` resolves
 // under `-collection name=path`. The returned key is the logical identity used
 // for mangling, never the host absolute path.
-resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: string, key: string, ok: bool) {
+// Why a prefixed import could not be resolved. The caller reports it, because an
+// `import` statement and a `-provider` selection name the offender differently.
+Import_Resolution :: enum {
+	Ok,
+	No_Collection,
+	Outside_Collection,
+}
+
+resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: string, why: Import_Resolution) {
 	if colon := strings.index_byte(path, ':'); colon > 0 {
 		name := path[:colon]
 		rest := path[colon + 1:]
 		root, registered := c.collections[name]
 		if !registered {
-			return "", "", false
+			return "", .No_Collection
 		}
-		return strings.concatenate({root, "/", rest}), path, true
+		// A prefix selects a collection, so the path behind it names a package
+		// *inside* that collection. Without this, `name:../elsewhere` reaches a
+		// directory the collection does not contain while borrowing its name.
+		collection_root := canonical_dir(root)
+		resolved := canonical_dir(strings.concatenate({root, "/", rest}))
+		if _, under := path_under(collection_root, resolved); !under {
+			return "", .Outside_Collection
+		}
+		return resolved, .Ok
 	}
 	source_dir := filepath.dir(c.sources[file.file].path)
-	return canonical_dir(strings.concatenate({source_dir, "/", path})), path, true
+	return canonical_dir(strings.concatenate({source_dir, "/", path})), .Ok
 }
 
 // A package's identity is a function of its directory, never of the import that
@@ -399,7 +427,7 @@ path_under :: proc(root: string, sub: string) -> (rest: string, ok: bool) {
 	return "", false
 }
 
-@(private = "file")
+// Also used to name the offending prefix in the provider diagnostics.
 collection_prefix :: proc(path: string) -> string {
 	if colon := strings.index_byte(path, ':'); colon > 0 {
 		return path[:colon]

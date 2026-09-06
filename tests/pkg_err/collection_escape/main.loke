@@ -1,0 +1,9 @@
+package main;
+
+// A prefix selects a collection, so the path behind it names a package inside
+// that collection. Reaching back out with `..` borrows the collection's name
+// for a directory it does not contain — and `base:runtime` is a real package,
+// so this resolved and compiled before the confinement check existed.
+import "core:../base/runtime";
+
+main :: proc() { }

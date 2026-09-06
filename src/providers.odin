@@ -108,19 +108,28 @@ load_provider_packages :: proc(c: ^Compiler) {
 		// A relative import path resolves against the importing *file*, and a
 		// selection has none — it comes from the command line. So a provider is
 		// named through a collection, always.
-		dir, key, resolved := "", "", false
+		dir, why := "", Import_Resolution.No_Collection
 		if strings.index_byte(selection.path, ':') > 0 {
-			dir, key, resolved = resolve_import_path(c, nil, selection.path)
+			dir, why = resolve_import_path(c, nil, selection.path)
 		}
-		if !resolved {
+		switch why {
+		case .No_Collection:
 			errorf(
 				c, no_span(), "L0658",
 				"the %s provider's package `%s` does not name a registered collection",
 				provider_slot_name(slot), selection.path,
 			)
 			continue
+		case .Outside_Collection:
+			errorf(
+				c, no_span(), "L0658",
+				"the %s provider's package `%s` leaves the `%s` collection",
+				provider_slot_name(slot), selection.path, collection_prefix(selection.path),
+			)
+			continue
+		case .Ok:
 		}
-		id, loaded := load_package_dir(c, dir, key, no_span())
+		id, loaded := load_package_dir(c, dir, selection.path, no_span())
 		if !loaded {
 			continue
 		}

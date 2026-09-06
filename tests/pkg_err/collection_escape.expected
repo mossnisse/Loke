@@ -1,0 +1,3 @@
+L0329
+@7:1
+`core:../base/runtime` leaves the `core` collection; a prefixed path names a package inside it
