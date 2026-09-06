@@ -461,7 +461,15 @@ emit_compound_assign :: proc(e: ^Emitter, s: ^Stmt_Assign) {
 	current := load(e, llvm_type(e, type), address)
 	rhs := emit_expr(e, s.rhs[0])
 	op := compound_operator(s.op)
-	result := emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
+	result: string
+	// design.md "SIMD vectors": the operator is lane-wise, so it is the vector
+	// path's, not the scalar one's — which would emit an integer mnemonic over
+	// float lanes and skip the splat a scalar right operand needs.
+	if type_is_simd(e.c, type) {
+		result = emit_simd_binary_values(e, op, type, current, type, rhs, expr_base(s.rhs[0]).type)
+	} else {
+		result = emit_binary_op(e, op, type, expr_base(s.rhs[0]).type, current, rhs)
+	}
 	store(e, type, result, address)
 }
 

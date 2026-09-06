@@ -58,20 +58,38 @@ simd_lane_value :: proc(e: ^Emitter, value: string, info: ^Type_Info) -> string 
 // The lane-wise arithmetic and bitwise operators.
 emit_simd_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	vector := simd_binary_vector(e, v)
+	left := emit_expr(e, v.lhs)
+	right := emit_expr(e, v.rhs)
+	return emit_simd_binary_values(
+		e, v.op, vector, left, expr_base(v.lhs).type, right, expr_base(v.rhs).type,
+	)
+}
+
+// The same operation from operand values rather than from syntax, which is what
+// a compound assignment has: it loaded its destination before the operator ran.
+emit_simd_binary_values :: proc(
+	e: ^Emitter,
+	op: Token_Kind,
+	vector: Type_Id,
+	left_value: string,
+	left_type: Type_Id,
+	right_value: string,
+	right_type: Type_Id,
+) -> string {
 	info := underlying_info(e.c, vector)
 	llvm := llvm_type(e, vector)
-	left := simd_operand(e, emit_expr(e, v.lhs), expr_base(v.lhs).type, vector)
-	right := simd_operand(e, emit_expr(e, v.rhs), expr_base(v.rhs).type, vector)
+	left := simd_operand(e, left_value, left_type, vector)
+	right := simd_operand(e, right_value, right_type, vector)
 
-	#partial switch v.op {
+	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
-		return emit_simd_compare(e, v.op, vector, info, left, right)
+		return emit_simd_compare(e, op, vector, info, left, right)
 	case .Slash, .Percent:
 		if !type_is_float(e.c, info.element) {
-			return emit_simd_divrem(e, v.op, vector, info, left, right)
+			return emit_simd_divrem(e, op, vector, info, left, right)
 		}
 	case .Shl, .Shr:
-		return emit_simd_shift(e, v.op, vector, info, left, right)
+		return emit_simd_shift(e, op, vector, info, left, right)
 	case .Amp_Tilde:
 		complement := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = xor %s %s, %s", complement, llvm, right, simd_all_ones(e, info))
@@ -79,7 +97,7 @@ emit_simd_binary :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 		fmt.sbprintfln(&e.b, "  %s = and %s %s, %s", out, llvm, left, complement)
 		return out
 	}
-	mnemonic := simd_mnemonic(v.op, type_is_float(e.c, info.element))
+	mnemonic := simd_mnemonic(op, type_is_float(e.c, info.element))
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s, %s", out, mnemonic, llvm, left, right)
 	return out

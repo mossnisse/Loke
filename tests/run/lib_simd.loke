@@ -128,9 +128,25 @@ main :: proc() {
 	fmt.println(table.len(), table[1]);
 	drop(table);
 
+	// A compound assignment is that same operator plus a write, so it agrees
+	// with the spelled-out form on every lane type, including a shift whose
+	// count splats and a float lane that must not take the integer mnemonic.
+	acc := a;
+	acc += 1;
+	acc <<= 1;
+	acc &~= b;
+	fmt.println(acc, acc == ((a + 1) << 1) &~ b);
+	float_acc := f;
+	float_acc *= 2.0;
+	fmt.println(float_acc);
+	mask_acc := mask;
+	mask_acc &= b > 3;
+	fmt.println(mask_acc);
+
 	// design.md's operator table gives `&`, `|`, `~`, and `&~` `bool` lanes, so
 	// a constant mask folds through them like any other constant vector.
 	fmt.println(MASK_AND, MASK_OR, MASK_XOR, MASK_ANDNOT);
+	fmt.println(FOLDED_COMPOUND);
 }
 
 Holder :: struct {
@@ -167,3 +183,15 @@ MASK_AND :: MASK_A & MASK_B;
 MASK_OR :: MASK_A | MASK_B;
 MASK_XOR :: MASK_A ~ MASK_B;
 MASK_ANDNOT :: MASK_A &~ MASK_B;
+
+// The same compound assignments where the lanes live in the evaluator's own
+// values rather than in written constants.
+compound_lanes :: proc() -> Simd(i32, 4) {
+	v: Simd(i32, 4) = {1, 2, 3, 4};
+	v += 10;
+	v *= 2;
+	v >>= 1;
+	return v;
+}
+
+FOLDED_COMPOUND :: compound_lanes();

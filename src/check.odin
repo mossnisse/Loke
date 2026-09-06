@@ -2632,7 +2632,19 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			return
 		}
 	}
-	if op == .Shl || op == .Shr {
+	// A lane-wise operator that does not apply is the mistake, so it is named
+	// before the right operand is asked to splat into a vector it cannot fill.
+	if type_is_simd(k.c, type) && !compound_applies(k.c, op, type) {
+		errorf(
+			k.c, s.op_span, "L0318",
+			"`%s` does not apply to `%s`", operator_text(op), type_name(k.c, type),
+		)
+		return
+	}
+	// design.md "SIMD vectors": "a shift's right operand is a vector too, so
+	// `v << 2` splats the count". The scalar rule that a count keeps its own type
+	// has nothing lane-wise to mean, so only a scalar destination uses it.
+	if (op == .Shl || op == .Shr) && !type_is_simd(k.c, type) {
 		if !check_shift_count(k, s.rhs[0]) {
 			return
 		}
@@ -2780,6 +2792,12 @@ report_not_assignable :: proc(k: ^Checker, base: ^Expr_Base, what: string) {
 compound_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
 	if type_kind(c, type) == .Distinct {
 		return false
+	}
+	// design.md "SIMD vectors": every operator applies lane-wise, and a compound
+	// assignment is that operator plus a write, so it applies exactly where the
+	// lane-wise one does.
+	if info := underlying_info(c, type); info != nil && info.kind == .Simd {
+		return simd_operator_applies(c, op, info.element)
 	}
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:

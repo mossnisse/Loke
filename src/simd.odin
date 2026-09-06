@@ -242,7 +242,7 @@ check_simd_binary :: proc(k: ^Checker, v: ^Expr_Binary, lhs, rhs: Type_Id) {
 	if !simd_splat_operands(k, v, vector, info.element) {
 		return
 	}
-	if !simd_operator_applies(k, v.op, info.element) {
+	if !simd_operator_applies(k.c, v.op, info.element) {
 		errorf(
 			k.c, v.op_span, "L0686",
 			"`%s` does not apply to `%s` lanes",
@@ -342,12 +342,13 @@ simd_splat_operands :: proc(k: ^Checker, v: ^Expr_Binary, vector, element: Type_
 	return ok
 }
 
-// design.md's operator table, read by lane type.
-@(private = "file")
-simd_operator_applies :: proc(k: ^Checker, op: Token_Kind, element: Type_Id) -> bool {
-	integer := type_is_integer(k.c, element)
-	float := type_is_float(k.c, element)
-	boolean := type_is_boolean(k.c, element)
+// design.md's operator table, read by lane type. `compound_applies` reads it
+// too: a compound assignment is the binary operator plus a write, so the two
+// must answer alike or `v += 1` and `v = v + 1` would disagree.
+simd_operator_applies :: proc(c: ^Compiler, op: Token_Kind, element: Type_Id) -> bool {
+	integer := type_is_integer(c, element)
+	float := type_is_float(c, element)
+	boolean := type_is_boolean(c, element)
 	#partial switch op {
 	case .Plus, .Minus, .Star, .Slash:
 		return integer || float

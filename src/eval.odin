@@ -856,12 +856,21 @@ eval_simd_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary, operand: Eval_Value) -> 
 // splatted scalar, which is the lane value itself.
 @(private = "file")
 eval_simd_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary, left, right: Eval_Value) -> (Eval_Value, bool) {
-	info := underlying_info(ev.k.c, v.type)
+	return eval_simd_binary_values(ev, v.op, v.op_span, v.type, left, right)
+}
+
+// The same lane-wise fold from values rather than syntax: a compound assignment
+// has its destination's loaded value, not an `Expr_Binary`.
+@(private = "file")
+eval_simd_binary_values :: proc(
+	ev: ^Evaluator, op: Token_Kind, op_span: Span, type: Type_Id, left, right: Eval_Value,
+) -> (Eval_Value, bool) {
+	info := underlying_info(ev.k.c, type)
 	if info == nil {
 		return Eval_Value{}, false
 	}
 	comparison := false
-	#partial switch v.op {
+	#partial switch op {
 	case .Eq_Eq, .Not_Eq, .Lt, .Lt_Eq, .Gt, .Gt_Eq:
 		comparison = true
 	}
@@ -875,16 +884,16 @@ eval_simd_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary, left, right: Eval_Valu
 	for index in 0 ..< int(info.count) {
 		a, b := eval_simd_lane(left, index), eval_simd_lane(right, index)
 		if comparison {
-			result, ok := eval_compare(ev, v.op, a, b)
+			result, ok := eval_compare(ev, op, a, b)
 			if !ok {
-				eval_fail(ev, v.op_span, "L0341", "this comparison has no compile-time meaning")
+				eval_fail(ev, op_span, "L0341", "this comparison has no compile-time meaning")
 				return Eval_Value{}, false
 			}
 			elements[index] = scalar(bool_const(result), info.element)
 			continue
 		}
 		folded, ok := fold_arithmetic(
-			ev.k.c, v.op, v.op_span, const_of(a), const_of(b), source.element, ev.alloc,
+			ev.k.c, op, op_span, const_of(a), const_of(b), source.element, ev.alloc,
 		)
 		if !ok {
 			if !eval_memory_ok(ev) { return Eval_Value{}, false }
@@ -893,7 +902,7 @@ eval_simd_binary :: proc(ev: ^Evaluator, v: ^Expr_Binary, left, right: Eval_Valu
 		}
 		elements[index] = scalar(folded, source.element)
 	}
-	return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+	return Eval_Value{kind = .Aggregate, type = type, elements = elements}, true
 }
 
 @(private = "file")
@@ -2577,6 +2586,17 @@ eval_compound_assign :: proc(ev: ^Evaluator, s: ^Stmt_Assign) -> Eval_Flow {
 	}
 	op := compound_operator(s.op)
 	type := slot.type
+	// design.md "SIMD vectors": a vector's lanes live in `elements`, which
+	// `const_of` does not carry, so the shared fold below would see operands with
+	// no lanes in them. The lane-wise fold is the same one `v = v op x` uses.
+	if type_is_simd(ev.k.c, type) {
+		result, lanes_ok := eval_simd_binary_values(ev, op, s.op_span, type, slot^, operand)
+		if !lanes_ok {
+			return .Fail
+		}
+		slot^ = result
+		return .Normal
+	}
 	folded, folded_ok := fold_arithmetic(ev.k.c, op, s.op_span, const_of(slot^), const_of(operand), type, ev.alloc)
 	if !folded_ok {
 		if !eval_memory_ok(ev) { return .Fail }
