@@ -127,6 +127,10 @@ main :: proc() {
 	table.append(b);
 	fmt.println(table.len(), table[1]);
 	drop(table);
+
+	// design.md's operator table gives `&`, `|`, `~`, and `&~` `bool` lanes, so
+	// a constant mask folds through them like any other constant vector.
+	fmt.println(MASK_AND, MASK_OR, MASK_XOR, MASK_ANDNOT);
 }
 
 Holder :: struct {
@@ -156,3 +160,10 @@ lane_arithmetic :: proc() -> i32 {
 }
 
 FOLDED :: lane_arithmetic();
+
+MASK_A :: Simd(bool, 4){true, true, false, false};
+MASK_B :: Simd(bool, 4){true, false, true, false};
+MASK_AND :: MASK_A & MASK_B;
+MASK_OR :: MASK_A | MASK_B;
+MASK_XOR :: MASK_A ~ MASK_B;
+MASK_ANDNOT :: MASK_A &~ MASK_B;

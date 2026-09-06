@@ -64,6 +64,28 @@ fold_arithmetic :: proc(
 		return float_const(result, bits), true
 	}
 
+	// design.md "SIMD vectors": `&`, `|`, `~`, and `&~` apply to `bool` lanes too.
+	// A boolean carries no `integer`, so the integer path below would fold every
+	// mask to `false` instead of computing it.
+	if a.kind == .Boolean || b.kind == .Boolean {
+		if a.kind != .Boolean || b.kind != .Boolean {
+			errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
+			return Const_Value{}, false
+		}
+		#partial switch op {
+		case .Amp:
+			return bool_const(a.boolean && b.boolean), true
+		case .Pipe:
+			return bool_const(a.boolean || b.boolean), true
+		case .Tilde:
+			return bool_const(a.boolean != b.boolean), true
+		case .Amp_Tilde:
+			return bool_const(a.boolean && !b.boolean), true
+		}
+		errorf(c, op_span, "L0355", "`%s` does not apply to `%s`", operator_text(op), type_name(c, type))
+		return Const_Value{}, false
+	}
+
 	if (op == .Slash || op == .Percent) && bi_is_zero(b.integer) {
 		errorf(c, op_span, "L0319", "division by zero")
 		return Const_Value{}, false

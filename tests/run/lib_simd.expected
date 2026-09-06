@@ -38,3 +38,4 @@ Simd 4 true
 [10, 20, 30, 40] [true, true, true, true]
 [20, 40, 60, 80]
 2 [3, 7, 4, 6]
+[true, false, false, false] [true, true, true, false] [false, true, true, false] [false, true, false, false]
