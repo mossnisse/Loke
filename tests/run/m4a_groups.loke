@@ -6,6 +6,19 @@ show_f32  :: proc(f: f32)  -> int { return int(f) + 100; }
 
 show :: proc{show_bool, show_int, show_f32};
 
+Point :: struct { x, y: int }
+Tone :: enum { Low, High }
+
+place_one :: proc(p: Point) -> int { return p.x * 10 + p.y; }
+place_two :: proc(p: Point, by: int) -> int { return p.x * 10 + p.y + by; }
+tone_one :: proc(t: Tone) -> int { return int(t); }
+tone_two :: proc(t: Tone, by: int) -> int { return int(t) + by; }
+
+// Every member wants the same type in that position, so an argument whose
+// meaning comes from its destination has one, exactly as a method call's does.
+place :: proc{place_one, place_two};
+tone :: proc{tone_one, tone_two};
+
 pad :: proc(i: int, by: int = 5) -> int { return i + by; }
 pad3 :: proc(i: int, j: int, k: int) -> int { return i * j * k; }
 padded :: proc{pad, pad3};
@@ -22,4 +35,6 @@ main :: proc() {
 	fmt.println(padded(3, 4));
 	fmt.println(padded(2, 3, 4));
 	fmt.println(padded(by = 40, i = 2));
+	fmt.println(place({1, 2}), place({1, 2}, 100));
+	fmt.println(tone(.High), tone(.High, 100));
 }

@@ -2629,7 +2629,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 	// same path.
 	members := sym.kind == .Proc_Group ? sym.members : []Symbol_Id{group}
 	description := concat(k.c, "`", concat(k.c, identifier_text(k.c, sym.name), "`"))
-	args, args_ok := collect_call_arguments(k, v.args)
+	args, args_ok := collect_call_arguments(k, v.args, members)
 	if !args_ok {
 		v.type = INVALID_TYPE
 		return
