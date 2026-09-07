@@ -158,8 +158,12 @@ Function_Emission :: struct {
 }
 
 // The per-function half of `Emitter`, embedded so a field is still written as
-// `e.result_type` and adding one to this struct is all it takes to have it
-// saved and restored.
+// `e.result_type` and adding one to this struct is all it takes for
+// `begin_function_emission` to save and restore it. `emit_unwind_thunk` is the
+// one emitter that does not go through it: a replayed action re-emits the
+// parent's own `defer` statements, so it inherits most of this state and swaps
+// only the four fields it owns. A new field that a replay must not share with
+// the frame it unwinds has to be added there as well.
 @(private)
 Function_State :: struct {
 	// Whether the block being appended to already ends in a terminator. LLVM
@@ -229,7 +233,7 @@ begin_function_emission :: proc(e: ^Emitter) -> Function_Emission {
 // into `pending_thunks` for one generated in the middle of another function.
 @(private)
 end_function_emission :: proc(e: ^Emitter, state: Function_Emission) -> string {
-	text := splice_prologue(strings.to_string(e.b), e.prologue[:])
+	text := splice_prologue(e, strings.to_string(e.b), e.prologue[:])
 	e.b = state.parent
 	e.fn = state.saved
 	return text
@@ -250,15 +254,19 @@ finish_pending_thunk :: proc(e: ^Emitter, state: Function_Emission) {
 // Places the collected `alloca` lines immediately after the function's entry
 // label, which is the only point at which every one of them is known.
 @(private)
-splice_prologue :: proc(body: string, prologue: []string) -> string {
+splice_prologue :: proc(e: ^Emitter, body: string, prologue: []string) -> string {
 	if len(prologue) == 0 {
 		return body
 	}
 	ENTRY :: "\nentry:\n"
 	at := strings.index(body, ENTRY)
 	if at < 0 {
-		// No entry block to hold them. Hand the text to LLVM for its own
-		// diagnostic rather than silently dropping a function's storage.
+		// Every function that reaches here opened with an entry label, so there is
+		// nowhere to place the storage only if one was written without one. The text
+		// is handed on unchanged for LLVM to describe the break in its own terms,
+		// but `e.failed` is what stops a module missing a function's allocas from
+		// being returned as though it were whole.
+		backend_fail(e, "a function has no entry block to hold its storage")
 		return body
 	}
 	out := strings.builder_make()
@@ -384,7 +392,7 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 // every package's items.
 @(private = "file")
 name_synth_procs :: proc(e: ^Emitter) {
-	used := make(map[string]bool)
+	used := make(map[string]bool, context.temp_allocator)
 	for symbol_id in e.c.synth_procs {
 		symbol := symbol_of(e.c, symbol_id)
 		if symbol == nil {

@@ -596,11 +596,19 @@ fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
 		"  %pack = alloca i8, i64 %n\n" +
 		"  br label %loop\n" +
 		"}\n"
-	actual := splice_prologue(body, {"  %pair = alloca { i64, i64 }", "  %byte = alloca i8"})
+	c := test_compiler("package main;")
+	defer destroy_compilation(&c)
+	e := make_emitter(&c)
+	actual := splice_prologue(&e, body, {"  %pair = alloca { i64, i64 }", "  %byte = alloca i8"})
 	testing.expectf(t, actual == expected, "unexpected prologue splice:\n%s", actual)
 
 	// Nothing to place, and nowhere to place it, both leave the text alone.
-	testing.expect(t, splice_prologue(body, nil) == body)
+	testing.expect(t, splice_prologue(&e, body, nil) == body)
+	testing.expect(t, !e.failed && c.error_count == 0, "an ordinary splice reported a failure")
+
+	// Storage with no entry block to hold it leaves the text for LLVM to describe,
+	// but the module must not be handed back as though it were whole.
 	orphan := "declare void @outside()\n"
-	testing.expect(t, splice_prologue(orphan, {"  %x = alloca i8"}) == orphan)
+	testing.expect(t, splice_prologue(&e, orphan, {"  %x = alloca i8"}) == orphan)
+	testing.expect(t, e.failed && c.error_count == 1, "a dropped prologue was not reported")
 }

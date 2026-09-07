@@ -348,7 +348,10 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", env, env_slot)
 
 	// The parent's allocas are unreachable from here, so every local a replayed
-	// action names is rebound to its address in the env.
+	// action names is rebound to its address in the env. A backend name always
+	// starts with `%` or `@`, so the empty string stands for "had none" — putting
+	// one back verbatim would turn an unbound symbol into one bound to nothing,
+	// which is exactly the state `symbol_name` exists to catch.
 	saved_names := make([dynamic]string, 0, len(u.env_bindings))
 	for binding in u.env_bindings {
 		append(&saved_names, e.names[binding.symbol])
@@ -396,9 +399,13 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "")
 
 	for binding, index in u.env_bindings {
+		if saved_names[index] == "" {
+			delete_key(&e.names, binding.symbol)
+			continue
+		}
 		e.names[binding.symbol] = saved_names[index]
 	}
-	append(&e.pending, splice_prologue(strings.to_string(e.b), e.prologue[:]))
+	append(&e.pending, splice_prologue(e, strings.to_string(e.b), e.prologue[:]))
 	u.replaying = false
 	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
 	e.prologue = saved_prologue

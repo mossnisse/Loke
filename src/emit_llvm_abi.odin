@@ -18,7 +18,7 @@ foreign_llvm_name :: proc(sym: ^Symbol) -> string {
 // signature matches the C library's definition under the Windows x64 ABI.
 @(private)
 emit_foreign_declarations :: proc(e: ^Emitter) {
-	seen := make(map[string]bool)
+	seen := make(map[string]bool, context.temp_allocator)
 	// A `declare` for a name this module also defines is a redefinition to LLVM's
 	// own parser, not a forward declaration. That happens whenever source names a
 	// symbol the compiler itself writes into the module — the generated
