@@ -1,0 +1,32 @@
+package main; import "core:fmt";
+
+// What a rejected instantiation reports, and what it must not.
+
+Tiny  :: struct($T: type) where size_of(T) < 2 { v: T }
+Sized :: struct($N: int)  where N > 0          { items: [N]int }
+
+// A silent probe that reports a nested instantiation and then discards it. The
+// discarded report must not take the *next* diagnostic's frames with it.
+bounded :: proc(x: $T) -> int where size_of(Tiny(T)) >= 0 { return 1; }
+plain :: proc(x: string) -> int { return 2; }
+either :: proc{bounded, plain};
+
+// A signature that does not resolve follows the same rule a body does: an
+// overload nothing selects must not fail the compilation on its own.
+packed :: proc(xs: ..$P) -> int { return xs.len(); }
+unpacked :: proc() -> int { return 0; }
+counted :: proc{packed, unpacked};
+
+// The sole candidate, whose signature does not resolve either. This one is
+// reported, at the call rather than at the declaration it substituted into.
+lone :: proc(xs: ..$Q) -> int { return xs.len(); }
+
+main :: proc() {
+	fmt.println(either("s"));
+	fmt.println(counted());
+	// A bound is what makes `[N]int` well formed, so rejecting it must not also
+	// report the field the bound was written to guard.
+	y: Sized(-1) = {};
+	_ = y;
+	fmt.println(lone());
+}

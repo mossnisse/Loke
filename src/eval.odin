@@ -191,7 +191,9 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 	k.c.speculation_depth = 0
 	defer k.c.speculation_depth = saved_speculation
 	if instance, found := k.c.procedure_instances[symbol_id]; found {
-		promote_generic_instance(k, instance)
+		// Evaluation reaches a procedure by symbol, with no call syntax of its
+		// own to blame; the instance's own span is all there is here.
+		promote_generic_instance(k, instance, no_span())
 	}
 	symbol := symbol_of(k.c, symbol_id)
 	if symbol == nil || symbol.kind != .Proc {

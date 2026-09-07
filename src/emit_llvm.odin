@@ -341,8 +341,20 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 	// Instantiations are named with their own package's symbols, in deterministic
 	// instantiation order, so a cross-package generic call has a final name
 	// before any body is written.
+	//
+	// Each part of that name is the argument type as source spells it, and a
+	// written name is not unique across packages: `size_of_arg(alpha.Item)` and
+	// `size_of_arg(beta.Item)` are two instances with one spelling. The symbol
+	// id separates them, exactly as it does for the synthesized procedures
+	// below, so a collision costs a suffix rather than a definition.
+	taken := make(map[string]bool, len(pkg.instances), context.temp_allocator)
 	for instance in pkg.instances {
-		e.names[instance.symbol] = llvm_proc_name(pkg, llvm_safe(instance.name))
+		name := llvm_proc_name(pkg, llvm_safe(instance.name))
+		if taken[name] {
+			name = fmt.aprintf("%s.%d", name, int(instance.symbol))
+		}
+		taken[name] = true
+		e.names[instance.symbol] = name
 	}
 }
 

@@ -1,0 +1,11 @@
+L0434
+@29:5
+does not satisfy the bound `N > 0`
+while instantiating `Sized(-1)`
+!an array length must be a non-negative constant
+!`$P` is not bound here
+L0437
+@31:14
+@22:20
+`$Q` is not bound here
+in the signature of `lone()`

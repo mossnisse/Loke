@@ -19,6 +19,16 @@ first_of :: proc(values: [$N]$E) -> E {
 	return values[0];
 }
 
+// A compile-time argument need not be a scalar. Its parts are its identity, so
+// two vectors that differ anywhere are two instances rather than one — and a
+// `string` part may itself contain the separators the parts compose with.
+Sized :: struct($V: [2]int) {
+	items: [V[0]]int,
+}
+
+scaled :: proc($V: [2]int) -> int { return V[0] * 100 + V[1]; }
+head :: proc($V: [2]string) -> string { return V[0]; }
+
 main :: proc() {
 	a: Pair(int) = {2, 3};
 	b: Pair(f64) = {1.5, 2.5};
@@ -27,4 +37,10 @@ main :: proc() {
 	fmt.println(identity(int, 7));
 	xs := [3]int{9, 8, 7};
 	fmt.println(first_of(xs));
+
+	small: Sized([2]int{1, 9}) = {};
+	large: Sized([2]int{3, 7}) = {};
+	fmt.println(small.items.len(), large.items.len());
+	fmt.println(scaled([2]int{1, 2}), scaled([2]int{3, 4}));
+	fmt.println(head([2]string{"a,b", "c"}), head([2]string{"a", "b,c"}));
 }

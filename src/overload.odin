@@ -515,10 +515,17 @@ build_generic_candidate :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	// the candidate with a captured reason, silently.
 	instance, made := instantiate_generic(k, template, inference.bindings, inference.scope, no_span(), report = false)
 	if !made {
+		// A bound is the usual rejection, but not the only one: a substituted
+		// signature that does not resolve was contained by the same probe, and
+		// its own words say more than a guess about bounds would.
+		reason := "its `where` bounds are not satisfied by these arguments"
+		if instance != nil && instance.rejection.message != "" {
+			reason = instance.rejection.message
+		}
 		return Candidate {
 			symbol   = template.symbol,
 			args     = args,
-			reason   = "its `where` bounds are not satisfied by these arguments",
+			reason   = reason,
 			template = template,
 			bindings = inference.bindings,
 			scope    = inference.scope,
@@ -686,8 +693,9 @@ resolve_overload :: proc(
 	}
 	if len(maximal) == 1 {
 		chosen := all[maximal[0]]
-		// Only the selected instance is promoted to a checked, emitted body.
-		promote_generic_instance(k, chosen.instance)
+		// Only the selected instance is promoted to a checked, emitted body, and
+		// this call is what selected it — so its body's diagnostics name it.
+		promote_generic_instance(k, chosen.instance, span)
 		return chosen, true
 	}
 	if report {

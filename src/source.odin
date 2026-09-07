@@ -419,6 +419,12 @@ truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 		destroy_diagnostic(&c.diagnostics[index])
 	}
 	resize(&c.diagnostics, wanted)
+	// An instantiation stack is attached to whichever diagnostic is last, and
+	// remembered by this length so the unwind cannot attach it again. Dropping
+	// past that point makes the memory a claim about a diagnostic that no longer
+	// exists, and the next one to land at the same index would be refused its
+	// own frames — the only thing naming the call that caused it.
+	c.last_noted_diagnostic = min(c.last_noted_diagnostic, wanted)
 }
 
 // Renders every accumulated diagnostic to stderr, in source order per file.

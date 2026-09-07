@@ -3,6 +3,10 @@ package main; import "core:fmt";
 import "./alpha";
 import "./beta";
 
+// One template, two argument types that spell the same. An instance is named
+// from that spelling, so the two must not settle on one emitted symbol.
+width_of :: proc(x: $T) -> int { return size_of(T); }
+
 main :: proc() {
 	a := alpha.make(4);
 	b := beta.make(4);
@@ -16,4 +20,5 @@ main :: proc() {
 	av, aw := a;
 	bv, bw := b;
 	fmt.println(av.id, aw, bv.id, bv.extra, bw);
+	fmt.println(width_of(a.value), width_of(b.value));
 }

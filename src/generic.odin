@@ -104,6 +104,19 @@ Instance :: struct {
 	body_checked: bool,
 	// Deferred so an unselected overload never has its body diagnosed.
 	span:         Span,
+	// Why a silent probe rejected this instance. Rejections are cached, and the
+	// probe that made one is the only attempt that ever computes its reason, so
+	// a probe that must not report still has to leave the reason behind for a
+	// request that is not a probe.
+	rejection:    Instance_Rejection,
+}
+
+// The head diagnostic of a contained rejection, kept rather than the whole
+// list: it is the cause, and everything after it is that cause's fallout.
+Instance_Rejection :: struct {
+	code:    string,
+	message: string,
+	span:    Span,
 }
 
 Instantiation_Frame :: struct {
@@ -423,6 +436,28 @@ const_key_text :: proc(c: ^Compiler, value: Const_Value) -> string {
 		return fmt.aprintf("t%d", u32(value.type_value), allocator = c.semantic_allocator)
 	case .Nil:
 		return "nil"
+	case .Aggregate:
+		// A struct, array, union, or vector argument is its parts. Without them
+		// every aggregate answered the same text, and since this text *is* a
+		// value argument's identity, two different argument vectors shared one
+		// key — and one instance, one type, and one emitted body.
+		if value.aggregate == nil {
+			return "{}"
+		}
+		b := strings.builder_make(c.semantic_allocator)
+		// The variant leads because two variants of one union hold their payloads
+		// in the same slot: `.ok(1)` and `.err(1)` are the same elements.
+		fmt.sbprintf(&b, "{{%d", value.aggregate.variant)
+		for element in value.aggregate.elements {
+			// Length-prefixed for the reason `instance_key` length-prefixes this
+			// whole string: a `string` element may contain the `,` and `}` the
+			// parts are composed with, and `{"a,b", "c"}` and `{"a", "b,c"}` are
+			// not the same argument.
+			text := const_key_text(c, element)
+			fmt.sbprintf(&b, ",%d:%s", len(text), text)
+		}
+		strings.write_string(&b, "}")
+		return strings.to_string(b)
 	}
 	return "?"
 }
@@ -1102,12 +1137,29 @@ instantiate_generic :: proc(
 		instance.provisional = false
 	}
 
+	mark := len(k.c.diagnostics)
+	errors := k.c.error_count
 	switch template.kind {
 	case .Record:
 		instance.signature_ok = instantiate_record_body(k, template, instance, name, report)
 	case .Procedure:
 		instance.signature_ok = instantiate_procedure_signature(k, template, instance, name, report)
 	case .None:
+	}
+	// A silent probe asks whether a candidate applies. `check_where_clauses`
+	// already keeps its own bounds quiet, but a substituted signature that does
+	// not resolve reported anyway, so an overload nothing selects could fail the
+	// compilation on its own. Contain it, and keep its head: a rejection is
+	// cached, and nothing recomputes one.
+	if !report && !instance.signature_ok && len(k.c.diagnostics) > mark {
+		head := k.c.diagnostics[mark]
+		instance.rejection = Instance_Rejection {
+			code    = head.code,
+			message = strings.clone(head.message, k.c.semantic_allocator),
+			span    = head.span,
+		}
+		truncate_diagnostics(k.c, mark)
+		k.c.error_count = errors
 	}
 	// Failed bounds are negative cache entries. Reusing them avoids cloning a
 	// declaration and allocating semantic artifacts on every overload probe;
@@ -1117,7 +1169,7 @@ instantiate_generic :: proc(
 
 @(private = "file")
 report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, instance: ^Instance, span: Span) {
-	if instance == nil || instance.decl == nil {
+	if instance == nil {
 		return
 	}
 	name := generic_instance_name(k.c, template.symbol, instance.bindings)
@@ -1126,6 +1178,19 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 
 	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
 	defer pop(&k.c.instantiation_stack)
+	// A rejection a probe contained, re-reported for a request that is not one.
+	// The caret goes on this request, because the substitution is what failed
+	// and this is where it was asked for; the note keeps the written line the
+	// probe's own diagnostic pointed at.
+	if instance.rejection.code != "" {
+		errorf(k.c, span, instance.rejection.code, "%s", instance.rejection.message)
+		add_notef(k.c, instance.rejection.span, "in the signature of `%s`", name)
+		note_instantiation_stack(k)
+		return
+	}
+	if instance.decl == nil {
+		return
+	}
 	#partial switch template.kind {
 	case .Record:
 		if record, ok := instance.decl.values[0].(^Type_Record); ok {
@@ -1268,6 +1333,14 @@ instantiate_record_body :: proc(
 	saved := enter_instance(k, template, instance.scope)
 	defer leave_instance(k, saved)
 
+	// The bounds come first because they are what makes a field type well formed
+	// in the first place: `struct($N: int) where N > 0 { items: [N]int }` is
+	// written that way so `[N]int` never has to face a negative length. Resolving
+	// fields first reports that fallout as a second, independent error, against
+	// the declaration rather than the argument that caused it.
+	if !check_where_clauses(k, record.where_clauses, instance.span, name, report) {
+		return false
+	}
 	before := len(k.c.diagnostics)
 	if record.kind == .Struct {
 		resolve_struct_fields(k, type, record)
@@ -1277,9 +1350,6 @@ instantiate_record_body :: proc(
 	// design.md "@(require_results)": the property is declared once and every
 	// instance carries it, so `Result(int, Error)` is checked like `Result` is.
 	apply_type_metadata(k, clone, type)
-	if !check_where_clauses(k, record.where_clauses, instance.span, name, report) {
-		return false
-	}
 	if report && len(k.c.diagnostics) > before {
 		note_instantiation_stack(k)
 	}
@@ -1480,7 +1550,7 @@ instantiate_procedure_signature :: proc(
 
 // Checks a selected instance's body exactly once, and queues it for emission
 // with its defining package's items.
-promote_generic_instance :: proc(k: ^Checker, instance: ^Instance) {
+promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	// An interface requirement asks whether the call is well-typed, not whether
 	// its body executes. Committing here would cache a body whose dependencies
 	// were suppressed by the speculative registry gates.
@@ -1500,9 +1570,12 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance) {
 	saved := enter_instance(k, template, instance.scope)
 	defer leave_instance(k, saved)
 
+	// A body is diagnosed against the call that wanted it, which is the selection
+	// promoting it here. The instance's own span is a poor substitute: a silent
+	// overload probe created most instances, and a probe has no call to name.
 	append(&k.c.instantiation_stack, Instantiation_Frame {
 		description = identifier_text(k.c, symbol_of(k.c, instance.symbol).name),
-		span        = instance.span,
+		span        = span.file == NO_FILE ? instance.span : span,
 	})
 	defer pop(&k.c.instantiation_stack)
 
