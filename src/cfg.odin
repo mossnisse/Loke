@@ -179,6 +179,17 @@ Prov_Call_Result :: struct {
 	region_content: []Prov_Region_Content,
 }
 
+// A root's allocator expression is resolved once while walking and once after
+// the body-wide, flow-insensitive region map has seen every assignment. Direct
+// call summaries use the same delayed substitution so a call in a loop widens
+// when its allocator argument is reassigned on the back edge.
+Prov_Allocation_Region_Source :: struct {
+	root:    Root_Id,
+	value:   Expr,
+	call:    ^Expr_Call,
+	summary: Region_Set,
+}
+
 // Allocator backing is independent of contained borrow loans. Aggregate field
 // writes therefore keep a parallel path-indexed region fact even when the field
 // type has no carrier shape (for example `[dynamic]int`).
@@ -265,6 +276,7 @@ Flow_Graph :: struct {
 	// maps harmlessly: two maps are two roots whose paths are never compared.
 	map_key_entries: map[string]int,
 	call_results:   map[^Expr_Call]Prov_Call_Result,
+	allocation_region_sources: [dynamic]Prov_Allocation_Region_Source,
 	// Direct callees whose result summaries this graph reads. Populated only in
 	// summary mode and copied into compilation metadata before the graph dies.
 	summary_callees: [dynamic]Symbol_Id,
@@ -344,6 +356,7 @@ build_flow_graph :: proc(
 	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
 	graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
+	graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
 	graph.summary_callees = make([dynamic]Symbol_Id, allocator)
 	graph.temp_roots = make([dynamic]Root_Id, allocator)
 	graph.region_of = make(map[Symbol_Id]Region_Set, 8, allocator)
@@ -368,6 +381,7 @@ build_flow_graph :: proc(
 	leave_flow_scope(graph)
 
 	if mode != .Lifecycle {
+		prov_finalize_allocation_regions(graph)
 		return graph
 	}
 	return len(graph.tracked) == 0 ? nil : graph
@@ -2669,6 +2683,26 @@ prov_substitute_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, summary: Regio
 	return out
 }
 
+// Re-resolve allocation regions after the complete body has populated the
+// flow-insensitive allocator map. The first result remains useful to statements
+// later in the initial walk; merging the settled result makes allocation sites
+// inside loops conservative across back edges as well.
+@(private = "file")
+prov_finalize_allocation_regions :: proc(graph: ^Flow_Graph) {
+	for source in graph.allocation_region_sources {
+		if source.root == NO_ROOT || int(source.root) >= len(graph.roots) {
+			continue
+		}
+		set := Region_Set{}
+		if source.value != nil {
+			set = prov_region_of(graph, source.value)
+		} else if source.call != nil {
+			set = prov_substitute_region(graph, source.call, source.summary)
+		}
+		region_merge(&graph.roots[int(source.root)].region, set)
+	}
+}
+
 // Substitute each independently summarized result field at the call site.
 // Missing content means the callee had no path mapping, and callers continue to
 // use the conservative whole-result region in that case.
@@ -3734,6 +3768,21 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// its first value (design.md).
 			root := prov_new_root(graph, .Allocation, v.span, "this allocation")
 			graph.roots[int(root)].symbol = INVALID_SYMBOL
+			// design.md `new`: "the allocation root has region provenance
+			// identifying its allocator region". The written allocator is bound
+			// past the operands; without one the call took the default provider.
+			region := prov_empty_region(graph)
+			region.default = true
+			operands := sym.builtin == .New ? 0 : 1
+			if len(v.bound) > operands {
+				allocator := v.bound[operands]
+				region = prov_region_of(graph, allocator)
+				append(&graph.allocation_region_sources, Prov_Allocation_Region_Source {
+					root = root,
+					value = allocator,
+				})
+			}
+			graph.roots[int(root)].region = region
 			return prov_borrow(graph, root, nil, true, v.span, "pointer")
 		case .Unsafe_Free:
 			// The unchecked release: no allocation root to end, and nothing to
@@ -4581,6 +4630,15 @@ prov_substitute_result :: proc(
 		if !found {
 			root = prov_synthetic_root(graph, v, kind)
 			synthetic^[kind] = root
+		}
+		if kind == .Allocation {
+			region := prov_substitute_region(graph, v, dependencies.fresh_region)
+			region_merge(&graph.roots[int(root)].region, region)
+			append(&graph.allocation_region_sources, Prov_Allocation_Region_Source {
+				root = root,
+				call = v,
+				summary = dependencies.fresh_region,
+			})
 		}
 		out = prov_join(graph, out, prov_borrow(
 			graph, root, nil, type_carries_borrow(graph.k.c, type).mutable,

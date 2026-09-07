@@ -1,7 +1,7 @@
 // Sibling fields of one returned record keep independent allocator regions.
 // Discarding the first field must not make `held` depend on its allocator, but
 // resetting the second allocator still sees the retained owner.
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:mem";
 
 Buffer :: struct { id: int }
 impl Buffer {
@@ -19,13 +19,12 @@ return_two_buffers :: proc(first, second: Allocator) -> (left: Buffer, right: Bu
 	};
 }
 
-separate_result_regions :: proc(
-	@(allocator_reset) first: Allocator,
-	@(allocator_reset) second: Allocator,
-) {
-	_, held := return_two_buffers(first, second);
-	free_all(first);  // legal: only the discarded sibling used this region
-	free_all(second); // error: `held` is backed by this one
+separate_result_regions :: proc() {
+	first := mem.Arena.init();
+	second := mem.Arena.init();
+	_, held := return_two_buffers(first.allocator(), second.allocator());
+	free_all(first.allocator());  // legal: only the discarded sibling used this region
+	free_all(second.allocator()); // error: `held` is backed by this one
 	fmt.println(held.id);
 }
 

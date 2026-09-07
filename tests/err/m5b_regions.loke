@@ -55,6 +55,47 @@ owner_survives_reset :: proc(@(allocator_reset) allocator: Allocator) {
 	fmt.println(held.id);
 }
 
+// The reset does reach the allocations of the region it names, including one
+// this body created: the gate above is region identity, not allocation kind.
+local_arena_alias_survives_reset :: proc() {
+	arena := mem.Arena.init();
+	pointer := new(int, arena.allocator()) or_else nil;
+	free_all(arena.allocator());
+	fmt.println(pointer^);
+}
+
+// Distinct parameters are not proof of distinct regions: a caller may pass the
+// same allocator handle for both.
+parameter_regions_may_alias :: proc(
+	@(allocator_reset) reset: Allocator,
+	allocate: Allocator,
+) {
+	pointer := new(int, allocate) or_else nil;
+	free_all(reset);
+	fmt.println(pointer^);
+}
+
+// The allocation site runs again after the assignment on the loop back edge,
+// so its region is both `a` and `b` even though the first iteration uses `a`.
+loop_carried_allocation_region :: proc() {
+	a := mem.Arena.init();
+	b := mem.Arena.init();
+	allocator := a.allocator();
+	for (i := 0; i < 2; i += 1) {
+		pointer := new(int, allocator) or_else nil;
+		allocator = b.allocator();
+		free_all(b.allocator());
+		fmt.println(pointer^);
+	}
+}
+
+// An allocation returned through a direct call keeps the callee's allocator
+// region. A caller cannot receive one backed by a provider the callee destroys.
+return_local_region_allocation :: proc() -> ^mut int {
+	arena := mem.Arena.init();
+	return new(int, arena.allocator()) or_else nil;
+}
+
 // design.md: an owner "backed by a region created in the current procedure may
 // not be ... assigned to `static`, `thread_local`, or file-scope storage".
 owner_escapes_to_file_scope :: proc(allocator: Allocator) {

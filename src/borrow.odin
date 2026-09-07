@@ -136,6 +136,11 @@ Prov_Root :: struct {
 	// `Param`: the borrowed parameter this root arrived through, which is what a
 	// direct call substitutes an actual argument into.
 	param_index: int,
+	// `Allocation`: the allocator region the storage came from. A reset of some
+	// other region is none of its business (design.md `@(allocator_reset)`: the
+	// call is rejected "while an owning value or borrow from that region is
+	// live"). Empty means the region was not recorded, which every reset reaches.
+	region: Region_Set,
 }
 
 // ---------------------------------------------------------- projections --
@@ -763,9 +768,10 @@ carrier_noun :: proc(c: ^Compiler, type: Type_Id) -> string {
 //
 // design.md also settles the precision question: when compile-time
 // region-identity analysis cannot prove two allocator values distinct, the
-// lifetime check conservatively treats their regions as possibly identical. M5
-// has no source-level provider that creates a region, so no two identities are
-// ever proven distinct and a reset must assume it ends every tracked region.
+// lifetime check conservatively treats their regions as possibly identical. A
+// local `mem.Arena` or `mem.Scratch` does create one, and each gets a bit of its
+// own below, so two of them *are* proven distinct: a reset reaches only the
+// owners and allocations of the region it names.
 //
 // ponytail: region identity is flow-insensitive, one entry per allocator
 // binding. An allocator variable that is reassigned to a different provider
@@ -806,6 +812,17 @@ region_is_local_only :: proc(set: Region_Set) -> bool {
 // reset actually threatens: an owner of a *different* arena is not its business.
 regions_may_overlap :: proc(a, b: Region_Set) -> bool {
 	if a.unknown || b.unknown || a.crowded || b.crowded {
+		return true
+	}
+	a_parameter := region_is_parameter_backed(a)
+	b_parameter := region_is_parameter_backed(b)
+	// Two received allocator values are not distinct merely because they arrived
+	// through different parameters: the caller may pass the same handle twice. A
+	// parameter may likewise name the process default. Locally created providers
+	// remain distinct from parameters because their regions did not exist at
+	// procedure entry.
+	if (a_parameter && (b_parameter || b.default)) ||
+	   (b_parameter && (a_parameter || a.default)) {
 		return true
 	}
 	if a.default && b.default {
@@ -887,8 +904,10 @@ Result_Dependencies :: struct {
 	// outlives the thread cannot be satisfied by it.
 	thread:  bool,
 	// A fresh allocation root, which is what lets a returned pointer reach
-	// checked `free`.
-	fresh:   bool,
+	// checked `free`. Its region follows the root through a direct result summary
+	// independently of the pointer's root identity.
+	fresh:        bool,
+	fresh_region: Region_Set,
 	// Callee-local storage. Returning it is already an error in the callee; the
 	// component exists so a caller does not silently believe the result.
 	local:   bool,
@@ -928,8 +947,9 @@ Proc_Summary :: struct {
 @(private = "file")
 new_result_dependencies :: proc(c: ^Compiler, param_count: int) -> Result_Dependencies {
 	return Result_Dependencies {
-		params = make([]bool, param_count, c.semantic_allocator),
+		params      = make([]bool, param_count, c.semantic_allocator),
 		param_paths = make([][]bool, param_count, c.semantic_allocator),
+		fresh_region = Region_Set{params = make([]bool, param_count, c.semantic_allocator)},
 	}
 }
 
@@ -1071,6 +1091,7 @@ merge_provenance :: proc(into: ^Result_Dependencies, from: Result_Dependencies) 
 	if from.static && !into.static   { into.static, changed  = true, true }
 	if from.thread && !into.thread   { into.thread, changed  = true, true }
 	if from.fresh && !into.fresh     { into.fresh, changed   = true, true }
+	changed = merge_region_provenance(&into.fresh_region, from.fresh_region) || changed
 	if from.local && !into.local     { into.local, changed   = true, true }
 	if from.unknown && !into.unknown { into.unknown, changed = true, true }
 	return changed
@@ -1413,6 +1434,7 @@ merge_loan_provenance :: proc(state: ^Prov_State, into: ^Result_Dependencies, lo
 		one.thread = true
 	case .Allocation:
 		one.fresh = true
+		one.fresh_region = root.region
 	case .Local, .Slice_Literal, .Temporary:
 		one.local = true
 	case .Unknown:
@@ -1684,10 +1706,10 @@ run_prov_event :: proc(state: ^Prov_State, event: Prov_Event, reach: []u8, inval
 			}
 		}
 	case .Reset:
-		// An accepted reset ends every allocation root in the region and
+		// An accepted reset ends every allocation root in its own region and
 		// invalidates all locally tracked aliases of them.
 		for loan, index in graph.loans {
-			if graph.roots[int(loan.root)].kind == .Allocation {
+			if reset_ends_root(graph.roots[int(loan.root)], event) {
 				invalid[index] = true
 			}
 		}
@@ -1925,6 +1947,19 @@ report_provenance :: proc(state: ^Prov_State) {
 	}
 }
 
+// Whether a reset ends storage rooted here. Only an allocation ends with a
+// region, and only one the reset can actually reach: a second arena's
+// allocations are none of its business, the same answer `prov_reset` already
+// gives for owners. A root whose region was never recorded could be from
+// anywhere, so it stays reachable.
+@(private = "file")
+reset_ends_root :: proc(root: Prov_Root, event: Prov_Event) -> bool {
+	if root.kind != .Allocation {
+		return false
+	}
+	return region_is_empty(root.region) || regions_may_overlap(root.region, event.region)
+}
+
 // Whether a live loan and one access to its root are compatible. design.md: an
 // immutable borrow permits compatible reads; a mutable borrow excludes every
 // competing access.
@@ -1991,15 +2026,34 @@ check_prov_event :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, us
 		}
 	case .Escape:
 		// design.md's `bad_owner`, the region half of a return: an owner backed by
-		// a region created in the current procedure may not be returned. The
-		// region ends with the frame, so moving the owner into result storage would
-		// hand the caller a value whose backing storage is already gone.
-		if region_has_local(event.region) {
-			if event.name != "" {
+		// a region created in the current procedure may not be returned. Allocation
+		// roots carry the same obligation even though their pointers are not owners.
+		// The region ends with the frame, so handing either to the caller would leave
+		// it backed by storage that is already gone.
+		escape_region := Region_Set{params = make([]bool, max(graph.param_count, 1), graph.alloc)}
+		region_merge(&escape_region, event.region)
+		for source in event.sources {
+			row := reach_row(state, state.reach, source)
+			for index in 0 ..< state.loans {
+				if !bit_get(row, index) || state.invalid[index] {
+					continue
+				}
+				root := graph.roots[int(graph.loans[index].root)]
+				if root.kind == .Allocation {
+					region_merge(&escape_region, root.region)
+				}
+			}
+		}
+		if region_has_local(escape_region) {
+			name := event.name
+			if name == "" {
+				name = prov_region_name(graph, escape_region)
+			}
+			if name != "" {
 				errorf(
 					state.k.c, event.span, "L0592",
 					"this result is backed by `%s`, an allocator region that ends when this procedure returns",
-					event.name,
+					name,
 				)
 			} else {
 				errorf(
@@ -2159,7 +2213,7 @@ check_region_reset :: proc(state: ^Prov_State, event: Prov_Event, live: []bool, 
 	it := live_loans(state, live)
 	for slot, index in next_live_loan(&it) {
 		loan := graph.loans[index]
-		if graph.roots[int(loan.root)].kind != .Allocation {
+		if !reset_ends_root(graph.roots[int(loan.root)], event) {
 			continue
 		}
 		errorf(
@@ -2471,11 +2525,6 @@ check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> ([]Root_
 			if !bit_get(row, index) {
 				continue
 			}
-			if state.invalid[index] {
-				errorf(state.k.c, event.span, "L0514", "this allocation has already been released")
-				add_notef(state.k.c, graph.loans[index].span, "the pointer is created here")
-				return nil, false
-			}
 			found += 1
 			base := graph.loans[index]
 			root := graph.roots[int(base.root)]
@@ -2498,6 +2547,13 @@ check_free_provenance :: proc(state: ^Prov_State, event: Prov_Event) -> ([]Root_
 					"`free` takes the allocation base pointer, not a pointer that may be derived from it",
 				)
 				add_notef(state.k.c, base.span, "this possible pointer is created here")
+				return nil, false
+			}
+			// What the pointer designates first, then whether it is still there:
+			// only a released allocation makes the sentence below true.
+			if state.invalid[index] {
+				errorf(state.k.c, event.span, "L0514", "this allocation has already been released")
+				add_notef(state.k.c, base.span, "the pointer is created here")
 				return nil, false
 			}
 			already := false

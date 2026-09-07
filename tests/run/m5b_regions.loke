@@ -38,6 +38,49 @@ reset_after_last_use :: proc(@(allocator_reset) allocator: Allocator) -> int {
 	return total;
 }
 
+// design.md `@(allocator_reset)`: a reset is rejected while an owning value or
+// borrow "from that region" is live. A second arena's allocations, and the
+// default provider's, are none of its business -- the same answer an owner of
+// another region already gets.
+allocations_of_another_region :: proc() -> int {
+	a := mem.Arena.init();
+	b := mem.Arena.init();
+	mine := new(int, b.allocator()) or_else nil;
+	heap := new(int) or_else nil;
+	if (mine == nil || heap == nil) { return 0; }
+	mine^ = 10;
+	heap^ = 20;
+	free_all(a.allocator());
+	total := mine^ + heap^;
+	free(heap);
+	return total;
+}
+
+allocate_in :: proc(allocator: Allocator) -> ^mut int {
+	return new(int, allocator) or_else nil;
+}
+
+allocate_in_default :: proc() -> ^mut int {
+	return new(int) or_else nil;
+}
+
+// Fresh allocation roots carry their regions through a direct result summary,
+// so an unrelated local reset remains valid after either helper call.
+returned_allocations_of_another_region :: proc() -> int {
+	a := mem.Arena.init();
+	b := mem.Arena.init();
+	mine := allocate_in(b.allocator());
+	heap := allocate_in_default();
+	if (mine == nil || heap == nil) { return 0; }
+	mine^ = 30;
+	heap^ = 40;
+	free_all(a.allocator());
+	total := mine^ + heap^;
+	free(mine, b.allocator());
+	free(heap);
+	return total;
+}
+
 // An owner whose scope has ended no longer blocks a reset.
 reset_after_an_owner_ends :: proc(@(allocator_reset) allocator: Allocator) -> int {
 	total := 0;
@@ -73,6 +116,9 @@ main :: proc() {
 	// really outlives the process.
 	store_a_view(KEPT_NUMBERS[:]);
 	fmt.println(KEPT_NUMBERS[0]);
+
+	fmt.println(allocations_of_another_region());
+	fmt.println(returned_allocations_of_another_region());
 
 }
 
