@@ -1,0 +1,25 @@
+package main;
+
+Only :: move_only struct { id: int }
+
+Move_First :: struct {
+	only: Only,
+	kids: [dynamic]Move_First,
+}
+
+Move_Last :: struct {
+	kids: [dynamic]Move_Last,
+	only: Only,
+}
+
+main :: proc() {
+	// Resolve each record before asking whether its recursive container can be
+	// copied. The answer must not depend on whether the back-edge is visited
+	// before or after the move-only field.
+	first: Move_First = {};
+	last: Move_Last = {};
+	first_nodes: [dynamic]Move_First = {};
+	last_nodes: [dynamic]Move_Last = {};
+	first_copy := first_nodes;
+	last_copy := last_nodes;
+}

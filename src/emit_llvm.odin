@@ -283,6 +283,20 @@ backend_fail :: proc(e: ^Emitter, message: string) {
 	errorf(e.c, no_span(), "L0405", "internal backend contract violation: %s", message)
 }
 
+// The backend name of an already resolved operation. Every symbol a body can
+// name is bound before any body is emitted, so an unbound one means a semantic
+// registry reached lowering holding a symbol nothing emits — the same class of
+// break `emission_contract.odin` rejects earlier, caught here for the registries
+// it does not know about. The placeholder only keeps the text well formed;
+// `e.failed` is what stops the module from being returned.
+symbol_name :: proc(e: ^Emitter, id: Symbol_Id) -> string {
+	if name, named := e.names[id]; named {
+		return name
+	}
+	backend_fail(e, "a resolved operation has no emitted name")
+	return "null"
+}
+
 @(private = "file")
 name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 	if pkg == nil {
@@ -650,7 +664,7 @@ emit_program_init :: proc(e: ^Emitter) {
 
 	if allocator := e.c.providers[.Allocator].factory; allocator != INVALID_SYMBOL {
 		handle := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call ptr %s()", handle, e.names[allocator] or_else "null")
+		fmt.sbprintfln(&e.b, "  %s = call ptr %s()", handle, symbol_name(e, allocator))
 		// The runtime checks the handle for nil and for a matching record, and
 		// terminates before application code runs when either fails.
 		fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_publish_allocator(ptr %s)", handle)
@@ -661,7 +675,7 @@ emit_program_init :: proc(e: ^Emitter) {
 		handle := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call %s %s()",
-			handle, llvm_type(e, result), e.names[logger] or_else "null",
+			handle, llvm_type(e, result), symbol_name(e, logger),
 		)
 		if global, found := e.names[slot]; found {
 			store(e, result, handle, global)

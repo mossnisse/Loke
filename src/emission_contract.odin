@@ -57,7 +57,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 
 	// Synthesized map bodies use these choices even when no written map call
 	// remains. A consumer cannot silently fall back to a fresh member lookup.
-	for info in c.types {
+	for &info in c.types {
 		if info.kind == .Map && .Container in info.contributed &&
 		   resolved_map_key_policy(c, info.key).kind == .Unresolved {
 			return emission_contract_error(c, "a map key operation was not resolved during checking")
@@ -69,20 +69,48 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			return emission_contract_error(c, "a resolved map key operation has no checked procedure")
 		}
 	}
+	// A sort's `<` is chosen once per element type and lowered as a direct call
+	// to that symbol, so the comparison thunk never repeats member lookup. A
+	// delegation was already followed through during resolution, which is why the
+	// recorded operation is expected to have a body of its own.
+	for _, policy in c.order_policies {
+		if policy.kind == .Inherent && !emission_procedure_available(c, policy.less) {
+			return emission_contract_error(c, "a resolved ordering operation has no checked procedure")
+		}
+	}
+	// design.md's formatter coherence, likewise: the generated thunk calls the
+	// one discovered `format` rather than searching for the name again. An
+	// absent entry is a compiler-generated formatter, not a missing dependency.
+	for _, hook in c.formatters {
+		if hook != INVALID_SYMBOL && !emission_procedure_available(c, hook) {
+			return emission_contract_error(c, "a discovered formatter has no checked procedure")
+		}
+	}
 	if !c.lifecycle_operations_ready {
 		return emission_contract_error(c, "lifecycle operations must be finalized before emission")
 	}
 	synthesized := make(map[Symbol_Id]bool, context.temp_allocator)
 	for id in c.synth_procs { synthesized[id] = true }
 	for index in 1 ..< len(c.types) {
-		type := type_underlying(c, Type_Id(index))
-		if type == INVALID_TYPE { continue }
+		// A record is keyed by underlying type, so it is validated once at its own
+		// index rather than again through every `distinct` that shares it. A type
+		// whose chain does not settle on itself is either an alias of one already
+		// visited or part of a cycle the finite-size pass has already reported.
+		type := Type_Id(index)
+		if type_underlying(c, type) != type { continue }
 		operations, resolved := resolved_lifecycle_operations(c, type)
 		if !resolved {
 			return emission_contract_error(c, "a type has no finalized lifecycle operations")
 		}
+		// Both hook kinds and both copy operations answer the same two questions:
+		// whether the recorded symbol can be emitted, and whether it belongs to the
+		// type whose record names it. A borrowed one would be handed the bytes of
+		// this type rather than of its own.
 		for target in ([]Symbol_Id{operations.custom_drop, operations.custom_try_clone}) {
-			if target != INVALID_SYMBOL && !emission_procedure_available(c, target) {
+			if target == INVALID_SYMBOL { continue }
+			symbol := symbol_of(c, target)
+			if symbol == nil || !emission_procedure_available(c, target) ||
+			   type_underlying(c, symbol.owner_type) != type {
 				return emission_contract_error(c, "a lifecycle hook has no checked procedure")
 			}
 		}
@@ -90,7 +118,7 @@ validate_emission_dependencies :: proc(c: ^Compiler) -> bool {
 			if target == INVALID_SYMBOL { continue }
 			symbol := symbol_of(c, target)
 			expected: Synth_Kind = slot == 0 ? .Clone : .Try_Clone
-			if !emission_procedure_available(c, target) || !synthesized[target] ||
+			if symbol == nil || !emission_procedure_available(c, target) || !synthesized[target] ||
 			   symbol.synth != expected || type_underlying(c, symbol.owner_type) != type {
 				return emission_contract_error(c, "a lifecycle copy operation has no registered procedure")
 			}

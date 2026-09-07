@@ -624,7 +624,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	fmt.sbprintfln(
 		&e.b,
 		"  %s = call %s %s(%s %s)",
-		made, iterator_type, e.names[s.iter_symbol], subject_type, subject,
+		made, iterator_type, symbol_name(e, s.iter_symbol), subject_type, subject,
 	)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", iterator_type, made, iterator)
 	if subject_by_ptr && !expression_is_borrowed_place(e.c, s.iterable) {
@@ -650,7 +650,7 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	option := symbol_of(e.c, s.next_symbol).result
 	option_llvm := llvm_type(e, option)
 	produced := temp(e)
-	fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, option_llvm, e.names[s.next_symbol], iterator)
+	fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, option_llvm, symbol_name(e, s.next_symbol), iterator)
 	ok := temp(e)
 	shape := union_layout(e.c, option)
 	tag := emit_union_tag(e, option, produced)

@@ -228,7 +228,7 @@ emit_thread_local_teardown :: proc(e: ^Emitter) {
 		if !emit_lifecycle(e, sym.type).managed {
 			continue
 		}
-		emit_drop_place(e, sym.type, e.names[symbol_id])
+		emit_drop_place(e, sym.type, symbol_name(e, symbol_id))
 	}
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
@@ -458,7 +458,7 @@ emit_format_body :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		options := load(e, llvm_type(e, e.c.runtime_types["Options"]), "%o")
 		fmt.sbprintfln(
 			&e.b, "  call void %s(%s %s, %s %s, %s %s)",
-			e.names[hook],
+			symbol_name(e, hook),
 			receiver_type, receiver,
 			llvm_type(e, e.c.runtime_types["Writer"]), writer,
 			llvm_type(e, e.c.runtime_types["Options"]), options,
@@ -1188,7 +1188,7 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		}
 		if len(symbol.params) > 0 && type_is_compile_time_only(e.c, symbol.params[0]) { continue }
 		e.terminated = false
-		name := e.names[symbol_id]
+		name := symbol_name(e, symbol_id)
 		switch symbol.synth {
 		case .Adapter_View, .Adapter_Iter, .Indexed_Next, .Iterator_Copy,
 		     .Refs_View, .Refs_Iter, .Refs_Iter_Reverse:
@@ -1491,9 +1491,9 @@ emit_witness_thunk :: proc(e: ^Emitter, witness: ^Witness, slot: Witness_Slot, i
 	call := ""
 	if target.result != INVALID_TYPE {
 		call = temp(e)
-		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, e.names[slot.target])
+		fmt.sbprintf(&e.b, "  %s = call %s %s(", call, result_type, symbol_name(e, slot.target))
 	} else {
-		fmt.sbprintf(&e.b, "  call void %s(", e.names[slot.target])
+		fmt.sbprintf(&e.b, "  call void %s(", symbol_name(e, slot.target))
 	}
 	receiver_type := param_mode_is_pointer(slot.mode) ? "ptr" : llvm_type(e, target.params[0])
 	fmt.sbprintf(&e.b, "%s %s", receiver_type, receiver)

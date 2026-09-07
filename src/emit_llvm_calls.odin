@@ -237,7 +237,7 @@ emit_operator_call :: proc(e: ^Emitter, symbol_id: Symbol_Id, bound: []Expr) -> 
 		return emit_delegated(e, symbol, bound)
 	}
 	info := type_of(e.c, symbol.proc_type)
-	results := emit_bound_call(e, symbol_id, e.names[symbol_id] or_else "null", info, bound)
+	results := emit_bound_call(e, symbol_id, symbol_name(e, symbol_id), info, bound)
 	return len(results) == 0 ? "0" : results[0]
 }
 
@@ -420,7 +420,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, llvm_type(e, clone_result), e.names[hook], receiver_type, receiver, allocator,
+		returned, llvm_type(e, clone_result), symbol_name(e, hook), receiver_type, receiver, allocator,
 	)
 	clone_slot := emit_union_spill(e, clone_result, returned)
 	failed := emit_union_failed(e, clone_result, returned)
@@ -727,7 +727,7 @@ emit_direct_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 
 	callee := ""
 	if symbol != nil && symbol.kind == .Proc {
-		callee = e.names[v.resolution.symbol] or_else "null"
+		callee = symbol_name(e, v.resolution.symbol)
 	} else {
 		callee = emit_expr(e, v.callee)
 		// A procedure value may be nil; the call takes the same trap seam every

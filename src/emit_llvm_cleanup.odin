@@ -639,7 +639,7 @@ register_implicit_drop :: proc(e: ^Emitter, symbol_id: Symbol_Id, live := true) 
 	if !sym.drop_at_exit || len(e.cleanups) == 0 {
 		return
 	}
-	entry := Deferred{flag = flag, place = e.names[symbol_id], place_symbol = symbol_id, type = sym.type}
+	entry := Deferred{flag = flag, place = symbol_name(e, symbol_id), place_symbol = symbol_id, type = sym.type}
 	unwind_reserve(e, &entry)
 	e.unwind.slot_by_symbol[symbol_id] = entry.slot
 	unwind_register(e, entry)
@@ -667,7 +667,7 @@ kill_place :: proc(e: ^Emitter, symbol_id: Symbol_Id) {
 		return
 	}
 	if zero, ok := zero_const(e.c, sym.type); ok {
-		store(e, sym.type, llvm_const(e, zero, sym.type), e.names[symbol_id])
+		store(e, sym.type, llvm_const(e, zero, sym.type), symbol_name(e, symbol_id))
 	}
 	if flag := drop_flag_of(e, symbol_id); flag != "" {
 		fmt.sbprintfln(&e.b, "  store i1 false, ptr %s", flag)
@@ -692,7 +692,7 @@ emit_explicit_drop :: proc(e: ^Emitter, v: ^Expr_Call) {
 	if sym == nil {
 		return
 	}
-	emit_drop_place(e, sym.type, e.names[ident.symbol])
+	emit_drop_place(e, sym.type, symbol_name(e, ident.symbol))
 	kill_place(e, ident.symbol)
 }
 
@@ -780,7 +780,7 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		out, llvm_type(e, type), e.names[hook], receiver_type, receiver, provider,
+		out, llvm_type(e, type), symbol_name(e, hook), receiver_type, receiver, provider,
 	)
 	return out
 }
@@ -839,7 +839,7 @@ emit_clone_call :: proc(
 	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
-		returned, llvm_type(e, result), e.names[hook], receiver_type, receiver, allocator,
+		returned, llvm_type(e, result), symbol_name(e, hook), receiver_type, receiver, allocator,
 	)
 	slot := emit_union_spill(e, result, returned)
 	failed = emit_union_failed(e, result, returned)
@@ -878,7 +878,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		   hook_sym != nil && param_mode_is_pointer(symbol_param_mode(e.c, hook_sym, 0)) {
 			hook_type, hook_receiver = "ptr", "%arg0"
 		}
-		fmt.sbprintfln(&e.b, "  %%custom = call %s %s(%s %s, ptr %%arg1)", pair, e.names[hook], hook_type, hook_receiver)
+		fmt.sbprintfln(&e.b, "  %%custom = call %s %s(%s %s, ptr %%arg1)", pair, symbol_name(e, hook), hook_type, hook_receiver)
 		fmt.sbprintfln(&e.b, "  ret %s %%custom", pair)
 		fmt.sbprintln(&e.b, "}")
 		return
@@ -1140,7 +1140,7 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		return
 	}
 	if hook := operations.custom_drop; hook != INVALID_SYMBOL {
-		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", e.names[hook], address)
+		fmt.sbprintfln(&e.b, "  call void %s(ptr %s)", symbol_name(e, hook), address)
 	}
 	// design.md "Unions": a union owns exactly one payload, so its drop reads the
 	// tag and destroys that variant alone. No inactive payload is loaded.

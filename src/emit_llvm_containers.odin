@@ -159,7 +159,7 @@ container_less_thunk :: proc(e: ^Emitter, element: Type_Id) -> string {
 				before = temp(e)
 				fmt.sbprintfln(
 					&e.b, "  %s = call i1 %s(%s %s, %s %s)",
-					before, e.names[policy.less], llvm, left, llvm, right,
+					before, symbol_name(e, policy.less), llvm, left, llvm, right,
 				)
 			} else {
 				before = emit_compare(e, .Lt, element, left, right)
@@ -260,7 +260,7 @@ container_hash_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 				out = temp(e)
 				fmt.sbprintfln(
 					&e.b, "  %s = call i64 %s(%s %s, i64 %%seed)",
-					out, e.names[hook], receiver_type, receiver,
+					out, symbol_name(e, hook), receiver_type, receiver,
 				)
 			} else {
 				out = emit_hash_value(e, key, value, "%seed")
@@ -284,7 +284,7 @@ container_equal_thunk :: proc(e: ^Emitter, key: Type_Id) -> string {
 				same = temp(e)
 				fmt.sbprintfln(
 					&e.b, "  %s = call i1 %s(%s %s, %s %s)",
-					same, e.names[hook], llvm, left, llvm, right,
+					same, symbol_name(e, hook), llvm, left, llvm, right,
 				)
 			} else {
 				same = emit_compare(e, .Eq_Eq, key, left, right)

@@ -805,7 +805,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		}
 		symbol := symbol_of(e.c, v.symbol)
 		if symbol != nil && symbol.kind == .Proc {
-			return e.names[v.symbol] or_else "null"
+			return symbol_name(e, v.symbol)
 		}
 		out := temp(e)
 		address, ok := e.names[v.symbol]
@@ -849,7 +849,7 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		}
 		// `pkg.f` as a value is the procedure itself, not storage holding one.
 		if symbol := symbol_of(e.c, base.resolution.symbol); symbol != nil && symbol.kind == .Proc {
-			return e.names[base.resolution.symbol] or_else "null"
+			return symbol_name(e, base.resolution.symbol)
 		}
 		address := emit_address_at(e, expr, as_type)
 		return load_place(e, as_type, address)

@@ -29,7 +29,8 @@ Lifecycle :: struct {
 	// must not rediscover these by searching for the strings "clone"/"try_clone".
 	clone:           Symbol_Id,
 	try_clone:       Symbol_Id,
-	// An explicit `move_only struct`: neither public copy entry point exists.
+	// An explicit `move_only struct`, or a type that contains one: neither
+	// public copy entry point exists.
 	clone_disabled:   bool,
 	// A record is managed when it has a drop/copy hook, is move-only, or has a
 	// recursively managed field — the managed value is what scope exit cleans
@@ -147,10 +148,11 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 		entry.intrinsic = info.kind == .String || entry.container || entry.provider
 		entry.clone_disabled ||= entry.provider || info.move_only
 		// A record containing a move-only part is itself move-only: the generated
-		// field-wise clone would have no hook to call for that field. Resolved
-		// here, behind the `.Checking` marker, because a type reached through its
-		// own container field would otherwise ask this of itself without end.
-		entry.clone_disabled ||= has_move_only_part(c, info)
+		// field-wise clone would have no hook to call for that field. Only this
+		// queried type is cached; a part reached through a cycle may see an
+		// ancestor before the ancestor's later fields, so caching that partial
+		// answer would make the result depend on declaration order.
+		entry.clone_disabled ||= has_move_only_part(c, under, info)
 		entry.managed =
 			entry.intrinsic ||
 			entry.custom_drop != INVALID_SYMBOL ||
@@ -227,17 +229,32 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 // The parts whose move-only-ness the containing type inherits. A container is
 // included, unlike `has_managed_part`: `[dynamic]T` owns a deep clone of its
 // elements, so it has the same nothing-to-call problem a record does.
+//
+// This is existential reachability, so a recursion-stack guard gives the exact
+// answer for the type asked about: an ancestor continues visiting its other
+// fields after a back-edge contributes nothing. Only the queried lifecycle is
+// cached. An intermediate part may have an answer that is right for this walk
+// and wrong when asked on its own, because its path through the ancestor was
+// deliberately cut.
 @(private = "file")
-has_move_only_part :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
+has_move_only_part :: proc(c: ^Compiler, type: Type_Id, info: ^Type_Info) -> bool {
+	visiting := make(map[Type_Id]bool, 8, context.temp_allocator)
+	visiting[type_underlying(c, type)] = true
+	return has_move_only_part_walk(c, info, &visiting)
+}
+
+@(private = "file")
+has_move_only_part_walk :: proc(c: ^Compiler, info: ^Type_Info, visiting: ^map[Type_Id]bool) -> bool {
 	#partial switch info.kind {
 	case .Array, .Dynamic_Array:
-		return type_clone_disabled(c, info.element)
+		return type_clone_disabled_walk(c, info.element, visiting)
 	case .Map:
-		return type_clone_disabled(c, info.key) || type_clone_disabled(c, info.element)
+		return type_clone_disabled_walk(c, info.key, visiting) ||
+		       type_clone_disabled_walk(c, info.element, visiting)
 	case .Struct:
 		for field in info.fields {
 			sym := symbol_of(c, field)
-			if sym != nil && type_clone_disabled(c, sym.type) {
+			if sym != nil && type_clone_disabled_walk(c, sym.type, visiting) {
 				return true
 			}
 		}
@@ -245,12 +262,36 @@ has_move_only_part :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 		// A union holding a move-only variant is move-only: the tag-aware clone
 		// would have no hook to call for the arm that is active.
 		for variant in info.variants {
-			if variant != TYPE_VOID && type_clone_disabled(c, variant) {
+			if variant != TYPE_VOID && type_clone_disabled_walk(c, variant, visiting) {
 				return true
 			}
 		}
 	}
 	return false
+}
+
+@(private = "file")
+type_clone_disabled_walk :: proc(c: ^Compiler, type: Type_Id, visiting: ^map[Type_Id]bool) -> bool {
+	if type == INVALID_TYPE {
+		return false
+	}
+	under := type_underlying(c, type)
+	if existing, found := c.lifecycles[under]; found && existing.state == .Finite {
+		return existing.clone_disabled
+	}
+	if visiting[under] {
+		return false
+	}
+	info := type_of(c, under)
+	if info == nil {
+		return false
+	}
+	if info.provider || info.move_only {
+		return true
+	}
+	visiting[under] = true
+	defer delete_key(visiting, under)
+	return has_move_only_part_walk(c, info, visiting)
 }
 
 // ------------------------------------------------- generated copy members --
@@ -324,26 +365,28 @@ contribute_lifecycle_members :: proc(k: ^Checker, written: Type_Id) {
 
 	entry := lifecycle_of(k.c, type)
 	// A move-only declaration, or a record holding a move-only part, has no copy
-	// entry point to contribute.
-	if entry.clone_disabled || type_clone_disabled(k.c, type) {
-		return
+	// entry point to contribute. Its managed parts still need theirs: cleanup of
+	// a container field emits the container's complete operation table even when
+	// the containing record itself can never be copied.
+	if !entry.clone_disabled && !type_clone_disabled(k.c, type) {
+		members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+		// Always contribute the public fallible wrapper. With a custom `hook(copy)`
+		// its emitted body forwards to that hook; otherwise it performs the generated
+		// field-wise operation.
+		append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
+		// design.md: `clone` is generated for a user record and for a union, both of
+		// which a program names directly. A fixed array is reached only as a part of
+		// one, and is not itself a record.
+		if info.kind == .Struct || info.kind == .Union {
+			append(&members, generated_hook(k, type, "clone", .Clone, false))
+		}
+		add_members(k.c, type, members[:])
 	}
-	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
-	// Always contribute the public fallible wrapper. With a custom `hook(copy)`
-	// its emitted body forwards to that hook; otherwise it performs the generated
-	// field-wise operation.
-	append(&members, generated_hook(k, type, "try_clone", .Try_Clone, true))
-	// design.md: `clone` is generated for a user record and for a union, both of
-	// which a program names directly. A fixed array is reached only as a part of
-	// one, and is not itself a record.
-	if info.kind == .Struct || info.kind == .Union {
-		append(&members, generated_hook(k, type, "clone", .Clone, false))
-	}
-	add_members(k.c, type, members[:])
 
 	// A union's parts are its variant payloads. The generated body reads the tag
-	// and visits exactly one, but any could be active, so every payload's own
-	// operations have to exist.
+	// and visits exactly one, and its cleanup follows the same tag. Any payload
+	// could be active, so every payload's own operations have to exist even when
+	// this union is move-only and has no generated body of its own.
 	if info.kind == .Union {
 		for variant in info.variants {
 			if variant != TYPE_VOID && type_is_managed(k.c, variant) {

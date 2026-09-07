@@ -9,6 +9,8 @@ package main; import "core:fmt";
 
 Leaf :: struct { @(public) text: string }
 Holder :: struct { @(public) kids: [dynamic]Leaf }
+Token :: move_only struct { id: int }
+Locked_Holder :: struct { token: Token, kids: [dynamic]Leaf }
 
 // Nothing here appends, indexes, copies, or so much as asks a length: every
 // member lookup is its own reason to contribute, and this case has none.
@@ -16,6 +18,9 @@ cleanup_only :: proc() {
 	xs: [dynamic]Leaf = {};
 	table: map[int]Leaf = {};
 	held: Holder = {};
+	// A move-only outer record has no copy members of its own, but that must not
+	// stop contribution from reaching a copyable container field needed by drop.
+	locked: Locked_Holder = {};
 }
 
 // The omitted field is the container, so the struct literal is the only place

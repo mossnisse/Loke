@@ -52,7 +52,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if !info.adapter_by_value { address = load(e, "ptr", address) }
 		target := symbol_of(e.c, symbol.iteration_target)
 		iterator := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", iterator, llvm_type(e, target.result), e.names[symbol.iteration_target], address)
+		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", iterator, llvm_type(e, target.result), symbol_name(e, symbol.iteration_target), address)
 		value := iterator
 		if info.adapter_kind == .Indexed {
 			value = insert(e, result, "undef", llvm_type(e, target.result), iterator, 0)
@@ -69,7 +69,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		inner_type := llvm_type(e, inner_option)
 		iterator := gep_field(e, llvm_type(e, source), "%arg0", 0)
 		produced := temp(e)
-		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, inner_type, e.names[symbol.iteration_target], iterator)
+		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, inner_type, symbol_name(e, symbol.iteration_target), iterator)
 		tag := emit_union_tag(e, inner_option, produced)
 		ok := temp(e)
 		shape := union_layout(e.c, inner_option)

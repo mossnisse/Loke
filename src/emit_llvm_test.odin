@@ -323,8 +323,10 @@ unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
 
 @(test)
 emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
-	cases := []string{"unfrozen", "speculative", "typeid", "typeid_range", "map", "instance", "witness", "constant",
-	                   "lifecycle_unready", "lifecycle_missing", "lifecycle_incomplete", "lifecycle_hook"}
+	cases := []string{"unfrozen", "speculative", "typeid", "typeid_range", "map", "order", "formatter",
+	                   "instance", "witness", "constant",
+	                   "lifecycle_unready", "lifecycle_missing", "lifecycle_incomplete", "lifecycle_hook",
+	                   "lifecycle_hook_owner"}
 	for broken in cases {
 		c: Compiler
 		c.build_mode = .Obj
@@ -340,6 +342,10 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		case "map":
 			map_type := map_of(&c, TYPE_INT, TYPE_INT)
 			type_of(&c, map_type).contributed += {.Container}
+		case "order":
+			c.order_policies[TYPE_INT] = Order_Policy{kind = .Inherent, less = Symbol_Id(len(c.symbols) + 1)}
+		case "formatter":
+			c.formatters[TYPE_INT] = Symbol_Id(len(c.symbols) + 1)
 		case "instance":
 			instance := new(Instance, c.semantic_allocator)
 			instance.body_checked = true
@@ -355,6 +361,13 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		case "lifecycle_hook":
 			operations := c.lifecycle_operations[TYPE_INT]
 			operations.custom_drop = Symbol_Id(len(c.symbols) + 1)
+			c.lifecycle_operations[TYPE_INT] = operations
+		case "lifecycle_hook_owner":
+			// Emittable, but declared on another type: it would be called with the
+			// bytes of this one.
+			append(&c.symbols, Symbol{kind = .Proc, is_foreign = true, proc_type = TYPE_INT, owner_type = TYPE_BOOL})
+			operations := c.lifecycle_operations[TYPE_INT]
+			operations.custom_drop = Symbol_Id(len(c.symbols) - 1)
 			c.lifecycle_operations[TYPE_INT] = operations
 		}
 		testing.expectf(t, !validate_emission_dependencies(&c) && c.error_count == 1,
