@@ -92,7 +92,7 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 
 	argument := llvm_type(e, receiver)
-	open_function(e, "define void %s(%s %%arg0)", name, synth_param_llvm(e, symbol, 0))
+	open_function(e, "define %svoid %s(%s %%arg0)", llvm_linkage(name), name, synth_param_llvm(e, symbol, 0))
 	e.terminated = false
 
 	// Every contributed member is emitted whether or not the program calls it,
@@ -509,7 +509,7 @@ emit_synth_provider_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	}
 	provider := llvm_type(e, produced == TYPE_ALLOCATOR ? symbol.params[0] : produced)
 	result := llvm_result_type(e, symbol.result, symbol.result_inout)
-	fmt.sbprintf(&e.b, "define %s %s(", result, name)
+	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), result, name)
 	for parameter, index in symbol.params {
 		if index > 0 {
 			fmt.sbprint(&e.b, ", ")
@@ -606,7 +606,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fallible := symbol.result != INVALID_TYPE && type_is_union(e.c, symbol.result)
 
 	result := llvm_result_type(e, symbol.result, symbol.result_inout)
-	fmt.sbprintf(&e.b, "define %s %s(", result, name)
+	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), result, name)
 	for parameter, index in symbol.params {
 		if index > 0 {
 			fmt.sbprint(&e.b, ", ")

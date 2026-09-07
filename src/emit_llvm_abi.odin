@@ -645,7 +645,7 @@ emit_foreign_signature :: proc(e: ^Emitter, symbol: ^Symbol, llvm_name: string) 
 			}
 		}
 	}
-	fmt.sbprintf(&e.b, "define %s %s(", ret, llvm_name)
+	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(llvm_name), ret, llvm_name)
 	need_comma := false
 	if sret_prefix != "" {
 		fmt.sbprint(&e.b, sret_prefix)

@@ -8,7 +8,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	result := llvm_type(e, symbol.result)
 	source := symbol.params[0]
 	info := type_of(e.c, source)
-	open_function(e, "define %s %s(ptr %%arg0)", result, name)
+	open_function(e, "define %s%s %s(ptr %%arg0)", llvm_linkage(name), result, name)
 	e.terminated = false
 	#partial switch symbol.synth {
 	case .Refs_View:

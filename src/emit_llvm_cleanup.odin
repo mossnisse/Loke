@@ -863,7 +863,10 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	value_type := llvm_type(e, subject)
 	result := symbol.result
 	pair := llvm_type(e, result)
-	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", pair, name, synth_param_llvm(e, symbol, 0))
+	open_function(
+		e, "define %s%s %s(%s %%arg0, ptr %%arg1)",
+		llvm_linkage(name), pair, name, synth_param_llvm(e, symbol, 0),
+	)
 	e.terminated = false
 	// The body below works with the receiver as a value; an immutable receiver
 	// arrives as its address (design.md "Receiver forms"), so it is loaded once.
@@ -1058,7 +1061,10 @@ emit_synth_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	defer finish_function_emission(e, function)
 	subject := symbol.params[0]
 	value_type := llvm_type(e, subject)
-	open_function(e, "define %s %s(%s %%arg0, ptr %%arg1)", value_type, name, synth_param_llvm(e, symbol, 0))
+	open_function(
+		e, "define %s%s %s(%s %%arg0, ptr %%arg1)",
+		llvm_linkage(name), value_type, name, synth_param_llvm(e, symbol, 0),
+	)
 	e.terminated = false
 
 	cloned := emit_clone_with_policy(e, subject, synth_receiver_value(e, symbol), "%arg1")

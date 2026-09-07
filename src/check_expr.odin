@@ -3045,8 +3045,6 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 		return
 	}
 	if v.symbol == INVALID_SYMBOL {
-		name := identifier_text(k.c, intern_identifier(k.c, "proc_literal"))
-		_ = name
 		v.symbol = new_symbol(k.c, Symbol {
 			name = intern_identifier(k.c, "proc$literal"),
 			span = v.span,
@@ -3067,7 +3065,11 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	}
 	symbol.proc_literal = v
 	v.type = symbol.proc_type
-	if pkg := package_of(k.c, k.pkg); pkg != nil {
+	// The same registry gate every other backend-only list has: an interface
+	// requirement is a hypothetical program checked on cloned syntax, so a literal
+	// written inside one would otherwise be hoisted to a real module function that
+	// nothing can call.
+	if pkg := package_of(k.c, k.pkg); pkg != nil && k.c.speculation_depth == 0 {
 		append(&pkg.hoisted_procs, v)
 	}
 	check_proc_body(k, v)

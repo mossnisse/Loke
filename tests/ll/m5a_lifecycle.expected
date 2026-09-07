@@ -1,4 +1,4 @@
-define %union.Result.Plain.Allocator_Error.
+define internal %union.Result.Plain.Allocator_Error.
 @loke.i.Plain.try_clone(ptr %arg0, ptr %arg1)
 clone.failed.
 call %union.Result.Res.Allocator_Error.

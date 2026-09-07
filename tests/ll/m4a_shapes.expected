@@ -1,7 +1,7 @@
 %union.Outcome.
 = type { i32, i8, [3 x i8] }
-define i32 @loke.p.Vec.double
-define %struct.Vec
+define internal i32 @loke.p.Vec.double
+define internal %struct.Vec
 @loke.p.Vec.add
 getelementptr inbounds %union.Outcome.
 extractvalue %union.Outcome.

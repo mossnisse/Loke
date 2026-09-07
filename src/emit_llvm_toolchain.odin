@@ -14,8 +14,8 @@ import "core:strings"
 // Both clang seams — the object compile and the link — give the same advice.
 CLANG_MISSING :: "cannot run `%s`: install LLVM (`winget install LLVM.LLVM`) or set LOKE_CLANG"
 
-emit_package :: proc(c: ^Compiler, package_id: Package_Id, opts: Options) -> int {
-	module, generated := emit_llvm_module(c, package_id)
+emit_package :: proc(c: ^Compiler, opts: Options) -> int {
+	module, generated := emit_llvm_module(c)
 	if !generated {
 		return 2
 	}

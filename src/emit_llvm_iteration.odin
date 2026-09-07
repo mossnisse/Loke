@@ -718,7 +718,10 @@ emit_synth_iter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	reversed := symbol.synth == .Range_Iter_Reverse ||
 	            symbol.synth == .Array_Iter_Reverse ||
 	            symbol.synth == .Dynamic_Iter_Reverse
-	open_function(e, "define %s %s(%s %%arg0)", iterator, name, synth_param_llvm(e, symbol, 0))
+	open_function(
+		e, "define %s%s %s(%s %%arg0)",
+		llvm_linkage(name), iterator, name, synth_param_llvm(e, symbol, 0),
+	)
 	// Every shape below reads the receiver's words as a value; an immutable
 	// receiver arrives as a pointer to the caller's storage, so it is loaded once.
 	self := synth_receiver_value(e, symbol)
@@ -824,7 +827,7 @@ emit_synth_range_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	signed := type_signed(e.c, step) || type_is_rune(e.c, step)
 
 	pair_type := llvm_type(e, option)
-	open_function(e, "define %s %s(ptr %%arg0)", pair_type, name)
+	open_function(e, "define %s%s %s(ptr %%arg0)", llvm_linkage(name), pair_type, name)
 	current_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_CURRENT)
 	current := load(e, element, current_ptr)
 	high_ptr := gep_field(e, iterator, "%arg0", ITER_RANGE_HIGH)
@@ -898,7 +901,7 @@ emit_synth_indexed_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string, slic
 	stored_llvm := llvm_type(e, stored)
 
 	pair_type := llvm_type(e, option)
-	open_function(e, "define %s %s(ptr %%arg0)", pair_type, name)
+	open_function(e, "define %s%s %s(ptr %%arg0)", llvm_linkage(name), pair_type, name)
 	index_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_INDEX)
 	index := load(e, "i64", index_ptr)
 	reversed_ptr := gep_field(e, iterator, "%arg0", ITER_ARRAY_REVERSED)
@@ -974,7 +977,7 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	ops := container_ops_global(e, subject)
 
 	pair_type := llvm_type(e, option)
-	open_function(e, "define %s %s(ptr %%arg0)", pair_type, name)
+	open_function(e, "define %s%s %s(ptr %%arg0)", llvm_linkage(name), pair_type, name)
 	table_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_TABLE)
 	table := load(e, "ptr", table_ptr)
 	cursor_ptr := gep_field(e, iterator, "%arg0", ITER_MAP_CURSOR)
@@ -1067,7 +1070,7 @@ emit_synth_text_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	yielded := option_payload(e.c, option)
 	iterator := llvm_type(e, symbol.params[0])
 	pair_type := llvm_type(e, option)
-	open_function(e, "define %s %s(ptr %%arg0)", pair_type, name)
+	open_function(e, "define %s%s %s(ptr %%arg0)", llvm_linkage(name), pair_type, name)
 
 	view := load(e, STRING_VIEW_TYPE, gep_field(e, iterator, "%arg0", ITER_TEXT_VIEW))
 	data := extract(e, STRING_VIEW_TYPE, view, STRING_DATA)

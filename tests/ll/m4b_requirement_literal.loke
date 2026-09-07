@@ -1,0 +1,21 @@
+package main; import "core:fmt";
+
+// An interface body is a hypothetical program checked on cloned syntax, so a
+// procedure literal written inside a requirement must not reach the module. The
+// requirement below is checked first; if its literal were hoisted it would take
+// `lambda.0` and push the one `main` actually calls to `lambda.1`.
+Callable :: interface($T: type) {
+	(value: T) value.run(proc() -> int { return 7; }) -> int;
+}
+
+Runner :: struct { base: int }
+
+impl Runner {
+	run :: proc(self, f: proc() -> int) -> int { return self.base + f(); }
+}
+
+main :: proc() {
+	static_assert(Callable(Runner));
+	runner := Runner{base = 1};
+	fmt.println(runner.run(proc() -> int { return 41; }));
+}

@@ -81,14 +81,10 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 }
 
 // Pure module generation boundary: lowering and LLVM serialization consume the
-// checked compilation and return bytes in memory. Filesystem policy and the
-// external toolchain remain in `emit_package` above.
-emit_llvm_module :: proc(c: ^Compiler, package_id: Package_Id) -> (string, bool) {
-	pkg := package_of(c, package_id)
-	if pkg == nil {
-		errorf(c, no_span(), "L0404", "cannot emit an unknown package")
-		return "", false
-	}
+// checked compilation and return bytes in memory. One module holds every package
+// in dependency order, so there is nothing per-package to select. Filesystem
+// policy and the external toolchain remain in `emit_package` above.
+emit_llvm_module :: proc(c: ^Compiler) -> (string, bool) {
 	if !validate_emission_dependencies(c) { return "", false }
 	e := make_emitter(c)
 
@@ -272,6 +268,17 @@ splice_prologue :: proc(body: string, prologue: []string) -> string {
 	}
 	strings.write_string(&out, body[at + len(ENTRY):])
 	return strings.to_string(out)
+}
+
+// design.md "@(export)": an export is the only reason a generated procedure needs
+// a linker-visible name. Everything else is emitted under a mangled `@loke.` name
+// no external consumer can even spell — `.` is not an identifier byte in C — and
+// this module holds the whole program, so `internal` is what lets LLVM drop a body
+// once it has finished inlining it. The runtime's own entry points
+// (`@loke_rt_v1_*`, `@wmain`) are written as fixed text and never reach here.
+@(private)
+llvm_linkage :: proc(name: string) -> string {
+	return strings.has_prefix(name, "@loke.") ? "internal " : ""
 }
 
 @(private)
@@ -500,7 +507,10 @@ emit_proc :: proc(e: ^Emitter, symbol_id: Symbol_Id, literal: ^Expr_Proc) {
 	if e.abi_foreign {
 		emit_foreign_signature(e, symbol, llvm_name)
 	} else {
-		fmt.sbprintf(&e.b, "define %s %s(", llvm_result_type(e, symbol.result, e.result_inout), llvm_name)
+		fmt.sbprintf(
+			&e.b, "define %s%s %s(",
+			llvm_linkage(llvm_name), llvm_result_type(e, symbol.result, e.result_inout), llvm_name,
+		)
 		for parameter, index in symbol.params {
 			if index > 0 {
 				fmt.sbprint(&e.b, ", ")

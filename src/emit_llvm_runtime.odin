@@ -1231,7 +1231,7 @@ emit_synth_standard_customization :: proc(e: ^Emitter, symbol: ^Symbol, name: st
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
 	result := llvm_type(e, symbol.result)
-	fmt.sbprintf(&e.b, "define %s %s(", result, name)
+	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), result, name)
 	for _, index in symbol.params {
 		if index > 0 { fmt.sbprint(&e.b, ", ") }
 		fmt.sbprintf(&e.b, "%s %%arg%d", synth_param_llvm(e, symbol, index), index)
@@ -1528,7 +1528,7 @@ emit_dyn_forwarding_slot :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	// a pointer, so the forwarder loads it before reading its halves.
 	receiver_by_ptr := len(signature.param_modes) > 0 && param_mode_is_pointer(signature.param_modes[0])
 	receiver_type := receiver_by_ptr ? "ptr" : view_type
-	fmt.sbprintf(&e.b, "define %s %s(%s %%arg0", result_type, name, receiver_type)
+	fmt.sbprintf(&e.b, "define %s%s %s(%s %%arg0", llvm_linkage(name), result_type, name, receiver_type)
 	for position in 1 ..< len(symbol.params) {
 		mode := signature.param_modes[position]
 		type := param_mode_is_pointer(mode) ? "ptr" : llvm_type(e, symbol.params[position])

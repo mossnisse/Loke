@@ -52,7 +52,7 @@ main :: proc() { assert(value() == 78); }
 	testing.expect(t, len(cloned.field_indices) == 0, "a syntax clone retained checked field indices")
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
-	before, emitted := emit_llvm_module(&c, id)
+	before, emitted := emit_llvm_module(&c)
 	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
 
 	// Change only the written keys after checking. Both consumers must still
@@ -65,11 +65,11 @@ main :: proc() { assert(value() == 78); }
 	checker := Checker{c = &c}
 	value, evaluated := require_const(&checker, &call, "test result")
 	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 78), "CTFE repeated field lookup")
-	after, emitted_again := emit_llvm_module(&c, id)
+	after, emitted_again := emit_llvm_module(&c)
 	if !testing.expect(t, emitted_again && c.error_count == 0 && before == after,
 	                   "LLVM repeated field lookup") { report(&c); return }
 	literal.field_indices = nil
-	module, missing := emit_llvm_module(&c, id)
+	module, missing := emit_llvm_module(&c)
 	testing.expect(t, !missing && module == "" && c.error_count == 1,
 	               "missing field indices did not reject the module")
 }
@@ -115,7 +115,7 @@ main :: proc() {
 		info.variant_names[0], info.variant_names[1] = info.variant_names[1], info.variant_names[0]
 	}
 	type_of(&c, extraction.type).failure_designated = false
-	module, missing := emit_llvm_module(&c, id)
+	module, missing := emit_llvm_module(&c)
 	testing.expect(t, !missing && module == "" && c.error_count == 1,
 	               "missing failure metadata did not reject the module")
 }
@@ -135,7 +135,7 @@ entry_emission_requires_validated_symbol :: proc(t: ^testing.T) {
 		check_emission_package(&c, id)
 		freeze_typeids(&c)
 		finalize_lifecycle_operations(&c)
-		before, emitted := emit_llvm_module(&c, id)
+		before, emitted := emit_llvm_module(&c)
 		if !testing.expectf(t, emitted && c.error_count == 0, "%s setup failed", scenario) {
 			report(&c)
 		} else if scenario == "object" {
@@ -149,7 +149,7 @@ entry_emission_requires_validated_symbol :: proc(t: ^testing.T) {
 			case "missing_symbol": c.entry_point = INVALID_SYMBOL
 			case "missing_name": f.active_items = nil
 			}
-			after, emitted_again := emit_llvm_module(&c, id)
+			after, emitted_again := emit_llvm_module(&c)
 			if scenario == "lookup_removed" {
 				testing.expect(t, emitted_again && c.error_count == 0 && before == after,
 				               "LLVM repeated the entry lookup or used a hardcoded name")
@@ -224,7 +224,7 @@ main :: proc() {
 	// same module after both source-type and ordinary conversion emission.
 	previous := ""
 	for pass in 0 ..< 2 {
-		module, emitted := emit_llvm_module(&c, id)
+		module, emitted := emit_llvm_module(&c)
 		if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
 		if pass > 0 { testing.expect(t, module == previous, "repeated emission changed the LLVM module") }
 		previous = module
@@ -263,7 +263,7 @@ main :: proc() { }
 	}
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
-	_, valid := emit_llvm_module(&c, id)
+	_, valid := emit_llvm_module(&c)
 	if !testing.expect(t, valid && c.error_count == 0, "an unreferenced generic template reached LLVM emission") { report(&c) }
 }
 
@@ -296,7 +296,7 @@ main :: proc() {
 	if !testing.expect(t, c.error_count == 0) { report(&c); return }
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
-	_, valid := emit_llvm_module(&c, id)
+	_, valid := emit_llvm_module(&c)
 	if !testing.expect(t, valid && c.error_count == 0, "field-only map types must reach emission with resolved key policies") { report(&c) }
 }
 
@@ -314,10 +314,10 @@ unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
 	check_emission_package(&c, id)
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
-	_, valid := emit_llvm_module(&c, id)
+	_, valid := emit_llvm_module(&c)
 	testing.expect(t, valid && c.error_count == 0, "registered and nil typeids must both emit")
 	delete_key(&c.typeid_values, TYPE_INT)
-	module, missing := emit_llvm_module(&c, id)
+	module, missing := emit_llvm_module(&c)
 	testing.expect(t, !missing && module == "" && c.error_count == 1, "a missing dependency silently became the nil typeid")
 }
 
@@ -438,7 +438,7 @@ main :: proc() { assert(lookup() == 7); }
 	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 7), "CTFE repeated member lookup")
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
-	_, emitted := emit_llvm_module(&c, id)
+	_, emitted := emit_llvm_module(&c)
 	if !testing.expect(t, emitted && c.error_count == 0, "LLVM repeated member lookup") { report(&c) }
 }
 
@@ -490,7 +490,7 @@ main :: proc() {
 		               operations.clone_disabled == type_clone_disabled(&c, type),
 		               "the snapshot changed lifecycle semantics")
 	}
-	before, emitted := emit_llvm_module(&c, id)
+	before, emitted := emit_llvm_module(&c)
 	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
 	// Discard both sources of lazy lifecycle decisions. Checked symbols and the
 	// final value records survive, so lowering must produce exactly the same IR.
@@ -505,7 +505,7 @@ main :: proc() {
 		info.members = members[:]
 	}
 	clear(&c.lifecycles)
-	after, emitted_again := emit_llvm_module(&c, id)
+	after, emitted_again := emit_llvm_module(&c)
 	testing.expect(t, emitted_again && c.error_count == 0 && before == after,
 	               "LLVM repeated lifecycle member lookup or classification")
 	testing.expect(t, len(c.lifecycles) == 0, "LLVM repopulated the checker's lifecycle cache")
@@ -550,7 +550,7 @@ lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 			               len(c.synth_procs) == procs_before && len(info.members) == members_before,
 			               "a late lifecycle request mutated semantic state")
 		}
-		module, emitted := emit_llvm_module(&c, id)
+		module, emitted := emit_llvm_module(&c)
 		testing.expectf(t, !emitted && module == "" && c.error_count == 1,
 		                "%s lifecycle dependency was accepted", broken)
 		destroy_ast(&f)

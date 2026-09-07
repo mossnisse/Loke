@@ -201,7 +201,7 @@ run :: proc() -> int {
 		return code
 	}
 
-	code := emit_package(&c, package_id, opts)
+	code := emit_package(&c, opts)
 	report(&c) // warnings may have been produced with no error
 	return code
 }

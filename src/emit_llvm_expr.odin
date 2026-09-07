@@ -883,10 +883,10 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return out
 
 	case ^Expr_Proc:
-		if name, ok := e.names[v.symbol]; ok {
-			return name
-		}
-		return "null"
+		// Every literal a body can reach is hoisted and named before any body is
+		// emitted. A `null` here would assemble and link, and only fail as a call
+		// through a null pointer at run time.
+		return symbol_name(e, v.symbol)
 
 	case ^Expr_Range:
 		return emit_range_value(e, v, as_type)
