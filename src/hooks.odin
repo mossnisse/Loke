@@ -88,11 +88,6 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	operations := Lifecycle_Operations{facts = facts}
 	operations.state = .Checking
 	operations.clone_fallible = facts.custom_try_clone != INVALID_SYMBOL || facts.container
-	// `Lifecycle.clone_disabled` is the declaration's own flag; whether a copy
-	// entry point exists is the transitive question, and the snapshot answers the
-	// one its name asks. A record holding a move-only part has no field-wise
-	// clone to generate either.
-	operations.clone_disabled = type_clone_disabled(c, under)
 	c.lifecycle_operations[under] = operations
 	// The parts a generated copy visits, asked for through the one pair every
 	// other walk uses, so the snapshot cannot index a record and a fixed array by
@@ -151,6 +146,11 @@ lifecycle_of :: proc(c: ^Compiler, type: Type_Id) -> ^Lifecycle {
 		entry.provider = info.provider
 		entry.intrinsic = info.kind == .String || entry.container || entry.provider
 		entry.clone_disabled ||= entry.provider || info.move_only
+		// A record containing a move-only part is itself move-only: the generated
+		// field-wise clone would have no hook to call for that field. Resolved
+		// here, behind the `.Checking` marker, because a type reached through its
+		// own container field would otherwise ask this of itself without end.
+		entry.clone_disabled ||= has_move_only_part(c, info)
 		entry.managed =
 			entry.intrinsic ||
 			entry.custom_drop != INVALID_SYMBOL ||
@@ -221,20 +221,16 @@ type_clone_disabled :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	if type == INVALID_TYPE {
 		return false
 	}
-	if lifecycle_of(c, type).clone_disabled {
-		return true
-	}
-	// A record containing a move-only part is itself move-only: the generated
-	// field-wise clone would have no hook to call for that field.
-	info := underlying_info(c, type)
-	if info == nil {
-		return false
-	}
+	return lifecycle_of(c, type).clone_disabled
+}
+
+// The parts whose move-only-ness the containing type inherits. A container is
+// included, unlike `has_managed_part`: `[dynamic]T` owns a deep clone of its
+// elements, so it has the same nothing-to-call problem a record does.
+@(private = "file")
+has_move_only_part :: proc(c: ^Compiler, info: ^Type_Info) -> bool {
 	#partial switch info.kind {
 	case .Array, .Dynamic_Array:
-		// A container of a move-only element is itself move-only for the same
-		// reason a record holding one is: the deep clone would have no hook to
-		// call for the element it has to duplicate.
 		return type_clone_disabled(c, info.element)
 	case .Map:
 		return type_clone_disabled(c, info.key) || type_clone_disabled(c, info.element)

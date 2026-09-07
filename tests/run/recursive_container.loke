@@ -1,0 +1,34 @@
+package main; import "core:fmt";
+
+// A record that reaches itself through a container. design.md "Dynamic arrays"
+// and "Maps": a container owns a deep clone of what it holds, so managedness and
+// move-only-ness both travel through it — and asking that of a type reached from
+// its own field has to stop at the answer already in progress. A by-value cycle
+// is rejected by the finite-size pass, but this one is a legal type.
+
+Node :: struct {
+	@(public) tag: int,
+	@(public) kids: [dynamic]Node,
+}
+
+Table :: struct {
+	@(public) tag: int,
+	@(public) rows: map[int]Table,
+}
+
+main :: proc() {
+	root: Node = {};
+	root.tag = 1;
+	root.kids.append(Node{tag = 2});
+	dup := root.clone();
+	fmt.println(dup.tag);
+	fmt.println(dup.kids.len());
+	fmt.println(dup.kids[0].tag);
+
+	table: Table = {};
+	table.tag = 10;
+	table.rows[1] = Table{tag = 11};
+	copied := table.clone();
+	fmt.println(copied.tag);
+	fmt.println(copied.rows[1].tag);
+}
