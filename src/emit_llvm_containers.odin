@@ -938,7 +938,7 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	key_slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, key_slot)
 	cleanup := Deferred{slot = -1}
-	if type_is_managed(e.c, key) && !expression_is_borrowed_place(e.c, v.lhs) {
+	if emit_lifecycle(e, key).managed && !expression_is_borrowed_place(e.c, v.lhs) {
 		cleanup = begin_temporary_drop(e, key, key_slot)
 	}
 	found, out := temp(e), temp(e)
@@ -1012,7 +1012,7 @@ prepare_map_assignment :: proc(e: ^Emitter, v: ^Expr_Index, snapshot_key: bool) 
 	key := container_key(e.c, container)
 	// An earlier destination can replace the variable supplying this key. Keep
 	// an independent snapshot when a multiple assignment may write it first.
-	if snapshot_key && type_is_managed(e.c, key) && expression_is_borrowed_place(e.c, v.indices[0]) {
+	if snapshot_key && emit_lifecycle(e, key).managed && expression_is_borrowed_place(e.c, v.indices[0]) {
 		value := emit_clone_value(e, key, load(e, llvm_type(e, key), key_slot))
 		store(e, key, value, key_slot)
 		cleanup = begin_temporary_drop(e, key, key_slot)
@@ -1094,7 +1094,7 @@ emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> (s
 	slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, slot)
 	cleanup := Deferred{slot = -1}
-	if type_is_managed(e.c, key) && !expression_is_borrowed_place(e.c, v.indices[0]) {
+	if emit_lifecycle(e, key).managed && !expression_is_borrowed_place(e.c, v.indices[0]) {
 		cleanup = begin_temporary_drop(e, key, slot)
 	}
 	return slot, cleanup

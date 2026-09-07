@@ -61,7 +61,7 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
 	case .Iterator_Copy:
 		value := load(e, result, "%arg0")
-		if type_is_managed(e.c, source) { value = emit_clone_value(e, source, value) }
+		if emit_lifecycle(e, source).managed { value = emit_clone_value(e, source, value) }
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
 	case .Indexed_Next:
 		target := symbol_of(e.c, symbol.iteration_target)

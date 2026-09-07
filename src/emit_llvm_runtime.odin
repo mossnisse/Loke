@@ -1300,7 +1300,7 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 		fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, matched)
 		panic_if(e, failed, "anyview.mismatch", "checked extraction failed")
 		out := load(e, target, data)
-		if type_is_managed(e.c, v.payload) {
+		if emit_lifecycle(e, v.payload).managed {
 			out = emit_clone_value(e, v.payload, out)
 		}
 		single[0] = out
@@ -1328,7 +1328,7 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", matched, then_label, done_label)
 	fmt.sbprintfln(&e.b, "%s:", then_label)
 	loaded := load(e, target, data)
-	if type_is_managed(e.c, v.payload) {
+	if emit_lifecycle(e, v.payload).managed {
 		loaded = emit_clone_value(e, v.payload, loaded)
 	}
 	wrapped := emit_union_value(e, option, some, loaded)

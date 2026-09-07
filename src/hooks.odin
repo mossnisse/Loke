@@ -88,30 +88,30 @@ finalize_type_lifecycle :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	operations := Lifecycle_Operations{facts = facts}
 	operations.state = .Checking
 	operations.clone_fallible = facts.custom_try_clone != INVALID_SYMBOL || facts.container
+	// `Lifecycle.clone_disabled` is the declaration's own flag; whether a copy
+	// entry point exists is the transitive question, and the snapshot answers the
+	// one its name asks. A record holding a move-only part has no field-wise
+	// clone to generate either.
+	operations.clone_disabled = type_clone_disabled(c, under)
 	c.lifecycle_operations[under] = operations
-	info := type_of(c, under)
-	if info != nil {
-		// One array element is enough, regardless of the array's length. Walking
-		// every index here would make metadata finalization proportional to size.
-		parts: []Type_Id
-		if info.kind == .Array && info.count > 0 {
-			parts = []Type_Id{info.element}
-		} else if info.kind == .Struct {
-			parts = make([]Type_Id, len(info.fields), context.temp_allocator)
-			for field, index in info.fields { parts[index] = symbol_of(c, field).type }
-		} else if info.kind == .Union {
-			// Which variant is active is a runtime fact, so a union's generated
-			// clone admits the worst case across every payload it could hold.
-			carried := make([dynamic]Type_Id, 0, len(info.variants), context.temp_allocator)
-			for variant in info.variants {
-				if variant != TYPE_VOID { append(&carried, variant) }
-			}
-			parts = carried[:]
+	// The parts a generated copy visits, asked for through the one pair every
+	// other walk uses, so the snapshot cannot index a record and a fixed array by
+	// a second convention. One array element is enough regardless of the array's
+	// length: walking every index would make finalization proportional to size.
+	count := clone_part_count(c, under)
+	if underlying_kind(c, under) == .Array && count > 1 { count = 1 }
+	parts := make([dynamic]Type_Id, 0, count, context.temp_allocator)
+	for index in 0 ..< count { append(&parts, clone_part(c, under, index)) }
+	// Which variant is active is a runtime fact, so a union's generated clone
+	// admits the worst case across every payload it could hold.
+	if info := underlying_info(c, under); info != nil && info.kind == .Union {
+		for variant in info.variants {
+			if variant != TYPE_VOID { append(&parts, variant) }
 		}
-		for part in parts {
-			if !finalize_type_lifecycle(c, part) { return false }
-			operations.clone_fallible ||= c.lifecycle_operations[type_underlying(c, part)].clone_fallible
-		}
+	}
+	for part in parts {
+		if !finalize_type_lifecycle(c, part) { return false }
+		operations.clone_fallible ||= c.lifecycle_operations[type_underlying(c, part)].clone_fallible
 	}
 	operations.state = .Finite
 	c.lifecycle_operations[under] = operations

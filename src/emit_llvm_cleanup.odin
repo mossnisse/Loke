@@ -1166,7 +1166,7 @@ emit_union_drop :: proc(e: ^Emitter, type: Type_Id, info: ^Type_Info, address: s
 	tag := emit_union_tag(e, type, value)
 	done := new_label(e, "uniondrop.done")
 	for variant, index in info.variants {
-		if variant == TYPE_VOID || !type_is_managed(e.c, variant) {
+		if variant == TYPE_VOID || !emit_lifecycle(e, variant).managed {
 			continue
 		}
 		matched := temp(e)
@@ -1200,7 +1200,7 @@ emit_union_try_clone_body :: proc(
 	tag := emit_union_tag(e, subject, subject_value)
 
 	for variant, index in info.variants {
-		if variant == TYPE_VOID || !type_is_managed(e.c, variant) {
+		if variant == TYPE_VOID || !emit_lifecycle(e, variant).managed {
 			continue
 		}
 		matched := temp(e)
@@ -1210,7 +1210,7 @@ emit_union_try_clone_body :: proc(
 
 		place_label(e, hit)
 		source := gep_field(e, value_type, self, 0)
-		if !type_clone_is_fallible(e.c, variant) {
+		if !emit_lifecycle(e, variant).clone_fallible {
 			loaded := load(e, llvm_type(e, variant), source)
 			cloned := emit_clone_value(e, variant, loaded, "%arg1")
 			built := emit_union_value(e, subject, index, cloned)

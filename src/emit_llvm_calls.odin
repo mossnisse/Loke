@@ -616,7 +616,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	taken := emit_union_payload(e, operand_type, payload_type, slot)
 	// A place keeps owning what it holds, so what leaves is a copy of it. A
 	// trivially copied payload is already its own copy.
-	if v.borrows && type_is_managed(e.c, payload_type) {
+	if v.borrows && emit_lifecycle(e, payload_type).managed {
 		taken = emit_clone_value(e, payload_type, taken)
 	}
 	success_exit := new_label(e, "orelse.success.exit")
@@ -629,7 +629,7 @@ emit_or_else :: proc(e: ^Emitter, v: ^Expr_Or_Else) -> []string {
 	// a *temporary* is dropped here, before the fallback runs, since the operand's
 	// value is discarded on this path. A place still owns its own.
 	if failure_type := info.variants[info.failure_variant];
-	   !v.borrows && type_is_managed(e.c, failure_type) {
+	   !v.borrows && emit_lifecycle(e, failure_type).managed {
 		emit_drop_place(e, failure_type, gep_field(e, llvm_type(e, operand_type), slot, 0))
 	}
 	fallback := emit_expr(e, v.fallback)
@@ -690,7 +690,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 			error = emit_union_payload(e, operand_type, failure_type, slot)
 			// A place keeps its value, so the error the caller sees is a copy.
 			failure_into := target_info.variants[target_info.failure_variant]
-			if v.borrows && type_is_managed(e.c, failure_type) &&
+			if v.borrows && emit_lifecycle(e, failure_type).managed &&
 			   !failure_assignment_borrows(e.c, failure_type, failure_into) {
 				error = emit_clone_value(e, failure_type, error)
 			}
@@ -713,7 +713,7 @@ emit_or_return :: proc(e: ^Emitter, v: ^Expr_Postfix) -> []string {
 		return out
 	}
 	out[0] = emit_union_payload(e, operand_type, info.variants[success], slot)
-	if v.borrows && type_is_managed(e.c, info.variants[success]) {
+	if v.borrows && emit_lifecycle(e, info.variants[success]).managed {
 		out[0] = emit_clone_value(e, info.variants[success], out[0])
 	}
 	return out

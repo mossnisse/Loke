@@ -441,11 +441,18 @@ impl Resource {
 }
 Nested :: struct { parts: [2]Resource, empty: [0]Resource, text: string }
 Empty :: struct { parts: [0]Resource }
+// A union and a managed map key: the tag-aware clone and the map write are the
+// lowering paths that used to ask the checker's cache instead of the snapshot.
+Shape :: union { two: int, one: Resource }
 main :: proc() {
     x: Nested = {};
     y := x.clone();
     z: Empty = {};
     w := z.clone();
+    s: Shape = .one(Resource{5});
+    u := s.clone();
+    keys: map[string]int = {};
+    keys["one"] = 1;
 }
 `)
 	defer destroy_compilation(&c)
@@ -466,7 +473,8 @@ main :: proc() {
 		type := Type_Id(index)
 		operations, resolved := resolved_lifecycle_operations(&c, type)
 		testing.expect(t, resolved && operations.managed == type_is_managed(&c, type) &&
-		               operations.clone_fallible == type_clone_is_fallible(&c, type),
+		               operations.clone_fallible == type_clone_is_fallible(&c, type) &&
+		               operations.clone_disabled == type_clone_disabled(&c, type),
 		               "the snapshot changed lifecycle semantics")
 	}
 	before, emitted := emit_llvm_module(&c, id)
