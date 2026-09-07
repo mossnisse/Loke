@@ -12,3 +12,6 @@ in `grow_integer`, called here
 L0342
 @31:10
 in `grow_array`, called here
+L0342
+@42:10
+in `grow_stack`, called here

@@ -110,6 +110,12 @@ main :: proc() {
 	static_assert(FOLDED == 4);
 	fmt.println(FOLDED);
 
+	// "An explicit `Simd(U, N)(v)` converts each lane" is a value claim, so it
+	// has to hold in all three places: a written constant, an evaluated
+	// procedure, and the emitted call. The last two are printed side by side.
+	fmt.println(CONVERTED, CONVERTED[3]);
+	fmt.println(FOLDED_CONVERSION, lane_conversion());
+
 	// --------------------------------------------------------- reflection --
 
 	info := type_info_of(typeid_of(Simd(f32, 4)));
@@ -176,6 +182,19 @@ lane_arithmetic :: proc() -> i32 {
 }
 
 FOLDED :: lane_arithmetic();
+
+// The lane-wise conversion, in the checker and in the evaluator. `const_of`
+// carries no lanes and the splat path answered only its own target, so both
+// once refused what `convertible` permits and the backend emits.
+CONVERTED :: Simd(f64, 4)(Simd(i32, 4){3, 4, 5, 6});
+
+lane_conversion :: proc() -> i32 {
+	v: Simd(i32, 4) = {3, 4, 5, 6};
+	widened := Simd(f64, 4)(v);
+	return i32(widened[0]) * 10 + Simd(i32, 4)(widened)[3];
+}
+
+FOLDED_CONVERSION :: lane_conversion();
 
 MASK_A :: Simd(bool, 4){true, true, false, false};
 MASK_B :: Simd(bool, 4){true, false, true, false};

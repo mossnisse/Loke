@@ -34,3 +34,13 @@ grow_array :: proc() -> int {
 	xs.resize(1000000);
 	return xs.len();
 }
+
+// Recursion is bounded by the *stack* the evaluator runs on, not by a frame
+// count: one evaluated call costs kilobytes of it, so `EVAL_MAX_DEPTH` is out
+// of reach on an ordinary stack and this must still be a diagnostic rather
+// than the process dying.
+STACK :: grow_stack(1000);
+grow_stack :: proc(n: int) -> int {
+	if (n == 0) { return 0; }
+	return 1 + grow_stack(n - 1);
+}

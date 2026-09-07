@@ -32,6 +32,8 @@ true true true false
 true
 [0, 1, 2, 3] [0, 2, 4, 6] [-0, -1, -2, -3] [-2, -3, -4, -5] [false, false, true, true]
 4
+[3, 4, 5, 6] 6
+36 36
 Simd 16 16 4
 true Simd(f32, 4)
 Simd 4 true

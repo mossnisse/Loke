@@ -138,6 +138,18 @@ eval_propagate :: proc(fail: bool) -> Eval_Failure {
 EVAL_OR_RETURN_OK :: eval_propagate(false) or_else -1;
 EVAL_OR_RETURN_ERR :: eval_propagate(true) or_else -1;
 
+// An `or_return` need not be the last thing a frame does. In a loop's post
+// statement it ends the loop as well as the procedure, so a post that only
+// checked for failure would keep the loop running on a value that already
+// returned — forever, until a ceiling stopped it.
+eval_post :: proc(limit: int) -> Eval_Failure {
+	total := 0;
+	for (i := 1; i < limit; i = eval_source(i >= 3) or_return) { total += i; }
+	return .ok(total);
+}
+EVAL_POST_OK :: eval_post(3) or_else -1;
+EVAL_POST_ERR :: eval_post(9) or_else -1;
+
 main :: proc() {
 	static_assert(TEMP_LOOKUP == 73);
 	assert(temporary_lookup() == TEMP_LOOKUP);
@@ -153,6 +165,8 @@ main :: proc() {
 	fmt.println(REVIVED);
 	fmt.println(COPIED);
 	fmt.println(EVAL_OR_RETURN_OK, EVAL_OR_RETURN_ERR);
+	fmt.println(EVAL_POST_OK, EVAL_POST_ERR);
+	fmt.println(eval_post(3) or_else -1, eval_post(9) or_else -1);
 }
 
 // Equality deliberately ignores the annotation: structural comparison gives

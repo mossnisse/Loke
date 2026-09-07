@@ -3735,23 +3735,33 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			return nil_const(), true
 		}
 	case .Simd:
-		// design.md "SIMD vectors": a scalar constant becomes the splat, one lane
-		// per element, converted once at the lane type.
+		// design.md "SIMD vectors": `Simd(U, N)(v)` "converts each lane of `v`
+		// from `T` to `U` under the same rule the scalar conversion `U(lane)`
+		// would use, and requires the same lane count". A scalar constant is the
+		// splat: that same conversion, into every lane. Both are the one loop
+		// below, so a constant vector folds exactly where `convertible` already
+		// says it may — otherwise the fold would refuse what the backend emits.
 		if value.kind == .Aggregate {
-			if value.aggregate != nil && value.aggregate.type == target {
+			if value.aggregate == nil || len(value.aggregate.elements) != int(info.count) {
+				return value, false
+			}
+			if value.aggregate.type == target {
 				return value, true
 			}
-			return value, false
 		}
-		lane, fits := convert_const(c, value, info.element, explicit, allocator)
-		if !fits {
-			return value, false
-		}
-		elements := make([]Const_Value, info.count, c.semantic_allocator)
+		elements := make([]Const_Value, info.count, storage)
 		for index in 0 ..< int(info.count) {
-			elements[index] = lane
+			lane := value
+			if value.kind == .Aggregate {
+				lane = value.aggregate.elements[index]
+			}
+			converted, fits := convert_const(c, lane, info.element, explicit, allocator)
+			if !fits {
+				return value, false
+			}
+			elements[index] = converted
 		}
-		aggregate := new(Const_Aggregate, c.semantic_allocator)
+		aggregate := new(Const_Aggregate, storage)
 		aggregate.type = target
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true

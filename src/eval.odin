@@ -23,6 +23,24 @@ EVAL_MAX_STEPS  :: 1_000_000
 EVAL_MAX_DEPTH  :: 256
 EVAL_MAX_MEMORY :: 64 * 1024 * 1024
 
+// The three above are counted; this one is measured, because the evaluator
+// recurses on the host's own stack and the counted ceilings cannot protect it.
+// One evaluated call costs 16-53 KB of that stack depending on the shape of the
+// expressions in it, so a 1 MB stack reaches `EVAL_MAX_DEPTH` in none of them,
+// and 128 levels of nesting — all the parser allows — exhausts it inside a
+// *single* frame with no call at all. A frame count therefore cannot be the
+// guard: `eval_step` compares the live frame against the shallowest one this
+// thread has evaluated from, which bounds recursion and nesting together.
+// Raise this only alongside the stack the compiler is linked with.
+EVAL_MAX_STACK :: 768 * 1024
+
+// Per thread, so the compiler's own test harness cannot measure one thread's
+// depth against another's stack, and reset upwards whenever evaluation starts
+// nearer the top than the recorded point — the shallowest frame seen on this
+// thread is the closest thing to its base that we can observe portably.
+@(private = "file", thread_local)
+eval_stack_base: uintptr
+
 // What finishing a statement did to control flow. `Fail` means a diagnostic has
 // already been reported and the whole evaluation is over.
 Eval_Flow :: enum {
@@ -250,6 +268,20 @@ eval_proc_name :: proc(c: ^Compiler, symbol_id: Symbol_Id) -> string {
 @(private = "file")
 eval_step :: proc(ev: ^Evaluator, span: Span) -> bool {
 	if ev.failed || !eval_memory_ok(ev) { return false }
+	// A stack address, which grows downwards away from the base. Reporting needs
+	// stack of its own, so the budget stops short of the real edge.
+	probe: u8
+	here := uintptr(&probe)
+	if eval_stack_base < here {
+		eval_stack_base = here
+	}
+	if eval_stack_base - here > EVAL_MAX_STACK {
+		return eval_fail(
+			ev, span, "L0342",
+			"compile-time evaluation exceeded %d bytes of stack: it recurses or nests too deeply here",
+			EVAL_MAX_STACK,
+		)
+	}
 	ev.steps += 1
 	if ev.steps > EVAL_MAX_STEPS {
 		return eval_fail(ev, span, "L0342", "compile-time evaluation exceeded %d steps", EVAL_MAX_STEPS)
@@ -845,7 +877,7 @@ eval_simd_unary :: proc(ev: ^Evaluator, v: ^Expr_Unary, operand: Eval_Value) -> 
 			return Eval_Value{}, false
 		}
 		if folded.kind == .Integer || folded.kind == .Rune {
-			folded.integer = wrap_to_type(ev.k.c, folded.integer, info.element)
+			folded.integer = wrap_to_type(ev.k.c, folded.integer, info.element, ev.alloc)
 		}
 		elements[index] = scalar(folded, info.element)
 	}
@@ -1549,12 +1581,6 @@ eval_map_membership :: proc(ev: ^Evaluator, v: ^Expr_Binary) -> (Eval_Value, boo
 	return Eval_Value{kind = .Boolean, type = TYPE_BOOL, boolean = present}, true
 }
 
-// How many entries a container holds. A map stores two slots per entry.
-@(private = "file")
-container_length :: proc(c: ^Compiler, v: Eval_Value) -> int {
-	return type_is_map(c, v.type) ? len(v.elements) / 2 : len(v.elements)
-}
-
 // ------------------------------------------------------------------ places --
 
 // The storage an expression denotes. Assignment, `&`, and `inout` binding all
@@ -2153,10 +2179,28 @@ eval_conversion :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 		eval_fail(ev, v.span, "L0341", "a pointer's address cannot be observed at compile time")
 		return Eval_Value{}, false
 	}
-	converted, fits := convert_const(c, const_of(source), v.type, true, ev.alloc)
+	// `const_of` carries only the scalar fields, and an aggregate's parts live in
+	// `elements`. Freezing into the evaluator's own storage is what hands the
+	// shared conversion a whole value, so a vector converts lane by lane here
+	// exactly as it does when the operand was written as a constant.
+	operand := const_of(source)
+	if source.kind == .Aggregate {
+		frozen, froze := freeze(ev, source, ev.alloc)
+		if !froze {
+			return Eval_Value{}, false
+		}
+		operand = frozen
+	}
+	converted, fits := convert_const(c, operand, v.type, true, ev.alloc)
 	if !fits {
 		eval_fail(ev, v.span, "L0341", "this conversion has no compile-time value")
 		return Eval_Value{}, false
+	}
+	// design.md "SIMD vectors": a lane-wise conversion answers with an aggregate,
+	// so it has to be read back as one — a `scalar` here would leave a vector
+	// with no lanes, and the next `v[i]` would find nothing there.
+	if converted.kind == .Aggregate {
+		return value_from_const(ev, converted, v.type)
 	}
 	return scalar(converted, v.type), true
 }
@@ -2273,7 +2317,10 @@ eval_message :: proc(ev: ^Evaluator, v: ^Expr_Call, index: int) -> string {
 	if base == nil || !base.is_const || base.const_value.kind != .String {
 		return ""
 	}
-	return fmt.aprintf(": %s", base.const_value.text)
+	// Diagnostic text, not a value: it belongs to the compilation like every
+	// other interpolated fragment, rather than to `context.allocator`, which
+	// owns nothing here and would never free it.
+	return fmt.aprintf(": %s", base.const_value.text, allocator = ev.k.c.semantic_allocator)
 }
 
 // -------------------------------------------------------------- statements --
@@ -2317,7 +2364,13 @@ eval_stmt :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 		return .Fail
 	}
 	if result == .Fail {
+		// The statement containing the `or_return` is where its unwind signal
+		// becomes ordinary return flow, and where it is spent. Leaving it set
+		// would let the *next* silent failure in this frame — a `defer` running
+		// on the way out, after the flag was raised — read as a return too, and
+		// hand back a result the evaluation never finished computing.
 		if frame := current_frame(ev); frame != nil && frame.returning && !ev.failed {
+			frame.returning = false
 			return .Return
 		}
 	}
@@ -2635,8 +2688,11 @@ eval_for :: proc(ev: ^Evaluator, s: ^Stmt_For) -> Eval_Flow {
 			return .Normal
 		}
 		if s.post != nil {
-			if post := eval_stmt(ev, s.post); post == .Fail {
-				return .Fail
+			// A post statement can end the loop as well as advance it: an
+			// `or_return` written there returns from the whole procedure, so
+			// anything but ordinary completion leaves this loop.
+			if post := eval_stmt(ev, s.post); post != .Normal {
+				return post
 			}
 		}
 	}
