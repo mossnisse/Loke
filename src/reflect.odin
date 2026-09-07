@@ -228,8 +228,7 @@ freeze_typeids :: proc(c: ^Compiler) {
 // terminates on the already-requested check.
 @(private = "file")
 request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
-	info := type_of(c, type)
-	if info == nil {
+	if type_of(c, type) == nil {
 		return
 	}
 	consider :: proc(c: ^Compiler, referenced: Type_Id) {
@@ -241,10 +240,10 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 		}
 		request_typeid(c, referenced)
 	}
-	// A `distinct` type's own underlying shape is reachable through `element`.
-	if info.kind == .Distinct {
-		consider(c, info.element)
-	}
+	// A `distinct` type's own `element` is deliberately absent: `type_info_entry`
+	// reports the shape `underlying_info` resolves to, so the wrapped type is
+	// never named by the metadata and an id for it would be reachable from
+	// nothing. The shape's own components below are what a walk can reach.
 	under := underlying_info(c, type)
 	if under == nil {
 		return
@@ -267,9 +266,49 @@ request_referenced_typeids :: proc(c: ^Compiler, type: Type_Id) {
 	}
 }
 
+// A symbol's package-qualified identity. A bare identifier is not one: two
+// packages may both declare `Token`.
+@(private = "file")
+symbol_key :: proc(c: ^Compiler, id: Symbol_Id) -> string {
+	sym := symbol_of(c, id)
+	if sym == nil {
+		return "<none>"
+	}
+	pkg_key := ""
+	if pkg := package_of(c, sym.pkg); pkg != nil {
+		pkg_key = pkg.key
+	}
+	return fmt.aprintf(
+		"%s:%s", pkg_key, identifier_text(c, sym.name),
+		allocator = c.semantic_allocator,
+	)
+}
+
+// Generic and `dyn` arguments, each named by its own stable key rather than by
+// the display spelling the applied type's `name` was built from.
+@(private = "file")
+write_applied_args :: proc(
+	c: ^Compiler,
+	b: ^strings.Builder,
+	args: []Generic_Arg,
+	memo: ^map[Type_Id]string,
+	visiting: ^map[Type_Id]bool,
+) {
+	for arg in args {
+		if arg.is_type {
+			fmt.sbprintf(b, ":t{%s}", typeid_sort_key_walk(c, arg.type, memo, visiting))
+		} else {
+			fmt.sbprintf(b, ":v{%s}", const_key_text(c, arg.value))
+		}
+	}
+}
+
 // A canonical identity independent of both request order and the internal
 // Type_Id allocation order. Nominal types use their package-qualified symbol;
-// structural types recursively name their complete shape.
+// an applied type — a generic instance or a `dyn` view — names what it was
+// applied to plus each argument's own key, since its readable `name` is a
+// display spelling two unrelated types can share; structural types recursively
+// name their complete shape.
 typeid_sort_key :: proc(c: ^Compiler, type: Type_Id) -> string {
 	memo := make(map[Type_Id]string, c.semantic_allocator)
 	visiting := make(map[Type_Id]bool, c.semantic_allocator)
@@ -301,7 +340,7 @@ typeid_sort_key_walk :: proc(
 	// shapes (e.g. `int` and `i64` on a 64-bit target). Catalogue position is
 	// fixed by the language, but the readable name keeps the key independent of
 	// both that internal position and request order.
-	if type >= 0 && type < FIRST_DYNAMIC_TYPE {
+	if type < FIRST_DYNAMIC_TYPE {
 		result = fmt.aprintf(
 			"predeclared:%s", type_name(c, type),
 			allocator = c.semantic_allocator,
@@ -315,14 +354,29 @@ typeid_sort_key_walk :: proc(
 		memo^[type] = result
 		return result
 	}
+	// An instance's `name` is the readable `Box(Token)`, assembled from display
+	// names — and a display name is not an identity, so `Box(a.Token)` and
+	// `Box(b.Token)` spell the same thing. Equal keys leave the sort to fall back
+	// on request order, which is the one thing this pass promises ids do not
+	// depend on. Key on the template and each argument's own key instead.
+	if info.instance_of != INVALID_SYMBOL {
+		b := strings.builder_make(c.semantic_allocator)
+		fmt.sbprintf(&b, "instance:%s", symbol_key(c, info.instance_of))
+		// A template declared in an `impl` block shares its name with the
+		// templates of every other block on the same owner.
+		if template := symbol_of(c, info.instance_of);
+		   template != nil && template.owner_type != INVALID_TYPE {
+			fmt.sbprintf(&b, ":o{%s}", typeid_sort_key_walk(c, template.owner_type, memo, visiting))
+		}
+		write_applied_args(c, &b, info.instance_args, memo, visiting)
+		result = strings.to_string(b)
+		memo^[type] = result
+		return result
+	}
 	if info.symbol != INVALID_SYMBOL {
-		if sym := symbol_of(c, info.symbol); sym != nil {
-			pkg_key := ""
-			if pkg := package_of(c, sym.pkg); pkg != nil {
-				pkg_key = pkg.key
-			}
+		if symbol_of(c, info.symbol) != nil {
 			result = fmt.aprintf(
-				"nominal:%s:%s", pkg_key, identifier_text(c, sym.name),
+				"nominal:%s", symbol_key(c, info.symbol),
 				allocator = c.semantic_allocator,
 			)
 			memo^[type] = result
@@ -346,6 +400,17 @@ typeid_sort_key_walk :: proc(
 				typeid_sort_key_walk(c, member.type, memo, visiting),
 			)
 		}
+		result = strings.to_string(b)
+		memo^[type] = result
+		return result
+	}
+	// A `dyn` type carries no symbol, so it would otherwise fall to the display
+	// name below — and `dyn Drawable` names whichever `Drawable` was in scope.
+	// The erased interface and its arguments are the identity.
+	if info.dyn_interface != INVALID_SYMBOL {
+		b := strings.builder_make(c.semantic_allocator)
+		fmt.sbprintf(&b, "dyn:%t:%s", info.mutable, symbol_key(c, info.dyn_interface))
+		write_applied_args(c, &b, info.dyn_args, memo, visiting)
 		result = strings.to_string(b)
 		memo^[type] = result
 		return result
@@ -459,6 +524,19 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	switch kind {
 	case .Typeid_Of:
 		if !gate_type(k, subject, expr_span(operand)) {
+			v.type = INVALID_TYPE
+			return
+		}
+		// A `typeid` names a runtime type. `request_referenced_typeids` already
+		// declines to register a compile-time-only one it reaches through the
+		// metadata; asking for one directly gets the same answer, said out loud
+		// rather than as a table entry describing a value that cannot exist.
+		if type_is_compile_time_only(k.c, subject) {
+			errorf(
+				k.c, expr_span(operand), "L0451",
+				"`%s` exists only during compilation, so it has no `typeid`",
+				type_name(k.c, subject),
+			)
 			v.type = INVALID_TYPE
 			return
 		}

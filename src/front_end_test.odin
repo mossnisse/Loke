@@ -116,6 +116,56 @@ deep_typeids_are_request_order_independent :: proc(t: ^testing.T) {
 	testing.expect(t, right_first == right_reverse, "deep right typeid depends on request order")
 }
 
+// Two instances of one template whose arguments merely *print* the same:
+// `Box(a.Token)` and `Box(b.Token)` share the readable name `Box(Token)`, so a
+// key taken from that name would tie and leave the sort to fall back on request
+// order. Same story for `dyn` over two packages' unrelated `Drawable`.
+@(test)
+applied_typeids_do_not_key_on_display_names :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+	init_semantic_stores(&c)
+	name := intern_identifier(&c, "Box(Token)")
+	template := new_symbol(&c, Symbol{name = intern_identifier(&c, "Box"), kind = .Type})
+	interface_symbol := new_symbol(&c, Symbol{name = intern_identifier(&c, "Drawable"), kind = .Type})
+
+	applied :: proc(c: ^Compiler, name: Identifier_Id, owner: Symbol_Id, arg: Type_Id, dyn: bool) -> Type_Id {
+		args := make([]Generic_Arg, 1, c.semantic_allocator)
+		args[0] = Generic_Arg{is_type = true, type = arg}
+		info := Type_Info{kind = .Struct, name = name}
+		if dyn {
+			info.kind, info.dyn_interface, info.dyn_args = .Dyn, owner, args
+		} else {
+			info.symbol, info.instance_of, info.instance_args = new_symbol(c, Symbol{name = name, kind = .Type}), owner, args
+		}
+		return new_type(c, info)
+	}
+	// Two packages' unrelated `Token`: separate nominal types that print alike.
+	token :: proc(c: ^Compiler, pkg: string) -> Type_Id {
+		symbol := new_symbol(c, Symbol {
+			name = intern_identifier(c, "Token"),
+			kind = .Type,
+			pkg  = new_package(c, pkg, pkg),
+		})
+		return new_type(c, Type_Info{kind = .Struct, symbol = symbol})
+	}
+	first, second := token(&c, "a"), token(&c, "b")
+
+	testing.expect(
+		t,
+		typeid_sort_key(&c, applied(&c, name, template, first, false)) !=
+		typeid_sort_key(&c, applied(&c, name, template, second, false)),
+		"two generic instances collided on their shared display name",
+	)
+	dyn_name := intern_identifier(&c, "dyn Drawable")
+	testing.expect(
+		t,
+		typeid_sort_key(&c, applied(&c, dyn_name, interface_symbol, first, true)) !=
+		typeid_sort_key(&c, applied(&c, dyn_name, interface_symbol, second, true)),
+		"two dyn views collided on their shared display name",
+	)
+}
+
 @(test)
 written_signatures_agree_on_parameter_shapes :: proc(t: ^testing.T) {
 	source := `package main;

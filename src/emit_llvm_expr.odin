@@ -291,6 +291,10 @@ write_const_bytes :: proc(e: ^Emitter, out: []u8, value: Const_Value, type: Type
 		return true
 	case .Typeid:
 		id := typeid_value(e.c, value.type_value)
+		if value.type_value != INVALID_TYPE && id == 0 {
+			backend_fail(e, "a typeid constant was not registered before freezing")
+			return false
+		}
 		for _, index in out {
 			out[index] = u8(id >> u64(index * 8))
 		}
