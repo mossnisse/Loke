@@ -1,0 +1,12 @@
+L0572
+@12:2
+`format` on `Consuming` is what erased printing calls
+L0572
+@18:2
+`format` on `Mutating` is what erased printing calls
+L0572
+@24:2
+`format` on `Foreign_Receiver` is what erased printing calls
+L0572
+@31:2
+`format` on `Near_Miss` is what erased printing calls

@@ -1,0 +1,39 @@
+package main; import "core:fmt";
+
+// design.md "String format printing": `format` is the erased protocol's name, so
+// a member spelling it in the type's own package has to be able to serve it. The
+// thunk hands over the caller's own storage and expects nothing back.
+
+Other :: struct { @(public) a: f64, @(public) b: string }
+
+Consuming :: struct { @(public) v: int }
+impl Consuming {
+	// Would drop a value its owner still holds, once per print.
+	format :: proc(self: move Consuming, w: fmt.Writer, o: fmt.Options) {}
+}
+
+Mutating :: struct { @(public) v: int }
+impl Mutating {
+	// Would make printing a write, through storage the caller may not own.
+	format :: proc(self: inout Mutating, w: fmt.Writer, o: fmt.Options) {}
+}
+
+Foreign_Receiver :: struct { @(public) v: u8 }
+impl Foreign_Receiver {
+	// Would be called with this type's bytes under another type's name.
+	format :: proc(other: Other, w: fmt.Writer, o: fmt.Options) {}
+}
+
+Near_Miss :: struct { @(public) v: int }
+impl Near_Miss {
+	// A result the protocol has nowhere to put; silently printing field-wise
+	// would answer a written formatter with silence.
+	format :: proc(self, w: fmt.Writer, o: fmt.Options) -> int { return 0; }
+}
+
+main :: proc() {
+	fmt.println(Consuming{v = 1});
+	fmt.println(Mutating{v = 2});
+	fmt.println(Foreign_Receiver{v = 3});
+	fmt.println(Near_Miss{v = 4});
+}

@@ -20,36 +20,34 @@ package lokec
 // The formatter a concrete type answers to, or INVALID_SYMBOL when the compiler
 // generates one. design.md's coherence rule in one predicate: only the package
 // that owns the type may supply it.
-formatter_of :: proc(c: ^Compiler, type: Type_Id) -> Symbol_Id {
+formatter_of :: proc(c: ^Compiler, type, writer, options: Type_Id) -> Symbol_Id {
 	// Formatting is coherent per *concrete identity*. In particular a distinct
 	// type owns different inherent members from the representation it wraps.
 	info := type_of(c, type)
 	if info == nil {
 		return INVALID_SYMBOL
 	}
-	chosen := INVALID_SYMBOL
 	for member in info.members {
 		sym := symbol_of(c, member)
 		if sym == nil || sym.synth != .None || identifier_text(c, sym.name) != "format" {
 			continue
 		}
-		if !formatter_signature_ok(c, sym) {
-			continue
+		if formatter_signature_ok(sym, type, writer, options) {
+			return member
 		}
-		if chosen != INVALID_SYMBOL {
-			errorf(
-				c, sym.span, "L0572",
-				"`%s` has two `format` procedures in its own package, so its erased formatting would be ambiguous",
-				type_name(c, type),
-			)
-			if previous := symbol_of(c, chosen); previous != nil {
-				add_notef(c, previous.span, "the other one is declared here")
-			}
-			continue
-		}
-		chosen = member
+		// A type holds at most one inherent `format` — L0409 rejects a second at
+		// declaration — and design.md gives that name to the protocol. So a member
+		// spelling it that cannot serve it is a mistake rather than an unrelated
+		// procedure this collides with, and printing field-wise anyway would answer
+		// a written formatter with silence.
+		errorf(
+			c, sym.span, "L0572",
+			"`format` on `%s` is what erased printing calls, so it is written `proc(self, w: fmt.Writer, o: fmt.Options)`",
+			type_name(c, type),
+		)
+		return INVALID_SYMBOL
 	}
-	return chosen
+	return INVALID_SYMBOL
 }
 
 // design.md's coherence rule, resolved once for the whole program: an `impl`
@@ -61,28 +59,35 @@ discover_formatters :: proc(c: ^Compiler) {
 	if !c.format_requested {
 		return
 	}
-	for type in c.typeid_order {
-		if _, done := c.formatters[type]; done {
-			continue
-		}
-		c.formatters[type] = formatter_of(c, type)
-	}
-}
-
-// `format(self, writer: Writer, options: Options)`. The two library types are
-// resolved through the importing package, exactly as `Source_Code_Location` is,
-// so there is one identity for each.
-@(private = "file")
-formatter_signature_ok :: proc(c: ^Compiler, sym: ^Symbol) -> bool {
-	if len(sym.params) != 3 || sym.result != INVALID_TYPE {
-		return false
-	}
+	// `format_requested` is set by checking `format_any`, which is also what
+	// records these, so their absence is a checker that never ran rather than a
+	// signature to report on.
 	writer, has_writer := c.runtime_types["Writer"]
 	options, has_options := c.runtime_types["Options"]
 	if !has_writer || !has_options {
+		return
+	}
+	for type in c.typeid_order {
+		c.formatters[type] = formatter_of(c, type, writer, options)
+	}
+}
+
+// `format(self, writer: Writer, options: Options)`: a borrowed receiver of the
+// type itself, and nothing given back. The two library types are resolved
+// through the importing package, exactly as `Source_Code_Location` is, so there
+// is one identity for each.
+//
+// The receiver form is half the signature. The thunk hands a formatter the
+// caller's own storage, so a mutating receiver would make printing a write and a
+// consuming one would drop a value its owner still holds; a receiver of another
+// type would be called with the bytes of this one.
+@(private = "file")
+formatter_signature_ok :: proc(sym: ^Symbol, subject, writer, options: Type_Id) -> bool {
+	if !sym.has_receiver || sym.receiver != .Borrow {
 		return false
 	}
-	return sym.params[1] == writer && sym.params[2] == options
+	return len(sym.params) == 3 && sym.result == INVALID_TYPE &&
+		sym.params[0] == subject && sym.params[1] == writer && sym.params[2] == options
 }
 
 // Whether a concrete type can be formatted at all. design.md's erased printing
