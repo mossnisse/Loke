@@ -3127,6 +3127,16 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	v.addressable = true
 	v.assignable = false
 	v.immutable = .Temporary
+	// A literal produces a value the backend has to clean up, and a managed one
+	// is cleaned up through its lifecycle operations. A container's run through
+	// one operation table per element type, and that table carries the element's
+	// clone beside its drop — so a container that is only ever constructed and
+	// dropped still needs the copy entry points a written copy would contribute.
+	// Contributed here, at the one place every aggregate is built, rather than
+	// only at the sites that copy.
+	if type_is_managed(k.c, target) {
+		contribute_lifecycle_members(k, target)
+	}
 
 	#partial switch info.kind {
 	case .Struct:

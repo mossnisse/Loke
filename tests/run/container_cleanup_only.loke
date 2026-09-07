@@ -1,0 +1,29 @@
+package main; import "core:fmt";
+
+// design.md "Dynamic arrays"/"Maps": a container is cleaned up through one
+// operation table per element type, and that table carries the element's clone
+// beside its drop. So a container that is only ever constructed and dropped
+// still needs the copy entry points a written copy would have contributed —
+// including when its literal is the empty one, when it reaches the program only
+// as a field, and when it is a temporary with no name at all.
+
+Leaf :: struct { @(public) text: string }
+Holder :: struct { @(public) kids: [dynamic]Leaf }
+
+// Nothing here appends, indexes, copies, or so much as asks a length: every
+// member lookup is its own reason to contribute, and this case has none.
+cleanup_only :: proc() {
+	xs: [dynamic]Leaf = {};
+	table: map[int]Leaf = {};
+	held: Holder = {};
+}
+
+// The omitted field is the container, so the struct literal is the only place
+// its value comes from.
+build :: proc() -> Holder { return {}; }
+
+main :: proc() {
+	cleanup_only();
+	_ = build();
+	fmt.println(1);
+}
