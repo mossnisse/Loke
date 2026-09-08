@@ -163,6 +163,76 @@ seed_runtime_is_found_from_anywhere :: proc(t: ^testing.T) {
 	)
 }
 
+// A seed runtime that exists but does not define everything the module calls
+// is a runtime failure, not a foreign one. `loke_rt.h` makes the ABI version
+// part of every exported name so a stale directory fails to link instead of
+// agreeing on a changed record — and that link failure has to name the runtime
+// it came from, since the program here imports nothing foreign at all.
+@(test)
+a_partial_seed_runtime_is_not_a_foreign_failure :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	partial := fmt.tprintf("%s/partial-runtime", TMP)
+	os.make_directory(partial)
+	// The header plus one source: enough to compile, far too little to link.
+	for name in ([]string{"loke_rt.h", "alloc.c"}) {
+		content, read := os.read_entire_file(filepath.join({"runtime", name}, context.temp_allocator))
+		if !testing.expectf(t, read, "cannot read runtime/%s", name) {
+			return
+		}
+		defer delete(content)
+		os.write_entire_file(filepath.join({partial, name}, context.temp_allocator), content)
+	}
+
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string {
+				compiler_path(), "examples/hello.loke",
+				"-o", fmt.tprintf("%s/partial-runtime.exe", TMP),
+				fmt.tprintf("-runtime=%s", partial),
+			},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	testing.expectf(t, state.exit_code == 2, "a partial seed runtime linked")
+	testing.expectf(
+		t,
+		!strings.contains(string(stderr), "L0633"),
+		"a partial seed runtime was blamed on a foreign import:\n%s",
+		string(stderr),
+	)
+	testing.expectf(
+		t,
+		strings.contains(string(stderr), "L0403") && strings.contains(string(stderr), partial),
+		"expected L0403 naming %s, got:\n%s",
+		partial,
+		string(stderr),
+	)
+}
+
+// `-o` chooses the artifact path, and `.ll` is a legal thing to call an
+// executable. The generated module is derived from that same path, so the
+// build must not take its own output for a temporary and delete it.
+@(test)
+a_dot_ll_output_survives_its_own_build :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	out := fmt.tprintf("%s/dot-ll-output.ll", TMP)
+	os.remove(out)
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "examples/hello.loke", "-o", out}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "building to %s failed:\n%s", out, string(stderr)) {
+		return
+	}
+	testing.expectf(t, os.is_file(out), "the build reported success and left no %s", out)
+}
+
 @(test)
 programs_run :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -489,22 +559,36 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 
 	// design.md "Build modes": one relocatable object cannot carry an assembled
 	// input, so an `obj` build that imports one says what its consumer must do
-	//. This needs no toolchain, so it runs before the skip below.
-	asm_state, _, asm_stderr, asm_err := os2.process_exec(
-		os2.Process_Desc {
-			command = []string {
-				compiler_path(), "tests/obj/asm_import.loke",
-				"-build-mode=obj", "-o", fmt.tprintf("%s/asm-import.obj", TMP),
+	//. Every recognized assembly extension owes that diagnostic, each naming the
+	// command its own syntax needs — a `.s` that slipped through would leave the
+	// host an undefined symbol and no hint. This needs no toolchain, so it runs
+	// before the skip below.
+	assembly_cases := [][2]string {
+		{"tests/obj/asm_import.loke", "nasm -f win64"},
+		{"tests/obj/asm_import_gnu.loke", "clang -c"},
+	}
+	for assembly_case in assembly_cases {
+		source, assembler := assembly_case[0], assembly_case[1]
+		asm_state, _, asm_stderr, asm_err := os2.process_exec(
+			os2.Process_Desc {
+				command = []string {
+					compiler_path(), source, "-build-mode=obj",
+					"-o", fmt.tprintf("%s/%s.obj", TMP, filepath.stem(source)),
+				},
 			},
-		},
-		context.allocator,
-	)
-	if testing.expectf(t, asm_err == nil, "cannot run %s", compiler_path()) {
-		testing.expectf(t, asm_state.exit_code != 0, "an `obj` build accepted an assembly import")
+			context.allocator,
+		)
+		if !testing.expectf(t, asm_err == nil, "cannot run %s", compiler_path()) {
+			continue
+		}
+		testing.expectf(t, asm_state.exit_code != 0, "an `obj` build accepted %s", source)
 		testing.expectf(
 			t,
-			strings.contains(string(asm_stderr), "L0603"),
-			"an `obj` build with an assembly import did not report L0603:\n%s",
+			strings.contains(string(asm_stderr), "L0603") &&
+			strings.contains(string(asm_stderr), assembler),
+			"an `obj` build of %s did not report L0603 naming `%s`:\n%s",
+			source,
+			assembler,
 			string(asm_stderr),
 		)
 	}

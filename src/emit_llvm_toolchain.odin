@@ -28,7 +28,10 @@ emit_package :: proc(c: ^Compiler, opts: Options) -> int {
 		fmt.printfln("wrote %s", ll_path)
 		return 0
 	}
-	defer if !opts.keep_temps {
+	// `-o <path>.ll` makes the module's own path the output path. clang reads the
+	// module before it writes over it, so the build still succeeds — but this
+	// cleanup would then delete the artifact that build just produced.
+	defer if !opts.keep_temps && ll_path != opts.output {
 		os.remove(ll_path)
 	}
 
@@ -59,11 +62,11 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string, opts: Op
 				if !is_imp {
 					continue
 				}
-				if strings.to_lower(filepath.ext(imp.path)) == ".asm" {
+				if assembler := assembler_for(imp.path); assembler != "" {
 					errorf(
 						c, imp.span, "L0603",
-						"an object build cannot assemble `%s`; the final consumer must assemble it with `nasm -f win64` and link the result",
-						imp.path,
+						"an object build cannot assemble `%s`; the final consumer must assemble it with `%s` and link the result",
+						imp.path, assembler,
 					)
 					return 2
 				}
@@ -83,6 +86,23 @@ compile_object :: proc(c: ^Compiler, ll_path: string, obj_path: string, opts: Op
 		return 2
 	}
 	return 0
+}
+
+// design.md "Foreign system": the recognized assembly extensions are `.asm`,
+// `.s`, and `.S`, and this is the command each one needs. "" for anything else —
+// a library file the linker takes as it is. `.asm` is NASM syntax; the GNU
+// syntax of `.s`/`.S` clang assembles itself, which is why an `exe` build hands
+// those straight to the link and only `.asm` goes through `assemble_nasm`.
+@(private = "file")
+assembler_for :: proc(path: string) -> string {
+	// `to_lower` already folds `.S`.
+	switch strings.to_lower(filepath.ext(path)) {
+	case ".asm":
+		return "nasm -f win64"
+	case ".s":
+		return "clang -c"
+	}
+	return ""
 }
 
 // ------------------------------------------------------- layout agreement --
@@ -313,9 +333,13 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	}
 	if state.exit_code != 0 {
 		// design.md "Foreign system": an unresolved link name is its own failure —
-		// the binding named a symbol the libraries do not define.
-		if strings.contains(string(stderr), "unresolved external symbol") ||
-		   strings.contains(string(stderr), "undefined symbol") {
+		// the binding named a symbol the libraries do not define. With nothing
+		// foreign linked it cannot be that: a stale or partial `-runtime` tree
+		// leaves the `loke_rt_v1_*` names undefined too, and that belongs to the
+		// seed runtime L0403 names rather than to the program's bindings.
+		if len(foreign_inputs) > 0 &&
+		   (strings.contains(string(stderr), "unresolved external symbol") ||
+		    strings.contains(string(stderr), "undefined symbol")) {
 			errorf(
 				c, no_span(), "L0633",
 				"a foreign link name was not found in any imported library:\n%s",

@@ -1,0 +1,16 @@
+package widget_asm_gnu;
+
+// design.md "Foreign system": `.s` is a recognized assembly extension just as
+// `.asm` is, so an `obj` build owes it the same L0603 — with the command its
+// syntax actually needs. An `exe` build hands a `.s` straight to clang.
+
+foreign import helper "helper.s";
+
+foreign helper {
+	helper_value :: proc "c" () -> i32 ---;
+}
+
+@(export)
+widget_helper_gnu :: proc "c" () -> i32 {
+	return helper_value();
+}
