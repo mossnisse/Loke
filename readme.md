@@ -139,6 +139,7 @@ in source are resolved from the importing file.
 | `-emit-ll` | Check the program and write LLVM IR, without invoking Clang or linking. The `.ll` path is derived from `-o`. |
 | `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, and any object NASM assembled for a `.asm` foreign import. Normally both are removed after the Clang step. |
 | `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. Requires the native toolchain. |
+| `-print-toolchain` | Print the Clang, MSVC toolset, and `-isystem`/`-L` flags a link would use on this machine, and whether one could run at all (`ready=yes`), then stop. Takes no input. |
 
 The parsing modes take a **file**, not a package directory:
 

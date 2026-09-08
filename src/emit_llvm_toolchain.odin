@@ -481,6 +481,51 @@ assembly_object_path :: proc(source, exe_path: string) -> string {
 	return filepath.join({filepath.dir(exe_path), name})
 }
 
+// `-print-toolchain`: what the link above would use on this machine — the
+// clang it resolved, the MSVC toolset it picked, and the flags it would add,
+// one `flag=` line each in command order so a caller passes them through
+// without having to know what any of them mean. `ready=no` says a link would
+// not get off the ground here: no runnable clang, or a piece of the toolset
+// missing that the environment does not already supply.
+//
+// The test harness is the other caller. It is a separate package and cannot
+// call the discovery below, so it used to keep a second copy of these rules,
+// and that copy drifting looser made an object-build test skip — or fail — on
+// a machine where a real build worked.
+print_toolchain :: proc() -> int {
+	clang := find_clang()
+	// `find_clang` falls back to a bare name for PATH to resolve, so running it
+	// is the only way to learn whether it is there.
+	_, _, _, probe := os2.process_exec(
+		os2.Process_Desc{command = []string{clang, "--version"}},
+		context.allocator,
+	)
+	fmt.printfln("clang=%s", clang)
+	fmt.printfln("msvc=%s", msvc_tools_dir())
+
+	includes := msvc_include_dirs()
+	for include in includes {
+		fmt.println("flag=-isystem")
+		fmt.printfln("flag=%s", include)
+	}
+	lib := msvc_lib_dir()
+	if lib != "" {
+		fmt.println("flag=-L")
+		fmt.printfln("flag=%s", lib)
+	}
+
+	// `msvc_include_dirs` adds the toolset's own headers and the UCRT's, in that
+	// order, and a link outside a developer prompt needs both. Either half is
+	// unnecessary when the environment variable clang honours for it is set,
+	// which is why the two are asked separately.
+	ready :=
+		probe == nil &&
+		(os2.get_env("INCLUDE", context.allocator) != "" || len(includes) == 2) &&
+		(os2.get_env("LIB", context.allocator) != "" || lib != "")
+	fmt.printfln("ready=%s", ready ? "yes" : "no")
+	return 0
+}
+
 @(private = "file")
 find_clang :: proc() -> string {
 	if configured := os2.get_env("LOKE_CLANG", context.allocator); configured != "" {

@@ -41,7 +41,6 @@ import "core:log"
 import "core:os"
 import os2 "core:os/os2"
 import "core:path/filepath"
-import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
@@ -890,95 +889,44 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 }
 
 // clang plus the `-isystem`/`-L` flags its Windows target needs outside a
-// developer prompt. This mirrors `find_clang`, `msvc_tools_dir`,
-// `msvc_include_dirs`, and `msvc_lib_dir` in `src/emit_llvm_toolchain.odin`,
-// and has to keep mirroring them: the harness is a separate package that only
-// ever shells out to the built compiler, so it cannot call those, and a rule
-// looser than theirs makes this test skip on a machine where a real build
-// would have succeeded — which is a silently unrun test, not a failing one.
-// It skips rather than fails when nothing is installed.
+// developer prompt, asked of the compiler instead of worked out again here:
+// `-print-toolchain` reports the discovery `link` performs in
+// `src/emit_llvm_toolchain.odin`, so one set of rules decides what a build and
+// this test both link against. The copy that used to live here drifted looser
+// than them — globbing one install root where the compiler globs two, and
+// gating the `-L` on `INCLUDE` — which skipped this test, and in one
+// half-configured environment failed it, where a real build worked.
+//
+// `ready` is the compiler's own answer to whether a link could run at all on
+// this machine. The test skips rather than fails when it says no.
 @(private)
 host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
-	clang = os.get_env("LOKE_CLANG", context.temp_allocator)
-	if clang == "" {
-		for candidate in ([]string{`C:\Program Files\LLVM\bin\clang.exe`, `C:\Program Files (x86)\LLVM\bin\clang.exe`}) {
-			if os.is_file(candidate) {
-				clang = candidate
-				break
-			}
-		}
-	}
-	if clang == "" || !os.is_file(clang) {
+	state, stdout, _, err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
+		context.allocator,
+	)
+	if err != nil || state.exit_code != 0 {
 		return "", nil, false
 	}
-	// A toolset must hold both halves to be a candidate, as it must for the
-	// compiler: a build-tools installation can ship headers with no `lib\x64`,
-	// and mixing its headers with another version's libraries is worse than not
-	// finding it at all.
-	tools := ""
-	for candidate in newest_directories(
-		`C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
-		`C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
-	) {
-		if os.is_dir(filepath.join({candidate, "include"}, context.temp_allocator)) &&
-		   os.is_dir(filepath.join({candidate, "lib", "x64"}, context.temp_allocator)) {
-			tools = candidate
-			break
-		}
-	}
-
-	// `INCLUDE` and `LIB` gate separately, as they do in the compiler: clang
-	// honours each on its own, and a prompt that set one is not a prompt that set
-	// both.
+	// `flag=` lines are passed through in the order they were printed; the
+	// harness never has to know which of them pair up.
 	out := make([dynamic]string, context.temp_allocator)
-	if os.get_env("INCLUDE", context.temp_allocator) == "" {
-		ucrt := newest_directory(
-			`C:\Program Files (x86)\Windows Kits\10\Include\*\ucrt`,
-			`C:\Program Files\Windows Kits\10\Include\*\ucrt`,
-		)
-		if tools == "" || ucrt == "" {
-			return "", nil, false
+	ready := false
+	for line in strings.split_lines(string(stdout), context.temp_allocator) {
+		key, _, value := strings.partition(strings.trim_space(line), "=")
+		switch key {
+		case "clang":
+			clang = strings.clone(value, context.temp_allocator)
+		case "flag":
+			append(&out, strings.clone(value, context.temp_allocator))
+		case "ready":
+			ready = value == "yes"
 		}
-		append(&out, "-isystem", filepath.join({tools, "include"}, context.temp_allocator))
-		append(&out, "-isystem", ucrt)
 	}
-	if os.get_env("LIB", context.temp_allocator) == "" {
-		if tools == "" {
-			return "", nil, false
-		}
-		append(&out, "-L", filepath.join({tools, "lib", "x64"}, context.temp_allocator))
+	if !ready {
+		return "", nil, false
 	}
 	return clang, out[:], true
-}
-
-@(private)
-newest_directory :: proc(patterns: ..string) -> string {
-	all := newest_directories(..patterns)
-	return len(all) == 0 ? "" : all[0]
-}
-
-// The compiler's `newest_matches`: every directory the patterns name, newest
-// first by the last path element. Ordering by that element rather than by the
-// whole path is what keeps a newer toolset under `Program Files` from losing to
-// an older one under `(x86)`.
-@(private)
-newest_directories :: proc(patterns: ..string) -> []string {
-	found := make([dynamic]string, context.temp_allocator)
-	for pattern in patterns {
-		matches, err := filepath.glob(pattern, context.temp_allocator)
-		if err != nil {
-			continue
-		}
-		for match in matches {
-			if os.is_dir(match) {
-				append(&found, match)
-			}
-		}
-	}
-	slice.sort_by(found[:], proc(a, b: string) -> bool {
-		return filepath.base(a) > filepath.base(b)
-	})
-	return found[:]
 }
 
 @(test)

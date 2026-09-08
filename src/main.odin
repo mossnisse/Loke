@@ -21,6 +21,9 @@ usage:
 options:
     -h, --help    print this message and stop
     -version      print the compiler version and stop
+    -print-toolchain
+                  print the clang, MSVC toolset, and flags a link would use
+                  here, and whether one could run at all, then stop
     -o <path>     output executable (default: input name with .exe)
     -emit-ll      write the LLVM IR next to the output and stop
     -keep-temps   keep the generated .ll after linking
@@ -61,9 +64,11 @@ options:
 `
 
 Options :: struct {
-	// `-h`/`--help` and `-version` stop before anything is compiled.
+	// `-h`/`--help`, `-version`, and `-print-toolchain` stop before anything is
+	// compiled.
 	help:       bool,
 	version:    bool,
+	print_toolchain: bool,
 	input:      string,
 	output:     string,
 	emit_ll:    bool,
@@ -113,6 +118,10 @@ run :: proc() -> int {
 	if opts.version {
 		fmt.printfln("lokec %s", LOKE_VERSION_STRING)
 		return 0
+	}
+	// Reports the host, so it needs no input and must not require one.
+	if opts.print_toolchain {
+		return print_toolchain()
 	}
 	if !args_ok {
 		fmt.eprint(USAGE)
@@ -226,6 +235,8 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 				return opts, false
 			}
 			opts.output = args[i]
+		case arg == "-print-toolchain":
+			opts.print_toolchain = true
 		case arg == "-emit-ll":
 			opts.emit_ll = true
 		case arg == "-keep-temps":
