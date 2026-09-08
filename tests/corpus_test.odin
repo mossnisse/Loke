@@ -888,6 +888,60 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 	)
 }
 
+// Every toolchain test in this file skips on `-print-toolchain` saying
+// `ready=no`, so that answer has to be the same one a build gives: a
+// `ready=yes` that cannot link fails all of them at once, and a `ready=no`
+// that could link stops running them without saying so. Tying the two
+// together is what keeps readiness from being computed a way that only looks
+// right — counting the flags it happened to print, say.
+@(test)
+the_reported_toolchain_agrees_with_a_real_build :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	state, stdout, _, err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "-print-toolchain"}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "-print-toolchain failed") {
+		return
+	}
+	report := string(stdout)
+	// The two lines the harness reads by name, plus the one it counts on being
+	// absent or present rather than parsed.
+	testing.expectf(t, strings.contains(report, "clang="), "no clang line:\n%s", report)
+	testing.expectf(
+		t,
+		strings.contains(report, "ready=yes") || strings.contains(report, "ready=no"),
+		"no ready line:\n%s",
+		report,
+	)
+	ready := strings.contains(report, "ready=yes")
+
+	build, _, build_stderr, build_err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string {
+				compiler_path(), "examples/hello.loke",
+				"-o", fmt.tprintf("%s/toolchain-report.exe", TMP),
+			},
+		},
+		context.allocator,
+	)
+	if !testing.expectf(t, build_err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	testing.expectf(
+		t,
+		ready == (build.exit_code == 0),
+		"-print-toolchain reported ready=%v and a build exited %d:\n%s\n%s",
+		ready,
+		build.exit_code,
+		report,
+		string(build_stderr),
+	)
+}
+
 // clang plus the `-isystem`/`-L` flags its Windows target needs outside a
 // developer prompt, asked of the compiler instead of worked out again here:
 // `-print-toolchain` reports the discovery `link` performs in

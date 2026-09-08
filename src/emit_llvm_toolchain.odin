@@ -328,10 +328,13 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	// (`__extendhfsf2`, `__truncsfhf2`) on x86-64 without F16C, and the MSVC CRT
 	// does not provide them.
 	append(&command, "-rtlib=compiler-rt")
-	if lib := msvc_lib_dir(); lib != "" {
+	// Incompleteness is not diagnosed here: clang names the header or library it
+	// could not find, which beats anything this could say before running it.
+	if lib, _ := msvc_lib_dir(); lib != "" {
 		append(&command, "-L", lib)
 	}
-	for include in msvc_include_dirs() {
+	includes, _ := msvc_include_dirs()
+	for include in includes {
 		append(&command, "-isystem", include)
 	}
 
@@ -503,25 +506,20 @@ print_toolchain :: proc() -> int {
 	fmt.printfln("clang=%s", clang)
 	fmt.printfln("msvc=%s", msvc_tools_dir())
 
-	includes := msvc_include_dirs()
+	includes, includes_complete := msvc_include_dirs()
 	for include in includes {
 		fmt.println("flag=-isystem")
 		fmt.printfln("flag=%s", include)
 	}
-	lib := msvc_lib_dir()
+	lib, lib_complete := msvc_lib_dir()
 	if lib != "" {
 		fmt.println("flag=-L")
 		fmt.printfln("flag=%s", lib)
 	}
 
-	// `msvc_include_dirs` adds the toolset's own headers and the UCRT's, in that
-	// order, and a link outside a developer prompt needs both. Either half is
-	// unnecessary when the environment variable clang honours for it is set,
-	// which is why the two are asked separately.
-	ready :=
-		probe == nil &&
-		(os2.get_env("INCLUDE", context.allocator) != "" || len(includes) == 2) &&
-		(os2.get_env("LIB", context.allocator) != "" || lib != "")
+	// Each half reports for itself, having already taken its own environment
+	// variable into account.
+	ready := probe == nil && includes_complete && lib_complete
 	fmt.printfln("ready=%s", ready ? "yes" : "no")
 	return 0
 }
@@ -545,15 +543,20 @@ find_clang :: proc() -> string {
 
 // The MSVC toolset's `lib\x64`, or "" when there is nothing to add: a developer
 // prompt has already put it in LIB, which lld-link honours.
+//
+// `complete` separates the two reasons for "": nothing to add because the
+// environment supplies it, and nothing to add because there was nothing to
+// find. Only the second means a link cannot run here, and a caller reporting
+// on the host cannot tell them apart from the path alone.
 @(private = "file")
-msvc_lib_dir :: proc() -> string {
+msvc_lib_dir :: proc() -> (dir: string, complete: bool) {
 	if os2.get_env("LIB", context.allocator) != "" {
-		return ""
+		return "", true
 	}
 	if root := msvc_tools_dir(); root != "" {
-		return filepath.join({root, "lib", "x64"})
+		return filepath.join({root, "lib", "x64"}), true
 	}
-	return ""
+	return "", false
 }
 
 // The C headers the seed runtime includes: the MSVC toolset's own, and the
@@ -561,22 +564,27 @@ msvc_lib_dir :: proc() -> string {
 //
 // Only the runtime's `.c` inputs need these — a generated `.ll` includes
 // nothing — so they arrived with M6a rather than with the original link seam.
+// `complete` is both of them, for the same reason `msvc_lib_dir` reports one:
+// a short list does not say which half is missing, and counting the entries to
+// find out would break the moment a third directory belongs here.
 @(private = "file")
-msvc_include_dirs :: proc() -> []string {
+msvc_include_dirs :: proc() -> (dirs: []string, complete: bool) {
 	if os2.get_env("INCLUDE", context.allocator) != "" {
-		return nil
+		return nil, true
 	}
-	dirs := make([dynamic]string)
-	if root := msvc_tools_dir(); root != "" {
-		append(&dirs, filepath.join({root, "include"}))
+	out := make([dynamic]string)
+	root := msvc_tools_dir()
+	if root != "" {
+		append(&out, filepath.join({root, "include"}))
 	}
-	if ucrt := newest_match(
+	ucrt := newest_match(
 		`C:\Program Files (x86)\Windows Kits\10\Include\*\ucrt`,
 		`C:\Program Files\Windows Kits\10\Include\*\ucrt`,
-	); ucrt != "" {
-		append(&dirs, ucrt)
+	)
+	if ucrt != "" {
+		append(&out, ucrt)
 	}
-	return dirs[:]
+	return out[:], root != "" && ucrt != ""
 }
 
 // `...\VC\Tools\MSVC\<version>`, the root both the libraries and the headers
