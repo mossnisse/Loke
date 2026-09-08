@@ -41,6 +41,7 @@ import "core:log"
 import "core:os"
 import os2 "core:os/os2"
 import "core:path/filepath"
+import "core:slice"
 import "core:strings"
 import "core:testing"
 import "core:time"
@@ -889,8 +890,13 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 }
 
 // clang plus the `-isystem`/`-L` flags its Windows target needs outside a
-// developer prompt, discovered the same way the compiler's own link does. The
-// test skips rather than fails when neither is installed.
+// developer prompt. This mirrors `find_clang`, `msvc_tools_dir`,
+// `msvc_include_dirs`, and `msvc_lib_dir` in `src/emit_llvm_toolchain.odin`,
+// and has to keep mirroring them: the harness is a separate package that only
+// ever shells out to the built compiler, so it cannot call those, and a rule
+// looser than theirs makes this test skip on a machine where a real build
+// would have succeeded — which is a silently unrun test, not a failing one.
+// It skips rather than fails when nothing is installed.
 @(private)
 host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
 	clang = os.get_env("LOKE_CLANG", context.temp_allocator)
@@ -905,30 +911,74 @@ host_toolchain :: proc() -> (clang: string, flags: []string, ok: bool) {
 	if clang == "" || !os.is_file(clang) {
 		return "", nil, false
 	}
+	// A toolset must hold both halves to be a candidate, as it must for the
+	// compiler: a build-tools installation can ship headers with no `lib\x64`,
+	// and mixing its headers with another version's libraries is worse than not
+	// finding it at all.
+	tools := ""
+	for candidate in newest_directories(
+		`C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
+		`C:\Program Files (x86)\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`,
+	) {
+		if os.is_dir(filepath.join({candidate, "include"}, context.temp_allocator)) &&
+		   os.is_dir(filepath.join({candidate, "lib", "x64"}, context.temp_allocator)) {
+			tools = candidate
+			break
+		}
+	}
+
+	// `INCLUDE` and `LIB` gate separately, as they do in the compiler: clang
+	// honours each on its own, and a prompt that set one is not a prompt that set
+	// both.
 	out := make([dynamic]string, context.temp_allocator)
 	if os.get_env("INCLUDE", context.temp_allocator) == "" {
-		tools := newest_directory(`C:\Program Files\Microsoft Visual Studio\*\*\VC\Tools\MSVC\*`)
-		ucrt := newest_directory(`C:\Program Files (x86)\Windows Kits\10\Include\*\ucrt`)
+		ucrt := newest_directory(
+			`C:\Program Files (x86)\Windows Kits\10\Include\*\ucrt`,
+			`C:\Program Files\Windows Kits\10\Include\*\ucrt`,
+		)
 		if tools == "" || ucrt == "" {
 			return "", nil, false
 		}
 		append(&out, "-isystem", filepath.join({tools, "include"}, context.temp_allocator))
 		append(&out, "-isystem", ucrt)
+	}
+	if os.get_env("LIB", context.temp_allocator) == "" {
+		if tools == "" {
+			return "", nil, false
+		}
 		append(&out, "-L", filepath.join({tools, "lib", "x64"}, context.temp_allocator))
 	}
 	return clang, out[:], true
 }
 
 @(private)
-newest_directory :: proc(pattern: string) -> string {
-	matches, _ := filepath.glob(pattern)
-	newest := ""
-	for match in matches {
-		if os.is_dir(match) && match > newest {
-			newest = match
+newest_directory :: proc(patterns: ..string) -> string {
+	all := newest_directories(..patterns)
+	return len(all) == 0 ? "" : all[0]
+}
+
+// The compiler's `newest_matches`: every directory the patterns name, newest
+// first by the last path element. Ordering by that element rather than by the
+// whole path is what keeps a newer toolset under `Program Files` from losing to
+// an older one under `(x86)`.
+@(private)
+newest_directories :: proc(patterns: ..string) -> []string {
+	found := make([dynamic]string, context.temp_allocator)
+	for pattern in patterns {
+		matches, err := filepath.glob(pattern, context.temp_allocator)
+		if err != nil {
+			continue
+		}
+		for match in matches {
+			if os.is_dir(match) {
+				append(&found, match)
+			}
 		}
 	}
-	return newest
+	slice.sort_by(found[:], proc(a, b: string) -> bool {
+		return filepath.base(a) > filepath.base(b)
+	})
+	return found[:]
 }
 
 @(test)
