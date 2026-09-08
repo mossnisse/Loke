@@ -77,38 +77,52 @@ impl Bit_Set($E) {
 
 	// Union, intersection, difference, and symmetric difference, spelled with the
 	// integer operators they are: `Integral` already gives `|`, `&`, `&~` and `~`
-	// exactly these meanings on the underlying words.
+	// exactly these meanings on the underlying words, so each of these is that
+	// operator applied word by word.
+	//
+	// `==` is not written here: `words` is a fixed array of `u64`, so the record's
+	// generated field-wise equality already compares exactly these bits, and the
+	// bits above the last member are invariantly clear in both operands.
 	union_with :: operator(|) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		return combine(left, right, Set_Op.Union);
+		result: Bit_Set(E) = {};
+		foreach (word, index in left.words.indexed()) {
+			result.words[index] = word | right.words[index];
+		}
+		return result;
 	}
 
 	intersect :: operator(&) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		return combine(left, right, Set_Op.Intersection);
+		result: Bit_Set(E) = {};
+		foreach (word, index in left.words.indexed()) {
+			result.words[index] = word & right.words[index];
+		}
+		return result;
 	}
 
 	difference :: operator(&~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		return combine(left, right, Set_Op.Difference);
+		result: Bit_Set(E) = {};
+		foreach (word, index in left.words.indexed()) {
+			result.words[index] = word &~ right.words[index];
+		}
+		return result;
 	}
 
 	symmetric_difference :: operator(~) proc(left, right: Bit_Set(E)) -> Bit_Set(E) {
-		return combine(left, right, Set_Op.Symmetric_Difference);
-	}
-
-	equal :: operator(==) proc(left, right: Bit_Set(E)) -> bool {
+		result: Bit_Set(E) = {};
 		foreach (word, index in left.words.indexed()) {
-			if (word != right.words[index]) { return false; }
+			result.words[index] = word ~ right.words[index];
 		}
-		return true;
+		return result;
 	}
 
 	// Every member `self` does not hold. Bits above the last member stay clear,
 	// so a complement never invents a position no member owns.
 	complement :: operator(~) proc(self: Bit_Set(E)) -> Bit_Set(E) {
-		return combine(Bit_Set(E).all(), self, Set_Op.Difference);
+		return Bit_Set(E).all() &~ self;
 	}
 
 	is_subset_of :: proc(self, other: Bit_Set(E)) -> bool {
-		return combine(self, other, Set_Op.Difference).is_empty();
+		return (self &~ other).is_empty();
 	}
 
 	// -------------------------------------------------------- iteration --
@@ -134,8 +148,9 @@ impl Bit_Set($E) {
 }
 
 // Iterating a set yields the members it holds, in declaration order. The
-// iterator carries a copy of the words for the reason `Small_Array`'s does: a
-// `self` receiver is callee-local, so no borrow of it can be returned.
+// iterator carries a copy of the words rather than a borrow of them: a set is
+// one `u64` per 64 members, so for every enum worth writing the copy is no
+// larger than the slice header a borrow would need.
 Bit_Set_Iterator :: struct($E: type) {
 	@(private) held: Bit_Set(E),
 	@(private) at:   int,
@@ -156,24 +171,6 @@ impl Bit_Set_Iterator($E) {
 		}
 		return .none;
 	}
-}
-
-@(private)
-Set_Op :: enum { Union, Intersection, Difference, Symmetric_Difference };
-
-@(private)
-combine :: proc(left: Bit_Set($E), right: Bit_Set(E), operation: Set_Op) -> Bit_Set(E) {
-	result: Bit_Set(E) = {};
-	foreach (word, index in left.words.indexed()) {
-		other := right.words[index];
-		switch (operation) {
-		case .Union:                result.words[index] = word | other;
-		case .Intersection:         result.words[index] = word & other;
-		case .Difference:           result.words[index] = word &~ other;
-		case .Symmetric_Difference: result.words[index] = word ~ other;
-		}
-	}
-	return result;
 }
 
 // A member's declaration position. Linear in the number of members, which is

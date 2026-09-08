@@ -152,7 +152,10 @@ impl Small_Array($T, $N) {
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
 		at := self.count;
 		for (at > index) {
-			self.items[at] = self.items[at - 1];
+			// A shift is a move, not a copy: `exchange` leaves the zero value behind,
+			// so no managed element is cloned and none is briefly live at two indices.
+			// The discarded result is the zero the previous step left at `at`.
+			_ = exchange(inout self.items[at], exchange(inout self.items[at - 1], {}));
 			at -= 1;
 		}
 		self.items[index] = value;
@@ -169,42 +172,34 @@ impl Small_Array($T, $N) {
 	// would then have to leave alone.
 	pop :: proc(self: inout Small_Array(T, N)) -> Option(T) {
 		if (self.count == 0) { return .none; }
-		blank: T = {};
 		self.count -= 1;
 		last := self.count;
-		return .some(exchange(inout self.items[last], blank));
-	}
-
-	// Compatibility spelling; absence has the same contract in both forms.
-	try_pop :: proc(self: inout Small_Array(T, N)) -> Option(T) {
-		return self.pop();
+		return .some(exchange(inout self.items[last], {}));
 	}
 
 	// Order-preserving: everything after `index` shifts down one place.
 	remove :: proc(self: inout Small_Array(T, N), index: int) -> T {
 		self.check_index(index);
-		blank: T = {};
-		removed := exchange(inout self.items[index], blank);
+		removed := exchange(inout self.items[index], {});
 		at := index;
 		for (at + 1 < self.count) {
-			self.items[at] = self.items[at + 1];
+			_ = exchange(inout self.items[at], exchange(inout self.items[at + 1], {}));
 			at += 1;
 		}
+		// The last shift — or the removal itself, when nothing shifted — already
+		// left the zero value in the slot that falls behind the new length.
 		self.count -= 1;
-		self.items[self.count] = blank;
 		return removed;
 	}
 
 	// O(1), at the cost of the order: the last element takes the hole.
 	remove_unordered :: proc(self: inout Small_Array(T, N), index: int) -> T {
 		self.check_index(index);
-		blank: T = {};
-		removed := exchange(inout self.items[index], blank);
+		removed := exchange(inout self.items[index], {});
 		self.count -= 1;
 		last := self.count;
 		if (index != last) {
-			moved := exchange(inout self.items[last], blank);
-			self.items[index] = moved;
+			_ = exchange(inout self.items[index], exchange(inout self.items[last], {}));
 		}
 		return removed;
 	}
@@ -212,8 +207,7 @@ impl Small_Array($T, $N) {
 	// Length only. The retired elements are overwritten so nothing stays live
 	// behind the length.
 	clear :: proc(self: inout Small_Array(T, N)) {
-		blank: T = {};
-		foreach (i in 0 ..< self.count) { self.items[i] = blank; }
+		foreach (i in 0 ..< self.count) { _ = exchange(inout self.items[i], {}); }
 		self.count = 0;
 	}
 

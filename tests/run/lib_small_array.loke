@@ -62,9 +62,9 @@ main :: proc() {
 	fmt.println(z.pop(), z);
 	fmt.println(z.pop(), z.pop());
 	fmt.println(z.len(), z.pop() or_else -1);
-	// The old spelling remains an alias, including for an empty array.
+	// The last element, then absence, from the same call.
 	z.append(7);
-	fmt.println(z.try_pop(), z.try_pop());
+	fmt.println(z.pop(), z.pop());
 
 	// One generic absence contract for built-in and library containers.
 	growable: [dynamic]int = {};
