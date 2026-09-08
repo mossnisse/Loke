@@ -137,7 +137,7 @@ in source are resolved from the importing file.
 | `-parse-only` | Lex and parse one source file, then stop. No import discovery, type checking, or executable. |
 | `-dump-ast` | Print that file's syntax tree, then stop at the same stage. |
 | `-emit-ll` | Check the program and write LLVM IR, without invoking Clang or linking. The `.ll` path is derived from `-o`. |
-| `-keep-temps` | Keep generated LLVM IR after a normal executable or object build. Normally it is removed after the Clang step. |
+| `-keep-temps` | Keep the build's temporaries: the generated LLVM IR, and any object NASM assembled for a `.asm` foreign import. Normally both are removed after the Clang step. |
 | `-check-layout` | Build and run an LLVM layout probe and compare sizes, alignments, and field offsets with the compiler's calculations. Requires the native toolchain. |
 
 The parsing modes take a **file**, not a package directory:

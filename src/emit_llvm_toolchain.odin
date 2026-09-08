@@ -202,7 +202,11 @@ check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
 		errorf(c, no_span(), "L0405", "cannot run the layout probe")
 		return 2
 	}
-	lines := strings.split_lines(strings.trim_space(strings.replace_all(string(stdout), "\r\n", "\n") or_else ""))
+	// `replace_all` reports whether it allocated, not whether it succeeded: it
+	// hands the input straight back when there is nothing to convert, so the
+	// second value must not be read as an `or_else` guard.
+	text, _ := strings.replace_all(string(stdout), "\r\n", "\n")
+	lines := strings.split_lines(strings.trim_space(text))
 	if len(lines) != len(probes) {
 		errorf(c, no_span(), "L0405", "the layout probe produced %d values, expected %d", len(lines), len(probes))
 		return 2
@@ -292,7 +296,15 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	// design.md "Foreign system": every active foreign import joins the link
 	// command, libraries and assembled objects alike. A missing
 	// file or assembler is diagnosed here, by name, before clang runs.
-	foreign_inputs, foreign_ok := collect_foreign_link_inputs(c, exe_path)
+	foreign_inputs, assembly_temporaries, foreign_ok := collect_foreign_link_inputs(c, exe_path)
+	// The assembler's objects exist only to reach the command below. Removing
+	// them from one `defer` rather than at each `return` also covers a collection
+	// that assembled some inputs and then failed on a later one.
+	defer if !opts.keep_temps {
+		for object in assembly_temporaries {
+			os.remove(object)
+		}
+	}
 	if !foreign_ok {
 		return 2
 	}
@@ -361,10 +373,21 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 // input. A `system:` prefix passes the bare name to the linker's search path; a
 // relative path resolves against the importing file. `.s`/`.S` go to clang,
 // `.asm` is assembled by `nasm`, and anything else is a library file. The
-// inputs are deduplicated and returned in a deterministic order.
+// inputs are deduplicated and returned in a deterministic order. The objects
+// `nasm` produced come back separately as well: they are this link's
+// temporaries, and only the caller knows when the command that reads them has
+// run.
 @(private = "file")
-collect_foreign_link_inputs :: proc(c: ^Compiler, exe_path: string) -> (inputs: []string, ok: bool) {
+collect_foreign_link_inputs :: proc(
+	c: ^Compiler,
+	exe_path: string,
+) -> (
+	inputs: []string,
+	temporaries: []string,
+	ok: bool,
+) {
 	out := make([dynamic]string)
+	objects := make([dynamic]string)
 	seen := make(map[string]bool)
 	ok = true
 	for id in package_order(c) {
@@ -412,6 +435,7 @@ collect_foreign_link_inputs :: proc(c: ^Compiler, exe_path: string) -> (inputs: 
 				if ext == ".asm" {
 					if obj, assembled := assemble_nasm(c, resolved, exe_path, imp.span); assembled {
 						append(&out, obj)
+						append(&objects, obj)
 					} else {
 						ok = false
 					}
@@ -421,7 +445,7 @@ collect_foreign_link_inputs :: proc(c: ^Compiler, exe_path: string) -> (inputs: 
 			}
 		}
 	}
-	return out[:], ok
+	return out[:], objects[:], ok
 }
 
 // Assembles a `.asm` input with `nasm` for the Windows x64 object format. A

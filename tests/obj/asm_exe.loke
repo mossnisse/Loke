@@ -1,0 +1,18 @@
+package main;
+
+// design.md "Foreign system": an `exe` build assembles a `.asm` import with
+// `nasm` and joins the object to the link, which is the half `asm_import.loke`
+// cannot reach. `helper_value` returns 11, so a wrong answer here means the
+// assembled object was not the one linked.
+
+foreign import helper "helper.asm";
+
+foreign helper {
+	helper_value :: proc "c" () -> i32 ---;
+}
+
+main :: proc() {
+	if (helper_value() != 11) {
+		panic("the assembled input did not reach the link");
+	}
+}

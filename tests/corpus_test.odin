@@ -549,6 +549,86 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 	)
 }
 
+// design.md "Foreign system": an `exe` build assembles a `.asm` import with
+// `nasm` and links the object it produced — the half an `obj` build refuses.
+// That object is the build's own temporary, written beside the executable
+// rather than into a temp directory, so it has to reach the link and it has to
+// not outlive it. Skips rather than fails when `nasm` is not installed.
+@(test)
+assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	nasm := os.get_env("LOKE_NASM", context.temp_allocator)
+	if nasm == "" {
+		nasm = "nasm"
+	}
+	if _, _, _, probe := os2.process_exec(
+		os2.Process_Desc{command = []string{nasm, "-v"}},
+		context.allocator,
+	); probe != nil {
+		log.info("no nasm found; skipping the assembly-import link")
+		return
+	}
+
+	// Its own directory: an assembled object is named after its source, and the
+	// corpus runs several tests into TMP at once.
+	dir := fmt.tprintf("%s/asm-exe", TMP)
+	os.make_directory(dir)
+	for stale in assembled_objects(dir) {
+		os.remove(stale)
+	}
+	exe := fmt.tprintf("%s/asm-exe.exe", dir)
+
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "tests/obj/asm_exe.loke", "-o", exe}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "an assembly import failed to link:\n%s", string(stderr)) {
+		return
+	}
+	run_state, _, _, run_err := os2.process_exec(os2.Process_Desc{command = []string{exe}}, context.allocator)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(
+		t,
+		run_state.exit_code == 0,
+		"the assembled input gave the wrong answer (exit %d)",
+		run_state.exit_code,
+	)
+	testing.expectf(t, len(assembled_objects(dir)) == 0, "the link left its assembled object in %s", dir)
+
+	// `-keep-temps` governs it too: the object is a build temporary like the
+	// generated module, not something the build set out to produce.
+	kept_state, _, kept_stderr, kept_err := os2.process_exec(
+		os2.Process_Desc {
+			command = []string{compiler_path(), "tests/obj/asm_exe.loke", "-o", exe, "-keep-temps"},
+		},
+		context.allocator,
+	)
+	testing.expectf(t, kept_err == nil, "cannot run %s", compiler_path())
+	testing.expectf(
+		t,
+		kept_state.exit_code == 0,
+		"an assembly import failed to link:\n%s",
+		string(kept_stderr),
+	)
+	testing.expectf(
+		t,
+		len(assembled_objects(dir)) == 1,
+		"-keep-temps did not keep the assembled object in %s",
+		dir,
+	)
+}
+
+// The objects `assemble_nasm` writes for `tests/obj/helper.asm`, whatever
+// digest it gave them.
+@(private)
+assembled_objects :: proc(dir: string) -> []string {
+	matches, _ := filepath.glob(fmt.tprintf("%s/helper.*.obj", dir), context.temp_allocator)
+	return matches
+}
+
 // design.md "Build modes": `-build-mode=obj` produces one
 // relocatable module from a non-`main` root. This links it into a C program that
 // owns process entry and supplies the seed runtime, and asserts the object
