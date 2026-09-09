@@ -53,4 +53,18 @@ main :: proc() {
 	fmt.println(path.clean("."));
 	fmt.println(path.clean("\\\\server\\share\\a\\..\\b"));
 	fmt.println(path.clean("\\\\?\\C:\\weird\\..\\path"));
+
+	// A volume is never part of the last element, and a root has no last element
+	// at all — the two rules `base` used to disagree with `directory` about.
+	fmt.println(path.base("C:a"));
+	fmt.println(path.stem("C:a.txt"));
+	fmt.println(path.base("\\\\server\\share").len());
+	fmt.println(path.directory("C:a"));
+
+	// Joining onto a bare drive volume must not root the result: `C:` is the
+	// current directory on a drive and `C:\` is its root. A UNC volume is rooted
+	// already and does take the separator.
+	fmt.println(path.join([]string_view{"C:", "x"}));
+	fmt.println(path.is_absolute(path.join([]string_view{"C:", "x"})));
+	fmt.println(path.join([]string_view{"\\\\server\\share", "x"}));
 }

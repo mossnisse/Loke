@@ -77,12 +77,17 @@ is_drive_letter :: proc(value: u8) -> bool {
 	return (value >= u8('a') && value <= u8('z')) || (value >= u8('A') && value <= u8('Z'));
 }
 
-// The last element. A trailing separator is ignored, so `base("a/b/")` is `b`.
+// The last element. A trailing separator is ignored, so `base("a/b/")` is `b`,
+// and the volume is never part of it: `base("C:a")` is `a`, while a root -- a
+// `C:\` or a `\\server\share` -- has no last element at all.
 base :: proc(path: string_view) -> string_view {
 	trimmed := without_trailing_separators(path);
 	bytes := trimmed.bytes();
+	// The floor is the volume rather than zero, which is the rule `directory`
+	// below already stops at. Scanning past it would answer `C:a` for `C:a`.
+	volume := volume_length(trimmed);
 	at := bytes.len();
-	for (; at > 0 && !is_separator(bytes[at - 1]); at -= 1) {}
+	for (; at > volume && !is_separator(bytes[at - 1]); at -= 1) {}
 	return trimmed[at:];
 }
 
@@ -141,10 +146,17 @@ join :: proc(
 	parts: []string_view, allocator: Allocator = mem.default_allocator(),
 ) -> string {
 	builder := strings.init(allocator);
+	// `C:` names the current directory on a drive and `C:\` names its root, so a
+	// separator after a bare drive volume would not join the parts, it would move
+	// them: `join({"C:", "x"})` is `C:x`. A UNC volume is rooted by construction
+	// and does take one.
+	after_drive := false;
 	foreach (part in parts) {
 		if (part.len() == 0) { continue; }
-		if (builder.len() > 0) { builder.append(SEPARATOR); }
+		first := builder.len() == 0;
+		if (!first && !after_drive) { builder.append(SEPARATOR); }
 		builder.append(part);
+		after_drive = first && part.len() == 2 && volume_length(part) == 2;
 	}
 	joined := builder.finish();
 	cleaned := clean(joined, allocator);
