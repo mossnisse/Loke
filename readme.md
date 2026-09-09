@@ -1,24 +1,33 @@
-Loke is a project to make a new programming language building on Odin.
+Loke is an experimental general prupose programming language that builds on ideas from Odin.
 
-It aims to add more high level language functionality and more possibilities for abstractions with good ergonomics and still have the possibilities to have low level access and control of the binary output similar to Odin and C.
+It aims to provide higher-level language features and ergonomic abstractions
+while preserving low-level access and control over generated binaries comparable
+to Odin and C.
 
-It aims at making it easier to handle memory allocations and complex datatypes as strings and dynamic arrays, not making the language 100% memory safe as Rust.
+Loke is intended to make memory allocation and compound types such as strings
+and dynamic arrays easier to manage. It does not attempt to provide Rust-style
+complete memory safety.
 
-Loke should be able to use compiled C libraries (C ABI) and have some compatibility C datatypes to make that work.
+The language supports compiled C libraries through the C ABI and provides
+C-compatible data types for interoperability.
 
-The language should be expressive enough making precompilers/macros and building scripts unecessary.
+Loke aims to be expressive enough that separate preprocessors, macro systems,
+and bespoke build scripts are unnecessary.
 
-Procedures and that are called and packages that are imported should not change how the code works for the caller or importer in any unexpected ways. The opposite may be true. Having an parameter with an pointer to data that is manipulated is an nessary evil and is allowed.
-
-Stuff like hidden allocations are allowed but procedures returning values that has to be manually hanndled should be clearly vissible that it is needed.
+Procedure calls and package imports should not change a caller's behavior in
+unexpected ways. Mutation through an explicitly passed mutable pointer is
+allowed because the possibility is visible at the call boundary. Hidden
+allocations are also allowed, but a returned value that requires manual cleanup
+should make that responsibility clear in its type or API.
 
 The normative language specification is in [design.md](design.md), and its grammar in [grammar.md](grammar.md). Open questions, differences from Odin, and non-normative design motivations are collected in [comments.md](comments.md).
 
 ## The compiler
 
 `lokec` is written in Odin and lives in [src/](src). The v1 compiler implements
-the language described by `design.md`. Its pipeline, phase contracts, allocation
-ownership, and source-code map are documented in
+the language described by `design.md`, subject to the documented
+[known gaps](known-gaps.md). Its pipeline, phase contracts, allocation ownership,
+and source-code map are documented in
 [compiler-architecture.md](compiler-architecture.md). Longer-term work is
 summarized in [future-plans.md](future-plans.md).
 
@@ -91,6 +100,8 @@ Compile examples individually: `examples/` contains separate programs, not one m
 | `-copy-cost=N` | Warn about copies of at least `N` inline bytes or copies whose lifecycle clone may allocate. Default: `512`; use `-copy-cost=off` to disable. |
 | `-build-mode=exe\|obj` | Produce an executable (default) or one relocatable object. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
+| `-provider <slot>=<package>:<name>` | Select a build-wide `allocator` or `logger` provider factory. The provider package becomes a build dependency even when source does not import it. `-provider:<slot>=...` is also accepted. |
+| `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
 
 For an optimized executable:
 
@@ -164,9 +175,31 @@ PowerShell, inspect `$LASTEXITCODE` immediately after the command.
 An object build accepts a root package without `main` and emits no executable
 entry point. Declarations marked `@(export)` provide symbols to the host.
 The final C host link must supply the required Loke runtime and foreign
-libraries; the object does not bundle them. An `.asm` import cannot be included
-in this single-object build: assemble it separately and link it at the host's
-final link step.
+libraries; the object does not bundle them.
+
+Every host thread must attach to the runtime before calling a Loke export and
+detach before the thread exits:
+
+```c
+void loke_rt_v1_thread_attach(void);
+void loke_rt_v1_thread_detach(void);
+
+int main(void) {
+    loke_rt_v1_thread_attach();
+    /* Call Loke exports here. */
+    loke_rt_v1_thread_detach();
+    return 0;
+}
+```
+
+If the object was built with `-provider`, it also exports
+`loke_rt_v1_program_init()`. Call that once on the attached startup thread,
+after `loke_rt_v1_thread_attach()` and before calling any Loke export or starting
+worker threads. Repeated calls after initialization are harmless. An object
+built without a selected provider does not export this initializer.
+
+An `.asm` import cannot be included in this single-object build: assemble it
+separately and link it at the host's final link step.
 
 ### Toolchain troubleshooting
 
@@ -208,22 +241,32 @@ odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
 
 ## Standard library
 
-The **standard library** ([standard-library-plan.md](standard-library-plan.md)) is the first release of
-ordinary Loke code over that foundation. `base:` stays reserved for declarations
-that participate in the language or its runtime ABI; general-purpose code lives
-in `core:`, in small packages a program imports by name, with no prelude:
+The **standard library** is ordinary Loke code over the compiler and runtime
+foundation; [standard-library-plan.md](standard-library-plan.md) documents its
+design. `base:` stays reserved for declarations that participate in the language
+or its runtime ABI. General-purpose code lives in `core:`, in small packages a
+program imports by name, with no prelude:
 
 ```text
-core:strings          UTF-8 algorithms and String_Builder
+core:container        fixed-capacity and enum-indexed containers and sets
 core:cstrings         owned zero-terminated buffers for foreign APIs
-core:strconv          scalar parsing
-core:fmt              value formatting and process diagnostics    (grown)
-core:io               byte stream protocols and buffered helpers
-core:encoding/utf16   UTF-8 to UTF-16 and back
-core:path             lexical path operations
+core:encoding/utf16   UTF-8 to UTF-16 conversion and back
+core:endian           endian-specific storage wrappers
+core:fmt              value formatting and process diagnostics
 core:fs               files, directories, and file metadata
+core:io               byte-stream protocols and shared I/O errors
+core:log              logging through the build-selected provider
+core:math             elementary functions, complex numbers, and quaternions
+core:mem              allocators, arenas, and scratch regions
+core:os               arguments, exit, environment, and process state
+core:path             lexical path operations
+core:simd             cross-lane SIMD operations
+core:slice            slice algorithms
+core:strconv          scalar parsing
+core:strings          UTF-8 algorithms, iterators, and String_Builder
+core:sync             atomics, fences, and one-time initialization
 core:term             standard streams and terminal key input
-core:os               arguments, exit, environment, process state (grown)
+core:unsafe           explicit unchecked operations and conversions
 ```
 
 - **text.** `core:strings` adds search, trimming, splitting, joining and

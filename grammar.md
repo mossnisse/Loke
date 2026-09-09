@@ -152,7 +152,7 @@ Attribute_Value= Expression
 ```
 
 The qualified form is an [extension attribute](design.md#extension-attributes),
-e.g. `@(compiler.no_alias)`. Attributes attach to declarations, package
+for example `@(tool.name)`. Attributes attach to declarations, package
 clauses, statements, blocks, parameters, record type literals, and foreign
 blocks; which attribute is valid where is semantic, not grammatical.
 `@(allocator_reset)` and `@(escape=<level>)` are part of procedure-type

@@ -154,9 +154,8 @@ nested :: proc() {
 	fmt.println(xs[3]);
 }
 
-// design.md "Explicit runtime environments": a provider is an ordinary field of
-// an application record, which is what "runtime identity, passed explicitly"
-// means in practice. The record inherits the provider's move-only lifecycle.
+// design.md "Allocators": an allocator-backed owner may be an ordinary field of
+// an application record. The record inherits the owner's move-only lifecycle.
 Request_Env :: struct {
 	scratch: mem.Scratch,
 	id:      int,

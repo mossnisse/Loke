@@ -1649,7 +1649,7 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 	case .Var:
 		// `thread_local` storage lives as long as its thread, not as long as the
 		// process, so it is a root kind of its own even though both survive a
-		// return (design.md "Storage duration").
+		// return (design.md "Storage modifiers").
 		switch {
 		case sym.duration == .Thread_Local:
 			kind = .Thread_Local

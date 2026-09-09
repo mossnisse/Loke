@@ -128,8 +128,7 @@ predeclare_build_config :: proc(c: ^Compiler, universe: ^Scope) {
 	// and a caller-side `when` over it removes the call and its arguments.
 	define_universe(c, universe, "LOKE_LOG_LEVEL", enum_const(c, .Log_Level, int(c.log_level)))
 	define_universe(c, universe, "LOKE_VENDOR", enum_const(c, .Vendor, 0)) // Loke
-	// design.md "Debug-mode detection": v1 accepts no debug build, so `LOKE_DEBUG`
-	// is present and always false. A later debug build mode flips it.
+	// design.md "Built-in constants": `LOKE_DEBUG` is the build-provided debug flag.
 	define_universe(c, universe, "LOKE_DEBUG", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,
