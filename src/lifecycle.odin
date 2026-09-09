@@ -143,6 +143,22 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		add_notef(k.c, sym.span, "declared here; `exchange` replaces a static-duration value instead")
 		return false
 	}
+	// design.md "Unions": a switch over a place borrows it, so the case binding
+	// is a view of a payload the subject still owns. Consuming the view leaves
+	// the subject live, and its own cleanup then releases storage the transfer
+	// already took -- silently, at scope exit, as a second free.
+	if sym.borrowed_binding {
+		errorf(
+			k.c,
+			expr_span(e),
+			"L0690",
+			"`%s` views the payload of a switch over a place, which still owns it; `switch (%s in move(...))` hands it over first",
+			form,
+			identifier_text(k.c, sym.name),
+		)
+		add_notef(k.c, sym.span, "bound here")
+		return false
+	}
 	// An ordinary `value: T` parameter is a non-owning immutable borrow (design.md
 	// "Parameter semantics and ABI lowering"); consuming it is the caller's `move`
 	// at the call site, not this body's. A `move` parameter is the exception:

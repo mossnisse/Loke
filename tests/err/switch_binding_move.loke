@@ -1,0 +1,47 @@
+package main;
+
+import "core:slice";
+
+// design.md "Unions": a switch over a place borrows it, so the case binding
+// views a payload the subject still owns. Consuming that view would leave the
+// subject's own cleanup to release storage the transfer already took.
+
+taken_from_place :: proc(source: []int) -> int {
+	outcome := slice.try_clone(source);
+	switch (owned in outcome) {
+	case .ok:  taken := move(owned); return taken.len();
+	case .err: return -1;
+	}
+}
+
+dropped_from_place :: proc(source: []int) -> int {
+	outcome := slice.try_clone(source);
+	switch (owned in outcome) {
+	case .ok:  drop(owned); return 0;
+	case .err: return -1;
+	}
+}
+
+// Consuming the subject hands the payload over, and the binding owns it.
+taken_from_temporary :: proc(source: []int) -> int {
+	switch (owned in slice.try_clone(source)) {
+	case .ok:  taken := move(owned); return taken.len();
+	case .err: return -1;
+	}
+}
+
+taken_from_moved_place :: proc(source: []int) -> int {
+	outcome := slice.try_clone(source);
+	switch (owned in move(outcome)) {
+	case .ok:  taken := move(owned); return taken.len();
+	case .err: return -1;
+	}
+}
+
+main :: proc() {
+	values := [?]int{1, 2, 3};
+	taken_from_place(values[:]);
+	dropped_from_place(values[:]);
+	taken_from_temporary(values[:]);
+	taken_from_moved_place(values[:]);
+}

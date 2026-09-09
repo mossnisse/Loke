@@ -361,6 +361,21 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 		e.names[binding.symbol] = value
 	}
 
+	// The `%deferN` flags are parent allocas too, and nothing binds them into the
+	// env. A replayed action that touches one — `defer drop(x)` on a
+	// conditionally live local clears x's — would otherwise name storage this
+	// function cannot reach. Each gets a local stand-in seeded `true`: an action
+	// runs only where its `%ulive` byte already says the place is live, and the
+	// writes a replay makes stay visible to the rest of the replay.
+	saved_flags := e.defer_flags
+	e.defer_flags = make([]string, len(saved_flags))
+	for index in 0 ..< len(saved_flags) {
+		flag := fmt.aprintf("%%udefer%d.%d", index, next_id(e))
+		alloca_named(e, flag, "i1")
+		fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", flag)
+		e.defer_flags[index] = flag
+	}
+
 	for index := len(u.actions) - 1; index >= 0; index -= 1 {
 		entry := u.actions[index]
 		flag, address := temp(e), temp(e)
@@ -408,7 +423,7 @@ emit_unwind_thunk :: proc(e: ^Emitter) {
 	append(&e.pending, splice_prologue(e, strings.to_string(e.b), e.prologue[:]))
 	u.replaying = false
 	e.b, e.terminated, e.cleanups = saved_body, saved_terminated, saved_cleanups
-	e.prologue = saved_prologue
+	e.prologue, e.defer_flags = saved_prologue, saved_flags
 }
 
 // Registers a partially constructed compiler-owned value for panic replay. It

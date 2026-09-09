@@ -418,6 +418,9 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 				// non-owning view of the payload. A temporary hands the payload
 				// over, and the binding owns it like any other managed local.
 				immutable  = borrows,
+				// `move`/`drop` on the binding would take an owner the subject
+				// still has, leaving its cleanup to release transferred storage.
+				borrowed_binding = borrows,
 			})
 			k.scope.names[name] = entry.binding_symbol
 		}

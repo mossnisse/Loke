@@ -768,6 +768,10 @@ Symbol :: struct {
 	// A value parameter is immutable storage; an `inout` parameter is a mutable
 	// alias. Both are addressable.
 	immutable:   bool,
+	// design.md "Unions": a switch over a place borrows it, so this case binding
+	// views a payload the subject still owns, and `move`/`drop` have no owner
+	// here to transfer or release.
+	borrowed_binding: bool,
 	// design.md "`@(allocator_reset)`": this `Allocator` parameter's region may
 	// be ended by a successful call. The promise is verified in the body and
 	// carried in the procedure type.

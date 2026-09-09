@@ -1,0 +1,29 @@
+package main; import "core:fmt"; import "core:slice";
+
+// design.md "What the unwind runs, and what it does not": the panic replays this
+// frame's pending actions, including a `defer drop(...)` written for a local
+// whose liveness a switch left conditional. That local's flag is an alloca of
+// the frame being unwound, and the cleanup thunk is a separate function, so the
+// replay must not reach for it there.
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
+}
+
+fails :: proc(source: []Res) {
+	kept: [dynamic]Res = {};
+	switch (cloned in slice.try_clone(source)) {
+	case .ok:  kept = move(cloned);
+	case .err: return;
+	}
+	defer drop(kept);
+	fmt.println(kept.len());
+	panic("the frame fails with a conditionally live local");
+}
+
+main :: proc() {
+	values := [?]Res{Res{7}, Res{8}};
+	fails(values[:]);
+}
