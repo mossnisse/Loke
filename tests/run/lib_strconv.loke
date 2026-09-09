@@ -65,6 +65,12 @@ main :: proc() {
 	show_i64("9223372036854775808");
 	show_i64("-9223372036854775809");
 
+	// A prefix is recognised only when the base is 0. Under an explicit base it
+	// is ordinary non-digit text, so it reports trailing data rather than
+	// `Invalid_Base` -- including when it agrees with the base asked for.
+	show_i64("0x10", 16);
+	show_i64("0b11", 2);
+
 	switch (unsigned in strconv.parse_u64("18446744073709551615")) {
 	case .ok:
 		fmt.println(unsigned);
@@ -92,6 +98,14 @@ main :: proc() {
 	show_f64("1.2.3");
 	show_f64("1e");
 	show_f64("abc");
+
+	// Underscores are ignored among the digits, the same rule the integer
+	// parsers follow, and in the exponent too where a written literal may not.
+	show_f64("1_000.5");
+	show_f64("1.5_5");
+	show_f64("1.5e1_0");
+	show_f64("_");
+	show_f64("1e_");
 
 	// Mantissas are accumulated without wrapping, and a finite spelling outside
 	// f64's range reports Overflow instead of succeeding with infinity.

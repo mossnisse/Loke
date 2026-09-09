@@ -16,7 +16,9 @@ Parse_Error :: enum {
 	// The text is not a number at all: no digits, a stray sign, a misplaced
 	// underscore, an exponent with no digits.
 	Invalid_Syntax,
-	// A base outside 2 to 36, or a prefix that contradicts the requested base.
+	// A base outside 2 to 36. A prefix is recognised only when the base is 0, so
+	// `0x` under an explicit base is ordinary non-digit text and reports
+	// `Trailing_Data` rather than arriving here.
 	Invalid_Base,
 	// The value does not fit the destination type.
 	Overflow,
@@ -77,8 +79,13 @@ parse_uint :: proc(text: string_view, base: int = 0) -> Result(uint, Parse_Error
 // parsing (Eisel-Lemire, or a big-integer fallback) goes behind this same
 // signature when something needs bit-exact round-tripping.
 //
-// Accepts `[+-]digits[.digits][(e|E)[+-]digits]`. Infinities and NaNs are not
-// spellable; a caller that needs them tests for the words itself.
+// Accepts `[+-]digits[.digits][(e|E)[+-]digits]`, with underscores ignored among
+// the digits exactly as `parse_u64` ignores them. The lexer takes them in a
+// written literal's mantissa but not its exponent; that asymmetry carries no
+// reason this package can see, so one rule covers all three digit runs here.
+//
+// Infinities and NaNs are not spellable; a caller that needs them tests for the
+// words itself.
 parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	trimmed := trim_ascii_space(text);
 	if (trimmed.len() == 0) { return .err(.Invalid_Syntax); }
@@ -96,7 +103,8 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	// Digits past the point where a u64 mantissa saturates change the exponent
 	// instead of the mantissa; they are below the precision of the result.
 	saturated := false;
-	for (; at < bytes.len() && is_digit(bytes[at]); at += 1) {
+	for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {
+		if (bytes[at] == u8('_')) { continue; }
 		digits += 1;
 		if (saturated) {
 			exponent += 1;
@@ -112,7 +120,8 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 	}
 	if (at < bytes.len() && bytes[at] == u8('.')) {
 		at += 1;
-		for (; at < bytes.len() && is_digit(bytes[at]); at += 1) {
+		for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {
+			if (bytes[at] == u8('_')) { continue; }
 			digits += 1;
 			if (saturated) { continue; }
 			digit := u64(bytes[at] - u8('0'));
@@ -135,7 +144,8 @@ parse_f64 :: proc(text: string_view) -> Result(f64, Parse_Error) {
 		}
 		written := 0;
 		value := 0;
-		for (; at < bytes.len() && is_digit(bytes[at]); at += 1) {
+		for (; at < bytes.len() && (is_digit(bytes[at]) || bytes[at] == u8('_')); at += 1) {
+			if (bytes[at] == u8('_')) { continue; }
 			written += 1;
 			// Any exponent past this is already infinity or zero; clamping keeps the
 			// accumulation from wrapping.
@@ -168,21 +178,25 @@ POWERS_OF_TEN :: [23]f64{
 
 // One multiply or divide by an exactly representable power of ten is exactly
 // rounded; beyond that the scaling repeats and the error compounds.
+//
+// The table is indexed where it is declared. Binding it to a local first reads
+// as a convenience, but a constant aggregate materializes into the frame: that
+// spelling emitted an `alloca [23 x double]` and stored all 184 bytes on every
+// call.
 @(private)
 scale :: proc(value: f64, exponent: int) -> f64 {
-	powers := POWERS_OF_TEN;
 	if (exponent >= 0) {
-		if (exponent <= 22) { return value * powers[exponent]; }
+		if (exponent <= 22) { return value * POWERS_OF_TEN[exponent]; }
 		scaled := value;
 		left := exponent;
-		for (; left > 22; left -= 22) { scaled *= powers[22]; }
-		return scaled * powers[left];
+		for (; left > 22; left -= 22) { scaled *= POWERS_OF_TEN[22]; }
+		return scaled * POWERS_OF_TEN[left];
 	}
-	if (exponent >= -22) { return value / powers[-exponent]; }
+	if (exponent >= -22) { return value / POWERS_OF_TEN[-exponent]; }
 	scaled := value;
 	left := -exponent;
-	for (; left > 22; left -= 22) { scaled /= powers[22]; }
-	return scaled / powers[left];
+	for (; left > 22; left -= 22) { scaled /= POWERS_OF_TEN[22]; }
+	return scaled / POWERS_OF_TEN[left];
 }
 
 @(private)
