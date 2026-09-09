@@ -8,7 +8,12 @@ Point{x = 1, y = 2}
 [10, 20, 30]
 .count(4)
 $ 250
-main 73
+main 74
 8
 18446744073709551617 18446744073709551617
 meters
+cafebabeCAFEBABE
+101ZZ
+255255
+-FF FF
+id 7 4

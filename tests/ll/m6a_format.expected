@@ -5,6 +5,6 @@ define private void @loke.f.1(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.2(ptr %data, ptr %w, ptr %o) {
 define private void @loke.f.3(ptr %data, ptr %w, ptr %o) {
 call void @loke.p.Money.format(ptr %data,
-%t348 = load i64, ptr @.loke.fmt_thunks.count
-%t353 = getelementptr inbounds ptr, ptr @.loke.fmt_thunks, i64 %t352
+%t347 = load i64, ptr @.loke.fmt_thunks.count
+%t352 = getelementptr inbounds ptr, ptr @.loke.fmt_thunks, i64 %t351
 declare void @loke_rt_v1_fmt_bytes(ptr, ptr, i64)

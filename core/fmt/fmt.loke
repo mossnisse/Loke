@@ -47,25 +47,25 @@ DEFAULT_OPTIONS :: Options{10, false};
 
 @(public)
 print :: proc(args: ..any_view) {
-	emit(stdout_writer(), ..args);
+	emit(stdout_writer(), DEFAULT_OPTIONS, ..args);
 }
 
 @(public)
 println :: proc(args: ..any_view) {
 	w := stdout_writer();
-	emit(w, ..args);
+	emit(w, DEFAULT_OPTIONS, ..args);
 	write_bytes(w, "\n");
 }
 
 @(public)
 eprint :: proc(args: ..any_view) {
-	emit(stderr_writer(), ..args);
+	emit(stderr_writer(), DEFAULT_OPTIONS, ..args);
 }
 
 @(public)
 eprintln :: proc(args: ..any_view) {
 	w := stderr_writer();
-	emit(w, ..args);
+	emit(w, DEFAULT_OPTIONS, ..args);
 	write_bytes(w, "\n");
 }
 
@@ -82,7 +82,23 @@ stderr :: proc() -> Writer { return stderr_writer(); }
 // `fmt.println(offset, codepoint)` prints `0 A`.
 @(public)
 format_to :: proc(w: Writer, args: ..any_view) {
-	emit(w, ..args);
+	emit(w, DEFAULT_OPTIONS, ..args);
+}
+
+// The same, with the caller choosing how a scalar is spelled: `Options{16, true}`
+// writes `CAFEBABE` where the default writes `3405691582`. The seed runtime has
+// always implemented base 2 to 36 and both digit cases; until this procedure
+// existed nothing could ask for them, because `format_any` is package-private
+// and every call site here passed `DEFAULT_OPTIONS`.
+//
+// `options` leads for the same reason `to_string`'s allocator does: a variadic
+// absorbs the trailing arguments. The name differs rather than overloading
+// `format_to`, because an `Options` is itself a formattable value — so
+// `format_to(w, options, x)` would be an ambiguous call rather than an obvious
+// one.
+@(public)
+format_to_with :: proc(w: Writer, options: Options, args: ..any_view) {
+	emit(w, options, ..args);
 }
 
 // The same formatting, into memory instead of a stream.
@@ -101,8 +117,12 @@ format_to :: proc(w: Writer, args: ..any_view) {
 @(public)
 to_string :: proc(allocator: Allocator, args: ..any_view) -> string {
 	sink := make([dynamic]u8, 0, 64, allocator) or_else no_sink();
-	collector := Collector{sink};
-	emit(Writer{collect, &mut collector}, ..args);
+	// `move`, because a named local in a composite literal is copy initialization
+	// and not a transfer. Without it the collector clones the buffer from the
+	// *selected* allocator and formats there, so `allocator` reached only the
+	// returned string and every call allocated twice.
+	collector := Collector{move(sink)};
+	emit(Writer{collect, &mut collector}, DEFAULT_OPTIONS, ..args);
 	// Every formatter writes UTF-8; a `format` overload that does not is the
 	// one way here, and a wrong one.
 	view := string_view.from_utf8(collector.bytes[:]) or_else no_view();
@@ -123,14 +143,14 @@ collect :: proc(state: rawptr, bytes: [^]u8, count: int) {
 }
 
 @(private)
-emit :: proc(w: Writer, args: ..any_view) {
+emit :: proc(w: Writer, options: Options, args: ..any_view) {
 	first := true;
 	foreach (a in args) {
 		if (!first) {
 			write_bytes(w, " ");
 		}
 		first = false;
-		format_any(a, w, DEFAULT_OPTIONS);
+		format_any(a, w, options);
 	}
 }
 

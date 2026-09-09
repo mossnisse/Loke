@@ -1,0 +1,32 @@
+package main;
+
+// `fmt.to_string` formats into storage from the allocator it is handed, so an
+// arena that cannot hold the scratch buffer *and* the result is the caller's
+// failure to see. The collector used to be copy-initialized from a named local,
+// which is a clone rather than a transfer, so the buffer it actually formatted
+// into came from the selected allocator -- and this program succeeded on the
+// heap while the arena it was given held only the returned string.
+//
+// `collect` appends through the infallible spelling, so exhaustion follows the
+// allocation failure policy and the process stops. There is no `try_to_string`
+// to report it to.
+//
+// 448 is tuned, and is the point of the case: the arena holds the 120-byte
+// result comfortably, and does not hold it *plus* the scratch buffer and the
+// one growth step that filling it costs. Below 320 both spellings fail and
+// above 512 both succeed, so a change to the 64-byte initial reserve or to the
+// growth factor moves this window and the number has to move with it.
+
+import "core:fmt";
+import "core:mem";
+
+main :: proc() {
+	room: [448]u8 = {};
+	arena := mem.Arena.from_buffer(room[:]);
+	fmt.println("before");
+	long := "0123456789" + "0123456789" + "0123456789" + "0123456789" +
+		"0123456789" + "0123456789" + "0123456789" + "0123456789" +
+		"0123456789" + "0123456789" + "0123456789" + "0123456789";
+	text := fmt.to_string(arena.allocator(), long);
+	fmt.println(text.len());
+}
