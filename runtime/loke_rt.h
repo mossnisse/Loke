@@ -425,7 +425,8 @@ uint64_t loke_rt_v1_hash_bytes(const uint8_t *data, int64_t len, uint64_t seed);
  * formatter writes through, and the scalar spellings that would otherwise be
  * hundreds of lines of generated LLVM apiece.
  *
- * `Writer` and `Options` are declared in `core:fmt` with exactly these shapes.
+ * `Writer` and `Options` are declared in `core:fmt`, and each field here must
+ * match the width the language gives its counterpart, not merely the total size.
  * A compiler-generated formatter thunk receives a pointer to each. */
 typedef struct loke_rt_writer_v1 {
 	void (*write)(void *state, const uint8_t *bytes, int64_t count);
@@ -434,8 +435,14 @@ typedef struct loke_rt_writer_v1 {
 
 typedef struct loke_rt_options_v1 {
 	int64_t base;
-	int32_t uppercase;
-	int32_t reserved;
+	/* `core:fmt` spells this one `bool`, which design.md "Basic types" fixes at
+	 * one byte, so it is one byte here. It was `int32_t`, and the three bytes
+	 * past the one the language writes are padding it never initializes: a
+	 * `false` therefore read back true wherever the stack above it was dirty,
+	 * which no build could reach until `fmt.format_to_with` let a caller
+	 * construct an `Options` at all. */
+	int8_t uppercase;
+	int8_t reserved[7];
 } loke_rt_options_v1;
 
 LOKE_RT_STATIC_ASSERT(sizeof(loke_rt_writer_v1) == 16, writer_size);
