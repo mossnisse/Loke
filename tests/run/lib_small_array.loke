@@ -10,6 +10,14 @@ import "base:interfaces";
 
 Small :: container.Small_Array(int, 8);
 
+// Slicing through a value parameter: the receiver is immutable here, which is
+// the whole reason `span` takes `self` rather than `inout`.
+middle :: proc(values: Small) -> int {
+	total := 0;
+	foreach (value in values[1:3]) { total += value; }
+	return total;
+}
+
 // The `try_` half answers `Result(Unit, Capacity_Error)`; these checks want the
 // variant and, when it failed, the numbers the error carries.
 report :: proc(outcome: Result(Unit, container.Capacity_Error)) {
@@ -33,6 +41,10 @@ main :: proc() {
 	fmt.println(x[1]);
 	fmt.println(x[0:2]);
 	fmt.println(x.slice());
+	// A read-only receiver slices too, so this needs no `inout`. A writable
+	// subrange is the mutable whole-prefix view, sliced.
+	fmt.println(middle(x));
+	fmt.println(x.slice()[0:2]);
 
 	// Iteration, forwards and backwards.
 	foreach (value in x) { fmt.println(value); }

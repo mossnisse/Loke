@@ -74,10 +74,12 @@ impl Small_Array($T, $N) {
 	// `x[a:b]` over the live prefix only, which is why this is not the built-in
 	// fixed array's own slicing: the `N - count` trailing zero values are not
 	// elements.
-	span :: operator([:]) proc(self: inout Small_Array(T, N), low: int, high: int) -> []mut T {
-		if (low < 0 || high < low || high > self.count) {
-			panic("Small_Array slice is out of range");
-		}
+	//
+	// The receiver is immutable, so `x[a:b]` reads on any array rather than only
+	// on a mutable one. A writable subrange is `slice()[a:b]`: built-in slicing of
+	// the mutable whole-prefix view, already bounded by the live prefix.
+	span :: operator([:]) proc(self, low: int, high: int) -> []T {
+		self.check_span(low, high);
 		return self.items[low:high];
 	}
 
@@ -228,6 +230,13 @@ impl Small_Array($T, $N) {
 	check_index :: proc(self, index: int) {
 		if (index < 0 || index >= self.count) {
 			panic("Small_Array index is out of range");
+		}
+	}
+
+	@(private)
+	check_span :: proc(self, low: int, high: int) {
+		if (low < 0 || high < low || high > self.count) {
+			panic("Small_Array slice is out of range");
 		}
 	}
 }
