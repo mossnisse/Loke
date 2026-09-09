@@ -50,6 +50,60 @@ Each entry carries its own repro instead, small enough to paste.
   main :: proc() { outlive_local_arena(); pointer_outlives_local_arena(); }
   ```
 
+- **`move` out of a variant-switch binding whose subject is a live local is
+  accepted, and double-frees.** `design.md` "Decomposition" says a temporary or
+  `move(...)` consumes; a plain named local does not, so the binding borrows a
+  payload the subject still owns. Moving out of that borrow leaves the subject
+  live, and its scope-exit drop releases storage the move already transferred.
+  The program below aborts with a heap corruption before it prints. Either the
+  move should be rejected against an unconsumed subject, or binding should
+  consume it. Consuming the subject explicitly — `switch (owned in
+  move(outcome))` — is the working spelling today, and is what
+  `core/fs/fs.loke`'s `read_bytes` uses.
+
+  ```loke
+  package main; import "core:fmt"; import "core:slice";
+
+  main :: proc() {
+	source := [?]int{1, 2, 3};
+	outcome := slice.try_clone(source[:]);
+	switch (owned in outcome) {
+	case .ok:
+		taken := move(owned);
+		fmt.println(taken.len());
+	case .err:
+		fmt.println(-1);
+	}
+  }
+  ```
+
+- **A `return` inside a `switch` arm emits a store to a `defer` slot that block
+  has not declared yet.** The generated IR names a `%deferN` alloca the early
+  return's cleanup path clears, but the slot is only created where the `defer`
+  statement appears — after the switch — so `clang` rejects the module with
+  `use of undefined value`. The check phase reports nothing; the failure is
+  `error[L0403]` from the linker step. Registering the slot at block entry, or
+  skipping the clear for a `defer` the return cannot have reached, is the shape
+  of the fix. Moving the `defer` above the switch is the workaround, and is what
+  `core/os/process.loke` does.
+
+  ```loke
+  package main; import "core:fmt"; import "core:slice";
+
+  f :: proc() -> int {
+	a := [?]int{1};
+	b: [dynamic]int = {};
+	switch (made in slice.try_clone(a[:])) {
+	case .ok:  b = move(made);
+	case .err: return -1;
+	}
+	defer drop(b);
+	return b.len();
+  }
+
+  main :: proc() { fmt.println(f()); }
+  ```
+
 ## Not gaps
 
 Recorded because they look like gaps and are not, and each cost an

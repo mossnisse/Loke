@@ -153,10 +153,10 @@ read_bytes :: proc(
 	file := open_read(path) or_return;
 	outcome := io.read_to_end(inout file, allocator, limit);
 	closed := file.close();
-	switch (bytes in outcome) {
+	switch (bytes in move(outcome)) {
 	case .ok:
 		closed or_return;
-		return .ok(bytes);
+		return .ok(move(bytes));
 	case .err:
 		return .err(bytes);
 	}
@@ -408,7 +408,7 @@ wide_path :: proc(path: string_view, operation: io.Operation) -> Result([dynamic
 		return .err(io.make_error(.Invalid_Path, operation));
 	}
 	switch (units in utf16.encode(path, mem.default_allocator())) {
-	case .ok:  return .ok(units);
+	case .ok:  return .ok(move(units));
 	case .err: return .err(io.make_error(.Out_Of_Memory, operation));
 	}
 }

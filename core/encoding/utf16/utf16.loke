@@ -33,7 +33,11 @@ Error :: enum {
 encode :: proc(
 	text: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result([dynamic]u16, Error) {
-	units := make([dynamic]u16, 0, text.len() + 1, allocator) or_else no_units();
+	units: [dynamic]u16 = {};
+	switch (made in make([dynamic]u16, 0, text.len() + 1, allocator)) {
+	case .ok:  units = move(made);
+	case .err: return .err(.Out_Of_Memory);
+	}
 	foreach (codepoint in text) {
 		value := int(codepoint);
 		if (value < 0x10000) {
@@ -55,11 +59,8 @@ encode :: proc(
 	case .ok:
 	case .err: drop(units); return .err(.Out_Of_Memory);
 	}
-	return .ok(units);
+	return .ok(move(units));
 }
-
-@(private)
-no_units :: proc() -> [dynamic]u16 { panic("utf16 allocation failed"); }
 
 // The units as an owning UTF-8 `string`. A zero unit does not end the input:
 // pass the exact range to convert, which is what every Windows API that reports

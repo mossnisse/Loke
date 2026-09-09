@@ -209,11 +209,11 @@ read_to_end :: proc(
 		switch (outcome in reader.read(chunk[:])) {
 		case .ok: count = outcome;
 		case .err:
-			if (is(outcome, .End_Of_Input)) { return .ok(collected); }
+			if (is(outcome, .End_Of_Input)) { return .ok(move(collected)); }
 			drop(collected);
 			return .err(outcome);
 		}
-		if (count == 0) { return .ok(collected); }
+		if (count == 0) { return .ok(move(collected)); }
 		if (limit > 0 && collected.len() + count > limit) {
 			drop(collected);
 			return .err(make_error(.Limit_Exceeded, .Read_To_End));
@@ -376,4 +376,6 @@ latch_sink :: proc(state: rawptr, bytes: [^]u8, count: int) {
 }
 
 @(private)
+// Unreachable: reserving zero capacity only binds the allocator, and the
+// allocation failures that follow are reported, not fatal.
 empty_bytes :: proc() -> [dynamic]u8 { panic("io allocation failed"); }

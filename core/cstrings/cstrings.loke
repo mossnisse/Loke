@@ -35,20 +35,19 @@ from_string :: proc(
 			return .err(.Contains_Zero);
 		}
 	}
-	buffer := make([dynamic]u8, 0, text.len() + 1, allocator) or_else no_buffer();
-	switch (added in buffer.try_append(..text.bytes())) {
+	switch (buffer in make([dynamic]u8, 0, text.len() + 1, allocator)) {
 	case .ok:
-	case .err: drop(buffer); return .err(.Out_Of_Memory);
+		// The capacity covers the text and the terminator, so neither append
+		// can grow the buffer, and neither can fail.
+		buffer.append(..text.bytes());
+		buffer.append(0);
+		// `move`, because a copy would clone the bytes into the *default*
+		// allocator and discard the one the caller chose.
+		return .ok(C_String{move(buffer)});
+	case .err:
+		return .err(.Out_Of_Memory);
 	}
-	switch (added in buffer.try_append(0)) {
-	case .ok:
-	case .err: drop(buffer); return .err(.Out_Of_Memory);
-	}
-	return .ok(C_String{buffer});
 }
-
-@(private)
-no_buffer :: proc() -> [dynamic]u8 { panic("C_String allocation failed"); }
 
 impl C_String {
 	// design.md spells the accessor as a method, so the whole surface is one.
