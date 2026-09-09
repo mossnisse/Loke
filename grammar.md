@@ -166,6 +166,11 @@ Source_File   = Package_Clause Top_Level_Item*
 
 Package_Clause= Attributes? "package" Identifier ";"
 
+`@(default_allocator=<string>)` and `@(default_logger=<string>)` use this
+existing package-attribute position. Their restriction to the root
+`package main` and their provider-factory meaning are semantic rules; see
+[Build-selected providers](design.md#build-selected-providers).
+
 Top_Level_Item= Import_Decl
               | Foreign_Import_Decl
               | Foreign_Block

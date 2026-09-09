@@ -1,11 +1,15 @@
+@(
+	default_allocator = "./provider:allocator_factory",
+	default_logger = "./provider:logger_factory",
+)
 package main;
 
 import "core:fmt";
 import "core:log";
 
-// A program that selects both providers and imports neither.
-// `-provider` is what makes the provider package a build dependency; nothing
-// here mentions it, and `core:log` is imported for the logging surface only.
+// A program that selects both source-default providers and imports neither.
+// The package attributes make the provider package a build dependency;
+// `core:log` is imported for the logging surface only.
 
 main :: proc() {
 	// Lazy default binding: this container is allocator-unbound until its first

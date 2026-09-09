@@ -237,7 +237,30 @@ Could the compiler move a large fixed-size local variables to the heap? Does it 
 
 ## default allocator
 
-I think the default allocator and logger should be choosen in the source code in the main package, is that an good idea and what effect does that have? So must be befor the import statements
+The default allocator and logger can be chosen in Loke source on the root
+`package main` clause:
+
+```odin
+@(
+	default_allocator = "./providers:allocator_factory",
+	default_logger = "./providers:logger_factory",
+)
+package main;
+```
+
+This is a good default because the program's normal runtime policy now travels
+with its source, and the provider package becomes a build dependency without a
+redundant import. Package attributes also put the choice before all imports
+without making textual import order meaningful. Restricting it to the root
+`package main` prevents a library from changing an application's process-wide
+policy merely by being imported.
+
+The choice remains static: provider factories still run once before `main`, and
+ordinary allocations and log calls still use the selected handles. A build may
+override either source default with `-provider`, which preserves the useful
+ability to use a different heap or sink for an embedded target, test, or host
+without editing the program. With neither a source default nor an override, the
+system heap and standard logger remain the fallbacks.
 
 ## shorten dynamic array syntax
 

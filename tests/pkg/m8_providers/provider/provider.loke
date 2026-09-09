@@ -7,7 +7,7 @@ import "core:mem";
 
 // The two factories a build may select, and the process-lifetime state behind
 // them (design.md "Build-selected providers"). Nothing imports this package:
-// the build names it with `-provider`, which is what makes it a dependency.
+// the root package's source defaults name it, which makes it a dependency.
 
 // design.md: a factory must return a handle backed by storage that lives as
 // long as the process. A `static` buffer plus a `static` arena over it is that,

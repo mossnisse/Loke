@@ -3,7 +3,7 @@
 //
 // A `Logger` is an ordinary service handle: one procedure and its state, the
 // same shape `fmt.Writer` has. Nothing about it is compiler-known. What the
-// build selects is which one the package-level procedures below dispatch to,
+// program selects is which one the package-level procedures below dispatch to,
 // and `-log-level` decides which of them have a body at all.
 //
 // There is no scoped or package-local override of the program logger. A package

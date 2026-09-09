@@ -1,0 +1,4 @@
+@(default_logger = "not-a-provider-target")
+package main;
+
+main :: proc() {}

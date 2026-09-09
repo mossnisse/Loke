@@ -1,0 +1,2 @@
+-provider
+logger=core:log:standard_logger

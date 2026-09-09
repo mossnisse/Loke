@@ -49,6 +49,11 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}, true
 	case "private":
 		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}, true
+	case "default_allocator", "default_logger":
+		// These package-clause strings name provider factories. They are read
+		// before import discovery by `collect_source_provider_defaults`; the
+		// ordinary pass still owns their shape and placement diagnostics.
+		return {{.Package_Clause}, .Value_Required}, true
 	case "require_results":
 		// design.md "@(require_results)": on a type declaration the property is
 		// carried by the *type*, so every value of it is checked, not just the
@@ -167,6 +172,16 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
 		validate_attribute_list(k, file.attributes, .Package_Clause)
+		for attribute in file.attributes {
+			if _, is_provider := source_provider_slot(attribute); is_provider &&
+			   (pkg.id != k.c.root_package || identifier_text(k.c, pkg.name) != "main") {
+				errorf(
+					k.c, attribute.span, "L0661",
+					"`@(%s=...)` is only allowed on the root `package main` clause",
+					attribute.path[0].text,
+				)
+			}
+		}
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:

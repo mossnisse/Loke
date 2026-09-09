@@ -100,7 +100,7 @@ Compile examples individually: `examples/` contains separate programs, not one m
 | `-copy-cost=N` | Warn about copies of at least `N` inline bytes or copies whose lifecycle clone may allocate. Default: `512`; use `-copy-cost=off` to disable. |
 | `-build-mode=exe\|obj` | Produce an executable (default) or one relocatable object. |
 | `-runtime=<dir>` | Override the C runtime source directory, normally `runtime/` beside the compiler. |
-| `-provider <slot>=<package>:<name>` | Select a build-wide `allocator` or `logger` provider factory. The provider package becomes a build dependency even when source does not import it. `-provider:<slot>=...` is also accepted. |
+| `-provider <slot>=<package>:<name>` | Override a source-default `allocator` or `logger` provider for this build, or select one when source does not. The provider package becomes a build dependency even when source does not import it. `-provider:<slot>=...` is also accepted. |
 | `-log-level=debug\|info\|warning\|error\|off` | Set the compiled `LOKE_LOG_LEVEL` used by `core:log`. Default: `debug`. |
 
 For an optimized executable:
@@ -140,6 +140,26 @@ Custom collections use the same form: `-collection vendor=path\to\packages`
 lets source import `"vendor:package_name"`. Collection paths supplied on the
 command line are relative to the shell's working directory; relative imports
 in source are resolved from the importing file.
+
+#### Default allocator and logger
+
+The root `package main` can keep its normal allocator and logger choices in
+source. The value names a public zero-argument provider factory; its package
+does not also need to be imported:
+
+```odin
+@(
+	default_allocator = "./providers:allocator_factory",
+	default_logger = "./providers:logger_factory",
+)
+package main;
+```
+
+Relative provider paths resolve from this file. Collection-qualified paths such
+as `"platform:runtime:allocator_factory"` work as well. Only the root package
+named `main` may use these attributes, and each may be written once across a
+multi-file main package. `-provider allocator=...` and `-provider logger=...`
+override the corresponding source default for target-specific or test builds.
 
 ### Inspecting a compilation
 
@@ -192,11 +212,12 @@ int main(void) {
 }
 ```
 
-If the object was built with `-provider`, it also exports
-`loke_rt_v1_program_init()`. Call that once on the attached startup thread,
-after `loke_rt_v1_thread_attach()` and before calling any Loke export or starting
-worker threads. Repeated calls after initialization are harmless. An object
-built without a selected provider does not export this initializer.
+If the object was built with a selected provider (from source or `-provider`),
+it also exports `loke_rt_v1_program_init()`. Call that once on the attached
+startup thread, after `loke_rt_v1_thread_attach()` and before calling any Loke
+export or starting worker threads. Repeated calls after initialization are
+harmless. An object built without a selected provider does not export this
+initializer.
 
 An `.asm` import cannot be included in this single-object build: assemble it
 separately and link it at the host's final link step.

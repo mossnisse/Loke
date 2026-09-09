@@ -51,13 +51,16 @@ source lookup or repair incomplete semantic state.
 ## Driver and phase order
 
 The command-line entry point is `run` in `src/main.odin`. It seeds immutable
-build configuration, collection roots, provider selections, panic strategy,
-optimization mode, and build mode before source discovery begins.
+build configuration, collection roots, provider overrides, panic strategy,
+optimization mode, and build mode before source discovery begins. After loading
+the root package, `compile_program` reads provider defaults from its
+`package main` attributes; command-line selections take precedence per slot.
 
 The normal compilation path is:
 
 1. `compile_program` in `src/packages.odin` initializes semantic stores, loads
-   `base:runtime`, loads the root package, and adds selected provider packages.
+   `base:runtime`, loads the root package, collects its provider defaults, and
+   adds the selected provider packages.
 2. Package discovery runs to a fixed point. Each round rebuilds the selected
    `File.active_items`, discovers newly active imports, rejects import cycles,
    prepares package declarations, and evaluates file-scope `when` conditions.

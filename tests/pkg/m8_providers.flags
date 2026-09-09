@@ -1,7 +1,1 @@
--collection
-app=tests/pkg/m8_providers
--provider
-allocator=app:provider:allocator_factory
--provider
-logger=app:provider:logger_factory
 -log-level=warning

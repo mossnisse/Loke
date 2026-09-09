@@ -2,10 +2,9 @@ package main;
 
 import "core:log";
 
-// The provider-selection diagnostics. The selections are in
-// the sibling `.flags`, because design.md puts provider selection on the build
-// command line and nowhere else — which is also why these diagnostics have no
-// source location to point at.
+// Command-line provider-selection diagnostics. The selections deliberately
+// remain in the sibling `.flags` to cover build overrides, which have no source
+// location to point at.
 
 main :: proc() {
 	log.error("unreached");

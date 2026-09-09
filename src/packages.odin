@@ -30,9 +30,12 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 		return INVALID_PACKAGE, false
 	}
 	c.root_package = root
-	// design.md "Build-selected providers": a selected provider's package is a
-	// build dependency even where no source imports it, so it is loaded here and
-	// then travels the ordinary discovery, ordering, and checking path.
+	// design.md "Build-selected providers": source defaults live on the root
+	// `package main` clause. Command-line selections were installed earlier and
+	// override them per slot. A selected provider's package is a build dependency
+	// even where no source imports it, so it is loaded here and then travels the
+	// ordinary discovery, ordering, and checking path.
+	collect_source_provider_defaults(c, root)
 	load_provider_packages(c)
 
 	k := Checker{c = c}

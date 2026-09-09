@@ -1,0 +1,4 @@
+@(default_allocator = "./provider:allocator_factory")
+package utility;
+
+exported :: proc() {}

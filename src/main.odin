@@ -55,9 +55,10 @@ options:
     -provider allocator=<package>:<name>
     -provider logger=<package>:<name>
     -provider:<slot>=<package>:<name>
-                  select a build provider: a public proc() -> Allocator or
-                  proc() -> Logger. Its package becomes a build dependency even
-                  if no source imports it; each slot may be selected once
+                  select or override a build provider: a public proc() ->
+                  Allocator or proc() -> Logger. Its package becomes a build
+                  dependency even if no source imports it; each slot may be
+                  selected once
     -log-level=debug|info|warning|error|off
                   the compiled LOKE_LOG_LEVEL; core:log suppresses every call
                   below it (default: debug)
@@ -144,8 +145,9 @@ run :: proc() -> int {
 		report(&c)
 		return 1
 	}
-	// design.md "Build-selected providers": selection happens on the command line
-	// and nowhere else, and it is settled before any source is read.
+	// design.md "Build-selected providers": command-line selections are explicit
+	// per-build overrides. Source defaults are collected from the root package
+	// after it is loaded and leave these slots unchanged.
 	for entry in opts.providers {
 		if !select_provider(&c, entry) {
 			report(&c)

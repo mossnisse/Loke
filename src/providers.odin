@@ -1,11 +1,11 @@
 // Build-selected providers (design.md "Build-selected providers").
 //
 // The final build selects at most one default-allocator provider and one
-// logging provider, on the command line and nowhere else. Each selection names
-// a *factory*: a public, non-generic procedure taking nothing and returning the
-// slot's handle type. Naming one makes its package a build dependency even
-// where no source imports it, which is the whole point — a program should not
-// have to mention the provider it runs on.
+// logging provider. A root `package main` may name source defaults on its
+// package clause; the command line can replace either default for a particular
+// build. Each selection names a *factory*: a public, non-generic procedure
+// taking nothing and returning the slot's handle type. Naming one makes its
+// package a build dependency even where no source imports it.
 //
 // Nothing here changes what an unselected build does. The runtime's fallback
 // record is still the answer `mem.default_allocator()` gives; what changes is
@@ -21,12 +21,17 @@ Provider_Slot :: enum {
 
 Provider_Selection :: struct {
 	// The written `path:name`, kept verbatim for diagnostics.
-	written:  string,
-	path:     string,
-	name:     string,
-	selected: bool,
-	pkg:      Package_Id,
-	factory:  Symbol_Id,
+	written:     string,
+	path:        string,
+	name:        string,
+	selected:    bool,
+	// Nil for a command-line selection. A source default uses its package-clause
+	// file so an unprefixed provider path can resolve relative to that file just
+	// like an import.
+	from_file:   ^File,
+	span:        Span,
+	pkg:         Package_Id,
+	factory:     Symbol_Id,
 }
 
 provider_slot_name :: proc(slot: Provider_Slot) -> string {
@@ -49,7 +54,9 @@ any_provider_selected :: proc(c: ^Compiler) -> bool {
 }
 
 // `-provider <slot>=<import path>:<name>`. Parsed before any source is loaded,
-// so a malformed selection is reported without compiling anything.
+// so a malformed selection is reported without compiling anything. These are
+// explicit build overrides; `collect_source_provider_defaults` leaves an
+// already-selected slot alone.
 select_provider :: proc(c: ^Compiler, entry: string) -> bool {
 	equals := strings.index_byte(entry, '=')
 	if equals <= 0 {
@@ -66,33 +73,120 @@ select_provider :: proc(c: ^Compiler, entry: string) -> bool {
 		errorf(c, no_span(), "L0656", "`%s` is not a provider slot; use `allocator` or `logger`", slot_text)
 		return false
 	}
+	return install_provider_selection(c, slot, target, no_span(), nil, duplicate_is_error = true)
+}
+
+// Source defaults use package-clause attributes so they necessarily precede
+// imports and remain visible even when their provider package is not imported:
+//
+//     @(default_allocator="./providers:allocator")
+//     package main;
+//
+// One file may supply each slot. The per-file duplicate is already diagnosed by
+// the ordinary attribute validator; this pass reports the package-wide case.
+collect_source_provider_defaults :: proc(c: ^Compiler, root: Package_Id) {
+	pkg := package_of(c, root)
+	if pkg == nil || identifier_text(c, pkg.name) != "main" {
+		return
+	}
+	seen: [Provider_Slot]bool
+	first_span: [Provider_Slot]Span
+	for file in pkg.files {
+		seen_in_file: [Provider_Slot]bool
+		for attribute in file.attributes {
+			slot, is_provider := source_provider_slot(attribute)
+			if !is_provider {
+				continue
+			}
+			if seen_in_file[slot] {
+				continue // `validate_attribute_list` owns this diagnostic.
+			}
+			seen_in_file[slot] = true
+			target, valid := source_provider_target(c, attribute)
+			if !valid {
+				continue // Attribute shape validation owns malformed values.
+			}
+			if seen[slot] {
+				errorf(
+					c, attribute.span, "L0657",
+					"the source default for the %s provider is selected more than once",
+					provider_slot_name(slot),
+				)
+				add_notef(c, first_span[slot], "the first source default is here")
+				continue
+			}
+			seen[slot], first_span[slot] = true, attribute.span
+			// A command-line selection is an override, not a conflicting second
+			// default. Still parse the source target above so malformed source does
+			// not become valid merely because one build replaces it.
+			if c.providers[slot].selected {
+				continue
+			}
+			install_provider_selection(c, slot, target, attribute.span, file, duplicate_is_error = false)
+		}
+	}
+}
+
+source_provider_slot :: proc(attribute: Attribute) -> (Provider_Slot, bool) {
+	if len(attribute.path) != 1 {
+		return .Allocator, false
+	}
+	switch attribute.path[0].text {
+	case "default_allocator": return .Allocator, true
+	case "default_logger":    return .Logger, true
+	}
+	return .Allocator, false
+}
+
+@(private = "file")
+source_provider_target :: proc(c: ^Compiler, attribute: Attribute) -> (string, bool) {
+	lit, ok := attribute.value.(^Expr_Literal)
+	if !ok || (lit.kind != .String && lit.kind != .Raw_String) {
+		return "", false
+	}
+	return decode_string_literal(c, lit.text, lit.kind == .Raw_String)
+}
+
+@(private = "file")
+install_provider_selection :: proc(
+	c: ^Compiler,
+	slot: Provider_Slot,
+	target: string,
+	span: Span,
+	from_file: ^File,
+	duplicate_is_error: bool,
+) -> bool {
 	// The *last* colon separates the declaration from the import path, because an
-	// import path contains one of its own: `core:log:standard_logger`.
+	// import path can contain one of its own: `core:log:standard_logger`.
 	split := strings.last_index_byte(target, ':')
 	if split <= 0 || split == len(target) - 1 {
 		errorf(
-			c, no_span(), "L0656",
-			"`-provider %s` needs the form <slot>=<package>:<name>", entry,
+			c, span, "L0656",
+			"the %s provider `%s` needs the form <package>:<name>",
+			provider_slot_name(slot), target,
 		)
 		return false
 	}
 	if c.providers[slot].selected {
-		errorf(
-			c, no_span(), "L0657",
-			"the %s provider is selected twice: `%s` and `%s`",
-			provider_slot_name(slot), c.providers[slot].written, target,
-		)
-		return false
+		if duplicate_is_error {
+			errorf(
+				c, span, "L0657",
+				"the %s provider is selected twice: `%s` and `%s`",
+				provider_slot_name(slot), c.providers[slot].written, target,
+			)
+			return false
+		}
+		return true
 	}
-	// The argument vector lives for the process, so these are borrows of it
-	// rather than copies.
 	c.providers[slot] = Provider_Selection {
-		written  = target,
-		path     = target[:split],
-		name     = target[split + 1:],
-		selected = true,
-		pkg      = INVALID_PACKAGE,
-		factory  = INVALID_SYMBOL,
+		written   = target,
+		path      = target[:split],
+		name      = target[split + 1:],
+		selected  = true,
+		from_file = from_file,
+		span      = span,
+		pkg       = INVALID_PACKAGE,
+		factory   = INVALID_SYMBOL,
 	}
 	return true
 }
@@ -105,29 +199,28 @@ load_provider_packages :: proc(c: ^Compiler) {
 		if !selection.selected {
 			continue
 		}
-		// A relative import path resolves against the importing *file*, and a
-		// selection has none — it comes from the command line. So a provider is
-		// named through a collection, always, which is what the nil file makes
-		// `resolve_import_path` answer.
-		dir, why := resolve_import_path(c, nil, selection.path)
+		// Command-line selections have no importing file and therefore need a
+		// collection-qualified path. A source default resolves an unprefixed path
+		// against the file containing its package clause.
+		dir, why := resolve_import_path(c, selection.from_file, selection.path)
 		switch why {
 		case .No_Collection:
 			errorf(
-				c, no_span(), "L0658",
+				c, selection.span, "L0658",
 				"the %s provider's package `%s` does not name a registered collection",
 				provider_slot_name(slot), selection.path,
 			)
 			continue
 		case .Outside_Collection:
 			errorf(
-				c, no_span(), "L0658",
+				c, selection.span, "L0658",
 				"the %s provider's package `%s` leaves the `%s` collection",
 				provider_slot_name(slot), selection.path, collection_prefix(selection.path),
 			)
 			continue
 		case .Ok:
 		}
-		id, loaded := load_package_dir(c, dir, selection.path, no_span())
+		id, loaded := load_package_dir(c, dir, selection.path, selection.span)
 		if !loaded {
 			continue
 		}
@@ -154,7 +247,7 @@ resolve_provider_factories :: proc(k: ^Checker) {
 		sym := symbol_of(c, symbol_id)
 		if sym == nil || !sym.public {
 			errorf(
-				c, no_span(), "L0658",
+				c, selection.span, "L0658",
 				"the %s provider `%s` names no public declaration in `%s`",
 				provider_slot_name(slot), selection.name, selection.path,
 			)
@@ -164,7 +257,7 @@ resolve_provider_factories :: proc(k: ^Checker) {
 		sym = symbol_of(c, symbol_id)
 		if !provider_factory_shape(c, sym, wanted) {
 			errorf(
-				c, no_span(), "L0659",
+				c, selection.span, "L0659",
 				"the %s provider `%s` is not a factory: it must be `proc() -> %s`",
 				provider_slot_name(slot), selection.written,
 				wanted == INVALID_TYPE ? "the slot's handle" : type_name(c, wanted),

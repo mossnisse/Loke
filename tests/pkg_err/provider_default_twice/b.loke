@@ -1,0 +1,2 @@
+@(default_logger = "core:log:standard_logger")
+package main;
