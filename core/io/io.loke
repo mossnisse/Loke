@@ -159,6 +159,11 @@ CHUNK :: 4096;
 
 // Fills `destination` completely, or fails. A stream that ends early is
 // `Unexpected_End`, which is the difference between this and `read`.
+//
+// "Or fails" is not "or leaves the buffer alone": a failure part way through
+// has already written the bytes it did read, and a `Result` carries the error
+// rather than the count, so a caller cannot learn how far it got. Read into a
+// scratch buffer instead when the destination must stay intact on failure.
 read_exact :: proc(reader: inout $R, destination: []mut u8) -> Result(Unit, Error) where Reader(R) {
 	filled := 0;
 	for (; filled < destination.len(); ) {
@@ -181,6 +186,10 @@ write_all :: proc(writer: inout $W, source: []u8) -> Result(Unit, Error) where W
 	written := 0;
 	for (; written < source.len(); ) {
 		count := writer.write(source[written:]) or_return;
+		// The slice is never empty here, so a conforming writer never answers zero
+		// -- this is a writer breaking the contract, and the guard is what keeps
+		// that from spinning forever. `Broken_Pipe` because a sink that accepts
+		// nothing and a sink that has gone away are the same thing from here.
 		if (count == 0) {
 			return .err(make_error(.Broken_Pipe, .Write));
 		}
@@ -228,6 +237,11 @@ read_to_end :: proc(
 
 // Bytes from `source` into `destination` until the source ends, answering how
 // many moved. A caller's `buffer` avoids the frame-sized one.
+//
+// The count is a success answer only. A `Result` carries the error instead on
+// failure, so a partial transfer reports no total and cannot be resumed from
+// one -- a caller who needs that owns the loop and calls `read` and `write_all`
+// itself.
 copy :: proc(
 	destination: inout $W, source: inout $R, buffer: []mut u8 = nil,
 ) -> Result(u64, Error) where Writer(W), Reader(R) {
@@ -330,7 +344,7 @@ read_line :: proc(
 write_formatted :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
 	latch := Latch{(dyn mut Writer)(&mut writer), .none};
 	fmt.format_to(fmt.Writer{latch_sink, &mut latch}, ..args);
-	return latched(latch);
+	return latched(latch.error);
 }
 
 write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Result(Unit, Error) where Writer(W) {
@@ -338,7 +352,7 @@ write_formatted_line :: proc(writer: inout $W, args: ..any_view) -> Result(Unit,
 	adapter := fmt.Writer{latch_sink, &mut latch};
 	fmt.format_to(adapter, ..args);
 	fmt.format_to(adapter, "\n");
-	return latched(latch);
+	return latched(latch.error);
 }
 
 // `Option(Error)` rather than `Result`, because a latch records *whether* a
@@ -349,9 +363,11 @@ Latch :: struct {
 	error:  Option(Error),
 }
 
+// The failure alone: taking the whole `Latch` would copy its `dyn mut Writer`
+// to read one scalar field beside it.
 @(private)
-latched :: proc(latch: Latch) -> Result(Unit, Error) {
-	switch (failure in latch.error) {
+latched :: proc(error: Option(Error)) -> Result(Unit, Error) {
+	switch (failure in error) {
 	case .some: return .err(failure);
 	case .none: return .ok(Unit{});
 	}
