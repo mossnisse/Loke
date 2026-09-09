@@ -16,8 +16,10 @@ Enum_Array :: struct($E: type, $T: type) {
 }
 
 impl Enum_Array($E, $T) {
-	// Every slot set to `value`.
-	filled :: proc(value: T) -> Enum_Array(E, T) {
+	// Every slot set to `value`, which copies it once per member and so is not
+	// part of a move-only instantiation (design.md "where clauses"). The zero
+	// value needs no construction either way.
+	filled :: proc(value: T) -> Enum_Array(E, T) where is_copyable(T) {
 		result: Enum_Array(E, T) = {};
 		foreach (i in 0 ..< result.slots.len()) { result.slots[i] = value; }
 		return result;
@@ -28,7 +30,8 @@ impl Enum_Array($E, $T) {
 	len :: proc(self) -> int { return E.values().len(); }
 	cap :: proc(self) -> int { return E.values().len(); }
 
-	get :: operator([]) proc(self, member: E) -> T {
+	// Reading a slot out by value is a copy; `get_mut` reaches it without one.
+	get :: operator([]) proc(self, member: E) -> T where is_copyable(T) {
 		return self.slots[position_of(member)];
 	}
 
@@ -83,7 +86,11 @@ impl Enum_Array_Iterator($E, $T) {
 
 	iter :: proc(self) -> Enum_Array_Iterator(E, T) { return self; }
 
-	next :: proc(self: inout Enum_Array_Iterator(E, T)) -> Option(Enum_Entry(E, T)) {
+	// An entry carries the value by copy, so a move-only `T` gets no by-value
+	// `foreach` here; `slots` is reached through `get_mut` or `&value` instead.
+	next :: proc(
+		self: inout Enum_Array_Iterator(E, T),
+	) -> Option(Enum_Entry(E, T)) where is_copyable(T) {
 		members := E.values();
 		if (self.at >= members.len()) { return .none; }
 		index := self.at;

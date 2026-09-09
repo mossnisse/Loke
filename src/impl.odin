@@ -336,13 +336,40 @@ member_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> []
 	return out[:]
 }
 
+// A member a failed `where` bound removed from this instantiation. Lookup hides
+// it, so a "no such member" report can say the name exists and why it is not
+// here, instead of leaving the caller to hunt for a typo.
+excluded_member :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id) -> ^Symbol {
+	info := type_of(k.c, type)
+	if info == nil {
+		return nil
+	}
+	for member in info.members {
+		sym := symbol_of(k.c, member)
+		if sym != nil && sym.name == name && sym.bound_excluded {
+			return sym
+		}
+	}
+	return nil
+}
+
 // The one symbol-visibility predicate (design.md "Exported names"). Methods,
 // operators, associated members, struct fields, and reflection all ask this, so
 // no path can expose a declaration another path would hide. The observer is the
 // lookup package rather than the package being compiled, which is what lets a
 // generic body instantiated elsewhere still see its own definition site.
 member_is_visible :: proc(k: ^Checker, sym: ^Symbol) -> bool {
-	return sym != nil && (sym.pkg == lookup_package(k) || sym.public)
+	if sym == nil {
+		return false
+	}
+	// design.md "where clauses": a method of an instantiated generic `impl` whose
+	// bound does not hold is not part of that instantiation. Hiding it here rather
+	// than at each lookup is what keeps method calls, operators, interface
+	// satisfaction, and reflection agreeing on which members that instance has.
+	if sym.bound_excluded {
+		return false
+	}
+	return sym.pkg == lookup_package(k) || sym.public
 }
 
 // The declaring package may read, write, and initialize package-visible

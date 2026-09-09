@@ -634,6 +634,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			return
 		}
 		errorf(k.c, v.span, "L0408", "`%s` has no member `%s`", type_name(k.c, subject), v.name.text)
+		note_excluded_member(k, subject, v.name.text)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -681,6 +682,7 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			}
 		}
 		errorf(k.c, v.span, "L0363", "`%s` has no field or member `%s`", type_name(k.c, operand), v.name.text)
+		note_excluded_member(k, operand, v.name.text)
 		v.type = INVALID_TYPE
 		return
 	}
@@ -787,6 +789,22 @@ select_method :: proc(k: ^Checker, v: ^Expr_Selector, receiver: Type_Id, callee_
 
 // The members of `receiver` named `name` that method-call syntax can reach: an
 // associated procedure without a receiver is not one of them.
+// Why a name that is written in the source is not a member here. A missing
+// member and one a `where` bound removed read the same at the call, so the
+// reports that say "no such member" all add this.
+note_excluded_member :: proc(k: ^Checker, type: Type_Id, name: string) {
+	excluded := excluded_member(k, type, intern_identifier(k.c, name))
+	if excluded == nil {
+		return
+	}
+	add_notef(
+		k.c,
+		excluded.span,
+		"`%s` is declared with a `where` bound that does not hold for this instantiation",
+		name,
+	)
+}
+
 method_candidates :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	all := member_candidates(k, receiver, name)
 	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)

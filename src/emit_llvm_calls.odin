@@ -91,7 +91,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 		case .Free_All:
 			emit_region_reset(e, v)
 			return "0"
-		case .None, .Size_Of, .Align_Of, .Offset_Of,
+		case .None, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable,
 		     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 		     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 			// These fold to a constant in every reachable case; arriving here

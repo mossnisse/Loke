@@ -930,6 +930,10 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 			type_name(k.c, iterator),
 			type_name(k.c, element),
 		)
+		// A yielded element is a copy, so an iterator that gates `next` on the
+		// element being copyable simply has none here. Saying so is the difference
+		// between a missing method and a method this instantiation was never given.
+		note_excluded_member(k, iterator, "next")
 		return FLOWS
 	}
 

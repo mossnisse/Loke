@@ -1864,6 +1864,7 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 	for member in clone.members {
 		if d, is_decl := member.(^Decl); is_decl {
 			resolve_declaration_signature(k, d)
+			exclude_member_on_failed_bound(k, d)
 		}
 	}
 	for member in clone.members {
@@ -1872,6 +1873,35 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		}
 	}
 	append(&k.c.pending_impl_instances, Pending_Impl{item = clone, scope = scope, pkg = block.pkg, file = block.file, file_node = block.file_node, subject = instance.type})
+}
+
+// design.md "where clauses": a method of an instantiated block whose bound does
+// not hold is excluded from that instantiation rather than reported. It is what
+// lets one generic container serve element types that cannot do everything the
+// container offers -- `Small_Array(T, N)` keeps the methods that copy an element
+// for a copyable `T` and drops them for a move-only one, instead of failing the
+// moment such an instance exists.
+//
+// The bound is evaluated here, beside the signature, rather than with the
+// deferred body: a call can resolve long before the body is checked, and the
+// lookup that has to skip this method runs in between.
+@(private = "file")
+exclude_member_on_failed_bound :: proc(k: ^Checker, d: ^Decl) {
+	literal := decl_proc_literal(d)
+	if literal == nil || len(literal.where_clauses) == 0 {
+		return
+	}
+	if len(d.symbols) == 0 || d.symbols[0] == INVALID_SYMBOL {
+		return
+	}
+	symbol := symbol_of(k.c, d.symbols[0])
+	if symbol == nil {
+		return
+	}
+	name := identifier_text(k.c, symbol.name)
+	if !check_where_clauses(k, literal.where_clauses, literal.span, name, report = false) {
+		symbol.bound_excluded = true
+	}
 }
 
 // Members of an instantiated block. Names a specialized block already supplied
@@ -2050,6 +2080,11 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 					continue
 				}
 				sym := symbol_of(k.c, d.symbols[0])
+				// A method whose bound did not hold is not part of this instantiation:
+				// its body was never checked, so there is no body to emit.
+				if sym != nil && sym.bound_excluded {
+					continue
+				}
 				append(&pkg.instances, Instance_Decl {
 					symbol = d.symbols[0],
 					decl   = d,

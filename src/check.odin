@@ -2237,6 +2237,12 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 	if symbol == nil {
 		return
 	}
+	if symbol.bound_excluded {
+		// The bound was evaluated beside the signature and did not hold, so this
+		// method is not part of the instantiation and its body is never checked
+		// against an element type it was never written for.
+		return
+	}
 	if k.generic_depth > 0 && !literal.generic_instance {
 		// A method of an instantiated block: its bounds close over the block's
 		// arguments, which are bound in the scope this body is checked in.

@@ -112,6 +112,7 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		{"size_of", .Size_Of, TYPE_INT},
 		{"align_of", .Align_Of, TYPE_INT},
 		{"offset_of", .Offset_Of, TYPE_INT},
+		{"is_copyable", .Is_Copyable, TYPE_BOOL},
 
 
 		// design.md "`type` and `typeid`" and "Compile-time reflection". Their

@@ -586,6 +586,10 @@ Builtin_Kind :: enum {
 	Size_Of,
 	Align_Of,
 	Offset_Of,
+	// design.md "Built-in procedures": whether a copy of this type exists at all.
+	// It is what a `where` bound asks when a generic body copies its element, and
+	// no member can answer it -- a scalar is copyable and has no clone to name.
+	Is_Copyable,
 	// Compile-time reflection (design.md "`type` and `typeid`", "Compile-time
 	// reflection").
 	Type_Of,
@@ -747,6 +751,11 @@ Symbol :: struct {
 	// Signature resolution already reported why this procedure has no usable
 	// type, so the gate must not report a second time for the same mistake.
 	signature_error: bool,
+	// design.md "where clauses": a method of an instantiated generic `impl`
+	// whose bound does not hold is not part of that instantiation. The symbol
+	// stays so a call can say why the method is missing, but nothing looks it
+	// up, its body is never checked, and the backend never emits it.
+	bound_excluded: bool,
 	// A procedure the compiler contributes: it has a real symbol and signature,
 	// and the backend writes its body (`src/iterate.odin`).
 	synth:       Synth_Kind,

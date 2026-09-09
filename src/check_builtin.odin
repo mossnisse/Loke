@@ -41,6 +41,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Size_Of, .Align_Of, .Offset_Of:
 		check_layout_builtin(k, v, ident, sym.builtin, expected)
 		return
+	case .Is_Copyable:
+		check_is_copyable_builtin(k, v, ident)
+		return
 	case .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of:
 		check_reflection_builtin(k, v, ident, sym.builtin)
 		return
@@ -377,7 +380,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .None, .Assert, .Panic,
+	     .Strings_Allocate, .None, .Assert, .Panic, .Is_Copyable,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
@@ -385,6 +388,36 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	}
 	v.is_const = true
 	v.const_value = int_const(k.c, i64(result))
+}
+
+// design.md "Built-in procedures": `is_copyable(T)` folds to `false` exactly
+// when `T` is move-only, structurally included -- the same question the
+// move-only diagnostics ask, so a `where` bound and the error it avoids cannot
+// disagree. Its operand is inspected, not evaluated, like the layout queries.
+@(private = "file")
+check_is_copyable_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.type = TYPE_BOOL
+	if len(v.args) != 1 {
+		errorf(k.c, v.span, "L0322", "`%s` takes 1 argument, found %d", ident.name, len(v.args))
+		v.type = INVALID_TYPE
+		return
+	}
+	if v.args[0].name.text != "" || v.args[0].mode != .Value {
+		reject_builtin_argument_shape(k, v.args[0])
+		v.type = INVALID_TYPE
+		return
+	}
+	operand := layout_operand_type(k, v.args[0].value, .Is_Copyable)
+	if operand == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	if !gate_type(k, operand, expr_span(v.args[0].value)) {
+		v.type = INVALID_TYPE
+		return
+	}
+	v.is_const = true
+	v.const_value = bool_const(!type_clone_disabled(k.c, operand))
 }
 
 // The type a layout operand denotes: a written type, or the type of an
@@ -548,7 +581,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 		return
 
 	case .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Make,
+	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Make,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,

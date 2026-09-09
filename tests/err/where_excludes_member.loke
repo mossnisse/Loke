@@ -1,0 +1,26 @@
+package main;
+
+import "core:container";
+
+// The methods a move-only element leaves out, and what a call to one says
+// (design.md "where clauses"). Each is a member the instantiation does not
+// have, not a body that failed to check.
+
+Token :: move_only struct { @(public) id: int }
+
+Slot :: enum{Only};
+
+main :: proc() {
+	a: container.Small_Array(Token, 4) = {};
+
+	// `append` copies out of a borrowed argument.
+	token := Token{1};
+	a.append(token);
+
+	// By-value iteration yields a copy, so the iterator has no `next`.
+	foreach (held in a) { _ = held.id; }
+
+	// `filled` copies one value into every slot.
+	seed := Token{2};
+	_ = container.Enum_Array(Slot, Token).filled(seed);
+}

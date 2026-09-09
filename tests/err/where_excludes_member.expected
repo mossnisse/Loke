@@ -1,0 +1,15 @@
+L0363
+@18:2
+`Small_Array(Token, 4)` has no field or member `append`
+`append` is declared with a `where` bound that does not hold for this instantiation
+L0456
+@21:19
+needs `next :: proc(self: inout Small_Array_Iterator(Token)) -> Option(Token)`
+`next` is declared with a `where` bound that does not hold for this instantiation
+L0408
+@25:6
+`Enum_Array(Slot, Token)` has no member `filled`
+`filled` is declared with a `where` bound that does not hold for this instantiation
+!error[L0502]
+!error[L0503]
+!error[L0434]

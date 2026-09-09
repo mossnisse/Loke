@@ -8,6 +8,12 @@
 //
 // The zero value is a usable, empty array, so `x: Small_Array(int, 8) = {};`
 // needs no construction.
+//
+// A move-only element is held too. The methods that copy one — `get`,
+// `append`, `insert`, their `try_` forms, and by-value iteration — are bound
+// on `is_copyable(T)`, so they are simply not members of such an instance
+// (design.md "where clauses"); `append_moved` and `insert_moved` are the way
+// in, and everything that reaches an element without copying it is unchanged.
 @(public)
 package container;
 
@@ -61,7 +67,10 @@ impl Small_Array($T, $N) {
 	is_full :: proc(self) -> bool { return self.count == N; }
 	space :: proc(self) -> int { return N - self.count; }
 
-	get :: operator([]) proc(self, index: int) -> T {
+	// Reading an element out by value is a copy, so this is not part of a
+	// move-only instantiation (design.md "where clauses"). `get_mut`, `view` and
+	// `slice` reach the element without one, and `remove` hands it over entirely.
+	get :: operator([]) proc(self, index: int) -> T where is_copyable(T) {
 		self.check_index(index);
 		return self.items[index];
 	}
@@ -114,7 +123,9 @@ impl Small_Array($T, $N) {
 
 	// ------------------------------------------------------------ mutation --
 
-	append :: proc(self: inout Small_Array(T, N), @(escape=stored) values: ..T) {
+	append :: proc(
+		self: inout Small_Array(T, N), @(escape=stored) values: ..T,
+	) where is_copyable(T) {
 		switch (_ in self.try_append(..values)) {
 		case .ok:
 		case .err: panic("Small_Array is full");
@@ -124,7 +135,7 @@ impl Small_Array($T, $N) {
 	// Nothing is written unless everything fits, which is the `try_` promise.
 	try_append :: proc(
 		self: inout Small_Array(T, N), @(escape=stored) values: ..T,
-	) -> Result(Unit, Capacity_Error) {
+	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
 		if (wanted > N) {
 			return .err(Capacity_Error{wanted, N});
@@ -136,7 +147,9 @@ impl Small_Array($T, $N) {
 		return .ok({});
 	}
 
-	insert :: proc(self: inout Small_Array(T, N), index: int, @(escape=stored) value: T) {
+	insert :: proc(
+		self: inout Small_Array(T, N), index: int, @(escape=stored) value: T,
+	) where is_copyable(T) {
 		switch (_ in self.try_insert(index, value)) {
 		case .ok:
 		case .err: panic("Small_Array is full");
@@ -147,22 +160,41 @@ impl Small_Array($T, $N) {
 	// untouched; a bad index is always a programmer error.
 	try_insert :: proc(
 		self: inout Small_Array(T, N), index: int, @(escape=stored) value: T,
-	) -> Result(Unit, Capacity_Error) {
+	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
 		if (index < 0 || index > self.count) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		at := self.count;
-		for (at > index) {
-			// A shift is a move, not a copy: `exchange` leaves the zero value behind,
-			// so no managed element is cloned and none is briefly live at two indices.
-			// The discarded result is the zero the previous step left at `at`.
-			_ = exchange(inout self.items[at], exchange(inout self.items[at - 1], {}));
-			at -= 1;
-		}
+		self.open_slot(index);
 		self.items[index] = value;
 		self.count += 1;
 		return .ok({});
+	}
+
+	// The move-only way in. `append` and `insert` copy out of a borrowed
+	// argument, which a move-only element cannot do, so these consume theirs
+	// instead: `values.append_moved(move(token))`.
+	//
+	// Neither has a `try_` form. A capacity failure would arrive having already
+	// taken the value it could not store, which is the opposite of what this
+	// file's `try_` contract promises; a caller who must not panic asks `space()`
+	// or `is_full()` first, and those are exact.
+	append_moved :: proc(self: inout Small_Array(T, N), @(escape=stored) value: move T) {
+		if (self.count == N) { panic("Small_Array is full"); }
+		self.items[self.count] = move(value);
+		self.count += 1;
+	}
+
+	insert_moved :: proc(
+		self: inout Small_Array(T, N), index: int, @(escape=stored) value: move T,
+	) {
+		if (index < 0 || index > self.count) {
+			panic("Small_Array index is out of range");
+		}
+		if (self.count == N) { panic("Small_Array is full"); }
+		self.open_slot(index);
+		self.items[index] = move(value);
+		self.count += 1;
 	}
 
 	// The last element, removed, or .none when empty, like a dynamic array.
@@ -233,6 +265,23 @@ impl Small_Array($T, $N) {
 		}
 	}
 
+	// Everything from `index` up moves one slot along, leaving `index` holding the
+	// zero value for the caller to store into. A shift is a move, not a copy:
+	// `exchange` leaves the zero behind, so no managed element is cloned and none
+	// is briefly live at two indices. Each discarded result is the zero the
+	// previous step left behind.
+	//
+	// It takes no bound: the moving insert needs the same shift as the copying
+	// one, and shifting has never been the part that copies.
+	@(private)
+	open_slot :: proc(self: inout Small_Array(T, N), index: int) {
+		at := self.count;
+		for (at > index) {
+			_ = exchange(inout self.items[at], exchange(inout self.items[at - 1], {}));
+			at -= 1;
+		}
+	}
+
 	@(private)
 	check_span :: proc(self, low: int, high: int) {
 		if (low < 0 || high < low || high > self.count) {
@@ -274,7 +323,11 @@ impl Small_Array_Iterator($T) {
 
 	iter :: proc(self) -> Small_Array_Iterator(T) { return self; }
 
-	next :: proc(self: inout Small_Array_Iterator(T)) -> Option(T) {
+	// Yielding an element by value is a copy, so a move-only `T` gets no `next`
+	// here and therefore no by-value `foreach` — design.md "Element bindings"
+	// sends such an element through `refs()` or `&value` instead, which is what
+	// `view().refs()` and `iter_mut` already provide.
+	next :: proc(self: inout Small_Array_Iterator(T)) -> Option(T) where is_copyable(T) {
 		if (self.at >= self.items.len()) { return .none; }
 		index := self.items.len() - 1 - self.at if self.reverse else self.at;
 		self.at += 1;

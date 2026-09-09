@@ -1,0 +1,81 @@
+package main;
+
+import "core:fmt";
+import "core:container";
+
+// A move-only element in the library containers (design.md "Fixed-capacity
+// arrays" and "where clauses"). The methods that copy an element are bound on
+// `is_copyable(T)`, so they are not members of these instances at all; what is
+// left is the half that reaches an element without copying it.
+
+Token :: move_only struct { @(public) id: int }
+
+Plain :: struct { id: int }
+
+Slot :: enum{First, Second};
+
+// The bound the containers ask, on its own. It follows structure: a record with
+// a move-only field is move-only, and so is a container of one.
+copyability :: proc() {
+	fmt.println(is_copyable(int), is_copyable(string), is_copyable(Plain));
+	fmt.println(is_copyable(Token), is_copyable([dynamic]int), is_copyable([dynamic]Token));
+	static_assert(is_copyable(Plain), "a plain record copies");
+	static_assert(!is_copyable(Token), "a move-only one does not");
+}
+
+main :: proc() {
+	copyability();
+
+	// --------------------------------------------------------- Small_Array --
+
+	a: container.Small_Array(Token, 4) = {};
+	fmt.println(a.len(), a.cap(), a.is_empty(), a.space());
+
+	// `append` copies from a borrowed argument, so a move-only element comes in
+	// through the consuming form instead.
+	one, two, nine := Token{1}, Token{2}, Token{9};
+	a.append_moved(move(one));
+	a.append_moved(move(two));
+	a.insert_moved(0, move(nine));
+	fmt.println(a.len(), a.is_full(), a.space());
+
+	// Read-only and mutable traversal, neither of which copies an element.
+	foreach (token in a.view().refs()) { fmt.println(token.id); }
+	foreach (&token in a) { token.id += 100; }
+	foreach (token in a.view().refs()) { fmt.println(token.id); }
+
+	// A field read through the array is a place, not a copy.
+	fmt.println(a[0].id, a[2].id);
+
+	// Removal hands the element over entirely, so these need no copy.
+	taken := a.remove(0);
+	fmt.println(taken.id, a.len());
+	moved_out := a.remove_unordered(0);
+	fmt.println(moved_out.id, a.len());
+	switch (last in a.pop()) {
+	case .some: fmt.println(last.id);
+	case .none: fmt.println("empty");
+	}
+	fmt.println(a.len());
+	a.clear();
+	fmt.println(a.len(), a.is_empty());
+
+	// ---------------------------------------------------------- Enum_Array --
+
+	// The zero value is the whole array, so nothing needs `filled` here.
+	slots: container.Enum_Array(Slot, Token) = {};
+	fmt.println(slots.len(), slots.cap());
+	seven := Token{7};
+	slots[.First] = move(seven);
+	fmt.println(slots[.First].id, slots[.Second].id);
+	slots[.Second].id = 3;
+	fmt.println(slots[.First].id, slots[.Second].id);
+
+	// A copyable element still gets everything, in the same package.
+	numbers: container.Small_Array(int, 4) = {};
+	numbers.append(1, 2, 3);
+	fmt.println(numbers, numbers[1], numbers[0:2]);
+	counts := container.Enum_Array(Slot, int).filled(5);
+	fmt.println(counts);
+	foreach (entry in counts) { fmt.println(entry.key, entry.value); }
+}
