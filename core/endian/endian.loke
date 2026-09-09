@@ -24,6 +24,10 @@ Little_Endian :: struct($T: type) where interfaces.Integral(T) {
 	// storage of the right size and alignment the language offers. Reading it
 	// directly is meaningless on a big-endian target, which is what `@(private)`
 	// is here to prevent.
+	//
+	// The default structural equality over this one field is already the right
+	// answer, so there is no `==` overload below: two wrappers hold equal values
+	// exactly when their stored bytes match, and that needs no swap.
 	@(private) stored: T,
 }
 
@@ -34,7 +38,8 @@ impl Little_Endian($T) {
 	}
 
 	// The host value back. On a little-endian target both directions are the
-	// identity, and the optimizer removes them.
+	// identity, and `host_to` folds them away rather than leaving a branch for
+	// the optimizer.
 	load :: proc(self) -> T {
 		return host_to(self.stored, Order.Little);
 	}
@@ -44,12 +49,6 @@ impl Little_Endian($T) {
 	// to prevent. `Little_Endian(u32)(x)` is the written form.
 	from_host :: hook(convert) proc(value: T) -> Little_Endian(T) {
 		return {host_to(value, Order.Little)};
-	}
-
-	// Two stored values are equal exactly when the values they store are, and
-	// the stored bytes already say so without a swap.
-	equal :: operator(==) proc(left, right: Little_Endian(T)) -> bool {
-		return left.stored == right.stored;
 	}
 
 	// The value, not the storage: printing the swapped bytes would be a puzzle.
@@ -75,10 +74,6 @@ impl Big_Endian($T) {
 		return {host_to(value, Order.Big)};
 	}
 
-	equal :: operator(==) proc(left, right: Big_Endian(T)) -> bool {
-		return left.stored == right.stored;
-	}
-
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, self.load());
 	}
@@ -96,10 +91,20 @@ host_order :: proc() -> Order {
 
 // Host to `wanted`, and `wanted` back to host: a byte swap is its own inverse,
 // so one procedure serves both directions.
+//
+// `wanted` is a generic *value* parameter, so the comparison against the host
+// order folds during checking and a target needing no swap emits none. As a
+// runtime parameter this was a call and a branch on every `store` and `load`,
+// removable only by an optimizer that the default `-opt=none` build does not
+// run — in a type whose whole purpose is to make the swap free where it is not
+// needed.
 @(private)
-host_to :: proc(value: $T, wanted: Order) -> T where interfaces.Integral(T) {
-	if (host_order() == wanted) { return value; }
-	return byte_swap(value);
+host_to :: proc(value: $T, $wanted: Order) -> T where interfaces.Integral(T) {
+	when (host_order() == wanted) {
+		return value;
+	} else {
+		return byte_swap(value);
+	}
 }
 
 // A one-byte value has nothing to swap, and the `when` keeps the wide-mask
