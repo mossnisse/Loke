@@ -163,6 +163,24 @@ dyn_type :: proc(
 	if existing, found := k.c.dyn_types[key]; found {
 		return existing
 	}
+	full := make([]Generic_Arg, len(info.params), k.c.semantic_allocator)
+	full[0] = Generic_Arg{is_type = true, type = TYPE_RAWPTR}
+	for index in 1 ..< len(full) {
+		full[index] = index - 1 < len(args) ? args[index - 1] : Generic_Arg{}
+	}
+	if failure, holds := interface_predicates_check(k, info, full); !holds {
+		if report {
+			errorf(
+				k.c,
+				span,
+				"L0463",
+				"`%s` does not satisfy its interface `where` clause",
+				dyn_display_name(k.c, info, args, mutable),
+			)
+			add_notef(k.c, failure.span, "this predicate does not hold: %s", failure.reason)
+		}
+		return INVALID_TYPE
+	}
 	// The read-only variant always exists, because it is the ABI type both
 	// capabilities share (`dyn_abi_type`), exactly as `[]T` is for slices.
 	if mutable {
@@ -260,7 +278,12 @@ dyn_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, args: []Generic_Arg, 
 	b := strings.builder_make(c.semantic_allocator)
 	fmt.sbprintf(&b, "%d%s", u32(interface_symbol), mutable ? "m" : "")
 	for arg in args {
-		fmt.sbprintf(&b, "|%d", u32(arg.type))
+		if arg.is_type {
+			fmt.sbprintf(&b, "|T%d", u32(arg.type))
+		} else {
+			text := const_key_text(c, arg.value)
+			fmt.sbprintf(&b, "|V%d:%d:%s", u32(arg.value_type), len(text), text)
+		}
 	}
 	return strings.to_string(b)
 }
@@ -276,7 +299,7 @@ dyn_display_name :: proc(c: ^Compiler, info: ^Interface_Info, args: []Generic_Ar
 			if index > 0 {
 				strings.write_string(&b, ", ")
 			}
-			strings.write_string(&b, type_name(c, arg.type))
+			strings.write_string(&b, interface_argument_text(c, arg))
 		}
 		strings.write_string(&b, ")")
 	}
@@ -307,12 +330,26 @@ dyn_abi_type :: proc(c: ^Compiler, id: Type_Id) -> Type_Id {
 
 // The same interface applied to the same arguments, whatever the capability:
 // what `dyn mut I(T)` and `dyn I(T)` have in common and `dyn I(U)` does not.
-dyn_same_application :: proc(a, b: ^Type_Info) -> bool {
+dyn_same_application :: proc(c: ^Compiler, a, b: ^Type_Info) -> bool {
 	if a.dyn_interface != b.dyn_interface || len(a.dyn_args) != len(b.dyn_args) {
 		return false
 	}
 	for arg, index in a.dyn_args {
-		if arg.type != b.dyn_args[index].type || arg.is_type != b.dyn_args[index].is_type {
+		other := b.dyn_args[index]
+		if arg.is_type != other.is_type {
+			return false
+		}
+		if arg.is_type {
+			if arg.type != other.type {
+				return false
+			}
+			continue
+		}
+		if arg.value_type != other.value_type {
+			return false
+		}
+		equal, comparable := const_equal(c, arg.value, other.value)
+		if !comparable || !equal {
 			return false
 		}
 	}
@@ -334,7 +371,31 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 		info.dyn_reason = "it declares no subject parameter"
 		return false
 	}
+	if _, is_type := info.params[0].type_syntax.(^Type_Type); !is_type {
+		info.dyn_reason = "its subject parameter does not have type `type`"
+		return false
+	}
 	subject := info.params[0].name
+	for parameter, index in info.params {
+		if index > 0 && type_syntax_names(parameter.type_syntax, subject) {
+			info.dyn_reason = fmt.aprintf(
+				"parameter `%s` has a type that depends on the erased subject",
+				identifier_text(k.c, parameter.name),
+				allocator = k.c.semantic_allocator,
+			)
+			return false
+		}
+	}
+	for clause in info.node.where_clauses {
+		if type_syntax_names(clause, subject) {
+			info.dyn_reason = fmt.aprintf(
+				"the `where` predicate on line %d depends on the erased subject",
+				span_line(k.c, expr_span(clause)),
+				allocator = k.c.semantic_allocator,
+			)
+			return false
+		}
+	}
 
 	for requirement in info.node.requirements {
 		if requirement.kind == .Slot {
@@ -370,6 +431,16 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 			)
 			return false
 		}
+		for arg, index in call.args {
+			if index > 0 && type_syntax_names(arg.value, subject) {
+				info.dyn_reason = fmt.aprintf(
+					"the composed interface `%s` derives an explicit argument from the erased subject",
+					identifier_text(k.c, symbol_of(k.c, composed.symbol).name),
+					allocator = k.c.semantic_allocator,
+				)
+				return false
+			}
+		}
 		if !dyn_compatible(k, composed) {
 			info.dyn_reason = fmt.aprintf(
 				"the composed interface `%s` is not dyn-compatible: %s",
@@ -386,10 +457,15 @@ dyn_compatible :: proc(k: ^Checker, info: ^Interface_Info) -> bool {
 
 @(private = "file")
 requirement_line :: proc(c: ^Compiler, requirement: Requirement) -> int {
-	if requirement.span.file == NO_FILE || int(requirement.span.file) >= len(c.sources) {
+	return span_line(c, requirement.span)
+}
+
+@(private = "file")
+span_line :: proc(c: ^Compiler, span: Span) -> int {
+	if span.file == NO_FILE || int(span.file) >= len(c.sources) {
 		return 0
 	}
-	line, _ := line_col(&c.sources[requirement.span.file], requirement.span.lo)
+	line, _ := line_col(&c.sources[span.file], span.lo)
 	return line
 }
 
@@ -465,8 +541,9 @@ dyn_slot_is_compatible :: proc(k: ^Checker, requirement: Requirement, subject: I
 	return "", true
 }
 
-// Does this written type mention `name` anywhere? Purely syntactic, because
-// dyn compatibility is a property of the declaration and no arguments are bound.
+// Does this syntax mention `name` anywhere? Purely syntactic, because dyn
+// compatibility is a property of the declaration and no arguments are bound.
+// The same walk serves slot types and interface-local value predicates.
 @(private = "file")
 type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 	if e == nil {
@@ -475,6 +552,8 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 	#partial switch v in e {
 	case ^Expr_Ident:
 		return v.name_id == name
+	case ^Expr_Error, ^Expr_Literal, ^Type_Type, ^Expr_Proc_Group:
+		return false
 	case ^Type_Pointer:
 		return type_syntax_names(v.elem, name)
 	case ^Type_C_Pointer:
@@ -485,12 +564,30 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 		return type_syntax_names(v.elem, name)
 	case ^Type_Distinct:
 		return type_syntax_names(v.elem, name)
+	case ^Type_Dyn:
+		return type_syntax_names(v.interface_expr, name)
 	case ^Type_Array:
 		return type_syntax_names(v.length, name) || type_syntax_names(v.elem, name)
 	case ^Type_Map:
 		return type_syntax_names(v.key, name) || type_syntax_names(v.value, name)
 	case ^Expr_Selector:
 		return type_syntax_names(v.operand, name)
+	case ^Expr_Checked_Extract:
+		return type_syntax_names(v.operand, name) || type_syntax_names(v.target, name)
+	case ^Expr_Index:
+		if type_syntax_names(v.operand, name) {
+			return true
+		}
+		for index in v.indices {
+			if type_syntax_names(index, name) {
+				return true
+			}
+		}
+		return false
+	case ^Expr_Slice:
+		return type_syntax_names(v.operand, name) ||
+		       type_syntax_names(v.lo, name) ||
+		       type_syntax_names(v.hi, name)
 	case ^Expr_Call:
 		for arg in v.args {
 			if type_syntax_names(arg.value, name) {
@@ -498,6 +595,54 @@ type_syntax_names :: proc(e: Expr, name: Identifier_Id) -> bool {
 			}
 		}
 		return type_syntax_names(v.callee, name)
+	case ^Expr_Postfix:
+		return type_syntax_names(v.operand, name)
+	case ^Expr_Unary:
+		return type_syntax_names(v.operand, name)
+	case ^Expr_Binary:
+		return type_syntax_names(v.lhs, name) || type_syntax_names(v.rhs, name)
+	case ^Expr_Range:
+		return type_syntax_names(v.lo, name) || type_syntax_names(v.hi, name)
+	case ^Expr_Or_Else:
+		return type_syntax_names(v.value, name) || type_syntax_names(v.fallback, name)
+	case ^Expr_Cond:
+		return type_syntax_names(v.then, name) ||
+		       type_syntax_names(v.cond, name) ||
+		       type_syntax_names(v.otherwise, name)
+	case ^Expr_Move:
+		return type_syntax_names(v.value, name)
+	case ^Expr_Composite:
+		if type_syntax_names(v.type_expr, name) || type_syntax_names(v.via, name) {
+			return true
+		}
+		for element in v.elements {
+			if type_syntax_names(element.key, name) || type_syntax_names(element.value, name) {
+				return true
+			}
+		}
+		return false
+	case ^Expr_Operator:
+		return type_syntax_names(v.value, name)
+	case ^Type_Poly:
+		return type_syntax_names(v.constraint, name)
+	case ^Type_Proc:
+		for parameter in v.params {
+			if type_syntax_names(parameter.type, name) || type_syntax_names(parameter.default, name) {
+				return true
+			}
+		}
+		return v.result != nil && type_syntax_names(v.result.type, name)
+	case ^Type_Anon_Record:
+		for field in v.fields {
+			if type_syntax_names(field.type, name) {
+				return true
+			}
+		}
+		return false
+	case ^Expr_Proc, ^Type_Record, ^Type_Enum, ^Type_Interface:
+		// These forms may contain executable bodies or declarations. They are not
+		// useful erasure-invariant predicates, so keep the dyn verdict conservative.
+		return true
 	}
 	return false
 }
@@ -580,15 +725,11 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 			continue
 		}
 		composed_args := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-		valid := true
-		for arg, index in call.args {
-			denoted := resolve_type_syntax(k, arg.value)
-			if denoted == INVALID_TYPE {
-				valid = false
-				break
-			}
-			composed_args[index] = Generic_Arg{is_type = true, type = denoted}
-		}
+		valid: bool
+		composed_args, valid = interface_arguments_for(
+			k, call.args, composed, 0, INVALID_TYPE,
+			"L0443", "an interface argument", false, composed_args,
+		)
 		if !valid {
 			continue
 		}
@@ -659,7 +800,8 @@ witness_key :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: Type_Id
 		if arg.is_type {
 			fmt.sbprintf(&b, "|T%d", u32(arg.type))
 		} else {
-			fmt.sbprintf(&b, "|V%d:%s", u32(arg.value_type), const_key_text(c, arg.value))
+			text := const_key_text(c, arg.value)
+			fmt.sbprintf(&b, "|V%d:%d:%s", u32(arg.value_type), len(text), text)
 		}
 	}
 	return strings.to_string(b)
@@ -679,11 +821,15 @@ witness_llvm_name :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: T
 	}
 	fmt.sbprintf(&b, "@loke.w.%s.%s", llvm_safe(interface_name), llvm_safe(type_name(c, concrete)))
 	for arg in args {
-		if arg.is_type {
-			fmt.sbprintf(&b, ".%s", llvm_safe(type_name(c, arg.type)))
-		} else {
-			fmt.sbprintf(&b, ".%s", llvm_safe(const_key_text(c, arg.value)))
-		}
+		part := arg.is_type ? type_name(c, arg.type) : fmt.aprintf(
+			"v%s:%s",
+			type_name(c, arg.value_type),
+			const_key_text(c, arg.value),
+			allocator = c.semantic_allocator,
+		)
+		escaped := llvm_safe(part, dots = false)
+		fmt.sbprintf(&b, ".%s", escaped)
+		delete(escaped)
 	}
 	return strings.to_string(b)
 }
@@ -775,6 +921,9 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 		errorf(k.c, expr_span(v.interface_expr), "L0463", "`dyn` needs an interface")
 		return INVALID_TYPE
 	}
+	if !dyn_compatible(k, info) {
+		return dyn_type(k, info, nil, v.span, v.mutable, report = true)
+	}
 	// The subject is erased, so the application supplies every *other* parameter.
 	if len(args) != len(info.params) - 1 {
 		errorf(
@@ -790,13 +939,13 @@ resolve_dyn_type :: proc(k: ^Checker, v: ^Type_Dyn) -> Type_Id {
 		return INVALID_TYPE
 	}
 	bound := make([]Generic_Arg, len(args), k.c.semantic_allocator)
-	for arg, index in args {
-		denoted := resolve_type_syntax(k, arg.value)
-		if denoted == INVALID_TYPE {
-			errorf(k.c, arg.span, "L0463", "a `dyn` interface argument must name a type")
-			return INVALID_TYPE
-		}
-		bound[index] = Generic_Arg{is_type = true, type = denoted}
+	ok: bool
+	bound, ok = interface_arguments_for(
+		k, args, info, 1, TYPE_RAWPTR,
+		"L0463", "a `dyn` interface argument", true, bound,
+	)
+	if !ok {
+		return INVALID_TYPE
 	}
 	return dyn_type(k, info, bound, v.span, v.mutable, report = true)
 }

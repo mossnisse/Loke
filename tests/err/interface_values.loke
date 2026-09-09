@@ -1,0 +1,28 @@
+package main;
+
+Inline :: interface($Self: type, $Limit: int)
+	where Limit > 0, size_of(Self) <= Limit {
+}
+
+Positive :: interface($Self: type, $Count: int)
+	where Count > 0 {
+	slot value: proc(self) -> int;
+}
+
+Bad_Subject :: interface($Self: int) {}
+
+static_assert(Inline(i64, 4));
+
+subject_dependent_dyn :: proc() {
+	value: dyn Inline(8);
+}
+
+failed_dyn_value_bound :: proc() {
+	value: dyn Positive(0);
+}
+
+wrong_value_argument :: proc() {
+	static_assert(Positive(int, bool));
+}
+
+main :: proc() {}

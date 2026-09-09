@@ -652,6 +652,7 @@ Type_Enum :: struct {
 Type_Interface :: struct {
 	using base:     Expr_Base,
 	generic_params: []Generic_Param,
+	where_clauses:  []Expr,
 	requirements:   []Requirement,
 }
 

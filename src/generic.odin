@@ -1648,7 +1648,6 @@ check_where_clauses :: proc(k: ^Checker, clauses: []Expr, span: Span, what: stri
 	return true
 }
 
-@(private = "file")
 where_bound_text :: proc(c: ^Compiler, clause: Expr) -> string {
 	span := expr_span(clause)
 	if span.file == NO_FILE || int(span.file) >= len(c.sources) {

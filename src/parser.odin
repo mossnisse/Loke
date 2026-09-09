@@ -3127,6 +3127,7 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 		)
 	}
 	generics, generics_ok := parse_generic_params(p)
+	where_clauses := parse_where_clause(p)
 	_, opened := expect(p, .Lbrace, "L0239", "`{` to open the interface body")
 
 	requirements := make([dynamic]Requirement, 0, 0, p.allocator)
@@ -3144,6 +3145,7 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 
 	e := new_expr(p, Type_Interface, lo)
 	e.generic_params = generics
+	e.where_clauses = where_clauses
 	e.requirements = requirements[:]
 	e.has_error = !opened || !closed || !generics_ok || bad
 	return e

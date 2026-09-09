@@ -333,8 +333,9 @@ Associated-type selectors do not chain in version 1.
 
 In `dyn Interface(arguments...)`, `Type_Name` must resolve to a dyn-compatible
 interface. Its first generic parameter is the erased subject and is omitted from
-`arguments`; all remaining interface parameters are supplied there. The explicit
-conversion syntax uses the existing parenthesised-type expression,
+`arguments`; all remaining interface parameters are supplied there as types or
+constant values according to their declarations. The explicit conversion syntax
+uses the existing parenthesised-type expression,
 `(dyn Interface)(&value)`.
 
 ## Records
@@ -380,7 +381,7 @@ A field named `_` is an unnamed padding field. A field type may itself be a
 ## Interfaces
 
 ```
-Interface_Definition = "interface" Generic_Parameters "{" Requirement* "}"
+Interface_Definition = "interface" Generic_Parameters Where_Clause? "{" Requirement* "}"
 
 Requirement  = Bindings? Expression ("->" Requirement_Result)? ";"
              | "slot" Identifier ":" Proc_Type ";"
@@ -389,6 +390,12 @@ Requirement_Result = "inout"? Type
 Bindings           = "(" Binding_Group ("," Binding_Group)* ","? ")"
 Binding_Group      = Identifier ("," Identifier)* ":" "inout"? Type
 ```
+
+The first generic parameter is the interface subject and must have type `type`.
+Later parameters follow the ordinary generic rule: a `type` parameter takes a
+type argument, while any other parameter takes a compile-time constant converted
+to its declared type. An interface `Where_Clause` is evaluated before its body
+requirements for every application.
 
 A requirement beginning with `(` starts a binding list when an identifier
 followed by `,` or `:` comes next — a form no expression can start with;

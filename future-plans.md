@@ -227,35 +227,13 @@ on the bootstrap implementation used.
 [comments.md](comments.md) is the canonical backlog for possible language
 changes. Keep proposals there until a concrete use case and implementation plan
 make them roadmap candidates; do not silently turn an open question into a
-compiler task. The two questions below are recorded here because their
-implementation consequences have already been investigated in detail.
+compiler task. The question below is recorded here because its implementation
+consequences have already been investigated in detail.
 
-Two extensions were considered while file-scope `static_assert` was added and
-were deliberately left out. Neither is an unfinished part of that work: the
-structural interface model is complete without them, and each needs its own
-proposal before any compiler change.
-
-### Interface value predicates
-
-Interface parameters take types today. Admitting constant *values*, and an
-interface-local `where` clause over them, would allow a bound such as
-`size_of(Self) <= 8` to live in the interface rather than in every consumer.
-
-The blocking problem is runtime polymorphism. `dyn I` satisfies `I` through its
-forwarding slots, but a concrete type can satisfy a bound over its own size
-while the two-word `dyn I` view does not, so a structural re-check of
-`I(dyn I)` may contradict the witness the value carries. A proposal must decide
-whether such a bound may mention the erased subject at all, whether a `dyn`
-value is judged by re-evaluation or by its witness, when the bound is evaluated
-during `dyn` formation and conversion, how the failure is reported, and how
-value arguments are normalized, compared, displayed, mangled, and substituted
-through composed interfaces and slots. It must also name the library or
-language use case that an ordinary consuming `where` clause does not already
-serve.
-
-Implementation would have to audit every consumer of `Generic_Arg`, not only
-witness keys: dynamic type keys, equality, display, composed-slot resolution,
-and slot-call substitution all assume type arguments today.
+Nominal conformance was considered while file-scope `static_assert` was added
+and deliberately left out. It is not an unfinished part of that work: the
+structural interface model is complete without it, and it needs its own proposal
+before any compiler change.
 
 ### Nominal conformance
 

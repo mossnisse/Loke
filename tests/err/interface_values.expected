@@ -1,0 +1,20 @@
+L0441
+@12:27
+first generic parameter is its subject and must have type `type`
+L0444
+@14:1
+`i64` does not satisfy `Inline(i64, 4)`
+@4:19
+the predicate `size_of(Self) <= Limit` evaluates to false
+L0463
+@17:9
+`Inline` is not dyn-compatible
+predicate on line 4 depends on the erased subject
+L0463
+@21:9
+`dyn Positive(0)` does not satisfy its interface `where` clause
+@8:8
+the predicate `Count > 0` evaluates to false
+L0443
+@25:30
+for `$Count: int` must be a compile-time value, found a type

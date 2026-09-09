@@ -296,7 +296,7 @@ be file-private.
 | Files | Responsibility |
 | --- | --- |
 | `ast_clone.odin`, `generic.odin` | Clean syntax cloning, generic inference, specialization, monomorphization, and instance caches. |
-| `interface.odin` | Structural interface requirements and slot lookup contexts. |
+| `interface.odin` | Typed interface arguments, interface-local predicates, structural requirements, and slot lookup contexts. |
 | `eval.odin` | Bounded typed-AST interpreter for compile-time execution. |
 | `expand.odin`, `reflect.odin` | Static `foreach`, reflection descriptors, `type_of`, `typeid_of`, and type-ID freezing. |
 

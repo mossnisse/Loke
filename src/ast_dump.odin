@@ -684,6 +684,11 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Type_Interface:
 		fmt.sbprint(b, "(interface")
 		dump_generic_params(b, node.generic_params, depth)
+		for clause in node.where_clauses {
+			fmt.sbprint(b, " (where")
+			dump_child(b, clause, depth)
+			fmt.sbprint(b, ")")
+		}
 		for requirement in node.requirements {
 			dump_requirement(b, requirement, depth)
 		}

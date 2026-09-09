@@ -1,0 +1,57 @@
+// Interface parameters accept normalized constant values, and interface-local
+// `where` clauses are part of the reusable predicate.
+package main; import "core:fmt";
+
+Inline :: interface($Self: type, $Limit: int)
+	where Limit > 0, size_of(Self) <= Limit {
+}
+
+Window :: interface($Self: type, $Count: int)
+	where Count > 0 {
+	slot sum: proc(self, values: [Count]int) -> int;
+}
+
+Even_Window :: interface($Self: type, $Count: int)
+	where Count % 2 == 0 {
+	Window(Self, Count);
+}
+
+Calculator :: struct {}
+impl Calculator {
+	sum :: proc(self, values: [4]int) -> int {
+		return values[0] + values[1] + values[2] + values[3];
+	}
+}
+
+static_assert(Inline(i32, 2 + 2));
+static_assert(!Inline(i64, 4));
+static_assert(Even_Window(Calculator, 4));
+static_assert(Even_Window(dyn Even_Window(4), 4));
+
+through_constraint :: proc(value: $T) -> int where Even_Window(T, 4) {
+	return value.sum([4]int{5, 6, 7, 8});
+}
+
+window_count :: proc(value: dyn Even_Window($Count)) -> int {
+	return Count;
+}
+
+main :: proc() {
+	fmt.println(Inline(i32, 4));
+	fmt.println(Inline(i64, 4));
+
+	calculator := Calculator{};
+	// The argument is normalized before it becomes type identity, so these are
+	// the same dyn application. Composition substitutes the value into the slot.
+	folded := (dyn Even_Window(2 + 2))(&calculator);
+	same: dyn Even_Window(4) = folded;
+	fmt.println(same.sum([4]int{1, 2, 3, 4}));
+	fmt.println(through_constraint(calculator));
+	fmt.println(window_count(same));
+	fmt.println(through_constraint(same));
+
+	other := Calculator{};
+	mutable := (dyn mut Even_Window(2 + 2))(&mut other);
+	weakened: dyn Even_Window(4) = mutable;
+	fmt.println(weakened.sum([4]int{1, 1, 1, 1}));
+}

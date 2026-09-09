@@ -1406,7 +1406,7 @@ carrier_weakens_to :: proc(c: ^Compiler, from: Type_Id, to: Type_Id) -> bool {
 	case .Slice, .Pointer:
 		return from_info.element == to_info.element
 	case .Dyn:
-		return dyn_same_application(from_info, to_info)
+		return dyn_same_application(c, from_info, to_info)
 	}
 	return false
 }

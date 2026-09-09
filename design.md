@@ -2391,7 +2391,20 @@ Library numeric types follow the ordinary rules. A scalar reaches `Complex_F64` 
 
 ### Interfaces as reusable constraints
 
-An `interface` gives a name to a reusable compile-time predicate over types. An application such as `Additive(T)` is a constant `bool`: it is true exactly when the substituted requirements hold. It can therefore appear anywhere a compile-time Boolean is accepted, including a [`where`](#where-clauses) clause or `static_assert`.
+An `interface` gives a name to a reusable compile-time predicate over types and constant values. An application such as `Additive(T)` is a constant `bool`: it is true exactly when its header bounds and substituted requirements hold. It can therefore appear anywhere a compile-time Boolean is accepted, including a [`where`](#where-clauses) clause or `static_assert`.
+
+The first generic parameter is the interface's **subject** and must have type `type`. Later parameters use the ordinary generic-argument rules: a parameter of type `type` receives a type, and every other parameter receives a compile-time constant converted to its declared type. That normalized pair of declared type and constant value participates in interface application, dynamic-type, and witness identity; diagnostics display the normalized value, while backend keys use its canonical encoding. Composition and named-slot substitution carry the same typed argument vector rather than reclassifying its syntax.
+
+An interface may put a [`where`](#where-clauses) clause between its parameters and body. These expressions are compile-time Boolean predicates, evaluated before the body requirements for every application. This is the truth-valued form for a restriction shared by all consumers:
+
+```odin
+Inline_Storable :: interface($Self: type, $Limit: int)
+	where Limit > 0, size_of(Self) <= Limit {
+	slot hash: proc(self) -> uint;
+}
+```
+
+`Inline_Storable(T, 8)` is false when either header predicate is false even if `T` has the required slot. A positive use such as a bare consuming `where`, a file-scope `static_assert`, or a `dyn` conversion reports the failed application and notes the particular header predicate or body requirement that failed.
 
 Satisfaction is structural. A type satisfies an interface when its operations and members meet the requirements; no `implements` declaration is consulted. The interface declaration is compile-time metadata rather than a runtime value type. Runtime polymorphism is requested explicitly with [`dyn Interface`](#borrowed-dynamic-interface-values).
 
@@ -2433,7 +2446,7 @@ Mutable_Indexable :: interface($T: type, $Element: type) {
 
 Only `inout` is admitted in a binding list. A consuming operation can be required as a named slot with a `move self` receiver, but there is no hypothetical `move` binding, since checking a capability must not consume the evidence used for the remaining requirements.
 
-**Validity form** `expr;` requires only that the expression compiles. It does not test the expression's value. In particular, `false;` is a satisfied validity requirement because `false` is well-formed. A truth-valued restriction belongs in the consuming declaration's `where` clause; giving reusable interfaces their own value predicates would require a distinct truth-requirement form rather than changing the meaning of existing validity requirements.
+**Validity form** `expr;` requires only that the expression compiles. It does not test the expression's value. In particular, `false;` is a satisfied validity requirement because `false` is well-formed. A truth-valued restriction belongs in the interface header's `where` clause (when it is reusable) or in the consuming declaration's `where` clause (when it is local); the meaning of an existing validity requirement never changes based on the expression's result.
 
 An associated constant is an ordinary expression requirement: `T.ZERO -> Element;` asks for a member `ZERO` on `T` whose value converts to `Element`. When the required result is `type`, the member must evaluate to a compile-time type; it is then an **associated type** usable in later requirements and in constrained generic code:
 
@@ -2604,13 +2617,13 @@ Two mechanisms determine whether a generic declaration is applicable:
 - **[`where` clauses](#where-clauses)** filter an otherwise matched declaration with compile-time Boolean expressions. `N > 2` and `Additive(T)` are the same kind of bound. An interface declaration does not add a third constraint mechanism; it defines a named, reusable Boolean predicate whose failure can identify an individual structural requirement.
 - **[Specialization](#specialization)** matches and destructures structural shape in a parameter type, as in `values: []$E` or `table: ^Table($Key, $Value)`. Because it binds parts and participates in overload specificity, it is not merely another predicate.
 
-Use an interface when a capability is reused, when constrained code needs its members or slots, or when a per-requirement diagnostic is valuable. Use a direct `where` expression for a local value relation such as `N > 2`.
+Use an interface when a capability is reused, when constrained code needs its members or slots, when a value relation is part of that reusable capability, or when a per-requirement diagnostic is valuable. Use a direct `where` expression for a relation local to one declaration, such as `N > 2`.
 
 ### Runtime polymorphism
 
 Runtime polymorphism reuses the same structural interfaces as generics. It is requested explicitly with [`dyn Interface`](#borrowed-dynamic-interface-values), the only construct that erases a concrete type behind an interface.
 
-For runtime use, an interface's first generic parameter is its **subject** and must have type `type`; erasure substitutes the concrete implementation type for it, while any other generic parameters stay explicit arguments of the dynamic type. The catalogue's `interfaces.Iterator(Self, Element)` is one such interface:
+For runtime use, erasure substitutes the concrete implementation type for the subject, while every other generic parameter stays an explicit type or constant-value argument of the dynamic type. The catalogue's `interfaces.Iterator(Self, Element)` is one such interface:
 
 ```odin
 Drawable :: interface($Self: type) {
@@ -2627,16 +2640,19 @@ A witness is not a source-level value. It is used only for calls through `dyn`.
 An interface is **dyn-compatible** when it can be erased behind a finite set of slots and invoked without knowing the subject's size. It must meet all of these:
 
 - its first generic parameter is `$Self: type` (the name may differ);
+- an interface-local `where` predicate may not mention the subject, and the declared types of later parameters may not depend on it;
 - every runtime operation is a named `slot`; any other expression or validity requirement (beyond interface composition) makes it static-only;
-- every composed interface is dyn-compatible and uses the same subject;
+- every composed interface is dyn-compatible, uses the same subject, and does not derive another explicit argument from that subject;
 - a slot is non-generic, non-variadic, uses the ordinary Loke calling convention, and has no omitted-argument defaults;
 - the subject occurs exactly once in the slot signature, as the first `self` or `self: inout Self` receiver, and nowhere else.
 
 These rules exclude constructors, `Self`-returning methods, consuming methods, generic methods, and binary operations needing another value of the same hidden type. They remain valid static requirements; the restriction applies only when forming a `dyn` type.
 
+The `where` rule is what keeps static and runtime satisfaction consistent. A predicate such as `size_of(Self) <= 8` may hold for a concrete type but not for its two-word erased view, so it makes the interface static-only. A predicate such as `Count > 0` is erasure-invariant and remains dyn-compatible. It is checked when `dyn I(arguments...)` is formed, then checked again as part of the concrete interface application at conversion. A dyn view satisfies its interface by the ordinary structural re-check through forwarding slots; its witness proves only the slot implementations and is not evidence for a compile-time fact about the hidden representation.
+
 #### Borrowed dynamic interface values
 
-`dyn Interface(arguments...)` is a fixed-size, non-owning view: a data pointer plus a pointer to the interface's coherent implementation for the erased type. The subject argument is omitted, being the erased type. For example, `dyn interfaces.Iterator(u8)` may hold a borrow of any concrete value for which `interfaces.Iterator(Concrete, u8)` is satisfied.
+`dyn Interface(arguments...)` is a fixed-size, non-owning view: a data pointer plus a pointer to the interface's coherent implementation for the erased type. The subject argument is omitted, being the erased type. Remaining arguments may be types or constant values and are normalized before becoming part of the dynamic type's identity. For example, `dyn interfaces.Iterator(u8)` may hold a borrow of any concrete value for which `interfaces.Iterator(Concrete, u8)` is satisfied, and `dyn Window(2 + 2)` is the same type as `dyn Window(4)` when `Window` declares `$Count: int`.
 
 The view's capability is written, not inferred from the interface: `dyn I` is an immutable borrow and `dyn mut I` an exclusive mutable one, subject to the same use-based exclusivity rule as every other borrow. The two are distinct types with distinct names and type identities over one representation — the same data pointer and the same witness — so `dyn mut I` weakens to `dyn I` with no cast and no copy, and `dyn I` never strengthens.
 
@@ -4188,7 +4204,7 @@ swapped :: proc(pair: [2]$E) -> [2]E {
 
 ### where clauses
 
-A bound on generic parameters to a procedure or record can be expressed using a `where` clause immediately before the opening `{`. Every bound is a compile-time boolean expression evaluated while the declaration is instantiated.
+A bound on generic parameters to a procedure, record, or interface can be expressed using a `where` clause immediately before the opening `{`. Every bound is a compile-time boolean expression evaluated when the procedure or record is instantiated, or whenever the interface is applied.
 
 The clause is part of the same declaration as the signature it constrains. No semicolon separates them; the declaration is terminated by its body, exactly as it would be without the clause. Multiple bounds are separated by commas and all must hold.
 
@@ -4206,7 +4222,7 @@ impl Small_Array($T, $N) {
 }
 ```
 
-A bound written on the record itself is not this case: it constrains which instances exist at all, and failing it is a hard error at the instantiation. The exclusion applies only where there is still a type to have members.
+A bound written on the record itself is not this case: it constrains which instances exist at all, and failing it is a hard error at the instantiation. An interface-local bound contributes to the interface's Boolean result; a positive use reports it as the failed interface predicate. The exclusion applies only where there is still a type to have members.
 
 Some cases that a where clause may be useful:
 

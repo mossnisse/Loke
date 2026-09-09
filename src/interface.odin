@@ -117,6 +117,13 @@ check_interface_declaration :: proc(k: ^Checker, symbol_id: Symbol_Id) {
 			"L0441",
 			"an interface declares its subject as a generic parameter, as in `interface($Self: type)`",
 		)
+	} else if _, is_type := info.params[0].type_syntax.(^Type_Type); !is_type {
+		errorf(
+			k.c,
+			info.params[0].span,
+			"L0441",
+			"an interface's first generic parameter is its subject and must have type `type`",
+		)
 	}
 
 	seen := make([dynamic]Identifier_Id, 0, 4, context.temp_allocator)
@@ -194,15 +201,127 @@ interface_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Interface_Info) -
 		return nil, false
 	}
 	out := make([]Generic_Arg, len(v.args), k.c.semantic_allocator)
-	for arg, index in v.args {
-		// Every interface parameter this milestone admits is a `type`; a value
-		// parameter would be checked against its own written type here.
-		denoted := resolve_type_syntax(k, arg.value)
-		if denoted == INVALID_TYPE {
-			errorf(k.c, arg.span, "L0443", "an interface argument must name a type")
+	return interface_arguments_for(k, v.args, info, 0, INVALID_TYPE, "L0443", "an interface argument", true, out)
+}
+
+// One argument path for direct applications, composition, constrained slot
+// lookup, and `dyn`. Parameter types resolve in the interface's lexical scope
+// with earlier parameters bound; argument expressions resolve at the use site.
+// Value arguments are converted to the declared parameter type before they
+// become identity, so equivalent spellings share witnesses and dynamic types.
+interface_arguments_for :: proc(
+	k: ^Checker,
+	written: []Argument,
+	info: ^Interface_Info,
+	first: int,
+	erased_subject: Type_Id,
+	code: string,
+	description: string,
+	report: bool,
+	out: []Generic_Arg,
+) -> ([]Generic_Arg, bool) {
+	if first < 0 || first + len(written) > len(info.params) || len(out) != len(written) {
+		return nil, false
+	}
+	bindings := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
+	if first > 0 {
+		if erased_subject == INVALID_TYPE {
 			return nil, false
 		}
-		out[index] = Generic_Arg{is_type = true, type = denoted}
+		bind_generic_name(k, bindings, Generic_Binding {
+			name = info.params[0].name,
+			span = info.params[0].span,
+			arg  = Generic_Arg{is_type = true, type = erased_subject},
+		})
+	}
+
+	use_scope := k.scope
+	defer k.scope = use_scope
+	for arg, index in written {
+		parameter := info.params[first + index]
+		k.scope = bindings
+		errors := k.c.error_count
+		wanted := resolve_type_syntax(k, parameter.type_syntax)
+		k.scope = use_scope
+		if wanted == INVALID_TYPE {
+			if report && k.c.error_count == errors {
+				errorf(k.c, parameter.span, code, "this interface parameter's type does not resolve")
+			}
+			return nil, false
+		}
+
+		value := Generic_Arg{}
+		if wanted == TYPE_TYPE {
+			errors = k.c.error_count
+			denoted := resolve_type_syntax(k, arg.value)
+			if denoted == INVALID_TYPE {
+				if report && k.c.error_count == errors {
+					errorf(k.c, arg.span, code, "%s of type `type` needs a type", description)
+				}
+				return nil, false
+			}
+			value = Generic_Arg{is_type = true, type = denoted}
+		} else {
+			bound_poly := false
+			if poly, is_poly := arg.value.(^Type_Poly); is_poly {
+				name := poly.name.id
+				if name == INVALID_IDENTIFIER {
+					name = intern_identifier(k.c, poly.name.text)
+				}
+				if symbol := symbol_of(k.c, lookup_symbol(k.scope, name)); symbol != nil && symbol.kind == .Const {
+					converted, fits := convert_const(k.c, symbol.const_value, wanted, false)
+					if !fits {
+						return nil, false
+					}
+					value = Generic_Arg{value = converted, value_type = wanted}
+					bound_poly = true
+				}
+			}
+			if !bound_poly {
+				if check_single_expr(k, arg.value, wanted) == INVALID_TYPE {
+					return nil, false
+				}
+				if base := expr_base(arg.value); base != nil && base.denoted_type != INVALID_TYPE {
+					if report {
+						errorf(
+							k.c,
+							arg.span,
+							code,
+							"%s for `$%s: %s` must be a compile-time value, found a type",
+							description,
+							identifier_text(k.c, parameter.name),
+							type_name(k.c, wanted),
+						)
+					}
+					return nil, false
+				}
+				folded, evaluated := require_const(k, arg.value, description, code)
+				if !evaluated {
+					return nil, false
+				}
+				converted, fits := convert_const(k.c, folded, wanted, false)
+				if !fits {
+					if report {
+						errorf(
+							k.c,
+							arg.span,
+							code,
+							"`%s` is not representable by the interface parameter's type `%s`",
+							const_key_text(k.c, folded),
+							type_name(k.c, wanted),
+						)
+					}
+					return nil, false
+				}
+				value = Generic_Arg{value = converted, value_type = wanted}
+			}
+		}
+		out[index] = value
+		bind_generic_name(k, bindings, Generic_Binding {
+			name = parameter.name,
+			span = parameter.span,
+			arg  = value,
+		})
 	}
 	return out, true
 }
@@ -267,12 +386,10 @@ report_failed_interface_bound :: proc(k: ^Checker, clause: Expr, span: Span) -> 
 		return false
 	}
 	args := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-	for arg, index in call.args {
-		denoted := resolve_type_syntax(k, arg.value)
-		if denoted == INVALID_TYPE {
-			return false
-		}
-		args[index] = Generic_Arg{is_type = true, type = denoted}
+	ok: bool
+	args, ok = interface_arguments_for(k, call.args, info, 0, INVALID_TYPE, "L0443", "an interface argument", false, args)
+	if !ok {
+		return false
 	}
 	return !interface_satisfied(k, info, args, span, report = true)
 }
@@ -284,9 +401,22 @@ interface_application_text :: proc(c: ^Compiler, info: ^Interface_Info, args: []
 		if index > 0 {
 			text = concat(c, text, ", ")
 		}
-		text = concat(c, text, arg.is_type ? type_name(c, arg.type) : "<value>")
+		text = concat(c, text, interface_argument_text(c, arg))
 	}
 	return concat(c, text, ")")
+}
+
+interface_argument_text :: proc(c: ^Compiler, arg: Generic_Arg) -> string {
+	if arg.is_type {
+		return type_name(c, arg.type)
+	}
+	if arg.value.kind == .String {
+		return fmt.aprintf("%q", arg.value.text, allocator = c.semantic_allocator)
+	}
+	if arg.value.kind == .Aggregate {
+		return const_key_text(c, arg.value)
+	}
+	return const_display_text(c, arg.value)
 }
 
 // Guards against an interface whose composition names itself: requirement
@@ -309,6 +439,9 @@ interface_check :: proc(
 			span   = info.node.span,
 			reason = "this interface composes itself",
 		}, false
+	}
+	if failure, ok := interface_predicates_check(k, info, args); !ok {
+		return failure, false
 	}
 	// Requirements are hypothetical programs, deliberately checked with the real
 	// checker on cloned syntax; registry gates keep rejected probes from changing
@@ -361,6 +494,87 @@ interface_check :: proc(
 		failure, ok := check_one_requirement(k, info, clone, body, args, span, application_pkg)
 		if !ok {
 			return failure, false
+		}
+	}
+	return Requirement_Failure{}, true
+}
+
+// Interface-local `where` clauses are truth predicates, unlike a body's
+// validity requirement. They are evaluated for every application before any
+// structural requirement is checked. This entry point is also used when a dyn
+// type is formed: dyn compatibility guarantees those predicates do not inspect
+// the erased subject, so a harmless placeholder may stand in for it there.
+interface_predicates_check :: proc(
+	k: ^Checker,
+	info: ^Interface_Info,
+	args: []Generic_Arg,
+) -> (Requirement_Failure, bool) {
+	if len(info.node.where_clauses) == 0 {
+		return Requirement_Failure{}, true
+	}
+	if len(args) != len(info.params) {
+		return Requirement_Failure{span = info.node.span, reason = "wrong number of interface arguments"}, false
+	}
+	if k.interface_depth >= MAX_INTERFACE_DEPTH {
+		return Requirement_Failure{span = info.node.span, reason = "this interface predicate is recursive"}, false
+	}
+
+	scope := new_scope(k.c, info.scope == nil ? build_universe(k.c) : info.scope, .Local)
+	for parameter, index in info.params {
+		bind_generic_name(k, scope, Generic_Binding {
+			name = parameter.name,
+			span = parameter.span,
+			arg  = args[index],
+		})
+	}
+
+	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
+	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
+	saved_literal, saved_result := k.proc_literal, k.result_type
+	saved_place := k.place_position
+	k.c.speculation_depth += 1
+	k.interface_depth += 1
+	k.scope, k.pkg, k.lookup_pkg = scope, info.pkg, info.pkg
+	k.proc_literal = nil
+	k.result_type = INVALID_TYPE
+	k.place_position = false
+	if info.file_node != nil {
+		k.file, k.file_node = info.file, info.file_node
+	}
+	defer {
+		k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
+		k.impl_type, k.file, k.file_node = saved_impl, saved_file, saved_node
+		k.proc_literal, k.result_type = saved_literal, saved_result
+		k.place_position = saved_place
+		k.interface_depth -= 1
+		k.c.speculation_depth -= 1
+	}
+
+	for clause in info.node.where_clauses {
+		clone := clone_expr(k.c, clause)
+		mark := len(k.c.diagnostics)
+		errors := k.c.error_count
+		type := check_single_expr(k, clone, TYPE_BOOL)
+		folded, evaluated := require_const(k, clone, "an interface `where` bound", "L0444")
+		captured := k.c.error_count > errors
+		reason := "this predicate is not a compile-time boolean"
+		if mark < len(k.c.diagnostics) {
+			reason = strings.clone(k.c.diagnostics[mark].message, k.c.semantic_allocator)
+		}
+		truncate_diagnostics(k.c, mark)
+		k.c.error_count = errors
+		if type == INVALID_TYPE || captured || !evaluated || folded.kind != .Boolean {
+			return Requirement_Failure{span = expr_span(clause), reason = reason}, false
+		}
+		if !folded.boolean {
+			return Requirement_Failure {
+				span = expr_span(clause),
+				reason = fmt.aprintf(
+					"the predicate `%s` evaluates to false",
+					where_bound_text(k.c, clause),
+					allocator = k.c.semantic_allocator,
+				),
+			}, false
 		}
 	}
 	return Requirement_Failure{}, true
@@ -501,14 +715,7 @@ composed_arguments :: proc(k: ^Checker, call: ^Expr_Call, composed: ^Interface_I
 		return nil, false
 	}
 	out := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-	for arg, index in call.args {
-		denoted := resolve_type_syntax(k, arg.value)
-		if denoted == INVALID_TYPE {
-			return nil, false
-		}
-		out[index] = Generic_Arg{is_type = true, type = denoted}
-	}
-	return out, true
+	return interface_arguments_for(k, call.args, composed, 0, INVALID_TYPE, "L0443", "an interface argument", false, out)
 }
 
 // Requirement checking selects one matching inherent method or an extension
@@ -642,18 +849,11 @@ required_slot_candidates :: proc(k: ^Checker, type: Type_Id, name: Identifier_Id
 			continue
 		}
 		args := make([]Generic_Arg, len(call.args), k.c.semantic_allocator)
-		bound := true
-		for arg, index in call.args {
-			denoted := resolve_type_syntax(k, arg.value)
-			if denoted == INVALID_TYPE {
-				bound = false
-				break
-			}
-			args[index] = Generic_Arg{is_type = true, type = denoted}
-		}
+		bound: bool
+		args, bound = interface_arguments_for(k, call.args, info, 0, INVALID_TYPE, "L0443", "an interface argument", false, args)
 		// The subject is the first argument; a bound over some other type says
 		// nothing about this one.
-		if !bound || args[0].type != type {
+		if !bound || !args[0].is_type || args[0].type != type {
 			continue
 		}
 		flattened := make([dynamic]Interface_Slot, 0, 4, context.temp_allocator)

@@ -425,6 +425,7 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 	case ^Type_Interface:
 		n := new_clone(c, Type_Interface, &v.base)
 		n.generic_params = clone_generic_params(c, v.generic_params)
+		n.where_clauses = clone_exprs(c, v.where_clauses)
 		n.requirements = clone_requirements(c, v.requirements)
 		return n
 	}
