@@ -249,13 +249,11 @@ read_console_line :: proc(
 	for (;;) {
 		read: u32 = 0;
 		if (rt_read_console(handle, unsafe.raw_data(units[:]), 512, &mut read, nil) == 0) {
-			drop(line);
 			return .err(from_last_error(.Read_Line));
 		}
 		if (read == 0) {
 			// Ctrl+Z at the start of a line is the console's end of input.
 			if (line.len() == 0) {
-				drop(line);
 				return .err(io.make_error(.End_Of_Input, .Read_Line));
 			}
 			break;
@@ -264,7 +262,6 @@ read_console_line :: proc(
 		switch (added in line.try_append(..units[0:count])) {
 		case .ok:
 		case .err:
-			drop(line);
 			return .err(io.make_error(.Out_Of_Memory, .Read_Line));
 		}
 		if (units[count - 1] == u16('\n')) { break; }
@@ -277,11 +274,9 @@ read_console_line :: proc(
 	}
 	switch (text in utf16.decode(line[0:kept], allocator)) {
 	case .ok:
-		drop(line);
 		return .ok(text);
 	case .err:
 		code := io.Code.Out_Of_Memory if text == .Out_Of_Memory else io.Code.Invalid_Data;
-		drop(line);
 		return .err(io.make_error(code, .Read_Line));
 	}
 }

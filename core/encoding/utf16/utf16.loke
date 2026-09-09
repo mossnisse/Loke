@@ -3,8 +3,16 @@
 //
 // Windows is a wide-character operating system: every path, environment
 // variable, and console record it hands out is UTF-16. The library's public
-// contract is UTF-8, so exactly one place converts — this one — and no
-// platform-facing package grows its own copy.
+// contract is UTF-8, so `core:fs`, `core:os`, and `core:term` convert through
+// here rather than each growing a surrogate decoder of its own.
+//
+// One decoder stays outside that: `runtime/args.c` converts the `wmain`
+// argument vector before the initial thread attaches, so there is no Loke code
+// for it to call yet. It also answers a different question. design.md "Program
+// entry and exit" types `os.args[i]` as `string`, with no failure channel, so an
+// argument that Windows never promised to be well-formed becomes U+FFFD there.
+// Every caller reaching this package has a `Result` to fail into, and gets
+// `Invalid_Data` rather than a quietly changed name.
 //
 // The plan lists `core:encoding/utf16` among the later packages. It arrives
 // early because `core:fs`, `core:term`, and `core:os` all need it on the first
@@ -43,7 +51,7 @@ encode :: proc(
 		if (value < 0x10000) {
 			switch (added in units.try_append(u16(value))) {
 			case .ok:
-			case .err: drop(units); return .err(.Out_Of_Memory);
+			case .err: return .err(.Out_Of_Memory);
 			}
 			continue;
 		}
@@ -52,12 +60,12 @@ encode :: proc(
 		low := u16(0xDC00 + (rest & 0x3FF));
 		switch (added in units.try_append(high, low)) {
 		case .ok:
-		case .err: drop(units); return .err(.Out_Of_Memory);
+		case .err: return .err(.Out_Of_Memory);
 		}
 	}
 	switch (added in units.try_append(0)) {
 	case .ok:
-	case .err: drop(units); return .err(.Out_Of_Memory);
+	case .err: return .err(.Out_Of_Memory);
 	}
 	return .ok(move(units));
 }

@@ -113,7 +113,6 @@ get_environment_native :: proc(
 	name: string_view, allocator: Allocator,
 ) -> Result(Option(string), io.Error) {
 	encoded := wide(name, .Environment) or_return;
-	defer drop(encoded);
 
 	// The first call sizes the buffer: with a zero-length destination the answer
 	// is the length *including* the terminator, or zero for a failure.
@@ -124,7 +123,6 @@ get_environment_native :: proc(
 		return .err(error);
 	}
 	buffer: [dynamic]u16 = {};
-	defer drop(buffer);
 	switch (made in make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
 	case .ok:  buffer = move(made);
 	case .err: return .err(io.make_error(.Out_Of_Memory, .Environment));
@@ -140,9 +138,7 @@ get_environment_native :: proc(
 @(private)
 set_environment_native :: proc(name: string_view, value: string_view) -> Result(Unit, io.Error) {
 	encoded_name := wide(name, .Environment) or_return;
-	defer drop(encoded_name);
 	encoded_value := wide(value, .Environment) or_return;
-	defer drop(encoded_value);
 	if (rt_set_environment(unsafe.raw_data(encoded_name), unsafe.raw_data(encoded_value)) == 0) {
 		return .err(from_last_error(.Environment));
 	}
@@ -152,7 +148,6 @@ set_environment_native :: proc(name: string_view, value: string_view) -> Result(
 @(private)
 unset_environment_native :: proc(name: string_view) -> Result(Unit, io.Error) {
 	encoded := wide(name, .Environment) or_return;
-	defer drop(encoded);
 	// A null value removes the variable.
 	if (rt_set_environment(unsafe.raw_data(encoded), nil) == 0) {
 		return .err(from_last_error(.Environment));
@@ -167,7 +162,6 @@ working_directory_native :: proc(allocator: Allocator) -> Result(string, io.Erro
 		return .err(from_last_error(.Working_Directory));
 	}
 	buffer: [dynamic]u16 = {};
-	defer drop(buffer);
 	switch (made in make([dynamic]u16, int(needed), int(needed), mem.default_allocator())) {
 	case .ok:  buffer = move(made);
 	case .err: return .err(io.make_error(.Out_Of_Memory, .Working_Directory));
@@ -182,7 +176,6 @@ working_directory_native :: proc(allocator: Allocator) -> Result(string, io.Erro
 @(private)
 set_working_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
 	encoded := wide(path, .Working_Directory) or_return;
-	defer drop(encoded);
 	if (rt_set_directory(unsafe.raw_data(encoded)) == 0) {
 		return .err(from_last_error(.Working_Directory));
 	}
@@ -197,7 +190,6 @@ executable_path_native :: proc(allocator: Allocator) -> Result(string, io.Error)
 	size := 260;
 	for (; size <= 65536; size *= 2) {
 		buffer: [dynamic]u16 = {};
-		defer drop(buffer);
 		switch (made in make([dynamic]u16, size, size, mem.default_allocator())) {
 		case .ok:  buffer = move(made);
 		case .err: return .err(io.make_error(.Out_Of_Memory, .Executable_Path));
