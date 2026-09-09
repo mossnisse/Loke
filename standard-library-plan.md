@@ -702,6 +702,7 @@ Path operations are lexical and perform no filesystem access:
 ```odin
 separator() -> rune
 is_absolute(path: string_view) -> bool
+volume(path: string_view) -> string_view
 base(path: string_view) -> string_view
 directory(path: string_view) -> string_view
 extension(path: string_view) -> string_view
@@ -710,8 +711,15 @@ join(parts: []string_view, allocator := mem.default_allocator()) -> string
 clean(path: string_view, allocator := mem.default_allocator()) -> string
 ```
 
+`volume` is public because nothing above a volume is a directory anything can
+create or remove — `C:` is a drive and a UNC prefix is a share — so a caller
+walking a path has to know where the walkable part starts. `fs.create_directories`
+is the one that needs it.
+
 `join` and `clean` return owning storage, so they take an allocator like every
-other such procedure. `join` takes a slice rather than a variadic: a variadic
+other such procedure. The allocator takes their scratch as well as their result,
+so a caller sizing a `mem.Arena` around either should budget a few times the
+result rather than exactly it. `join` takes a slice rather than a variadic: a variadic
 absorbs every trailing argument, so a defaulted allocator before one could never
 be omitted, and one after one could never be supplied. `path.join({a, b})` also
 matches `strings.join`, which already takes its parts as one value.

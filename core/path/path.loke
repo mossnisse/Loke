@@ -142,6 +142,10 @@ without_trailing_separators :: proc(path: string_view) -> string_view {
 // A slice rather than a variadic: a variadic absorbs every trailing argument, so
 // a defaulted allocator before one could never be omitted and one after it could
 // never be supplied.
+//
+// The joined text reaches `clean` as a borrowed view of the builder's buffer:
+// `clean` only reads it, so turning it into an owned `string` first would be one
+// allocation and one full copy spent on a value discarded on the next line.
 join :: proc(
 	parts: []string_view, allocator: Allocator = mem.default_allocator(),
 ) -> string {
@@ -158,9 +162,7 @@ join :: proc(
 		builder.append(part);
 		after_drive = first && part.len() == 2 && volume_length(part) == 2;
 	}
-	joined := builder.finish();
-	cleaned := clean(joined, allocator);
-	return cleaned;
+	return clean(builder.view(), allocator);
 }
 
 // Redundant separators, `.` elements, and resolvable `..` elements removed. The
@@ -168,6 +170,11 @@ join :: proc(
 //
 // This is a *lexical* rewrite: `a/b/../c` becomes `a\c` whether or not `b` is a
 // symbolic link, which is why `fs` gets a separate resolving operation.
+//
+// `allocator` takes the scratch as well as the result: the element stack and the
+// builder both come from it. Against the heap that is invisible, but a caller
+// sizing a `mem.Arena` should budget a few times the result rather than exactly
+// it — a bump region reclaims a dropped temporary only at `free_all`.
 //
 // ponytail: an extended-length `\\?\` path is returned unchanged. Those exist
 // precisely to bypass normalization — Windows passes them to the filesystem

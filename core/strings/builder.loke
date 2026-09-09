@@ -101,6 +101,21 @@ impl String_Builder {
 		return .ok(text);
 	}
 
+	// What is written so far, borrowed rather than copied. The view reads the
+	// builder's own buffer, so it cannot outlive the next append — and does not
+	// have to be trusted to: an append while the view is still live is rejected
+	// (L0512, "a read-only borrow of it is still in use"). `copy_string` is the
+	// one to reach for when the text really must outlast the builder.
+	//
+	// This exists so a caller who only needs to *read* the assembled text does
+	// not have to allocate a `string` to do it: `path.join` hands the view
+	// straight to `path.clean`.
+	view :: proc(self) -> string_view {
+		// The same guard `try_copy_string` states: the public surface never admits
+		// a partial rune, so this is unreachable rather than a policy.
+		return string_view.from_utf8(self.data[:]) or_else not_utf8();
+	}
+
 	// A copy of what is written so far. The builder is not disturbed either way.
 	copy_string :: proc(self, allocator: Allocator = mem.default_allocator()) -> string {
 		return self.try_copy_string(allocator) or_else builder_no_string();
