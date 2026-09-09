@@ -42,7 +42,7 @@ selected: Logger = {};
 // The handle the program is logging through, for code that wants to pass it on
 // rather than call the package procedures.
 current :: proc() -> Logger {
-	if (selected.write == nil) { return Logger{standard_write, nil}; }
+	if (selected.write == nil) { return standard_logger(); }
 	return selected;
 }
 
@@ -90,8 +90,12 @@ error :: proc(args: ..any_view) {
 
 // Is anything at this level compiled in? A caller with an expensive argument
 // asks the constant directly in a `when`; this is for a runtime branch over a
-// level held in a variable.
-enabled :: proc(level: Level) -> bool { return LOKE_LOG_LEVEL <= level; }
+// level held in a variable -- which is the caller who can be handed `Off` from
+// configuration, so `Off` answers false rather than comparing: it is a
+// threshold, there is no procedure that records at it, and nothing logs there.
+enabled :: proc(level: Level) -> bool {
+	return level != Level.Off && LOKE_LOG_LEVEL <= level;
+}
 
 // ponytail: one allocation per emitted record, because formatting into a
 // caller-supplied buffer needs a `fmt.Writer` over storage this package would

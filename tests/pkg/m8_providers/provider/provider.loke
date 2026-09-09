@@ -38,7 +38,12 @@ allocator_factory :: proc() -> Allocator {
 	state.allocator_calls += 1;
 	// Nothing has been published yet, so this call's own default allocations
 	// would go to the system heap, and logging goes to the standard sink.
-	state.logger_at_allocator = log.current().state != nil;
+	//
+	// Comparing the *procedure* rather than the state: both this package's logger
+	// and the fallback carry a nil state, so a nil check here would read `false`
+	// whether or not publication had happened. `standard_logger` is public so
+	// that a caller can name the fallback, which is what makes this observable.
+	state.logger_at_allocator = log.current().write != log.standard_logger().write;
 	region = mem.Arena.from_buffer(storage[:]);
 	return region.allocator();
 }
