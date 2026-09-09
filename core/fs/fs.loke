@@ -64,9 +64,8 @@ Metadata :: struct {
 // particular instance was opened with. Using an unsupported direction returns
 // `Unsupported` at run time.
 File :: move_only struct {
-	@(private) handle:    Handle,
-	@(private) access:    Access,
-	@(private) appending: bool,
+	@(private) handle: Handle,
+	@(private) access: Access,
 }
 
 impl File {
@@ -244,12 +243,13 @@ create_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 // `path.volume` finds.
 create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
 	bytes := path.bytes();
-	at := lexical.volume(path).len();
-	for (; at < bytes.len(); at += 1) {
-		if (!is_separator(bytes[at]) || at == 0) { continue; }
-		parent := path[0:at];
-		if (parent.len() == 0) { continue; }
-		ensure_directory(parent) or_return;
+	// The separator *ending* the volume names the volume itself, so the walk skips
+	// it rather than starting after it. One `at == start` covers both `C:\x` and a
+	// rooted `\x`, whose volume is empty.
+	start := lexical.volume(path).len();
+	for (at := start; at < bytes.len(); at += 1) {
+		if (!is_separator(bytes[at]) || at == start) { continue; }
+		ensure_directory(path[0:at]) or_return;
 	}
 	return ensure_directory(path);
 }
@@ -283,6 +283,12 @@ remove_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 read_directory :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(),
 ) -> Result(Directory_Reader, io.Error) {
+	// Here rather than in the backend: the empty path is `Invalid_Path` everywhere
+	// else in the package, and a backend that builds a search pattern out of it
+	// would enumerate somewhere real instead.
+	if (path.len() == 0) {
+		return .err(io.make_error(.Invalid_Path, .Read_Directory));
+	}
 	return read_directory_native(path, allocator);
 }
 
@@ -321,7 +327,6 @@ foreign import kernel32 "system:kernel32.lib";
 @(private) TRUNCATE_EXISTING :: 5;
 @(private) FILE_ATTRIBUTE_NORMAL :: 0x80;
 @(private) FILE_ATTRIBUTE_DIRECTORY :: 0x10;
-@(private) INVALID_FILE_ATTRIBUTES :: 0xFFFFFFFF;
 @(private) MOVEFILE_REPLACE_EXISTING :: 0x1;
 
 // The 100-nanosecond ticks between 1601-01-01 and 1970-01-01.
@@ -455,7 +460,7 @@ open_native :: proc(path: string_view, options: Open_Options) -> Result(File, io
 	if (handle == INVALID_HANDLE) {
 		return .err(from_last_error(.Open));
 	}
-	return .ok(File{handle, options.access, options.append});
+	return .ok(File{handle, options.access});
 }
 
 @(private)
@@ -541,10 +546,17 @@ kind_of :: proc(attributes: u32) -> Kind {
 }
 
 // A `FILETIME` counts 100-nanosecond ticks from 1601; the library's unit is
-// nanoseconds from 1970.
+// nanoseconds from 1970, which an `i64` carries for 1677 to 2262.
+//
+// Zero is Windows for "not recorded" — a filesystem that does not keep the
+// field, or a device — and is the one value outside that range a real volume
+// hands back. Subtracting the epoch from it wraps (design.md "Arithmetic
+// operators"), so an unrecorded time would read as a date far in the future
+// rather than as no date at all.
 @(private)
 unix_nanoseconds :: proc(time: [2]u32) -> i64 {
 	ticks := (i64(time[1]) << 32) | i64(time[0]);
+	if (ticks == 0) { return 0; }
 	return (ticks - FILETIME_UNIX_EPOCH) * 100;
 }
 
