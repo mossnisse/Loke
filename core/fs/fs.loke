@@ -92,7 +92,7 @@ impl File {
 	read :: proc(self: inout File, destination: []mut u8) -> Result(int, io.Error) {
 		if (destination.len() == 0) { return .ok(0); }
 		if (self.handle == NO_HANDLE) {
-			return .err(io.make_error(.Invalid_Data, .Read));
+			return .err(io.make_error(.Closed, .Read));
 		}
 		if (self.access == .Write) {
 			return .err(io.make_error(.Unsupported, .Read));
@@ -103,7 +103,7 @@ impl File {
 	write :: proc(self: inout File, source: []u8) -> Result(int, io.Error) {
 		if (source.len() == 0) { return .ok(0); }
 		if (self.handle == NO_HANDLE) {
-			return .err(io.make_error(.Invalid_Data, .Write));
+			return .err(io.make_error(.Closed, .Write));
 		}
 		if (self.access == .Read) {
 			return .err(io.make_error(.Unsupported, .Write));
@@ -113,7 +113,7 @@ impl File {
 
 	seek :: proc(self: inout File, offset: i64, origin: Seek_Origin) -> Result(u64, io.Error) {
 		if (self.handle == NO_HANDLE) {
-			return .err(io.make_error(.Invalid_Data, .Seek));
+			return .err(io.make_error(.Closed, .Seek));
 		}
 		return seek_handle(self.handle, offset, origin);
 	}
@@ -163,6 +163,13 @@ read_bytes :: proc(
 
 // The whole file as text. The bytes are validated: a file that is not UTF-8 is
 // `Invalid_Data`, never silently repaired.
+//
+// This allocates the file twice over, and that is the floor rather than a debt:
+// a `[dynamic]u8` owns raw element storage while a `string` points past a
+// reference-counted header, so the two are never storage-compatible and the
+// bytes have to be read somewhere before they can be copied into string storage
+// (`core:strings` `String_Builder.finish` pays the same copy for the same
+// reason). A caller who cannot afford the second copy wants `read_bytes`.
 read_text :: proc(
 	path: string_view, allocator: Allocator = mem.default_allocator(), limit: int = 0,
 ) -> Result(string, io.Error) {
@@ -428,6 +435,7 @@ from_last_error :: proc(operation: io.Operation) -> io.Error {
 	else if (native == 38) { code = .End_Of_Input; }
 	else if (native == 109 || native == 232) { code = .Broken_Pipe; }
 	else if (native == 112) { code = .Out_Of_Space; }
+	else if (native == 145) { code = .Directory_Not_Empty; }
 	else if (native == 123 || native == 161 || native == 206) { code = .Invalid_Path; }
 	else if (native == 995) { code = .Interrupted; }
 	else if (native == 50 || native == 1) { code = .Unsupported; }
@@ -590,9 +598,9 @@ create_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
 
 @(private)
 remove_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
-	wide := wide_path(path, .Remove) or_return;
+	wide := wide_path(path, .Remove_Directory) or_return;
 	if (rt_remove_directory(unsafe.raw_data(wide)) == 0) {
-		return .err(from_last_error(.Remove));
+		return .err(from_last_error(.Remove_Directory));
 	}
 	return .ok(Unit{});
 }
@@ -693,8 +701,15 @@ from_utf16_error :: proc(error: utf16.Error, operation: io.Operation) -> io.Erro
 } else {
 
 // No non-Windows backend exists yet: `LOKE_OS` is a fixed `.Windows`, so this
-// branch is never selected. It is here so that adding a target is a matter of
-// filling in one `when` arm rather than restructuring the package.
+// branch is never selected, and it holds only the two names the portable half
+// above spells out — `File` is written once against `Handle` rather than once
+// per target.
+//
+// `Directory_Reader` is the exception, and a second target owes a whole one:
+// the public type and its `impl` live in the Windows arm because the record the
+// platform fills *is* the reader's state, and there is no portable shape to put
+// outside the `when` until a second one exists to generalize against. Two arms
+// is when that shape becomes knowable; one arm plus a guess is not.
 @(private) Handle :: int;
 @(private) NO_HANDLE :: 0;
 
