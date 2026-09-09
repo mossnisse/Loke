@@ -36,7 +36,7 @@ impl Complex($T) {
 	}
 
 	negate :: operator(-) proc(self: Complex(T)) -> Complex(T) {
-		return {T(0) - self.real, T(0) - self.imaginary};
+		return {-self.real, -self.imaginary};
 	}
 
 	multiply :: operator(*) proc(left, right: Complex(T)) -> Complex(T) {
@@ -63,7 +63,7 @@ impl Complex($T) {
 	}
 
 	conjugate :: proc(self) -> Complex(T) {
-		return {self.real, T(0) - self.imaginary};
+		return {self.real, -self.imaginary};
 	}
 
 	// The squared magnitude, for any `Numeric` `T`. `abs` needs a square root and
@@ -73,10 +73,14 @@ impl Complex($T) {
 		return self.real*self.real + self.imaginary*self.imaginary;
 	}
 
+	// `format_to_with` for the components, so the caller's base and case reach
+	// them: `T` may be an integer, and a formatter that took `options` only to
+	// format with the defaults would spell a `Complex(i32)` in base 10 however
+	// it was asked for. The separators are text and read nothing from `options`.
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		fmt.format_to(writer, self.real);
+		fmt.format_to_with(writer, options, self.real);
 		fmt.format_to(writer, "+");
-		fmt.format_to(writer, self.imaginary);
+		fmt.format_to_with(writer, options, self.imaginary);
 		fmt.format_to(writer, "i");
 	}
 }
@@ -118,7 +122,7 @@ impl Quaternion($T) {
 	}
 
 	negate :: operator(-) proc(self: Quaternion(T)) -> Quaternion(T) {
-		return {T(0) - self.real, T(0) - self.i, T(0) - self.j, T(0) - self.k};
+		return {-self.real, -self.i, -self.j, -self.k};
 	}
 
 	multiply :: operator(*) proc(left, right: Quaternion(T)) -> Quaternion(T) {
@@ -138,7 +142,7 @@ impl Quaternion($T) {
 	}
 
 	conjugate :: proc(self) -> Quaternion(T) {
-		return {self.real, T(0) - self.i, T(0) - self.j, T(0) - self.k};
+		return {self.real, -self.i, -self.j, -self.k};
 	}
 
 	norm_squared :: proc(self) -> T {
@@ -146,13 +150,13 @@ impl Quaternion($T) {
 	}
 
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
-		fmt.format_to(writer, self.real);
+		fmt.format_to_with(writer, options, self.real);
 		fmt.format_to(writer, "+");
-		fmt.format_to(writer, self.i);
+		fmt.format_to_with(writer, options, self.i);
 		fmt.format_to(writer, "i+");
-		fmt.format_to(writer, self.j);
+		fmt.format_to_with(writer, options, self.j);
 		fmt.format_to(writer, "j+");
-		fmt.format_to(writer, self.k);
+		fmt.format_to_with(writer, options, self.k);
 		fmt.format_to(writer, "k");
 	}
 }
@@ -291,7 +295,7 @@ impl Quaternion(f64) {
 		} else {
 			factor = 1.0/(scale*sum);
 		}
-		return {real*factor, 0.0 - i*factor, 0.0 - j*factor, 0.0 - k*factor};
+		return {real*factor, -(i*factor), -(j*factor), -(k*factor)};
 	}
 }
 
@@ -314,6 +318,6 @@ impl Quaternion(f32) {
 		} else {
 			factor = f32(1.0)/(scale*sum);
 		}
-		return {real*factor, f32(0.0) - i*factor, f32(0.0) - j*factor, f32(0.0) - k*factor};
+		return {real*factor, -(i*factor), -(j*factor), -(k*factor)};
 	}
 }

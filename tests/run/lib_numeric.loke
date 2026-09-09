@@ -71,6 +71,8 @@ main :: proc() {
 	fmt.println(i*j == k, j*i == -k);
 	fmt.println(i*i, j*j, k*k);
 	fmt.println(i*j*k);
+	// The `-0` components below are the point: negating or conjugating a `+0.0`
+	// gives `-0.0`, which is why neither is written `T(0) - x`.
 	fmt.println(i + j, i - j, -i);
 	fmt.println(i.conjugate(), i.norm_squared());
 	fmt.println(Q.from_components(1, 2, 3, 4).norm_squared());
@@ -149,4 +151,25 @@ floating :: proc() {
 	zero := Q{0.0, 0.0, 0.0, 0.0}.inverse();
 	fmt.println(math.is_nan(zero.real), math.is_nan(zero.i),
 	            math.is_nan(zero.j), math.is_nan(zero.k));
+
+	// Negation is unary minus, not `0 - x`: the second maps `+0.0` to `+0.0`
+	// and so loses the sign of a zero that `negate` and `conjugate` are supposed
+	// to flip. `sign_bit` is the only way to see it -- `+0.0 == -0.0`.
+	positive := C{0.0, 0.0};
+	negated := -positive;
+	fmt.println(math.sign_bit(negated.real), math.sign_bit(negated.imaginary),
+	            math.sign_bit(positive.conjugate().imaginary));
+	negated_q := -Q{0.0, 0.0, 0.0, 0.0};
+	conjugated_q := Q{0.0, 0.0, 0.0, 0.0}.conjugate();
+	fmt.println(math.sign_bit(negated_q.real), math.sign_bit(negated_q.k),
+	            math.sign_bit(conjugated_q.i), math.sign_bit(conjugated_q.k));
+	// Unsigned wraps exactly as `T(0) - x` did, which is what made the change safe.
+	fmt.println(-math.Complex(u32){1, 2});
+
+	// A formatter is handed `options` so it can spell its components the way it
+	// was asked to. An integer instantiation is where a base is observable.
+	fmt.format_to_with(fmt.stdout(), fmt.Options{16, true}, math.Complex(i32){255, 16});
+	fmt.println("");
+	fmt.format_to_with(fmt.stdout(), fmt.Options{16, true}, math.Quaternion(i32){255, 16, 10, 1});
+	fmt.println("");
 }
