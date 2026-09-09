@@ -1,12 +1,15 @@
 // Allocators (design.md "Allocators", "Build-selected providers").
 //
-// M6a installs one provider: the system heap, reached through
-// `mem.default_allocator()`. Source code cannot replace it; a future build
-// option may choose another implementation without changing the handle ABI,
-// because everything a caller holds is one pointer to one provider record.
+// One provider serves the whole program, reached through
+// `mem.default_allocator()`. With nothing selected the runtime supplies the
+// system heap; the root `package main` may name a factory for the slot with
+// `@(default_allocator = "<import path>:<name>")`, and `-provider
+// allocator=<import path>:<name>` overrides that for one build. Whichever is
+// chosen, the handle ABI is the same: everything a caller holds is one pointer
+// to one provider record.
 //
-// M6b adds the two local region roots, `mem.Arena` and `mem.Scratch`, which is
-// what makes a `free_all` able to succeed at all.
+// `mem.Arena` and `mem.Scratch` are the two local region roots, which is what
+// makes a `free_all` able to succeed at all.
 @(public)
 package mem;
 
@@ -16,22 +19,41 @@ package mem;
 //   Allocator_Error    the allocation-failure result
 //   default_allocator  the build-selected default provider
 //
-// `default_allocator` is the same symbol the generated default argument of a
-// generated copy operations, so an omitted allocator and a written
+// `default_allocator` is the same symbol a generated copy operation's default
+// argument names, so an omitted allocator and a written
 // `mem.default_allocator()` select one provider through one call.
 //
 //   Arena              a local bump region, optionally over a caller's buffer
 //   Scratch            the same, always provider-backed
+//   try_arena          the two constructors again, reporting an allocation
+//   try_scratch        failure instead of applying the provider's policy to it
 //
-// Both are compiler-owned because the region lattice has to *recognise* them,
-// not merely call them: a region created here is one this body may reset without
-// a promise, and one no owner may outlive.
+// The two types are compiler-owned because the region lattice has to
+// *recognise* them, not merely call them: a region created here is one this
+// body may reset without a promise, and one no owner may outlive.
 //
-//   arena := mem.Arena.init();               // blocks from the default provider
+//   arena := mem.Arena.init();                 // blocks from the default provider
 //   arena := mem.Arena.from_buffer(buffer[:]); // caller storage, no allocation
 //   scratch := mem.Scratch.init();
-//   xs: [dynamic]int via arena.allocator() = {};
+//   outcome := mem.try_arena();                // Result(Arena, Allocator_Error)
+//
+// A reset needs every borrower of the region to be gone, and that is a scope
+// rather than a convention — resetting while one is live is rejected (L0537,
+// "this reset would end the region backing `xs`, which is still live here"):
+//
+//   {
+//       xs: [dynamic]int via arena.allocator() = {};
+//       xs.append(1, 2, 3);
+//   }
 //   free_all(arena.allocator());        // reusable: the region stays usable
+//
+// `from_buffer` needs room for the control block, one block header, and the
+// alignment between them — 128 bytes on x86-64. A buffer under that ends the
+// process rather than failing, because no allocation policy could make it
+// succeed, and there is no fallible spelling to reach for: `try_arena` and
+// `try_scratch` take a parent allocator, not a buffer. The runtime knows the
+// exact figure; it is not published here until a caller has to compute a buffer
+// size rather than pick one.
 //
 // A provider is move-only: two owners of one control block would release it
 // twice, and a bump region has no meaningful copy. Moving one never changes its
