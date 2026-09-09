@@ -1,0 +1,34 @@
+package main;
+
+import "core:fmt";
+import "core:os";
+
+// design.md "Build-selected providers" is not what this is about: it is
+// `core:os`'s claim that `Option` separates a variable that is not set from one
+// whose value is the empty string.
+//
+// Only the second needs a real environment block. `SetEnvironmentVariableW`
+// deletes a variable set to "", so no program can create the case for itself —
+// the harness launches this one with `LOKE_EMPTY_PROBE=` in the environment it
+// hands over, which is why this is a one-off rather than a `tests/run` case.
+
+report :: proc(name: string_view) {
+	switch (value in os.get_environment(name)) {
+	case .ok:
+		switch (text in value) {
+		case .some: fmt.println("some", text.len());
+		case .none: fmt.println("none");
+		}
+	case .err:
+		fmt.println("err", value);
+	}
+}
+
+main :: proc() {
+	// Set to the empty string by the parent: present, and its value is "".
+	report("LOKE_EMPTY_PROBE");
+	// Set to a real value by the parent, so the two arrive the same way.
+	report("LOKE_VALUE_PROBE");
+	// Never set at all.
+	report("LOKE_ABSENT_PROBE");
+}

@@ -128,8 +128,12 @@ get_environment_native :: proc(
 	case .err: return .err(io.make_error(.Out_Of_Memory, .Environment));
 	}
 	written := rt_get_environment(unsafe.raw_data(encoded), unsafe.raw_data(buffer), needed);
-	if (written == 0 || written >= needed) {
-		// A concurrent change resized the value between the two calls.
+	// `written` excludes the terminator that `needed` counted, so a variable set
+	// to the empty string writes zero units and `needed` is 1. That is a value,
+	// not a failure -- and it is the case `Option` exists to tell from `.none`.
+	// A zero anywhere else is the call failing, and a count at or past `needed`
+	// is a concurrent change resizing the value between the two calls.
+	if (written >= needed || (written == 0 && needed != 1)) {
 		return .err(from_last_error(.Environment));
 	}
 	return .ok(.some(from_wide(buffer[:], int(written), allocator, .Environment) or_return));

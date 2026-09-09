@@ -26,6 +26,9 @@
 //                                  owns process entry and supplies the runtime
 //   tests/os/args.{loke,expected}  a program run with a real, non-ASCII argument
 //                                  vector, which every other case lacks
+//   tests/os/environment.{loke,    a program run with an environment block the
+//     expected}                    program could not create for itself: a
+//                                  variable whose value is the empty string
 //
 // Any case may sit beside a `.flags` file of extra compiler options, one per
 // line, which is how `-define` and `-collection` are exercised.
@@ -537,6 +540,56 @@ process_arguments_reach_os_args :: proc(t: ^testing.T) {
 	}
 	run_state, stdout, _, run_err := os2.process_exec(
 		os2.Process_Desc{command = []string{exe, "alpha", "héllo", "日本"}},
+		context.allocator,
+	)
+	testing.expectf(t, run_err == nil, "cannot run %s", exe)
+	testing.expectf(t, run_state.exit_code == 0, "exited with %d", run_state.exit_code)
+	testing.expectf(
+		t,
+		normalise(string(stdout)) == normalise(string(expected)),
+		"expected %q, got %q",
+		normalise(string(expected)),
+		normalise(string(stdout)),
+	)
+}
+
+// `core:os` says `Option` separates a variable that is not set from one whose
+// value is the empty string. Windows deletes a variable set to "", so no program
+// can build that environment for itself — this is the one case that needs the
+// parent to hand over an environment block, which the glob corpus cannot express.
+@(test)
+empty_environment_values_are_values :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	exe := fmt.tprintf("%s/os-environment.exe", TMP)
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = []string{compiler_path(), "tests/os/environment.loke", "-o", exe}},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", compiler_path()) {
+		return
+	}
+	if !testing.expectf(t, state.exit_code == 0, "compile failed:\n%s", string(stderr)) {
+		return
+	}
+
+	expected, has_expected := os.read_entire_file("tests/os/environment.expected")
+	if !testing.expect(t, has_expected, "missing tests/os/environment.expected") {
+		return
+	}
+
+	// `env` replaces the block wholesale, so the inherited one is carried over:
+	// dropping it would change what the child can do for reasons unrelated to
+	// the three variables under test.
+	inherited, environ_err := os2.environ(context.allocator)
+	if !testing.expectf(t, environ_err == nil, "cannot read this process' environment") {
+		return
+	}
+	block := make([dynamic]string, context.temp_allocator)
+	append(&block, ..inherited)
+	append(&block, "LOKE_EMPTY_PROBE=", "LOKE_VALUE_PROBE=fivec")
+
+	run_state, stdout, _, run_err := os2.process_exec(
+		os2.Process_Desc{command = []string{exe}, env = block[:]},
 		context.allocator,
 	)
 	testing.expectf(t, run_err == nil, "cannot run %s", exe)

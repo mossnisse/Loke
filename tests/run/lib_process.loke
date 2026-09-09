@@ -4,6 +4,7 @@ import "core:fmt";
 import "core:io";
 import "core:mem";
 import "core:os";
+import "core:path";
 
 // Process-state allocation failures keep their normalized I/O identity. A
 // deliberately small fixed arena makes UTF-16 decoding fail without depending
@@ -42,4 +43,53 @@ main :: proc() {
 	}
 
 	fmt.println(succeeded(os.unset_environment(name)));
+
+	// The success path, which the arena above deliberately never reaches: a value
+	// set and read back is the same value, and a name that was never set is
+	// `.none` rather than an error.
+	switch (_ in os.set_environment(name, "round trip")) {
+	case .ok:  break;
+	case .err: fmt.println("set failed");
+	}
+	switch (found in os.get_environment(name)) {
+	case .ok:
+		switch (text in found) {
+		case .some: fmt.println(text == "round trip");
+		case .none: fmt.println("unexpectedly none");
+		}
+	case .err: fmt.println("get failed");
+	}
+	switch (missing in os.get_environment("LOKE_STDLIB_NEVER_SET_4A19")) {
+	case .ok:
+		switch (_ in missing) {
+		case .some: fmt.println("unexpectedly some");
+		case .none: fmt.println(true);
+		}
+	case .err: fmt.println("get failed");
+	}
+	fmt.println(succeeded(os.unset_environment(name)));
+
+	// The working directory round trip. Printed as booleans, so the case does not
+	// depend on where the harness runs it from.
+	start := "";
+	switch (here in os.working_directory()) {
+	case .ok:  start = here;
+	case .err: fmt.println("cwd failed");
+	}
+	parent := path.directory(start);
+	fmt.println(start.len() > 0, path.is_absolute(start));
+	fmt.println(succeeded(os.set_working_directory(parent)));
+	switch (moved in os.working_directory()) {
+	case .ok:  fmt.println(moved == parent, moved != start);
+	case .err: fmt.println("cwd failed");
+	}
+	fmt.println(succeeded(os.set_working_directory(start)));
+	// A directory that cannot exist is an error, not a silent no-op.
+	fmt.println(succeeded(os.set_working_directory("no_such_directory_4A19\\nested")));
+
+	// The executable is always an absolute path to a real file.
+	switch (exe in os.executable_path()) {
+	case .ok:  fmt.println(exe.len() > 0, path.is_absolute(exe), path.base(exe).len() > 0);
+	case .err: fmt.println("exe failed");
+	}
 }
