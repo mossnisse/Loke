@@ -15,7 +15,6 @@ package term;
 import "core:encoding/utf16";
 import "core:io";
 import "core:mem";
-import "core:strings";
 import "core:unsafe";
 
 // A borrowed process standard handle. These lightweight values do not own the
@@ -237,42 +236,54 @@ write_handle :: proc(handle: int, source: []u8) -> Result(int, io.Error) {
 
 // A console delivers UTF-16, one cooked line at a time. The loop is for a line
 // longer than the buffer, not for the ordinary case.
+//
+// Every chunk lands in one buffer that is decoded once, at the end. A long line
+// is exactly where `ReadConsoleW` splits a surrogate pair across two calls, and
+// decoding chunk by chunk would report that ordinary line as invalid data.
 @(private)
 read_console_line :: proc(
 	handle: int, allocator: Allocator, options: io.Line_Options,
 ) -> Result(string, io.Error) {
-	builder := strings.init(allocator);
+	line: [dynamic]u16 = {};
 	units: [512]u16 = {};
-	total := 0;
 	for (;;) {
 		read: u32 = 0;
 		if (rt_read_console(handle, unsafe.raw_data(units[:]), 512, &mut read, nil) == 0) {
+			drop(line);
 			return .err(from_last_error(.Read_Line));
 		}
 		if (read == 0) {
 			// Ctrl+Z at the start of a line is the console's end of input.
-			if (total == 0) {
+			if (line.len() == 0) {
+				drop(line);
 				return .err(io.make_error(.End_Of_Input, .Read_Line));
 			}
 			break;
 		}
 		count := int(read);
-		total += count;
-		ended := count > 0 && units[count - 1] == u16('\n');
-		if (ended && !options.keep_ending) {
-			count -= 1;
-			if (count > 0 && units[count - 1] == u16('\r')) { count -= 1; }
-		}
-		switch (chunk in utf16.decode(units[0:count], allocator)) {
+		switch (added in line.try_append(..units[0:count])) {
 		case .ok:
-			builder.append(chunk);
 		case .err:
-			code := io.Code.Out_Of_Memory if chunk == .Out_Of_Memory else io.Code.Invalid_Data;
-			return .err(io.make_error(code, .Read_Line));
+			drop(line);
+			return .err(io.make_error(.Out_Of_Memory, .Read_Line));
 		}
-		if (ended) { break; }
+		if (units[count - 1] == u16('\n')) { break; }
 	}
-	return .ok(builder.finish());
+	kept := line.len();
+	if (!options.keep_ending && kept > 0 && line[kept - 1] == u16('\n')) {
+		kept -= 1;
+		// The `\r` of a `\r\n` ending goes with it.
+		if (kept > 0 && line[kept - 1] == u16('\r')) { kept -= 1; }
+	}
+	switch (text in utf16.decode(line[0:kept], allocator)) {
+	case .ok:
+		drop(line);
+		return .ok(text);
+	case .err:
+		code := io.Code.Out_Of_Memory if text == .Out_Of_Memory else io.Code.Invalid_Data;
+		drop(line);
+		return .err(io.make_error(code, .Read_Line));
+	}
 }
 
 // The scoped resource. Its `drop` restores the exact previous mode on ordinary
