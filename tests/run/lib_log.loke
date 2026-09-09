@@ -41,7 +41,21 @@ main :: proc() {
 	}
 	fmt.println("evaluations", calls);
 
-	// The runtime query agrees with the constant.
+	// The runtime query agrees with the constant. `Off` is a threshold rather
+	// than a level anything records at, so it is never enabled -- not even in a
+	// build compiled at it, where `enabled(.Off)` would otherwise be the one true
+	// answer in a program that logs nothing.
 	fmt.println(log.enabled(log.Level.Debug), log.enabled(log.Level.Warning), log.enabled(log.Level.Error));
+	fmt.println(log.enabled(log.Level.Off));
 	fmt.println(LOKE_LOG_LEVEL);
+
+	// `at` is the other half of `enabled`: a level held in a variable, recorded
+	// at without switching over the members to reach a fixed procedure. The
+	// filtering is the same one the four procedures apply, so `Debug` here is
+	// dropped exactly as `log.debug` is -- and `Off` records nothing at all.
+	foreach (level in [?]log.Level{
+		log.Level.Debug, log.Level.Info, log.Level.Warning, log.Level.Error, log.Level.Off,
+	}) {
+		log.at(level, "at", level);
+	}
 }

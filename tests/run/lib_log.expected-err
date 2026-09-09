@@ -1,0 +1,5 @@
+[Warning] warning 3
+[Error] error 4
+[Warning] guarded 5
+[Warning] at Warning
+[Error] at Error

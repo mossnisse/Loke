@@ -1,7 +1,8 @@
 // The whole executable test harness. Corpora shelling out to
 // the built compiler, plus the parser's own:
 //
-//   tests/run/*.loke + .expected   compile, run, compare stdout
+//   tests/run/*.loke + .expected   compile, run, compare stdout; an optional
+//                                  sibling .expected-err compares stderr too
 //   tests/ll/*.loke  + .expected   compile with -emit-ll, assert the generated
 //                                  IR still contains each listed shape; a `*`
 //                                  matches any run inside one IR line
@@ -1052,7 +1053,7 @@ run_one_program :: proc(t: ^testing.T, path, expected_file, exe: string) {
 		return
 	}
 
-	run_state, stdout, _, run_err := os2.process_exec(
+	run_state, stdout, run_stderr, run_err := os2.process_exec(
 		os2.Process_Desc{command = []string{exe}},
 		context.allocator,
 	)
@@ -1065,6 +1066,23 @@ run_one_program :: proc(t: ^testing.T, path, expected_file, exe: string) {
 		path,
 		normalise(string(expected)),
 		normalise(string(stdout)),
+	)
+
+	// stderr is ignored unless the case pins it with a sibling `.expected-err`.
+	// A `core:log` record on the standard sink is what needs that: it is the
+	// logger every unselected build gets, and comparing stdout alone never sees
+	// a line of it.
+	errors, has_errors := os.read_entire_file(fmt.tprintf("%s-err", expected_file))
+	if !has_errors {
+		return
+	}
+	testing.expectf(
+		t,
+		normalise(string(run_stderr)) == normalise(string(errors)),
+		"%s: expected stderr %q, got %q",
+		path,
+		normalise(string(errors)),
+		normalise(string(run_stderr)),
 	)
 }
 

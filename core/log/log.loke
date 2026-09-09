@@ -97,6 +97,28 @@ enabled :: proc(level: Level) -> bool {
 	return level != Level.Off && LOKE_LOG_LEVEL <= level;
 }
 
+// A record at a level chosen at runtime, which is what `enabled` above is for:
+// having branched on a level held in a variable, this is how a caller records
+// at it without switching over five members to reach one of the four fixed
+// procedures.
+//
+// The `when` is the same guard those four carry, asked once for the whole
+// package: `<= Error` is false only when logging is compiled out entirely, so
+// an `off` build discards this body too. `enabled` then does the per-level
+// filtering that a compiled constant cannot, because the level is not one.
+at :: proc(level: Level, args: ..any_view) {
+	when (LOKE_LOG_LEVEL <= Level.Error) {
+		if (enabled(level)) { record(level, ..args); }
+	}
+}
+
+// The allocation here applies the library's ordinary failure policy, which for
+// logging is worth stating rather than assuming: `fmt.to_string` panics when it
+// cannot allocate, so a record emitted while handling a failure can end the
+// process instead of reporting it. A log call is not a no-op under memory
+// pressure. Nothing quieter is available while `core:fmt` has no `try_to_string`
+// and these four procedures return nothing to report through.
+//
 // ponytail: one allocation per emitted record, because formatting into a
 // caller-supplied buffer needs a `fmt.Writer` over storage this package would
 // have to size arbitrarily, and truncation there would have to cut a rune. If
