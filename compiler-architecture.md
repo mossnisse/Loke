@@ -422,6 +422,12 @@ odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
 and reruns the run/trap corpus at every supported optimization level. Use
 `-SkipOptimizationMatrix` for a quicker baseline check while iterating.
 
+Three tests need a tool this repository does not ship — nasm, and a clang or MSVC
+toolset to link a C host — and record what they skipped when it is absent. Pass
+`-RequireTools` (or set `LOKE_TEST_REQUIRE_TOOLS=1`) on a machine that is
+supposed to have them: the skips become failures, so the assembly link, the
+object-build host link and the IR validation cannot go missing on a green run.
+
 For a structural backend refactor, compare emitted `.ll` with the same source
 path and options before and after the change. Reproducible IR catches naming and
 ordering drift that successful execution may hide.

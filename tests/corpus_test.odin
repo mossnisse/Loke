@@ -41,6 +41,12 @@
 // not visible from stdout.
 //
 // Run with:  odin build src -out:lokec.exe  &&  odin test tests
+//
+// Three tests need a tool this repository does not ship — nasm, and a clang or
+// MSVC toolset for a C host — and note what they skipped when it is missing.
+// `LOKE_TEST_REQUIRE_TOOLS=1` (or `.\test-all.ps1 -RequireTools`) turns those
+// notes into failures, so a machine meant to have the toolchain cannot lose that
+// coverage quietly.
 package tests
 
 import "core:fmt"
@@ -78,6 +84,20 @@ env_flags :: proc() -> []string {
 		append(&flags, field)
 	}
 	return flags[:]
+}
+
+// A tool this machine does not have costs coverage, and a green run says nothing
+// about which. `LOKE_TEST_REQUIRE_TOOLS=1` turns every such skip into a failure,
+// which is what a machine that is supposed to have the toolchain should run:
+// otherwise the assembly link, the C-host link and the IR validation are all
+// free to disappear without a red run anywhere.
+@(private)
+skipped_capability :: proc(t: ^testing.T, reason: string) {
+	if os.get_env("LOKE_TEST_REQUIRE_TOOLS", context.temp_allocator) != "" {
+		testing.expectf(t, false, "%s, and LOKE_TEST_REQUIRE_TOOLS is set", reason)
+		return
+	}
+	log.infof("%s; skipping what needs it", reason)
 }
 
 // The corpus shells out, so a forgotten build must fail visibly instead of
@@ -595,7 +615,7 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 	found_clang, _, has_clang := host_toolchain()
 	clang := strings.clone(found_clang)
 	if !has_clang {
-		log.info("no usable clang; skipping IR validation")
+		skipped_capability(t, "no usable clang, so the generated IR is never assembled")
 	}
 
 	for path in cases {
@@ -926,7 +946,7 @@ assembled_inputs_reach_the_link_and_not_the_output_directory :: proc(t: ^testing
 		os2.Process_Desc{command = []string{nasm, "-v"}},
 		context.allocator,
 	); probe != nil {
-		log.info("no nasm found; skipping the assembly-import link")
+		skipped_capability(t, "no nasm, so an assembly import never reaches a link")
 		return
 	}
 
@@ -1036,7 +1056,7 @@ object_build_links_into_a_c_host :: proc(t: ^testing.T) {
 
 	clang, include_flags, found := host_toolchain()
 	if !found {
-		log.info("no clang or MSVC toolset found; skipping the object-build host link")
+		skipped_capability(t, "no clang or MSVC toolset, so no object build reaches a C host")
 		return
 	}
 

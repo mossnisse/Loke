@@ -1,11 +1,19 @@
 [CmdletBinding()]
 param(
-    [switch]$SkipOptimizationMatrix
+    [switch]$SkipOptimizationMatrix,
+    # Turns the harness's tool skips into failures: nasm and a C host toolset are
+    # not shipped here, and without this a machine missing one still runs green
+    # with that coverage gone.
+    [switch]$RequireTools
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $savedFlags = [Environment]::GetEnvironmentVariable('LOKE_TEST_FLAGS', 'Process')
+$savedRequireTools = [Environment]::GetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', 'Process')
+if ($RequireTools) {
+    [Environment]::SetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', '1', 'Process')
+}
 
 Push-Location -LiteralPath $repoRoot
 try {
@@ -44,5 +52,6 @@ try {
 }
 finally {
     [Environment]::SetEnvironmentVariable('LOKE_TEST_FLAGS', $savedFlags, 'Process')
+    [Environment]::SetEnvironmentVariable('LOKE_TEST_REQUIRE_TOOLS', $savedRequireTools, 'Process')
     Pop-Location
 }
