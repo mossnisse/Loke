@@ -183,4 +183,13 @@ main :: proc() {
 	pointee := 32;
 	fmt.println(int(qualified.read()));
 	fmt.println(int((&pointee).read()));
+
+	// This package declares plenty of `==`, none of them about `Plain`. An
+	// overload for an unrelated type is not what this expression is about, so
+	// the generated field-wise equality answers it (design.md "Comparison
+	// operators": every field of a comparable record).
+	fmt.println(1 if Plain{1, "one"} == Plain{1, "one"} else 0);
+	fmt.println(1 if Plain{1, "one"} != Plain{2, "two"} else 0);
 }
+
+Plain :: struct { rank: int, name: string_view }

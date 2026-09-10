@@ -53,8 +53,14 @@ main :: proc() {
 	static_assert(!interfaces.Cloneable(Holds_Move_Only));
 
 	static_assert(!interfaces.Integral(f64));
-	static_assert(!interfaces.Equatable(Opaque));
 	static_assert(!interfaces.Numeric(bool));
+	// design.md "Comparison operators": a struct is comparable when all its
+	// fields are, and `Equatable` takes the generated equality that follows --
+	// an `==` this package declares for some other type is not in the way.
+	// Slices are the standing exception: they compare against `nil` and nothing
+	// else, so no equality is generated for one.
+	static_assert(interfaces.Equatable(Opaque));
+	static_assert(!interfaces.Equatable([]int));
 
 	// A user `distinct` type satisfies the same catalogue entries through its
 	// own operators.

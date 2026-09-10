@@ -362,10 +362,32 @@ resolve_operator :: proc(
 	return cand.symbol, bound
 }
 
-// Is there any candidate at all? Asked before a fallback rule is applied, so
-// `!=` only falls back to `==` when no `!=` overload exists.
+// Is there a candidate this expression is actually about? Asked only to decide
+// whether a failure to resolve is worth reporting, so the answer has to hold to
+// the same principle as `operator_viable` below: an overload declared for an
+// unrelated type elsewhere in the package must not change this expression.
+// `Plain{1} == Plain{1}` is answered by the generated field-wise equality
+// however many other types the package gives an `==`.
+//
+// A generic candidate counts without matching, because its parameters are not
+// the types it will accept once instantiated -- losing a diagnostic is the only
+// thing at stake here, never a resolution.
 operator_exists :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> bool {
-	return len(operator_candidates(k, symbol, operands)) > 0
+	for candidate in operator_candidates(k, symbol, operands) {
+		sym := symbol_of(k.c, candidate)
+		if sym == nil {
+			continue
+		}
+		if sym.generic {
+			return true
+		}
+		for param in sym.params {
+			if slice.contains(operands, param) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // A fallback is suppressed only by an overload that actually applies to these
