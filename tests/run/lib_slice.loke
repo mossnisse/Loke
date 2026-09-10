@@ -4,6 +4,12 @@ package main; import "core:fmt"; import "core:slice";
 //
 // The first two blocks are design.md's "Sorting slices" examples verbatim.
 
+// A move-only element, and a copyable one with no zero value: the two element
+// kinds `swap`s `when` has to keep apart.
+Token :: move_only struct { id: int }
+
+Shape :: union { circle: int, square: int }
+
 main :: proc() {
 	s := []mut int{1, 6, 3, 5 ,7, 3, 0};
 	slice.sort(s);
@@ -63,6 +69,23 @@ main :: proc() {
 	fmt.println(scratch);
 	slice.fill(scratch, 7);
 	fmt.println(scratch);
+
+	// `swap` and `reverse` trade places rather than copying, so a move-only
+	// element goes through both -- the only two procedures here that one can.
+	tokens := []mut Token{Token{1}, Token{2}, Token{3}, Token{4}};
+	slice.swap(tokens, 0, 3);
+	fmt.println(tokens[0].id, tokens[3].id);
+	slice.reverse(tokens);
+	fmt.println(tokens[0].id, tokens[1].id, tokens[2].id, tokens[3].id);
+	slice.swap(tokens, 2, 2);
+	fmt.println(tokens[2].id);
+
+	// The other branch is not a fallback for the merely copyable: a union that
+	// designates no zero has nothing for `exchange` to install, and copies.
+	shapes := []mut Shape{Shape.circle(1), Shape.square(2)};
+	slice.swap(shapes, 0, 1);
+	slice.reverse(shapes);
+	fmt.println(shapes.len());
 
 	// An owned copy outlives the view it came from, which is the whole point.
 	owned := slice.clone(s);
