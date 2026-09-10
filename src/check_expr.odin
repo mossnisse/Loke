@@ -1954,13 +1954,14 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, type: Type_Id) -> bool {
 @(private = "file")
 check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 	ordered := v.op != .Eq_Eq && v.op != .Not_Eq
+	both := []Type_Id{operand_type, operand_type}
 	if ordered && !type_is_ordered(k.c, operand_type) {
 		// The type may well have a `<`, one this package simply may not use. Said
 		// in the message rather than a note because an interface requirement keeps
 		// only the message: `where interfaces.Ordered(T)` in another package is
 		// exactly where this lands, and a bare "does not order" sends the reader
 		// looking for a missing operator that is right there.
-		if hidden_inherent_operator(k, operator_text(v.op), operand_type) {
+		if hidden_inherent_operator(k, operator_text(v.op), both) {
 			errorf(
 				k.c, v.op_span, "L0355",
 				"`%s` does not order `%s` here: its inherent `%s` is not `@(public)`",
@@ -1974,6 +1975,27 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 	}
 	if !ordered && !type_is_comparable(k.c, operand_type) {
 		errorf(k.c, v.op_span, "L0355", "`%s` is not comparable", type_name(k.c, operand_type))
+		v.type = INVALID_TYPE
+		return
+	}
+	// A record with an unexported inherent `==` is still *comparable*: the
+	// generated field-wise equality is sitting right there. Taking it would be
+	// the one thing worse than refusing -- design.md "Maps" wants one equality
+	// policy across packages, and silently answering with a second one gives a
+	// caller a wrong answer with nothing to read. `!=` is included because it
+	// falls back to `!(a == b)`, so a hidden `==` decides it too.
+	if !ordered &&
+	   (hidden_inherent_operator(k, "==", both) ||
+	    (v.op == .Not_Eq && hidden_inherent_operator(k, "!=", both))) {
+		errorf(
+			k.c, v.op_span, "L0355",
+			"`%s` has an inherent `%s` that is not `@(public)`, so this package cannot compare it",
+			type_name(k.c, operand_type), v.op == .Not_Eq ? "!=" : "==",
+		)
+		add_notef(
+			k.c, v.op_span,
+			"comparing field-wise here would be a second equality for one type; export the operator instead",
+		)
 		v.type = INVALID_TYPE
 		return
 	}

@@ -208,23 +208,43 @@ operator_candidates_for_receiver :: proc(k: ^Checker, symbol: string, receiver: 
 	return out[:]
 }
 
-// An operator the operand's own type declares but this package may not use:
-// inherent, not `@(public)`, so `add_operator_members` filtered it out
-// (design.md "Exported names"). Worth naming in a diagnostic, because "`<` does
-// not order `Card`" is otherwise indistinguishable from "`Card` has no `<`",
-// and the recourse -- exporting the operator -- is not one a caller guesses.
-hidden_inherent_operator :: proc(k: ^Checker, symbol: string, operand: Type_Id) -> bool {
-	info := type_of(k.c, operand)
-	if info == nil {
-		return false
-	}
-	for member in info.members {
-		sym := symbol_of(k.c, member)
-		if sym == nil || sym.operator != symbol || sym.bound_excluded {
+// An operator that would apply to these operands, declared inherent on one of
+// them, and filtered out of the candidate set by `add_operator_members` for not
+// being `@(public)` (design.md "Exported names").
+//
+// Worth naming in a diagnostic, because "`<` does not order `Card`" is
+// otherwise indistinguishable from "`Card` has no `<`", and the recourse --
+// exporting the operator -- is not one a caller guesses. The parameters must
+// match exactly: a report that a hidden operator is in the way has to be about
+// one that would otherwise have been chosen, or it rejects a comparison the
+// built-in table answers perfectly well.
+hidden_inherent_operator :: proc(k: ^Checker, symbol: string, operands: []Type_Id) -> bool {
+	for operand in operands {
+		info := type_of(k.c, operand)
+		if info == nil {
 			continue
 		}
-		if !member_is_visible(k, sym) {
-			return true
+		for member in info.members {
+			sym := symbol_of(k.c, member)
+			if sym == nil || sym.operator != symbol || sym.bound_excluded {
+				continue
+			}
+			// A `delegate` forwards to the underlying type's operator, which is
+			// what the built-in table reaches for a `distinct` anyway. Nothing is
+			// being substituted, so nothing is worth reporting.
+			if sym.delegated || member_is_visible(k, sym) || len(sym.params) != len(operands) {
+				continue
+			}
+			applies := true
+			for param, index in sym.params {
+				if param != operands[index] {
+					applies = false
+					break
+				}
+			}
+			if applies {
+				return true
+			}
 		}
 	}
 	return false

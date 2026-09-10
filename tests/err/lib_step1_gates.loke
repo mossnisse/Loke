@@ -21,4 +21,23 @@ main :: proc() {
 
 	// A `Small_Array` needs room, and `N > 0` is part of the type.
 	empty: container.Small_Array(int, 0) = {};
+
+	// An inherent `==` this package has but does not export. `core:slice`
+	// resolves it from over there and cannot reach it -- and unlike a missing
+	// `<`, a missing `==` has a field-wise stand-in sitting right there. Taking
+	// it would answer `contains` with an equality this file does not use, so the
+	// bound refuses instead and says what to export. `Ordered` composes
+	// `Equatable`, so `sort` fails on the same requirement.
+	badges := []mut Badge{Badge{2, "two"}, Badge{1, "one"}};
+	slice.sort(badges);
+	_ = slice.contains(badges, Badge{1, "ONE"});
+}
+
+// `==` on the rank alone, so field-wise equality is a different answer, not a
+// slower spelling of the same one.
+Badge :: struct { rank: int, name: string_view }
+
+impl Badge {
+	before :: operator(<) proc(a, b: Badge) -> bool { return a.rank < b.rank; }
+	same :: operator(==) proc(a, b: Badge) -> bool { return a.rank == b.rank; }
 }

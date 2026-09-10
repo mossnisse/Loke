@@ -13,3 +13,9 @@ does not satisfy `Ordered(Not_Ordered)`
 L0434
 @23:9
 does not satisfy the bound `N > 0`
+L0444
+@32:2
+has an inherent `==` that is not `@(public)`
+L0444
+@33:6
+has an inherent `==` that is not `@(public)`
