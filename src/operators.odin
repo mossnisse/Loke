@@ -208,6 +208,28 @@ operator_candidates_for_receiver :: proc(k: ^Checker, symbol: string, receiver: 
 	return out[:]
 }
 
+// An operator the operand's own type declares but this package may not use:
+// inherent, not `@(public)`, so `add_operator_members` filtered it out
+// (design.md "Exported names"). Worth naming in a diagnostic, because "`<` does
+// not order `Card`" is otherwise indistinguishable from "`Card` has no `<`",
+// and the recourse -- exporting the operator -- is not one a caller guesses.
+hidden_inherent_operator :: proc(k: ^Checker, symbol: string, operand: Type_Id) -> bool {
+	info := type_of(k.c, operand)
+	if info == nil {
+		return false
+	}
+	for member in info.members {
+		sym := symbol_of(k.c, member)
+		if sym == nil || sym.operator != symbol || sym.bound_excluded {
+			continue
+		}
+		if !member_is_visible(k, sym) {
+			return true
+		}
+	}
+	return false
+}
+
 @(private = "file")
 append_unique :: proc(out: ^[dynamic]Symbol_Id, id: Symbol_Id) {
 	if !slice.contains(out[:], id) {

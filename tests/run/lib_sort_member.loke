@@ -15,7 +15,13 @@ import "core:slice";
 Card :: struct { rank: int, name: string_view }
 
 impl Card {
+	// Exported, because the free spellings below resolve `<` and `==` from inside
+	// `core:slice`, and design.md "Exported names" gates an inherent operator the
+	// same way it gates a method. The member spellings need no such thing: the
+	// sort they call is contributed, and the comparison happens in this package.
+	@(public)
 	before :: operator(<) proc(a, b: Card) -> bool { return a.rank < b.rank; }
+	@(public)
 	equal :: operator(==) proc(a, b: Card) -> bool { return a.rank == b.rank; }
 	format :: proc(self, writer: fmt.Writer, options: fmt.Options) {
 		fmt.format_to(writer, self.name);
@@ -110,4 +116,28 @@ main :: proc() {
 	// A borrow of the container ends at the sort, so this is the ordinary
 	// borrow-then-sort-then-read order rather than one live across it.
 	fmt.println(sorted_copy([]int{3, 1, 2}));
+
+	// The other half of "both spellings": the free ones, on the same user
+	// element. `core:slice` is not this package, so its `Ordered` and `Equatable`
+	// bounds resolve `<` and `==` from over there, and reach only what `Card`
+	// exports -- which is why the two operators above carry `@(public)` and the
+	// member spellings needed nothing. Given that, the two spellings agree.
+	loose := []mut Card{Card{3, "three"}, Card{1, "one"}, Card{2, "two"}};
+	slice.sort(loose);
+	fmt.println(loose, slice.is_sorted(loose));
+	slice.reverse_sort(loose);
+	fmt.println(loose, slice.is_reverse_sorted(loose));
+	slice.sort(loose);
+	fmt.println(slice.binary_search(loose, Card{2, "?"}));
+	fmt.println(slice.min(loose), slice.max(loose));
+
+	// `Card`s `==` compares rank alone. Field-wise equality would answer `false`
+	// here, so this is the answer only the inherent operator can give.
+	fmt.println(slice.contains(loose, Card{2, "?"}), slice.index_of(loose, Card{2, "?"}));
+
+	// A delegated `<` and `==` reach the free spellings too -- and reach them
+	// without `@(public)`, unlike the written operators above.
+	widths := []mut Meters{Meters(3.5), Meters(-1.0), Meters(0.25)};
+	slice.sort(widths);
+	fmt.println(f64(widths[0]), slice.is_sorted(widths), slice.contains(widths, Meters(0.25)));
 }

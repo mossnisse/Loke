@@ -1955,7 +1955,20 @@ validate_shift_count :: proc(k: ^Checker, e: Expr, type: Type_Id) -> bool {
 check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 	ordered := v.op != .Eq_Eq && v.op != .Not_Eq
 	if ordered && !type_is_ordered(k.c, operand_type) {
-		errorf(k.c, v.op_span, "L0355", "`%s` does not order `%s`", operator_text(v.op), type_name(k.c, operand_type))
+		// The type may well have a `<`, one this package simply may not use. Said
+		// in the message rather than a note because an interface requirement keeps
+		// only the message: `where interfaces.Ordered(T)` in another package is
+		// exactly where this lands, and a bare "does not order" sends the reader
+		// looking for a missing operator that is right there.
+		if hidden_inherent_operator(k, operator_text(v.op), operand_type) {
+			errorf(
+				k.c, v.op_span, "L0355",
+				"`%s` does not order `%s` here: its inherent `%s` is not `@(public)`",
+				operator_text(v.op), type_name(k.c, operand_type), operator_text(v.op),
+			)
+		} else {
+			errorf(k.c, v.op_span, "L0355", "`%s` does not order `%s`", operator_text(v.op), type_name(k.c, operand_type))
+		}
 		v.type = INVALID_TYPE
 		return
 	}
