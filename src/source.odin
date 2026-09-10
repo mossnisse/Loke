@@ -442,9 +442,28 @@ report :: proc(c: ^Compiler) {
 		}
 		return a.span.lo < b.span.lo
 	})
+	previous: ^Diagnostic
 	for &d in c.diagnostics {
+		// One mistake reported twice is one diagnostic. Two blocks left open by
+		// the same missing brace both run out of input at the end of the file, so
+		// they arrive with the same code, span and message; sorting has already
+		// made them adjacent. A repeat that carries a note is still rendered,
+		// since that note is something the first one did not say.
+		if previous != nil && len(d.notes) == 0 && same_diagnostic(previous^, d) {
+			continue
+		}
 		render(c, &d)
+		previous = &d
 	}
+}
+
+@(private = "file")
+same_diagnostic :: proc(a, b: Diagnostic) -> bool {
+	return a.severity == b.severity &&
+		a.code == b.code &&
+		a.span == b.span &&
+		a.label == b.label &&
+		a.message == b.message
 }
 
 @(private = "file")

@@ -15,6 +15,9 @@ main :: proc() {
 
 sentinel :: proc() { }
 
-// A block runs to its `}`, so an unclosed one reads to the end of the file.
+// A block runs to its `}`, so an unclosed one reads to the end of the file --
+// and so does every block around it. Two of them end at the same position with
+// the same message, which is one mistake and is reported once.
 unclosed :: proc() {
-	f();
+	{
+		f();

@@ -11,5 +11,5 @@ L0216
 @14:1
 expected `;` after the statement
 L0214
-@21:1
+@24:1
 expected `}` to close the block
