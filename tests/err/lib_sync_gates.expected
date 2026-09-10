@@ -7,6 +7,12 @@ cannot take the address of `count`: it is reached through a packed struct
 L0392
 @66:2
 a `$` parameter needs a compile-time constant argument
+L0503
+@92:12
+`Atomic(int)` is move-only
+L0503
+@97:11
+`Once` is move-only
 L0662
 `Point` is not an atomic type
 L0662

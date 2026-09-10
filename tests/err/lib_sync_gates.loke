@@ -79,4 +79,23 @@ main :: proc() {
 	packed_field(inout packed);
 	packed_atomic_receiver(inout packed_atomic);
 	runtime_order(Order.Acquire);
+	copy_atomic(inout counter);
+	copy_once(inout gate);
 }
+
+gate: static sync.Once = {};
+
+// A copy of an atomic is a non-atomic read of it that hands back a second,
+// unrelated atomic, and a copied `once` is one that fires again. `move_only`
+// makes both unwritable, and `Once` inherits it from the field it holds.
+copy_atomic :: proc(counter: inout sync.Atomic(int)) {
+	mirror := counter;
+	mirror.store(1);
+}
+
+copy_once :: proc(source: inout sync.Once) {
+	spare := source;
+	spare.do(nothing);
+}
+
+nothing :: proc() {}

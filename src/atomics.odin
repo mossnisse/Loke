@@ -87,7 +87,9 @@ atomic_width_bits :: proc(c: ^Compiler, type: Type_Id) -> int {
 	case .Rune:
 		return 32
 	case .Pointer, .C_Pointer, .Raw_Pointer:
-		return 64
+		// The target's own width, which is the knob every other pointer size in
+		// the compiler reads. A literal 64 here would be a second answer to it.
+		return int(c.target.pointer_bits)
 	case .Int, .Enum:
 		bits := type_bits(c, type_underlying(c, type))
 		switch bits {
@@ -289,6 +291,10 @@ check_atomic_order :: proc(
 	if !check_value_expr(k, argument, order_type, "pass") {
 		return .Relaxed, false
 	}
+	// `base:runtime` and `core:sync` are the only callers an intrinsic has, so
+	// this and the two below answer a stdlib author rather than a user: outside
+	// them the ordering has already travelled through a `$` parameter, and a
+	// runtime value is stopped at that boundary with its own diagnostic.
 	base := expr_base(argument)
 	if !base.is_const {
 		errorf(

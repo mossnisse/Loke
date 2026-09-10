@@ -40,6 +40,11 @@ main :: proc() {
 	fmt.println(observed == held, swapped, a.load());
 	missed, failed := a.compare_exchange(held, 200, Order.Sequentially_Consistent, Order.Relaxed);
 	fmt.println(missed, failed, a.load());
+	// The failure ordering is not bounded by the success one. A compare-exchange
+	// that fails performs no write, so a load's orderings are the whole rule and
+	// either side may be the stronger of the two.
+	strict, strict_failed := a.compare_exchange(0, 1, Order.Relaxed, Order.Sequentially_Consistent);
+	fmt.println(strict, strict_failed);
 
 	// Every ordering each operation permits.
 	a.store(1, Order.Relaxed);
@@ -50,6 +55,11 @@ main :: proc() {
 	fmt.println(a.load(Order.Sequentially_Consistent));
 	fmt.println(a.add(1, Order.Relaxed), a.load(Order.Relaxed));
 	fmt.println(a.exchange(9, Order.Acquire_Release), a.load(Order.Acquire));
+
+	// The zero is not the only initial value: `value` is public exactly so a
+	// caller holding exclusive access can seed one without a synchronizing store.
+	seeded: Counter = {5};
+	fmt.println(seeded.load(), seeded.add(1), seeded.load());
 
 	sync.fence(Order.Acquire);
 	sync.fence(Order.Release);
@@ -125,6 +135,13 @@ main :: proc() {
 	fmt.println(pointer.load() == nil);
 	pointer.store(&target);
 	fmt.println(pointer.load()^);
+	// A `^mut T` is a distinct atomic type from a `^T`, and the one a published
+	// pointer is usually read back as.
+	writable_target := 1;
+	writable: sync.Atomic(^mut int) = {};
+	writable.store(&mut writable_target);
+	writable.load()^ = 43;
+	fmt.println(writable_target);
 	raw: sync.Atomic(rawptr) = {};
 	fmt.println(raw.exchange(nil) == nil);
 

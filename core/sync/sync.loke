@@ -34,7 +34,11 @@ package sync;
 // rather than a number with a name.
 //
 // The zero value is `T`s zero, and nothing has to run before it is usable.
-Atomic :: struct($T: type) {
+//
+// `move_only`, because a copy of an atomic is a *non-atomic* read of it that
+// hands back a second, unrelated atomic. That is never what a caller means, and
+// design.md propagates it structurally, so `Once` below is move-only too.
+Atomic :: move_only struct($T: type) {
 	// Public, because a caller that has proven it has exclusive access — during
 	// construction, or after joining every other thread — reads and writes it
 	// without paying for a synchronizing operation. Every *atomic* access goes
@@ -43,8 +47,6 @@ Atomic :: struct($T: type) {
 }
 
 impl Atomic($T) {
-	of :: proc(value: T) -> Atomic(T) { return {value}; }
-
 	load :: proc(self, $order: Memory_Order = Memory_Order.Sequentially_Consistent) -> T {
 		return atomic_load(&self.value, order);
 	}
@@ -129,6 +131,10 @@ fence :: proc($order: Memory_Order = Memory_Order.Sequentially_Consistent) {
 //
 // The zero value is an unfired `once`, which is what lets it live in `static`
 // storage with no initializer.
+//
+// `do` fires through an `inout` receiver, so a `once` has to be reachable
+// mutably. File-scope and `static` storage are, which is where design.md puts
+// it; a payload behind `shared(T)` is not, because `get` hands back a `^T`.
 Once :: struct {
 	@(private) state: Atomic(u32),
 }
@@ -151,6 +157,11 @@ impl Once {
 	// The winner publishes with a release store and every other thread observes
 	// with an acquire load, so whatever the action wrote is visible to all of
 	// them.
+	//
+	// An action must not reach its own `once`: the thread running it is the one
+	// the wait below spins on, so a re-entrant `do` waits for itself and never
+	// returns. Telling that case apart needs a thread identity, and version 1 has
+	// no source of one -- so it is a rule rather than a diagnostic.
 	do :: proc(self: inout Once, action: proc()) {
 		if (self.state.load(Memory_Order.Acquire) == ONCE_DONE) { return; }
 		observed, won := self.state.compare_exchange(
