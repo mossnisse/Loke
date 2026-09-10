@@ -98,11 +98,17 @@ main :: proc() {
 	// so a vector of nothing but negative zero keeps its sign; `+0.0` would not.
 	negative_zero: Simd(f64, 2) = {-0.0, -0.0};
 	fmt.println(simd.reduce_add(negative_zero), simd.reduce_mul(negative_zero));
-	// A NaN lane, which design.md does not speak to: the sum carries it, and a
-	// minimum and a maximum answer with the lane that is not NaN.
+	// "`reduce_min` and `reduce_max` ignore NaN lanes and answer with a number
+	// whenever any lane holds one; a vector of nothing but NaN reduces to NaN."
+	// The all-NaN answer is checked against itself rather than printed: NaN is
+	// the one value not equal to itself, and its spelling is not design.md's.
 	nan := f64(0.0) / f64(0.0);
 	with_nan: Simd(f64, 4) = {1.5, nan, 3.5, 2.5};
 	fmt.println(simd.reduce_min(with_nan), simd.reduce_max(with_nan));
+	all_nan: Simd(f64, 2) = {nan, nan};
+	lowest := simd.reduce_min(all_nan);
+	highest := simd.reduce_max(all_nan);
+	fmt.println(lowest != lowest, highest != highest);
 	fmt.println(simd.any(mask), simd.all(mask), simd.all(a > 0), simd.any(a > 100));
 	fmt.println(simd.select(mask, a, b));
 	fmt.println(simd.to_array(a), simd.to_array(a)[2]);

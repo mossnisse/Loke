@@ -304,6 +304,22 @@ simd_any_lane :: proc(e: ^Emitter, info: ^Type_Info, mask: string) -> string {
 	return out
 }
 
+// LLVM mangles an overloaded intrinsic's suffix by bit width, so a `double`
+// lane is `f64` -- `v2double` is a spelling it happens to remangle rather than
+// one it defines, which is not a thing to keep depending on.
+@(private = "file")
+simd_mangled_lane :: proc(lane: string) -> string {
+	switch lane {
+	case "half":
+		return "f16"
+	case "float":
+		return "f32"
+	case "double":
+		return "f64"
+	}
+	return lane
+}
+
 // One `declare` per reduction intrinsic the module actually uses. `result` is
 // the scalar it folds to, which is the lane type for every reduction except a
 // float `add`/`mul`, whose LLVM form takes a starting value.
@@ -314,7 +330,7 @@ simd_declare_reduce :: proc(e: ^Emitter, name: string, lane: string, count: int,
 simd_declare_reduce_with_start :: proc(
 	e: ^Emitter, name, lane: string, count: int, result: string, start: bool,
 ) {
-	key := fmt.aprintf("llvm.vector.reduce.%s.v%d%s", name, count, lane)
+	key := fmt.aprintf("llvm.vector.reduce.%s.v%d%s", name, count, simd_mangled_lane(lane))
 	if key in e.simd_intrinsics {
 		return
 	}
@@ -430,7 +446,7 @@ simd_call_reduce :: proc(
 	out := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s @llvm.vector.reduce.%s.v%d%s(%s<%d x %s> %s)",
-		out, result, name, count, lane, start, count, lane, value,
+		out, result, name, count, simd_mangled_lane(lane), start, count, lane, value,
 	)
 	return out
 }
