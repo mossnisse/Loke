@@ -14,6 +14,8 @@ main :: proc() {
 	slice.sort(readable);
 	slice.reverse_sort(readable);
 	slice.fill(readable, 0);
+	slice.swap(readable, 0, 1);
+	slice.reverse(readable);
 
 	// An element type with no `<` cannot be sorted.
 	records := []mut Not_Ordered{Not_Ordered{1}};

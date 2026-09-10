@@ -7,15 +7,21 @@ no overload of `reverse_sort` applies to these arguments
 L0392
 @16:2
 no overload of `fill` applies to these arguments
+L0392
+@17:2
+no overload of `swap` applies to these arguments
+L0392
+@18:2
+no overload of `reverse` applies to these arguments
 L0444
-@20:2
+@22:2
 does not satisfy `Ordered(Not_Ordered)`
 L0434
-@23:9
+@25:9
 does not satisfy the bound `N > 0`
 L0444
-@32:2
+@34:2
 has an inherent `==` that is not `@(public)`
 L0444
-@33:6
+@35:6
 has an inherent `==` that is not `@(public)`

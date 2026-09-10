@@ -1,4 +1,4 @@
-package main; import "core:fmt"; import "core:slice";
+package main; import "core:fmt"; import "core:mem"; import "core:slice";
 
 // `core:slice` end to end.
 //
@@ -60,6 +60,9 @@ main :: proc() {
 	fmt.println(slice.min(s), slice.max(s));
 	fmt.println(slice.min(empty), slice.max(empty));
 	fmt.println(slice.equal(s, s), slice.equal(s, r));
+	// Different lengths are unequal before any element is looked at, which is the
+	// only reason `equal` can index `right` with `left`'s indices at all.
+	fmt.println(slice.equal(s, one), slice.equal(one, s), slice.equal(empty, empty));
 
 	// Places.
 	scratch := []mut int{1, 2, 3, 4, 5};
@@ -69,6 +72,14 @@ main :: proc() {
 	fmt.println(scratch);
 	slice.fill(scratch, 7);
 	fmt.println(scratch);
+
+	// `reverse` loops on `low + 1 < high`, so the lengths it must not touch and
+	// the first one it must are all below five.
+	foreach (n in 0 ..< 4) {
+		short := []mut int{1, 2, 3}[0:n];
+		slice.reverse(short);
+		fmt.println(n, short);
+	}
 
 	// `swap` and `reverse` trade places rather than copying, so a move-only
 	// element goes through both -- the only two procedures here that one can.
@@ -92,4 +103,14 @@ main :: proc() {
 	fmt.println(owned, owned.len(), owned.cap() >= owned.len());
 	slice.reverse(owned[:]);
 	fmt.println(owned);
+
+	// The allocator is a parameter, not a fixed choice, and `try_clone` is the
+	// spelling that hands back the failure instead of panicking on it.
+	arena := mem.Arena.init();
+	scoped := slice.clone(s, arena.allocator());
+	fmt.println(scoped);
+	switch (result in slice.try_clone(s, arena.allocator())) {
+	case .ok: fmt.println("ok", result.len());
+	case .err: fmt.println("err", result);
+	}
 }

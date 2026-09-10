@@ -31,6 +31,10 @@ reverse_sort :: proc(values: []mut $T) where interfaces.Ordered(T) {
 	values.reverse_sort();
 }
 
+// Whether `sort` would leave the slice as it is. `Ordered` is IEEE-754 for
+// floats here too, so a NaN is neither `<` nor `>=` anything: `is_sorted` says
+// true of a slice a NaN sits in the middle of, and `sort` may still move it.
+// The two agree that no pair is out of order, which is all either claims.
 is_sorted :: proc(values: []$T) -> bool where interfaces.Ordered(T) {
 	foreach (i in 1 ..< values.len()) {
 		if (values[i] < values[i - 1]) { return false; }
@@ -170,5 +174,8 @@ try_clone :: proc(
 	return .ok(move(owned));
 }
 
+// design.md "Typed fallibility": `or_else` needs a value on its right, and this
+// failure has none to offer - the program stops instead. A diverging fallback
+// keeps the successful path a single expression.
 @(private)
 no_copy :: proc($T: type) -> [dynamic]T { panic("slice clone allocation failed"); }
