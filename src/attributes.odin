@@ -176,7 +176,7 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 			if _, is_provider := source_provider_slot(attribute); is_provider &&
 			   pkg.id != k.c.root_package {
 				errorf(
-					k.c, attribute.span, "L0661",
+					k.c, attribute.span, "L0613",
 					"`@(%s=...)` is only allowed on the root package clause",
 					attribute.path[0].text,
 				)

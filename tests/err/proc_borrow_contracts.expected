@@ -1,13 +1,13 @@
-L0666
+L0645
 @10:6
 inferred contract of `first`
-L0666
+L0645
 @13:37
 inferred contract of `first`
-L0666
+L0645
 @14:40
 inferred contract of `first`
-L0666
+L0645
 @15:27
 inferred contract of `first`
 L0310
@@ -28,10 +28,10 @@ L0512
 L0513
 @37:14
 this temporary has ended
-L0666
+L0645
 @44:44
 inferred contract of `ordered`
-L0666
+L0645
 @49:2
 inferred contract of `first`
 L0644
@@ -40,6 +40,6 @@ L0644
 L0513
 @60:14
 this temporary has ended
-L0666
+L0645
 @65:50
 inferred contract of `choose_region`

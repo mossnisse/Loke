@@ -60,7 +60,7 @@ check_proc_contracts :: proc(k: ^Checker) {
 		actual, have := result_summary(k.c, a.proc_contract)
 		bound, known := result_summary(k.c, b.proc_contract)
 		if !have || !known || !result_contract_within(actual, bound) {
-			errorf(k.c, check.span, "L0666", "procedure result provenance does not satisfy the inferred contract of `%s`",
+			errorf(k.c, check.span, "L0645", "procedure result provenance does not satisfy the inferred contract of `%s`",
 				identifier_text(k.c, symbol_of(k.c, b.proc_contract).name))
 			add_notef(k.c, symbol_of(k.c, b.proc_contract).span, "result contract inferred from this declaration")
 			add_precision_notes(k.c, check.span, actual.precision | bound.precision)
