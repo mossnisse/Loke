@@ -1,0 +1,35 @@
+// The shape checks at the `core:unsafe` boundary. Everything past them is the
+// caller's promise, so these are the only complaints the package makes about a
+// conversion or an unchecked release.
+
+package main;
+
+import "core:mem";
+import "core:unsafe";
+
+main :: proc() {
+	values := [?]int{1, 2, 3};
+
+	// A fixed array is reached one level at a time through its address, never as
+	// a value: the value has no storage the result could point into.
+	_ = unsafe.raw_data(values);
+
+	// Both view constructors take a `[^]u8` and nothing else -- a checked
+	// pointer still has an owner, which is what these exist to do without.
+	_ = unsafe.cstring_view(&values[0]);
+	_ = unsafe.string_view(&values[0], 1);
+
+	// A length is an integer, and there is always exactly one of them: no
+	// zero-terminated overload, because these bytes carry no terminator.
+	text := [?]u8{'h', 'e', 'j'};
+	bytes := unsafe.raw_data(text[:]);
+	_ = unsafe.string_view(bytes, text);
+	_ = unsafe.string_view(bytes);
+
+	// The release is sized, so it names the pointee type. A `rawptr` is cast
+	// back on first, and a `^T` reads the allocation without getting to end it.
+	held: rawptr = &mut values[0];
+	unsafe.free(held, mem.default_allocator());
+	reader: ^int = &values[0];
+	unsafe.free(reader);
+}

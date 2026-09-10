@@ -1,0 +1,49 @@
+// `unsafe.free` (design.md "The `unsafe` package"): the unchecked release, for
+// an allocation whose root the compiler cannot follow back to its `new`.
+//
+// The pointer here travels as a `rawptr` through a record field, which is the
+// case the design names -- and the release is sized, so the pointee type is
+// cast back on at the call to supply the size and alignment.
+
+package main;
+
+import "core:fmt";
+import "core:mem";
+import "core:unsafe";
+
+// An opaque handle: nothing about the field says what it addresses, so the
+// provenance analysis has nothing to follow and no allocation root to end.
+Handle :: struct {
+	block: rawptr,
+}
+
+main :: proc() {
+	allocator := mem.default_allocator();
+	held := Handle{nil};
+	switch (p in new(int, allocator)) {
+	case .ok:
+		p^ = 41;
+		held.block = p;
+	case .err:
+		fmt.println("allocation failed");
+		return;
+	}
+
+	// Reached only through the `rawptr`, and still the live allocation.
+	reader := (^int)(held.block);
+	fmt.println(reader^ + 1);
+
+	unsafe.free((^mut int)(held.block), allocator);
+	held.block = nil;
+
+	// The default allocator is the same provider whether written or omitted, so
+	// the one-argument form releases what the two-argument form would.
+	switch (q in new(int, allocator)) {
+	case .ok:
+		q^ = 7;
+		fmt.println(q^);
+		unsafe.free(q);
+	case .err:
+		fmt.println("allocation failed");
+	}
+}

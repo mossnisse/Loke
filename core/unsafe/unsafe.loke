@@ -1,8 +1,32 @@
 // The explicit trust boundary (design.md "What is not checked").
 //
-// `raw_data`, `string_view` and `cstring_view` over C pointers and
-// unchecked storage arrive with M6a step 4, alongside the text carriers they
-// convert between.
+// Six members, all compiler built-ins, each one a promise the compiler cannot
+// check: `raw_data`, `string_view` and `cstring_view` discard or manufacture
+// provenance, `transmute` reinterprets bits, `forget` suppresses cleanup, and
+// `free` releases storage nothing traced. This file is the whole package -- the
+// visible import is the review mechanism.
+//
+// # `forget(value)`
+//
+// Consumes an owning value and runs no cleanup hook, for it or for anything it
+// owns transitively: the resource is deliberately leaked, or relinquished to
+// whatever owns it now. It is not a lifetime extension -- a borrow of the
+// operand dies here exactly as it would at a `drop` -- so a place is written
+// `forget(move(place))` and a temporary is passed directly.
+//
+// # `free(pointer)` and `free(pointer, allocator)`
+//
+// Releases an allocation the compiler cannot follow back to the `new` that made
+// it: one reached through a `rawptr`, a parameter, or foreign code. It checks
+// nothing. That the pointer is that allocation's base, that the allocator is
+// the one that created it, that nothing still refers to it, and that this
+// happens once are all the caller's.
+//
+// The operand is still a checked `^mut T`, because the release is *sized*: a
+// pointer that travelled as a `rawptr` is cast back to the pointee type at the
+// call, and that cast is what supplies the size and alignment to release. A
+// handle over an opaque control block, `shared(T)` among them, has no other way
+// to release it.
 //
 // # `transmute(T, value)`
 //

@@ -1,0 +1,21 @@
+L0569
+@15:22
+`unsafe.raw_data` takes a slice, a pointer to a fixed array, or text, found `[3]int`
+L0569
+@19:26
+`unsafe.cstring_view` takes a `[^]u8`, found `^int`
+L0569
+@20:25
+`unsafe.string_view` takes a `[^]u8` and a length, found `^int`
+L0569
+@26:32
+a length must be an integer, found `[3]u8`
+L0569
+@27:6
+`unsafe.string_view` takes 2 arguments, found 1
+L0493
+@32:14
+`unsafe.free` takes an allocation pointer, found `rawptr`
+L0639
+@34:14
+`unsafe.free` needs a mutable allocation pointer, found `^int`

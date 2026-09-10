@@ -312,13 +312,14 @@ check_strings_allocate :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 //
 //	unsafe.raw_data([]$E)          -> [^]E   read-only slices; capability discarded
 //	unsafe.raw_data([]mut $E)      -> [^]E
+//	unsafe.raw_data([dynamic]$E)   -> [^]E
 //	unsafe.raw_data(^[$N]$E)       -> [^]E   fixed arrays
 //	unsafe.raw_data(string)        -> [^]byte
+//	unsafe.raw_data(string_view)   -> [^]byte
 //	unsafe.raw_data(cstring_view)  -> [^]byte
 //
 // and the two view constructors whose operands the compiler cannot trace to an
-// owner. The `[dynamic]E` and `Simd` overloads wait for the milestones that
-// introduce those operands.
+// owner.
 check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: Builtin_Kind) {
 	v.value_category = .Value
 	arity := kind == .Unsafe_String_View ? 2 : 1

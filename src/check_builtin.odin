@@ -557,7 +557,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			v.type = INVALID_TYPE
 			return
 		}
-		if !check_free_operand(k, v.args[0].value, pointer) {
+		if !check_free_operand(k, v.args[0].value, pointer, kind == .Unsafe_Free ? "unsafe.free" : "free") {
 			v.type = INVALID_TYPE
 			return
 		}
@@ -968,10 +968,15 @@ set_allocation_results :: proc(k: ^Checker, v: ^Expr_Call, pointer: Type_Id) {
 // `new` or `new_clone` (design.md). The syntax check is only that the operand
 // is a checked pointer; whether its value really is that allocation base, and
 // whether it has already been released, is root provenance (`src/borrow.odin`).
+//
+// `unsafe.free` shares the shape and reports under its own name, because it is
+// the one a `rawptr` reaches first (design.md "The `unsafe` package"). The
+// release is sized, so the pointee type is cast back on before the call rather
+// than checked away here.
 @(private = "file")
-check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id) -> bool {
+check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id, form: string) -> bool {
 	if underlying_kind(k.c, pointer) != .Pointer {
-		errorf(k.c, expr_span(e), "L0493", "`free` takes an allocation pointer, found `%s`", type_name(k.c, pointer))
+		errorf(k.c, expr_span(e), "L0493", "`%s` takes an allocation pointer, found `%s`", form, type_name(k.c, pointer))
 		return false
 	}
 	// Releasing storage is the strongest write there is, so it needs the write
@@ -980,7 +985,7 @@ check_free_operand :: proc(k: ^Checker, e: Expr, pointer: Type_Id) -> bool {
 	if !pointer_is_mutable(k.c, pointer) {
 		errorf(
 			k.c, expr_span(e), "L0639",
-			"`free` needs a mutable allocation pointer, found `%s`", type_name(k.c, pointer),
+			"`%s` needs a mutable allocation pointer, found `%s`", form, type_name(k.c, pointer),
 		)
 		return false
 	}
