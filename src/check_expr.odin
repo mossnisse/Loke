@@ -2272,6 +2272,9 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		if check_enum_values(k, v, sel) {
 			return
 		}
+		if check_enum_from_int(k, v, sel) {
+			return
+		}
 	}
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && callee_is_descriptor(k, sel.operand) {
 		check_single_expr(k, sel.operand)
@@ -3005,6 +3008,12 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
+	if type_is_enum(k.c, target) && (type_is_numeric(k.c, source) || type_is_enum(k.c, source)) &&
+	   type_underlying(k.c, source) != type_underlying(k.c, target) {
+		errorf(k.c, v.span, "L0410", "an enum is closed; use `%s.from_int(value)` to validate a backing integer", type_name(k.c, target))
+		v.type = INVALID_TYPE
+		return
+	}
 	if builtin_conversion(k, v, target, source) {
 		return
 	}
@@ -3380,6 +3389,10 @@ reject_keyed_element :: proc(k: ^Checker, element: Element, target: Type_Id) {
 @(private = "file")
 check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	count := int(info.count)
+	if len(v.elements) < count && !require_type_has_zero(k, info.element, v.span, "omitted array elements") {
+		v.type = INVALID_TYPE
+		return
+	}
 	values := make([]Expr, count, k.c.semantic_allocator)
 	ok := true
 	for element, index in v.elements {
@@ -3523,7 +3536,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 	case .Float:
 		return float_const(0, info.bits), true
 	case .Enum:
-		return int_const(c, 0), true
+		return int_const(c, 0), type_has_zero(c, type)
 	case .Typeid:
 		// design.md "`type` and `typeid`": `Invalid` is the zero value, and a nil id
 		// resolves to it. Its numeric form is 0, so an uninitialised `typeid` local
@@ -3539,12 +3552,14 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		return Const_Value{kind = .String}, true
 	case .Array, .Simd:
 		elements := make([]Const_Value, info.count, c.semantic_allocator)
-		element, ok := zero_const(c, info.element)
-		if !ok {
-			return Const_Value{}, false
-		}
-		for index in 0 ..< int(info.count) {
-			elements[index] = element
+		if info.count > 0 {
+			element, ok := zero_const(c, info.element)
+			if !ok {
+				return Const_Value{}, false
+			}
+			for index in 0 ..< int(info.count) {
+				elements[index] = element
+			}
 		}
 		aggregate := new(Const_Aggregate, c.semantic_allocator)
 		aggregate.type = type
@@ -3586,6 +3601,10 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 	base := expr_base(e)
 	if base == nil || target == INVALID_TYPE || base.type == INVALID_TYPE {
+		return false
+	}
+	if type_is_enum(k.c, target) && type_is_untyped(k.c, base.type) {
+		errorf(k.c, base.span, "L0310", "an enum requires a variant; use `%s.from_int(value)` to validate a backing integer", type_name(k.c, target))
 		return false
 	}
 	// design.md "Unions": a payload never becomes a union implicitly. Two variants
@@ -3737,7 +3756,11 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Boolean {
 			return value, true
 		}
-	case .Int, .Enum:
+	case .Enum:
+		// Retyping a constant must never manufacture a non-variant. Source-type
+		// checks at conversion and generic-binding sites enforce enum identity.
+		return value, value.kind == .Integer && enum_member_by_value(c, target, value) != INVALID_SYMBOL
+	case .Int:
 		bits, signed := type_bits(c, target), type_signed(c, target)
 		#partial switch value.kind {
 		case .Integer, .Rune:
@@ -3918,7 +3941,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if type_is_untyped(c, from) {
 		#partial switch underlying_kind(c, to) {
-		case .Int, .Float, .Rune, .Bool, .Enum:
+		case .Int, .Float, .Rune, .Bool:
 			return true
 		}
 		return false
@@ -3952,6 +3975,9 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true // between a distinct type and what it wraps, either way
 	}
 	source_kind, dest_kind := type_kind(c, source), type_kind(c, dest)
+	if dest_kind == .Enum {
+		return false // only an existing value of the same enum may convert
+	}
 
 	// design.md "SIMD vectors": "An explicit `Simd(U, N)(v)` converts each lane
 	// of `v` from `T` to `U` under the same rule the scalar conversion `U(lane)`

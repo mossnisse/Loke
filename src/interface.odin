@@ -270,6 +270,7 @@ interface_arguments_for :: proc(
 				}
 				if symbol := symbol_of(k.c, lookup_symbol(k.scope, name)); symbol != nil && symbol.kind == .Const {
 					converted, fits := convert_const(k.c, symbol.const_value, wanted, false)
+					fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, symbol.type, wanted)
 					if !fits {
 						return nil, false
 					}
@@ -300,6 +301,7 @@ interface_arguments_for :: proc(
 					return nil, false
 				}
 				converted, fits := convert_const(k.c, folded, wanted, false)
+				fits &&= !type_is_enum(k.c, wanted) || assignable(k.c, expr_base(arg.value).type, wanted)
 				if !fits {
 					if report {
 						errorf(

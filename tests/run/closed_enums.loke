@@ -1,0 +1,94 @@
+package main;
+import "core:fmt";
+
+Sparse :: enum i8 { Negative = -7, Zero = 0, High = 100 }
+No_Zero :: enum u8 { One = 1, Last = 255 }
+Wide :: enum u128 { Small = 1, Huge = 18446744073709551617 }
+Empty :: enum {}
+Wire :: distinct u8;
+Empty_Array: [0]No_Zero;
+chosen :: proc($value: No_Zero) -> No_Zero { return value; }
+Holder :: struct($value: No_Zero) { field: int }
+Gate :: interface($T: type, $value: No_Zero) {}
+
+classify :: proc(value: Sparse) -> int {
+	switch (value) {
+	case .Negative: return -1;
+	case .Zero: return 0;
+	case .High: return 1;
+	}
+}
+
+validate :: proc(n: i8) -> int {
+	value := Sparse.from_int(n) or_else Sparse.Zero;
+	return classify(value);
+}
+
+forward :: proc($E: type, n: u8) -> Option(E) { return E.from_int(n); }
+absent :: proc(n: u8) -> bool { return forward(No_Zero, n) == .none; }
+absurd :: proc(value: Empty) -> int { switch (value) {} }
+Payloadless :: union { first:, second: }
+same_variant :: proc(value: Payloadless) -> bool { return value == .first; }
+
+initialized :: proc(n: u8) -> No_Zero {
+	result: No_Zero;
+	choice := No_Zero.from_int(n) or_else No_Zero.One;
+	switch (choice) {
+	case .One: result = .One;
+	case .Last: result = .Last;
+	}
+	return result;
+}
+
+static_assert(validate(-7) == -1);
+static_assert(validate(99) == 0);
+static_assert((No_Zero.from_int(255) or_else No_Zero.One) == .Last);
+static_assert((Wide.from_int(18446744073709551617) or_else Wide.Small) == .Huge);
+static_assert(Empty.from_int(0) == .none);
+static_assert(absent(0));
+static_assert(!absent(1));
+static_assert(Payloadless.first == Payloadless.first);
+static_assert(Payloadless.first != Payloadless.second);
+static_assert(same_variant(.first));
+static_assert(!same_variant(.second));
+static_assert(initialized(255) == .Last);
+static_assert(chosen(No_Zero.Last) == .Last);
+static_assert(Gate(int, No_Zero.Last));
+
+count: int;
+next :: proc() -> i8 { count += 1; return 100; }
+
+main :: proc() {
+	foreach (value in Sparse.values()) {
+		fmt.println(classify(value));
+	}
+	foreach (n in [5]i8{-8, -7, 0, 99, 100}) {
+		fmt.println(validate(n));
+	}
+	zero: Sparse = {};
+	assert(zero == .Zero);
+	assert(initialized(255) == .Last);
+	assert(chosen(No_Zero.Last) == .Last);
+	holder: Holder(No_Zero.Last) = {};
+	assert(holder.field == 0 && Empty_Array.len() == 0);
+	explicit: [2]No_Zero = {.One, .Last};
+	empty: [0]No_Zero = {};
+	assert(explicit[1] == .Last && empty.len() == 0);
+	assert((Sparse.from_int(next()) or_else Sparse.Zero) == .High);
+	assert(count == 1);
+	foreach (n in [4]u8{0, 1, 254, 255}) {
+		switch (value in forward(No_Zero, n)) {
+		case .some: fmt.println(u8(value));
+		case .none: fmt.println("unknown");
+		}
+	}
+	wide: u128 = 18446744073709551617;
+	assert((Wide.from_int(wide) or_else Wide.Small) == .Huge);
+	wide -= 1;
+	assert(Wide.from_int(wide) == .none);
+	wire := Wire(255);
+	assert((No_Zero.from_int(u8(wire)) or_else No_Zero.One) == .Last);
+	empty_input := 42;
+	assert(Empty.from_int(empty_input) == .none);
+	fmt.println("closed");
+}

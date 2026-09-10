@@ -55,14 +55,10 @@ Each entry carries its own repro instead, small enough to paste.
 Recorded because they look like gaps and are not, and each cost an
 investigation once.
 
-- **An exhaustive enum `switch` where every arm returns still needs a return
-  after it** (`error[L0365]`). Correct: `design.md` "Exhaustive switch" makes
-  exhaustiveness a check over declared members, not values, and conversion into
-  an enum is unchecked — so a subject holding a non-member value matches no case
-  and falls out of the bottom. A *variant* switch covering every variant is the
-  case where no path reaches the end, and the compiler already accepts that one
-  with no trailing return. The diagnostic now says this at the switch rather
-  than at the signature, so it no longer reads as a missing feature.
+- **Enums are closed.** An enum switch covering every variant needs no trailing
+  return when every arm terminates, just like a union variant switch. Integer
+  input is validated with `Enum.from_int`, and an enum without a variant
+  represented by zero has no zero value (`design.md` "Enumerations").
 - **Overlapping range cases are accepted.** Correct: cases are tried top to
   bottom and the first match wins (`design.md` "switch statement"). Only
   duplicate constant values are diagnosed.

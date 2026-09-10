@@ -466,7 +466,7 @@ key_for :: proc(virtual_key: u16) -> Key {
 	if (code == 45) { return .Insert; }
 	if (code == 46) { return .Delete; }
 	if (code >= 112 && code <= 123) {
-		return Key(int(Key.F1) + (code - 112));
+		return Key.from_int(int(Key.F1) + (code - 112)) or_else Key.Unknown;
 	}
 	return .Unknown;
 }

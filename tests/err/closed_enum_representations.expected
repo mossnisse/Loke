@@ -1,0 +1,4 @@
+L0380
+L0352
+enum variants must have distinct integer representations
+enum member representation does not fit `u8`

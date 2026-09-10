@@ -1047,6 +1047,9 @@ bind_compile_time_argument :: proc(
 	value := arg.const_value
 	value_type := arg.type
 	if wanted != INVALID_TYPE {
+		if type_is_enum(k.c, wanted) && !assignable(k.c, value_type, wanted) {
+			return "an enum generic argument must be a variant of the parameter's enum type", false
+		}
 		converted, fits := convert_const(k.c, value, wanted, false)
 		if !fits {
 			return fmt.aprintf(
@@ -1475,6 +1478,9 @@ bind_record_argument :: proc(
 	folded, evaluated := require_const(k, arg.value, "a generic argument", "L0432")
 	if !evaluated {
 		return "", false
+	}
+	if type_is_enum(k.c, wanted) && !assignable(k.c, expr_base(arg.value).type, wanted) {
+		return "an enum generic argument must be a variant of the parameter's enum type", false
 	}
 	converted, fits := convert_const(k.c, folded, wanted, false)
 	if !fits {

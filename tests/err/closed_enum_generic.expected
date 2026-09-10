@@ -1,0 +1,10 @@
+L0392
+L0392
+L0306
+L0432
+L0306
+L0432
+L0443
+L0443
+an enum generic argument must be a variant of the parameter's enum type
+not representable by the interface parameter's type `E`

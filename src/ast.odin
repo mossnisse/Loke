@@ -251,6 +251,9 @@ Expr_Call :: struct {
 	reflect_field: Symbol_Id,
 	// `text.byte_len()`, `text.bytes()`, and the rest of the text surface.
 	text:            Text_Op,
+	// `Enum.from_int(value)` validates a backing integer before constructing a
+	// closed enum. The result is Option(enum_from_int).
+	enum_from_int:   Type_Id,
 	// `.name(payload)` variant construction, or `value.as(T)`.
 	union_op:        Union_Op,
 	// The variant `union_op == .Construct` writes.
@@ -935,10 +938,8 @@ Stmt_Switch :: struct {
 	binding_symbol: Symbol_Id,
 	subject:    Expr,
 	cases:      []Switch_Case,
-	// A variant switch covering every variant, or any switch with a default:
-	// no path reaches past the cases without entering one. An open enum keeps
-	// this false even with every member covered, since a value outside the
-	// declared set still falls through.
+	// An enum or variant switch covering every variant, or any switch with a
+	// default: no path reaches past the cases without entering one.
 	exhaustive: bool,
 }
 

@@ -619,6 +619,10 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 		}
 	}
 	fallback := default_index >= 0 ? bodies[default_index] : done
+	closed_fallback := default_index < 0 && s.exhaustive
+	if closed_fallback {
+		fallback = new_label(e, "switch.invalid")
+	}
 
 	branch(e, len(order) > 0 ? tests[order[0]] : fallback)
 	for case_index, position in order {
@@ -636,6 +640,12 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 			}
 		}
 		branch_if(e, matched, bodies[case_index], next)
+	}
+
+	if closed_fallback {
+		place_label(e, fallback)
+		fmt.sbprintfln(&e.b, "  unreachable")
+		e.terminated = true
 	}
 
 	for entry, index in s.cases {

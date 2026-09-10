@@ -3,9 +3,9 @@
 // design.md "Zero values": Loke relies on every semantic zero having an
 // all-zero runtime representation — container growth, zero-initialized
 // allocation, map insertion, globals, and generated cleanup all depend on it.
-// A named union earns a zero only through `@(zero=first_variant)`, so a type
-// may legitimately have *no* zero, and every zero-manufacturing operation
-// must say so instead of quietly producing tag 0.
+// A named union earns a zero only through `@(zero=first_variant)`; an enum
+// needs a variant represented by 0. Every zero-manufacturing operation must
+// check this instead of quietly producing an invalid representation.
 //
 // design.md "@(require_results)": `@(require_results)` on a type declaration
 // makes a bare call statement an error whenever a result carries that type,
@@ -45,6 +45,8 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 		return true
 	}
 	#partial switch info.kind {
+	case .Enum:
+		return enum_member_by_value(c, under, int_const(c, 0)) != INVALID_SYMBOL
 	case .Union:
 		// Tag 0 plus a zero payload is the all-zero representation, so only the
 		// first variant can be the zero, and only if its own payload has one.
@@ -81,7 +83,7 @@ require_type_has_zero :: proc(k: ^Checker, type: Type_Id, span: Span, what: stri
 		"`%s` has no zero value, so it cannot be produced by %s",
 		type_name(k.c, type), what,
 	)
-	add_notef(k.c, span, "give the union a zero with `@(zero=first_variant)`, or construct the value explicitly")
+	add_notef(k.c, span, "construct the value explicitly, or provide a zero variant (an enum member represented by 0, or a union's `@(zero=first_variant)`)")
 	return false
 }
 

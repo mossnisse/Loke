@@ -1,0 +1,17 @@
+package main;
+E :: enum u8 { A = 1, B = 3 }
+F :: enum u8 { A = 1 }
+runtime_cast :: proc(n: u8) -> E { return E(n); }
+constant_cast :: proc() -> E { return E(1); }
+other_enum :: proc() -> E { return E(F.A); }
+literal :: proc() -> E { return 1; }
+wrong_type :: proc(n: int) { _ = E.from_int(n); }
+out_of_range :: proc() { _ = E.from_int(256); }
+main :: proc() {
+	_ = runtime_cast(1);
+	_ = constant_cast();
+	_ = other_enum();
+	_ = literal();
+	wrong_type(1);
+	out_of_range();
+}

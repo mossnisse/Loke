@@ -967,8 +967,12 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 		// counts must match, and design.md "Unions" makes two union values equal
 		// only when they hold the same *variant* (two variants may share a payload type).
 		equal := len(a.elements) == len(b.elements)
-		if a.variant != b.variant && type_is_union(ev.k.c, a.type) {
-			equal = false
+		if type_is_union(ev.k.c, a.type) {
+			if a.variant != b.variant {
+				equal = false
+			} else if union_variant_payload(ev.k.c, a.type, a.variant) == TYPE_VOID {
+				return op == .Eq_Eq, true
+			}
 		}
 		for element, index in a.elements {
 			if !equal {
@@ -1883,6 +1887,18 @@ eval_union_payload :: proc(value: Eval_Value, binding_type: Type_Id) -> Eval_Val
 
 @(private = "file")
 eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
+	if v.enum_from_int != INVALID_TYPE {
+		value, ok := eval_expr(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		candidate := Const_Value{kind = .Integer, integer = value.integer}
+		if enum_member_by_value(ev.k.c, v.enum_from_int, candidate) == INVALID_SYMBOL {
+			return eval_named_union(ev, v.type, "none", Eval_Value{})
+		}
+		value.type = v.enum_from_int
+		return eval_named_union(ev, v.type, "some", value)
+	}
 	if v.resolution.kind == .Conversion {
 		return eval_conversion(ev, v)
 	}

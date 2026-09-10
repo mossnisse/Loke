@@ -1098,9 +1098,9 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 // Enum values use the two raw words without narrowing signed or unsigned
 // 128-bit values (design.md).
 //
-// ponytail: the low word carries the value, the high word its sign extension.
-// Every enum backing this compiler accepts fits in 64 bits today; a 128-bit
-// backing needs the real split here and nowhere else.
+// The low word carries bits 0..63 and the high word bits 64..127, including a
+// signed representation's sign extension. Narrower enum backings therefore
+// have an all-zero or all-one high word as their representation requires.
 @(private = "file")
 enum_raw_words :: proc(c: ^Compiler, value: Const_Value) -> (low: string, high: string) {
 	if value.kind != .Integer {

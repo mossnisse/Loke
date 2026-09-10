@@ -69,11 +69,6 @@ Flow_Info :: struct {
 	returns:          bool,
 	breaks:           bool,
 	continues:        bool,
-	// Set when this statement falls through *only* because an enum can hold a
-	// non-member value: a member-complete switch with no default whose cases
-	// all terminate. It carries the span the missing-return diagnostic blames,
-	// since the signature is not where the answer is.
-	open_enum_exit:   ^Stmt_Switch,
 }
 
 FLOWS :: Flow_Info{can_fall_through = true}
@@ -968,6 +963,17 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 					errorf(k.c, field.name.span, "L0304", "`%s` is already a member of this enum", field.name.text)
 					break
 				}
+			}
+		}
+		if !bi_fits(k.c, discriminant, type_bits(k.c, backing), type_signed(k.c, backing)) {
+			errorf(k.c, field.name.span, "L0352", "enum member representation does not fit `%s`", type_name(k.c, backing))
+		}
+		for existing in members {
+			symbol := symbol_of(k.c, existing)
+			equal, ok := const_equal(k.c, symbol.const_value, Const_Value{kind = .Integer, integer = discriminant})
+			if ok && equal {
+				errorf(k.c, field.name.span, "L0380", "enum variants must have distinct integer representations")
+				break
 			}
 		}
 		field.symbol = new_binding_symbol(k, field.name, .Enum_Member)
@@ -2305,15 +2311,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
 	literal.defer_count = k.defer_slots
 	if symbol.result != INVALID_TYPE && flow.can_fall_through {
-		if s := flow.open_enum_exit; s != nil {
-			errorf(
-				k.c, s.span, "L0365",
-				"this switch covers every member of `%s`, but an enum can hold a non-member value, so control can fall past it; add `case:` to return or panic there",
-				type_name(k.c, expr_base(s.subject).type),
-			)
-		} else {
-			errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")
-		}
+		errorf(k.c, literal.span, "L0365", "this procedure can end without returning a value")
 	}
 }
 
@@ -2345,8 +2343,6 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 		// Statements after a terminator are still checked, but they cannot
 		// restore fallthrough.
 		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
-		// Only the last statement can be the one control falls out of.
-		flow.open_enum_exit = result.open_enum_exit
 	}
 	return flow
 }
@@ -2975,14 +2971,12 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if !has_default {
 		member_complete = check_exhaustive(k, s, subject, covered)
 	}
-	// Only a default closes a value switch: an open enum admits a value outside
-	// its declared members, so covering every one of them still falls through.
-	s.exhaustive = has_default
+	// Closed enums have exactly their declared variants, as tagged unions do.
+	s.exhaustive = has_default || member_complete
 	return Flow_Info {
-		can_fall_through = !has_default || any_case_falls || len(s.cases) == 0,
+		can_fall_through = !s.exhaustive || any_case_falls,
 		returns          = flow.returns,
 		continues        = flow.continues,
-		open_enum_exit   = member_complete && !any_case_falls ? s : nil,
 	}
 }
 

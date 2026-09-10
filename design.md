@@ -171,6 +171,7 @@ The zero value is:
 
 - `0` for numeric and rune types
 - `false` for `bool`
+- the declared variant represented by `0`, for an enum that has one
 - `""` for `string`
 - an empty, immediately usable value for `[dynamic]T` and `map[K]V`: `len` and `cap` are 0, and appending or inserting needs no prior construction. Without a `via` declaration it is allocator-unbound until its first allocating operation
 - `nil` for pointer, C pointer, `rawptr`, procedure, `typeid`, slice, `string_view`, `cstring_view`, `any_view`, every `dyn Interface`, `shared(T)`, and `weak(T)` type. A nil slice or view has length 0
@@ -182,7 +183,7 @@ Compile-time-only `type` and reflection descriptors have no zero value.
 
 ##### Types with no zero value
 
-A union has no zero value unless it writes `@(zero=name)`, and the property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
+A union has no zero value unless it writes `@(zero=name)`. An enum has no zero value unless one of its variants is represented by `0`. The property propagates: a struct, a non-empty fixed array, or a distinct type that reaches a no-zero type has none either. An empty fixed array holds no element and keeps its own zero.
 
 Every operation that manufactures a zero is rejected for a no-zero type:
 
@@ -1417,7 +1418,7 @@ A union's storage is its payload region, then the tag, then whatever padding the
 
 ### Enumerations
 
-An enumeration defines a distinct type and a fixed set of named values. Values have declaration order:
+An enumeration is a closed sum type whose variants carry no payload, in the same conceptual family as a payloadless tagged union. `enum` retains convenient syntax and control over its integer representation; it does not make an enum and a separately declared union the same type. Every value names exactly one declared variant. Variants have declaration order:
 
 ```odin
 Direction :: enum{North, East, South, West};
@@ -1451,19 +1452,22 @@ Foo :: enum u8 {A, B, C}; // Foo is 8 bits
 
 Enum members are named constants, not numbers with a name: they may have holes, and arithmetic on them is not defined. See [Arithmetic operators](#arithmetic-operators). Convert to the backing integer type when a numeric value is wanted, and use the library `Bit_Set(Enum)` for flag sets.
 
-#### Non-member values
+#### Integer conversion
 
-**Conversion between an enum and its backing integer type is unchecked in both directions.** `Foo(n)` reinterprets `n` as a `Foo` and `int(f)` reads the representation back; neither tests membership, and this holds for a constant operand as much as a runtime one. An enum type therefore ranges over every value its backing type can hold, and a value that names no declared member is an ordinary, representable value of that type — not undefined behavior.
+`Enum.from_int(value) -> Option(Enum)` validates membership. It takes one plain argument of the enum's backing integer type; an untyped integer constant must fit that type. A declared representation produces `.some(variant)` and every other backing value produces `.none`. The argument is evaluated once, and validation works identically at compile time and runtime. It neither traps nor silently narrows its input.
 
 ```odin
-Foo :: enum { A, B, C }
+Foo :: enum { A, B = 4, C = 7 }
 
-n := 200;
-f := Foo(n);          // no check: `f` is a `Foo` naming no member
-assert(int(f) == 200);
+n := 4;
+f := Foo.from_int(n) or_else Foo.A;
+assert(int(f) == 4);
+assert(Foo.from_int(200) == .none);
 ```
 
-This is deliberate: enum values arrive from foreign calls, files, and wire  formats, and a conversion that trapped would make every such boundary fallible. Code converting an untrusted integer should validate it — by comparing against the members, or by switching with an explicit `case:` — before treating it as a member. See [exhaustive switch](#exhaustive-switch).
+Direct numeric-to-enum conversions such as `Foo(n)` and numeric literals assigned to enums are errors, even when the number names a variant. Use `.A`, `Foo.A`, or the validating constructor. Conversion from an enum to its backing integer remains an ordinary explicit conversion. Variant representations must be distinct and fit the backing type, including automatically incremented values. An enum with no variants is uninhabited.
+
+Foreign APIs and wire formats retain unknown numbers as integers or `distinct` integer wrappers until validation. A foreign binding that uses an enum directly promises that incoming values name declared variants; the ABI does not perform validation. Unsafe code likewise must preserve membership when constructing an enum representation. See [exhaustive switch](#exhaustive-switch).
 
 Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_Snake_Case`, and the core library follows suit.
 
@@ -3648,20 +3652,19 @@ case: // intentionally ignore `.number`
 }
 ```
 
-A switch over an enum must either list every member or include `case:`. A variant switch must either cover every variant or include `case:`; one that covers every variant needs no default, and no path reaches the end of it. The default may be empty; writing it is the explicit acknowledgement that the remaining cases are intentionally ignored.
-
-**Exhaustiveness checks declared members, not every backing value.** Because [conversion into an enum is unchecked](#non-member-values), an enum may hold an unnamed value. Without `case:`, such a value matches nothing and execution continues after the switch:
+A switch over an enum must either list every variant or include `case:`, exactly as a union variant switch must. Covering every variant guarantees that a case runs. If every case terminates with a return, panic, or other non-fallthrough control flow, the switch cannot fall through and needs no trailing return. A case that completes normally or executes `break` still continues after the switch. The default may be empty; writing it explicitly acknowledges that the remaining cases are intentionally ignored.
 
 ```odin
-switch (Foo(200)) {
-case .A: fmt.println("A");
-case .B: fmt.println("B");
-case .C: fmt.println("C");
+classify :: proc(value: Foo) -> int {
+	switch (value) {
+	case .A: return 1;
+	case .B: return 2;
+	case .C: return 3;
+	}
 }
-// nothing runs, and control continues here
 ```
 
-A switch over a value from outside the program should write `case:` and handle the unexpected value there. A variant switch does not have this problem: a union's tag is written only by the language, so covering every variant covers every value.
+Unknown external integers are handled by [`Enum.from_int`](#integer-conversion) before switching over the validated enum. They are not extra enum variants requiring a default arm.
 
 ### defer statement
 
@@ -5222,7 +5225,7 @@ A procedure using a foreign calling convention, a variable declared in a foreign
 - fixed-width integers, `int`, `uint`, `uintptr`, `bool`, `rune`, `f32`, and `f64`; their size and alignment follow their Loke definitions and their argument classification follows the target C ABI for a scalar of that representation. `bool` uses C `_Bool`, and `int` and `uint` use the ABI class matching their target-selected width. `f16`, 128-bit integers, and other target extensions are safe only when that target ABI defines their C-compatible classification;
 - `rawptr`, `^T`, and `[^]T`, lowered as C pointers; the pointed-to type need not be foreign-ABI-safe because the foreign function receives only an address;
 - procedure pointers whose declared calling convention and complete signature match the foreign declaration;
-- enums with an explicit foreign-ABI-safe integer backing type;
+- enums with an explicit foreign-ABI-safe integer backing type, provided the binding guarantees that incoming values name declared variants. Use the backing integer and `Enum.from_int` when unknown values are possible;
 - plain structs with a trivial lifecycle whose fields are recursively foreign-ABI-safe. Their field order, padding, alignment, and by-value argument classification follow the target C ABI for the equivalent C record. A fixed array is permitted as a record field and has the equivalent C array layout;
 - `cstring_view`, lowered to `char const *`. It may be used as a parameter or result and never claims ownership.
 

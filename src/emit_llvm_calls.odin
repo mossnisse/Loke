@@ -9,6 +9,24 @@ import "core:fmt"
 
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
+	if v.enum_from_int != INVALID_TYPE {
+		value := emit_expr(e, v.bound[0])
+		present := "false"
+		for member in underlying_info(e.c, v.enum_from_int).fields {
+			sym := symbol_of(e.c, member)
+			matches := temp(e)
+			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", matches,
+				llvm_type(e, v.enum_from_int), value, bi_text(e.c, sym.const_value.integer))
+			if present == "false" {
+				present = matches
+			} else {
+				joined := temp(e)
+				fmt.sbprintfln(&e.b, "  %s = or i1 %s, %s", joined, present, matches)
+				present = joined
+			}
+		}
+		return emit_option_value(e, as_type, present, value)
+	}
 	if v.union_op == .Extract && v.extract != nil {
 		return emit_any_view_extract(e, v.extract, v.extract.type)[0]
 	}

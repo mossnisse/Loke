@@ -1316,6 +1316,10 @@ report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call, consumed: int)
 
 @(private = "file")
 walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
+	if v.enum_from_int != INVALID_TYPE {
+		walk_flow_expr(graph, v.bound[0])
+		return nil // integer input and enum payload carry no borrows
+	}
 	// `value.as(T)` is an extraction wearing call syntax. Walking the node it
 	// resolved to is what preserves the source root, exactly as `value.(T)` does.
 	if v.union_op == .Extract && v.extract != nil {

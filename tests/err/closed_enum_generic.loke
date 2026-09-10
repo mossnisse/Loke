@@ -1,0 +1,13 @@
+package main;
+E :: enum { A = 1 }
+choose :: proc($value: E) -> E { return value; }
+Holder :: struct($value: E) { field: int }
+Gate :: interface($T: type, $value: E) {}
+main :: proc() {
+	_ = choose(99);
+	_ = choose(1);
+	_ = Holder(99){};
+	_ = Holder(1){};
+	static_assert(Gate(int, 99));
+	static_assert(Gate(int, 1));
+}

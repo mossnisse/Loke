@@ -1,0 +1,13 @@
+package main;
+E :: enum { A = 1, B = 2 }
+Wrapper :: struct { value: E }
+D :: distinct E;
+global: E;
+main :: proc() {
+	x: E = {};
+	y: Wrapper = {};
+	z: [2]E = {};
+	d: D = {};
+	_ = x; _ = y; _ = z; _ = d;
+	_ = make([dynamic]E, 2);
+}

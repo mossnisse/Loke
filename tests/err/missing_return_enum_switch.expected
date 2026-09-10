@@ -1,3 +1,2 @@
 L0365
-@8:2
-this switch covers every member of `Foo`, but an enum can hold a non-member value, so control can fall past it; add `case:` to return or panic there
+this procedure can end without returning a value

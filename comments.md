@@ -71,35 +71,6 @@ rule, and a normative slot-flattening order for a consumer that did not exist.
 Whichever way the question above is answered, the primitive comes back with the
 owner that needs it.
 
-## Borrow checking across procedure boundaries
-
-A direct call is no longer coarse. Aggregate provenance gave every named
-declaration and generic instantiation a result-provenance summary that records
-*which* borrowed parameters a result may name, and which
-[carrier paths](design.md#values-that-contain-borrows) inside them, so a helper
-returning one field of a record argument substitutes that field's root rather
-than everything the argument holds. Two borrowed parameters where the result
-derives from one leaves the other free to be a temporary.
-
-The original question — whether the imprecision forces copies in code that does
-not need them — asked to be settled by writing a real library against it. That
-library exists: `core:strings`, `fmt`, `io`, `fs`, `path`, `cstrings`,
-`encoding/utf16`, `strconv`, and `term` are all written against these rules. The
-conservatism that remains was measured and recorded during that work rather than
-removed, and is tracked with the provenance contracts in
-[`language-refinement-strategy.md`](language-refinement-strategy.md).
-
-What remains is narrower. **A call through a procedure value is still coarse**:
-the result is derived from every borrowed argument the type does not exclude
-with [`@(escape=none)`](design.md#escapelevel), because a procedure value
-carries no summary — the metadata lives on the declaration, and an indirect call
-does not know which declaration it reaches. The open question is whether
-`@(escape=none)` on the parameter is a sufficient answer, or whether a procedure
-*type* should be able to carry a result contract of its own. The second option
-puts provenance into type identity and therefore into procedure-value
-compatibility, which is a considerably larger change than the imprecision it
-would remove; no program has yet needed it.
-
 ## Marking a dead variable live
 
 Should `core:unsafe` gain an operation that tells the checker a dead variable is
@@ -275,10 +246,24 @@ authoritative language definition.
 
 Loke adds a deliberately small, procedure-local borrow checker. It catches
 invalidating a container while a view is live and prevents obvious local
-escapes without adding lifetime syntax. A returned borrow is conservatively
-attributed to every borrowed argument from which it could have come. That can
-require an unnecessary copy in ambiguous cases, but keeps procedure signatures
-free of lifetime parameters.
+escapes without adding lifetime syntax. Named procedures and generic
+instantiations infer result contracts that record borrowed parameters and
+[carrier paths](design.md#values-that-contain-borrows), roots, and allocator-region
+dependencies. Returning one field of a record argument uses that field's root
+rather than everything the argument holds.
+
+[Inferred callback types](design.md#procedure-result-contracts) preserve those
+contracts: both `callback := choose` and `Chooser :: type_of(choose)` retain the
+same provenance as a direct call. Copies and generic forwarding preserve it too.
+The contract participates in type identity and compatibility, so changing a
+published procedure's result dependencies can break clients.
+
+Converting to a plain written `proc(...) -> T` signature erases that refinement;
+converting back cannot recover it. Calls through that plain type conservatively
+derive borrowed results from every borrowed argument not excluded by
+[`@(escape=none)`](design.md#escapelevel). Owning results retain the region
+dependencies of every moved owner and allocator argument. Plain signatures keep
+this conservative precision tradeoff.
 
 Raw pointers, stored borrows, foreign calls, and cross-thread lifetimes remain
 explicit trust boundaries. This keeps low-level optimization and interop
@@ -287,34 +272,38 @@ possible without making unsafe behavior the default.
 ### Managed lexical storage
 
 Strings, dynamic arrays, maps, and user resource types are owning values with
-automatic scope cleanup. `manual` suppresses only that automatic cleanup, while
-`static` and `thread_local` control duration; none creates a second type.
+automatic scope cleanup. [`unsafe.forget`](design.md#unsafeforget) consumes an
+individual value without cleanup; a lexical place is passed as
+`unsafe.forget(move(value))`. `static` and `thread_local` control storage duration
+without creating a second type.
 
 File-scope and `static` managed values are not automatically dropped. A global
 destruction order across packages would make shutdown depend on initialization
 order and on whether other threads can still reach a value. Externally
-observable process cleanup therefore uses an explicit owner, `defer`, or
-`drop` in `main`. A managed `thread_local` does have a natural local endpoint
-and is dropped on normal thread return, in reverse initialization order;
+observable process cleanup therefore uses a lexical owner, `defer`, or
+`drop` in `main`. To extract a static-duration value for cleanup, use
+[`exchange`](design.md#exchange) to leave a live replacement; direct `move` and
+`drop` on that storage are forbidden. A managed `thread_local` has a natural
+local endpoint and is dropped on normal thread return, in reverse initialization order;
 aborting termination makes no such guarantee.
 
 ### Storage modifiers instead of storage attributes
 
 Odin spells static-duration locals `@(static)` and thread locals
-`@(thread_local)`. Loke writes both in the declaration alongside `manual`,
-because they answer the same question it does — where does this variable live,
-for how long, and who releases it.
+`@(thread_local)`. Loke writes `static` and `thread_local` in the declaration
+because they specify where and how long the variable lives. The two modifiers
+are mutually exclusive.
 
 The dividing line is not metadata versus meaning: `@(packed)` and
 `@(allocator_reset)` are attributes and both are load-bearing. It is that these
-three answer a question about the declared storage itself, which is what the
+two answer a question about the declared storage itself, which is what the
 declaration is for. Remove `@(link_name)` or `@(export)` and the program still
 means what it meant; remove `static` and a counter resets on every call, cleanup
 starts running at scope exit, and a borrow that used to be returnable no longer
 is.
 
-Splitting duration from ownership keeps `static manual Foo` expressible, which a
-single modifier slot could not say.
+Cleanup suppression is a per-value operation through `unsafe.forget`, not a
+declaration modifier.
 
 ### No `stack` modifier, and no heap-promoted locals
 
@@ -773,6 +762,21 @@ from treating them as thin wrappers over integers. Enum members may have holes,
 so the result of `Foo.A + Foo.B` need not be a member of `Foo`, and the language
 has `Bit_Set(Enum)` for flag sets. Enums remain comparable and ordered, and
 converting to the backing integer type is one call.
+
+### Closed enums and payloadless unions
+
+Enums are closed sums whose variants carry no payload. They retain `enum`
+syntax, explicit integer representations, and integer ordering, while sharing
+the meaning of variants and exhaustive control flow with tagged unions. A switch
+covering every variant now guarantees that a case runs; when every arm returns,
+no trailing return is needed.
+
+The former unchecked integer conversion made member coverage weaker than value
+coverage. [`Enum.from_int`](design.md#integer-conversion) now validates the
+backing integer and returns `Option(Enum)`. Foreign APIs and wire formats keep
+unknown numbers in an integer or `distinct` integer wrapper until validated.
+An enum without a variant represented by zero has no zero value, and that
+restriction propagates through aggregates just as it does for unions.
 
 ### Defined signed overflow
 

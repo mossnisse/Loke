@@ -181,9 +181,9 @@ position_of :: proc(member: $E) -> int {
 	foreach (declared, index in E.values().indexed()) {
 		if (declared == member) { return index; }
 	}
-	// design.md "Non-member values": an integer conversion can produce a value
-	// naming no member, and a set has no bit for it.
-	panic("this value names no member of the enumeration");
+	// design.md "Enumerations": safe enum values always name a variant. Keep a
+	// defensive check for invalid representations supplied across unsafe boundaries.
+	panic("invalid enum representation");
 }
 
 // The classic SWAR population count: five folds, no table, no loop.

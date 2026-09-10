@@ -2,12 +2,11 @@ package main; import "core:fmt";
 
 Foo :: enum { A, B, C }
 
-// Every member is named and every case returns, but a `Foo` can hold a
-// non-member value, so control falls past the switch.
+// Coverage alone does not terminate control flow: one case completes normally.
 classify :: proc(f: Foo) -> int {
 	switch (f) {
 	case .A: return 1;
-	case .B: return 2;
+	case .B: break;
 	case .C: return 3;
 	}
 }

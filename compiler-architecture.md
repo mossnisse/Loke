@@ -286,7 +286,7 @@ be file-private.
 | `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations, zero-value rules, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and canonical standard operation aliases. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
-| `union.odin`, `optional.odin`, `erased.odin` | Tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
+| `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Closed enum validation, tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | Built-in slice, managed-container, text, SIMD, and atomic semantics. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
 | `iteration_adapters.odin`, `iteration_refs.odin` | Ordinary iterable adapters and read-only element borrowing over arrays and slices. |
