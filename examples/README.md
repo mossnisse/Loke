@@ -57,8 +57,9 @@ redirected input is `Not_A_Terminal` on purpose. Run it from a terminal —
 
 — and confirm three things:
 
-1. ordinary keys, arrows, and modified keys are each reported once, with
-   `ctrl+`/`alt+` prefixes where they apply;
+1. ordinary keys, arrows, and modified keys are each reported once per press,
+   with `ctrl+`/`alt+` prefixes where they apply, and holding one down repeats
+   it — the console reports a held key as one record carrying a count;
 2. Escape prints `escape` and exits;
 3. the terminal is left usable: typing echoes again, and Ctrl+C works. Closing
    the window mid-run must also leave a usable terminal, which is the console

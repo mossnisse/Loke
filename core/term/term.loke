@@ -15,6 +15,7 @@ package term;
 import "core:encoding/utf16";
 import "core:io";
 import "core:mem";
+import "core:sync";
 import "core:unsafe";
 
 // A borrowed process standard handle. These lightweight values do not own the
@@ -43,6 +44,9 @@ impl Input {
 }
 
 impl Output {
+	// Bytes, through `WriteFile`, with the mirror of `Input.read`'s caveat: a real
+	// console renders them in its *output* code page, so non-ASCII UTF-8 arrives
+	// intact only where that page is UTF-8. Redirected output is the bytes given.
 	write :: proc(self: inout Output, source: []u8) -> Result(int, io.Error) {
 		if (source.len() == 0) { return .ok(0); }
 		return write_handle(self.handle, source);
@@ -248,7 +252,7 @@ read_console_line :: proc(
 	units: [512]u16 = {};
 	for (;;) {
 		read: u32 = 0;
-		if (rt_read_console(handle, unsafe.raw_data(units[:]), 512, &mut read, nil) == 0) {
+		if (rt_read_console(handle, unsafe.raw_data(units[:]), u32(units.len()), &mut read, nil) == 0) {
 			return .err(from_last_error(.Read_Line));
 		}
 		if (read == 0) {
@@ -297,20 +301,28 @@ Raw_Mode :: move_only struct {
 	@(private) live:     bool,
 	// A high surrogate whose low half has not arrived yet.
 	@(private) pending:  u16,
+	// What is left of the record just decoded, and the event to hand back for it.
+	@(private) repeats:  u16,
+	@(private) repeated: Key_Event,
 }
 
 // The saved mode reachable from a control handler, which runs on a thread of the
 // operating system's choosing and can be given no argument of its own. This is
 // the one piece of process state the package keeps — and nothing writes it until
 // a caller asks for raw mode.
-@(private) handler_handle: int = 0;
-@(private) handler_mode: u32 = 0;
-@(private) handler_installed: bool = false;
+// Atomic because that handler thread is exactly the conflicting access design.md
+// calls a data race, and `handler_handle` is also the claim: a non-zero one means
+// a live scope owns the console, so the compare-exchange in `begin_raw` is what
+// makes one `Raw_Mode` per process true rather than merely checked.
+@(private) handler_handle: sync.Atomic(int) = {};
+@(private) handler_mode: sync.Atomic(u32) = {};
+@(private) handler_installed: sync.Atomic(bool) = {};
 
 @(private)
 restore_handler :: proc "stdcall" (event: u32) -> i32 {
-	if (handler_handle != 0) {
-		rt_set_console_mode(handler_handle, handler_mode);
+	handle := handler_handle.load();
+	if (handle != 0) {
+		rt_set_console_mode(handle, handler_mode.load());
 	}
 	// FALSE: the next handler in the chain still runs, so the default terminating
 	// behaviour is unchanged. Restoring the mode is all this does.
@@ -322,36 +334,40 @@ restore_handler :: proc "stdcall" (event: u32) -> i32 {
 begin_raw :: proc(
 	input: Input = stdin(), options: Raw_Options = {},
 ) -> Result(Raw_Mode, io.Error) {
-	// One process-global restore record can safely describe one live scope. A
-	// second would overwrite the original cooked mode and could leave the console
-	// raw when either value closes or the control handler runs.
-	if (handler_handle != 0) {
-		return .err(io.make_error(.Already_Exists, .Terminal_Mode));
-	}
 	previous: u32 = 0;
 	if (rt_get_console_mode(input.handle, &mut previous) == 0) {
 		return .err(io.make_error(.Not_A_Terminal, .Terminal_Mode));
 	}
+	// One process-global restore record can safely describe one live scope. A
+	// second would overwrite the original cooked mode and could leave the console
+	// raw when either value closes or the control handler runs -- so the claim is
+	// one operation rather than a read a second caller can pass as well.
+	_, claimed := handler_handle.compare_exchange(0, input.handle);
+	if (!claimed) {
+		return .err(io.make_error(.Already_Exists, .Terminal_Mode));
+	}
+	// The console is still cooked here, so a control event arriving before the
+	// store below restores whatever a previous scope saved for it: stale, and
+	// cooked, which is the state the console is actually in.
+	handler_mode.store(previous);
 	wanted := previous & ~u32(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
 	if (options.interrupt_as_key) {
 		wanted = wanted & ~u32(ENABLE_PROCESSED_INPUT);
 	}
 	// Install the process-level restore path before changing the terminal. A
 	// registration failure therefore leaves the console untouched.
-	handler_handle = input.handle;
-	handler_mode = previous;
-	if (!handler_installed) {
+	if (!handler_installed.load()) {
 		if (rt_set_ctrl_handler(restore_handler, 1) == 0) {
-			handler_handle = 0;
+			handler_handle.store(0);
 			return .err(from_last_error(.Terminal_Mode));
 		}
-		handler_installed = true;
+		handler_installed.store(true);
 	}
 	if (rt_set_console_mode(input.handle, wanted) == 0) {
-		handler_handle = 0;
+		handler_handle.store(0);
 		return .err(from_last_error(.Terminal_Mode));
 	}
-	return .ok(Raw_Mode{input.handle, previous, true, 0});
+	return .ok(Raw_Mode{input.handle, previous, true, 0, 0, Key_Event{}});
 }
 
 impl Raw_Mode {
@@ -360,18 +376,24 @@ impl Raw_Mode {
 		if (self.live) {
 			rt_set_console_mode(self.handle, self.previous);
 			self.live = false;
-			handler_handle = 0;
+			handler_handle.store(0);
 		}
 	}
 
 	// Idempotent, and leaves the value inert even when the restore failed.
+	//
+	// The claim is released after the restore, not before it: a failed restore
+	// leaves the control handler armed with the cooked mode, which is the only
+	// path left once this value is inert. It also leaves the claim held, so a
+	// later `begin_raw` answers `Already_Exists` -- the console's state is no
+	// longer known, and the mode to put back is still this one.
 	close :: proc(self: inout Raw_Mode) -> Result(Unit, io.Error) {
 		if (!self.live) { return .ok(Unit{}); }
 		self.live = false;
-		handler_handle = 0;
 		if (rt_set_console_mode(self.handle, self.previous) == 0) {
 			return .err(from_last_error(.Terminal_Mode));
 		}
+		handler_handle.store(0);
 		return .ok(Unit{});
 	}
 
@@ -379,12 +401,17 @@ impl Raw_Mode {
 	// are consumed and skipped: they belong to a later terminal package, and a
 	// caller of this one asked for keys.
 	//
-	// A repeat count is reported as that many individual events on later calls
-	// only if the platform sends them; this decoder does not expand one record
-	// into several, because doing so would reorder it against the next.
+	// A held key arrives as one record carrying a count, and that count is handed
+	// back as that many events (standard-library-plan: repeats are individual
+	// events). Ordering is unchanged by it -- every repeat belongs to the record
+	// already read, so they all precede the next one.
 	read_key :: proc(self: inout Raw_Mode) -> Result(Key_Event, io.Error) {
 		if (!self.live) {
 			return .err(io.make_error(.Not_A_Terminal, .Read_Key));
+		}
+		if (self.repeats > 0) {
+			self.repeats -= 1;
+			return .ok(self.repeated);
 		}
 		record: Input_Record = {};
 		for (;;) {
@@ -399,7 +426,12 @@ impl Raw_Mode {
 				continue;
 			}
 			switch (event in decode_record(inout self, record)) {
-			case .some: return .ok(event);
+			case .some:
+				if (record.repeat_count > 1) {
+					self.repeats = record.repeat_count - 1;
+					self.repeated = event;
+				}
+				return .ok(event);
 			case .none:
 			}
 		}
