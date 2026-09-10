@@ -138,6 +138,11 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 		if value.kind == .Nil {
 			return "zeroinitializer"
 		}
+		// A slice constant is not a pair of fields to fill in: it points at
+		// storage, and only the module can hold storage that outlives every frame.
+		if info.kind == .Slice && value.aggregate != nil {
+			return slice_literal_constant(e, value, info)
+		}
 		// A `@(packed)`/`@(align=N)` struct's constant must match the byte-exact
 		// body `struct_body` emits.
 		packed := info.kind == .Struct && info.packed

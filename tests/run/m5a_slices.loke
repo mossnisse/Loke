@@ -4,6 +4,14 @@ package main; import "core:fmt";
 
 NUMBERS :: [3]int{7, 42, 628};
 
+// design.md "Slice literals": the hidden backing array is an owner in the
+// surrounding lexical scope, and at file scope that scope is the module -- so
+// these name storage that outlives every frame. The mutable one is written to
+// below, which is the reason its array cannot be shared with an equal one.
+READABLE := []int{7, 42, 628};
+WRITABLE := []mut int{1, 2};
+NOTHING := []int{};
+
 sum :: proc(values: []int) -> int {
 	total := 0;
 	foreach (value in values) {
@@ -92,6 +100,11 @@ main :: proc() {
 	fmt.println(table.len());
 	fmt.println(table[2]);
 	fmt.println(sum(table));
+
+	fmt.println(READABLE.len(), READABLE[0], READABLE[2], sum(READABLE));
+	WRITABLE[1] = 5;
+	fmt.println(WRITABLE[0], WRITABLE[1]);
+	fmt.println(NOTHING.len());
 }
 
 runtime_index :: proc() -> int {

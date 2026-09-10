@@ -118,6 +118,43 @@ text_literal_global :: proc(e: ^Emitter, text: string) -> string {
 	return name
 }
 
+// The static storage behind a file-scope slice literal: design.md "Slice
+// literals" makes the hidden backing array an owner in the surrounding scope,
+// and at file scope that scope is the module, so the array is a global and the
+// slice is `{ ptr, len }` naming it.
+//
+// One global per literal, never shared. Two `[]mut T` literals with equal
+// elements are two arrays, and a write through one must not show up in the
+// other -- which is also why the mutable form is `global` rather than the
+// `unnamed_addr constant` a read-only literal can be merged into.
+@(private)
+slice_literal_constant :: proc(e: ^Emitter, value: Const_Value, info: ^Type_Info) -> string {
+	count := len(value.aggregate.elements)
+	if count == 0 {
+		// A slice of nothing points nowhere, which is the nil slice.
+		return "zeroinitializer"
+	}
+	element := llvm_type(e, info.element)
+	b := strings.builder_make()
+	fmt.sbprintf(&b, "[%d x %s] [", count, element)
+	for slot, index in value.aggregate.elements {
+		fmt.sbprintf(&b, "%s %s %s", index > 0 ? "," : "", element, llvm_const(e, slot, info.element))
+	}
+	strings.write_string(&b, " ]")
+	name := fmt.aprintf("@.slice.%d", len(e.globals))
+	append(&e.globals, fmt.aprintf(
+		"%s = private %s %s\n",
+		name, info.mutable ? "global" : "unnamed_addr constant", strings.to_string(b),
+	))
+	// Built rather than formatted: Odin's `fmt` reads `{` as a verb.
+	out := strings.builder_make()
+	strings.write_string(&out, "{ ptr ")
+	strings.write_string(&out, name)
+	fmt.sbprintf(&out, ", i64 %d ", count)
+	strings.write_string(&out, "}")
+	return strings.to_string(out)
+}
+
 // A literal `string` or `string_view` value. A literal costs no allocation and
 // no handle accounting: its owner flags say "static", which is exactly what a
 // retain and a release both ignore.

@@ -377,7 +377,7 @@ element_type_at :: proc(c: ^Compiler, type: Type_Id, index: int) -> Type_Id {
 		return INVALID_TYPE
 	}
 	#partial switch info.kind {
-	case .Array, .Simd:
+	case .Array, .Simd, .Slice:
 		return info.element
 	case .Struct:
 		if index < len(info.fields) {
@@ -554,15 +554,19 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 	if type_is_container(ev.k.c, type) {
 		return Eval_Value{kind = .Aggregate, type = type}, true
 	}
+	// design.md "Nil slices": the zero value of a slice is nil. Filling in its
+	// two header fields would say the same thing in a shape that collides with a
+	// slice literal's constant, which is its elements rather than its header.
+	if type_is_slice(ev.k.c, type) {
+		return Eval_Value{kind = .Nil, type = type}, true
+	}
 	under := type_underlying(ev.k.c, type)
 	info := type_of(ev.k.c, under)
 	if info == nil { return Eval_Value{}, false }
 	#partial switch info.kind {
 	case .Int, .Enum, .Rune:
 		return Eval_Value{kind = info.kind == .Rune ? .Rune : .Integer, type = type, integer = bi_zero(ev.alloc)}, true
-	case .Array, .Struct, .Any_View, .Dyn, .Slice:
-		ensure_slice_fields(ev.k.c, under)
-		info = type_of(ev.k.c, under)
+	case .Array, .Struct, .Any_View, .Dyn:
 		count := info.kind == .Array ? int(info.count) : len(info.fields)
 		kind, element, fields := info.kind, info.element, info.fields
 		elements, allocated := eval_elements(ev, count)
@@ -988,7 +992,11 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 
 @(private = "file")
 eval_composite :: proc(ev: ^Evaluator, v: ^Expr_Composite) -> (Eval_Value, bool) {
-	if type_is_container(ev.k.c, v.type) {
+	// A slice literal is a hidden backing array plus a length, and at file scope
+	// that array has static lifetime (design.md "Slice literals"). So its
+	// constant is the elements in order -- the shape below already builds for a
+	// `[dynamic]T` literal, minus the header a container cannot own.
+	if type_is_container(ev.k.c, v.type) || type_is_slice(ev.k.c, v.type) {
 		return eval_container_literal(ev, v)
 	}
 	value, zeroed := zero_value(ev, v.type)
