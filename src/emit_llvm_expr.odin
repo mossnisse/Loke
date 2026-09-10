@@ -924,6 +924,11 @@ emit_slice_literal :: proc(e: ^Emitter, v: ^Expr_Composite, as_type: Type_Id) ->
 		store(e, info.element, emit_expr(e, element.value), slot)
 	}
 
+	// "An ordinary frame owner in the surrounding lexical scope" is the whole
+	// claim, and a managed element makes the difference visible: without this the
+	// hidden array is filled and then abandoned, so `[]mut T{...}` would leak
+	// every element a named `[N]T` of the same elements drops.
+	register_scope_place(e, backing, root)
 	return emit_slice_value(e, as_type, root, fmt.aprintf("%d", len(v.elements)))
 }
 

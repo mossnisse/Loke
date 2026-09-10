@@ -33,4 +33,16 @@ drop 83
 drop 91
 drop 92
 err
+held 1
+readable 3
+drop held 3
+drop held 2
+drop held 1
+after the block
+each 100
+drop held 100
+each 101
+drop held 101
+1
 end
+drop held 9

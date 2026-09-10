@@ -90,5 +90,38 @@ main :: proc() {
 	case .err: fmt.println("err");
 	}
 
+	// design.md "Temporaries and procedure boundaries" draws the other half: a
+	// slice literal's hidden `[N]T` is "an ordinary frame owner in the
+	// surrounding lexical scope", not a full-expression temporary. So it is the
+	// scope that owes these drops, and it owes them for a `[]T` literal as much
+	// as a `[]mut T` one.
+	{
+		held := []mut Held{Held{1}, Held{2}};
+		fmt.println("held", held[0].tag);
+		readable := []Held{Held{3}};
+		fmt.println("readable", readable[0].tag);
+	}
+	fmt.println("after the block");
+
+	// One per iteration, for the same reason the borrowed temporaries above are.
+	for (n := 0; n < 2; n += 1) {
+		each := []mut Held{Held{100 + n}};
+		fmt.println("each", each[0].tag);
+	}
+
+	// A literal written as an argument belongs to this scope, not the statement,
+	// so its drop comes last rather than at the semicolon.
+	fmt.println(takes_held([]Held{Held{9}}));
+
 	fmt.println("end");
 }
+
+// A managed element is what makes the hidden array's ownership observable: an
+// unmanaged one is filled and abandoned with nothing to notice.
+Held :: move_only struct { tag: int }
+
+impl Held {
+	release :: hook(drop) proc(self: inout Held) { fmt.println("drop held", self.tag); }
+}
+
+takes_held :: proc(xs: []Held) -> int { return xs.len(); }
