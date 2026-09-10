@@ -1,0 +1,61 @@
+package main; import "core:mem"; import "core:fmt";
+
+outlive_local_arena :: proc() {
+	xs: [dynamic]int = {};
+	{
+		a := mem.Arena.init();
+		ys: [dynamic]int via a.allocator() = {};
+		ys.append(7);
+		xs = move(ys);
+	}
+	fmt.println(xs[0]);
+}
+
+pointer_outlives_local_arena :: proc() {
+	p: ^mut int = ---;
+	{
+		a := mem.Arena.init();
+		p = new(int, a.allocator()) or_else nil;
+	}
+	if (p == nil) { panic("no"); }
+	fmt.println(p^);
+}
+
+// No subsequent read is needed: xs still has a cleanup obligation.
+scratch_break :: proc() {
+	xs: [dynamic]int = {};
+	for (true) {
+		a := mem.Scratch.init();
+		ys: [dynamic]int via a.allocator() = {};
+		ys.append(1);
+		xs = move(ys);
+		break;
+	}
+}
+
+scratch_continue :: proc() {
+	xs: [dynamic]int = {};
+	for (i := 0; i < 1; i += 1) {
+		a := mem.Scratch.init();
+		ys: [dynamic]int via a.allocator() = {};
+		ys.append(1);
+		xs = move(ys);
+		continue;
+	}
+}
+
+conditional_drop :: proc(remove: bool) {
+	xs: [dynamic]int = {};
+	{
+		a := mem.Arena.init();
+		ys: [dynamic]int via a.allocator() = {};
+		ys.append(1);
+		xs = move(ys);
+		if (remove) { drop(xs); }
+	}
+}
+
+main :: proc() {
+	outlive_local_arena(); pointer_outlives_local_arena();
+	scratch_break(); scratch_continue(); conditional_drop(false);
+}

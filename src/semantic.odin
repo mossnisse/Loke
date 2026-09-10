@@ -968,6 +968,7 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.formatters = make(map[Type_Id]Symbol_Id, c.semantic_allocator)
 	c.result_summary_dependencies = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.reset_dead = make(map[^Expr_Call][]Symbol_Id, c.semantic_allocator)
+	c.cleanup_reset_dead = make(map[Cleanup_Reset_Key][]Symbol_Id, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits

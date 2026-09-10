@@ -1,0 +1,66 @@
+package main; import "core:mem"; import "core:fmt";
+
+// Dependants clean up before their provider, including moved and dropped ones.
+ordinary :: proc(early: bool) -> int {
+	a := mem.Arena.init();
+	xs: [dynamic]int via a.allocator() = {};
+	xs.append(7);
+	ys := move(xs);
+	if (early) { return 7; }
+	drop(ys);
+	return 7;
+}
+
+// A dead outer owner must not block the inner provider's cleanup.
+dropped_outer :: proc() {
+	xs: [dynamic]int = {};
+	{
+		a := mem.Scratch.init();
+		ys: [dynamic]int via a.allocator() = {};
+		ys.append(7);
+		xs = move(ys);
+		defer drop(xs);
+	}
+}
+
+// Last use can precede region end without an explicit free.
+last_use :: proc() -> int {
+	total := 0;
+	{
+		a := mem.Scratch.init();
+		p := new(int, a.allocator()) or_else nil;
+		if (p == nil) { return 0; }
+		p^ = 9;
+		total = p^;
+	}
+	return total;
+}
+
+// Every iteration runs provider cleanup, including continue and break.
+loop_exits :: proc() {
+	for (i := 0; i < 3; i += 1) {
+		a := mem.Arena.init();
+		xs: [dynamic]int via a.allocator() = {};
+		xs.append(i);
+		if (i == 0) { continue; }
+		break;
+	}
+}
+
+// Deferred syntax expands at multiple exits and must keep checkpoint identity.
+deferred :: proc(early: bool) {
+	defer {
+		a := mem.Arena.init();
+		xs: [dynamic]int via a.allocator() = {};
+		xs.append(1);
+	}
+	if (early) { return; }
+}
+
+main :: proc() {
+	fmt.println(ordinary(false), ordinary(true), last_use());
+	dropped_outer();
+	loop_exits();
+	deferred(false);
+	deferred(true);
+}

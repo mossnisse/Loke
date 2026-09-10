@@ -1,0 +1,15 @@
+L0537
+@6:3
+this reset would end the region backing `xs`, which is still live here
+L0537
+@17:3
+this reset ends every allocation in the region, but a pointer of one of them is still in use
+L0537
+@28:3
+this reset would end the region backing `xs`, which is still live here
+L0537
+@39:3
+this reset would end the region backing `xs`, which is still live here
+L0537
+@50:3
+this reset would end the region backing `xs`, which is still live here

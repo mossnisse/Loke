@@ -810,12 +810,12 @@ report_events :: proc(k: ^Checker, graph: ^Flow_Graph, block: ^Flow_Block, state
 // outgoing path; an explicitly dropped owner is dead and no longer blocks reset
 // (design.md). That is exactly this analysis's `.Dead`, and only `.Dead`: a
 // conditionally live owner may still need cleanup on one path, so it keeps
-// blocking. Recorded against the call node both the reset pass and this one
-// walk, in the compilation arena rather than this analysis's own — the reset
-// check runs later, over a different graph.
+// blocking. Recorded against the call node or provider-cleanup ordinal both
+// passes walk, in the compilation arena rather than this analysis's own — the
+// reset check runs later, over a different graph.
 @(private = "file")
 record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event, state: []Liveness) {
-	if event.call == nil {
+	if event.call == nil && event.cleanup_reset.body == nil {
 		return
 	}
 	dead := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
@@ -824,7 +824,11 @@ record_reset_liveness :: proc(k: ^Checker, graph: ^Flow_Graph, event: Flow_Event
 			append(&dead, local.symbol)
 		}
 	}
-	k.c.reset_dead[event.call] = dead[:]
+	if event.call != nil {
+		k.c.reset_dead[event.call] = dead[:]
+	} else {
+		k.c.cleanup_reset_dead[event.cleanup_reset] = dead[:]
+	}
 }
 
 @(private = "file")

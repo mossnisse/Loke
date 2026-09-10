@@ -252,9 +252,10 @@ Compiler :: struct {
 	zero_int_arg:             Expr,
 	// An explicitly dropped owner is dead and no longer blocks reset (design.md).
 	// M5a's liveness answers that one pass and one graph earlier than the reset
-	// check, so the definitely-dead owners at each reset call are recorded here
+	// check, so the definitely-dead owners at each call or cleanup are recorded here
 	// (`src/lifecycle.odin`, `src/cfg.odin`).
 	reset_dead:               map[^Expr_Call][]Symbol_Id,
+	cleanup_reset_dead:       map[Cleanup_Reset_Key][]Symbol_Id,
 	// Compilation-lifetime semantic storage. Parser ASTs remain per-file arenas.
 	semantic_initialized: bool,
 	semantic_arena:       virtual.Arena,

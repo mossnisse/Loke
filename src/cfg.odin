@@ -34,23 +34,31 @@ Flow_Event_Kind :: enum {
 	Cleanup,
 	// An allocator-region reset, recorded so the later provenance pass can ask
 	// which owners were definitely dead at it (a dropped owner no longer blocks
-	// a reset — design.md). Keyed on the call node since the two passes use
-	// separate graphs.
+	// a reset — design.md). Calls use their AST node; provider cleanups use a
+	// body-local ordinal since the two passes use separate graphs.
 	Reset_Point,
 }
 
 Flow_Event :: struct {
+	cleanup_reset: Cleanup_Reset_Key,
 	kind:   Flow_Event_Kind,
 	slot:   int,
 	span:   Span,
 	name:   string,
 	assign: ^Stmt_Assign,
 	target: int,
-	// `Reset_Point`: the call whose liveness answer is being recorded.
+	// `Reset_Point`: a call, or `cleanup_reset` for a lexical provider exit.
 	call:   ^Expr_Call,
 	// Names the operation attempted, for diagnostics. Not a history: states are
 	// a lattice, so which earlier op consumed the binding isn't tracked.
 	verb:   string,
+}
+
+// Cleanup syntax can be expanded at several exits (including inside defers).
+// Number provider cleanups in walk order, shared by all three graph modes.
+Cleanup_Reset_Key :: struct {
+	body: ^Expr_Proc,
+	ordinal: int,
 }
 
 Flow_Block :: struct {
@@ -313,6 +321,7 @@ Flow_Graph :: struct {
 	// scope. Leaving a scope cleans up the slots above its marker, then forgets
 	// them.
 	in_scope: [dynamic]Flow_Cleanup,
+	cleanup_reset_count: int,
 	scopes:   [dynamic]Flow_Scope,
 	// How many loops enclose the statement being walked, so the copy-cost report
 	// can say that a copy runs on every iteration.
@@ -508,6 +517,8 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 			continue
 		}
 		if action.kind == .Prov_Root {
+			id := graph.roots[int(action.root)].symbol
+			provider_cleanup_reset(graph, id, action.span)
 			// A borrow may be used only while its root is live (design.md). The
 			// storage ends here, so every loan of it does too.
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
@@ -515,12 +526,34 @@ emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 		}
 		slot := action.slot
 		sym := symbol_of(graph.k.c, graph.tracked[slot].symbol)
+		provider_cleanup_reset(graph, graph.tracked[slot].symbol, sym == nil ? no_span() : sym.span)
 		emit(graph, Flow_Event {
 			kind = .Cleanup,
 			slot = slot,
 			span = sym == nil ? no_span() : sym.span,
 			name = sym == nil ? "" : identifier_text(graph.k.c, sym.name),
 		})
+	}
+}
+
+@(private = "file")
+provider_cleanup_reset :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
+	sym := symbol_of(graph.k.c, id)
+	if sym == nil || !type_is_region_provider(graph.k.c, sym.type) || sym.duration != .None {
+		return
+	}
+	graph.cleanup_reset_count += 1
+	key := Cleanup_Reset_Key{graph.literal, graph.cleanup_reset_count}
+	if graph.mode == .Lifecycle {
+		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
+	} else {
+		dead, found := graph.k.c.cleanup_reset_dead[key]
+		// Unreachable exits have no solved checkpoint. A consumed provider has
+		// no cleanup to execute, so neither case ends a region here.
+		if !found || slice.contains(dead, id) {
+			return
+		}
+		prov_reset(graph, prov_region_for_symbol(graph, id), span, true, nil, dead)
 	}
 }
 
@@ -2613,6 +2646,22 @@ prov_call_region :: proc(graph: ^Flow_Graph, v: ^Expr_Call, result_type: Type_Id
 	if !type_is_managed(c, result_type) && !allocator_result {
 		return out
 	}
+	// A union constructor wraps its payload; it is not an opaque procedure
+	// returning an owner of an unknown region.
+	if v.union_op == .Construct {
+		for argument in v.bound {
+			if argument != nil {
+				region_merge(&out, prov_region_of(graph, argument))
+			}
+		}
+		return out
+	}
+	// These validating conversions copy into the default allocator and expose
+	// no allocator argument (design.md "string type conversions").
+	if v.text_conversion == .String_From_Bytes || v.text_conversion == .String_From_C_View {
+		out.default = true
+		return out
+	}
 	if v.union_op == .Extract && type_is_managed(c, result_type) {
 		out.default = true
 		return out
@@ -2771,7 +2820,7 @@ prov_parameter_symbol :: proc(graph: ^Flow_Graph, index: int) -> ^Symbol {
 // A reset may end every allocation root in that allocator region (design.md),
 // so it is checked both for the promise it needs and for what would survive it.
 @(private = "file")
-prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool, at: ^Expr_Call) {
+prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool, at: ^Expr_Call, cleanup_dead: []Symbol_Id = nil) {
 	covered, unmarked := prov_reset_promise(graph, set)
 	if !direct && unmarked == "" && region_is_empty(set) {
 		// Default and unknown regions are pre-existing and must not be hidden
@@ -2800,8 +2849,11 @@ prov_reset :: proc(graph: ^Flow_Graph, set: Region_Set, span: Span, direct: bool
 	// An owner is live when it may be used later or still needs cleanup on some
 	// outgoing path; an explicitly dropped owner is dead and no longer blocks a
 	// reset (design.md). Scope presence can't answer that, so the answer is
-	// M5a's, recorded at this same call node one pass earlier.
+	// lifecycle's, recorded at this call or cleanup expansion one pass earlier.
 	dead := graph.k.c.reset_dead[at]
+	if at == nil {
+		dead = cleanup_dead
+	}
 	for id in graph.owners_in_scope {
 		owner := symbol_of(graph.k.c, id)
 		if owner == nil {
