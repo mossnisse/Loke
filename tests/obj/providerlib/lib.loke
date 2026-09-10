@@ -1,3 +1,7 @@
+@(
+	default_allocator = "./provider:allocator_factory",
+	default_logger = "./provider:logger_factory",
+)
 package hostlib;
 
 import "core:log";

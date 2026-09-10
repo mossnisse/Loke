@@ -252,15 +252,12 @@ This is a good default because the program's normal runtime policy now travels
 with its source, and the provider package becomes a build dependency without a
 redundant import. Package attributes also put the choice before all imports
 without making textual import order meaningful. Restricting it to the root
-`package main` prevents a library from changing an application's process-wide
-policy merely by being imported.
+package prevents a library from changing an application's process-wide policy
+merely by being imported.
 
 The choice remains static: provider factories still run once before `main`, and
-ordinary allocations and log calls still use the selected handles. A build may
-override either source default with `-provider`, which preserves the useful
-ability to use a different heap or sink for an embedded target, test, or host
-without editing the program. With neither a source default nor an override, the
-system heap and standard logger remain the fallbacks.
+ordinary allocations and log calls still use the selected handles. With no
+selection, the system heap and standard logger remain the fallbacks.
 
 ## shorten dynamic array syntax
 

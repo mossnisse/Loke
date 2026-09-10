@@ -1,11 +1,10 @@
 // Build-selected providers (design.md "Build-selected providers").
 //
 // The final build selects at most one default-allocator provider and one
-// logging provider. A root `package main` may name source defaults on its
-// package clause; the command line can replace either default for a particular
-// build. Each selection names a *factory*: a public, non-generic procedure
-// taking nothing and returning the slot's handle type. Naming one makes its
-// package a build dependency even where no source imports it.
+// logging provider. The root package names them on its package clause. Each
+// selection names a *factory*: a public, non-generic procedure taking nothing
+// and returning the slot's handle type. Naming one makes its package a build
+// dependency even where no source imports it.
 //
 // Nothing here changes what an unselected build does. The runtime's fallback
 // record is still the answer `mem.default_allocator()` gives; what changes is
@@ -25,9 +24,8 @@ Provider_Selection :: struct {
 	path:        string,
 	name:        string,
 	selected:    bool,
-	// Nil for a command-line selection. A source default uses its package-clause
-	// file so an unprefixed provider path can resolve relative to that file just
-	// like an import.
+	// The file carrying the package clause, so an unprefixed provider path
+	// resolves relative to it just like an import.
 	from_file:   ^File,
 	span:        Span,
 	pkg:         Package_Id,
@@ -53,40 +51,20 @@ any_provider_selected :: proc(c: ^Compiler) -> bool {
 	return false
 }
 
-// `-provider <slot>=<import path>:<name>`. Parsed before any source is loaded,
-// so a malformed selection is reported without compiling anything. These are
-// explicit build overrides; `collect_source_provider_defaults` leaves an
-// already-selected slot alone.
-select_provider :: proc(c: ^Compiler, entry: string) -> bool {
-	equals := strings.index_byte(entry, '=')
-	if equals <= 0 {
-		errorf(c, no_span(), "L0656", "`-provider %s` needs the form <slot>=<package>:<name>", entry)
-		return false
-	}
-	slot_text := entry[:equals]
-	target := entry[equals + 1:]
-	slot := Provider_Slot.Allocator
-	switch slot_text {
-	case "allocator": slot = .Allocator
-	case "logger":    slot = .Logger
-	case:
-		errorf(c, no_span(), "L0656", "`%s` is not a provider slot; use `allocator` or `logger`", slot_text)
-		return false
-	}
-	return install_provider_selection(c, slot, target, no_span(), nil, duplicate_is_error = true)
-}
-
-// Source defaults use package-clause attributes so they necessarily precede
-// imports and remain visible even when their provider package is not imported:
+// Selections use package-clause attributes so they necessarily precede imports
+// and remain visible even when their provider package is not imported:
 //
 //     @(default_allocator="./providers:allocator")
 //     package main;
+//
+// Only the root package may select: a library changing an application's
+// process-wide policy by being imported is exactly what this excludes.
 //
 // One file may supply each slot. The per-file duplicate is already diagnosed by
 // the ordinary attribute validator; this pass reports the package-wide case.
 collect_source_provider_defaults :: proc(c: ^Compiler, root: Package_Id) {
 	pkg := package_of(c, root)
-	if pkg == nil || identifier_text(c, pkg.name) != "main" {
+	if pkg == nil {
 		return
 	}
 	seen: [Provider_Slot]bool
@@ -116,13 +94,7 @@ collect_source_provider_defaults :: proc(c: ^Compiler, root: Package_Id) {
 				continue
 			}
 			seen[slot], first_span[slot] = true, attribute.span
-			// A command-line selection is an override, not a conflicting second
-			// default. Still parse the source target above so malformed source does
-			// not become valid merely because one build replaces it.
-			if c.providers[slot].selected {
-				continue
-			}
-			install_provider_selection(c, slot, target, attribute.span, file, duplicate_is_error = false)
+			install_provider_selection(c, slot, target, attribute.span, file)
 		}
 	}
 }
@@ -154,7 +126,6 @@ install_provider_selection :: proc(
 	target: string,
 	span: Span,
 	from_file: ^File,
-	duplicate_is_error: bool,
 ) -> bool {
 	// The *last* colon separates the declaration from the import path, because an
 	// import path can contain one of its own: `core:log:standard_logger`.
@@ -166,17 +137,6 @@ install_provider_selection :: proc(
 			provider_slot_name(slot), target,
 		)
 		return false
-	}
-	if c.providers[slot].selected {
-		if duplicate_is_error {
-			errorf(
-				c, span, "L0657",
-				"the %s provider is selected twice: `%s` and `%s`",
-				provider_slot_name(slot), c.providers[slot].written, target,
-			)
-			return false
-		}
-		return true
 	}
 	c.providers[slot] = Provider_Selection {
 		written   = target,
@@ -199,9 +159,8 @@ load_provider_packages :: proc(c: ^Compiler) {
 		if !selection.selected {
 			continue
 		}
-		// Command-line selections have no importing file and therefore need a
-		// collection-qualified path. A source default resolves an unprefixed path
-		// against the file containing its package clause.
+		// An unprefixed path resolves against the file containing the package
+		// clause, exactly as an import written there would.
 		dir, why := resolve_import_path(c, selection.from_file, selection.path)
 		switch why {
 		case .No_Collection:

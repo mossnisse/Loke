@@ -880,9 +880,6 @@ selected_object_build_links_into_a_c_host :: proc(t: ^testing.T, clang: string, 
 		os2.Process_Desc {
 			command = []string {
 				compiler_path(), "tests/obj/providerlib", "-build-mode=obj",
-				"-collection", "obj=tests/obj/providerlib",
-				"-provider", "allocator=obj:provider:allocator_factory",
-				"-provider", "logger=obj:provider:logger_factory",
 				"-o", obj,
 			},
 		},

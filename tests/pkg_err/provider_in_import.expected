@@ -1,0 +1,3 @@
+L0661
+@1:3
+`@(default_allocator=...)` is only allowed on the root package clause

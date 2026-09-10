@@ -1,4 +1,5 @@
 @(default_allocator = "./provider:allocator_factory")
-package utility;
+package lib;
 
+@(public)
 exported :: proc() {}

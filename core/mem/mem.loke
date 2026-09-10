@@ -2,11 +2,9 @@
 //
 // One provider serves the whole program, reached through
 // `mem.default_allocator()`. With nothing selected the runtime supplies the
-// system heap; the root `package main` may name a factory for the slot with
-// `@(default_allocator = "<import path>:<name>")`, and `-provider
-// allocator=<import path>:<name>` overrides that for one build. Whichever is
-// chosen, the handle ABI is the same: everything a caller holds is one pointer
-// to one provider record.
+// system heap; the root package may name a factory for the slot with
+// `@(default_allocator = "<import path>:<name>")`. Either way the handle ABI is
+// the same: everything a caller holds is one pointer to one provider record.
 //
 // `mem.Arena` and `mem.Scratch` are the two local region roots, which is what
 // makes a `free_all` able to succeed at all.

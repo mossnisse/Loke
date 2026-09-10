@@ -1,4 +1,0 @@
--collection
-trapprov=tests/trap/providers
--provider
-allocator=trapprov:nil_allocator:factory

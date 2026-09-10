@@ -1,4 +1,0 @@
--provider
-logger=core:log:standard_logger
--provider
-logger=core:log:current

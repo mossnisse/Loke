@@ -4947,13 +4947,13 @@ A panic terminates the whole program; only the panicking thread can unwind. Othe
 
 ### Build-selected providers
 
-The final build selects exactly one **default allocator provider** and one **logging provider**. The root `package main` may declare a source default for either slot, and the build command may override either default. Imports cannot select or replace providers and cannot create differently configured copies of a package.
+The final build selects exactly one **default allocator provider** and one **logging provider**. The root package may select either slot on its package clause. Imports cannot select or replace providers and cannot create differently configured copies of a package.
 
 If none are selected, the runtime supplies the system heap allocator and standard logger. Providers are fixed for the executable or library, initialized before `main`, and available until process exit.
 
 #### Selecting a provider
 
-A source default is a string-valued attribute on the root `package main` clause. This puts it before every import without giving import order semantic meaning:
+A selection is a string-valued attribute on the root package clause. This puts it before every import without giving import order semantic meaning:
 
 ```odin
 @(
@@ -4963,16 +4963,9 @@ A source default is a string-valued attribute on the root `package main` clause.
 package main;
 ```
 
-The package path is resolved like an import from that source file, so it may be relative or collection-qualified. The final `:<name>` identifies a declaration in the package. Each attribute may occur at most once across the root package, including when the package contains multiple files. These attributes are rejected on an imported package and on a root package not named `main`.
+The package path is resolved like an import from that source file, so it may be relative or collection-qualified. The final `:<name>` identifies a public, non-generic, zero-argument factory returning the slot's handle type: `Allocator` or `Logger`. Each attribute may occur at most once across the root package, including when the package contains multiple files. Selection makes the factory's package a build dependency even when the root package does not import it.
 
-A particular build may replace either source default on the command line:
-
-```text
--provider allocator=<import path>:<name>
--provider logger=<import path>:<name>
-```
-
-Because a command-line selection has no source file to be relative to, its package path must be collection-qualified. The name identifies a public, non-generic, zero-argument factory returning the slot's handle type: `Allocator` or `Logger`. Selection makes its package a build dependency even when the root package does not import it. Each command-line slot may be selected once; a command-line selection overrides the corresponding source default. Imports do not select providers.
+These attributes are rejected on an imported package, so no library can change an application's process-wide policy merely by being imported. An `obj` build selects on its own root package clause the same way.
 
 #### Provider initialization
 

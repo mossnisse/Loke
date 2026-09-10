@@ -1,0 +1,8 @@
+package main;
+
+import "lib";
+
+// design.md "Build-selected providers": only the root package selects, so an
+// import cannot change the program's process-wide policy by being imported.
+
+main :: proc() { lib.exported(); }

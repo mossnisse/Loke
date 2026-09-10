@@ -1,0 +1,7 @@
+@(default_allocator = "widgets:tools:make_allocator")
+package main;
+
+// A prefixed provider path names a collection like any import, and this build
+// registers no `widgets`.
+
+main :: proc() { }

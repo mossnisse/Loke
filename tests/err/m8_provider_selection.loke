@@ -1,10 +1,14 @@
+@(
+	default_allocator = "core:log:standard_write",
+	default_logger = "core:log:enabled",
+)
 package main;
 
 import "core:log";
 
-// Command-line provider-selection diagnostics. The selections deliberately
-// remain in the sibling `.flags` to cover build overrides, which have no source
-// location to point at.
+// design.md "Build-selected providers": a selection names a public factory of
+// the slot's handle type. Here the first names nothing public and the second
+// names a declaration that is not a factory.
 
 main :: proc() {
 	log.error("unreached");

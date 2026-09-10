@@ -1,8 +1,0 @@
-package main;
-
-// A `-provider` selection is a command-line name with no importing file behind
-// it, so an unprefixed package path has nothing to be relative to and names no
-// collection. The selection is in the sibling `.flags`, which is also why this
-// diagnostic has no source location.
-
-main :: proc() { }

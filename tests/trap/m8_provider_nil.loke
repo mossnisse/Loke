@@ -1,3 +1,4 @@
+@(default_allocator = "./providers/nil_allocator:factory")
 package main; import "core:fmt";
 
 // The selected allocator factory answers `nil`, which terminates startup before

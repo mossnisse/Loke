@@ -52,13 +52,6 @@ options:
                   (default: none)
     -build-mode=exe|obj
                   build an executable, or a relocatable object (default: exe)
-    -provider allocator=<package>:<name>
-    -provider logger=<package>:<name>
-    -provider:<slot>=<package>:<name>
-                  select or override a build provider: a public proc() ->
-                  Allocator or proc() -> Logger. Its package becomes a build
-                  dependency even if no source imports it; each slot may be
-                  selected once
     -log-level=debug|info|warning|error|off
                   the compiled LOKE_LOG_LEVEL; core:log suppresses every call
                   below it (default: debug)
@@ -92,9 +85,6 @@ Options :: struct {
 	//.
 	opt_mode:   Opt_Mode,
 	build_mode: Build_Mode,
-	// `-provider <slot>=<package>:<name>`, in the order written, so a second
-	// selection for one slot can name both.
-	providers:  [dynamic]string,
 	// `-log-level=<level>`, the compiled `LOKE_LOG_LEVEL`.
 	log_level:  Log_Level,
 }
@@ -145,16 +135,6 @@ run :: proc() -> int {
 		report(&c)
 		return 1
 	}
-	// design.md "Build-selected providers": command-line selections are explicit
-	// per-build overrides. Source defaults are collected from the root package
-	// after it is loaded and leave these slots unchanged.
-	for entry in opts.providers {
-		if !select_provider(&c, entry) {
-			report(&c)
-			return 1
-		}
-	}
-
 	// The parse-only modes stop before discovery, so they still describe exactly
 	// one file's syntax.
 	if opts.parse_only || opts.dump_ast {
@@ -281,15 +261,6 @@ parse_args :: proc(args: []string) -> (opts: Options, ok: bool) {
 				fmt.eprintln("error: -opt needs `none`, `minimal`, `size`, `speed`, or `aggressive`")
 				return opts, false
 			}
-		case arg == "-provider":
-			i += 1
-			if i >= len(args) {
-				fmt.eprintln("error: -provider needs <slot>=<package>:<name>")
-				return opts, false
-			}
-			append(&opts.providers, args[i])
-		case strings.has_prefix(arg, "-provider:"):
-			append(&opts.providers, arg[len("-provider:"):])
 		case strings.has_prefix(arg, "-log-level="):
 			switch arg[len("-log-level="):] {
 			case "debug":   opts.log_level = .Debug
