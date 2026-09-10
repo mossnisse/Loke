@@ -1,5 +1,8 @@
-this binding copies 24 bytes from `doc`
-@24:17
 L0503
 @32:18
 field `token` is `Only`, which is move-only, so this destructure cannot copy it; write `move(...)` to transfer ownership instead
+
+warning[L0507]: this binding copies 24 bytes from `doc`
+@24:17
+warning[L0507]: this binding copies 8 bytes from `h`
+@32:18

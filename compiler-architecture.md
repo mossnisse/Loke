@@ -393,10 +393,10 @@ The integration harness is `tests/corpus_test.odin`:
 | Directory | Contract |
 | --- | --- |
 | `tests/run/` | Compile, execute, and compare stdout with `.expected`. |
-| `tests/trap/` | Compile and require a failing process result. |
-| `tests/err/` | Match diagnostic count, codes, message fragments, and optional `@line:column` spans. |
+| `tests/trap/` | Compile, require a failing process result, and match the panic report with `.expected-err`. |
+| `tests/err/` | Match diagnostic count, codes, message fragments, and optional `@line:column` spans. Warnings the case's own sources raise are counted too, written as `warning[L0507]: ...`. |
 | `tests/syntax/`, `tests/syntax_err/` | Valid syntax and parser recovery. |
-| `tests/ll/` | Require stable shapes in emitted LLVM IR. |
+| `tests/ll/` | Require stable shapes in emitted LLVM IR, and require LLVM to accept the module. |
 | `tests/layout/` | Compare compiler and LLVM layout. |
 | `tests/pkg/`, `tests/pkg_err/` | Multi-package success and import/package diagnostics. |
 | `tests/obj/`, `tests/os/` | C-host object linking and real process-argument integration. |

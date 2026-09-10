@@ -8,8 +8,11 @@
 //                                  matches any run inside one IR line
 //   tests/err/*.loke + .expected   compile, assert exact diagnostic count plus
 //                                  code/message substrings and @line:column spans;
-//                                  a `!`-prefixed line must *not* appear
-//   tests/trap/*.loke              compile, run, expect a non-zero exit
+//                                  a `!`-prefixed line must *not* appear, and a
+//                                  `warning[...]` line is counted like a code
+//   tests/trap/*.loke              compile, run, expect a non-zero exit, and
+//     with .expected-err           compare the panic report; an optional
+//                                  .expected pins the stdout produced first
 //   tests/layout/*.loke            compile with -check-layout: the checker's
 //                                  size/alignment/offsets must agree with LLVM's
 //   tests/pkg/<case>/ with        a directory compiled as one root package, with
@@ -250,7 +253,9 @@ programs_run :: proc(t: ^testing.T) {
 // A non-zero exit alone cannot prove what a panic did on the way down, so a
 // trap case reads its sibling `.flags` like every other corpus — which is how
 // `-panic=abort` is exercised — and may pin the stdout produced before the
-// failure with a `.expected` file (m6a-plan decision "Corpora").
+// failure with a `.expected` file (m6a-plan decision "Corpora"). The panic
+// report itself is pinned by a required `.expected-err`: an exit code alone
+// lets a case named for one failure pass on any other.
 @(test)
 programs_trap :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
@@ -278,12 +283,24 @@ programs_trap :: proc(t: ^testing.T) {
 			continue
 		}
 
-		run_state, stdout, _, run_err := os2.process_exec(
+		run_state, stdout, run_stderr, run_err := os2.process_exec(
 			os2.Process_Desc{command = []string{exe}},
 			context.allocator,
 		)
 		testing.expectf(t, run_err == nil, "%s: cannot run the produced exe", path)
 		testing.expectf(t, run_state.exit_code != 0, "%s: expected a runtime failure", path)
+
+		errors, has_errors := os.read_entire_file(fmt.tprintf("%s-err", expected_path(path)))
+		if testing.expectf(t, has_errors, "%s: missing .expected-err naming the panic", path) {
+			testing.expectf(
+				t,
+				normalise(string(run_stderr)) == normalise(string(errors)),
+				"%s: expected stderr %q, got %q",
+				path,
+				normalise(string(errors)),
+				normalise(string(run_stderr)),
+			)
+		}
 
 		expected, has_expected := os.read_entire_file(expected_path(path))
 		if !has_expected {
@@ -304,11 +321,22 @@ programs_trap :: proc(t: ^testing.T) {
 // renumbering. Each case lists the instruction shapes that must survive: the
 // integer guards, the short-circuit phi, the bounds and nil checks, the defer
 // flags, recursive aggregate equality, and the indirect call.
+//
+// Every module is also handed to LLVM itself. `-emit-ll` stops before clang and
+// most cases here have no `tests/run` twin, so nothing else ever parses what
+// they generate: substring matching alone passes on IR that cannot be assembled.
 @(test)
 generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 	os.make_directory(TMP)
 	cases, _ := filepath.glob("tests/ll/*.loke")
 	testing.expect(t, len(cases) > 0, "no IR cases found")
+
+	// Cloned out of the temporary allocator: this outlives the loop below.
+	found_clang, _, has_clang := host_toolchain()
+	clang := strings.clone(found_clang)
+	if !has_clang {
+		log.info("no usable clang; skipping IR validation")
+	}
 
 	for path in cases {
 		expected, has_expected := os.read_entire_file(expected_path(path))
@@ -332,6 +360,25 @@ generated_ir_keeps_its_shape :: proc(t: ^testing.T) {
 		ir, read_ok := os.read_entire_file(ll_path)
 		if !testing.expectf(t, read_ok, "%s: no IR at %s", path, ll_path) {
 			continue
+		}
+		if has_clang {
+			assembled, _, reject, assemble_err := os2.process_exec(
+				os2.Process_Desc {
+					command = []string {
+						clang, "-x", "ir", "-c", ll_path,
+						"-o", fmt.tprintf("%s/%s.ll.o", TMP, filepath.stem(path)),
+					},
+				},
+				context.allocator,
+			)
+			testing.expectf(t, assemble_err == nil, "%s: cannot run %s", path, clang)
+			testing.expectf(
+				t,
+				assembled.exit_code == 0,
+				"%s: LLVM rejects the generated IR:\n%s",
+				path,
+				string(reject),
+			)
 		}
 		for raw_line in strings.split_lines(normalise(string(expected))) {
 			line := strings.trim_space(raw_line)
@@ -1169,6 +1216,7 @@ check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, mode, sent
 
 	output := string(stderr)
 	expected_errors := 0
+	expected_warnings := 0
 	for raw_line in strings.split_lines(normalise(string(expected))) {
 		line := strings.trim_space(raw_line)
 		if line == "" {
@@ -1208,6 +1256,9 @@ check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, mode, sent
 		if strings.has_prefix(line, "L0") {
 			expected_errors += 1
 		}
+		if strings.has_prefix(line, "warning[") {
+			expected_warnings += 1
+		}
 		testing.expectf(
 			t,
 			strings.contains(output, line),
@@ -1226,6 +1277,50 @@ check_one_diagnostic_case :: proc(t: ^testing.T, path, expected_file, mode, sent
 		strings.count(output, "error[L"),
 		output,
 	)
+
+	// Warnings are counted the same way, so a stray one is not invisible here —
+	// but only the ones this case's own sources produced. An error anywhere is
+	// this corpus's business; a warning raised inside the bundled `core`/`base`
+	// is not, and no fixture could enumerate those: `-copy-cost=1` reports every
+	// copy in every package the case compiles, the standard library included.
+	warnings := own_diagnostics(output, path, "warning[")
+	testing.expectf(
+		t,
+		warnings == expected_warnings,
+		"%s: expected %d warnings from its own sources, got %d\n%s",
+		path,
+		expected_warnings,
+		warnings,
+		output,
+	)
+}
+
+// Diagnostics of `kind` whose location line points inside `path` — a file for a
+// single-file case, a directory for a package one. The location is written as
+// the compiler resolved it, so an absolute Windows path has to match a relative
+// case path: both are compared with `/` separators, and a directory case matches
+// every member file under it.
+@(private)
+own_diagnostics :: proc(output, path, kind: string) -> (count: int) {
+	slashed :: proc(s: string) -> string {
+		return strings.replace_all(s, "\\", "/", context.temp_allocator) or_else s
+	}
+	case_path := slashed(path)
+	pending := false
+	for raw_line in strings.split_lines(output, context.temp_allocator) {
+		line := strings.trim_space(raw_line)
+		if strings.has_prefix(line, kind) {
+			pending = true
+			continue
+		}
+		if pending && strings.has_prefix(line, "--> ") {
+			if strings.contains(slashed(line), case_path) {
+				count += 1
+			}
+			pending = false
+		}
+	}
+	return
 }
 
 // A case may sit beside a `.flags` file holding extra compiler options, one per

@@ -4,3 +4,8 @@ L0503
 L0503
 @24:15
 `[dynamic]Move_Last` is move-only, so this binding cannot copy it; write `move(...)` to transfer ownership instead
+
+warning[L0507]: this binding clones `first_nodes`
+@23:16
+warning[L0507]: this binding clones `last_nodes`
+@24:15
