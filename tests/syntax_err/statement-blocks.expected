@@ -13,5 +13,3 @@ expected `;` after the statement
 L0214
 @21:1
 expected `}` to close the block
-L0214
-@21:1

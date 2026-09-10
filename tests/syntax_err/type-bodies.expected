@@ -1,0 +1,19 @@
+L0239
+@6:17
+expected `{` to open the body
+L0206
+@6:24
+expected a declaration
+L0239
+@8:19
+expected `{` to open the enum body
+L0241
+@8:19
+expected an enum member name
+L0206
+@8:27
+L0239
+@11:2
+expected `{` to open the interface body
+L0206
+@12:1

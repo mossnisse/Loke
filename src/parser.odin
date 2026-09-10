@@ -674,7 +674,7 @@ parse_foreign :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item
 	}
 	_, opened := expect(p, .Lbrace, "L0251", "`{` to open the foreign block")
 	item.members = parse_member_list(p, .Foreign)
-	_, closed := expect(p, .Rbrace, "L0251", "`}` to close the foreign block")
+	closed := close_body(p, opened, "L0251", "`}` to close the foreign block")
 
 	item.has_error = !has_name || !opened || !closed
 	item.span = span_to_here(p, start)
@@ -692,7 +692,7 @@ parse_impl :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
 	item.type = parse_type(p)
 	_, opened := expect(p, .Lbrace, "L0252", "`{` to open the block")
 	item.members = parse_member_list(p, .Impl)
-	_, closed := expect(p, .Rbrace, "L0252", "`}` to close the block")
+	closed := close_body(p, opened, "L0252", "`}` to close the block")
 
 	item.has_error = !opened || !closed || expr_has_error(item.type)
 	item.span = span_to_here(p, start)
@@ -819,7 +819,7 @@ parse_top_level_block :: proc(
 	block.attributes = attributes
 	_, opened := expect(p, .Lbrace, "L0252", "`{` to open the block")
 	block.items = parse_items(p, stop_at_rbrace = true)
-	_, closed := expect(p, .Rbrace, "L0252", "`}` to close the block")
+	closed := close_body(p, opened, "L0252", "`}` to close the block")
 
 	block.has_error = !opened || !closed
 	block.span = span_to_here(p, start)
@@ -1313,6 +1313,19 @@ open_header :: proc(p: ^Parser, message: string) -> bool {
 	return false
 }
 
+// One missing brace is one diagnostic, for the same reason as `close_header`:
+// with no `{` consumed there is no `}` to ask for. Asking anyway consumes the
+// *enclosing* block's brace, which reads every statement after this body as part
+// of it — one mistyped header then swallows the rest of the file.
+@(private = "file")
+close_body :: proc(p: ^Parser, opened: bool, code: string, message: string) -> bool {
+	if !opened {
+		return false
+	}
+	_, ok := expect(p, .Rbrace, code, message)
+	return ok
+}
+
 // One missing parenthesis is one diagnostic: with no `(` consumed there is no
 // `)` to ask for.
 @(private = "file")
@@ -1615,7 +1628,7 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 	for at(p, .Case) {
 		append(&cases, parse_switch_case(p, kind))
 	}
-	_, body_closed := expect(p, .Rbrace, "L0248", "`}` to close the switch body")
+	body_closed := close_body(p, body_opened, "L0248", "`}` to close the switch body")
 
 	s := new_stmt(p, Stmt_Switch, start)
 	s.kind = kind
@@ -3001,7 +3014,7 @@ parse_record :: proc(p: ^Parser) -> Expr {
 	} else {
 		fields, members_ok = parse_field_list(p)
 	}
-	_, closed := expect(p, .Rbrace, "L0239", "`}` to close the body")
+	closed := close_body(p, opened, "L0239", "`}` to close the body")
 
 	e := new_expr(p, Type_Record, lo)
 	e.kind = keyword.kind == .Union ? .Union : .Struct
@@ -3105,7 +3118,7 @@ parse_enum :: proc(p: ^Parser) -> Expr {
 			break
 		}
 	}
-	_, closed := expect(p, .Rbrace, "L0239", "`}` to close the enum body")
+	closed := close_body(p, opened, "L0239", "`}` to close the enum body")
 
 	e := new_expr(p, Type_Enum, lo)
 	e.backing = backing
@@ -3144,7 +3157,7 @@ parse_interface :: proc(p: ^Parser) -> Expr {
 			advance(p) // requirements end in `;`, so force progress
 		}
 	}
-	_, closed := expect(p, .Rbrace, "L0239", "`}` to close the interface body")
+	closed := close_body(p, opened, "L0239", "`}` to close the interface body")
 
 	e := new_expr(p, Type_Interface, lo)
 	e.generic_params = generics

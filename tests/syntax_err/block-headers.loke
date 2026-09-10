@@ -1,6 +1,10 @@
 // The headers of the three brace-bodied items that are not procedures: a
 // foreign block names its library, an `impl` opens with `{`, an interface
 // requirement ends with `;`, and a delegation lists its operators in parens.
+//
+// A body that never opened does not ask for a `}`, so the one below the `impl`
+// is left where it is and reported as the stray it is, rather than closing a
+// block that was never entered.
 package main;
 
 foreign { }

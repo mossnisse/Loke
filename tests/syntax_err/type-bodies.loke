@@ -1,0 +1,16 @@
+// The type bodies that open with `{`: a record, an enum, and an interface. None
+// of them asks for a `}` it never opened, so each mistake stays one diagnostic
+// and the declarations after it are still read.
+package main;
+
+Point :: struct x: int }
+
+Colour :: enum Red, Green }
+
+Sized :: interface($Self: type)
+	slot size: proc(self) -> int;
+}
+
+after :: proc() -> int { return 1; }
+
+sentinel :: proc() { }
