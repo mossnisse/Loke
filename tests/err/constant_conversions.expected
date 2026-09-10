@@ -1,0 +1,15 @@
+L0353
+@10:18
+1.5 is not representable by `int`
+L0351
+@11:17
+`1e400` is not a valid floating-point literal
+L0317
+@12:13
+`!` does not apply to `untyped int`
+L0579
+@13:15
+`make` names the container type to create
+L0345
+@14:17
+this message must be a compile-time string

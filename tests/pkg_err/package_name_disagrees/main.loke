@@ -1,0 +1,6 @@
+package main;
+
+// A directory is one package, so every file in it writes the same name. The
+// first file read establishes it and the note points back at that clause.
+
+main :: proc() { }

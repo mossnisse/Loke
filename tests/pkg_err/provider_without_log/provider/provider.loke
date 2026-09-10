@@ -1,0 +1,10 @@
+@(public)
+package provider;
+
+Logger :: struct { level: int }
+
+handle: static Logger = {};
+
+logger_factory :: proc() -> ^Logger {
+	return &handle;
+}

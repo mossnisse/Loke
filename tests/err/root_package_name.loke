@@ -1,0 +1,5 @@
+// An executable's root package is named `main`. A library package compiled as
+// one says so here rather than at the link.
+package library;
+
+main :: proc() { }

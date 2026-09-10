@@ -1,0 +1,10 @@
+@(public)
+package strings;
+
+// `allocate_string(text, allocator)` takes both: the view to copy and the
+// allocator to copy it into. One argument is not a shorter spelling of it.
+copy :: proc(text: string_view) -> string {
+	return allocate_string(text) or_else no_string();
+}
+
+no_string :: proc() -> string { return ""; }

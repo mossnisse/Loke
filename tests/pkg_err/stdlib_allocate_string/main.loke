@@ -1,0 +1,11 @@
+package main;
+
+// The compiler contributes `allocate_string` to `core:strings` alone, so only a
+// standard-library author can misuse it -- which is what a replaced `core`
+// collection makes reachable from a test.
+
+import "core:strings";
+
+main :: proc() {
+	_ = strings.copy("text");
+}

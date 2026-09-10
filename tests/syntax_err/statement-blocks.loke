@@ -1,0 +1,20 @@
+// Statements: a body is a block and not a single statement, a `switch` needs
+// its own, one statement ends before the next begins, and a header holds an
+// expression rather than a statement.
+package main;
+
+f :: proc() { }
+
+main :: proc() {
+	x := 1;
+	if (x == 1) x = 2;
+	switch (x) case 1: { }
+	if (x = 2) { }
+	f()
+}
+
+sentinel :: proc() { }
+
+// A block runs to its `}`, so an unclosed one reads to the end of the file.
+unclosed :: proc() {
+	f();

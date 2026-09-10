@@ -401,6 +401,14 @@ The integration harness is `tests/corpus_test.odin`:
 | `tests/pkg/`, `tests/pkg_err/` | Multi-package success and import/package diagnostics. |
 | `tests/obj/`, `tests/os/` | C-host object linking and real process-argument integration. |
 
+Every diagnostic code the compiler can write is pinned by a case in one of those
+directories, or by a harness test for the ones no corpus shape reaches — a
+missing input, an unwritable module, an absent clang or assembler. The
+exceptions are the `UNPINNED` list in `tests/corpus_test.odin`: invariant guards
+that no source can reach, and `require_const`'s fallback message, each with the
+reasoning recorded at its site. `every_diagnostic_code_is_pinned` fails when a
+new code arrives without either.
+
 Common commands from the repository root:
 
 ```powershell

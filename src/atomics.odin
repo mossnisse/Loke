@@ -141,6 +141,9 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	v.value_category = .Value
 	order_type := memory_order_type(k)
 	if order_type == INVALID_TYPE {
+		// Reachable only from a replaced `base:runtime`, which would mean vendoring
+		// the whole runtime into a test to delete one enum from it. Left unpinned
+		// rather than carrying a copy of `base/runtime` that silently rots.
 		errorf(k.c, v.span, "L0661", "`base:runtime` does not declare `Memory_Order`")
 		v.type = INVALID_TYPE
 		return

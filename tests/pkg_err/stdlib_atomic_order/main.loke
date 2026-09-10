@@ -1,0 +1,12 @@
+package main;
+
+// The atomic intrinsics are contributed to `core:sync` alone, and each needs a
+// constant ordering. Outside that package an ordering has already travelled
+// through a `$` parameter, so only a replaced `core` reaches the intrinsic with
+// a runtime value.
+
+import "core:sync";
+
+main :: proc() {
+	_ = sync.forwarded(1);
+}

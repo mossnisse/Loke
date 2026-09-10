@@ -1,0 +1,6 @@
+L0203
+@4:9
+expected a package name
+L0205
+@6:1
+a file has exactly one `package` clause, at the top

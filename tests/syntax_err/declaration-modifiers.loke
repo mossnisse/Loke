@@ -1,0 +1,9 @@
+// Storage modifiers and the uninitialised marker, on declarations that are
+// otherwise well formed: duration is one axis, and `---` says what a written
+// type would have said.
+package main;
+
+repeated: static static int = 3;
+no_type := ---;
+
+sentinel :: proc() { }

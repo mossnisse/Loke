@@ -1,0 +1,6 @@
+﻿// This file begins with a UTF-8 byte order mark. A source file is UTF-8 with
+// no mark, and one is a file-level fault rather than a token: it is reported
+// with no span, before anything is lexed.
+package main;
+
+main :: proc() { }

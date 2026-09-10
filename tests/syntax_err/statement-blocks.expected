@@ -1,0 +1,17 @@
+L0213
+@10:14
+expected `{` to open a block
+L0248
+@11:13
+expected `{` to open the switch body
+L0246
+@12:6
+a control-flow header takes one expression
+L0216
+@14:1
+expected `;` after the statement
+L0214
+@21:1
+expected `}` to close the block
+L0214
+@21:1

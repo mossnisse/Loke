@@ -1,0 +1,8 @@
+// The clause is there but names nothing, and a second one follows it. The
+// package a file belongs to is decided by its first clause; a later one is not
+// a second membership.
+package ;
+
+package main;
+
+sentinel :: proc() { }

@@ -109,6 +109,10 @@ Evaluator :: struct {
 
 // The single funnel every compile-time-required context goes through. An
 // already folded expression is accepted as is; anything else is executed.
+// The `code` names the context — a constant initialiser, a file-scope one, an
+// atomic ordering — in the fallback below. It is a fallback: it is written only
+// when the evaluator failed without reporting, and every failing path in the
+// evaluator reports, so L0311, L0325 and L0340 have no fixture to pin them.
 require_const :: proc(k: ^Checker, e: Expr, what: string, code := "L0340") -> (Const_Value, bool) {
 	base := expr_base(e)
 	if base == nil || base.type == INVALID_TYPE {

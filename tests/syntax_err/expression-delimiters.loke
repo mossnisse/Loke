@@ -1,0 +1,18 @@
+// Expression forms that open something they never close, and the operators
+// whose operand is a name or a type rather than an expression.
+package main;
+
+main :: proc() {
+	x := (1 + 2;
+	b: any = 2;
+	c := b.(int;
+	d := b.;
+	e := move 3;
+	f := map int]string{};
+	g := [^int;
+	h := $;
+	i := 1 if true;
+	_ = x; _ = c; _ = d; _ = e; _ = f; _ = g; _ = h; _ = i;
+}
+
+sentinel :: proc() { }

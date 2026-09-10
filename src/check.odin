@@ -2024,6 +2024,8 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 
+	// The parser reads an expression after `::` or reports L0220 in its place, so
+	// a constant always arrives with a value and this is an invariant guard.
 	if len(d.values) == 0 {
 		if d.kind == .Const {
 			errorf(k.c, d.span, "L0307", "a constant needs an initialiser")
@@ -2091,7 +2093,10 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 		symbol_id := i < len(d.symbols) ? d.symbols[i] : INVALID_SYMBOL
 
 		// `---` is uninitialised storage, not a zero value, and needs a written
-		// type to have any shape at all.
+		// type to have any shape at all. Both branches are invariant guards: the
+		// parser admits `---` only as `x: T = ---` — an inferred `x := ---` is
+		// L0235 and a constant's `::` never reaches it at all — so a nil value
+		// arrives here with a written type and a `.Var` kind.
 		if value == nil {
 			if declared == INVALID_TYPE {
 				errorf(k.c, d.span, "L0381", "`---` needs an explicitly written type")
@@ -2141,7 +2146,10 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 
 		// Every compile-time-required context goes through one funnel, so a
 		// constant initialiser may call a procedure and still get the same
-		// diagnostics as a folded one.
+		// diagnostics as a folded one. The code passed here names the context in
+		// `require_const`'s fallback message, which is reached only by an
+		// evaluation that failed without reporting: every failing path in the
+		// evaluator has its own diagnostic, so these two are unpinned by design.
 		if d.top_level && d.kind == .Var {
 			require_const(k, value, "a file-scope initializer", "L0325")
 		}

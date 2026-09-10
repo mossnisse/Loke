@@ -1,0 +1,18 @@
+// The headers of the three brace-bodied items that are not procedures: a
+// foreign block names its library, an `impl` opens with `{`, an interface
+// requirement ends with `;`, and a delegation lists its operators in parens.
+package main;
+
+foreign { }
+
+Point :: struct { x: int }
+
+impl Point
+	delegate(<, ==;
+}
+
+Sized :: interface($Self: type) {
+	slot size: proc(self) -> int
+}
+
+sentinel :: proc() { }

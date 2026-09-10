@@ -1,0 +1,21 @@
+L0309
+@12:14
+this expression produces no value
+L0314
+@13:11
+`_` cannot be read
+L0316
+@14:13
+`size_of` is a built-in procedure and must be called
+L0320
+@16:2
+`int` is not callable
+L0334
+@17:18
+`fmt` names a package; write `fmt.name` to use one of its declarations
+L0312
+@21:1
+a procedure declaration binds exactly one name
+L0233
+@21:6
+a constant declares exactly one name

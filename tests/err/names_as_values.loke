@@ -1,0 +1,21 @@
+package main;
+
+// Names read where a value is wanted: a call that produces nothing, the blank
+// name, a built-in that is not a value, a package, and a value that is not
+// callable. Each is a name resolution that succeeded and a use that cannot.
+
+import "core:fmt";
+
+nothing :: proc() { }
+
+main :: proc() {
+	produced := nothing();
+	blank := _;
+	builtin := size_of;
+	number := 1;
+	number();
+	package_name := fmt;
+	_ = produced; _ = blank; _ = builtin; _ = package_name;
+}
+
+two, names :: proc() { };

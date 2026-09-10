@@ -1,0 +1,12 @@
+L0251
+@6:9
+expected the foreign library's name
+L0252
+@11:2
+expected `{` to open the block
+L0243
+@11:16
+expected `)` after the delegated operators
+L0242
+@16:1
+expected `;` after the requirement

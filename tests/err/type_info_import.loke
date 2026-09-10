@@ -1,0 +1,9 @@
+package main;
+
+// `type_info_of` produces a `^runtime.Type_Info`, so the file that calls it
+// needs the package that declares the type. Nothing else here imports it.
+
+main :: proc() {
+	info := type_info_of(int);
+	_ = info;
+}

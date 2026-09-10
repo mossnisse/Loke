@@ -1,0 +1,5 @@
+package main
+
+// The clause runs to the `;`, so without one the next item is read as part of
+// it.
+sentinel :: proc() { }

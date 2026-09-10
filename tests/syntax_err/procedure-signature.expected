@@ -1,0 +1,27 @@
+L0211
+@5:27
+expected `(` to open the parameter list
+L0237
+@6:23
+expected a parameter name
+L0240
+@7:17
+expected `$` before a generic parameter name
+L0240
+@7:18
+expected `:` and the generic parameter's type
+L0210
+@7:18
+expected a type
+L0244
+@10:14
+expected a procedure name
+L0236
+@14:54
+expected a procedure body or `---` after the `where` clause
+L0253
+@24:25
+expected `,` or `)` after the parameter
+L0212
+@25:1
+expected `)` to close the parameter list

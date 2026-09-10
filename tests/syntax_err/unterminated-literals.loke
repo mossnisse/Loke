@@ -1,0 +1,13 @@
+// Literals the lexer cannot finish. A character literal ends at its line; a raw
+// string runs to the next backtick, so an unterminated one reaches the end of the
+// file and has to come last.
+package main;
+
+main :: proc() {
+	c := 'a;
+	_ = c;
+}
+
+sentinel :: proc() { }
+
+trailing :: `unterminated raw

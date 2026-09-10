@@ -1,0 +1,8 @@
+@(default_logger = "./provider:logger_factory")
+package main;
+
+// A logging provider publishes its handle into `core:log`, so selecting one
+// needs that package in the build. Nothing here imports it, and the factory's
+// own result type cannot stand in for the one the selection publishes.
+
+main :: proc() { }

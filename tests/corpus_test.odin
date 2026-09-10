@@ -219,6 +219,125 @@ a_partial_seed_runtime_is_not_a_foreign_failure :: proc(t: ^testing.T) {
 	)
 }
 
+// The three inputs and outputs a build cannot reach: a source file that is not
+// there, a generated module that cannot be written, and a foreign import whose
+// file is missing. Each is named by path, because a wrong one and a missing
+// installation look the same from inside the toolchain. These need a driver
+// invocation of their own -- an `err` fixture is a file that exists, compiled
+// to a path that works.
+@(test)
+unreachable_inputs_and_outputs_are_named :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	absent := fmt.tprintf("%s/no-such-source.loke", TMP)
+	os.remove(absent)
+	expect_diagnostic(t, {compiler_path(), absent}, 1, "L0001", absent)
+
+	// A directory that does not exist, so deriving `<output>.ll` from `-o` and
+	// writing it fails where the module is written rather than where it is built.
+	unwritable := fmt.tprintf("%s/no-such-directory/module.exe", TMP)
+	expect_diagnostic(
+		t,
+		{compiler_path(), "examples/hello.loke", "-emit-ll", "-o", unwritable},
+		2,
+		"L0401",
+		"module.ll",
+	)
+
+	// Written here rather than kept as a corpus case: no corpus compiles a
+	// program for its link, and a stray `.loke` under `tests/` is swept up by a
+	// glob that means something else.
+	source := fmt.tprintf("%s/missing-foreign-import.loke", TMP)
+	os.write_entire_file(source, transmute([]u8)string(
+`package main;
+
+foreign import missing "./no-such-library.lib";
+
+foreign missing {
+	absent :: proc "c" () -> i32 ---;
+}
+
+main :: proc() { _ = absent(); }
+`))
+	expect_diagnostic(
+		t,
+		{compiler_path(), source, "-o", fmt.tprintf("%s/missing-foreign-import.exe", TMP)},
+		2,
+		"L0631",
+		"no-such-library.lib",
+	)
+}
+
+// The two tools the driver shells out to, each named by the path it tried. Both
+// are reported from the environment override, which is the only way a machine
+// that has the tool can be asked what a machine without it sees -- and the
+// assembler's absence is otherwise only ever *skipped* here.
+@(test)
+a_missing_tool_is_named_by_the_path_it_tried :: proc(t: ^testing.T) {
+	os.make_directory(TMP)
+	inherited, environ_err := os2.environ(context.allocator)
+	if !testing.expect(t, environ_err == nil, "cannot read this process's environment") {
+		return
+	}
+
+	absent_clang := fmt.tprintf("%s/no-such-clang.exe", TMP)
+	expect_diagnostic_with_env(
+		t,
+		{compiler_path(), "examples/hello.loke", "-o", fmt.tprintf("%s/no-clang.exe", TMP)},
+		append_env(inherited, fmt.tprintf("LOKE_CLANG=%s", absent_clang)),
+		"L0402",
+		absent_clang,
+	)
+
+	absent_nasm := fmt.tprintf("%s/no-such-nasm.exe", TMP)
+	expect_diagnostic_with_env(
+		t,
+		{compiler_path(), "tests/obj/asm_exe.loke", "-o", fmt.tprintf("%s/no-nasm.exe", TMP)},
+		append_env(inherited, fmt.tprintf("LOKE_NASM=%s", absent_nasm)),
+		"L0632",
+		"helper.asm",
+	)
+}
+
+@(private)
+append_env :: proc(inherited: []string, entry: string) -> []string {
+	out := make([dynamic]string, 0, len(inherited) + 1, context.temp_allocator)
+	append(&out, ..inherited)
+	append(&out, entry)
+	return out[:]
+}
+
+// One compiler run that must fail with `code` in its diagnostics and `names` in
+// the text -- the path, so a wrong one is distinguishable from a missing one.
+@(private)
+expect_diagnostic :: proc(t: ^testing.T, command: []string, exit: int, code, names: string) {
+	expect_diagnostic_env(t, command, nil, exit, code, names)
+}
+
+@(private)
+expect_diagnostic_with_env :: proc(t: ^testing.T, command: []string, env: []string, code, names: string) {
+	expect_diagnostic_env(t, command, env, 2, code, names)
+}
+
+@(private)
+expect_diagnostic_env :: proc(t: ^testing.T, command: []string, env: []string, exit: int, code, names: string) {
+	state, _, stderr, err := os2.process_exec(
+		os2.Process_Desc{command = command, env = env},
+		context.allocator,
+	)
+	if !testing.expectf(t, err == nil, "cannot run %s", command[0]) {
+		return
+	}
+	testing.expectf(t, state.exit_code == exit, "%s: expected exit %d, got %d\n%s", code, exit, state.exit_code, string(stderr))
+	testing.expectf(
+		t,
+		strings.contains(string(stderr), code) && strings.contains(string(stderr), names),
+		"expected %s naming %s, got:\n%s",
+		code,
+		names,
+		string(stderr),
+	)
+}
+
 // `-o` chooses the artifact path, and `.ll` is a legal thing to call an
 // executable. The generated module is derived from that same path, so the
 // build must not take its own output for a temporary and delete it.
@@ -238,6 +357,147 @@ a_dot_ll_output_survives_its_own_build :: proc(t: ^testing.T) {
 		return
 	}
 	testing.expectf(t, os.is_file(out), "the build reported success and left no %s", out)
+}
+
+// Every diagnostic code the compiler can write is pinned by a case somewhere,
+// so a new one arrives with the fixture that demonstrates it rather than
+// silently unpinned. The exceptions are listed here rather than discovered: an
+// invariant guard that no source can reach, and the fallback `require_const`
+// writes only when an evaluation failed without reporting -- each with the
+// reasoning recorded at its site.
+UNPINNED :: []string {
+	// `parse_declaration`, entered only through `starts_declaration`, which has
+	// already scanned the names and the `:`.
+	"L0207",
+	"L0208",
+	// A constant always parses with a value, and `---` reaches the checker only
+	// as `x: T = ---`.
+	"L0307",
+	"L0381",
+	// `require_const`'s context-named fallback: every failing path in the
+	// evaluator reports first.
+	"L0311",
+	"L0325",
+	"L0340",
+	// Backend and parser invariants: an emission contract violation, a foreign
+	// member that `parse_member_list` cannot produce, and `unsupported_construct`
+	// — every arm that used to reach it was given an honest diagnostic in M7.
+	"L0405",
+	"L0622",
+	"L0350",
+	// Needs a replaced `base:runtime` — a copy of the whole runtime in the test
+	// tree to delete one enum from it.
+	"L0661",
+}
+
+@(test)
+every_diagnostic_code_is_pinned :: proc(t: ^testing.T) {
+	emitted := make(map[string]bool, 0, context.temp_allocator)
+	sources, _ := filepath.glob("src/*.odin", context.temp_allocator)
+	for path in sources {
+		if strings.has_suffix(path, "_test.odin") {
+			continue
+		}
+		text, ok := os.read_entire_file(path, context.temp_allocator)
+		if !ok {
+			continue
+		}
+		for code in quoted_codes(string(text)) {
+			emitted[code] = true
+		}
+	}
+	testing.expectf(t, len(emitted) > 100, "found only %d diagnostic codes in src/", len(emitted))
+
+	// A code is pinned by any case that names it, and by the harness tests above
+	// for the diagnostics no corpus shape can reach.
+	pinned := make(map[string]bool, 0, context.temp_allocator)
+	patterns := []string {
+		"tests/err/*.expected",
+		"tests/pkg_err/*.expected",
+		"tests/syntax_err/*.expected",
+		"tests/corpus_test.odin",
+		"src/*_test.odin",
+	}
+	for pattern in patterns {
+		files, _ := filepath.glob(pattern, context.temp_allocator)
+		for path in files {
+			text, ok := os.read_entire_file(path, context.temp_allocator)
+			if !ok {
+				continue
+			}
+			for code in bare_codes(string(text)) {
+				pinned[code] = true
+			}
+		}
+	}
+
+	for code in UNPINNED {
+		testing.expectf(
+			t,
+			code in emitted,
+			"%s is listed as unpinned and no longer written anywhere in src/; drop the line",
+			code,
+		)
+		pinned[code] = true
+	}
+	for code in emitted {
+		testing.expectf(
+			t,
+			code in pinned,
+			"%s has no case pinning it: add one, or list it in UNPINNED with the reason at its site",
+			code,
+		)
+	}
+}
+
+// `"L0NNN"` — a code as the compiler's sources write one, quoted, so a mention
+// in a comment or a message is not mistaken for a diagnostic that exists.
+@(private)
+quoted_codes :: proc(text: string) -> []string {
+	return scan_codes(text, quoted = true)
+}
+
+// `L0NNN` anywhere — a fixture writes the bare code on its own line, and a
+// harness test writes it inside a message.
+@(private)
+bare_codes :: proc(text: string) -> []string {
+	return scan_codes(text, quoted = false)
+}
+
+@(private = "file")
+scan_codes :: proc(text: string, quoted: bool) -> []string {
+	out := make([dynamic]string, context.temp_allocator)
+	needle := quoted ? `"L0` : "L0"
+	rest := text
+	for {
+		at := strings.index(rest, needle)
+		if at < 0 {
+			break
+		}
+		rest = rest[at + len(needle):]
+		if len(rest) < 3 {
+			break
+		}
+		digits := rest[:3]
+		if !is_digits(digits) {
+			continue
+		}
+		if quoted && (len(rest) < 4 || rest[3] != '"') {
+			continue
+		}
+		append(&out, fmt.tprintf("L0%s", digits))
+	}
+	return out[:]
+}
+
+@(private = "file")
+is_digits :: proc(s: string) -> bool {
+	for c in s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 @(test)

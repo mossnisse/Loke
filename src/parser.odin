@@ -867,6 +867,9 @@ parse_declaration :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> 
 	d := ast_new(p, Decl)
 	d.attributes = attributes
 
+	// Every call site scans `Ident ("," Ident)* ":"` with `starts_declaration`
+	// before entering, so the name and the `:` below are invariant guards rather
+	// than reachable diagnostics: a declaration that got here has both.
 	names := make([dynamic]Name, 0, 0, p.allocator)
 	for {
 		name, ok := expect(p, .Ident, "L0207", "a name")

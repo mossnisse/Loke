@@ -1,0 +1,12 @@
+L0564
+@12:12
+a string yields decoded code points, so it cannot be iterated by reference
+L0591
+@15:12
+a map key is immutable, so it cannot be iterated by reference; write `foreach (key, &value in m)`
+L0587
+@18:8
+`in` tests a `map[K]V` for a key, found `[]int`
+L0360
+@22:12
+`Point` has 2 fields, so it fills 2 bindings, not 3

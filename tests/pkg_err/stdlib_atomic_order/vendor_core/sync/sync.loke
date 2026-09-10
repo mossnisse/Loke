@@ -1,0 +1,10 @@
+@(public)
+package sync;
+
+// An ordinary parameter, not a `$` one: its value is not known here, and the
+// intrinsic cannot select an instruction from it.
+forwarded :: proc(value: i32) -> i32 {
+	cell: i32 = value;
+	order: Memory_Order = Memory_Order.Acquire;
+	return atomic_load(&cell, order);
+}

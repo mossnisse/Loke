@@ -1,0 +1,27 @@
+L0219
+@6:13
+expected `)` to close the parenthesised expression
+L0224
+@8:13
+expected `)` to close the checked extraction
+L0225
+@9:9
+expected a name after `.`
+L0228
+@10:12
+expected `(` after `move`
+L0229
+@11:11
+expected `[` after `map`
+L0220
+@12:7
+parenthesise a type used as a conversion, or pass it as an argument
+L0231
+@12:9
+expected `]` after `[^`
+L0230
+@13:8
+expected a name after `$`
+L0221
+@14:16
+expected `else` to complete the conditional expression

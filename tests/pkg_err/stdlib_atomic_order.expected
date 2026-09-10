@@ -1,0 +1,3 @@
+L0666
+@9:28
+an atomic ordering must be a constant; a `$` parameter is what keeps one constant across a wrapper

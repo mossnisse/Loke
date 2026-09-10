@@ -1,0 +1,6 @@
+L0232
+@6:18
+repeated storage modifier
+L0235
+@7:12
+`---` needs a written type, as in `x: T = ---;`

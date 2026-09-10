@@ -1,0 +1,24 @@
+package main;
+
+// What cannot be iterated by reference -- a string yields decoded code points,
+// and a map key is immutable -- plus the two shapes that look like a container
+// operation and are not: `in` outside a map, and a destructure whose arity does
+// not match the value's fields.
+
+Point :: struct { x: int, y: int }
+
+main :: proc() {
+	text: string = "text";
+	foreach (&ch in text) { }
+
+	m := map[int]int{};
+	foreach (&key, value in m) { }
+
+	values := []int{1, 2};
+	if (1 in values) { }
+
+	p := Point{1, 2};
+	a, b, c := 0, 0, 0;
+	a, b, c = p;
+	_ = a; _ = b; _ = c;
+}

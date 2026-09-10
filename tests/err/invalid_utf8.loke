@@ -1,0 +1,7 @@
+// A byte that no UTF-8 sequence can start. The span names where decoding
+// stopped, which is the only position the lexer has.
+package main;
+
+main :: proc() {
+	// ÿþ
+}
