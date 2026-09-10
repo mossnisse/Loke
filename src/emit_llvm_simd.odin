@@ -408,13 +408,15 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 		fmt.sbprintfln(&e.b, "  %s = trunc i8 %s to i1", out, folded)
 		return out
 	}
-	// design.md: the floating-point reductions are ordered, left to right. LLVM
-	// spells that as the starting-value form, whose identity is the neutral
-	// element of the fold.
+	// design.md: a floating-point sum and product are ordered, left to right.
+	// LLVM spells that as the starting-value form, seeded with the fold's exact
+	// identity. A sum's is `-0.0`, not `+0.0`: `+0.0 + -0.0` is `+0.0`, which
+	// would give an all-negative-zero vector the wrong zero.
 	start := ""
 	if float && (v.simd_fold == .Add || v.simd_fold == .Mul) {
+		bits := u16(type_bits(e.c, info.element))
 		start = fmt.aprintf(
-			"%s %s, ", lane, llvm_float(float_pattern(v.simd_fold == .Add ? 0 : 1, u16(type_bits(e.c, info.element))), u16(type_bits(e.c, info.element))),
+			"%s %s, ", lane, llvm_float(float_pattern(v.simd_fold == .Add ? -0.0 : 1.0, bits), bits),
 		)
 	}
 	return simd_call_reduce(e, name, lane, count, lane, value, start)

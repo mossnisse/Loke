@@ -148,9 +148,7 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// spell. A lane index is constant, so none of these can be written as a
 		// loop in ordinary Loke."
 		//
-		// The reduction's fold is a `$` parameter for the reason an atomic's
-		// ordering is: it selects the instruction, so it has to survive the
-		// library boundary as a constant.
+		// The reduction's fold is a constant because it selects the instruction.
 		// `Fold` itself is an ordinary enum in this package's own source: only this
 		// package can reach the intrinsic, so the constant is matched by member
 		// name rather than by binding a second identity for one enum.

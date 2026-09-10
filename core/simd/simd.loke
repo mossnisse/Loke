@@ -14,9 +14,9 @@ package simd;
 //   simd_select  lane-wise choice between two vectors
 //   simd_reduce  a vector folded to one scalar, by a constant `Fold`
 //
-// The fold is a `$` parameter for the reason an atomic ordering is: it selects
-// the instruction, so a constant at the caller has to stay constant across this
-// boundary.
+// The fold is a constant because it selects the instruction. It needs no `$`
+// parameter the way an atomic's ordering does, because nothing forwards one:
+// every procedure below writes its own `Fold` member at the call.
 
 // Which fold `reduce` performs. Only this package names it — every public
 // procedure below is one fold with its own name — so it is `@(private)`.
@@ -65,8 +65,14 @@ all :: proc(mask: Simd(bool, $N)) -> bool {
 }
 
 // design.md: "`reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each
-// folding a vector to one scalar. The floating-point reductions are ordered,
-// left to right, so a result does not depend on the target's vector width."
+// folding a vector to one scalar. A floating-point sum and product are ordered,
+// left to right, so their results do not depend on the target's vector width; a
+// minimum and a maximum need no such rule, because they do not depend on order."
+//
+// The ordered sum is seeded with `-0.0`, the exact identity, so a vector of
+// nothing but negative zero keeps its sign. A float minimum and maximum answer
+// with the lane that is not NaN, and may answer with either lane when the two
+// compare equal — which `-0.0` and `+0.0` do.
 reduce_add :: proc(vector: Simd($T, $N)) -> T {
 	return simd_reduce(vector, Fold.Add);
 }

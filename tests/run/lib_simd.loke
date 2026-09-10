@@ -93,6 +93,16 @@ main :: proc() {
 
 	fmt.println(simd.reduce_add(a), simd.reduce_mul(b), simd.reduce_min(a), simd.reduce_max(a));
 	fmt.println(simd.reduce_add(f), simd.reduce_min(f), simd.reduce_max(f));
+	// "A floating-point sum and product are ordered, left to right", and the
+	// ordered form is seeded with the fold's exact identity. A sum's is `-0.0`,
+	// so a vector of nothing but negative zero keeps its sign; `+0.0` would not.
+	negative_zero: Simd(f64, 2) = {-0.0, -0.0};
+	fmt.println(simd.reduce_add(negative_zero), simd.reduce_mul(negative_zero));
+	// A NaN lane, which design.md does not speak to: the sum carries it, and a
+	// minimum and a maximum answer with the lane that is not NaN.
+	nan := f64(0.0) / f64(0.0);
+	with_nan: Simd(f64, 4) = {1.5, nan, 3.5, 2.5};
+	fmt.println(simd.reduce_min(with_nan), simd.reduce_max(with_nan));
 	fmt.println(simd.any(mask), simd.all(mask), simd.all(a > 0), simd.any(a > 100));
 	fmt.println(simd.select(mask, a, b));
 	fmt.println(simd.to_array(a), simd.to_array(a)[2]);
