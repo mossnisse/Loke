@@ -48,7 +48,7 @@ main :: proc() {
 	// set and read back is the same value, and a name that was never set is
 	// `.none` rather than an error.
 	switch (_ in os.set_environment(name, "round trip")) {
-	case .ok:  break;
+	case .ok:
 	case .err: fmt.println("set failed");
 	}
 	switch (found in os.get_environment(name)) {

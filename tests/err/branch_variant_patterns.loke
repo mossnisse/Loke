@@ -1,0 +1,11 @@
+package main; import "core:fmt";
+
+Maybe :: union { none:, some: int }
+
+main :: proc() {
+	switch (Maybe.none) {
+	case .none(value): fmt.println(value);
+	case .some(number): fmt.println(number);
+	}
+	fmt.println(value);
+}

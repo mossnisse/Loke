@@ -559,7 +559,7 @@ declared `inout`; see [Procedures](#procedures). Everywhere else a `Return_Value
 is an ordinary expression.
 
 `Defer_Statement`'s body is narrowed semantically: no `return`, `or_return`, or
-nested `defer`; `break`/`continue` may target only a loop or switch wholly
+nested `defer`; `break`/`continue` may target only a loop wholly
 inside it. See [design.md](design.md#defer-statement).
 
 ## Switch
@@ -569,7 +569,10 @@ Switch_Statement = Value_Switch | Type_Switch
 
 Value_Switch = Attributes? "switch" "(" Init_Statement? Expression ")"
                "{" Value_Case* "}"
-Value_Case   = "case" Expression_List? ":" Statement*
+Value_Case   = "case" (Branch_Pattern | Expression_List)? ":" Statement*
+// A branch pattern is recognized only when the switch subject is a union. It
+// is deliberately shallow: one variant, one identifier binding, no nesting.
+Branch_Pattern = "." Identifier "(" Binding_Name ")"
 
 Type_Switch  = Attributes? "switch" "(" Init_Statement? Binding_Name "in" Expression ")"
                "{" Type_Case* "}"
@@ -715,6 +718,8 @@ The productions above use the following deterministic parsing rules:
 - `switch (name in expression)` is a type switch, over a union's variants or an
   `any_view`'s types. A value switch over membership uses
   `switch ((name in expression))`.
+- A singleton case of the exact shape `.name(binding)` is a branch-local union
+  pattern. Calls with any other callee or argument shape remain expressions.
 - An `Init_Statement` is a `Variable_Decl` when the comma-separated list of names
   that opens it is followed by `:`, and a `Simple_Statement` otherwise. Deciding
   this means scanning a name list, which is the same bounded scan `Declaration`

@@ -216,18 +216,18 @@ ensure_proc_typed_for_eval :: proc(k: ^Checker, symbol_id: Symbol_Id) -> bool {
 
 	outer_location := save_checker_location(k)
 	outer_proc, outer_result := k.proc_literal, k.result_type
-	outer_loop, outer_switch, outer_defer := k.loop_depth, k.switch_depth, k.in_defer
+	outer_loop, outer_defer := k.loop_depth, k.in_defer
 	outer_slots := k.defer_slots
 	defer {
 		restore_checker_location(k, outer_location)
 		k.proc_literal, k.result_type = outer_proc, outer_result
-		k.loop_depth, k.switch_depth, k.in_defer = outer_loop, outer_switch, outer_defer
+		k.loop_depth, k.in_defer = outer_loop, outer_defer
 		k.defer_slots = outer_slots
 	}
 	enter_symbol_location(k, symbol)
 	k.proc_literal = nil
 	k.result_type = INVALID_TYPE
-	k.loop_depth, k.switch_depth, k.in_defer = 0, 0, false
+	k.loop_depth, k.in_defer = 0, false
 
 	resolve_declaration_signature(k, d)
 	check_decl(k, d)
@@ -2956,7 +2956,7 @@ eval_switch :: proc(ev: ^Evaluator, s: ^Stmt_Switch) -> Eval_Flow {
 	if !ok {
 		return .Fail
 	}
-	if s.kind == .Type && type_is_union(ev.k.c, type_underlying(ev.k.c, expr_base(s.subject).type)) {
+	if s.kind != .Value && type_is_union(ev.k.c, type_underlying(ev.k.c, expr_base(s.subject).type)) {
 		return eval_variant_switch(ev, s, subject)
 	}
 	default_index := -1
@@ -3038,8 +3038,7 @@ eval_case_body :: proc(ev: ^Evaluator, stmts: []Stmt) -> Eval_Flow {
 	if frame != nil {
 		flow = run_defers(ev, frame, mark, flow)
 	}
-	// A `break` leaves the switch, and nothing beyond it.
-	return flow == .Break ? .Normal : flow
+	return flow
 }
 
 @(private = "file")

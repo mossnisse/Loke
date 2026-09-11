@@ -1351,26 +1351,40 @@ Record-field initialization rules apply to the payload: a place argument clones 
 
 #### Inspecting a union
 
-A union is inspected with a `switch`, whose cases are variant names. There is no extraction operator: `v.(T)` and `v.as(T)` belong to [`any_view`](#any_view-type), where the set of possible types is genuinely open.
+A union is inspected with a `switch`, whose cases are variant names. A case may
+bind that variant's payload locally with `.name(binding)`. This is a deliberately
+small pattern: the binding is one identifier (or `_`), and patterns do not nest.
+Payloadless variants are written as bare `.name`.
 
 ```odin
-switch (p in v) {
-case .text:
-	// `p` is a new binding whose static type is the variant's payload type.
-	static_assert(type_of(p) == string);
-case .flag:
-	static_assert(type_of(p) == bool);
-case .number, .real:
-	// Several variants cannot choose one payload type, so the binding keeps
-	// the union type.
-	static_assert(type_of(p) == Value);
+switch (v) {
+case .text(text):
+	static_assert(type_of(text) == string);
+case .flag(flag):
+	static_assert(type_of(flag) == bool);
+case .number(number):
+	static_assert(type_of(number) == int);
+case .real(real):
+	static_assert(type_of(real) == f64);
 case .absent:
-	// A payloadless variant binds `Unit`, so every case binds something.
-	static_assert(type_of(p) == Unit);
 }
 ```
 
-The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while `type_of(p)` reflects the case binding's static narrowing.
+The switch reads the union's tag. `type_of(v)` remains `Value` everywhere, while
+each branch-local name has the payload type of the variant that introduced it.
+
+The header-binding form remains useful for grouped cases. One variant narrows
+the binding to its payload; several variants, or a default case, keep it at the
+union type. A payloadless variant binds `Unit`:
+
+```odin
+switch (p in v) {
+case .text:                 static_assert(type_of(p) == string);
+case .number, .real:        static_assert(type_of(p) == Value);
+case .flag:                 static_assert(type_of(p) == bool);
+case .absent:               static_assert(type_of(p) == Unit);
+}
+```
 
 A switch with a case for every variant is **exhaustive**, and no path reaches the end of the statement. That is what lets an exhaustive switch be the last statement of a value-returning procedure. A switch that omits a variant and has no default case is rejected, and names the variants it did not cover. There is no nil case, because a union has no nil state.
 
@@ -1378,9 +1392,10 @@ Writing `_` as the binding name acquires no binding.
 
 #### Switch ownership
 
-A switch over a **place** borrows it: the binding is immutable and non-owning, and the place keeps its value.
+A switch over a **place** borrows it: a payload binding is immutable and
+non-owning, and the place keeps its value.
 
-A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary  managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
+A switch over a **temporary** — or over `move(subject)` — consumes it. The active payload transfers into the case's own binding, which is an ordinary managed local from there on: it can be moved out, and it drops exactly once on every exit of its case. A case with no binding owns the whole union instead.
 
 #### Zero values and `@(zero=)`
 
@@ -3588,6 +3603,17 @@ switch (x in set) { }     // variant switch: `x` binds the payload of `set`
 switch ((x in set)) { }   // value switch on the boolean `x in set`
 ```
 
+A union may instead put the payload binding in its individual case. This keeps
+unrelated payload names and types out of the other branches:
+
+```odin
+switch (token) {
+case .number(value): use_number(value);
+case .word(text):    use_word(text);
+case .end:
+}
+```
+
 A switch statement can also use the same ranges accepted by `foreach`:
 
 ```odin
@@ -3652,7 +3678,7 @@ case: // intentionally ignore `.number`
 }
 ```
 
-A switch over an enum must either list every variant or include `case:`, exactly as a union variant switch must. Covering every variant guarantees that a case runs. If every case terminates with a return, panic, or other non-fallthrough control flow, the switch cannot fall through and needs no trailing return. A case that completes normally or executes `break` still continues after the switch. The default may be empty; writing it explicitly acknowledges that the remaining cases are intentionally ignored.
+A switch over an enum must either list every variant or include `case:`, exactly as a union variant switch must. Covering every variant guarantees that a case runs. If every case terminates with a return, panic, or other non-fallthrough control flow, the switch cannot fall through and needs no trailing return. A case that completes normally continues after the switch. `break` is loop-only and passes through any enclosing switches. The default may be empty; writing it explicitly acknowledges that the remaining cases are intentionally ignored.
 
 ```odin
 classify :: proc(value: Foo) -> int {
@@ -3670,7 +3696,7 @@ Unknown external integers are handled by [`Enum.from_int`](#integer-conversion) 
 
 A defer statement defers the execution of a statement until the end of the scope it is in. It is registered when execution reaches the `defer` statement and participates in the unified LIFO scope-exit ordering described under [Managed values and storage](#managed-values-and-storage).
 
-Deferred code may not transfer control out of the deferred statement. `return` and `or_return` are invalid there. `break` or `continue` may target only a loop or switch wholly inside the deferred statement. A deferred statement may not contain another `defer`.
+Deferred code may not transfer control out of the deferred statement. `return` and `or_return` are invalid there. `break` or `continue` may target only a loop wholly inside the deferred statement. A deferred statement may not contain another `defer`.
 
 So once scope exit begins, a deferred action runs to completion; it cannot replace the return, break, or continue that caused the exit, nor register more work in a defer stack already draining.
 
@@ -3774,19 +3800,20 @@ See [Conditional compilation](#conditional-compilation) for built-in constants t
 
 #### break statement
 
-`break` exits the innermost enclosing `for`, `foreach`, or `switch`. It takes no operand, and using it outside those constructs is an error. Conditions and ordinary blocks are not breakable constructs.
+`break` exits the innermost enclosing `for` or `foreach`. It takes no operand,
+and using it outside a loop is an error. Switches, conditions, and ordinary
+blocks are not breakable constructs; a break in a switch case passes through
+the switch to the nearest loop.
 
 ```odin
 for (cond) {
 	switch (next_action()) {
 	case .stop:
 		if (cond) {
-			break; // exits the innermost construct: the switch
+			break; // exits the enclosing for loop
 		}
 	case:
 	}
-
-	break; // exits the innermost construct: the for loop
 }
 ```
 

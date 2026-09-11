@@ -53,10 +53,9 @@ Checker :: struct {
 	// its `return inout e` needs an addressable operand.
 	result_inout:   bool,
 
-	// Lexical targets for `break`, `continue`, and `defer` restrictions.
-	loop_depth:   int,
-	switch_depth: int,
-	in_defer:     bool,
+	// Lexical loop targets for `break` and `continue`, and defer restrictions.
+	loop_depth: int,
+	in_defer:   bool,
 	// One flag slot per syntactic `defer` in the procedure being checked.
 	defer_slots:  int,
 }
@@ -2284,13 +2283,13 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	outer_proc := k.proc_literal
 	outer_result := k.result_type
 	outer_result_inout := k.result_inout
-	outer_loop, outer_switch, outer_defer := k.loop_depth, k.switch_depth, k.in_defer
+	outer_loop, outer_defer := k.loop_depth, k.in_defer
 	defer {
 		k.scope = outer_scope
 		k.proc_literal = outer_proc
 		k.result_type = outer_result
 		k.result_inout = outer_result_inout
-		k.loop_depth, k.switch_depth, k.in_defer = outer_loop, outer_switch, outer_defer
+		k.loop_depth, k.in_defer = outer_loop, outer_defer
 	}
 
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
@@ -2298,7 +2297,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	k.proc_literal = literal
 	k.result_type = symbol.result
 	k.result_inout = symbol.result_inout
-	k.loop_depth, k.switch_depth, k.in_defer = 0, 0, false
+	k.loop_depth, k.in_defer = 0, false
 	outer_slots := k.defer_slots
 	k.defer_slots = 0
 	defer k.defer_slots = outer_slots
@@ -2924,7 +2923,7 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 
 @(private = "file")
 check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
-	if s.kind == .Type {
+	if s.kind != .Value {
 		return check_type_switch(k, s)
 	}
 	outer := k.scope
@@ -2964,15 +2963,14 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		for value in entry.values {
 			check_case_value(k, value, subject, &seen, &covered)
 		}
-		k.switch_depth += 1
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
 		case_flow := check_stmts(k, entry.stmts)
 		k.scope = case_scope
-		k.switch_depth -= 1
 		flow.returns ||= case_flow.returns
+		flow.breaks ||= case_flow.breaks
 		flow.continues ||= case_flow.continues
-		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
+		any_case_falls ||= case_flow.can_fall_through
 	}
 
 	member_complete := false
@@ -2984,6 +2982,7 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	return Flow_Info {
 		can_fall_through = !s.exhaustive || any_case_falls,
 		returns          = flow.returns,
+		breaks           = flow.breaks,
 		continues        = flow.continues,
 	}
 }
@@ -3164,8 +3163,8 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 @(private = "file")
 check_branch :: proc(k: ^Checker, s: ^Stmt_Branch) -> Flow_Info {
 	if s.kind == .Break {
-		if k.loop_depth == 0 && k.switch_depth == 0 {
-			errorf(k.c, s.span, "L0368", "`break` is only valid inside a loop or a switch")
+		if k.loop_depth == 0 {
+			errorf(k.c, s.span, "L0368", "`break` is only valid inside a loop")
 			return FLOWS
 		}
 		return Flow_Info{breaks = true}

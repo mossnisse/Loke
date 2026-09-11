@@ -30,20 +30,19 @@ impl Split_Iterator {
 
 	next :: proc(self: inout Split_Iterator) -> Option(string_view) {
 		if (self.done) { return .none; }
-		at := 0;
-		switch (found in index(self.rest, self.separator)) {
-		case .some: at = found;
+		switch (index(self.rest, self.separator)) {
+		case .some(at):
+			if (self.separator.len() == 0) {
+				self.done = true;
+				return .some(self.rest);
+			}
+			part := self.rest[0:at];
+			self.rest = self.rest[at + self.separator.len():];
+			return .some(part);
 		case .none:
 			self.done = true;
 			return .some(self.rest);
 		}
-		if (self.separator.len() == 0) {
-			self.done = true;
-			return .some(self.rest);
-		}
-		part := self.rest[0:at];
-		self.rest = self.rest[at + self.separator.len():];
-		return .some(part);
 	}
 }
 

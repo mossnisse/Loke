@@ -73,7 +73,7 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 		emit_for(e, s)
 
 	case ^Stmt_Switch:
-		if s.kind == .Type {
+		if s.kind != .Value {
 			emit_type_switch(e, s)
 		} else {
 			emit_switch(e, s)
@@ -579,13 +579,6 @@ emit_for :: proc(e: ^Emitter, s: ^Stmt_For) {
 // jump table when a measured switch is hot.
 @(private = "file")
 emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
-	outer_break, outer_break_depth := e.break_label, e.break_depth
-	defer {
-		e.break_label = outer_break
-		e.break_depth = outer_break_depth
-	}
-
-	e.break_depth = len(e.cleanups)
 	push_scope(e, nil)
 	if s.init != nil {
 		emit_stmt(e, s.init)
@@ -594,7 +587,6 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	subject := emit_expr(e, s.subject)
 
 	done := new_label(e, "switch.done")
-	e.break_label = done
 
 	bodies := make([]string, len(s.cases))
 	tests := make([]string, len(s.cases))
@@ -665,13 +657,6 @@ emit_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 // names several types or is the default.
 @(private = "file")
 emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
-	outer_break, outer_break_depth := e.break_label, e.break_depth
-	defer {
-		e.break_label = outer_break
-		e.break_depth = outer_break_depth
-	}
-
-	e.break_depth = len(e.cleanups)
 	push_scope(e, nil)
 	if s.init != nil {
 		emit_stmt(e, s.init)
@@ -702,7 +687,6 @@ emit_type_switch :: proc(e: ^Emitter, s: ^Stmt_Switch) {
 	}
 
 	done := new_label(e, "typeswitch.done")
-	e.break_label = done
 
 	bodies := make([]string, len(s.cases))
 	tests := make([]string, len(s.cases))

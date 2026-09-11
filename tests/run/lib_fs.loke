@@ -248,17 +248,14 @@ count_entries :: proc(directory: string_view) -> int {
 	case .err: return -1;
 	}
 	total := 0;
-	// `break` inside a variant switch leaves the switch, so the loop's own exit
-	// is a condition rather than a jump out of a case.
-	reading := true;
-	for (; reading; ) {
+	for (;;) {
 		switch (outcome in reader.next()) {
 		case .ok:
-			switch (entry in outcome) {
-			case .some:
+			switch (outcome) {
+			case .some(entry):
 				if (entry.name.len() == 0) { return -3; }
 				total += 1;
-			case .none: reading = false;
+			case .none: break;
 			}
 		case .err: return -2;
 		}

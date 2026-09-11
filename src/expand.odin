@@ -83,10 +83,10 @@ expand_one_element :: proc(
 	// A diagnostic inside an expansion must show the element and its source
 	// descriptor or index (design.md).
 	before := len(k.c.diagnostics)
-	outer_loop, outer_switch := k.loop_depth, k.switch_depth
-	k.loop_depth, k.switch_depth = 0, 0
+	outer_loop := k.loop_depth
+	k.loop_depth = 0
 	flow := check_block(k, copy_block)
-	k.loop_depth, k.switch_depth = outer_loop, outer_switch
+	k.loop_depth = outer_loop
 	if len(k.c.diagnostics) > before {
 		add_notef(
 			k.c,

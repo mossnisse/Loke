@@ -545,6 +545,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 					span   = entry.span,
 					values = clone_exprs(c, entry.values),
 					stmts  = stmts,
+					binding = entry.binding,
 				}
 			}
 			n.cases = cases

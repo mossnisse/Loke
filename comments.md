@@ -534,7 +534,8 @@ procedure runs.
 Labels made structured control flow read like a hidden `goto`. The common
 multi-level exit cases can use a returned helper procedure, a loop condition,
 or an `if` chain. Loke therefore keeps `break` and `continue` limited to the
-innermost applicable construct.
+innermost loop. A switch is selection rather than iteration and is not a break
+target; its cases already stop automatically.
 
 ### File-private visibility
 
@@ -694,9 +695,11 @@ that every foreign boolean is just a differently sized Loke `bool`.
 
 ### Unchecked union extractions
 
-A union has no extraction at all: it is inspected with a `switch`, whose cases
-are variant names and which the compiler requires to be exhaustive. There is no
-spelling that reads one variant's payload while another is active.
+A union has no unchecked extraction: it is inspected with a `switch`, whose
+cases are variant names and which the compiler requires to be exhaustive. A
+branch pattern such as `.some(value)` exposes the payload only in the arm that
+has already checked that variant. There is no spelling that reads one variant's
+payload while another is active.
 Interpreting the wrong payload as an owning type can manufacture a container
 header from unrelated bits and later pass an invalid pointer to `drop`.
 `unsafe.transmute` and raw storage in `core:unsafe` remain available for explicit

@@ -944,7 +944,7 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	}
 	// A switch over a place borrows it; one over a temporary consumes it, and
 	// the active payload transfers into the case's own owning binding.
-	consumes := s.kind == .Type && s.subject != nil &&
+	consumes := s.kind != .Value && s.subject != nil &&
 		expr_base(s.subject).type != TYPE_ANY_VIEW &&
 		!expression_is_borrowed_place(graph.k.c, s.subject)
 	entry := graph.current
@@ -954,8 +954,6 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	for c in s.cases {
 		graph.current = new_flow_block(graph)
 		link(graph, entry, graph.current)
-		outer_break, outer_break_depth := graph.break_block, graph.break_depth
-		graph.break_block, graph.break_depth = merge, len(graph.in_scope)
 		enter_flow_scope(graph)
 		// A type switch binds one name per case to the subject's value, so what
 		// the union alternative holds is what the binding holds.
@@ -967,7 +965,6 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		}
 		walk_flow_stmts(graph, c.stmts)
 		leave_flow_scope(graph)
-		graph.break_block, graph.break_depth = outer_break, outer_break_depth
 		link(graph, graph.current, merge)
 	}
 	if !s.exhaustive {

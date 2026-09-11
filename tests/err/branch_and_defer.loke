@@ -20,3 +20,10 @@ main :: proc() {
 	stray();
 	fmt.println(escaping());
 }
+
+switch_break :: proc(n: int) {
+	switch (n) {
+	case 0: break;
+	case:
+	}
+}

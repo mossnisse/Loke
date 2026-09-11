@@ -85,26 +85,22 @@ main :: proc() {
 
 	tokens: [dynamic]Token = {};
 	cursor := 0;
-	scanning := true;
-	for (scanning) {
+	for (;;) {
 		scan := next_token(source, cursor);
 		cursor = scan.next;
-		// `break` here would leave the switch, not the loop (design.md "break
-		// statement"), so the end variant clears the loop's own condition.
-		switch (v in scan.token) {
-		case .end: scanning = false;
+		switch (scan.token) {
+		case .end: break;
 		case:      tokens.append(scan.token);
 		}
 	}
 
-	// One binding names the payload, and its type differs in every arm: `v` is
-	// an `int` here, a `string_view` there, a `rune` below.
+	// Each arm names its own payload at its own type.
 	foreach (token, index in tokens.indexed()) {
-		switch (v in token) {
-		case .number: fmt.println(index, "number", v, magnitude(v));
-		case .word:   fmt.println(index, "word", v);
-		case .symbol: fmt.println(index, "symbol", v);
-		case .end:    fmt.println(index, "end");
+		switch (token) {
+		case .number(value): fmt.println(index, "number", value, magnitude(value));
+		case .word(text):    fmt.println(index, "word", text);
+		case .symbol(value): fmt.println(index, "symbol", value);
+		case .end:           fmt.println(index, "end");
 		}
 	}
 

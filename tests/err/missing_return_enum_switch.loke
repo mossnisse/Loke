@@ -6,7 +6,7 @@ Foo :: enum { A, B, C }
 classify :: proc(f: Foo) -> int {
 	switch (f) {
 	case .A: return 1;
-	case .B: break;
+	case .B:
 	case .C: return 3;
 	}
 }

@@ -63,14 +63,17 @@ main :: proc() {
 	}
 	report("fall out");
 
-	// --- `break` out of a case -------------------------------------------
+	// --- `break` through a case and out of its loop -----------------------
 	reset();
 	{
-		switch (value in held(2)) {
-		case .held:
-			fmt.println("before break", value.id);
-			break;
-		case .spare, .empty:
+		for (;;) {
+			switch (value in held(2)) {
+			case .held:
+				fmt.println("before break", value.id);
+				break;
+			case .spare, .empty:
+			}
+			fmt.println("not reached");
 		}
 	}
 	report("break");

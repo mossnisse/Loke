@@ -1628,6 +1628,22 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 	for at(p, .Case) {
 		append(&cases, parse_switch_case(p, kind))
 	}
+	// A call-shaped implicit variant with one identifier argument is a small
+	// pattern, not a construction: `.some(value)` binds `value` only in that
+	// case. Keeping the recognition this narrow leaves ordinary case
+	// expressions and grouped cases unchanged.
+	if kind == .Value {
+		for &entry in cases {
+			if len(entry.values) != 1 {
+				continue
+			}
+			if selector, case_binding, ok := branch_variant_pattern(entry.values[0]); ok {
+				entry.values[0] = selector
+				entry.binding = case_binding
+				kind = .Pattern
+			}
+		}
+	}
 	body_closed := close_body(p, body_opened, "L0248", "`}` to close the switch body")
 
 	s := new_stmt(p, Stmt_Switch, start)
@@ -1639,6 +1655,23 @@ parse_switch :: proc(p: ^Parser) -> Stmt {
 	s.has_error =
 		!opened || !closed || !body_opened || !body_closed || expr_has_error(subject)
 	return s
+}
+
+@(private = "file")
+branch_variant_pattern :: proc(value: Expr) -> (Expr, Name, bool) {
+	call, is_call := value.(^Expr_Call)
+	if !is_call || len(call.args) != 1 {
+		return nil, Name{}, false
+	}
+	selector, is_selector := call.callee.(^Expr_Selector)
+	arg := call.args[0]
+	ident, is_ident := arg.value.(^Expr_Ident)
+	if !is_selector || selector.operand != nil || !is_ident ||
+	   arg.name.text != "" || arg.mode != .Value {
+		return nil, Name{}, false
+	}
+	binding := Name{text = ident.name, span = ident.span, id = ident.name_id}
+	return selector, binding, true
 }
 
 @(private = "file")

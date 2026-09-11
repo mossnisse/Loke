@@ -59,7 +59,7 @@ main :: proc() {
 	bucket(11);
 	bucket(99);
 
-	// `break` inside a switch leaves the switch, not the loop around it.
+	// A switch is not a break target: `break` exits the loop around it.
 	count := 0;
 	for (i := 0; i < 4; i += 1) {
 		switch (i) {

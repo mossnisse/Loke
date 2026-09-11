@@ -1,0 +1,70 @@
+package main; import "core:fmt";
+
+Token :: union { number: int, word: string_view, end: }
+
+describe :: proc(token: Token) -> int {
+	switch (token) {
+	case .number(value):
+		static_assert(type_of(value) == int);
+		return value;
+	case .word(text):
+		static_assert(type_of(text) == string_view);
+		return text.len();
+	case .end:
+		return 0;
+	}
+}
+
+option_value :: proc(value: Option(int)) -> int {
+	switch (value) {
+	case .some(number): return number;
+	case .none: return -1;
+	}
+}
+
+result_value :: proc(value: Result(int, string_view)) -> int {
+	switch (value) {
+	case .ok(number): return number;
+	case .err(message): return -message.len();
+	}
+}
+
+count_until_two :: proc() -> int {
+	count := 0;
+	for (;;) {
+		switch (Option(int).some(count)) {
+		case .some(value):
+			if (value == 2) { break; }
+			count += 1;
+		case .none:
+		}
+	}
+	return count;
+}
+
+main :: proc() {
+	static_assert(option_value(.some(7)) == 7);
+	static_assert(option_value(.none) == -1);
+	static_assert(result_value(.ok(9)) == 9);
+	static_assert(count_until_two() == 2);
+
+	fmt.println(describe(.number(42)));
+	fmt.println(describe(.word("loke")));
+	fmt.println(describe(.end));
+	fmt.println(option_value(.some(7)));
+	fmt.println(option_value(.none));
+	fmt.println(result_value(.ok(9)));
+	fmt.println(result_value(.err("bad")));
+
+	// A break nested in a switch exits the nearest loop, not merely the case.
+	count := 0;
+	for (i := 0; i < 4; i += 1) {
+		switch (Option(int).some(i)) {
+		case .some(value):
+			if (value == 2) { break; }
+			count += 1;
+		case .none:
+		}
+	}
+	fmt.println(count);
+}

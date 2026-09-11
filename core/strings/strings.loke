@@ -130,18 +130,13 @@ count :: proc(text: string_view, needle: string_view) -> int {
 	if (needle.len() == 0) { return text.len() + 1; }
 	total := 0;
 	rest := text;
-	// `break` inside a variant switch leaves the switch, so the loop's own exit
-	// is a condition rather than a jump out of a case.
-	searching := true;
-	for (; searching && rest.len() >= needle.len(); ) {
-		at := 0;
-		switch (found in index(rest, needle)) {
-		case .some: at = found;
-		case .none: searching = false;
+	for (rest.len() >= needle.len()) {
+		switch (index(rest, needle)) {
+		case .some(at):
+			total += 1;
+			rest = rest[at + needle.len():];
+		case .none: break;
 		}
-		if (!searching) { continue; }
-		total += 1;
-		rest = rest[at + needle.len():];
 	}
 	return total;
 }
@@ -275,20 +270,15 @@ replace :: proc(
 	builder := init(allocator);
 	rest := text;
 	done := 0;
-	// `break` inside a variant switch leaves the switch, so the loop's own exit
-	// is a condition rather than a jump out of a case.
-	searching := true;
-	for (; searching && old.len() > 0 && (limit < 0 || done < limit); ) {
-		at := 0;
-		switch (found in index(rest, old)) {
-		case .some: at = found;
-		case .none: searching = false;
+	for (old.len() > 0 && (limit < 0 || done < limit)) {
+		switch (index(rest, old)) {
+		case .some(at):
+			builder.append(rest[0:at]);
+			builder.append(new);
+			rest = rest[at + old.len():];
+			done += 1;
+		case .none: break;
 		}
-		if (!searching) { continue; }
-		builder.append(rest[0:at]);
-		builder.append(new);
-		rest = rest[at + old.len():];
-		done += 1;
 	}
 	builder.append(rest);
 	return builder.finish();

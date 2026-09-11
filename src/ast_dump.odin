@@ -327,7 +327,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 
 	case ^Stmt_Switch:
 		dump_indent(b, depth)
-		fmt.sbprint(b, node.kind == .Type ? "(switch type" : "(switch value")
+		fmt.sbprint(b, node.kind == .Value ? "(switch value" : "(switch type")
 		if node.kind == .Type {
 			fmt.sbprintf(b, " %q", node.binding.text)
 		}
@@ -342,6 +342,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 			fmt.sbprint(b, "(case")
 			for value in entry.values {
 				dump_child(b, value, depth + 1)
+			}
+			if entry.binding.text != "" {
+				fmt.sbprintf(b, " (bind %q)", entry.binding.text)
 			}
 			fmt.sbprintln(b)
 			for inner in entry.stmts {

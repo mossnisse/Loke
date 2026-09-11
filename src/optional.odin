@@ -400,16 +400,27 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		} else if len(entry.variant_indices) == 1 {
 			payload := union_variant_payload(k.c, subject, entry.variant_indices[0])
 			binding_type = payload == TYPE_VOID ? unit_type(k.c) : payload
+			if s.kind == .Pattern && entry.binding.text != "" && payload == TYPE_VOID {
+				errorf(
+					k.c, entry.binding.span, "L0426",
+					"the payloadless variant `.%s` has nothing to bind",
+					union_variant_name(k.c, subject, entry.variant_indices[0]),
+				)
+			}
 		}
 		entry.binding_type = binding_type
 
 		case_scope := k.scope
 		k.scope = new_scope(k.c, case_scope, .Local)
-		if s.binding.text != "" && s.binding.text != "_" {
-			name := intern_identifier(k.c, s.binding.text)
+		binding := s.binding
+		if s.kind == .Pattern {
+			binding = entry.binding
+		}
+		if binding.text != "" && binding.text != "_" {
+			name := intern_identifier(k.c, binding.text)
 			entry.binding_symbol = new_symbol(k.c, Symbol {
 				name       = name,
-				span       = s.binding.span,
+				span       = binding.span,
 				kind       = .Var,
 				type       = binding_type,
 				pkg        = k.pkg,
@@ -424,14 +435,13 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 			})
 			k.scope.names[name] = entry.binding_symbol
 		}
-		k.switch_depth += 1
 		case_flow := check_stmts(k, entry.stmts)
-		k.switch_depth -= 1
 		k.scope = case_scope
 
 		flow.returns ||= case_flow.returns
+		flow.breaks ||= case_flow.breaks
 		flow.continues ||= case_flow.continues
-		any_case_falls ||= case_flow.can_fall_through || case_flow.breaks
+		any_case_falls ||= case_flow.can_fall_through
 	}
 
 	// design.md "Unions": a variant switch covering every variant is exhaustive,
@@ -454,6 +464,7 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	return Flow_Info {
 		can_fall_through = !exhaustive || any_case_falls || len(s.cases) == 0,
 		returns          = flow.returns,
+		breaks           = flow.breaks,
 		continues        = flow.continues,
 	}
 }

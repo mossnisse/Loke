@@ -912,6 +912,9 @@ Stmt_When :: struct {
 Switch_Kind :: enum {
 	Value,
 	Type,
+	// `switch (union) { case .variant(binding): ... }`: dispatch is the same
+	// tag switch as `Type`, but each case carries its own optional binding.
+	Pattern,
 }
 
 // `Value_Case` and `Type_Case` are one shape once types and expressions share a
@@ -920,6 +923,9 @@ Switch_Case :: struct {
 	span:   Span,
 	values: []Expr,
 	stmts:  []Stmt,
+	// The branch-local binding in `.variant(name)`. Empty for the traditional
+	// header binding and for a case that only tests a variant.
+	binding: Name,
 	// A type switch binds one name per case: at the variant's payload type for a
 	// single-variant case, and at the union's type for a grouped or default
 	// case, where the active variant is not known.
@@ -934,7 +940,7 @@ Stmt_Switch :: struct {
 	using base: Node_Base,
 	kind:       Switch_Kind,
 	init:       Stmt,
-	binding:    Name, // the type switch's `Binding_Name`
+	binding:    Name, // the traditional type switch's header `Binding_Name`
 	binding_symbol: Symbol_Id,
 	subject:    Expr,
 	cases:      []Switch_Case,
