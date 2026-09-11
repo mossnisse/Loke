@@ -3214,8 +3214,19 @@ parse_requirement :: proc(p: ^Parser) -> (Requirement, bool) {
 		sync_to_statement(p) // to the next `;`, or the body's `}`
 	}
 	requirement.span = span_to_here(p, start)
+	// design.md "Interface bodies": a bare requirement is a truth condition, and
+	// bound names are hypothetical values that are never constant.
+	result_ok := true
+	if len(requirement.bindings) > 0 && requirement.result == nil && bindings_ok {
+		parse_error(
+			p, requirement.span, "L0255", "a binding list with no result",
+			"a requirement with bindings needs a result: write `-> Type`, or `-> _` to require only that it compiles",
+		)
+		result_ok = false
+	}
 	ok :=
 		bindings_ok &&
+		result_ok &&
 		terminated &&
 		!expr_has_error(requirement.expr) &&
 		!expr_has_error(requirement.result)

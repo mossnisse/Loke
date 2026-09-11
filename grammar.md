@@ -383,10 +383,11 @@ A field named `_` is an unnamed padding field. A field type may itself be a
 ```
 Interface_Definition = "interface" Generic_Parameters Where_Clause? "{" Requirement* "}"
 
-Requirement  = Bindings? Expression ("->" Requirement_Result)? ";"
+Requirement  = Bindings Expression "->" Requirement_Result ";"
+             | Expression ("->" Requirement_Result)? ";"
              | "slot" Identifier ":" Proc_Type ";"
 
-Requirement_Result = "inout"? Type
+Requirement_Result = "inout"? Type | "_"
 Bindings           = "(" Binding_Group ("," Binding_Group)* ","? ")"
 Binding_Group      = Identifier ("," Identifier)* ":" "inout"? Type
 ```

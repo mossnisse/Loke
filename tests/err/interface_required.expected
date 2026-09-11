@@ -1,21 +1,31 @@
 L0444
-@49:2
+@61:2
+does not satisfy `Sized(Flag)`
+the predicate `size_of(T) == 999` evaluates to false
+L0444
+@62:2
+does not satisfy `Buildable(Labelled)`
+this requirement is not a compile-time boolean; write `-> _` to require only that it compiles
+L0444
+@63:2
 does not satisfy `Addable(Flag)`
 this requirement does not hold: `+` does not apply to `Flag` and `Flag`
 L0444
-@50:2
+@64:2
 does not satisfy `Numeric(Flag)`
 Flag is not numeric
 L0444
-@51:2
+@65:2
 does not satisfy `Named(Flag)`
 `Flag` has no method `describe` with this signature
 L0444
-@52:2
+@66:2
 does not satisfy `Named(Labelled)`
 `Labelled` has no method `describe` with this signature
 L0444
-@53:6
+@67:6
 while instantiating `sum(Flag)`
-@11:2
-@22:2
+@6:2
+@16:2
+@20:2
+@31:2

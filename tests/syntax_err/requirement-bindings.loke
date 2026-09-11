@@ -1,0 +1,12 @@
+// A bare requirement is a truth condition, and bound names stand for
+// hypothetical values that are never constant, so a binding list needs a
+// result: `-> Type`, or `-> _` to require only that the expression compiles.
+package main;
+
+Comparable :: interface($Self: type) {
+	(a, b: Self) a == b;
+	(a, b: Self) a < b -> bool;
+	(value: inout Self) value.reset() -> _;
+}
+
+sentinel :: proc() { }

@@ -49,7 +49,7 @@ Sequence :: interface($Self: type) {
 	Self.Item -> type;
 	(s: Self) s.count() -> int;
 	(s: inout Self, i: int) s[i] -> inout Self.Item;
-	(a, b: Self) a == b;
+	(a, b: Self) a == b -> bool;
 	((a)) ;
 	slot next: proc(self: Self) -> Self.Item;
 	slot reset: proc(self: inout Self);

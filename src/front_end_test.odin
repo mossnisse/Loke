@@ -304,11 +304,11 @@ Probe :: interface($T: type) {
     (value: ^T) (dyn Sized)(value) -> View;
     &TABLE -> ^[2]int;
     typeid_of(T) -> typeid;
-    type_info_of(typeid_of(T));
-    (value: any_view, writer: Writer, options: Options) format_any(value, writer, options);
+    type_info_of(typeid_of(T)) -> _;
+    (value: any_view, writer: Writer, options: Options) format_any(value, writer, options) -> _;
 }
 Nested :: interface($T: type) { Probe(T); }
-Rejected :: interface($T: type) { Nested(T); T.missing; }
+Rejected :: interface($T: type) { Nested(T); T.missing -> _; }
 `
 	p: Checked
 	defer destroy_checked(&p)

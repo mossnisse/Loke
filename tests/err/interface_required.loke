@@ -1,10 +1,19 @@
 package main;
 
-// A validity requirement holds when its expression type-checks; its value is
-// never inspected. `Sized` is therefore satisfied by every sized type, even
-// though the written comparison is false.
+// A bare requirement is a truth condition: `Sized` holds only for a type of
+// exactly 999 bytes, however well-formed the comparison is.
 Sized :: interface($T: type) {
 	size_of(T) == 999;
+}
+
+// `-> _` asks only that the expression compiles; its result is not inspected.
+Describable :: interface($T: type) {
+	(value: T) value.describe() -> _;
+}
+
+// A bare requirement must be a compile-time boolean.
+Buildable :: interface($T: type) {
+	T.make();
 }
 
 Addable :: interface($T: type) {
@@ -27,6 +36,7 @@ Flag :: struct { on: bool }
 Labelled :: struct { text: string }
 impl Labelled {
 	describe :: proc(self) -> bool { return true; }
+	make :: proc() -> Labelled { return Labelled{"made"}; }
 }
 
 sum :: proc(a, b: $T) -> T where Addable(T) { return a + b; }
@@ -39,13 +49,17 @@ tag :: proc{tag_addable, tag_any};
 
 main :: proc() {
 	// Silent: an interface application is a predicate, and `false` is a value.
-	static_assert(Sized(Flag));
+	static_assert(!Sized(Flag));
+	static_assert(Describable(Labelled));
+	static_assert(!Describable(Flag));
 	static_assert(!Addable(Flag));
 	probe := Addable(Flag);
 	_ = probe;
 	_ = tag(Flag{true});
 
 	// Required: each of these must name the requirement that failed.
+	static_assert(Sized(Flag));
+	static_assert(Buildable(Labelled));
 	static_assert(Addable(Flag));
 	static_assert(Numeric(Flag), "Flag is not numeric");
 	static_assert(Named(Flag));

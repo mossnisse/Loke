@@ -4,6 +4,6 @@ package main;
 
 Iface :: interface($Self: type) {
 	(s: Self) s.len() -> int;
-	(a, b: Self) a == b;
+	(a, b: Self) a == b -> bool;
 	((a + b).c()) -> int;
 }

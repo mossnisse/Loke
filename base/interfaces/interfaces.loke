@@ -89,5 +89,5 @@ Mutable_Sequence :: interface($Self: type) {
 
 Growable_Sequence :: interface($Self: type) {
 	Mutable_Sequence(Self);
-	(value: inout Self, element: Self.Element) value.append(element);
+	(value: inout Self, element: Self.Element) value.append(element) -> _;
 }

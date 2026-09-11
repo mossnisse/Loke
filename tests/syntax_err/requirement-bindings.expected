@@ -1,0 +1,3 @@
+L0255
+@7:2
+a requirement with bindings needs a result: write `-> Type`, or `-> _` to require only that it compiles

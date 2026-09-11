@@ -2417,7 +2417,7 @@ An `interface` gives a name to a reusable compile-time predicate over types and 
 
 The first generic parameter is the interface's **subject** and must have type `type`. Later parameters use the ordinary generic-argument rules: a parameter of type `type` receives a type, and every other parameter receives a compile-time constant converted to its declared type. That normalized pair of declared type and constant value participates in interface application, dynamic-type, and witness identity; diagnostics display the normalized value, while backend keys use its canonical encoding. Composition and named-slot substitution carry the same typed argument vector rather than reclassifying its syntax.
 
-An interface may put a [`where`](#where-clauses) clause between its parameters and body. These expressions are compile-time Boolean predicates, evaluated before the body requirements for every application. This is the truth-valued form for a restriction shared by all consumers:
+An interface may put a [`where`](#where-clauses) clause between its parameters and body. These expressions are compile-time Boolean predicates, evaluated before the body requirements for every application, so they suit a restriction that should be tested first:
 
 ```odin
 Inline_Storable :: interface($Self: type, $Limit: int)
@@ -2448,10 +2448,11 @@ sum :: proc(values: []$T) -> T
 
 #### Interface bodies
 
-An interface body is a semicolon-terminated list of requirements ([`Requirement` grammar](grammar.md#interfaces)). Every requirement denotes a compile-time proposition, but its written expression need not itself be a Boolean or be executable at compile time. A requirement may be preceded by a **binding list** introducing names for hypothetical values or explicit `inout` places. There are three forms:
+An interface body is a semicolon-terminated list of requirements ([`Requirement` grammar](grammar.md#interfaces)). Every requirement denotes a compile-time proposition, but its written expression need not itself be a Boolean or be executable at compile time. A requirement may be preceded by a **binding list** introducing names for hypothetical values or explicit `inout` places. There are four forms:
 
 - **expression form** — `expr -> Type;`
-- **validity form** — `expr;`
+- **validity form** — `expr -> _;`
+- **truth form** — `expr;`
 - **named dispatch form** — `slot name: proc(...);`
 
 A requirement beginning with `(` is always a binding list; a requirement whose own expression must start with a parenthesis needs a second pair. Inside a requirement a type name always means the type, and values come only from the binding list, so `T(0)` is unambiguously construction and `(a, b: T) a + b` is unambiguously addition.
@@ -2468,7 +2469,9 @@ Mutable_Indexable :: interface($T: type, $Element: type) {
 
 Only `inout` is admitted in a binding list. A consuming operation can be required as a named slot with a `move self` receiver, but there is no hypothetical `move` binding, since checking a capability must not consume the evidence used for the remaining requirements.
 
-**Validity form** `expr;` requires only that the expression compiles. It does not test the expression's value. In particular, `false;` is a satisfied validity requirement because `false` is well-formed. A truth-valued restriction belongs in the interface header's `where` clause (when it is reusable) or in the consuming declaration's `where` clause (when it is local); the meaning of an existing validity requirement never changes based on the expression's result.
+**Validity form** `expr -> _;` requires only that the expression compiles. Its result, if it has one, is not inspected.
+
+**Truth form** `expr;` requires a compile-time Boolean that evaluates to true, so `false;` never holds and `size_of(T) <= 8;` means what it says. A truth requirement has no binding list: bound names stand for hypothetical values, which are never constant. A restriction that should be tested before the body belongs in the interface header's `where` clause, and one local to a consumer belongs in that declaration's `where` clause.
 
 An associated constant is an ordinary expression requirement: `T.ZERO -> Element;` asks for a member `ZERO` on `T` whose value converts to `Element`. When the required result is `type`, the member must evaluate to a compile-time type; it is then an **associated type** usable in later requirements and in constrained generic code:
 
@@ -2502,7 +2505,7 @@ An associated type is an associated constant whose value has type `type`. For a 
 
 A slot is both a static callable requirement and a potential [witness](#runtime-polymorphism) entry. It is available through method syntax in constrained generic code, and reached by the slot's own lookup rather than the caller's: a bound that positively requires the interface calls the  implementation satisfaction selected, including one whose ordinary visibility the instantiating package could not see. The capability is exactly the required slot on the required type. An unrelated private member, a member offered only by a negated bound or by one arm of a disjunction, and every ordinary call outside a constrained declaration all keep the [visibility rules](#exported-names); a `static_assert` grants nothing, since it constrains no declaration.
 
-Method and operator requirements are written as ordinary calls on bound values; lifecycle requirements name the hook (the standard [`Cloneable`](#standard-interface-catalogue) requires the fixed `try_clone` slot). Interfaces compose by naming one another. A bare interface application in an interface body is a composition requirement: the application must evaluate to true, not merely compile. This is the deliberate exception to ordinary validity-form checking.
+Method and operator requirements are written as ordinary calls on bound values; lifecycle requirements name the hook (the standard [`Cloneable`](#standard-interface-catalogue) requires the fixed `try_clone` slot). Interfaces compose by naming one another in a truth requirement. As with a consuming `where` bound, an interface application standing alone composes, contributing its slots and capabilities; a negated one, or one side of `||`, is only tested for truth.
 
 Requirement checking is non-recursive at the point of use and does not prove requirements about types that do not yet exist. An interface application like `Ordered(T)` is a compile-time predicate; the declaration alone is not a runtime type and cannot be a variable, field, parameter, or result type. `dyn Ordered` is a separate erased type, valid only when the interface is dyn-compatible.
 
@@ -2612,7 +2615,7 @@ Mutable_Sequence :: interface($Self: type) {
 
 Growable_Sequence :: interface($Self: type) {
 	Mutable_Sequence(Self);
-	(value: inout Self, element: Self.Element) value.append(element);
+	(value: inout Self, element: Self.Element) value.append(element) -> _;
 }
 ```
 
@@ -2663,7 +2666,7 @@ An interface is **dyn-compatible** when it can be erased behind a finite set of 
 
 - its first generic parameter is `$Self: type` (the name may differ);
 - an interface-local `where` predicate may not mention the subject, and the declared types of later parameters may not depend on it;
-- every runtime operation is a named `slot`; any other expression or validity requirement (beyond interface composition) makes it static-only;
+- every runtime operation is a named `slot`; any other requirement (beyond interface composition) makes it static-only;
 - every composed interface is dyn-compatible, uses the same subject, and does not derive another explicit argument from that subject;
 - a slot is non-generic, non-variadic, uses the ordinary Loke calling convention, and has no omitted-argument defaults;
 - the subject occurs exactly once in the slot signature, as the first `self` or `self: inout Self` receiver, and nowhere else.

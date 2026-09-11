@@ -663,8 +663,35 @@ check_one_requirement :: proc(
 	if type == INVALID_TYPE || captured {
 		return Requirement_Failure{span = requirement.span, reason = reason}, false
 	}
+	// design.md "Interface bodies": a bare requirement is a truth condition, the
+	// same rule composition above follows, so `false;` never holds.
 	if requirement.result == nil {
-		return Requirement_Failure{}, true // validity form: compiling is the whole requirement
+		mark = len(k.c.diagnostics)
+		errors = k.c.error_count
+		folded, evaluated := require_const(k, requirement.expr, "an interface requirement", "L0444")
+		truncate_diagnostics(k.c, mark)
+		k.c.error_count = errors
+		if !evaluated || folded.kind != .Boolean {
+			return Requirement_Failure {
+				span   = requirement.span,
+				reason = "this requirement is not a compile-time boolean; write `-> _` to require only that it compiles",
+			}, false
+		}
+		if !folded.boolean {
+			return Requirement_Failure {
+				span   = requirement.span,
+				reason = fmt.aprintf(
+					"the predicate `%s` evaluates to false",
+					where_bound_text(k.c, requirement.expr),
+					allocator = k.c.semantic_allocator,
+				),
+			}, false
+		}
+		return Requirement_Failure{}, true
+	}
+	// `-> _`: compiling is the whole requirement, and the result is not inspected.
+	if any, is_ident := requirement.result.(^Expr_Ident); is_ident && any.name == "_" {
+		return Requirement_Failure{}, true
 	}
 
 	base := expr_base(requirement.expr)
