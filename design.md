@@ -1418,7 +1418,7 @@ A union's storage is its payload region, then the tag, then whatever padding the
 
 ### Enumerations
 
-An enumeration is a closed sum type whose variants carry no payload, in the same conceptual family as a payloadless tagged union. `enum` retains convenient syntax and control over its integer representation; it does not make an enum and a separately declared union the same type. Every value names exactly one declared variant. Variants have declaration order:
+An enumeration is a closed sum type whose variants carry no payload. `enum` retains convenient syntax and control over its integer representation. Every value names exactly one declared variant. Variants have declaration order:
 
 ```odin
 Direction :: enum{North, East, South, West};

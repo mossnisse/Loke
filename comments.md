@@ -202,34 +202,6 @@ Encapsulation and abstractions must still be important so they can work on an pa
 
 add an garbage collected allocator as an alternative?
 
-## memory managment
-
-Could the compiler move a large fixed-size local variables to the heap? Does it need to be made to an "Owning value"?
-
-## default allocator
-
-The default allocator and logger can be chosen in Loke source on the root
-`package main` clause:
-
-```odin
-@(
-	default_allocator = "./providers:allocator_factory",
-	default_logger = "./providers:logger_factory",
-)
-package main;
-```
-
-This is a good default because the program's normal runtime policy now travels
-with its source, and the provider package becomes a build dependency without a
-redundant import. Package attributes also put the choice before all imports
-without making textual import order meaningful. Restricting it to the root
-package prevents a library from changing an application's process-wide policy
-merely by being imported.
-
-The choice remains static: provider factories still run once before `main`, and
-ordinary allocations and log calls still use the selected handles. With no
-selection, the system heap and standard logger remain the fallbacks.
-
 ## shorten dynamic array syntax
 
 change [dynamic] to [dyn] or [+] [*]
