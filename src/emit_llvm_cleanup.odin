@@ -118,6 +118,9 @@ emit_try_clone_into :: proc(e: ^Emitter, type: Type_Id, out, src, allocator: str
 	}
 	hook := operations.try_clone
 	if hook == INVALID_SYMBOL {
+		if emit_dead_move_only_copy(e, type) {
+			return "false"
+		}
 		backend_fail(e, "a fallible container element has no `try_clone` member")
 		return "false"
 	}
@@ -795,6 +798,9 @@ emit_clone_value :: proc(e: ^Emitter, type: Type_Id, value: string, allocator :=
 	}
 	hook := entry.clone
 	if hook == INVALID_SYMBOL {
+		if emit_dead_move_only_copy(e, type) {
+			return "undef"
+		}
 		backend_fail(e, fmt.aprintf("an implicit copy of `%s` has no `clone` member", type_name(e.c, type)))
 		return "0"
 	}

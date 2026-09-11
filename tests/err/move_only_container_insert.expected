@@ -1,0 +1,18 @@
+L0503
+@8:24
+`Res` is move-only, so this insertion cannot copy it; write `move(...)` to transfer ownership instead
+L0503
+@9:24
+`Res` is move-only, so this insertion cannot copy it; write `move(...)` to transfer ownership instead
+L0503
+@11:14
+`Res` is move-only, so this insertion cannot copy it; write `move(...)` to transfer ownership instead
+L0503
+@12:11
+`Res` is move-only, so this variadic argument cannot copy it; write `move(...)` to transfer ownership instead
+L0503
+@13:13
+`Res` is move-only, so a `..` spread cannot copy its elements into the pack
+L0491
+@14:6
+`Res` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows

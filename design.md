@@ -852,6 +852,22 @@ fmt.eprintln(x[:], x.len(), x.cap()); // [10, 0, 0, 20, 30, 40, 50, 60] 8 16
 
 Use `resize` to grow and zero-fill an array, or `append` to add elements at the end.
 
+#### Container insertion
+
+An element given to `append`, `insert`, `try_insert`, or `find_or_insert` is taken the way an initialization takes it, exactly as `m[key] = elem` and a container literal take theirs: a temporary or `move(x)` transfers into the container, and a borrowed place is copied. A move-only element therefore enters from a temporary or through `move`:
+
+```odin
+File :: move_only struct { handle: int }
+
+files: [dynamic]File = {};
+files.append(open_file("a.txt"));   // a temporary moves in
+f := open_file("b.txt");
+files.append(move(f));              // `f` is dead after the call
+files.append(f);                    // error: a borrowed move-only value cannot be copied
+```
+
+Ownership passes at the call. When an insertion does not store its element — `find_or_insert` finds the key already present, or an allocation fails — the operation drops it, so every element is dropped exactly once. A `..` spread lends its elements, so spreading a move-only slice into `append` is rejected.
+
 #### Removing from a dynamic array
 
 Removing from a dynamic array can be done in several ways using the built-in procedures:
@@ -982,6 +998,8 @@ A map maps keys to values. Its zero value is empty and immediately usable. Like 
 
 Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `value.hash(seed: uint) -> uint` (equal values produce equal hashes). Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
 
+A key must also be copyable. It is copied into the map on insertion and out of it by `keys()` and `entries()`, and a lookup has to write a second value equal to it — which a `move_only` type exists to prevent. A move-only key is rejected where the map type is named; a move-only *value* is fine (see [Container insertion](#container-insertion)).
+
 ```odin
 m: map[string]int = {};
 m["Bob"] = 2;
@@ -1067,7 +1085,7 @@ case .none:
 }
 ```
 
-`&m[key]` is the same pointer without the `Option`, and panics where `find` answers `.none`. `m.find_or_insert(key, elem)` is the third form: it answers `^mut V`, inserting `elem` under `key` first when the key is absent. Its second argument is an ordinary one, evaluated whether or not the insertion happens. An operation that wants an entry either way therefore names the default it creates:
+`&m[key]` is the same pointer without the `Option`, and panics where `find` answers `.none`. `m.find_or_insert(key, elem)` is the third form: it answers `^mut V`, inserting `elem` under `key` first when the key is absent. Its second argument is evaluated whether or not the insertion happens and is taken as any [inserted element](#container-insertion) is; when the key is already present, the unused element is dropped. An operation that wants an entry either way therefore names the default it creates:
 
 ```odin
 counts: map[string]int = {};

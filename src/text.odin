@@ -722,11 +722,19 @@ bind_variadic_arguments :: proc(
 	}
 	if type_is_managed(k.c, element) && needs_element_clone && !lifecycle_of(k.c, element).intrinsic {
 		if type_clone_disabled(k.c, element) {
-			errorf(
-				k.c, v.span, "L0503",
-				"a `%s` variadic pack must clone borrowed elements, but the element type is move-only",
-				type_name(k.c, element),
-			)
+			// design.md "Container insertion": a borrowed element is copied, so each
+			// one is reported where `move(...)` belongs. A spread lends its elements
+			// and has no `move` form.
+			for value in elements {
+				classify_copy(k, value, element, "variadic argument")
+			}
+			for spread in spreads {
+				errorf(
+					k.c, expr_span(spread), "L0503",
+					"`%s` is move-only, so a `..` spread cannot copy its elements into the pack",
+					type_name(k.c, element),
+				)
+			}
 			ok = false
 		} else {
 			contribute_lifecycle_members(k, element)

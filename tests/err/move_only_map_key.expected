@@ -1,0 +1,6 @@
+L0586
+@12:2
+`Key` cannot be a map key: it is move-only, and a key must be copyable
+L0586
+@13:2
+`Key` cannot be a map key: it is move-only, and a key must be copyable

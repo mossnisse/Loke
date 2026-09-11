@@ -53,7 +53,14 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 	element := container_element(e.c, under)
 	key := container_key(e.c, under)
 	elem_drop := container_drop_thunk(e, element)
-	elem_clone := container_clone_thunk(e, element)
+	// A move-only element has no clone. The container is then move-only too, so
+	// no whole-container clone reaches the slot, and every insertion hands such an
+	// element over rather than lending it (design.md "Container insertion"): the
+	// memcpy NULL asks for is exactly that move.
+	elem_clone := "null"
+	if element == INVALID_TYPE || !emit_lifecycle(e, element).clone_disabled {
+		elem_clone = container_clone_thunk(e, element)
+	}
 	key_drop, key_clone, key_hash, key_equal := "null", "null", "null", "null"
 	key_size, key_align := u64(0), u64(0)
 	if key != INVALID_TYPE {
@@ -187,6 +194,11 @@ container_thunk :: proc(
 		return name
 	}
 	e.container_thunks[name] = true
+	// A thunk is shared with user code, so it never inherits a dead body's licence
+	// to abort on a move-only copy.
+	saved := e.synth_bodies
+	e.synth_bodies = false
+	defer e.synth_bodies = saved
 	frame := begin_function_emission(e)
 	open_function(e, "define private %s %s(%s)", result, name, params)
 	body(e, part)
@@ -400,8 +412,11 @@ emit_dynamic_literal_into :: proc(e: ^Emitter, v: ^Expr_Composite, address: stri
 		)
 		emit_container_policy_failure(e, address, status)
 		// The staged copy was cloned into the container, so this frame still owns
-		// the temporary it appended from.
-		emit_drop_place(e, element, slot)
+		// the temporary it appended from — unless the element is move-only, when
+		// the append moved it and the container is its one owner.
+		if !emit_lifecycle(e, element).clone_disabled {
+			emit_drop_place(e, element, slot)
+		}
 	}
 	finish_temporary_drop(e, cleanup)
 }
@@ -604,6 +619,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	element_llvm := llvm_type(e, element)
 	ops := container_ops_global(e, container)
 	fallible := symbol.result != INVALID_TYPE && type_is_union(e.c, symbol.result)
+	// design.md "Container insertion": a move-only element is handed over, not
+	// lent, so it is stored without a clone and this body owns it until then.
+	moves := emit_lifecycle(e, element).clone_disabled
 
 	result := llvm_result_type(e, symbol.result, symbol.result_inout)
 	fmt.sbprintf(&e.b, "define %s%s %s(", llvm_linkage(name), result, name)
@@ -639,6 +657,11 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_append(ptr %%arg0, ptr %s, ptr %s, i64 %s)",
 			status, ops, data, count,
 		)
+		if moves {
+			kept := branch_on_failure(e, status)
+			emit_drop_run(e, element, data, count)
+			rejoin(e, kept)
+		}
 
 	case .Insert:
 		slot := value_storage(e, element, "%arg2")
@@ -647,7 +670,13 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call i32 @loke_rt_v1_dyn_insert(ptr %%arg0, ptr %s, i64 %%arg1, ptr %s, i64 1)",
 			status, ops, slot,
 		)
-		// Value parameters are borrowed; their caller owns any temporary cleanup.
+		// A copyable value parameter is borrowed, and its caller owns any
+		// temporary cleanup. A move-only one was handed over.
+		if moves {
+			kept := branch_on_failure(e, status)
+			emit_drop_place(e, element, slot)
+			rejoin(e, kept)
+		}
 
 	case .Pop:
 		out := alloca(e, element_llvm)
@@ -757,7 +786,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// design.md "Maps": the slot either way. An existing entry is answered
 		// without touching the table; an absent key inserts the supplied element,
 		// which the map must then own, so it is cloned exactly as `try_insert`
-		// clones. Nothing manufactures a zero, so a no-zero element is insertable.
+		// clones — or, being move-only, moved in, and dropped on a hit instead.
+		// Nothing manufactures a zero, so a no-zero element is insertable.
 		key_slot := value_storage(e, container_key(e.c, container), "%arg1")
 		found, present := temp(e), temp(e)
 		fmt.sbprintfln(
@@ -767,12 +797,17 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		hit_label, miss_label := new_label(e, "mfoi.hit"), new_label(e, "mfoi.miss")
 		branch_if(e, present, hit_label, miss_label)
 		place_label(e, hit_label)
+		if moves {
+			emit_drop_place(e, element, value_storage(e, element, "%arg2"))
+		}
 		emit_map_slot_result(e, symbol.result, result, found, fallible)
 
 		place_label(e, miss_label)
 		staged := alloca(e, element_llvm)
 		cloned := "true"
-		if emit_lifecycle(e, element).managed {
+		if moves {
+			store(e, element, "%arg2", staged)
+		} else if emit_lifecycle(e, element).managed {
 			cloned = emit_try_clone_into(
 				e, element, staged, value_storage(e, element, "%arg2"), emit_map_allocator(e, "%arg0"),
 			)
@@ -810,7 +845,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		allocator := emit_map_allocator(e, "%arg0")
 		staged := alloca(e, element_llvm)
 		cloned := "true"
-		if emit_lifecycle(e, element).managed {
+		if moves {
+			store(e, element, "%arg2", staged)
+		} else if emit_lifecycle(e, element).managed {
 			source := value_storage(e, element, "%arg2")
 			cloned = emit_try_clone_into(e, element, staged, source, allocator)
 		} else {
@@ -925,6 +962,52 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	e.terminated = false
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
+}
+
+// A move-only element that failed to enter the container was never stored, so
+// the body it was handed to still owns it. `branch_on_failure` opens the block
+// that drops it; `rejoin` closes that block and continues past it.
+@(private = "file")
+branch_on_failure :: proc(e: ^Emitter, status: string) -> string {
+	failed := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
+	drop_label, kept_label := new_label(e, "cop.unconsumed"), new_label(e, "cop.kept")
+	branch_if(e, failed, drop_label, kept_label)
+	place_label(e, drop_label)
+	return kept_label
+}
+
+@(private = "file")
+rejoin :: proc(e: ^Emitter, kept_label: string) {
+	branch(e, kept_label)
+	place_label(e, kept_label)
+	e.terminated = false
+}
+
+// Every element of a `..T` pack, in order.
+@(private = "file")
+emit_drop_run :: proc(e: ^Emitter, element: Type_Id, data, count: string) {
+	index_slot := alloca(e, "i64")
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
+	head, body, done := new_label(e, "unconsumed.head"), new_label(e, "unconsumed.body"), new_label(e, "unconsumed.done")
+	branch(e, head)
+	place_label(e, head)
+	index := load(e, "i64", index_slot)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp ult i64 %s, %s", more, index, count)
+	branch_if(e, more, body, done)
+	place_label(e, body)
+	at := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = getelementptr inbounds %s, ptr %s, i64 %s", at, llvm_type(e, element), data, index,
+	)
+	emit_drop_place(e, element, at)
+	next := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next, index)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, index_slot)
+	branch(e, head)
+	place_label(e, done)
+	e.terminated = false
 }
 
 // `key in m`: one probe, no insertion and no value.

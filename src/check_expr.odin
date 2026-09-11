@@ -2609,6 +2609,28 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 			)
 		}
 	}
+	// design.md "Container insertion": an inserted element is taken the way an
+	// initialization takes it, so a borrowed place is copied and a move-only one
+	// has to be written `move(...)`. `append`'s pack applies the same rule when
+	// it is bound.
+	#partial switch chosen.container_op {
+	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
+		element := container_element(k.c, chosen.params[0])
+		if type_clone_disabled(k.c, element) && len(v.bound) > 2 {
+			classify_copy(k, v.bound[2], element, "insertion")
+		}
+	case .Append:
+		// A lone spread forwards its slice instead of building a pack, so binding
+		// never saw it; that slice is lent, and `append` would keep its elements.
+		element := container_element(k.c, chosen.params[0])
+		if type_clone_disabled(k.c, element) && v.variadic_forwards && len(v.bound) > 1 {
+			errorf(
+				k.c, expr_span(v.bound[1]), "L0503",
+				"`%s` is move-only, so a `..` spread cannot copy its elements into the pack",
+				type_name(k.c, element),
+			)
+		}
+	}
 	// design.md "Iteration adapters": a map view yields owned elements, so the
 	// halves it copies need a copy entry point. The view itself costs nothing;
 	// what it cannot do is produce a `move_only` key or value.

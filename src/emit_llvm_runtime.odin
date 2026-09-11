@@ -362,6 +362,21 @@ emit_panic :: proc(e: ^Emitter, message: string) {
 	e.terminated = true
 }
 
+// A synthesized member body that copies a move-only value is dead: the checker
+// rejected every call to it (L0491). The copy aborts instead of failing the
+// build, and is a plain call, not a terminator, so the caller's block goes on.
+// Anywhere else a move-only copy is a compiler bug, and still reported as one.
+@(private)
+emit_dead_move_only_copy :: proc(e: ^Emitter, type: Type_Id) -> bool {
+	if !e.synth_bodies || !emit_lifecycle(e, type).clone_disabled {
+		return false
+	}
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_abort(ptr %s)", message_global(e, "a move-only value was copied"),
+	)
+	return true
+}
+
 // Panics when `cond` holds, and continues in a fresh block otherwise.
 @(private)
 panic_if :: proc(e: ^Emitter, cond: string, prefix: string, message: string) {
@@ -1218,6 +1233,8 @@ emit_type_info_of :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 // once for the whole compilation, after every package's items.
 @(private)
 emit_synth_procs :: proc(e: ^Emitter) {
+	e.synth_bodies = true
+	defer e.synth_bodies = false
 	for symbol_id in e.c.synth_procs {
 		symbol := symbol_of(e.c, symbol_id)
 		if symbol == nil || symbol.synth == .None {

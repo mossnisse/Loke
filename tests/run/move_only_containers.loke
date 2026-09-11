@@ -1,0 +1,68 @@
+package main;
+
+import "core:fmt";
+
+// A move-only element enters a container the way an initialization takes it:
+// from a temporary or through `move(...)`. Every value is dropped exactly once,
+// including one an insertion did not need.
+drops := 0;
+
+Res :: move_only struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) {
+		if (self.id != 0) {
+			drops += 1;
+		}
+	}
+}
+
+main :: proc() {
+	{
+		m: map[string]Res = {};
+		m["a"] = Res{ id = 1 };
+		m["a"] = Res{ id = 2 };
+		m["b"] = Res{ id = 3 };
+		fmt.println("overwrite", drops);
+		switch (p in m.find("b")) {
+		case .some: p^.id += 10;
+		case .none:
+		}
+		fmt.println("b", m["b"].id);
+		switch (r in m.remove("a")) {
+		case .some: fmt.println("removed", r.id);
+		case .none: fmt.println("a missing");
+		}
+		fmt.println("len", m.len(), "drops", drops);
+	}
+	fmt.println("after map", drops);
+	{
+		m := map[string]Res{ "x" = Res{ id = 4 } };
+		fmt.println("literal", m.len(), drops);
+	}
+	fmt.println("after map literal", drops);
+	{
+		d := [dynamic]Res{ Res{ id = 5 }, Res{ id = 6 } };
+		fmt.println("dyn", d.len(), d[1].id, drops);
+	}
+	fmt.println("after dyn", drops);
+	{
+		m: map[string]Res = {};
+		r := Res{ id = 7 };
+		m.find_or_insert("k", move(r))^.id += 1;  // absent: moved in
+		m.find_or_insert("k", Res{ id = 8 });      // present: the 8 is dropped
+		fmt.println("find_or_insert", m["k"].id, drops);
+		_ = m.try_insert("k", Res{ id = 9 });       // replaces, dropping the 8 stored
+		_ = m.try_insert("j", Res{ id = 10 });
+		fmt.println("try_insert", m["k"].id, m.len(), drops);
+	}
+	fmt.println("after inserting map", drops);
+	{
+		d: [dynamic]Res = {};
+		s := Res{ id = 11 };
+		d.append(Res{ id = 12 }, move(s));
+		d.insert(0, Res{ id = 13 });
+		fmt.println("append", d.len(), d[0].id, d[1].id, d[2].id, drops);
+	}
+	fmt.println("after appending", drops);
+}

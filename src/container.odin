@@ -543,6 +543,17 @@ require_map_key_policy :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return true
 	}
 	if resolved_map_key_policy(k.c, key).kind != .Unresolved { return true }
+	// design.md "Maps": a key is copied in on insertion and out by `keys()`, and
+	// a lookup writes another value equal to it — all of which a move-only type
+	// exists to prevent.
+	if type_clone_disabled(k.c, key) {
+		errorf(
+			k.c, span, "L0586",
+			"`%s` cannot be a map key: it is move-only, and a key must be copyable",
+			type_name(k.c, key),
+		)
+		return false
+	}
 	policy, reason := resolve_map_key_policy(k.c, key)
 	if reason == "" {
 		// Selecting semantic IDs is safe even for a hypothetical signature. It

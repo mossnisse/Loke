@@ -1,0 +1,14 @@
+package main;
+
+// A map key is copied in and out, so a move-only one is rejected where the map
+// type is named, including through a generic instantiation.
+Key :: move_only struct { id: int }
+
+Table :: struct($K: type) {
+	entries: map[K]int,
+}
+
+main :: proc() {
+	m: map[Key]int = {};
+	t: Table(Key) = {};
+}

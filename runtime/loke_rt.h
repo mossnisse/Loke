@@ -304,7 +304,9 @@ void loke_rt_v1_dyn_drop(loke_rt_dynamic_v1 *self, const loke_rt_container_ops_v
 /* The mutating dynamic-array operations. Each binds the container's provider on
  * first need — design.md's lazy default binding — and each clones from `src`
  * through `ops->elem_clone`, because a `..T` pack is a read-only slice and a
- * borrowed element has to be duplicated to be kept.
+ * borrowed element has to be duplicated to be kept. A move-only element has a
+ * NULL `elem_clone`: its caller handed the elements over, so the memcpy is the
+ * move, and on failure the caller-side body still owns and drops them.
  *
  * `src` may point into the container's own storage: `xs.append(..xs[:])` is
  * ordinary source. Growth therefore never releases the old block until the copy

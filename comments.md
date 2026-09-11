@@ -786,6 +786,20 @@ array's index does. `m.find(key)` answers `Option(^mut V)` without inserting,
 and `m.find_or_insert(key, elem)` answers the slot either way, so a caller that
 wants a default names the default rather than inheriting the element's zero.
 
+### Container insertion takes its element like an initialization
+
+`append`, `insert`, `try_insert` and `find_or_insert` once borrowed their
+element and cloned it in, which left a move-only element no way into a
+container but `m[key] = elem` and a literal. Giving them `move` parameters was
+rejected: `move(...)` needs a lexical owner, so `d.append(File{...})` could not
+be written at all, and `d.append(move(x))` would be required for every `int`.
+Instead the element is taken exactly as `x := elem` takes it — a temporary or
+`move(x)` transfers, a borrowed place copies — which is already what assignment
+and literals do. A copyable element reads and behaves as before; a move-only one
+needs `move(x)` only where any other copy of it would. The operation owns the
+element from the call, so it drops the one it does not store: the duplicate a
+`find_or_insert` hit makes unnecessary, or a pack an allocation failure left out.
+
 ### `string` borrows as `string_view`
 
 `string` converts implicitly to `string_view`. Without it the two types compete

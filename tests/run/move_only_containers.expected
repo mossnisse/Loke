@@ -1,0 +1,14 @@
+overwrite 1
+b 13
+removed 2
+len 1 drops 2
+after map 3
+literal 1 3
+after map literal 4
+dyn 2 6 4
+after dyn 6
+find_or_insert 8 7
+try_insert 9 2 8
+after inserting map 10
+append 3 13 12 11 10
+after appending 13

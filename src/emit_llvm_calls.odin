@@ -983,6 +983,29 @@ proc_result_is_inout :: proc(info: ^Type_Info) -> bool {
 	return info != nil && info.result_inout
 }
 
+// design.md "Container insertion": the argument through which a container
+// insertion takes a move-only element, or -1. Such an element is handed over
+// rather than lent, so the caller registers no cleanup for it.
+@(private = "file")
+consumed_element_slot :: proc(e: ^Emitter, symbol: ^Symbol) -> int {
+	if symbol == nil || len(symbol.params) == 0 {
+		return -1
+	}
+	slot := -1
+	#partial switch symbol.container_op {
+	case .Append:
+		slot = 1
+	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
+		slot = 2
+	case:
+		return -1
+	}
+	if !emit_lifecycle(e, container_element(e.c, symbol.params[0])).clone_disabled {
+		return -1
+	}
+	return slot
+}
+
 // The shared call sequence: bind the operands left to right, emit the call, and
 // hand back one operand per result.
 @(private = "file")
@@ -1016,6 +1039,7 @@ emit_bound_call :: proc(
 		pack = call_node.variadic_slot
 	}
 	pack_cleanup := Deferred{slot = -1}
+	consumed := consumed_element_slot(e, symbol)
 	argument_cleanups := make([dynamic]Deferred)
 	defer delete(argument_cleanups)
 	// design.md "Evaluation order": supplied operands run in source order and
@@ -1052,7 +1076,7 @@ emit_bound_call :: proc(
 		// caller — only the caller can tell the two apart. A C-variadic call passes
 		// arguments past the declared parameter list, which have no parameter type
 		// to clean up against.
-		if mode == .Value && index < len(callee_type.parameters) &&
+		if mode == .Value && index < len(callee_type.parameters) && index != consumed &&
 		   !expression_is_borrowed_place(e.c, argument) {
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&argument_cleanups, entry) }
@@ -1075,6 +1099,13 @@ emit_bound_call :: proc(
 		if symbol != nil && index < len(symbol.param_symbols) && symbol.param_symbols[index] != INVALID_SYMBOL {
 			e.param_values[symbol.param_symbols[index]] = operands[index]
 		}
+	}
+
+	// A move-only pack is handed over at the call: from here the callee owns it,
+	// and drops whatever it could not store.
+	if consumed >= 0 && consumed == pack && pack_cleanup.array_cleanup {
+		unwind_clear(e, pack_cleanup.slot)
+		pack_cleanup = Deferred{slot = -1}
 	}
 
 	if convention_is_foreign(callee_type.convention) {

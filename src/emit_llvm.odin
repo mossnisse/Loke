@@ -13,6 +13,11 @@ Emitter :: struct {
 	b:    strings.Builder,
 	next: int, // temporary and unique-name counter
 	failed: bool,
+	// Set while `emit_synth_procs` emits member bodies. A member such as
+	// `lookup_value` on a move-only element clones a type with no clone, but the
+	// checker rejected every call to it (L0491), so its body is dead and the copy
+	// aborts instead of failing the build.
+	synth_bodies: bool,
 	// Backend names are an emitter concern. Semantic symbols remain reusable by
 	// MIR, interpreters, and multiple backend invocations.
 	names:        map[Symbol_Id]string,

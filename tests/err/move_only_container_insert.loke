@@ -1,0 +1,15 @@
+package main;
+
+Res :: move_only struct { id: int }
+
+main :: proc() {
+	m: map[string]Res = {};
+	r := Res{ id = 1 };
+	m.find_or_insert("a", r);
+	_ = m.try_insert("a", r);
+	d: [dynamic]Res = {};
+	d.insert(0, r);
+	d.append(r);
+	d.append(..d[:]);
+	_ = m.lookup_value("a");
+}
