@@ -573,7 +573,7 @@ check_reflection_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate,
+	     .Strings_Allocate, .Slice_Sort_By,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence,
 	     .None, .Assert, .Panic, .Size_Of, .Align_Of, .Offset_Of, .Is_Copyable, .Type_Of:

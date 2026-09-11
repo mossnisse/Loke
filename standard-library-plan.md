@@ -1092,9 +1092,10 @@ so the `else` arm of every `when` in `core:fs`, `core:path`, `core:term` and
 `core:os` exists and is never selected.
 
 M8 closed four of the entries this list used to defer, because design.md's own
-catalogue assumed them rather than merely allowing them: sorting is now a
-contributed `sort`/`reverse_sort` member on `[dynamic]T` and `[]mut T` with
-`core:slice` forwarding to it; `core:log` sits on a build-selected logger;
+catalogue assumed them rather than merely allowing them: ordering-based sorting
+is a contributed `sort`/`reverse_sort` member on `[dynamic]T` and `[]mut T`, and
+`core:slice` adds the typed-comparator `sort_by`; `core:log` sits on a
+build-selected logger;
 `core:sync` supplies `Atomic(T)`, `fence`, and `Once`; and `core:simd` supplies
 what the `Simd(T, N)` operators cannot spell. M8 also added `core:container`
 (`Small_Array`, `Bit_Set`, `Enum_Array`), `core:math` (`Complex`,

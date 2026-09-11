@@ -1,12 +1,15 @@
 L0651
-@11:2
+@13:2
 `[dynamic]Opaque` cannot be sorted
 L0363
-@19:2
+@21:2
 `[]int` has no field or member `sort`
 L0363
-@20:2
+@22:2
 `[]int` has no field or member `reverse_sort`
 L0512
-@28:2
+@30:2
 `numbers` cannot be modified here
+L0444
+@37:2
+`No_Comparator` does not satisfy `Comparator(No_Comparator, Opaque)`

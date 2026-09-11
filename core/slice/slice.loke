@@ -1,7 +1,8 @@
 // Slice algorithms (design.md "Sorting slices", "Slices").
 //
-// Everything here is ordinary Loke over `[]T` and `[]mut T`. Nothing allocates
-// except `clone`/`try_clone`, which say so in their names by returning an owner.
+// The public surface is ordinary Loke over `[]T` and `[]mut T`. The one private
+// sorting bridge reaches the runtime's raw relocation machinery. Nothing here
+// allocates except `clone`/`try_clone`, which say so by returning an owner.
 //
 // The mutating procedures take `[]mut T`, so passing a read-only `[]T` is the
 // compile-time error design.md promises rather than a silent no-op.
@@ -12,6 +13,22 @@ import "base:interfaces";
 import "core:mem";
 
 // ---------------------------------------------------------------- ordering --
+
+// A typed ordering policy. The comparator is an ordinary value, so a record
+// may carry configuration or checked borrows without allocating or passing
+// user state through `rawptr`. `call` borrows that record and the two elements;
+// sorting never retains any of them.
+Comparator :: interface($C, $T: type) {
+	slot call: proc(self, left, right: T) -> bool;
+}
+
+// Sorts in place according to `comparator`. The package-private intrinsic owns
+// only the bridge to the shared byte-relocating runtime introsort: it receives
+// the comparator's address for this call and generates a typed adapter to
+// `C.call`. The public operation and all callback state remain ordinary Loke.
+sort_by :: proc(values: []mut $T, comparator: $C) where Comparator(C, T) {
+	sort_by_intrinsic(values, &comparator);
+}
 
 // Ascending, in place. No allocation, and no comparator: `Ordered` is the
 // precondition, and design.md's `Ordered` is IEEE-754 for floats, so a slice

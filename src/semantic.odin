@@ -662,6 +662,10 @@ Builtin_Kind :: enum {
 	Fmt_Stderr_Writer,
 	Fmt_Write_Bytes,
 	Fmt_Format_Any,
+	// `core:slice`'s typed comparator bridge to the shared runtime introsort.
+	// The public wrapper supplies a mutable slice and a checked pointer to its
+	// comparator value; the pointer is used synchronously and never retained.
+	Slice_Sort_By,
 	// String-producing procedures take a conventional `allocator` argument when
 	// selection is needed (design.md "Allocators") — built-ins otherwise allocate
 	// from the default provider. Contributed package-privately to `core:strings`

@@ -282,7 +282,7 @@ be file-private.
 
 | Files | Responsibility |
 | --- | --- |
-| `check.odin`, `check_expr.odin` | Main checker: declarations/statements/type syntax, then expressions/conversions/folding. |
+| `check.odin`, `check_expr.odin`, `check_builtin.odin` | Main checker: declarations/statements/type syntax, expressions/conversions/folding, and compiler-owned primitive call contracts. |
 | `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations, zero-value rules, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and canonical standard operation aliases. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
@@ -323,7 +323,7 @@ be file-private.
 | `emit_llvm_expr.odin` | Constants, places, scalar expressions, comparisons, and text operations. |
 | `emit_llvm_calls.odin` | Resolved calls, argument packing, conversions, allocation built-ins, and erased dispatch. |
 | `emit_llvm_cleanup.odin` | Lifecycle clone/drop, cleanup registration, and panic replay. |
-| `emit_llvm_containers.odin` | Container operation tables, construction, and synthesized element/key bodies. |
+| `emit_llvm_containers.odin` | Container operation tables, construction, synthesized element/key bodies, and typed-comparator sort adapters. |
 | `emit_llvm_iteration.odin`, `emit_llvm_adapters.odin` | Built-in iteration, iterable adapters, and synthesized iterator bodies. |
 | `emit_llvm_atomics.odin`, `emit_llvm_simd.odin` | Atomic instruction/fallback lowering and LLVM vector lowering. |
 | `emit_llvm_runtime.odin` | Runtime declarations, reflection metadata, formatting tables, globals, and witnesses. |

@@ -275,6 +275,9 @@ Expr_Call :: struct {
 	atomic_type:          Type_Id,
 	atomic_order:         int,
 	atomic_failure_order: int,
+	// `core:slice.sort_by_intrinsic`: the concrete immutable `call` method whose
+	// generated C-ABI thunk receives the comparator through a call-scoped pointer.
+	sort_comparator:      Symbol_Id,
 	// design.md "SIMD vectors": which fold a `simd_reduce` call selected. Like
 	// an atomic ordering, it picks the instruction rather than being an operand
 	// to it, so it is settled at check time.

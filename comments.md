@@ -418,6 +418,18 @@ would still need ownership and lifetime rules. Typed `state + proc` records and
 callbacks with explicit generic state provide the useful mechanism using
 ordinary language facilities while keeping procedure values thin.
 
+`core:slice.sort_by` is the first standard generic callback algorithm built on
+that choice. Its comparator is an ordinary record with an immutable `call` method,
+so configuration and checked borrows remain typed and allocation-free. The
+compiler erases addresses only inside a generated call-scoped adapter to the
+shared runtime introsort; the runtime neither owns nor retains the comparator.
+This keeps raw relocation and one copy of the introsort below the language
+boundary without making `rawptr` part of the user-facing callback protocol.
+
+Closure syntax remains a possible shorthand for constructing the same kind of
+environment and method. Its capture, mutation, and escape rules should be
+decided only after more generic algorithms have exercised this explicit form.
+
 ### Typed fallibility, and the `Option` decision it reverses
 
 An earlier revision of [`design.md`](design.md) said the language and core

@@ -1,8 +1,10 @@
-package main;
+package main; import "core:slice";
 
 // The gates on the contributed `sort` member.
 
 Opaque :: struct { value: int }
+
+No_Comparator :: struct { }
 
 // One diagnostic at the container, not one per comparison inside a sort the
 // caller never wrote.
@@ -29,9 +31,16 @@ borrowed :: proc(out: inout int) {
 	out = view[0];
 }
 
+// `sort_by` checks the callable shape at the public generic boundary.
+bad_comparator :: proc() {
+	values := []mut Opaque{Opaque{2}, Opaque{1}};
+	slice.sort_by(values, No_Comparator{});
+}
+
 main :: proc() {
 	total := 0;
 	unordered();
 	read_only();
 	borrowed(inout total);
+	bad_comparator();
 }

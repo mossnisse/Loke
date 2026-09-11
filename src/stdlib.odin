@@ -19,6 +19,7 @@ STD_META :: "base:meta"
 STD_MEM :: "core:mem"
 STD_UNSAFE :: "core:unsafe"
 STD_FMT :: "core:fmt"
+STD_SLICE :: "core:slice"
 STD_STRINGS :: "core:strings"
 STD_LOG :: "core:log"
 STD_SYNC :: "core:sync"
@@ -115,6 +116,13 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// 397 to 4923 lines of IR for hello-world, since the whole package gets
 		// emitted.
 		contribute_builtin(c, pkg, "allocate_string", .Strings_Allocate, public = false)
+	case STD_SLICE:
+		// `slice.sort_by` owns the typed public surface. The compiler contributes
+		// only the package-private bridge that gives the shared runtime introsort a
+		// call-scoped comparator address and a generated typed thunk. Ordinary Loke
+		// cannot express raw relocation of an arbitrary element without invoking
+		// its copy/drop operations.
+		contribute_builtin(c, pkg, "sort_by_intrinsic", .Slice_Sort_By, public = false)
 	case STD_STRINGS:
 		// The one bridge the standard-library plan can't express in Loke itself:
 		// copying known-valid UTF-8 into string storage from a *supplied*

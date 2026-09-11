@@ -1,7 +1,11 @@
 declare void @loke_rt_v1_sort(ptr, i64, i64, ptr, i32)
+declare void @loke_rt_v1_sort_by(ptr, i64, i64, ptr, ptr)
 i64 8, ptr @loke.cless.13, i32 0)
 i64 8, ptr @loke.cless.13, i32 1)
 i64 16, ptr @loke.cless.*, i32 0)
 define private i32 @loke.cless.13(ptr %a, ptr %b)
 = icmp slt i64 %t
 = call i1 @loke.p.Card.before(%struct.Card.* %t
+call void @loke_rt_v1_sort_by(ptr %t
+define private i32 @loke.csortby.*(ptr %state, ptr %a, ptr %b)
+= call i1 @loke.p.By_Tag.call(ptr %state

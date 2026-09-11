@@ -98,6 +98,9 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_fmt_builtin(e, v, symbol.builtin)
 		case .Strings_Allocate:
 			return emit_strings_allocate(e, v, as_type)[0]
+		case .Slice_Sort_By:
+			emit_slice_sort_by(e, v)
+			return "0"
 		case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 		     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 			return emit_atomic_builtin(e, v, symbol.builtin, as_type)

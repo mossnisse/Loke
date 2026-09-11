@@ -136,7 +136,7 @@ check_fmt_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kind: 
 	     .Free_All, .Default_Allocator, .Drop, .Exchange, .Type_Info_Of,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget, .Unsafe_Free,
 	     .Unsafe_Transmute, .Simd_Cast, .Simd_Select, .Simd_Reduce,
-	     .Strings_Allocate,
+	     .Strings_Allocate, .Slice_Sort_By,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		v.type = INVALID_TYPE

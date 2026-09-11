@@ -750,12 +750,42 @@ if (s == nil) {
 
 #### Sorting slices
 
-`slice.sort` sorts ascending and `slice.reverse_sort` descending. Both accept `[]mut T`; passing a read-only `[]T` is a compile-time error, because a read-only slice has no `sort` member to call.
+`slice.sort` sorts ascending and `slice.reverse_sort` descending according to
+the element type's `Ordered` implementation. `slice.sort_by` instead accepts an
+ordinary comparator value whose type satisfies this structural contract:
+
+```odin
+Comparator :: interface($C, $T: type) {
+	slot call: proc(self, left, right: T) -> bool;
+}
+```
+
+The comparator may be a record containing configuration or checked borrows. It
+is borrowed for the call, retained nowhere, and sorting allocates nothing. Its
+`call` method must define a strict weak ordering. The sort is not stable, so
+elements for which neither direction is before the other may appear in either
+order.
+
+All three procedures accept `[]mut T`; passing a read-only `[]T` is a
+compile-time error, because a read-only slice has no mutable storage to sort.
 
 ```odin
 s := []mut int{1, 6, 3, 5, 7, 3, 0};
 slice.sort(s);
 slice.reverse_sort(s);
+
+Card :: struct { rank: int, tag: int }
+By_Tag :: struct { descending: bool }
+
+impl By_Tag {
+	call :: proc(self, left, right: Card) -> bool {
+		if (self.descending) { return right.tag < left.tag; }
+		return left.tag < right.tag;
+	}
+}
+
+cards := []mut Card{Card{2, 20}, Card{1, 30}};
+slice.sort_by(cards, By_Tag{true});
 ```
 
 ### Dynamic arrays

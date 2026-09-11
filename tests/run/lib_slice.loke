@@ -10,6 +10,26 @@ Token :: move_only struct { id: int }
 
 Shape :: union { circle: int, square: int }
 
+Card :: struct { rank: int, tag: int }
+
+Field_Order :: struct {
+	by_tag:     bool,
+	descending: ^bool,
+}
+
+impl Field_Order {
+	call :: proc(self, left, right: Card) -> bool {
+		a := left.rank;
+		b := right.rank;
+		if (self.by_tag) {
+			a = left.tag;
+			b = right.tag;
+		}
+		if (self.descending^) { return b < a; }
+		return a < b;
+	}
+}
+
 main :: proc() {
 	s := []mut int{1, 6, 3, 5 ,7, 3, 0};
 	slice.sort(s);
@@ -44,6 +64,17 @@ main :: proc() {
 	floats := []mut f64{2.5, -1.0, 0.5};
 	slice.reverse_sort(floats);
 	fmt.println(floats);
+
+	// A comparator is an ordinary typed record. Its fields select policy without
+	// allocation, procedure capture, or exposing callback state as `rawptr`. The
+	// pointer field is a checked borrow of local state carried through the record.
+	cards := []mut Card{Card{3, 20}, Card{1, 30}, Card{2, 10}};
+	descending := true;
+	slice.sort_by(cards, Field_Order{true, &descending});
+	fmt.println(cards[0].rank, cards[1].rank, cards[2].rank);
+	descending = false;
+	slice.sort_by(cards, Field_Order{false, &descending});
+	fmt.println(cards[0].tag, cards[1].tag, cards[2].tag);
 
 	fmt.println(slice.is_sorted(s), slice.is_sorted(r));
 	fmt.println(slice.is_reverse_sorted(r), slice.is_reverse_sorted(s));

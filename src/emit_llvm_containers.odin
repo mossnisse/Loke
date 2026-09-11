@@ -149,6 +149,64 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
+// `core:slice.sort_by` keeps its comparator typed in source. Its private
+// intrinsic reaches here with a checked pointer to that value and the concrete
+// immutable `call` method selected by the checker. Only this C ABI seam erases
+// the comparator and element addresses; the runtime retains neither.
+@(private)
+emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
+	if !e.sort_by_declared {
+		e.sort_by_declared = true
+		append(&e.globals, "declare void @loke_rt_v1_sort_by(ptr, i64, i64, ptr, ptr)\n")
+	}
+	if len(v.bound) != 2 || v.sort_comparator == INVALID_SYMBOL {
+		backend_fail(e, "a checked slice sort_by has no comparator")
+		return
+	}
+
+	slice_type := expr_base(v.bound[0]).type
+	element := slice_element(e.c, slice_type)
+	value := emit_expr(e, v.bound[0])
+	storage := llvm_type(e, slice_type)
+	data := extract(e, storage, value, SLICE_DATA)
+	count := extract(e, storage, value, SLICE_LEN)
+	ctx := emit_expr(e, v.bound[1])
+	less := sort_by_thunk(e, element, v.sort_comparator)
+	fmt.sbprintfln(
+		&e.b, "  call void @loke_rt_v1_sort_by(ptr %s, i64 %s, i64 %d, ptr %s, ptr %s)",
+		data, count, type_size(e.c, element), ctx, less,
+	)
+}
+
+// One adapter per concrete comparator method. The method symbol already fixes
+// both `C` and `T`, so its id is a complete and stable key within this module.
+@(private = "file")
+sort_by_thunk :: proc(e: ^Emitter, element: Type_Id, method: Symbol_Id) -> string {
+	name := fmt.aprintf("@loke.csortby.%d", int(method))
+	if e.container_thunks[name] {
+		return name
+	}
+	e.container_thunks[name] = true
+
+	frame := begin_function_emission(e)
+	open_function(e, "define private i32 %s(ptr %%state, ptr %%a, ptr %%b)", name)
+	llvm := llvm_type(e, element)
+	left := load(e, llvm, "%a")
+	right := load(e, llvm, "%b")
+	before := temp(e)
+	fmt.sbprintfln(
+		&e.b, "  %s = call i1 %s(ptr %%state, %s %s, %s %s)",
+		before, symbol_name(e, method), llvm, left, llvm, right,
+	)
+	out := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = zext i1 %s to i32", out, before)
+	fmt.sbprintfln(&e.b, "  ret i32 %s", out)
+	fmt.sbprintln(&e.b, "}")
+	fmt.sbprintln(&e.b, "")
+	finish_pending_thunk(e, frame)
+	return name
+}
+
 // One comparison per element type, memoised exactly as the clone and drop
 // thunks are. The policy behind it was settled during checking, so this never
 // re-decides which `<` a type sorts by.

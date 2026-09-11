@@ -349,18 +349,30 @@ int32_t loke_rt_v1_string_to_runes(
 
 /* Sorting. `less(a, b)` is 1 when `*a` orders before `*b`; the compiler
  * generates one per element type, exactly as it generates the clone and drop
- * thunks in the operation table. `descending` inverts the comparison - it does
- * not reverse the finished array - and the sort is not stable.
+ * thunks in the operation table. `less_with_state(state, a, b)` is the
+ * call-scoped typed-comparator adapter used by `core:slice.sort_by`.
+ * `descending` inverts the stateless comparison - it does not reverse the
+ * finished array - and the sort is not stable.
  *
  * `data` is the first element and `count` the number of them, so one entry
  * point serves both a `[dynamic]T` and a `[]mut T`. Nothing here allocates, and
- * the table is not involved: an element's size and its `less` are everything a
- * sort needs. */
+ * the table is not involved: an element's size, comparison, and optional state
+ * are everything a sort needs. */
 typedef int32_t (*loke_rt_less_v1)(const void *a, const void *b);
+typedef int32_t (*loke_rt_less_with_state_v1)(
+	const void *state, const void *a, const void *b);
 
 void loke_rt_v1_sort(
 	void *data, int64_t count, uint64_t elem_size,
 	loke_rt_less_v1 less, int32_t descending);
+
+/* The typed `core:slice.sort_by` bridge. `state` is borrowed only for this
+ * synchronous call; the generated thunk recovers its concrete comparator type
+ * and invokes `call`. The comparator defines the direction, so there is no
+ * separate descending flag. */
+void loke_rt_v1_sort_by(
+	void *data, int64_t count, uint64_t elem_size, const void *state,
+	loke_rt_less_with_state_v1 less);
 
 /* Atomics at a width this target has no usable native lowering for
  * (`runtime/atomic.c`). Every operand travels by address, so one helper per

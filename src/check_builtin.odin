@@ -77,6 +77,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Strings_Allocate:
 		check_strings_allocate(k, v, ident)
 		return
+	case .Slice_Sort_By:
+		check_slice_sort_by(k, v, ident)
+		return
 	case .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		check_atomic_builtin(k, v, ident, sym.builtin)
@@ -124,6 +127,84 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	}
 	v.bound = bound
 	v.type = sym.type
+}
+
+// `core:slice.sort_by_intrinsic(values, &comparator)`. The public generic
+// wrapper has already required `slice.Comparator(C, T)`; this check records the
+// exact inherent/slot-visible method for lowering and independently protects
+// the compiler-owned boundary from a malformed replacement standard package.
+@(private = "file")
+check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
+	v.value_category = .Value
+	if !check_builtin_arity(k, v, ident, 2) {
+		return
+	}
+
+	values := check_single_expr(k, v.args[0].value)
+	values_info := underlying_info(k.c, values)
+	if values_info == nil || values_info.kind != .Slice || !values_info.mutable {
+		errorf(
+			k.c, expr_span(v.args[0].value), "L0651",
+			"`sort_by_intrinsic` needs a mutable slice, found `%s`", type_name(k.c, values),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+
+	ctx := check_single_expr(k, v.args[1].value)
+	context_info := underlying_info(k.c, ctx)
+	if context_info == nil || context_info.kind != .Pointer {
+		errorf(
+			k.c, expr_span(v.args[1].value), "L0651",
+			"`sort_by_intrinsic` needs a pointer to its comparator, found `%s`", type_name(k.c, ctx),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+
+	element := values_info.element
+	comparator := context_info.element
+	name := intern_identifier(k.c, "call")
+	matches := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+	for candidate in method_candidates(k, comparator, name) {
+		sym := symbol_of(k.c, candidate)
+		if sym != nil && slot_matches(
+			k, sym,
+			[]Type_Id{comparator, element, element},
+			[]Param_Mode{.Borrow, .Value, .Value},
+			TYPE_BOOL, false,
+		) {
+			append(&matches, candidate)
+		}
+	}
+	if len(matches) != 1 {
+		errorf(
+			k.c, v.span, "L0651",
+			"`%s` must provide exactly one `call(self, left: %s, right: %s) -> bool` method for sorting",
+			type_name(k.c, comparator), type_name(k.c, element), type_name(k.c, element),
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+
+	v.bound = make([]Expr, 2, k.c.semantic_allocator)
+	v.bound[0] = v.args[0].value
+	v.bound[1] = v.args[1].value
+	v.sort_comparator = matches[0]
+	v.type = TYPE_VOID
+}
+
+@(private = "file")
+check_builtin_arity :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, wanted: int) -> bool {
+	if len(v.args) == wanted {
+		return true
+	}
+	errorf(
+		k.c, v.span, "L0322", "`%s` takes %d arguments, found %d",
+		ident.name, wanted, len(v.args),
+	)
+	v.type = INVALID_TYPE
+	return false
 }
 
 // A built-in takes positional value arguments and nothing else: it has no
@@ -380,7 +461,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate, .None, .Assert, .Panic, .Is_Copyable,
+	     .Strings_Allocate, .Slice_Sort_By, .None, .Assert, .Panic, .Is_Copyable,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
@@ -587,7 +668,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
-	     .Strings_Allocate,
+	     .Strings_Allocate, .Slice_Sort_By,
 	     .Atomic_Load, .Atomic_Store, .Atomic_Exchange, .Atomic_Compare_Exchange,
 	     .Atomic_Add, .Atomic_Sub, .Atomic_And, .Atomic_Or, .Atomic_Xor, .Atomic_Fence:
 		return
