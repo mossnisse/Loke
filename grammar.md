@@ -718,8 +718,10 @@ The productions above use the following deterministic parsing rules:
 - `switch (name in expression)` is a type switch, over a union's variants or an
   `any_view`'s types. A value switch over membership uses
   `switch ((name in expression))`.
-- A singleton case of the exact shape `.name(binding)` is a branch-local union
-  pattern. Calls with any other callee or argument shape remain expressions.
+- A `Value_Switch` parses its cases as expressions. When the subject's type is a
+  union, the checker reads a singleton case of the exact shape `.name(binding)`
+  as a branch-local pattern; calls of any other shape, and every case of a
+  switch over a non-union, remain expressions.
 - An `Init_Statement` is a `Variable_Decl` when the comma-separated list of names
   that opens it is followed by `:`, and a `Simple_Statement` otherwise. Deciding
   this means scanning a name list, which is the same bounded scan `Declaration`

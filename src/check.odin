@@ -2939,6 +2939,13 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		// blame the procedure for a missing return it may well have.
 		return Flow_Info{}
 	}
+	// design.md "Inspecting a union": a union is inspected by variant name
+	// whatever shape its cases take, so the subject's type, not the cases,
+	// decides that this is a variant switch.
+	if type_is_union(k.c, subject) {
+		adopt_branch_patterns(s)
+		return check_variant_cases(k, s, subject)
+	}
 	if type_is_untyped(k.c, subject) {
 		materialize(k, s.subject, default_type(k.c, subject))
 		subject = expr_base(s.subject).type

@@ -282,6 +282,40 @@ check_or_return_target :: proc(k: ^Checker, v: ^Expr_Postfix, shape: Fallible) -
 
 // ---------------------------------------------------------- type switch --
 
+// design.md "Inspecting a union": in a switch over a union, a singleton case
+// `.name(binding)` binds that variant's payload in its arm alone. The shape is
+// deliberately narrow, and only a union subject reads it as a pattern; over any
+// other subject it stays an ordinary call.
+adopt_branch_patterns :: proc(s: ^Stmt_Switch) {
+	s.kind = .Pattern
+	for &entry in s.cases {
+		if len(entry.values) != 1 {
+			continue
+		}
+		if selector, binding, ok := branch_variant_pattern(entry.values[0]); ok {
+			entry.values[0] = selector
+			entry.binding = binding
+		}
+	}
+}
+
+@(private = "file")
+branch_variant_pattern :: proc(value: Expr) -> (Expr, Name, bool) {
+	call, is_call := value.(^Expr_Call)
+	if !is_call || len(call.args) != 1 {
+		return nil, Name{}, false
+	}
+	selector, is_selector := call.callee.(^Expr_Selector)
+	arg := call.args[0]
+	ident, is_ident := arg.value.(^Expr_Ident)
+	if !is_selector || selector.operand != nil || !is_ident ||
+	   arg.name.text != "" || arg.mode != .Value {
+		return nil, Name{}, false
+	}
+	binding := Name{text = ident.name, span = ident.span, id = ident.name_id}
+	return selector, binding, true
+}
+
 // design.md "switch statement": the cases are types, and for a union the
 // only case types allowed are its own variants.
 check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
@@ -296,6 +330,12 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	if subject == INVALID_TYPE {
 		return Flow_Info{}
 	}
+	return check_variant_cases(k, s, subject)
+}
+
+// The cases of a switch whose subject is already checked: a type switch, or a
+// value switch that `check_switch` found to be over a union.
+check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> Flow_Info {
 	// design.md: a dynamic interface is a borrowed view and supports no type
 	// switch in version 1.
 	if type_is_dyn(k.c, subject) {
@@ -418,6 +458,14 @@ check_type_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 		}
 		if binding.text != "" && binding.text != "_" {
 			name := intern_identifier(k.c, binding.text)
+			// The shadowing rule every declaration follows: without it, a case that
+			// names an existing local would silently bind rather than refer to it.
+			if s.kind == .Pattern {
+				outer, owner := lookup_symbol_with_scope(case_scope, name)
+				if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
+					errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
+				}
+			}
 			entry.binding_symbol = new_symbol(k.c, Symbol {
 				name       = name,
 				span       = binding.span,

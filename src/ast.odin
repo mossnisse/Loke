@@ -914,6 +914,8 @@ Switch_Kind :: enum {
 	Type,
 	// `switch (union) { case .variant(binding): ... }`: dispatch is the same
 	// tag switch as `Type`, but each case carries its own optional binding.
+	// The parser cannot see the subject's type, so the checker turns a `Value`
+	// switch over a union into this kind.
 	Pattern,
 }
 

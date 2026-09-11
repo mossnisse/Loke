@@ -15,6 +15,25 @@ describe :: proc(token: Token) -> int {
 	}
 }
 
+// Bare variant names alone still make a variant switch: exhaustive without a
+// default, and no payload needs to be comparable.
+Held :: union { items: [dynamic]int, empty: }
+
+token_kind :: proc(token: Token) -> int {
+	switch (token) {
+	case .number: return 1;
+	case .word: return 2;
+	case .end: return 3;
+	}
+}
+
+held_kind :: proc(held: Held) -> int {
+	switch (held) {
+	case .items: return 1;
+	case .empty: return 0;
+	}
+}
+
 option_value :: proc(value: Option(int)) -> int {
 	switch (value) {
 	case .some(number): return number;
@@ -67,4 +86,5 @@ main :: proc() {
 		}
 	}
 	fmt.println(count);
+	fmt.println(token_kind(.word("loke")), held_kind(.empty));
 }

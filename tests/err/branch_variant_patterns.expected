@@ -4,3 +4,9 @@ the payloadless variant `.none` has nothing to bind
 L0315
 @10:14
 unknown name `value`
+L0305
+@20:13
+`number` shadows an outer declaration
+L0320
+@28:7
+`Colour` is not callable

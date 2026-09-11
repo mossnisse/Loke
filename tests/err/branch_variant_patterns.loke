@@ -9,3 +9,23 @@ main :: proc() {
 	}
 	fmt.println(value);
 }
+
+Colour :: enum { Red, Blue }
+
+// A pattern binding follows the shadowing rule: naming an existing local is an
+// error, not a silent new binding.
+shadowed :: proc(opt: Option(int)) {
+	number := 5;
+	switch (opt) {
+	case .some(number): fmt.println(number);
+	case .none:
+	}
+}
+
+// Only a union subject reads `.name(x)` as a pattern.
+not_a_union :: proc(c: Colour) {
+	switch (c) {
+	case .Red(x):
+	case:
+	}
+}
