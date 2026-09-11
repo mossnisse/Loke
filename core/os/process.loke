@@ -146,7 +146,7 @@ set_environment_native :: proc(name: string_view, value: string_view) -> Result(
 	if (rt_set_environment(unsafe.raw_data(encoded_name), unsafe.raw_data(encoded_value)) == 0) {
 		return .err(from_last_error(.Environment));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)
@@ -156,7 +156,7 @@ unset_environment_native :: proc(name: string_view) -> Result(Unit, io.Error) {
 	if (rt_set_environment(unsafe.raw_data(encoded), nil) == 0) {
 		return .err(from_last_error(.Environment));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)
@@ -183,7 +183,7 @@ set_working_directory_native :: proc(path: string_view) -> Result(Unit, io.Error
 	if (rt_set_directory(unsafe.raw_data(encoded)) == 0) {
 		return .err(from_last_error(.Working_Directory));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)

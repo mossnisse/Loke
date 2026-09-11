@@ -30,6 +30,7 @@ false false
 .err(converted)
 .err(Something_Bad)
 .ratio(1.5) .numbers([3, 4]) .ok([5, 6])
+.ok(Unit{}) .ok(Unit{}) .ok(Unit{}) true true
 8
 -1
 900

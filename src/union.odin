@@ -325,14 +325,22 @@ check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: 
 	sel.type = subject
 	sel.variant_union = subject
 	sel.variant_index = index
-	if union_variant_payload(k.c, subject, index) != TYPE_VOID {
+	// A `Unit` payload has one value, so outside a call the bare `.ok` is already
+	// complete: payloadless and `Unit`-carrying variants are spelled alike.
+	payload := union_variant_payload(k.c, subject, index)
+	unit_payload := payload == unit_type(k.c) && !k.in_callee
+	if payload != TYPE_VOID && !unit_payload {
 		sel.resolution = Resolution{kind = .Union_Variant}
 		return true
+	}
+	payload_value := Const_Value{}
+	if unit_payload {
+		payload_value, _ = zero_const(k.c, payload)
 	}
 	sel.resolution = Resolution{kind = .Builtin_Operator}
 	sel.is_const = true
 	sel.immutable = .Constant
-	sel.const_value = union_const(k.c, subject, index, Const_Value{})
+	sel.const_value = union_const(k.c, subject, index, payload_value)
 	return true
 }
 

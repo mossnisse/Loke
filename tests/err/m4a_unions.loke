@@ -76,5 +76,8 @@ main :: proc() {
 	// `or_else` needs a union with a designated failure variant on its left.
 	b := not_fallible() or_else true;
 
-	fmt.println(a, b, w, x, y, z, q);
+	// Only a `Unit` payload may be left out.
+	r: Result(i32, bool) = .ok;
+
+	fmt.println(a, b, w, x, y, z, q, r);
 }

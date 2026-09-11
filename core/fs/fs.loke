@@ -81,7 +81,7 @@ impl File {
 
 	// Idempotent: the value is left inert even when the close itself failed.
 	close :: proc(self: inout File) -> Result(Unit, io.Error) {
-		if (self.handle == NO_HANDLE) { return .ok(Unit{}); }
+		if (self.handle == NO_HANDLE) { return .ok; }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
 		return close_handle(handle);
@@ -119,7 +119,7 @@ impl File {
 	}
 
 	flush :: proc(self: inout File) -> Result(Unit, io.Error) {
-		if (self.handle == NO_HANDLE) { return .ok(Unit{}); }
+		if (self.handle == NO_HANDLE) { return .ok; }
 		return flush_handle(self.handle);
 	}
 }
@@ -267,11 +267,11 @@ create_directories :: proc(path: string_view) -> Result(Unit, io.Error) {
 @(private)
 ensure_directory :: proc(path: string_view) -> Result(Unit, io.Error) {
 	switch (outcome in create_directory(path)) {
-	case .ok: return .ok(Unit{});
+	case .ok: return .ok;
 	case .err:
 		if (!io.is(outcome, .Already_Exists)) { return .err(outcome); }
 		info := metadata(path) or_return;
-		if (info.kind == .Directory) { return .ok(Unit{}); }
+		if (info.kind == .Directory) { return .ok; }
 		return .err(outcome);
 	}
 }
@@ -476,7 +476,7 @@ close_handle :: proc(handle: Handle) -> Result(Unit, io.Error) {
 	if (rt_close_handle(handle) == 0) {
 		return .err(from_last_error(.Close));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)
@@ -530,7 +530,7 @@ flush_handle :: proc(handle: Handle) -> Result(Unit, io.Error) {
 	if (rt_flush(handle) == 0) {
 		return .err(from_last_error(.Flush));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)
@@ -574,7 +574,7 @@ remove_native :: proc(path: string_view) -> Result(Unit, io.Error) {
 	if (rt_delete_file(unsafe.raw_data(wide)) == 0) {
 		return .err(from_last_error(.Remove));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)
@@ -584,7 +584,7 @@ rename_native :: proc(old_path: string_view, new_path: string_view) -> Result(Un
 	if (rt_move_file(unsafe.raw_data(from), unsafe.raw_data(to), u32(MOVEFILE_REPLACE_EXISTING)) == 0) {
 		return .err(from_last_error(.Rename));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)
@@ -593,7 +593,7 @@ create_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
 	if (rt_create_directory(unsafe.raw_data(wide), nil) == 0) {
 		return .err(from_last_error(.Create_Directory));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 @(private)
@@ -602,7 +602,7 @@ remove_directory_native :: proc(path: string_view) -> Result(Unit, io.Error) {
 	if (rt_remove_directory(unsafe.raw_data(wide)) == 0) {
 		return .err(from_last_error(.Remove_Directory));
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 // The search handle plus the record Windows fills. `pending` is the entry
@@ -627,13 +627,13 @@ impl Directory_Reader {
 	}
 
 	close :: proc(self: inout Directory_Reader) -> Result(Unit, io.Error) {
-		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) { return .ok(Unit{}); }
+		if (self.handle == NO_HANDLE || self.handle == INVALID_HANDLE) { return .ok; }
 		handle := self.handle;
 		self.handle = NO_HANDLE;
 		if (rt_find_close(handle) == 0) {
 			return .err(from_last_error(.Read_Directory));
 		}
-		return .ok(Unit{});
+		return .ok;
 	}
 
 	// The next entry, or `.none` at the end of the directory. `.` and `..` are

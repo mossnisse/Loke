@@ -76,7 +76,7 @@ load :: proc(
 		entry := parse_entry(line) or_return;
 		into[entry.key] = entry.value;
 	}
-	return .ok(Unit{});
+	return .ok;
 }
 
 describe :: proc(outcome: Result(Unit, Error)) -> string_view {

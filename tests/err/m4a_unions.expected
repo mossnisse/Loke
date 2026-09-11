@@ -67,3 +67,6 @@ L0426
 L0428
 @77:7
 `or_else` needs a union with a designated failure variant on its left, found `bool`
+L0425
+@80:25
+`Result(i32, bool).ok` carries a payload: write `ok(value)`

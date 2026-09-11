@@ -40,6 +40,18 @@ static_pair: Pair_Value = .numbers({3, 4});
 static_result: Result([2]i16, Error_Code) = .ok({5, 6});
 
 caller_1 :: proc() -> Result(Unit, Error_Code) { return .ok(Unit{}); }
+
+// A `Unit` payload has one value, so its variant is spelled like a payloadless one.
+unit_ok :: proc() -> Result(Unit, Error_Code) { return .ok; }
+static_unit: Result(Unit, Error_Code) = .ok;
+unit_is_ok :: proc() -> bool {
+	switch (r in unit_ok()) {
+	case .ok:  return true;
+	case .err: return false;
+	}
+	return false;
+}
+FOLDED_UNIT_OK :: unit_is_ok();
 caller_2 :: proc() -> Result(int, Error_Code) { return .ok(123); }
 failing :: proc() -> Result(int, Error_Code) { return .err(.Something_Bad); }
 
@@ -186,6 +198,7 @@ main :: proc() {
 	}
 	fmt.println(multi_result());
 	fmt.println(static_ratio, static_pair, static_result);
+	fmt.println(unit_ok(), static_unit, Result(Unit, Error_Code).ok, FOLDED_UNIT_OK, unit_is_ok());
 
 	// `or_else` supplies a fallback and evaluates it only on the failure variant.
 	fmt.println(fetch(false) or_else -1);

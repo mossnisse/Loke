@@ -1339,12 +1339,13 @@ A variant is identified by its name and declaration index, not its payload type.
 
 #### Constructing a variant
 
-`.name(payload)` builds a variant where the union type is known from context; `U.name(payload)` names the union explicitly. A payloadless variant is written without the call: `.name`, or `U.name`.
+`.name(payload)` builds a variant where the union type is known from context; `U.name(payload)` names the union explicitly. A payloadless variant is written without the call: `.name`, or `U.name`. So is a variant whose payload is `Unit`, which has only one value: `.ok` builds `Result(Unit, E)`, and `.ok(Unit{})` remains valid.
 
 ```odin
 v = .number(7);
 v = Value.number(7);
 v = .absent;
+return .ok; // in a procedure returning Result(Unit, E)
 ```
 
 Record-field initialization rules apply to the payload: a place argument clones it and must be copyable; a temporary or `move(x)` transfers it.
@@ -3748,7 +3749,7 @@ read_file :: proc() -> Result(Unit, io.Error) {
 		}
 	}
 	// Use `file` here.
-	return .ok(Unit{});
+	return .ok;
 }
 ```
 
@@ -4909,7 +4910,7 @@ Error_Code :: enum { Something_Bad, Something_Worse, The_Worst }
 
 // The two shapes a fallible procedure has. `Result(Unit, E)` is the one with
 // nothing to hand back on success.
-step  :: proc() -> Result(Unit, Error_Code) { return .ok(Unit{}); }
+step  :: proc() -> Result(Unit, Error_Code) { return .ok; }
 value :: proc() -> Result(int, Error_Code)  { return .ok(123); }
 
 work :: proc() -> Result(int, Error_Code) {

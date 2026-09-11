@@ -22,7 +22,7 @@ LIMIT :: 1024 * 1024;
 summarize :: proc(path: string_view) -> Result(Unit, io.Error) {
 	bytes := fs.read_bytes(path, limit = LIMIT) or_return;
 	fmt.println("bytes:", bytes.len());
-	return .ok(Unit{});
+	return .ok;
 }
 
 // The same file again, this time without holding it in memory: one fixed buffer,
@@ -63,7 +63,7 @@ run :: proc() -> Result(Unit, io.Error) {
 	summarize(path) or_return;
 	lines := count_lines(path) or_return;
 	fmt.println("lines:", lines);
-	return .ok(Unit{});
+	return .ok;
 }
 
 main :: proc() {
