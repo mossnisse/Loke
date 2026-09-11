@@ -2814,15 +2814,18 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 		return param, named && !expr_has_error(param.type)
 	}
 
+	// design.md "Receiver forms": `self: inout` and `self: move` may leave the
+	// type to the enclosing block, as a plain `self` does.
+	receiver_type_omitted := peek_token(p, 1).kind == .Comma || peek_token(p, 1).kind == .Rparen
 	#partial switch current(p).kind {
 	case .Inout:
 		advance(p)
 		param.mode = .Inout
-		param.type = parse_type(p)
+		if !receiver_type_omitted { param.type = parse_type(p) }
 	case .Move:
 		advance(p)
 		param.mode = .Move
-		param.type = parse_type(p)
+		if !receiver_type_omitted { param.type = parse_type(p) }
 	case .Range:
 		advance(p) // `..`
 		param.mode = .Variadic

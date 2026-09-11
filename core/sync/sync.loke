@@ -52,7 +52,7 @@ impl Atomic($T) {
 	}
 
 	store :: proc(
-		self: inout Atomic(T), value: T,
+		self: inout, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) {
 		atomic_store(&mut self.value, value, order);
@@ -60,7 +60,7 @@ impl Atomic($T) {
 
 	// The previous value.
 	exchange :: proc(
-		self: inout Atomic(T), value: T,
+		self: inout, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T {
 		return atomic_exchange(&mut self.value, value, order);
@@ -71,7 +71,7 @@ impl Atomic($T) {
 	// and `observed` is what was there — the value replaced when it swapped, and
 	// the value that stopped it when it did not.
 	compare_exchange :: proc(
-		self: inout Atomic(T), expected: T, desired: T,
+		self: inout, expected: T, desired: T,
 		$success: Memory_Order = Memory_Order.Sequentially_Consistent,
 		$failure: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> (observed: T, swapped: bool) {
@@ -84,35 +84,35 @@ impl Atomic($T) {
 
 	// The five read-modify-writes, each answering the *previous* value.
 	add :: proc(
-		self: inout Atomic(T), value: T,
+		self: inout, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T {
 		return atomic_add(&mut self.value, value, order);
 	}
 
 	sub :: proc(
-		self: inout Atomic(T), value: T,
+		self: inout, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T {
 		return atomic_sub(&mut self.value, value, order);
 	}
 
 	bit_and :: proc(
-		self: inout Atomic(T), value: T,
+		self: inout, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T {
 		return atomic_and(&mut self.value, value, order);
 	}
 
 	bit_or :: proc(
-		self: inout Atomic(T), value: T,
+		self: inout, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T {
 		return atomic_or(&mut self.value, value, order);
 	}
 
 	bit_xor :: proc(
-		self: inout Atomic(T), value: T,
+		self: inout, value: T,
 		$order: Memory_Order = Memory_Order.Sequentially_Consistent,
 	) -> T {
 		return atomic_xor(&mut self.value, value, order);

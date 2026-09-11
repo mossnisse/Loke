@@ -75,7 +75,7 @@ impl Small_Array($T, $N) {
 		return self.items[index];
 	}
 
-	get_mut :: operator([]) proc(self: inout Small_Array(T, N), index: int) -> inout T {
+	get_mut :: operator([]) proc(self: inout, index: int) -> inout T {
 		self.check_index(index);
 		return inout self.items[index];
 	}
@@ -93,7 +93,7 @@ impl Small_Array($T, $N) {
 	}
 
 	// The whole live prefix as one mutable view.
-	slice :: proc(self: inout Small_Array(T, N)) -> []mut T {
+	slice :: proc(self: inout) -> []mut T {
 		return self.items[0:self.count];
 	}
 
@@ -117,14 +117,14 @@ impl Small_Array($T, $N) {
 		return {self.view(), 0, true};
 	}
 
-	iter_mut :: proc(self: inout Small_Array(T, N)) -> Small_Array_Mut_Iterator(T) {
+	iter_mut :: proc(self: inout) -> Small_Array_Mut_Iterator(T) {
 		return {self.slice(), 0};
 	}
 
 	// ------------------------------------------------------------ mutation --
 
 	append :: proc(
-		self: inout Small_Array(T, N), @(escape=stored) values: ..T,
+		self: inout, @(escape=stored) values: ..T,
 	) where is_copyable(T) {
 		switch (_ in self.try_append(..values)) {
 		case .ok:
@@ -134,7 +134,7 @@ impl Small_Array($T, $N) {
 
 	// Nothing is written unless everything fits, which is the `try_` promise.
 	try_append :: proc(
-		self: inout Small_Array(T, N), @(escape=stored) values: ..T,
+		self: inout, @(escape=stored) values: ..T,
 	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
 		wanted := self.count + values.len();
 		if (wanted > N) {
@@ -148,7 +148,7 @@ impl Small_Array($T, $N) {
 	}
 
 	insert :: proc(
-		self: inout Small_Array(T, N), index: int, @(escape=stored) value: T,
+		self: inout, index: int, @(escape=stored) value: T,
 	) where is_copyable(T) {
 		switch (_ in self.try_insert(index, value)) {
 		case .ok:
@@ -159,7 +159,7 @@ impl Small_Array($T, $N) {
 	// Validate the index even when full. Capacity failure leaves the array
 	// untouched; a bad index is always a programmer error.
 	try_insert :: proc(
-		self: inout Small_Array(T, N), index: int, @(escape=stored) value: T,
+		self: inout, index: int, @(escape=stored) value: T,
 	) -> Result(Unit, Capacity_Error) where is_copyable(T) {
 		if (index < 0 || index > self.count) {
 			panic("Small_Array index is out of range");
@@ -179,14 +179,14 @@ impl Small_Array($T, $N) {
 	// taken the value it could not store, which is the opposite of what this
 	// file's `try_` contract promises; a caller who must not panic asks `space()`
 	// or `is_full()` first, and those are exact.
-	append_moved :: proc(self: inout Small_Array(T, N), @(escape=stored) value: move T) {
+	append_moved :: proc(self: inout, @(escape=stored) value: move T) {
 		if (self.count == N) { panic("Small_Array is full"); }
 		self.items[self.count] = move(value);
 		self.count += 1;
 	}
 
 	insert_moved :: proc(
-		self: inout Small_Array(T, N), index: int, @(escape=stored) value: move T,
+		self: inout, index: int, @(escape=stored) value: move T,
 	) {
 		if (index < 0 || index > self.count) {
 			panic("Small_Array index is out of range");
@@ -204,7 +204,7 @@ impl Small_Array($T, $N) {
 	// reachable from two indices at once, and — where `T` is a borrow carrier —
 	// the value taken out is not a borrow of `self` that the rest of the body
 	// would then have to leave alone.
-	pop :: proc(self: inout Small_Array(T, N)) -> Option(T) {
+	pop :: proc(self: inout) -> Option(T) {
 		if (self.count == 0) { return .none; }
 		self.count -= 1;
 		last := self.count;
@@ -212,7 +212,7 @@ impl Small_Array($T, $N) {
 	}
 
 	// Order-preserving: everything after `index` shifts down one place.
-	remove :: proc(self: inout Small_Array(T, N), index: int) -> T {
+	remove :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
 		removed := exchange(inout self.items[index], {});
 		at := index;
@@ -227,7 +227,7 @@ impl Small_Array($T, $N) {
 	}
 
 	// O(1), at the cost of the order: the last element takes the hole.
-	remove_unordered :: proc(self: inout Small_Array(T, N), index: int) -> T {
+	remove_unordered :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
 		removed := exchange(inout self.items[index], {});
 		self.count -= 1;
@@ -240,7 +240,7 @@ impl Small_Array($T, $N) {
 
 	// Length only. The retired elements are overwritten so nothing stays live
 	// behind the length.
-	clear :: proc(self: inout Small_Array(T, N)) {
+	clear :: proc(self: inout) {
 		foreach (i in 0 ..< self.count) { _ = exchange(inout self.items[i], {}); }
 		self.count = 0;
 	}
@@ -274,7 +274,7 @@ impl Small_Array($T, $N) {
 	// It takes no bound: the moving insert needs the same shift as the copying
 	// one, and shifting has never been the part that copies.
 	@(private)
-	open_slot :: proc(self: inout Small_Array(T, N), index: int) {
+	open_slot :: proc(self: inout, index: int) {
 		at := self.count;
 		for (at > index) {
 			_ = exchange(inout self.items[at], exchange(inout self.items[at - 1], {}));
@@ -309,7 +309,7 @@ Small_Array_Mut_Iterator :: struct($T: type) {
 }
 
 impl Small_Array_Mut_Iterator($T) {
-	next :: proc(self: inout Small_Array_Mut_Iterator(T)) -> Option(^mut T) {
+	next :: proc(self: inout) -> Option(^mut T) {
 		if (self.at >= self.items.len()) { return .none; }
 		index := self.at;
 		self.at += 1;
@@ -327,7 +327,7 @@ impl Small_Array_Iterator($T) {
 	// here and therefore no by-value `foreach` — design.md "Element bindings"
 	// sends such an element through `refs()` or `&value` instead, which is what
 	// `view().refs()` and `iter_mut` already provide.
-	next :: proc(self: inout Small_Array_Iterator(T)) -> Option(T) where is_copyable(T) {
+	next :: proc(self: inout) -> Option(T) where is_copyable(T) {
 		if (self.at >= self.items.len()) { return .none; }
 		index := self.items.len() - 1 - self.at if self.reverse else self.at;
 		self.at += 1;

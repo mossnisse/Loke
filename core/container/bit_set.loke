@@ -54,22 +54,22 @@ impl Bit_Set($E) {
 
 	// --------------------------------------------------------- mutation --
 
-	set :: proc(self: inout Bit_Set(E), member: E) {
+	set :: proc(self: inout, member: E) {
 		at := position_of(member);
 		self.words[at/64] |= u64(1) << uint(at % 64);
 	}
 
-	unset :: proc(self: inout Bit_Set(E), member: E) {
+	unset :: proc(self: inout, member: E) {
 		at := position_of(member);
 		self.words[at/64] &~= u64(1) << uint(at % 64);
 	}
 
-	toggle :: proc(self: inout Bit_Set(E), member: E) {
+	toggle :: proc(self: inout, member: E) {
 		at := position_of(member);
 		self.words[at/64] ~= u64(1) << uint(at % 64);
 	}
 
-	clear :: proc(self: inout Bit_Set(E)) {
+	clear :: proc(self: inout) {
 		foreach (i in 0 ..< self.words.len()) { self.words[i] = 0; }
 	}
 
@@ -162,7 +162,7 @@ impl Bit_Set_Iterator($E) {
 
 	iter :: proc(self) -> Bit_Set_Iterator(E) { return self; }
 
-	next :: proc(self: inout Bit_Set_Iterator(E)) -> Option(E) {
+	next :: proc(self: inout) -> Option(E) {
 		members := E.values();
 		for (self.at < members.len()) {
 			member := members[self.at];

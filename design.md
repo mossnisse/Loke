@@ -1758,7 +1758,7 @@ impl Vector2 {
 		return self.x*self.x + self.y*self.y;
 	}
 
-	scale :: proc(self: inout Vector2, factor: f32) {
+	scale :: proc(self: inout, factor: f32) {
 		self.x *= factor;
 		self.y *= factor;
 	}
@@ -1778,7 +1778,7 @@ v.length_squared();
 Vector2.length_squared(v);
 ```
 
-A plain `self` is an immutable borrow, `self: inout Type` a mutable borrow, and `self: move Type` consumes the receiver. Members without `self` are accessed through the type name.
+A plain `self` is an immutable borrow, `self: inout` a mutable borrow, and `self: move` consumes the receiver. In every mode the type may be written, as in `self: inout Type`; left out, it is the `impl` type. Members without `self` are accessed through the type name.
 
 The same block form adds methods or operators to a type from another package:
 
@@ -1809,8 +1809,10 @@ There are three receiver modes:
 | Receiver | Meaning |
 | --- | --- |
 | `self` | Immutable borrow of the value |
-| `self: inout Type` | Exclusive mutable borrow of the caller's variable |
-| `self: move Type` | Consumes the receiver |
+| `self: inout` | Exclusive mutable borrow of the caller's variable |
+| `self: move` | Consumes the receiver |
+
+Each form may also spell the type, `self: inout Type`; it must be the `impl` type for the parameter to be a receiver.
 
 Both borrowing receivers designate the caller's storage rather than a copy. A borrow they return derives from the caller's root under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). An immutable receiver cannot write through `self`. A temporary receiver lives through the complete expression, and a borrow from it cannot escape that expression.
 
@@ -1821,11 +1823,11 @@ Immutable and `inout` receivers use `value.method()`; the `inout` borrow is impl
 A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. The immutable receiver may be written `self: Type` when clearer; it is the same mode.
 
 ```odin
-counter.bump();          // `inout self`, marker implicit
-total := move(counter).consume();  // `move self`, transfer written
+counter.bump();          // `self: inout`, marker implicit
+total := move(counter).consume();  // `self: move`, transfer written
 ```
 
-A first parameter declared `self: ^Type` is **not** a receiver: it is an ordinary pointer parameter with no method-call sugar, called as `Type.method(pointer)`. Mutating methods use `inout self`, not pointer receivers.
+A first parameter declared `self: ^Type` is **not** a receiver: it is an ordinary pointer parameter with no method-call sugar, called as `Type.method(pointer)`. Mutating methods use `self: inout`, not pointer receivers.
 
 #### Generic types
 
@@ -1847,7 +1849,7 @@ impl Table($Key, $Value) {
 		...
 	}
 
-	insert :: proc(self: inout Table(Key, Value), key: Key, value: Value) {
+	insert :: proc(self: inout, key: Key, value: Value) {
 		...
 	}
 }
@@ -1860,7 +1862,7 @@ case .none:
 }
 ```
 
-Where the receiver's type is written out — `inout` and `move` receivers, and every non-receiver mention — the bound names are used without `$`, which marks a binding site, not a use.
+Where the block's type is written out — a receiver that spells its type, and every non-receiver mention — the bound names are used without `$`, which marks a binding site, not a use.
 
 A block may target one specialization, `impl Table(string, int) { ... }`; when both are visible the more specialized wins by tie-breaker 4 of [overload resolution](#operator-lookup-and-overload-resolution). Constraints use a `where` clause on the procedure, not the block. This is what lets a generic container satisfy an [interface](#interfaces-as-reusable-constraints), whose requirements use method syntax.
 

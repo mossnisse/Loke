@@ -1,0 +1,6 @@
+L0408
+@4:14
+a parameter needs a type; only the receiver `self` may omit one
+L0408
+@8:25
+a parameter needs a type; only the receiver `self` may omit one

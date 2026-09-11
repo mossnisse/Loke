@@ -35,7 +35,7 @@ impl Enum_Array($E, $T) {
 		return self.slots[position_of(member)];
 	}
 
-	get_mut :: operator([]) proc(self: inout Enum_Array(E, T), member: E) -> inout T {
+	get_mut :: operator([]) proc(self: inout, member: E) -> inout T {
 		return inout self.slots[position_of(member)];
 	}
 
@@ -89,7 +89,7 @@ impl Enum_Array_Iterator($E, $T) {
 	// An entry carries the value by copy, so a move-only `T` gets no by-value
 	// `foreach` here; `slots` is reached through `get_mut` or `&value` instead.
 	next :: proc(
-		self: inout Enum_Array_Iterator(E, T),
+		self: inout,
 	) -> Option(Enum_Entry(E, T)) where is_copyable(T) {
 		members := E.values();
 		if (self.at >= members.len()) { return .none; }

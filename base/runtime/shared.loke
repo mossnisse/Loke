@@ -120,7 +120,7 @@ impl Shared($T) {
 	//
 	// It does *not* make concurrent access to `T` safe. A caller needs a mutex,
 	// atomics inside `T`, immutability, or another protocol of its own.
-	get :: proc(self: inout Shared(T)) -> ^T {
+	get :: proc(self: inout) -> ^T {
 		if (self.block == nil) { panic("this shared handle is nil"); }
 		block := (^mut Shared_Block(T))(self.block);
 		return &block^.payload;
@@ -177,7 +177,7 @@ impl Shared($T) {
 		return left.block == right.block;
 	}
 
-	release :: hook(drop) proc(self: inout Shared(T)) {
+	release :: hook(drop) proc(self: inout) {
 		if (self.block == nil) { return; }
 		block := (^mut Shared_Block(T))(self.block);
 		self.block = nil;
@@ -236,7 +236,7 @@ impl Weak($T) {
 		return left.block == right.block;
 	}
 
-	release :: hook(drop) proc(self: inout Weak(T)) {
+	release :: hook(drop) proc(self: inout) {
 		if (self.block == nil) { return; }
 		block := (^mut Shared_Block(T))(self.block);
 		self.block = nil;

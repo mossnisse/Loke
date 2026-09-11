@@ -1,0 +1,11 @@
+package main;
+
+// Only the receiver may leave its type to the block; any other parameter needs one.
+free :: proc(x: inout) {}
+
+Counter :: struct { n: int }
+impl Counter {
+	second :: proc(n: int, self: move) {}
+}
+
+main :: proc() {}

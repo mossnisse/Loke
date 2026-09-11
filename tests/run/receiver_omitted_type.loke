@@ -1,0 +1,39 @@
+package main; import "core:fmt";
+
+// design.md "Receiver forms": every receiver mode may leave its type to the
+// enclosing `impl` block, as a plain `self` does.
+
+Counter :: struct { n: int }
+impl Counter {
+	bump :: proc(self: inout, by: int) { self.n += by; }
+	take :: proc(self: move) -> int { return self.n; }
+}
+
+Stack :: struct($T: type) { items: [4]T, count: int }
+impl Stack($T) {
+	push :: proc(self: inout, value: T) {
+		self.items[self.count] = value;
+		self.count += 1;
+	}
+	top :: proc(self) -> T { return self.items[self.count - 1]; }
+	into_count :: proc(self: move) -> int { return self.count; }
+}
+
+main :: proc() {
+	c := Counter{1};
+	c.bump(2);
+	fmt.println(c.n);
+	fmt.println(move(c).take());
+
+	s: Stack(int) = {};
+	s.push(7);
+	s.push(9);
+	fmt.println(s.top());
+	fmt.println(move(s).into_count());
+
+	// The unbound method still carries the whole receiver type.
+	bump := Counter.bump;
+	d := Counter{10};
+	bump(inout d, 5);
+	fmt.println(d.n);
+}
