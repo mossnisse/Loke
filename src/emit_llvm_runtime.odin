@@ -1398,12 +1398,12 @@ emit_any_view_extract :: proc(e: ^Emitter, v: ^Expr_Checked_Extract, as_type: Ty
 @(private)
 emit_dyn_value :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 	storage := llvm_type(e, as_type)
-	if v.dyn_witness == nil {
+	if v.operation.(Call_Dyn_Conversion).witness == nil {
 		return "zeroinitializer"
 	}
 	data := emit_expr(e, v.bound[0])
 	first := insert(e, storage, "undef", "ptr", data, DYN_DATA)
-	out := insert(e, storage, first, "ptr", v.dyn_witness.name, DYN_WITNESS)
+	out := insert(e, storage, first, "ptr", v.operation.(Call_Dyn_Conversion).witness.name, DYN_WITNESS)
 	return out
 }
 
@@ -1422,7 +1422,7 @@ emit_dyn_slot_call :: proc(e: ^Emitter, v: ^Expr_Call) -> []string {
 	panic_if(e, is_nil, "dyn.nil", "call through a nil dyn view")
 
 	entry, thunk := temp(e), temp(e)
-	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %d", entry, witness, v.dyn_slot)
+	fmt.sbprintfln(&e.b, "  %s = getelementptr inbounds ptr, ptr %s, i64 %d", entry, witness, v.operation.(Call_Dyn_Slot).index)
 	fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", thunk, entry)
 
 	signature := type_of(e.c, expr_base(v.callee).type)

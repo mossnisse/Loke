@@ -75,7 +75,7 @@ check_text_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) ->
 	}
 
 	v.value_category = .Value
-	v.text = op
+	v.operation = Call_Text{op = op}
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = sel.operand
@@ -201,7 +201,7 @@ text_operand_error :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, oper
 @(private = "file")
 check_from_runes :: proc(k: ^Checker, v: ^Expr_Call) {
 	v.value_category = .Value
-	v.text = .From_Runes
+	v.operation = Call_Text{op = .From_Runes}
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	if len(v.args) != 1 {
 		errorf(k.c, v.span, "L0561", "`string.from_runes` takes one `[]rune`, found %d arguments", len(v.args))
@@ -270,7 +270,7 @@ check_from_utf8 :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		return
 	}
 	v.resolution = Resolution{kind = .Builtin_Operator}
-	v.text_conversion = op
+	v.operation = Call_Text_Conversion{op = op}
 	v.bound = make([]Expr, 1, k.c.semantic_allocator)
 	v.bound[0] = v.args[0].value
 	set_optional_ok_results(k, v, target)

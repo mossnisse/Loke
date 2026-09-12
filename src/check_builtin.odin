@@ -19,6 +19,7 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	ident.resolution = Resolution{kind = .Value, symbol = symbol_id}
 	ident.type = sym.proc_type
 	v.resolution = Resolution{kind = .Call, symbol = symbol_id, chosen_overload = symbol_id}
+	v.operation = Call_Builtin{}
 
 	// Exhaustive on purpose: a built-in with no arm here would fall through to
 	// the ordinary parameter path and be called as if it were declared there.
@@ -196,7 +197,7 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound = make([]Expr, 2, k.c.semantic_allocator)
 	v.bound[0] = v.args[0].value
 	v.bound[1] = v.args[1].value
-	v.sort_comparator = match
+	v.operation = Call_Sort_By{comparator = match}
 	v.type = TYPE_VOID
 }
 
@@ -584,7 +585,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			v.type = INVALID_TYPE
 			return
 		}
-		v.alloc_type = element
+		v.operation = Call_Allocation{type = element}
 		// A fresh allocation is the caller's to write and to free, so `new` and
 		// `new_clone` hand back `^mut T`.
 		set_allocation_results(k, v, pointer_to(k.c, element, true))
@@ -606,7 +607,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 			}
 		}
 		append(&bound, v.args[0].value)
-		v.alloc_type = value
+		v.operation = Call_Allocation{type = value}
 		// `new_clone` creates a new allocation root containing a clone of the
 		// value (design.md), so the operand's own copy hook has to exist by
 		// emission.
@@ -787,7 +788,7 @@ check_make_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	}
 	bound[max_counts] = allocator
 	v.bound = bound
-	v.alloc_type = container
+	v.operation = Call_Allocation{type = container}
 	// design.md "Zero values": a written *length* fills that many slots with the
 	// element's zero. A capacity or a map reservation is raw storage and fills
 	// nothing, and neither does a length written as the constant `0` — which is

@@ -527,6 +527,7 @@ default_allocator_arg :: proc(c: ^Compiler) -> Expr {
 	call.type = TYPE_ALLOCATOR
 	call.value_category = .Value
 	call.resolution = Resolution{kind = .Call, symbol = sym, chosen_overload = sym}
+	call.operation = Call_Builtin{}
 	c.default_allocator_arg = call
 	return call
 }

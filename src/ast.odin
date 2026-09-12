@@ -210,18 +210,6 @@ Text_Op :: enum {
 	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
 }
 
-// The compiler-defined operation available on every union value. It is kept
-// separate from ordinary method lookup so a union cannot replace the meaning
-// of runtime variant inspection.
-Union_Op :: enum {
-	None,
-	// `.name(payload)` / `U.name(payload)`: variant construction. `bound[0]` is
-	// the payload and `variant_index` is the variant it lands in.
-	Construct,
-	// `value.as(T)`, whose semantics live in the `extract` node below.
-	Extract,
-}
-
 // design.md "string type conversions": named UTF-8 constructors validate their
 // input and return Option(T). These are not type-call conversions.
 Text_Conversion :: enum {
@@ -230,6 +218,49 @@ Text_Conversion :: enum {
 	View_From_Bytes,    // `string_view.from_utf8(bytes)` — validate and borrow
 	String_From_C_View, // `string.from_utf8(cview)` — scan, validate, and copy
 }
+
+// The checker selects one operation. Nil is the explicit unchecked state;
+// syntax clones retain no operation. Symbol identity stays in base.resolution,
+// and argument binding/evaluation order are shared by every operation.
+Call_Operation :: union {
+	Call_Procedure,
+	Call_Compile_Time,
+	Call_Builtin,
+	Call_Conversion,
+	Call_Reflect,
+	Call_Text,
+	Call_Enum_From_Int,
+	Call_Union_Construct,
+	Call_Extract,
+	Call_Text_Conversion,
+	Call_Atomic,
+	Call_Sort_By,
+	Call_Simd_Reduce,
+	Call_Dyn_Conversion,
+	Call_Dyn_Slot,
+	Call_Allocation,
+}
+
+Call_Procedure :: struct {}
+Call_Compile_Time :: struct {} // type/interface applications, never runtime calls
+Call_Builtin :: struct {} // intrinsic without additional checked metadata
+Call_Conversion :: struct {} // representation/numeric conversion, no user hook
+Call_Reflect :: struct { op: Reflect_Op, field: Symbol_Id }
+Call_Text :: struct { op: Text_Op }
+Call_Enum_From_Int :: struct { type: Type_Id }
+Call_Union_Construct :: struct { index: int, clone: bool }
+// The same checked extraction node used by the postfix spelling.
+Call_Extract :: struct { node: ^Expr_Checked_Extract }
+Call_Text_Conversion :: struct { op: Text_Conversion }
+// Orderings and the element type are settled during checking, not runtime args.
+Call_Atomic :: struct { type: Type_Id, order: int, failure_order: int }
+Call_Sort_By :: struct { comparator: Symbol_Id }
+Call_Simd_Reduce :: struct { fold: Simd_Fold }
+// A nil witness represents conversion of a nil pointer to a nil dyn view.
+Call_Dyn_Conversion :: struct { witness: ^Witness }
+Call_Dyn_Slot :: struct { index: int }
+// The element of new/new_clone, or the container type of make.
+Call_Allocation :: struct { type: Type_Id }
 
 // A call, a conversion, or a generic application — syntax cannot tell them
 // apart, and M2's name resolution does not need it to.
@@ -245,43 +276,7 @@ Expr_Call :: struct {
 	// default in parameter order. Nil when the two orders coincide (every call
 	// written without named arguments).
 	bound_order: []int,
-	// `field.get(value)` / `field.pointer(value)`, with the struct field the
-	// descriptor selected.
-	reflect:       Reflect_Op,
-	reflect_field: Symbol_Id,
-	// `text.byte_len()`, `text.bytes()`, and the rest of the text surface.
-	text:            Text_Op,
-	// `Enum.from_int(value)` validates a backing integer before constructing a
-	// closed enum. The result is Option(enum_from_int).
-	enum_from_int:   Type_Id,
-	// `.name(payload)` variant construction, or `value.as(T)`.
-	union_op:        Union_Op,
-	// The variant `union_op == .Construct` writes.
-	variant_index:   int,
-	// Whether that construction clones its payload: a place keeps owning its
-	// value, so the variant gets a copy, exactly as an aggregate literal's field
-	// does.
-	variant_clone:   bool,
-	// `value.as(T)`: the optional extraction this call resolved to. Downstream
-	// phases delegate to it instead of treating the call as a call, keeping
-	// `.(T)` and `.as(T)` on one flow, evaluation, and lowering path.
-	extract:         ^Expr_Checked_Extract,
-	// A validating text conversion, which has optional-ok results.
-	text_conversion: Text_Conversion,
-	// design.md "Concurrency and the memory model": an atomic intrinsic call.
-	// The orderings are `Memory_Order` values, settled at check time because the
-	// ordering is part of the instruction rather than an argument to it, and
-	// `atomic_type` is the type the operation runs at.
-	atomic_type:          Type_Id,
-	atomic_order:         int,
-	atomic_failure_order: int,
-	// `core:slice.sort_by_intrinsic`: the concrete immutable `call` method whose
-	// generated C-ABI thunk receives the comparator through a call-scoped pointer.
-	sort_comparator:      Symbol_Id,
-	// design.md "SIMD vectors": which fold a `simd_reduce` call selected. Like
-	// an atomic ordering, it picks the instruction rather than being an operand
-	// to it, so it is settled at check time.
-	simd_fold:            Simd_Fold,
+	operation: Call_Operation,
 	// design.md "Variadic parameters". `variadic_slot` is the packed parameter's
 	// index, or -1. `variadic_forwards` marks the sole-spread case, where
 	// `bound[variadic_slot]` is the slice itself; otherwise the explicit
@@ -293,15 +288,6 @@ Expr_Call :: struct {
 	variadic_elements: []Expr,
 	variadic_spreads:  []Expr,
 	variadic_order:    []bool,
-	// The witness a `(dyn I)(&value)` conversion selected, or nil.
-	dyn_witness:   ^Witness,
-	// A slot call through a `dyn` value: its index in the witness.
-	dyn_slot:      int,
-	is_dyn_call:   bool,
-	// `new(T)` / `new_clone(value)`: the allocated element type. The backend
-	// needs its size, and the checker records it so the pointee is not
-	// re-derived from the result type.
-	alloc_type:    Type_Id,
 }
 
 // The suffixes that take no operand: `^` and `or_return`.

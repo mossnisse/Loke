@@ -512,7 +512,6 @@ Resolution_Kind :: enum {
 	Method,
 	Procedure_Group,
 	Call,
-	Conversion,
 	Generic_Application,
 	Builtin_Operator,
 	User_Operator,

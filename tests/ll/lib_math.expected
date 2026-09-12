@@ -1,19 +1,19 @@
-declare double @loke_rt_v1_math_sqrt_f64(double)
-declare float @loke_rt_v1_math_sqrt_f32(float)
-declare double @loke_rt_v1_math_hypot_f64(double, double)
-declare float @loke_rt_v1_math_hypot_f32(float, float)
-declare double @loke_rt_v1_math_pow_f64(double, double)
-declare float @loke_rt_v1_math_pow_f32(float, float)
-declare double @loke_rt_v1_math_sin_f64(double)
-declare float @loke_rt_v1_math_sin_f32(float)
-declare double @loke_rt_v1_math_mod_f64(double, double)
-declare float @loke_rt_v1_math_mod_f32(float, float)
-declare float @loke_rt_v1_math_exp_f32(float)
-declare float @loke_rt_v1_math_tan_f32(float)
-declare float @loke_rt_v1_math_acos_f32(float)
-call double @loke_rt_v1_math_sqrt_f64(double
-call float @loke_rt_v1_math_sqrt_f32(float
-call double @loke_rt_v1_math_hypot_f64(double
-call float @loke_rt_v1_math_hypot_f32(float
-call double @loke_rt_v1_math_mod_f64(double
-call float @loke_rt_v1_math_mod_f32(float
+declare double @sqrt(double)
+declare float @sqrtf(float)
+declare double @hypot(double, double)
+declare float @hypotf(float, float)
+declare double @pow(double, double)
+declare float @powf(float, float)
+declare double @sin(double)
+declare float @sinf(float)
+declare double @fmod(double, double)
+declare float @fmodf(float, float)
+declare float @expf(float)
+declare float @tanf(float)
+declare float @acosf(float)
+call double @sqrt(double
+call float @sqrtf(float
+call double @hypot(double
+call float @hypotf(float
+call double @fmod(double
+call float @fmodf(float

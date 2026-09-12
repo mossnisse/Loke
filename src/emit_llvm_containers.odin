@@ -156,7 +156,7 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // the comparator and element addresses; the runtime retains neither.
 @(private)
 emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
-	if len(v.bound) != 2 || v.sort_comparator == INVALID_SYMBOL {
+	if len(v.bound) != 2 || v.operation.(Call_Sort_By).comparator == INVALID_SYMBOL {
 		backend_fail(e, "a checked slice sort_by has no comparator")
 		return
 	}
@@ -168,7 +168,7 @@ emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
 	data := extract(e, storage, value, SLICE_DATA)
 	count := extract(e, storage, value, SLICE_LEN)
 	ctx := emit_expr(e, v.bound[1])
-	less := sort_by_thunk(e, element, v.sort_comparator)
+	less := sort_by_thunk(e, element, v.operation.(Call_Sort_By).comparator)
 	fmt.sbprintfln(
 		&e.b, "  call void @loke_rt_v1_sort_by(ptr %s, i64 %s, i64 %d, ptr %s, ptr %s)",
 		data, count, type_size(e.c, element), ctx, less,

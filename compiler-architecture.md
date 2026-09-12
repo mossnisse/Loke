@@ -120,6 +120,15 @@ resolved symbols, chosen overloads, bound arguments, conversions, and lowering
 tags. Backend code should consume these annotations instead of inferring
 semantics from syntax.
 
+`Expr_Call.operation` is a tagged `Call_Operation`: procedure calls, intrinsic
+families, conversions, reflection, text operations, union construction,
+extraction, and dynamic dispatch carry only their operation-specific metadata.
+Symbol identity stays in `Expr_Base.resolution`; written arguments, bound
+arguments, variadic packing, and evaluation order remain shared on the call.
+Nil means unchecked, and syntax cloning clears the operation along with the
+other checked annotations. LLVM call dispatch switches on the operation and
+rejects an unchecked call instead of inferring its meaning from a symbol.
+
 Struct literals retain resolved field indices in source order for both CTFE and
 LLVM. Executable validation retains the entry procedure's `Symbol_Id`; emission
 requires its registered name. Optional extraction reads the checked union's
@@ -133,7 +142,10 @@ the same cloning rule for each expansion.
 ### Disposable control-flow graphs
 
 `cfg.odin` builds a per-procedure `Flow_Graph` whose blocks reference typed AST
-nodes. It is an analysis view, not a lowering IR:
+nodes. It owns traversal, control-flow topology, and lifecycle events;
+`cfg_provenance.odin` owns the provenance event vocabulary and construction,
+including carrier projections, allocator regions, and call effects.
+The graph is an analysis view, not a lowering IR:
 
 - lifecycle mode records initialization, move, drop, cleanup, and control-flow
   events used by `lifecycle.odin`;
@@ -174,7 +186,9 @@ universe instead of synthesizing lookalikes.
 
 `check.odin` owns declarations, signatures, statements, scopes, and type syntax.
 `check_expr.odin` owns expressions, contextual typing, conversions, place
-capabilities, and leaf folding. An expected type flows down into untyped
+capabilities, and leaf folding. It dispatches calls to `check_calls.odin`, which
+owns call checking, argument binding, and explicit call-form conversions.
+An expected type flows down into untyped
 constants, implicit enum members, `nil`, and typeless composite literals.
 
 All named groups, methods, user operators, `init` conversions, and indexing
@@ -282,7 +296,7 @@ be file-private.
 
 | Files | Responsibility |
 | --- | --- |
-| `check.odin`, `check_expr.odin`, `check_builtin.odin` | Main checker: declarations/statements/type syntax, expressions/conversions/folding, and compiler-owned primitive call contracts. |
+| `check.odin`, `check_expr.odin`, `check_calls.odin`, `check_builtin.odin` | Main checker: declarations/statements/type syntax, expression dispatch/conversions/folding, call checking/argument binding, and compiler-owned primitive call contracts. |
 | `bigint.odin`, `const_ops.odin`, `zero.odin` | Exact integer constants, shared constant operations, zero-value rules, and required-result classification. |
 | `overload.odin`, `impl.odin`, `operators.odin`, `customization.odin` | Candidate ranking, methods/extensions, operators/delegates, and canonical standard operation aliases. |
 | `attributes.odin`, `abi.odin`, `foreign.odin`, `layout.odin` | Attribute validation, foreign ABI safety and Win64 classification, foreign declarations/imports, and canonical layout. |
@@ -305,7 +319,7 @@ be file-private.
 | Files | Responsibility |
 | --- | --- |
 | `hooks.odin`, `lifecycle.odin` | Managed-type classification, lifecycle hooks, copy/move/drop checking, liveness, and cleanup slots. |
-| `cfg.odin` | Disposable control-flow topology and lifecycle/provenance event generation. |
+| `cfg.odin`, `cfg_provenance.odin` | Disposable control-flow topology and lifecycle events; provenance event construction, carrier projections, allocator regions, and call effects. |
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |

@@ -407,7 +407,7 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	signed := type_signed(e.c, info.element)
 
 	name := ""
-	switch v.simd_fold {
+	switch v.operation.(Call_Simd_Reduce).fold {
 	case .Add: name = float ? "fadd" : "add"
 	case .Mul: name = float ? "fmul" : "mul"
 	case .Min: name = float ? "fmin" : (signed ? "smin" : "umin")
@@ -418,7 +418,7 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 
 	// The `i8` lane a mask stores is reduced as itself, then narrowed: `or`
 	// answers "any lane set" and `and` answers "every lane set".
-	if v.simd_fold == .Any || v.simd_fold == .All {
+	if v.operation.(Call_Simd_Reduce).fold == .Any || v.operation.(Call_Simd_Reduce).fold == .All {
 		folded := simd_call_reduce(e, name, lane, count, lane, value, "")
 		out := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = trunc i8 %s to i1", out, folded)
@@ -429,10 +429,10 @@ emit_simd_reduce :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
 	// identity. A sum's is `-0.0`, not `+0.0`: `+0.0 + -0.0` is `+0.0`, which
 	// would give an all-negative-zero vector the wrong zero.
 	start := ""
-	if float && (v.simd_fold == .Add || v.simd_fold == .Mul) {
+	if float && (v.operation.(Call_Simd_Reduce).fold == .Add || v.operation.(Call_Simd_Reduce).fold == .Mul) {
 		bits := u16(type_bits(e.c, info.element))
 		start = fmt.aprintf(
-			"%s %s, ", lane, llvm_float(float_pattern(v.simd_fold == .Add ? -0.0 : 1.0, bits), bits),
+			"%s %s, ", lane, llvm_float(float_pattern(v.operation.(Call_Simd_Reduce).fold == .Add ? -0.0 : 1.0, bits), bits),
 		)
 	}
 	return simd_call_reduce(e, name, lane, count, lane, value, start)

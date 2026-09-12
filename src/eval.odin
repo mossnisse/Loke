@@ -1882,7 +1882,7 @@ eval_union_construct :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool
 	if !copied_ok {
 		return Eval_Value{}, false
 	}
-	return eval_union(ev, v.type, v.variant_index, copied)
+	return eval_union(ev, v.type, v.operation.(Call_Union_Construct).index, copied)
 }
 
 // The payload of `value`, or the whole union when the case binds the union
@@ -1899,38 +1899,32 @@ eval_union_payload :: proc(value: Eval_Value, binding_type: Type_Id) -> Eval_Val
 
 @(private = "file")
 eval_call :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
-	if v.enum_from_int != INVALID_TYPE {
+	#partial switch operation in v.operation {
+	case Call_Enum_From_Int:
 		value, ok := eval_expr(ev, v.bound[0])
-		if !ok {
-			return Eval_Value{}, false
-		}
+		if !ok { return Eval_Value{}, false }
 		candidate := Const_Value{kind = .Integer, integer = value.integer}
-		if enum_member_by_value(ev.k.c, v.enum_from_int, candidate) == INVALID_SYMBOL {
+		if enum_member_by_value(ev.k.c, operation.type, candidate) == INVALID_SYMBOL {
 			return eval_named_union(ev, v.type, "none", Eval_Value{})
 		}
-		value.type = v.enum_from_int
+		value.type = operation.type
 		return eval_named_union(ev, v.type, "some", value)
-	}
-	if v.resolution.kind == .Conversion {
+	case Call_Conversion, Call_Dyn_Conversion:
 		return eval_conversion(ev, v)
-	}
-	if v.union_op == .Construct {
+	case Call_Union_Construct:
 		return eval_union_construct(ev, v)
-	}
-	// `value.as(T)` is an extraction, and an extraction has no compile-time
-	// meaning yet. Say so here rather than treating it as an unresolved call.
-	if v.union_op == .Extract {
+	case Call_Extract:
+		// The postfix spelling has no compile-time meaning either.
 		eval_fail(ev, v.span, "L0341", "this expression has no compile-time meaning")
 		return Eval_Value{}, false
-	}
-	callee := symbol_of(ev.k.c, v.resolution.symbol)
-	if callee != nil && callee.kind == .Builtin {
-		return eval_builtin(ev, v, callee)
-	}
-	// A text built-in has a compiler-written body too: the checker recorded which
-	// operation this is, and the string it reads is already in hand.
-	if v.text != .None {
+	case Call_Text:
 		return eval_text_op(ev, v)
+	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
+		callee := symbol_of(ev.k.c, v.resolution.symbol)
+		if callee != nil && callee.kind == .Builtin { return eval_builtin(ev, v, callee) }
+	case nil:
+		eval_fail(ev, v.span, "L0341", "an unchecked call has no compile-time meaning")
+		return Eval_Value{}, false
 	}
 	// Standard built-in customization members likewise have compiler-written
 	// bodies — execute the operation directly during compile-time evaluation.
@@ -1978,7 +1972,7 @@ eval_text_op :: proc(ev: ^Evaluator, v: ^Expr_Call) -> (Eval_Value, bool) {
 	if !ok {
 		return Eval_Value{}, false
 	}
-	#partial switch v.text {
+	#partial switch v.operation.(Call_Text).op {
 	case .Byte_Len:
 		return eval_count_value(ev, len(subject.text)), true
 

@@ -216,8 +216,8 @@ int32_t loke_rt_v1_bytes_compare(
 int64_t loke_rt_v1_cstring_len(const uint8_t *p);
 
 /* Encodes one scalar value into at most 4 bytes and answers how many it wrote,
- * or 0 when `value` is not a scalar value. Shared between string building and
- * `loke_rt_v1_fmt_rune`; generated code never calls it, which is why it carries
+ * or 0 when `value` is not a scalar value. Shared by string building, argument
+ * conversion and `loke_rt_v1_fmt_rune`; generated code never calls it, so it carries
  * no `v1` ABI version. */
 int64_t loke_rt_encode_rune(uint8_t *out, int32_t value);
 
@@ -478,53 +478,6 @@ void loke_rt_v1_fmt_f64(const loke_rt_writer_v1 *w, double value);
 void loke_rt_v1_fmt_bool(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_rune(const loke_rt_writer_v1 *w, int32_t value);
 void loke_rt_v1_fmt_ptr(const loke_rt_writer_v1 *w, const void *value);
-
-/* --------------------------------------------------------------- math -- */
-
-/* math-plan "Where the functions come from": `core:math` binds these versioned
- * wrappers rather than the public CRT/libm names, so the package does not depend
- * on whatever the host linker implicitly supplies. Each delegates to the target
- * C math implementation; the documented classifications, signs, poles, and
- * domain results are that implementation's, verified per target rather than
- * re-derived here. None of them sets a Loke failure or reads `errno`. */
-double loke_rt_v1_math_floor_f64(double x);
-float loke_rt_v1_math_floor_f32(float x);
-double loke_rt_v1_math_ceil_f64(double x);
-float loke_rt_v1_math_ceil_f32(float x);
-double loke_rt_v1_math_round_f64(double x);
-float loke_rt_v1_math_round_f32(float x);
-double loke_rt_v1_math_trunc_f64(double x);
-float loke_rt_v1_math_trunc_f32(float x);
-double loke_rt_v1_math_sqrt_f64(double x);
-float loke_rt_v1_math_sqrt_f32(float x);
-double loke_rt_v1_math_exp_f64(double x);
-float loke_rt_v1_math_exp_f32(float x);
-double loke_rt_v1_math_log_f64(double x);
-float loke_rt_v1_math_log_f32(float x);
-double loke_rt_v1_math_log2_f64(double x);
-float loke_rt_v1_math_log2_f32(float x);
-double loke_rt_v1_math_log10_f64(double x);
-float loke_rt_v1_math_log10_f32(float x);
-double loke_rt_v1_math_sin_f64(double x);
-float loke_rt_v1_math_sin_f32(float x);
-double loke_rt_v1_math_cos_f64(double x);
-float loke_rt_v1_math_cos_f32(float x);
-double loke_rt_v1_math_tan_f64(double x);
-float loke_rt_v1_math_tan_f32(float x);
-double loke_rt_v1_math_asin_f64(double x);
-float loke_rt_v1_math_asin_f32(float x);
-double loke_rt_v1_math_acos_f64(double x);
-float loke_rt_v1_math_acos_f32(float x);
-double loke_rt_v1_math_atan_f64(double x);
-float loke_rt_v1_math_atan_f32(float x);
-double loke_rt_v1_math_mod_f64(double a, double b);
-float loke_rt_v1_math_mod_f32(float a, float b);
-double loke_rt_v1_math_hypot_f64(double a, double b);
-float loke_rt_v1_math_hypot_f32(float a, float b);
-double loke_rt_v1_math_pow_f64(double a, double b);
-float loke_rt_v1_math_pow_f32(float a, float b);
-double loke_rt_v1_math_atan2_f64(double a, double b);
-float loke_rt_v1_math_atan2_f32(float a, float b);
 
 /* ------------------------------------------------------ panic and threads -- */
 

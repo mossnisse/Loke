@@ -1556,7 +1556,7 @@ emit_text_parts :: proc(e: ^Emitter, operand: Expr) -> (data: string, length: st
 emit_text_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
 	out := make([]string, 1)
 	out[0] = "0"
-	switch v.text {
+	switch v.operation.(Call_Text).op {
 	case .None:
 		backend_fail(e, "a text call has no operation")
 
@@ -1716,7 +1716,7 @@ emit_strings_allocate :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> [
 // returns Option(T), with .none for invalid input.
 @(private)
 emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
-	switch v.text_conversion {
+	switch v.operation.(Call_Text_Conversion).op {
 	case .None:
 		break
 

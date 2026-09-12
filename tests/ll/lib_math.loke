@@ -1,9 +1,8 @@
 package main;
 
-// math-plan step 3: `core:math` binds the *versioned seed-runtime* wrappers, not
-// the host CRT names, and each width binds its own. A declaration that reached
-// `@sqrt` or that widened an `f32` call through `double` would still print the
-// right answer, so the check is on the generated IR rather than on output.
+// `core:math` binds the platform C math symbols directly, with a separate
+// entry point for each width. Widening an f32 call through double can still
+// print the right answer, so check the generated IR as well as runtime output.
 
 import "core:math";
 

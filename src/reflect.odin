@@ -655,8 +655,7 @@ check_descriptor_operation :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Select
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = v.args[0].value
 	v.bound = bound
-	v.reflect = op
-	v.reflect_field = field
+	v.operation = Call_Reflect{op = op, field = field}
 	v.resolution = Resolution{kind = .Field, symbol = field}
 	if op == .Field_Get {
 		v.type = field_type

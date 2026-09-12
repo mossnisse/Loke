@@ -160,89 +160,86 @@ clamp :: proc(value, low, high: $T) -> T where interfaces.Numeric(T), interfaces
 	return value;
 }
 
-// ------------------------------------------------ the seed runtime bridge --
+// ------------------------------------------------ platform math bindings --
 //
-// math-plan "Where the functions come from": binding the public CRT/libm names
-// directly would make `core:math` depend on the host linker's implicit
-// libraries. These versioned wrappers are part of every link already, exactly
-// as `core:os`'s argument accessors are, so this block names them without a
-// `foreign import` of its own. Nothing outside this file may reach them.
-foreign loke_runtime {
-	@(link_name="loke_rt_v1_math_floor_f64")
+// The Windows x64 toolchain links the CRT. Bind each width directly to its
+// C math function; f32 uses the float entry points without promotion to double.
+foreign platform_math {
+	@(link_name="floor")
 	rt_floor_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_floor_f32")
+	@(link_name="floorf")
 	rt_floor_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_ceil_f64")
+	@(link_name="ceil")
 	rt_ceil_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_ceil_f32")
+	@(link_name="ceilf")
 	rt_ceil_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_round_f64")
+	@(link_name="round")
 	rt_round_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_round_f32")
+	@(link_name="roundf")
 	rt_round_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_trunc_f64")
+	@(link_name="trunc")
 	rt_trunc_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_trunc_f32")
+	@(link_name="truncf")
 	rt_trunc_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_sqrt_f64")
+	@(link_name="sqrt")
 	rt_sqrt_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_sqrt_f32")
+	@(link_name="sqrtf")
 	rt_sqrt_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_exp_f64")
+	@(link_name="exp")
 	rt_exp_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_exp_f32")
+	@(link_name="expf")
 	rt_exp_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_log_f64")
+	@(link_name="log")
 	rt_log_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_log_f32")
+	@(link_name="logf")
 	rt_log_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_log2_f64")
+	@(link_name="log2")
 	rt_log2_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_log2_f32")
+	@(link_name="log2f")
 	rt_log2_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_log10_f64")
+	@(link_name="log10")
 	rt_log10_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_log10_f32")
+	@(link_name="log10f")
 	rt_log10_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_sin_f64")
+	@(link_name="sin")
 	rt_sin_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_sin_f32")
+	@(link_name="sinf")
 	rt_sin_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_cos_f64")
+	@(link_name="cos")
 	rt_cos_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_cos_f32")
+	@(link_name="cosf")
 	rt_cos_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_tan_f64")
+	@(link_name="tan")
 	rt_tan_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_tan_f32")
+	@(link_name="tanf")
 	rt_tan_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_asin_f64")
+	@(link_name="asin")
 	rt_asin_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_asin_f32")
+	@(link_name="asinf")
 	rt_asin_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_acos_f64")
+	@(link_name="acos")
 	rt_acos_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_acos_f32")
+	@(link_name="acosf")
 	rt_acos_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_atan_f64")
+	@(link_name="atan")
 	rt_atan_f64 :: proc "c" (x: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_atan_f32")
+	@(link_name="atanf")
 	rt_atan_f32 :: proc "c" (x: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_mod_f64")
+	@(link_name="fmod")
 	rt_mod_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_mod_f32")
+	@(link_name="fmodf")
 	rt_mod_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_hypot_f64")
+	@(link_name="hypot")
 	rt_hypot_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_hypot_f32")
+	@(link_name="hypotf")
 	rt_hypot_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_pow_f64")
+	@(link_name="pow")
 	rt_pow_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_pow_f32")
+	@(link_name="powf")
 	rt_pow_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
-	@(link_name="loke_rt_v1_math_atan2_f64")
+	@(link_name="atan2")
 	rt_atan2_f64 :: proc "c" (a: f64, b: f64) -> f64 ---;
-	@(link_name="loke_rt_v1_math_atan2_f32")
+	@(link_name="atan2f")
 	rt_atan2_f32 :: proc "c" (a: f32, b: f32) -> f32 ---;
 }
 // --------------------------------------------------- rounding and remainder --

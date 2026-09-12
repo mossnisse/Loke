@@ -23,6 +23,73 @@ check_emission_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 }
 
 @(test)
+checked_call_operations_are_cleared_by_syntax_cloning :: proc(t: ^testing.T) {
+	c := test_compiler(`package main;
+Color :: enum { red, blue }
+Value :: union { number: int }
+identity :: proc(value: int) -> int { return value; }
+main :: proc() {
+    n := 7;
+    text: string = "abc";
+    ordinary := identity(value = n);
+    converted := i32(n);
+    wrapped: Value = .number(n);
+    length := text.byte_len();
+    color := Color.from_int(n);
+    view: any_view = n;
+    extracted := view.as(int);
+}
+`)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name)
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_emission_package(&c, id)
+	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	body := decl_proc(f.items[len(f.items) - 1].(^Decl)).body
+	calls: [dynamic]^Expr_Call
+	defer delete(calls)
+	for statement in body.stmts {
+		if declaration, ok := statement.(^Decl); ok {
+			for value in declaration.values {
+				if call, is_call := value.(^Expr_Call); is_call { append(&calls, call) }
+			}
+		}
+	}
+	if !testing.expect(t, len(calls) == 6) { return }
+	_, ordinary := calls[0].operation.(Call_Procedure)
+	_, conversion := calls[1].operation.(Call_Conversion)
+	construction, wrapped := calls[2].operation.(Call_Union_Construct)
+	text, text_call := calls[3].operation.(Call_Text)
+	enum_conversion, enum_call := calls[4].operation.(Call_Enum_From_Int)
+	extraction, extracted := calls[5].operation.(Call_Extract)
+	testing.expect(t, ordinary && conversion && wrapped && text_call && enum_call && extracted)
+	testing.expect(t, construction.index == 0 && !construction.clone)
+	testing.expect(t, text.op == .Byte_Len && type_is_enum(&c, enum_conversion.type))
+	testing.expect(t, extraction.node != nil && extraction.node.type == calls[5].type)
+	testing.expect(t, len(calls[0].bound_order) == 1 && calls[0].bound_order[0] == 0)
+	for call in calls {
+		clone := clone_expr(&c, call).(^Expr_Call)
+		testing.expect(t, clone.operation == nil && clone.bound == nil && clone.bound_order == nil,
+		               "syntax cloning retained a checked call operation or argument binding")
+		testing.expect(t, len(clone.args) == len(call.args))
+	}
+	freeze_typeids(&c)
+	finalize_lifecycle_operations(&c)
+	_, emitted := emit_llvm_module(&c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+	// Symbol resolution alone cannot stand in for an unchecked operation.
+	calls[0].operation = nil
+	module, unchecked := emit_llvm_module(&c)
+	testing.expect(t, !unchecked && module == "" && c.error_count > 0,
+	               "an unchecked call was emitted using its resolved symbol")
+}
+
+@(test)
 composite_consumers_use_checked_field_indices :: proc(t: ^testing.T) {
 	c := test_compiler(`package main;
 Pair :: struct { first, second: int }
@@ -62,6 +129,7 @@ main :: proc() { assert(value() == 78); }
 	call: Expr_Call
 	call.type = TYPE_INT
 	call.resolution = Resolution{kind = .Call, symbol = value_decl.symbols[0]}
+	call.operation = Call_Procedure{}
 	checker := Checker{c = &c}
 	value, evaluated := require_const(&checker, &call, "test result")
 	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 78), "CTFE repeated field lookup")
@@ -94,7 +162,7 @@ main :: proc() {
 	if !testing.expect(t, c.error_count == 0) { report(&c); return }
 	body := decl_proc(f.items[0].(^Decl)).body
 	call := body.stmts[1].(^Decl).values[0].(^Expr_Call)
-	extraction := call.extract
+	extraction := call.operation.(Call_Extract).node
 	if !testing.expect(t, extraction != nil) { return }
 	freeze_typeids(&c)
 	finalize_lifecycle_operations(&c)
@@ -433,6 +501,7 @@ main :: proc() { assert(lookup() == 7); }
 	call: Expr_Call
 	call.type = TYPE_INT
 	call.resolution = Resolution{kind = .Call, symbol = lookup}
+	call.operation = Call_Procedure{}
 	checker := Checker{c = &c}
 	value, evaluated := require_const(&checker, &call, "test result")
 	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 7), "CTFE repeated member lookup")

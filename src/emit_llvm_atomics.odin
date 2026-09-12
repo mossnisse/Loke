@@ -85,7 +85,8 @@ emit_atomic_declarations :: proc(e: ^Emitter) {
 }
 
 emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> string {
-	order := Memory_Order(v.atomic_order)
+	checked := v.operation.(Call_Atomic)
+	order := Memory_Order(checked.order)
 	if kind == .Atomic_Fence {
 		// A fence has no operand and no width, so both paths agree: LLVM emits the
 		// barrier natively, and the runtime helper exists only so the fallback
@@ -94,7 +95,7 @@ emit_atomic_builtin :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_t
 		return "0"
 	}
 
-	bits := atomic_width_bits(e.c, v.atomic_type)
+	bits := atomic_width_bits(e.c, checked.type)
 	address := emit_expr(e, v.bound[0])
 	if atomic_width_is_native(bits) {
 		return emit_native_atomic(e, v, kind, address, bits, order, as_type)
@@ -164,7 +165,8 @@ emit_native_atomic :: proc(
 	order: Memory_Order,
 	as_type: Type_Id,
 ) -> string {
-	storage := atomic_storage_type(e, v.atomic_type, bits)
+	checked := v.operation.(Call_Atomic)
+	storage := atomic_storage_type(e, checked.type, bits)
 	align := bits / 8
 
 	if kind == .Atomic_Load {
@@ -173,11 +175,11 @@ emit_native_atomic :: proc(
 			&e.b, "  %s = load atomic %s, ptr %s %s, align %d",
 			raw, storage, address, llvm_ordering(order), align,
 		)
-		return atomic_from_storage(e, v.atomic_type, storage, raw)
+		return atomic_from_storage(e, checked.type, storage, raw)
 	}
 
 	if kind == .Atomic_Store {
-		value := atomic_to_storage(e, v.atomic_type, storage, emit_expr(e, v.bound[1]))
+		value := atomic_to_storage(e, checked.type, storage, emit_expr(e, v.bound[1]))
 		fmt.sbprintfln(
 			&e.b, "  store atomic %s %s, ptr %s %s, align %d",
 			storage, value, address, llvm_ordering(order), align,
@@ -186,13 +188,13 @@ emit_native_atomic :: proc(
 	}
 
 	if kind == .Atomic_Compare_Exchange {
-		expected := atomic_to_storage(e, v.atomic_type, storage, emit_expr(e, v.bound[1]))
-		desired := atomic_to_storage(e, v.atomic_type, storage, emit_expr(e, v.bound[2]))
+		expected := atomic_to_storage(e, checked.type, storage, emit_expr(e, v.bound[1]))
+		desired := atomic_to_storage(e, checked.type, storage, emit_expr(e, v.bound[2]))
 		pair, observed, swapped := temp(e), temp(e), temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = cmpxchg ptr %s, %s %s, %s %s %s %s, align %d",
 			pair, address, storage, expected, storage, desired,
-			llvm_ordering(order), llvm_ordering(Memory_Order(v.atomic_failure_order)), align,
+			llvm_ordering(order), llvm_ordering(Memory_Order(checked.failure_order)), align,
 		)
 		// `{` is a directive to core:fmt, so the pair type is concatenated.
 		pair_type := fmt.aprintf("%s%s, i1 }", "{ ", storage)
@@ -202,13 +204,13 @@ emit_native_atomic :: proc(
 	}
 
 	opcode := atomic_rmw_opcode(kind)
-	value := atomic_to_storage(e, v.atomic_type, storage, emit_expr(e, v.bound[1]))
+	value := atomic_to_storage(e, checked.type, storage, emit_expr(e, v.bound[1]))
 	previous := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = atomicrmw %s ptr %s, %s %s %s, align %d",
 		previous, opcode, address, storage, value, llvm_ordering(order), align,
 	)
-	return atomic_from_storage(e, v.atomic_type, storage, previous)
+	return atomic_from_storage(e, checked.type, storage, previous)
 }
 
 // The runtime path. Every operand travels by address, because the helper is one
@@ -222,7 +224,8 @@ emit_fallback_atomic :: proc(
 	order: Memory_Order,
 	as_type: Type_Id,
 ) -> string {
-	storage := llvm_type(e, v.atomic_type)
+	checked := v.operation.(Call_Atomic)
+	storage := llvm_type(e, checked.type)
 	helper := atomic_helper_name(kind)
 	out := alloca(e, storage)
 
@@ -237,7 +240,7 @@ emit_fallback_atomic :: proc(
 
 	if kind == .Atomic_Store {
 		value := alloca(e, storage)
-		store(e, v.atomic_type, emit_expr(e, v.bound[1]), value)
+		store(e, checked.type, emit_expr(e, v.bound[1]), value)
 		fmt.sbprintfln(
 			&e.b, "  call void @loke_rt_v1_atomic128_store(ptr %s, ptr %s, i32 %d)",
 			address, value, int(order),
@@ -248,15 +251,15 @@ emit_fallback_atomic :: proc(
 	if kind == .Atomic_Compare_Exchange {
 		expected := alloca(e, storage)
 		desired := alloca(e, storage)
-		store(e, v.atomic_type, emit_expr(e, v.bound[1]), expected)
-		store(e, v.atomic_type, emit_expr(e, v.bound[2]), desired)
+		store(e, checked.type, emit_expr(e, v.bound[1]), expected)
+		store(e, checked.type, emit_expr(e, v.bound[2]), desired)
 		status, swapped := temp(e), temp(e)
 		// The helper writes the observed value back into `expected`, which is what
 		// a failed compare-exchange has to report.
 		fmt.sbprintfln(
 			&e.b,
 			"  %s = call i32 @loke_rt_v1_atomic128_compare_exchange(ptr %s, ptr %s, ptr %s, i32 %d, i32 %d)",
-			status, address, expected, desired, int(order), v.atomic_failure_order,
+			status, address, expected, desired, int(order), checked.failure_order,
 		)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne i32 %s, 0", swapped, status)
 		observed := load(e, storage, expected)
@@ -264,7 +267,7 @@ emit_fallback_atomic :: proc(
 	}
 
 	value := alloca(e, storage)
-	store(e, v.atomic_type, emit_expr(e, v.bound[1]), value)
+	store(e, checked.type, emit_expr(e, v.bound[1]), value)
 	fmt.sbprintfln(
 		&e.b, "  call void @loke_rt_v1_atomic128_%s(ptr %s, ptr %s, ptr %s, i32 %d)",
 		helper, address, value, out, int(order),
@@ -287,6 +290,6 @@ emit_atomic_exchange_result :: proc(
 ) -> string {
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = xor i1 %s, true", failed, swapped)
-	value := atomic_from_storage(e, v.atomic_type, storage, observed)
+	value := atomic_from_storage(e, v.operation.(Call_Atomic).type, storage, observed)
 	return emit_option_value(e, as_type, failed, value)
 }

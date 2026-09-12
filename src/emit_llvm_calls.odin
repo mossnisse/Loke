@@ -9,14 +9,15 @@ import "core:fmt"
 
 @(private)
 emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
-	if v.enum_from_int != INVALID_TYPE {
+	switch operation in v.operation {
+	case Call_Enum_From_Int:
 		value := emit_expr(e, v.bound[0])
 		present := "false"
-		for member in underlying_info(e.c, v.enum_from_int).fields {
+		for member in underlying_info(e.c, operation.type).fields {
 			sym := symbol_of(e.c, member)
 			matches := temp(e)
 			fmt.sbprintfln(&e.b, "  %s = icmp eq %s %s, %s", matches,
-				llvm_type(e, v.enum_from_int), value, bi_text(e.c, sym.const_value.integer))
+				llvm_type(e, operation.type), value, bi_text(e.c, sym.const_value.integer))
 			if present == "false" {
 				present = matches
 			} else {
@@ -26,31 +27,31 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			}
 		}
 		return emit_option_value(e, as_type, present, value)
-	}
-	if v.union_op == .Extract && v.extract != nil {
-		return emit_any_view_extract(e, v.extract, v.extract.type)[0]
-	}
-	if v.is_dyn_call {
+	case Call_Extract:
+		return emit_any_view_extract(e, operation.node, operation.node.type)[0]
+	case Call_Dyn_Slot:
 		results := emit_dyn_slot_call(e, v)
 		return len(results) == 0 ? "0" : results[0]
-	}
-	if v.resolution.kind == .Conversion && type_is_dyn(e.c, as_type) {
+	case Call_Dyn_Conversion:
 		return emit_dyn_value(e, v, as_type)
-	}
-	if v.text_conversion != .None {
+	case Call_Text_Conversion:
 		return emit_text_conversion(e, v, as_type)[0]
-	}
-	if v.resolution.kind == .Conversion {
+	case Call_Conversion:
 		return emit_conversion(e, v, as_type)
-	}
-	if v.reflect != .None {
+	case Call_Reflect:
 		return emit_descriptor_operation(e, v)
-	}
-	if v.union_op != .None {
+	case Call_Union_Construct:
 		return emit_union_operation(e, v, as_type)
-	}
-	if v.text != .None {
+	case Call_Text:
 		return emit_text_operation(e, v, as_type)[0]
+	case Call_Procedure:
+		results := emit_direct_call(e, v)
+		return len(results) == 0 ? "0" : results[0]
+	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
+		// These intrinsic families retain their exact operation's symbol.
+	case nil, Call_Compile_Time:
+		backend_fail(e, "an unchecked or compile-time call reached emission")
+		return "0"
 	}
 	symbol := symbol_of(e.c, v.resolution.symbol)
 	if symbol != nil && symbol.kind == .Builtin {
@@ -121,8 +122,8 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return "0"
 		}
 	}
-	results := emit_direct_call(e, v)
-	return len(results) == 0 ? "0" : results[0]
+	backend_fail(e, "an intrinsic call has no builtin symbol")
+	return "0"
 }
 
 // `field.get(value)` and `field.pointer(value)`. The descriptor selected one
@@ -130,24 +131,16 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 // `get`.
 @(private = "file")
 emit_descriptor_operation :: proc(e: ^Emitter, v: ^Expr_Call) -> string {
+	checked := v.operation.(Call_Reflect)
 	base := emit_expr(e, v.bound[0])
 	owner := underlying_info(e.c, expr_base(v.bound[0]).type)
-	field := symbol_of(e.c, v.reflect_field)
+	field := symbol_of(e.c, checked.field)
 	address := gep_field(e, llvm_type(e, owner.element), base, int(field.index))
-	if v.reflect == .Field_Pointer {
+	if checked.op == .Field_Pointer {
 		return address
 	}
 	out := load(e, llvm_type(e, field.type), address)
 	return out
-}
-
-// The runtime half of the compiler-contributed `hash`. It spells the same two
-// steps `hash_const` folds, so a constant hash and a computed one agree.
-@(private = "file")
-emit_hash :: proc(e: ^Emitter, value_expr, seed_expr: Expr) -> string {
-	value := emit_expr(e, value_expr)
-	seed := emit_expr(e, seed_expr)
-	return emit_hash_value(e, expr_base(value_expr).type, value, seed)
 }
 
 emit_hash_value :: proc(e: ^Emitter, type: Type_Id, value, seed: string) -> string {
@@ -225,25 +218,6 @@ emit_hash_bits :: proc(e: ^Emitter, under: Type_Id, value: string) -> string {
 	return out
 }
 
-// Whether a call's result may name its receiver's storage. A result that holds
-// no borrow cannot, whatever the summary says; beyond that the callee's
-// result-provenance summary decides, and a callee without one is treated
-// conservatively (design.md "Temporaries and procedure boundaries").
-@(private = "file")
-result_may_borrow_receiver :: proc(c: ^Compiler, callee: Symbol_Id, result: Type_Id) -> bool {
-	if result == INVALID_TYPE {
-		return false
-	}
-	if !type_is_carrier(c, result) && !type_carries_borrow(c, result).any {
-		return false
-	}
-	summary, found := result_summary(c, callee)
-	if !found {
-		return true
-	}
-	return len(summary.params) == 0 || summary.params[0]
-}
-
 // An operator, index, or slice call. Operator lookup has already chosen one
 // named procedure, so this is an ordinary direct call — except for a `delegate`
 // overload, which has no body and applies the underlying type's operation to the
@@ -297,28 +271,18 @@ emit_delegated :: proc(e: ^Emitter, symbol: ^Symbol, bound: []Expr) -> string {
 emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []string {
 	#partial switch v in expr {
 	case ^Expr_Call:
-		// `value.as(T)`: one extraction lowering, reached through call syntax.
-		if v.union_op == .Extract && v.extract != nil {
-			return emit_any_view_extract(e, v.extract, v.extract.type)
-		}
-		// A slot call has no callee symbol and no callee value — the thunk comes
-		// out of the witness table — so it can never take the ordinary call path
-		// below, whatever its result count is.
-		if v.is_dyn_call {
+		#partial switch operation in v.operation {
+		case Call_Extract:
+			return emit_any_view_extract(e, operation.node, operation.node.type)
+		case Call_Dyn_Slot:
 			return emit_dyn_slot_call(e, v)
-		}
-		// A conversion and a built-in are calls in syntax only, and each has its
-		// own lowering; `emit_call` is what knows the difference.
-		if kind := call_builtin_kind(e, v); kind == .New || kind == .New_Clone {
+		case Call_Allocation:
+			kind := call_builtin_kind(e, v)
+			if kind == .Make { return emit_make_container(e, v, as_type) }
 			return emit_allocation_pair(e, v, kind, as_type)
-		}
-		if call_builtin_kind(e, v) == .Make {
-			return emit_make_container(e, v, as_type)
-		}
-		if v.text != .None {
+		case Call_Text:
 			return emit_text_operation(e, v, as_type)
-		}
-		if v.text_conversion != .None {
+		case Call_Text_Conversion:
 			return emit_text_conversion(e, v, as_type)
 		}
 		if kind := call_builtin_kind(e, v); kind == .Unsafe_String_View {
@@ -346,11 +310,13 @@ emit_producer_value :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> []stri
 
 @(private)
 call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
-	if v.resolution.kind == .Conversion || v.reflect != .None {
+	#partial switch _ in v.operation {
+	case Call_Builtin, Call_Atomic, Call_Allocation, Call_Sort_By, Call_Simd_Reduce:
+		sym := symbol_of(e.c, v.resolution.symbol)
+		return sym != nil && sym.kind == .Builtin ? sym.builtin : Builtin_Kind.None
+	case:
 		return .None
 	}
-	sym := symbol_of(e.c, v.resolution.symbol)
-	return sym != nil && sym.kind == .Builtin ? sym.builtin : Builtin_Kind.None
 }
 
 // `new` and `new_clone` always return an error instead of invoking the allocator
@@ -358,15 +324,16 @@ call_builtin_kind :: proc(e: ^Emitter, v: ^Expr_Call) -> Builtin_Kind {
 // here — the caller gets a null pointer and a non-nil error and decides.
 @(private = "file")
 emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_type: Type_Id) -> []string {
+	checked := v.operation.(Call_Allocation)
 	// `new_clone` creates a new allocation root containing a clone of the value
 	// (design.md), so a record whose clone can fail goes through its hook rather
 	// than through a shallow store of the representation.
-	if kind == .New_Clone && emit_lifecycle(e, v.alloc_type).clone_fallible {
+	if kind == .New_Clone && emit_lifecycle(e, checked.type).clone_fallible {
 		return emit_new_clone_hook(e, v, as_type)
 	}
 	// `new(T)` binds only an allocator; `new_clone(v)` binds the value first.
 	allocator := emit_allocator_operand(e, v, kind == .New ? 0 : 1)
-	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
+	size, align := type_size(e.c, checked.type), type_align(e.c, checked.type)
 	pointer := temp(e)
 	if kind == .New {
 		// design.md: `new` zero-initialises.
@@ -390,7 +357,7 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 		store_label, done_label := new_label(e, "newclone.store"), new_label(e, "newclone.done")
 		fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", failed, done_label, store_label)
 		place_label(e, store_label)
-		store(e, v.alloc_type, emit_expr(e, v.bound[0]), pointer)
+		store(e, checked.type, emit_expr(e, v.bound[0]), pointer)
 		branch(e, done_label)
 		place_label(e, done_label)
 		e.terminated = false
@@ -408,9 +375,10 @@ emit_allocation_pair :: proc(e: ^Emitter, v: ^Expr_Call, kind: Builtin_Kind, as_
 // need no predecessor-label tracking.
 @(private = "file")
 emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
+	checked := v.operation.(Call_Allocation)
 	value := emit_expr(e, v.bound[0])
 	allocator := emit_allocator_operand(e, v, 1)
-	size, align := type_size(e.c, v.alloc_type), type_align(e.c, v.alloc_type)
+	size, align := type_size(e.c, checked.type), type_align(e.c, checked.type)
 
 	pointer_slot := alloca(e, "ptr")
 	error_slot := alloca(e, "i64")
@@ -429,7 +397,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	branch_if(e, no_memory, done_label, clone_label)
 
 	place_label(e, clone_label)
-	hook := emit_lifecycle(e, v.alloc_type).try_clone
+	hook := emit_lifecycle(e, checked.type).try_clone
 	if hook == INVALID_SYMBOL {
 		backend_fail(e, "a fallible `new_clone` has no `try_clone` member")
 		failed := make([]string, 1)
@@ -437,7 +405,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 		return failed
 	}
 	clone_result := symbol_of(e.c, hook).result
-	receiver_type, receiver := call_receiver_operand(e, hook, v.alloc_type, value)
+	receiver_type, receiver := call_receiver_operand(e, hook, checked.type, value)
 	returned := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call %s %s(%s %s, ptr %s)",
@@ -445,7 +413,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	)
 	clone_slot := emit_union_spill(e, clone_result, returned)
 	failed := emit_union_failed(e, clone_result, returned)
-	cloned := emit_union_payload(e, clone_result, v.alloc_type, clone_slot)
+	cloned := emit_union_payload(e, clone_result, checked.type, clone_slot)
 	release_label, publish_label := new_label(e, "newclone.release"), new_label(e, "newclone.publish")
 	branch_if(e, failed, release_label, publish_label)
 
@@ -458,7 +426,7 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	branch(e, done_label)
 
 	place_label(e, publish_label)
-	store(e, v.alloc_type, cloned, pointer)
+	store(e, checked.type, cloned, pointer)
 	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", pointer, pointer_slot)
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", error_slot)
 	branch(e, done_label)
@@ -483,7 +451,8 @@ emit_new_clone_hook :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 // something half-built.
 @(private = "file")
 emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []string {
-	is_map := type_is_map(e.c, v.alloc_type)
+	checked := v.operation.(Call_Allocation)
+	is_map := type_is_map(e.c, checked.type)
 	counts := is_map ? 1 : 2
 	values := make([]string, counts)
 	for index in 0 ..< counts {
@@ -514,7 +483,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	status := temp(e)
 	fmt.sbprintfln(
 		&e.b, "  %s = call i32 @%s(ptr %s, ptr %s, i64 %s)",
-		status, helper, header, container_ops_global(e, v.alloc_type), capacity,
+		status, helper, header, container_ops_global(e, checked.type), capacity,
 	)
 	failed := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = icmp eq i32 %s, 0", failed, status)
@@ -526,7 +495,7 @@ emit_make_container :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []s
 	// loop, and dropping those zeros is the no-op every hook must already handle.
 	place_label(e, fill_label)
 	if !is_map {
-		element := container_element(e.c, v.alloc_type)
+		element := container_element(e.c, checked.type)
 		data := load(e, "ptr", header)
 		bytes := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = mul i64 %s, %d", bytes, length, type_size(e.c, element))
@@ -1162,9 +1131,6 @@ emit_bound_call :: proc(
 
 @(private = "file")
 emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
-	if v.text_conversion != .None {
-		return emit_text_conversion(e, v, as_type)[0]
-	}
 	source_expr := v.bound[0]
 	source := expr_base(source_expr).type
 	target := as_type
@@ -1213,13 +1179,14 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 // `U.name(payload)`: evaluate the payload and write it plus the variant's tag.
 @(private = "file")
 emit_union_operation :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
-	if v.union_op != .Construct || len(v.bound) != 1 {
+	operation, construction := v.operation.(Call_Union_Construct)
+	if !construction || len(v.bound) != 1 {
 		backend_fail(e, "a union call has no construction operand")
 		return "0"
 	}
 	payload := emit_expr(e, v.bound[0])
-	if v.variant_clone {
+	if operation.clone {
 		payload = emit_clone_value(e, expr_base(v.bound[0]).type, payload)
 	}
-	return emit_union_value(e, as_type, v.variant_index, payload)
+	return emit_union_value(e, as_type, operation.index, payload)
 }

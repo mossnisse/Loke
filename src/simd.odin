@@ -581,7 +581,7 @@ check_simd_reduce :: proc(k: ^Checker, v: ^Expr_Call, bound: ^[dynamic]Expr) {
 		}
 		v.type = info.element
 	}
-	v.simd_fold = fold
+	v.operation = Call_Simd_Reduce{fold = fold}
 	append(bound, v.args[0].value)
 }
 

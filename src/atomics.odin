@@ -158,7 +158,7 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 			v.type = INVALID_TYPE
 			return
 		}
-		v.atomic_order = int(order)
+		v.operation = Call_Atomic{order = int(order)}
 		v.bound = nil
 		v.type = TYPE_VOID
 		return
@@ -240,18 +240,18 @@ check_atomic_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = INVALID_TYPE
 		return
 	}
-	v.atomic_order = int(order)
+	operation := Call_Atomic{type = element, order = int(order)}
 	if kind == .Atomic_Compare_Exchange {
 		failure, failure_ok := check_atomic_order(k, v, 2 + values, order_type, kind, true)
 		if !failure_ok {
 			v.type = INVALID_TYPE
 			return
 		}
-		v.atomic_failure_order = int(failure)
+		operation.failure_order = int(failure)
 	}
 
 	v.bound = bound
-	v.atomic_type = element
+	v.operation = operation
 	#partial switch kind {
 	case .Atomic_Store:
 		v.type = TYPE_VOID

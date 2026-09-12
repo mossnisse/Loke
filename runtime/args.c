@@ -19,29 +19,6 @@ static char **arg_values;
 /* One UTF-16 code unit sequence to UTF-8. Surrogate pairs combine; an unpaired
  * surrogate becomes U+FFFD, because a Loke `string` may not hold one and a
  * Windows argument vector is not guaranteed to be well-formed. */
-static uint64_t utf8_encode(uint32_t code_point, char *out) {
-	if (code_point < 0x80u) {
-		out[0] = (char)code_point;
-		return 1;
-	}
-	if (code_point < 0x800u) {
-		out[0] = (char)(0xC0u | (code_point >> 6));
-		out[1] = (char)(0x80u | (code_point & 0x3Fu));
-		return 2;
-	}
-	if (code_point < 0x10000u) {
-		out[0] = (char)(0xE0u | (code_point >> 12));
-		out[1] = (char)(0x80u | ((code_point >> 6) & 0x3Fu));
-		out[2] = (char)(0x80u | (code_point & 0x3Fu));
-		return 3;
-	}
-	out[0] = (char)(0xF0u | (code_point >> 18));
-	out[1] = (char)(0x80u | ((code_point >> 12) & 0x3Fu));
-	out[2] = (char)(0x80u | ((code_point >> 6) & 0x3Fu));
-	out[3] = (char)(0x80u | (code_point & 0x3Fu));
-	return 4;
-}
-
 static char *to_utf8(const uint16_t *wide) {
 	uint64_t units = 0;
 	uint64_t bytes = 0;
@@ -73,7 +50,7 @@ static char *to_utf8(const uint16_t *wide) {
 		} else if (code_point >= 0xDC00u && code_point <= 0xDFFFu) {
 			code_point = 0xFFFDu; /* an unpaired low surrogate */
 		}
-		written += utf8_encode(code_point, out + written);
+		written += loke_rt_encode_rune((uint8_t *)(out + written), (int32_t)code_point);
 	}
 	out[written] = 0;
 	return out;

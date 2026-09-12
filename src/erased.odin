@@ -969,7 +969,8 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = v.args[0].value
 	v.bound = bound
-	v.resolution = Resolution{kind = .Conversion}
+	v.operation = Call_Dyn_Conversion{}
+	v.resolution = {}
 
 	// Converting a nil concrete pointer produces the nil dynamic view and does
 	// not retain a witness for the absent value.
@@ -1038,7 +1039,7 @@ check_dyn_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 			return
 		}
 	}
-	v.dyn_witness = witness
+	v.operation = Call_Dyn_Conversion{witness = witness}
 }
 
 // ---------------------------------------- any_view checked extractions --
@@ -1069,7 +1070,6 @@ check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> 
 	}
 
 	v.value_category = .Value
-	v.union_op = .Extract
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	bound := make([]Expr, 1, k.c.semantic_allocator)
 	bound[0] = sel.operand
@@ -1092,7 +1092,7 @@ check_union_extract :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> 
 	extract.operand = sel.operand
 	extract.target = v.args[0].value
 	extract.mode = .Optional
-	v.extract = extract
+	v.operation = Call_Extract{node = extract}
 
 	check_extract_of(k, extract, TYPE_ANY_VIEW)
 	v.type = extract.type
@@ -1262,8 +1262,7 @@ check_dyn_slot_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, dyn
 	if named {
 		v.bound_order = order[:]
 	}
-	v.is_dyn_call = true
-	v.dyn_slot = index
+	v.operation = Call_Dyn_Slot{index = index}
 	// The slot's `inout` result travels with the signature: the witness returns a
 	// pointer, so a call through the view has to be typed — and lowered — as one.
 	sel.type = intern_proc_type(k.c, params, modes, result_type, result_inout, "")

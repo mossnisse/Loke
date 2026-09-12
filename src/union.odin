@@ -350,8 +350,7 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	subject, index := sel.variant_union, sel.variant_index
 	payload := union_variant_payload(k.c, subject, index)
 	v.value_category = .Value
-	v.union_op = .Construct
-	v.variant_index = index
+	v.operation = Call_Union_Construct{index = index}
 	v.resolution = Resolution{kind = .Builtin_Operator}
 	v.type = subject
 
@@ -376,7 +375,10 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	v.bound = bound
 	// Variant construction is aggregate construction: `.some(x)` where `x` names a
 	// place leaves that place owning its value, so the variant receives a clone.
-	v.variant_clone = classify_copy(k, v.args[0].value, payload, "variant construction")
+	v.operation = Call_Union_Construct{
+		index = index,
+		clone = classify_copy(k, v.args[0].value, payload, "variant construction"),
+	}
 
 	// design.md "Zero values": explicit constant variant construction is
 	// permitted at static duration when its payload is constant.

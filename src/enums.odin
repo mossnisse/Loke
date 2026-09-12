@@ -22,7 +22,7 @@ check_enum_from_int :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) -> 
 		v.type = INVALID_TYPE
 		return true
 	}
-	v.enum_from_int = subject
+	v.operation = Call_Enum_From_Int{type = subject}
 	v.bound = make([]Expr, 1, k.c.semantic_allocator)
 	v.bound[0] = v.args[0].value
 	v.type = option_type(k, subject, v.span)
