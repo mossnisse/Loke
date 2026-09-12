@@ -78,8 +78,7 @@ main :: proc() {
 		               "syntax cloning retained a checked call operation or argument binding")
 		testing.expect(t, len(clone.args) == len(call.args))
 	}
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	_, emitted := emit_llvm_module(&c)
 	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
 	// Symbol resolution alone cannot stand in for an unchecked operation.
@@ -117,8 +116,7 @@ main :: proc() { assert(value() == 78); }
 	testing.expect(t, literal.field_indices[0] == 1 && literal.field_indices[1] == 0)
 	cloned := clone_expr(&c, literal).(^Expr_Composite)
 	testing.expect(t, len(cloned.field_indices) == 0, "a syntax clone retained checked field indices")
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	before, emitted := emit_llvm_module(&c)
 	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
 
@@ -164,8 +162,7 @@ main :: proc() {
 	call := body.stmts[1].(^Decl).values[0].(^Expr_Call)
 	extraction := call.operation.(Call_Extract).node
 	if !testing.expect(t, extraction != nil) { return }
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	// Compare extraction instructions, since reflection tables legitimately
 	// retain variant names even though this lowering no longer reads them.
 	previous := ""
@@ -201,8 +198,7 @@ entry_emission_requires_validated_symbol :: proc(t: ^testing.T) {
 		c.root_package = id
 		add_package_file(&c, id, &f)
 		check_emission_package(&c, id)
-		freeze_typeids(&c)
-		finalize_lifecycle_operations(&c)
+		finalize_semantics(&c)
 		before, emitted := emit_llvm_module(&c)
 		if !testing.expectf(t, emitted && c.error_count == 0, "%s setup failed", scenario) {
 			report(&c)
@@ -254,8 +250,7 @@ main :: proc() {
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
 	if !testing.expect(t, c.error_count == 0) { report(&c); return }
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 
 	body := decl_proc(f.items[0].(^Decl)).body
 	number := body.stmts[0].(^Decl).symbols[0]
@@ -329,8 +324,7 @@ main :: proc() { }
 			symbol.generic = false
 		}
 	}
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	_, valid := emit_llvm_module(&c)
 	if !testing.expect(t, valid && c.error_count == 0, "an unreferenced generic template reached LLVM emission") { report(&c) }
 }
@@ -362,8 +356,7 @@ main :: proc() {
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
 	if !testing.expect(t, c.error_count == 0) { report(&c); return }
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	_, valid := emit_llvm_module(&c)
 	if !testing.expect(t, valid && c.error_count == 0, "field-only map types must reach emission with resolved key policies") { report(&c) }
 }
@@ -380,8 +373,7 @@ unregistered_typeid_is_a_backend_contract_error :: proc(t: ^testing.T) {
 	c.root_package = id
 	add_package_file(&c, id, &f)
 	check_emission_package(&c, id)
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	_, valid := emit_llvm_module(&c)
 	testing.expect(t, valid && c.error_count == 0, "registered and nil typeids must both emit")
 	delete_key(&c.typeid_values, TYPE_INT)
@@ -400,8 +392,7 @@ emission_rejects_incomplete_registries :: proc(t: ^testing.T) {
 		c.build_mode = .Obj
 		init_semantic_stores(&c)
 		request_typeid(&c, TYPE_INT)
-		freeze_typeids(&c)
-		finalize_lifecycle_operations(&c)
+		finalize_semantics(&c)
 		switch broken {
 		case "unfrozen": c.typeid_frozen = false
 		case "speculative": c.speculation_depth = 1
@@ -505,8 +496,7 @@ main :: proc() { assert(lookup() == 7); }
 	checker := Checker{c = &c}
 	value, evaluated := require_const(&checker, &call, "test result")
 	testing.expect(t, evaluated && bi_eq_i64(&c, value.integer, 7), "CTFE repeated member lookup")
-	freeze_typeids(&c)
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	_, emitted := emit_llvm_module(&c)
 	if !testing.expect(t, emitted && c.error_count == 0, "LLVM repeated member lookup") { report(&c) }
 }
@@ -590,8 +580,7 @@ lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 		c.root_package = id
 		add_package_file(&c, id, &f)
 		check_emission_package(&c, id)
-		freeze_typeids(&c)
-		finalize_lifecycle_operations(&c)
+		finalize_semantics(&c)
 		testing.expect(t, validate_emission_dependencies(&c), "invalid lifecycle test setup")
 		target: Type_Id
 		for type, operations in c.lifecycle_operations {

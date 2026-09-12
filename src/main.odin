@@ -171,16 +171,7 @@ run :: proc() -> int {
 		return 1
 	}
 
-	// Every requested concrete type gets its deterministic `typeid` before any
-	// body is emitted, so traversal order cannot change an observable ID.
-	freeze_typeids(&c)
-	// design.md's formatter coherence is decided once the type set is closed, so
-	// "one formatter per concrete type" is a whole-program answer, not a
-	// per-call-site one.
-	discover_formatters(&c)
-	// Copy/drop lowering consumes a closed snapshot after all checked helpers
-	// have had the opportunity to contribute their lifecycle dependencies.
-	finalize_lifecycle_operations(&c)
+	finalize_semantics(&c)
 	if c.error_count > 0 {
 		report(&c)
 		return 1
