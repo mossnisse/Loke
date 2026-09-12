@@ -10,6 +10,7 @@ import os2 "core:os/os2"
 import "core:slice"
 import "core:strconv"
 import "core:strings"
+import "core:time"
 
 // Both clang seams — the object compile and the link — give the same advice.
 CLANG_MISSING :: "cannot run `%s`: install LLVM (`winget install LLVM.LLVM`) or set LOKE_CLANG"
@@ -267,6 +268,118 @@ replace_ext :: proc(path: string, ext: string) -> string {
 	return strings.concatenate({path, ext})
 }
 
+// The bundled seed runtime's objects, compiled once per optimization mode and
+// reused by every later link. Recompiling the nine C sources is where a build
+// actually spends its time: 550ms of an 800ms `-O0` link and 800ms at `-O3`,
+// against a 31ms front end.
+//
+// The mode is the whole key because the host is the only target — nothing passes
+// `-target`, so one `-O` flag is all that varies between two links. A driver
+// that learns to cross-compile has to name the triple here as well.
+//
+// A custom `-runtime=<dir>` always compiles from source. The cache lives inside
+// the runtime directory, and that tree belongs to whoever named it: it was given
+// to be read, not written to.
+//
+// A set older than any source is ignored rather than repaired, so editing the
+// runtime costs the speedup and never correctness. Population compiles into a
+// process-unique directory and renames it into place, so a concurrent link
+// cannot observe a half-written set; the loser of that race discards its own
+// copy and uses the winner's.
+@(private = "file")
+prebuilt_runtime_objects :: proc(runtime_dir: string, sources: []string, opts: Options) -> []string {
+	if opts.runtime_dir != "" {
+		return nil
+	}
+	dir := filepath.join({runtime_dir, "prebuilt", fmt.tprintf("%v", opts.opt_mode)})
+	objects := make([]string, len(sources))
+	for source, index in sources {
+		objects[index] = filepath.join({dir, replace_ext(filepath.base(source), ".o")})
+	}
+	if prebuilt_current(runtime_dir, objects) {
+		return objects
+	}
+	staging := filepath.join({runtime_dir, "prebuilt", fmt.tprintf(".staging-%d", os2.get_pid())})
+	// Covers every failing return below, and is a no-op once the rename succeeded.
+	defer os2.remove_all(staging)
+	if os2.make_directory_all(staging) != nil {
+		return nil
+	}
+	if !compile_runtime_sources(runtime_dir, sources, staging, opts) {
+		return nil
+	}
+	if os2.rename(staging, dir) != nil {
+		// Either a concurrent link installed this set first, or a stale one is in
+		// the way. Losing the replacement is safe: a reader holding an object open
+		// keeps it, and this link then compiles from source as it always did.
+		os2.remove_all(dir)
+		if os2.rename(staging, dir) != nil {
+			return nil
+		}
+	}
+	return objects
+}
+
+// Every object present and no older than every runtime source. The headers count
+// too: all nine sources include `loke_rt.h`, so a header-only edit has to
+// invalidate the set as well.
+@(private = "file")
+prebuilt_current :: proc(runtime_dir: string, objects: []string) -> bool {
+	newest: time.Time
+	for pattern in ([]string{"*.c", "*.h"}) {
+		matches, err := filepath.glob(filepath.join({runtime_dir, pattern}))
+		if err != nil {
+			return false
+		}
+		for match in matches {
+			stamp, stamp_err := os2.modification_time_by_path(match)
+			if stamp_err != nil {
+				return false
+			}
+			if time.diff(newest, stamp) > 0 {
+				newest = stamp
+			}
+		}
+	}
+	for object in objects {
+		stamp, err := os2.modification_time_by_path(object)
+		if err != nil || time.diff(newest, stamp) < 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// One clang process for all nine sources. `-c` with several inputs writes each
+// object beside its own name in the working directory, which is why the staging
+// directory is passed as that rather than through a per-file `-o`.
+@(private = "file")
+compile_runtime_sources :: proc(
+	runtime_dir: string,
+	sources: []string,
+	staging: string,
+	opts: Options,
+) -> bool {
+	command := make([dynamic]string, context.temp_allocator)
+	append(&command, find_clang(), "-c")
+	for source in sources {
+		append(&command, source)
+	}
+	append(&command, opt_clang_flag(opts.opt_mode), "-I", runtime_dir)
+	includes, _ := msvc_include_dirs()
+	for include in includes {
+		append(&command, "-isystem", include)
+	}
+	state, _, _, err := os2.process_exec(
+		os2.Process_Desc{command = command[:], working_dir = staging},
+		context.allocator,
+	)
+	// Nothing is reported here. A runtime that cannot be precompiled is not a
+	// failed build: the caller links the sources instead, which is what diagnoses
+	// a genuinely broken runtime tree, with clang's own message.
+	return err == nil && state.exit_code == 0
+}
+
 // clang does llc + link + CRT startup in one process (decision A5, A7). It
 // finds the Windows SDK itself but computes a relative, unusable
 // VCToolsInstallDir outside a developer prompt, so the CRT import libraries
@@ -314,8 +427,12 @@ link :: proc(c: ^Compiler, ll_path: string, exe_path: string, opts: Options) -> 
 	// design.md "Build configuration": the selected optimization mode maps to one
 	// `-O` flag on the single clang invocation.
 	append(&command, opt_clang_flag(opts.opt_mode))
-	for source in sources {
-		append(&command, source)
+	runtime_inputs := sources
+	if prebuilt := prebuilt_runtime_objects(runtime_dir, sources, opts); prebuilt != nil {
+		runtime_inputs = prebuilt
+	}
+	for input in runtime_inputs {
+		append(&command, input)
 	}
 	for input in foreign_inputs {
 		append(&command, input)

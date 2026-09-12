@@ -4,3 +4,4 @@ tests/tmp/
 *.pdb
 *.obj
 *.ilk
+runtime/prebuilt/
