@@ -1,0 +1,18 @@
+package main;
+
+// design.md "where clauses": a bound is a compile-time boolean, and a failed one
+// removes the method from the instantiation. A bound that is not a boolean at all
+// is neither — it is a broken declaration, and reporting it is the only way the
+// mistake is ever seen. Silently obeying it would delete `show` over a missing
+// import and then blame the call.
+
+Box :: struct($T: type) { value: T }
+
+impl Box($T) {
+	show :: proc(self) -> bool where Ordered(T) { return self.value < self.value; }
+}
+
+main :: proc() {
+	b := Box(int){3};
+	_ = b.show();
+}

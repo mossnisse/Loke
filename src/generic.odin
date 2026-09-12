@@ -1606,7 +1606,16 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 // design.md "where clauses": every bound is a compile-time boolean evaluated
 // while the declaration is instantiated. A failed bound removes an overload
 // candidate silently and is a hard error at a direct instantiation.
-check_where_clauses :: proc(k: ^Checker, clauses: []Expr, span: Span, what: string, report: bool) -> bool {
+//
+// A bound that is not a compile-time boolean *at all* — an unresolved name, a
+// non-boolean value — is a third case: the declaration is malformed rather than
+// a poor fit for these arguments. `report_malformed` reports that much even
+// where a bound failing on its merits stays silent, so a caller whose silence
+// deletes something cannot delete it over a typo.
+check_where_clauses :: proc(
+	k: ^Checker, clauses: []Expr, span: Span, what: string, report: bool,
+	report_malformed := false,
+) -> bool {
 	for clause in clauses {
 		mark := len(k.c.diagnostics)
 		errors := k.c.error_count
@@ -1624,7 +1633,7 @@ check_where_clauses :: proc(k: ^Checker, clauses: []Expr, span: Span, what: stri
 			k.c.error_count = errors
 			continue
 		}
-		if !report {
+		if !report && !(failed && report_malformed) {
 			truncate_diagnostics(k.c, mark)
 			k.c.error_count = errors
 			return false
@@ -1904,7 +1913,21 @@ exclude_member_on_failed_bound :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	name := identifier_text(k.c, symbol.name)
-	if !check_where_clauses(k, literal.where_clauses, literal.span, name, report = false) {
+	// Silence here does not reject a candidate, it removes a member. A bound that
+	// cannot be evaluated at all would remove one over a typo or a missing import,
+	// and the call site would then report a member that is written right there, so
+	// a malformed bound is reported rather than obeyed.
+	//
+	// Only the malformed path reports, so a diagnostic is how that case is told
+	// from a bound that simply did not hold. A reported bound is a broken
+	// declaration rather than an instantiation this method is not part of, and
+	// leaving the member in place is what keeps the one true error from trailing a
+	// second, untrue one at the call.
+	errors := k.c.error_count
+	ok := check_where_clauses(
+		k, literal.where_clauses, literal.span, name, report = false, report_malformed = true,
+	)
+	if !ok && k.c.error_count == errors {
 		symbol.bound_excluded = true
 	}
 }

@@ -1,0 +1,6 @@
+L0315
+@12:35
+unknown name `Ordered`
+while instantiating `Box(int)`
+!has no field or member `show`
+!a `where` bound that does not hold
