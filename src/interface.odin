@@ -832,6 +832,15 @@ collect_slot_members :: proc(k: ^Checker, members: []Symbol_Id, name: Identifier
 		if sym == nil || sym.name != name {
 			continue
 		}
+		// design.md "where clauses": a method an instantiation's failed bound
+		// removed is not one of that instantiation's members. `member_is_visible`
+		// hides it from every ordinary lookup; satisfaction bypasses that predicate
+		// for the *visibility* half alone, so exclusion has to be repeated here.
+		// Accepting one promises a slot whose body was never checked and never
+		// emitted, which reaches the backend as a missing name.
+		if sym.bound_excluded {
+			continue
+		}
 		if sym.decl != nil && sym.decl.sig_state == .Unchecked {
 			resolve_declaration_signature(k, sym.decl)
 			sym = symbol_of(k.c, member)

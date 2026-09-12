@@ -10,6 +10,10 @@ L0408
 @25:6
 `Enum_Array(Slot, Token)` has no member `filled`
 `filled` is declared with a `where` bound that does not hold for this instantiation
+L0444
+@27:6
+`Holder(Token)` does not satisfy `Sized(Holder(Token), Token)`
+`Holder(Token)` has no method `size` with this signature
 !error[L0502]
 !error[L0503]
 !error[L0434]

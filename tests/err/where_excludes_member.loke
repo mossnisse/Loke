@@ -23,4 +23,23 @@ main :: proc() {
 	// `filled` copies one value into every slot.
 	seed := Token{2};
 	_ = container.Enum_Array(Slot, Token).filled(seed);
+
+	_ = needs_size(Token{3}, Holder(Token){});
+}
+
+// An interface requirement asks the same question a call does, so it has to see
+// the same member set. A slot matched by a method the bound removed would promise
+// a body that was never checked and is never emitted.
+Sized :: interface($C, $T: type) {
+	slot size: proc(self, value: T) -> int;
+}
+
+Holder :: struct($T: type) { }
+
+impl Holder($T) {
+	size :: proc(self, value: T) -> int where is_copyable(T) { return 1; }
+}
+
+needs_size :: proc(value: $T, holder: $C) -> int where Sized(C, T) {
+	return holder.size(value);
 }
