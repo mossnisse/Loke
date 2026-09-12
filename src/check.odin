@@ -606,29 +606,41 @@ has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
 
 // ---------------------------------------------------------- signatures --
 
-// The location-dependent part of Checker state. On-demand checking is used by
-// constants, compile-time evaluation, associated members, and staged `when`
-// selection; every one of those paths must resolve names with the declaration's
-// own scope, file, package, and extension visibility.
+// The location-dependent part of Checker state: where the code being checked
+// sits, as opposed to what checking it produces. On-demand checking is used by
+// constants, compile-time evaluation, associated members, staged `when`
+// selection, generic instantiation, and interface requirements; every one of
+// those paths must resolve names with the declaration's own scope, file,
+// package, extension visibility, enclosing procedure, and instantiation depth.
+// A new field of that kind belongs here, so that adding it is one edit rather
+// than an audit of those entry points. Outputs stay out: `defer_slots` is
+// counted for the enclosing procedure, and the statement flags are consumed by
+// the node that sets them.
 Checker_Location :: struct {
-	scope:      ^Scope,
-	pkg:        Package_Id,
-	lookup_pkg: Package_Id,
-	impl_type:  Type_Id,
-	file:       u32,
-	file_node:  ^File,
+	scope:         ^Scope,
+	pkg:           Package_Id,
+	lookup_pkg:    Package_Id,
+	impl_type:     Type_Id,
+	file:          u32,
+	file_node:     ^File,
+	// The enclosing procedure, and how many instantiations enclose it: a body
+	// checked at an instance is not lexically inside whatever reached it.
+	proc_literal:  ^Expr_Proc,
+	generic_depth: int,
 }
 
 save_checker_location :: proc(k: ^Checker) -> Checker_Location {
 	return Checker_Location {
 		scope = k.scope, pkg = k.pkg, lookup_pkg = k.lookup_pkg,
 		impl_type = k.impl_type, file = k.file, file_node = k.file_node,
+		proc_literal = k.proc_literal, generic_depth = k.generic_depth,
 	}
 }
 
 restore_checker_location :: proc(k: ^Checker, saved: Checker_Location) {
 	k.scope, k.pkg, k.lookup_pkg = saved.scope, saved.pkg, saved.lookup_pkg
 	k.impl_type, k.file, k.file_node = saved.impl_type, saved.file, saved.file_node
+	k.proc_literal, k.generic_depth = saved.proc_literal, saved.generic_depth
 }
 
 enter_symbol_location :: proc(k: ^Checker, sym: ^Symbol, subject := INVALID_TYPE) {

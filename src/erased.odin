@@ -681,15 +681,11 @@ interface_slots :: proc(k: ^Checker, info: ^Interface_Info, args: []Generic_Arg,
 			bind_generic_name(k, scope, Generic_Binding{name = parameter.name, span = parameter.span, arg = args[index]})
 		}
 	}
-	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
-	saved_file, saved_node := k.file, k.file_node
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
 	k.scope, k.pkg, k.lookup_pkg = scope, info.pkg, info.pkg
 	if info.file_node != nil {
 		k.file, k.file_node = info.file, info.file_node
-	}
-	defer {
-		k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
-		k.file, k.file_node = saved_file, saved_node
 	}
 
 	for requirement in info.node.requirements {
@@ -763,7 +759,7 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 	witness.name = witness_llvm_name(k.c, info.symbol, concrete, args)
 
 	slots := make([]Witness_Slot, len(flattened), k.c.semantic_allocator)
-	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
+	saved := save_checker_location(k)
 	for entry, index in flattened {
 		owner := interface_info_for(k, entry.owner)
 		// The coherent rule, applied per slot: the package that declares the slot
@@ -783,7 +779,7 @@ request_witness :: proc(k: ^Checker, info: ^Interface_Info, concrete: Type_Id, a
 			result = result_type,
 		}
 	}
-	k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
+	restore_checker_location(k, saved)
 	witness.slots = slots
 	if k.c.speculation_depth == 0 {
 		k.c.witnesses[key] = witness

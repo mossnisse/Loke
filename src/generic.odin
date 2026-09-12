@@ -803,7 +803,7 @@ infer_generic_arguments :: proc(k: ^Checker, template: ^Generic_Template, args: 
 	// Inference resolves the template's own written types, so it runs positioned
 	// at the template exactly as instantiation does.
 	saved := enter_instance(k, template, scope)
-	defer leave_instance(k, saved)
+	defer restore_checker_location(k, saved)
 
 	// This is a property of the written call, before `$` arguments disappear
 	// from an instantiated signature. Delaying it until `build_candidate` would
@@ -1177,7 +1177,7 @@ report_rejected_instance :: proc(k: ^Checker, template: ^Generic_Template, insta
 	}
 	name := generic_instance_name(k.c, template.symbol, instance.bindings)
 	saved := enter_instance(k, template, instance.scope)
-	defer leave_instance(k, saved)
+	defer restore_checker_location(k, saved)
 
 	append(&k.c.instantiation_stack, Instantiation_Frame{description = name, span = span})
 	defer pop(&k.c.instantiation_stack)
@@ -1250,32 +1250,10 @@ note_instantiation_stack :: proc(k: ^Checker) {
 
 // The checker state an instance displaces while `body` runs positioned at it:
 // its own scope, the definition's package for method/operator/extension
-// lookup, and its file for visibility defaults. Fields are named rather than
-// positional — `pkg`/`lookup` are both `Package_Id`, `file`/`generic` both
-// integers — so a positional save/restore could swap either pair unnoticed.
+// lookup, and its file for visibility defaults.
 @(private = "file")
-Instance_Context :: struct {
-	scope:       ^Scope,
-	pkg, lookup: Package_Id,
-	impl:        Type_Id,
-	file:        u32,
-	node:        ^File,
-	literal:     ^Expr_Proc,
-	generic:     int,
-}
-
-@(private = "file")
-enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) -> Instance_Context {
-	saved := Instance_Context {
-		scope   = k.scope,
-		pkg     = k.pkg,
-		lookup  = k.lookup_pkg,
-		impl    = k.impl_type,
-		file    = k.file,
-		node    = k.file_node,
-		literal = k.proc_literal,
-		generic = k.generic_depth,
-	}
+enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) -> Checker_Location {
+	saved := save_checker_location(k)
 	k.scope = scope
 	k.pkg = template.pkg
 	k.lookup_pkg = template.lookup_pkg
@@ -1286,14 +1264,6 @@ enter_instance :: proc(k: ^Checker, template: ^Generic_Template, scope: ^Scope) 
 		k.file, k.file_node = template.file, template.file_node
 	}
 	return saved
-}
-
-@(private = "file")
-leave_instance :: proc(k: ^Checker, saved: Instance_Context) {
-	k.scope, k.pkg, k.lookup_pkg = saved.scope, saved.pkg, saved.lookup
-	k.impl_type, k.file, k.file_node = saved.impl, saved.file, saved.node
-	k.proc_literal = saved.literal
-	k.generic_depth = saved.generic
 }
 
 // ------------------------------------------------------- record instances --
@@ -1334,7 +1304,7 @@ instantiate_record_body :: proc(
 	instance.symbol = symbol_id
 	instance.type = type
 	saved := enter_instance(k, template, instance.scope)
-	defer leave_instance(k, saved)
+	defer restore_checker_location(k, saved)
 
 	// The bounds come first because they are what makes a field type well formed
 	// in the first place: `struct($N: int) where N > 0 { items: [N]int }` is
@@ -1537,7 +1507,7 @@ instantiate_procedure_signature :: proc(
 	literal.symbol = symbol_id
 
 	saved := enter_instance(k, template, instance.scope)
-	defer leave_instance(k, saved)
+	defer restore_checker_location(k, saved)
 
 	before := k.c.error_count
 	clone.sig_state = .Checked
@@ -1574,7 +1544,7 @@ promote_generic_instance :: proc(k: ^Checker, instance: ^Instance, span: Span) {
 	}
 
 	saved := enter_instance(k, template, instance.scope)
-	defer leave_instance(k, saved)
+	defer restore_checker_location(k, saved)
 
 	// A body is diagnosed against the call that wanted it, which is the selection
 	// promoting it here. The instance's own span is a poor substitute: a silent
@@ -1812,20 +1782,14 @@ install_one_generic_impl :: proc(k: ^Checker, template: ^Generic_Template, insta
 		return
 	}
 	scope := new_scope(k.c, block.scope, .Local)
-	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_generic := k.generic_depth
+	saved := save_checker_location(k)
+	defer restore_checker_location(k, saved)
 	k.scope = scope
 	k.pkg = block.pkg
 	k.lookup_pkg = block.pkg
 	k.generic_depth += 1
 	if block.file_node != nil {
 		k.file, k.file_node = block.file, block.file_node
-	}
-	defer {
-		k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
-		k.impl_type, k.file, k.file_node = saved_impl, saved_file, saved_node
-		k.generic_depth = saved_generic
 	}
 
 	// Match the block's written arguments against this instance's bound ones.
@@ -2082,9 +2046,7 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 		}
 		k.c.pending_impl_instances[index].checked = true
 
-		saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
-		saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-		saved_generic := k.generic_depth
+		saved := save_checker_location(k)
 		k.scope = pending.scope
 		k.pkg, k.lookup_pkg = pending.pkg, pending.pkg
 		k.impl_type = pending.subject
@@ -2121,8 +2083,6 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 			}
 		}
 
-		k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
-		k.impl_type, k.file, k.file_node = saved_impl, saved_file, saved_node
-		k.generic_depth = saved_generic
+		restore_checker_location(k, saved)
 	}
 }

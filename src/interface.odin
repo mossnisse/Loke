@@ -462,16 +462,12 @@ interface_check :: proc(
 		})
 	}
 
-	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal, saved_result := k.proc_literal, k.result_type
-	saved_place := k.place_position
+	saved := save_checker_location(k)
+	saved_result, saved_place := k.result_type, k.place_position
 	k.interface_depth += 1
 	defer {
-		k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
-		k.impl_type, k.file, k.file_node = saved_impl, saved_file, saved_node
-		k.proc_literal, k.result_type = saved_literal, saved_result
-		k.place_position = saved_place
+		restore_checker_location(k, saved)
+		k.result_type, k.place_position = saved_result, saved_place
 		k.interface_depth -= 1
 	}
 	k.proc_literal = nil
@@ -530,10 +526,8 @@ interface_predicates_check :: proc(
 		})
 	}
 
-	saved_scope, saved_pkg, saved_lookup := k.scope, k.pkg, k.lookup_pkg
-	saved_impl, saved_file, saved_node := k.impl_type, k.file, k.file_node
-	saved_literal, saved_result := k.proc_literal, k.result_type
-	saved_place := k.place_position
+	saved := save_checker_location(k)
+	saved_result, saved_place := k.result_type, k.place_position
 	k.c.speculation_depth += 1
 	k.interface_depth += 1
 	k.scope, k.pkg, k.lookup_pkg = scope, info.pkg, info.pkg
@@ -544,10 +538,8 @@ interface_predicates_check :: proc(
 		k.file, k.file_node = info.file, info.file_node
 	}
 	defer {
-		k.scope, k.pkg, k.lookup_pkg = saved_scope, saved_pkg, saved_lookup
-		k.impl_type, k.file, k.file_node = saved_impl, saved_file, saved_node
-		k.proc_literal, k.result_type = saved_literal, saved_result
-		k.place_position = saved_place
+		restore_checker_location(k, saved)
+		k.result_type, k.place_position = saved_result, saved_place
 		k.interface_depth -= 1
 		k.c.speculation_depth -= 1
 	}
