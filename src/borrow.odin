@@ -1238,10 +1238,22 @@ analyze_program_provenance :: proc(k: ^Checker) {
 	}
 	queue := make([dynamic]^Expr_Proc, 0, len(k.c.checked_bodies), context.temp_allocator)
 	queued := make([]bool, len(k.c.symbols), context.temp_allocator)
+	// Discovery recorded every body's callees; a changed summary has to reach the
+	// other direction, so the same pass inverts those edges. Every dependency list
+	// that will ever exist is already recorded above, so inverting once here is
+	// the whole graph.
+	callers := make(map[Symbol_Id][dynamic]^Expr_Proc, context.temp_allocator)
 	for body in k.c.checked_bodies {
-		if body.clean && body.literal != nil {
-			append(&queue, body.literal)
-			queued[int(body.literal.symbol)] = true
+		if !body.clean || body.literal == nil {
+			continue
+		}
+		append(&queue, body.literal)
+		queued[int(body.literal.symbol)] = true
+		for callee in k.c.result_summary_dependencies[body.literal.symbol] {
+			if callee not_in callers {
+				callers[callee] = make([dynamic]^Expr_Proc, 0, 4, context.temp_allocator)
+			}
+			append(&callers[callee], body.literal)
 		}
 	}
 	for head := 0; head < len(queue); head += 1 {
@@ -1250,20 +1262,12 @@ analyze_program_provenance :: proc(k: ^Checker) {
 		if !summarize_body(k, literal) {
 			continue
 		}
-		for caller in k.c.checked_bodies {
-			if !caller.clean || caller.literal == nil {
-				continue
-			}
-			depends := false
-			for callee in k.c.result_summary_dependencies[caller.literal.symbol] {
-				if callee == literal.symbol {
-					depends = true
-					break
-				}
-			}
-			index := int(caller.literal.symbol)
-			if depends && !queued[index] {
-				append(&queue, caller.literal)
+		// Bound to a local first: iterating the map index directly miscompiles.
+		affected := callers[literal.symbol]
+		for caller in affected {
+			index := int(caller.symbol)
+			if !queued[index] {
+				append(&queue, caller)
 				queued[index] = true
 			}
 		}
