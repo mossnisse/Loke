@@ -30,6 +30,16 @@ impl Field_Order {
 	}
 }
 
+// A comparator that is not a strict weak ordering. Nothing promises the result
+// is sorted, but the runtime introsort must still stay inside the slice and
+// finish: `sort_partition`'s scan away from the pivot is bounded by `low`
+// precisely so arbitrary user code cannot walk it off the front.
+Always_Before :: struct { }
+
+impl Always_Before {
+	call :: proc(self, left, right: int) -> bool { return true; }
+}
+
 main :: proc() {
 	s := []mut int{1, 6, 3, 5 ,7, 3, 0};
 	slice.sort(s);
@@ -75,6 +85,24 @@ main :: proc() {
 	descending = false;
 	slice.sort_by(cards, Field_Order{false, &descending});
 	fmt.println(cards[0].tag, cards[1].tag, cards[2].tag);
+
+	// Past `LOKE_RT_SORT_SMALL`, so the quicksort partition runs rather than the
+	// insertion tail. A broken comparator may permute these however it likes; it
+	// may not lose, duplicate, or reach past one of them.
+	junk: [dynamic]int = {};
+	i := 0;
+	for (i < 64) {
+		junk.append(i % 7);
+		i = i + 1;
+	}
+	slice.sort_by(junk[:], Always_Before{});
+	total := 0;
+	i = 0;
+	for (i < junk.len()) {
+		total = total + junk[i];
+		i = i + 1;
+	}
+	fmt.println("unordered comparator:", junk.len(), total);
 
 	fmt.println(slice.is_sorted(s), slice.is_sorted(r));
 	fmt.println(slice.is_reverse_sorted(r), slice.is_reverse_sorted(s));

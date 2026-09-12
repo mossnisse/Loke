@@ -764,7 +764,9 @@ The comparator may be a record containing configuration or checked borrows. It
 is borrowed for the call, retained nowhere, and sorting allocates nothing. Its
 `call` method must define a strict weak ordering. The sort is not stable, so
 elements for which neither direction is before the other may appear in either
-order.
+order. A comparator that is not a strict weak ordering leaves the elements in an
+unspecified order rather than reaching past them: the sort is still a
+permutation of the slice, and still terminates.
 
 All three procedures accept `[]mut T`; passing a read-only `[]T` is a
 compile-time error, because a read-only slice has no mutable storage to sort.

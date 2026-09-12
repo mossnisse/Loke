@@ -1213,7 +1213,13 @@ static void sort_choose_pivot(const loke_rt_sort_v1 *s, int64_t low, int64_t hig
 
 /* Hoare partition around the value now at `low`. Comparing against the slot
  * rather than a copy is what keeps the pivot out of the stack buffer; the loop
- * never moves it, because both scans stop before crossing it. */
+ * never moves it, because both scans stop before crossing it.
+ *
+ * Both scans are also bounded by the range itself, not only by the comparison.
+ * A well-behaved `less` stops each one on its own - neither `x < x` nor a
+ * strict weak ordering's pivot can pass - but `sort_by` hands this loop
+ * arbitrary user code, and a comparator that answers "before" to everything
+ * would otherwise walk `j` off the front of the slice. */
 static int64_t sort_partition(const loke_rt_sort_v1 *s, int64_t low, int64_t high) {
 	int64_t i = low;
 	int64_t j = high;

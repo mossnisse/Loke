@@ -58,9 +58,6 @@ Emitter :: struct {
 	// The LLVM vector-reduction intrinsics this module declares, keyed by their
 	// mangled name so one shape is declared once.
 	simd_intrinsics: map[string]bool,
-	// The stateful sort entry is emitted lazily, so programs that never use
-	// `slice.sort_by` retain the existing runtime declaration and golden IR.
-	sort_by_declared: bool,
 	globals:  [dynamic]string,
 }
 

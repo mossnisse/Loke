@@ -136,7 +136,11 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 @(private = "file")
 check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.value_category = .Value
-	if !check_builtin_arity(k, v, ident, 2) {
+	if len(v.args) != 2 {
+		errorf(
+			k.c, v.span, "L0322", "`%s` takes 2 arguments, found %d", ident.name, len(v.args),
+		)
+		v.type = INVALID_TYPE
 		return
 	}
 
@@ -165,7 +169,8 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	element := values_info.element
 	comparator := context_info.element
 	name := intern_identifier(k.c, "call")
-	matches := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+	match := INVALID_SYMBOL
+	matches := 0
 	for candidate in method_candidates(k, comparator, name) {
 		sym := symbol_of(k.c, candidate)
 		if sym != nil && slot_matches(
@@ -174,10 +179,11 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 			[]Param_Mode{.Borrow, .Value, .Value},
 			TYPE_BOOL, false,
 		) {
-			append(&matches, candidate)
+			match = candidate
+			matches += 1
 		}
 	}
-	if len(matches) != 1 {
+	if matches != 1 {
 		errorf(
 			k.c, v.span, "L0651",
 			"`%s` must provide exactly one `call(self, left: %s, right: %s) -> bool` method for sorting",
@@ -190,21 +196,8 @@ check_slice_sort_by :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	v.bound = make([]Expr, 2, k.c.semantic_allocator)
 	v.bound[0] = v.args[0].value
 	v.bound[1] = v.args[1].value
-	v.sort_comparator = matches[0]
+	v.sort_comparator = match
 	v.type = TYPE_VOID
-}
-
-@(private = "file")
-check_builtin_arity :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, wanted: int) -> bool {
-	if len(v.args) == wanted {
-		return true
-	}
-	errorf(
-		k.c, v.span, "L0322", "`%s` takes %d arguments, found %d",
-		ident.name, wanted, len(v.args),
-	)
-	v.type = INVALID_TYPE
-	return false
 }
 
 // A built-in takes positional value arguments and nothing else: it has no

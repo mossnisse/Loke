@@ -8,6 +8,7 @@
 [2.5, 0.5, -1]
 1 3 2
 30 10 20
+unordered comparator: 64 189
 true false
 true false
 (index: int, found: bool){index = 4, found = true}

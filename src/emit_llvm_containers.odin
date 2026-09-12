@@ -34,6 +34,7 @@ emit_container_declarations :: proc(e: ^Emitter) {
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_map_clear(ptr, ptr)")
 	fmt.sbprintln(&e.b, "declare i32 @loke_rt_v1_map_shrink(ptr, ptr, i64)")
 	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_sort(ptr, i64, i64, ptr, i32)")
+	fmt.sbprintln(&e.b, "declare void @loke_rt_v1_sort_by(ptr, i64, i64, ptr, ptr)")
 }
 
 // The operation table for one concrete container type, made once and reused.
@@ -155,10 +156,6 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // the comparator and element addresses; the runtime retains neither.
 @(private)
 emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
-	if !e.sort_by_declared {
-		e.sort_by_declared = true
-		append(&e.globals, "declare void @loke_rt_v1_sort_by(ptr, i64, i64, ptr, ptr)\n")
-	}
 	if len(v.bound) != 2 || v.sort_comparator == INVALID_SYMBOL {
 		backend_fail(e, "a checked slice sort_by has no comparator")
 		return
@@ -179,14 +176,21 @@ emit_slice_sort_by :: proc(e: ^Emitter, v: ^Expr_Call) {
 }
 
 // One adapter per concrete comparator method. The method symbol already fixes
-// both `C` and `T`, so its id is a complete and stable key within this module.
+// both `C` and `T` — a generic `call` cannot satisfy the interface slot — but
+// the element is keyed too, so a later relaxation of that would collide loudly
+// instead of reusing an adapter that loads the wrong type.
 @(private = "file")
 sort_by_thunk :: proc(e: ^Emitter, element: Type_Id, method: Symbol_Id) -> string {
-	name := fmt.aprintf("@loke.csortby.%d", int(method))
+	name := fmt.aprintf("@loke.csortby.%d.%d", int(method), int(element))
 	if e.container_thunks[name] {
 		return name
 	}
 	e.container_thunks[name] = true
+	// A thunk is shared with user code, so it never inherits a dead body's licence
+	// to abort on a move-only copy, exactly as `container_thunk` does not.
+	saved := e.synth_bodies
+	e.synth_bodies = false
+	defer e.synth_bodies = saved
 
 	frame := begin_function_emission(e)
 	open_function(e, "define private i32 %s(ptr %%state, ptr %%a, ptr %%b)", name)
