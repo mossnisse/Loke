@@ -3992,7 +3992,7 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 #### Copy-cost diagnostics
 
-Copying a large aggregate or managed owner is valid, but tools may warn when a binding, assignment, parameter, return, or explicit `clone` duplicates substantial data. An ordinary `value: T` parameter borrows a managed owner and is not a copy site. Use `move` for ownership transfer and `inout` only when mutation is intended.
+Copying a large aggregate or managed owner is valid, but tools may warn when a binding, assignment, parameter, return, a place operand of [`or_else` or `or_return`](#operator-ownership), or an explicit `clone` duplicates substantial data. An ordinary `value: T` parameter borrows a managed owner and is not a copy site. Use `move` for ownership transfer and `inout` only when mutation is intended.
 
 ```odin
 sum :: proc(values: [dynamic]int) -> int {

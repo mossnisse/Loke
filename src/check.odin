@@ -1952,6 +1952,13 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 // is gated as unimplemented, naming the wrong problem and a milestone that
 // will never actually fix it.
 report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
+	// The parser already said what is wrong with an error node, which is why
+	// `resolve_type_syntax` answers `INVALID_TYPE` for one in silence. Saying
+	// anything further here turns an ordinary syntax mistake into a second
+	// diagnostic calling it a compiler defect.
+	if _, is_error := syntax.(^Expr_Error); is_error {
+		return
+	}
 	if ident, is_ident := syntax.(^Expr_Ident); is_ident {
 		if ident.name == "Simd" {
 			errorf(k.c, ident.span, "L0681", "`Simd` needs its element type and lane count, as in `Simd(f32, 4)`")
@@ -3234,6 +3241,14 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		return terminated
 	}
 	if k.result_type == INVALID_TYPE {
+		// `result_type` holds INVALID_TYPE both for a procedure with no result and
+		// for one whose written result did not resolve, so it cannot tell them
+		// apart on its own. The signature's syntax can: a written result that
+		// failed was already reported where it was written, and calling that
+		// procedure "returns nothing" would blame the body for the signature.
+		if k.proc_literal != nil && k.proc_literal.signature.result != nil {
+			return terminated
+		}
 		errorf(k.c, s.span, "L0326", "this procedure returns nothing")
 		return terminated
 	}

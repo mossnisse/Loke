@@ -37,3 +37,11 @@ main :: proc() {
 
 	_ = ys; _ = f; _ = stray;
 }
+
+// The deleted multi-result spelling is a syntax mistake, not an unhandled
+// construct. The parser reports it and leaves an error node behind; every
+// position that requires a type has to stay silent about that node rather than
+// report the shape written around it as a compiler defect. The body must stay
+// silent too: an unresolved result is not a procedure that returns nothing, and
+// blaming the `return` would answer for the signature.
+two_results :: proc() -> (int, int) { return {}; }

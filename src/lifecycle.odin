@@ -546,6 +546,11 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 		// A container literal replacing a destination with a written policy is
 		// built with that policy's provider, not with a default-backed temporary.
 		bind_literal_allocator(k.c, value, place_root_symbol(k.c, s.lhs[index]))
+		// `_ = place` takes nothing, so there is no copy to make: a clone here
+		// allocates a value the discard has no destination for and never drops.
+		if is_discard(s.lhs[index]) {
+			continue
+		}
 		if expression_is_borrowed_place(k.c, value) {
 			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop)
 		}
@@ -640,6 +645,8 @@ Copy_Site :: enum {
 	Binding,
 	Assignment,
 	Return,
+	Or_Else,
+	Or_Return,
 }
 
 @(private = "file")
@@ -649,6 +656,8 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	case .Binding:    return "binding"
 	case .Assignment: return "assignment"
 	case .Return:     return "return"
+	case .Or_Else:    return "`or_else`"
+	case .Or_Return:  return "`or_return`"
 	}
 	return "copy"
 }

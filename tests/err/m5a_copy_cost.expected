@@ -1,16 +1,23 @@
 L0502
-@50:46
+@51:46
 `Only` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 
 warning[L0507]: this return clones `value`
-@46:47
+@47:47
 warning[L0507]: this argument copies 16 bytes from `pair`
-@58:22
+@59:22
 warning[L0507]: this binding copies 16 bytes from `pair`
-@65:12
-warning[L0507]: this binding clones `res`
 @66:12
+warning[L0507]: this binding clones `res`
+@67:12
 warning[L0507]: this assignment copies 16 bytes from `pair`
-@67:11
+@68:11
 warning[L0507]: this binding copies 16 bytes from `pair`
-@76:13
+@77:13
+warning[L0507]: this `or_else` clones `maybe`
+@90:15
+warning[L0507]: this `or_return` clones `outcome`
+@96:11
+
+!:83:6
+!:84:6

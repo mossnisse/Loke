@@ -26,3 +26,9 @@ L0630
 a procedure value needs a body
 @36:7
 
+L0238
+a procedure returns at most one value
+@47:26
+
+!L0350
+!L0326

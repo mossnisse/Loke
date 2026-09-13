@@ -960,6 +960,14 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			return prov_load_content(graph, operand_loans, nil, v.type, v.span)
 		}
 		if v.op == .Or_Return {
+			// Either payload may be the one copied out of a place, so the report
+			// names the fallible union rather than guessing a path.
+			if graph.mode == .Lifecycle && v.borrows {
+				report_copy_cost(
+					graph.k, .Or_Return, expr_span(v.operand), v.operand,
+					expr_base(v.operand).type, graph.loop_depth > 0,
+				)
+			}
 			entry := graph.current
 			resume := new_flow_block(graph)
 			link(graph, entry, resume)
@@ -1099,6 +1107,14 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Or_Else:
 		value_loans := walk_flow_expr(graph, v.value)
+		// design.md "Operator ownership": a place operand leaves the source live
+		// and copies the success payload out of it, so the same refactor that
+		// names a temporary turns a transfer into a clone. Only the payload is
+		// reported — `or_else` leaves a place's failure alone. The `Prov_` modes
+		// rebuild this topology read-only and must not repeat the warning.
+		if graph.mode == .Lifecycle && v.borrows {
+			report_copy_cost(graph.k, .Or_Else, expr_span(v.value), v.value, v.type, graph.loop_depth > 0)
+		}
 		entry := graph.current
 		merge := new_flow_block(graph)
 		// Success skips the fallback; failure evaluates it.
