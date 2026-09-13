@@ -2865,6 +2865,32 @@ numbers.append(16);
 
 A `return` evaluates and transfers its result before scope-exit actions run; a deferred statement cannot change it. Returning a non-owning parameter or borrowed place may require a clone. See [Parameter semantics](#parameter-semantics-and-abi-lowering).
 
+#### Value semantics and the ownership rule
+
+A variable holds a value, not a reference to one. Copying an owning value produces an independent value, and sharing is written rather than inferred: a pointer, slice, or view is the explicit opt-out, and a [clone is ownership-recursive, not deep](#lifecycle-hooks-and-resource-types) — it duplicates owned storage and stops at the first borrow it reaches. The sharing that is not written belongs to the *type*: [`string`](#string-type) and [`shared(T)`](#shared-ownership) retain their storage when copied, because each is immutable or explicitly shared and carries the handle count that makes retention safe.
+
+This is a decision, not an omission. A language that transfers by default and writes every duplication needs no copy rule at all, and gets an infallible assignment in exchange. Loke keeps the convenient copy and pays for it twice: copying a mutable owner may allocate, so an assignment is a failure site governed by [allocation failure](#allocation-failure); and a [move-only](#lifecycle-hooks-and-resource-types) value has no copy at all, so a place is written `move(...)` in every context below.
+
+One rule covers every context that takes a value. **A place stays live: it is borrowed wherever a borrow is indistinguishable from a copy, and copied otherwise. A temporary, or `move(x)`, transfers.** Making a borrow indistinguishable from a copy is what [Borrows and lifetimes](#borrows-and-lifetimes) is for — it is why an ordinary parameter can borrow a managed owner without the caller being able to tell.
+
+| context | a place | a temporary, or `move(x)` |
+| --- | --- | --- |
+| [binding and assignment](#assignment-statements) | cloned | transferred |
+| ordinary parameter `value: T` | borrowed for the call | borrowed; the temporary is destroyed after the full expression |
+| `borrow T` parameter, and a plain [`self`](#receiver-forms) | aliases the caller's storage | borrowed for the full expression |
+| `inout T` parameter | exclusive mutable borrow | not accepted: `inout` names a caller's variable |
+| `move T` parameter | transferred, and written `move(x)` at the call | transferred, with no marker |
+| [result](#parameter-semantics-and-abi-lowering) | a borrowed parameter or place is cloned | a managed local, temporary, or `move` parameter is transferred |
+| [`switch` subject](#switch-ownership) | payload borrowed, and the binding is immutable | payload consumed |
+| [`or_else`](#or_else-expression) | success payload copied out, failure left alone | payload transferred, and a managed failure dropped before the fallback |
+| [`or_return`](#or_return-operator) | the selected payload copied out, source stays live | transferred |
+| aggregate literal element | cloned | transferred |
+| [container insertion](#container-insertion) | cloned | transferred |
+
+[Iteration](#borrowing-iteration) is the one context that copies from a place rather than borrowing it: an ordinary `foreach (item in place)` clones each element, and `place.refs()` is the borrowing traversal.
+
+Cost varies with the shape of an expression; meaning does not. `produce() or_else fallback()` transfers a payload and `outcome or_else fallback()` copies one, yet both yield the same value and leave the same things live — naming an intermediate changes what the program pays, never what it computes. Because the difference is cost rather than meaning, it is reported rather than forbidden: see [Copy-cost diagnostics](#copy-cost-diagnostics).
+
 #### Values that outlive every scope
 
 File-scope and [`static`](#storage-modifiers) managed values live for the process lifetime and are not automatically dropped. The operating system reclaims their memory at process exit; leak checkers report it as reachable.
@@ -3376,7 +3402,7 @@ x:     = 123; // default type for an integer literal is `int`
 x := 123;
 ```
 
-Assignment has value semantics. Copying a mutable owning value creates an independent value by recursively cloning its owned storage. Copying an immutable or explicitly shared owning value, such as `string` or `shared(T)`, may retain shared storage. Copying a non-owning pointer, slice, or view preserves its reference semantics.
+Assignment has value semantics. Copying a mutable owning value creates an independent value by recursively cloning its owned storage. Copying an immutable or explicitly shared owning value, such as `string` or `shared(T)`, may retain shared storage. Copying a non-owning pointer, slice, or view preserves its reference semantics. Assignment is one of the contexts the [ownership rule](#value-semantics-and-the-ownership-rule) covers, and that table is where every other one is listed.
 
 ```odin
 a := [dynamic]int{1, 2, 3};
@@ -4998,7 +5024,7 @@ A producer's result count is its own, and a destination never changes it. Where 
 
 #### Operator ownership
 
-Both operators read their operand once, and what they do with the payload depends on whether that operand is a place:
+Both operators read their operand once, and what they do with the payload depends on whether that operand is a place — the general [ownership rule](#value-semantics-and-the-ownership-rule) applied to a fallible operand:
 
 | operand | success payload | failure payload |
 | --- | --- | --- |
