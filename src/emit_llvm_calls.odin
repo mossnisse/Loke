@@ -88,7 +88,7 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_transmute(e, v, as_type)
 		case .Unsafe_Take:
 			// The value leaves; the storage keeps the bits nobody may read again.
-			return load(e, llvm_type(e, as_type), emit_address(e, v.bound[0]))
+			return load_place(e, as_type, emit_address(e, v.bound[0]))
 		case .Unsafe_Write:
 			// A store and nothing else: the storage held no value, so there is
 			// nothing there to drop first. The value still arrives the way any

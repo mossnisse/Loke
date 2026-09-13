@@ -1,0 +1,23 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) {
+		id := self.id;
+		self.id = 0;
+		fmt.println("drop", id);
+		if (id == 2) { panic("clear drop failed"); }
+	}
+}
+
+main :: proc() {
+	held: container.Small_Array(Tracked, 3) = {};
+	one := Tracked{1};
+	two := Tracked{2};
+	held.append_moved(move(one));
+	held.append_moved(move(two));
+	held.clear();
+}

@@ -1,0 +1,28 @@
+package main;
+
+import "core:container";
+import "core:fmt";
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+Tracked :: struct { id: int }
+impl Tracked {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Tracked, Allocator_Error) {
+		if (self.id == 9) {
+			p := new(Huge, allocator) or_return;
+			free(p);
+		}
+		return .ok(Tracked{self.id});
+	}
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+
+main :: proc() {
+	held: container.Small_Array(Tracked, 3) = {};
+	one := Tracked{1};
+	two := Tracked{2};
+	held.append_moved(move(one));
+	held.append_moved(move(two));
+	failing := Tracked{9};
+	held.insert(1, failing);
+	fmt.println("unreachable");
+}

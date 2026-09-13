@@ -2555,7 +2555,12 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, values:
 			if fields == nil {
 				element_type = underlying_info(k.c, target).element
 			} else {
-				element_type = symbol_of(k.c, fields[index]).type
+				field := symbol_of(k.c, fields[index])
+				element_type = field.type
+				if field.initialized_by != INVALID_SYMBOL {
+					elements[index] = capacity_const(k.c, element_type)
+					continue
+				}
 			}
 			zero, ok := zero_const(k.c, element_type)
 			if !ok {
@@ -2575,6 +2580,18 @@ fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, values:
 	aggregate.elements = elements
 	v.is_const = true
 	v.const_value = Const_Value{kind = .Aggregate, aggregate = aggregate}
+}
+
+// The all-zero bytes of a fixed array field whose elements are not yet values.
+// Invalid element constants preserve that distinction for the evaluator, while
+// the backend writes their inert representation as `zeroinitializer`.
+capacity_const :: proc(c: ^Compiler, type: Type_Id) -> Const_Value {
+	info := underlying_info(c, type)
+	elements := make([]Const_Value, info.count, c.semantic_allocator)
+	aggregate := new(Const_Aggregate, c.semantic_allocator)
+	aggregate.type = type
+	aggregate.elements = elements
+	return Const_Value{kind = .Aggregate, aggregate = aggregate}
 }
 
 // The compile-time zero value of every runtime M2 type (design.md "Zero
@@ -2637,6 +2654,10 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 			symbol := symbol_of(c, field)
 			if symbol == nil {
 				return Const_Value{}, false
+			}
+			if symbol.initialized_by != INVALID_SYMBOL {
+				elements[index] = capacity_const(c, symbol.type)
+				continue
 			}
 			element, ok := zero_const(c, symbol.type)
 			if !ok {

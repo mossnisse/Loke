@@ -576,7 +576,14 @@ zero_value :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
 		elements, allocated := eval_elements(ev, count)
 		if !allocated { return Eval_Value{}, false }
 		for index in 0 ..< count {
-			element_type := kind == .Array ? element : symbol_of(ev.k.c, fields[index]).type
+			field := kind == .Array ? nil : symbol_of(ev.k.c, fields[index])
+			element_type := kind == .Array ? element : field.type
+			if field != nil && field.initialized_by != INVALID_SYMBOL {
+				value, ok := value_from_const(ev, capacity_const(ev.k.c, field.type), field.type)
+				if !ok { return Eval_Value{}, false }
+				elements[index] = value
+				continue
+			}
 			value, ok := zero_value(ev, element_type)
 			if !ok { return Eval_Value{}, false }
 			elements[index] = value
@@ -982,12 +989,33 @@ eval_compare :: proc(ev: ^Evaluator, op: Token_Kind, a, b: Eval_Value) -> (bool,
 				return op == .Eq_Eq, true
 			}
 		}
+		info := underlying_info(ev.k.c, a.type)
 		for element, index in a.elements {
 			if !equal {
 				break
 			}
-			same, ok := eval_compare(ev, .Eq_Eq, element, b.elements[index])
-			equal = ok && same
+			field := info != nil && info.kind == .Struct ? symbol_of(ev.k.c, info.fields[index]) : nil
+			counter := field != nil ? symbol_of(ev.k.c, field.initialized_by) : nil
+			if counter == nil {
+				same, ok := eval_compare(ev, .Eq_Eq, element, b.elements[index])
+				equal = ok && same
+				continue
+			}
+			left_count, left_ok := bi_to_i64(ev.alloc, a.elements[counter.index].integer)
+			right_count, right_ok := bi_to_i64(ev.alloc, b.elements[counter.index].integer)
+			count := min(left_count, right_count)
+			if !left_ok || !right_ok || count < 0 || count > i64(len(element.elements)) ||
+			   count > i64(len(b.elements[index].elements)) {
+				eval_fail(ev, ev.origin, "L0343", "an initialized prefix count is out of range")
+				return false, false
+			}
+			for at in 0 ..< int(count) {
+				same, ok := eval_compare(ev, .Eq_Eq, element.elements[at], b.elements[index].elements[at])
+				if !ok || !same {
+					equal = false
+					break
+				}
+			}
 		}
 		return equal == (op == .Eq_Eq), true
 	}
@@ -2283,6 +2311,45 @@ eval_builtin :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (Eval_Va
 			return Eval_Value{}, false
 		}
 		slot^ = zeroed
+		return void, true
+
+	case .Unsafe_Take:
+		place, ok := eval_place(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		value := place^
+		place^ = Eval_Value{kind = .Invalid, type = value.type}
+		return value, true
+
+	case .Unsafe_Write:
+		place, ok := eval_place(ev, v.bound[0])
+		if !ok {
+			return Eval_Value{}, false
+		}
+		value: Eval_Value
+		if moved, is_move := v.bound[1].(^Expr_Move); is_move {
+			source, source_ok := eval_place(ev, moved.value)
+			if !source_ok {
+				return Eval_Value{}, false
+			}
+			value = source^
+			source^ = Eval_Value{kind = .Invalid, type = value.type}
+		} else {
+			computed, computed_ok := eval_expr(ev, v.bound[1])
+			if !computed_ok {
+				return Eval_Value{}, false
+			}
+			value = computed
+			if expression_is_borrowed_place(ev.k.c, v.bound[1]) {
+				value, computed_ok = copy_value(ev, computed)
+				if !computed_ok {
+					return Eval_Value{}, false
+				}
+			}
+		}
+		value.type = place.type
+		place^ = value
 		return void, true
 
 	case .Unsafe_Forget:

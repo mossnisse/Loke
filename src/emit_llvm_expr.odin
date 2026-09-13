@@ -75,6 +75,12 @@ llvm_const :: proc(e: ^Emitter, value: Const_Value, type: Type_Id) -> string {
 	if info == nil {
 		return "0"
 	}
+	// An invalid constant inside `@(initialized)` capacity is not a value of the
+	// element type. It still has the inert all-zero representation the enclosing
+	// record's zero value writes without inspecting the element.
+	if value.kind == .Invalid {
+		return "zeroinitializer"
+	}
 	#partial switch info.kind {
 	case .Typeid:
 		// Symbolic during checking, numeric here: `freeze_typeids` has assigned a

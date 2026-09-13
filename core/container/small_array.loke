@@ -167,9 +167,9 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
-		self.open_slot(index);
-		unsafe.write(self.items[index], value);
+		unsafe.write(self.items[self.count], value);
 		self.count += 1;
+		self.move_last_to(index);
 		return .ok({});
 	}
 
@@ -194,15 +194,15 @@ impl Small_Array($T, $N) {
 			panic("Small_Array index is out of range");
 		}
 		if (self.count == N) { panic("Small_Array is full"); }
-		self.open_slot(index);
-		unsafe.write(self.items[index], move(value));
+		unsafe.write(self.items[self.count], move(value));
 		self.count += 1;
+		self.move_last_to(index);
 	}
 
 	// The last element, removed, or .none when empty, like a dynamic array.
 	//
-	// Every retirement below takes its element out with `unsafe.take` and then
-	// shortens the length, so the slot it leaves behind is capacity again: no
+	// Every retirement below shortens around the element it takes, so the slot it
+	// leaves behind is capacity again: no
 	// element is ever reachable from two indices at once, and none is left where
 	// the drop of `self` would release it a second time.
 	pop :: proc(self: inout) -> Option(T) {
@@ -211,14 +211,13 @@ impl Small_Array($T, $N) {
 		return .some(unsafe.take(self.items[self.count]));
 	}
 
-	// Order-preserving: everything after `index` shifts down one place. The
-	// vacated slot travels up with each swap and ends past the new length.
+	// Order-preserving: each following element moves down into the vacant slot.
 	remove :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
 		removed := unsafe.take(self.items[index]);
 		at := index;
 		for (at + 1 < self.count) {
-			self.items[:].swap(at, at + 1);
+			unsafe.write(self.items[at], unsafe.take(self.items[at + 1]));
 			at += 1;
 		}
 		self.count -= 1;
@@ -231,7 +230,7 @@ impl Small_Array($T, $N) {
 		removed := unsafe.take(self.items[index]);
 		self.count -= 1;
 		if (index != self.count) {
-			self.items[:].swap(index, self.count);
+			unsafe.write(self.items[index], unsafe.take(self.items[self.count]));
 		}
 		return removed;
 	}
@@ -239,8 +238,10 @@ impl Small_Array($T, $N) {
 	// Length only. Each retired element is taken out and dropped as the discarded
 	// value it is; the storage behind the new length is capacity again.
 	clear :: proc(self: inout) {
-		foreach (i in 0 ..< self.count) { _ = unsafe.take(self.items[i]); }
-		self.count = 0;
+		for (self.count > 0) {
+			self.count -= 1;
+			_ = unsafe.take(self.items[self.count]);
+		}
 	}
 
 	// --------------------------------------------------------- diagnostics --
@@ -263,16 +264,11 @@ impl Small_Array($T, $N) {
 		}
 	}
 
-	// Everything from `index` up moves one slot along, leaving `index` free for
-	// the caller to write into. A shift is a move, not a copy: each step trades
-	// the free slot with the element below it, so no managed element is cloned
-	// and none is briefly live at two indices.
-	//
-	// It takes no bound: the moving insert needs the same shift as the copying
-	// one, and shifting has never been the part that copies.
+	// The appended last element moves down to `index`. Every slot is live before
+	// the first swap, so the operation never reads raw capacity as a value.
 	@(private)
-	open_slot :: proc(self: inout, index: int) {
-		at := self.count;
+	move_last_to :: proc(self: inout, index: int) {
+		at := self.count - 1;
 		for (at > index) {
 			self.items[:].swap(at, at - 1);
 			at -= 1;

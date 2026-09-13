@@ -1040,14 +1040,9 @@ emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^
 // walk over a fixed array's elements uses. The capacity behind it held no
 // value and has nothing to release.
 @(private = "file")
-emit_drop_prefix :: proc(e: ^Emitter, record: Type_Id, base: string, field, counter: ^Symbol) {
-	element := underlying_info(e.c, field.type).element
-	if !emit_lifecycle(e, element).managed {
-		return
-	}
-	items := element_address(e, record, base, int(field.index))
+emit_drop_prefix_elements :: proc(e: ^Emitter, element: Type_Id, items, count: string) {
 	cursor := alloca(e, "i64")
-	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", emit_prefix_count(e, record, base, counter), cursor)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", count, cursor)
 	head := new_label(e, "prefix.drop.head")
 	body, done := new_label(e, "prefix.drop.body"), new_label(e, "prefix.drop.done")
 	branch(e, head)
@@ -1065,6 +1060,17 @@ emit_drop_prefix :: proc(e: ^Emitter, record: Type_Id, base: string, field, coun
 	place_label(e, done)
 }
 
+@(private = "file")
+emit_drop_prefix :: proc(e: ^Emitter, record: Type_Id, base: string, field, counter: ^Symbol) {
+	element := underlying_info(e.c, field.type).element
+	if !emit_lifecycle(e, element).managed {
+		return
+	}
+	items := element_address(e, record, base, int(field.index))
+	count := emit_prefix_count(e, record, base, counter)
+	emit_drop_prefix_elements(e, element, items, count)
+}
+
 // One part of a record, dropped the way that part is owned.
 @(private = "file")
 emit_drop_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) {
@@ -1079,11 +1085,10 @@ emit_drop_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index:
 	emit_drop_place(e, part, element_address(e, record, base, index))
 }
 
-// Clones the live prefix of an `@(initialized)` field, one element at a time,
-// publishing the destination's own count as it goes. That count is what a
-// failure anywhere later in the record reads to clean this field up, so it has
-// to be accurate at every point the loop can leave from -- including the
-// element clone that fails halfway.
+// Clones the live prefix of an `@(initialized)` field one element at a time.
+// The complete destination count is published before the field, so a failure
+// anywhere later can clean every completed prefix sharing it. A failure inside
+// this field instead drops the exact progress held by the local cursor.
 @(private = "file")
 emit_clone_prefix :: proc(
 	e: ^Emitter,
@@ -1100,6 +1105,7 @@ emit_clone_prefix :: proc(
 	destination := element_address(e, record, out, int(field.index))
 	built := element_address(e, record, out, int(counter.index))
 	total := emit_prefix_count(e, record, self, counter)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, counter.type), total, built)
 
 	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
@@ -1122,10 +1128,8 @@ emit_clone_prefix :: proc(
 		value, failed := emit_part_clone(e, element, from)
 		fail, ok := new_label(e, "prefix.clone.fail"), new_label(e, "prefix.clone.ok")
 		branch_if(e, failed, fail, ok)
-		// This field's own prefix is already published, so cleaning up is the same
-		// walk every other failing part performs.
 		place_label(e, fail)
-		emit_drop_prefix(e, record, out, field, counter)
+		emit_drop_prefix_elements(e, element, destination, at)
 		for earlier := index - 1; earlier >= 0; earlier -= 1 {
 			emit_drop_record_part(e, record, out, earlier)
 		}
@@ -1138,7 +1142,6 @@ emit_clone_prefix :: proc(
 	next := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next, at)
 	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
-	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, counter.type), next, built)
 	branch(e, head)
 	place_label(e, done)
 }

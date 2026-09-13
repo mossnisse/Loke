@@ -26,6 +26,11 @@ Buffer :: struct($T: type, $N: int) {
 	@(public) count: int,
 }
 
+Counter_First :: struct($T: type, $N: int) {
+	@(public) count: int,
+	@(public, initialized = count) items: [N]T,
+}
+
 impl Buffer($T, $N) {
 	len :: proc(self) -> int { return self.count; }
 
@@ -59,7 +64,40 @@ id_of :: proc(value: Sealed) -> int {
 	return 0;
 }
 
+capacity_round_trip :: proc() -> int {
+	buffer: Buffer(int, 2) = {};
+	unsafe.write(buffer.items[0], 7);
+	buffer.count = 1;
+	value := unsafe.take(buffer.items[0]);
+	buffer.count = 0;
+	assert(buffer == Buffer(int, 2){});
+	return value;
+}
+
+CAPACITY_ROUND_TRIP :: capacity_round_trip();
+
+No_Zero :: enum { One = 1, Two = 2 }
+
+Huge :: struct { pad: [4611686018427387904]u8 }
+Fallible :: struct { id: int }
+impl Fallible {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Fallible, Allocator_Error) {
+		p := new(Huge, allocator) or_return;
+		free(p);
+		return .ok(self);
+	}
+	release :: hook(drop) proc(self: inout Fallible) { fmt.println("fallible drop", self.id); }
+}
+
 main :: proc() {
+	// Both operations are phase-neutral when the storage is evaluator-owned.
+	fmt.println(CAPACITY_ROUND_TRIP);
+
+	// The empty record is all-zero even when a capacity element's own type has no
+	// zero. This is compiled under every optimization mode by the run corpus.
+	codes: Buffer(No_Zero, 2) = {};
+	fmt.println(codes.count, codes.count == 0);
+
 	// A record holding capacity has a zero value whatever the element is.
 	sealed: Buffer(Sealed, 4) = {};
 	fmt.println(sealed.len());
@@ -97,6 +135,19 @@ main :: proc() {
 	right.put(1);
 	right.put(2);
 	fmt.println(left == right, left);
+
+	// A count declared before its array is already copied when the first element
+	// clone fails. Partial cleanup must still use the local progress of zero.
+	{
+		source: Counter_First(Fallible, 2) = {};
+		failing := Fallible{1};
+		unsafe.write(source.items[0], move(failing));
+		source.count = 1;
+		switch (_ in source.try_clone()) {
+		case .ok: fmt.println("unexpected clone");
+		case .err: fmt.println("clone failed");
+		}
+	}
 
 	fmt.println("scope end");
 }
