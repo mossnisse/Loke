@@ -525,6 +525,7 @@ For_Header     = (Init_Statement | ";") Expression? ";" Simple_Statement?
 
 Foreach_Statement = "foreach" "(" Binding ("," Binding)* "in" Expression ")" Block
 Binding         = "$"? "&"? (Identifier | "_")
+                | "(" Binding ("," Binding)* ")"
 
 When_Statement = Attributes? "when" "(" Expression ")" Block
                  ("else" (When_Statement | Block))?
@@ -542,7 +543,9 @@ condition-only form.
 
 A binding list has any length: it names the fields of the element the iterable
 yields, so the arity a header may use is a semantic property of that element's
-type, not a syntactic limit.
+type, not a syntactic limit. A parenthesised group is a nested pattern over a
+field that is itself a record, so a header destructures to any depth; `$` and
+`&` mark a leaf and never a group.
 
 A `foreach` whose bindings carry `$` is a static expansion over a compile-time
 iterable; the two forms share one production so a mixed header parses and can

@@ -54,13 +54,13 @@ The root is the expression the adapters and built-in views (`indexed`, `reversed
 
 ## Lifetimes and ownership
 
-- **Borrowed yields** carry source provenance, so they — and `&item` — may outlive advancement and the iterator while the source stays valid. For a user-defined `next()` the returned pointer must derive from a view the iterator holds, not from the iterator's own storage; build this on the existing rule that a view carried by a receiver obeys its own source ([cfg.odin:4064](src/cfg.odin:4064)). It replaces the synth-kind list at [cfg.odin:4069](src/cfg.odin:4069) and `iteration_lends_source`.
+- **Borrowed yields** carry source provenance, so they — and `&item` — may outlive advancement and the iterator while the source stays valid. For a user-defined `next()` the returned pointer must derive from a view the iterator holds, not from the iterator's own storage; build this on the existing rule that a view carried by a receiver obeys its own source ([cfg_provenance.odin:2655](src/cfg_provenance.odin:2655)). It replaces the synth-kind list at [cfg_provenance.odin:2662](src/cfg_provenance.odin:2662) and `iteration_lends_source`.
 - **Mutable traversal** holds an exclusive source loan. Every yielded loan, nested pointers and derived pointers included, ends before advancing or dropping the iterator — on every loop exit and for manual calls.
 - **Consuming traversal** transfers each element without cloning. The move-iterator owns the collection and tracks the unyielded range or occupied map slots, so early exit drops only unyielded elements and frees storage once, without front removal or shifting. Map consumption transfers both key and value, unlike current removal. Provided for arrays, dynamic arrays, maps, `Small_Array`, and `Enum_Array`.
 
 ## Implementation sequence
 
-1. Update [the specification](design.md) and [grammar](grammar.md): the mode rule, `Yield`, patterns, `.copied()`, consuming traversal, `.refs()` removal, migration examples, and the move-only `Small_Array` claims in the interface catalogue.
+1. **Done.** Update [the specification](design.md) and [grammar](grammar.md): the mode rule, `Yield`, patterns, `.copied()`, consuming traversal, `.refs()` removal, migration examples, and the move-only `Small_Array` claims in the interface catalogue.
 2. One checked yield description and one recursive pattern representation through parsing, AST cloning/dumping, interface checks, generic resolution, and diagnostics. Record the mode and every projection during checking.
 3. Lifecycle, control-flow, and provenance: generalize borrowed bindings; distinguish descriptor loans, whole-traversal loans, and per-step loans; replace the `.refs()` exceptions with the verified yield rule.
 4. Convert built-in and library iterators (dropping `where is_copyable(T)` from borrowed `next`), then adapters, `.copied()`, and move-iterators. Extend runtime transfer helpers for map consumption.

@@ -999,7 +999,7 @@ Its inline storage is [capacity](#uninitialized-capacity) rather than `N` values
 
 An invalid insertion index panics in both ordinary and `try_` forms. `pop()` returns and removes the last element, or returns `.none` for an empty array. `x[a:b]` is a read-only `[]T` over the live prefix; `slice()` is the whole prefix as `[]mut T`, and a writable subrange is `slice()[a:b]`.
 
-A [move-only](#lifecycle-hooks-and-resource-types) element type is held too. The members that copy an element — `get`, the copying members of `append` and `insert`, their `try_` forms, and by-value iteration — are bound on [`is_copyable(T)`](#built-in-procedures) and are therefore not members of such an instance, which is the [`where` exclusion](#where-clauses) rather than anything this type arranges. `append` and `insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` is the way in, exactly as on a dynamic array: the written `move(...)` [selects](#parameter-semantics-and-abi-lowering) the consuming member, and a temporary reaches it with no marker at all. Those consuming members have no `try_` form, because a capacity failure would arrive having already consumed the value it could not store, so a caller who must not panic asks `space()` or `is_full()` first. Everything that reaches an element without copying it — `get_mut`, `view`, `slice`, `iter_mut`, `refs()`, `pop`, `remove`, `clear` — is unaffected.
+A [move-only](#lifecycle-hooks-and-resource-types) element type is held too. The members that copy an element — `get`, the copying members of `append` and `insert`, and their `try_` forms — are bound on [`is_copyable(T)`](#built-in-procedures) and are therefore not members of such an instance, which is the [`where` exclusion](#where-clauses) rather than anything this type arranges. `append` and `insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` is the way in, exactly as on a dynamic array: the written `move(...)` [selects](#parameter-semantics-and-abi-lowering) the consuming member, and a temporary reaches it with no marker at all. Those consuming members have no `try_` form, because a capacity failure would arrive having already consumed the value it could not store, so a caller who must not panic asks `space()` or `is_full()` first. Everything that reaches an element without copying it — `get_mut`, `view`, `slice`, `iter_mut`, `pop`, `remove`, `clear` — is unaffected, and so is [`foreach`](#borrowing-iteration), which borrows each element rather than copying it.
 
 ```odin
 x: Small_Array(int, 8) = {};
@@ -2135,14 +2135,48 @@ An indexing or slicing overload is responsible for its own bounds checks. A call
 
 ### Iteration protocol
 
-`foreach` uses the standard [`Iterable`](#standard-interface-catalogue) and `Iterator` interfaces. An iterable type provides:
+`foreach` traverses in one of three **modes**, and the header alone decides which:
+
+1. Any `&` leaf in the [binding pattern](#element-bindings) selects **mutable** traversal. The root must be writable storage — a mutable place, or a `[]mut T` view. Writing `&` together with `move(...)` or [`copied()`](#iteration-adapters) is an error.
+2. Otherwise a root that is a temporary or `move(place)` selects **consuming** traversal, when every adapter in the chain supports it, and borrowed traversal of the owned temporary when one does not. A borrowed view such as a slice never consumes its backing collection.
+3. Otherwise traversal **borrows**.
+
+This is the [ownership rule](#value-semantics-and-the-ownership-rule) applied to a loop: a place stays live and lends each element, a temporary or `move(x)` hands them over. Ordinary traversal of a place therefore copies nothing, whatever the element type, and a [move-only](#lifecycle-hooks-and-resource-types) element is read like any other.
+
+```odin
+foreach (item in items) { inspect(item); }              // borrowed: no clone, move-only included
+foreach (&item in items) { item.count += 1; }           // mutable: an exclusive loan per step
+foreach (item in move(items)) { take(move(item)); }     // consuming: elements transfer
+foreach (item in make_items()) { take(move(item)); }    // a temporary is consumed too
+foreach (item in items.copied()) { take(move(item)); }  // one clone per element, asked for
+```
+
+The **root** is the expression the adapters and container views — `indexed`, `reversed`, `copied`, `keys`, `values`, `entries` — are applied to, so `foreach (&value in m.values())` roots at `m`. Those carry the mode through; they never choose it. The root is evaluated once, and a temporary root lives for the whole statement (see [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries)). A user-defined method with one of those names keeps lookup precedence and is an ordinary call.
+
+An iterable type provides:
 
 - an `Element` type;
 - an `Iterator` type;
 - `iter(self) -> Iterator`;
-- `next(self: inout Iterator) -> Option(Element)` on its iterator.
+- `next(self: inout Iterator) -> Option(Item)` on its iterator;
+- optionally a `Yield` descriptor, saying how a binding receives `Item`.
 
-Each call to `next` answers `.some(element)`, or `.none` to end the loop. See [Typed fallibility](#typed-fallibility).
+Each call to `next` answers `.some(item)`, or `.none` to end the loop. See [Typed fallibility](#typed-fallibility).
+
+`Yield` describes what `next` hands back:
+
+| `Yield` | `Item` | what a leaf binding receives |
+| --- | --- | --- |
+| `Yield_Owned` | the element itself | the element, owned by this iteration |
+| `Yield_Borrowed` | `^T` | a borrowed, immutable `T` |
+| `Yield_Mutable` | `^mut T` | a mutable `T` place |
+| a record of descriptors | a record | each field as its own descriptor says |
+
+`Element` — what a single binding receives — is `T` for a borrowed or mutable leaf and `Item` otherwise. The checker validates `Yield` against `Item`'s shape and rejects a record descriptor over a record carrying a custom [`hook(copy)` or `hook(drop)`](#lifecycle-hooks-and-resource-types), the restriction consuming [destructuring](#destructuring) already carries.
+
+**An iterator that declares no `Yield` is owned, with `Item = Element`.** Every iterator written before `Yield` existed keeps its meaning, including `Countdown` below.
+
+The three modes are three interfaces, all in the [standard catalogue](#standard-interface-catalogue): [`Iterable`](#standard-interface-catalogue) with `iter`, `Mutable_Iterable` with `iter_mut`, and `Consuming_Iterable` with `iter_move(self: move Self)`. Reversal in each mode is a receiver method — `iter_reverse`, `iter_mut_reverse`, `iter_move_reverse` — and adds no interface of its own. A type that offers several modes must agree on the logical element across them.
 
 A visible [extension block](#methods-and-implementation-blocks) can make a foreign type iterable within the package that declares the extension.
 
@@ -2182,29 +2216,41 @@ foreach (value in Countdown{3}) {
 }
 ```
 
-Generic code refers to the yielded type as `S.Element`. An iterator over a collection borrows that collection, so the collection cannot be mutated while the iterator is in use; the normal [borrow rules](#borrows-and-lifetimes) apply.
+Generic code refers to the yielded type as `S.Element`, and to the handed-back type as `S.Iterator.Item` where the two differ. A borrowing or mutable traversal holds a loan on its source, so that source cannot be mutated — or, for a mutable traversal, read — while the iterator is in use; the normal [borrow rules](#borrows-and-lifetimes) apply. A consuming traversal owns its collection instead, so nothing is borrowed and nothing outlives the loop.
+
+A manual `next()` call returns `Item`, pointers and all. Code that must be generic over the yield mode uses `foreach`, which is what applies `Yield`; no projection operation is added for it.
 
 #### Element bindings
 
-One `foreach` binding receives the whole `Element`. Two or more bindings destructure a record element by declaration order:
+One `foreach` binding receives the whole `Element`. Two or more destructure a record element by declaration order, and a parenthesised group nests:
 
 ```odin
 foreach (entry in table) {
-	fmt.println(entry.key, entry.value);
+	fmt.println(entry.key^, entry.value^);
 }
 
-foreach (key, value in table) {   // `Element` is a two-field record
+foreach (key, value in table) {          // the entry's two fields
 	fmt.println(key, value);
+}
+
+foreach ((key, &value), index in table.indexed()) {
+	value^ += index;
 }
 ```
 
-This is the general [destructuring](#destructuring) rule applied to the element, so the element must be a record with exactly the same number of directly declared, visible fields. Bindings are flat and cannot nest; promoted fields are not flattened. Any binding may be `_`. Value bindings are immutable locals.
+This is the general [destructuring](#destructuring) rule applied to the element, so a destructured element must be a record with exactly the same number of directly declared, visible fields. A group descends into a field that is itself a record, to any depth; promoted fields are not flattened. Any binding may be `_`.
 
-The iterator still produces the whole element when fields are ignored. Destructuring moves its fields into the bindings without another copy and disposes of anything left over normally.
+A leaf is a **binding**, and what it receives is decided by the traversal's [`Yield`](#iteration-protocol):
 
-A value loop owns each yielded `Element` until the end of that iteration and then disposes of it exactly once, including on early exit or panic. Built-in containers copy elements for value iteration, so move-only elements require [`refs()`](#borrowing-iteration) or mutable `&value` iteration.
+- an **owned** leaf binds the value, which the iteration owns until the end of that step and then disposes of exactly once, including on early exit or panic;
+- a **borrowed** leaf binds the element itself, immutably — no copy is made, and a [move-only](#lifecycle-hooks-and-resource-types) element is read like any other;
+- a **mutable** leaf is written `&name` and binds a place, which may be written through.
 
-A value loop never invents an index, key, or byte offset. To receive that information, use an iterable or adapter whose `Element` contains it.
+An `&` leaf must land on a `Yield_Mutable` location; an unmarked leaf is immutable. A borrowed or mutable binding names storage the source still owns, so it cannot be moved or dropped — `move(item)` and `drop(item)` on one are the error [a switch over a place](#switch-ownership) already gives. `saved := item` still clones, and so still rejects a move-only element. `&item` on a borrowed binding yields a `^T` carrying the element's own provenance, which is how a pointer to an element is taken.
+
+A single binding over a record yield receives that record with its pointer fields, read through `entry.value^`; destructuring binds the pointees directly. No transparent borrowed-record type is introduced.
+
+A loop never invents an index, key, or byte offset. To receive one, use an adapter or view whose element carries it: `sequence.indexed()` for an index, and `map.keys()`, `map.values()`, or plain destructuring of a map entry for a key or value. The fixed spellings `foreach (&value, index in sequence)` and `foreach (&value in map)` are gone; each is a diagnostic naming its replacement.
 
 #### Iteration adapters
 
@@ -2214,6 +2260,9 @@ Every iterable has one default `Element` and `Iterator`. An adapter selects a di
 | --- | --- |
 | `source.indexed()` | `struct{value: Element, index: int}`, zero-based |
 | `source.reversed()` | the source `Element`, in reverse order |
+| `source.copied()` | the source `Element`, cloned once per step |
+
+`indexed()` and `reversed()` work in all three [modes](#iteration-protocol) and nest arbitrarily; they carry the mode through rather than choosing it. `copied()` turns a borrowed leaf into an owned one, cloning it with the element's own copy hook, allocator selection, and failure behaviour — it is the written form of the copy that a loop no longer makes on its own. An owned leaf passes through uncloned, so `copied()` over a consuming traversal is a no-op. It rejects a non-copyable borrowed leaf and an `&` leaf.
 
 `indexed()` starts at zero and advances only after `next` succeeds. `source.reversed().indexed()` numbers the reversed traversal from zero. Repeated indexing wraps the previous element in another `{value, index}` record. An indexed view is forward-only: reversing it would require knowing the end index. A reversed view supports reversal again, restoring the original traversal.
 
@@ -2222,6 +2271,8 @@ Every iterable has one default `Element` and `Iterator`. An adapter selects a di
 Adapters preserve borrows. Iterating an adapter over a borrowed collection keeps the same collection borrowed for the whole loop.
 
 `indexed()` and `reversed()` return ordinary iterable values. They allocate and copy no elements, may be stored or passed while their source remains valid, and start a fresh traversal on each `iter()` call. User-defined members with those names take precedence. Static expansion uses the same adapters.
+
+A **stored** adapter is always a borrowed view, and freezes its source while it is live: `v := items.indexed()` borrows `items` whatever the header that later traverses `v` says. Mutable and consuming traversal through an adapter exists only in a `foreach` header, where the root's loan or transfer spans the statement.
 
 Built-in containers also provide these views:
 
@@ -2260,51 +2311,62 @@ Because these are ordinary methods, a type that declares its own `keys`, `values
 
 #### Borrowing iteration
 
-Fixed arrays, dynamic arrays, and both `[]T` and `[]mut T` slices provide `source.refs()`. It returns an ordinary borrowed iterable whose `Element` is `^T`: each step hands back an immutable pointer to the original element. Creating, copying, and iterating this view allocate nothing and copy no elements. It works with move-only elements and with immutable procedure parameters:
+Traversing a place borrows it, and that is the default: no adapter, marker, or view is needed to read a collection without copying it.
 
 ```odin
 Entry :: move_only struct { id: int }
 
 sum :: proc(items: []Entry) -> int {
 	total := 0;
-	foreach (item in items.refs()) {
-		total += item^.id;
+	foreach (item in items) {
+		total += item.id;
 	}
 	return total;
 }
 ```
 
-`refs()` holds a read-only slice of the source storage. It satisfies `Iterable` and `Reverse_Iterable`, with `next(self: inout Iterator) -> Option(^T)`, and composes with the ordinary adapters:
+Fixed arrays, slices, dynamic arrays, and the standard `Small_Array(T, N)` yield borrowed elements, [move-only](#lifecycle-hooks-and-resource-types) ones included. A map's entry is borrowed as `struct{key: ^K, value: ^V}` and an `Enum_Array`'s as `struct{key: E, value: ^T}`, whose key is owned because an enum member is a value, not stored storage. Ranges, runes, and bytes stay owned: each is generated per step rather than read out of a container.
+
+Because the binding names the source's own storage, a borrowed yield **carries the source's provenance**. It, and any `&item` taken from it, stays valid after the iterator advances and after the iterator is dropped, for as long as the source itself is valid:
 
 ```odin
-foreach (item, index in items.refs().indexed()) { use(item^, index); }
-foreach (item in items.refs().reversed()) { use(item^); }
+first: ^Entry = nil;
+foreach (item in items) {
+	if (first == nil) { first = &item; }   // outlives the loop; `items` must too
+}
 ```
 
-The view can be stored, copied, passed, or returned while its source remains valid. A yielded pointer borrows the original storage and remains valid after the iterator advances. The source cannot be mutated or invalidated while the view, iterator, or a yielded pointer is live. A temporary source lasts for the complete expression, or for the whole `foreach` when used as its iterable. Packed fields cannot supply element pointers.
+The source cannot be mutated or invalidated while the traversal, or a pointer taken from it, is live. A temporary source lasts for the whole `foreach` statement. Packed fields cannot supply element pointers.
 
-A user-defined container may provide `refs()` itself or expose a read-only slice, as in `small.view().refs()`. For string bytes, use `text.bytes().refs()`.
+For a user-defined iterator declaring `Yield_Borrowed`, the pointer `next` returns must derive from a view the iterator holds, not from the iterator's own storage — the ordinary rule that a view carried by a receiver obeys its own source. An iterator that lends its own cursor is rejected, because advancing it would invalidate an element already handed back.
 
 #### By-reference iteration
 
-Mutable fixed arrays, mutable slices, dynamic arrays, map values, and user-defined containers implementing `Mutable_Iterable` allow:
+An `&` leaf anywhere in the pattern makes the traversal mutable:
 
 ```odin
 foreach (&value in collection) { ... }
-```
-
-The user-defined protocol has associated `Element` and `Mut_Iterator` types, `iter_mut :: proc(self: inout Self) -> Mut_Iterator`, and `next :: proc(self: inout Mut_Iterator) -> Option(^mut Element)`. The source is mutably borrowed for the whole traversal. Each successful `next()` lends one element; that reference must end before advancing or dropping the iterator. In a reference loop, the binding and pointers taken from it are confined to the current iteration, including exits by `break` and `continue`.
-
-Fixed arrays, mutable slices, dynamic arrays, and `Small_Array` satisfy `Mutable_Iterable`. Maps instead expose immutable keys and mutable values; an entry cannot be yielded as a mutable whole.
-
-Place loops may also receive information supplied by the container:
-
-```odin
-foreach (&value, index in sequence) { ... }
 foreach (key, &value in map) { ... }
 ```
 
-These fixed forms are separate from `Element` destructuring, and adapters cannot yield places. A value loop uses `sequence.indexed()` to request an index. If a value loop tries `foreach (value, index in sequence)` with a non-record element, the diagnostic points to `indexed()`.
+Mutable fixed arrays, mutable slices, dynamic arrays, `Small_Array`, map values, and user-defined containers implementing `Mutable_Iterable` support it. The root must be writable storage: a mutable place, or a `[]mut T` view. Maps expose immutable keys and mutable values, so an entry is never yielded as a mutable whole.
+
+The user-defined protocol has associated `Element` and `Mut_Iterator` types, `iter_mut :: proc(self: inout Self) -> Mut_Iterator`, and `next :: proc(self: inout Mut_Iterator) -> Option(^mut Element)`. The source is mutably borrowed for the whole traversal, which is exclusive: it cannot even be read through another path while the loop runs.
+
+Each successful `next()` lends one element, and **every loan it hands out — nested pointers and pointers derived from them included — ends before the iterator advances or is dropped.** That holds on every exit, `break` and `continue` among them, and for manual `next()` calls as much as for a header.
+
+#### Consuming iteration
+
+A temporary root, or `move(place)`, hands each element over instead of lending it:
+
+```odin
+foreach (token in move(tokens)) { store(move(token)); }
+foreach (token in make_tokens()) { store(move(token)); }
+```
+
+The traversal owns the collection. It transfers each element without cloning, tracking what it has not yet yielded, so leaving early by `break`, `return`, or a panic drops exactly the unyielded elements and frees the backing storage once — with no front removal and no shifting. Consuming a map transfers both key and value, which removal cannot. Fixed arrays, dynamic arrays, maps, `Small_Array`, and `Enum_Array` provide it, through `Consuming_Iterable` and `iter_move(self: move Self)`.
+
+Consuming traversal needs every adapter in the chain to support it. Where one does not, the root is still an owned temporary, so the loop borrows from it instead — the collection is dropped at the end of the statement either way. A borrowed view such as a slice never consumes its backing collection, whatever the header says: a slice owns nothing to hand over.
 
 ### Compiler semantic hooks
 
@@ -2667,15 +2729,15 @@ Cloneable :: interface($T: type) {
 	slot try_clone: proc(self, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
-Iterator :: interface($Self, $Element: type) {
-	slot next: proc(self: inout Self) -> Option(Element);
+Iterator :: interface($Self, $Item: type) {
+	slot next: proc(self: inout Self) -> Option(Item);
 }
 
 Iterable :: interface($Self: type) {
 	Self.Element -> type;
 	Self.Iterator -> type;
 	slot iter: proc(self) -> Self.Iterator;
-	Iterator(Self.Iterator, Self.Element);
+	Iterator(Self.Iterator, Self.Iterator.Item);
 }
 
 Reverse_Iterable :: interface($Self: type) {
@@ -2688,6 +2750,13 @@ Mutable_Iterable :: interface($Self: type) {
 	Self.Mut_Iterator -> type;
 	slot iter_mut: proc(self: inout Self) -> Self.Mut_Iterator;
 	Iterator(Self.Mut_Iterator, ^mut Self.Element);
+}
+
+Consuming_Iterable :: interface($Self: type) {
+	Self.Element -> type;
+	Self.Move_Iterator -> type;
+	slot iter_move: proc(self: move Self) -> Self.Move_Iterator;
+	Iterator(Self.Move_Iterator, Self.Element);
 }
 
 Sequence :: interface($Self: type) {
@@ -2709,7 +2778,7 @@ Growable_Sequence :: interface($Self: type) {
 
 `Ordered` means the `<` operation is available; it does not promise a mathematical total order, so floating-point types satisfy it with IEEE-754 comparisons. An algorithm needing a total or strict-weak order states that precondition or takes a comparator. `Numeric` does not compose `Ordered` and requires no ordering.
 
-`Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by copyable owning built-ins and records, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes by-value traversal; the built-in `foreach (&element in value)` forms stay place operations, and generic indexed mutation uses `Mutable_Sequence`.
+`Cloneable` names the fallible public `try_clone` operation, not the policy-following `clone`; it is satisfied by copyable owning built-ins and records, while `move_only struct` (including structural propagation from a field) makes it fail. `Iterable` describes reading traversal, whose elements a built-in container lends rather than copies; `Mutable_Iterable` and `Consuming_Iterable` describe the other two [modes](#iteration-protocol), and generic indexed mutation uses `Mutable_Sequence`. An iterator that declares no `Yield` is owned with `Item = Element`, which is why `Iterator(Self.Iterator, Self.Iterator.Item)` accepts every iterator written before `Yield` existed.
 
 Formatting stays the `value.format(writer, options)` protocol in `core:fmt`. Maps stay constrained by their concrete `map[K]V` shape — a map's `Element` is its `struct{key: K, value: V}` entry, so it satisfies `Iterable` but not `Sequence`, whose `value[index] -> Element` requirement an unordered keyed container cannot meet — and UTF-8 text stays its concrete `string`/`string_view` type.
 
@@ -2720,8 +2789,8 @@ Built-in satisfaction follows the operations the language already defines:
 - `bool`, integers, floats, runes, `string`, `string_view`, pointers, enums, `typeid`, and fixed arrays of hashable elements satisfy `Hashable`. For floats, `+0` and `-0` hash identically because they compare equal. User records and unions still require the inherent coherent equality/hash pair specified under [Maps](#maps);
 - built-in integer, floating-point, and rune types satisfy `Numeric`; integer and rune types satisfy `Integral`;
 - copyable owning built-ins such as `string`, dynamic arrays, maps, and `shared(T)`, plus recursively copyable owning aggregates, satisfy `Cloneable`;
-- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; maps and text do not. The [container views](#iteration-adapters) satisfy `Iterable` with the `Element` each one names. Reversed views also satisfy `Reverse_Iterable`; indexed, text, and map views do not. Fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Iterable`;
-- fixed arrays, slices, and dynamic arrays satisfy `Sequence`; fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Sequence` when supplied as mutable places; dynamic arrays satisfy `Growable_Sequence`. The standard `Small_Array(T, N)` library type supplies the same associated members and satisfies all three sequence interfaces for a copyable element. A [move-only](#lifecycle-hooks-and-resource-types) element leaves it with none of them, since `value[index] -> Element`, by-value iteration, and a copying `append` are exactly the members [the `where` exclusion](#where-clauses) removes; what remains is reached through `get_mut`, `view`, `iter_mut`, and the consuming member of `append`.
+- runtime ranges, strings, string views, fixed arrays, slices, dynamic arrays, and maps satisfy `Iterable`. Their associated `Element` is respectively the endpoint type, `rune`, `rune`, the stored element, the stored element, the stored element, and the map's `struct{key: K, value: V}` entry. Ranges, strings, and string views yield owned elements; the containers lend theirs, so a fixed array, slice, or dynamic array of a move-only element is iterable like any other, and a map entry is handed back as `struct{key: ^K, value: ^V}`. Fixed arrays, slices, dynamic arrays, and runtime ranges also satisfy `Reverse_Iterable`; maps and text do not. The [container views](#iteration-adapters) satisfy `Iterable` with the `Element` each one names. Reversed views also satisfy `Reverse_Iterable`; indexed, text, and map views do not. Fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Iterable`; fixed arrays, dynamic arrays, and maps satisfy `Consuming_Iterable`;
+- fixed arrays, slices, and dynamic arrays satisfy `Sequence`; fixed arrays, mutable slices, and dynamic arrays satisfy `Mutable_Sequence` when supplied as mutable places; dynamic arrays satisfy `Growable_Sequence`. The standard `Small_Array(T, N)` library type supplies the same associated members and satisfies all three sequence interfaces for a copyable element. A [move-only](#lifecycle-hooks-and-resource-types) element leaves it with none of them, since `value[index] -> Element` and a copying `append` are exactly the members [the `where` exclusion](#where-clauses) removes; what remains is reached through `get_mut`, `view`, `iter_mut`, the consuming member of `append`, and `foreach`, which borrows each element and so needs no copy at all.
 
 #### Choosing between `where` constraints and specialization
 
@@ -2887,7 +2956,7 @@ One rule covers every context that takes a value. **A place stays live: it is bo
 | aggregate literal element | cloned | transferred |
 | [container insertion](#container-insertion) | cloned | transferred |
 
-[Iteration](#borrowing-iteration) is the one context that copies from a place rather than borrowing it: an ordinary `foreach (item in place)` clones each element, and `place.refs()` is the borrowing traversal. Being a copy site, it is reported like the others.
+[Iteration](#borrowing-iteration) follows it as every other context does: traversing a place borrows each element, a temporary or `move(place)` consumes them, and [`copied()`](#iteration-adapters) is the written clone.
 
 Cost varies with the shape of an expression; meaning does not. `produce() or_else fallback()` transfers a payload and `outcome or_else fallback()` copies one, yet both yield the same value and leave the same things live — naming an intermediate changes what the program pays, never what it computes. Because the difference is cost rather than meaning, it is reported rather than forbidden: see [Copy-cost diagnostics](#copy-cost-diagnostics).
 
@@ -3017,7 +3086,7 @@ A constant is a value, not a variable, and an ordinary use of one is substituted
 - indexing by a non-constant index
 - a slice expression
 - taking its address with `&`
-- a borrowing traversal with `refs()`
+- a borrowing traversal, which lends the elements themselves
 
 **A constant used in any of those ways is materialized into read-only storage.** All uses of that constant share one backing object.
 
@@ -3588,7 +3657,7 @@ foreach (character in str) {
 }
 ```
 
-Use the address operator to iterate by reference over a mutable array, dynamic array, or slice. A slice must have type `[]mut T`. To borrow elements read-only, including from `[]T`, iterate `source.refs()` and read each `^T` through `value^`; see [Borrowing iteration](#borrowing-iteration).
+Use the address operator to iterate by reference over a mutable array, dynamic array, or slice. A slice must have type `[]mut T`. Reading elements needs no marker at all: an unmarked binding over a place already borrows, including from `[]T`; see [Borrowing iteration](#borrowing-iteration).
 
 ```odin
 mutable_slice := []mut int{1, 4, 9};
@@ -3602,8 +3671,8 @@ foreach (&value in mutable_slice) {
 foreach (&value in some_dynamic_array) {
 	value = something;
 }
-// does not impact the second index value
-foreach (&value, index in some_dynamic_array) {
+// an index comes from the adapter, never from an extra binding
+foreach (&value, index in some_dynamic_array.indexed()) {
 	value = something;
 }
 ```
@@ -4018,7 +4087,7 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 #### Copy-cost diagnostics
 
-Copying a large aggregate or managed owner is valid, but tools may warn when a binding, assignment, parameter, return, a place operand of [`or_else` or `or_return`](#operator-ownership), a step of a by-value [`foreach`](#borrowing-iteration) over a place, or an explicit `clone` duplicates substantial data. An ordinary `value: T` parameter borrows a managed owner and is not a copy site. Use `move` for ownership transfer and `inout` only when mutation is intended.
+Copying a large aggregate or managed owner is valid, but tools may warn when a binding, assignment, parameter, return, a place operand of [`or_else` or `or_return`](#operator-ownership), or an explicit `clone` or [`copied()`](#iteration-adapters) duplicates substantial data. An ordinary `value: T` parameter borrows a managed owner and is not a copy site. Use `move` for ownership transfer and `inout` only when mutation is intended.
 
 ```odin
 sum :: proc(values: [dynamic]int) -> int {
