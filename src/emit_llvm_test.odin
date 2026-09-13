@@ -618,6 +618,43 @@ lifecycle_copy_dependencies_are_closed :: proc(t: ^testing.T) {
 }
 
 @(test)
+converted_string_temporary_is_cleaned_up :: proc(t: ^testing.T) {
+	c := test_compiler(`package main;
+make_key :: proc() -> string { return "x" + ""; }
+main :: proc() {
+    m: map[string]int = {};
+    m["x"] = 1;
+    _ = m.find_ref(make_key());
+}
+`)
+	defer destroy_compilation(&c)
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
+	defer destroy_ast(&f)
+	id := new_package(&c, f.package_name)
+	c.root_package = id
+	add_package_file(&c, id, &f)
+	check_emission_package(&c, id)
+	if !testing.expect(t, c.error_count == 0) { report(&c); return }
+	finalize_semantics(&c)
+	module, emitted := emit_llvm_module(&c)
+	if !testing.expect(t, emitted && c.error_count == 0) { report(&c); return }
+	main_at := strings.index(module, "define internal void @loke.p.main()")
+	if !testing.expect(t, main_at >= 0) { return }
+	main_tail := module[main_at:]
+	main_end := strings.index(main_tail, "\n}\n")
+	if !testing.expect(t, main_end >= 0) { return }
+	main_ir := main_tail[:main_end]
+	made := strings.index(main_ir, "call %loke.string @loke.p.make_key()")
+	if !testing.expect(t, made >= 0) { return }
+	after_make := main_ir[made:]
+	lookup := strings.index(after_make, ".find_ref(")
+	release := strings.index(after_make, "call void @loke_rt_v1_string_release")
+	testing.expectf(t, lookup >= 0 && release > lookup, "converted query key was not released:\n%s", main_ir)
+}
+
+@(test)
 artifact_extension_ignores_dotted_parent_directories :: proc(t: ^testing.T) {
 	actual := replace_ext(`C:\release.v2\program`, ".ll")
 	testing.expectf(t, actual == `C:\release.v2\program.ll`, "unexpected artifact path %q", actual)

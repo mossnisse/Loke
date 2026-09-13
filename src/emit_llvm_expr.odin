@@ -785,10 +785,10 @@ emit_expr_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 		return emit_any_view_value(e, address, from)
 	}
 	// design.md: a `string` borrowed as a `string_view` — the same pointer and
-	// byte length, with the owning word dropped. Nothing is retained: the view
-	// borrows the string and cannot outlive it, which `src/borrow.odin` checks.
+	// byte length, with the owning word dropped. Addressing the source keeps an
+	// owned temporary alive through the full expression; a place remains borrowed.
 	if from := base.view_from; from != INVALID_TYPE && underlying_kind(e.c, as_type) == .String_View {
-		value := emit_expr_at(e, expr, from)
+		value := load(e, STRING_TYPE, emit_address_at(e, expr, from))
 		data := extract(e, STRING_TYPE, value, STRING_DATA)
 		length := extract(e, STRING_TYPE, value, STRING_LEN)
 		return emit_ptr_len(e, STRING_VIEW_TYPE, data, length)
