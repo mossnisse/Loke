@@ -642,6 +642,14 @@ Builtin_Kind :: enum {
 	// it or for anything it owns (design.md "Storage modifiers"). No signature
 	// can express "consume without cleanup", so it is a built-in too.
 	Unsafe_Forget,
+	// design.md "Uninitialized capacity": `unsafe.take(place)` reads an owner out
+	// of storage and runs no cleanup for what is left behind, and
+	// `unsafe.write(place, value)` installs one over storage that holds no value.
+	// They are the pair a container author needs to move an element into and out
+	// of capacity, which `move` cannot name and `exchange` cannot reach without a
+	// replacement the element type may not have.
+	Unsafe_Take,
+	Unsafe_Write,
 	// `unsafe.free(pointer, allocator)` releases an allocation whose root the
 	// compiler cannot see — one reached through a `rawptr` field, a parameter, or
 	// foreign code. design.md's `free` bullet names this crossing directly:
@@ -777,6 +785,11 @@ Symbol :: struct {
 	// Field or enum-member position in its owning type; parameter position in
 	// its signature.
 	index:       u32,
+	// design.md "Uninitialized capacity": `@(initialized = count)` on a fixed
+	// array field names the sibling field holding how many leading elements are
+	// live. The rest is capacity rather than values, so the record needs no zero
+	// for the element type and its generated copy and drop visit the prefix only.
+	initialized_by: Symbol_Id,
 	mode:        Param_Mode,
 	// The declaring procedure literal, for the capture check in step 6.
 	owner_proc:  rawptr,

@@ -2418,7 +2418,7 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			continue
 		}
 		symbol := symbol_of(k.c, field)
-		if symbol == nil {
+		if symbol == nil || symbol.initialized_by != INVALID_SYMBOL {
 			continue
 		}
 		if !require_type_has_zero(k, symbol.type, v.span, strings.concatenate({"the omitted field `", identifier_text(k.c, symbol.name), "`"}, context.temp_allocator)) {

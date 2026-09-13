@@ -97,18 +97,20 @@ letting a programmer assert that such a variable is definitely one state or the
 other, and thereby delete one flag and the branch that reads it. No corpus
 program has yet shown that flag mattering.
 
-The harder objection is the package charter. `core:unsafe` is scoped to
-operations that "discard or manufacture provenance", and all four of its members
-— `forget`, `raw_data`, `string_view`, `cstring_view` — fit that description.
-Liveness is not provenance. Such an operation would be the package's first
-member that does not, which is either a reason to widen the stated charter
-deliberately or a reason the operation belongs somewhere else. That question
-should be settled before the signature is, and it is a larger one than the flag
-it would remove.
+The package charter is no longer an objection. `core:unsafe` was scoped to
+operations that "discard or manufacture provenance"; `unsafe.take` and
+`unsafe.write` are liveness operations and live there, so the charter now reads
+"provenance, or a liveness the compiler cannot see" — which is what `forget`
+always was. What is left is only whether the flag this would remove is worth a
+member, and no corpus program has yet shown one mattering.
 
-The precedent points at deferral: `unsafe.Maybe_Uninit(T)` was decided the same
-way and left unbuilt, conditioned on an implementation need that has not
-appeared.
+The `unsafe.Maybe_Uninit(T)` half of that precedent is settled. The
+implementation need appeared — `Small_Array(T, N)` could not hold an element
+with no zero value, while `[dynamic]T` could — and it was answered by
+[`@(initialized = count)`](design.md#uninitialized-capacity) plus that pair of
+operations, rather than by a wrapper type. A container's storage stays `[N]T`,
+so it still yields a contiguous `[]T`, and the count it already keeps is what
+bounds the generated copy and drop.
 
 ## Concurrency refinements
 

@@ -1,4 +1,4 @@
-package main; import "core:fmt";
+package main; import "core:fmt"; import "core:container";
 
 // design.md "Zero values": a union with no `@(zero=)` has none, and every
 // operation that would manufacture one is rejected for it. This is the other
@@ -78,6 +78,31 @@ main :: proc() {
 	// An empty fixed array of them has a zero, because it holds no element.
 	none: [0]Choice = {};
 	fmt.println(none.len());
+
+	// design.md "Uninitialized capacity": a fixed-capacity container reserves
+	// storage rather than elements, so it imposes exactly what the dynamic array
+	// above does -- nothing. This is the same sequence, inline.
+	inline: container.Small_Array(Choice, 4) = {};
+	fmt.println(inline.len(), inline.is_empty());
+	inline.append(.a(1), .b(true), .a(2));
+	fmt.println(inline.len(), inline[0], inline[2]);
+	fmt.println(inline.pop() or_else .a(0), inline.len());
+	fmt.println(inline.remove(0), inline.len(), inline[0]);
+	inline.clear();
+	fmt.println(inline.len());
+
+	// The retired elements were taken out rather than overwritten, so a managed
+	// one is released once, when it is dropped -- not again behind the length.
+	{
+		held: container.Small_Array(Tracked_Choice, 3) = {};
+		one: Tracked_Choice = .a(Tracked{1});
+		two: Tracked_Choice = .b(Tracked{2});
+		held.append_moved(move(one));
+		held.append_moved(move(two));
+		taken := held.remove(0);
+		drop(taken);
+		fmt.println(held.len());
+	}
 
 	// A new map entry is raw inert storage until the supplied no-zero value is
 	// committed. Its zeroed bytes are never passed to the drop hook.

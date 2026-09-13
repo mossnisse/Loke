@@ -1,0 +1,102 @@
+package main;
+
+import "core:fmt";
+import "core:unsafe";
+
+// design.md "Uninitialized capacity": a fixed array field whose live prefix
+// another field counts, and the two `core:unsafe` operations that move values
+// across that boundary.
+//
+// The element is a managed owner, so every claim here is observable: a slot
+// behind the count is never cloned and never released, and one in front of it
+// is cloned and released exactly once.
+
+Tracked :: struct { id: int }
+impl Tracked {
+	release :: hook(drop) proc(self: inout Tracked) { fmt.println("drop", self.id); }
+}
+
+// No zero value and no copy: the element kind a `[N]T` field could not hold at
+// all, because the record would need a zero for it.
+Held :: move_only struct { id: int }
+Sealed :: union { first: Held, second: Held }
+
+Buffer :: struct($T: type, $N: int) {
+	@(public, initialized = count) items: [N]T,
+	@(public) count: int,
+}
+
+impl Buffer($T, $N) {
+	len :: proc(self) -> int { return self.count; }
+
+	push :: proc(self: inout, value: move T) {
+		unsafe.write(self.items[self.count], move(value));
+		self.count += 1;
+	}
+
+	// The copying way in: a borrowed value is cloned into the storage, exactly
+	// as an initialization takes it.
+	put :: proc(self: inout, value: T) where is_copyable(T) {
+		unsafe.write(self.items[self.count], value);
+		self.count += 1;
+	}
+
+	// The count shortens first, so the slot the value leaves is capacity again
+	// by the time anything could unwind through it.
+	pop :: proc(self: inout) -> T {
+		self.count -= 1;
+		return unsafe.take(self.items[self.count]);
+	}
+
+	view :: proc(self) -> []T { return self.items[0:self.count]; }
+}
+
+id_of :: proc(value: Sealed) -> int {
+	switch (held in value) {
+	case .first:  return held.id;
+	case .second: return held.id;
+	}
+	return 0;
+}
+
+main :: proc() {
+	// A record holding capacity has a zero value whatever the element is.
+	sealed: Buffer(Sealed, 4) = {};
+	fmt.println(sealed.len());
+	one: Sealed = .first(Held{1});
+	two: Sealed = .second(Held{2});
+	sealed.push(move(one));
+	sealed.push(move(two));
+	fmt.println(sealed.len(), id_of(sealed.view()[0]), id_of(sealed.view()[1]));
+	taken := sealed.pop();
+	fmt.println(id_of(taken), sealed.len());
+
+	// A managed element: two pushed, one retired. The retired slot keeps the
+	// bits of a value that no longer exists, and neither the copy below nor the
+	// drop at the end of the scope may read them.
+	owners: Buffer(Tracked, 4) = {};
+	first := Tracked{10};
+	second := Tracked{20};
+	owners.push(move(first));
+	owners.push(move(second));
+	retired := owners.pop();
+	fmt.println("retired", retired.id, owners.len());
+	drop(retired);
+
+	copied := owners;
+	fmt.println("copied", copied.len(), copied.view()[0].id);
+
+	// The capacity a retired element left behind is not part of the value, so
+	// equality and formatting stop at the count as the copy and the drop do.
+	left: Buffer(int, 4) = {};
+	right: Buffer(int, 4) = {};
+	left.put(1);
+	left.put(2);
+	left.put(3);
+	_ = left.pop();
+	right.put(1);
+	right.put(2);
+	fmt.println(left == right, left);
+
+	fmt.println("scope end");
+}

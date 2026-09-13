@@ -995,6 +995,8 @@ Where a container must deliberately outlive its scope uncleaned, [`unsafe.forget
 
 `Small_Array(T, N)` is a library container with inline capacity `N`. It supports indexing, slicing, iteration, and the usual container methods without allocating. Operations that exceed `N` panic; their `try_` forms leave the value unchanged and return `Result(Unit, Capacity_Error)`. Element copying follows the ordinary copy rules.
 
+Its inline storage is [capacity](#uninitialized-capacity) rather than `N` values, so `T` needs no zero value: an empty `Small_Array(T, N)` imposes exactly what an empty `[dynamic]T` does. A copy clones the live elements only, and so does a drop.
+
 An invalid insertion index panics in both ordinary and `try_` forms. `pop()` returns and removes the last element, or returns `.none` for an empty array. `x[a:b]` is a read-only `[]T` over the live prefix; `slice()` is the whole prefix as `[]mut T`, and a writable subrange is `slice()[a:b]`.
 
 A [move-only](#lifecycle-hooks-and-resource-types) element type is held too. The methods that copy an element — `get`, `append`, `insert`, their `try_` forms, and by-value iteration — are bound on [`is_copyable(T)`](#built-in-procedures) and are therefore not members of such an instance, which is the [`where` exclusion](#where-clauses) rather than anything this type arranges. `append_moved` and `insert_moved` take the element with `move(...)` and are the way in; they have no `try_` form, because a capacity failure would arrive having already consumed the value it could not store, so a caller who must not panic asks `space()` or `is_full()` first. Everything that reaches an element without copying it — `get_mut`, `view`, `slice`, `iter_mut`, `refs()`, `pop`, `remove`, `clear` — is unaffected.
@@ -4706,7 +4708,7 @@ If a view has no locally provable lifetime, make an owned copy with `clone`, use
 
 ### The `unsafe` package
 
-Operations that discard or manufacture provenance live in `core:unsafe`. It is an ordinary package; its visible import is the review mechanism.
+Operations that discard or manufacture provenance, or that assert a liveness the compiler cannot see, live in `core:unsafe`. It is an ordinary package; its visible import is the review mechanism.
 
 ```odin
 import "core:unsafe"
@@ -4734,6 +4736,38 @@ The compiler checks the shape of the conversion and nothing else. The source and
 Producing a valid destination representation is the caller's obligation. During compile-time evaluation, a bit pattern that is not a value of the destination type is a compile-time error. The same invalid pattern at runtime is not diagnosed.
 
 Pointer destinations are limited to `rawptr` and C pointers, and the result is unchecked: dereferencing it is valid only when the input bits already describe suitably aligned, live storage of the destination pointee type.
+
+#### Uninitialized capacity
+
+A fixed-capacity container reserves storage for `N` elements and holds fewer. The storage behind what it holds is **capacity**: bytes that have never been a value. A `[N]T` field cannot express that on its own — every one of its elements is a value, so the record needs a zero for `T` it may have no use for, and its generated copy and drop visit all `N`.
+
+`@(initialized = count)` on a fixed array field says that only its first `count` elements are values, naming a sibling field of type `int` that holds how many:
+
+```odin
+Small_Array :: struct($T: type, $N: int) {
+	@(private, initialized = count) items: [N]T,
+	@(private) count: int,
+}
+```
+
+The field then imposes no zero-value requirement on `T`, so the record has a zero value whatever the element is — an empty `Small_Array(T, N)` is as free of `T` as an empty `[dynamic]T`. The record's generated copy clones elements `0 ..< count` and leaves the capacity uncopied; its generated drop releases those same elements and nothing else. A copy that fails partway releases what it built, exactly as it does for any other part.
+
+The count's accuracy is the container author's promise. The compiler reads the named field to decide what to copy and what to release, and verifies only the shape: the attribute must name a sibling field of the record, and that field must be an `int`.
+
+Two `core:unsafe` operations move values across that boundary, because neither [`move`](#assignment-statements) nor [`exchange`](#exchange) can. `move` cannot name an element, and `exchange` installs a replacement the element type may not have.
+
+```odin
+unsafe.write(self.items[self.count], move(value)); // storage becomes a value
+taken := unsafe.take(self.items[last]);            // the value leaves the storage
+```
+
+`unsafe.write(place, value)` stores into a place holding no value, so nothing is dropped first. The value arrives the way an initialization takes it: a borrowed place is cloned into the storage, a temporary or a `move` hands ownership over.
+
+`unsafe.take(place)` reads the value out and runs no cleanup for what is left behind. The result is owned by the caller like any other value. Afterwards the storage holds the bits of a value that no longer exists, and reading it again as one is undefined.
+
+Both refuse a bare variable. A variable's liveness is tracked, so `move` takes its value out and an ordinary assignment puts one back; reaching past that with an unchecked operation could only contradict what the compiler already knows. They apply to a field, an element, or any other place inside an aggregate.
+
+Neither operation adjusts the count. A container takes its element out and then shortens, or lengthens and then writes, and the order is what keeps the count accurate at every point a panic can unwind from.
 
 Everything in `unsafe` is a promise by the programmer that the compiler cannot verify. It does not make the underlying storage owned or extend its lifetime.
 
@@ -5555,6 +5589,7 @@ The lists below identify attributes by their declaration targets. Struct and uni
     @(link_name=<string>)
     @(private) – globals and struct fields
     @(public) – globals and struct fields
+    @(initialized=<field>) – a fixed array field whose live prefix another field counts
 ```
 
 These attributes specify linkage or visibility. They specify the symbol that a declaration produces or the code that can use the declaration. Storage duration uses [storage modifiers](#storage-modifiers), not attributes. A [constant](#constant-declarations) specifies read-only data.

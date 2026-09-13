@@ -1324,12 +1324,73 @@ emit_equal :: proc(e: ^Emitter, type: Type_Id, lhs, rhs: string) -> string {
 			symbol := symbol_of(e.c, field)
 			left := extract(e, llvm_type(e, under), lhs, index)
 			right := extract(e, llvm_type(e, under), rhs, index)
-			leaf := emit_equal(e, symbol.type, left, right)
+			leaf := ""
+			if counter := symbol_of(e.c, symbol.initialized_by); counter != nil {
+				leaf = emit_prefix_equal(e, under, counter, symbol.type, lhs, rhs, left, right)
+			} else {
+				leaf = emit_equal(e, symbol.type, left, right)
+			}
 			result = combine_and(e, result, leaf)
 		}
 		return result
 	}
 	return emit_compare(e, .Eq_Eq, type, lhs, rhs)
+}
+
+// design.md "Uninitialized capacity": only the live prefix of the field holds
+// values, so only the prefix is compared. Two records whose counts differ are
+// already unequal through the count field itself, and the loop stops at the
+// shorter of the two so neither side's capacity is ever read -- which for an
+// element that compares through a pointer is the difference between an answer
+// and a use of storage that was released.
+@(private = "file")
+emit_prefix_equal :: proc(
+	e: ^Emitter, record: Type_Id, counter: ^Symbol, array: Type_Id, lhs, rhs, left, right: string,
+) -> string {
+	element := underlying_info(e.c, array).element
+	element_llvm := llvm_type(e, element)
+	record_llvm := llvm_type(e, record)
+	array_llvm := llvm_type(e, array)
+
+	count_left := widen_to_i64(e, extract(e, record_llvm, lhs, int(counter.index)), counter.type)
+	count_right := widen_to_i64(e, extract(e, record_llvm, rhs, int(counter.index)), counter.type)
+	shorter, total := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", shorter, count_left, count_right)
+	fmt.sbprintfln(
+		&e.b, "  %s = select i1 %s, i64 %s, i64 %s", total, shorter, count_left, count_right,
+	)
+
+	// Both operands are values here, and an element is reached by index, so each
+	// side is spilled to storage the loop can walk.
+	left_slot, right_slot := alloca(e, array_llvm), alloca(e, array_llvm)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", array_llvm, left, left_slot)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", array_llvm, right, right_slot)
+	same, cursor := alloca(e, "i1"), alloca(e, "i64")
+	fmt.sbprintfln(&e.b, "  store i1 true, ptr %s", same)
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+
+	head := new_label(e, "prefix.equal.head")
+	body, done := new_label(e, "prefix.equal.body"), new_label(e, "prefix.equal.done")
+	branch(e, head)
+	place_label(e, head)
+	at := load(e, "i64", cursor)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", more, at, total)
+	branch_if(e, more, body, done)
+	place_label(e, body)
+	one := load(e, element_llvm, gep_at(e, element_llvm, left_slot, at))
+	other := load(e, element_llvm, gep_at(e, element_llvm, right_slot, at))
+	leaf := emit_equal(e, element, one, other)
+	previous := load(e, "i1", same)
+	next := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = and i1 %s, %s", next, previous, leaf)
+	fmt.sbprintfln(&e.b, "  store i1 %s, ptr %s", next, same)
+	step := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", step, at)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", step, cursor)
+	branch(e, head)
+	place_label(e, done)
+	return load(e, "i1", same)
 }
 
 // An erased view is an aggregate the ordinary struct path cannot compare, so it

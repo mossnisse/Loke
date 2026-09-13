@@ -2573,6 +2573,16 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				}
 			}
 			return nil
+		case .Unsafe_Take, .Unsafe_Write:
+			// Both replace what the place holds, so a borrow of it ends here exactly
+			// as at an `exchange`.
+			if len(v.bound) >= 1 {
+				prov_invalidate(graph, v.bound[0], v.span, sym.builtin == .Unsafe_Take ? "taken" : "overwritten")
+				for bound in v.bound[1:] {
+					walk_flow_expr(graph, bound)
+				}
+			}
+			return nil
 		case .Unsafe_Forget:
 			if len(v.bound) == 1 {
 				// The carriers the operand held go nowhere: nothing binds the

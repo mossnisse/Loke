@@ -91,6 +91,11 @@ contribute_standard_members :: proc(k: ^Checker, pkg: ^Package) {
 		// loss, and the only release `shared(T)` and any other handle over a
 		// `rawptr` control block can perform.
 		contribute_builtin(c, pkg, "free", .Unsafe_Free)
+		// Moving a value into and out of raw capacity: the one place the compiler
+		// cannot see whether storage holds a value, so the container author says
+		// so (design.md "Uninitialized capacity").
+		contribute_builtin(c, pkg, "take", .Unsafe_Take)
+		contribute_builtin(c, pkg, "write", .Unsafe_Write)
 		// Reinterpreting bits is the third visible loss: nothing about the source
 		// value says the destination representation is one its type ever admits,
 		// so the spelling is `unsafe.transmute(T, value)` and the operation is

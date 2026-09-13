@@ -842,6 +842,18 @@ emit_format_struct :: proc(e: ^Emitter, type, under: Type_Id, address: string) {
 		emit_format_literal(e, identifier_text(e.c, sym.name))
 		emit_format_literal(e, " = ")
 		slot := gep_field(e, llvm_type(e, under), address, index)
+		// design.md "Uninitialized capacity": the storage behind the live prefix
+		// holds no value, so printing it would read what a retired element left
+		// there. The prefix prints as the sequence it is.
+		if counter := symbol_of(e.c, sym.initialized_by); counter != nil {
+			count := load(
+				e, llvm_type(e, counter.type),
+				gep_field(e, llvm_type(e, under), address, int(counter.index)),
+			)
+			element := underlying_info(e.c, sym.type).element
+			emit_format_sequence(e, element, slot, count, inline_array = true)
+			continue
+		}
 		emit_format_call(e, sym.type, slot)
 	}
 	emit_format_literal(e, "}")

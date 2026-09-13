@@ -81,6 +81,11 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 		return {{.Struct_Literal}, .None}, true
 	case "align":
 		return {{.Struct_Literal, .Union_Literal}, .Deferred}, true
+	case "initialized":
+		// design.md "Uninitialized capacity": the value is a bare sibling field
+		// name, so the shape is validated by `resolve_uninitialized_fields`
+		// against the record's own field list.
+		return {{.Struct_Field}, .Deferred}, true
 	case "zero", "failure":
 		// The value is a bare variant name rather than a string, so the shape is
 		// validated by `src/union.odin` against the union's own variant list.

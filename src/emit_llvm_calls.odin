@@ -86,6 +86,22 @@ emit_call :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string {
 			return emit_unsafe_builtin(e, v, symbol.builtin, as_type)[0]
 		case .Unsafe_Transmute:
 			return emit_transmute(e, v, as_type)
+		case .Unsafe_Take:
+			// The value leaves; the storage keeps the bits nobody may read again.
+			return load(e, llvm_type(e, as_type), emit_address(e, v.bound[0]))
+		case .Unsafe_Write:
+			// A store and nothing else: the storage held no value, so there is
+			// nothing there to drop first. The value still arrives the way any
+			// initialization takes it -- a place keeps its own value and the storage
+			// receives a clone, a temporary or a `move` hands ownership over.
+			written := expr_base(v.bound[0]).type
+			address := emit_address(e, v.bound[0])
+			value := emit_expr(e, v.bound[1])
+			if emit_lifecycle(e, written).managed && expression_is_borrowed_place(e.c, v.bound[1]) {
+				value = emit_clone_value(e, written, value)
+			}
+			store(e, written, value, address)
+			return "0"
 		case .Unsafe_Forget:
 			// The feature's whole meaning is the call that is *not* made: the operand
 			// is evaluated for its side effects, but skips the `emit_discarded_temporary`

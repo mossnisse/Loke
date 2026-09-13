@@ -964,6 +964,15 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		part_operations := emit_lifecycle(e, part)
 		source := element_address(e, subject, self, index)
 		destination := element_address(e, subject, out, index)
+		// design.md "Uninitialized capacity": the live prefix is copied element by
+		// element and the capacity behind it is not copied at all. An unmanaged
+		// element needs none of that -- the whole field travels as bytes, capacity
+		// included, because none of those bytes owns anything.
+		if field, counter, prefixed := record_prefix_part(e, subject, index); prefixed &&
+		   part_operations.managed {
+			emit_clone_prefix(e, subject, self, out, field, counter, index, result, pair)
+			continue
+		}
 		if !part_operations.managed {
 			loaded := load(e, llvm_type(e, part), source)
 			store(e, part, loaded, destination)
@@ -984,7 +993,7 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// past `index` is still the inert zero this block never wrote.
 		place_label(e, unwind)
 		for done := index - 1; done >= 0; done -= 1 {
-			emit_drop_place(e, clone_part(e.c, subject, done), element_address(e, subject, out, done))
+			emit_drop_record_part(e, subject, out, done)
 		}
 		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "true"))
 		e.terminated = true
@@ -998,6 +1007,140 @@ emit_synth_try_clone :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	built := load(e, value_type, out)
 	fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "false", built))
 	fmt.sbprintln(&e.b, "}")
+}
+
+// design.md "Uninitialized capacity": `@(initialized = count)` says that only
+// the first `count` elements of a fixed array field are values. Everything the
+// generated lifecycle does to that field is bounded by the count it names, and
+// the capacity behind it is never read as a value.
+@(private = "file")
+record_prefix_part :: proc(
+	e: ^Emitter, record: Type_Id, index: int,
+) -> (field: ^Symbol, counter: ^Symbol, prefixed: bool) {
+	info := underlying_info(e.c, record)
+	if info == nil || info.kind != .Struct || index < 0 || index >= len(info.fields) {
+		return nil, nil, false
+	}
+	field = symbol_of(e.c, info.fields[index])
+	if field == nil || field.initialized_by == INVALID_SYMBOL {
+		return nil, nil, false
+	}
+	counter = symbol_of(e.c, field.initialized_by)
+	return field, counter, counter != nil
+}
+
+// The live count, widened to the index type the element addressing uses.
+@(private = "file")
+emit_prefix_count :: proc(e: ^Emitter, record: Type_Id, base: string, counter: ^Symbol) -> string {
+	address := element_address(e, record, base, int(counter.index))
+	return widen_to_i64(e, load(e, llvm_type(e, counter.type), address), counter.type)
+}
+
+// Drops the live prefix, last element first, which is the order the unrolled
+// walk over a fixed array's elements uses. The capacity behind it held no
+// value and has nothing to release.
+@(private = "file")
+emit_drop_prefix :: proc(e: ^Emitter, record: Type_Id, base: string, field, counter: ^Symbol) {
+	element := underlying_info(e.c, field.type).element
+	if !emit_lifecycle(e, element).managed {
+		return
+	}
+	items := element_address(e, record, base, int(field.index))
+	cursor := alloca(e, "i64")
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", emit_prefix_count(e, record, base, counter), cursor)
+	head := new_label(e, "prefix.drop.head")
+	body, done := new_label(e, "prefix.drop.body"), new_label(e, "prefix.drop.done")
+	branch(e, head)
+	place_label(e, head)
+	remaining := load(e, "i64", cursor)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp sgt i64 %s, 0", more, remaining)
+	branch_if(e, more, body, done)
+	place_label(e, body)
+	index := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = sub i64 %s, 1", index, remaining)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", index, cursor)
+	emit_drop_place(e, element, gep_at(e, llvm_type(e, element), items, index))
+	branch(e, head)
+	place_label(e, done)
+}
+
+// One part of a record, dropped the way that part is owned.
+@(private = "file")
+emit_drop_record_part :: proc(e: ^Emitter, record: Type_Id, base: string, index: int) {
+	part := clone_part(e.c, record, index)
+	if !emit_lifecycle(e, part).managed {
+		return
+	}
+	if field, counter, prefixed := record_prefix_part(e, record, index); prefixed {
+		emit_drop_prefix(e, record, base, field, counter)
+		return
+	}
+	emit_drop_place(e, part, element_address(e, record, base, index))
+}
+
+// Clones the live prefix of an `@(initialized)` field, one element at a time,
+// publishing the destination's own count as it goes. That count is what a
+// failure anywhere later in the record reads to clean this field up, so it has
+// to be accurate at every point the loop can leave from -- including the
+// element clone that fails halfway.
+@(private = "file")
+emit_clone_prefix :: proc(
+	e: ^Emitter,
+	record: Type_Id,
+	self, out: string,
+	field, counter: ^Symbol,
+	index: int,
+	result: Type_Id,
+	pair: string,
+) {
+	element := underlying_info(e.c, field.type).element
+	element_llvm := llvm_type(e, element)
+	source := element_address(e, record, self, int(field.index))
+	destination := element_address(e, record, out, int(field.index))
+	built := element_address(e, record, out, int(counter.index))
+	total := emit_prefix_count(e, record, self, counter)
+
+	cursor := alloca(e, "i64")
+	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
+	head := new_label(e, "prefix.clone.head")
+	body, done := new_label(e, "prefix.clone.body"), new_label(e, "prefix.clone.done")
+	branch(e, head)
+	place_label(e, head)
+	at := load(e, "i64", cursor)
+	more := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = icmp slt i64 %s, %s", more, at, total)
+	branch_if(e, more, body, done)
+
+	place_label(e, body)
+	from := gep_at(e, element_llvm, source, at)
+	into := gep_at(e, element_llvm, destination, at)
+	cloned := ""
+	if !emit_lifecycle(e, element).clone_fallible {
+		cloned = emit_clone_value(e, element, load(e, element_llvm, from), "%arg1")
+	} else {
+		value, failed := emit_part_clone(e, element, from)
+		fail, ok := new_label(e, "prefix.clone.fail"), new_label(e, "prefix.clone.ok")
+		branch_if(e, failed, fail, ok)
+		// This field's own prefix is already published, so cleaning up is the same
+		// walk every other failing part performs.
+		place_label(e, fail)
+		emit_drop_prefix(e, record, out, field, counter)
+		for earlier := index - 1; earlier >= 0; earlier -= 1 {
+			emit_drop_record_part(e, record, out, earlier)
+		}
+		fmt.sbprintfln(&e.b, "  ret %s %s", pair, emit_alloc_result(e, result, "true"))
+		e.terminated = true
+		place_label(e, ok)
+		cloned = value
+	}
+	store(e, element, cloned, into)
+	next := temp(e)
+	fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", next, at)
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", next, cursor)
+	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, counter.type), next, built)
+	branch(e, head)
+	place_label(e, done)
 }
 
 // The address of part `index`, which is a struct field or an array element.
@@ -1183,11 +1326,7 @@ emit_drop_place :: proc(e: ^Emitter, type: Type_Id, address: string) {
 		return
 	}
 	for index := clone_part_count(e.c, type) - 1; index >= 0; index -= 1 {
-		part := clone_part(e.c, type, index)
-		if !emit_lifecycle(e, part).managed {
-			continue
-		}
-		emit_drop_place(e, part, element_address(e, type, address, index))
+		emit_drop_record_part(e, type, address, index)
 	}
 }
 

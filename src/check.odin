@@ -806,6 +806,79 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 		info.packed = record_is_packed(value)
 		info.written_align = record_written_alignment(k, value)
 	}
+	resolve_uninitialized_fields(k, type, value)
+}
+
+// design.md "Uninitialized capacity": `@(initialized = count)` on a fixed array
+// field says that only its leading `count` elements are values -- the rest is
+// capacity. It is resolved after every field symbol exists, because the name it
+// carries is a sibling that may be declared after it.
+//
+// The promise is the author's: the compiler reads the named field to decide
+// what to copy and what to drop, and nothing verifies that it is accurate. What
+// is checked is the shape, so a typo or a wrong type is not a silent leak.
+@(private = "file")
+resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
+	info := type_of(k.c, type)
+	if info == nil {
+		return
+	}
+	for &field in value.fields {
+		attribute, written := field_initialized_attribute(field.attributes)
+		if !written {
+			continue
+		}
+		for binding in field.symbols {
+			symbol := symbol_of(k.c, binding)
+			if symbol == nil {
+				continue
+			}
+			if underlying_kind(k.c, symbol.type) != .Array {
+				errorf(
+					k.c, attribute.span, "L0691",
+					"`@(initialized)` names the live prefix of a fixed array, and `%s` is `%s`",
+					identifier_text(k.c, symbol.name), type_name(k.c, symbol.type),
+				)
+				continue
+			}
+			ident, is_ident := attribute.value.(^Expr_Ident)
+			if !is_ident {
+				errorf(
+					k.c, attribute.span, "L0691",
+					"`@(initialized=...)` names a field of this record holding the live count",
+				)
+				continue
+			}
+			counter := member_named(k.c, info.fields, ident.name_id)
+			counted := symbol_of(k.c, counter)
+			if counted == nil {
+				errorf(
+					k.c, attribute.span, "L0691",
+					"`%s` is not a field of this record", ident.name,
+				)
+				continue
+			}
+			if type_underlying(k.c, counted.type) != TYPE_INT {
+				errorf(
+					k.c, attribute.span, "L0691",
+					"the live count `%s` is `%s`, and must be `int`",
+					ident.name, type_name(k.c, counted.type),
+				)
+				continue
+			}
+			symbol.initialized_by = counter
+		}
+	}
+}
+
+@(private = "file")
+field_initialized_attribute :: proc(attributes: []Attribute) -> (Attribute, bool) {
+	for attribute in attributes {
+		if len(attribute.path) == 1 && attribute.path[0].text == "initialized" {
+			return attribute, true
+		}
+	}
+	return {}, false
 }
 
 // `(name: Type, ...)`. Every field is named and public by grammar, so all that

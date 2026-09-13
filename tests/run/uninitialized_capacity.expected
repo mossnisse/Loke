@@ -1,0 +1,10 @@
+0
+2 1 2
+2 1
+retired 20 1
+drop 20
+copied 1 10
+true Buffer(int, 4){items = [1, 2], count = 2}
+scope end
+drop 10
+drop 10

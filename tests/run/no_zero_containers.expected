@@ -17,6 +17,14 @@ true 2
 0
 0 true
 0
+0 true
+3 .a(1) .a(2)
+.a(2) 2
+.a(1) 1 .b(true)
+0
+drop 1
+1
+drop 2
 drop 7
 drop 7
 drop 8

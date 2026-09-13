@@ -57,7 +57,13 @@ type_has_zero_walk :: proc(c: ^Compiler, type: Type_Id, seen: ^map[Type_Id]bool)
 	case .Struct:
 		for field in info.fields {
 			symbol := symbol_of(c, field)
-			if symbol != nil && !type_has_zero_walk(c, symbol.type, seen) {
+			if symbol == nil || symbol.initialized_by != INVALID_SYMBOL {
+				// design.md "Uninitialized capacity": the storage behind the live
+				// prefix holds no values, so the element type needs no zero -- the
+				// same reason a dynamic array's capacity imposes none.
+				continue
+			}
+			if !type_has_zero_walk(c, symbol.type, seen) {
 				return false
 			}
 		}

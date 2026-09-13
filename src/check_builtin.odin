@@ -69,6 +69,9 @@ check_builtin_call :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, symbo
 	case .Unsafe_Forget:
 		check_forget_builtin(k, v, ident)
 		return
+	case .Unsafe_Take, .Unsafe_Write:
+		check_capacity_builtin(k, v, sym.builtin)
+		return
 	case .Unsafe_Transmute:
 		check_transmute_builtin(k, v, ident)
 		return
@@ -453,6 +456,7 @@ check_layout_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 	     .New, .New_Clone, .Free, .Unsafe_Free, .Free_All, .Make, .Default_Allocator, .Drop, .Exchange,
 	     .Simd_Cast, .Simd_Select, .Simd_Reduce,
 	     .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
+	     .Unsafe_Take, .Unsafe_Write,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .Slice_Sort_By, .None, .Assert, .Panic, .Is_Copyable,
@@ -660,6 +664,7 @@ check_allocation_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident,
 	     .Static_Assert, .Build_Config, .Source_Location, .Caller_Location,
 	     .Type_Of, .Typeid_Of, .Fields_Of, .Enum_Values_Of, .Default_Allocator, .Drop,
 	     .Exchange, .Unsafe_Raw_Data, .Unsafe_String_View, .Unsafe_C_String_View, .Unsafe_Forget,
+	     .Unsafe_Take, .Unsafe_Write,
 	     .Unsafe_Transmute, .Type_Info_Of,
 	     .Fmt_Stdout_Writer, .Fmt_Stderr_Writer, .Fmt_Write_Bytes, .Fmt_Format_Any,
 	     .Strings_Allocate, .Slice_Sort_By,

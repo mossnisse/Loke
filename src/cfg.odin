@@ -1225,6 +1225,13 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 				walk_flow_expr(graph, v.bound[1])
 			}
 			return nil
+		case .Unsafe_Take, .Unsafe_Write:
+			// Neither names a variable (the checker refuses one), so the operands are
+			// ordinary reads of whatever aggregate holds the place.
+			for bound in v.bound {
+				walk_flow_expr(graph, bound)
+			}
+			return nil
 		case .Drop, .Free:
 			// `drop` consumes the binding. `free` ends an allocation root rather
 			// than a value, and provenance (`src/borrow.odin`) already reports a

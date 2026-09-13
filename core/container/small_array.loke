@@ -18,6 +18,7 @@
 package container;
 
 import "core:fmt";
+import "core:unsafe";
 
 // design.md writes `try_append` as `Result(Unit, Capacity_Error)`, so this is
 // the payload inside that result union, not a second fallible shape. Nothing
@@ -47,10 +48,11 @@ impl Capacity_Error {
 // `N > 0` because a zero-capacity growable array can only panic, and a caller
 // who wants no storage wants no container.
 Small_Array :: struct($T: type, $N: int) where N > 0 {
-	// Elements at `count ..< N` are the zero value, never live: `pop` and
-	// `remove` overwrite what they retire so a managed element is not left
-	// duplicated behind the length.
-	@(private) items: [N]T,
+	// design.md "Uninitialized capacity": elements at `count ..< N` are capacity
+	// rather than values. Nothing reads them, the generated copy and drop stop at
+	// `count`, and the element type therefore needs no zero value -- an empty
+	// `Small_Array(T, N)` is as free of `T` as an empty `[dynamic]T` is.
+	@(private, initialized = count) items: [N]T,
 	@(private) count: int,
 }
 
@@ -141,7 +143,7 @@ impl Small_Array($T, $N) {
 			return .err(Capacity_Error{wanted, N});
 		}
 		foreach (value in values) {
-			self.items[self.count] = value;
+			unsafe.write(self.items[self.count], value);
 			self.count += 1;
 		}
 		return .ok({});
@@ -166,7 +168,7 @@ impl Small_Array($T, $N) {
 		}
 		if (self.count == N) { return .err(Capacity_Error{N + 1, N}); }
 		self.open_slot(index);
-		self.items[index] = value;
+		unsafe.write(self.items[index], value);
 		self.count += 1;
 		return .ok({});
 	}
@@ -181,7 +183,7 @@ impl Small_Array($T, $N) {
 	// or `is_full()` first, and those are exact.
 	append_moved :: proc(self: inout, @(escape=stored) value: move T) {
 		if (self.count == N) { panic("Small_Array is full"); }
-		self.items[self.count] = move(value);
+		unsafe.write(self.items[self.count], move(value));
 		self.count += 1;
 	}
 
@@ -193,35 +195,32 @@ impl Small_Array($T, $N) {
 		}
 		if (self.count == N) { panic("Small_Array is full"); }
 		self.open_slot(index);
-		self.items[index] = move(value);
+		unsafe.write(self.items[index], move(value));
 		self.count += 1;
 	}
 
 	// The last element, removed, or .none when empty, like a dynamic array.
 	//
-	// Every retirement below is one `exchange`: it takes the element out and
-	// leaves the zero value behind as a single operation, so no element is ever
-	// reachable from two indices at once, and — where `T` is a borrow carrier —
-	// the value taken out is not a borrow of `self` that the rest of the body
-	// would then have to leave alone.
+	// Every retirement below takes its element out with `unsafe.take` and then
+	// shortens the length, so the slot it leaves behind is capacity again: no
+	// element is ever reachable from two indices at once, and none is left where
+	// the drop of `self` would release it a second time.
 	pop :: proc(self: inout) -> Option(T) {
 		if (self.count == 0) { return .none; }
 		self.count -= 1;
-		last := self.count;
-		return .some(exchange(inout self.items[last], {}));
+		return .some(unsafe.take(self.items[self.count]));
 	}
 
-	// Order-preserving: everything after `index` shifts down one place.
+	// Order-preserving: everything after `index` shifts down one place. The
+	// vacated slot travels up with each swap and ends past the new length.
 	remove :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
-		removed := exchange(inout self.items[index], {});
+		removed := unsafe.take(self.items[index]);
 		at := index;
 		for (at + 1 < self.count) {
-			_ = exchange(inout self.items[at], exchange(inout self.items[at + 1], {}));
+			self.items[:].swap(at, at + 1);
 			at += 1;
 		}
-		// The last shift — or the removal itself, when nothing shifted — already
-		// left the zero value in the slot that falls behind the new length.
 		self.count -= 1;
 		return removed;
 	}
@@ -229,19 +228,18 @@ impl Small_Array($T, $N) {
 	// O(1), at the cost of the order: the last element takes the hole.
 	remove_unordered :: proc(self: inout, index: int) -> T {
 		self.check_index(index);
-		removed := exchange(inout self.items[index], {});
+		removed := unsafe.take(self.items[index]);
 		self.count -= 1;
-		last := self.count;
-		if (index != last) {
-			_ = exchange(inout self.items[index], exchange(inout self.items[last], {}));
+		if (index != self.count) {
+			self.items[:].swap(index, self.count);
 		}
 		return removed;
 	}
 
-	// Length only. The retired elements are overwritten so nothing stays live
-	// behind the length.
+	// Length only. Each retired element is taken out and dropped as the discarded
+	// value it is; the storage behind the new length is capacity again.
 	clear :: proc(self: inout) {
-		foreach (i in 0 ..< self.count) { _ = exchange(inout self.items[i], {}); }
+		foreach (i in 0 ..< self.count) { _ = unsafe.take(self.items[i]); }
 		self.count = 0;
 	}
 
@@ -265,11 +263,10 @@ impl Small_Array($T, $N) {
 		}
 	}
 
-	// Everything from `index` up moves one slot along, leaving `index` holding the
-	// zero value for the caller to store into. A shift is a move, not a copy:
-	// `exchange` leaves the zero behind, so no managed element is cloned and none
-	// is briefly live at two indices. Each discarded result is the zero the
-	// previous step left behind.
+	// Everything from `index` up moves one slot along, leaving `index` free for
+	// the caller to write into. A shift is a move, not a copy: each step trades
+	// the free slot with the element below it, so no managed element is cloned
+	// and none is briefly live at two indices.
 	//
 	// It takes no bound: the moving insert needs the same shift as the copying
 	// one, and shifting has never been the part that copies.
@@ -277,7 +274,7 @@ impl Small_Array($T, $N) {
 	open_slot :: proc(self: inout, index: int) {
 		at := self.count;
 		for (at > index) {
-			_ = exchange(inout self.items[at], exchange(inout self.items[at - 1], {}));
+			self.items[:].swap(at, at - 1);
 			at -= 1;
 		}
 	}

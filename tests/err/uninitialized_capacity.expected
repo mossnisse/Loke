@@ -1,0 +1,24 @@
+L0691
+@7:4
+`@(initialized)` names the live prefix of a fixed array
+L0691
+@12:4
+`total` is not a field of this record
+L0691
+@17:4
+the live count `count` is `bool`, and must be `int`
+L0692
+@31:18
+`unsafe.take` reaches storage whose liveness is not tracked
+L0692
+@32:15
+`unsafe.write` reaches storage whose liveness is not tracked
+L0692
+@36:6
+`unsafe.take` takes one argument
+L0692
+@37:2
+`unsafe.write` takes the place and the value written into it
+L0359
+@38:18
+this expression cannot be the place `unsafe.take` reads

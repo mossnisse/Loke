@@ -243,6 +243,79 @@ check_exchange_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident) {
 	contribute_lifecycle_members(k, destination)
 }
 
+// design.md "Uninitialized capacity": `unsafe.take(place)` reads the owner out
+// of storage without running cleanup for what stays behind, and
+// `unsafe.write(place, value)` installs one without dropping what was there.
+// Between them they move a value into and out of capacity -- storage the
+// compiler has been told holds no value, and whose accuracy is the container
+// author's promise.
+//
+// Both refuse a bare variable. A whole variable's liveness *is* tracked, so
+// `move` takes it out and an ordinary assignment puts one back; reaching past
+// that with an unchecked operation would only break what the compiler knows.
+check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
+	taking := kind == .Unsafe_Take
+	name := taking ? "unsafe.take" : "unsafe.write"
+	wanted := taking ? 1 : 2
+	v.value_category = .Value
+	v.type = taking ? INVALID_TYPE : TYPE_VOID
+	if len(v.args) != wanted {
+		errorf(
+			k.c, v.span, "L0692",
+			taking ? "`unsafe.take` takes one argument, the place the value is read out of" :
+				"`unsafe.write` takes the place and the value written into it",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	for argument in v.args {
+		if argument.name.text != "" || argument.mode != .Value {
+			errorf(k.c, v.span, "L0692", "`%s` takes positional arguments only", name)
+			v.type = INVALID_TYPE
+			return
+		}
+	}
+	place := check_single_expr(k, v.args[0].value)
+	if place == INVALID_TYPE {
+		v.type = INVALID_TYPE
+		return
+	}
+	base := expr_base(v.args[0].value)
+	if base == nil || !base.assignable {
+		report_not_assignable(k, base, taking ? "the place `unsafe.take` reads" : "the place `unsafe.write` fills")
+		v.type = INVALID_TYPE
+		return
+	}
+	if _, is_ident := v.args[0].value.(^Expr_Ident); is_ident {
+		errorf(
+			k.c, expr_span(v.args[0].value), "L0692",
+			"`%s` reaches storage whose liveness is not tracked, and a variable's is; %s",
+			name, taking ? "`move` takes a variable's value out" : "an ordinary assignment fills it",
+		)
+		v.type = INVALID_TYPE
+		return
+	}
+	bound := make([]Expr, wanted, k.c.semantic_allocator)
+	bound[0] = v.args[0].value
+	if !taking {
+		if !check_value_expr(k, v.args[1].value, place, "write into") {
+			v.type = INVALID_TYPE
+			return
+		}
+		// The storage takes the value the way an initialization does, so a borrowed
+		// place is cloned into it and a move-only one has to be written `move(...)`.
+		classify_copy(k, v.args[1].value, place, "write")
+		bound[1] = v.args[1].value
+	}
+	v.bound = bound
+	if taking {
+		v.type = place
+		// The value handed back is owned like any other, so whatever it needs to be
+		// copied or released has to exist.
+		contribute_lifecycle_members(k, place)
+	}
+}
+
 // ------------------------------------------------- ownership at the call --
 
 // A `move` argument must be marked at the call site too, not just at the

@@ -1,0 +1,45 @@
+package main; import "core:unsafe";
+
+// design.md "Uninitialized capacity": the count a field names is the author's
+// promise, and the shape of that promise is what the compiler checks.
+
+Not_An_Array :: struct {
+	@(initialized = count) items: int,
+	count: int,
+}
+
+No_Such_Field :: struct {
+	@(initialized = total) items: [4]int,
+	count: int,
+}
+
+Wrong_Count_Type :: struct {
+	@(initialized = count) items: [4]int,
+	count: bool,
+}
+
+Buffer :: struct {
+	@(initialized = count) items: [4][dynamic]int,
+	count: int,
+}
+
+// A variable's liveness is tracked, so neither operation may name one: `move`
+// takes its value out and an ordinary assignment puts one back.
+variables :: proc() {
+	xs := [dynamic]int{1};
+	ys := [dynamic]int{2};
+	_ = unsafe.take(xs);
+	unsafe.write(ys, [dynamic]int{3});
+}
+
+shapes :: proc(b: inout Buffer) {
+	_ = unsafe.take(b.items[0], 1);
+	unsafe.write(b.items[0]);
+	_ = unsafe.take(7);
+}
+
+main :: proc() {
+	b: Buffer = {};
+	variables();
+	shapes(inout b);
+}
