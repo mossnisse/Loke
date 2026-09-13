@@ -31,12 +31,13 @@ main :: proc() {
 	a: container.Small_Array(Token, 4) = {};
 	fmt.println(a.len(), a.cap(), a.is_empty(), a.space());
 
-	// `append` copies from a borrowed argument, so a move-only element comes in
-	// through the consuming form instead.
+	// `append` and `insert` are procedure groups: the copying member cannot take a
+	// borrowed move-only element, and the written `move(...)` selects the
+	// consuming one. That member is also callable under its own name.
 	one, two, nine := Token{1}, Token{2}, Token{9};
-	a.append_moved(move(one));
+	a.append(move(one));
 	a.append_moved(move(two));
-	a.insert_moved(0, move(nine));
+	a.insert(0, move(nine));
 	fmt.println(a.len(), a.is_full(), a.space());
 
 	// Read-only and mutable traversal, neither of which copies an element.

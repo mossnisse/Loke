@@ -100,6 +100,17 @@ resolve_group_members :: proc(k: ^Checker, group_id: Symbol_Id, value: ^Expr_Pro
 			member = lookup_symbol(k.scope, id)
 		}
 		if member == INVALID_SYMBOL {
+			// design.md "where clauses": a member whose bound does not hold is not part
+			// of this instantiation, so a group that lists it simply loses it. This is
+			// the same shrinking every other lookup does -- `Small_Array(T, N)` groups
+			// its copying and consuming `append` under one name, and a move-only `T`
+			// leaves the group with only the consuming member instead of failing the
+			// moment such an instance exists.
+			if holder := symbol_of(k.c, group_id); holder != nil && holder.owner_type != INVALID_TYPE {
+				if excluded_member(k, holder.owner_type, id) != nil {
+					continue
+				}
+			}
 			errorf(k.c, name.span, "L0395", "unknown name `%s` in this procedure group", name.text)
 			continue
 		}

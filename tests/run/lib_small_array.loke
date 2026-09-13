@@ -92,6 +92,13 @@ main :: proc() {
 	owned.append([dynamic]int{3});
 	fmt.println(last, owned[0]);
 
+	// `append` is a procedure group even for a copyable element: a written
+	// `move(...)` selects the consuming member, so `source` is dead after the
+	// call rather than cloned into the array.
+	source := [dynamic]int{4, 5};
+	owned.append(move(source));
+	fmt.println(owned[1]);
+
 	// Insertion at each end and in the middle.
 	w: container.Small_Array(int, 4) = {};
 	w.insert(0, 2);

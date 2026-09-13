@@ -9,11 +9,13 @@
 // The zero value is a usable, empty array, so `x: Small_Array(int, 8) = {};`
 // needs no construction.
 //
-// A move-only element is held too. The methods that copy one — `get`,
-// `append`, `insert`, their `try_` forms, and by-value iteration — are bound
-// on `is_copyable(T)`, so they are simply not members of such an instance
-// (design.md "where clauses"); `append_moved` and `insert_moved` are the way
-// in, and everything that reaches an element without copying it is unchanged.
+// A move-only element is held too. The members that copy one — `get`,
+// `append_copied`, `insert_copied`, the `try_` forms, and by-value iteration —
+// are bound on `is_copyable(T)`, so they are simply not members of such an
+// instance (design.md "where clauses"). `append` and `insert` are procedure
+// groups whose other member consumes, so `values.append(move(token))` is the
+// way in, just as it is for a dynamic array, and everything that reaches an
+// element without copying it is unchanged.
 @(public)
 package container;
 
@@ -125,7 +127,7 @@ impl Small_Array($T, $N) {
 
 	// ------------------------------------------------------------ mutation --
 
-	append :: proc(
+	append_copied :: proc(
 		self: inout, @(escape=stored) values: ..T,
 	) where is_copyable(T) {
 		switch (_ in self.try_append(..values)) {
@@ -149,7 +151,7 @@ impl Small_Array($T, $N) {
 		return .ok({});
 	}
 
-	insert :: proc(
+	insert_copied :: proc(
 		self: inout, index: int, @(escape=stored) value: T,
 	) where is_copyable(T) {
 		switch (_ in self.try_insert(index, value)) {
@@ -173,9 +175,10 @@ impl Small_Array($T, $N) {
 		return .ok({});
 	}
 
-	// The move-only way in. `append` and `insert` copy out of a borrowed
-	// argument, which a move-only element cannot do, so these consume theirs
-	// instead: `values.append_moved(move(token))`.
+	// The consuming half of the `append` and `insert` groups below. The copying
+	// members read out of a borrowed argument, which a move-only element cannot
+	// do, so these take theirs with `move`, and a written `move(...)` at the call
+	// is what selects them (design.md "Parameter semantics and ABI lowering").
 	//
 	// Neither has a `try_` form. A capacity failure would arrive having already
 	// taken the value it could not store, which is the opposite of what this
@@ -198,6 +201,12 @@ impl Small_Array($T, $N) {
 		self.count += 1;
 		self.move_last_to(index);
 	}
+
+	// One name per operation, exactly as built-in insertion has one: a borrowed
+	// place copies, a written `move(...)` transfers. The call site therefore reads
+	// the same here as on `[dynamic]T`.
+	append :: proc{append_copied, append_moved};
+	insert :: proc{insert_copied, insert_moved};
 
 	// The last element, removed, or .none when empty, like a dynamic array.
 	//

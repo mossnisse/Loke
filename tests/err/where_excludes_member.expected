@@ -1,7 +1,7 @@
-L0363
+L0392
 @18:2
-`Small_Array(Token, 4)` has no field or member `append`
-`append` is declared with a `where` bound that does not hold for this instantiation
+no overload of method `append` applies to these arguments
+`append_moved` does not apply: it takes argument 2 by `move`, which is written `move(...)`
 L0456
 @21:19
 needs `next :: proc(self: inout Small_Array_Iterator(Token)) -> Option(Token)`

@@ -13,7 +13,7 @@ Slot :: enum{Only};
 main :: proc() {
 	a: container.Small_Array(Token, 4) = {};
 
-	// `append` copies out of a borrowed argument.
+	// The copying member of `append` is gone; the rest needs a written `move(...)`.
 	token := Token{1};
 	a.append(token);
 
