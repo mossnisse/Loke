@@ -345,7 +345,12 @@ require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symb
 		if argument == nil {
 			continue
 		}
-		if _, is_move := argument.(^Expr_Move); is_move {
+		// A place still belongs to whoever declared it, so giving it away is written
+		// out. A temporary owns its value already and has no lexical owner to leave
+		// dead, so it transfers directly — the same rule `unsafe.forget` follows, and
+		// what lets a library insertion take `values.append(open_file(path))` exactly
+		// as built-in insertion does.
+		if !expression_is_borrowed_place(k.c, argument) {
 			continue
 		}
 		name := "this parameter"

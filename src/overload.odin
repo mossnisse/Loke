@@ -59,6 +59,11 @@ Candidate :: struct {
 	parametric: bool,
 	// Tie-breaker 4: how much structure the written parameter patterns pin down.
 	specificity: int,
+	// Tie-breaker 5: how many arguments reached this candidate through a mode
+	// their written form did not name — an owning argument into an ordinary value
+	// parameter, or an unmarked temporary into a `move` one. Both transfer, so
+	// neither is a mismatch; the written form decides which candidate gets to.
+	mode_adjusted: int,
 	// The instantiation this candidate stands for, promoted to a checked body
 	// only if it is the one selected.
 	instance:   ^Instance,
@@ -297,9 +302,13 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	if param == INVALID_TYPE || arg.type == INVALID_TYPE {
 		return RANK_NONE
 	}
-	// A parameter mode is part of the match, not a conversion. A receiver's `inout`
-	// mode is implicit (already supplied by call syntax), but a consuming receiver
-	// is written `move(value).method()`, so that written form matters too, both ways.
+	// A parameter mode is part of the match, not a conversion. An argument's mode
+	// decides viability here and ties in `tie_break`, so it never competes with a
+	// conversion. A receiver's is different: its `inout` mode is implicit in
+	// method-call syntax, and a borrowing receiver ranks behind a by-value one,
+	// which is what picks between a `self` and a `self: inout` member of one group.
+	// A consuming receiver is written `move(value).method()`, so that written form
+	// matters too, both ways.
 	_, moved := arg.expr.(^Expr_Move)
 	adjusted := false
 	if arg.is_receiver {
@@ -313,14 +322,14 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 			return RANK_NONE
 		}
 		// design.md "Parameter semantics and ABI lowering": a `move` parameter is
-		// written `move(expr)` at the call site too. The reverse is not a mismatch —
-		// `append(move(row))` transfers into an ordinary value parameter rather than
-		// cloning into it — but it is the weaker match, so a written transfer picks
-		// the consuming overload wherever both exist.
-		if mode == .Move && !moved {
+		// written `move(expr)` at the call site too, unless the argument is a
+		// temporary — it owns its value already and leaves no lexical owner dead, so
+		// there is nothing for the marker to announce. Either form arrives owning
+		// the argument, which is what the mode asks for.
+		owned := moved || !expression_is_borrowed_place(k.c, arg.expr)
+		if mode == .Move && !owned {
 			return RANK_NONE
 		}
-		adjusted = moved && mode == .Value
 	}
 	if arg.type == param {
 		return adjusted ? RANK_ADJUST : RANK_EXACT
@@ -492,6 +501,13 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		}
 		cand.ranks[index] = rank
+		// A receiver's form already had to match exactly, so only arguments can
+		// reach a mode their written form did not name.
+		if !arg.is_receiver {
+			if _, transferred := arg.expr.(^Expr_Move); transferred != (mode == .Move) {
+				cand.mode_adjusted += 1
+			}
+		}
 	}
 
 	for slot in 0 ..< count {
@@ -606,7 +622,7 @@ compare_vectors :: proc(a, b: []int) -> int {
 	return 0
 }
 
-// The four tie-breakers, in order, for candidates whose vectors are identical.
+// The five tie-breakers, in order, for candidates whose vectors are identical.
 // Returns -1 when `a` wins, 1 when `b` does, and 0 when none of them decides.
 @(private = "file")
 tie_break :: proc(a, b: ^Candidate) -> int {
@@ -624,6 +640,12 @@ tie_break :: proc(a, b: ^Candidate) -> int {
 	// than the other stays ambiguous.
 	if a.specificity != b.specificity {
 		return a.specificity > b.specificity ? -1 : 1
+	}
+	// design.md tie-breaker 5: the written form selects. `values.append(move(f))`
+	// picks the consuming member of a group, and `values.append(1)` the ordinary
+	// one, where nothing structural tells the two apart.
+	if a.mode_adjusted != b.mode_adjusted {
+		return a.mode_adjusted < b.mode_adjusted ? -1 : 1
 	}
 	return 0
 }

@@ -999,7 +999,7 @@ Its inline storage is [capacity](#uninitialized-capacity) rather than `N` values
 
 An invalid insertion index panics in both ordinary and `try_` forms. `pop()` returns and removes the last element, or returns `.none` for an empty array. `x[a:b]` is a read-only `[]T` over the live prefix; `slice()` is the whole prefix as `[]mut T`, and a writable subrange is `slice()[a:b]`.
 
-A [move-only](#lifecycle-hooks-and-resource-types) element type is held too. The members that copy an element — `get`, the copying members of `append` and `insert`, their `try_` forms, and by-value iteration — are bound on [`is_copyable(T)`](#built-in-procedures) and are therefore not members of such an instance, which is the [`where` exclusion](#where-clauses) rather than anything this type arranges. `append` and `insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` is the way in, exactly as on a dynamic array: the written `move(...)` [selects](#parameter-semantics-and-abi-lowering) the consuming member. Those consuming members have no `try_` form, because a capacity failure would arrive having already consumed the value it could not store, so a caller who must not panic asks `space()` or `is_full()` first. Everything that reaches an element without copying it — `get_mut`, `view`, `slice`, `iter_mut`, `refs()`, `pop`, `remove`, `clear` — is unaffected.
+A [move-only](#lifecycle-hooks-and-resource-types) element type is held too. The members that copy an element — `get`, the copying members of `append` and `insert`, their `try_` forms, and by-value iteration — are bound on [`is_copyable(T)`](#built-in-procedures) and are therefore not members of such an instance, which is the [`where` exclusion](#where-clauses) rather than anything this type arranges. `append` and `insert` are [procedure groups](#explicit-procedure-overloading) whose other member consumes, so `values.append(move(token))` is the way in, exactly as on a dynamic array: the written `move(...)` [selects](#parameter-semantics-and-abi-lowering) the consuming member, and a temporary reaches it with no marker at all. Those consuming members have no `try_` form, because a capacity failure would arrive having already consumed the value it could not store, so a caller who must not panic asks `space()` or `is_full()` first. Everything that reaches an element without copying it — `get_mut`, `view`, `slice`, `iter_mut`, `refs()`, `pop`, `remove`, `clear` — is unaffected.
 
 ```odin
 x: Small_Array(int, 8) = {};
@@ -2036,6 +2036,7 @@ When conversion vectors are identical, tie-breakers apply in order:
 2. A candidate needing fewer omitted defaults wins.
 3. A non-parametric candidate beats a parametric one.
 4. Between parametric candidates, a structural specialization beats an unspecialized parameter (`Table(string, int)` beats `Table($K, $V)`); if neither is more specialized, the call is ambiguous.
+5. A candidate reached through the mode its arguments were written in beats one reached through the other: a written `move(expr)` prefers a `move` parameter, and an unmarked argument prefers an ordinary one. A parameter mode is never a conversion rank, so this decides only where nothing above it does; if neither is preferred, the call is ambiguous.
 
 **Constraints decide whether a candidate is viable, never which viable candidate wins.** `interface` applications and `where` clauses are filters; only structure orders what survives. Two candidates of identical shape differing only in constraint strength are an ambiguity error, resolved by naming the intended member or dispatching with `when`. Non-overlapping `where` filters are not ambiguous, since only one candidate is viable.
 
@@ -4000,11 +4001,19 @@ sort_in_place(inout numbers);
 process_owned(move(numbers));
 ```
 
-**The `inout` and `move` modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and an argument to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs, so a reader sees at the call which arguments may be modified and which are given away.
+**The `inout` and `move` modes are required at the call site, not just at the declaration.** An argument to an `inout` parameter must be written `inout expr`, and a *place* given to a `move` parameter must be written `move(expr)`. Omitting the marker is an error naming the parameter and the mode it needs, so a reader sees at the call which arguments may be modified and which are given away.
+
+**A temporary is passed to a `move` parameter directly.** It owns its value already and leaves no lexical owner dead, so there is nothing for a marker to announce — the same rule [`unsafe.forget`](#storage-modifiers) follows, and what lets an ordinary library call take an owning temporary exactly as [built-in insertion](#container-insertion) does:
+
+```odin
+files.append(open_file("a.txt"));   // a temporary: no marker
+f := open_file("b.txt");
+files.append(move(f));              // a place: written out, `f` is dead after the call
+```
 
 `value: borrow T` is an immutable alias of the caller's storage, in any parameter position. Unlike the default value binding, `&value` can be returned subject to the caller's lifetime. It uses the same mode as an immutable receiver, takes no call-site marker, and performs no copy. It can borrow a temporary for the complete expression, but cannot extend that temporary's lifetime. Constants are materialized as for `&`; packed fields cannot supply an aligned borrow. It cannot have a default. `@(escape=...)` may constrain this borrow even when `T` itself contains no pointer or view.
 
-The written form therefore also selects, as it does for a [consuming receiver](#methods-and-abstractions): a candidate whose parameter is `move` is reachable only from a written `move(expr)`. The reverse is not a mismatch — `move(expr)` into an ordinary value parameter transfers ownership instead of cloning into it — but it is the weaker match, so a written transfer picks the consuming overload wherever both exist.
+The written form therefore also selects. A candidate whose parameter is `move` is reachable only from an argument that already owns its value — a written `move(expr)` or a temporary — and passing such an argument to an ordinary value parameter is not a mismatch either, since it transfers ownership instead of cloning into it. Both directions are viable, so the written form decides between them by [tie-breaker 5](#operator-lookup-and-overload-resolution): `values.append(move(f))` picks a group's consuming member and `values.append(1)` its ordinary one. A [consuming receiver](#methods-and-abstractions) is stricter, and is always written `move(value).method()`.
 
 `move(x)` is an [expression](#assignment-statements) that transfers `x` and marks it dead. It may be used in assignments, returns, arguments, and consuming method calls such as `move(value).method()`. It cannot target static-duration storage.
 

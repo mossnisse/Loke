@@ -38,13 +38,22 @@ place_argument :: proc() {
 }
 
 // A `move` parameter transfers ownership, so the callee's copy is the one that
-// dies and the caller adds no second drop. The marker is written at the call
-// site even when the source is already a temporary.
+// dies and the caller adds no second drop. A place belongs to whoever declared
+// it, so giving it away is written out at the call.
 consuming_argument :: proc() {
 	fmt.println(3000);
 	held := make_res(3);
 	fmt.println(consumes(move(held)));
 	fmt.println(3001);
+}
+
+// A temporary needs no marker: it owns its value already and leaves no lexical
+// owner dead, so there is nothing for one to announce. The callee still owns
+// what it was handed, and drops it exactly once.
+consuming_temporary :: proc() {
+	fmt.println(3100);
+	fmt.println(consumes(make_res(31)));
+	fmt.println(3101);
 }
 
 // Several temporaries in one call are each cleaned up, in reverse order.
@@ -69,6 +78,7 @@ main :: proc() {
 	temporary_argument();
 	place_argument();
 	consuming_argument();
+	consuming_temporary();
 	several();
 	looping();
 }

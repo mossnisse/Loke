@@ -61,6 +61,13 @@ main :: proc() {
 	a.clear();
 	fmt.println(a.len(), a.is_empty());
 
+	// A temporary owns its value and needs no marker, so a move-only element
+	// enters the library container by the same call it enters a built-in one by.
+	a.append(Token{5});
+	built_in: [dynamic]Token = {};
+	built_in.append(Token{5});
+	fmt.println(a[0].id, built_in[0].id);
+
 	// ---------------------------------------------------------- Enum_Array --
 
 	// The zero value is the whole array, so nothing needs `filled` here.
