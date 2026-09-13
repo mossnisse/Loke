@@ -3,8 +3,9 @@ package main; import "core:fmt";
 // design.md "Copy-cost diagnostics" (m5a-plan step 5). "A copy site is a point
 // that duplicates a value instead of moving or borrowing it": a trivial
 // aggregate copied into a `value: T` parameter, a binding, an assignment, the
-// return of a borrowed managed owner by value, and a place operand of `or_else`
-// or `or_return`, which copies a payload out and leaves the source live.
+// return of a borrowed managed owner by value, a place operand of `or_else` or
+// `or_return`, which copies a payload out and leaves the source live, and a
+// by-value `foreach` over a place, which copies one element per step.
 //
 // Compiled with `-copy-cost=1`, so every real copy site reports and the ones
 // that are not copy sites still stay quiet — `_ = place` writes to nothing and
@@ -89,6 +90,15 @@ main :: proc() {
 	maybe: Option(Res) = .some(Res{8});
 	unwrapped := maybe or_else Res{0};
 	_ = unwrapped;
+
+	// design.md "Value semantics and the ownership rule": iteration is the one
+	// context that copies from a place, so a by-value traversal is a copy site
+	// once per step. `&item` and `.refs()` borrow instead, and neither is one.
+	items := [dynamic]Res{};
+	foreach (item in items) { fmt.println(item.id); }
+	foreach (item in items.refs()) { fmt.println(item.id); }
+	foreach (&item in items) { fmt.println(item.id); }
+	_ = items;
 }
 
 relay :: proc() -> Result(Res, int) {

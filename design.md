@@ -2887,7 +2887,7 @@ One rule covers every context that takes a value. **A place stays live: it is bo
 | aggregate literal element | cloned | transferred |
 | [container insertion](#container-insertion) | cloned | transferred |
 
-[Iteration](#borrowing-iteration) is the one context that copies from a place rather than borrowing it: an ordinary `foreach (item in place)` clones each element, and `place.refs()` is the borrowing traversal.
+[Iteration](#borrowing-iteration) is the one context that copies from a place rather than borrowing it: an ordinary `foreach (item in place)` clones each element, and `place.refs()` is the borrowing traversal. Being a copy site, it is reported like the others.
 
 Cost varies with the shape of an expression; meaning does not. `produce() or_else fallback()` transfers a payload and `outcome or_else fallback()` copies one, yet both yield the same value and leave the same things live — naming an intermediate changes what the program pays, never what it computes. Because the difference is cost rather than meaning, it is reported rather than forbidden: see [Copy-cost diagnostics](#copy-cost-diagnostics).
 
@@ -4018,7 +4018,7 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 #### Copy-cost diagnostics
 
-Copying a large aggregate or managed owner is valid, but tools may warn when a binding, assignment, parameter, return, a place operand of [`or_else` or `or_return`](#operator-ownership), or an explicit `clone` duplicates substantial data. An ordinary `value: T` parameter borrows a managed owner and is not a copy site. Use `move` for ownership transfer and `inout` only when mutation is intended.
+Copying a large aggregate or managed owner is valid, but tools may warn when a binding, assignment, parameter, return, a place operand of [`or_else` or `or_return`](#operator-ownership), a step of a by-value [`foreach`](#borrowing-iteration) over a place, or an explicit `clone` duplicates substantial data. An ordinary `value: T` parameter borrows a managed owner and is not a copy site. Use `move` for ownership transfer and `inout` only when mutation is intended.
 
 ```odin
 sum :: proc(values: [dynamic]int) -> int {
