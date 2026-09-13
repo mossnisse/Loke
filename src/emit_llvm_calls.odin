@@ -1162,6 +1162,7 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 		operation = from_bits > to_bits ? "fptrunc" : "fpext"
 	case from_float:
 		operation = to_signed ? "fptosi" : "fptoui"
+		guard_float_to_int(e, value, from, from_lane, to_lane)
 	case to_float:
 		operation = from_signed ? "sitofp" : "uitofp"
 	case from_bits > to_bits:
@@ -1174,6 +1175,46 @@ emit_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> string 
 	out := temp(e)
 	fmt.sbprintfln(&e.b, "  %s = %s %s %s to %s", out, operation, llvm_type(e, from), value, llvm_type(e, to))
 	return out
+}
+
+// design.md "Type conversion": a float converts to an integer type only when the
+// value is in that type's range. LLVM's `fptosi`/`fptoui` yield poison for every
+// other input -- a NaN, an infinity, or a magnitude that does not fit -- which
+// is not a value this language has, so the range is tested first and an invalid
+// conversion panics (design.md "Panics and unwinding"). Both tests are unordered
+// so a NaN trips them, and the upper bound is exclusive because it is the first
+// power of two past the destination's maximum.
+@(private = "file")
+guard_float_to_int :: proc(e: ^Emitter, value: string, from, from_lane, to_lane: Type_Id) {
+	width := u16(type_bits(e.c, from_lane))
+	signed := type_signed(e.c, to_lane) || type_is_rune(e.c, to_lane)
+	magnitude := int(type_bits(e.c, to_lane)) - (signed ? 1 : 0)
+	low_value := signed ? -power_of_two(magnitude) : 0
+	high_value := power_of_two(magnitude)
+
+	// A destination wider than the source's exponent range rounds its bound to an
+	// infinity. Every finite value is then in range and only the infinity itself
+	// is not, so an equal operand has to fail rather than pass.
+	below := float_from_pattern(float_pattern(low_value, width), width) == low_value ? "ult" : "ule"
+	low := llvm_float(float_pattern(low_value, width), width)
+	high := llvm_float(float_pattern(high_value, width), width)
+
+	info := underlying_info(e.c, from)
+	lanes := type_is_simd(e.c, from)
+	if lanes {
+		low, high = simd_repeated(e, info, low), simd_repeated(e, info, high)
+	}
+	llvm := llvm_type(e, from)
+	under, over, bad := temp(e), temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = fcmp %s %s %s, %s", under, below, llvm, value, low)
+	fmt.sbprintfln(&e.b, "  %s = fcmp uge %s %s, %s", over, llvm, value, high)
+	predicate := lanes ? fmt.aprintf("<%d x i1>", info.count) : "i1"
+	fmt.sbprintfln(&e.b, "  %s = or %s %s, %s", bad, predicate, under, over)
+	// A panic is not lane-wise, so one invalid lane faults the whole conversion.
+	if lanes {
+		bad = simd_any_lane(e, info, bad)
+	}
+	panic_if(e, bad, "cast.range", "a float outside the destination integer type's range")
 }
 
 // `U.name(payload)`: evaluate the payload and write it plus the variant's tag.

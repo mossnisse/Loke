@@ -2828,6 +2828,13 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			}
 			return Const_Value{kind = .Integer, integer = value.integer}, true
 		case .Float:
+			// design.md "Type conversion": the interval the runtime conversion
+			// checks, so a constant is a diagnostic exactly where a value would
+			// panic. A NaN or an infinity fails both comparisons.
+			limit := power_of_two(int(bits) - (signed ? 1 : 0))
+			if !(value.float >= (signed ? -limit : 0) && value.float < limit) {
+				return value, false
+			}
 			truncated, exact, ok := bi_from_f64_trunc(storage, value.float)
 			if !ok || (!explicit && !exact) {
 				return value, false

@@ -1,0 +1,17 @@
+// design.md "Type conversion": a float that is not in the destination integer
+// type's interval has no value to produce, so the conversion panics instead of
+// handing LLVM's poison to whatever reads the result. The lines before it are
+// the conversions that are in range, including the lane-wise form.
+package main; import "core:fmt";
+
+narrow :: proc(value: f64) -> i32 { return i32(value); }
+
+main :: proc() {
+	fmt.println(narrow(1.9), narrow(-1.9), narrow(-2147483648.0));
+	unsigned := 4294967295.5;
+	fmt.println(u32(unsigned));
+	lanes: Simd(f64, 2) = {1.5, -3.5};
+	converted := Simd(i32, 2)(lanes);
+	fmt.println(converted[0], converted[1]);
+	fmt.println(narrow(1e100));
+}

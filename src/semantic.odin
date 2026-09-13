@@ -374,6 +374,18 @@ float_bits_const :: proc(raw: u64, bits: u16) -> Const_Value {
 	return Const_Value{kind = .Float, float = float_from_pattern(raw, bits), float_bits = bits, float_raw = raw}
 }
 
+// design.md "Type conversion": the bounds of a float-to-integer conversion are
+// powers of two, which is what lets one interval serve every float width -- the
+// value is exact in any format that can hold it and an infinity in one that
+// cannot, and the comparison against an infinity still answers correctly.
+power_of_two :: proc(exponent: int) -> f64 {
+	out := f64(1)
+	for _ in 0 ..< exponent {
+		out *= 2
+	}
+	return out
+}
+
 // The IEEE-754 encoding of a value already rounded to `bits`, and its inverse.
 // The f16 halves are the hand-rolled pair below; 32 and 64 are hardware widths.
 float_pattern :: proc(value: f64, bits: u16) -> u64 {

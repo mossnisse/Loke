@@ -269,7 +269,6 @@ emit_simd_unary :: proc(e: ^Emitter, v: ^Expr_Unary, as_type: Type_Id) -> string
 }
 
 // A vector constant with the same value in every lane, written inline.
-@(private = "file")
 simd_repeated :: proc(e: ^Emitter, info: ^Type_Info, lane: string) -> string {
 	llvm := simd_lane_llvm_type(e, info)
 	out := "<"
@@ -293,7 +292,6 @@ simd_all_ones :: proc(e: ^Emitter, info: ^Type_Info) -> string {
 
 // One `i1` from a lane-wise predicate: true when any lane is. A panic is not
 // lane-wise, so a lane-wise fault condition has to reduce before it can branch.
-@(private = "file")
 simd_any_lane :: proc(e: ^Emitter, info: ^Type_Info, mask: string) -> string {
 	simd_declare_reduce(e, "or", "i1", int(info.count), "i1")
 	out := temp(e)

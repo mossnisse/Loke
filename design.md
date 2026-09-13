@@ -209,6 +209,10 @@ u := u32(f);
 
 Assigning between different types requires an explicit conversion unless an implicit conversion rule applies.
 
+An integer converts to another integer type by keeping the low bits of its two's-complement representation, the same wrap the [arithmetic operators](#arithmetic-operators) define, so a narrowing or a negative-to-unsigned conversion is defined rather than a fault.
+
+A floating-point value converts to an integer type only when it is in range: at least the destination's minimum, and less than one past its maximum. The value is then truncated toward zero. A NaN, an infinity, or a value outside that interval [panics](#panics-and-unwinding), and a constant one is a compilation diagnostic instead. The interval's endpoints are powers of two, which every floating-point format represents exactly, so a fractional value just past one of them panics even though truncating first would have fit: `u32(-0.5)` is out of range rather than zero. A `Simd(U, N)(v)` applies this rule per lane, and one invalid lane faults the whole conversion, because a panic is not lane-wise.
+
 ##### Implicit type conversions
 
 The following list defines the implicit conversions. There are no user-defined ones: a `hook(convert)` applies only where it is written, and imported extensions cannot add conversions.
@@ -4997,6 +5001,7 @@ A **panic** is an unrecoverable runtime fault. In required compile-time procedur
 - a call through a nil `dyn` view
 - integer division or remainder by zero
 - an out-of-range built-in index
+- a [floating-point value that is not in the integer type it converts to](#type-conversion)
 - a failed trapping checked extraction, `v.(T)`
 - an allocation failure when the allocator policy is [`.Panic`](#allocation-failure)
 
