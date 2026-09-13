@@ -82,26 +82,18 @@ binary_search :: proc(values: []$T, wanted: T) -> (index: int, found: bool)
 
 // ------------------------------------------------------------------ places --
 
-// Two places trade contents, which is the one rearrangement that needs no copy
-// -- so a move-only element belongs here even though it belongs nowhere else in
-// this file. `move` cannot name an element (design.md "Storage modifiers"),
-// leaving `exchange` as the way to reach into an aggregate.
+// Two elements trade contents, which is the one rearrangement that installs no
+// new value: no copy or drop hook runs on either element, and no vacated slot
+// has to be filled. That is what reaches a move-only element and a no-zero one
+// alike -- `exchange` needs a replacement, and the zero is the only one
+// available without a copy, which an element type may not have at all.
 //
-// The split is not "move-only takes the slow path". `exchange` has to install a
-// live replacement, and the zero is the only one available without a copy, so
-// the second branch is closed to a copyable union that designates no zero --
-// each element type can take exactly one of these.
+// This is design.md's free spelling of the contributed `values.swap()` member,
+// and it forwards to it exactly as `sort` does: one implementation, reached by
+// both spellings. Each index is bounds-checked there, and two equal indices
+// leave the element as it is.
 swap :: proc(values: []mut $T, left: int, right: int) {
-	if (left == right) { return; }
-	when (is_copyable(T)) {
-		held := values[left];
-		values[left] = values[right];
-		values[right] = held;
-	} else {
-		held := exchange(inout values[left], {});
-		values[left] = exchange(inout values[right], {});
-		values[right] = move(held);
-	}
+	values.swap(left, right);
 }
 
 // Reverses the order of the elements in place. Built on `swap`, so it reaches a

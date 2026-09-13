@@ -7,9 +7,15 @@ L0363
 L0363
 @22:2
 `[]int` has no field or member `reverse_sort`
+L0363
+@23:2
+`[]int` has no field or member `swap`
+L0392
+@24:2
+no overload of `swap` applies to these arguments
 L0512
-@30:2
+@32:2
 `numbers` cannot be modified here
 L0444
-@37:2
+@39:2
 `No_Comparator` does not satisfy `Comparator(No_Comparator, Opaque)`

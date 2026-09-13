@@ -1,0 +1,55 @@
+package main;
+
+import "core:fmt";
+import "core:slice";
+
+// `swap` as a contributed member (design.md "Swapping elements").
+//
+// design.md writes both spellings, `x.swap(i, j)` on a dynamic array and the
+// free `slice.swap(s, i, j)`, and this file is not `core:slice` — which is the
+// point of contributing the member: an `impl [dynamic]T` written there would be
+// an extension visible only inside that package.
+//
+// The element is move-only *and* has no zero value, so nothing built on
+// `exchange` could rearrange it: there is neither a copy to make nor a zero to
+// install. A swap installs nothing, which is why it reaches this element.
+Held :: move_only struct { id: int }
+Sealed :: union { held: Held, spare: Held }
+
+id_of :: proc(value: Sealed) -> int {
+	switch (token in value) {
+	case .held:  return token.id;
+	case .spare: return token.id;
+	}
+	return 0;
+}
+
+// The dynamic array's receiver is a place, so the evaluator performs the same
+// operation the backend writes and a constant agrees with a run-time call.
+rotated :: proc() -> int {
+	xs: [dynamic]int = {};
+	xs.append(1, 2, 3);
+	xs.swap(0, 2);
+	xs.swap(1, 1); // two equal indices leave the element as it is
+	return xs[0]*100 + xs[1]*10 + xs[2];
+}
+
+ROTATED :: rotated();
+
+main :: proc() {
+	fmt.println(ROTATED, rotated(), ROTATED == rotated());
+
+	owners := [dynamic]Sealed{Sealed.held(Held{7}), Sealed.spare(Held{8})};
+	owners.swap(0, 1);
+	fmt.println(id_of(owners[0]), id_of(owners[1]));
+	owners.swap(1, 1);
+	fmt.println(id_of(owners[1]));
+
+	// The same operation through a slice of that array, and through the free
+	// spelling: one implementation, three ways in.
+	view := owners[:];
+	view.swap(0, 1);
+	fmt.println(id_of(owners[0]));
+	slice.swap(owners[:], 0, 1);
+	fmt.println(id_of(owners[0]));
+}

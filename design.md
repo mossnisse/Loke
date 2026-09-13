@@ -752,6 +752,14 @@ if (s == nil) {
 }
 ```
 
+#### Swapping elements
+
+`values.swap(left, right)` makes two elements of a `[]mut T` trade contents, and `slice.swap(values, left, right)` is the free spelling of the same operation. A dynamic array has the same member, as it has `sort`. Each index is bounds-checked like any other, so an out-of-range one panics, and two equal indices leave the element as it is.
+
+Neither element is created or destroyed — they change place — so no copy or drop hook runs on either, and no vacated slot has to be filled. A swap therefore applies to an element type that has neither a copy nor a zero value, which [`exchange`](#exchange) cannot: exchange installs a replacement, and the zero is the only replacement available without a copy. `slice.reverse` is built on it and reaches the same element types.
+
+The operation takes two indices rather than two places because the indices are runtime values, and two borrows of one sequence cannot be shown to name distinct elements. A read-only `[]T` has no `swap`, exactly as it has no `sort`.
+
 #### Sorting slices
 
 `slice.sort` sorts ascending and `slice.reverse_sort` descending according to
@@ -926,6 +934,7 @@ Along with `len` and `cap`, a dynamic array supports:
 
 - `x[low:high]` slices it, producing a borrowed view under the ordinary [slice rules](#slices).
 - `x.sort()` sorts in place, as [`slice.sort`](#sorting-slices) does for a `[]mut T`.
+- `x.swap(left, right)` makes two elements [trade contents](#swapping-elements).
 - `x.clear()` sets `len` to 0 and leaves `cap` unchanged.
 - `x.resize(n)` sets the length to `n`, zero-filling new elements and growing the capacity if needed.
 - `x.reserve(n)` makes the capacity at least `n` without changing the length.
@@ -3373,6 +3382,8 @@ previous := exchange(inout current, {});
 The destination must be a definitely live variable or addressable place. Its type supplies the context for `replacement`. The destination place is evaluated once, then the replacement is evaluated completely. If that fails or panics, the destination remains unchanged. Otherwise the old value is returned and the replacement is installed without an observable dead state.
 
 An owning variable used as `replacement` must use `move(source)` to transfer ownership. The result follows ordinary ownership rules, including temporary cleanup if ignored.
+
+Two elements of a mutable slice trade contents with [`values.swap`](#swapping-elements) instead. It installs no replacement, so it applies where `exchange` does not: to an element type with neither a copy nor a zero value.
 
 `exchange` is permitted for lexical and static-duration destinations. It is the only operation that can move the current value out of file-scope, `static`, or `thread_local` storage, because it simultaneously leaves a completed live replacement. Like any `inout` operation, it is rejected while an incompatible borrow of the destination is live. It is not an atomic memory operation and provides no inter-thread synchronization; concurrent code uses `Atomic(T)` or a lock.
 

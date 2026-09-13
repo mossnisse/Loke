@@ -85,6 +85,37 @@ container_ops_global :: proc(e: ^Emitter, type: Type_Id) -> string {
 	return name
 }
 
+// The element storage and live count of whichever receiver a sequence member
+// has. A mutating container arrives as the address of its header, so both words
+// are loads; a slice receiver is a borrow of the caller's header, so they are
+// read out of the header value itself.
+@(private = "file")
+synth_sequence_storage :: proc(
+	e: ^Emitter, symbol: ^Symbol, through_header: bool,
+) -> (data: string, count: string) {
+	if through_header {
+		storage, length := temp(e), temp(e)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
+			storage, CONTAINER_TYPE, CONTAINER_STORAGE,
+		)
+		fmt.sbprintfln(
+			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
+			length, CONTAINER_TYPE, CONTAINER_LEN,
+		)
+		data, count = temp(e), temp(e)
+		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, storage)
+		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", count, length)
+		return
+	}
+	header := llvm_type(e, symbol.params[0])
+	self := synth_receiver_value(e, symbol)
+	data, count = temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, header, self, SLICE_DATA)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", count, header, self, SLICE_LEN)
+	return
+}
+
 // `xs.sort()` and `s.sort()`: the data pointer, the element count, the element
 // size, one generated comparison, and whether the order is reversed. Everything
 // above that is `runtime/container.c`'s introsort.
@@ -99,7 +130,6 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		element = slice_element(e.c, receiver)
 	}
 
-	argument := llvm_type(e, receiver)
 	open_function(e, "define %svoid %s(%s %%arg0)", llvm_linkage(name), name, synth_param_llvm(e, symbol, 0))
 	e.terminated = false
 
@@ -116,36 +146,60 @@ emit_synth_sort :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 	}
 
-	data, count := "", ""
-	if through_header {
-		// A mutating receiver arrives as the header's address, so both words are
-		// loads rather than extracts.
-		storage, length := temp(e), temp(e)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
-			storage, CONTAINER_TYPE, CONTAINER_STORAGE,
-		)
-		fmt.sbprintfln(
-			&e.b, "  %s = getelementptr inbounds %s, ptr %%arg0, i32 0, i32 %d",
-			length, CONTAINER_TYPE, CONTAINER_LEN,
-		)
-		data, count = temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", data, storage)
-		fmt.sbprintfln(&e.b, "  %s = load i64, ptr %s", count, length)
-	} else {
-		// A slice receiver is a borrow of the caller's header, so the two words are
-		// read out of the loaded header rather than out of a by-value argument.
-		self := synth_receiver_value(e, symbol)
-		data, count = temp(e), temp(e)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, argument, self, SLICE_DATA)
-		fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", count, argument, self, SLICE_LEN)
-	}
+	data, count := synth_sequence_storage(e, symbol, through_header)
 
 	fmt.sbprintfln(
 		&e.b, "  call void @loke_rt_v1_sort(ptr %s, i64 %s, i64 %d, ptr %s, i32 %d)",
 		data, count, type_size(e.c, element), container_less_thunk(e, element),
 		symbol.container_op == .Reverse_Sort ? 1 : 0,
 	)
+	fmt.sbprintln(&e.b, "  ret void")
+	fmt.sbprintln(&e.b, "}")
+}
+
+// design.md "Swapping elements": two elements trade contents. Neither value is
+// created or destroyed -- they change place -- so no copy or drop hook runs and
+// nothing has to be installed in a vacated slot. That is what reaches a
+// move-only or no-zero element, which `exchange` cannot: it needs a replacement
+// value, and the zero is the only one available without a copy.
+//
+// Both loads happen before either store, so two equal indices leave the element
+// exactly as it was. The slice's own bounds rule still applies to each index.
+@(private = "file")
+emit_synth_swap :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
+	function := begin_function_emission(e)
+	defer finish_function_emission(e, function)
+	receiver := symbol.params[0]
+	element := container_element(e.c, receiver)
+	through_header := element != INVALID_TYPE
+	if !through_header {
+		element = slice_element(e.c, receiver)
+	}
+	element_llvm := llvm_type(e, element)
+
+	open_function(
+		e, "define %svoid %s(%s %%arg0, %s %%arg1, %s %%arg2)",
+		llvm_linkage(name), name, synth_param_llvm(e, symbol, 0),
+		synth_param_llvm(e, symbol, 1), synth_param_llvm(e, symbol, 2),
+	)
+	e.terminated = false
+
+	data, count := synth_sequence_storage(e, symbol, through_header)
+
+	// Unsigned, so a negative index is caught by the same comparison as an
+	// oversized one -- the rule every other slice index goes through.
+	for argument in 1 ..= 2 {
+		out_of_range := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = icmp uge i64 %%arg%d, %s", out_of_range, argument, count)
+		panic_if(e, out_of_range, "bounds", "index out of range")
+	}
+
+	left := gep_at(e, element_llvm, data, "%arg1")
+	right := gep_at(e, element_llvm, data, "%arg2")
+	held_left := load(e, element_llvm, left)
+	held_right := load(e, element_llvm, right)
+	store(e, element, held_right, left)
+	store(e, element, held_left, right)
 	fmt.sbprintln(&e.b, "  ret void")
 	fmt.sbprintln(&e.b, "}")
 }
@@ -673,6 +727,9 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	case .Sort, .Reverse_Sort:
 		emit_synth_sort(e, symbol, name)
 		return
+	case .Swap:
+		emit_synth_swap(e, symbol, name)
+		return
 	}
 	function := begin_function_emission(e)
 	defer finish_function_emission(e, function)
@@ -996,8 +1053,8 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			&e.b, "  %s = call i32 @loke_rt_v1_map_shrink(ptr %%arg0, ptr %s, i64 %%arg1)", status, ops,
 		)
 
-	case .None, .Sort, .Reverse_Sort:
-		// `.Sort`/`.Reverse_Sort` returned above; reaching here is a dispatch bug.
+	case .None, .Sort, .Reverse_Sort, .Swap:
+		// The three returned above; reaching here is a dispatch bug.
 		backend_fail(e, "a contributed container member has no operation")
 		fmt.sbprintln(&e.b, "  ret void")
 		fmt.sbprintln(&e.b, "}")

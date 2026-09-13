@@ -1357,6 +1357,28 @@ eval_container_op :: proc(ev: ^Evaluator, v: ^Expr_Call, symbol: ^Symbol) -> (ou
 		}
 		return none, true
 
+	case .Swap:
+		// A slice's receiver is a borrow of the caller's header, so swapping through
+		// it would rearrange a copy; only the dynamic array, whose receiver is a
+		// place, can be rearranged here. The same split `sort` has.
+		if symbol.receiver != .Inout {
+			eval_fail(ev, v.span, "L0341", "a slice cannot be rearranged at compile time")
+			return nil, false
+		}
+		left, left_ok := count_argument(ev, v, 1)
+		right, right_ok := count_argument(ev, v, 2)
+		if !left_ok || !right_ok {
+			return nil, false
+		}
+		for at in ([2]int{left, right}) {
+			if at >= len(self.elements) {
+				eval_fail(ev, v.span, "L0361", "index %d is out of range", at)
+				return nil, false
+			}
+		}
+		self.elements[left], self.elements[right] = self.elements[right], self.elements[left]
+		return none, true
+
 	case .Insert:
 		at, at_ok := count_argument(ev, v, 1)
 		value, value_ok := argument(ev, v, 2)

@@ -150,6 +150,13 @@ Container_Op :: enum {
 	// inside that package, and design.md's own `s.sort()` is written in user code.
 	Sort,
 	Reverse_Sort,
+	// design.md "Swapping elements". Two elements trade contents, which is the
+	// one rearrangement that installs no new value, so it reaches a move-only or
+	// no-zero element that `exchange` cannot. Contributed to a mutable slice and
+	// to a dynamic array, like `sort`. The two indices are runtime values the
+	// borrow checker cannot prove distinct, which is exactly why this is one
+	// operation rather than two `inout` borrows of the same sequence.
+	Swap,
 	// The map half. `find` never inserts and `find_or_insert` always answers a
 	// slot; `m[key] = v` is a place rather than a call, so it is not a member.
 	Map_Find,
@@ -201,7 +208,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	// Insertion clones, so the element's own copy entry point has to exist.
 	contribute_lifecycle_members(k, element)
 
-	members := make([dynamic]Symbol_Id, 0, 16, k.c.semantic_allocator)
+	members := make([dynamic]Symbol_Id, 0, 17, k.c.semantic_allocator)
 	none := INVALID_TYPE
 	// design.md "Typed fallibility": a recoverable operation reports through
 	// `Result(Unit, Allocator_Error)`, never a trailing status.
@@ -285,6 +292,12 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	append(&members, container_member(
 		k, type, "reverse_sort", .Reverse_Sort, []Type_Id{type}, []Param_Mode{.Inout}, none, 0,
 	))
+	// The same rearrangement over two of the elements, and `inout` for the same
+	// reason.
+	append(&members, container_member(
+		k, type, "swap", .Swap,
+		[]Type_Id{type, TYPE_INT, TYPE_INT}, []Param_Mode{.Inout, .Value, .Value}, none, 0,
+	))
 	add_members(k.c, type, members[:])
 }
 
@@ -303,7 +316,7 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	if !info.mutable {
 		return
 	}
-	members := make([dynamic]Symbol_Id, 0, 2, k.c.semantic_allocator)
+	members := make([dynamic]Symbol_Id, 0, 3, k.c.semantic_allocator)
 	append(&members, container_member(
 		k, type, "sort", .Sort,
 		[]Type_Id{type}, []Param_Mode{.Value}, INVALID_TYPE, 0, .Value,
@@ -311,6 +324,11 @@ ensure_slice_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	append(&members, container_member(
 		k, type, "reverse_sort", .Reverse_Sort,
 		[]Type_Id{type}, []Param_Mode{.Value}, INVALID_TYPE, 0, .Value,
+	))
+	append(&members, container_member(
+		k, type, "swap", .Swap,
+		[]Type_Id{type, TYPE_INT, TYPE_INT}, []Param_Mode{.Value, .Value, .Value},
+		INVALID_TYPE, 0, .Value,
 	))
 	add_members(k.c, type, members[:])
 }

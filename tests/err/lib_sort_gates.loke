@@ -15,11 +15,13 @@ unordered :: proc() {
 }
 
 // design.md "Sorting slices": a read-only slice is not sortable, so it has no
-// `sort` to call.
+// `sort` to call. `swap` rearranges it too, and is gated the same way.
 read_only :: proc() {
 	readable := []int{3, 1, 2};
 	readable.sort();
 	readable.reverse_sort();
+	readable.swap(0, 1);
+	slice.swap(readable, 0, 1);
 }
 
 // A sort rearranges the whole container, so it is an invalidating access to it

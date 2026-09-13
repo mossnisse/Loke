@@ -4,11 +4,14 @@ package main; import "core:fmt"; import "core:mem"; import "core:slice";
 //
 // The first two blocks are design.md's "Sorting slices" examples verbatim.
 
-// A move-only element, and a copyable one with no zero value: the two element
-// kinds `swap`s `when` has to keep apart.
+// The three element kinds `swap` has to reach: a move-only one, a copyable one
+// with no zero value, and one that is both -- which nothing built on `exchange`
+// could take, because it has neither a copy nor a zero to install.
 Token :: move_only struct { id: int }
 
 Shape :: union { circle: int, square: int }
+
+Sealed :: union { held: Token, spare: Token }
 
 Card :: struct { rank: int, tag: int }
 
@@ -38,6 +41,15 @@ Always_Before :: struct { }
 
 impl Always_Before {
 	call :: proc(self, left, right: int) -> bool { return true; }
+}
+
+// A `Sealed` payload, read without copying it out of the union.
+id_of :: proc(value: Sealed) -> int {
+	switch (token in value) {
+	case .held:  return token.id;
+	case .spare: return token.id;
+	}
+	return 0;
 }
 
 main :: proc() {
@@ -142,6 +154,7 @@ main :: proc() {
 
 	// `swap` and `reverse` trade places rather than copying, so a move-only
 	// element goes through both -- the only two procedures here that one can.
+	// No copy or drop hook runs on an element either operation moves.
 	tokens := []mut Token{Token{1}, Token{2}, Token{3}, Token{4}};
 	slice.swap(tokens, 0, 3);
 	fmt.println(tokens[0].id, tokens[3].id);
@@ -150,12 +163,22 @@ main :: proc() {
 	slice.swap(tokens, 2, 2);
 	fmt.println(tokens[2].id);
 
-	// The other branch is not a fallback for the merely copyable: a union that
-	// designates no zero has nothing for `exchange` to install, and copies.
+	// A union that designates no zero has nothing `exchange` could install, and
+	// one whose payload is move-only has no copy either. Both trade places.
 	shapes := []mut Shape{Shape.circle(1), Shape.square(2)};
 	slice.swap(shapes, 0, 1);
 	slice.reverse(shapes);
 	fmt.println(shapes.len());
+
+	sealed := []mut Sealed{Sealed.held(Token{5}), Sealed.spare(Token{6})};
+	slice.swap(sealed, 0, 1);
+	fmt.println(id_of(sealed[0]), id_of(sealed[1]));
+	slice.reverse(sealed);
+	fmt.println(id_of(sealed[0]), id_of(sealed[1]));
+	// The contributed member is the same operation the free spelling forwards to,
+	// and two equal indices leave the element as it is.
+	sealed.swap(0, 0);
+	fmt.println(id_of(sealed[0]));
 
 	// An owned copy outlives the view it came from, which is the whole point.
 	owned := slice.clone(s);
