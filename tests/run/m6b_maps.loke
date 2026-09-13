@@ -385,6 +385,23 @@ lookup_regressions :: proc() {
 	case .some: assert(ptr^ == 17);
 	case .none: assert(false);
 	}
+
+	// design.md "Maps": `find_ref` is the same probe through a read-only borrow.
+	// An immutable parameter can ask it, having no `inout` to give `find`.
+	assert(read_grid(grid, {1, 2}) == 17);
+	assert(read_grid(grid, {3, 4}) == -1);
+	switch (ptr in grid.find_ref({1, 2})) {
+	case .some: assert(ptr^ == 17);
+	case .none: assert(false);
+	}
+}
+
+read_grid :: proc(m: borrow map[[2]int]int, key: [2]int) -> int {
+	switch (ptr in m.find_ref(key)) {
+	case .some: return ptr^;
+	case .none:
+	}
+	return -1;
 }
 
 lookup_regions :: proc() {

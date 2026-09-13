@@ -360,6 +360,17 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	)
 	set_synth_result_summary(k.c, find, 0)
 	append(&members, find)
+	// design.md "Maps": the same probe through a read-only borrow. A read-only
+	// path has no `inout` to give `find`, and cannot ask `lookup_value` for a
+	// move-only element it must not copy, so it asks this and reads `^V` — the
+	// borrow `refs()` hands out, answered for one key.
+	find_ref := container_member(
+		k, type, "find_ref", .Map_Find,
+		[]Type_Id{type, key}, []Param_Mode{.Value, .Value},
+		option_type(k, pointer_to(k.c, value, false)), 0, .Value,
+	)
+	set_synth_result_summary(k.c, find_ref, 0)
+	append(&members, find_ref)
 	// design.md "Maps": the owning read. Unlike `find` it hands back an
 	// independently owned value rather than a pointer into the table, so its
 	// receiver is immutable and an immutable parameter or a temporary map can be

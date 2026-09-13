@@ -846,11 +846,17 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 
 	case .Map_Find:
 		// Returns a pointer to the existing value and `true`, or `nil` and `false`;
-		// never inserts (design.md).
+		// never inserts (design.md). `find_ref` is the same probe with an immutable
+		// receiver, which arrives as the header itself rather than its address.
+		header := "%arg0"
+		if !param_mode_is_pointer(symbol_param_mode(e.c, symbol, 0)) {
+			header = alloca(e, CONTAINER_TYPE)
+			fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", CONTAINER_TYPE, header)
+		}
 		slot := value_storage(e, container_key(e.c, container), "%arg1")
 		found, ok := temp(e), temp(e)
 		fmt.sbprintfln(
-			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %%arg0, ptr %s, ptr %s)", found, ops, slot,
+			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, slot,
 		)
 		fmt.sbprintfln(&e.b, "  %s = icmp ne ptr %s, null", ok, found)
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_value(e, symbol.result, ok, found))

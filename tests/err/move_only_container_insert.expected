@@ -15,4 +15,4 @@ L0503
 `Res` is move-only, so a `..` spread cannot copy its elements into the pack
 L0491
 @14:6
-`Res` is move-only, so `lookup_value` cannot copy it out; use `find`, which borrows
+`Res` is move-only, so `lookup_value` cannot copy it out; use `find` or `find_ref`, which borrow

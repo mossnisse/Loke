@@ -1132,6 +1132,16 @@ case .none:
 }
 ```
 
+`m.find_ref(key)` is the same probe through a read-only borrow: it answers `Option(^V)` and its receiver is immutable, so an immutable parameter or a temporary map can be read through it. It is what a read-only path asks — `find` would want an `inout` that path does not have, and `lookup_value` would copy the element out, which a [move-only](#lifecycle-hooks-and-resource-types) one forbids:
+
+```odin
+read :: proc(m: borrow map[string]Token, key: string) -> Option(^Token) {
+	return m.find_ref(key);
+}
+```
+
+The returned pointer borrows the map for as long as it is live, exactly as `&m[key]` does, so no insertion can reallocate the table under it.
+
 `&m[key]` is the same pointer without the `Option`, and panics where `find` answers `.none`. `m.find_or_insert(key, elem)` is the third form: it answers `^mut V`, inserting `elem` under `key` first when the key is absent. Its second argument is evaluated whether or not the insertion happens and is taken as any [inserted element](#container-insertion) is; when the key is already present, the unused element is dropped. An operation that wants an entry either way therefore names the default it creates:
 
 ```odin
@@ -1150,6 +1160,7 @@ The built-in map supports these container operations:
 - `some_map.shrink()` removes excess capacity.
 - `some_map.try_insert(key, elem)` inserts or updates the entry, returning the [allocation error](#allocation-failure) rather than following the policy. It is the recoverable call form of `m[key] = elem`.
 - `some_map.find(key)` returns `Option(^mut V)`: a pointer to the existing value, or `.none`. It does not insert.
+- `some_map.find_ref(key)` returns `Option(^V)`: the same lookup through a read-only borrow, so its receiver is immutable. It does not insert.
 - `some_map.find_or_insert(key, elem)` returns `^mut V`: a pointer to the existing value, or to `elem` after inserting it under `key`. Allocation failure follows the [policy](#allocation-failure); `try_find_or_insert` returns the error instead.
 - `some_map.lookup_value(key)` returns `Option(V)`: an independently owned copy of the existing value, or `.none`. It does not insert, and its receiver is immutable.
 

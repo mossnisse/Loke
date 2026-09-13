@@ -10,7 +10,7 @@ Value :: union { flag: bool, number: i32 }
 Plain :: struct { n: int }
 
 // `lookup_value` copies the element out, which a move-only element has no way
-// to do. `find` still borrows one.
+// to do. `find` and `find_ref` still borrow one.
 Token :: move_only struct { id: int }
 
 main :: proc() {

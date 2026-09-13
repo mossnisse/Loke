@@ -12,3 +12,5 @@ try_insert 9 2 8
 after inserting map 10
 append 3 13 12 11 10
 after appending 13
+read_ref 14 0 13
+after reading 14
