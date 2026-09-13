@@ -388,12 +388,46 @@ lookup_regressions :: proc() {
 
 	// design.md "Maps": `find_ref` is the same probe through a read-only borrow.
 	// An immutable parameter can ask it, having no `inout` to give `find`.
+	borrowed_keys();
 	assert(read_grid(grid, {1, 2}) == 17);
 	assert(read_grid(grid, {3, 4}) == -1);
 	switch (ptr in grid.find_ref({1, 2})) {
 	case .some: assert(ptr^ == 17);
 	case .none: assert(false);
 	}
+}
+
+// design.md "Maps": a borrowed key queries a `map[string]V`. Nothing owned is
+// built to compare against one, which is why the view need not be terminated or
+// outlive the probe — only its bytes are read.
+borrowed_keys :: proc() {
+	m: map[string]int = {};
+	m["hellope"] = 1;
+	m["other"] = 2;
+	view: string_view = "hellope";
+	assert(view in m);
+	assert(!("nope" in m));
+	assert(m[view] == 1);
+	assert((m.lookup_value(view) or_else -1) == 1);
+	assert((m.lookup_value("missing") or_else -1) == -1);
+	switch (slot in m.find(view)) {
+	case .some: slot^ = 11;
+	case .none: assert(false);
+	}
+	switch (slot in m.find_ref(view)) {
+	case .some: assert(slot^ == 11);
+	case .none: assert(false);
+	}
+	m[view] += 4;
+	assert(&m[view] != nil && m[view] == 15);
+	// A view into a longer buffer: the key ends where the view does.
+	text: string = "hellopeXX";
+	assert(text[0:7] in m && m[text[0:7]] == 15);
+	assert(!(text[0:6] in m));
+	// The owned spelling still reaches the same entry.
+	owned: string = "other";
+	assert(owned in m && m[owned] == 2 && (m.lookup_value(owned) or_else -1) == 2);
+	assert((m.remove(view) or_else -1) == 15 && m.len() == 1);
 }
 
 read_grid :: proc(m: borrow map[[2]int]int, key: [2]int) -> int {

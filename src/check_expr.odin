@@ -1084,11 +1084,27 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 		v.type = INVALID_TYPE
 		return
 	}
-	if !check_value_expr(k, v.lhs, container_key(k.c, container), "look up") {
+	if !check_map_key(k, v.lhs, container_key(k.c, container), true) {
 		v.type = INVALID_TYPE
 		return
 	}
 	v.type = TYPE_BOOL
+}
+
+// design.md "Maps": an operation that only compares its key accepts the borrowed
+// form of it, so a `map[string]V` is asked with a `string_view` and no owned key
+// is built for the probe. `m[key] = elem` stores the key, so it still wants the
+// owned `string` it clones.
+@(private = "file")
+check_map_key :: proc(k: ^Checker, e: Expr, key: Type_Id, borrows: bool) -> bool {
+	type := check_single_expr(k, e, key)
+	if type == INVALID_TYPE || key == INVALID_TYPE {
+		return false
+	}
+	if borrows && key == TYPE_STRING && type == TYPE_STRING_VIEW {
+		return true
+	}
+	return materialize_value_expr(k, e, key, "look up")
 }
 
 // design.md "Maps": one syntax, two behaviours chosen by position.
@@ -1104,7 +1120,7 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 // recorded by `src/cfg.odin` makes true.
 @(private = "file")
 check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, place, inserts: bool) {
-	if !check_value_expr(k, v.indices[0], info.key, "look up") {
+	if !check_map_key(k, v.indices[0], info.key, !inserts) {
 		v.type = INVALID_TYPE
 		return
 	}

@@ -86,6 +86,24 @@ looked_up :: proc() -> int {
 	return held.len() * 100 + m["a"].len() * 10 + m.len();
 }
 
+// design.md "Maps": a `map[string]V` is queried with a `string_view` as well as
+// a `string`, and the fold answers what the run-time probe does — one key policy,
+// two spellings of the same bytes.
+QUERIED :: queried();
+queried :: proc() -> int {
+	m := map[string]int{"a" = 1, "bb" = 2};
+	view: string_view = "bb";
+	total := 0;
+	if (view in m) { total += m[view]; }
+	total += m.lookup_value(view) or_else 0;
+	switch (slot in m.find_ref("a")) {
+	case .some: total += slot^;
+	case .none: return -1;
+	}
+	total += m.remove(view) or_else 0;
+	return total * 10 + m.len();
+}
+
 FOUND :: found();
 found :: proc() -> int {
 	m := map[int]int{1 = 10, 2 = 20, 1 = 30};
@@ -155,6 +173,8 @@ main :: proc() {
 	assert(temporary_lookup() == TEMP_LOOKUP);
 	static_assert(CUSTOM_KEYS == 7);
 	assert(custom_keys() == CUSTOM_KEYS);
+	static_assert(QUERIED == 71);
+	assert(queried() == QUERIED);
 	fmt.println(SUM);
 	fmt.println(POPPED);
 	fmt.println(REMOVED);

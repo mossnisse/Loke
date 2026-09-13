@@ -1149,6 +1149,17 @@ counts: map[string]int = {};
 counts.find_or_insert(word, 0)^ += 1;
 ```
 
+A `map[string]V` is queried with a `string_view` as well as a `string`. `view in m`, `m[view]` in every position but the inserting one, and the non-storing lookups — `find`, `find_ref`, `lookup_value`, and `remove` — all take the borrowed form, so a query builds no owned key and an owned one is not cloned to be compared:
+
+```odin
+counts: map[string]int = {};
+counts["hellope"] = 1;
+word := text[0:7];              // a `string_view` into a longer buffer
+if (word in counts) { use(counts[word]); }
+```
+
+This is the one pairing of a borrowed query key with an owned stored key, and it holds because the two spellings hash and compare identically: both satisfy [`Hashable`](#standard-interface-catalogue) through the same byte-wise mix, so a view finds exactly the entry its bytes name. `m[key] = elem`, `try_insert`, and `find_or_insert` store the key and therefore still take the owned `string`.
+
 #### Map container operations
 
 The built-in map supports these container operations:

@@ -348,6 +348,14 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	members := make([dynamic]Symbol_Id, 0, 8, k.c.semantic_allocator)
 	none := INVALID_TYPE
 	fails := result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)
+	// design.md "Maps": an operation that only compares its key takes the
+	// borrowed form of it, so a `map[string]V` is queried with a `string_view`
+	// and an owned `string` converts to one rather than being cloned for the
+	// probe. Insertion keeps the owned key, which it stores.
+	query := key
+	if key == TYPE_STRING {
+		query = TYPE_STRING_VIEW
+	}
 
 	// `find` returns `Option(^mut V)` over the existing value — it never inserts
 	// (design.md). The receiver is `inout` because the returned pointer grants
@@ -355,7 +363,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	// representation; the borrow and invalidation rules did not.
 	find := container_member(
 		k, type, "find", .Map_Find,
-		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value},
+		[]Type_Id{type, query}, []Param_Mode{.Inout, .Value},
 		option_type(k, pointer_to(k.c, value, true)), 0,
 	)
 	set_synth_result_summary(k.c, find, 0)
@@ -366,7 +374,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	// borrow `refs()` hands out, answered for one key.
 	find_ref := container_member(
 		k, type, "find_ref", .Map_Find,
-		[]Type_Id{type, key}, []Param_Mode{.Value, .Value},
+		[]Type_Id{type, query}, []Param_Mode{.Value, .Value},
 		option_type(k, pointer_to(k.c, value, false)), 0, .Value,
 	)
 	set_synth_result_summary(k.c, find_ref, 0)
@@ -377,7 +385,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	// read through it.
 	lookup := container_member(
 		k, type, "lookup_value", .Map_Lookup_Value,
-		[]Type_Id{type, key}, []Param_Mode{.Value, .Value},
+		[]Type_Id{type, query}, []Param_Mode{.Value, .Value},
 		option_type(k, value), 0, .Value,
 	)
 	// A synthesised member has no body, so without a written summary a carrier
@@ -410,7 +418,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	// `.none` when the key was absent.
 	map_remove := container_member(
 		k, type, "remove", .Map_Remove,
-		[]Type_Id{type, key}, []Param_Mode{.Inout, .Value}, option_type(k, value), 0,
+		[]Type_Id{type, query}, []Param_Mode{.Inout, .Value}, option_type(k, value), 0,
 	)
 	set_synth_result_summary(k.c, map_remove, 0)
 	append(&members, map_remove)

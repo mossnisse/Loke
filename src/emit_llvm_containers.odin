@@ -764,6 +764,17 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return slot
 	}
 
+	// The key a non-storing lookup compares against. design.md "Maps": such a
+	// member takes the borrowed key, so a `string_view` argument is spilled as the
+	// unowned header the key's own hash and equality were generated for.
+	key_probe_slot :: proc(e: ^Emitter, symbol: ^Symbol, container: Type_Id) -> string {
+		key := container_key(e.c, container)
+		if symbol.params[1] != key {
+			return emit_borrowed_key_slot(e, "%arg1")
+		}
+		return value_storage(e, key, "%arg1")
+	}
+
 	status := ""
 	switch symbol.container_op {
 	case .Append:
@@ -853,7 +864,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 			header = alloca(e, CONTAINER_TYPE)
 			fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", CONTAINER_TYPE, header)
 		}
-		slot := value_storage(e, container_key(e.c, container), "%arg1")
+		slot := key_probe_slot(e, symbol, container)
 		found, ok := temp(e), temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, slot,
@@ -868,13 +879,12 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		// payload on a hit. The immutable receiver is already the address of the
 		// caller's header, which is what the C probe reads; nothing writes through
 		// it (design.md "Receiver forms").
-		key_type := container_key(e.c, container)
 		header := "%arg0"
 		if !param_mode_is_pointer(symbol_param_mode(e.c, symbol, 0)) {
 			header = alloca(e, CONTAINER_TYPE)
 			fmt.sbprintfln(&e.b, "  store %s %%arg0, ptr %s", CONTAINER_TYPE, header)
 		}
-		key_slot := value_storage(e, key_type, "%arg1")
+		key_slot := key_probe_slot(e, symbol, container)
 		found := temp(e)
 		fmt.sbprintfln(
 			&e.b, "  %s = call ptr @loke_rt_v1_map_find(ptr %s, ptr %s, ptr %s)", found, header, ops, key_slot,
@@ -1025,8 +1035,7 @@ emit_synth_container_op :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		return
 
 	case .Map_Remove:
-		key_type := container_key(e.c, container)
-		key_slot := value_storage(e, key_type, "%arg1")
+		key_slot := key_probe_slot(e, symbol, container)
 		out := alloca(e, element_llvm)
 		found := temp(e)
 		fmt.sbprintfln(
@@ -1142,12 +1151,18 @@ emit_map_membership :: proc(e: ^Emitter, v: ^Expr_Binary) -> string {
 	key := container_key(e.c, container)
 	ops := container_ops_global(e, container)
 	header := emit_address(e, v.rhs)
+	given := expr_base(v.lhs).type
 	value := emit_expr(e, v.lhs)
-	key_slot := alloca(e, llvm_type(e, key))
-	store(e, key, value, key_slot)
 	cleanup := Deferred{slot = -1}
-	if emit_lifecycle(e, key).managed && !expression_is_borrowed_place(e.c, v.lhs) {
-		cleanup = begin_temporary_drop(e, key, key_slot)
+	key_slot := ""
+	if given != key {
+		key_slot = emit_borrowed_key_slot(e, value)
+	} else {
+		key_slot = alloca(e, llvm_type(e, key))
+		store(e, key, value, key_slot)
+		if emit_lifecycle(e, key).managed && !expression_is_borrowed_place(e.c, v.lhs) {
+			cleanup = begin_temporary_drop(e, key, key_slot)
+		}
 	}
 	found, out := temp(e), temp(e)
 	fmt.sbprintfln(
@@ -1298,7 +1313,11 @@ emit_map_lookup :: proc(e: ^Emitter, v: ^Expr_Index) -> string {
 @(private = "file")
 emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> (string, Deferred) {
 	key := container_key(e.c, container)
+	given := expr_base(v.indices[0]).type
 	value := emit_expr(e, v.indices[0])
+	if given != key {
+		return emit_borrowed_key_slot(e, value), Deferred{slot = -1}
+	}
 	slot := alloca(e, llvm_type(e, key))
 	store(e, key, value, slot)
 	cleanup := Deferred{slot = -1}
@@ -1306,6 +1325,24 @@ emit_map_key_slot :: proc(e: ^Emitter, v: ^Expr_Index, container: Type_Id) -> (s
 		cleanup = begin_temporary_drop(e, key, slot)
 	}
 	return slot, cleanup
+}
+
+// design.md "Maps": a `map[string]V` is queried with a `string_view`. The key's
+// hash and equality were generated for the owning shape and read only its bytes,
+// so the view is spilled as the unowned header a literal already has — nothing
+// clones it and nothing drops it.
+@(private)
+emit_borrowed_key_slot :: proc(e: ^Emitter, view: string) -> string {
+	data, length := temp(e), temp(e)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", data, STRING_VIEW_TYPE, view, VIEW_DATA)
+	fmt.sbprintfln(&e.b, "  %s = extractvalue %s %s, %d", length, STRING_VIEW_TYPE, view, VIEW_LEN)
+	slot := alloca(e, STRING_TYPE)
+	fmt.sbprintfln(&e.b, "  store ptr %s, ptr %s", data, gep_field(e, STRING_TYPE, slot, STRING_DATA))
+	fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", length, gep_field(e, STRING_TYPE, slot, STRING_LEN))
+	fmt.sbprintfln(
+		&e.b, "  store i64 %d, ptr %s", STRING_STATIC, gep_field(e, STRING_TYPE, slot, STRING_OWNER),
+	)
+	return slot
 }
 
 // Finds or creates a map slot. The runtime distinguishes a newly inserted

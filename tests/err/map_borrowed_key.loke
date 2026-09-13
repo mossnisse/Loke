@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Maps": a lookup only compares its key, so a `map[string]V` answers a
+// `string_view`. Insertion stores the key it is given and still takes the owned
+// `string`: a borrowed one would leave the map holding bytes it does not own.
+
+main :: proc() {
+	m: map[string]int = {};
+	view: string_view = "a";
+	m[view] = 1;
+	m.find_or_insert(view, 2);
+	_ = m.try_insert(view, 3);
+	// A borrowed key is the `string` pairing only; nothing else queries across types.
+	other: map[int]int = {};
+	_ = other.find_ref(view);
+}
