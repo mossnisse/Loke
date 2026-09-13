@@ -318,23 +318,26 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 
 // ------------------------------------------------- ownership at the call --
 
-// A `move` argument must be marked at the call site too, not just at the
-// declaration (design.md "Parameter semantics and ABI lowering"). Method-call
+// A place passed by `move` must be marked at the call site too, not just at the
+// declaration; an owning temporary needs no marker (design.md "Parameter
+// semantics and ABI lowering"). Method-call
 // syntax supplies an `inout` receiver's marker implicitly, since that borrow
 // ends with the call and leaves the source usable; a consuming receiver leaves
 // the source dead, so it's written `move(value).method()` like any other
 // transfer.
-require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symbol_Id) {
+require_argument_ownership :: proc(
+	k: ^Checker, v: ^Expr_Call, declaration: Symbol_Id, signature: ^Type_Info = nil,
+) {
 	sym := symbol_of(k.c, declaration)
-	if sym == nil {
-		return
+	info := signature
+	if info == nil && sym != nil {
+		info = type_of(k.c, sym.proc_type)
 	}
-	info := type_of(k.c, sym.proc_type)
 	if info == nil {
 		return
 	}
 	first := 0
-	if sym.has_receiver && sym.receiver != .Move {
+	if sym != nil && sym.has_receiver && sym.receiver != .Move {
 		first = 1 // an `inout` receiver's marker is implicit in method-call syntax
 	}
 	for slot in first ..< len(v.bound) {
@@ -350,11 +353,11 @@ require_argument_ownership :: proc(k: ^Checker, v: ^Expr_Call, declaration: Symb
 		// dead, so it transfers directly — the same rule `unsafe.forget` follows, and
 		// what lets a library insertion take `values.append(open_file(path))` exactly
 		// as built-in insertion does.
-		if !expression_is_borrowed_place(k.c, argument) {
+		if expression_is_owned_argument(argument) {
 			continue
 		}
 		name := "this parameter"
-		if slot < len(sym.param_symbols) {
+		if sym != nil && slot < len(sym.param_symbols) {
 			if parameter := symbol_of(k.c, sym.param_symbols[slot]); parameter != nil {
 				name = identifier_text(k.c, parameter.name)
 			}
@@ -431,6 +434,15 @@ expression_is_borrowed_place :: proc(c: ^Compiler, e: Expr) -> bool {
 		return false
 	}
 	return place_root_symbol(c, e) != INVALID_SYMBOL
+}
+
+// A `move` parameter may take a value that already owns its representation.
+// Checked expressions say that directly: temporaries and `move(...)` are values,
+// while dereferences, projections, indexing, and `inout` results are places even
+// when they have no lexical root for `place_root_symbol` to find.
+expression_is_owned_argument :: proc(e: Expr) -> bool {
+	base := expr_base(e)
+	return base != nil && base.value_category == .Value
 }
 
 // The compiler never silently moves a dynamic array, map, runtime string,

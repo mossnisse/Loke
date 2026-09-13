@@ -1,0 +1,19 @@
+package main;
+
+import "core:fmt";
+
+Res :: struct { id: int }
+
+impl Res {
+	release :: hook(drop) proc(self: inout Res) {
+		if (self.id != 0) { fmt.println("drop", self.id); }
+	}
+}
+
+make_res :: proc(id: int) -> Res { return Res{id}; }
+boom :: proc() -> int { panic("boom"); }
+sink :: proc(value: move Res, later: int) { fmt.println(value.id + later); }
+
+main :: proc() {
+	sink(make_res(7), boom());
+}

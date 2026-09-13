@@ -326,7 +326,7 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 		// temporary — it owns its value already and leaves no lexical owner dead, so
 		// there is nothing for the marker to announce. Either form arrives owning
 		// the argument, which is what the mode asks for.
-		owned := moved || !expression_is_borrowed_place(k.c, arg.expr)
+		owned := expression_is_owned_argument(arg.expr)
 		if mode == .Move && !owned {
 			return RANK_NONE
 		}
@@ -827,7 +827,7 @@ failing_tie_breaker :: proc(all: []Candidate, maximal: []int) -> string {
 			}
 		}
 	}
-	return "tie-breaker 4, where no candidate is more structurally specialized"
+	return "tie-breaker 5, where no candidate better matches the written parameter modes"
 }
 
 @(private = "file")

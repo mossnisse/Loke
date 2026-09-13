@@ -10,6 +10,14 @@ import "base:interfaces";
 
 Small :: container.Small_Array(int, 8);
 
+Copied :: struct { id: int }
+
+impl Copied {
+	copy_owned :: hook(copy) proc(self, allocator: Allocator) -> Result(Copied, Allocator_Error) {
+		return .ok(Copied{self.id + 100});
+	}
+}
+
 // Slicing through a value parameter: the receiver is immutable here, which is
 // the whole reason `span` takes `self` rather than `inout`.
 middle :: proc(values: Small) -> int {
@@ -98,6 +106,12 @@ main :: proc() {
 	source := [dynamic]int{4, 5};
 	owned.append(move(source));
 	fmt.println(owned[1]);
+
+	// A one-element unmarked call selects the copying member even though that
+	// group also contains a non-variadic consuming member.
+	copied: container.Small_Array(Copied, 1) = {};
+	copied.append(Copied{1});
+	fmt.println(copied.slice()[0].id);
 
 	// Insertion at each end and in the middle.
 	w: container.Small_Array(int, 4) = {};

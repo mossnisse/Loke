@@ -692,7 +692,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 		// A pack changes how the arguments are packed, not whether a `move`
 		// parameter's transfer is written at the call site. A call through a group
 		// asks the same question right after binding the same way.
-		require_argument_ownership(k, v, declaration)
+		require_argument_ownership(k, v, declaration, info)
 		return bound_ok
 	}
 	bound := make([]Expr, count, k.c.semantic_allocator)
@@ -788,7 +788,7 @@ bind_arguments :: proc(k: ^Checker, v: ^Expr_Call, info: ^Type_Info, declaration
 	if named {
 		v.bound_order = order[:]
 	}
-	require_argument_ownership(k, v, declaration)
+	require_argument_ownership(k, v, declaration, info)
 	return ok
 }
 
@@ -958,4 +958,3 @@ all_candidates_consume :: proc(k: ^Checker, candidates: []Symbol_Id) -> bool {
 	}
 	return len(candidates) > 0
 }
-

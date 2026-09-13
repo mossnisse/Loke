@@ -136,6 +136,17 @@ impl Small_Array($T, $N) {
 		}
 	}
 
+	// Keep the one-element copying member structurally level with `append_moved`,
+	// so their parameter modes — not the variadic tie-breaker — select between
+	// `append(value)` and `append(move(value))`.
+	@(private)
+	append_one_copied :: proc(
+		self: inout, @(escape=stored) value: T,
+	) where is_copyable(T) {
+		index := self.count;
+		self.insert_copied(index, value);
+	}
+
 	// Nothing is written unless everything fits, which is the `try_` promise.
 	try_append :: proc(
 		self: inout, @(escape=stored) values: ..T,
@@ -205,7 +216,7 @@ impl Small_Array($T, $N) {
 	// One name per operation, exactly as built-in insertion has one: a borrowed
 	// place copies, a written `move(...)` transfers. The call site therefore reads
 	// the same here as on `[dynamic]T`.
-	append :: proc{append_copied, append_moved};
+	append :: proc{append_one_copied, append_copied, append_moved};
 	insert :: proc{insert_copied, insert_moved};
 
 	// The last element, removed, or .none when empty, like a dynamic array.

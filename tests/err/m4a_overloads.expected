@@ -11,7 +11,7 @@ L0391
 @26:14
 candidate `take_i8` with conversion vector (2)
 candidate `take_i16` with conversion vector (2)
-selection failed at tie-breaker 4
+selection failed at tie-breaker 5
 L0391
 @31:14
 candidate `cross_a` with conversion vector (3, 0)

@@ -1030,6 +1030,8 @@ emit_bound_call :: proc(
 	consumed := consumed_element_slot(e, symbol)
 	argument_cleanups := make([dynamic]Deferred)
 	defer delete(argument_cleanups)
+	handoff_cleanups := make([dynamic]Deferred)
+	defer delete(handoff_cleanups)
 	// design.md "Evaluation order": supplied operands run in source order and
 	// are staged into their matched slots; omitted defaults follow in parameter
 	// order. Only the final operand list is parameter-ordered.
@@ -1064,7 +1066,12 @@ emit_bound_call :: proc(
 		// caller — only the caller can tell the two apart. A C-variadic call passes
 		// arguments past the declared parameter list, which have no parameter type
 		// to clean up against.
-		if mode == .Value && index < len(callee_type.parameters) && index != consumed &&
+		if mode == .Move && index < len(callee_type.parameters) {
+			// The callee owns this value only once the call begins. Until then a
+			// later argument can panic, so keep the completed handoff live for unwind.
+			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
+			if entry.place != "" { append(&handoff_cleanups, entry) }
+		} else if mode == .Value && index < len(callee_type.parameters) && index != consumed &&
 		   !expression_is_borrowed_place(e.c, argument) {
 			entry := hold_temporary_value(e, callee_type.parameters[index], operands[index])
 			if entry.place != "" { append(&argument_cleanups, entry) }
@@ -1094,6 +1101,11 @@ emit_bound_call :: proc(
 	if consumed >= 0 && consumed == pack && pack_cleanup.array_cleanup {
 		unwind_clear(e, pack_cleanup.slot)
 		pack_cleanup = Deferred{slot = -1}
+	}
+	// Argument evaluation completed, so ownership now crosses the call boundary.
+	// A panic in the callee drops its own `move` parameters, not these guards.
+	for entry in handoff_cleanups {
+		finish_temporary_drop(e, entry)
 	}
 
 	if convention_is_foreign(callee_type.convention) {
