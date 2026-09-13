@@ -216,16 +216,40 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		return
 	}
 
-	set_call_result(v, info.result, info.result_inout)
+	set_call_result(
+		v, info.result, info.result_inout,
+		result_written_but_unresolved(symbol_of(k.c, declaration)),
+	)
+}
+
+// A procedure that wrote a result which did not resolve. `Symbol.result` holds
+// INVALID_TYPE for that and for a procedure with no result alike, and
+// `signature_error` does not separate them either: when the written type was
+// already reported elsewhere, resolving this signature adds no error of its own
+// and the flag stays clear. The syntax is what still knows.
+@(private = "file")
+result_written_but_unresolved :: proc(sym: ^Symbol) -> bool {
+	if sym == nil || sym.result != INVALID_TYPE {
+		return false
+	}
+	literal := sym.proc_literal
+	if literal == nil && sym.decl != nil {
+		literal = decl_proc_literal(sym.decl)
+	}
+	return literal != nil && literal.signature.result != nil
 }
 
 // design.md "Parameter semantics and ABI lowering": an `inout` result returns a
 // place, so the call is one — addressable and assignable. Every call spelling
 // settles its result here, because which one reached the procedure does not
 // change what the procedure returns.
-set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool) {
+set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool, result_unresolved := false) {
 	if result == INVALID_TYPE {
-		v.type = TYPE_VOID
+		// `result` is INVALID_TYPE both for a procedure with no result and for one
+		// whose written result did not resolve. Answering `TYPE_VOID` for the
+		// second makes every use of the call say the expression produces no value,
+		// blaming the call for a mistake already reported at the declaration.
+		v.type = result_unresolved ? INVALID_TYPE : TYPE_VOID
 		return
 	}
 	v.type = result
@@ -242,8 +266,8 @@ set_call_result :: proc(v: ^Expr_Call, result: Type_Id, result_inout: bool) {
 // `_ = call()` is an assignment, not this statement, so it is never reached.
 report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 	call, is_call := expr.(^Expr_Call)
-	if !is_call || call.type == TYPE_VOID {
-		return // not a call, or a call with no results
+	if !is_call || call.type == TYPE_VOID || call.type == INVALID_TYPE {
+		return // not a call, a call with no results, or one that did not resolve
 	}
 	required := false
 	name := ""
@@ -439,7 +463,7 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = INVALID_TYPE
 		return
 	}
-	set_call_result(v, chosen.result, chosen.result_inout)
+	set_call_result(v, chosen.result, chosen.result_inout, result_written_but_unresolved(chosen))
 	// `lookup_value` produces an owned copy of the stored element, so a move-only
 	// element has nothing for it to produce. Reported after the result shape is
 	// settled, so a `v, ok :=` destructuring still knows its arity.
@@ -590,7 +614,7 @@ check_group_call :: proc(k: ^Checker, v: ^Expr_Call, group: Symbol_Id, expected:
 		return
 	}
 	chosen := symbol_of(k.c, cand.symbol)
-	set_call_result(v, chosen.result, chosen.result_inout)
+	set_call_result(v, chosen.result, chosen.result_inout, result_written_but_unresolved(chosen))
 }
 
 // Every call spelling passes an immutable receiver by address, including

@@ -23,3 +23,16 @@ composed :: proc() {
 	i: proc(x: no_such_type);
 	j: proc() -> no_such_type;
 }
+
+// A procedure whose written result does not resolve was already answered at the
+// signature. Calling it is not a second mistake: the body's `return` must not
+// report that the procedure returns nothing, and a caller must not report that
+// the call produces no value. Both would blame the use for the declaration.
+returns_missing :: proc() -> no_such_type {
+	return 1;
+}
+
+calls_it :: proc() {
+	_ = returns_missing();
+	returns_missing();
+}
