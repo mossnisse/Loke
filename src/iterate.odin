@@ -907,15 +907,39 @@ check_adapter_applies :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, n
 	return ok
 }
 
-// design.md "By-reference iteration": the built-in place forms, unchanged.
-// Their names are fixed by the container — a value and index, or a key and
-// value — not read off an `Element` record.
+// design.md "Element bindings": a loop never invents an index. The counter is
+// the iterable's, which is what `indexed()` supplies -- in a place header as in
+// a value one. Shared by the direct place lowering and the `iter_mut` one, which
+// each number a traversal they already walk.
+check_place_index_binding :: proc(k: ^Checker, s: ^Stmt_Foreach) -> bool {
+	if len(s.bindings) == 2 && !s.indexed {
+		errorf(
+			k.c, s.bindings[1].name.span, "L0459",
+			"a `foreach` does not supply an index, so `%s` has nothing to bind",
+			s.bindings[1].name.text,
+		)
+		add_notef(k.c, expr_span(s.iterable), "write `.indexed()` here to number the traversal")
+		return false
+	}
+	if s.indexed && len(s.bindings) == 1 {
+		errorf(
+			k.c, s.bindings[0].name.span, "L0459",
+			"`indexed()` pairs each element with a counter, so a by-reference `foreach` over it binds `&value, index`",
+		)
+		return false
+	}
+	return true
+}
+
+// design.md "By-reference iteration": the built-in place forms. Their names are
+// the container's — a value and index, or a key and value — not read off an
+// `Element` record.
 @(private = "file")
 check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, info: ^Type_Info) -> Flow_Info {
-	if s.adapter != .None || s.indexed {
+	if s.adapter != .None {
 		errorf(
 			k.c, s.span, "L0460",
-			"an adapter yields values, so it cannot be iterated by reference; drop the `&`",
+			"`reversed()` yields values, so it cannot be iterated by reference; drop the `&`",
 		)
 		return FLOWS
 	}
@@ -924,6 +948,14 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 		return FLOWS
 	}
 	if s.kind == .Map {
+		if s.indexed {
+			errorf(
+				k.c, s.span, "L0460",
+				"`indexed()` puts a map's entry inside its pair, which is not lowered for a by-reference `foreach`",
+			)
+			add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
+			return FLOWS
+		}
 		// Map values can be iterated by-reference, but map keys are immutable and
 		// cannot be (design.md).
 		key_binding := len(s.bindings) == 2 ? 0 : -1
@@ -961,13 +993,16 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 		s.bindings[value_binding].symbol = bind_loop_name(k, s.bindings[value_binding], s.element_type, true)
 		return check_foreach_block(k, s)
 	}
-	// The index binding is the loop's own counter, so it is never a place.
+	// The index binding is the traversal's counter, so it is never a place.
 	if len(s.bindings) == 2 && s.bindings[1].is_ref {
 		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
 		return FLOWS
 	}
 	if !s.bindings[0].is_ref {
-		errorf(k.c, s.bindings[0].name.span, "L0459", "a by-reference `foreach` binds `&value`, or `&value, index`")
+		errorf(k.c, s.bindings[0].name.span, "L0459", "a by-reference `foreach` binds `&value`, or `&value, index` over `indexed()`")
+		return FLOWS
+	}
+	if !check_place_index_binding(k, s) {
 		return FLOWS
 	}
 	switch s.kind {
@@ -980,7 +1015,7 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 				k.c,
 				s.bindings[0].name.span,
 				"L0480",
-				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s` for mutation, or iterate `source.refs()` for read-only access",
+				"`%s` yields read-only elements, so it cannot be iterated by reference; use `[]mut %s` for mutation, or drop the `&` to read them",
 				type_name(k.c, subject),
 				type_name(k.c, info.element),
 			)

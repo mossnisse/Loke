@@ -9,7 +9,7 @@ increment :: proc(xs: inout $S) where interfaces.Mutable_Iterable(S) {
 main :: proc() {
 	xs: Small = {};
 	xs.append(10, 20, 30);
-	foreach (&value, index in xs) { value += index; }
+	foreach (&value, index in xs.indexed()) { value += index; }
 	fmt.println(xs);
 	increment(inout xs);
 	fmt.println(xs);

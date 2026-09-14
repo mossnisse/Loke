@@ -61,6 +61,14 @@ they bind. Text and ranges generate their elements rather than storing them and
 stay owned, and so do the library's own iterators, `Enum_Array` included.
 `copied()`, consuming traversal, and the move-iterators do not exist.
 
+By-reference headers are migrated as far as `indexed()` reaches. `foreach (&v, i
+in seq.indexed())` is the spelling, over a container's own storage and over a
+user type's `iter_mut` alike; the old `foreach (&v, i in seq)` is a diagnostic
+naming it. Two place forms design.md removes are still accepted, because nothing
+replaces them yet: `foreach (&v in map)` stays until `map.values()` has a mutable
+walk of its own, and `reversed()` has no place form at all. `indexed()` over a
+map with an `&` leaf is refused for the same nesting reason a value header is.
+
 ```odin
 package main;
 

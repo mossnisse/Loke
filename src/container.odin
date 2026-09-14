@@ -371,7 +371,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 	// design.md "Maps": the same probe through a read-only borrow. A read-only
 	// path has no `inout` to give `find`, and cannot ask `lookup_value` for a
 	// move-only element it must not copy, so it asks this and reads `^V` — the
-	// borrow `refs()` hands out, answered for one key.
+	// borrow a lending traversal hands out, answered for one key.
 	find_ref := container_member(
 		k, type, "find_ref", .Map_Find,
 		[]Type_Id{type, query}, []Param_Mode{.Value, .Value},

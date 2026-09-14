@@ -29,17 +29,22 @@ L0363
 @49:16
 `map[int]int` has no field or member `runes`
 L0460
-@52:2
-an adapter yields values, so it cannot be iterated by reference
+@53:2
+`reversed()` yields values, so it cannot be iterated by reference
+L0459
+@54:15
+a `foreach` does not supply an index, so `i` has nothing to bind
+@54:20
+write `.indexed()` here to number the traversal
 L0456
-@55:21
+@57:21
 is a type, so it is not iterable; write `.values()` for its members
 L0456
-@58:16
+@60:16
 `Plain` is not iterable
 L0363
-@59:16
+@61:16
 `Plain` has no field or member `values`
 L0454
-@63:16
+@65:16
 has 2 fields, so a static `foreach` over it binds 1 or 2 names, not 3

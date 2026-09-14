@@ -32,12 +32,17 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 // that loan to the body of the current iteration and borrows the source for
 // the whole traversal.
 check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
-	if s.indexed || s.adapter != .None {
-		errorf(k.c, s.span, "L0460", "an adapter yields values, so it cannot be iterated by reference; drop the `&`")
+	if s.adapter != .None {
+		errorf(k.c, s.span, "L0460", "`reversed()` yields values, so it cannot be iterated by reference; drop the `&`")
 		return FLOWS
 	}
 	if len(s.bindings) > 2 || !s.bindings[0].is_ref || (len(s.bindings) == 2 && s.bindings[1].is_ref) {
-		errorf(k.c, s.span, "L0459", "a by-reference `foreach` binds `&value`, or `&value, index`")
+		errorf(k.c, s.span, "L0459", "a by-reference `foreach` binds `&value`, or `&value, index` over `indexed()`")
+		return FLOWS
+	}
+	// `indexed()` numbers the `iter_mut` walk this already performs: the counter
+	// is the traversal's, so the header spells it the same way a value loop does.
+	if !check_place_index_binding(k, s) {
 		return FLOWS
 	}
 	element := associated_type_of(k, subject, "Element")

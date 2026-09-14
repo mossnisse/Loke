@@ -55,7 +55,7 @@ doubled :: proc() -> int {
 // A by-reference loop's second name is its step counter, not a field.
 squares :: proc() -> int {
 	cells := [4]int{0, 0, 0, 0};
-	foreach (&cell, index in cells) { cell = index * index; }
+	foreach (&cell, index in cells.indexed()) { cell = index * index; }
 	return cells[0] + cells[1] + cells[2] + cells[3];
 }
 

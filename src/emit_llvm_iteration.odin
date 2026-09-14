@@ -236,10 +236,12 @@ with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, count
 	return out[:]
 }
 
-// The value this loop yields, before `indexed()` numbers it.
+// The value this loop yields, before `indexed()` numbers it. A place header
+// binds the element itself and keeps the counter beside it rather than in a
+// pair, so its `element_type` is already what it yields.
 @(private = "file")
 foreach_yielded_type :: proc(e: ^Emitter, s: ^Stmt_Foreach) -> Type_Id {
-	if !s.indexed {
+	if !s.indexed || foreach_is_place_loop(s) {
 		return s.element_type
 	}
 	return symbol_of(e.c, type_of(e.c, type_underlying(e.c, s.element_type)).fields[ELEMENT_FIRST]).type

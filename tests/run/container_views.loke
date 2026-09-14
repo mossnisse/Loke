@@ -184,6 +184,6 @@ main :: proc() {
 	fmt.println(named["only"]);
 	numbers: [dynamic]int = {};
 	numbers.append(1, 2);
-	foreach (&n, i in numbers) { n = n*10 + i; }
+	foreach (&n, i in numbers.indexed()) { n = n*10 + i; }
 	foreach (n in numbers) { fmt.println(n); }
 }
