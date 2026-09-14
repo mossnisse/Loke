@@ -1,12 +1,12 @@
-package main; import "base:interfaces";
+package main;
 
 // design.md "Iteration protocol": an iterator's `Yield` says how a binding
 // receives what `next` hands back, and the checker validates it against the
 // element's shape. A lending descriptor is checked here but not yet lowered —
 // see known-gaps.md, "Iteration still follows the pre-unification model".
 
-Lender :: struct { values: []int }
-Lender_Iterator :: struct { source: []int, at: int }
+Lender :: struct { values: []mut int }
+Lender_Iterator :: struct { source: []mut int, at: int }
 
 impl Lender {
 	Element  :: int;
@@ -16,13 +16,14 @@ impl Lender {
 }
 
 impl Lender_Iterator {
-	// `next` matches the `^int` this descriptor makes of `int`, so what remains
-	// is the lowering, not the contract.
-	Yield :: interfaces.Yield_Borrowed;
+	// A borrowed yield is lowered; a mutable one still needs the exclusive
+	// per-step loan the rest of the unification carries, so it is refused rather
+	// than bound to storage the loop would treat as shared.
+	Yield :: Yield_Mutable;
 
-	next :: proc(self: inout Lender_Iterator) -> Option(^int) {
+	next :: proc(self: inout Lender_Iterator) -> Option(^mut int) {
 		if (self.at >= self.source.len()) { return .none; }
-		item := &self.source[self.at];
+		item := &mut self.source[self.at];
 		self.at += 1;
 		return .some(item);
 	}
@@ -65,7 +66,7 @@ impl Keeper {
 }
 
 impl Keeper_Iterator {
-	Yield :: struct{key: interfaces.Yield_Borrowed, value: interfaces.Yield_Borrowed};
+	Yield :: struct{key: Yield_Borrowed, value: Yield_Borrowed};
 
 	next :: proc(self: inout Keeper_Iterator) -> Option(Guarded) { return .none; }
 }

@@ -240,6 +240,9 @@ Compiler :: struct {
 	providers:                [Provider_Slot]Provider_Selection,
 	// `-log-level`, the value `LOKE_LOG_LEVEL` is predeclared with.
 	log_level:                Log_Level,
+	// design.md "Iteration protocol": the three `Yield` descriptor types, in
+	// `Yield_Kind` order, bound with the rest of the runtime bootstrap.
+	yield_markers:            [3]Type_Id,
 	// `runtime.Memory_Order`, found by name on first use (`src/atomics.odin`).
 	memory_order_type:        Type_Id,
 	// design.md "Shared ownership": the two record templates the universe names

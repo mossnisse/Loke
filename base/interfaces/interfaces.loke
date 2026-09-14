@@ -50,17 +50,6 @@ Cloneable :: interface($T: type) {
 	slot try_clone: proc(self, allocator: Allocator) -> Result(T, Allocator_Error);
 }
 
-// design.md "Iteration protocol": an iterator's optional `Yield` says how a
-// binding receives what `next` hands back. A descriptor is a type, so a record
-// of them describes a record element field by field:
-//
-//	Yield :: struct{key: Yield_Borrowed, value: Yield_Mutable};
-//
-// An iterator declaring no `Yield` is owned, with `Item` the element itself.
-Yield_Owned :: struct {}
-Yield_Borrowed :: struct {}
-Yield_Mutable :: struct {}
-
 // What `next` hands back is `Item`, which the iterator's `Yield` makes of the
 // element it traverses; with no `Yield` the two are the same type.
 Iterator :: interface($Self, $Item: type) {
@@ -71,7 +60,10 @@ Iterable :: interface($Self: type) {
 	Self.Element -> type;
 	Self.Iterator -> type;
 	slot iter: proc(self) -> Self.Iterator;
-	Iterator(Self.Iterator, Self.Element);
+	// What the iterator hands back, which is the element itself unless it lends
+	// one. An iterator declaring no `Yield` has `Item` equal to `Element`, so
+	// this accepts every iterator written before `Yield` existed.
+	Iterator(Self.Iterator, Self.Iterator.Item);
 }
 
 // Reverse traversal, which `reversed()` asks for. It yields the same `Element`

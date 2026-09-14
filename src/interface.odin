@@ -804,6 +804,7 @@ check_slot_requirement :: proc(
 // select the same implementation satisfaction promised.
 slot_candidates :: proc(k: ^Checker, subject: Type_Id, name: Identifier_Id, owner_pkg: Package_Id) -> []Symbol_Id {
 	ensure_iteration_members(k, subject)
+	ensure_item_member(k, subject)
 	ensure_lifecycle_members(k, type_underlying(k.c, subject), name)
 	out := make([dynamic]Symbol_Id, 0, 4, k.c.semantic_allocator)
 	if info := underlying_info(k.c, subject); info != nil {

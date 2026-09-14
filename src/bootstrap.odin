@@ -57,6 +57,21 @@ bind_runtime_bootstrap :: proc(k: ^Checker, pkg: ^Package) {
 	c.option_symbol = option
 	c.result_symbol = result
 
+	// design.md "Iteration protocol": the three yield descriptors are universe
+	// names for the same reason `Option` is -- the compiler contributes a `Yield`
+	// to every built-in iterator that lends, and those programs import nothing.
+	for entry, index in ([3]string{"Yield_Owned", "Yield_Borrowed", "Yield_Mutable"}) {
+		marker := bootstrap_symbol(k, pkg, entry)
+		if marker == INVALID_SYMBOL {
+			return
+		}
+		resolve_symbol_signature_in_place(k, marker)
+		if sym := symbol_of(c, marker); sym != nil {
+			c.yield_markers[index] = sym.type
+		}
+		universe.names[intern_identifier(c, entry)] = marker
+	}
+
 	universe.names[intern_identifier(c, "Unit")] = unit
 	universe.names[intern_identifier(c, "Option")] = option
 	universe.names[intern_identifier(c, "Result")] = result

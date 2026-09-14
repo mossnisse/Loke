@@ -131,6 +131,11 @@ Type_Kind :: enum {
 Contribution :: enum u8 {
 	Mutable_Iteration,
 	Iteration,
+	// design.md "Iteration protocol": `Item`, what an iterator's `next` hands
+	// back. Contributed to any type that has a `next`, including a user one, so
+	// `Self.Iterator.Item` names something on an iterator written before `Yield`
+	// existed. Separate from `Iteration`, which is about the *iterable*.
+	Iteration_Item,
 	Lifecycle,
 	// The compiler-owned canonical receiver members: `len`, `cap`, and `hash` on
 	// the built-in types that provide them.

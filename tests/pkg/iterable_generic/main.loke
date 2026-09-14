@@ -22,10 +22,17 @@ impl Countdown_Iterator {
 
 // The associated output makes a generic loop's element type available without
 // another inferred generic parameter.
+//
+// design.md "Iteration protocol": a manual `next()` returns `Item`, which is a
+// pointer wherever the traversal lends, so code that must be generic over the
+// yield mode uses `foreach` -- which is what applies `Yield` -- rather than
+// projecting the pointer itself.
 first :: proc(source: $S) -> Option(S.Element)
 	where interfaces.Iterable(S) {
-	iterator := source.iter();
-	return iterator.next();
+	foreach (item in source) {
+		return .some(item);
+	}
+	return .none;
 }
 
 sum_entries :: proc(source: $S) -> int

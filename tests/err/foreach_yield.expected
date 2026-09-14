@@ -1,11 +1,9 @@
 L0695
-`Lender_Iterator` lends its elements, and a lending `Yield` is not lowered yet
-@76:20
-
+@77:20
+lends its elements this way, and that `Yield` is not lowered yet
 L0694
+@81:20
 is not a yield descriptor
-@80:20
-
 L0694
+@85:20
 has a custom `hook(copy)` or `hook(drop)`, so a record `Yield` cannot describe it
-@84:20

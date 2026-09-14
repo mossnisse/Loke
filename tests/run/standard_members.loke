@@ -68,8 +68,9 @@ main :: proc() {
 	table := map[string]int{"a" = 1};
 	fmt.println(table.len(), 1 if table.cap() >= 1 else 0);
 
+	// A sequence lends its elements, so `next` hands back a pointer into `xs`.
 	reverse := xs.iter_reverse();
-	fmt.println(reverse.next());
+	fmt.println((reverse.next() or_else nil)^);
 
 	box.format(fmt.stdout(), fmt.Options{});
 	fmt.println();

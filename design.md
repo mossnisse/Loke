@@ -2174,7 +2174,7 @@ Each call to `next` answers `.some(item)`, or `.none` to end the loop. See [Type
 
 `Element` — what a single binding receives — is `T` for a borrowed or mutable leaf and `Item` otherwise. The checker validates `Yield` against `Item`'s shape and rejects a record descriptor over a record carrying a custom [`hook(copy)` or `hook(drop)`](#lifecycle-hooks-and-resource-types), the restriction consuming [destructuring](#destructuring) already carries.
 
-**An iterator that declares no `Yield` is owned, with `Item = Element`.** Every iterator written before `Yield` existed keeps its meaning, including `Countdown` below.
+**An iterator that declares no `Yield` is owned, with `Item = Element`.** Every iterator written before `Yield` existed keeps its meaning, including `Countdown` below. `Item` names what `next` hands back on any iterator, whether or not it declares one, which is what lets a single `Iterable` cover both modes. The three descriptors are predeclared names, like `Option` and `Result`, because the built-in containers lend and a program iterating an array imports nothing.
 
 The three modes are three interfaces, all in the [standard catalogue](#standard-interface-catalogue): [`Iterable`](#standard-interface-catalogue) with `iter`, `Mutable_Iterable` with `iter_mut`, and `Consuming_Iterable` with `iter_move(self: move Self)`. Reversal in each mode is a receiver method — `iter_reverse`, `iter_mut_reverse`, `iter_move_reverse` — and adds no interface of its own. A type that offers several modes must agree on the logical element across them.
 

@@ -101,6 +101,19 @@ Source_Code_Location :: struct {
 // there is no honest default between success and failure, so it must be
 // constructed.
 
+// design.md "Iteration protocol": an iterator's optional `Yield` says how a
+// binding receives what `next` hands back -- the element itself, a pointer
+// lending it, or, for a record element, a record of descriptors one per field.
+// They live here, and are universe names, because the compiler contributes a
+// `Yield` to the built-in iterators that lend, and a program iterating an array
+// imports nothing.
+@(public)
+Yield_Owned :: struct {}
+@(public)
+Yield_Borrowed :: struct {}
+@(public)
+Yield_Mutable :: struct {}
+
 // The no-payload result type. A fallible operation that produces nothing on
 // success returns `Result(Unit, E)`.
 @(public)

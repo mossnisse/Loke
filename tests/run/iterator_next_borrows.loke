@@ -3,7 +3,10 @@ package main;
 import "core:container";
 import "core:fmt";
 
-advance :: proc(it: inout $I) { fmt.println(it.next()); }
+// design.md "Iteration protocol": `next` hands back `Item`, which is a pointer
+// wherever the traversal lends, so code generic over the yield mode cannot print
+// the element. Advancing the cursor is the whole of what this asks for.
+advance :: proc(it: inout $I) { _ = it.next(); }
 
 main :: proc() {
 	xs: container.Small_Array(int, 4) = {};
@@ -23,7 +26,9 @@ main :: proc() {
 	y := [dynamic]int{1, 2};
 	Dynamic :: [dynamic]int;
 	holder: (it: Dynamic.Iterator) = {it = y.iter()};
-	fmt.println(holder.it.next());
+	// A dynamic array lends, so what comes back names the element in place.
+	held := holder.it.next() or_else nil;
+	fmt.println(held^);
 	advance(inout holder.it);
 	y.append(3);
 	fmt.println(y.len());

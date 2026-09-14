@@ -1,5 +1,4 @@
 package main;
-import "base:interfaces";
 import "core:container";
 import "core:fmt";
 
@@ -25,6 +24,26 @@ sum :: proc(items: []Locked) -> int {
 	return total;
 }
 
+// design.md "Iteration protocol": an iterator declaring `Yield_Borrowed` hands
+// back a pointer into its source, and a loop binds the element it names rather
+// than the pointer. The descriptors are universe names, so this needs no import.
+Lender :: struct { values: []int, }
+Lender_Iterator :: struct { source: []int, at: int, }
+impl Lender {
+	Element  :: int;
+	Iterator :: Lender_Iterator;
+	iter :: proc(self) -> Lender_Iterator { return {self.values, 0}; }
+}
+impl Lender_Iterator {
+	Yield :: Yield_Borrowed;
+	next :: proc(self: inout Lender_Iterator) -> Option(^int) {
+		if (self.at >= self.source.len()) { return .none; }
+		item := &self.source[self.at];
+		self.at += 1;
+		return .some(item);
+	}
+}
+
 drops: int;
 Sequence :: struct { count: int, }
 Cursor :: struct { at: int, count: int, active: bool, }
@@ -36,7 +55,7 @@ impl Sequence {
 impl Cursor {
 	// design.md "Iteration protocol": an owned descriptor says what an iterator
 	// declaring none already means, so spelling it changes nothing here.
-	Yield :: interfaces.Yield_Owned;
+	Yield :: Yield_Owned;
 
 	next :: proc(self: inout Cursor) -> Option(int) {
 		if (self.at >= self.count) { return .none; }
@@ -81,6 +100,20 @@ main :: proc() {
 	fmt.println(sum(locked[:]));
 	_ = owned;
 	_ = locked;
+
+	// A user iterator that lends, and the built-in one, agree: both hand back a
+	// pointer into the source, and neither copies.
+	numbers := [3]int{1, 2, 3};
+	foreach (value in Lender{numbers[:]}) { fmt.println(value); }
+	walker := owned.iter();
+	stepping := true;
+	for (stepping) {
+		switch (one in walker.next()) {
+		case .some: fmt.println(one^.id);
+		case .none: stepping = false;
+		}
+	}
+	fmt.println(copies);
 
 	sequence := Sequence{3};
 	indexed := sequence.indexed();

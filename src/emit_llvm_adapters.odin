@@ -79,6 +79,17 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		place_label(e, yielded)
 		payload_type := option_payload(e.c, inner_option)
 		payload := emit_union_payload(e, inner_option, payload_type, emit_union_spill(e, inner_option, produced))
+		// A lending source hands back a pointer into its own storage; the pair
+		// this builds is a new value, so the element is read out of that storage
+		// and owned from here (design.md "Iteration adapters").
+		wrapped := symbol_of(e.c, type_of(e.c, type_underlying(e.c, info.element)).fields[ELEMENT_FIRST]).type
+		if payload_type != wrapped {
+			payload = load(e, llvm_type(e, wrapped), payload)
+			if emit_lifecycle(e, wrapped).managed {
+				payload = emit_clone_value(e, wrapped, payload)
+			}
+			payload_type = wrapped
+		}
 		counter := gep_field(e, llvm_type(e, source), "%arg0", 1)
 		index := load(e, "i64", counter)
 		pair_type := llvm_type(e, info.element)

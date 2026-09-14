@@ -413,10 +413,12 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	case info.kind == .Array:
 		element = info.element
 		held := under
+		// A compile-time-only element has no runtime storage to lend, so that
+		// traversal keeps handing over values.
 		next_kind = .Array_Next
 		if !type_is_compile_time_only(k.c, element) {
 			held = slice_of(k.c, element, mutable = false)
-			next_kind = .Slice_Next
+			next_kind = .Slice_Ref_Next
 		}
 		iterator = array_iterator_type(k.c, under, held)
 		iter_kind, reverse_kind = .Array_Iter, .Array_Iter_Reverse
@@ -425,14 +427,14 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		// verbatim: `{ data, 0 }`. Only `next`'s bound is different.
 		element = info.element
 		iterator = array_iterator_type(k.c, under)
-		iter_kind, reverse_kind, next_kind = .Array_Iter, .Array_Iter_Reverse, .Slice_Next
+		iter_kind, reverse_kind, next_kind = .Array_Iter, .Array_Iter_Reverse, .Slice_Ref_Next
 	case info.kind == .Dynamic_Array:
 		// design.md "Dynamic arrays": iteration views the current allocation and
 		// stops at the length — exactly a slice, so the protocol members are the
 		// slice ones with a different `iter`.
 		element = info.element
 		iterator = array_iterator_type(k.c, under, slice_of(k.c, info.element, mutable = false))
-		iter_kind, reverse_kind, next_kind = .Dynamic_Iter, .Dynamic_Iter_Reverse, .Slice_Next
+		iter_kind, reverse_kind, next_kind = .Dynamic_Iter, .Dynamic_Iter_Reverse, .Slice_Ref_Next
 	case info.kind == .Map:
 		// design.md "Iteration adapters": a map's `Element` is its `{key, value}`
 		// entry, so a one-name loop binds the whole entry and a two-name loop
@@ -471,10 +473,12 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		return
 	}
 
-	// A built-in traversal hands back an owned `Element`, so a managed one needs
-	// its copy and drop entry points before the iterator's body asks. An
-	// unmanaged element copies bitwise and has neither.
-	if type_is_managed(k.c, element) {
+	// design.md "Borrowing iteration": a sequence lends its elements, so `next`
+	// hands back a pointer into the container and there is nothing to clone. Every
+	// other built-in traversal still hands over an owned `Element`, so a managed
+	// one needs its copy and drop entry points before the iterator's body asks.
+	lends := next_kind == .Slice_Ref_Next
+	if !lends && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
 
@@ -515,20 +519,26 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 		return
 	}
 	iterator_info.contributed += {.Iteration}
-	// An element borrowed by `refs()` or `iter_mut()` needs no value-copy
-	// iterator. Do not emit an unusable `next` body that would clone a move-only
-	// element merely because lookup also contributed its container's members.
-	if (next_kind == .Array_Next || next_kind == .Slice_Next) && type_clone_disabled(k.c, element) { return }
-	next_members := make([]Symbol_Id, 1, k.c.semantic_allocator)
+	// A copying `next` over a move-only element has no copy to make. Do not emit
+	// an unusable body merely because lookup also contributed its container's
+	// members; a lending one has no such problem.
+	if next_kind == .Array_Next && type_clone_disabled(k.c, element) { return }
+	item := lends ? pointer_to(k.c, element, false) : element
+	next_members := make([]Symbol_Id, lends ? 2 : 1, k.c.semantic_allocator)
 	next := synth_proc(
 		k.c, "next", next_kind, iterator,
-		[]Type_Id{iterator}, []Param_Mode{.Inout}, option_type(k, element),
+		[]Type_Id{iterator}, []Param_Mode{.Inout}, option_type(k, item),
 	)
 	if sym := symbol_of(k.c, next); sym != nil {
 		sym.has_receiver = true
 		sym.receiver = .Inout
 	}
 	next_members[0] = next
+	// design.md "Iteration protocol": the descriptor that says a binding receives
+	// the element this pointer names, rather than the pointer itself.
+	if lends {
+		next_members[1] = new_associated_type(k.c, "Yield", k.c.yield_markers[Yield_Kind.Borrowed], iterator)
+	}
 	add_members(k.c, iterator, next_members)
 }
 
@@ -734,7 +744,14 @@ foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
 // Text, ranges, maps, and protocol iterators keep producing owned values until
 // step 4 of the iteration unification converts them.
 foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
-	if s.indexed || foreach_is_place_loop(s) {
+	if foreach_is_place_loop(s) {
+		return false
+	}
+	// `indexed()` numbers the traversal it wraps. A header naming the value and
+	// the index separately binds the element where it lies and counts beside it;
+	// one name over the pair asks for the record itself, which is a new value and
+	// so copies the element into it.
+	if s.indexed && len(s.bindings) != 2 {
 		return false
 	}
 	#partial switch s.kind {
@@ -1009,16 +1026,21 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		return FLOWS
 	}
 
-	// A borrowed or mutable yield binds storage the source still owns, which
-	// needs the lifecycle and lowering work the rest of the unification carries.
+	// design.md "Borrowing iteration": a borrowed yield hands back a pointer into
+	// the source, and the binding is the element it names. A mutable yield and a
+	// record of descriptors still need the lowering the rest of the unification
+	// carries, so they are refused rather than bound to the wrong storage.
 	if !yield_is_owned(yield) {
-		errorf(
-			k.c, expr_span(s.iterable), "L0695",
-			"`%s` lends its elements, and a lending `Yield` is not lowered yet",
-			type_name(k.c, iterator),
-		)
-		add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
-		return FLOWS
+		if yield.kind != .Borrowed || s.indexed {
+			errorf(
+				k.c, expr_span(s.iterable), "L0695",
+				"`%s` lends its elements this way, and that `Yield` is not lowered yet",
+				type_name(k.c, iterator),
+			)
+			add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
+			return FLOWS
+		}
+		s.borrows = true
 	}
 
 	s.kind = .Protocol
@@ -1042,7 +1064,11 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	// design.md "Borrowing iteration": traversing a place lends each element, so
 	// nothing is copied out of the container and a move-only element is read like
 	// any other. Every other lowering still yields an owned element.
-	s.borrows = foreach_lends_elements(s)
+	// The protocol path has already read its iterator's `Yield`; every other
+	// lowering is decided by the shape of the traversal.
+	if s.kind != .Protocol {
+		s.borrows = foreach_lends_elements(s)
+	}
 	// design.md "Element bindings": a copying loop yields an owned `Element`. A
 	// built-in traversal copies it out of container storage, so a move-only
 	// element has nothing for it to produce; a protocol iterator's `next` already
@@ -1123,7 +1149,10 @@ bind_element_field :: proc(k: ^Checker, s: ^Stmt_Foreach, index: int, type: Type
 	if !gate_type(k, type, expr_span(s.iterable)) {
 		return false
 	}
-	s.bindings[index].symbol = bind_loop_name(k, binding, type, false, s.borrows)
+	// `indexed()`'s counter is the loop's own value, not a view of anything the
+	// source owns, so only the element half of that pair is a lent binding.
+	lent := s.borrows && !(s.indexed && index == ELEMENT_SECOND)
+	s.bindings[index].symbol = bind_loop_name(k, binding, type, false, lent)
 	return true
 }
 

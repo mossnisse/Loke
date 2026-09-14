@@ -298,6 +298,9 @@ ensure_contributed_members :: proc(k: ^Checker, type: Type_Id, name: Identifier_
 	// declares by hand (design.md "Iteration protocol").
 	ensure_iteration_members(k, type)
 	ensure_mutable_iteration_members(k, type)
+	// `Item` names what this type's own `next` hands back, for any iterator
+	// (design.md "Iteration protocol").
+	ensure_item_member(k, type)
 	// The generated `try_clone`/`clone` are contributed the same way, so a record
 	// without a hand-written hook still has both copy entry points.
 	ensure_lifecycle_members(k, type, name)

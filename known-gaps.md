@@ -26,14 +26,10 @@ This is one divergence rather than fifteen because it is one coordinated change.
 [iteration-unification-plan.md](iteration-unification-plan.md) has the six
 implementation steps; the specification is step 1, and the gap closes at step 6.
 
-Step 2 has landed the two representations, checked but not yet lowered: a nested
-binding pattern parses and reports `L0693`, and an iterator's `Yield` is read and
-validated against its element — a mismatch is `L0694` — but a descriptor that
-lends reports `L0695` rather than binding storage the lowering would treat as
-owned. The catalogue's `Iterable` still spells its constraint
-`Iterator(Self.Iterator, Self.Element)` rather than design.md's
-`Self.Iterator.Item`; the two agree while every built-in yields owned elements,
-and step 4 is what makes them differ.
+Step 2 landed the two representations. A nested binding pattern parses and
+reports `L0693`, still unlowered. An iterator's `Yield` is read and validated
+against its element — a mismatch is `L0694` — and a borrowed descriptor now
+lowers; a mutable one, and a record of descriptors, still report `L0695`.
 
 Step 3 has landed the ownership and lifetime rules the lowering needs: a `&`
 binding is a non-owning view like a switch payload, its loan ends with the step,
@@ -42,14 +38,18 @@ result is attributed by the callee's summary. The two built-in iteration synths
 have no body to summarize, so they are still named directly in
 [cfg_provenance.odin](src/cfg_provenance.odin).
 
-Step 4 has converted the contiguous containers: iterating an array, a slice, or a
-dynamic array clones nothing, and a move-only element is read like any other. The
-adapters are what remain of it. `reversed()` lends, because it only flips which
-element the cursor reaches, but `indexed()` materializes a record and so still
-copies its element into one — and neither adapter is contributed at all for a
-move-only element, so the sequence below has no `indexed` member to call rather
-than a copy to refuse. `copied()`, consuming traversal, and the move-iterators do
-not exist yet.
+Step 4 has converted the contiguous containers and their iterators: iterating an
+array, a slice, or a dynamic array clones nothing, a move-only element is read
+like any other, and `iter()`/`next()` hand back a pointer into the container, so
+a manual walk and a loop agree. `reversed()` carries that through, and
+`indexed()` lends when the header names the value and the index separately.
+
+What remains of step 4: one name over an `indexed()` pair still materializes the
+record, so that form copies and is not contributed for a move-only element; maps,
+text, and ranges still yield owned values; and `copied()`, consuming traversal,
+and the move-iterators do not exist. A single binding over a record yield —
+design.md's `entry.key`/`entry.value` form — is what step 6 must migrate before
+maps convert, so that nothing silently starts printing an address.
 
 ```odin
 package main;
@@ -69,8 +69,8 @@ error[L0491]: `Only` is move-only, so this view cannot copy the value out of the
 map; iterate `&value`, or remove the entries
 ```
 
-The refusal a sequence used to give still names `refs()` in its remedy — the
-spelling the specification no longer has, and which step 6 deletes.
+That remedy still names `refs()` for a sequence — the spelling the specification
+no longer has, and which step 6 deletes.
 
 ## Not gaps
 

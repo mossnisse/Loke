@@ -50,7 +50,17 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	if !iteration_proc_matches(k, symbol_of(k.c, iter), source, .Borrow, iterator) ||
 	   element == INVALID_TYPE || iterator == INVALID_TYPE { return INVALID_SYMBOL }
 	next := iteration_member(k, iterator, "next")
-	if !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, element)) {
+	// design.md "Borrowing iteration": a lending source hands back a pointer, so
+	// what `next` returns is the iterator's `Item`, not its `Element`.
+	item := iterator_item_or_invalid(k, iterator, element)
+	if item == INVALID_TYPE ||
+	   !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
+		return INVALID_SYMBOL
+	}
+	// `indexed()` builds a pair of its own, which copies the element into it, and
+	// a move-only element has no copy to make. `reversed()` wraps no value at all
+	// and so carries a lending source through untouched.
+	if kind == .Indexed && type_clone_disabled(k.c, element) {
 		return INVALID_SYMBOL
 	}
 	forward, backward := iter, INVALID_SYMBOL

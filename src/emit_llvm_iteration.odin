@@ -676,6 +676,13 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		if len(s.bindings) == 2 {
 			bind_foreach_field(e, s.bindings[1].symbol, Foreach_Field{type = TYPE_INT, value = load(e, "i64", counter)})
 		}
+	} else if s.borrows {
+		// design.md "Borrowing iteration": the payload is a pointer into the
+		// source, so the binding is that address and the loop owns nothing.
+		address := emit_union_payload(e, option, pointer_to(e.c, yielded, false), slot)
+		fields := []Foreach_Field{{type = yielded, address = address, place = true}}
+		numbered := counter == "" ? "" : load(e, "i64", counter)
+		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else {
 		value := emit_union_payload(e, option, yielded, slot)
 		fields := []Foreach_Field{{type = yielded, value = value}}

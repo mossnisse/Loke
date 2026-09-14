@@ -37,7 +37,7 @@ iterator_yield :: proc(k: ^Checker, iterator: Type_Id, span: Span) -> (Yield_Des
 
 @(private = "file")
 yield_desc_of :: proc(k: ^Checker, written: Type_Id, span: Span) -> (Yield_Desc, bool) {
-	if kind, is_marker := yield_marker_kind(k, written); is_marker {
+	if kind, is_marker := yield_marker_kind_of(k, written); is_marker {
 		return Yield_Desc{kind = kind}, true
 	}
 	info := underlying_info(k.c, written)
@@ -64,36 +64,13 @@ yield_desc_of :: proc(k: ^Checker, written: Type_Id, span: Span) -> (Yield_Desc,
 	return Yield_Desc{kind = .Record, fields = fields}, true
 }
 
-// The three descriptor types are ordinary declarations in the standard
-// catalogue, found by name the way `runtime.Memory_Order` is. A program that
-// never imports the catalogue cannot name one, and so never asks.
-// Not one of `stdlib.odin`'s contributed packages: the compiler adds nothing to
-// the catalogue, it only reads three declarations out of it.
-@(private = "file")
-STD_INTERFACES :: "base:interfaces"
-
-@(private = "file")
-yield_marker_kind :: proc(k: ^Checker, type: Type_Id) -> (Yield_Kind, bool) {
-	markers := [?]struct{name: string, kind: Yield_Kind} {
-		{"Yield_Owned", .Owned},
-		{"Yield_Borrowed", .Borrowed},
-		{"Yield_Mutable", .Mutable},
-	}
-	for index in 1 ..< len(k.c.packages) {
-		pkg := &k.c.packages[index]
-		if pkg.key != STD_INTERFACES || pkg.scope == nil {
-			continue
-		}
-		for marker in markers {
-			id := pkg.scope.names[intern_identifier(k.c, marker.name)] or_else INVALID_SYMBOL
-			sym := symbol_of(k.c, id)
-			if sym == nil || sym.kind != .Type {
-				continue
-			}
-			resolve_symbol_signature_in_place(k, id)
-			if symbol_of(k.c, id).type == type {
-				return marker.kind, true
-			}
+// The three descriptor types are ordinary declarations in `base:runtime`, bound
+// into the universe with `Option` and `Result`, so naming one needs no import
+// and the compiler can contribute a `Yield` to a built-in iterator.
+yield_marker_kind_of :: proc(k: ^Checker, type: Type_Id) -> (Yield_Kind, bool) {
+	for marker, index in k.c.yield_markers {
+		if marker != INVALID_TYPE && marker == type {
+			return Yield_Kind(index), true
 		}
 	}
 	return .Owned, false
@@ -159,4 +136,53 @@ yield_is_owned :: proc(desc: Yield_Desc) -> bool {
 		}
 	}
 	return true
+}
+
+// design.md "Iteration protocol": `Item` is what `next` hands back, which is the
+// element itself unless a `Yield` says otherwise. An iterator that declares its
+// own `Item` keeps it; every other one — a user iterator written before `Yield`
+// existed, or a compiler-contributed one — gets the payload of its own `next`.
+// That is what lets `Self.Iterator.Item` name something on every iterator, and
+// so what lets one `Iterable` cover both yield modes.
+ensure_item_member :: proc(k: ^Checker, type: Type_Id) {
+	under := type_underlying(k.c, type)
+	info := type_of(k.c, under)
+	if info == nil || .Iteration_Item in info.contributed {
+		return
+	}
+	// Set before the lookup below, which reaches member contribution again.
+	info.contributed += {.Iteration_Item}
+	if find_member(k, under, intern_identifier(k.c, "Item")) != INVALID_SYMBOL {
+		return
+	}
+	next := symbol_of(k.c, iteration_member(k, under, "next"))
+	if next == nil || next.result == INVALID_TYPE {
+		return // not an iterator at all
+	}
+	payload := option_payload(k.c, next.result)
+	if payload == INVALID_TYPE {
+		return
+	}
+	add_members(k.c, under, []Symbol_Id{new_associated_type(k.c, "Item", payload, under)})
+}
+
+// What `iterator` hands back for `element`, for a caller that is deciding
+// whether something applies rather than checking a written program: a leaf
+// descriptor answers, and anything else is INVALID_TYPE with nothing reported.
+iterator_item_or_invalid :: proc(k: ^Checker, iterator: Type_Id, element: Type_Id) -> Type_Id {
+	written := associated_type_of(k, iterator, "Yield")
+	if written == INVALID_TYPE {
+		return element
+	}
+	kind, is_marker := yield_marker_kind_of(k, written)
+	if !is_marker {
+		return INVALID_TYPE
+	}
+	switch kind {
+	case .Owned:    return element
+	case .Borrowed: return pointer_to(k.c, element, false)
+	case .Mutable:  return pointer_to(k.c, element, true)
+	case .Record:
+	}
+	return INVALID_TYPE
 }
