@@ -399,12 +399,14 @@ prov_root_for_symbol :: proc(graph: ^Flow_Graph, id: Symbol_Id) -> Root_Id {
 			kind = .Static
 		}
 	case .Parameter:
-		// An `inout` parameter and an immutable receiver both alias the caller's
-		// root, while the default parameter binding is a callee-local read-only
-		// value (design.md "Receiver forms", "Temporaries and procedure
-		// boundaries"). This is what lets `proc(self) -> []T` return a slice of
-		// the receiver's own inline storage.
-		if param_mode_is_pointer(sym.mode) {
+		// An `inout` parameter, an immutable receiver, and an ordinary parameter
+		// holding a managed owner all alias the caller's root; only a trivial
+		// `value: T` is a callee-local read-only copy (design.md "Receiver
+		// forms", "Parameter semantics and ABI lowering"). This is what lets
+		// `proc(self) -> []T` return a slice of the receiver's own storage, and
+		// what makes the free-procedure spelling of the same helper behave the
+		// same way.
+		if param_borrows_caller_storage(graph.k.c, sym.mode, sym.type) {
 			kind = .Param
 		}
 	case .Const:
@@ -2478,6 +2480,30 @@ prov_escaping_actuals :: proc(graph: ^Flow_Graph, v: ^Expr_Call, actuals: [][]in
 	return out
 }
 
+// Whether an argument names the caller's storage for the callee, so a borrow
+// the call returns derives from the caller's root. The receiver slot answers
+// with the declared receiver mode rather than the parameter's: a synthesized
+// member may take a managed receiver genuinely by value, as a provider handle
+// does, and that is not the caller's storage under another name.
+@(private = "file")
+prov_argument_borrows_caller :: proc(
+	graph: ^Flow_Graph,
+	v: ^Expr_Call,
+	index: int,
+	receiver: Param_Mode,
+	has_receiver: bool,
+) -> bool {
+	if index == 0 && has_receiver {
+		return receiver == .Borrow
+	}
+	c := graph.k.c
+	return param_borrows_caller_storage(
+		c,
+		proc_parameter_mode(c, prov_call_proc_type(graph, v), index),
+		prov_parameter_type(graph, v, index),
+	)
+}
+
 prov_parameter_type :: proc(graph: ^Flow_Graph, v: ^Expr_Call, index: int) -> Type_Id {
 	info := underlying_info(graph.k.c, prov_call_proc_type(graph, v))
 	if info == nil || index >= len(info.parameters) {
@@ -2793,8 +2819,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 					graph, receiver, expr_base(argument).type, value, result_type, v.span,
 				)
 			}
-		} else if (index == 0 && receiver == .Borrow) ||
-		          proc_parameter_mode(c, prov_call_proc_type(graph, v), index) == .Borrow {
+		} else if prov_argument_borrows_caller(graph, v, index, receiver, has_receiver) {
 			// design.md "Receiver forms": an immutable receiver designates the
 			// caller's value, so a borrow the method returns derives from the
 			// caller's root just as an `inout` receiver's does. The difference is

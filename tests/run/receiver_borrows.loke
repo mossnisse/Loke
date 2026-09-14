@@ -79,6 +79,22 @@ impl Holder {
 	held_view :: proc(self) -> []int { return self.held; }
 }
 
+// design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
+// holding a managed owner is the caller's storage under another name, so the
+// free-procedure spelling of a view accessor behaves like the method spelling.
+// Moving a helper in or out of an `impl` therefore changes nothing.
+Bag :: struct {
+	items: [dynamic]int,
+}
+
+free_view :: proc(bag: Bag) -> []int { return bag.items[:]; }
+
+impl Bag {
+	// The plain receiver and the written-out one are the same mode.
+	view :: proc(self) -> []int { return self.items[:]; }
+	spelled_view :: proc(self: borrow) -> []int { return self.items[:]; }
+}
+
 forward :: proc(source: $S) -> int where interfaces.Iterable(S), S.Element == int {
 	total := 0;
 	foreach (n in source) { total += n; }
@@ -137,4 +153,9 @@ main :: proc() {
 	first := cursor.next_ref();
 	second := cursor.next_ref();
 	fmt.println(first^, second^);
+
+	// The same body as a free procedure, as a plain receiver, and as a written
+	// `self: borrow`: one rule, three spellings.
+	bag := Bag{[dynamic]int{1, 2, 3}};
+	fmt.println(free_view(bag).len(), bag.view()[1], bag.spelled_view()[2]);
 }

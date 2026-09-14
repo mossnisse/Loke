@@ -369,7 +369,11 @@ main :: proc() {
 	assert(static_result_field(numbers[:])[0] == 5);
 	assert(union_result_field(numbers[:])[0] == 1);
 	assert(field_beside_map_result(numbers[:])[0] == 1);
-	assert(field_beside_map_parameter(numbers[:])[0] == 1);
+	beside_map_local := [3]int{7, 8, 9};
+	beside_map_table: map[string]Holder = {};
+	beside_map_table["b"] = Holder{beside_map_local[:]};
+	beside_map := Parameter_With_Map{move(beside_map_table), numbers[:]};
+	assert(field_beside_map_parameter(beside_map)[0] == 1);
 	assert(truncated_whole_replacement(numbers[:])[0] == 1);
 	assert(map_try_insert_keeps_unrelated_key(numbers[:])[0] == 1);
 	retained_elements: [dynamic]Holder = {};
@@ -618,11 +622,11 @@ field_beside_map_result :: proc(values: []int) -> []int {
 
 Parameter_With_Map :: struct { entries: map[string]Holder, view: []int }
 parameter_view :: proc(value: Parameter_With_Map) -> []int { return value.view; }
-field_beside_map_parameter :: proc(values: []int) -> []int {
-	local := [3]int{7, 8, 9};
-	table: map[string]Holder = {};
-	table["b"] = Holder{local[:]};
-	value := Parameter_With_Map{move(table), values};
+// A managed parameter names the caller's storage, so a call that hands back one
+// of its view fields keeps the whole aggregate borrowed — exactly as it does
+// through a receiver. `value` is therefore a parameter here, not a local that
+// ends at the return.
+field_beside_map_parameter :: proc(value: Parameter_With_Map) -> []int {
 	return parameter_view(value);
 }
 

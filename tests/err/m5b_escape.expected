@@ -19,3 +19,6 @@ L0514
 L0526
 @51:9
 this slice cannot be returned: the slice literal it borrows ends when this procedure returns
+L0526
+@61:9
+this slice cannot be returned: `pair` ends when this procedure returns

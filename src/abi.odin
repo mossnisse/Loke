@@ -30,6 +30,20 @@ param_mode_is_pointer :: proc(mode: Param_Mode) -> bool {
 	return mode == .Inout || mode == .Borrow
 }
 
+// design.md "Parameter semantics and ABI lowering": an ordinary `value: T`
+// holding a managed owner is "a non-owning immutable borrow for the call",
+// cloning nothing and transferring nothing — the caller's storage, under
+// another name. So for lifetimes it names the caller's root exactly as
+// `borrow T` and a plain `self` do, and a view of it may be returned. Only a
+// trivial value is the callee-local the bare mode suggests, which is the one
+// case where a free procedure and a method still differ.
+//
+// This answers about lifetimes, not about the ABI: `param_mode_is_pointer` is
+// still what decides how the parameter crosses.
+param_borrows_caller_storage :: proc(c: ^Compiler, mode: Param_Mode, type: Type_Id) -> bool {
+	return param_mode_is_pointer(mode) || (mode == .Value && type_is_managed(c, type))
+}
+
 // design.md "Calling conventions": `"c"` and `"stdcall"` are the two foreign
 // spellings; `loke` is written as the empty string. Everything else is a typo
 // or an unimplemented convention and is rejected by name (L0618).

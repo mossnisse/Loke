@@ -1895,11 +1895,11 @@ There are three receiver modes:
 
 | Receiver | Meaning |
 | --- | --- |
-| `self` | Immutable borrow of the value |
+| `self`, `self: borrow` | Immutable borrow of the value |
 | `self: inout` | Exclusive mutable borrow of the caller's variable |
 | `self: move` | Consumes the receiver |
 
-Each form may also spell the type, `self: inout Type`; it must be the `impl` type for the parameter to be a receiver.
+A plain `self` is the abbreviation of `self: borrow`; both spellings are the same mode, and the longer one is there so a receiver that relies on aliasing the caller can say so. Each form may also spell the type, `self: inout Type`; it must be the `impl` type for the parameter to be a receiver.
 
 Both borrowing receivers designate the caller's storage rather than a copy. A borrow they return derives from the caller's root under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). An immutable receiver cannot write through `self`. A temporary receiver lives through the complete expression, and a borrow from it cannot escape that expression.
 
@@ -4071,7 +4071,7 @@ The source-level parameter mode is decided before ABI lowering:
 
 | Parameter form | Source-level meaning |
 | --- | --- |
-| `value: T` | Immutable local binding; no ownership transfer |
+| `value: T` | Immutable local binding; no ownership transfer. A managed owner is a borrow of the caller's storage |
 | `value: []T` | Immutable borrowed view with read-only elements |
 | `value: []mut T` | Immutable borrowed view whose elements may be modified |
 | `value: borrow T` | Immutable alias of the caller's storage |
@@ -4080,6 +4080,8 @@ The source-level parameter mode is decided before ABI lowering:
 | `value: move T` | Ownership transfer from caller to callee |
 
 A `value: T` parameter is never made `inout` by its machine representation. A trivial value behaves as an immutable callee-local; a managed owner (including a struct or fixed array with managed fields) is a non-owning immutable borrow for the call, cloning nothing and transferring nothing, with reached storage protected by [Borrows and lifetimes](#borrows-and-lifetimes).
+
+Because a managed owner passed this way *is* the caller's storage, a borrow of one names the caller's root and may be returned, exactly as `borrow T` and a receiver may. A helper therefore behaves the same whether it is written as a free procedure or as a method. A trivial value is the one case where the two still differ: a copy of it ends with the call, so only `borrow T` or a receiver lets a borrow of its inline storage escape.
 
 Returning such a borrowed parameter by value performs a logical clone, since the callee owns nothing to move out: a mutable owner clones into `mem.default_allocator()` unless the procedure constructs the result with another allocator, while `string` and `shared(T)` retain their shared allocation. Returning a borrowed value whose clone is disabled is a compile-time error. Returning a managed local, temporary, or `move` parameter instead transfers ownership without cloning. A procedure needing allocator-controlled result storage takes an allocator parameter and constructs against it.
 
@@ -4204,7 +4206,7 @@ pointer^ = 99;                      // writes `values[2]`
 
 The returned expression must denote an assignable place of exactly the declared type; there is no result conversion, and a value expression is rejected. A call whose result is `inout T` is itself a place: it may be assigned to, have its address taken, and be passed as an `inout` argument. It is not a first-class reference type — the mode may be written on a result, never on a variable, field, or container element.
 
-An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and its lifetime follows exactly the rules a returned `^T` follows under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries): it derives root provenance from the procedure's `inout` parameters, `inout` receiver, and other borrowed arguments, or from an allocation or static root. An ordinary `value: T` parameter is a callee-local binding, so a place projected out of one carries no caller provenance and the result cannot outlive the call expression.
+An `inout` result is a [borrow carrier](#storage-roots-and-borrow-carriers), and its lifetime follows exactly the rules a returned `^T` follows under [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries): it derives root provenance from the procedure's `inout` parameters, `inout` receiver, and other borrowed arguments, or from an allocation or static root. An ordinary `value: T` parameter holding a trivial value is a callee-local binding, so a place projected out of one carries no caller provenance and the result cannot outlive the call expression; one holding a managed owner names the caller's storage and propagates provenance like the other borrowed forms.
 
 ```odin
 escape :: proc() -> inout int {

@@ -51,6 +51,20 @@ temporary_argument :: proc() -> []int {
 	return first_half([4]int{1, 2, 3, 4}[:]);
 }
 
+// design.md "Parameter semantics and ABI lowering": a managed owner passed as
+// `value: T` is the caller's storage, so a view of it may be returned — but a
+// trivial value really is a callee-local copy, and a view of its inline storage
+// still ends with the call. `borrow T` or a receiver is what says otherwise.
+Inline_Pair :: struct { items: [2]int }
+
+returns_a_trivial_parameter_view :: proc(pair: Inline_Pair) -> []int {
+	return pair.items[:];
+}
+
+returns_a_borrowed_parameter_view :: proc(pair: borrow Inline_Pair) -> []int {
+	return pair.items[:];
+}
+
 main :: proc() {
 	fmt.println(1);
 }

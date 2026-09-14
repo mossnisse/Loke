@@ -2835,13 +2835,21 @@ parse_parameter :: proc(p: ^Parser) -> (Parameter, bool) {
 		return param, named
 	}
 
+	// design.md "Receiver forms": `self: borrow` writes out the mode a plain
+	// `self` already has, so the receiver's mode can be read off the signature
+	// like every other one. Only the receiver may omit the type, which is what
+	// keeps `value: borrow` meaning a parameter of a type named `borrow`.
+	self_borrow := len(param.names) == 1 && param.names[0].name.text == "self" &&
+		(peek_token(p, 1).kind == .Comma || peek_token(p, 1).kind == .Rparen)
 	// `borrow` is contextual here, so an ordinary type or procedure named
 	// `borrow` remains usable elsewhere (and `value: borrow` is still a type).
 	if is_contextual(p, "borrow") && (starts_type(peek_token(p, 1).kind) ||
-	   peek_token(p, 1).kind == .Ident || peek_token(p, 1).kind == .Lparen) {
+	   peek_token(p, 1).kind == .Ident || peek_token(p, 1).kind == .Lparen || self_borrow) {
 		advance(p)
 		param.mode = .Borrow
-		param.type = parse_type(p)
+		if !self_borrow {
+			param.type = parse_type(p)
+		}
 		param.span = span_to_here(p, start)
 		return param, named && !expr_has_error(param.type)
 	}
