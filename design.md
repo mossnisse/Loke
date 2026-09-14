@@ -1905,7 +1905,7 @@ Both borrowing receivers designate the caller's storage rather than a copy. A bo
 
 The immutable receiver mode is written `borrow T` in a procedure type. Thus `method := Type.method` stores an unbound method, and a callback type can use `proc(self: borrow Type) -> Result`. Calling `method(value)` supplies the receiver without a marker. `inout` and `move` receivers retain those parameter modes.
 
-Immutable and `inout` receivers use `value.method()`; the `inout` borrow is implicit and ends with the call. A consuming receiver requires `move(value).method()`, which leaves the source dead. The written form also selects the matching receiver overload.
+Immutable and `inout` receivers use `value.method()`; the `inout` borrow is implicit and ends with the call. A consuming receiver takes its receiver the way a [`move` parameter](#temporaries-and-procedure-boundaries) takes an argument: a place is written `move(value).method()`, which leaves the source dead, while a temporary already owns its value and needs no marker, as in `parse(text).map_error(App_Error, to_app)`. The written form also selects the matching receiver overload.
 
 A consuming method cannot be called on file-scope, `static`, or `thread_local` storage, since it would leave that storage dead; use `exchange` to install a replacement first. Nor can it consume a field or element, for the same reason `move` cannot. The immutable receiver may be written `self: Type` when clearer; it is the same mode.
 
@@ -4130,7 +4130,7 @@ files.append(move(f));              // a place: written out, `f` is dead after t
 
 `value: borrow T` is an immutable alias of the caller's storage, in any parameter position. Unlike the default value binding, `&value` can be returned subject to the caller's lifetime. It uses the same mode as an immutable receiver, takes no call-site marker, and performs no copy. It can borrow a temporary for the complete expression, but cannot extend that temporary's lifetime. Constants are materialized as for `&`; packed fields cannot supply an aligned borrow. It cannot have a default. `@(escape=...)` may constrain this borrow even when `T` itself contains no pointer or view.
 
-The written form therefore also selects. A candidate whose parameter is `move` is reachable only from an argument that already owns its value — a written `move(expr)` or a temporary — and passing such an argument to an ordinary value parameter is not a mismatch either, since it transfers ownership instead of cloning into it. Both directions are viable, so the written form decides between them by [tie-breaker 5](#operator-lookup-and-overload-resolution): `values.append(move(f))` picks a group's consuming member and `values.append(1)` its ordinary one. A [consuming receiver](#methods-and-abstractions) is stricter, and is always written `move(value).method()`.
+The written form therefore also selects. A candidate whose parameter is `move` is reachable only from an argument that already owns its value — a written `move(expr)` or a temporary — and passing such an argument to an ordinary value parameter is not a mismatch either, since it transfers ownership instead of cloning into it. Both directions are viable, so the written form decides between them by [tie-breaker 5](#operator-lookup-and-overload-resolution): `values.append(move(f))` picks a group's consuming member and `values.append(1)` its ordinary one. A [consuming receiver](#methods-and-abstractions) follows the same rule, so `move(value).method()` and `make_value().method()` both reach one; only a written `move` reaches a consuming member of a group.
 
 `move(x)` is an [expression](#assignment-statements) that transfers `x` and marks it dead. It may be used in assignments, returns, arguments, and consuming method calls such as `move(value).method()`. It cannot target static-duration storage.
 
@@ -5163,6 +5163,28 @@ work :: proc() -> Result(int, Error_Code) {
 ```
 
 The failure payload is rewrapped as the enclosing procedure's failure variant, so a procedure may propagate into a different error type as long as the payloads are assignable. A place operand copies both payloads and leaves the source whole; see [Operator ownership](#operator-ownership).
+
+### Changing error domains
+
+Assignability is the whole rule, so a `Result(T, Parse_Error)` does not propagate into a `Result(T, App_Error)` merely because `App_Error` has a `parse: Parse_Error` variant. Nothing could choose that variant on its own: two variants may carry the same payload type, so the wrapping is named rather than guessed. `Result.map_error` names it:
+
+```odin
+Parse_Error :: enum { Bad_Digit, Empty }
+App_Error   :: union { parse: Parse_Error, io: io.Error }
+
+// A union constructor is not a callable value, so the mapper is an ordinary
+// procedure — and the place the intended variant is written down.
+to_app :: proc(error: Parse_Error) -> App_Error { return .parse(error); }
+
+read_setting :: proc(text: string_view) -> Result(int, App_Error) {
+	value := parse(text).map_error(App_Error, to_app) or_return;
+	return .ok(value);
+}
+```
+
+`map_error` consumes its receiver and relocates the success payload rather than cloning it, so a move-only `T` maps like any other. The receiver above is a temporary and so needs no marker; a bound result is a place and is written `move(outcome).map_error(...)`. The target error type is written because a poly parameter inside a nested procedure type is not inferred from the argument.
+
+This is the only error adaptation the language provides. Inspecting or logging a failure uses the same `switch` and mapping facilities; there is no second, implicit conversion path between error types.
 
 ## Panics and unwinding
 

@@ -407,9 +407,10 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 		v.type = INVALID_TYPE
 		return
 	}
-	// Every candidate consumes, and the transfer is not written: say so here
-	// rather than through a no-overload-matches report of the same fact.
-	if _, moved := receiver.(^Expr_Move); !moved && all_candidates_consume(k, candidates) {
+	// Every candidate consumes a receiver that is a place, and the transfer is not
+	// written: say so here rather than through a no-overload-matches report of the
+	// same fact. A temporary receiver already owns its value, so it needs no marker.
+	if !expression_is_owned_argument(receiver) && all_candidates_consume(k, candidates) {
 		errorf(
 			k.c, expr_span(receiver), "L0501",
 			"`%s` consumes its receiver, so the call is written `move(...).%s(...)`",

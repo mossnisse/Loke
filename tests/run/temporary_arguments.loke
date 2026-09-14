@@ -56,6 +56,22 @@ consuming_temporary :: proc() {
 	fmt.println(3101);
 }
 
+// A consuming receiver follows the same rule as a consuming parameter: a place
+// is written `move(value).method()`, a temporary needs no marker. Only the
+// callee's copy dies, so the id prints once.
+impl Res {
+	take :: proc(self: move Res) -> int { return self.id; }
+}
+
+consuming_receiver :: proc() {
+	fmt.println(3200);
+	fmt.println(make_res(32).take());
+	fmt.println(3201);
+	held := make_res(33);
+	fmt.println(move(held).take());
+	fmt.println(3202);
+}
+
 // Several temporaries in one call are each cleaned up, in reverse order.
 two :: proc(a: Res, b: Res) -> int { return a.id + b.id; }
 
@@ -79,6 +95,7 @@ main :: proc() {
 	place_argument();
 	consuming_argument();
 	consuming_temporary();
+	consuming_receiver();
 	several();
 	looping();
 }

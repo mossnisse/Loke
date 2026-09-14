@@ -1,0 +1,65 @@
+package main; import "core:fmt";
+
+// Changing a Result's error domain without a second exception system.
+//
+// design.md "or_return operator": a failure propagates only where its payload is
+// already assignable, so a parser's `Parse_Error` cannot enter an application's
+// `App_Error` on its own — two variants may carry the same payload type, so
+// nothing could guess which one was meant. `map_error` names the variant through
+// an ordinary procedure and leaves `or_return` as the visible early return.
+
+Parse_Error :: enum { Bad_Digit, Empty }
+
+App_Error :: union { parse: Parse_Error, io: int }
+
+// A union constructor is not a callable value, so the mapper is written out.
+to_app :: proc(error: Parse_Error) -> App_Error { return .parse(error); }
+
+parse :: proc(ok: bool) -> Result(int, Parse_Error) {
+	if (ok) { return .ok(21); }
+	return .err(.Bad_Digit);
+}
+
+// The receiver is a temporary, so the transfer needs no marker.
+doubled :: proc(ok: bool) -> Result(int, App_Error) {
+	n := parse(ok).map_error(App_Error, to_app) or_return;
+	return .ok(n * 2);
+}
+
+// A bound result is a place: giving it away is written out, exactly as it is for
+// a consuming parameter.
+from_place :: proc() -> Result(int, App_Error) {
+	outcome := parse(false);
+	n := move(outcome).map_error(App_Error, to_app) or_return;
+	return .ok(n);
+}
+
+// A move-only success payload is relocated, never cloned, so mapping the error
+// side leaves it untouched. The drop prints, so a lost or doubled one shows.
+Handle :: move_only struct { id: int }
+
+impl Handle {
+	release :: hook(drop) proc(self: inout Handle) { fmt.println(self.id); }
+}
+
+open :: proc() -> Result(Handle, Parse_Error) { return .ok(Handle{7}); }
+
+opened :: proc() -> Result(int, App_Error) {
+	handle := open().map_error(App_Error, to_app) or_return;
+	return .ok(handle.id);
+}
+
+report :: proc(label: int, outcome: Result(int, App_Error)) {
+	fmt.println(label);
+	switch (r in outcome) {
+	case .ok:  fmt.println(r);
+	case .err: fmt.println(r);
+	}
+}
+
+main :: proc() {
+	report(1000, doubled(true));
+	report(2000, doubled(false));
+	report(3000, from_place());
+	report(4000, opened());
+}

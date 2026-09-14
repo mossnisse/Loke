@@ -307,12 +307,16 @@ argument_rank :: proc(k: ^Checker, arg: Arg_Info, param: Type_Id, mode: Param_Mo
 	// conversion. A receiver's is different: its `inout` mode is implicit in
 	// method-call syntax, and a borrowing receiver ranks behind a by-value one,
 	// which is what picks between a `self` and a `self: inout` member of one group.
-	// A consuming receiver is written `move(value).method()`, so that written form
-	// matters too, both ways.
+	// A consuming receiver follows the same rule a `move` parameter does: a place is
+	// written `move(value).method()`, a temporary already owns its value.
 	_, moved := arg.expr.(^Expr_Move)
 	adjusted := false
 	if arg.is_receiver {
-		if moved != (mode == .Move) {
+		if mode == .Move {
+			if !expression_is_owned_argument(arg.expr) {
+				return RANK_NONE
+			}
+		} else if moved {
 			return RANK_NONE
 		}
 		adjusted = mode != .Value
@@ -501,12 +505,10 @@ build_candidate :: proc(k: ^Checker, symbol_id: Symbol_Id, args: []Arg_Info) -> 
 			return cand
 		}
 		cand.ranks[index] = rank
-		// A receiver's form already had to match exactly, so only arguments can
-		// reach a mode their written form did not name.
-		if !arg.is_receiver {
-			if _, transferred := arg.expr.(^Expr_Move); transferred != (mode == .Move) {
-				cand.mode_adjusted += 1
-			}
+		// An unmarked temporary reaches a `move` parameter or a consuming receiver
+		// without naming that mode, so the written form breaks the tie either way.
+		if _, transferred := arg.expr.(^Expr_Move); transferred != (mode == .Move) {
+			cand.mode_adjusted += 1
 		}
 	}
 

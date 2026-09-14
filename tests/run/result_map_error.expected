@@ -1,0 +1,9 @@
+1000
+42
+2000
+.parse(Bad_Digit)
+3000
+.parse(Bad_Digit)
+7
+4000
+7
