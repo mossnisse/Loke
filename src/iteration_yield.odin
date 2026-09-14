@@ -27,26 +27,31 @@ Yield_Desc :: struct {
 
 // The descriptor `iterator` declares, defaulting to owned. `ok` is false when
 // the declaration is not a descriptor at all, which has been reported.
-iterator_yield :: proc(k: ^Checker, iterator: Type_Id, span: Span) -> (Yield_Desc, bool) {
+iterator_yield :: proc(k: ^Checker, iterator: Type_Id, span: Span, report := true) -> (Yield_Desc, bool) {
 	written := associated_type_of(k, iterator, "Yield")
 	if written == INVALID_TYPE {
 		return Yield_Desc{kind = .Owned}, true
 	}
-	return yield_desc_of(k, written, span)
+	return yield_desc_of(k, written, span, report)
 }
 
+// `report` is false for a caller deciding whether something applies rather than
+// checking a written program: a malformed descriptor is that caller's "no", and
+// the loop over the same iterator is what says so.
 @(private = "file")
-yield_desc_of :: proc(k: ^Checker, written: Type_Id, span: Span) -> (Yield_Desc, bool) {
+yield_desc_of :: proc(k: ^Checker, written: Type_Id, span: Span, report: bool) -> (Yield_Desc, bool) {
 	if kind, is_marker := yield_marker_kind_of(k, written); is_marker {
 		return Yield_Desc{kind = kind}, true
 	}
 	info := underlying_info(k.c, written)
 	if info == nil || info.kind != .Struct || len(info.fields) == 0 {
-		errorf(
-			k.c, span, "L0694",
-			"`%s` is not a yield descriptor: write `Yield_Owned`, `Yield_Borrowed`, `Yield_Mutable`, or a record of those",
-			type_name(k.c, written),
-		)
+		if report {
+			errorf(
+				k.c, span, "L0694",
+				"`%s` is not a yield descriptor: write `Yield_Owned`, `Yield_Borrowed`, `Yield_Mutable`, or a record of those",
+				type_name(k.c, written),
+			)
+		}
 		return {}, false
 	}
 	fields := make([]Yield_Desc, len(info.fields), k.c.semantic_allocator)
@@ -55,7 +60,7 @@ yield_desc_of :: proc(k: ^Checker, written: Type_Id, span: Span) -> (Yield_Desc,
 		if field == nil {
 			return {}, false
 		}
-		desc, ok := yield_desc_of(k, field.type, span)
+		desc, ok := yield_desc_of(k, field.type, span, report)
 		if !ok {
 			return {}, false
 		}
@@ -79,7 +84,7 @@ yield_marker_kind_of :: proc(k: ^Checker, type: Type_Id) -> (Yield_Kind, bool) {
 // The `Item` this descriptor makes of `element`: what `next` must return, and
 // what a manual call receives. INVALID_TYPE when the descriptor and the element
 // disagree, which has been reported.
-yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: Span) -> Type_Id {
+yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: Span, report := true) -> Type_Id {
 	switch desc.kind {
 	case .Owned:
 		return element
@@ -91,11 +96,13 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 	}
 	info := underlying_info(k.c, element)
 	if info == nil || info.kind != .Struct || len(info.fields) != len(desc.fields) {
-		errorf(
-			k.c, span, "L0694",
-			"a record `Yield` of %d fields needs a record element with %d fields, and `%s` is not one",
-			len(desc.fields), len(desc.fields), type_name(k.c, element),
-		)
+		if report {
+			errorf(
+				k.c, span, "L0694",
+				"a record `Yield` of %d fields needs a record element with %d fields, and `%s` is not one",
+				len(desc.fields), len(desc.fields), type_name(k.c, element),
+			)
+		}
 		return INVALID_TYPE
 	}
 	// The restriction a consuming destructure already carries: a type with a
@@ -103,11 +110,13 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 	// "Iteration protocol").
 	if life := lifecycle_of(k.c, element); life != nil &&
 	   (life.custom_drop != INVALID_SYMBOL || life.custom_try_clone != INVALID_SYMBOL) {
-		errorf(
-			k.c, span, "L0694",
-			"`%s` has a custom `hook(copy)` or `hook(drop)`, so a record `Yield` cannot describe it field by field",
-			type_name(k.c, element),
-		)
+		if report {
+			errorf(
+				k.c, span, "L0694",
+				"`%s` has a custom `hook(copy)` or `hook(drop)`, so a record `Yield` cannot describe it field by field",
+				type_name(k.c, element),
+			)
+		}
 		return INVALID_TYPE
 	}
 	fields := make([]Anon_Record_Field, len(desc.fields), k.c.semantic_allocator)
@@ -116,7 +125,7 @@ yield_item_type :: proc(k: ^Checker, element: Type_Id, desc: Yield_Desc, span: S
 		if field == nil {
 			return INVALID_TYPE
 		}
-		projected := yield_item_type(k, field.type, desc.fields[index], span)
+		projected := yield_item_type(k, field.type, desc.fields[index], span, report)
 		if projected == INVALID_TYPE {
 			return INVALID_TYPE
 		}
@@ -167,22 +176,13 @@ ensure_item_member :: proc(k: ^Checker, type: Type_Id) {
 }
 
 // What `iterator` hands back for `element`, for a caller that is deciding
-// whether something applies rather than checking a written program: a leaf
-// descriptor answers, and anything else is INVALID_TYPE with nothing reported.
+// whether something applies rather than checking a written program: the same
+// projection the loop makes, with nothing reported and INVALID_TYPE where the
+// descriptor and the element disagree.
 iterator_item_or_invalid :: proc(k: ^Checker, iterator: Type_Id, element: Type_Id) -> Type_Id {
-	written := associated_type_of(k, iterator, "Yield")
-	if written == INVALID_TYPE {
-		return element
-	}
-	kind, is_marker := yield_marker_kind_of(k, written)
-	if !is_marker {
+	desc, ok := iterator_yield(k, iterator, no_span(), report = false)
+	if !ok {
 		return INVALID_TYPE
 	}
-	switch kind {
-	case .Owned:    return element
-	case .Borrowed: return pointer_to(k.c, element, false)
-	case .Mutable:  return pointer_to(k.c, element, true)
-	case .Record:
-	}
-	return INVALID_TYPE
+	return yield_item_type(k, element, desc, no_span(), report = false)
 }

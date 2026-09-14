@@ -137,11 +137,23 @@ bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Fie
 		// the loop owns the whole of it for the step. It is built even when the
 		// name is `_`, so a field with a copy hook is produced and disposed of
 		// exactly as it would be when bound (design.md "Element bindings").
-		slot := alloca(e, record)
+		//
+		// design.md "Borrowing iteration": a part the traversal lends goes into
+		// that record as its address, so nothing is copied out of the container and
+		// the name reads it through `entry.value^`.
+		bound := s.item_type == INVALID_TYPE ? s.element_type : s.item_type
+		built := llvm_type(e, bound)
+		held := type_of(e.c, type_underlying(e.c, bound))
+		slot := alloca(e, built)
 		for field, index in fields {
-			store(e, field.type, owned_field_value(e, field), gep_field(e, record, slot, index))
+			want := symbol_of(e.c, held.fields[index]).type
+			if want == field.type {
+				store(e, field.type, owned_field_value(e, field), gep_field(e, built, slot, index))
+				continue
+			}
+			store(e, want, field.address, gep_field(e, built, slot, index))
 		}
-		register_scope_place(e, s.element_type, slot)
+		register_scope_place(e, bound, slot)
 		if symbol := s.bindings[0].symbol; symbol != INVALID_SYMBOL {
 			bind_local(e, symbol, slot)
 		}
@@ -678,6 +690,11 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		if len(s.bindings) == 2 {
 			bind_foreach_field(e, s.bindings[1].symbol, Foreach_Field{type = TYPE_INT, value = load(e, "i64", counter)})
 		}
+	} else if payload := option_payload(e.c, option); s.borrows && !type_is_pointer(e.c, payload) {
+		// design.md "Iteration protocol": a record `Yield` hands back a record of
+		// pointers -- one per part the iterator lends -- so each binding is a place
+		// at its own address, and one name over the whole receives the record.
+		bind_foreach_fields(e, s, lent_record_fields(e, s, emit_union_payload(e, option, payload, slot), payload))
 	} else if s.borrows {
 		// design.md "Borrowing iteration": the payload is a pointer into the
 		// source, so the binding is that address and the loop owns nothing.
@@ -1013,26 +1030,18 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintfln(&e.b, "  br i1 %s, label %%%s, label %%%s", finished, stop_label, yield_label)
 
 	fmt.sbprintfln(&e.b, "%s:", yield_label)
-	key_type := container_key(e.c, subject)
-	value_type := container_element(e.c, subject)
 	out := ""
-	// A lending view hands back the address of the stored half; a copying one
-	// reads it out (design.md "Borrowing iteration").
-	lends := type_is_pointer(e.c, yielded)
 	#partial switch symbol.synth {
 	case .Map_Keys_Next:
-		address := load(e, "ptr", key_out)
-		out = lends ? address : copy_map_half(e, key_type, address)
+		out = load(e, "ptr", key_out)
 	case .Map_Values_Next:
-		address := load(e, "ptr", value_out)
-		out = lends ? address : copy_map_half(e, value_type, address)
+		out = load(e, "ptr", value_out)
 	case:
 		// design.md "Iteration adapters": a map's `Element` is its `{key, value}`
-		// entry, so this hands back the same record a direct loop destructures.
-		key := copy_map_half(e, key_type, load(e, "ptr", key_out))
-		value := copy_entry_value(e, key_type, key, value_type, load(e, "ptr", value_out))
-		built := insert(e, element, "undef", llvm_type(e, key_type), key, ELEMENT_FIRST)
-		out = insert(e, element, built, llvm_type(e, value_type), value, ELEMENT_SECOND)
+		// entry, and the table stores the two halves rather than the record, so
+		// what this hands back is a record of their addresses.
+		built := insert(e, element, "undef", "ptr", load(e, "ptr", key_out), ELEMENT_FIRST)
+		out = insert(e, element, built, "ptr", load(e, "ptr", value_out), ELEMENT_SECOND)
 	}
 	fmt.sbprintfln(&e.b, "  ret %s %s", pair_type, emit_option_some(e, option, out))
 
@@ -1041,44 +1050,25 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	fmt.sbprintln(&e.b, "}")
 }
 
-// One half of a slot, as an owned value: the map keeps its own storage, so a
-// managed half is cloned rather than aliased.
+// One `Foreach_Field` per part of a record `Yield`'s payload: a lent part is the
+// place its pointer names, an owned one is the value itself. The `Element` says
+// what each part is; the payload's own fields say which of them were lent.
 @(private = "file")
-copy_map_half :: proc(e: ^Emitter, type: Type_Id, address: string) -> string {
-	value := load(e, llvm_type(e, type), address)
-	if !emit_lifecycle(e, type).managed {
-		return value
+lent_record_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, record: string, payload: Type_Id) -> []Foreach_Field {
+	element := type_of(e.c, type_underlying(e.c, s.element_type))
+	held := type_of(e.c, type_underlying(e.c, payload))
+	llvm := llvm_type(e, payload)
+	fields := make([]Foreach_Field, len(element.fields), context.temp_allocator)
+	for id, index in element.fields {
+		field := symbol_of(e.c, id)
+		part := extract(e, llvm, record, index)
+		if symbol_of(e.c, held.fields[index]).type == field.type {
+			fields[index] = Foreach_Field{type = field.type, value = part}
+			continue
+		}
+		fields[index] = Foreach_Field{type = field.type, address = part, place = true, stored = true}
 	}
-	return emit_clone_value(e, type, value)
-}
-
-// The second half of an entry. If copying it fails, the first half is already an
-// owned value that nothing else will ever see, so it is destroyed before the
-// allocator's failure policy runs (design.md "Allocation failure").
-@(private = "file")
-copy_entry_value :: proc(
-	e: ^Emitter, key_type: Type_Id, key: string, value_type: Type_Id, address: string,
-) -> string {
-	if !emit_lifecycle(e, key_type).managed || !emit_lifecycle(e, value_type).managed {
-		return copy_map_half(e, value_type, address)
-	}
-	value_llvm := llvm_type(e, value_type)
-	staged := alloca(e, value_llvm)
-	provider := emit_default_allocator(e)
-	ok := emit_try_clone_into(e, value_type, staged, address, provider)
-	fail_label, done_label := new_label(e, "entry.failed"), new_label(e, "entry.done")
-	branch_if(e, ok, done_label, fail_label)
-
-	place_label(e, fail_label)
-	held := alloca(e, llvm_type(e, key_type))
-	store(e, key_type, key, held)
-	emit_drop_place(e, key_type, held)
-	fmt.sbprintfln(&e.b, "  call void @loke_rt_v1_alloc_failed(ptr %s)", provider)
-	fmt.sbprintln(&e.b, "  unreachable")
-	e.terminated = true
-
-	place_label(e, done_label)
-	return load(e, value_llvm, staged)
+	return fields
 }
 
 // design.md "String iteration": one decoded code point per step, advancing the

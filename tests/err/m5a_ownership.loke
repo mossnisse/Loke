@@ -74,9 +74,9 @@ main :: proc() {
 	foreach (item in table) {
 		fmt.println(item.id);
 	}
-	// design.md "Borrowing iteration": `values()` lends the half it names, so a
-	// move-only value is read like any other. `entries()` builds the `{key, value}`
-	// record the table does not store, and that copy it cannot make.
+	// design.md "Borrowing iteration": a map lends both halves of a slot, so a
+	// move-only value is read like any other -- through `values()`, and through
+	// the `{key, value}` record `entries()` builds out of their addresses.
 	locked: map[int]Only = {};
 	foreach (item in locked.values()) {
 		fmt.println(item.id);

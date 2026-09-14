@@ -77,15 +77,20 @@ main :: proc() {
 	keys, values, entries := 0, 0, 0;
 	foreach (k in table.keys()) { keys += k; }
 	foreach (v in table.values()) { values += v; }
-	foreach (k, v in table.entries()) { entries += k*100 + v; }
+	// design.md "Element bindings": one name over the entry receives the record of
+	// addresses the table lends, so the halves are read through `^`.
+	foreach (e in table.entries()) { entries += e.key^*100 + e.value^; }
 	fmt.println(keys);
 	fmt.println(values);
 	fmt.println(entries);
 
-	// An entry destructures exactly as a bare map loop does.
+	// An entry destructures exactly as a bare map loop does, and both spellings
+	// bind the halves where the table holds them.
 	pairs := 0;
 	foreach (k, v in table.entries()) { pairs += k*100 + v; }
 	foreach (k, v in table) { pairs -= k*100 + v; }
+	foreach (e in table) { pairs += e.key^*100 + e.value^; }
+	foreach (e in table.entries()) { pairs -= e.key^*100 + e.value^; }
 	fmt.println(pairs);
 
 	// Stored, and traversed twice: every `iter()` starts fresh.

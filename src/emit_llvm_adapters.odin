@@ -79,21 +79,15 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		place_label(e, yielded)
 		payload_type := option_payload(e.c, inner_option)
 		payload := emit_union_payload(e, inner_option, payload_type, emit_union_spill(e, inner_option, produced))
-		// A lending source hands back a pointer into its own storage; the pair
-		// this builds is a new value, so the element is read out of that storage
-		// and owned from here (design.md "Iteration adapters").
+		// A lending source hands back what it lent; the pair this builds is a new
+		// value, so whatever was lent is read out of the source's storage and owned
+		// from here (design.md "Iteration adapters").
 		wrapped := symbol_of(e.c, type_of(e.c, type_underlying(e.c, info.element)).fields[ELEMENT_FIRST]).type
-		if payload_type != wrapped {
-			payload = load(e, llvm_type(e, wrapped), payload)
-			if emit_lifecycle(e, wrapped).managed {
-				payload = emit_clone_value(e, wrapped, payload)
-			}
-			payload_type = wrapped
-		}
+		payload = own_yielded(e, payload, payload_type, wrapped)
 		counter := gep_field(e, llvm_type(e, source), "%arg0", 1)
 		index := load(e, "i64", counter)
 		pair_type := llvm_type(e, info.element)
-		pair := insert(e, pair_type, "undef", llvm_type(e, payload_type), payload, 0)
+		pair := insert(e, pair_type, "undef", llvm_type(e, wrapped), payload, 0)
 		pair = insert(e, pair_type, pair, "i64", index, 1)
 		stepped := temp(e)
 		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
@@ -103,4 +97,34 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
 	}
 	fmt.sbprintln(&e.b, "}")
+}
+
+// design.md "Iteration adapters": an owned value of `wanted`, from whatever the
+// source handed over. A lent leaf is read through its pointer; a record `Yield`
+// hands over one part per field, each owned the same way. Already-owned parts
+// pass through untouched.
+@(private = "file")
+own_yielded :: proc(e: ^Emitter, payload: string, handed, wanted: Type_Id) -> string {
+	if handed == wanted {
+		return payload
+	}
+	if type_is_pointer(e.c, handed) {
+		value := load(e, llvm_type(e, wanted), payload)
+		if emit_lifecycle(e, wanted).managed {
+			return emit_clone_value(e, wanted, value)
+		}
+		return value
+	}
+	held := type_of(e.c, type_underlying(e.c, handed))
+	target := type_of(e.c, type_underlying(e.c, wanted))
+	llvm, out := llvm_type(e, handed), llvm_type(e, wanted)
+	built := "undef"
+	for id, index in target.fields {
+		field := symbol_of(e.c, id)
+		part := own_yielded(
+			e, extract(e, llvm, payload, index), symbol_of(e.c, held.fields[index]).type, field.type,
+		)
+		built = insert(e, out, built, llvm_type(e, field.type), part, index)
+	}
+	return built
 }

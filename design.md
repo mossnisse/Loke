@@ -1045,7 +1045,7 @@ A map maps keys to values. Its zero value is empty and immediately usable. Like 
 
 Any type can be a map key when it satisfies `interfaces.Hashable`, with a **coherent** `==` and `value.hash(seed: uint) -> uint` (equal values produce equal hashes). Built-in conformances are the list under the [standard interface catalogue](#standard-interface-catalogue). For a user-defined key, both operations must be inherent to the key type; caller-local extensions do not qualify, so a `map[K]V` uses one equality and hashing policy across packages. A different policy wraps the key in a local `distinct` type with its own inherent operations, or uses a library map type with explicit hasher and equality parameters.
 
-A key must also be copyable. It is copied into the map on insertion and out of it by `keys()` and `entries()`, and a lookup has to write a second value equal to it — which a `move_only` type exists to prevent. A move-only key is rejected where the map type is named; a move-only *value* is fine (see [Container insertion](#container-insertion)).
+A key must also be copyable. It is copied into the map on insertion, and a lookup has to write a second value equal to it — which a `move_only` type exists to prevent. A move-only key is rejected where the map type is named; a move-only *value* is fine (see [Container insertion](#container-insertion)).
 
 ```odin
 m: map[string]int = {};
@@ -2278,7 +2278,7 @@ Built-in containers also provide these views:
 
 | View | Result | `Element` |
 | --- | --- | --- |
-| `map.entries()` | opaque borrowed map view | `struct{key: K, value: V}` — the map's own `Element` |
+| `map.entries()` | opaque borrowed map view | `struct{key: K, value: V}` — the map's own `Element`, lent as `{key: ^K, value: ^V}` |
 | `map.keys()` | opaque borrowed map view | `K` |
 | `map.values()` | opaque borrowed map view | `V` |
 | `text.runes()` | `string_view` | `rune` — the string's own `Element` |

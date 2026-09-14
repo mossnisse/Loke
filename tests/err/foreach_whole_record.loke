@@ -1,27 +1,31 @@
 package main;
 
 // design.md "Element bindings" and iteration-unification-plan.md step 6: a
-// traversal that lends what its container stores hands a single name the record
-// itself, so `entry.value` becomes a `^V` once the record `Yield` lands. Every
-// such header is refused until then, so no site quietly changes from printing a
-// value to printing an address. See known-gaps.md, "Iteration still follows the
-// pre-unification model".
+// traversal lends what its container stores, so a record built from those parts
+// is handed over as their pointers and a single name reads `entry.value^`. What
+// is not lowered is a record built from a record -- `indexed()` over a map, or
+// over its entry view -- which is refused rather than bound to the wrong
+// storage. See known-gaps.md, "Iteration still follows the pre-unification
+// model".
 main :: proc() {
 	table := map[string]int{};
 	numbers := [3]int{1, 2, 3};
 
-	foreach (entry in table) { _ = entry.value; }
-	foreach (entry in table.entries()) { _ = entry.key; }
-	foreach (pair in numbers.indexed()) { _ = pair.index; }
-	foreach (pair in table.values().indexed()) { _ = pair.value; }
+	foreach (pair in table.indexed()) { _ = pair.index; }
+	foreach (entry, at in table.entries().indexed()) { _ = at; }
 
-	// A discard names no field, and destructuring binds the parts the container
-	// holds, so neither can change meaning.
-	foreach (_ in table) { }
-	foreach (key, value in table) { _ = key; _ = value; }
-	foreach (value, index in numbers.indexed()) { _ = value; _ = index; }
+	// Every record built from lent parts binds, under one name or several.
+	foreach (entry in table) { _ = entry.value^; }
+	foreach (entry in table.entries()) { _ = entry.key^; }
+	foreach (key, value in table.entries()) { _ = key; _ = value; }
+	foreach (pair in numbers.indexed()) { _ = pair.value^ + pair.index; }
+	foreach (pair in table.values().indexed()) { _ = pair.value^; }
 
-	// A range generates its elements rather than storing them, so the pair it is
-	// paired into owns them and stays bindable under one name.
+	// A range generates its elements, so its pair owns them and `pair.value` is
+	// the value itself.
 	foreach (pair in (0 ..< 3).indexed()) { _ = pair.value; }
+
+	// Two names over `indexed()` of a map still copy the entry, which is the
+	// other half of the nesting that is not lowered.
+	foreach (entry, at in table.indexed()) { _ = at + entry.value; }
 }

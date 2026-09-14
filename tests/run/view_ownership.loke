@@ -74,7 +74,9 @@ main :: proc() {
 		}
 	}
 
-	// An ignored field is still produced and disposed of.
+	// design.md "Borrowing iteration": the table stores both halves of a slot, so
+	// `entries()` hands over their addresses and nothing is produced to dispose
+	// of -- not even for an ignored name.
 	fmt.println(3);
 	foreach (_, _ in table.entries()) { fmt.println(600); }
 
@@ -88,8 +90,9 @@ main :: proc() {
 	fmt.println(6);
 	_ = scan(table, 1);
 
-	// A managed key destructured beside a managed value: both halves are copied
-	// per step, and both are disposed of.
+	// A managed key destructured beside a managed value: both halves are lent
+	// where the table holds them, through the bare loop and through `entries()`,
+	// so neither is copied and neither is disposed of.
 	fmt.println(7);
 	named: map[string]Tracked = {};
 	named["k"] = Tracked{9};

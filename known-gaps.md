@@ -18,9 +18,9 @@ by the header — borrowed by default, mutable at an `&` leaf, consuming from a
 temporary or `move(place)` — with recursive binding patterns, `Yield`
 descriptors, `Consuming_Iterable`, and `copied()` as the written clone. The
 compiler is partway there: traversal of an array, a slice, a dynamic array, or a
-map's halves now lends each element, while text, ranges, and every record the
-traversal has to build still copy. Bindings are flat, `refs()` still exists, and
-there is no consuming traversal.
+map now lends what the container stores, through a `Yield` the iterator declares,
+while text, ranges, and the library's own iterators stay owned. Bindings are
+flat, `refs()` still exists, and there is no consuming traversal.
 
 This is one divergence rather than fifteen because it is one coordinated change.
 [iteration-unification-plan.md](iteration-unification-plan.md) has the six
@@ -28,8 +28,8 @@ implementation steps; the specification is step 1, and the gap closes at step 6.
 
 Step 2 landed the two representations. A nested binding pattern parses and
 reports `L0693`, still unlowered. An iterator's `Yield` is read and validated
-against its element — a mismatch is `L0694` — and a borrowed descriptor now
-lowers; a mutable one, and a record of descriptors, still report `L0695`.
+against its element — a mismatch is `L0694` — and a borrowed descriptor and a
+record of them now lower; a mutable one still reports `L0695`.
 
 Step 3 has landed the ownership and lifetime rules the lowering needs: a `&`
 binding is a non-owning view like a switch payload, its loan ends with the step,
@@ -38,57 +38,49 @@ result is attributed by the callee's summary. The two built-in iteration synths
 have no body to summarize, so they are still named directly in
 [cfg_provenance.odin](src/cfg_provenance.odin).
 
-Step 4 has converted the contiguous containers, their iterators, and the map
-halves: iterating an array, a slice, or a dynamic array clones nothing, a
-move-only element is read like any other, and `iter()`/`next()` hand back a
-pointer into the container, so a manual walk and a loop agree. `reversed()`
-carries that through; `indexed()` lends when the header names the value and the
-index separately. A map lends both halves to `foreach (key, value in table)`, and
-`keys()` and `values()` lend the half they name.
+Step 4 has converted the contiguous containers, the maps, and their iterators.
+Iterating an array, a slice, a dynamic array, or a map clones nothing, a
+move-only element is read like any other, and `iter()`/`next()` hand back what
+the container stores, so a manual walk and a loop agree. A map lends both halves
+of a slot: `foreach (key, value in table)` binds them where the table holds them,
+`keys()` and `values()` lend the half they name, and `entries()` hands over a
+record of their addresses, which one name reads through `entry.value^`. That
+record is the `Yield` of descriptors design.md specifies, declared by the map's
+own iterator and checked the way a user iterator's would be. `reversed()` carries
+a lending source through; `indexed()` lends when it wraps one.
 
-What remains of step 4 is everything that builds a record the container does not
-store, because that record is a new value and copies into it: one name over an
-`indexed()` pair, one name over a map entry, and `entries()`, which is why
-`foreach (k, v in table)` lends while `foreach (k, v in table.entries())` copies.
-design.md gives those a record `Yield` whose fields are descriptors, so the
-binding would receive `entry.key^`; that is unlowered (`L0695`). Text and ranges
-generate their elements rather than storing them and stay owned. `copied()`,
-consuming traversal, and the move-iterators do not exist.
-
-Step 6's first migration has landed ahead of the rest of it, so that no site
-quietly changes what it prints when the record `Yield` does land: a single name
-over a record built from parts the traversal lends is `L0696`, and the remedy is
-to bind the parts. `foreach (entry in table)`, `foreach (entry in
-table.entries())`, and `foreach (pair in items.indexed())` are all refused; a
-discard, a destructuring header, and a pair over a range or over text are not.
-The error lifts when the record `Yield` lowers and the binding can be written
-`entry.value^`. One shape it does not yet catch is a name bound to such a record
-*inside* a larger one -- `foreach (entry, i in table.indexed())` -- because the
-nested pattern that would replace it is itself unlowered (`L0693`).
+What remains unlowered is a record built out of a record: `indexed()` over a map
+or over its entry view puts the `{key, value}` entry inside the `{value, index}`
+pair. One name over that is `L0696`, and two names reach `L0695` through the
+entry view, while `foreach (entry, i in table.indexed())` still copies the entry
+as it did before. The replacement is the nested binding pattern step 2 left
+unlowered (`L0693`), which is why these wait for it rather than changing what
+they bind. Text and ranges generate their elements rather than storing them and
+stay owned, and so do the library's own iterators, `Enum_Array` included.
+`copied()`, consuming traversal, and the move-iterators do not exist.
 
 ```odin
 package main;
 
 Entry :: move_only struct { id: int }
 
-walk :: proc(items: []Entry, table: map[int]Entry) {
-	foreach (item in items) { _ = item.id; }               // lends, as specified
-	foreach (item, at in items.indexed()) { _ = at; }      // no such member
-	foreach (key, value in table) { _ = value.id; }        // lends, as specified
-	foreach (entry in table) { _ = entry.value.id; }       // one name, a record: L0696
-	foreach (k, v in table.entries()) { _ = v.id; }        // builds a record: L0491
+walk :: proc(items: []Entry, table: map[int]Entry, counts: map[int]int) {
+	foreach (item in items) { _ = item.id; }                // lends, as specified
+	foreach (item, at in items.indexed()) { _ = at; }       // no such member
+	foreach (key, value in table) { _ = value.id; }         // lends, as specified
+	foreach (entry in table) { _ = entry.value^.id; }       // lends, as specified
+	foreach (pair in counts.indexed()) { _ = pair.index; }  // a record of records: L0696
 }
 ```
 
-`L0491` is what remains where a record still has to be built:
+`indexed()` is still absent from anything it would have to copy a move-only
+element into, which is why the second and fifth loops differ:
 
 ```
-error[L0491]: `(key: int, value: Entry)` is move-only, so a by-value `foreach`
-cannot copy it out of the container; iterate `&value`, or remove the elements
+error[L0363]: `[]Entry` has no field or member `indexed`
+error[L0696]: one name over `(value: (key: int, value: int), index: int)` binds a
+record of records, which is not lowered yet; bind the parts separately
 ```
-
-For a sequence that remedy still names `refs()` — the spelling the specification
-no longer has, and which step 6 deletes.
 
 ## Not gaps
 

@@ -881,6 +881,11 @@ Stmt_Foreach :: struct {
 	// The complete `Element` one binding names: a record for a map entry or an
 	// `indexed()` pair, and the yielded value itself otherwise.
 	element_type:  Type_Id,
+	// design.md "Element bindings": one name over a record whose parts the
+	// traversal lends receives those parts as pointers, read through
+	// `entry.value^`. INVALID_TYPE whenever a single name binds the `Element`
+	// itself, which is every owned traversal and every lent leaf.
+	item_type:     Type_Id,
 	// design.md "Borrowing iteration": this traversal lends each element rather
 	// than copying it out, so a binding names the container's own storage and the
 	// loop owns nothing to dispose of. `&` in a binding says the same about

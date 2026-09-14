@@ -206,6 +206,17 @@ map_entry_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 	})
 }
 
+// design.md "Iteration protocol": the `Yield` a map's iterator declares. Both
+// halves of a slot are stored, so both are lent, and the descriptor is the
+// record a user iterator over the same shape would write by hand.
+map_entry_yield_type :: proc(c: ^Compiler) -> Type_Id {
+	borrowed := c.yield_markers[Yield_Kind.Borrowed]
+	return anon_record_type(c, []Anon_Record_Field{
+		{name = intern_identifier(c, "key"), type = borrowed},
+		{name = intern_identifier(c, "value"), type = borrowed},
+	})
+}
+
 // `indexed()`'s `Element`: `(value: E, index: int)`.
 indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return anon_record_type(c, []Anon_Record_Field{
@@ -483,7 +494,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	// hands back a pointer into the container and there is nothing to clone. Every
 	// other built-in traversal still hands over an owned `Element`, so a managed
 	// one needs its copy and drop entry points before the iterator's body asks.
-	lends := next_kind == .Slice_Ref_Next || lends_halves
+	lends := next_kind == .Slice_Ref_Next || lends_halves || next_kind == .Map_Next
 	if !lends && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
@@ -529,7 +540,18 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	// an unusable body merely because lookup also contributed its container's
 	// members; a lending one has no such problem.
 	if next_kind == .Array_Next && type_clone_disabled(k.c, element) { return }
+	// design.md "Iteration protocol": a map stores both halves of its entry, so
+	// what it lends is a record of two pointers rather than a pointer to a record
+	// the table never holds. Every other lending traversal lends a leaf.
+	entry_yield := next_kind == .Map_Next
+	descriptor := k.c.yield_markers[Yield_Kind.Borrowed]
 	item := lends ? pointer_to(k.c, element, false) : element
+	if entry_yield {
+		lent := []Yield_Desc{{kind = .Borrowed}, {kind = .Borrowed}}
+		descriptor = map_entry_yield_type(k.c)
+		item = yield_item_type(k, element, Yield_Desc{kind = .Record, fields = lent}, no_span())
+		if item == INVALID_TYPE { return }
+	}
 	next_members := make([]Symbol_Id, lends ? 2 : 1, k.c.semantic_allocator)
 	next := synth_proc(
 		k.c, "next", next_kind, iterator,
@@ -543,7 +565,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	// design.md "Iteration protocol": the descriptor that says a binding receives
 	// the element this pointer names, rather than the pointer itself.
 	if lends {
-		next_members[1] = new_associated_type(k.c, "Yield", k.c.yield_markers[Yield_Kind.Borrowed], iterator)
+		next_members[1] = new_associated_type(k.c, "Yield", descriptor, iterator)
 	}
 	add_members(k.c, iterator, next_members)
 }
@@ -755,56 +777,55 @@ foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
 	}
 	#partial switch s.kind {
 	case .Array, .Slice, .Dynamic:
-		// `indexed()` numbers the traversal it wraps. A header naming the value and
-		// the index separately binds the element where it lies and counts beside it;
-		// one name over the pair asks for the record itself, which is a new value
-		// and so copies the element into it.
-		return !s.indexed || len(s.bindings) == 2
+		return true
 	case .Map:
-		// A map's element is its `{key, value}` entry. Two names bind the halves
-		// where the table holds them; one name asks for the entry record, which the
-		// table does not store and so must be built.
-		return !s.indexed && len(s.bindings) == 2
+		// A map's element is its `{key, value}` entry. Both halves are stored, so a
+		// header naming them binds them where the table holds them and one naming
+		// the entry receives a record of pointers to them. `indexed()` puts that
+		// entry inside a second record, which is the nesting still unlowered.
+		return !s.indexed
 	}
 	return false
 }
 
-// design.md "Element bindings", plan step 6: a traversal that lends what its
-// container stores hands a single name the record itself, so once the record
-// `Yield` lands `entry.value` is a `^V` and printing it prints an address.
-// Refusing those headers now migrates every site to destructuring before the
-// meaning changes rather than after. Destructuring binds the parts and is
-// unaffected; a name that binds such a record inside a larger one waits for
-// nested patterns (`L0693`).
+// Which parts of a built record this traversal lends. A map stores both halves
+// of its entry; `indexed()`'s counter is the loop's own value and is owned,
+// whatever it counts. The result is the descriptor design.md gives these
+// traversals, so the direct lowerings and a user iterator's `Yield` project a
+// record the same way.
 @(private = "file")
-foreach_binds_whole_lent_record :: proc(k: ^Checker, s: ^Stmt_Foreach) -> bool {
-	// A discard names no field, so nothing it reads can change; generic code that
-	// only counts a traversal stays writable over a map.
-	if len(s.bindings) != 1 || foreach_is_place_loop(s) || s.bindings[0].name.text == "_" {
-		return false
+foreach_record_yield :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> (Yield_Desc, bool) {
+	info := underlying_info(k.c, element)
+	if info == nil || info.kind != .Struct || len(info.fields) == 0 {
+		return {}, false
 	}
-	// A map entry is a record of two stored halves however it is reached: the map
-	// itself, or its `entries()` view.
-	if s.kind == .Map {
-		return true
+	fields := make([]Yield_Desc, len(info.fields), k.c.semantic_allocator)
+	for _, index in info.fields {
+		owned := s.indexed && index == ELEMENT_SECOND
+		fields[index] = Yield_Desc{kind = owned ? .Owned : .Borrowed}
 	}
-	if info := underlying_info(k.c, expr_base(s.iterable).type); info != nil && info.view_kind == .Entries {
-		return true
-	}
-	// `indexed()` pairs the traversal it wraps with a counter, so the pair lends
-	// exactly when that traversal does. The direct lowerings answer that from the
-	// container; an iterator answers it with its `Yield`, which this header has
-	// already read whatever it binds.
-	if !s.indexed {
-		return false
-	}
-	#partial switch s.kind {
-	case .Array, .Slice, .Dynamic:
-		return true
-	case .Protocol:
-		return s.borrows
-	}
-	return false
+	return Yield_Desc{kind = .Record, fields = fields}, true
+}
+
+// design.md "Element bindings": a record the traversal builds out of parts it
+// lends is handed to a single name as those parts' pointers. A record built out
+// of owned values, and a leaf, are the `Element` itself.
+@(private = "file")
+foreach_builds_lent_record :: proc(s: ^Stmt_Foreach) -> bool {
+	return len(s.bindings) == 1 && s.borrows && (s.indexed || s.kind == .Map)
+}
+
+// The one record still built out of a record: `indexed()` over a map nests the
+// `{key, value}` entry inside the `{value, index}` pair. A single name over that
+// would receive `entry.value^` once the nesting lowers, so it stays refused
+// until then rather than changing what it prints
+// (iteration-unification-plan.md step 6). The entry view reaches the same
+// nesting through its iterator's `Yield`, which `L0695` refuses first. A discard
+// names no field and so cannot change.
+@(private = "file")
+foreach_binds_unlowered_record :: proc(s: ^Stmt_Foreach) -> bool {
+	return s.kind == .Map && s.indexed && len(s.bindings) == 1 &&
+	       s.bindings[0].name.text != "_"
 }
 
 // design.md: "any `&` leaf in the binding pattern selects mutable traversal",
@@ -1073,11 +1094,12 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	}
 
 	// design.md "Borrowing iteration": a borrowed yield hands back a pointer into
-	// the source, and the binding is the element it names. A mutable yield and a
-	// record of descriptors still need the lowering the rest of the unification
-	// carries, so they are refused rather than bound to the wrong storage.
+	// the source and the binding is the element it names; a record of descriptors
+	// hands back a record of those pointers, which one name receives whole. A
+	// mutable yield still needs the lowering the rest of the unification carries,
+	// and so does a record inside the pair `indexed()` would wrap it in.
 	if !yield_is_owned(yield) {
-		if yield.kind != .Borrowed {
+		if yield.kind == .Mutable || (yield.kind == .Record && s.indexed) {
 			errorf(
 				k.c, expr_span(s.iterable), "L0695",
 				"`%s` lends its elements this way, and that `Yield` is not lowered yet",
@@ -1087,6 +1109,9 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 			return FLOWS
 		}
 		s.borrows = true
+		if yield.kind == .Record && len(s.bindings) == 1 {
+			s.item_type = item
+		}
 	}
 
 	s.kind = .Protocol
@@ -1115,18 +1140,30 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if s.kind != .Protocol {
 		s.borrows = foreach_lends_elements(s)
 	}
-	if foreach_binds_whole_lent_record(k, s) {
-		report_whole_lent_record(k, s, element)
+	if foreach_binds_unlowered_record(s) {
+		report_unlowered_record(k, s, element)
 		return FLOWS
+	}
+	// design.md "Element bindings": one name over a record the traversal builds
+	// out of parts it lends receives those parts as pointers. An iterator that
+	// declared a record `Yield` has already said so; a built-in traversal says it
+	// here, where the header's shape is what decides.
+	if s.item_type == INVALID_TYPE && foreach_builds_lent_record(s) {
+		desc, shaped := foreach_record_yield(k, s, element)
+		if !shaped {
+			return FLOWS
+		}
+		s.item_type = yield_item_type(k, element, desc, expr_span(s.iterable))
+		if s.item_type == INVALID_TYPE {
+			return FLOWS
+		}
 	}
 	// design.md "Element bindings": a copying loop yields an owned `Element`, and
 	// a built-in traversal copies it out of container storage, so a move-only
 	// element has nothing for it to produce. A protocol iterator's `next` already
-	// hands one over and needs no copy; a lending traversal copies nothing at all
-	// -- unless the header names one thing over a traversal yielding several,
-	// which builds the record the container does not store and copies into it.
-	builds := len(s.bindings) == 1 && s.indexed
-	owns := s.borrows ? builds : s.kind != .Protocol
+	// hands one over and needs no copy, and a lending traversal copies nothing --
+	// what it builds out of lent parts holds their addresses.
+	owns := !s.borrows && s.kind != .Protocol
 	if owns && !require_copyable_element(k, s, element) {
 		return FLOWS
 	}
@@ -1134,11 +1171,12 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	// drop and the clone have to exist. `indexed()` wraps the traversal in a
 	// record of its own, which is why this is asked here and not only where the
 	// iterable's members were contributed.
-	if (!s.borrows || builds) && type_is_managed(k.c, element) {
+	if !s.borrows && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
 	if len(s.bindings) == 1 {
-		if !bind_element_field(k, s, 0, element) {
+		bound := s.item_type != INVALID_TYPE ? s.item_type : element
+		if !bind_element_field(k, s, 0, bound) {
 			return FLOWS
 		}
 		return check_foreach_block(k, s)
@@ -1172,10 +1210,10 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 // The replacement names the record's own fields, so the message says the header
 // to write rather than describing one.
 @(private = "file")
-report_whole_lent_record :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) {
+report_unlowered_record :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) {
 	errorf(
 		k.c, s.bindings[0].name.span, "L0696",
-		"one name over `%s` binds the record itself, and the traversal lends the parts it is built from; bind the parts separately",
+		"one name over `%s` binds a record of records, which is not lowered yet; bind the parts separately",
 		type_name(k.c, element),
 	)
 	if info := underlying_info(k.c, element); info != nil && info.kind == .Struct {
@@ -1203,15 +1241,10 @@ require_copyable_element :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id
 	if !type_clone_disabled(k.c, element) {
 		return true
 	}
-	info := underlying_info(k.c, expr_base(s.iterable).type)
-	remedy := "iterate `&value`, or remove the elements"
-	if info != nil && (info.kind == .Array || info.kind == .Slice || info.kind == .Dynamic_Array) {
-		remedy = "iterate `source.refs()` for read-only access, `&value` for mutable access, or remove the elements"
-	}
 	errorf(
 		k.c, expr_span(s.iterable), "L0491",
-		"`%s` is move-only, so a by-value `foreach` cannot copy it out of the container; %s",
-		type_name(k.c, element), remedy,
+		"`%s` is move-only, so a by-value `foreach` cannot copy it out of the container; bind the parts the traversal lends, or remove the elements",
+		type_name(k.c, element),
 	)
 	return false
 }
