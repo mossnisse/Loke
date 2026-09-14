@@ -125,7 +125,9 @@ end_iteration :: proc(e: ^Emitter) {
 // apart — only a one-name loop over a synthesized element pays to build it.
 @(private = "file")
 bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field) {
-	if len(s.bindings) == len(fields) {
+	// A record Yield still binds the whole pointer record when it happens to
+	// contain one field; it is not the scalar one-field case below.
+	if len(s.bindings) == len(fields) && !(len(s.bindings) == 1 && s.item_type != INVALID_TYPE) {
 		for field, index in fields {
 			bind_foreach_field(e, s.bindings[index].symbol, field)
 		}
@@ -260,7 +262,11 @@ field_value :: proc(e: ^Emitter, field: Foreach_Field) -> string {
 // rune ordinal from `indexed()` (design.md "String iteration").
 @(private = "file")
 emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
-	data, length := emit_text_parts(e, s.iterable)
+	type := type_underlying(e.c, expr_base(s.iterable).type)
+	storage := llvm_type(e, type)
+	value := load(e, storage, spill_foreach_iterable(e, s.iterable))
+	data := extract(e, storage, value, STRING_DATA)
+	length := extract(e, storage, value, STRING_LEN)
 	offset := alloca(e, "i64")
 	decoded := temp(e)
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", offset)
@@ -329,7 +335,7 @@ emit_text_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	container := expr_base(s.iterable).type
 	ops := container_ops_global(e, container)
-	header := emit_address(e, s.iterable)
+	header := spill_foreach_iterable(e, s.iterable)
 	table := load(e, "ptr", header)
 	cursor := alloca(e, "i64")
 	fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
@@ -442,7 +448,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	case .Array:
 		// `&value` names the element in place, so the array must be a place
 		// rather than a copy.
-		array_slot = spill_iterable(e, s.iterable)
+		array_slot = spill_foreach_iterable(e, s.iterable)
 		counter_type = "i64"
 		alloca_named(e, cursor, "i64")
 		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", cursor)
@@ -465,7 +471,7 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		// design.md "Dynamic arrays": the loop views the *current* allocation,
 		// stopping at the length, never the capacity — kept true for the loop's
 		// duration by the whole-container loan it holds.
-		header := emit_address(e, s.iterable)
+		header := spill_foreach_iterable(e, s.iterable)
 		array_slot = temp(e)
 		fmt.sbprintfln(&e.b, "  %s = load ptr, ptr %s", array_slot, header)
 		length_slot := gep_field(e, CONTAINER_TYPE, header, CONTAINER_LEN)
@@ -634,10 +640,10 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	iter_sym := symbol_of(e.c, s.iter_symbol)
 	// design.md "Receiver forms": `iter` takes an immutable receiver, so the
 	// source is handed over as the address of the caller's storage rather than
-	// copied. A temporary source is materialised by `emit_address`, and lives as
-	// long as the frame — at least the statement the borrow is bounded by.
+	// copied. A temporary source moves into the loop scope, which keeps it alive
+	// for the complete statement the borrow is bounded by.
 	subject_by_ptr := param_mode_is_pointer(symbol_param_mode(e.c, iter_sym, 0))
-	subject := subject_by_ptr ? emit_address(e, s.iterable) : emit_expr(e, s.iterable)
+	subject := subject_by_ptr ? spill_foreach_iterable_at(e, s.iterable, iter_sym.params[0]) : emit_expr(e, s.iterable)
 	subject_type := subject_by_ptr ? "ptr" : llvm_type(e, iter_sym.params[0])
 	iterator_type := llvm_type(e, s.iterator_type)
 	iterator := alloca(e, iterator_type)
@@ -648,9 +654,6 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		made, iterator_type, symbol_name(e, s.iter_symbol), subject_type, subject,
 	)
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", iterator_type, made, iterator)
-	if subject_by_ptr && !expression_is_borrowed_place(e.c, s.iterable) {
-		register_scope_place(e, iter_sym.params[0], subject)
-	}
 	register_scope_place(e, s.iterator_type, iterator)
 
 	counter := ""
@@ -726,13 +729,6 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	place_label(e, done)
 }
 
-// An array the loop indexes: its own storage when it has any, and a spill
-// otherwise.
-@(private)
-spill_iterable :: proc(e: ^Emitter, expr: Expr) -> string {
-	return spill_iterable_at(e, expr, expr_base(expr).type)
-}
-
 @(private)
 spill_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	base := expr_base(expr)
@@ -742,6 +738,29 @@ spill_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
 	value := emit_expr_at(e, expr, as_type)
 	slot := alloca(e, llvm_type(e, as_type))
 	fmt.sbprintfln(&e.b, "  store %s %s, ptr %s", llvm_type(e, as_type), value, slot)
+	return slot
+}
+
+// A foreach borrows its source for the complete statement. A place already has
+// an owner; a produced value moves into the loop scope and is disposed of when
+// the loop exits, including through break, return, or panic.
+@(private = "file")
+spill_foreach_iterable :: proc(e: ^Emitter, expr: Expr) -> string {
+	return spill_foreach_iterable_at(e, expr, expr_base(expr).type)
+}
+
+@(private = "file")
+spill_foreach_iterable_at :: proc(e: ^Emitter, expr: Expr, as_type: Type_Id) -> string {
+	base := expr_base(expr)
+	if materialization_of(e.c, expr) != nil || base.value_category == .Place {
+		return emit_address_at(e, expr, as_type)
+	}
+	value := emit_expr_at(e, expr, as_type)
+	slot := alloca(e, llvm_type(e, as_type))
+	store(e, as_type, value, slot)
+	if !base.is_const {
+		register_scope_place(e, as_type, slot)
+	}
 	return slot
 }
 

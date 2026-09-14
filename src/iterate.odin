@@ -755,6 +755,11 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if !check_adapter_applies(k, s, subject, adapter_name) {
 		return FLOWS
 	}
+	// A named array constant has one backing object for every runtime use. The
+	// indexed lowering needs its address even for a value loop.
+	if s.kind == .Array {
+		request_materialization(k, s.iterable)
+	}
 	if foreach_is_place_loop(s) {
 		return check_place_foreach(k, s, subject, info)
 	}

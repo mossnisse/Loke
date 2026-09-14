@@ -695,13 +695,27 @@ eval_expr :: proc(ev: ^Evaluator, e: Expr) -> (result: Eval_Value, success: bool
 	case ^Expr_Composite:
 		return eval_composite(ev, v)
 
+	case ^Expr_Range:
+		low, low_ok := eval_expr(ev, v.lo)
+		if !low_ok { return Eval_Value{}, false }
+		high, high_ok := eval_expr(ev, v.hi)
+		if !high_ok { return Eval_Value{}, false }
+		elements, allocated := eval_elements(ev, 3)
+		if !allocated { return Eval_Value{}, false }
+		elements[RANGE_LOW] = low
+		elements[RANGE_HIGH] = high
+		elements[RANGE_CLOSED] = Eval_Value{
+			kind = .Boolean, type = TYPE_BOOL, boolean = v.op == .Range_Incl,
+		}
+		return Eval_Value{kind = .Aggregate, type = v.type, elements = elements}, true
+
 	case ^Expr_Proc:
 		return Eval_Value{kind = .Nil, type = v.type, proc_value = v.symbol}, true
 
 	case ^Expr_Or_Else:
 		return eval_or_else(ev, v)
 
-	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract, ^Expr_Slice, ^Expr_Range,
+	case ^Expr_Error, ^Expr_Literal, ^Expr_Checked_Extract, ^Expr_Slice,
 	     ^Expr_Move, ^Expr_Proc_Group, ^Expr_Operator,
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
@@ -2829,7 +2843,7 @@ eval_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 		}
 		return .Normal
 
-	case .Range:
+	case .Range, .Stored_Range:
 		return eval_range_foreach(ev, s)
 
 	case .Array, .Slice, .Dynamic:
@@ -2878,25 +2892,32 @@ eval_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
 // from zero (design.md "Reverse iteration").
 @(private = "file")
 eval_range_foreach :: proc(ev: ^Evaluator, s: ^Stmt_Foreach) -> Eval_Flow {
-	written, is_range := s.iterable.(^Expr_Range)
-	if !is_range {
-		eval_fail(ev, expr_span(s.iterable), "L0341", "this range has no compile-time meaning")
-		return .Fail
-	}
-	lo, lo_ok := eval_expr(ev, written.lo)
-	if !lo_ok {
-		return .Fail
-	}
-	hi, hi_ok := eval_expr(ev, written.hi)
-	if !hi_ok {
-		return .Fail
+	lo, hi: Eval_Value
+	closed := false
+	if written, is_range := s.iterable.(^Expr_Range); is_range {
+		low, low_ok := eval_expr(ev, written.lo)
+		if !low_ok { return .Fail }
+		high, high_ok := eval_expr(ev, written.hi)
+		if !high_ok { return .Fail }
+		lo, hi = low, high
+		closed = written.op == .Range_Incl
+	} else {
+		stored, ok := eval_expr(ev, s.iterable)
+		if !ok { return .Fail }
+		if stored.kind != .Aggregate || len(stored.elements) <= RANGE_CLOSED || stored.elements[RANGE_CLOSED].kind != .Boolean {
+			eval_fail(ev, expr_span(s.iterable), "L0341", "this range has no compile-time meaning")
+			return .Fail
+		}
+		lo = stored.elements[RANGE_LOW]
+		hi = stored.elements[RANGE_HIGH]
+		closed = stored.elements[RANGE_CLOSED].boolean
 	}
 	if lo.kind != .Integer && lo.kind != .Rune {
 		eval_fail(ev, expr_span(s.iterable), "L0341", "this range has no compile-time meaning")
 		return .Fail
 	}
 	span := bi_sub(ev.alloc, hi.integer, lo.integer)
-	if written.op == .Range_Incl {
+	if closed {
 		span = bi_add(ev.alloc, span, bi_from_i64(ev.alloc, 1))
 	}
 	last := bi_sub(ev.alloc, span, bi_from_i64(ev.alloc, 1))

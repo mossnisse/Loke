@@ -1,0 +1,7 @@
+package main;
+
+main :: proc() {
+	foreach ($value in [0]int{}) {
+		when (true) { break; }
+	}
+}

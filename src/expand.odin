@@ -221,6 +221,11 @@ expansion_has_branch :: proc(k: ^Checker, block: ^Block) -> bool {
 			if otherwise, is_block := v.otherwise.(^Block); is_block {
 				found = expansion_has_branch(k, otherwise) || found
 			}
+		case ^Stmt_When:
+			found = expansion_has_branch(k, v.then) || found
+			if otherwise, is_block := v.otherwise.(^Block); is_block {
+				found = expansion_has_branch(k, otherwise) || found
+			}
 		}
 	}
 	return found

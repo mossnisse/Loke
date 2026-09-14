@@ -1,0 +1,66 @@
+package main;
+import "core:fmt";
+
+// Every direct walk of a named constant sees the same read-only backing object.
+DIRECT :: [2]int{21, 22};
+
+source_drops: int;
+Source_Item :: struct { id: int }
+impl Source_Item {
+	release :: hook(drop) proc(self: inout Source_Item) {
+		source_drops += 1;
+		self.id = 0;
+	}
+}
+
+make_source :: proc() -> [2]Source_Item {
+	return [2]Source_Item{Source_Item{7}, Source_Item{9}};
+}
+
+// A one-field record Yield still lends a record, not its sole field.
+Entry :: struct { value: int }
+Entries :: struct { values: []int }
+Entry_Iterator :: struct { values: []int, at: int }
+impl Entries {
+	Element :: Entry;
+	Iterator :: Entry_Iterator;
+	iter :: proc(self) -> Entry_Iterator { return {self.values, 0}; }
+}
+impl Entry_Iterator {
+	Yield :: struct { value: Yield_Borrowed };
+	next :: proc(self: inout Entry_Iterator) -> Option((value: ^int)) {
+		if (self.at >= self.values.len()) { return .none; }
+		item := &self.values[self.at];
+		self.at += 1;
+		return .some({value = item});
+	}
+}
+
+stored_sum :: proc() -> int {
+	range := 0 ..< 4;
+	total := 0;
+	foreach (value in range) { total += value; }
+	return total;
+}
+STORED_SUM :: stored_sum();
+
+main :: proc() {
+	first, second: ^int = nil, nil;
+	foreach (item in DIRECT) { first = &item; break; }
+	foreach (item in DIRECT) { second = &item; break; }
+	fmt.println("constant", first == second, first^);
+
+	total := 0;
+	foreach (item in make_source()) {
+		total += item.id;
+		continue;
+	}
+	fmt.println("temporary", total, source_drops);
+
+	values := [2]int{3, 5};
+	lent := 0;
+	foreach (entry in Entries{values[:]}) { lent += entry.value^; }
+	fmt.println("one-field", lent);
+
+	fmt.println("stored range", STORED_SUM, stored_sum());
+}
