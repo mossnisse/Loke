@@ -17,12 +17,11 @@ warning[L0507]: this binding copies 16 bytes from `pair`
 warning[L0507]: this `or_else` clones `maybe`
 @91:15
 warning[L0507]: this binding clones `item`
-@102:37
+@101:37
 warning[L0507]: this `or_return` clones `outcome`
-@108:11
+@107:11
 
 !:84:6
 !:85:6
 !:99:19
 !:100:20
-!:101:20

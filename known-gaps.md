@@ -20,7 +20,7 @@ descriptors, `Consuming_Iterable`, and `copied()` as the written clone. The
 compiler is partway there: traversal of an array, a slice, a dynamic array, or a
 map now lends what the container stores, through a `Yield` the iterator declares,
 while text, ranges, and the library's own iterators stay owned. Bindings are
-flat, `refs()` still exists, and there is no consuming traversal.
+flat and there is no consuming traversal.
 
 This is one divergence rather than fifteen because it is one coordinated change.
 [iteration-unification-plan.md](iteration-unification-plan.md) has the six

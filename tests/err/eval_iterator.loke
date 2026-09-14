@@ -7,11 +7,28 @@ package main; import "core:fmt";
 // the boundary is visible when someone reaches it.
 TOTAL :: total();
 
+Cells :: struct { start: int }
+Cells_Iterator :: struct { current: int }
+
+impl Cells {
+	Element  :: int;
+	Iterator :: Cells_Iterator;
+	iter :: proc(self) -> Cells_Iterator { return {self.start}; }
+}
+
+impl Cells_Iterator {
+	next :: proc(self: inout Cells_Iterator) -> Option(int) {
+		if (self.current <= 0) { return .none; }
+		value := self.current;
+		self.current -= 1;
+		return .some(value);
+	}
+}
+
 total :: proc() -> int {
-	cells := [3]int{1, 2, 3};
 	sum := 0;
-	foreach (cell in cells.refs()) {
-		sum += cell^;
+	foreach (cell in Cells{3}) {
+		sum += cell;
 	}
 	return sum;
 }

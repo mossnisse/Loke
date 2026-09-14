@@ -2147,12 +2147,11 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 	return nil
 }
 
-// The borrow a `foreach` holds on its iterable. Iterating a carrier reuses the
-// loans it already holds; iterating a place borrows that place, mutably when the
-// binding is written `ref` over a mutable sequence.
+// The borrow a `foreach` holds on its iterable: iterating a place borrows that
+// place, mutably when the binding is written `ref` over a mutable sequence. A
+// traversal of anything but a place carries its own loans and takes none here.
 @(private)
 prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> []int {
-	if iteration_lends_source(graph.k.c, expr_base(s.iterable).type) { return iterated }
 	root, path, ok := prov_place_of(graph, s.iterable)
 	if !ok {
 		return iterated
@@ -2700,13 +2699,12 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// to the whole parameter, while one that only reads through what it
 			// carries stays narrowed to those paths.
 			//
-			// The two iteration synths have no body to summarize, so they keep
-			// naming themselves until step 4 of the iteration unification gives
-			// every lending iterator a summary of its own.
+			// A slice's lending `next` has no body to summarize, so it keeps
+			// naming itself until step 4 of the iteration unification gives every
+			// lending iterator a summary of its own.
 			lends := prov_result_reads_through_receiver(c, v, index)
 			if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil {
-				lends ||= callee.synth == .Slice_Ref_Next ||
-					(callee.synth == .Indexed_Next && iteration_lends_source(c, expr_base(argument).type))
+				lends ||= callee.synth == .Slice_Ref_Next
 			}
 			if lends {
 				actuals[index] = prov_carrier_slots(graph, argument)
@@ -2807,8 +2805,7 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			held := walk_flow_expr(graph, argument)
 			callee := symbol_of(c, v.resolution.chosen_overload)
 			if callee != nil && (callee.synth == .Adapter_Iter || callee.synth == .Iterator_Copy ||
-			   callee.synth == .Refs_Iter || callee.synth == .Refs_Iter_Reverse ||
-			   ((callee.synth == .Adapter_View || callee.synth == .Refs_View) && type_of(c, callee.result).adapter_by_value)) {
+			   (callee.synth == .Adapter_View && type_of(c, callee.result).adapter_by_value)) {
 				actuals[index] = held
 				borrowed = prov_join(graph, borrowed, held)
 				continue

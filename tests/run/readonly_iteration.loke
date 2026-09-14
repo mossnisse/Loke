@@ -3,8 +3,10 @@ import "core:fmt";
 import "core:container";
 import "base:interfaces";
 
-// design.md "Borrowing iteration": inspecting move-only or expensive elements
-// requires neither a clone nor mutable access to their storage.
+// design.md "Borrowing iteration": traversing a place lends each element, so
+// inspecting move-only or expensive elements requires neither a clone nor
+// mutable access to their storage, and a pointer taken with `&` outlives both
+// the step and the traversal.
 Entry :: move_only struct { id: int }
 impl Entry {
 	release :: hook(drop) proc(self: inout Entry) { self.id = 0; }
@@ -12,7 +14,7 @@ impl Entry {
 
 sum :: proc(items: []Entry) -> int {
 	total := 0;
-	foreach (item in items.refs()) { total += item^.id; }
+	foreach (item in items) { total += item.id; }
 	return total;
 }
 
@@ -26,31 +28,27 @@ impl Tracked {
 	release :: hook(drop) proc(self: inout Tracked) { self.id = 0; }
 }
 
-sum_refs :: proc(source: $S) -> int where interfaces.Iterable(S), S.Element == (^int) {
+sum_ints :: proc(source: $S) -> int where interfaces.Iterable(S), S.Element == int {
 	total := 0;
-	foreach (item in source) { total += item^; }
+	foreach (item in source) { total += item; }
 	return total;
 }
 
-Int_Refs :: type_of([]int{}.refs());
-view_of :: proc(values: []int) -> Int_Refs { return values.refs(); }
+// A borrowing view is an ordinary `[]T`, so returning one is valid exactly while
+// what it names outlives the call.
+view_of :: proc(values: []int) -> []int { return values; }
 make_values :: proc() -> [dynamic]int { return [dynamic]int{4, 5}; }
 
 CONSTANT :: [2]int{21, 22};
 constant_first :: proc() -> ^int {
-	walker := CONSTANT.refs().iter();
+	walker := CONSTANT.iter();
 	return walker.next() or_else nil;
 }
-
-// Ordinary members win over the contributed spelling.
-Custom :: struct {}
-impl Custom { refs :: proc(self) -> [1]int { return {17}; } }
 
 main :: proc() {
 	entries := [2]Entry{Entry{3}, Entry{7}};
 	fmt.println("move-only", sum(entries[:]));
-	foreach (entry, index in entries.refs().indexed()) { fmt.println(index, entry^.id); }
-	foreach (entry in entries.refs().reversed()) { fmt.println("reverse", entry^.id); }
+	foreach (entry in entries.reversed()) { fmt.println("reverse", entry.id); }
 	// The unrelated value-copy iterator must not be emitted for move-only T.
 	readonly: []Entry = entries[:];
 	first := &readonly[0];
@@ -58,52 +56,47 @@ main :: proc() {
 
 	tracked := [2]Tracked{Tracked{11}, Tracked{13}};
 	for (pass := 0; pass < 2; pass += 1) {
-		foreach (item in tracked.refs()) { fmt.println("tracked", item^.id); }
+		foreach (item in tracked) { fmt.println("tracked", item.id); }
 	}
 	fmt.println("copies", copies);
 	assert(copies == 0);
 
 	values := [dynamic]int{1, 2, 3};
-	refs := values.refs();
-	fmt.println("generic", sum_refs(refs), sum_refs(refs.reversed()));
-	fmt.println("repeat", sum_refs(refs));
-	foreach (item, index in refs.reversed().indexed()) { fmt.println(index, item^); }
+	view: []int = values[:];
+	fmt.println("generic", sum_ints(view), sum_ints(view.reversed()));
+	fmt.println("repeat", sum_ints(view));
+	foreach (item, index in view.reversed().indexed()) { fmt.println(index, item); }
 	// A slice descriptor can disappear without ending the borrowed storage.
 	from_slice := view_of(values[:]);
-	fmt.println("returned", sum_refs(from_slice));
-	walker := values[:].refs().iter();
+	fmt.println("returned", sum_ints(from_slice));
+	walker := view.iter();
 	one := walker.next() or_else nil;
 	two := walker.next() or_else nil;
 	drop(walker);
 	fmt.println("retained", one^, two^);
 	values.append(4); // all source borrows have ended
 	fmt.println("resumed", values.len());
-	// Element pointers outlive the traversal descriptor, including in foreach
-	// and after wrapping the traversal in indexed().
+	// An element pointer taken inside the loop outlives the loop itself.
 	saved: ^int = nil;
-	{
-		local_view := values.refs();
-		foreach (item in local_view) { saved = item; break; }
-	}
-	fmt.println("past view", saved^);
-	indexed_walker := values.refs().indexed().iter();
+	foreach (item in values) { saved = &item; break; }
+	fmt.println("past loop", saved^);
+	// A stored adapter walks the same elements; its pair is the loop's own value.
+	indexed_walker := values.indexed().iter();
 	indexed_one := indexed_walker.next() or_else {};
 	indexed_two := indexed_walker.next() or_else {};
 	drop(indexed_walker);
-	fmt.println("indexed retained", indexed_one.value^, indexed_two.value^);
+	fmt.println("indexed", indexed_one.value, indexed_two.value);
 	fmt.println("constant", constant_first()^, constant_first() == &CONSTANT[0]);
 
 	// Foreach keeps the temporary owner alive for the complete loop.
-	foreach (item in make_values().refs()) { fmt.println("temporary", item^); }
+	foreach (item in make_values()) { fmt.println("temporary", item); }
 	empty: []Entry = nil;
-	foreach (item in empty.refs()) { panic("empty slice yielded"); }
+	foreach (item in empty) { panic("empty slice yielded"); }
 	zero: [0]Entry = {};
-	foreach (item in zero.refs().reversed()) { panic("empty array yielded"); }
+	foreach (item in zero.reversed()) { panic("empty array yielded"); }
 	fmt.println("empty", sum(empty));
 
 	small: container.Small_Array(int, 4) = {};
 	small.append(8, 9);
-	fmt.println("library", sum_refs(small.view().refs()));
-	custom: Custom = {};
-	foreach (item in custom.refs()) { fmt.println("custom", item); }
+	fmt.println("library", sum_ints(small.view()));
 }

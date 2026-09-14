@@ -1,9 +1,0 @@
-@(public)
-package views;
-
-Int_Refs :: type_of([]int{}.refs());
-borrow :: proc(values: []int) -> Int_Refs { return values.refs(); }
-
-// The view and its iterator carry the source's lifetime through a generic
-// instantiation in another package, without retaining a descriptor temporary.
-forward :: proc(value: $T) -> T { return value; }

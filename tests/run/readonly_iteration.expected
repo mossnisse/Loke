@@ -1,6 +1,4 @@
 move-only 10
-0 3
-1 7
 reverse 7
 reverse 3
 indexed read 3
@@ -17,11 +15,10 @@ repeat 6
 returned 6
 retained 1 2
 resumed 4
-past view 1
-indexed retained 1 2
+past loop 1
+indexed 1 2
 constant 21 true
 temporary 4
 temporary 5
 empty 0
 library 17
-custom 17

@@ -1,36 +1,30 @@
 L0640
-@7:36
+@8:42
 read-only `^T`
 L0310
-@12:23
+@13:23
 cannot initialise `^mut int` with `^int`
 L0512
-@20:3
-`values` cannot be modified here
-L0512
-@30:2
+@23:2
 `values` cannot be dropped here
 L0526
-@37:9
+@30:9
 `values` ends when this procedure returns
 L0513
-@43:19
+@36:19
 this temporary has ended
 L0641
-@50:2
+@43:2
 a read-only reborrow of it is still in use
 L0513
-@60:9
+@53:9
 this temporary has ended
-L0614
-@66:19
-reached through a packed struct
 L0512
-@74:3
+@65:3
 `values` cannot be modified here: a read-only iterator of it is still in use
 L0512
-@85:2
+@76:2
 `values` cannot be modified here: a read-only iterator of it is still in use
 L0690
-@93:34
+@84:34
 views an element a `foreach` source still owns

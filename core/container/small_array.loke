@@ -338,8 +338,8 @@ impl Small_Array_Iterator($T) {
 
 	// Yielding an element by value is a copy, so a move-only `T` gets no `next`
 	// here and therefore no by-value `foreach` — design.md "Element bindings"
-	// sends such an element through `refs()` or `&value` instead, which is what
-	// `view().refs()` and `iter_mut` already provide.
+	// sends such an element through a lending traversal instead, which is what
+	// `view()` and `iter_mut` already provide.
 	next :: proc(self: inout) -> Option(T) where is_copyable(T) {
 		if (self.at >= self.items.len()) { return .none; }
 		index := self.items.len() - 1 - self.at if self.reverse else self.at;

@@ -68,9 +68,6 @@ Synth_Kind :: enum {
 	Adapter_Iter,
 	Indexed_Next,
 	Iterator_Copy,
-	Refs_View,
-	Refs_Iter,
-	Refs_Iter_Reverse,
 	// Compiler-owned canonical receiver methods for the built-in `len`, `cap`,
 	// and `hash` operations. Their free spellings resolve to these same symbols.
 	Standard_Len,

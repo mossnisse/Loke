@@ -92,12 +92,11 @@ main :: proc() {
 	_ = unwrapped;
 
 	// design.md "Borrowing iteration": traversing a place lends each element, so
-	// no form of the loop is a copy site -- not the plain one, not `.refs()`, and
-	// not `&item`. Copying an element is written, and reports as the binding it
-	// is rather than as the loop.
+	// no form of the loop is a copy site -- not the plain one and not `&item`.
+	// Copying an element is written, and reports as the binding it is rather
+	// than as the loop.
 	items := [dynamic]Res{};
 	foreach (item in items) { fmt.println(item.id); }
-	foreach (item in items.refs()) { fmt.println(item.id); }
 	foreach (&item in items) { fmt.println(item.id); }
 	foreach (item in items) { saved := item; fmt.println(saved.id); }
 	_ = items;
