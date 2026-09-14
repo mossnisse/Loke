@@ -214,6 +214,15 @@ map_entry_yield_type :: proc(c: ^Compiler) -> Type_Id {
 	})
 }
 
+// `indexed()`'s `Yield`: it numbers whatever it wraps, so it lends the half its
+// source lends and owns the counter it supplies itself.
+indexed_yield_type :: proc(c: ^Compiler, value: Yield_Kind) -> Type_Id {
+	return anon_record_type(c, []Anon_Record_Field{
+		{name = intern_identifier(c, "value"), type = c.yield_markers[value]},
+		{name = intern_identifier(c, "index"), type = c.yield_markers[Yield_Kind.Owned]},
+	})
+}
+
 // `indexed()`'s `Element`: `(value: E, index: int)`.
 indexed_element_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	return anon_record_type(c, []Anon_Record_Field{
@@ -804,12 +813,13 @@ foreach_record_yield :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) ->
 	return Yield_Desc{kind = .Record, fields = fields}, true
 }
 
-// design.md "Element bindings": a record the traversal builds out of parts it
-// lends is handed to a single name as those parts' pointers. A record built out
+// design.md "Element bindings": whether the traversal builds a record out of
+// parts it lends. That record is what a single name receives -- those parts'
+// pointers -- and what says which of several names is lent. A record built out
 // of owned values, and a leaf, are the `Element` itself.
 @(private = "file")
 foreach_builds_lent_record :: proc(s: ^Stmt_Foreach) -> bool {
-	return len(s.bindings) == 1 && s.borrows && (s.indexed || s.kind == .Map)
+	return s.borrows && (s.indexed || s.kind == .Map)
 }
 
 // The one record still built out of a record: `indexed()` over a map nests the
@@ -1106,7 +1116,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 			return FLOWS
 		}
 		s.borrows = true
-		if yield.kind == .Record && len(s.bindings) == 1 {
+		if yield.kind == .Record {
 			s.item_type = item
 		}
 	}
@@ -1259,11 +1269,27 @@ bind_element_field :: proc(k: ^Checker, s: ^Stmt_Foreach, index: int, type: Type
 	if !gate_type(k, type, expr_span(s.iterable)) {
 		return false
 	}
-	// `indexed()`'s counter is the loop's own value, not a view of anything the
-	// source owns, so only the element half of that pair is a lent binding.
-	lent := s.borrows && !(s.indexed && index == ELEMENT_SECOND)
+	// design.md "Element bindings": a lent binding names storage the source still
+	// holds. Which halves of a built record those are is what the record `Yield`
+	// says: a field handed over as a pointer is lent, and one handed over as
+	// itself is a value the traversal supplied -- `indexed()`'s counter.
+	lent := s.borrows
+	if lent && len(s.bindings) > 1 && s.item_type != INVALID_TYPE {
+		lent = foreach_field_is_lent(k, s, index)
+	}
 	s.bindings[index].symbol = bind_loop_name(k, binding, type, false, lent)
 	return true
+}
+
+@(private = "file")
+foreach_field_is_lent :: proc(k: ^Checker, s: ^Stmt_Foreach, index: int) -> bool {
+	element := underlying_info(k.c, s.element_type)
+	item := underlying_info(k.c, s.item_type)
+	if element == nil || item == nil || index >= len(element.fields) || index >= len(item.fields) {
+		return true
+	}
+	held, handed := symbol_of(k.c, element.fields[index]), symbol_of(k.c, item.fields[index])
+	return held == nil || handed == nil || held.type != handed.type
 }
 
 @(private = "file")

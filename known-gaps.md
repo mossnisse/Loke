@@ -47,7 +47,9 @@ of a slot: `foreach (key, value in table)` binds them where the table holds them
 record of their addresses, which one name reads through `entry.value^`. That
 record is the `Yield` of descriptors design.md specifies, declared by the map's
 own iterator and checked the way a user iterator's would be. `reversed()` carries
-a lending source through; `indexed()` lends when it wraps one.
+a lending source through, and `indexed()` declares a record `Yield` of its own --
+`{value: Yield_Borrowed, index: Yield_Owned}` -- so numbering a lending traversal
+lends the element and owns only the counter, stored view included.
 
 What remains unlowered is a record built out of a record: `indexed()` over a map
 or over its entry view puts the `{key, value}` entry inside the `{value, index}`
@@ -66,18 +68,16 @@ Entry :: move_only struct { id: int }
 
 walk :: proc(items: []Entry, table: map[int]Entry, counts: map[int]int) {
 	foreach (item in items) { _ = item.id; }                // lends, as specified
-	foreach (item, at in items.indexed()) { _ = at; }       // no such member
+	foreach (item, at in items.indexed()) { _ = at; }       // lends, as specified
 	foreach (key, value in table) { _ = value.id; }         // lends, as specified
 	foreach (entry in table) { _ = entry.value^.id; }       // lends, as specified
 	foreach (pair in counts.indexed()) { _ = pair.index; }  // a record of records: L0696
 }
 ```
 
-`indexed()` is still absent from anything it would have to copy a move-only
-element into, which is why the second and fifth loops differ:
+Only the last loop is refused, because only it nests a record inside the pair:
 
 ```
-error[L0363]: `[]Entry` has no field or member `indexed`
 error[L0696]: one name over `(value: (key: int, value: int), index: int)` binds a
 record of records, which is not lowered yet; bind the parts separately
 ```

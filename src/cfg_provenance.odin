@@ -2699,12 +2699,14 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// to the whole parameter, while one that only reads through what it
 			// carries stays narrowed to those paths.
 			//
-			// A slice's lending `next` has no body to summarize, so it keeps
-			// naming itself until step 4 of the iteration unification gives every
-			// lending iterator a summary of its own.
+			// The two lending synths have no body to summarize, so they keep
+			// naming themselves until step 4 of the iteration unification gives
+			// every lending iterator a summary of its own. `indexed()` is one of
+			// them only while it wraps a lending source; over an owned one its
+			// pair is a value of its own and names nothing.
 			lends := prov_result_reads_through_receiver(c, v, index)
 			if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil {
-				lends ||= callee.synth == .Slice_Ref_Next
+				lends ||= callee.synth == .Slice_Ref_Next || indexed_next_lends(c, callee)
 			}
 			if lends {
 				actuals[index] = prov_carrier_slots(graph, argument)

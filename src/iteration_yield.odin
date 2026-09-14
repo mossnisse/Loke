@@ -175,14 +175,3 @@ ensure_item_member :: proc(k: ^Checker, type: Type_Id) {
 	add_members(k.c, under, []Symbol_Id{new_associated_type(k.c, "Item", payload, under)})
 }
 
-// What `iterator` hands back for `element`, for a caller that is deciding
-// whether something applies rather than checking a written program: the same
-// projection the loop makes, with nothing reported and INVALID_TYPE where the
-// descriptor and the element disagree.
-iterator_item_or_invalid :: proc(k: ^Checker, iterator: Type_Id, element: Type_Id) -> Type_Id {
-	desc, ok := iterator_yield(k, iterator, no_span(), report = false)
-	if !ok {
-		return INVALID_TYPE
-	}
-	return yield_item_type(k, element, desc, no_span(), report = false)
-}

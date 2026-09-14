@@ -51,14 +51,16 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		place_label(e, yielded)
 		payload_type := option_payload(e.c, inner_option)
 		payload := emit_union_payload(e, inner_option, payload_type, emit_union_spill(e, inner_option, produced))
-		// A lending source hands back what it lent; the pair this builds is a new
-		// value, so whatever was lent is read out of the source's storage and owned
-		// from here (design.md "Iteration adapters").
-		wrapped := symbol_of(e.c, type_of(e.c, type_underlying(e.c, info.element)).fields[ELEMENT_FIRST]).type
+		// design.md "Iteration adapters": what `next` hands back is the pair the
+		// iterator's own `Yield` describes. A half that pair lends takes the
+		// pointer the source lent, unchanged; a half it owns is read out of the
+		// source's storage and owned from here.
+		pair_id := option_payload(e.c, symbol.result)
+		wrapped := symbol_of(e.c, type_of(e.c, type_underlying(e.c, pair_id)).fields[ELEMENT_FIRST]).type
 		payload = own_yielded(e, payload, payload_type, wrapped)
 		counter := gep_field(e, llvm_type(e, source), "%arg0", 1)
 		index := load(e, "i64", counter)
-		pair_type := llvm_type(e, info.element)
+		pair_type := llvm_type(e, pair_id)
 		pair := insert(e, pair_type, "undef", llvm_type(e, wrapped), payload, 0)
 		pair = insert(e, pair_type, pair, "i64", index, 1)
 		stepped := temp(e)

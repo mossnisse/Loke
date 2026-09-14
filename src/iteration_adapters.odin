@@ -34,6 +34,23 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 	return reported
 }
 
+// design.md "Iteration adapters": whether `indexed()` hands back the pointer its
+// source lent, so that the pair names the source's storage rather than the
+// iterator's own. The record `Yield` is what made the value half a pointer where
+// the `Element` holds the value itself, and that difference is the fact.
+indexed_next_lends :: proc(c: ^Compiler, callee: ^Symbol) -> bool {
+	if callee.synth != .Indexed_Next || len(callee.params) == 0 {
+		return false
+	}
+	handed := underlying_info(c, option_payload(c, callee.result))
+	element := underlying_info(c, type_of(c, type_underlying(c, callee.params[0])).element)
+	if handed == nil || element == nil || len(handed.fields) == 0 || len(element.fields) == 0 {
+		return false
+	}
+	lent, held := symbol_of(c, handed.fields[ELEMENT_FIRST]), symbol_of(c, element.fields[ELEMENT_FIRST])
+	return lent != nil && held != nil && lent.type != held.type
+}
+
 iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_Id) -> Symbol_Id {
 	kind := Adapter_Kind.None
 	switch identifier_text(k.c, name) {
@@ -51,15 +68,23 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	next := iteration_member(k, iterator, "next")
 	// design.md "Borrowing iteration": a lending source hands back a pointer, so
 	// what `next` returns is the iterator's `Item`, not its `Element`.
-	item := iterator_item_or_invalid(k, iterator, element)
+	source_yield, described := iterator_yield(k, iterator, no_span(), report = false)
+	if !described {
+		return INVALID_SYMBOL
+	}
+	item := yield_item_type(k, element, source_yield, no_span(), report = false)
 	if item == INVALID_TYPE ||
 	   !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
 		return INVALID_SYMBOL
 	}
-	// `indexed()` builds a pair of its own, which copies the element into it, and
-	// a move-only element has no copy to make. `reversed()` wraps no value at all
-	// and so carries a lending source through untouched.
-	if kind == .Indexed && type_clone_disabled(k.c, element) {
+	// design.md "Iteration adapters": `indexed()` numbers whatever it wraps, so it
+	// lends the half its source lends and owns only the counter it supplies. A
+	// source lending a record would put a record inside the pair, which is the
+	// nesting still unlowered, so that one is copied into the pair as before --
+	// and a move-only element has no copy to make. `reversed()` wraps no value at
+	// all and so carries a lending source through untouched.
+	lends := kind == .Indexed && source_yield.kind == .Borrowed
+	if kind == .Indexed && !lends && type_clone_disabled(k.c, element) {
 		return INVALID_SYMBOL
 	}
 	forward, backward := iter, INVALID_SYMBOL
@@ -104,12 +129,26 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		result_info.descriptor = type_is_compile_time_only(c, source)
 		result_info.mangled = fmt.aprintf("Indexed_Iterator.%d", view, allocator = c.semantic_allocator)
 		result_info.contributed += {.Iteration}
-		next_member := adapter_proc(k, "next", .Indexed_Next, result_iterator, .Inout, option_type(k, element), next)
+		yielded := element
+		if lends {
+			lent := []Yield_Desc{{kind = .Borrowed}, {kind = .Owned}}
+			yielded = yield_item_type(
+				k, element, Yield_Desc{kind = .Record, fields = lent}, no_span(), report = false,
+			)
+			if yielded == INVALID_TYPE {
+				return INVALID_SYMBOL
+			}
+		}
+		next_member := adapter_proc(k, "next", .Indexed_Next, result_iterator, .Inout, option_type(k, yielded), next)
 		copy_member := adapter_proc(k, "iter", .Iterator_Copy, result_iterator, .Borrow, result_iterator)
-		add_members(c, result_iterator, []Symbol_Id{
-			new_associated_type(c, "Element", element, result_iterator),
-			new_associated_type(c, "Iterator", result_iterator, result_iterator), next_member, copy_member,
-		})
+		members := make([dynamic]Symbol_Id, 0, 5, context.temp_allocator)
+		append(&members, new_associated_type(c, "Element", element, result_iterator))
+		append(&members, new_associated_type(c, "Iterator", result_iterator, result_iterator))
+		append(&members, next_member, copy_member)
+		if lends {
+			append(&members, new_associated_type(c, "Yield", indexed_yield_type(c, .Borrowed), result_iterator))
+		}
+		add_members(c, result_iterator, members[:])
 		if type_is_managed(c, result_iterator) { contribute_lifecycle_members(k, result_iterator) }
 	}
 	iter_member := adapter_proc(k, "iter", .Adapter_Iter, view, .Borrow, result_iterator, forward)

@@ -48,6 +48,9 @@ constant_first :: proc() -> ^int {
 main :: proc() {
 	entries := [2]Entry{Entry{3}, Entry{7}};
 	fmt.println("move-only", sum(entries[:]));
+	// `indexed()` lends the half its source lends, so numbering a move-only
+	// sequence copies nothing and needs no copy to exist.
+	foreach (entry, index in entries.indexed()) { fmt.println(index, entry.id); }
 	foreach (entry in entries.reversed()) { fmt.println("reverse", entry.id); }
 	// The unrelated value-copy iterator must not be emitted for move-only T.
 	readonly: []Entry = entries[:];
@@ -80,12 +83,13 @@ main :: proc() {
 	saved: ^int = nil;
 	foreach (item in values) { saved = &item; break; }
 	fmt.println("past loop", saved^);
-	// A stored adapter walks the same elements; its pair is the loop's own value.
+	// `indexed()` lends what its source lends, so the pairs a stored adapter hands
+	// back hold element pointers that outlive the walk.
 	indexed_walker := values.indexed().iter();
 	indexed_one := indexed_walker.next() or_else {};
 	indexed_two := indexed_walker.next() or_else {};
 	drop(indexed_walker);
-	fmt.println("indexed", indexed_one.value, indexed_two.value);
+	fmt.println("indexed retained", indexed_one.value^, indexed_two.value^);
 	fmt.println("constant", constant_first()^, constant_first() == &CONSTANT[0]);
 
 	// Foreach keeps the temporary owner alive for the complete loop.
