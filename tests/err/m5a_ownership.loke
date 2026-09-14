@@ -81,8 +81,8 @@ main :: proc() {
 	foreach (item in locked.values()) {
 		fmt.println(item.id);
 	}
-	foreach (entry in locked.entries()) {
-		fmt.println(entry.value.id);
+	foreach (key, value in locked.entries()) {
+		fmt.println(key + value.id);
 	}
 
 	// `exchange` replaces a definitely live value, and its marker is written at

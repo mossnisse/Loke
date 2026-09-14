@@ -38,8 +38,8 @@ first :: proc(source: $S) -> Option(S.Element)
 sum_entries :: proc(source: $S) -> int
 	where interfaces.Iterable(S) {
 	total := 0;
-	foreach (entry in source) {
-		total += entry.value;
+	foreach (_, value in source) {
+		total += value;
 	}
 	return total;
 }

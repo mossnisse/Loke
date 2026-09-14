@@ -95,7 +95,7 @@ main :: proc() {
 	named["k"] = Tracked{9};
 	foreach (k, v in named) { fmt.println(700 + k.len() + v.id); }
 	fmt.println(8);
-	foreach (e in named.entries()) { fmt.println(800 + e.key.len() + e.value.id); }
+	foreach (k, v in named.entries()) { fmt.println(800 + k.len() + v.id); }
 	fmt.println(9);
 	foreach (k in named.keys()) { fmt.println(900 + k.len()); }
 

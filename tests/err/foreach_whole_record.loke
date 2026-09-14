@@ -1,0 +1,27 @@
+package main;
+
+// design.md "Element bindings" and iteration-unification-plan.md step 6: a
+// traversal that lends what its container stores hands a single name the record
+// itself, so `entry.value` becomes a `^V` once the record `Yield` lands. Every
+// such header is refused until then, so no site quietly changes from printing a
+// value to printing an address. See known-gaps.md, "Iteration still follows the
+// pre-unification model".
+main :: proc() {
+	table := map[string]int{};
+	numbers := [3]int{1, 2, 3};
+
+	foreach (entry in table) { _ = entry.value; }
+	foreach (entry in table.entries()) { _ = entry.key; }
+	foreach (pair in numbers.indexed()) { _ = pair.index; }
+	foreach (pair in table.values().indexed()) { _ = pair.value; }
+
+	// A discard names no field, and destructuring binds the parts the container
+	// holds, so neither can change meaning.
+	foreach (_ in table) { }
+	foreach (key, value in table) { _ = key; _ = value; }
+	foreach (value, index in numbers.indexed()) { _ = value; _ = index; }
+
+	// A range generates its elements rather than storing them, so the pair it is
+	// paired into owns them and stays bindable under one name.
+	foreach (pair in (0 ..< 3).indexed()) { _ = pair.value; }
+}

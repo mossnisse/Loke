@@ -20,6 +20,7 @@
 package lokec
 
 import "core:fmt"
+import "core:strings"
 
 RANGE_LOW :: 0
 RANGE_HIGH :: 1
@@ -768,6 +769,44 @@ foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
 	return false
 }
 
+// design.md "Element bindings", plan step 6: a traversal that lends what its
+// container stores hands a single name the record itself, so once the record
+// `Yield` lands `entry.value` is a `^V` and printing it prints an address.
+// Refusing those headers now migrates every site to destructuring before the
+// meaning changes rather than after. Destructuring binds the parts and is
+// unaffected; a name that binds such a record inside a larger one waits for
+// nested patterns (`L0693`).
+@(private = "file")
+foreach_binds_whole_lent_record :: proc(k: ^Checker, s: ^Stmt_Foreach) -> bool {
+	// A discard names no field, so nothing it reads can change; generic code that
+	// only counts a traversal stays writable over a map.
+	if len(s.bindings) != 1 || foreach_is_place_loop(s) || s.bindings[0].name.text == "_" {
+		return false
+	}
+	// A map entry is a record of two stored halves however it is reached: the map
+	// itself, or its `entries()` view.
+	if s.kind == .Map {
+		return true
+	}
+	if info := underlying_info(k.c, expr_base(s.iterable).type); info != nil && info.view_kind == .Entries {
+		return true
+	}
+	// `indexed()` pairs the traversal it wraps with a counter, so the pair lends
+	// exactly when that traversal does. The direct lowerings answer that from the
+	// container; an iterator answers it with its `Yield`, which this header has
+	// already read whatever it binds.
+	if !s.indexed {
+		return false
+	}
+	#partial switch s.kind {
+	case .Array, .Slice, .Dynamic:
+		return true
+	case .Protocol:
+		return s.borrows
+	}
+	return false
+}
+
 // design.md: "any `&` leaf in the binding pattern selects mutable traversal",
 // so the search is over the whole tree rather than the top level.
 @(private = "file")
@@ -1076,6 +1115,10 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if s.kind != .Protocol {
 		s.borrows = foreach_lends_elements(s)
 	}
+	if foreach_binds_whole_lent_record(k, s) {
+		report_whole_lent_record(k, s, element)
+		return FLOWS
+	}
 	// design.md "Element bindings": a copying loop yields an owned `Element`, and
 	// a built-in traversal copies it out of container storage, so a move-only
 	// element has nothing for it to produce. A protocol iterator's `next` already
@@ -1124,6 +1167,32 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		}
 	}
 	return check_foreach_block(k, s)
+}
+
+// The replacement names the record's own fields, so the message says the header
+// to write rather than describing one.
+@(private = "file")
+report_whole_lent_record :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) {
+	errorf(
+		k.c, s.bindings[0].name.span, "L0696",
+		"one name over `%s` binds the record itself, and the traversal lends the parts it is built from; bind the parts separately",
+		type_name(k.c, element),
+	)
+	if info := underlying_info(k.c, element); info != nil && info.kind == .Struct {
+		names := make([dynamic]string, 0, len(info.fields), context.temp_allocator)
+		for field_id in info.fields {
+			field := symbol_of(k.c, field_id)
+			if field == nil {
+				return
+			}
+			append(&names, identifier_text(k.c, field.name))
+		}
+		add_notef(
+			k.c, s.bindings[0].name.span, "write `foreach (%s in ...)`",
+			strings.join(names[:], ", ", context.temp_allocator),
+		)
+	}
+	add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
 }
 
 // design.md "Standard interface catalogue": a copy needs a copy entry point, and

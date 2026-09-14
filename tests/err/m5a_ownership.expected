@@ -26,7 +26,7 @@ L0503
 @69:6
 `Only` is move-only, so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0491
-@84:20
+@84:25
 `Only` is move-only, so this view cannot copy the value out of the map
 L0505
 @91:16

@@ -55,9 +55,9 @@ main :: proc() {
 	order: [dynamic]string_view = {};
 	count_words(text, inout counts, inout order);
 
-	// One name over a map binds the entry; two names bind key and value.
+	// Two names over a map bind the key and the value where the table holds them.
 	total := 0;
-	foreach (entry in counts) { total += entry.value; }
+	foreach (_, count in counts) { total += count; }
 	fmt.println("distinct:", counts.len());
 	fmt.println("total:", total);
 

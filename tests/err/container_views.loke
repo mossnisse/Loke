@@ -42,14 +42,14 @@ main :: proc() {
 	case .some: fmt.println(step.key);
 	case .none:
 	}
-	foreach (e in entries) { fmt.println(e.value); }
+	foreach (_, v in entries) { fmt.println(v); }
 
 	// Dropping the source out from under a live view.
 	other: map[int]int = {};
 	other[3] = 30;
 	seen := other.entries();
 	drop(other);
-	foreach (e in seen) { fmt.println(e.key); }
+	foreach (k, _ in seen) { fmt.println(k); }
 
 	// Moving it, likewise.
 	source: map[int]int = {};

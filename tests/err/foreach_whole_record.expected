@@ -1,0 +1,14 @@
+L0696
+@13:11
+one name over `(key: string, value: int)` binds the record itself
+@13:11
+write `foreach (key, value in ...)`
+L0696
+@14:11
+one name over `(key: string, value: int)` binds the record itself
+L0696
+@15:11
+one name over `(value: int, index: int)` binds the record itself
+L0696
+@16:11
+one name over `(value: int, index: int)` binds the record itself

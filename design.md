@@ -3608,8 +3608,8 @@ foreach (value in some_dynamic_array) {
 }
 
 some_map := map[string]int{"A" = 1, "C" = 9, "B" = 4};
-foreach (entry in some_map) {
-	fmt.println(entry.key, entry.value);
+foreach (key, value in some_map) {
+	fmt.println(key, value);
 }
 ```
 

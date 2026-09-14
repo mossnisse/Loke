@@ -82,8 +82,10 @@ main :: proc() {
 	foreach (v, i in nums.indexed()) { fmt.println(i*10 + v); }
 	foreach (v, i in (5 ..< 8).indexed()) { fmt.println(i*10 + v); }
 
-	// One name over `indexed()` binds the whole `{value, index}` pair.
-	foreach (pair in nums.indexed()) { fmt.println(pair.index*10 + pair.value); }
+	// One name over `indexed()` binds the whole `{value, index}` pair. A lending
+	// traversal under it is `L0696` until the record `Yield` lands, so this is the
+	// range, whose elements are generated and stay owned.
+	foreach (pair in (7 ..< 9).indexed()) { fmt.println(pair.index*10 + pair.value); }
 
 	// `reversed()` walks backwards; composing it numbers the reversed traversal.
 	foreach (v in xs.reversed()) { fmt.println(v); }
@@ -107,7 +109,7 @@ main :: proc() {
 	sum := 0;
 	foreach (key, value in table) { sum += key*100 + value; }
 	fmt.println(sum);
-	foreach (entry in table) { fmt.println(entry.key + entry.value); }
+	foreach (key, value in table) { fmt.println(key + value); }
 	foreach (k in table.keys()) { fmt.println(k); }
 	foreach (v in table.values()) { fmt.println(v); }
 	foreach (entry, i in table.indexed()) { fmt.println(i*1000 + entry.value); }
