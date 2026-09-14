@@ -639,6 +639,14 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		errorf(k.c, s.span, "L0456", "a `foreach` binds at least one name")
 		return FLOWS
 	}
+	if span, nested := first_group_span(s.bindings); nested {
+		errorf(
+			k.c, span, "L0693",
+			"a nested binding pattern is not lowered yet; destructure one level, or bind the whole element and read its fields",
+		)
+		add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
+		return FLOWS
+	}
 
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
@@ -715,12 +723,47 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 // `Element`. Classified before the binding semantics are checked, since the
 // two shapes read their names differently.
 foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
-	for binding in s.bindings {
-		if binding.is_ref {
+	return pattern_has_ref(s.bindings)
+}
+
+// design.md: "any `&` leaf in the binding pattern selects mutable traversal",
+// so the search is over the whole tree rather than the top level.
+@(private = "file")
+pattern_has_ref :: proc(bindings: []Foreach_Binding) -> bool {
+	for binding in bindings {
+		if binding.is_ref || pattern_has_ref(binding.group) {
 			return true
 		}
 	}
 	return false
+}
+
+// A group anywhere in the pattern. design.md specifies nested destructuring;
+// the checker below resolves the header's shape, and the lowerings this
+// milestone has still read a flat binding list, so one is reported rather than
+// silently bound to the wrong storage.
+@(private = "file")
+pattern_is_nested :: proc(bindings: []Foreach_Binding) -> bool {
+	for binding in bindings {
+		if len(binding.group) > 0 || pattern_is_nested(binding.group) {
+			return true
+		}
+	}
+	return false
+}
+
+// The span of the first group, for the diagnostic that reports one.
+@(private = "file")
+first_group_span :: proc(bindings: []Foreach_Binding) -> (Span, bool) {
+	for binding in bindings {
+		if len(binding.group) > 0 {
+			if span, found := first_group_span(binding.group); found {
+				return span, true
+			}
+			return binding.name.span, true
+		}
+	}
+	return Span{}, false
 }
 
 // The `Element` this loop yields, after the header's adapter.

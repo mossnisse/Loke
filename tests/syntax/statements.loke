@@ -57,6 +57,11 @@ main :: proc() {
 	foreach (&value, index in items) { }
 	foreach (_, index in items.indexed()) { }
 	foreach ($member in fields_of(T)) { }
+	// Nested patterns: a group descends into a record field, to any depth, and
+	// `&` and `_` stay leaf markers (grammar.md `Binding`).
+	foreach ((key, value) in table) { }
+	foreach ((key, &value), index in table.indexed()) { }
+	foreach ((a, (b, &c)), _ in nested) { }
 
 	// `when` is a statement as well as a top-level item.
 	when (DEBUG) { }

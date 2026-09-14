@@ -825,11 +825,17 @@ Stmt_For :: struct {
 }
 
 // `"$"? "&"? (Identifier | "_")`. A `$` binding is a static expansion.
+// One leaf of a `foreach` header's binding pattern, or a parenthesised group of
+// them (design.md "Element bindings"). A group descends into a field that is
+// itself a record; `group` is empty for a leaf, which is every binding a header
+// written before nesting existed has. `name` carries the group's own span with
+// no text, so a diagnostic about a group still points somewhere.
 Foreach_Binding :: struct {
 	name:      Name,
 	is_static: bool,
 	is_ref:    bool,
 	symbol:    Symbol_Id,
+	group:     []Foreach_Binding,
 }
 
 // How the checker resolved a `foreach`. A range and a fixed array lower

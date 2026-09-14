@@ -499,17 +499,7 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 	case ^Stmt_Foreach:
 		n := new(Stmt_Foreach, c.semantic_allocator)
 		clone_node_base(c, &n.base, &v.base)
-		if len(v.bindings) > 0 {
-			bindings := make([]Foreach_Binding, len(v.bindings), c.semantic_allocator)
-			for binding, index in v.bindings {
-				bindings[index] = Foreach_Binding {
-					name      = binding.name,
-					is_static = binding.is_static,
-					is_ref    = binding.is_ref,
-				}
-			}
-			n.bindings = bindings
-		}
+		n.bindings = clone_foreach_bindings(c, v.bindings)
 		n.iterable = clone_expr(c, v.iterable)
 		n.body = clone_block(c, v.body)
 		return n
@@ -675,4 +665,24 @@ clone_items :: proc(c: ^Compiler, list: []Item) -> []Item {
 		out[index] = clone_item(c, entry)
 	}
 	return out
+}
+
+// A binding pattern is a tree (design.md "Element bindings"), so a clone copies
+// its groups too. Symbols are deliberately not carried over: a clone is checked
+// again and binds its own names.
+@(private = "file")
+clone_foreach_bindings :: proc(c: ^Compiler, source: []Foreach_Binding) -> []Foreach_Binding {
+	if len(source) == 0 {
+		return nil
+	}
+	bindings := make([]Foreach_Binding, len(source), c.semantic_allocator)
+	for binding, index in source {
+		bindings[index] = Foreach_Binding {
+			name      = binding.name,
+			is_static = binding.is_static,
+			is_ref    = binding.is_ref,
+			group     = clone_foreach_bindings(c, binding.group),
+		}
+	}
+	return bindings
 }

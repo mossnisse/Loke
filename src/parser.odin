@@ -1482,6 +1482,43 @@ parse_for :: proc(p: ^Parser) -> Stmt {
 	return s
 }
 
+// One binding, which is a leaf or a parenthesised group of bindings that
+// descends into a record field (grammar.md `Binding`). A group takes no `$` or
+// `&` of its own: those mark a leaf, and a group's leaves carry their own.
+@(private = "file")
+parse_foreach_binding :: proc(p: ^Parser) -> (Foreach_Binding, bool) {
+	binding: Foreach_Binding
+	if at(p, .Lparen) {
+		start := current(p)
+		advance(p)
+		group := make([dynamic]Foreach_Binding, 0, 0, p.allocator)
+		ok := true
+		for {
+			inner, inner_ok := parse_foreach_binding(p)
+			ok = ok && inner_ok
+			append(&group, inner)
+			if !allow(p, .Comma) {
+				break
+			}
+		}
+		if _, closed := expect(p, .Rparen, "L0247", "`)` to close the binding group"); !closed {
+			ok = false
+		}
+		// A group has no name of its own, so it carries the span instead: a
+		// diagnostic about the group still has somewhere to point.
+		binding.name = Name{span = span_to_here(p, start)}
+		binding.group = group[:]
+		return binding, ok
+	}
+	binding.is_static = allow(p, .Dollar)
+	binding.is_ref = allow(p, .Amp)
+	name, ok := expect(p, .Ident, "L0247", "a binding name")
+	if ok {
+		binding.name = name_of(p, name)
+	}
+	return binding, ok
+}
+
 @(private = "file")
 parse_foreach :: proc(p: ^Parser) -> Stmt {
 	start := advance(p) // `foreach`
@@ -1490,13 +1527,8 @@ parse_foreach :: proc(p: ^Parser) -> Stmt {
 	bindings := make([dynamic]Foreach_Binding, 0, 0, p.allocator)
 	bad_bindings := false
 	for {
-		binding: Foreach_Binding
-		binding.is_static = allow(p, .Dollar)
-		binding.is_ref = allow(p, .Amp)
-		name, ok := expect(p, .Ident, "L0247", "a binding name")
-		if ok {
-			binding.name = name_of(p, name)
-		} else {
+		binding, ok := parse_foreach_binding(p)
+		if !ok {
 			bad_bindings = true
 		}
 		append(&bindings, binding)

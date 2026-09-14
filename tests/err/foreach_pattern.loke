@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Element bindings": a parenthesised group descends into a field
+// that is itself a record. The header parses and the pattern is represented all
+// the way through cloning and dumping; the lowerings this milestone has still
+// read a flat binding list, so a group is reported rather than bound to storage
+// it does not name. See known-gaps.md, "Iteration still follows the
+// pre-unification model".
+main :: proc() {
+	table := map[string]int{};
+	foreach ((key, value) in table) {
+		_ = key;
+		_ = value;
+	}
+	_ = table;
+}

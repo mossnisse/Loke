@@ -307,18 +307,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 	case ^Stmt_Foreach:
 		dump_indent(b, depth)
 		fmt.sbprint(b, "(foreach [")
-		for binding, i in node.bindings {
-			if i > 0 {
-				fmt.sbprint(b, ",")
-			}
-			fmt.sbprintf(
-				b,
-				"\"%s%s%s\"",
-				binding.is_static ? "$" : "",
-				binding.is_ref ? "&" : "",
-				binding.name.text,
-			)
-		}
+		dump_foreach_bindings(b, node.bindings)
 		fmt.sbprintln(b, "]")
 		dump_labeled(b, "in", node.iterable, depth + 1)
 		dump_block(b, node.body, depth + 1)
@@ -807,4 +796,29 @@ dump_argument :: proc(b: ^strings.Builder, arg: Argument, depth: int) {
 	}
 	dump_child(b, arg.value, depth)
 	fmt.sbprint(b, ")")
+}
+
+// A binding pattern is a tree, so a group prints as a nested list. A leaf prints
+// exactly as it did before groups existed, which is what keeps every flat
+// header's golden dump unchanged.
+@(private = "file")
+dump_foreach_bindings :: proc(b: ^strings.Builder, bindings: []Foreach_Binding) {
+	for binding, i in bindings {
+		if i > 0 {
+			fmt.sbprint(b, ",")
+		}
+		if len(binding.group) > 0 {
+			fmt.sbprint(b, "[")
+			dump_foreach_bindings(b, binding.group)
+			fmt.sbprint(b, "]")
+			continue
+		}
+		fmt.sbprintf(
+			b,
+			"\"%s%s%s\"",
+			binding.is_static ? "$" : "",
+			binding.is_ref ? "&" : "",
+			binding.name.text,
+		)
+	}
 }
