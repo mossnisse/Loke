@@ -405,6 +405,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	iter_kind := Synth_Kind.None
 	reverse_kind := Synth_Kind.None
 	next_kind := Synth_Kind.None
+	lends_halves := false
 	switch {
 	case info.is_range:
 		element = info.element
@@ -461,11 +462,15 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 			iterator = map_iterator_type(k.c, info.key)
 			iter_kind, next_kind = .Map_View_Iter, .Map_Next
 		case .Keys:
+			// design.md "Borrowing iteration": a half of a slot is stored, so the
+			// view lends it rather than copying it out of the table.
 			iterator = map_view_iterator_type(k.c, under, "Map_Keys_Iterator")
 			iter_kind, next_kind = .Map_View_Iter, .Map_Keys_Next
+			lends_halves = true
 		case .Values:
 			iterator = map_view_iterator_type(k.c, under, "Map_Values_Iterator")
 			iter_kind, next_kind = .Map_View_Iter, .Map_Values_Next
+			lends_halves = true
 		case .None:
 			return
 		}
@@ -477,7 +482,7 @@ ensure_iteration_members :: proc(k: ^Checker, type: Type_Id) {
 	// hands back a pointer into the container and there is nothing to clone. Every
 	// other built-in traversal still hands over an owned `Element`, so a managed
 	// one needs its copy and drop entry points before the iterator's body asks.
-	lends := next_kind == .Slice_Ref_Next
+	lends := next_kind == .Slice_Ref_Next || lends_halves
 	if !lends && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
@@ -736,27 +741,29 @@ foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
 	return pattern_has_ref(s.bindings)
 }
 
-// design.md "Borrowing iteration": ordinary traversal of contiguous storage
-// lends each element, so the binding names the container's slot and the loop
-// copies nothing. `&` asks for the mutable form of the same thing, and
-// `indexed()` still materializes a record of its own, so neither is this.
+// design.md "Borrowing iteration": ordinary traversal of a container lends each
+// element, so the binding names the container's own slot and the loop copies
+// nothing. `&` asks for the mutable form of the same thing, and a header that
+// asks for a record the traversal does not store gets a new value instead.
 //
-// Text, ranges, maps, and protocol iterators keep producing owned values until
-// step 4 of the iteration unification converts them.
+// Text and ranges generate their elements rather than storing them, so they keep
+// handing over owned values.
 foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
 	if foreach_is_place_loop(s) {
 		return false
 	}
-	// `indexed()` numbers the traversal it wraps. A header naming the value and
-	// the index separately binds the element where it lies and counts beside it;
-	// one name over the pair asks for the record itself, which is a new value and
-	// so copies the element into it.
-	if s.indexed && len(s.bindings) != 2 {
-		return false
-	}
 	#partial switch s.kind {
 	case .Array, .Slice, .Dynamic:
-		return true
+		// `indexed()` numbers the traversal it wraps. A header naming the value and
+		// the index separately binds the element where it lies and counts beside it;
+		// one name over the pair asks for the record itself, which is a new value
+		// and so copies the element into it.
+		return !s.indexed || len(s.bindings) == 2
+	case .Map:
+		// A map's element is its `{key, value}` entry. Two names bind the halves
+		// where the table holds them; one name asks for the entry record, which the
+		// table does not store and so must be built.
+		return !s.indexed && len(s.bindings) == 2
 	}
 	return false
 }
@@ -1031,7 +1038,7 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	// record of descriptors still need the lowering the rest of the unification
 	// carries, so they are refused rather than bound to the wrong storage.
 	if !yield_is_owned(yield) {
-		if yield.kind != .Borrowed || s.indexed {
+		if yield.kind != .Borrowed {
 			errorf(
 				k.c, expr_span(s.iterable), "L0695",
 				"`%s` lends its elements this way, and that `Yield` is not lowered yet",
@@ -1069,18 +1076,22 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if s.kind != .Protocol {
 		s.borrows = foreach_lends_elements(s)
 	}
-	// design.md "Element bindings": a copying loop yields an owned `Element`. A
-	// built-in traversal copies it out of container storage, so a move-only
-	// element has nothing for it to produce; a protocol iterator's `next` already
-	// hands one over and needs no copy.
-	if !s.borrows && s.kind != .Protocol && !require_copyable_element(k, s, element) {
+	// design.md "Element bindings": a copying loop yields an owned `Element`, and
+	// a built-in traversal copies it out of container storage, so a move-only
+	// element has nothing for it to produce. A protocol iterator's `next` already
+	// hands one over and needs no copy; a lending traversal copies nothing at all
+	// -- unless the header names one thing over a traversal yielding several,
+	// which builds the record the container does not store and copies into it.
+	builds := len(s.bindings) == 1 && s.indexed
+	owns := s.borrows ? builds : s.kind != .Protocol
+	if owns && !require_copyable_element(k, s, element) {
 		return FLOWS
 	}
-	// A copying loop disposes of its element at the end of every step, so the drop
-	// and the clone have to exist. `indexed()` wraps the traversal in a record of
-	// its own, which is why this is asked here and not only where the iterable's
-	// members were contributed. A lending loop owns nothing and needs neither.
-	if !s.borrows && type_is_managed(k.c, element) {
+	// A loop that owns its element disposes of it at the end of every step, so the
+	// drop and the clone have to exist. `indexed()` wraps the traversal in a
+	// record of its own, which is why this is asked here and not only where the
+	// iterable's members were contributed.
+	if (!s.borrows || builds) && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
 	if len(s.bindings) == 1 {

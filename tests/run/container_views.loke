@@ -96,14 +96,16 @@ main :: proc() {
 	fmt.println(count(table.entries()));
 	fmt.println(sum_ints(passthrough(table.values())));
 
-	// Stepped by hand. The explicit walk and the loop agree.
+	// Stepped by hand. The explicit walk and the loop agree: both lend, so what
+	// `next` hands back names the value in the table (design.md "Iteration
+	// protocol").
 	manual := table.values();
 	walker := manual.iter();
 	by_hand := 0;
 	walking := true;
 	for (walking) {
 		switch (step in walker.next()) {
-		case .some: by_hand += step;
+		case .some: by_hand += step^;
 		case .none: walking = false;
 		}
 	}

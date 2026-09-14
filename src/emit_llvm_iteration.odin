@@ -366,13 +366,15 @@ emit_map_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 			type = container_element(e.c, container), address = load(e, "ptr", value_out), place = true,
 		})
 	} else {
-		// The map's own `Element` is its `{key, value}` entry, and a value loop
-		// yields an owned one: both halves are copied out of the slot, whether the
-		// loop binds the entry whole or destructures it. `m.entries()` is the same
-		// traversal reached through the protocol, and produces the same copies.
+		// design.md "Borrowing iteration": a header naming both halves binds them
+		// where the table holds them. One name asks for the `{key, value}` entry
+		// instead, which the table does not store, so that record is built and both
+		// halves are copied into it -- as `m.entries()` does through the protocol.
 		fields := []Foreach_Field{
-			{type = container_key(e.c, container), address = load(e, "ptr", key_out), stored = true},
-			{type = container_element(e.c, container), address = load(e, "ptr", value_out), stored = true},
+			{type = container_key(e.c, container), address = load(e, "ptr", key_out),
+			 place = s.borrows, stored = true},
+			{type = container_element(e.c, container), address = load(e, "ptr", value_out),
+			 place = s.borrows, stored = true},
 		}
 		numbered := counter == "" ? "" : load(e, "i64", counter)
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
@@ -680,7 +682,10 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		// design.md "Borrowing iteration": the payload is a pointer into the
 		// source, so the binding is that address and the loop owns nothing.
 		address := emit_union_payload(e, option, pointer_to(e.c, yielded, false), slot)
-		fields := []Foreach_Field{{type = yielded, address = address, place = true}}
+		// `stored` for the one case that still builds a value of its own: one name
+		// over an `indexed()` pair materializes the record, and the element it
+		// copies in is the container's, so it is cloned rather than aliased.
+		fields := []Foreach_Field{{type = yielded, address = address, place = true, stored = true}}
 		numbered := counter == "" ? "" : load(e, "i64", counter)
 		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else {
@@ -1011,11 +1016,16 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 	key_type := container_key(e.c, subject)
 	value_type := container_element(e.c, subject)
 	out := ""
+	// A lending view hands back the address of the stored half; a copying one
+	// reads it out (design.md "Borrowing iteration").
+	lends := type_is_pointer(e.c, yielded)
 	#partial switch symbol.synth {
 	case .Map_Keys_Next:
-		out = copy_map_half(e, key_type, load(e, "ptr", key_out))
+		address := load(e, "ptr", key_out)
+		out = lends ? address : copy_map_half(e, key_type, address)
 	case .Map_Values_Next:
-		out = copy_map_half(e, value_type, load(e, "ptr", value_out))
+		address := load(e, "ptr", value_out)
+		out = lends ? address : copy_map_half(e, value_type, address)
 	case:
 		// design.md "Iteration adapters": a map's `Element` is its `{key, value}`
 		// entry, so this hands back the same record a direct loop destructures.

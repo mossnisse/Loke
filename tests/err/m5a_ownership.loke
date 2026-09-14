@@ -74,8 +74,9 @@ main :: proc() {
 	foreach (item in table) {
 		fmt.println(item.id);
 	}
-	// A map view still yields owned halves, so it refuses to copy a move-only
-	// value out of the table.
+	// design.md "Borrowing iteration": `values()` lends the half it names, so a
+	// move-only value is read like any other. `entries()` builds the `{key, value}`
+	// record the table does not store, and that copy it cannot make.
 	locked: map[int]Only = {};
 	foreach (item in locked.values()) {
 		fmt.println(item.id);

@@ -38,38 +38,46 @@ result is attributed by the callee's summary. The two built-in iteration synths
 have no body to summarize, so they are still named directly in
 [cfg_provenance.odin](src/cfg_provenance.odin).
 
-Step 4 has converted the contiguous containers and their iterators: iterating an
-array, a slice, or a dynamic array clones nothing, a move-only element is read
-like any other, and `iter()`/`next()` hand back a pointer into the container, so
-a manual walk and a loop agree. `reversed()` carries that through, and
-`indexed()` lends when the header names the value and the index separately.
+Step 4 has converted the contiguous containers, their iterators, and the map
+halves: iterating an array, a slice, or a dynamic array clones nothing, a
+move-only element is read like any other, and `iter()`/`next()` hand back a
+pointer into the container, so a manual walk and a loop agree. `reversed()`
+carries that through; `indexed()` lends when the header names the value and the
+index separately. A map lends both halves to `foreach (key, value in table)`, and
+`keys()` and `values()` lend the half they name.
 
-What remains of step 4: one name over an `indexed()` pair still materializes the
-record, so that form copies and is not contributed for a move-only element; maps,
-text, and ranges still yield owned values; and `copied()`, consuming traversal,
-and the move-iterators do not exist. A single binding over a record yield —
-design.md's `entry.key`/`entry.value` form — is what step 6 must migrate before
-maps convert, so that nothing silently starts printing an address.
+What remains of step 4 is everything that builds a record the container does not
+store, because that record is a new value and copies into it: one name over an
+`indexed()` pair, one name over a map entry, and `entries()`, which is why
+`foreach (k, v in table)` lends while `foreach (k, v in table.entries())` copies.
+design.md gives those a record `Yield` whose fields are descriptors, so the
+binding would receive `entry.key^`; that is unlowered (`L0695`), and step 6 is
+what migrates every `entry.value` site before it lands, so that nothing silently
+starts printing an address. Text and ranges generate their elements rather than
+storing them and stay owned. `copied()`, consuming traversal, and the
+move-iterators do not exist.
 
 ```odin
 package main;
 
 Entry :: move_only struct { id: int }
 
-walk :: proc(items: []Entry) {
+walk :: proc(items: []Entry, table: map[int]Entry) {
 	foreach (item in items) { _ = item.id; }               // lends, as specified
 	foreach (item, at in items.indexed()) { _ = at; }      // no such member
+	foreach (key, value in table) { _ = value.id; }        // lends, as specified
+	foreach (entry in table) { _ = entry.value.id; }       // builds a record: L0491
 }
 ```
 
-`L0491` is now reached through the map views, which still hand back owned halves:
+`L0491` is what remains where a record still has to be built:
 
 ```
-error[L0491]: `Only` is move-only, so this view cannot copy the value out of the
-map; iterate `&value`, or remove the entries
+error[L0491]: `(key: int, value: Entry)` is move-only, so a by-value `foreach`
+cannot copy it out of the container; iterate `&value`, or remove the elements
 ```
 
-That remedy still names `refs()` for a sequence — the spelling the specification
+For a sequence that remedy still names `refs()` — the spelling the specification
 no longer has, and which step 6 deletes.
 
 ## Not gaps

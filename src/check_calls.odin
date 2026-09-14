@@ -534,12 +534,18 @@ fold_standard_customization_call :: proc(k: ^Checker, v: ^Expr_Call, chosen: ^Sy
 	v.const_value = int_const(k.c, i64(info.count))
 }
 
+// design.md "Borrowing iteration": `keys()` and `values()` lend the half they
+// name, so only `entries()` -- which builds a record the table does not store --
+// copies anything and can refuse a move-only half.
 @(private = "file")
 require_copyable_view_element :: proc(k: ^Checker, chosen: ^Symbol, span: Span) {
+	if chosen.container_op == .Map_Keys || chosen.container_op == .Map_Values {
+		return
+	}
 	subject := chosen.params[0]
 	halves := [2]struct{copied: bool, type: Type_Id, what: string}{
-		{chosen.container_op != .Map_Values, container_key(k.c, subject), "key"},
-		{chosen.container_op != .Map_Keys, container_element(k.c, subject), "value"},
+		{true, container_key(k.c, subject), "key"},
+		{true, container_element(k.c, subject), "value"},
 	}
 	for half in halves {
 		if !half.copied || !type_clone_disabled(k.c, half.type) {

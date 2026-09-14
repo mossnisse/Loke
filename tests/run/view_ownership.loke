@@ -52,8 +52,9 @@ main :: proc() {
 	table: map[int]Tracked = {};
 	fill(inout table);
 
-	// A direct value loop over the map copies the value half only; the key is an
-	// unmanaged `int`.
+	// design.md "Borrowing iteration": a map lends both halves to a header that
+	// names them, so this copies nothing at all -- and neither does the stored
+	// `values()` view or the explicit walk over it.
 	fmt.println(0);
 	foreach (k, v in table) { fmt.println(300 + v.id + k); }
 

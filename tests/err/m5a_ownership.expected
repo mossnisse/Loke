@@ -26,29 +26,26 @@ L0503
 @69:6
 `Only` is move-only, so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0491
-@80:19
-`Only` is move-only, so this view cannot copy the value out of the map
-L0491
-@83:20
+@84:20
 `Only` is move-only, so this view cannot copy the value out of the map
 L0505
-@90:16
+@91:16
 `exchange` replaces the destination, so it is written `exchange(inout place, replacement)`
 L0500
-@92:7
+@93:7
 `h` cannot be exchanged here: it has already been moved, dropped, or released
 L0498
-@98:7
+@99:7
 `drop` cannot be applied to `static` storage, which is always live
 L0498
-@99:12
+@100:12
 `move` cannot be applied to `thread_local` storage, which is always live
 L0506
-@100:18
+@101:18
 a `static` declaration is initialised once, before any code runs, so its initialiser must be a compile-time constant
 L0500
-@107:14
+@108:14
 `d` cannot be used here: it is live on only some of the paths that reach this point
 L0501
-@112:23
+@113:23
 `value` is a `move` parameter, so this argument is written `move(...)`
