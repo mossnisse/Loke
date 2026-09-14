@@ -494,8 +494,13 @@ check_method_call :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, expec
 	#partial switch chosen.container_op {
 	case .Insert, .Map_Find_Or_Insert, .Map_Try_Insert:
 		element := container_element(k.c, chosen.params[0])
-		if type_clone_disabled(k.c, element) && len(v.bound) > 2 {
-			classify_copy(k, v.bound[2], element, "insertion")
+		if len(v.bound) > 2 {
+			// The cost is asked of every element; only a move-only one turns the copy
+			// into the error `classify_copy` reports.
+			classify_copy_cost(k, v.bound[2], element, .Insertion)
+			if type_clone_disabled(k.c, element) {
+				classify_copy(k, v.bound[2], element, .Insertion)
+			}
 		}
 	case .Append:
 		// A lone spread forwards its slice instead of building a pack, so binding

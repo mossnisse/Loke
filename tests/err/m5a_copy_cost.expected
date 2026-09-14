@@ -2,6 +2,8 @@ L0502
 @52:46
 `Only` is move-only, so a borrowed value of it cannot be returned by value; return a `move` parameter or a local instead
 
+warning[L0507]: this aggregate literal copies 8 bytes from `self`
+@26:18
 warning[L0507]: this return clones `value`
 @48:47
 warning[L0507]: this argument copies 16 bytes from `pair`
@@ -20,6 +22,18 @@ warning[L0507]: this binding clones `item`
 @101:37
 warning[L0507]: this `or_return` clones `outcome`
 @107:11
+warning[L0507]: this variant construction clones `taken`
+@108:13
+warning[L0507]: this aggregate literal clones `big`
+@123:17
+warning[L0507]: this variadic argument clones `big`
+@124:11
+warning[L0507]: this insertion clones `big`
+@127:18
+warning[L0507]: this `or_else` clones `absent`
+@130:12
+warning[L0507]: this `or_else` fallback clones `big`
+@130:27
 
 !:84:6
 !:85:6

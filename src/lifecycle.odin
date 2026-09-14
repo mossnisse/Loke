@@ -316,7 +316,8 @@ check_capacity_builtin :: proc(k: ^Checker, v: ^Expr_Call, kind: Builtin_Kind) {
 		}
 		// The storage takes the value the way an initialization does, so a borrowed
 		// place is cloned into it and a move-only one has to be written `move(...)`.
-		classify_copy(k, v.args[1].value, place, "write")
+		classify_copy_cost(k, v.args[1].value, place, .Write)
+		classify_copy(k, v.args[1].value, place, .Write)
 		bound[1] = v.args[1].value
 	}
 	v.bound = bound
@@ -460,7 +461,7 @@ expression_is_owned_argument :: proc(e: Expr) -> bool {
 // The compiler never silently moves a dynamic array, map, runtime string,
 // `shared(T)`, or type with a custom copy hook — including at the source's
 // last use (design.md).
-classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> bool {
+classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) -> bool {
 	if value == nil || !type_is_managed(k.c, type) || !expression_is_borrowed_place(k.c, value) {
 		return false
 	}
@@ -471,7 +472,7 @@ classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> 
 			"L0503",
 			"`%s` is move-only, so this %s cannot copy it; write `move(...)` to transfer ownership instead",
 			type_name(k.c, type),
-			site,
+			copy_site_text(site),
 		)
 		return false
 	}
@@ -479,13 +480,33 @@ classify_copy :: proc(k: ^Checker, value: Expr, type: Type_Id, site: string) -> 
 	return true
 }
 
+// Report what a copy costs at a site checked in the ordinary pass, where the
+// enclosing loop depth is still `k`'s. Separate from `classify_copy` because the
+// two ask different questions: an unmanaged aggregate has no lifecycle clone to
+// contribute and is still expensive to copy by the byte.
+classify_copy_cost :: proc(k: ^Checker, value: Expr, type: Type_Id, site: Copy_Site) {
+	if value == nil || !expression_is_borrowed_place(k.c, value) {
+		return
+	}
+	// A destination built by *converting* the operand is not a duplicate of it,
+	// whatever it costs: `fmt.println(count)` erases an `int` into a 16-byte
+	// `any_view` that borrows it, and reporting that as a copy of `count` would
+	// name a duplication the program never makes. The erasure rewrites the node
+	// to the destination type, so the conversion is what has to be asked about,
+	// not the type it produced.
+	base := expr_base(value)
+	if base == nil || base.type != type || base.erased_from != INVALID_TYPE {
+		return
+	}
+	report_copy_cost(k, site, expr_span(value), value, type, k.loop_depth > 0)
+}
+
 // Aggregate construction has a binding's value semantics: a place continues to
 // own its value, so the field/element receives a clone; a temporary or `move`
-// hands ownership to the aggregate. Literal copies aren't one of the four
-// copy-cost warning sites, but still need the lifecycle operation and the
-// move-only diagnostic.
+// hands ownership to the aggregate.
 classify_composite_element :: proc(k: ^Checker, v: ^Expr_Composite, index: int, type: Type_Id) {
-	if !classify_copy(k, v.elements[index].value, type, "aggregate literal") {
+	classify_copy_cost(k, v.elements[index].value, type, .Literal)
+	if !classify_copy(k, v.elements[index].value, type, .Literal) {
 		return
 	}
 	if v.element_clones == nil {
@@ -511,7 +532,7 @@ classify_declaration_copies :: proc(k: ^Checker, d: ^Decl, in_loop := false) {
 		if value != nil && expression_is_borrowed_place(k.c, value) {
 			report_copy_cost(k, .Binding, expr_span(value), value, sym.type, in_loop)
 		}
-		if !classify_copy(k, value, sym.type, "binding") {
+		if !classify_copy(k, value, sym.type, .Binding) {
 			continue
 		}
 		if clones == nil {
@@ -566,7 +587,7 @@ classify_assignment_copies :: proc(k: ^Checker, s: ^Stmt_Assign, in_loop := fals
 		if expression_is_borrowed_place(k.c, value) {
 			report_copy_cost(k, .Assignment, expr_span(value), value, base.type, in_loop)
 		}
-		if !classify_copy(k, value, base.type, "assignment") {
+		if !classify_copy(k, value, base.type, .Assignment) {
 			continue
 		}
 		if clones == nil {
@@ -659,17 +680,32 @@ Copy_Site :: enum {
 	Return,
 	Or_Else,
 	Or_Return,
+	// The sites that reach a value inside a larger expression. A copy here is the
+	// easiest kind to miss, being written as construction rather than as an
+	// assignment, so each one names what it was building.
+	Literal,
+	Insertion,
+	Write,
+	Variadic,
+	Variant,
+	Or_Else_Fallback,
 }
 
 @(private = "file")
 copy_site_text :: proc(site: Copy_Site) -> string {
 	switch site {
-	case .Argument:   return "argument"
-	case .Binding:    return "binding"
-	case .Assignment: return "assignment"
-	case .Return:     return "return"
-	case .Or_Else:    return "`or_else`"
-	case .Or_Return:  return "`or_return`"
+	case .Argument:         return "argument"
+	case .Binding:          return "binding"
+	case .Assignment:       return "assignment"
+	case .Return:           return "return"
+	case .Or_Else:          return "`or_else`"
+	case .Or_Return:        return "`or_return`"
+	case .Literal:          return "aggregate literal"
+	case .Insertion:        return "insertion"
+	case .Write:            return "write"
+	case .Variadic:         return "variadic argument"
+	case .Variant:          return "variant construction"
+	case .Or_Else_Fallback: return "`or_else` fallback"
 	}
 	return "copy"
 }
@@ -702,7 +738,10 @@ report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr,
 	transferable := false
 	if root := symbol_of(k.c, place_root_symbol(k.c, source)); root != nil {
 		name = identifier_text(k.c, root.name)
-		transferable = root.borrowed_binding == .None
+		// A materialized constant is storage the program shares, not a value anyone
+		// owns, so the copy is real but `move` names nothing that could give it up.
+		transferable = root.borrowed_binding == .None &&
+			(root.kind == .Var || root.kind == .Parameter)
 	}
 	source_text := name == "" ? fmt.aprintf("a `%s`", type_name(k.c, type), allocator = k.c.semantic_allocator) :
 		fmt.aprintf("`%s`", name, allocator = k.c.semantic_allocator)

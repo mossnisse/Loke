@@ -718,6 +718,9 @@ bind_variadic_arguments :: proc(
 		value, passed := pass_argument(k, arg.value, element, prechecked)
 		append(&elements, value)
 		append(&order, false)
+		// Asked of every element, managed or not: a pack copies what it is given,
+		// and a large unmanaged one costs by the byte without a clone to report.
+		classify_copy_cost(k, value, element, .Variadic)
 		needs_element_clone ||= expression_is_borrowed_place(k.c, value)
 		ok = ok && passed
 	}
@@ -727,7 +730,7 @@ bind_variadic_arguments :: proc(
 			// one is reported where `move(...)` belongs. A spread lends its elements
 			// and has no `move` form.
 			for value in elements {
-				classify_copy(k, value, element, "variadic argument")
+				classify_copy(k, value, element, .Variadic)
 			}
 			for spread in spreads {
 				errorf(

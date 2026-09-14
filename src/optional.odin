@@ -166,7 +166,8 @@ check_or_else :: proc(k: ^Checker, v: ^Expr_Or_Else, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	v.fallback_clone = classify_copy(k, v.fallback, payload, "`or_else` fallback")
+	classify_copy_cost(k, v.fallback, payload, .Or_Else_Fallback)
+	v.fallback_clone = classify_copy(k, v.fallback, payload, .Or_Else_Fallback)
 	if type_clone_disabled(k.c, payload) && expression_is_borrowed_place(k.c, v.fallback) {
 		v.type = INVALID_TYPE
 		return

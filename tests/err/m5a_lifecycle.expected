@@ -37,3 +37,5 @@ L0496
 
 warning[L0507]: this return clones `self`
 @15:52
+warning[L0507]: this variant construction clones `self`
+@24:14

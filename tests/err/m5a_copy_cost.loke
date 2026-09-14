@@ -107,3 +107,29 @@ relay :: proc() -> Result(Res, int) {
 	taken := outcome or_return;
 	return .ok(taken);
 }
+
+// The sites that reach a value from inside a larger expression. Each is the
+// ownership rule copying a place, exactly as a binding is, but written as
+// construction -- which is what makes it the easiest copy to miss. The
+// aggregate literal and the variant payload are reported above, inside `Res`'s
+// own copy hook and in `relay`; these are the rest.
+Holder :: struct { values: [dynamic]int }
+
+pack :: proc(items: ..[dynamic]int) -> int { return items.len(); }
+
+expression_sites :: proc() {
+	big: [dynamic]int = {};
+
+	held := Holder{big};                 // aggregate literal element
+	_ = pack(big);                       // variadic pack element
+
+	store: [dynamic][dynamic]int = {};
+	store.insert(0, big);                // container insertion
+
+	absent: Option([dynamic]int) = .none;
+	picked := absent or_else big;        // `or_else` fallback
+
+	// Not a copy: erasing into an `any_view` borrows what it points at, so the
+	// destination's own size is not a duplication of `big`.
+	fmt.println(held.values.len(), store.len(), picked.len(), big.len());
+}

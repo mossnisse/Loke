@@ -375,9 +375,10 @@ check_union_construct :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector) {
 	v.bound = bound
 	// Variant construction is aggregate construction: `.some(x)` where `x` names a
 	// place leaves that place owning its value, so the variant receives a clone.
+	classify_copy_cost(k, v.args[0].value, payload, .Variant)
 	v.operation = Call_Union_Construct{
 		index = index,
-		clone = classify_copy(k, v.args[0].value, payload, "variant construction"),
+		clone = classify_copy(k, v.args[0].value, payload, .Variant),
 	}
 
 	// design.md "Zero values": explicit constant variant construction is

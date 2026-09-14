@@ -4087,7 +4087,9 @@ Machine-level argument passing does not grant extra ownership, mutation, or life
 
 #### Copy-cost diagnostics
 
-Copying a large aggregate or managed owner is valid, but tools may warn when a binding, assignment, parameter, return, a place operand of [`or_else` or `or_return`](#operator-ownership), or an explicit `clone` or [`copied()`](#iteration-adapters) duplicates substantial data. An ordinary `value: T` parameter borrows a managed owner and is not a copy site. Use `move` for ownership transfer and `inout` only when mutation is intended.
+Copying a large aggregate or managed owner is valid, but tools may warn wherever [the ownership rule](#value-semantics-and-the-ownership-rule) copies a place rather than borrowing or transferring it: a binding, an assignment, a parameter, a return, a place operand or fallback of [`or_else` or `or_return`](#operator-ownership), an [aggregate literal](#struct-literals) element, a [variant](#unions) payload, a [container insertion](#container-insertion), a variadic pack element, and an explicit `clone` or [`copied()`](#iteration-adapters). Every context in that table is asked, because a copy written as construction is the easiest one to miss.
+
+Building a destination by *converting* the operand is not a copy of it and is not reported: `print(count)` erases an `int` into a borrowing `any_view`, duplicating nothing. An ordinary `value: T` parameter borrows a managed owner and is not a copy site either. Use `move` for ownership transfer and `inout` only when mutation is intended.
 
 ```odin
 sum :: proc(values: [dynamic]int) -> int {
