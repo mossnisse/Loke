@@ -727,6 +727,9 @@ Symbol :: struct {
 	// design.md "Exported names": package-private by default; `@(public)` on the
 	// declaration, or on the package clause, exports it.
 	public:      bool,
+	// design.md "@(require_results)": whether the name was ever read after its
+	// declaration. Only a local of a required-result type asks.
+	named:       bool,
 	type:        Type_Id,
 	const_value: Const_Value,
 	params:      []Type_Id,

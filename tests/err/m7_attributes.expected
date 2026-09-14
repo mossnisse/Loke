@@ -34,4 +34,8 @@ L0612
 the result of `h` must be used or discarded with `_ = ...`
 @37:2
 
+L0698
+`uninspected` holds the result of `h`, which is never used
+@40:2
+
 warning[L0611]: `g` is deprecated: use `g2` instead

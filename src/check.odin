@@ -2463,7 +2463,57 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 		// restore fallthrough.
 		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
 	}
+	report_unread_required_results(k, stmts)
 	return flow
+}
+
+// design.md "@(require_results)": a bare call statement is not the only way a
+// failure goes unobserved — binding one and never looking at it discards it just
+// as quietly. Asked here, after every statement of the sequence is checked, so a
+// binding read by a later statement or a nested block has already said so; and
+// asked over the statements rather than the scope, so the diagnostics come out
+// in source order rather than a map's.
+@(private = "file")
+report_unread_required_results :: proc(k: ^Checker, stmts: []Stmt) {
+	for stmt in stmts {
+		d, is_decl := stmt.(^Decl)
+		if !is_decl || d.kind != .Var {
+			continue
+		}
+		for id, index in d.symbols {
+			sym := symbol_of(k.c, id)
+			if sym == nil || sym.named || sym.kind != .Var {
+				continue
+			}
+			// The same policy a bare call statement answers to: the result type, or
+			// the declaration the initializer called. One binding per initializer, so
+			// a destructuring declaration asks about the whole call once.
+			required := type_requires_results(k.c, sym.type)
+			source := ""
+			if !required && index < len(d.values) {
+				if call, is_call := d.values[index].(^Expr_Call); is_call && call.type != INVALID_TYPE {
+					source, required = required_result_of_call(k, call)
+				}
+			}
+			if !required {
+				continue
+			}
+			span := index < len(d.names) ? d.names[index].span : d.span
+			if source != "" {
+				errorf(
+					k.c, span, "L0698",
+					"`%s` holds the result of `%s`, which is never used: inspect it, or discard it with `_ = ...`",
+					identifier_text(k.c, sym.name), source,
+				)
+				continue
+			}
+			errorf(
+				k.c, span, "L0698",
+				"`%s` holds a `%s` that is never used: inspect it, or discard it with `_ = ...`",
+				identifier_text(k.c, sym.name), type_name(k.c, sym.type),
+			)
+		}
+	}
 }
 
 check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {

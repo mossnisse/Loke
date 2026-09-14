@@ -386,6 +386,11 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		return
 	}
 	v.symbol = symbol_id
+	// design.md "@(require_results)": every read of a name funnels through here,
+	// so this is the one place that can answer whether a binding was ever looked
+	// at. An assignment's destination reaches it too, which is why overwriting a
+	// required result still counts as reading it.
+	sym.named = true
 
 	// A nested procedure literal has no closure in M2, so a name that lives in
 	// an enclosing procedure's frame is rejected here rather than silently

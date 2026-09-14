@@ -644,7 +644,7 @@ map_try_insert_keeps_unrelated_key :: proc(values: []int) -> []int {
 	local := [3]int{7, 8, 9};
 	table: map[string]Holder = {};
 	table["a"] = Holder{values};
-	err := table.try_insert("b", Holder{local[:]});
+	_ = table.try_insert("b", Holder{local[:]});
 	return table["a"].view;
 }
 

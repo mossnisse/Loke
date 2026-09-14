@@ -35,4 +35,7 @@ main :: proc() {
 	@(unknown_local) value := 1;
 	g();
 	h();
+	// Binding the result discards it as quietly as the bare call above does, so
+	// it answers to the same policy. `_ = h()` stays the written discard.
+	uninspected := h();
 }

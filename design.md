@@ -5846,7 +5846,9 @@ Within a public-default file, `@(private)` narrows an individual declaration bac
 
 #### `@(require_results)`
 
-`@(require_results)` requires a call's results to be used or explicitly discarded. A bare call statement that violates the requirement is a compile-time error. Assignment to `_` explicitly discards a result.
+`@(require_results)` requires a call's results to be used or explicitly discarded. A bare call statement that violates the requirement is a compile-time error, and so is a local binding of the result whose name is never read afterwards — binding a failure and never looking at it discards it as quietly as dropping the call on the floor. Assignment to `_` explicitly discards a result.
+
+Reading the name in any way satisfies the requirement, including `_ = binding`, so the diagnostic asks only whether the binding was looked at, never whether every variant was handled. A binding that is read and then overwritten with a second unhandled result is not reported: that is dataflow, not a name lookup.
 
 The requirement can originate in either a declaration or a result type:
 
@@ -5860,8 +5862,11 @@ foo :: proc() -> bool {
 }
 
 main :: proc() {
-    foo();     // ERROR: the result is not handled
-    _ = foo(); // OK: the result is explicitly discarded
+    foo();                  // ERROR: the result is not handled
+    uninspected := foo();   // ERROR: the binding is never read
+    _ = foo();              // OK: the result is explicitly discarded
+    handled := foo();       // OK: read below
+    _ = handled;
 }
 ```
 

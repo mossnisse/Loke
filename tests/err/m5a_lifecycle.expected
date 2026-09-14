@@ -16,6 +16,9 @@ a `move_only` type cannot also declare `hook(copy)`
 L0488
 @40:2
 duplicate `hook(drop)` for `Resource`
+L0698
+@46:2
+`bad` holds a `Result(^mut Move_Only, Allocator_Error)` that is never used
 L0491
 @46:19
 `Move_Only` is move-only, so it cannot be cloned into a new allocation

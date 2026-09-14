@@ -269,36 +269,37 @@ report_discarded_required_results :: proc(k: ^Checker, expr: Expr) {
 	if !is_call || call.type == TYPE_VOID || call.type == INVALID_TYPE {
 		return // not a call, a call with no results, or one that did not resolve
 	}
-	required := false
-	name := ""
-	if selected := symbol_of(k.c, call.resolution.chosen_overload); selected != nil {
-		required = selected.require_results
-		name = identifier_text(k.c, selected.name)
-	}
-	if !required {
-		if group := symbol_of(k.c, callee_group(k, call.callee)); group != nil && group.require_results {
-			required = true
-			name = identifier_text(k.c, group.name)
+	if name, required := required_result_of_call(k, call); required {
+		if name != "" {
+			errorf(
+				k.c, call.span, "L0612",
+				"the result of `%s` must be used or discarded with `_ = ...`", name,
+			)
+			return
 		}
-	}
-	if required {
-		errorf(
-			k.c, call.span, "L0612",
-			"the result of `%s` must be used or discarded with `_ = ...`", name,
-		)
-		return
-	}
-	// design.md "@(require_results)": the attribute is a *type* attribute as
-	// well, so a result whose type requires handling is required whoever
-	// declared the procedure. `Result` is the one that matters in practice.
-	if type_requires_results(k.c, call.type) {
 		errorf(
 			k.c, call.span, "L0612",
 			"this call produces `%s`, which must be used or discarded with `_ = ...`",
 			type_name(k.c, call.type),
 		)
-		return
 	}
+}
+
+// Whether a call's result must be handled, and the declaration that says so —
+// an empty name means the requirement came from the result *type* rather than a
+// declaration. Shared with the binding check, so a bound result and a bare call
+// answer to the same policy.
+required_result_of_call :: proc(k: ^Checker, call: ^Expr_Call) -> (name: string, required: bool) {
+	if selected := symbol_of(k.c, call.resolution.chosen_overload); selected != nil && selected.require_results {
+		return identifier_text(k.c, selected.name), true
+	}
+	if group := symbol_of(k.c, callee_group(k, call.callee)); group != nil && group.require_results {
+		return identifier_text(k.c, group.name), true
+	}
+	// design.md "@(require_results)": the attribute is a *type* attribute as
+	// well, so a result whose type requires handling is required whoever
+	// declared the procedure. `Result` is the one that matters in practice.
+	return "", type_requires_results(k.c, call.type)
 }
 
 // The procedure group a callee names, or INVALID_SYMBOL. `pkg.group` names one
