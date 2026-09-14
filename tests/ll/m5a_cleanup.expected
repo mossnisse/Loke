@@ -1,8 +1,8 @@
-call void @loke.p.Res.release(ptr %b.76)
-call void @loke.p.Res.release(ptr %a.72)
-%defer0.101 = alloca i1
-store i1 false, ptr %defer0.101
-store i1 true, ptr %defer0.101
-store %struct.Res.* { i64 0 }, ptr %b.106
-br i1 %t115, label %defer.run.116, label %defer.skip.117
-call void @loke.p.Res.release(ptr %a.102)
+call void @loke.p.Res.release(ptr %b.*)
+call void @loke.p.Res.release(ptr %a.*)
+%defer0.* = alloca i1
+store i1 false, ptr %defer0.*
+store i1 true, ptr %defer0.*
+store %struct.Res.* { i64 0 }, ptr %b.*
+br i1 %t*, label %defer.run.*, label %defer.skip.*
+call void @loke.p.Res.release(ptr %a.*)

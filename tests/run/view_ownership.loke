@@ -98,8 +98,10 @@ main :: proc() {
 	fmt.println(9);
 	foreach (k in named.keys()) { fmt.println(900 + k.len()); }
 
-	// A record element whose fields are each managed: destructuring moves the
-	// fields out of the copy, so each is disposed of exactly once.
+	// design.md "Borrowing iteration": a sequence lends its elements, and lends
+	// each field of one a header takes apart, so none of these three loops copies
+	// or disposes of anything. The clone and drop before `1007` build the element
+	// the container keeps.
 	fmt.println(10);
 	pairs: [dynamic]Pair = {};
 	pairs.append(Pair{Tracked{3}, Tracked{4}});
@@ -114,8 +116,9 @@ main :: proc() {
 	fmt.println(13);
 	foreach (v, i in table.values().indexed()) { fmt.println(1300 + v.id + i); }
 
-	// A sequence's own `next` agrees with a loop over the same sequence: both
-	// copy the element out of the container's storage and hand over an owner.
+	// A sequence's own `next` still hands over an owned copy, which a loop over
+	// the same sequence no longer makes: the built-in iterators are converted by
+	// the rest of step 4 (see known-gaps.md).
 	fmt.println(14);
 	singles: [dynamic]Tracked = {};
 	singles.append(Tracked{5});

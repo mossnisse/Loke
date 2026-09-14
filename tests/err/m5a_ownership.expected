@@ -26,32 +26,29 @@ L0503
 @69:6
 `Only` is move-only, so this assignment cannot copy it; write `move(...)` to transfer ownership instead
 L0491
-@75:19
-`Only` is move-only, so a by-value `foreach` cannot copy it out of the container; iterate `source.refs()` for read-only access, `&value` for mutable access, or remove the elements
-L0491
-@79:19
+@80:19
 `Only` is move-only, so this view cannot copy the value out of the map
 L0491
-@82:20
+@83:20
 `Only` is move-only, so this view cannot copy the value out of the map
 L0505
-@89:16
+@90:16
 `exchange` replaces the destination, so it is written `exchange(inout place, replacement)`
 L0500
-@91:7
+@92:7
 `h` cannot be exchanged here: it has already been moved, dropped, or released
 L0498
-@97:7
+@98:7
 `drop` cannot be applied to `static` storage, which is always live
 L0498
-@98:12
+@99:12
 `move` cannot be applied to `thread_local` storage, which is always live
 L0506
-@99:18
+@100:18
 a `static` declaration is initialised once, before any code runs, so its initialiser must be a compile-time constant
 L0500
-@106:14
+@107:14
 `d` cannot be used here: it is live on only some of the paths that reach this point
 L0501
-@111:23
+@112:23
 `value` is a `move` parameter, so this argument is written `move(...)`

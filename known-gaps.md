@@ -17,9 +17,10 @@ Each entry carries its own repro instead, small enough to paste.
 by the header — borrowed by default, mutable at an `&` leaf, consuming from a
 temporary or `move(place)` — with recursive binding patterns, `Yield`
 descriptors, `Consuming_Iterable`, and `copied()` as the written clone. The
-compiler still implements the model that preceded it: an ordinary `foreach` over
-a place copies each element, `refs()` is the borrowing traversal, bindings are
-flat, and there is no consuming traversal.
+compiler is partway there: ordinary traversal of an array, a slice, or a dynamic
+array now lends each element, while maps, text, ranges, protocol iterators, and
+every `indexed()` traversal still copy. Bindings are flat, `refs()` still exists,
+and there is no consuming traversal.
 
 This is one divergence rather than fifteen because it is one coordinated change.
 [iteration-unification-plan.md](iteration-unification-plan.md) has the six
@@ -34,42 +35,42 @@ owned. The catalogue's `Iterable` still spells its constraint
 `Self.Iterator.Item`; the two agree while every built-in yields owned elements,
 and step 4 is what makes them differ.
 
-Step 3 has landed the ownership and lifetime rules the lowering will need, and
-they hold today for the traversals that already exist: a `&` binding is a
-non-owning view like a switch payload, its loan ends with the step, a pointer
-into a switch payload borrows the subject, and a lending method's result is
-attributed by the callee's summary. The two built-in iteration synths have no
-body to summarize, so they are still named directly in
-[cfg_provenance.odin](src/cfg_provenance.odin); step 4 replaces that when it
-gives every lending iterator a summary.
+Step 3 has landed the ownership and lifetime rules the lowering needs: a `&`
+binding is a non-owning view like a switch payload, its loan ends with the step,
+a pointer into a switch payload borrows the subject, and a lending method's
+result is attributed by the callee's summary. The two built-in iteration synths
+have no body to summarize, so they are still named directly in
+[cfg_provenance.odin](src/cfg_provenance.odin).
+
+Step 4 has converted the contiguous containers: iterating an array, a slice, or a
+dynamic array clones nothing, and a move-only element is read like any other. The
+adapters are what remain of it. `reversed()` lends, because it only flips which
+element the cursor reaches, but `indexed()` materializes a record and so still
+copies its element into one — and neither adapter is contributed at all for a
+move-only element, so the sequence below has no `indexed` member to call rather
+than a copy to refuse. `copied()`, consuming traversal, and the move-iterators do
+not exist yet.
 
 ```odin
 package main;
 
 Entry :: move_only struct { id: int }
 
-sum :: proc(items: []Entry) -> int {
-	total := 0;
-	foreach (item in items) {   // the spec borrows; the compiler tries to copy
-		total += item.id;
-	}
-	return total;
-}
-
-main :: proc() {
-	_ = sum([]Entry{});
+walk :: proc(items: []Entry) {
+	foreach (item in items) { _ = item.id; }               // lends, as specified
+	foreach (item, at in items.indexed()) { _ = at; }      // no such member
 }
 ```
 
+`L0491` is now reached through the map views, which still hand back owned halves:
+
 ```
-error[L0491]: `Entry` is move-only, so a by-value `foreach` cannot copy it out of
-the container; iterate `source.refs()` for read-only access, `&value` for mutable
-access, or remove the elements
+error[L0491]: `Only` is move-only, so this view cannot copy the value out of the
+map; iterate `&value`, or remove the entries
 ```
 
-Until then the compiler's own diagnostics, `L0491` and the `L0507` copy-cost
-report for a by-value loop, still name `refs()` — the spelling the specification
-no longer has.
+The refusal a sequence used to give still names `refs()` in its remedy — the
+spelling the specification no longer has, and which step 6 deletes.
 
 ## Not gaps
 

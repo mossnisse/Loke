@@ -881,6 +881,11 @@ Stmt_Foreach :: struct {
 	// The complete `Element` one binding names: a record for a map entry or an
 	// `indexed()` pair, and the yielded value itself otherwise.
 	element_type:  Type_Id,
+	// design.md "Borrowing iteration": this traversal lends each element rather
+	// than copying it out, so a binding names the container's own storage and the
+	// loop owns nothing to dispose of. `&` in a binding says the same about
+	// mutable storage; the two are the traversal's two lending modes.
+	borrows:       bool,
 	count:         u64,       // a fixed array's length
 	iterator_type: Type_Id,   // the protocol path's opaque iterator
 	iter_symbol:   Symbol_Id,

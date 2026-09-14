@@ -1,4 +1,4 @@
 type <{ i8, i32 }>
 type { i1, i32, [0 x i128] }
 type { [1 x i8], [4 x i8], [0 x i64] }
-store i32 3, ptr %t369, align 1
+store i32 3, ptr %t*, align 1

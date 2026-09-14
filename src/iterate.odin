@@ -726,6 +726,24 @@ foreach_is_place_loop :: proc(s: ^Stmt_Foreach) -> bool {
 	return pattern_has_ref(s.bindings)
 }
 
+// design.md "Borrowing iteration": ordinary traversal of contiguous storage
+// lends each element, so the binding names the container's slot and the loop
+// copies nothing. `&` asks for the mutable form of the same thing, and
+// `indexed()` still materializes a record of its own, so neither is this.
+//
+// Text, ranges, maps, and protocol iterators keep producing owned values until
+// step 4 of the iteration unification converts them.
+foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
+	if s.indexed || foreach_is_place_loop(s) {
+		return false
+	}
+	#partial switch s.kind {
+	case .Array, .Slice, .Dynamic:
+		return true
+	}
+	return false
+}
+
 // design.md: "any `&` leaf in the binding pattern selects mutable traversal",
 // so the search is over the whole tree rather than the top level.
 @(private = "file")
@@ -1021,18 +1039,22 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if !gate_type(k, element, expr_span(s.iterable)) {
 		return FLOWS
 	}
-	// design.md "Element bindings": a value loop yields an owned `Element`. A
+	// design.md "Borrowing iteration": traversing a place lends each element, so
+	// nothing is copied out of the container and a move-only element is read like
+	// any other. Every other lowering still yields an owned element.
+	s.borrows = foreach_lends_elements(s)
+	// design.md "Element bindings": a copying loop yields an owned `Element`. A
 	// built-in traversal copies it out of container storage, so a move-only
 	// element has nothing for it to produce; a protocol iterator's `next` already
 	// hands one over and needs no copy.
-	if s.kind != .Protocol && !require_copyable_element(k, s, element) {
+	if !s.borrows && s.kind != .Protocol && !require_copyable_element(k, s, element) {
 		return FLOWS
 	}
-	// The loop disposes of its element at the end of every step, so the drop and
-	// (for a copied one) the clone have to exist. `indexed()` wraps the traversal
-	// in a record of its own, which is why this is asked here and not only where
-	// the iterable's members were contributed.
-	if type_is_managed(k.c, element) {
+	// A copying loop disposes of its element at the end of every step, so the drop
+	// and the clone have to exist. `indexed()` wraps the traversal in a record of
+	// its own, which is why this is asked here and not only where the iterable's
+	// members were contributed. A lending loop owns nothing and needs neither.
+	if !s.borrows && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
 	if len(s.bindings) == 1 {
@@ -1101,7 +1123,7 @@ bind_element_field :: proc(k: ^Checker, s: ^Stmt_Foreach, index: int, type: Type
 	if !gate_type(k, type, expr_span(s.iterable)) {
 		return false
 	}
-	s.bindings[index].symbol = bind_loop_name(k, binding, type, false)
+	s.bindings[index].symbol = bind_loop_name(k, binding, type, false, s.borrows)
 	return true
 }
 
@@ -1138,7 +1160,9 @@ check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	return Flow_Info{can_fall_through = true, returns = body.returns}
 }
 
-bind_loop_name :: proc(k: ^Checker, binding: Foreach_Binding, type: Type_Id, mutable: bool) -> Symbol_Id {
+bind_loop_name :: proc(
+	k: ^Checker, binding: Foreach_Binding, type: Type_Id, mutable: bool, borrows := false,
+) -> Symbol_Id {
 	if binding.name.text == "_" || binding.name.text == "" {
 		return INVALID_SYMBOL
 	}
@@ -1155,9 +1179,10 @@ bind_loop_name :: proc(k: ^Checker, binding: Foreach_Binding, type: Type_Id, mut
 		// By default each iterated value is a copy, and assignment to the copy
 		// does not modify the source; `&value` makes the binding the element.
 		immutable = !mutable,
-		// A `&` binding names storage the source still owns, so it is the same
-		// non-owning view a switch over a place gives its payload.
-		borrowed_binding = binding.is_ref ? .Loop_Element : .None,
+		// A `&` binding, and a binding over a lending traversal, both name storage
+		// the source still owns: the same non-owning view a switch over a place
+		// gives its payload.
+		borrowed_binding = binding.is_ref || borrows ? .Loop_Element : .None,
 	})
 	k.scope.names[id] = symbol
 	return symbol

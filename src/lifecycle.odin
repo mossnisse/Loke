@@ -659,7 +659,6 @@ Copy_Site :: enum {
 	Return,
 	Or_Else,
 	Or_Return,
-	Iteration,
 }
 
 @(private = "file")
@@ -671,7 +670,6 @@ copy_site_text :: proc(site: Copy_Site) -> string {
 	case .Return:     return "return"
 	case .Or_Else:    return "`or_else`"
 	case .Or_Return:  return "`or_return`"
-	case .Iteration:  return "loop"
 	}
 	return "copy"
 }
@@ -699,17 +697,15 @@ report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr,
 		return
 	}
 	name := ""
+	// A binding that only views its source has no ownership to hand over, so the
+	// `move` advice below would name something `move` is not allowed to take.
+	transferable := false
 	if root := symbol_of(k.c, place_root_symbol(k.c, source)); root != nil {
 		name = identifier_text(k.c, root.name)
+		transferable = root.borrowed_binding == .None
 	}
 	source_text := name == "" ? fmt.aprintf("a `%s`", type_name(k.c, type), allocator = k.c.semantic_allocator) :
 		fmt.aprintf("`%s`", name, allocator = k.c.semantic_allocator)
-	// A by-value traversal copies one element per step, not the container, so
-	// naming the container alone would report the wrong thing as duplicated.
-	if site == .Iteration {
-		source_text = name == "" ? "each element" :
-			fmt.aprintf("each element of `%s`", name, allocator = k.c.semantic_allocator)
-	}
 	// A clone is not a fixed-size copy: reporting only its inline bytes would
 	// understate it, since the allocation it makes is the expensive half.
 	if allocates {
@@ -734,16 +730,8 @@ report_copy_cost :: proc(k: ^Checker, site: Copy_Site, span: Span, source: Expr,
 	// The advice is transfer or sharing only — never `inout` as an optimization,
 	// since `inout` grants mutation rights and changes which aliases are legal
 	// (design.md).
-	if name != "" && site != .Return {
+	if name != "" && transferable && site != .Return {
 		add_notef(k.c, no_span(), "write `move(%s)` if `%s` is no longer needed", name, name)
-	}
-	// A loop borrows its elements by asking for them that way; the pointer advice
-	// every other site gives has no place to be written here.
-	if site == .Iteration {
-		if name != "" {
-			add_notef(k.c, no_span(), "iterate `%s.refs()` to borrow each element instead", name)
-		}
-		return
 	}
 	add_notef(k.c, no_span(), "take a pointer or `shared(T)` if the two names should share one value")
 }

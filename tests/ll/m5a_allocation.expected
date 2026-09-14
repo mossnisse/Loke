@@ -4,11 +4,11 @@ declare ptr @loke_rt_v1_alloc(ptr, i64, i64)
 declare ptr @loke_rt_v1_alloc_zeroed(ptr, i64, i64)
 declare void @loke_rt_v1_free(ptr, ptr, i64, i64)
 call ptr @loke_rt_v1_selected_allocator()
-call ptr @loke_rt_v1_alloc_zeroed(ptr %t385, i64 8, i64 8)
-call ptr @loke_rt_v1_alloc(ptr %t420, i64 8, i64 8)
-call void @loke_rt_v1_free(ptr %t415, ptr
+call ptr @loke_rt_v1_alloc_zeroed(ptr %t*, i64 8, i64 8)
+call ptr @loke_rt_v1_alloc(ptr %t*, i64 8, i64 8)
+call void @loke_rt_v1_free(ptr %t*, ptr
 newclone.store.
 newclone.clone.
 newclone.release.
 newclone.publish.
-@loke.i.Res.try_clone(ptr %t460, ptr %t453)
+@loke.i.Res.try_clone(ptr %t*, ptr %t*)

@@ -164,6 +164,10 @@ bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Fie
 			Foreach_Field{
 				type = field.type,
 				address = gep_field(e, record, address, index),
+				// A lending traversal lends each field of the element too: taking
+				// the record apart must not copy what the whole was not copied
+				// from (design.md "Borrowing iteration").
+				place = source.place,
 				stored = source.stored,
 			},
 		)
@@ -593,10 +597,11 @@ bind_indexed_value :: proc(
 			)
 		}
 		// `&value` is the element itself, so the binding is its address and a store
-		// through it reaches the array. A value binding copies out of that same
-		// storage instead, and owns what it copied for the step.
+		// through it reaches the array. A lending traversal binds that same address
+		// read-only (design.md "Borrowing iteration"); only a copying one loads the
+		// element out and owns what it copied for the step.
 		append(&fields, Foreach_Field{
-			type = yielded, address = address, place = s.bindings[0].is_ref, stored = true,
+			type = yielded, address = address, place = s.bindings[0].is_ref || s.borrows, stored = true,
 		})
 	}
 	if foreach_is_place_loop(s) {

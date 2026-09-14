@@ -68,13 +68,14 @@ main :: proc() {
 	g := f;
 	g = f;
 
-	// A by-value `foreach` copies the element out of the container's storage, and
-	// a move-only element has no copy to make. A map view yields owned halves, so
-	// it refuses for the same reason.
+	// design.md "Borrowing iteration": traversing a place lends each element, so a
+	// move-only one is read like any other and this is not a copy at all.
 	table := [2]Only{Only{11}, Only{12}};
 	foreach (item in table) {
 		fmt.println(item.id);
 	}
+	// A map view still yields owned halves, so it refuses to copy a move-only
+	// value out of the table.
 	locked: map[int]Only = {};
 	foreach (item in locked.values()) {
 		fmt.println(item.id);

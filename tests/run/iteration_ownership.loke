@@ -13,6 +13,18 @@ impl Tracked {
 	drop_item :: hook(drop) proc(self: inout Tracked) {}
 }
 
+// design.md "Borrowing iteration": a move-only element is read like any other.
+Locked :: move_only struct { id: int, }
+impl Locked {
+	release :: hook(drop) proc(self: inout Locked) { self.id = 0; }
+}
+
+sum :: proc(items: []Locked) -> int {
+	total := 0;
+	foreach (item in items) { total += item.id; }
+	return total;
+}
+
 drops: int;
 Sequence :: struct { count: int, }
 Cursor :: struct { at: int, count: int, active: bool, }
@@ -49,6 +61,27 @@ main :: proc() {
 	// Capacity never appears in either iterator type.
 	fmt.println(size_of(container.Small_Array(int, 4).Iterator) == size_of(container.Small_Array(int, 128).Iterator));
 	fmt.println(size_of(container.Small_Array(int, 4).Mut_Iterator) == size_of(container.Small_Array(int, 128).Mut_Iterator));
+	// design.md "Borrowing iteration": traversing a place lends each element, so
+	// a plain loop over contiguous storage clones nothing whatever the element
+	// type, and copying one is written.
+	owned := [dynamic]Tracked{};
+	owned.append(Tracked{5});
+	owned.append(Tracked{6});
+	copies = 0;
+	foreach (value in owned) { fmt.println(value.id); }
+	foreach (value in owned.reversed()) { fmt.println(value.id); }
+	fmt.println(copies);
+	foreach (value in owned) { saved := value; fmt.println(saved.id); }
+	fmt.println(copies);
+
+	// A move-only element has no copy to make, and now needs none to be read.
+	locked := [dynamic]Locked{};
+	locked.append(Locked{7});
+	foreach (value in locked) { fmt.println(value.id); }
+	fmt.println(sum(locked[:]));
+	_ = owned;
+	_ = locked;
+
 	sequence := Sequence{3};
 	indexed := sequence.indexed();
 	foreach (value, index in indexed) { if (value == 2) { break; } }

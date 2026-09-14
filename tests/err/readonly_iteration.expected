@@ -25,3 +25,12 @@ this temporary has ended
 L0614
 @66:19
 reached through a packed struct
+L0512
+@74:3
+`values` cannot be modified here: a read-only iterator of it is still in use
+L0512
+@85:2
+`values` cannot be modified here: a read-only iterator of it is still in use
+L0690
+@93:34
+views an element a `foreach` source still owns

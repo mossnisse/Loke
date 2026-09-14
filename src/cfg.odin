@@ -757,46 +757,9 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 	graph.current = done
 }
 
-// design.md "Value semantics and the ownership rule": iteration is the context
-// that copies from a place rather than borrowing it, so a by-value traversal is
-// a copy site once per step. Only the direct container traversals are reported:
-// a map entry's key binding borrows rather than copies, so the entry type would
-// overstate what is duplicated, and a protocol iterator's copy happens inside
-// its own `next` rather than at the loop. Read before the body raises
-// `loop_depth`, so the note about an enclosing loop means one outside this.
-@(private = "file")
-report_iteration_copies :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
-	if graph.mode != .Lifecycle {
-		return
-	}
-	#partial switch s.kind {
-	case .Array, .Slice, .Dynamic:
-	case:
-		return
-	}
-	if !expression_is_borrowed_place(graph.k.c, s.iterable) {
-		return // a temporary or `move(...)` transfers its elements
-	}
-	// The same rule `report_argument_copies` follows: a scalar element is not a
-	// copy worth naming at any threshold, and that is what `source.refs()` yields.
-	if !type_is_managed(graph.k.c, s.element_type) && !type_is_aggregate(graph.k.c, s.element_type) {
-		return
-	}
-	for binding in s.bindings {
-		if binding.is_ref {
-			return // `&item` borrows the element it names
-		}
-	}
-	report_copy_cost(
-		graph.k, .Iteration, expr_span(s.iterable), s.iterable,
-		s.element_type, graph.loop_depth > 0,
-	)
-}
-
 @(private = "file")
 walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	iterated := walk_flow_expr(graph, s.iterable)
-	report_iteration_copies(graph, s)
 	// The traversal also borrows container storage, but copying an element
 	// preserves its existing borrows without borrowing the container itself.
 	elements := iterated
@@ -828,6 +791,12 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 			loans := iterated
 			if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 { loans = elements }
 			prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
+			// design.md "Borrowing iteration": a lending binding names the
+			// container's own slot, so `&item` borrows the source and stays valid
+			// for as long as that source does -- past this step, and past the loop.
+			if s.borrows {
+				prov_bind_view(graph, binding.symbol, iterated)
+			}
 		}
 	}
 	// design.md "By-reference iteration": the loan a `&` binding names ends when

@@ -65,3 +65,30 @@ packed_storage :: proc() {
 	value: Packed = {};
 	foreach (item in value.items.refs()) { fmt.println(item^); }
 }
+
+// design.md "Borrowing iteration": an ordinary traversal of a place lends each
+// element too, so the same rules bind it -- without `refs()` in sight.
+lend_during_mutation :: proc() {
+	values := [dynamic]int{1, 2};
+	foreach (item in values) {
+		values.append(3);
+		fmt.println(item);
+	}
+}
+
+// `&item` on a lending binding carries the element's own source provenance, so
+// it outlives the step and ends when that source is invalidated.
+escaped_element :: proc() {
+	values := [dynamic]int{1, 2};
+	kept: ^int = nil;
+	foreach (item in values) { kept = &item; }
+	values.append(3);
+	fmt.println(kept^);
+}
+
+// The binding views storage the source still owns, so there is no owner here to
+// release.
+drop_lent_element :: proc() {
+	values := [dynamic][dynamic]int{};
+	foreach (item in values) { drop(item); }
+}

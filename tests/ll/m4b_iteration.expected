@@ -1,8 +1,8 @@
 %struct.Range.int.* = type { i64, i64, i1 }
-%t373 = select i1 false, i1 %t375, i1 %t374
-%t394 = insertvalue %struct.Range.int.* %t393, i1 true, 2
-%t405 = select i1 %t399, i1 %t407, i1 %t406
-br i1 %t386, label %foreach.done.371, label %foreach.step.387
+%t* = select i1 false, i1 %t*, i1 %t*
+%t* = insertvalue %struct.Range.int.* %t*, i1 true, 2
+%t* = select i1 %t*, i1 %t*, i1 %t*
+br i1 %t*, label %foreach.done.*, label %foreach.step.*
 foreach.head.
 foreach.post.
 foreach.done.
