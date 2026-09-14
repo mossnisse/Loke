@@ -1997,11 +1997,15 @@ proc_type_name :: proc(c: ^Compiler, info: ^Type_Info) -> string {
 			strings.write_string(&b, escape_level_name(info.param_escapes[index]))
 			strings.write_string(&b, ") ")
 		}
-		if index < len(info.param_modes) && info.param_modes[index] == .Inout {
-			strings.write_string(&b, "inout ")
-		}
-		if index < len(info.param_modes) && info.param_modes[index] == .Borrow {
-			strings.write_string(&b, "borrow ")
+		// A parameter mode is part of the type, so two signatures differing only in
+		// one must not print the same — a mismatch report naming the same text twice
+		// explains nothing about why the argument was refused.
+		if index < len(info.param_modes) {
+			#partial switch info.param_modes[index] {
+			case .Inout:  strings.write_string(&b, "inout ")
+			case .Borrow: strings.write_string(&b, "borrow ")
+			case .Move:   strings.write_string(&b, "move ")
+			}
 		}
 		strings.write_string(&b, type_name(c, parameter))
 	}

@@ -1,0 +1,12 @@
+L0697
+@8:26
+`int` is a parameter name here, not a type
+L0697
+@9:26
+needs a written type, as in `proc(self: T)`
+L0697
+@10:26
+needs a written type, as in `proc(value: T)`
+L0310
+@17:30
+proc(move Res) -> int

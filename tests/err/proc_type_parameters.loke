@@ -1,0 +1,19 @@
+package main;
+
+// A written procedure type states every parameter's name and type. There is no
+// enclosing `impl` block to type a receiver from and no declaration to take a
+// default's type from, so a bare type is a parameter *name* — which used to
+// intern silently as `<invalid>` and report every later mismatch against a type
+// nobody wrote.
+unnamed  :: proc(f: proc(int) -> bool) -> int { return 0; }
+receiver :: proc(f: proc(self: inout) -> int) -> int { return 0; }
+inferred :: proc(f: proc(value: = 5) -> int) -> int { return 0; }
+
+// A parameter mode is part of the type, so a signature differing only in one
+// must say which: `proc(Res)` twice over explains nothing.
+Res :: move_only struct { id: int }
+consumes :: proc(value: move Res) -> int { return value.id; }
+takes :: proc(f: proc(value: Res) -> int) {}
+wrong_mode :: proc() { takes(consumes); }
+
+main :: proc() {}

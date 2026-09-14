@@ -1740,8 +1740,28 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 			// interned type carries the failure silently otherwise.
 			before := k.c.error_count
 			written := resolve_type_syntax(k, parameter.type)
-			if parameter.type != nil && written == INVALID_TYPE &&
-			   k.c.error_count == before {
+			if parameter.type == nil {
+				// A written procedure type has no enclosing `impl` block to type a
+				// receiver from and no declaration to take a default's type from, so
+				// every parameter states its own. Without this the interned type
+				// silently carries `<invalid>`, and the call that fails against it
+				// reports a mismatch against a type nobody wrote.
+				name := len(parameter.names) > 0 ? parameter.names[0].name.text : "value"
+				if parameter.default == nil && parameter.mode == .Value {
+					// Nothing but a bare word: it was meant as the type, so name it
+					// rather than telling the author to write the word twice.
+					errorf(
+						k.c, parameter.span, "L0697",
+						"`%s` is a parameter name here, not a type: a procedure type is written `proc(value: %s)`",
+						name, name,
+					)
+				} else {
+					errorf(
+						k.c, parameter.span, "L0697",
+						"a parameter of a procedure type needs a written type, as in `proc(%s: T)`", name,
+					)
+				}
+			} else if written == INVALID_TYPE && k.c.error_count == before {
 				report_unresolved_type(k, parameter.type)
 			}
 			for name_index in 0 ..< count {
