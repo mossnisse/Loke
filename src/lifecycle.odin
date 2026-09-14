@@ -143,19 +143,31 @@ require_lexical_owner :: proc(k: ^Checker, e: Expr, form: string) -> bool {
 		add_notef(k.c, sym.span, "declared here; `exchange` replaces a static-duration value instead")
 		return false
 	}
-	// design.md "Unions": a switch over a place borrows it, so the case binding
-	// is a view of a payload the subject still owns. Consuming the view leaves
-	// the subject live, and its own cleanup then releases storage the transfer
-	// already took -- silently, at scope exit, as a second free.
-	if sym.borrowed_binding {
-		errorf(
-			k.c,
-			expr_span(e),
-			"L0690",
-			"`%s` views the payload of a switch over a place, which still owns it; `switch (%s in move(...))` hands it over first",
-			form,
-			identifier_text(k.c, sym.name),
-		)
+	// A binding that views storage its source still owns has no owner to hand
+	// over: consuming the view leaves the source live, and the source's own
+	// cleanup then releases storage the transfer already took -- silently, at
+	// scope exit, as a second free. A switch over a place lends its payload
+	// (design.md "Unions") and a `&` loop binding lends one element (design.md
+	// "By-reference iteration"); the remedy differs, the reason does not.
+	if sym.borrowed_binding != .None {
+		if sym.borrowed_binding == .Switch_Payload {
+			errorf(
+				k.c,
+				expr_span(e),
+				"L0690",
+				"`%s` views the payload of a switch over a place, which still owns it; `switch (%s in move(...))` hands it over first",
+				form,
+				identifier_text(k.c, sym.name),
+			)
+		} else {
+			errorf(
+				k.c,
+				expr_span(e),
+				"L0690",
+				"`%s` views an element a `foreach` source still owns; take the element out of the source instead",
+				form,
+			)
+		}
 		add_notef(k.c, sym.span, "bound here")
 		return false
 	}

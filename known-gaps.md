@@ -34,6 +34,15 @@ owned. The catalogue's `Iterable` still spells its constraint
 `Self.Iterator.Item`; the two agree while every built-in yields owned elements,
 and step 4 is what makes them differ.
 
+Step 3 has landed the ownership and lifetime rules the lowering will need, and
+they hold today for the traversals that already exist: a `&` binding is a
+non-owning view like a switch payload, its loan ends with the step, a pointer
+into a switch payload borrows the subject, and a lending method's result is
+attributed by the callee's summary. The two built-in iteration synths have no
+body to summarize, so they are still named directly in
+[cfg_provenance.odin](src/cfg_provenance.odin); step 4 replaces that when it
+gives every lending iterator a summary.
+
 ```odin
 package main;
 

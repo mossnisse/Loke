@@ -19,10 +19,42 @@ main :: proc() {
 		break;
 	}
 	fmt.println(saved^);
+	// The loan a `&` binding names ends with the step it was yielded in --
+	// through a direct lowering exactly as through an iterator.
+	owners := [dynamic][dynamic]int{};
+	owners.append([dynamic]int{1});
+	direct: ^mut [dynamic]int = nil;
+	foreach (&owner in owners) {
+		direct = &mut owner;
+		break;
+	}
+	fmt.println(direct^);
+	_ = owners;
 	y: Small = {};
 	y.append(7);
 	it := y.iter_mut();
 	p := it.next();
 	drop(y);
 	fmt.println(p);
+}
+
+// A `&` binding names the element, which its source still owns, so there is no
+// owner here to hand over or release.
+element_ownership :: proc() {
+	owners := [dynamic][dynamic]int{};
+	owners.append([dynamic]int{1});
+	foreach (&owner in owners) {
+		drop(owner);
+	}
+	_ = owners;
+}
+
+element_transfer :: proc() {
+	owners := [dynamic][dynamic]int{};
+	owners.append([dynamic]int{1});
+	foreach (&owner in owners) {
+		taken := move(owner);
+		_ = taken;
+	}
+	_ = owners;
 }

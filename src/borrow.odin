@@ -1490,14 +1490,25 @@ merge_param_paths :: proc(
 	copy(loan_path, loan.path)
 	widen_summary_map_path(state.k.c, sym.type, loan_path)
 	changed := merge_precision(&into.precision, path_precision(loan_path))
+	matched := false
 	for path, position in shape {
 		if !paths_overlap(path.steps, loan_path) {
 			continue
 		}
+		matched = true
 		if !into.param_paths[index][position] {
 			into.param_paths[index][position] = true
 			changed = true
 		}
+	}
+	if !matched {
+		// The loan names the parameter's own storage -- `&self.count`, not an
+		// element of a view `self` holds -- and no carrier path describes that.
+		// Narrowing to the paths that do would drop the dependency altogether and
+		// let the pointer outlive the receiver, so the whole parameter is the only
+		// honest answer.
+		into.param_paths[index] = nil
+		return true
 	}
 	return changed
 }

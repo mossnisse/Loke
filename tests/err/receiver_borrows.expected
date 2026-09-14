@@ -1,9 +1,12 @@
 L0526
 @23:9
 this borrow cannot be returned: `local` ends when this procedure returns
+L0526
+@41:9
+this borrow cannot be returned: `local` ends when this procedure returns
 L0512
-@32:2
+@50:2
 `x` cannot be modified here: a read-only borrow of it is still in use
 L0512
-@38:2
+@56:2
 `y` cannot be dropped here: a read-only borrow of it is still in use

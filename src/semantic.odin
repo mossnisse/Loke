@@ -707,6 +707,13 @@ Builtin_Kind :: enum {
 	Atomic_Fence,
 }
 
+// What a non-owning binding views. `.None` is an ordinary owning binding.
+Borrowed_Binding :: enum u8 {
+	None,
+	Switch_Payload,
+	Loop_Element,
+}
+
 Symbol :: struct {
 	name:        Identifier_Id,
 	span:        Span,
@@ -796,10 +803,11 @@ Symbol :: struct {
 	// A value parameter is immutable storage; an `inout` parameter is a mutable
 	// alias. Both are addressable.
 	immutable:   bool,
-	// design.md "Unions": a switch over a place borrows it, so this case binding
-	// views a payload the subject still owns, and `move`/`drop` have no owner
-	// here to transfer or release.
-	borrowed_binding: bool,
+	// A binding that views storage another owner still holds, so `move`/`drop`
+	// have no owner here to transfer or release: a switch over a place lends its
+	// payload (design.md "Unions"), and a `&` loop binding lends one element of
+	// its source (design.md "By-reference iteration").
+	borrowed_binding: Borrowed_Binding,
 	// design.md "`@(allocator_reset)`": this `Allocator` parameter's region may
 	// be ended by a successful call. The promise is verified in the body and
 	// carried in the procedure type.

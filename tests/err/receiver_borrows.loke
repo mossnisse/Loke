@@ -23,6 +23,24 @@ escaped :: proc() -> []int {
 	return local.view();
 }
 
+// An `inout` receiver is no different: a pointer to storage the receiver itself
+// owns cannot outlive it, even from a type that also carries a view which would.
+// The dependency on a parameter widens as soon as one borrow names the
+// parameter's own storage rather than something it carries.
+Cursor :: struct {
+	items: []int,
+	at:    int,
+}
+
+impl Cursor {
+	position :: proc(self: inout Cursor) -> ^int { return &self.at; }
+}
+
+escaped_position :: proc(source: []int) -> ^int {
+	local := Cursor{source, 0};
+	return local.position();
+}
+
 main :: proc() {
 	x: Inline = {};
 	x.push(1);
@@ -37,4 +55,7 @@ main :: proc() {
 	w := y.view();
 	drop(y);
 	fmt.println(w.len());
+
+	values := [?]int{1, 2};
+	fmt.println(escaped_position(values[:])^);
 }

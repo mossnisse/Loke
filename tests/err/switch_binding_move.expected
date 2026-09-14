@@ -6,3 +6,7 @@ bound here
 L0690
 @20:18
 `drop` views the payload
+L0512
+@51:2
+`outcome` cannot be assigned here: a read-only payload of it is still in use
+the payload is created here

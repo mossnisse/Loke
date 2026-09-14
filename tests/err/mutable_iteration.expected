@@ -7,6 +7,15 @@ L0512
 L0513
 @21:14
 this pointer is used after `value`, the local it borrows, has ended
+L0513
+@31:14
+this pointer is used after `owner`, the local it borrows, has ended
 L0512
-@26:2
+@37:2
 `y` cannot be dropped here: a mutable borrow of it is still in use
+L0690
+@47:8
+views an element a `foreach` source still owns
+L0690
+@56:17
+`move` views an element a `foreach` source still owns

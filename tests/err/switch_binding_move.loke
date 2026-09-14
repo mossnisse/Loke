@@ -38,10 +38,25 @@ taken_from_moved_place :: proc(source: []int) -> int {
 	}
 }
 
+// A pointer into the payload names the subject's storage, not the binding's
+// own, so it stays valid exactly as long as the subject holds that payload.
+// Replacing the subject is what ends it.
+pointer_outlives_payload :: proc() -> int {
+	outcome: Result([dynamic]int, int) = .ok([dynamic]int{1, 2});
+	held: ^[dynamic]int = nil;
+	switch (owned in outcome) {
+	case .ok:  held = &owned;
+	case .err: return -1;
+	}
+	outcome = .err(0);
+	return held.len();
+}
+
 main :: proc() {
 	values := [?]int{1, 2, 3};
 	taken_from_place(values[:]);
 	dropped_from_place(values[:]);
 	taken_from_temporary(values[:]);
 	taken_from_moved_place(values[:]);
+	pointer_outlives_payload();
 }

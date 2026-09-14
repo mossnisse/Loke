@@ -479,7 +479,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 				immutable  = borrows,
 				// `move`/`drop` on the binding would take an owner the subject
 				// still has, leaving its cleanup to release transferred storage.
-				borrowed_binding = borrows,
+				borrowed_binding = borrows ? .Switch_Payload : .None,
 			})
 			k.scope.names[name] = entry.binding_symbol
 		}

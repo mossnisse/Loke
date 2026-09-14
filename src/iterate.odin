@@ -1155,6 +1155,9 @@ bind_loop_name :: proc(k: ^Checker, binding: Foreach_Binding, type: Type_Id, mut
 		// By default each iterated value is a copy, and assignment to the copy
 		// does not modify the source; `&value` makes the binding the element.
 		immutable = !mutable,
+		// A `&` binding names storage the source still owns, so it is the same
+		// non-owning view a switch over a place gives its payload.
+		borrowed_binding = binding.is_ref ? .Loop_Element : .None,
 	})
 	k.scope.names[id] = symbol
 	return symbol

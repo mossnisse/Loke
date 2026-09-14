@@ -50,11 +50,27 @@ impl Inline_Iterator($T) {
 	}
 }
 
+// An `inout` receiver that hands back a pointer derived from a view it holds
+// names that view's source, not the receiver's own storage, so advancing the
+// receiver cannot end a pointer it already handed over. Every lending iterator
+// has this shape.
+Cursor :: struct {
+	items: []int,
+	at:    int,
+}
+
+impl Cursor {
+	next_ref :: proc(self: inout Cursor) -> ^int {
+		item := &self.items[self.at];
+		self.at += 1;
+		return item;
+	}
+}
+
 // A record whose field is already a borrow. Handing that field back copies the
 // view rather than borrowing the receiver's own storage, but the result still
 // keeps the receiver borrowed for as long as it is used: a borrowed parameter's
-// carrier paths are not separated from its storage, and an `inout` parameter is
-// conservative in exactly the same way, so an immutable receiver matches it.
+// carrier paths are not separated from its storage.
 Holder :: struct {
 	held: []int,
 }
@@ -113,4 +129,12 @@ main :: proc() {
 	holder := Holder{numbers[:]};
 	copied := holder.held_view();
 	fmt.println(copied.len(), copied[0]);
+
+	// Two pointers from one cursor: the first stays usable while the cursor
+	// advances, because both name `storage` rather than the cursor.
+	storage := [3]int{10, 20, 30};
+	cursor := Cursor{storage[:], 0};
+	first := cursor.next_ref();
+	second := cursor.next_ref();
+	fmt.println(first^, second^);
 }

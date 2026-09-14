@@ -156,6 +156,10 @@ Flow_Graph :: struct {
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
+	// The loan a non-owning binding views: a `&` loop element or a switch
+	// payload over a place. `&binding` names the source's storage, so it
+	// borrows the source rather than the binding's own frame slot.
+	view_loans:     map[Symbol_Id][]int,
 	// One slot per `carrier_shape` path, for a local whose type can hold a
 	// carrier without being one. Ordered by the shape, so values of one type
 	// pair by index.
@@ -245,6 +249,7 @@ build_flow_graph :: proc(
 	graph.entry_defs = make([dynamic]Prov_Entry_Def, allocator)
 	graph.root_by_symbol = make(map[Symbol_Id]Root_Id, 8, allocator)
 	graph.slot_by_symbol = make(map[Symbol_Id]int, 8, allocator)
+	graph.view_loans = make(map[Symbol_Id][]int, 8, allocator)
 	graph.content_by_symbol = make(map[Symbol_Id][]int, 8, allocator)
 	graph.call_results = make(map[^Expr_Call]Prov_Call_Result, 8, allocator)
 	graph.allocation_region_sources = make([dynamic]Prov_Allocation_Region_Source, allocator)
@@ -825,7 +830,10 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 			prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
 		}
 	}
-	walk_flow_loop_body(graph, s.body, head, done, s.kind == .Protocol ? s.bindings : nil)
+	// design.md "By-reference iteration": the loan a `&` binding names ends when
+	// the step does, whatever lowering produced the element -- a pointer taken
+	// from it may not outlive the iteration that yielded it.
+	walk_flow_loop_body(graph, s.body, head, done, s.bindings)
 	link(graph, graph.current, head)
 	graph.current = done
 }
@@ -879,6 +887,11 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		if graph.mode != .Lifecycle {
 			prov_bind_value(graph, c.binding_symbol, prov_case_payload(graph, s, c, subject), c.span)
 			prov_bind_case_region(graph, c.binding_symbol, s.subject)
+			// A place subject keeps owning its payload, so the binding views the
+			// subject's storage and a pointer taken from it borrows the subject.
+			if !consumes {
+				prov_bind_view(graph, c.binding_symbol, prov_subject_view(graph, s.subject))
+			}
 		} else {
 			track_case_binding(graph, c, consumes)
 		}

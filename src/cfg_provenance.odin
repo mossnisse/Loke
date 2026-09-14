@@ -158,6 +158,31 @@ prov_case_payload :: proc(
 	)
 }
 
+// The loan a binding that views another place holds. Without it the binding's
+// own frame slot would answer for `&binding`, and a pointer taken from a view
+// would escape every invalidation rule that protects its source.
+@(private)
+prov_bind_view :: proc(graph: ^Flow_Graph, id: Symbol_Id, loans: []int) {
+	if id == INVALID_SYMBOL || len(loans) == 0 {
+		return
+	}
+	graph.view_loans[id] = loans
+}
+
+// The borrow a switch over a place holds on its subject, for the payload
+// binding to view.
+@(private)
+prov_subject_view :: proc(graph: ^Flow_Graph, subject: Expr) -> []int {
+	if subject == nil {
+		return nil
+	}
+	root, path, ok := prov_place_of(graph, subject)
+	if !ok {
+		return nil
+	}
+	return prov_borrow(graph, root, path, false, expr_span(subject), "payload")
+}
+
 // A case binding names the payload its subject held, so it inherits that
 // subject's region: unwrapping a handle does not lose which region it names.
 @(private)
@@ -2015,6 +2040,15 @@ prov_address_of :: proc(graph: ^Flow_Graph, v: ^Expr_Unary) -> []int {
 	// `&place` is an immutable loan and `&mut place` an exclusive one: several
 	// `&` borrows of one place may be live together, while a `&mut` excludes
 	// every competing name (design.md "Capabilities and the one rule").
+	//
+	// A binding that views storage another owner holds -- a `&` loop element, a
+	// switch payload over a place -- is not its own root: the pointer names the
+	// source, and outlives the binding exactly as long as the source stays valid.
+	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
+		if loans, viewed := graph.view_loans[ident.symbol]; viewed {
+			return loans
+		}
+	}
 	root, path, ok := prov_place_of(graph, v.operand)
 	if !ok {
 		// Taking an element's address borrows through its slice/pointer; it
@@ -2658,12 +2692,23 @@ prov_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 			// used by result substitution below.
 			borrowed = prov_join(graph, borrowed, prov_carrier_slots(graph, argument))
 			prov_invalidate(graph, argument, v.span, "modified")
-			if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil &&
-			   (callee.synth == .Slice_Ref_Next ||
-			   (callee.synth == .Indexed_Next && iteration_lends_source(c, expr_base(argument).type))) {
-				// The returned read-only pointer names the held slice's storage,
-				// never the cursor. Advancing or dropping this iterator cannot
-				// invalidate an element already handed back.
+			// design.md "Borrowing iteration": a result derived from a view the
+			// receiver holds names that view's source, never the receiver's own
+			// storage, so advancing or dropping the receiver cannot invalidate an
+			// element already handed back. The callee's summary is what tells the
+			// two apart -- a dependency reaching the receiver's own storage widens
+			// to the whole parameter, while one that only reads through what it
+			// carries stays narrowed to those paths.
+			//
+			// The two iteration synths have no body to summarize, so they keep
+			// naming themselves until step 4 of the iteration unification gives
+			// every lending iterator a summary of its own.
+			lends := prov_result_reads_through_receiver(c, v, index)
+			if callee := symbol_of(c, v.resolution.chosen_overload); callee != nil {
+				lends ||= callee.synth == .Slice_Ref_Next ||
+					(callee.synth == .Indexed_Next && iteration_lends_source(c, expr_base(argument).type))
+			}
+			if lends {
 				actuals[index] = prov_carrier_slots(graph, argument)
 				continue
 			}
@@ -3437,4 +3482,30 @@ prov_synthetic_borrow :: proc(graph: ^Flow_Graph, v: ^Expr_Call, kind: Root_Kind
 		v.span,
 		carrier_noun(graph.k.c, type),
 	)
+}
+
+// Whether the callee's result reaches this parameter only through what the
+// parameter carries -- a view it holds -- rather than through its own storage.
+// A summary narrowed to carrier paths says exactly that: `merge_param_paths`
+// widens the entry to the whole parameter as soon as one loan names the
+// parameter's own storage, so a surviving narrowing cannot hide one.
+@(private = "file")
+prov_result_reads_through_receiver :: proc(c: ^Compiler, v: ^Expr_Call, index: int) -> bool {
+	// A mutable yield is an exclusive loan: it ends before the receiver is
+	// advanced or dropped, so it keeps naming the receiver however it was
+	// derived (design.md "By-reference iteration"). Only a read-only result may
+	// outlive the call that produced it.
+	if type_carries_borrow(c, v.type).mutable {
+		return false
+	}
+	summary, found := result_summary(c, call_contract_declaration(c, v))
+	if !found || index >= len(summary.param_paths) {
+		return false
+	}
+	for named in summary.param_paths[index] {
+		if named {
+			return true
+		}
+	}
+	return false
 }
