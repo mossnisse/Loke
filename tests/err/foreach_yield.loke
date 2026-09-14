@@ -1,0 +1,86 @@
+package main; import "base:interfaces";
+
+// design.md "Iteration protocol": an iterator's `Yield` says how a binding
+// receives what `next` hands back, and the checker validates it against the
+// element's shape. A lending descriptor is checked here but not yet lowered —
+// see known-gaps.md, "Iteration still follows the pre-unification model".
+
+Lender :: struct { values: []int }
+Lender_Iterator :: struct { source: []int, at: int }
+
+impl Lender {
+	Element  :: int;
+	Iterator :: Lender_Iterator;
+
+	iter :: proc(self) -> Lender_Iterator { return {self.values, 0}; }
+}
+
+impl Lender_Iterator {
+	// `next` matches the `^int` this descriptor makes of `int`, so what remains
+	// is the lowering, not the contract.
+	Yield :: interfaces.Yield_Borrowed;
+
+	next :: proc(self: inout Lender_Iterator) -> Option(^int) {
+		if (self.at >= self.source.len()) { return .none; }
+		item := &self.source[self.at];
+		self.at += 1;
+		return .some(item);
+	}
+}
+
+// A descriptor is one of the three markers or a record of them. Nothing else
+// describes a yield.
+Muddle :: struct { values: []int }
+Muddle_Iterator :: struct { at: int }
+
+impl Muddle {
+	Element  :: int;
+	Iterator :: Muddle_Iterator;
+
+	iter :: proc(self) -> Muddle_Iterator { return {0}; }
+}
+
+impl Muddle_Iterator {
+	Yield :: int;
+
+	next :: proc(self: inout Muddle_Iterator) -> Option(int) { return .none; }
+}
+
+// A record descriptor takes a record apart field by field, which a type with a
+// custom hook does not allow — the restriction a consuming destructure carries.
+Guarded :: struct { key: int, value: int }
+
+impl Guarded {
+	release :: hook(drop) proc(self: inout Guarded) { self.key = 0; }
+}
+
+Keeper :: struct { entries: []Guarded }
+Keeper_Iterator :: struct { at: int }
+
+impl Keeper {
+	Element  :: Guarded;
+	Iterator :: Keeper_Iterator;
+
+	iter :: proc(self) -> Keeper_Iterator { return {0}; }
+}
+
+impl Keeper_Iterator {
+	Yield :: struct{key: interfaces.Yield_Borrowed, value: interfaces.Yield_Borrowed};
+
+	next :: proc(self: inout Keeper_Iterator) -> Option(Guarded) { return .none; }
+}
+
+main :: proc() {
+	storage := [2]int{1, 2};
+	lender := Lender{storage[:]};
+	foreach (value in lender) { _ = value; }
+	_ = lender;
+
+	muddle := Muddle{storage[:]};
+	foreach (value in muddle) { _ = value; }
+	_ = muddle;
+
+	keeper := Keeper{};
+	foreach (entry in keeper) { _ = entry; }
+	_ = keeper;
+}

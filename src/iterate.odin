@@ -961,9 +961,20 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 		}
 		iter = reverse
 	}
+	// design.md "Iteration protocol": `next` hands back `Item`, which the
+	// iterator's `Yield` makes of the element. Without one it is the element
+	// itself, which is what every iterator written before `Yield` existed says.
+	yield, yield_ok := iterator_yield(k, iterator, expr_span(s.iterable))
+	if !yield_ok {
+		return FLOWS
+	}
+	item := yield_item_type(k, element, yield, expr_span(s.iterable))
+	if item == INVALID_TYPE {
+		return FLOWS
+	}
 	next := iteration_member(k, iterator, "next")
 	next_sym := symbol_of(k.c, next)
-	if !iteration_proc_matches(k, next_sym, iterator, .Inout, option_type(k, element)) {
+	if !iteration_proc_matches(k, next_sym, iterator, .Inout, option_type(k, item)) {
 		errorf(
 			k.c,
 			expr_span(s.iterable),
@@ -971,12 +982,24 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 			"`%s` needs `next :: proc(self: inout %s) -> Option(%s)`",
 			type_name(k.c, iterator),
 			type_name(k.c, iterator),
-			type_name(k.c, element),
+			type_name(k.c, item),
 		)
 		// A yielded element is a copy, so an iterator that gates `next` on the
 		// element being copyable simply has none here. Saying so is the difference
 		// between a missing method and a method this instantiation was never given.
 		note_excluded_member(k, iterator, "next")
+		return FLOWS
+	}
+
+	// A borrowed or mutable yield binds storage the source still owns, which
+	// needs the lifecycle and lowering work the rest of the unification carries.
+	if !yield_is_owned(yield) {
+		errorf(
+			k.c, expr_span(s.iterable), "L0695",
+			"`%s` lends its elements, and a lending `Yield` is not lowered yet",
+			type_name(k.c, iterator),
+		)
+		add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
 		return FLOWS
 	}
 

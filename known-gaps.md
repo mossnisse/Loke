@@ -25,6 +25,15 @@ This is one divergence rather than fifteen because it is one coordinated change.
 [iteration-unification-plan.md](iteration-unification-plan.md) has the six
 implementation steps; the specification is step 1, and the gap closes at step 6.
 
+Step 2 has landed the two representations, checked but not yet lowered: a nested
+binding pattern parses and reports `L0693`, and an iterator's `Yield` is read and
+validated against its element — a mismatch is `L0694` — but a descriptor that
+lends reports `L0695` rather than binding storage the lowering would treat as
+owned. The catalogue's `Iterable` still spells its constraint
+`Iterator(Self.Iterator, Self.Element)` rather than design.md's
+`Self.Iterator.Item`; the two agree while every built-in yields owned elements,
+and step 4 is what makes them differ.
+
 ```odin
 package main;
 

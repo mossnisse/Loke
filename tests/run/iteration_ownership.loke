@@ -1,4 +1,5 @@
 package main;
+import "base:interfaces";
 import "core:container";
 import "core:fmt";
 
@@ -21,6 +22,10 @@ impl Sequence {
 	iter :: proc(self) -> Cursor { return {0, self.count, true}; }
 }
 impl Cursor {
+	// design.md "Iteration protocol": an owned descriptor says what an iterator
+	// declaring none already means, so spelling it changes nothing here.
+	Yield :: interfaces.Yield_Owned;
+
 	next :: proc(self: inout Cursor) -> Option(int) {
 		if (self.at >= self.count) { return .none; }
 		self.at += 1;
