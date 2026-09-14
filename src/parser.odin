@@ -1188,6 +1188,17 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 		return with_attributes(parse_switch(p), attributes), true
 	case .When:
 		return with_attributes(parse_when(p), attributes), true
+	case .Impl:
+		// design.md "Methods and implementation blocks": a body-local `impl` gives
+		// a type declared in that body its methods, so a one-off callable record
+		// sits beside the call that takes it. The checker is what limits the
+		// subject.
+		item := parse_impl(p, attributes, start)
+		block, is_impl := item.(^Item_Impl)
+		if !is_impl {
+			return error_stmt(p, item_span(item)), true
+		}
+		return block, true
 	case .Defer:
 		return with_attributes(parse_defer(p), attributes), true
 	case .Return:

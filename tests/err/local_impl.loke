@@ -1,0 +1,51 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Methods and implementation blocks": a body-local `impl` may only
+// name a type declared in the same body. Anywhere else it would be a
+// caller-local extension, which definition-site lookup exists to rule out.
+
+Outer :: struct { a: int }
+
+names_a_file_scope_type :: proc() -> int {
+	impl Outer {
+		doubled :: proc(self) -> int { return self.a * 2; }
+	}
+	return Outer{2}.doubled();
+}
+
+names_a_builtin :: proc() -> int {
+	impl int {
+		doubled :: proc(self) -> int { return self * 2; }
+	}
+	return 2;
+}
+
+// A body-local block names one concrete type; a generic subject belongs at file
+// scope, where an instantiation can install it.
+names_a_generic_subject :: proc() -> int {
+	Box :: struct { v: int }
+	impl Box($T) {
+		get :: proc(self) -> int { return self.v; }
+	}
+	return 1;
+}
+
+// The subject of a nested procedure's block is that procedure's body, not the
+// enclosing one, so a type from outside it is out of reach here too.
+nested :: proc() -> int {
+	Held :: struct { v: int }
+	inner :: proc() -> int {
+		impl Held {
+			get :: proc(self) -> int { return self.v; }
+		}
+		return 1;
+	}
+	return inner();
+}
+
+main :: proc() {
+	fmt.println(names_a_file_scope_type(), names_a_builtin());
+	fmt.println(names_a_generic_subject(), nested());
+}

@@ -370,7 +370,15 @@ name_package_symbols :: proc(e: ^Emitter, pkg: ^Package) {
 		}
 	}
 	for literal, index in pkg.hoisted_procs {
-		e.names[literal.symbol] = llvm_proc_name(pkg, fmt.aprintf("lambda.%d", index))
+		// A declared body-local procedure is hoisted by the same route an
+		// anonymous literal is, so it is named here too. The written name keeps
+		// the module readable; the index is what keeps two bodies declaring the
+		// same name apart.
+		written := "lambda"
+		if sym := symbol_of(e.c, literal.symbol); sym != nil && sym.decl != nil {
+			written = llvm_safe(identifier_text(e.c, sym.name))
+		}
+		e.names[literal.symbol] = llvm_proc_name(pkg, fmt.aprintf("%s.%d", written, index))
 	}
 	// Instantiations are named with their own package's symbols, in deterministic
 	// instantiation order, so a cross-package generic call has a final name

@@ -2513,6 +2513,10 @@ eval_stmt_inner :: proc(ev: ^Evaluator, stmt: Stmt) -> Eval_Flow {
 	case ^Stmt_Error:
 		return .Normal
 
+	// Members were declared when the body was checked; there is nothing to run.
+	case ^Item_Impl:
+		return .Normal
+
 	case ^Decl:
 		return eval_local_decl(ev, s)
 

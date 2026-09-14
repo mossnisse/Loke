@@ -2523,15 +2523,44 @@ check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 	return check_block(k, b)
 }
 
+// The backend names and emits module functions by walking file-level items, so
+// a procedure declared inside a body has to arrive by the route an anonymous
+// literal takes. Without this it checks and then fails in the emitter.
+@(private = "file")
+hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
+	literal := decl_proc_literal(d)
+	if literal == nil || k.c.speculation_depth != 0 || len(d.symbols) == 0 {
+		return
+	}
+	if d.symbols[0] == INVALID_SYMBOL || symbol_is_generic(k, d.symbols[0]) {
+		return
+	}
+	if pkg := package_of(k.c, k.pkg); pkg != nil {
+		append(&pkg.hoisted_procs, literal)
+	}
+}
+
 check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	switch s in stmt {
 	case ^Stmt_Error:
 		// Parser diagnostics already describe this retained recovery node.
 		return FLOWS
 
+	case ^Item_Impl:
+		check_local_impl(k, s)
+		return FLOWS
+
 	case ^Decl:
 		declare_all(k, s)
 		install_symbols(k.scope, k.c, s.symbols)
+		// A declaration inside a body is never visited by the package phases that
+		// give a record its nominal identity, resolve a shape or a signature, and
+		// hoist a procedure for emission. They run here instead, in the same order,
+		// so a type or procedure declared in a body is the same kind of thing as
+		// one declared beside the procedure.
+		create_nominal_type_shell(k, s)
+		resolve_declaration_signature(k, s)
+		hoist_body_local_proc(k, s)
 		// Local declaration symbols do not exist during the package-wide attribute
 		// pass, so validate their attributes once they are declared here.
 		validate_decl_attributes(k, s)

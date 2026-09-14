@@ -460,6 +460,9 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	switch s in stmt {
 	case ^Stmt_Error:
 
+	// An `impl` declares members; it runs nothing and holds nothing live.
+	case ^Item_Impl:
+
 	case ^Decl:
 		walk_flow_decl(graph, s)
 

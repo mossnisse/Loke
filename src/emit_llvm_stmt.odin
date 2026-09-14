@@ -47,6 +47,9 @@ emit_stmt :: proc(e: ^Emitter, stmt: Stmt) {
 	switch s in stmt {
 	case ^Stmt_Error:
 
+	// Its members are module functions, emitted with the hoisted procedures.
+	case ^Item_Impl:
+
 	case ^Decl:
 		emit_local_decl(e, s)
 

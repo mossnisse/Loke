@@ -1,0 +1,15 @@
+L0699
+@12:7
+`Outer` is not declared in this procedure, so it cannot be given members here
+L0363
+@15:9
+`Outer` has no field or member `doubled`
+L0699
+@19:7
+`int` is not declared in this procedure, so it cannot be given members here
+L0699
+@29:7
+a generic `impl` belongs at file scope; a block inside a body names one concrete type
+L0699
+@40:8
+`Held` is not declared in this procedure, so it cannot be given members here

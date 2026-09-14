@@ -754,6 +754,10 @@ Attribute :: struct {
 
 Stmt :: union {
 	^Decl,
+	// design.md "Methods and implementation blocks": an `impl` naming a type
+	// declared in the same body. It is the same node the file-level form uses, so
+	// nothing about a block's contents depends on where it was written.
+	^Item_Impl,
 	^Stmt_Error,
 	^Stmt_Expr,
 	^Stmt_Assign,
@@ -991,6 +995,8 @@ Stmt_Branch :: struct {
 stmt_base :: proc(s: Stmt) -> ^Node_Base {
 	switch v in s {
 	case ^Decl:
+		return &v.base
+	case ^Item_Impl:
 		return &v.base
 	case ^Stmt_Error:
 		return &v.base

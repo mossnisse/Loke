@@ -458,6 +458,9 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 	case ^Decl:
 		return clone_decl(c, v)
 
+	case ^Item_Impl:
+		return clone_item(c, v).(^Item_Impl)
+
 	case ^Stmt_Error:
 		n := new(Stmt_Error, c.semantic_allocator)
 		clone_node_base(c, &n.base, &v.base)

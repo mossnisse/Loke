@@ -1889,6 +1889,24 @@ Generic declarations use **definition-site lookup**: substituting concrete argum
 
 Field lookup takes priority over method-call sugar. Otherwise methods use normal overload resolution and can be collected into procedure groups.
 
+A procedure body may declare types and procedures, and may write an `impl` whose subject is a type declared in that same body. This is what keeps a one-off callable record beside the call that takes it:
+
+```odin
+sort_pending :: proc(values: []mut int, limit: int) {
+	By_Threshold :: struct { limit: int }
+	impl By_Threshold {
+		call :: proc(self, left, right: int) -> bool {
+			return (left < self.limit) && !(right < self.limit);
+		}
+	}
+	slice.sort_by(values, By_Threshold{limit});
+}
+```
+
+A body-local type is nominal like any other: two bodies declaring the same name declare two types, and each carries its own members. The record's fields are the capture, written by hand — a procedure literal still captures nothing, so the state a callback needs is the state its record holds.
+
+The subject must be declared in the same body. An `impl` on any other type would be a caller-local extension, which definition-site lookup exists to rule out. A body-local block names one concrete type, so a generic `impl` belongs at file scope.
+
 #### Receiver forms
 
 There are three receiver modes:

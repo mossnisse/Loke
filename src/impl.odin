@@ -70,6 +70,65 @@ declare_impl_block :: proc(k: ^Checker, item: ^Item_Impl, quiet := true) {
 	install_impl_members(k, item.kind, subject, members[:], k.pkg)
 }
 
+// design.md "Methods and implementation blocks": a body-local `impl` gives a
+// type declared in the same body its methods, so a one-off callable record — the
+// explicit form of a small callback — sits beside the call that takes it. The
+// three package phases run here in order, because a statement is visited once
+// and has no later phase to be reached by.
+//
+// The subject has to be declared in this body. An `impl` on any other type would
+// be a caller-local extension, which definition-site lookup exists to rule out:
+// a generic instantiation must mean the same thing in every caller. A local type
+// cannot be named from anywhere else, so a block on one adds no such reach.
+check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
+	if _, generic := item.type.(^Expr_Call); generic {
+		errorf(
+			k.c, expr_span(item.type), "L0699",
+			"a generic `impl` belongs at file scope; a block inside a body names one concrete type",
+		)
+		return
+	}
+	subject := resolve_type_syntax(k, item.type)
+	if subject == INVALID_TYPE {
+		return // `resolve_type_syntax` said what is wrong with the subject
+	}
+	if !type_declared_in_this_body(k, subject) {
+		errorf(
+			k.c, expr_span(item.type), "L0699",
+			"`%s` is not declared in this procedure, so it cannot be given members here; write the `impl` beside the type",
+			type_name(k.c, subject),
+		)
+		return
+	}
+	declare_impl_block(k, item, quiet = false)
+	resolve_impl_signatures(k, item)
+	// A method is an ordinary module function. Nothing walks a body looking for
+	// one, so each is hoisted exactly as a procedure declared in the body is.
+	if pkg := package_of(k.c, k.pkg); pkg != nil && k.c.speculation_depth == 0 {
+		for member in item.members {
+			d, is_decl := member.(^Decl)
+			if !is_decl || len(d.symbols) == 0 || d.symbols[0] == INVALID_SYMBOL {
+				continue
+			}
+			if literal := decl_proc_literal(d); literal != nil && !symbol_is_generic(k, d.symbols[0]) {
+				append(&pkg.hoisted_procs, literal)
+			}
+		}
+	}
+	check_impl_block(k, item)
+}
+
+// Whether the subject is a type this very procedure declares.
+@(private = "file")
+type_declared_in_this_body :: proc(k: ^Checker, subject: Type_Id) -> bool {
+	info := type_of(k.c, subject)
+	if info == nil || k.scope == nil || k.scope.owner_proc == nil {
+		return false
+	}
+	sym := symbol_of(k.c, info.symbol)
+	return sym != nil && sym.def_scope != nil && sym.def_scope.owner_proc == k.scope.owner_proc
+}
+
 @(private = "file")
 declare_impl_member :: proc(
 	k: ^Checker,

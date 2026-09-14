@@ -1,0 +1,51 @@
+package main;
+
+import "core:fmt";
+import "core:slice";
+
+// design.md "Methods and implementation blocks": a body may declare types and
+// procedures, and may write an `impl` whose subject is a type declared in that
+// same body. This is the explicit callable-record form of a small callback, kept
+// beside the call that takes it -- the record's fields are the capture, since a
+// procedure literal captures nothing.
+
+sort_pending :: proc(values: []mut int, limit: int) {
+	By_Threshold :: struct { limit: int }
+	impl By_Threshold {
+		call :: proc(self, left, right: int) -> bool {
+			return (left < self.limit) && !(right < self.limit);
+		}
+	}
+	slice.sort_by(values, By_Threshold{limit});
+}
+
+// A body-local type is nominal like any other, so two bodies declaring the same
+// name declare two types, each carrying its own members.
+one :: proc() -> int {
+	Box :: struct { v: int }
+	impl Box { get :: proc(self) -> int { return self.v; } }
+	return Box{7}.get();
+}
+
+two :: proc() -> int {
+	Box :: struct { v: int }
+	impl Box { get :: proc(self) -> int { return self.v * 2; } }
+	return Box{7}.get();
+}
+
+// A procedure declared in a body is an ordinary module function: it captures
+// nothing, and its body is checked like any other.
+doubled :: proc(values: []int) -> int {
+	twice :: proc(value: int) -> int { return value * 2; }
+	total := 0;
+	foreach (value in values) { total += twice(value); }
+	return total;
+}
+
+main :: proc() {
+	values := [dynamic]int{5, 1, 4, 2};
+	sort_pending(values[:], 3);
+	fmt.println(values[0], values[1], values[2], values[3]);
+	fmt.println(one(), two());
+	fmt.println(doubled(values[:]));
+}

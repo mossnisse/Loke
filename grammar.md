@@ -213,6 +213,10 @@ Whether an `Impl_Block` is an inherent implementation or an extension is not
 written — it follows from whether the subject type is declared by the
 enclosing package, a semantic rule (see [design.md](design.md#methods-and-implementation-blocks)).
 
+An `Impl_Block` is also a `Statement`. There its subject must be a type declared
+in the same procedure body, which is a semantic rule rather than a syntactic
+one.
+
 A procedure declared in a foreign block has no body and ends its signature with
 `---`; see [Procedures](#procedures).
 
@@ -481,6 +485,7 @@ Block     = Attributes? "{" Statement* "}"
 
 Statement = Block
           | Declaration
+          | Impl_Block                           // subject declared in this body
           | If_Statement
           | For_Statement
           | Foreach_Statement

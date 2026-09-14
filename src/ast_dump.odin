@@ -233,6 +233,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 	case ^Decl:
 		dump_decl(b, node, depth)
 
+	case ^Item_Impl:
+		dump_item(b, node, depth)
+
 	case ^Stmt_Error:
 		dump_indent(b, depth)
 		fmt.sbprintln(b, "(error-stmt)")
