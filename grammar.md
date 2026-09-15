@@ -19,8 +19,9 @@ closes it — `)`, `]`, or `}`. That is what makes the comma unambiguous, and it
 is why `Expression_List`, `Identifier_List`, `Where_Clause`, a `foreach` binding
 list (which `in` ends) and a case selector list (which `:` ends) have no `","?`:
 with no closing delimiter there is nothing to tell a trailing comma from a
-missing element. Every delimited list carries it, so adding one to the grammar
-means writing it.
+missing element. Every other delimited list carries it, so adding one to the
+grammar means writing it. The one exception is a parenthesised `foreach`
+binding group, which takes no trailing comma although `)` closes it.
 
 # Lexical structure
 
@@ -74,6 +75,7 @@ Contextual keywords, reserved only in the positions given:
 | `slot` | at the start of a named dispatch requirement in an `interface` body |
 | `using` | before a promoted struct field |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
+| `borrow` | in the parameter-mode position of a parameter, after its `:` |
 
 `nil`, `true`, and `false` are predeclared identifiers, not keywords, but they
 are **reserved**: no name a lookup can reach may be one of them. A field or enum
@@ -168,11 +170,6 @@ Source_File   = Package_Clause Top_Level_Item*
 
 Package_Clause= Attributes? "package" Identifier ";"
 
-`@(default_allocator=<string>)` and `@(default_logger=<string>)` use this
-existing package-attribute position. Their restriction to the root package and
-their provider-factory meaning are semantic rules; see
-[Build-selected providers](design.md#build-selected-providers).
-
 Top_Level_Item= Import_Decl
               | Foreign_Import_Decl
               | Foreign_Block
@@ -189,6 +186,11 @@ Top_Level_When = Attributes? "when" "(" Expression ")" Top_Level_Block
 Top_Level_Block= Attributes? "{" Top_Level_Item* "}"
 ```
 
+`@(default_allocator=<string>)` and `@(default_logger=<string>)` use the
+`Package_Clause` attribute position. Their restriction to the root package and
+their provider-factory meaning are semantic rules; see
+[Build-selected providers](design.md#build-selected-providers).
+
 `static_assert` is not a keyword. It is matched contextually at item position,
 by the identifier followed by `(`, and the semantic checker still resolves it as
 the predeclared built-in with the same meaning it has as a statement. This is
@@ -197,7 +199,6 @@ statement may appear there. The `Attributes?` is grammatical only — no attribu
 may appear on this item, and one written there is reported as misplaced.
 
 ```
-
 Import_Decl   = Attributes? "import" Identifier? String_Literal ";"
 
 Foreign_Import_Decl = Attributes? "foreign" "import" Identifier String_Literal ";"
@@ -304,6 +305,7 @@ Type = "^" "mut"? Type                                   // pointer
      | "type"                                           // compile-time-only type of types
      | Proc_Type
      | Type_Definition
+     | Interface_Definition                              // inline, as a reflection argument
      | "$" Identifier (":" Type)?                        // specialization binding
      | Record_Type                                       // anonymous structural record
      | Type_Name Type_Arguments?
@@ -318,7 +320,7 @@ Generic_Argument = Type | Expression                     // type or compile-time
 Type_Definition = Struct_Type | Move_Only_Struct_Type | Enum_Type | Union_Type
 
 Proc_Type = "proc" Calling_Convention? Signature
-Calling_Convention = String_Literal                      // portable: "loke", "c", "stdcall"
+Calling_Convention = String_Literal                      // "c" or "stdcall"
 ```
 
 `[?]T` is valid only as the type of a composite literal. `mut` is the
@@ -428,11 +430,9 @@ Proc_Declaration= Proc_Header "---"
 
 Proc_Group   = "proc" "{" Identifier ("," Identifier)* ","? "}"
 
-Operator_Decl       = Operator_Definition | Operator_Declaration
 Operator_Definition = "operator" "(" Operator_Symbol ")" (Proc_Definition | Proc_Group)
 Operator_Declaration= "operator" "(" Operator_Symbol ")" Proc_Declaration
 
-Hook_Decl        = Hook_Definition | Hook_Declaration
 Hook_Definition  = "hook" "(" Hook_Role ")" Proc_Definition
 Hook_Declaration = "hook" "(" Hook_Role ")" Proc_Declaration
 Hook_Role        = "convert" | "copy" | "drop"
@@ -450,7 +450,7 @@ Signature    = "(" Parameter_List? ")" ("->" Results)?
 Parameter_List = Parameter ("," Parameter)* ","?
 Parameter    = Attributes? Parameter_Names
              | Attributes? Parameter_Names ":" Type ("=" Expression)?
-             | Attributes? Parameter_Names ":" Parameter_Mode Type
+             | Attributes? Parameter_Names ":" Parameter_Mode Type?
              | Attributes? Parameter_Names ":" ".." Type
              | Attributes? Parameter_Names ":" "=" Expression
 Parameter_Names = Parameter_Name ("," Parameter_Name)*
@@ -462,17 +462,18 @@ Result_Type  = "inout"? Type
 ```
 
 A parameter with no type is legal only for the receiver `self` (typed from the
-enclosing `impl` block or interface `slot`); a leading `self` therefore ends
-`Parameter_Names` in `proc(self, allocator: Allocator)`, since it would
-otherwise swallow the receiver. The receiver keeps an immutable borrow mode
-regardless of the group's `Parameter_Mode`; one wanting another mode writes its
-own type, as `self: inout Type`. `..T` is a variadic parameter; variadic,
-`borrow`, `inout`, and `move` parameters cannot have defaults. `borrow` is
-contextual in the parameter-mode position; it remains an ordinary identifier
-elsewhere. A value parameter's
-`= Expression` default may reference the receiver and parameters to its left
-only — see [design.md](design.md#default-values) for when it's evaluated. A result
-is anonymous: `Results` is one `Result_Type`, so there is no result name and no
+enclosing `impl` block or interface `slot`), which is why `Parameter_Mode` may
+stand alone: `self: borrow`, `self: inout`, and `self: move` write out a
+receiver's mode and leave its type to the enclosing block, while every other
+parameter writes both. A leading `self` therefore ends `Parameter_Names` in
+`proc(self, allocator: Allocator)`, since it would otherwise swallow the
+receiver. The receiver keeps an immutable borrow mode regardless of the group's
+`Parameter_Mode`; one wanting another mode writes its own type, as
+`self: inout Type`. `..T` is a variadic parameter; variadic, `borrow`, `inout`,
+and `move` parameters cannot have defaults. A value parameter's `= Expression`
+default may reference the receiver and parameters to its left only — see
+[design.md](design.md#default-values) for when it's evaluated. A result is
+anonymous: `Results` is one `Result_Type`, so there is no result name and no
 result local, and `return` always carries its value. The `---` body marks a
 foreign declaration.
 
@@ -740,6 +741,10 @@ The productions above use the following deterministic parsing rules:
 - After the first `:` of a declaration, `static` and `thread_local` are storage
   modifiers only when followed by another modifier, by a type-start token, or by
   `=`. Otherwise they are ordinary type names.
+- After the `:` of a parameter, `borrow` is the parameter mode when followed by
+  a type-start token, an identifier, or `(`, and — for a lone `self` closed by
+  `,` or `)` — when the type is omitted. Otherwise it is an ordinary type name,
+  which is what keeps `value: borrow` a parameter of a type named `borrow`.
 - At the start of an `impl` member, `delegate` is the contextual
   keyword only when followed by `(`; otherwise it remains an ordinary identifier
   that may begin a declaration.
