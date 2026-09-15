@@ -65,20 +65,28 @@ build_universe :: proc(c: ^Compiler) -> ^Scope {
 		}
 	}
 
+	// design.md "Predeclared names": these three spell literals rather than name
+	// an operation, so they are `reserved` — a declaration cannot take one. A
+	// lookup that changed what `true` means would be a surprise no other name in
+	// the language can produce, and the ordinary shadowing rule already rejects
+	// far less than that.
 	define(c, universe, "true", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,
 		const_value = bool_const(true),
+		reserved    = true,
 	})
 	define(c, universe, "false", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_BOOL,
 		const_value = bool_const(false),
+		reserved    = true,
 	})
 	define(c, universe, "nil", Symbol {
 		kind        = .Const,
 		type        = TYPE_UNTYPED_NIL,
 		const_value = nil_const(),
+		reserved    = true,
 	})
 
 	// The signature every built-in shares: none. `check_builtin_call` settles

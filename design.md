@@ -5053,6 +5053,14 @@ true  // unfixed boolean constant equivalent to the expression 0==0
 nil   // unfixed nil value used for certain values
 ```
 
+#### Predeclared names
+
+`true`, `false`, and `nil` are **reserved**: no name a lookup can reach may be one of them. A declaration, parameter, loop binding, or pattern binding that takes one is rejected. They spell literals, and a name lookup that changed what a literal means would be a surprise no other name in the language can produce — a file-scope `true :: 0` would silently change every other file in the package. The language already rejects far milder shadowing.
+
+A field or enum member is reached through a selector rather than by name lookup, so `struct { true: int }` and `enum { nil, other }` are legal and mean what they say.
+
+Every other predeclared name is an operation or a build-provided constant — `len`, `make`, `drop`, `size_of`, `LOKE_DEBUG` — and may be shadowed by a declaration like any other name.
+
 `---` is declaration syntax with two roles: the [unspecified-contents marker](#zero-values) in `x: T = ---`, and the body marker for a [foreign procedure](#foreign-system). It is not an expression and cannot be assigned, passed, or used as `x := ---`.
 
 As an initializer, `---` is an **unsafe assertion**. The variable starts dead, but reads, borrows, and address-taking are accepted even though its contents are unspecified. Use it for storage another party will fill, such as a foreign out-parameter reached through `&mut x`.

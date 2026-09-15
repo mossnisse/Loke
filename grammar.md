@@ -75,9 +75,11 @@ Contextual keywords, reserved only in the positions given:
 | `using` | before a promoted struct field |
 | `delegate` | at the start of an operator-delegation declaration in an `impl` body |
 
-`nil`, `true`, and `false` are predeclared identifiers, not keywords; they may be
-shadowed by a declaration like any other name. So are the built-in procedures,
-including `drop`, `len`, `cap`, `new`, and `make`.
+`nil`, `true`, and `false` are predeclared identifiers, not keywords, but they
+are **reserved**: no name a lookup can reach may be one of them. A field or enum
+member is reached by a selector rather than by lookup, so those names stay free.
+The built-in procedures — including `drop`, `len`, `cap`, `new`, and `make` — are
+ordinary predeclared identifiers and may be shadowed by a declaration.
 
 ## Compile-time names
 

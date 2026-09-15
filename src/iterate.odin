@@ -1375,6 +1375,9 @@ bind_loop_name :: proc(
 	if id == INVALID_IDENTIFIER {
 		id = intern_identifier(k.c, binding.name.text)
 	}
+	if reject_reserved_name(k, id, binding.name.span) {
+		return INVALID_SYMBOL
+	}
 	symbol := new_symbol(k.c, Symbol {
 		name      = id,
 		span      = binding.name.span,

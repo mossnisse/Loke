@@ -730,6 +730,10 @@ Symbol :: struct {
 	// design.md "@(require_results)": whether the name was ever read after its
 	// declaration. Only a local of a required-result type asks.
 	named:       bool,
+	// design.md "Predeclared names": `true`, `false` and `nil` spell literals, so
+	// a declaration may not take one of those names. Every other predeclared name
+	// is an operation or a build-provided constant and stays shadowable.
+	reserved:    bool,
 	type:        Type_Id,
 	const_value: Const_Value,
 	params:      []Type_Id,

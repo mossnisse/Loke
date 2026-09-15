@@ -474,6 +474,10 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 			append(&symbols, INVALID_SYMBOL)
 			continue
 		}
+		if reject_reserved_name(k, name_id, name.span) {
+			append(&symbols, INVALID_SYMBOL)
+			continue
+		}
 		outer, owner := lookup_symbol_with_scope(k.scope.parent, name_id)
 		if outer != INVALID_SYMBOL && (owner.kind == .Local || owner.kind == .Procedure) {
 			errorf(k.c, name.span, "L0305", "`%s` shadows an outer declaration", name.text)
@@ -1276,6 +1280,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 					name_type, mode = written_type, .Value
 				}
 			}
+			reject_reserved_name(k, parameter_name.name.id, parameter_name.name.span)
 			binding := new_binding_symbol(k, parameter_name.name, .Parameter)
 			if bound := symbol_of(k.c, binding); bound != nil {
 				bound.type = name_type
@@ -1420,6 +1425,26 @@ new_binding_symbol :: proc(k: ^Checker, name: Name, kind: Symbol_Kind) -> Symbol
 		id = intern_identifier(k.c, name.text)
 	}
 	return new_symbol(k.c, Symbol{name = id, span = name.span, kind = kind, pkg = k.pkg})
+}
+
+// design.md "Predeclared names": `true`, `false` and `nil` spell literals, so no
+// name a lookup can reach may be one of them -- a parameter or a loop binding
+// changes what a literal means inside its body exactly as a declaration would. A
+// field or enum member is reached by selector rather than by lookup, so it is
+// not asked about. Every other predeclared name is an operation or a
+// build-provided constant and stays shadowable, which is why the answer is a
+// mark on the symbol rather than a list of names kept here.
+reject_reserved_name :: proc(k: ^Checker, name_id: Identifier_Id, span: Span) -> bool {
+	sym := symbol_of(k.c, lookup_symbol(build_universe(k.c), name_id))
+	if sym == nil || !sym.reserved {
+		return false
+	}
+	errorf(
+		k.c, span, "L0700",
+		"`%s` spells a literal, so it cannot be declared",
+		identifier_text(k.c, name_id),
+	)
+	return true
 }
 
 identifier_of :: proc(c: ^Compiler, v: ^Expr_Ident) -> Identifier_Id {

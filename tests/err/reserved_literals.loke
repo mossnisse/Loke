@@ -1,0 +1,36 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Predeclared names": `true`, `false` and `nil` spell literals, so no
+// name a lookup can reach may be one of them. Without this a file-scope `true`
+// silently changes what every other file in the package means by it, and a local
+// one is accepted although the language rejects far milder shadowing (L0305).
+
+nil :: 3;
+
+takes_a_literal_name :: proc(true: int) -> int {
+	return 1;
+}
+
+Choice :: union { a: int, b: int }
+
+binds_a_literal_name :: proc(values: []int, c: Choice) -> int {
+	false := 0;
+	foreach (nil in values) {
+		fmt.println(1);
+	}
+	switch (c) {
+	case .a(true): return 1;
+	case .b(x):    return x;
+	}
+}
+
+// A field and an enum member are reached by selector, never by name lookup, so
+// neither can change what a literal means and neither is rejected.
+Rec :: struct { true: int }
+Flag :: enum { nil, other }
+
+main :: proc() {
+	fmt.println(Rec{1}.true, Flag.nil == .nil);
+}

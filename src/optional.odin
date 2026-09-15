@@ -467,6 +467,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 					errorf(k.c, binding.span, "L0305", "`%s` shadows an outer declaration", binding.text)
 				}
 			}
+			reject_reserved_name(k, name, binding.span)
 			entry.binding_symbol = new_symbol(k.c, Symbol {
 				name       = name,
 				span       = binding.span,
