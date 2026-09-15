@@ -1,8 +1,120 @@
 # Loke language design
 
-This document defines the current Loke language. [grammar.md](grammar.md) defines its formal syntax.
+This document is the normative specification of Loke v1. [grammar.md](grammar.md) defines the formal syntax, [comments.md](comments.md) collects open questions and non-normative design rationale, and [known-gaps.md](known-gaps.md) records where the current compiler does not yet implement what is written here.
+
+Headings here are cited by name from source comments and checked by `check-citations.ps1`, so renaming or removing one is an interface change.
+
+## Contents
+
+- [A first program](#a-first-program)
+- [1. Source Structure](#1-source-structure)
+  - [File format](#file-format)
+  - [Code blocks](#code-blocks)
+  - [Identifiers](#identifiers)
+  - [Literals](#literals)
+  - [Comments](#comments)
+- [2. Types & Values](#2-types--values)
+  - [Primitive types](#primitive-types)
+  - [String types and views](#string-types-and-views)
+  - [Pointer types](#pointer-types)
+  - [Sequence types](#sequence-types)
+  - [SIMD vectors](#simd-vectors)
+  - [Map types](#map-types)
+  - [Structured and algebraic types](#structured-and-algebraic-types)
+  - [Procedure and meta types](#procedure-and-meta-types)
+- [3. Methods, Operators & Interfaces](#3-methods-operators--interfaces)
+  - [Methods and abstractions](#methods-and-abstractions)
+  - [Interfaces and polymorphism](#interfaces-and-polymorphism)
+- [4. Declarations & Storage Duration](#4-declarations--storage-duration)
+  - [Variable declarations](#variable-declarations)
+  - [Constant declarations](#constant-declarations)
+- [5. Expressions & Operators](#5-expressions--operators)
+  - [Operators](#operators)
+- [6. Statements & Control Flow](#6-statements--control-flow)
+  - [Assignment statements](#assignment-statements)
+  - [Control flow statements](#control-flow-statements)
+- [7. Procedures & Functions](#7-procedures--functions)
+  - [Procedures](#procedures)
+  - [Generics](#generics)
+- [8. Ownership & Lifetimes](#8-ownership--lifetimes)
+  - [Borrows and lifetimes](#borrows-and-lifetimes)
+- [9. Packages & Visibility](#9-packages--visibility)
+  - [Packages](#packages)
+- [10. Runtime & Interop](#10-runtime--interop)
+  - [Built-in constants, values, and procedures](#built-in-constants-values-and-procedures)
+  - [Error handling](#error-handling)
+  - [Panics and unwinding](#panics-and-unwinding)
+  - [Memory and program services](#memory-and-program-services)
+  - [Concurrency and the memory model](#concurrency-and-the-memory-model)
+  - [Foreign system](#foreign-system)
+- [Appendices](#appendices)
+  - [Conditional compilation](#conditional-compilation)
+  - [Compile-time built-ins](#compile-time-built-ins)
+  - [Attributes](#attributes)
+  - [Required diagnostics](#required-diagnostics)
+  - [Glossary](#glossary)
+  - [Library types assumed by this specification](#library-types-assumed-by-this-specification)
+
+## A first program
+
+Enough of the language to read the rest: a package and its imports, a record with an inherent method and an operator, failure as a type, an owning container, and one variant switch at the top.
+
+```odin
+package main;
+
+import "core:fmt";
+
+// A record, with an inherent method and an operator.
+Point :: struct { x, y: int }
+
+impl Point {
+	shifted :: proc(self, dx, dy: int) -> Point { return {self.x + dx, self.y + dy}; }
+
+	add :: operator(+) proc(left, right: Point) -> Point {
+		return {left.x + right.x, left.y + right.y};
+	}
+}
+
+Grid_Error :: enum { Off_Grid }
+
+// Failure is a type, not a trailing flag.
+checked :: proc(x, y: int) -> Result(Point, Grid_Error) {
+	if (x < 0 || y < 0) { return .err(.Off_Grid); }
+	return .ok(Point{x, y});
+}
+
+// `or_return` propagates the failure of a fallible call out of this procedure.
+corners :: proc(width, height: int) -> Result([dynamic]Point, Grid_Error) {
+	points: [dynamic]Point = {};           // owns its storage; released at scope exit
+	points.append(checked(0, 0) or_return);
+	points.append(checked(width, height) or_return);
+	return .ok(move(points));              // ownership transfers to the caller
+}
+
+main :: proc() {
+	moved := Point{0, 0}.shifted(3, 4) + Point{1, 1};
+	fmt.println("moved to", moved.x, moved.y);
+
+	switch (outcome in corners(8, 8)) {
+	case .ok:
+		foreach (p, i in outcome.indexed()) { fmt.println(i, p.x, p.y); }
+	case .err:
+		fmt.eprintln("error:", outcome);
+	}
+}
+```
+
+```text
+moved to 4 5
+0 0 0
+1 8 8
+```
+
+[examples/](examples/) holds twelve larger programs, each exercising one part of the language, and the test suite compiles them from those sources.
 
 # 1. Source Structure
+
+*Grammar: [Lexical structure](grammar.md#lexical-structure), [Source files](grammar.md#source-files).*
 
 ## File format
 
@@ -129,6 +241,8 @@ x: int; // trailing comment
 ```
 
 # 2. Types & Values
+
+*Grammar: [Types](grammar.md#types), [Records](grammar.md#records).*
 
 ## Primitive types
 
@@ -551,95 +665,6 @@ p := unsafe.raw_data(&x);
 p[n] = 123; // unchecked; the programmer proves that n is valid
 ```
 
-### SIMD vectors
-
-`Simd(T, N)` is a fixed-width vector of `N` lanes of `T` on which the ordinary arithmetic operators act lane-wise. It is a predeclared name and a member of the public `Type_Kind`. It exists so that a program that must be explicit about vector width can be, without leaving the language for intrinsics; ordinary array code that the optimizer happens to vectorise needs none of this.
-
-`Simd` is a value type with no lifecycle: it owns nothing, it is trivially copied, and its zero value is every lane's zero.
-
-#### Element types and lane counts
-
-`T` must be a boolean, integer, or floating-point type: `bool`, `i8` through
-`i64`, `u8` through `u64`, `int`, `uint`, `uintptr`, `f16`, `f32`, or `f64`.
-`distinct` over a permitted element is also permitted.
-
-`N` must be a constant power of two from 1 through 64, and
-`N * size_of(T)` must not exceed 64 bytes. These limits are independent of the
-target's available vector registers.
-
-A `Simd(bool, N)` is the **lane mask** type. Its lanes are one bit of information each; its representation is one byte per lane, so `size_of` and `align_of` follow the rules below like any other vector.
-
-#### Layout
-
-`size_of(Simd(T, N))` is `N * size_of(T)`, and `align_of(Simd(T, N))` is `size_of(Simd(T, N))` — a vector is aligned to its own size, which is what permits an aligned whole-vector load. A vector is therefore not the array with the same element and count: `Simd(f32, 2)` has size 8 and alignment 8, while `[2]f32` has size 8 and alignment 4.
-
-`meta.Type_Info` reports the element type and lane count for `Type_Kind.Simd`.
-
-#### Construction and conversion
-
-A `Simd` is written as a composite literal with one element per lane, in lane order:
-
-```odin
-lanes: Simd(f32, 4) = {1.0, 2.0, 3.0, 4.0};
-zeroes: Simd(f32, 4) = {};
-```
-
-A scalar converts to a vector implicitly wherever a vector is expected, producing the **splat** — every lane equal to that scalar. The reverse is not a conversion:
-
-```odin
-doubled := lanes * 2.0;                 // the scalar splats to all four lanes
-half: Simd(f32, 4) = 0.5;               // {0.5, 0.5, 0.5, 0.5}
-written := Simd(f32, 4){0.5};           // {0.5, 0, 0, 0}: a literal fills lanes
-```
-
-A literal is not a splat. It lists lanes, and the ones it omits take the lane type's zero, exactly as an array literal's do.
-
-An explicit `Simd(U, N)(v)` converts each lane of `v` from `T` to `U` under the same rule the scalar conversion `U(lane)` would use, and requires the same lane count. There is no implicit conversion between two vector types, and no reinterpretation of one vector type as another: a bit-preserving reinterpretation crosses the `core:unsafe` boundary like any other.
-
-#### Lane-wise operators
-
-Every operator below applies lane-wise and produces a vector of the same lane count. Both operands must have the same `Simd` type after splatting; mixing two different vector types is an error.
-
-| Operators | Element types | Result |
-|---|---|---|
-| `+`, `-`, `*`, `/` | integer, float | `Simd(T, N)` |
-| `%` | integer | `Simd(T, N)` |
-| unary `-` | signed integer, float | `Simd(T, N)` |
-| `&`, `\|`, `~`, `&~`, unary `~` | integer, `bool` | `Simd(T, N)` |
-| `<<`, `>>` | integer | `Simd(T, N)` |
-| `==`, `!=`, `<`, `<=`, `>`, `>=` | integer, float, `bool` (equality only) | `Simd(bool, N)` |
-| `&&`, `\|\|` | — | rejected |
-
-A comparison **yields a lane mask, not a `bool`**. `a < b` on vectors has type `Simd(bool, N)`, so it cannot be an `if` condition; reduce it first with `simd.any` or `simd.all`. This is why `&&` and `||` are rejected on vectors: they short-circuit, and there is nothing lane-wise for a short circuit to mean. Use `&` and `|` on the masks instead.
-
-Every lane obeys the scalar rule for its own operator, unchanged. Integer division or remainder by a zero lane is the same program fault it is for a scalar, and any zero divisor lane faults the whole operation. Signed `MIN / -1` and `MIN % -1` have the same wrapping results scalars give. A shift count at or beyond the element's width is defined exactly as it is for a scalar — the limit of the repeated one-bit shift — and a shift's right operand is a vector too, so `v << 2` splats the count.
-
-Floating-point lanes follow the scalar floating-point rules unchanged: no contraction the source did not write, and no reassociation.
-
-#### Lane access
-
-`v[i]` reads a lane and `v[i] = x` writes one. The index must be a constant in
-range. Use an array when the index is known only at runtime.
-
-`v.len()` is the lane count, a compile-time constant. A vector is not a sequence: it has no iteration, no slicing, and no `[:]`.
-
-#### `core:simd`
-
-`core:simd` supplies what the operators cannot spell. A lane index is constant, so none of these can be written as a loop in ordinary Loke:
-
-- `from_array(array) -> Simd(T, N)` and `to_array(v) -> [N]T`, the two conversions between a vector and an array of the same element and length. They are how vector data reaches ordinary code and how ordinary code reaches a vector;
-- `select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between two vectors — what a lane mask is for;
-- `any(mask) -> bool` and `all(mask) -> bool`, which turn a lane mask back into control flow;
-- `reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each folding a vector to one scalar. A floating-point sum and product are ordered, left to right, so their results do not depend on the target's vector width; a minimum and a maximum need no such rule, because they do not depend on order. A floating-point sum starts from `-0.0` and a product from `1.0`, so a vector of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN lanes and answer with a number whenever any lane holds one; a vector of nothing but NaN reduces to NaN. Where two lanes compare equal, including `-0.0` against `+0.0`, either may be the answer.
-
-The splat needs no procedure: a scalar in a vector position already is one.
-
-#### What SIMD does not do
-
-`Simd(T, N)` is not foreign-ABI-safe and cannot appear in a foreign signature, foreign global, or `@(export)` declaration. Pass a pointer to an array instead.
-
-`Simd` specifies portable lane behavior and width, not a particular machine instruction.
-
 ### Slices
 
 A slice is a non-owning view of a sequence. Its length is a runtime value. `[]T` has read-only elements. `[]mut T` has mutable elements. Both types have the same runtime representation. Mutability is a static capability and does not change the ABI.
@@ -1004,6 +1029,95 @@ low_of :: proc(r: Range($T)) -> T { return r.low; }
 `Range` takes one integer or rune type argument.
 
 Ranges are also accepted, as syntax rather than as values, in [`switch` case lists](#switch-statement) and in [designated array initializers](#fixed-arrays). Those positions match endpoints against a subject or an index and never construct a `Range(T)`.
+
+## SIMD vectors
+
+`Simd(T, N)` is a fixed-width vector of `N` lanes of `T` on which the ordinary arithmetic operators act lane-wise. It is a predeclared name and a member of the public `Type_Kind`. It exists so that a program that must be explicit about vector width can be, without leaving the language for intrinsics; ordinary array code that the optimizer happens to vectorise needs none of this.
+
+`Simd` is a value type with no lifecycle: it owns nothing, it is trivially copied, and its zero value is every lane's zero.
+
+### Element types and lane counts
+
+`T` must be a boolean, integer, or floating-point type: `bool`, `i8` through
+`i64`, `u8` through `u64`, `int`, `uint`, `uintptr`, `f16`, `f32`, or `f64`.
+`distinct` over a permitted element is also permitted.
+
+`N` must be a constant power of two from 1 through 64, and
+`N * size_of(T)` must not exceed 64 bytes. These limits are independent of the
+target's available vector registers.
+
+A `Simd(bool, N)` is the **lane mask** type. Its lanes are one bit of information each; its representation is one byte per lane, so `size_of` and `align_of` follow the rules below like any other vector.
+
+### Layout
+
+`size_of(Simd(T, N))` is `N * size_of(T)`, and `align_of(Simd(T, N))` is `size_of(Simd(T, N))` — a vector is aligned to its own size, which is what permits an aligned whole-vector load. A vector is therefore not the array with the same element and count: `Simd(f32, 2)` has size 8 and alignment 8, while `[2]f32` has size 8 and alignment 4.
+
+`meta.Type_Info` reports the element type and lane count for `Type_Kind.Simd`.
+
+### Construction and conversion
+
+A `Simd` is written as a composite literal with one element per lane, in lane order:
+
+```odin
+lanes: Simd(f32, 4) = {1.0, 2.0, 3.0, 4.0};
+zeroes: Simd(f32, 4) = {};
+```
+
+A scalar converts to a vector implicitly wherever a vector is expected, producing the **splat** — every lane equal to that scalar. The reverse is not a conversion:
+
+```odin
+doubled := lanes * 2.0;                 // the scalar splats to all four lanes
+half: Simd(f32, 4) = 0.5;               // {0.5, 0.5, 0.5, 0.5}
+written := Simd(f32, 4){0.5};           // {0.5, 0, 0, 0}: a literal fills lanes
+```
+
+A literal is not a splat. It lists lanes, and the ones it omits take the lane type's zero, exactly as an array literal's do.
+
+An explicit `Simd(U, N)(v)` converts each lane of `v` from `T` to `U` under the same rule the scalar conversion `U(lane)` would use, and requires the same lane count. There is no implicit conversion between two vector types, and no reinterpretation of one vector type as another: a bit-preserving reinterpretation crosses the `core:unsafe` boundary like any other.
+
+### Lane-wise operators
+
+Every operator below applies lane-wise and produces a vector of the same lane count. Both operands must have the same `Simd` type after splatting; mixing two different vector types is an error.
+
+| Operators | Element types | Result |
+|---|---|---|
+| `+`, `-`, `*`, `/` | integer, float | `Simd(T, N)` |
+| `%` | integer | `Simd(T, N)` |
+| unary `-` | signed integer, float | `Simd(T, N)` |
+| `&`, `\|`, `~`, `&~`, unary `~` | integer, `bool` | `Simd(T, N)` |
+| `<<`, `>>` | integer | `Simd(T, N)` |
+| `==`, `!=`, `<`, `<=`, `>`, `>=` | integer, float, `bool` (equality only) | `Simd(bool, N)` |
+| `&&`, `\|\|` | — | rejected |
+
+A comparison **yields a lane mask, not a `bool`**. `a < b` on vectors has type `Simd(bool, N)`, so it cannot be an `if` condition; reduce it first with `simd.any` or `simd.all`. This is why `&&` and `||` are rejected on vectors: they short-circuit, and there is nothing lane-wise for a short circuit to mean. Use `&` and `|` on the masks instead.
+
+Every lane obeys the scalar rule for its own operator, unchanged. Integer division or remainder by a zero lane is the same program fault it is for a scalar, and any zero divisor lane faults the whole operation. Signed `MIN / -1` and `MIN % -1` have the same wrapping results scalars give. A shift count at or beyond the element's width is defined exactly as it is for a scalar — the limit of the repeated one-bit shift — and a shift's right operand is a vector too, so `v << 2` splats the count.
+
+Floating-point lanes follow the scalar floating-point rules unchanged: no contraction the source did not write, and no reassociation.
+
+### Lane access
+
+`v[i]` reads a lane and `v[i] = x` writes one. The index must be a constant in
+range. Use an array when the index is known only at runtime.
+
+`v.len()` is the lane count, a compile-time constant. A vector is not a sequence: it has no iteration, no slicing, and no `[:]`.
+
+### `core:simd`
+
+`core:simd` supplies what the operators cannot spell. A lane index is constant, so none of these can be written as a loop in ordinary Loke:
+
+- `from_array(array) -> Simd(T, N)` and `to_array(v) -> [N]T`, the two conversions between a vector and an array of the same element and length. They are how vector data reaches ordinary code and how ordinary code reaches a vector;
+- `select(mask, a, b) -> Simd(T, N)`, choosing lane-wise between two vectors — what a lane mask is for;
+- `any(mask) -> bool` and `all(mask) -> bool`, which turn a lane mask back into control flow;
+- `reduce_add`, `reduce_mul`, `reduce_min`, and `reduce_max`, each folding a vector to one scalar. A floating-point sum and product are ordered, left to right, so their results do not depend on the target's vector width; a minimum and a maximum need no such rule, because they do not depend on order. A floating-point sum starts from `-0.0` and a product from `1.0`, so a vector of nothing but `-0.0` sums to `-0.0`. `reduce_min` and `reduce_max` ignore NaN lanes and answer with a number whenever any lane holds one; a vector of nothing but NaN reduces to NaN. Where two lanes compare equal, including `-0.0` against `+0.0`, either may be the answer.
+
+The splat needs no procedure: a scalar in a vector position already is one.
+
+### What SIMD does not do
+
+`Simd(T, N)` is not foreign-ABI-safe and cannot appear in a foreign signature, foreign global, or `@(export)` declaration. Pass a pointer to an array instead.
+
+`Simd` specifies portable lane behavior and width, not a particular machine instruction.
 
 ## Map types
 
@@ -1782,6 +1896,10 @@ print_text :: proc(value: any_view) {
 ```
 
 Use a union to own one of a closed set of types, and `dyn Interface` for borrowed runtime behavior.
+
+# 3. Methods, Operators & Interfaces
+
+*Grammar: [Interfaces](grammar.md#interfaces), [Declarations](grammar.md#declarations).*
 
 ## Methods and abstractions
 
@@ -2822,7 +2940,9 @@ Passing a concrete value to generic code never introduces dynamic dispatch; the 
 
 Closed heterogeneous ownership uses unions. Open ownership requires an explicit owner and callbacks; a `dyn` view never extends the payload's lifetime.
 
-# 3. Declarations & Storage Duration
+# 4. Declarations & Storage Duration
+
+*Grammar: [Declarations](grammar.md#declarations).*
 
 ## Variable declarations
 
@@ -3117,7 +3237,9 @@ Only the executed path must satisfy these restrictions; every branch still parse
 
 Compile-time evaluation is deterministic and hermetic. It receives target and project information only through language constants and [`build_config`](#build_configidentifier-default). Operations with unspecified runtime results, such as map iteration, are rejected on an executed compile-time path. `cap` is also unavailable there; `len` remains valid.
 
-# 4. Expressions & Operators
+# 5. Expressions & Operators
+
+*Grammar: [Expressions](grammar.md#expressions), [Operators and punctuation](grammar.md#operators-and-punctuation).*
 
 ## Operators
 
@@ -3383,7 +3505,9 @@ Floating-point division by zero follows IEEE-754 and does not panic: a non-zero 
 
 An implementation may combine multiple floating-point operations into a single fused operation, and produce a result that differs from the value obtained by executing and rounding the instructions individually.
 
-# 5. Statements & Control Flow
+# 6. Statements & Control Flow
+
+*Grammar: [Statements](grammar.md#statements), [Control flow](grammar.md#control-flow), [Switch](grammar.md#switch).*
 
 ## Assignment statements
 
@@ -3903,7 +4027,9 @@ for (cond) {
 }
 ```
 
-# 6. Procedures & Functions
+# 7. Procedures & Functions
+
+*Grammar: [Procedures](grammar.md#procedures).*
 
 ## Procedures
 
@@ -4415,7 +4541,7 @@ f: Foo(T, N);
 static_assert(size_of(f) == (N+N-2)*size_of(T));
 ```
 
-# 7. Ownership & Lifetimes
+# 8. Ownership & Lifetimes
 
 ## Borrows and lifetimes
 
@@ -4785,7 +4911,9 @@ Neither operation adjusts the count. A container takes its element out and then 
 
 Everything in `unsafe` is a promise by the programmer that the compiler cannot verify. It does not make the underlying storage owned or extend its lifetime.
 
-# 8. Packages & Visibility
+# 9. Packages & Visibility
+
+*Grammar: [Source files](grammar.md#source-files).*
 
 ## Packages
 
@@ -4900,7 +5028,9 @@ Packages may be thematically organized by placing them in subdirectories of anot
 
 Private-by-default visibility means a package that exists to export — a foreign binding, a thin wrapper — would otherwise need `@(public)` on every declaration. [Applying `@(public)` to the package declaration](#public) makes every declaration in that file public by default, and is the one-line fix when porting a package written against a public-by-default language.
 
-# 9. Runtime & Interop
+# 10. Runtime & Interop
+
+*Grammar: [Declarations](grammar.md#declarations).*
 
 ## Built-in constants, values, and procedures
 
@@ -5853,6 +5983,55 @@ pick :: proc(input: []int, @(escape=none) scratch: []int) -> []int {
 	return input; // returning `scratch` instead is an error
 }
 ```
+
+## Required diagnostics
+
+Where this specification rejects a program, it often also says what the message has to identify; a message that omits it is a defect, not a style preference. Those requirements are stated in the sections below and collected here so an implementation can check them off.
+
+| When | The diagnostic names |
+| --- | --- |
+| A no-zero type is asked for a zero | the operation, and the two ways out: `@(zero=first_variant)`, or explicit construction ([§](#types-with-no-zero-value)) |
+| A variant or enum switch is not exhaustive | the variants it did not cover ([§](#inspecting-a-union)) |
+| An overloaded call stays ambiguous | every maximal candidate, its conversion vector, and the tie-breaker at which selection failed ([§](#operator-lookup-and-overload-resolution)) |
+| A `foreach` header uses a retired fixed spelling | the adapter or view that replaces it ([§](#element-bindings)) |
+| A required interface application does not hold | the concrete application and the interface-body line that failed — “constraint not satisfied” alone is a defect ([§](#interface-bodies)) |
+| A mutating slot is called through a `dyn I` | `dyn mut I`, as a capability error rather than a missing member ([§](#borrowed-dynamic-interface-values)) |
+| Constant declarations form a cycle | the cycle as a path of constant declarations ([§](#constant-declarations)) |
+| A runtime value reaches a compile-time context | the runtime binding that prevented evaluation ([§](#compile-time-phases)) |
+| Compile-time evaluation exceeds a resource limit | the limit — evaluation never silently moves to runtime ([§](#compile-time-procedure-evaluation)) |
+| An error occurs inside a static `foreach` | the element and its source descriptor or index ([§](#static-foreach-expansion)) |
+| An `inout` or `move` marker is missing at a call | the parameter and the mode it needs ([§](#copy-cost-diagnostics)) |
+| A `where`-excluded method is called | the ordinary missing-member error, with a note pointing at the bound that did not hold ([§](#where-clauses)) |
+| An analysis budget forces a rejection | that budget limit ([§](#minimum-provenance-precision)) |
+| A suspended carrier is used during a reborrow | both ends: where the reborrow was taken, and the later use keeping it live ([§](#weakening-and-read-only-reborrows)) |
+| Two borrows conflict | the root, the borrow, the conflicting operation, and the later use keeping the borrow live ([§](#places-and-overlap)) |
+| An owner escapes its allocator region | the escaping owner and its shorter-lived region ([§](#allocator-regions-and-region-provenance)) |
+
+Two more are continuous rather than triggered: [copy-cost diagnostics](#copy-cost-diagnostics) report every context where the ownership rule copies a place instead of borrowing or transferring it, and [`@(require_results)`](#require_results) reports a result that is neither read nor explicitly discarded.
+
+## Glossary
+
+Terms this specification gives a precise meaning, with the section that defines each.
+
+| Term | Meaning |
+| --- | --- |
+| **borrow carrier** | A value that refers to another root without owning it: `^T`, `[]T`, a view, a `dyn` value, a parameter access path. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
+| **carrier path** | A projection path from a value to a borrow carrier inside it. A record holding a `[]int` is checked wherever a bare `[]int` is. See [Values that contain borrows](#values-that-contain-borrows). |
+| **extension member** | A member declared by an `impl` outside the subject type's package; visible only in the package that declares it. See [Methods and implementation blocks](#methods-and-implementation-blocks). |
+| **fallible expression** | An expression whose type is a union of exactly two variants carrying `@(failure=name)`. This shape, not a privileged name, is what `or_else` and `or_return` recognise. See [Typed fallibility](#typed-fallibility). |
+| **inherent member** | A member declared by an `impl` in the subject type's own package. Contrast an extension member. See [Methods and implementation blocks](#methods-and-implementation-blocks). |
+| **live / dead** | A local is *live* once fully assigned and *dead* before that, or after `move` or `drop`. Only a live local may be read, borrowed, addressed, moved, or dropped. See [Variable declarations](#variable-declarations). |
+| **managed value** | An owning value whose resources are released automatically when it leaves scope. See [Managed values and storage](#managed-values-and-storage). |
+| **mode** (iteration) | Which of borrowed, mutable, or consuming traversal a `foreach` header selects. See [Iteration protocol](#iteration-protocol). |
+| **place** | A storage root plus a normalized projection path through fields, indices, ranges, and dereferences. Borrow compatibility is decided for places, not names. See [Places and overlap](#places-and-overlap). |
+| **place position** | A position that names a location rather than a value: an assignment target, the operand of `&`, or an `inout` argument. It selects which indexing operation runs. See [Indexing and slicing](#indexing-and-slicing). |
+| **region provenance** | The allocator region backing an owning value, which must outlive it. See [Allocator regions and region provenance](#allocator-regions-and-region-provenance). |
+| **root provenance** | The root a borrow names and the capability it is reached through. Distinct from region provenance; see [How root and region provenance compose](#how-root-and-region-provenance-compose). |
+| **specialization binding** | A `$name` introducing a compile-time input or pattern name. `$` appears only where the name is bound. See [Compile-time phases](#compile-time-phases). |
+| **storage root** | A variable, value temporary, or allocation that owns storage, and the anchor for borrows of it. Cleanup policy does not decide what is a root. See [Storage roots and borrow carriers](#storage-roots-and-borrow-carriers). |
+| **temporary** | A value not bound to a name. It lives until the end of its complete expression, or of the enclosing statement in a `foreach`, `switch`, or `if` header. A temporary transfers where a place would be copied. See [Temporaries and procedure boundaries](#temporaries-and-procedure-boundaries). |
+| **unfixed constant** | A constant with no fixed type until context converts it, such as the literal `42`. See [Unfixed constants](#unfixed-constants). |
+| **witness** | Immutable evidence that a concrete type satisfies an interface's named slots. One per `(Interface, Concrete, arguments...)` tuple; not a source-level value. See [Runtime polymorphism](#runtime-polymorphism). |
 
 ## Library types assumed by this specification
 
