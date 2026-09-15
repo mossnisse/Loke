@@ -368,70 +368,32 @@ text = string.from_utf8(bytes) or_else "";
 
 `string.from_utf8(bytes)` accepts `[]u8` or `cstring_view` and returns an owned `Option(string)`. A C string view is scanned for its terminator first. `string_view.from_utf8(bytes)` accepts a byte slice and returns a borrowed `Option(string_view)` without copying. Both forms validate UTF-8.
 
-Legend:
-
-- copy = create an independent managed value
-- share = share immutable backing storage
-- borrow = create a non-owning view, subject to [Borrows and lifetimes](#borrows-and-lifetimes)
-- stream = get individual values from the string, without allocation
-- st = the input string
-
 A view from a `string` is `[]u8` and cannot become `[]mut u8`, by the ordinary [capability rule](#capabilities-and-the-one-rule).
 
-#### From string to X
+In the table below `st` is the source value, and the action is one of: **copy**, create an independent managed value; **share**, share immutable backing storage; **borrow**, create a non-owning view subject to [Borrows and lifetimes](#borrows-and-lifetimes); or **stream**, get individual values without allocation.
 
-| To | Action | Code |
-| --- | --- | --- |
-| `[]u8` | borrow | `st.bytes()` |
-| `string_view` | borrow, implicit | `view: string_view = st` |
-| `string_view` | borrow a subrange | `st[low:high]` |
-| `string` | share | `new_string := st` |
-| `string` | independent byte copy | `st.copy()` |
-| `cstring_view` | temporary borrow | `st.to_c_view()` |
-| `[]rune` | stream | `foreach (rune in st) { ... }` |
-| `[dynamic]rune` | copy | `st.to_runes()` |
-| `[^]u8` | unsafe borrow | `unsafe.raw_data(st.bytes())` |
-
-#### From cstring_view to X
-
-| To | Action | Code |
-| --- | --- | --- |
-| `Option(string)` | validate and copy | `string.from_utf8(st)` |
-| `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
-
-#### From a string literal to X
-
-| To | Action | Code |
-| --- | --- | --- |
-| `string` | share static storage | `newstr: string = st` |
-| `cstring_view` | borrow static storage | `newstr: cstring_view = st` |
-
-#### From []u8 to X
-
-| To | Action | Code |
-| --- | --- | --- |
-| `Option(string)` | validate and copy | `string.from_utf8(st)` |
-| `Option(string_view)` | validate and borrow | `string_view.from_utf8(st)` |
-| `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
-
-#### From []rune to string
-
-| Action | Code |
-| --- | --- |
-| validate and copy, `Option(string)` | `string.from_runes(st)` |
-
-#### From [^]u8 to cstring_view
-
-| Action | Code |
-| --- | --- |
-| unsafe borrow | `unsafe.cstring_view(st)` |
-
-#### From [^]u8 and length int to string
-
-| Action | Code |
-| --- | --- |
-| validate and copy, `Option(string)` | `string.from_utf8(ptr[0:length])` |
-| unsafe validate and borrow, `Option(string_view)` | `unsafe.string_view(ptr, length)` |
+| From | To | Action | Code |
+| --- | --- | --- | --- |
+| `string` | `[]u8` | borrow | `st.bytes()` |
+| `string` | `string_view` | borrow, implicit | `view: string_view = st` |
+| `string` | `string_view` | borrow a subrange | `st[low:high]` |
+| `string` | `string` | share | `new_string := st` |
+| `string` | `string` | independent byte copy | `st.copy()` |
+| `string` | `cstring_view` | temporary borrow | `st.to_c_view()` |
+| `string` | `[]rune` | stream | `foreach (rune in st) { ... }` |
+| `string` | `[dynamic]rune` | copy | `st.to_runes()` |
+| `string` | `[^]u8` | unsafe borrow | `unsafe.raw_data(st.bytes())` |
+| `cstring_view` | `Option(string)` | validate and copy | `string.from_utf8(st)` |
+| `cstring_view` | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
+| string literal | `string` | share static storage | `newstr: string = st` |
+| string literal | `cstring_view` | borrow static storage | `newstr: cstring_view = st` |
+| `[]u8` | `Option(string)` | validate and copy | `string.from_utf8(st)` |
+| `[]u8` | `Option(string_view)` | validate and borrow | `string_view.from_utf8(st)` |
+| `[]u8` | `[^]u8` | unsafe borrow | `unsafe.raw_data(st)` |
+| `[]rune` | `Option(string)` | validate and copy | `string.from_runes(st)` |
+| `[^]u8` | `cstring_view` | unsafe borrow | `unsafe.cstring_view(st)` |
+| `[^]u8` and a length | `Option(string)` | validate and copy | `string.from_utf8(ptr[0:length])` |
+| `[^]u8` and a length | `Option(string_view)` | unsafe validate and borrow | `unsafe.string_view(ptr, length)` |
 
 ## Pointer types
 
@@ -3305,15 +3267,7 @@ When the condition and selected value are constant, the result is constant. Use 
 - `..=` — inclusive range
 - `..<` — half-open range
 
-`..=` and `..<` are ordinary binary operators producing a [`Range(T)`](#ranges) value, which may be iterated directly or stored first:
-
-```odin
-foreach (x in a..<b) {}
-foreach (x in a..=b) {}
-
-span := a..=b;          // an ordinary Range value
-foreach (x in span) {}
-```
+`..=` and `..<` are ordinary binary operators producing a [`Range(T)`](#ranges) value.
 
 Two positions accept the same spelling as *syntax* rather than as a value, matching endpoints against a subject or an index without constructing a range:
 
@@ -3568,14 +3522,14 @@ foreach (i in 0..=9) {
 }
 ```
 
-`a..=b` is a closed range. It includes `a` and `b`. `a..<b` is a half-open range. It includes `a` and excludes `b`.
+`a..=b` and `a..<b` build an ordinary [`Range(T)`](#ranges) value, which the loop iterates like any other iterable.
 
 The built-in iterable types include strings, arrays, slices, dynamic arrays, maps, and integer ranges:
 
 ```odin
 some_string := "Hello, 世界";
 foreach (character in some_string) {
-	fmt.println(character);
+	fmt.println(character);       // a rune: string iteration yields code points
 }
 
 some_array := [3]int{1, 4, 9};
@@ -3594,12 +3548,12 @@ foreach (value in some_dynamic_array) {
 }
 
 some_map := map[string]int{"A" = 1, "C" = 9, "B" = 4};
-foreach (key, value in some_map) {
+foreach (key, value in some_map) {   // the map's element is `{key, value}`
 	fmt.println(key, value);
 }
 ```
 
-Every binding list names the fields of one [`Element`](#element-bindings), so a second binding exists only when the element is a two-field record. An index, a key, or an offset comes from an [adapter or a container view](#iteration-adapters):
+Every binding list names the fields of one [`Element`](#element-bindings), so a second binding exists only when the element is a two-field record. An index, a key, or an offset comes from an [adapter or a container view](#iteration-adapters) — an ordinary borrowed value the loop iterates, never extra header syntax:
 
 ```odin
 foreach (character, ordinal in some_string.indexed()) {
@@ -3608,74 +3562,22 @@ foreach (character, ordinal in some_string.indexed()) {
 foreach (character, offset in some_string.rune_offsets()) {
 	fmt.println(offset, character);
 }
-foreach (value, index in some_array.indexed()) {
-	fmt.println(index, value);
-}
-foreach (value, index in some_slice.indexed()) {
-	fmt.println(index, value);
-}
 foreach (value, index in some_dynamic_array.indexed()) {
 	fmt.println(index, value);
 }
-foreach (key, value in some_map) {         // the map's element is `{key, value}`
-	fmt.println(key, value);
-}
-foreach (value in some_map.values()) {     // values alone, no entry record
+foreach (value in some_map.values()) {   // values alone, no entry record
 	fmt.println(value);
 }
 ```
 
-`some_map.values()` is a [view](#iteration-adapters) — an ordinary borrowed value the loop iterates, not header syntax.
-
-`foreach (value, index in some_array)` is an error unless the array's element is a two-field record, in which case it destructures that record. Element bindings are positional and mean nothing else, so a loop over `[dynamic]Point` binds `x` and `y`, not a value and an index.
-
-When the iterable is a place or borrow carrier, evaluating it establishes an implicit iterator loan that lives through the whole loop and ends with the `foreach` statement. A borrowing traversal holds an immutable loan; a mutable one, an exclusive loan. So competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule. Value-only iteration such as an integer range needs no loan.
-
-String iteration produces Unicode runes, not bytes. The string must contain valid UTF-8.
+What a binding receives — a borrow, a mutable place written `&value`, or an owned element — is decided by the header alone, under the [iteration protocol](#iteration-protocol):
 
 ```odin
-str: string = "Some text";
-foreach (character in str) {
-	assert(type_of(character) == rune);
-	fmt.println(character);
-}
+foreach (&value in some_dynamic_array) { value += 1; }   // mutable: the root must be writable
+foreach (key, &value in some_map) { value += 1; }        // map keys stay immutable
 ```
 
-Use the address operator to iterate by reference over a mutable array, dynamic array, or slice. A slice must have type `[]mut T`. Reading elements needs no marker at all: an unmarked binding over a place already borrows, including from `[]T`; see [Borrowing iteration](#borrowing-iteration).
-
-```odin
-mutable_slice := []mut int{1, 4, 9};
-
-foreach (&value in some_array) {
-	value = something;
-}
-foreach (&value in mutable_slice) {
-	value = something;
-}
-foreach (&value in some_dynamic_array) {
-	value = something;
-}
-// an index comes from the adapter, never from an extra binding
-foreach (&value, index in some_dynamic_array.indexed()) {
-	value = something;
-}
-```
-
-Map values can be iterated by-reference, but their keys cannot since map keys are immutable:
-
-```odin
-some_map := map[string]int{"A" = 1, "C" = 9, "B" = 4};
-
-foreach (key, &value in some_map) {
-	value += 1;
-}
-
-fmt.println(some_map["A"]); // 2
-fmt.println(some_map["C"]); // 10
-fmt.println(some_map["B"]); // 5
-```
-
-String iteration cannot use a reference binding because strings are immutable.
+Evaluating a place or borrow carrier establishes an iterator loan that lasts for the whole statement: immutable for a borrowing traversal, exclusive for a mutable one, so competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule. Value-only iteration such as an integer range needs no loan.
 
 #### Static `foreach` expansion
 
@@ -3697,7 +3599,7 @@ Every binding uses `$`; mixing runtime and compile-time bindings in one header i
 
 #### Reverse iteration
 
-Reverse traversal is an ordinary [iterator adapter](#iteration-adapters) rather than control-flow syntax. `reversed()` iterates through the type's `iter_reverse`:
+Reverse traversal is the ordinary [`reversed()` adapter](#iteration-adapters) rather than control-flow syntax:
 
 ```odin
 array := [?]int { 10, 20, 30, 40, 50 };
@@ -3705,13 +3607,9 @@ array := [?]int { 10, 20, 30, 40, 50 };
 foreach (x in array.reversed()) {
 	fmt.println(x); // 50 40 30 20 10
 }
-
-foreach (x, i in array.reversed().indexed()) {
-	fmt.println(i, x); // 0 50, 1 40, ...
-}
 ```
 
-Fixed arrays, slices, dynamic arrays, and ranges reverse. A map does not because its order is unspecified. To walk text backwards, use `text.to_runes()` and reverse that sequence.
+A map does not reverse, because its [iteration order](#maps) is unspecified. To walk text backwards, use `text.to_runes()` and reverse that sequence.
 
 ### if statement
 

@@ -44,7 +44,7 @@ impl Args {
 		return rt_args_count();
 	}
 
-	// design.md "From cstring_view to X": the conversion validates UTF-8 and
+	// design.md "string type conversions": the conversion validates UTF-8 and
 	// copies into owned storage. The runtime's bytes are already valid, so the
 	// `.none` case is unreachable; an out-of-range index yields "" rather than
 	// reading past the vector.

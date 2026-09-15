@@ -196,7 +196,7 @@ text_operand_error :: proc(k: ^Checker, v: ^Expr_Call, sel: ^Expr_Selector, oper
 	v.type = INVALID_TYPE
 }
 
-// design.md "From []rune to string": `string.from_runes(st)` validates and
+// design.md "string type conversions": `string.from_runes(st)` validates and
 // copies, with optional-ok semantics.
 @(private = "file")
 check_from_runes :: proc(k: ^Checker, v: ^Expr_Call) {
@@ -390,8 +390,8 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		v.type = c_pointer_to(k.c, element)
 
 	case .Unsafe_String_View:
-		// An unsafe validate-and-borrow, optional-ok (design.md "From [^]u8 and
-		// length int to string"). The owner is unknown to the compiler, so keeping
+		// An unsafe validate-and-borrow, optional-ok (design.md "string type
+		// conversions"). The owner is unknown to the compiler, so keeping
 		// storage alive is the caller's job — but bytes are still validated, since
 		// the result type promises UTF-8.
 		if info == nil || info.kind != .C_Pointer || info.element != TYPE_U8 {
@@ -414,7 +414,7 @@ check_unsafe_builtin :: proc(k: ^Checker, v: ^Expr_Call, ident: ^Expr_Ident, kin
 		set_optional_ok_results(k, v, TYPE_STRING_VIEW)
 
 	case .Unsafe_C_String_View:
-		// design.md "From [^]u8 to cstring_view": an unsafe borrow, and no
+		// design.md "string type conversions": an unsafe borrow, and no
 		// validation at all — a `cstring_view` promises no encoding.
 		if info == nil || info.kind != .C_Pointer || info.element != TYPE_U8 {
 			errorf(

@@ -1305,7 +1305,7 @@ check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bo
 		element = info.element
 		mutable = base.assignable
 	case .String, .String_View:
-		// design.md "From string to X": `st[low:high]` borrows a subrange as a
+		// design.md "string type conversions": `st[low:high]` borrows a subrange as a
 		// `string_view`. It is a borrow of the string's owner and cannot outlive
 		// it, which `src/borrow.odin` checks.
 		return check_text_subrange(k, v)
@@ -2851,7 +2851,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return value, true
 		}
-	// design.md "From a string literal to X": a literal's zero-terminated bytes
+	// design.md "string type conversions": a literal's zero-terminated bytes
 	// have static lifetime, so the same constant initializes an owning `string`,
 	// a borrowed view, and a C view alike.
 	case .Untyped_String, .String, .String_View, .CString_View:
@@ -3035,7 +3035,7 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return true
 	}
 	if from == TYPE_UNTYPED_STRING {
-		// design.md "From a string literal to X": a literal's bytes have static
+		// design.md "string type conversions": a literal's bytes have static
 		// lifetime, so it initializes an owning `string`, a borrowed view, and a
 		// zero-terminated C view alike.
 		#partial switch underlying_kind(c, to) {

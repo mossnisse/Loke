@@ -679,7 +679,7 @@ emit_builtin_slice :: proc(e: ^Emitter, v: ^Expr_Slice, as_type: Type_Id) -> str
 	return emit_slice_value(e, as_type, start, count)
 }
 
-// design.md "From string to X": `st[low:high]` is a subrange *view*. The bounds
+// design.md "string type conversions": `st[low:high]` is a subrange *view*. The bounds
 // are byte offsets, and a range that split a code point would hand out a
 // `string_view` that is not valid UTF-8 — so the encoding is checked with the
 // range, not merely the length.
@@ -1795,7 +1795,7 @@ emit_text_conversion :: proc(e: ^Emitter, v: ^Expr_Call, as_type: Type_Id) -> []
 		)
 
 	case .View_From_Bytes:
-		// This conversion validates and borrows (design.md "From []u8 to X"). No
+		// This conversion validates and borrows (design.md "string type conversions"). No
 		// allocation and no copy — the view points into the slice's own root, and `src/borrow.odin`
 		// is what keeps it from outliving that root.
 		data, length := emit_byte_slice_parts(e, v.bound[0])
