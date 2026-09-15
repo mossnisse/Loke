@@ -1671,6 +1671,7 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 		{"shapes",         .Output},
 		{"streaming",      .Driven},
 		{"tokens",         .Output},
+		{"tour",           .Output},
 		{"word_frequency", .Output},
 	}
 
@@ -1719,6 +1720,50 @@ examples_compile_and_run :: proc(t: ^testing.T) {
 			"tests/examples/compile_time.sieve200.expected",
 		)
 	}
+}
+
+// design.md "A first program" prints `examples/tour.loke` in full. A copy in
+// another file is the thing examples/README.md says this suite exists to
+// prevent, so the copy is checked rather than trusted.
+@(test)
+design_first_program_matches_tour_example :: proc(t: ^testing.T) {
+	spec, spec_ok := os.read_entire_file("design.md")
+	if !testing.expect(t, spec_ok, "cannot read design.md") {
+		return
+	}
+	defer delete(spec)
+	source, source_ok := os.read_entire_file("examples/tour.loke")
+	if !testing.expect(t, source_ok, "cannot read examples/tour.loke") {
+		return
+	}
+	defer delete(source)
+
+	start := strings.index(string(spec), "## A first program")
+	if !testing.expect(t, start >= 0, "design.md has no \"A first program\" section") {
+		return
+	}
+	rest := string(spec)[start:]
+	open_fence := strings.index(rest, "```odin\n")
+	if !testing.expect(t, open_fence >= 0, "\"A first program\" has no odin block") {
+		return
+	}
+	rest = rest[open_fence + len("```odin\n"):]
+	close_fence := strings.index(rest, "\n```")
+	if !testing.expect(t, close_fence >= 0, "the odin block is not closed") {
+		return
+	}
+
+	printed := normalise(rest[:close_fence])
+	expected := normalise(string(source))
+	testing.expectf(
+		t,
+		printed == expected,
+		"design.md \"A first program\" has drifted from examples/tour.loke; "+
+		"update the fenced block to match the example."+
+		"\ndesign.md:\n%s\nexamples/tour.loke:\n%s",
+		printed,
+		expected,
+	)
 }
 
 // `greeting` reads a line from standard input and appends to a file in the

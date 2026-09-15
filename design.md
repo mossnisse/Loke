@@ -111,7 +111,7 @@ moved to 4 5
 1 8 8
 ```
 
-[examples/](examples/) holds twelve larger programs, each exercising one part of the language, and the test suite compiles them from those sources.
+This is [examples/tour.loke](examples/tour.loke); the test suite compiles it and checks the block above still matches it. The other twelve programs there each exercise one part of the language in more depth.
 
 # 1. Source Structure
 

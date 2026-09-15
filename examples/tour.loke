@@ -1,0 +1,42 @@
+package main;
+
+import "core:fmt";
+
+// A record, with an inherent method and an operator.
+Point :: struct { x, y: int }
+
+impl Point {
+	shifted :: proc(self, dx, dy: int) -> Point { return {self.x + dx, self.y + dy}; }
+
+	add :: operator(+) proc(left, right: Point) -> Point {
+		return {left.x + right.x, left.y + right.y};
+	}
+}
+
+Grid_Error :: enum { Off_Grid }
+
+// Failure is a type, not a trailing flag.
+checked :: proc(x, y: int) -> Result(Point, Grid_Error) {
+	if (x < 0 || y < 0) { return .err(.Off_Grid); }
+	return .ok(Point{x, y});
+}
+
+// `or_return` propagates the failure of a fallible call out of this procedure.
+corners :: proc(width, height: int) -> Result([dynamic]Point, Grid_Error) {
+	points: [dynamic]Point = {};           // owns its storage; released at scope exit
+	points.append(checked(0, 0) or_return);
+	points.append(checked(width, height) or_return);
+	return .ok(move(points));              // ownership transfers to the caller
+}
+
+main :: proc() {
+	moved := Point{0, 0}.shifted(3, 4) + Point{1, 1};
+	fmt.println("moved to", moved.x, moved.y);
+
+	switch (outcome in corners(8, 8)) {
+	case .ok:
+		foreach (p, i in outcome.indexed()) { fmt.println(i, p.x, p.y); }
+	case .err:
+		fmt.eprintln("error:", outcome);
+	}
+}

@@ -4,6 +4,10 @@ These programs are small enough to read in one sitting, but each exercises a
 different part of the language:
 
 - `hello.loke` — the smallest useful program.
+- `tour.loke` — the program design.md opens with: a record with a method and an
+  operator, typed failure, and an owning container handed back with `move`. It
+  carries no header comment because the spec section is its explanation, and a
+  test holds the two byte-identical.
 - `greeting.loke` — prompting, text-file I/O, and typed error handling.
 - `streaming.loke` — bounded reads, fixed-buffer streaming, and explicit close errors.
 - `keys.loke` — raw terminal input and automatic terminal restoration.
@@ -38,7 +42,7 @@ automatically, so no collection flags are needed.
 
 ## How these are checked
 
-`odin test tests` compiles all twelve from these sources — not from copies — and
+`odin test tests` compiles all thirteen from these sources — not from copies — and
 compares the output of the ones that produce a fixed result. `greeting` is run
 twice in a scratch directory with supplied input, so the second run has to find
 what the first wrote; `streaming` is run against a real file, a missing one, and
