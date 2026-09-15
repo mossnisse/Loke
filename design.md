@@ -484,11 +484,13 @@ The following are the rules for indexing and slicing for C pointers, and what ty
 x: [^]T = ...;
 ```
 
+```text
 x[i]   -> T
 x[:]   -> [^]T
 x[i:]  -> [^]T
 x[:n]  -> []T
 x[i:n] -> []T
+```
 
 Interacting with C pointers is easiest using `unsafe.raw_data`, which makes the loss of bounds and borrow capability visible at the call site.
 
@@ -529,7 +531,7 @@ foreach (i in 0..=4) {
 }
 ```
 
-A fixed array stores its elements contiguously. Its layout is equivalent to a record with one field uufor each element.
+A fixed array stores its elements contiguously. Its layout is equivalent to a record with one field for each element.
 
 `x[i]` accesses element `i` of `x`. The first element has index 0.
 
@@ -570,7 +572,7 @@ favorite_animals := [?]string{
 	// Assign by range of indices
 	3..=5 = "Frog",
 	6..<8 = "Cat",
-}
+};
 ```
 
 The built-in `len` procedure returns the array length.
@@ -632,7 +634,7 @@ A literal is not a splat. It lists lanes, and the ones it omits take the lane ty
 
 An explicit `Simd(U, N)(v)` converts each lane of `v` from `T` to `U` under the same rule the scalar conversion `U(lane)` would use, and requires the same lane count. There is no implicit conversion between two vector types, and no reinterpretation of one vector type as another: a bit-preserving reinterpretation crosses the `core:unsafe` boundary like any other.
 
-#### Operators
+#### Lane-wise operators
 
 Every operator below applies lane-wise and produces a vector of the same lane count. Both operands must have the same `Simd` type after splatting; mixing two different vector types is an error.
 
@@ -684,7 +686,9 @@ A mutable slice implicitly weakens to a read-only slice. A read-only slice never
 
 A slice expression has a low bound and a high bound separated by a colon:
 
+```text
 a[low : high]
+```
 
 The range includes the low bound and excludes the high bound. Either bound may be omitted: the low defaults to 0 and the high to the length, so for `a: [6]int` the expressions `a[0:6]`, `a[:6]`, `a[0:]`, and `a[:]` are equivalent.
 
@@ -724,11 +728,15 @@ length_of_x := x.len();
 
 A slice literal does not specify a length. This is an array literal:
 
+```odin
 [3]int{1, 6, 3}
+```
 
 This slice literal creates the same hidden array and returns a read-only slice of it:
 
+```odin
 []int{1, 6, 3}
+```
 
 **A slice literal has the type it is written with.** `[]T{...}` produces `[]T` and `[]mut T{...}` produces `[]mut T`; the capability is never inferred. A `[]mut T` literal may still be weakened by an explicit `[]T` destination, like any other mutable slice.
 
@@ -1009,7 +1017,7 @@ fmt.println(x.len(), x.cap()); // 3 8
 
 ### Ranges
 
-The range operators [`..<` and `..=`](#other-operators) produce a value of the compiler-provided generic type written `Range(T)` here and in diagnostics: `a..<b` is half-open and excludes `b`, `a..=b` is closed and includes it. Both endpoints are unified to one type under the ordinary binary-operand rule, and  `T` must be an integer or rune type. `Range` is a predeclared name, like [`Simd(T, N)`](#simd-vectors) and shadowable the same way, so the type is writable wherever a type is.
+The range operators [`..<` and `..=`](#other-operators) produce a value of the compiler-provided generic type written `Range(T)` here and in diagnostics: `a..<b` is half-open and excludes `b`, `a..=b` is closed and includes it. Both endpoints are unified to one type under the ordinary binary-operand rule, and `T` must be an integer or rune type. `Range` is a predeclared name, like [`Simd(T, N)`](#simd-vectors) and shadowable the same way, so the type is writable wherever a type is.
 
 A range is an ordinary first-class value, not a piece of loop syntax. It may be bound to a variable, passed to a parameter, and inferred into a `$` parameter, and it keeps its half-open or closed kind wherever it travels:
 
@@ -1023,7 +1031,7 @@ foreach (ch in closed) { fmt.println(ch); }  // a b c
 
 `Range(T)` has three public fields — `low: T`, `high: T`, and `closed: bool` — so code that must inspect a range rather than walk it reads them directly. It satisfies [`Iterable`](#standard-interface-catalogue) with `Element` equal to `T`, which is what lets a range reach generic code written against that interface. It is not a [`Sequence`](#standard-interface-catalogue): a range stores no elements, so it has neither `len` nor indexing.
 
-The type is usually inferred — a range-typed declaration takes its type from its initializer (`r := 0 ..< 3;`) and a generic procedure receives one through  a `$` parameter — but it can also be written, which is what makes a range a result type, a field type, and a matchable pattern:
+The type is usually inferred — a range-typed declaration takes its type from its initializer (`r := 0 ..< 3;`) and a generic procedure receives one through a `$` parameter — but it can also be written, which is what makes a range a result type, a field type, and a matchable pattern:
 
 ```odin
 clamp_span :: proc(r: $R, limit: int) -> R { ... }   // R is bound by the argument
@@ -1096,7 +1104,7 @@ A map literal initializes a map:
 m := map[string]int{
 	"Bob" = 2,
 	"Chloe" = 5,
-}
+};
 ```
 
 Map literals create managed values using the current allocator. Low-level code that must avoid implicit allocation can use `make` with an explicit allocator, or a project-level lint that rejects implicit allocation.
@@ -1112,7 +1120,7 @@ Test :: struct {
 m := map[string]Test{
 	"Bob" = { 0, 0 },
 	"Chloe" = { 1, 1 },
-}
+};
 
 m["Bob"] = { 3, 3 };
 m["Chloe"].x = 0;    // allowed: assigns the field of the stored value
@@ -1275,7 +1283,7 @@ named := Entry{key = "port", value = 8080};
 return .ok({key = k, value = v});
 ```
 
-A parenthesised group is a record type only when it is **labelled**. `(T)` in  expression position stays grouping and is not a type, and `Foo(x: int)` is not a generic application.
+A parenthesised group is a record type only when it is **labelled**. `(T)` in expression position stays grouping and is not a type, and `Foo(x: int)` is not a generic application.
 
 #### Destructuring
 
@@ -1287,14 +1295,14 @@ low, high = minmax(a, b);
 foreach (key, value in table) { ... }
 ```
 
-The record must have exactly as many **directly declared** fields as there are  bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is.
+The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is.
 
 Ownership follows the operand's category, exactly as every other binding does:
 
 - A **place** clones. `x, y := point` copy-initialises each binding and `point` stays live and drops normally. Each retained field must be copyable, and the copy-cost diagnostic applies per cloned field. This projects fields; it does not call the containing record's copy hook.
 - A **temporary** or `move(...)` consumes. Retained fields transfer without cloning. The containing record must have neither a custom `hook(copy)` nor a custom `hook(drop)` — decomposing a value whose hooks own its lifecycle is rejected rather than given an exception; its *fields* may have hooks of their own.
 
-`_` discards. It clones nothing from a place; in a consuming form the discarded  field drops exactly once, in reverse declaration order, after every retained binding is published.
+`_` discards. It clones nothing from a place; in a consuming form the discarded field drops exactly once, in reverse declaration order, after every retained binding is published.
 
 Retained fields are prepared in declaration order before any binding is published, and assignment follows the ordinary prepare-then-write rule. If cloning fails, it cleans partial field temporaries and leaves the source untouched.
 
@@ -1441,9 +1449,9 @@ case .text(text):
 case .flag(flag):
 	static_assert(type_of(flag) == bool);
 case .number(number):
-	static_assert(type_of(number) == int);
+	static_assert(type_of(number) == i32);
 case .real(real):
-	static_assert(type_of(real) == f64);
+	static_assert(type_of(real) == f32);
 case .absent:
 }
 ```
@@ -1568,7 +1576,9 @@ Compiler-provided enums such as `LOKE_ARCH` spell their members in `Capitalized_
 
 An implicit selector omits the enumeration type when context supplies that type. It has this form:
 
+```text
 .member_name
+```
 
 For example:
 
@@ -2378,7 +2388,7 @@ Consuming traversal needs every adapter in the chain to support it. Where one do
 
 ### Compiler semantic hooks
 
-Loke recognizes three semantic hooks: `hook(convert)`, `hook(copy)`, and  `hook(drop)`. The `hook` role activates the behavior; the declaration name does not. A hook has a fixed signature, belongs to the subject type's package, and is used only by its corresponding language operation.
+Loke recognizes three semantic hooks: `hook(convert)`, `hook(copy)`, and `hook(drop)`. The `hook` role activates the behavior; the declaration name does not. A hook has a fixed signature, belongs to the subject type's package, and is used only by its corresponding language operation.
 
 Other behavior, including `hash`, `format`, and iteration, uses ordinary methods. Naming a procedure `init`, `drop`, or `try_clone` gives it no special meaning.
 
@@ -2510,7 +2520,7 @@ Receiver-shaped common behavior is defined canonically as methods, and the metho
 
 These operations use method syntax: write `x.len()`, not `len(x)`. A free procedure with the same name is unrelated.
 
-**A clone is ownership-recursive, not deep.** It duplicates owned storage but  does not follow pointers, slices, or views. Components with sharing semantics, such as immutable [`string`](#string-type) and [`shared(T)`](#shared-ownership), remain shared. Thus cloning `[dynamic]string` creates a new array whose strings  still share text, while cloning a record with a `^T` field copies the pointer. Assignment follows the same rule through `try_clone`.
+**A clone is ownership-recursive, not deep.** It duplicates owned storage but does not follow pointers, slices, or views. Components with sharing semantics, such as immutable [`string`](#string-type) and [`shared(T)`](#shared-ownership), remain shared. Thus cloning `[dynamic]string` creates a new array whose strings still share text, while cloning a record with a `^T` field copies the pointer. Assignment follows the same rule through `try_clone`.
 
 Built-in types provide the methods they support. Lifecycle behavior is customized with `hook(copy)`, not a separate `clone` method.
 
@@ -2629,7 +2639,7 @@ An associated type is an associated constant whose value has type `type`. For a 
 - After substituting interface arguments, checking selects one matching inherent or same-package extension method. Modes, results, and calling convention must match exactly; default arguments do not participate.
 - Slot names must be unique across the interface and everything it composes. Witness members are never overload groups.
 
-A slot is both a static callable requirement and a potential [witness](#runtime-polymorphism) entry. It is available through method syntax in constrained generic code, and reached by the slot's own lookup rather than the caller's: a bound that positively requires the interface calls the  implementation satisfaction selected, including one whose ordinary visibility the instantiating package could not see. The capability is exactly the required slot on the required type. An unrelated private member, a member offered only by a negated bound or by one arm of a disjunction, and every ordinary call outside a constrained declaration all keep the [visibility rules](#exported-names); a `static_assert` grants nothing, since it constrains no declaration.
+A slot is both a static callable requirement and a potential [witness](#runtime-polymorphism) entry. It is available through method syntax in constrained generic code, and reached by the slot's own lookup rather than the caller's: a bound that positively requires the interface calls the implementation satisfaction selected, including one whose ordinary visibility the instantiating package could not see. The capability is exactly the required slot on the required type. An unrelated private member, a member offered only by a negated bound or by one arm of a disjunction, and every ordinary call outside a constrained declaration all keep the [visibility rules](#exported-names); a `static_assert` grants nothing, since it constrains no declaration.
 
 Method and operator requirements are written as ordinary calls on bound values; lifecycle requirements name the hook (the standard [`Cloneable`](#standard-interface-catalogue) requires the fixed `try_clone` slot). Interfaces compose by naming one another in a truth requirement. As with a consuming `where` bound, an interface application standing alone composes, contributing its slots and capabilities; a negated one, or one side of `||`, is only tested for truth.
 
