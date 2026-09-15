@@ -15,9 +15,14 @@ impl Res {
 	release :: hook(drop) proc(self: inout Res) { fmt.println(self.id); }
 }
 
+// design.md "Nil states": a *provably* nil local is a compile error (L0701), so
+// the nil arrives from a call. The trap covers every nil the compiler cannot
+// see coming, which is what this program is about.
+no_pointer :: proc() -> ^int { return nil; }
+
 main :: proc() {
 	live := Res{7};
 	defer fmt.println(70);
-	p: ^int = {};
+	p := no_pointer();
 	fmt.println(p^);
 }

@@ -10,6 +10,9 @@ import "core:strings"
 
 Checker :: struct {
 	c:     ^Compiler,
+	// Uses that trap on `nil`, pending the rest of the body that decides whether
+	// the local can be anything else (`nil_uses.odin`).
+	nil_uses: [dynamic]Nil_Use,
 	file:  u32,
 	// The file being checked. Its package-clause attributes decide the default
 	// visibility of the declarations in it.
@@ -2308,6 +2311,9 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 				}
 			}
 		}
+		// After the binding's type is settled, which is what decides whether the
+		// local has a nil state at all.
+		note_nil_write_to(k, symbol_id, value)
 	}
 }
 
@@ -2428,6 +2434,10 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 		k.result_inout = outer_result_inout
 		k.loop_depth, k.in_defer = outer_loop, outer_defer
 	}
+	// A nested literal is checked inside this body, so each body drains only the
+	// uses recorded after its own mark (`nil_uses.odin`).
+	nil_mark := len(k.nil_uses)
+	defer report_nil_uses(k, nil_mark)
 
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
@@ -2732,6 +2742,7 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 						return
 					}
 					check_assign_target(k, target, field.type)
+					note_unknown_nil_write(k, target)
 				}
 				return
 			}
@@ -2779,6 +2790,7 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			continue
 		}
 		check_value_expr(k, s.rhs[index], type, "assign")
+		note_nil_write(k, target, s.rhs[index])
 	}
 }
 
@@ -2843,6 +2855,7 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	}
 	// design.md "Maps": `m[key] += 1` reads and writes one element, so the entry
 	// must already be there; only `m[key] = elem` creates one.
+	note_unknown_nil_write(k, s.lhs[0])
 	type := check_assign_target(k, s.lhs[0], INVALID_TYPE, inserts = false)
 	if type == INVALID_TYPE {
 		check_expr(k, s.rhs[0])

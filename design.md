@@ -5053,6 +5053,14 @@ true  // unfixed boolean constant equivalent to the expression 0==0
 nil   // unfixed nil value used for certain values
 ```
 
+#### Nil states
+
+`^T`, a procedure value, and `dyn I` each have a nil state that fails on use. A local given nothing but `nil` is rejected where it is dereferenced, called, or dispatched through, rather than reaching that failure at run time.
+
+The question is asked over the whole body rather than along its paths. One write of anything else, anywhere in the body, settles it — as does one exposure to a write the compiler cannot read, such as `&mut local` or an `inout` argument. A pointer left nil on only *one* path is therefore not reported: that is a possibility rather than a certainty, and rejecting it would reject a program whose author knows the path is unreachable.
+
+This is a diagnostic, not a guarantee. Nothing about `^T` promises non-nil, and a nil that arrives from a parameter, a field, a container, or foreign code is still a run-time failure.
+
 #### Predeclared names
 
 `true`, `false`, and `nil` are **reserved**: no name a lookup can reach may be one of them. A declaration, parameter, loop binding, or pattern binding that takes one is rejected. They spell literals, and a name lookup that changed what a literal means would be a surprise no other name in the language can produce — a file-scope `true :: 0` would silently change every other file in the package. The language already rejects far milder shadowing.

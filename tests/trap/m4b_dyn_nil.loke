@@ -6,8 +6,13 @@ Drawable :: interface($Self: type) {
 	slot size: proc(self) -> int;
 }
 
+// design.md "Nil states": a *provably* nil local is a compile error (L0701), so
+// the nil arrives from a call. The trap covers every nil the compiler cannot
+// see coming.
+no_drawable :: proc() -> dyn Drawable { return nil; }
+
 main :: proc() {
 	// design.md: calling a slot on nil panics.
-	empty: dyn Drawable = nil;
+	empty := no_drawable();
 	fmt.println(empty.size());
 }

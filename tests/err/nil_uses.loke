@@ -1,0 +1,65 @@
+package main;
+
+import "core:fmt";
+
+// design.md "Nil states": a local given nothing but `nil` cannot do anything at
+// run time but trap, so the compiler says so rather than the trap.
+//
+// The question is asked over the whole body, not along its paths: one non-nil
+// write anywhere, or one exposure to a write the pass cannot read, settles it
+// and nothing is reported. A pointer left nil on *one* path is a may-nil, and
+// rejecting it would reject code whose author knows the path is unreachable.
+
+set_it :: proc(slot: inout ^int, @(escape=stored) target: ^int) { slot = target; }
+
+Drawable :: interface($Self: type) {
+	slot size: proc(self) -> int;
+}
+
+reported :: proc() {
+	pointer: ^int = nil;
+	_ = pointer^;
+
+	call_me: proc(x: int) -> int = nil;
+	fmt.println(call_me(1));
+
+	// The nil arrives by assignment rather than by initializer; same answer.
+	later: ^int;
+	later = nil;
+	_ = later^;
+
+	// A dynamic view dispatches through a witness it does not have.
+	empty: dyn Drawable = nil;
+	fmt.println(empty.size());
+}
+
+silent :: proc(x: int) {
+	value := x;
+
+	// Assigned something real: not provably nil.
+	assigned: ^int = nil;
+	assigned = &value;
+	fmt.println(assigned^);
+
+	// Nil on one path only.
+	conditional: ^int = nil;
+	if (x > 3) { conditional = &value; }
+	fmt.println(conditional^);
+
+	// Written through an `inout` parameter, which this pass cannot read.
+	through_call: ^int = nil;
+	set_it(inout through_call, &value);
+	fmt.println(through_call^);
+
+	// Exposed by `&mut`.
+	exposed: ^int = nil;
+	set_it(inout exposed, &value);
+	escape_hatch := &mut exposed;
+	escape_hatch^ = &value;
+	fmt.println(exposed^);
+}
+
+main :: proc() {
+	reported();
+	silent(1);
+}

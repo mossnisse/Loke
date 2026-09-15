@@ -1,6 +1,13 @@
 package main; import "core:fmt";
 
+// design.md "Nil states": a *provably* nil local is a compile error (L0701), so
+// the nil this trap needs arrives from a call instead. The trap is what covers
+// every nil the compiler cannot see coming.
+Callback :: proc(a: int) -> int;
+
+no_callback :: proc() -> Callback { return nil; }
+
 main :: proc() {
-	f: proc(a: int) -> int = nil;
+	f := no_callback();
 	fmt.println(f(1));
 }

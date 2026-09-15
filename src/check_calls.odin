@@ -99,6 +99,7 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 	if sel, is_selector := v.callee.(^Expr_Selector); is_selector && sel.operand != nil {
 		if operand := dyn_operand_type(k, sel.operand); operand != INVALID_TYPE {
 			if check_dyn_slot_call(k, v, sel, operand) {
+				note_nil_use(k, sel.operand, "dispatch")
 				return
 			}
 			errorf(k.c, v.span, "L0467", "`%s` has no slot `%s`", type_name(k.c, operand), sel.name.text)
@@ -194,6 +195,10 @@ check_call :: proc(k: ^Checker, v: ^Expr_Call, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// A call through a local procedure *value*. A directly named procedure is a
+	// `.Proc` symbol and is not tracked, so this asks only about the indirect
+	// form, which is the one that can be nil.
+	note_nil_use(k, v.callee, "call")
 
 	// Only a directly named procedure may use defaults or named arguments; a
 	// call through a procedure value supplies every parameter positionally.
@@ -654,6 +659,8 @@ bind_written_argument :: proc(
 	}
 	if expected == .Borrow && !check_borrow_argument(k, value) { return value, false }
 	if arg.mode == .Inout {
+		// The callee writes through it, and this pass cannot read what it writes.
+		note_unknown_nil_write(k, value)
 		if base := expr_base(value); base != nil && !base.assignable {
 			report_not_assignable(k, base, "an `inout` argument")
 			return value, false

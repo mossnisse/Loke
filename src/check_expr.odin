@@ -1505,6 +1505,10 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			return
 		}
 		operand_base := expr_base(v.operand)
+		// `&mut local` hands out a write this pass cannot read.
+		if v.mutable {
+			note_unknown_nil_write(k, v.operand)
+		}
 		// design.md "Materialization": a place rooted in a named constant has an
 		// address once the shared read-only object is registered. Marked here for
 		// `&mut` too, so that form is rejected as a constant rather than as
@@ -1699,6 +1703,7 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 		v.type = INVALID_TYPE
 		return
 	}
+	note_nil_use(k, v.operand, "dereference")
 	v.type = info.element
 	v.value_category = .Place
 	// Dereferencing either capability yields a real place with an address. Only

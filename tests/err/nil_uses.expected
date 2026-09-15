@@ -1,0 +1,12 @@
+L0701
+@21:6
+`pointer` is `nil` everywhere it is given a value, so this dereference always fails
+L0701
+@24:14
+`call_me` is `nil` everywhere it is given a value, so this call always fails
+L0701
+@29:6
+`later` is `nil` everywhere it is given a value, so this dereference always fails
+L0701
+@33:14
+`empty` is `nil` everywhere it is given a value, so this dispatch always fails

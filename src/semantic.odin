@@ -311,6 +311,14 @@ WINDOWS_X64 :: Target_Info {
 	max_align    = 16,
 }
 
+// Sticky: `Unknown` is never left, because the pass asks about the whole body
+// rather than one path through it (`nil_uses.odin`).
+Nil_Writes :: enum u8 {
+	None,
+	Nil_Only,
+	Unknown,
+}
+
 Const_Kind :: enum {
 	Invalid,
 	Integer,
@@ -734,6 +742,9 @@ Symbol :: struct {
 	// a declaration may not take one of those names. Every other predeclared name
 	// is an operation or a build-provided constant and stays shadowable.
 	reserved:    bool,
+	// Whether every value this local has ever been given is `nil`, which is what
+	// lets a use of it be reported rather than trapped (`nil_uses.odin`).
+	nil_writes:  Nil_Writes,
 	type:        Type_Id,
 	const_value: Const_Value,
 	params:      []Type_Id,
