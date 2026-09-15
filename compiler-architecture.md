@@ -71,10 +71,13 @@ The normal compilation path is:
 4. Ownership analysis runs per concrete procedure while it is checked.
    `analyze_program_provenance` then computes cross-procedure result summaries
    and checks borrows, escapes, allocator regions, and reset effects over the
-   completed program.
-5. The driver validates the executable entry point and exported names. It then
-   freezes runtime `typeid` values, discovers the coherent formatter for each
-   concrete type, and finalizes immutable lifecycle-operation records.
+   completed program. `resolve_provider_factories` then resolves the selected
+   providers' factory signatures, once every package has been checked.
+5. The driver validates the executable entry point and exported names. Then
+   `finalize_semantics` freezes runtime `typeid` values, discovers the coherent
+   formatter for each concrete type, and finalizes immutable
+   lifecycle-operation records — in that order, because formatter discovery
+   reads the `typeid` order that freezing closes.
 6. `validate_emission_dependencies` rejects an incomplete checked state before
    an emitter is allocated. `emit_llvm_module` produces one textual LLVM module
    containing every package in deterministic dependency order.
@@ -187,9 +190,9 @@ universe instead of synthesizing lookalikes.
 `check.odin` owns declarations, signatures, statements, scopes, and type syntax.
 `check_expr.odin` owns expressions, contextual typing, conversions, place
 capabilities, and leaf folding. It dispatches calls to `check_calls.odin`, which
-owns call checking, argument binding, and explicit call-form conversions.
-An expected type flows down into untyped
-constants, implicit enum members, `nil`, and typeless composite literals.
+owns call checking, argument binding, and explicit call-form conversions. An
+expected type flows down into untyped constants, implicit enum members, `nil`,
+and typeless composite literals.
 
 All named groups, methods, user operators, `init` conversions, and indexing
 share the candidate engine in `overload.odin`. Feature modules form candidates
@@ -220,8 +223,8 @@ Managed values have language-defined clone, move, and drop behavior.
 `lifecycle.odin` assigns copy obligations, tracks liveness, diagnoses invalid
 uses, and determines cleanup slots. Liveness follows every local, because a
 local starts dead and definite initialization is checked for all of them; only
-a managed one also carries a scope-exit cleanup obligation. Normal exits and panic unwind consume the
-same settled cleanup facts.
+a managed one also carries a scope-exit cleanup obligation. Normal exits and
+panic unwind consume the same settled cleanup facts.
 
 `borrow.odin` runs two related dataflow analyses over provenance events:
 
@@ -262,7 +265,7 @@ The repository has three implementation layers outside `src/`:
 | Location | Role |
 | --- | --- |
 | `base/` | Foundational Loke declarations needed by the compiler itself: runtime result/option/shared types, reflection metadata, and structural interfaces. |
-| `core/` | The standard library written in ordinary Loke: formatting, memory, containers, strings, I/O, filesystem, OS, synchronization, SIMD helpers, math, encoding, and related packages. |
+| `core/` | The standard library written in ordinary Loke: formatting, memory, containers, strings and string conversion, I/O, logging, filesystem and paths, OS, terminal, synchronization, SIMD helpers, math, encoding, and related packages. |
 | `runtime/` | The versioned C ABI for allocation, arenas, process arguments, atomics, managed containers, failure, panic, formatting, and text storage. `loke_rt.h` is the ABI contract. |
 
 The rule is to keep a feature in Loke source whenever the language can express
@@ -270,9 +273,13 @@ it. `stdlib.odin` contributes only identities or primitives the compiler already
 owns or that Loke cannot express, such as atomic instructions, erased formatting
 dispatch, allocator-aware string allocation, and selected provider access.
 
-An executable build links the generated module with the sorted C runtime
-sources. An object build emits one relocatable compiler module and leaves its
-runtime and foreign references for the host to supply.
+An executable build links the generated module with the compiled C runtime.
+`prebuilt_runtime_objects` keeps one object set per optimization mode under
+`runtime/prebuilt/<mode>/` and recompiles it only when a `runtime/*.c` or
+`*.h` is newer than a cached object, so the first build after editing
+`runtime/` is slow by design and the rest are not. An object build emits one
+relocatable compiler module and leaves its runtime and foreign references for
+the host to supply.
 
 ## Source-code map
 
@@ -303,7 +310,7 @@ be file-private.
 | `enums.odin`, `union.odin`, `optional.odin`, `erased.odin` | Closed enum validation, tagged unions, checked extraction/failure protocol, `any_view`, `dyn`, and witnesses. |
 | `slice.odin`, `container.odin`, `text.odin`, `simd.odin`, `atomics.odin` | Built-in slice, managed-container, text, SIMD, and atomic semantics. |
 | `hash.odin`, `format.odin`, `iterate.odin` | Contributed hashing, coherent formatting, ranges, `foreach`, and iteration protocol support. |
-| `iteration_adapters.odin`, `iteration_refs.odin` | Ordinary iterable adapters and read-only element borrowing over arrays and slices. |
+| `iteration_adapters.odin`, `iteration_mutable.odin`, `iteration_yield.odin` | Borrowed iterable adapters, mutable element lending over arrays, dynamic arrays, and mutable slices, and the `Yield` descriptors that decide whether a loop binding owns or borrows its element. |
 
 ### Generics and compile-time features
 
@@ -323,6 +330,7 @@ be file-private.
 | `proc_contracts.odin` | Inferred callback result contracts, checked substitution bounds, and immutable borrow arguments. |
 | `precision.odin` | Diagnostic metadata explaining bounded provenance merges without changing acceptance. |
 | `borrow.odin` | Root loans, carrier paths, result summaries, escape contracts, allocator-region analysis, and diagnostics. |
+| `nil_uses.odin` | Locals a body only ever writes `nil` to, reported at the use rather than left to the trap. Asked over the whole body rather than per path, because a may-nil would reject code whose author knows the path is unreachable. |
 | `region.odin`, `materialize.odin` | `Arena`/`Scratch` semantic types and read-only storage for address-requiring constants. |
 | `bootstrap.odin`, `stdlib.odin` | Binding ordinary bootstrap declarations and contributing compiler-owned standard members without duplicating type identity. |
 
@@ -414,6 +422,7 @@ The integration harness is `tests/corpus_test.odin`:
 | `tests/layout/` | Compare compiler and LLVM layout. |
 | `tests/pkg/`, `tests/pkg_err/` | Multi-package success and import/package diagnostics. |
 | `tests/obj/`, `tests/os/` | C-host object linking and real process-argument integration. |
+| `tests/examples/` | Every program in `examples/` is built from its real source and must carry a classification; an output example's stdout is compared with `tests/examples/<name>.expected`. |
 
 Every diagnostic code the compiler can write is pinned by a case in one of those
 directories, or by a harness test for the ones no corpus shape reaches — a
@@ -460,6 +469,9 @@ ordering drift that successful execution may hide.
 - Raw-pointer provenance, `core:unsafe`, foreign retention/aliasing, and
   cross-thread transfer remain explicit trust boundaries.
 
-These are boundaries, not hidden unfinished phases. New work should extend this
-architecture only when its consumer and semantic contract are concrete. The
-next intended initiatives are summarized in [future-plans.md](future-plans.md).
+These are boundaries, not hidden unfinished phases. Where the shipped compiler
+does diverge from design.md — iteration is mid-migration — the divergence is
+recorded in [known-gaps.md](known-gaps.md) with its own repro, not here. New
+work should extend this architecture only when its consumer and semantic
+contract are concrete. The next intended initiatives are summarized in
+[future-plans.md](future-plans.md).
