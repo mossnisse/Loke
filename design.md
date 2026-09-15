@@ -1206,17 +1206,7 @@ static_assert(Foo != (struct{}));
 
 #### Delegating operators
 
-A single forwarding overload is one line — unwrap to the underlying type, apply its operator, wrap the result back:
-
-```odin
-Meters :: distinct f64;
-
-impl Meters {
-    add :: operator(+) proc(a, b: Meters) -> Meters { return Meters(f64(a) + f64(b)); }
-}
-```
-
-but a numeric newtype needs that same line for every operator it wants. `delegate` generates those forwarding overloads from a list of operator symbols, parsed exactly as [`operator(...)`](#operator-declarations), inside an `impl` block for a distinct type:
+`delegate` generates forwarding overloads from a list of operator symbols, parsed exactly as [`operator(...)`](#operator-declarations), inside an `impl` block for a distinct type. It replaces the one-line unwrap-apply-wrap overload a numeric newtype would otherwise write for every operator it wants:
 
 ```odin
 Meters :: distinct f64;
@@ -1234,7 +1224,7 @@ ok := a < b;     // bool: a comparison result is not wrapped
 
 For each listed symbol, `delegate` generates the underlying type's overloads of that operator (fixed at declaration time, so a caller's extensions cannot change them), substituting the distinct type for the underlying type in every operand and result. Each generated overload unwraps its operands, applies the underlying operator, and wraps a result *of the underlying type* back; a result of any other type — a comparison `bool`, a dot-product `f32` — passes through unchanged. Compound-assignment forms follow from their binary operators via the [fallback rule](#operator-declarations), so delegating `+` also gives `+=`.
 
-Delegation is selective by design. `Meters` delegates `+` and `-` but not `*` or `/`: two lengths add to a length but multiply to an area, a different type. A mixed-operand operator such as `Meters * f64 -> Meters` is written by hand. Listing a symbol the underlying type does not define is an error, and delegating one already declared explicitly in the same block is a redeclaration.
+A mixed-operand operator such as `Meters * f64 -> Meters` is written by hand. Listing a symbol the underlying type does not define is an error, and delegating one already declared explicitly in the same block is a redeclaration.
 
 `delegate` has no meaning for a non-`distinct` type. Non-operator behavior — including a `hash`, `compare`, or `format` method — is re-exported by an ordinary one-line receiver method that unwraps, calls, and where relevant wraps; these are rarer and need no bulk form.
 
@@ -2543,39 +2533,7 @@ Built-in containers provide `len` and `cap` methods. A method call evaluates its
 
 ### Library numeric types
 
-Complex numbers and quaternions are standard-library abstractions, not base-language types, built from ordinary structs, methods, operators, conversions, interfaces, and formatting hooks:
-
-```odin
-Complex_F64 :: struct {
-	real, imaginary: f64,
-}
-
-impl Complex_F64 {
-	from_components :: proc(real: f64, imaginary: f64 = 0) -> Complex_F64 {
-		return {real, imaginary};
-	}
-
-	add :: operator(+) proc(left, right: Complex_F64) -> Complex_F64 {
-		return {left.real + right.real, left.imaginary + right.imaginary};
-	}
-
-	multiply :: operator(*) proc(left, right: Complex_F64) -> Complex_F64 {
-		return {
-			left.real*right.real - left.imaginary*right.imaginary,
-			left.real*right.imaginary + left.imaginary*right.real,
-		};
-	}
-
-	from_scalar :: hook(convert) proc(value: f64) -> Complex_F64 {
-		return {value, 0};
-	}
-}
-
-z := Complex_F64.from_components(1, 2);
-w := z*z + Complex_F64(2.0);  // the conversion hook, written
-```
-
-Library numeric types follow the ordinary rules. A scalar reaches `Complex_F64` through the explicit conversion `Complex_F64(x)`. Generic and third-party numeric types use the same construction, conversion, and operator rules.
+Complex numbers and quaternions are standard-library abstractions, not base-language types. `Complex(T)` and `Quaternion(T)` in `core:math` are ordinary records with methods, [operator declarations](#operator-declarations), a [conversion hook](#construction-and-conversions), interfaces, and a `format` method — nothing the language reserves for itself. A scalar reaches one through the explicit conversion `Complex_F64(x)`, since there are no [user-defined implicit conversions](#implicit-type-conversions). Generic and third-party numeric types use the same construction, conversion, and operator rules.
 
 ## Interfaces and polymorphism
 
@@ -3661,9 +3619,7 @@ foreach (value in some_map.values()) {     // values alone, no entry record
 
 `foreach (value, index in some_array)` is an error unless the array's element is a two-field record, in which case it destructures that record. Element bindings are positional and mean nothing else, so a loop over `[dynamic]Point` binds `x` and `y`, not a value and an index.
 
-By default, each iterated value is a copy the loop owns for one step and disposes of at the end of it. Assignment to the copy does not modify the source. A by-reference loop projects the container's own storage instead and copies nothing; a map key bound beside `&value` is borrowed in place, because it is immutable.
-
-When the iterable is a place or borrow carrier, evaluating it establishes an implicit iterator loan that lives through the whole loop and ends with the `foreach` statement. Iteration by value holds an immutable loan; by reference, an exclusive mutable loan. So competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule. Value-only iteration such as an integer range needs no loan.
+When the iterable is a place or borrow carrier, evaluating it establishes an implicit iterator loan that lives through the whole loop and ends with the `foreach` statement. A borrowing traversal holds an immutable loan; a mutable one, an exclusive loan. So competing access to or invalidation of the iterable from inside the loop is checked by the ordinary one rule. Value-only iteration such as an integer range needs no loan.
 
 String iteration produces Unicode runes, not bytes. The string must contain valid UTF-8.
 
