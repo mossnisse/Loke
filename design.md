@@ -11,6 +11,7 @@ Headings here are cited by name from source comments and checked by `check-citat
   - [File format](#file-format)
   - [Code blocks](#code-blocks)
   - [Identifiers](#identifiers)
+  - [Predeclared names](#predeclared-names)
   - [Literals](#literals)
   - [Comments](#comments)
 - [2. Types & Values](#2-types--values)
@@ -160,6 +161,14 @@ when (LOKE_DEBUG) { }
 ## Identifiers
 
 Identifiers are case-sensitive, ASCII only, and match `[A-Za-z_][A-Za-z0-9_]*`. The identifier `_` discards a value without creating a binding. Comments and literals may contain any Unicode.
+
+## Predeclared names
+
+`true`, `false`, and `nil` are **reserved**: no name a lookup can reach may be one of them. A declaration, parameter, loop binding, or pattern binding that takes one is rejected. They spell literals, and a name lookup that changed what a literal means would be a surprise no other name in the language can produce — a file-scope `true :: 0` would silently change every other file in the package. The language already rejects far milder shadowing.
+
+A field or enum member is reached through a selector rather than by name lookup, so `struct { true: int }` and `enum { nil, other }` are legal and mean what they say.
+
+Every other predeclared name is an operation or a build-provided constant — `len`, `make`, `drop`, `size_of`, `LOKE_DEBUG` — and may be shadowed by a declaration like any other name.
 
 ## Literals
 
@@ -2986,6 +2995,14 @@ y, z := 20, 30;
 test, z := 20, 30; // ERROR: `z` is already declared in this scope
 ```
 
+### Nil states
+
+`^T`, a procedure value, and `dyn I` each have a nil state that fails on use. A local given nothing but `nil` is rejected where it is dereferenced, called, or dispatched through, rather than reaching that failure at run time.
+
+The question is asked over the whole body rather than along its paths. One write of anything else, anywhere in the body, settles it — as does one exposure to a write the compiler cannot read, such as `&mut local` or an `inout` argument. A pointer left nil on only *one* path is therefore not reported: that is a possibility rather than a certainty, and rejecting it would reject a program whose author knows the path is unreachable.
+
+This is a diagnostic, not a guarantee. Nothing about `^T` promises non-nil, and a nil that arrives from a parameter, a field, a container, or foreign code is still a run-time failure.
+
 ### Managed values and storage
 
 Owning values such as `string`, `[dynamic]T`, and `map[K]V` may own backing storage. A live managed value releases its resources when it leaves scope. See [`string`](#string-type).
@@ -5046,22 +5063,6 @@ true  // unfixed boolean constant equivalent to the expression 0==0
 ```text
 nil   // unfixed nil value used for certain values
 ```
-
-#### Nil states
-
-`^T`, a procedure value, and `dyn I` each have a nil state that fails on use. A local given nothing but `nil` is rejected where it is dereferenced, called, or dispatched through, rather than reaching that failure at run time.
-
-The question is asked over the whole body rather than along its paths. One write of anything else, anywhere in the body, settles it — as does one exposure to a write the compiler cannot read, such as `&mut local` or an `inout` argument. A pointer left nil on only *one* path is therefore not reported: that is a possibility rather than a certainty, and rejecting it would reject a program whose author knows the path is unreachable.
-
-This is a diagnostic, not a guarantee. Nothing about `^T` promises non-nil, and a nil that arrives from a parameter, a field, a container, or foreign code is still a run-time failure.
-
-#### Predeclared names
-
-`true`, `false`, and `nil` are **reserved**: no name a lookup can reach may be one of them. A declaration, parameter, loop binding, or pattern binding that takes one is rejected. They spell literals, and a name lookup that changed what a literal means would be a surprise no other name in the language can produce — a file-scope `true :: 0` would silently change every other file in the package. The language already rejects far milder shadowing.
-
-A field or enum member is reached through a selector rather than by name lookup, so `struct { true: int }` and `enum { nil, other }` are legal and mean what they say.
-
-Every other predeclared name is an operation or a build-provided constant — `len`, `make`, `drop`, `size_of`, `LOKE_DEBUG` — and may be shadowed by a declaration like any other name.
 
 `---` is declaration syntax with two roles: the [unspecified-contents marker](#zero-values) in `x: T = ---`, and the body marker for a [foreign procedure](#foreign-system). It is not an expression and cannot be assigned, passed, or used as `x := ---`.
 
