@@ -2926,7 +2926,7 @@ fmt.println(count);    // OK
 
 Each declaration in a scope must have a unique name. A local declaration must not shadow a local variable or parameter in an outer scope. Copying a parameter into a mutable local requires a different name; see [Local copies of parameters](#local-copies-of-parameters).
 
-This restriction applies only to local scopes. A local declaration may shadow a file-scope declaration, an imported package name, or a predeclared identifier such as `byte`, `nil`, or `len`. The program cannot use the shadowed name in that local scope.
+This restriction applies only to local scopes. A local declaration may shadow a file-scope declaration, an imported package name, or a predeclared identifier such as `byte` or `len`; the three [reserved names](#predeclared-names) are the exception. The program cannot use the shadowed name in that local scope.
 
 ```odin
 x := 10;
@@ -5444,7 +5444,7 @@ case .err: panic("integer allocation failed");
 }
 ```
 
-- `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. The annotation preserves this invalidation effect through wrappers and indirect calls. No tracked dependent may survive the reset. If the allocator does not support region reset, the call traps.
+- `free_all(@(allocator_reset) allocator: Allocator)` frees every allocation in the allocator's region. The annotation preserves this invalidation effect through wrappers and indirect calls. No tracked dependent may survive the reset. An allocator that does not support region reset traps, but checked code cannot reach that trap: the only allocators a reset can name are [local regions](#allocators), which always reset. A body may not hide a reset of storage that existed before it, and `main` takes no parameters, so no promise chain can begin with a provider that would refuse. The trap remains defined for a future provider that answers no.
 
 ```odin
 free_all(my_allocator);
