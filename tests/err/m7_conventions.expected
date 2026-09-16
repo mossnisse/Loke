@@ -21,3 +21,19 @@ L0619
 L0619
 `i128` is an integer wider than 64 bits on the Win64 C ABI
 @15:16
+
+L0619
+`Ctx` is a record with a non-trivial lifecycle
+@22:21
+
+L0619
+`Ctx` is a record with a non-trivial lifecycle
+@26:13
+
+L0619
+member `s` of `Late` is a managed `string`
+@27:22
+
+L0619
+a variadic `..T` is a slice, which has no C form
+@35:8

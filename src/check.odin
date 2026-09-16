@@ -13,6 +13,9 @@ Checker :: struct {
 	// Uses that trap on `nil`, pending the rest of the body that decides whether
 	// the local can be anything else (`nil_uses.odin`).
 	nil_uses: [dynamic]Nil_Use,
+	// Foreign signatures that named a record still resolving its fields
+	// (`check_deferred_foreign_signatures`).
+	deferred_foreign_signatures: [dynamic]Foreign_Signature,
 	file:  u32,
 	// The file being checked. Its package-clause attributes decide the default
 	// visibility of the declarations in it.
@@ -239,6 +242,10 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	//.
 	validate_attributes(k, pkg)
 
+	// Every record in this package has its fields now, so a foreign signature
+	// that named one mid-resolution can be answered.
+	check_deferred_foreign_signatures(k)
+
 	// Phase 2c: a struct or array that contains itself by value has no finite
 	// size, and LLVM cannot be asked to lay one out. Pointer edges break the
 	// cycle, so this runs on the resolved graph and before any emission.
@@ -285,6 +292,8 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 			}
 		}
 	}
+	// And any a body's own procedure type deferred.
+	check_deferred_foreign_signatures(k)
 }
 
 @(private = "file")

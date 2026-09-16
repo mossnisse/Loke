@@ -1,0 +1,16 @@
+package main; import "core:fmt";
+
+// design.md "Foreign-ABI-safe types": a `borrow` parameter crosses as a pointer,
+// so a foreign procedure pointer taking one may sit inside a record that itself
+// crosses a C boundary, and a call through it still reads the caller's array.
+
+sum4 :: proc "c" (a: borrow [4]i32) -> i32 { return a[0] + a[1] + a[2] + a[3]; }
+
+Holder :: struct { f: proc "c" (a: borrow [4]i32) -> i32 }
+
+call_holder :: proc "c" (h: Holder, a: borrow [4]i32) -> i32 { return h.f(a); }
+
+main :: proc() {
+	values := [4]i32{1, 2, 3, 4};
+	fmt.println(call_holder(Holder{sum4}, values));
+}

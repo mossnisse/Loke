@@ -62,11 +62,21 @@ validate_convention :: proc(k: ^Checker, convention: string, span: Span) -> bool
 	return false
 }
 
+// design.md "Foreign-ABI-safe types" / "Parameter semantics": whether one
+// parameter of a foreign signature crosses as a pointer (`borrow`, `inout`, or
+// `@(by_ptr)`), so its pointee need not be ABI-safe itself. A declaration and a
+// procedure pointer nested in another foreign type both ask here, so one
+// signature cannot be accepted in one place and rejected in the other.
+foreign_param_is_pointer :: proc(modes: []Param_Mode, by_ptr: []bool, index: int) -> bool {
+	mode := index < len(modes) ? modes[index] : Param_Mode.Value
+	return param_mode_is_pointer(mode) || (index < len(by_ptr) && by_ptr[index])
+}
+
 // design.md "Foreign-ABI-safe types" / "Parameter semantics": every by-value
-// parameter and result of a foreign-convention signature must be ABI-safe (a
-// `move` parameter and more than one result have no C representation). An
-// `inout` parameter lowers to a pointer, so its pointee need not be ABI-safe
-// itself.
+// parameter and result of a foreign-convention signature must be ABI-safe. A
+// `move` parameter and more than one result have no C representation, and
+// neither has a Loke variadic `..T`, which is a slice. A C variadic is
+// `@(c_vararg)`, which never joins `params`.
 check_foreign_signature :: proc(
 	k: ^Checker,
 	params: []Type_Id,
@@ -76,48 +86,112 @@ check_foreign_signature :: proc(
 	result_inout: bool,
 	span: Span,
 ) {
-	for param, index in params {
-		mode := index < len(modes) ? modes[index] : Param_Mode.Value
+	for mode in modes {
 		#partial switch mode {
 		case .Move:
 			errorf(k.c, span, "L0621", "a foreign parameter cannot use `move`: a C call acquires no cleanup responsibility")
-			continue
-		case .Borrow, .Inout, .Variadic:
-			continue
-		}
-		if index < len(by_ptr) && by_ptr[index] {
-			continue
-		}
-		if ok, reason := foreign_abi_safe(k.c, param); !ok {
-			errorf(k.c, span, "L0619", "a foreign parameter is not ABI-safe: %s", reason)
+		case .Variadic:
+			errorf(k.c, span, "L0619", "a foreign parameter is not ABI-safe: a variadic `..T` is a slice, which has no C form")
 		}
 	}
-	if result != INVALID_TYPE && !result_inout {
-		if ok, reason := foreign_abi_safe(k.c, result); !ok {
-			errorf(k.c, span, "L0619", "a foreign result is not ABI-safe: %s", reason)
+	check_foreign_signature_types(k, Foreign_Signature{params, modes, by_ptr, result, result_inout, span})
+}
+
+// A foreign signature whose type safety could not be answered yet: a procedure
+// type written inside a record names that record before its fields exist.
+Foreign_Signature :: struct {
+	params:       []Type_Id,
+	modes:        []Param_Mode,
+	by_ptr:       []bool,
+	result:       Type_Id,
+	result_inout: bool,
+	span:         Span,
+}
+
+// Answers the signatures deferred while a record they name was still resolving.
+// Nothing is on the resolution stack between phases, so none is deferred again.
+check_deferred_foreign_signatures :: proc(k: ^Checker) {
+	count := len(k.deferred_foreign_signatures)
+	for index in 0 ..< count {
+		check_foreign_signature_types(k, k.deferred_foreign_signatures[index])
+	}
+	remove_range(&k.deferred_foreign_signatures, 0, count)
+}
+
+@(private = "file")
+check_foreign_signature_types :: proc(k: ^Checker, sig: Foreign_Signature) {
+	Unsafe :: struct {
+		what, reason: string,
+	}
+	unsafe := make([dynamic]Unsafe, 0, 2, context.temp_allocator)
+	for param, index in sig.params {
+		mode := index < len(sig.modes) ? sig.modes[index] : Param_Mode.Value
+		if mode == .Move || mode == .Variadic || foreign_param_is_pointer(sig.modes, sig.by_ptr, index) {
+			continue
+		}
+		ok, reason, incomplete := abi_safety(k.c, param)
+		if incomplete {
+			defer_foreign_signature(k, sig)
+			return
+		}
+		if !ok {
+			append(&unsafe, Unsafe{"parameter", reason})
 		}
 	}
+	if sig.result != INVALID_TYPE && !sig.result_inout {
+		ok, reason, incomplete := abi_safety(k.c, sig.result)
+		if incomplete {
+			defer_foreign_signature(k, sig)
+			return
+		}
+		if !ok {
+			append(&unsafe, Unsafe{"result", reason})
+		}
+	}
+	for u in unsafe {
+		errorf(k.c, sig.span, "L0619", "a foreign %s is not ABI-safe: %s", u.what, u.reason)
+	}
+}
+
+@(private = "file")
+defer_foreign_signature :: proc(k: ^Checker, sig: Foreign_Signature) {
+	if cap(k.deferred_foreign_signatures) == 0 {
+		k.deferred_foreign_signatures = make([dynamic]Foreign_Signature, 0, 4, k.c.semantic_allocator)
+	}
+	append(&k.deferred_foreign_signatures, sig)
 }
 
 // design.md "Foreign-ABI-safe types". `top_level` is false inside a struct,
 // where a fixed array is permitted (it becomes a C array field); at a
 // parameter, result, or global it is true, since C adjusts those to pointers.
 // On failure `reason` names the member path.
+//
+// A global or a C-variadic argument is checked once its type has resolved, so
+// only a signature (`check_foreign_signature`) can meet a record still resolving
+// its fields, and only it has to wait.
 foreign_abi_safe :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok: bool, reason: string) {
-	visiting := make([]bool, len(c.types), context.temp_allocator)
-	saw_cycle := false
-	safe, noun, path := abi_walk(c, type, top_level, visiting, &saw_cycle)
-	if safe {
-		return true, ""
-	}
-	if path == "" {
-		return false, fmt.tprintf("`%s` is %s", type_name(c, type), noun)
-	}
-	return false, fmt.tprintf("member `%s` of `%s` is %s", path, type_name(c, type), noun)
+	ok, reason, _ = abi_safety(c, type, top_level)
+	return
 }
 
-// The Windows x64 classification of one by-value foreign parameter or result
-//, confirmed against clang's own IR.
+// `incomplete` means the walk met a record still resolving its own fields, whose
+// answer is not known yet; `ok` is then true and says nothing.
+@(private = "file")
+abi_safety :: proc(c: ^Compiler, type: Type_Id, top_level := true) -> (ok: bool, reason: string, incomplete: bool) {
+	visiting := make([]bool, len(c.types), context.temp_allocator)
+	saw_cycle := false
+	safe, noun, path := abi_walk(c, type, top_level, visiting, &saw_cycle, &incomplete)
+	if safe {
+		return true, "", incomplete
+	}
+	if path == "" {
+		return false, fmt.tprintf("`%s` is %s", type_name(c, type), noun), false
+	}
+	return false, fmt.tprintf("member `%s` of `%s` is %s", path, type_name(c, type), noun), false
+}
+
+// The Windows x64 classification of one by-value foreign parameter or result,
+// confirmed against clang's own IR.
 Abi_Pass :: enum {
 	Direct,   // a scalar or pointer, passed as its own LLVM type
 	Bool_I1,  // a direct C `_Bool`: `i1 zeroext` in the signature, one byte stored
@@ -135,6 +209,9 @@ abi_pass :: proc(c: ^Compiler, type: Type_Id) -> Abi_Pass {
 	case .Bool:
 		return .Bool_I1
 	case .Struct, .Array, .Union:
+		// A top-level array or any union is rejected by `foreign_abi_safe` before
+		// emission. They stay here so a missed check still lowers by size, never
+		// silently as a direct LLVM aggregate.
 		switch type_size(c, under) {
 		case 1, 2, 4, 8:
 			return .Reg_Int
@@ -159,6 +236,7 @@ abi_walk :: proc(
 	top_level: bool,
 	visiting: []bool,
 	saw_cycle: ^bool,
+	incomplete: ^bool,
 ) -> (safe: bool, noun: string, path: string) {
 	if type == INVALID_TYPE {
 		return false, "not a resolved type", ""
@@ -210,18 +288,22 @@ abi_walk :: proc(
 		if !convention_is_foreign(info.convention) {
 			return false, "a `loke`-convention procedure pointer", ""
 		}
+		// Only an address crosses, so reaching a record under walk from inside this
+		// signature is a legal cycle, not an infinite-size one. Keep it from
+		// switching off the enclosing records' lifecycle check.
+		outer_cycle := saw_cycle^
+		defer saw_cycle^ = outer_cycle
 		// Not `index`: the `defer` above still has to clear this type's own slot.
 		for param, position in info.parameters {
-			mode := position < len(info.param_modes) ? info.param_modes[position] : Param_Mode.Value
-			if mode == .Inout || (position < len(info.param_by_ptr) && info.param_by_ptr[position]) {
+			if foreign_param_is_pointer(info.param_modes, info.param_by_ptr, position) {
 				continue
 			}
-			if s, n, p := abi_walk(c, param, true, visiting, saw_cycle); !s {
+			if s, n, p := abi_walk(c, param, true, visiting, saw_cycle, incomplete); !s {
 				return false, n, p
 			}
 		}
 		if info.result != INVALID_TYPE && !info.result_inout {
-			if s, n, p := abi_walk(c, info.result, true, visiting, saw_cycle); !s {
+			if s, n, p := abi_walk(c, info.result, true, visiting, saw_cycle, incomplete); !s {
 				return false, n, p
 			}
 		}
@@ -230,8 +312,16 @@ abi_walk :: proc(
 		if top_level {
 			return false, "a fixed array (write `[^]T` or `^T` at a C boundary)", ""
 		}
-		return abi_walk(c, info.element, false, visiting, saw_cycle)
+		return abi_walk(c, info.element, false, visiting, saw_cycle, incomplete)
 	case .Struct:
+		// A procedure type written inside a record can name it before its fields
+		// exist. Neither the fields nor the lifecycle can answer yet, and asking
+		// `type_is_managed` would cache the partial answer for good, so the
+		// signature waits for `check_deferred_foreign_signatures`.
+		if sym := symbol_of(c, info.symbol); sym != nil && sym.decl != nil && sym.decl.sig_state == .Checking {
+			incomplete^ = true
+			return true, "", ""
+		}
 		// A plain struct with a trivial lifecycle whose fields are recursively
 		// safe. Fields are checked before the lifecycle, so a managed field is
 		// named rather than the whole record; a custom hook with otherwise-safe
@@ -241,7 +331,7 @@ abi_walk :: proc(
 			if sym == nil {
 				continue
 			}
-			if s, n, p := abi_walk(c, sym.type, false, visiting, saw_cycle); !s {
+			if s, n, p := abi_walk(c, sym.type, false, visiting, saw_cycle, incomplete); !s {
 				name := identifier_text(c, sym.name)
 				if p != "" {
 					return false, n, fmt.tprintf("%s.%s", name, p)
@@ -249,7 +339,7 @@ abi_walk :: proc(
 				return false, n, name
 			}
 		}
-		if !saw_cycle^ && type_is_managed(c, under) {
+		if !saw_cycle^ && !incomplete^ && type_is_managed(c, under) {
 			return false, "a record with a non-trivial lifecycle", ""
 		}
 		return true, "", ""
