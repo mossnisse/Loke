@@ -877,6 +877,9 @@ Symbol :: struct {
 	// nothing downstream asks which block a symbol was written in.
 	is_foreign:         bool,
 	link_name:          string,
+	// design.md "Promoted struct fields": a `using` field, whose own fields its
+	// record's selectors also reach.
+	is_using:           bool,
 	// design.md "@(export)": the declaration emits its symbol into
 	// the object under `link_name` (its written name unless `@(link_name)` renamed
 	// it) instead of the mangled `@loke.p...`, so a C consumer can link to it.

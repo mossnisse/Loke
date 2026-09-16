@@ -1,0 +1,7 @@
+L0703
+`x` is promoted into `Both` by more than one `using` field
+@14:6
+
+L0363
+`Both` has no field or member `z`
+@15:6

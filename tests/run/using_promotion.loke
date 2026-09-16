@@ -1,0 +1,26 @@
+package main; import "core:fmt";
+
+// design.md "Promoted struct fields": a `using` field's own fields are reachable
+// as selectors on the containing record, through nesting and pointers, as
+// places, and in constants.
+
+Vec :: struct { x, y: int }
+Inner :: struct { using v: Vec, depth: int }
+Entity :: struct { using inner: Inner, id: int }
+
+move_right :: proc(e: ^mut Entity) {
+	e.x += 10;
+}
+
+POINT :: Entity{inner = Inner{v = Vec{7, 8}, depth = 1}, id = 9};
+
+main :: proc() {
+	e := Entity{inner = Inner{v = Vec{1, 2}, depth = 3}, id = 4};
+	fmt.println(e.x, e.y, e.depth, e.id);
+	e.y = 20;
+	move_right(&mut e);
+	fmt.println(e.inner.v.x, e.v.y);
+	p := &e;
+	fmt.println(p.x);
+	fmt.println(POINT.y);
+}

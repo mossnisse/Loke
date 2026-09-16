@@ -1,0 +1,16 @@
+package main;
+
+// design.md "Promoted struct fields": a declared field wins over a promoted one,
+// and two `using` fields supplying the same name make that selector ambiguous.
+
+Vec :: struct { x, y: int }
+Tag :: struct { id: int, x: int }
+Both :: struct { using v: Vec, using t: Tag, y: int }
+
+main :: proc() {
+	b := Both{};
+	_ = b.y;
+	_ = b.id;
+	_ = b.x;
+	_ = b.z;
+}

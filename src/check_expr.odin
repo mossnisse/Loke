@@ -662,6 +662,36 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 	if info != nil && info.kind == .Struct {
 		field = struct_field(k.c, base_type, intern_identifier(k.c, v.name.text))
 	}
+	// design.md "Promoted struct fields": a declared field wins, then one reached
+	// through `using` fields. `e.x` becomes the checked chain `e.position.x`.
+	if field == INVALID_SYMBOL && info != nil && info.kind == .Struct {
+		name := intern_identifier(k.c, v.name.text)
+		path := make([dynamic]Symbol_Id, 0, 4, context.temp_allocator)
+		found, ambiguous := promoted_field_path(k.c, base_type, name, &path, 0)
+		if ambiguous {
+			errorf(k.c, v.span, "L0703", "`%s` is promoted into `%s` by more than one `using` field; select it explicitly", v.name.text, type_name(k.c, operand))
+			v.type = INVALID_TYPE
+			return
+		}
+		if found {
+			current_type, current_base := operand, operand_base
+			for link in path[:len(path) - 1] {
+				inner := new(Expr_Selector, k.c.semantic_allocator)
+				inner.span = v.span
+				inner.operand = v.operand
+				inner.name = Name{text = identifier_text(k.c, symbol_of(k.c, link).name), span = v.name.span, id = symbol_of(k.c, link).name}
+				if !select_field(k, inner, current_type, current_base, through_pointer, pointer_mutable, link) {
+					v.type = INVALID_TYPE
+					return
+				}
+				v.operand = inner
+				current_type, current_base = inner.type, &inner.base
+				through_pointer, pointer_mutable = false, false
+			}
+			select_field(k, v, current_type, current_base, false, false, path[len(path) - 1])
+			return
+		}
+	}
 	// A field always wins over method-call sugar with the same name (design.md).
 	if field == INVALID_SYMBOL {
 		// A pointer may declare inherent methods of its own. Preserve that lookup
@@ -697,11 +727,24 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
+	select_field(k, v, operand, operand_base, through_pointer, pointer_mutable, field)
+}
+
+// Annotates `v` as selecting `field` from its already-checked operand.
+@(private = "file")
+select_field :: proc(
+	k: ^Checker,
+	v: ^Expr_Selector,
+	operand: Type_Id,
+	operand_base: ^Expr_Base,
+	through_pointer, pointer_mutable: bool,
+	field: Symbol_Id,
+) -> bool {
 	// Field lookup already won over method sugar, so an inaccessible field is
 	// reported as itself rather than falling through to a same-named method.
 	if !require_visible_field(k, v.span, operand, field, "L0471", "used") {
 		v.type = INVALID_TYPE
-		return
+		return false
 	}
 	sym := symbol_of(k.c, field)
 	v.resolution = Resolution{kind = .Field, symbol = field}
@@ -725,6 +768,47 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			v.immutable = .Constant
 		}
 	}
+	return true
+}
+
+// The `using` fields leading from `record` to a field named `name`, ending with
+// that field. A field declared at a level hides deeper ones; two matches at the
+// same level are ambiguous. Only a by-value struct field promotes.
+@(private = "file")
+promoted_field_path :: proc(
+	c: ^Compiler, record: Type_Id, name: Identifier_Id, path: ^[dynamic]Symbol_Id, depth: int,
+) -> (found: bool, ambiguous: bool) {
+	info := underlying_info(c, record)
+	// A record containing itself by value is already an error; stop the recursion.
+	if info == nil || info.kind != .Struct || depth > 32 {
+		return false, false
+	}
+	if direct := struct_field(c, record, name); direct != INVALID_SYMBOL {
+		append(path, direct)
+		return true, false
+	}
+	mark := len(path)
+	for field in info.fields {
+		sym := symbol_of(c, field)
+		if sym == nil || !sym.is_using {
+			continue
+		}
+		start := len(path)
+		append(path, field)
+		sub_found, sub_ambiguous := promoted_field_path(c, sym.type, name, path, depth + 1)
+		if sub_ambiguous || (sub_found && found) {
+			return false, true
+		}
+		if sub_found {
+			found = true
+		} else {
+			resize(path, start)
+		}
+	}
+	if !found {
+		resize(path, mark)
+	}
+	return found, false
 }
 
 // Method syntax through a pointer uses the same implicit dereference as field
