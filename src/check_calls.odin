@@ -885,6 +885,14 @@ check_conversion :: proc(k: ^Checker, v: ^Expr_Call, target: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
+	// Without this a refused literal would fall through to the hook search and
+	// report a missing conversion rather than the bytes it actually holds.
+	if operand := expr_base(v.args[0].value); operand.is_const &&
+	   constant_is_invalid_text(k.c, operand.const_value, target) {
+		report_invalid_utf8(k, operand.span, target)
+		v.type = INVALID_TYPE
+		return
+	}
 	if builtin_conversion(k, v, target, source) {
 		return
 	}

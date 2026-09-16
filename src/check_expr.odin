@@ -681,7 +681,12 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		if type_is_untyped(k.c, operand) {
 			materialized := default_type(k.c, operand)
 			if materialized != operand && materialized != INVALID_TYPE {
-				materialize(k, v.operand, materialized)
+				// A constant its default type refuses, such as a literal that is not
+				// UTF-8, has been reported; it has no members to look for.
+				if !materialize(k, v.operand, materialized) {
+					v.type = INVALID_TYPE
+					return
+				}
 				if select_method(k, v, materialized, callee_position) {
 					return
 				}
@@ -2817,9 +2822,36 @@ report_unrepresentable :: proc(k: ^Checker, base: ^Expr_Base, target: Type_Id) {
 		errorf(k.c, base.span, "L0353", "%v is not representable by `%s`", base.const_value.float, type_name(k.c, target))
 	case .Nil:
 		errorf(k.c, base.span, "L0310", "`nil` is not a value of `%s`", type_name(k.c, target))
-	case .Boolean, .String, .Type, .Aggregate, .Invalid:
+	case .String:
+		if !utf8.valid_string(base.const_value.text) {
+			report_invalid_utf8(k, base.span, target)
+			return
+		}
+		errorf(k.c, base.span, "L0310", "this constant is not a value of `%s`", type_name(k.c, target))
+	case .Boolean, .Type, .Aggregate, .Invalid:
 		errorf(k.c, base.span, "L0310", "this constant is not a value of `%s`", type_name(k.c, target))
 	}
+}
+
+// Is this the constant `convert_const` refuses because its bytes are not text?
+constant_is_invalid_text :: proc(c: ^Compiler, value: Const_Value, target: Type_Id) -> bool {
+	#partial switch underlying_kind(c, target) {
+	case .String, .String_View:
+		return value.kind == .String && !utf8.valid_string(value.text)
+	}
+	return false
+}
+
+// Shared by implicit and written conversions, so `s: string = "\xff"` and
+// `string("\xff")` say the same thing.
+report_invalid_utf8 :: proc(k: ^Checker, span: Span, target: Type_Id) {
+	errorf(
+		k.c,
+		span,
+		"L0702",
+		"this string constant is not valid UTF-8, so it is not a `%s`; write the bytes as a `[]u8` literal, or use a `cstring_view`",
+		type_name(k.c, target),
+	)
 }
 
 // Converts a constant to a target type. `explicit` is set for a written
@@ -2854,9 +2886,17 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 	// design.md "string type conversions": a literal's zero-terminated bytes
 	// have static lifetime, so the same constant initializes an owning `string`,
 	// a borrowed view, and a C view alike.
-	case .Untyped_String, .String, .String_View, .CString_View:
+	case .Untyped_String, .CString_View:
 		if value.kind == .String {
 			return value, true
+		}
+	// design.md "string type": "A `string` always holds valid UTF-8". An escape
+	// can spell any byte, so a literal is checked here, where it first becomes
+	// text — after folding, so `"\xc3" + "\xa9"` is the `é` it spells. A C view
+	// promises no encoding and takes the bytes as written.
+	case .String, .String_View:
+		if value.kind == .String {
+			return value, utf8.valid_string(value.text)
 		}
 	case .Bool:
 		if value.kind == .Boolean {

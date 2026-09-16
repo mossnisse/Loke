@@ -1,0 +1,21 @@
+L0702
+@17:14
+this string constant is not valid UTF-8, so it is not a `string`
+L0702
+@18:14
+this string constant is not valid UTF-8, so it is not a `string`
+L0702
+@19:12
+this string constant is not valid UTF-8, so it is not a `string_view`
+L0702
+@20:14
+this string constant is not valid UTF-8, so it is not a `string`
+L0702
+@21:14
+this string constant is not valid UTF-8, so it is not a `string`
+L0702
+@22:19
+this string constant is not valid UTF-8, so it is not a `string_view`
+L0702
+@23:7
+this string constant is not valid UTF-8, so it is not a `string`

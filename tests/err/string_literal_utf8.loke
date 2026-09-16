@@ -1,0 +1,25 @@
+package main;
+
+import "core:fmt";
+
+// design.md "string type": "A `string` always holds valid UTF-8". An escape can
+// spell any byte, so a literal is held to that where it first becomes text:
+// implicitly, through a written conversion, as an argument, through a named
+// constant, through the `any_view` a print takes, and as a receiver. Each is one
+// error, not a second one about the member the receiver no longer has. The
+// folded value is what is checked, so a concatenation is judged whole.
+
+take :: proc(text: string_view) -> int { return text.len(); }
+
+Lone_Byte :: "\xff";
+
+main :: proc() {
+	a: string = "\xc3";
+	b := string("\xff");
+	c := take("\x80");
+	d: string = Lone_Byte;
+	fmt.println("\xfe");
+	e: string_view = "ok" + "\xff";
+	f := "\xff".len();
+	_ = a; _ = b; _ = c; _ = d; _ = e; _ = f;
+}
