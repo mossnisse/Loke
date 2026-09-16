@@ -39,3 +39,10 @@ main :: proc() {
 	// it answers to the same policy. `_ = h()` stays the written discard.
 	uninspected := h();
 }
+
+// A delegation keeps its attributes, so they are validated like any other.
+Meters :: distinct i64;
+impl Meters {
+	@(bogus_delegate) delegate(+);
+	@(public) delegate(-);
+}

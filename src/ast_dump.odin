@@ -1,8 +1,5 @@
-// Deterministic, semantic-free AST dump for the parser golden tests and the
-// `-dump-ast` driver mode: omits addresses and checker annotations so output
-// stays stable across runs and phases.
-//
-// `_` stands for an absent optional child everywhere it appears.
+// Deterministic AST dump of written syntax, for the parser goldens and
+// `-dump-ast`. `_` is an absent optional child.
 package lokec
 
 import "core:fmt"
@@ -21,7 +18,7 @@ ast_dump :: proc(f: ^File) -> string {
 	return strings.to_string(b)
 }
 
-// ` @[name, qualified.name=EXPR]`, or nothing when there are none.
+// ` @[name,qualified.name=EXPR]`, or nothing.
 @(private = "file")
 dump_attributes :: proc(b: ^strings.Builder, attributes: []Attribute) {
 	if len(attributes) == 0 {
@@ -88,7 +85,6 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 		dump_indent(b, depth)
 		fmt.sbprint(b, "(foreign-import")
 		dump_attributes(b, node.attributes)
-		// The stored path is unquoted; the dump shows it as the written literal.
 		fmt.sbprintfln(b, " %q %q)", node.name.text, node.path)
 
 	case ^Item_Foreign_Block:
@@ -117,6 +113,7 @@ dump_item :: proc(b: ^strings.Builder, item: Item, depth: int) {
 	case ^Item_Delegate:
 		dump_indent(b, depth)
 		fmt.sbprint(b, "(delegate")
+		dump_attributes(b, node.attributes)
 		for symbol in node.symbols {
 			fmt.sbprintf(b, " %q", symbol)
 		}
@@ -217,8 +214,6 @@ dump_block :: proc(b: ^strings.Builder, block: ^Block, depth: int) {
 	fmt.sbprintln(b, ")")
 }
 
-// One line per child keeps compound statements deterministic without inventing
-// a layout: `(label ...)` children sit one level in from their statement.
 @(private = "file")
 dump_labeled :: proc(b: ^strings.Builder, label: string, expr: Expr, depth: int) {
 	dump_indent(b, depth)
@@ -270,7 +265,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 
 	case ^Stmt_If:
 		dump_indent(b, depth)
-		fmt.sbprintln(b, "(if")
+		fmt.sbprint(b, "(if")
+		dump_attributes(b, node.attributes)
+		fmt.sbprintln(b)
 		if node.init != nil {
 			dump_stmt(b, node.init, depth + 1)
 		}
@@ -293,7 +290,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 
 	case ^Stmt_For:
 		dump_indent(b, depth)
-		fmt.sbprintln(b, node.condition_only ? "(for cond-only" : "(for")
+		fmt.sbprint(b, node.condition_only ? "(for cond-only" : "(for")
+		dump_attributes(b, node.attributes)
+		fmt.sbprintln(b)
 		if node.init != nil {
 			dump_stmt(b, node.init, depth + 1)
 		}
@@ -311,7 +310,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 		dump_indent(b, depth)
 		fmt.sbprint(b, "(foreach [")
 		dump_foreach_bindings(b, node.bindings)
-		fmt.sbprintln(b, "]")
+		fmt.sbprint(b, "]")
+		dump_attributes(b, node.attributes)
+		fmt.sbprintln(b)
 		dump_labeled(b, "in", node.iterable, depth + 1)
 		dump_block(b, node.body, depth + 1)
 		dump_indent(b, depth)
@@ -350,7 +351,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 
 	case ^Stmt_Defer:
 		dump_indent(b, depth)
-		fmt.sbprintln(b, "(defer")
+		fmt.sbprint(b, "(defer")
+		dump_attributes(b, node.attributes)
+		fmt.sbprintln(b)
 		if node.stmt != nil {
 			dump_stmt(b, node.stmt, depth + 1)
 		}
@@ -360,6 +363,7 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 	case ^Stmt_Return:
 		dump_indent(b, depth)
 		fmt.sbprint(b, "(return")
+		dump_attributes(b, node.attributes)
 		if value := node.value; value != nil {
 			if value.is_inout {
 				fmt.sbprint(b, " (inout")
@@ -373,7 +377,9 @@ dump_stmt :: proc(b: ^strings.Builder, stmt: Stmt, depth: int) {
 
 	case ^Stmt_Branch:
 		dump_indent(b, depth)
-		fmt.sbprintln(b, node.kind == .Break ? "(break)" : "(continue)")
+		fmt.sbprint(b, node.kind == .Break ? "(break" : "(continue")
+		dump_attributes(b, node.attributes)
+		fmt.sbprintln(b, ")")
 
 	case ^Block:
 		dump_block(b, node, depth)
@@ -438,7 +444,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprintf(b, " %q)", node.name.text)
 
 	case ^Expr_Checked_Extract:
-		fmt.sbprint(b, "(assert")
+		fmt.sbprint(b, "(extract")
 		dump_child(b, node.operand, depth)
 		dump_child(b, node.target, depth)
 		fmt.sbprint(b, ")")
@@ -495,7 +501,6 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, ")")
 
 	case ^Expr_Cond:
-		// Source order: `then if cond else otherwise`.
 		fmt.sbprint(b, "(cond")
 		dump_child(b, node.then, depth)
 		dump_child(b, node.cond, depth)
@@ -525,11 +530,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Expr_Proc:
 		fmt.sbprint(b, "(proc")
 		dump_child(b, node.signature, depth)
-		for clause in node.where_clauses {
-			fmt.sbprint(b, " (where")
-			dump_child(b, clause, depth)
-			fmt.sbprint(b, ")")
-		}
+		dump_where_clauses(b, node.where_clauses, depth)
 		if node.bodiless {
 			fmt.sbprint(b, " ---)")
 			return
@@ -612,7 +613,6 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Type_Proc:
 		fmt.sbprint(b, "(proc-type")
 		if node.convention != "" {
-			// The stored convention is unquoted; the dump shows it as the written literal.
 			fmt.sbprintf(b, " %q", node.convention)
 		}
 		for param in node.params {
@@ -627,11 +627,7 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 		fmt.sbprint(b, node.kind == .Union ? "(union" : node.move_only ? "(move-only-struct" : "(struct")
 		dump_attributes(b, node.attributes)
 		dump_generic_params(b, node.generic_params, depth)
-		for clause in node.where_clauses {
-			fmt.sbprint(b, " (where")
-			dump_child(b, clause, depth)
-			fmt.sbprint(b, ")")
-		}
+		dump_where_clauses(b, node.where_clauses, depth)
 		for field in node.fields {
 			fmt.sbprint(b, " (field")
 			dump_attributes(b, field.attributes)
@@ -679,14 +675,19 @@ dump_expr :: proc(b: ^strings.Builder, expr: Expr, depth: int) {
 	case ^Type_Interface:
 		fmt.sbprint(b, "(interface")
 		dump_generic_params(b, node.generic_params, depth)
-		for clause in node.where_clauses {
-			fmt.sbprint(b, " (where")
-			dump_child(b, clause, depth)
-			fmt.sbprint(b, ")")
-		}
+		dump_where_clauses(b, node.where_clauses, depth)
 		for requirement in node.requirements {
 			dump_requirement(b, requirement, depth)
 		}
+		fmt.sbprint(b, ")")
+	}
+}
+
+@(private = "file")
+dump_where_clauses :: proc(b: ^strings.Builder, clauses: []Expr, depth: int) {
+	for clause in clauses {
+		fmt.sbprint(b, " (where")
+		dump_child(b, clause, depth)
 		fmt.sbprint(b, ")")
 	}
 }
@@ -801,9 +802,7 @@ dump_argument :: proc(b: ^strings.Builder, arg: Argument, depth: int) {
 	fmt.sbprint(b, ")")
 }
 
-// A binding pattern is a tree, so a group prints as a nested list. A leaf prints
-// exactly as it did before groups existed, which is what keeps every flat
-// header's golden dump unchanged.
+// A group prints as a nested list.
 @(private = "file")
 dump_foreach_bindings :: proc(b: ^strings.Builder, bindings: []Foreach_Binding) {
 	for binding, i in bindings {

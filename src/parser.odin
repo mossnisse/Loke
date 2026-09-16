@@ -727,7 +727,7 @@ parse_member_list :: proc(p: ^Parser, kind: Member_Context) -> []Item {
 		// `delegate` is the contextual keyword only when followed by `(`; otherwise
 		// it is an ordinary identifier that may begin a declaration.
 		case kind == .Impl && is_contextual(p, "delegate") && peek_token(p, 1).kind == .Lparen:
-			append(&members, parse_delegate(p, start))
+			append(&members, parse_delegate(p, attributes, start))
 		case starts_declaration(p):
 			if d, ok := parse_declaration(p, attributes, start); ok {
 				append(&members, d)
@@ -749,10 +749,11 @@ parse_member_list :: proc(p: ^Parser, kind: Member_Context) -> []Item {
 }
 
 @(private = "file")
-parse_delegate :: proc(p: ^Parser, start: Token) -> Item {
+parse_delegate :: proc(p: ^Parser, attributes: []Attribute, start: Token) -> Item {
 	advance(p) // `delegate`
 
 	item := ast_new(p, Item_Delegate)
+	item.attributes = attributes
 	_, opened := expect(p, .Lparen, "L0243", "`(` before the delegated operators")
 	symbols := make([dynamic]string, 0, 0, p.allocator)
 	for !at(p, .Rparen) && !at(p, .EOF) {

@@ -1,0 +1,19 @@
+// Attributes attach to every statement kind and to `delegate`.
+package main;
+
+impl Point {
+	@(tool.forward) delegate(+);
+}
+
+main :: proc() {
+	@(a) if (ready) { }
+	@(b) for (ready) { }
+	@(c) foreach (x in items) {
+		@(d) continue;
+	}
+	@(e) defer close(handle);
+	for (;;) {
+		@(f) break;
+	}
+	@(g) return;
+}

@@ -24,6 +24,7 @@ Attr_Pos :: enum {
 	Union_Literal,
 	Foreign_Block,
 	Static_Assert,
+	Delegate,
 }
 
 Attr_Shape :: enum {
@@ -108,6 +109,7 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	case .Union_Literal:  return "a union type"
 	case .Foreign_Block:  return "a foreign block"
 	case .Static_Assert:  return "a `static_assert`"
+	case .Delegate:       return "a `delegate`"
 	}
 	return "here"
 }
@@ -193,8 +195,11 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 				validate_decl_attributes(k, v)
 			case ^Item_Impl:
 				for member in v.members {
-					if d, ok := member.(^Decl); ok {
-						validate_decl_attributes(k, d)
+					#partial switch m in member {
+					case ^Decl:
+						validate_decl_attributes(k, m)
+					case ^Item_Delegate:
+						validate_attribute_list(k, m.attributes, .Delegate)
 					}
 				}
 			case ^Item_Static_Assert:

@@ -12,7 +12,7 @@
           (range Range_Incl (int "1") (int "2"))
         )
         (var names=["post"]
-          (postfix Or_Return (slice-of (index (assert (selector (postfix Caret (ident "p")) "field") (ident "int")) (int "1")) (int "2") (int "3")))
+          (postfix Or_Return (slice-of (index (extract (selector (postfix Caret (ident "p")) "field") (ident "int")) (int "1")) (int "2") (int "3")))
         )
         (var names=["args"]
           (call (ident "f") (ident "a") (arg "name" (ident "b")) (arg inout (ident "c")) (arg .. (ident "d")))

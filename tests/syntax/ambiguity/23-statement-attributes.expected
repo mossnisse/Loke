@@ -1,0 +1,36 @@
+(file package="main"
+  (impl (ident "Point")
+    (delegate @[tool.forward] "+")
+  )
+  (const names=["main"]
+    (proc (proc-type)
+      (block
+        (if @[a]
+          (cond (ident "ready"))
+          (block
+          )
+        )
+        (for cond-only @[b]
+          (cond (ident "ready"))
+          (block
+          )
+        )
+        (foreach ["x"] @[c]
+          (in (ident "items"))
+          (block
+            (continue @[d])
+          )
+        )
+        (defer @[e]
+          (call (ident "close") (ident "handle"))
+        )
+        (for
+          (block
+            (break @[f])
+          )
+        )
+        (return @[g])
+      )
+    )
+  )
+)
