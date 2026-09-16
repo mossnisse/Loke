@@ -1,0 +1,28 @@
+package main;
+
+// design.md "Attributes": no attribute applies to a statement or an `impl`
+// block, so every one written there is diagnosed. A body checked more than
+// once (a generic instance, a static `foreach` element) reports each once.
+
+@(bogus_impl) impl V { }
+V :: struct { x: int }
+
+id :: proc(value: $T) -> T {
+	@(bogus_local) x := 1;
+	@(bogus_generic_stmt) if (true) { }
+	return value;
+}
+
+main :: proc() {
+	a := id(1);
+	b := id(2.0);
+	foreach ($n in [2]int{1, 2}) {
+		@(bogus_static) y := n;
+		@(public) { }
+	}
+	W :: struct { z: int }
+	@(bogus_local_impl) impl W { @(bogus_member) m :: proc(self) { } }
+	@(bogus) if (true) { } else @(bogus_else) { }
+	@(tool.x) for (;;) { @(private) break; }
+	@(bogus) return;
+}

@@ -102,6 +102,7 @@ check_local_impl :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 	declare_impl_block(k, item, quiet = false)
 	resolve_impl_signatures(k, item)
+	validate_impl_attributes(k, item)
 	// A method is an ordinary module function. Nothing walks a body looking for
 	// one, so each is hoisted exactly as a procedure declared in the body is.
 	if pkg := package_of(k.c, k.pkg); pkg != nil && k.c.speculation_depth == 0 {

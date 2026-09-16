@@ -1,0 +1,47 @@
+L0606
+unknown attribute `@(bogus_impl)`
+@7:3
+
+L0606
+unknown attribute `@(bogus_local)`
+@11:4
+
+L0606
+unknown attribute `@(bogus_generic_stmt)`
+@12:4
+
+L0606
+unknown attribute `@(bogus_static)`
+@20:5
+
+L0607
+`@(public)` cannot appear on a statement
+@21:5
+
+L0606
+unknown attribute `@(bogus_local_impl)`
+@24:4
+
+L0606
+unknown attribute `@(bogus_member)`
+@24:33
+
+L0606
+unknown attribute `@(bogus)`
+@25:4
+
+L0606
+unknown attribute `@(bogus_else)`
+@25:32
+
+L0610
+`@(tool.x)` is an extension attribute; its `tool` namespace is not enabled
+@26:4
+
+L0607
+`@(private)` cannot appear on a statement
+@26:25
+
+L0606
+unknown attribute `@(bogus)`
+@27:4

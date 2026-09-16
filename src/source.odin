@@ -175,6 +175,10 @@ Compiler :: struct {
 
 	// Lifecycle classification (`src/hooks.odin`), cached per nominal type.
 	lifecycles: map[Type_Id]^Lifecycle,
+	// Attribute lists already validated, by the first attribute's position. A
+	// body checked once per generic instance or static `foreach` element is a
+	// clone with the same spans, and must not report its attributes again.
+	validated_attributes: map[u64]bool,
 	// Final value snapshots consumed by emission; no lazy classification or
 	// member selection is allowed through this interface.
 	lifecycle_operations:       map[Type_Id]Lifecycle_Operations,

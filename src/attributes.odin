@@ -25,6 +25,8 @@ Attr_Pos :: enum {
 	Foreign_Block,
 	Static_Assert,
 	Delegate,
+	Impl,
+	Statement,
 }
 
 Attr_Shape :: enum {
@@ -110,6 +112,8 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	case .Foreign_Block:  return "a foreign block"
 	case .Static_Assert:  return "a `static_assert`"
 	case .Delegate:       return "a `delegate`"
+	case .Impl:           return "an `impl` block"
+	case .Statement:      return "a statement"
 	}
 	return "here"
 }
@@ -118,6 +122,18 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 // behaviour (deprecation warnings, required-result errors, layout) is applied
 // by the owning feature.
 validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_Pos) {
+	if len(attributes) == 0 {
+		return
+	}
+	// A speculative check discards its diagnostics, so it must not claim the list.
+	if k.c.speculation_depth == 0 {
+		first := attributes[0].span
+		key := u64(first.file) << 32 | u64(first.lo)
+		if k.c.validated_attributes[key] {
+			return
+		}
+		k.c.validated_attributes[key] = true
+	}
 	seen := make(map[string]bool, len(attributes), context.temp_allocator)
 	for attribute in attributes {
 		if len(attribute.path) == 0 {
@@ -194,14 +210,7 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 			case ^Decl:
 				validate_decl_attributes(k, v)
 			case ^Item_Impl:
-				for member in v.members {
-					#partial switch m in member {
-					case ^Decl:
-						validate_decl_attributes(k, m)
-					case ^Item_Delegate:
-						validate_attribute_list(k, m.attributes, .Delegate)
-					}
-				}
+				validate_impl_attributes(k, v)
 			case ^Item_Static_Assert:
 				// No attribute lists this position, so every one written here is
 				// reported as misplaced by the ordinary table lookup.
@@ -214,6 +223,18 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 					}
 				}
 			}
+		}
+	}
+}
+
+validate_impl_attributes :: proc(k: ^Checker, item: ^Item_Impl) {
+	validate_attribute_list(k, item.attributes, .Impl)
+	for member in item.members {
+		#partial switch m in member {
+		case ^Decl:
+			validate_decl_attributes(k, m)
+		case ^Item_Delegate:
+			validate_attribute_list(k, m.attributes, .Delegate)
 		}
 	}
 }

@@ -2585,6 +2585,12 @@ hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
 }
 
 check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
+	#partial switch _ in stmt {
+	case ^Decl, ^Item_Impl:
+		// Validated with their members, by position.
+	case:
+		validate_attribute_list(k, stmt_base(stmt).attributes, .Statement)
+	}
 	switch s in stmt {
 	case ^Stmt_Error:
 		// Parser diagnostics already describe this retained recovery node.
