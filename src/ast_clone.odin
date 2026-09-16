@@ -1,23 +1,13 @@
-// Deep syntax cloning.
-//
-// Type annotations live on the AST nodes themselves (decision A1), so a second
-// instantiation of a generic declaration — or a second copy of a static
-// `foreach` body — cannot reuse the syntax the first one annotated. Cloning is
-// the only way to check a declaration body more than once.
-//
-// A clone keeps its source spans (diagnostics still point at written code) but
-// drops every semantic annotation: types, constant values, resolutions, bound
-// argument lists, and the symbol IDs of parameters, results, fields, and
-// members. Clones live in the semantic arena, not a file arena, since they
-// outlive no file but belong to no one file either.
+// Deep syntax cloning. Type annotations live on the AST nodes (decision A1), so
+// checking the same syntax twice — a generic instance, a static `foreach` copy —
+// needs a fresh copy. A clone keeps spans and written syntax and drops what the
+// checker fills in, except `Item_Impl.kind`, which a generic record's instance
+// reads from its template. Clones live in the semantic arena.
 package lokec
 
 // ------------------------------------------------------------------ helpers --
 
-// Storage for a cloned list, opened by every `clone_*` list helper. An empty
-// list clones to nil rather than a zero-length allocation, so a source that
-// wrote nothing stays indistinguishable from its clone; the caller's fill loop
-// is a no-op when this returns nil.
+// An empty list clones to nil, like the source that wrote nothing.
 @(private = "file")
 clone_slice :: proc(c: ^Compiler, list: []$T) -> []T {
 	if len(list) == 0 {
@@ -67,6 +57,15 @@ clone_exprs :: proc(c: ^Compiler, list: []Expr) -> []Expr {
 }
 
 @(private = "file")
+clone_stmts :: proc(c: ^Compiler, list: []Stmt) -> []Stmt {
+	out := clone_slice(c, list)
+	for entry, index in list {
+		out[index] = clone_stmt(c, entry)
+	}
+	return out
+}
+
+@(private = "file")
 clone_arguments :: proc(c: ^Compiler, list: []Argument) -> []Argument {
 	out := clone_slice(c, list)
 	for entry, index in list {
@@ -93,8 +92,6 @@ clone_elements :: proc(c: ^Compiler, list: []Element) -> []Element {
 	return out
 }
 
-// Parameters, results, fields, and bindings all carry `symbols`, which name the
-// instance's own storage: a clone starts with none.
 @(private = "file")
 clone_params :: proc(c: ^Compiler, list: []Parameter) -> []Parameter {
 	out := clone_slice(c, list)
@@ -261,7 +258,6 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 	case ^Expr_Postfix:
 		n := new_clone(c, Expr_Postfix, &v.base)
 		n.op, n.op_span = v.op, v.op_span
-		n.borrows = v.borrows
 		n.operand = clone_expr(c, v.operand)
 		return n
 
@@ -288,8 +284,6 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 
 	case ^Expr_Or_Else:
 		n := new_clone(c, Expr_Or_Else, &v.base)
-		n.borrows = v.borrows
-		n.fallback_clone = v.fallback_clone
 		n.value = clone_expr(c, v.value)
 		n.fallback = clone_expr(c, v.fallback)
 		return n
@@ -310,11 +304,6 @@ clone_expr :: proc(c: ^Compiler, e: Expr) -> Expr {
 		n := new_clone(c, Expr_Composite, &v.base)
 		n.type_expr = clone_expr(c, v.type_expr)
 		n.elements = clone_elements(c, v.elements)
-		// Re-derived when the cloned literal is checked in its specialization.
-		n.field_indices = nil
-		n.element_clones = nil
-		// Re-derived when the clone is checked at its own substitution.
-		n.backing = INVALID_TYPE
 		return n
 
 	case ^Expr_Proc:
@@ -440,13 +429,7 @@ clone_block :: proc(c: ^Compiler, b: ^Block) -> ^Block {
 	}
 	n := new(Block, c.semantic_allocator)
 	clone_node_base(c, &n.base, &b.base)
-	if len(b.stmts) > 0 {
-		stmts := make([]Stmt, len(b.stmts), c.semantic_allocator)
-		for stmt, index in b.stmts {
-			stmts[index] = clone_stmt(c, stmt)
-		}
-		n.stmts = stmts
-	}
+	n.stmts = clone_stmts(c, b.stmts)
 	return n
 }
 
@@ -508,8 +491,6 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		return n
 
 	case ^Stmt_When:
-		// The selection itself is not copied: a clone re-evaluates its own
-		// condition, which may differ once generic arguments are bound.
 		n := new(Stmt_When, c.semantic_allocator)
 		clone_node_base(c, &n.base, &v.base)
 		n.cond = clone_expr(c, v.cond)
@@ -524,24 +505,14 @@ clone_stmt :: proc(c: ^Compiler, s: Stmt) -> Stmt {
 		n.init = clone_stmt(c, v.init)
 		n.binding = v.binding
 		n.subject = clone_expr(c, v.subject)
-		if len(v.cases) > 0 {
-			cases := make([]Switch_Case, len(v.cases), c.semantic_allocator)
-			for entry, index in v.cases {
-				stmts: []Stmt
-				if len(entry.stmts) > 0 {
-					stmts = make([]Stmt, len(entry.stmts), c.semantic_allocator)
-					for stmt, position in entry.stmts {
-						stmts[position] = clone_stmt(c, stmt)
-					}
-				}
-				cases[index] = Switch_Case {
-					span   = entry.span,
-					values = clone_exprs(c, entry.values),
-					stmts  = stmts,
-					binding = entry.binding,
-				}
+		n.cases = clone_slice(c, v.cases)
+		for entry, index in v.cases {
+			n.cases[index] = Switch_Case {
+				span    = entry.span,
+				values  = clone_exprs(c, entry.values),
+				stmts   = clone_stmts(c, entry.stmts),
+				binding = entry.binding,
 			}
-			n.cases = cases
 		}
 		return n
 
@@ -592,8 +563,6 @@ clone_decl :: proc(c: ^Compiler, d: ^Decl) -> ^Decl {
 	return n
 }
 
-// `impl`/`extend` blocks are cloned per record instantiation, so their members
-// follow the same rules as any other declaration.
 clone_item :: proc(c: ^Compiler, item: Item) -> Item {
 	switch v in item {
 	case ^Decl:
@@ -670,15 +639,10 @@ clone_items :: proc(c: ^Compiler, list: []Item) -> []Item {
 	return out
 }
 
-// A binding pattern is a tree (design.md "Element bindings"), so a clone copies
-// its groups too. Symbols are deliberately not carried over: a clone is checked
-// again and binds its own names.
+// A binding pattern is a tree (design.md "Element bindings").
 @(private = "file")
 clone_foreach_bindings :: proc(c: ^Compiler, source: []Foreach_Binding) -> []Foreach_Binding {
-	if len(source) == 0 {
-		return nil
-	}
-	bindings := make([]Foreach_Binding, len(source), c.semantic_allocator)
+	bindings := clone_slice(c, source)
 	for binding, index in source {
 		bindings[index] = Foreach_Binding {
 			name      = binding.name,
