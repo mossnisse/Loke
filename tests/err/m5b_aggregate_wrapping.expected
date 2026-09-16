@@ -150,7 +150,7 @@ L0526
 this slice cannot be returned: `local` ends when this procedure returns
 L0647
 @483:2
-this slice borrows `local`, which does not outlive `retained_holders`: storage that outlives the process
+this slice borrows `local`, which does not outlive `retained_holders`: process-lifetime storage
 L0647
 @487:2
 this slice borrows `local`, which does not outlive `destination`: storage the caller owns
@@ -168,16 +168,16 @@ L0526
 this slice cannot be returned: `local` ends when this procedure returns
 L0647
 @522:2
-this slice borrows `aggregate_tls_numbers`, which does not outlive `aggregate_global_view`: storage that outlives the process
+this slice borrows `aggregate_tls_numbers`, which does not outlive `aggregate_global_view`: process-lifetime storage
 L0647
 @530:2
-this slice borrows existing content of `unknown_global_holder`, which does not outlive `unknown_global_view`: storage that outlives the process
+this slice borrows existing content of `unknown_global_holder`, which does not outlive `unknown_global_view`: process-lifetime storage
 L0647
 @539:2
-this pointer borrows this allocation, which does not outlive `retained_allocation`: storage that outlives the process
+this pointer borrows this allocation, which does not outlive `retained_allocation`: process-lifetime storage
 L0647
 @549:2
-this pointer borrows this allocation, which does not outlive `region_retained_allocation`: storage that outlives the process
+this pointer borrows this allocation, which does not outlive `region_retained_allocation`: process-lifetime storage
 L0647
 @560:2
-this slice borrows `local`, which does not outlive `distinct_global_holder`: storage that outlives the process
+this slice borrows `local`, which does not outlive `distinct_global_holder`: process-lifetime storage

@@ -10,11 +10,6 @@ path_precision :: proc(path: []Proj_Step) -> (loss: Precision_Loss) {
 	return
 }
 
-precision_equal :: proc(a, b: []Precision_Loss) -> bool {
-	for value, index in a { if value != b[index] { return false } }
-	return true
-}
-
 merge_precision :: proc(into: ^Precision_Loss, from: Precision_Loss) -> bool {
 	changed := (from & ~into^) != {}
 	into^ |= from

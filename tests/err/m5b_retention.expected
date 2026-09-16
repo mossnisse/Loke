@@ -1,9 +1,9 @@
 L0647
 @23:2
-this slice borrows `local`, which does not outlive `global_view`: storage that outlives the process
+this slice borrows `local`, which does not outlive `global_view`: process-lifetime storage
 L0647
 @29:2
-this slice borrows `local`, which does not outlive `global_holder`: storage that outlives the process
+this slice borrows `local`, which does not outlive `global_holder`: process-lifetime storage
 L0646
 @34:2
 this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `global_view`
@@ -15,7 +15,7 @@ L0646
 this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `global_holder`
 L0647
 @45:2
-this slice borrows `tls_view`, which does not outlive `global_view`: storage that outlives the process
+this slice borrows `tls_view`, which does not outlive `global_view`: process-lifetime storage
 L0646
 @51:2
 this slice borrows `values`, which is not written `@(escape=static)`, so it cannot reach `held`
@@ -27,7 +27,7 @@ L0646
 this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
 L0647
 @77:2
-this slice borrows `numbers`, which does not outlive `global_holder`: storage that outlives the process
+this slice borrows `numbers`, which does not outlive `global_holder`: process-lifetime storage
 L0646
 @83:2
 this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
@@ -48,7 +48,7 @@ L0646
 this slice borrows `values`, which is not written `@(escape=stored)`, so it cannot reach `destination`
 L0647
 @132:2
-this slice borrows `numbers`, which does not outlive `global_holder`: storage that outlives the process
+this slice borrows `numbers`, which does not outlive `global_holder`: process-lifetime storage
 L0513
 @145:9
 this slice is used after `numbers`, the local it borrows, has ended
