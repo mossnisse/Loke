@@ -8,3 +8,15 @@ forwarded :: proc(value: i32) -> i32 {
 	order: Memory_Order = Memory_Order.Acquire;
 	return atomic_load(&cell, order);
 }
+
+// A built-in has no parameter names to bind to.
+named :: proc() {
+	cell: i32 = 0;
+	atomic_store(&mut cell, 1, order = Memory_Order.Release);
+}
+
+// A bad place does not hide a bad ordering after it.
+both :: proc() {
+	cell: i32 = 0;
+	atomic_store(&cell, 1, Memory_Order.Acquire);
+}

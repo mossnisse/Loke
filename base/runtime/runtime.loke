@@ -68,11 +68,8 @@ Type_Info :: struct {
 }
 
 // design.md "Concurrency and the memory model": the ordering an atomic
-// operation asks for. Ordinary source — the compiler needs only the members'
-// values, so there is nothing here for it to own.
-//
-// Declaration order is the strength order, which is what lets a diagnostic name
-// "at least acquire" without a second table.
+// operation asks for. The compiler checks these names and values against its
+// own copy in `src/atomics.odin`.
 @(public)
 Memory_Order :: enum u8 {
 	Relaxed,

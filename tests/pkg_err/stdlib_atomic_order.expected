@@ -1,3 +1,10 @@
 L0666
 @9:28
 an atomic ordering must be a constant; a `$` parameter is what keeps one constant across a wrapper
+L0371
+@15:29
+L0661
+@21:15
+L0664
+@21:25
+this operation does not permit the ordering `Acquire`
