@@ -1859,7 +1859,7 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 	}
 	if value.variant != shape.failure {
 		if shape.info.variants[shape.success] == TYPE_VOID {
-			return zero_value(ev, unit_type(ev.k.c))
+			return zero_value(ev, ev.k.c.unit_type)
 		}
 		return eval_union_payload(value, INVALID_TYPE), true
 	}
@@ -1895,7 +1895,7 @@ eval_or_return :: proc(ev: ^Evaluator, v: ^Expr_Postfix) -> (Eval_Value, bool) {
 // `.ok(Unit{})`: an allocating container operation that had nothing to allocate.
 @(private = "file")
 eval_alloc_ok :: proc(ev: ^Evaluator, type: Type_Id) -> (Eval_Value, bool) {
-	return eval_named_union(ev, type, "ok", Eval_Value{kind = .Aggregate, type = unit_type(ev.k.c)})
+	return eval_named_union(ev, type, "ok", Eval_Value{kind = .Aggregate, type = ev.k.c.unit_type})
 }
 
 // The `^mut V` a `find_or_insert` answers, wrapped in `.ok` for the `try_`

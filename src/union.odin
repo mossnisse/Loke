@@ -328,7 +328,7 @@ check_union_variant_selector :: proc(k: ^Checker, sel: ^Expr_Selector, subject: 
 	// A `Unit` payload has one value, so outside a call the bare `.ok` is already
 	// complete: payloadless and `Unit`-carrying variants are spelled alike.
 	payload := union_variant_payload(k.c, subject, index)
-	unit_payload := payload == unit_type(k.c) && !k.in_callee
+	unit_payload := payload == k.c.unit_type && !k.in_callee
 	if payload != TYPE_VOID && !unit_payload {
 		sel.resolution = Resolution{kind = .Union_Variant}
 		return true

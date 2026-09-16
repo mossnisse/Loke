@@ -1110,7 +1110,7 @@ type_info_members :: proc(e: ^Emitter, member, type: Type_Id) -> string {
 			defer delete(values)
 			// The variant's *name* is its identity; a payloadless one reports
 			// `Unit` so every entry names a real type.
-			payload := variant == TYPE_VOID ? unit_type(e.c) : variant
+			payload := variant == TYPE_VOID ? e.c.unit_type : variant
 			values["kind"] = "2" // Union_Variant
 			values["name"] = text_constant(
 				e, Const_Value{kind = .String, text = identifier_text(e.c, shape.variant_names[index])}, false,

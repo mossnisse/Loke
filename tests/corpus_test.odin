@@ -405,9 +405,10 @@ UNPINNED :: []string {
 	"L0405",
 	"L0622",
 	"L0350",
-	// Needs a replaced `base:runtime` — a copy of the whole runtime in the test
-	// tree to delete one enum from it.
+	// Need a replaced `base:runtime` — a copy of the whole runtime in the test
+	// tree to change one declaration in it.
 	"L0661",
+	"L0704",
 }
 
 @(test)

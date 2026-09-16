@@ -212,7 +212,7 @@ ensure_container_members :: proc(k: ^Checker, type: Type_Id) {
 	none := INVALID_TYPE
 	// design.md "Typed fallibility": a recoverable operation reports through
 	// `Result(Unit, Allocator_Error)`, never a trailing status.
-	fails := result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)
+	fails := result_type(k, k.c.unit_type, TYPE_ALLOCATOR_ERROR)
 
 	pack := slice_of(k.c, element, mutable = false)
 	append(&members, container_member(
@@ -347,7 +347,7 @@ ensure_map_members :: proc(k: ^Checker, type: Type_Id, info: ^Type_Info) {
 
 	members := make([dynamic]Symbol_Id, 0, 8, k.c.semantic_allocator)
 	none := INVALID_TYPE
-	fails := result_type(k, unit_type(k.c), TYPE_ALLOCATOR_ERROR)
+	fails := result_type(k, k.c.unit_type, TYPE_ALLOCATOR_ERROR)
 	// design.md "Maps": an operation that only compares its key takes the
 	// borrowed form of it, so a `map[string]V` is queried with a `string_view`
 	// and an owned `string` converts to one rather than being cloned for the

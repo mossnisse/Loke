@@ -238,7 +238,7 @@ check_or_return :: proc(k: ^Checker, v: ^Expr_Postfix) {
 	// A payloadless success yields `Unit`, so `or_return` is an expression in
 	// every case and no second spelling is needed for the no-value one.
 	success := shape.info.variants[shape.success]
-	v.type = success == TYPE_VOID ? unit_type(k.c) : success
+	v.type = success == TYPE_VOID ? k.c.unit_type : success
 }
 
 // The enclosing procedure's side of the contract.
@@ -440,7 +440,7 @@ check_variant_cases :: proc(k: ^Checker, s: ^Stmt_Switch, subject: Type_Id) -> F
 			}
 		} else if len(entry.variant_indices) == 1 {
 			payload := union_variant_payload(k.c, subject, entry.variant_indices[0])
-			binding_type = payload == TYPE_VOID ? unit_type(k.c) : payload
+			binding_type = payload == TYPE_VOID ? k.c.unit_type : payload
 			if s.kind == .Pattern && entry.binding.text != "" && payload == TYPE_VOID {
 				errorf(
 					k.c, entry.binding.span, "L0426",
