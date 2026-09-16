@@ -2154,14 +2154,14 @@ prov_slice :: proc(graph: ^Flow_Graph, v: ^Expr_Slice) -> []int {
 // traversal of anything but a place carries its own loans and takes none here.
 @(private)
 prov_iterate :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach, iterated: []int) -> []int {
-	root, path, ok := prov_place_of(graph, s.iterable)
+	iterable := s.iterable
+	if foreach_is_place_loop(s) { iterable = mutable_foreach_root(graph.k.c, s) }
+	root, path, ok := prov_place_of(graph, iterable)
 	if !ok {
 		return iterated
 	}
 	mutable := false
-	for binding in s.bindings {
-		mutable ||= binding.is_ref
-	}
+	mutable = pattern_has_ref(s.bindings)
 	span := expr_span(s.iterable)
 	prov_access(graph, root, path, mutable ? .Write : .Read, span)
 	return prov_join(graph, iterated, prov_borrow(graph, root, path, mutable, span, "iterator"))

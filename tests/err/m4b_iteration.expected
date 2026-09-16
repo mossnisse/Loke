@@ -7,9 +7,9 @@ is not iterable
 L0457
 @55:12
 a range produces values
-L0457
-@58:15
-the index binding is a counter
+L0459
+@58:11
+`int` has 0 fields
 L0458
 @60:20
 a range needs integer or rune endpoints

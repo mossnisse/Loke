@@ -4,7 +4,7 @@ package lokec
 
 import "core:fmt"
 
-Adapter_Kind :: enum { None, Indexed, Reversed }
+Adapter_Kind :: enum { None, Indexed, Reversed, Copied }
 Adapter_Key :: struct { source: Type_Id, kind: Adapter_Kind, pkg: Package_Id }
 
 // Preserve the existing direct loop lowering only after ordinary member
@@ -22,9 +22,11 @@ peel_resolved_adapter :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Name {
 		if kind == .Indexed {
 			if indexed || reversed { return Name{} }
 			indexed = true
-		} else {
+		} else if kind == .Reversed {
 			if reversed { return Name{} }
 			reversed = true
+		} else {
+			break // copied() is a real protocol view, not a direct-header hint
 		}
 		if selector, selected := call.callee.(^Expr_Selector); selected { reported = selector.name }
 		source = call.bound[0]
@@ -56,6 +58,7 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	switch identifier_text(k.c, name) {
 	case "indexed": kind = .Indexed
 	case "reversed": kind = .Reversed
+	case "copied": kind = .Copied
 	case: return INVALID_SYMBOL
 	}
 	key := Adapter_Key{source, kind, lookup_package(k)}
@@ -77,14 +80,11 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	   !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, item)) {
 		return INVALID_SYMBOL
 	}
-	// design.md "Iteration adapters": `indexed()` numbers whatever it wraps, so it
-	// lends the half its source lends and owns only the counter it supplies. A
-	// source lending a record would put a record inside the pair, which is the
-	// nesting still unlowered, so that one is copied into the pair as before --
-	// and a move-only element has no copy to make. `reversed()` wraps no value at
-	// all and so carries a lending source through untouched.
-	lends := kind == .Indexed && source_yield.kind == .Borrowed
-	if kind == .Indexed && !lends && type_clone_disabled(k.c, element) {
+	// `indexed()` preserves the complete descriptor of the value it wraps and
+	// owns only the counter. This is recursive: indexing a map entry produces a
+	// record descriptor inside the outer pair rather than copying that entry.
+	lends := kind == .Indexed && !yield_is_owned(source_yield)
+	if kind == .Copied && !yield_borrowed_parts_copyable(k.c, element, source_yield) {
 		return INVALID_SYMBOL
 	}
 	forward, backward := iter, INVALID_SYMBOL
@@ -94,9 +94,14 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 			return INVALID_SYMBOL
 		}
 		backward = iter
+	} else if kind == .Copied {
+		reverse := iteration_member(k, source, "iter_reverse")
+		if iteration_proc_matches(k, symbol_of(k.c, reverse), source, .Borrow, iterator) {
+			backward = reverse
+		}
 	}
 	c := k.c
-	label := kind == .Indexed ? "Indexed" : "Reversed"
+	label := kind == .Indexed ? "Indexed" : kind == .Copied ? "Copied" : "Reversed"
 	view := new_type(c, Type_Info{
 		kind = .Struct, name = intern_identifier(c, fmt.aprintf("%s(%s)", label, type_name(c, source), allocator = c.semantic_allocator)),
 		key = source, element = element, is_view = true, adapter_kind = kind,
@@ -130,10 +135,12 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		result_info.mangled = fmt.aprintf("Indexed_Iterator.%d", view, allocator = c.semantic_allocator)
 		result_info.contributed += {.Iteration}
 		yielded := element
+		indexed_yield := Yield_Desc{}
 		if lends {
-			lent := []Yield_Desc{{kind = .Borrowed}, {kind = .Owned}}
+			lent := []Yield_Desc{source_yield, {kind = .Owned}}
+			indexed_yield = Yield_Desc{kind = .Record, fields = lent}
 			yielded = yield_item_type(
-				k, element, Yield_Desc{kind = .Record, fields = lent}, no_span(), report = false,
+				k, element, indexed_yield, no_span(), report = false,
 			)
 			if yielded == INVALID_TYPE {
 				return INVALID_SYMBOL
@@ -146,9 +153,31 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 		append(&members, new_associated_type(c, "Iterator", result_iterator, result_iterator))
 		append(&members, next_member, copy_member)
 		if lends {
-			append(&members, new_associated_type(c, "Yield", indexed_yield_type(c, .Borrowed), result_iterator))
+			descriptor := yield_desc_type(c, element, indexed_yield)
+			if descriptor == INVALID_TYPE { return INVALID_SYMBOL }
+			append(&members, new_associated_type(c, "Yield", descriptor, result_iterator))
 		}
 		add_members(c, result_iterator, members[:])
+		if type_is_managed(c, result_iterator) { contribute_lifecycle_members(k, result_iterator) }
+	} else if kind == .Copied {
+		result_iterator = new_type(c, Type_Info{
+			kind = .Struct, name = intern_identifier(c, fmt.aprintf("Copied_Iterator(%s)", type_name(c, iterator), allocator = c.semantic_allocator)),
+			key = iterator, element = element, adapter_kind = .Copied,
+		})
+		copied_fields := make([]Symbol_Id, 1, c.semantic_allocator)
+		copied_fields[0] = new_field(c, "iterator", iterator, 0, public = false)
+		result_info := type_of(c, result_iterator)
+		result_info.fields = copied_fields
+		result_info.descriptor = type_is_compile_time_only(c, source)
+		result_info.mangled = fmt.aprintf("Copied_Iterator.%d", view, allocator = c.semantic_allocator)
+		result_info.contributed += {.Iteration}
+		next_member := adapter_proc(k, "next", .Copied_Next, result_iterator, .Inout, option_type(k, element), next)
+		copy_member := adapter_proc(k, "iter", .Iterator_Copy, result_iterator, .Borrow, result_iterator)
+		add_members(c, result_iterator, []Symbol_Id{
+			new_associated_type(c, "Element", element, result_iterator),
+			new_associated_type(c, "Iterator", result_iterator, result_iterator),
+			next_member, copy_member,
+		})
 		if type_is_managed(c, result_iterator) { contribute_lifecycle_members(k, result_iterator) }
 	}
 	iter_member := adapter_proc(k, "iter", .Adapter_Iter, view, .Borrow, result_iterator, forward)
@@ -162,6 +191,25 @@ iteration_adapter_member :: proc(k: ^Checker, source: Type_Id, name: Identifier_
 	member := adapter_proc(k, identifier_text(c, name), .Adapter_View, source, .Borrow, view)
 	c.adapter_members[key] = member
 	return member
+}
+
+// copied() only needs clone support for leaves the source lends. Owned leaves
+// already belong to the adapter and pass through unchanged.
+yield_borrowed_parts_copyable :: proc(c: ^Compiler, element: Type_Id, desc: Yield_Desc) -> bool {
+	switch desc.kind {
+	case .Owned:
+		return true
+	case .Borrowed, .Mutable:
+		return !type_clone_disabled(c, element)
+	case .Record:
+	}
+	info := underlying_info(c, element)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(desc.fields) { return false }
+	for field_id, index in info.fields {
+		field := symbol_of(c, field_id)
+		if field == nil || !yield_borrowed_parts_copyable(c, field.type, desc.fields[index]) { return false }
+	}
+	return true
 }
 
 adapter_proc :: proc(k: ^Checker, name: string, kind: Synth_Kind, owner: Type_Id, mode: Param_Mode, result: Type_Id, target := INVALID_SYMBOL) -> Symbol_Id {

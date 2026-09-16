@@ -1,0 +1,24 @@
+package main;
+
+Source :: struct { values: []mut int }
+Cursor :: struct { values: []mut int, at: int }
+
+impl Source {
+	Element :: int;
+	Iterator :: Cursor;
+	Mut_Iterator :: Cursor;
+	iter :: proc(self) -> Cursor { return {self.values, 0}; }
+	iter_reverse :: proc(self) -> Cursor { return {self.values, 0}; }
+	iter_mut :: proc(self: inout Source) -> Cursor { return {self.values, 0}; }
+}
+
+impl Cursor {
+	Yield :: Yield_Mutable;
+	next :: proc(self: inout Cursor) -> Option(^mut int) { return .none; }
+}
+
+main :: proc() {
+	storage := [1]int{1};
+	source := Source{storage[:]};
+	foreach (&value in source.reversed()) { value += 1; }
+}

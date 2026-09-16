@@ -2,8 +2,7 @@ package main;
 
 // design.md "Iteration protocol": an iterator's `Yield` says how a binding
 // receives what `next` hands back, and the checker validates it against the
-// element's shape. A lending descriptor is checked here but not yet lowered —
-// see known-gaps.md, "Iteration still follows the pre-unification model".
+// element's shape. Invalid descriptors remain diagnostics.
 
 Lender :: struct { values: []mut int }
 Lender_Iterator :: struct { source: []mut int, at: int }
@@ -16,9 +15,7 @@ impl Lender {
 }
 
 impl Lender_Iterator {
-	// A borrowed yield is lowered; a mutable one still needs the exclusive
-	// per-step loan the rest of the unification carries, so it is refused rather
-	// than bound to storage the loop would treat as shared.
+	// A mutable descriptor is valid and lowered like any lending leaf.
 	Yield :: Yield_Mutable;
 
 	next :: proc(self: inout Lender_Iterator) -> Option(^mut int) {

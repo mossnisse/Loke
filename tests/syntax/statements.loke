@@ -7,6 +7,17 @@
 package main;
 
 main :: proc() {
+	// Attributes are syntactically accepted on every statement form; whether an
+	// enabled attribute supports that target is a semantic/toolchain rule.
+	@(tool.block) { }
+	@(tool.if_stmt) if (ready) { }
+	@(tool.for_stmt) for (ready) { }
+	@(tool.foreach_stmt) foreach (_ in items) { }
+	@(tool.switch_stmt) switch (value) { case: }
+	@(tool.when_stmt) when (DEBUG) { }
+	@(tool.defer_stmt) defer f();
+	@(tool.return_stmt) return;
+
 	// Blocks nest, and `{` at statement position is always a block.
 	{
 		{ }

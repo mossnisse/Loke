@@ -1256,7 +1256,7 @@ emit_synth_procs :: proc(e: ^Emitter) {
 		e.terminated = false
 		name := symbol_name(e, symbol_id)
 		switch symbol.synth {
-		case .Adapter_View, .Adapter_Iter, .Indexed_Next, .Iterator_Copy:
+		case .Adapter_View, .Adapter_Iter, .Indexed_Next, .Copied_Next, .Iterator_Copy:
 			emit_synth_adapter(e, symbol, name)
 		case .Standard_Len, .Standard_Cap, .Standard_Hash:
 			emit_synth_standard_customization(e, symbol, name)

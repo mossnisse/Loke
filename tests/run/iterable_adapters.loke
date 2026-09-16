@@ -38,7 +38,7 @@ main :: proc() {
 	foreach (value in custom.indexed()) { fmt.println(value); }
 	foreach (value in custom.reversed()) { fmt.println(value); }
 	// Repeated indexing wraps the previous element, just like any other record.
-	foreach (pair, outer in values.indexed().indexed()) { fmt.println(pair.value, pair.index, outer); }
+	foreach (pair, outer in values.indexed().indexed()) { fmt.println(pair.value^, pair.index, outer); }
 	STATIC :: [2]int{5, 6};
 	foreach ($pair, $outer in STATIC.reversed().indexed().indexed()) { fmt.println(pair.value, pair.index, outer); }
 }

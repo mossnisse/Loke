@@ -91,6 +91,7 @@ Foreach_Field :: struct {
 	value:   string,
 	place:   bool,
 	stored:  bool,
+	children: []Foreach_Field,
 }
 
 // The owned value one step yields for this field, cloning when the source is
@@ -125,67 +126,109 @@ end_iteration :: proc(e: ^Emitter) {
 // apart — only a one-name loop over a synthesized element pays to build it.
 @(private = "file")
 bind_foreach_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field) {
-	// A record Yield still binds the whole pointer record when it happens to
-	// contain one field; it is not the scalar one-field case below.
-	if len(s.bindings) == len(fields) && !(len(s.bindings) == 1 && s.item_type != INVALID_TYPE) {
-		for field, index in fields {
-			bind_foreach_field(e, s.bindings[index].symbol, field)
-		}
+	source := Foreach_Field{type = s.element_type, children = fields}
+	if len(fields) == 1 && fields[0].type == s.element_type {
+		source = fields[0]
+	}
+	bind_foreach_pattern(e, s.bindings, s.element_type, s.item_type, source)
+}
+
+@(private = "file")
+bind_foreach_pattern :: proc(
+	e: ^Emitter, bindings: []Foreach_Binding, logical, item: Type_Id, source: Foreach_Field,
+) {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		bind_foreach_pattern(e, bindings[0].group, logical, item, source)
 		return
 	}
-	record := llvm_type(e, s.element_type)
-	if len(s.bindings) == 1 {
-		// One name over a several-field traversal: the record is materialized, and
-		// the loop owns the whole of it for the step. It is built even when the
-		// name is `_`, so a field with a copy hook is produced and disposed of
-		// exactly as it would be when bound (design.md "Element bindings").
-		//
-		// design.md "Borrowing iteration": a part the traversal lends goes into
-		// that record as its address, so nothing is copied out of the container and
-		// the name reads it through `entry.value^`.
-		bound := s.item_type == INVALID_TYPE ? s.element_type : s.item_type
-		built := llvm_type(e, bound)
-		held := type_of(e.c, type_underlying(e.c, bound))
-		slot := alloca(e, built)
-		for field, index in fields {
-			want := symbol_of(e.c, held.fields[index]).type
-			if want == field.type {
-				store(e, field.type, owned_field_value(e, field), gep_field(e, built, slot, index))
-				continue
+	if len(bindings) == 1 && len(bindings[0].group) == 0 {
+		bound := logical
+		projected := foreach_projected_record(e.c, logical, item)
+		if projected || len(source.children) > 0 {
+			if projected { bound = item }
+			slot := materialize_foreach_record(e, logical, bound, source)
+			register_scope_place(e, bound, slot)
+			bind_foreach_place(e, bindings[0].symbol, slot)
+			return
+		}
+		bind_foreach_field(e, bindings[0].symbol, source)
+		return
+	}
+	parts := foreach_field_children(e, logical, source)
+	logical_info := type_of(e.c, type_underlying(e.c, logical))
+	item_info := type_of(e.c, type_underlying(e.c, item))
+	for binding, index in bindings {
+		field := symbol_of(e.c, logical_info.fields[index])
+		projected := INVALID_TYPE
+		if item_info != nil && item_info.kind == .Struct && index < len(item_info.fields) {
+			if projected_field := symbol_of(e.c, item_info.fields[index]); projected_field != nil {
+				projected = projected_field.type
 			}
-			store(e, want, field.address, gep_field(e, built, slot, index))
 		}
-		register_scope_place(e, bound, slot)
-		if symbol := s.bindings[0].symbol; symbol != INVALID_SYMBOL {
-			bind_local(e, symbol, slot)
+		if len(binding.group) > 0 {
+			bind_foreach_pattern(e, binding.group, field.type, projected, parts[index])
+		} else if foreach_projected_record(e.c, field.type, projected) {
+			slot := materialize_foreach_record(e, field.type, projected, parts[index])
+			register_scope_place(e, projected, slot)
+			bind_foreach_place(e, binding.symbol, slot)
+		} else {
+			bind_foreach_field(e, binding.symbol, parts[index])
 		}
-		return
 	}
-	// Several names over one record element: each one takes its field, which is a
-	// move out of the record rather than a second copy.
-	source := fields[0]
+}
+
+@(private = "file")
+foreach_projected_record :: proc(c: ^Compiler, logical, item: Type_Id) -> bool {
+	if logical == INVALID_TYPE || item == INVALID_TYPE || logical == item { return false }
+	a, b := underlying_info(c, logical), underlying_info(c, item)
+	return a != nil && b != nil && a.kind == .Struct && b.kind == .Struct
+}
+
+@(private = "file")
+foreach_field_children :: proc(e: ^Emitter, logical: Type_Id, source: Foreach_Field) -> []Foreach_Field {
+	if len(source.children) > 0 { return source.children }
+	info := type_of(e.c, type_underlying(e.c, logical))
+	fields := make([]Foreach_Field, len(info.fields), context.temp_allocator)
 	address := source.address
 	if address == "" {
-		address = alloca(e, record)
-		store(e, s.element_type, source.value, address)
+		address = alloca(e, llvm_type(e, logical))
+		store(e, logical, source.value, address)
 	}
-	info := type_of(e.c, type_underlying(e.c, s.element_type))
-	for binding, index in s.bindings {
-		field := symbol_of(e.c, info.fields[index])
-		bind_foreach_field(
-			e,
-			binding.symbol,
-			Foreach_Field{
-				type = field.type,
-				address = gep_field(e, record, address, index),
-				// A lending traversal lends each field of the element too: taking
-				// the record apart must not copy what the whole was not copied
-				// from (design.md "Borrowing iteration").
-				place = source.place,
-				stored = source.stored,
-			},
-		)
+	for field_id, index in info.fields {
+		field := symbol_of(e.c, field_id)
+		fields[index] = Foreach_Field{
+			type = field.type,
+			address = gep_field(e, llvm_type(e, logical), address, index),
+			place = source.place,
+			stored = source.stored,
+		}
 	}
+	return fields
+}
+
+@(private = "file")
+materialize_foreach_record :: proc(
+	e: ^Emitter, logical, item: Type_Id, source: Foreach_Field,
+) -> string {
+	logical_info := type_of(e.c, type_underlying(e.c, logical))
+	item_info := type_of(e.c, type_underlying(e.c, item))
+	parts := foreach_field_children(e, logical, source)
+	llvm := llvm_type(e, item)
+	slot := alloca(e, llvm)
+	for item_field_id, index in item_info.fields {
+		want := symbol_of(e.c, item_field_id).type
+		have := symbol_of(e.c, logical_info.fields[index]).type
+		at := gep_field(e, llvm, slot, index)
+		if want == have {
+			store(e, want, owned_field_value(e, parts[index]), at)
+		} else if type_is_pointer(e.c, want) {
+			store(e, want, parts[index].address, at)
+		} else {
+			nested := materialize_foreach_record(e, have, want, parts[index])
+			store(e, want, load(e, llvm_type(e, want), nested), at)
+		}
+	}
+	return slot
 }
 
 @(private = "file")
@@ -222,15 +265,10 @@ with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, count
 	}
 	inner := fields[0]
 	if len(fields) > 1 {
-		// The wrapped traversal becomes one field again, which materializes it: the
-		// copy out of container storage happens here, and what comes back is owned.
+		// Preserve the wrapped traversal as a subtree. Recursive binding decides
+		// whether to destructure it or materialize its projected pointer record.
 		wrapped := foreach_yielded_type(e, s)
-		llvm := llvm_type(e, wrapped)
-		slot := alloca(e, llvm)
-		for field, index in fields {
-			store(e, field.type, owned_field_value(e, field), gep_field(e, llvm, slot, index))
-		}
-		inner = Foreach_Field{type = wrapped, address = slot}
+		inner = Foreach_Field{type = wrapped, children = fields}
 	}
 	out := make([dynamic]Foreach_Field, 0, 2, context.temp_allocator)
 	append(&out, inner)
@@ -243,7 +281,7 @@ with_index :: proc(e: ^Emitter, s: ^Stmt_Foreach, fields: []Foreach_Field, count
 // pair, so its `element_type` is already what it yields.
 @(private = "file")
 foreach_yielded_type :: proc(e: ^Emitter, s: ^Stmt_Foreach) -> Type_Id {
-	if !s.indexed || foreach_is_place_loop(s) {
+	if !s.indexed {
 		return s.element_type
 	}
 	return symbol_of(e.c, type_of(e.c, type_underlying(e.c, s.element_type)).fields[ELEMENT_FIRST]).type
@@ -493,15 +531,6 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	e.break_label, e.continue_label = done, post
 	e.continue_depth = len(e.cleanups)
 
-	// A place loop's index is a counter the loop maintains, so it lives across
-	// iterations rather than being rebuilt per step.
-	index_slot := ""
-	if foreach_is_place_loop(s) && len(s.bindings) == 2 && s.bindings[1].symbol != INVALID_SYMBOL {
-		index_slot = temp(e)
-		alloca_named(e, index_slot, "i64")
-		fmt.sbprintfln(&e.b, "  store i64 0, ptr %s", index_slot)
-		bind_local(e, s.bindings[1].symbol, index_slot)
-	}
 	// A sequence's cursor is already the index `indexed()` wants; a range's
 	// cursor is its *value*, so numbering it needs a counter of its own.
 	counter := ""
@@ -546,9 +575,6 @@ emit_indexed_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 		place_label(e, step)
 	}
 	step_counter(e, cursor, counter_type)
-	if index_slot != "" {
-		step_counter(e, index_slot, "i64")
-	}
 	if counter != "" {
 		step_counter(e, counter, "i64")
 	}
@@ -623,12 +649,8 @@ bind_indexed_value :: proc(
 		// read-only (design.md "Borrowing iteration"); only a copying one loads the
 		// element out and owns what it copied for the step.
 		append(&fields, Foreach_Field{
-			type = yielded, address = address, place = s.bindings[0].is_ref || s.borrows, stored = true,
+			type = yielded, address = address, place = foreach_is_place_loop(s) || s.borrows, stored = true,
 		})
-	}
-	if foreach_is_place_loop(s) {
-		bind_foreach_field(e, s.bindings[0].symbol, fields[0])
-		return // the place form's index is its own counter, bound before the loop
 	}
 	bind_foreach_fields(e, s, with_index(e, s, fields[:], numbered))
 }
@@ -690,11 +712,11 @@ emit_protocol_foreach :: proc(e: ^Emitter, s: ^Stmt_Foreach) {
 	// `next` handed over an owned `Element`, so nothing here is a copy: the loop
 	// takes what it was given and disposes of it at the end of the step.
 	if foreach_is_place_loop(s) {
-		address := emit_union_payload(e, option, pointer_to(e.c, yielded, true), slot)
-		bind_foreach_place(e, s.bindings[0].symbol, address)
-		if len(s.bindings) == 2 {
-			bind_foreach_field(e, s.bindings[1].symbol, Foreach_Field{type = TYPE_INT, value = load(e, "i64", counter)})
-		}
+		logical := s.indexed ? foreach_yielded_type(e, s) : s.element_type
+		address := emit_union_payload(e, option, pointer_to(e.c, logical, true), slot)
+		fields := []Foreach_Field{{type = logical, address = address, place = true, stored = true}}
+		numbered := counter == "" ? "" : load(e, "i64", counter)
+		bind_foreach_fields(e, s, with_index(e, s, fields, numbered))
 	} else if payload := option_payload(e.c, option); s.borrows && !type_is_pointer(e.c, payload) {
 		// design.md "Iteration protocol": a record `Yield` hands back a record of
 		// pointers -- one per part the iterator lends -- so each binding is a place
@@ -1076,20 +1098,30 @@ emit_synth_map_next :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 // what each part is; the payload's own fields say which of them were lent.
 @(private = "file")
 lent_record_fields :: proc(e: ^Emitter, s: ^Stmt_Foreach, record: string, payload: Type_Id) -> []Foreach_Field {
-	element := type_of(e.c, type_underlying(e.c, s.element_type))
-	held := type_of(e.c, type_underlying(e.c, payload))
-	llvm := llvm_type(e, payload)
-	fields := make([]Foreach_Field, len(element.fields), context.temp_allocator)
-	for id, index in element.fields {
-		field := symbol_of(e.c, id)
-		part := extract(e, llvm, record, index)
-		if symbol_of(e.c, held.fields[index]).type == field.type {
-			fields[index] = Foreach_Field{type = field.type, value = part}
-			continue
-		}
-		fields[index] = Foreach_Field{type = field.type, address = part, place = true, stored = true}
+	root := lent_yield_field(e, foreach_yielded_type(e, s), payload, record)
+	return root.children
+}
+
+@(private = "file")
+lent_yield_field :: proc(e: ^Emitter, logical, payload: Type_Id, value: string) -> Foreach_Field {
+	if logical == payload {
+		return Foreach_Field{type = logical, value = value}
 	}
-	return fields
+	if type_is_pointer(e.c, payload) {
+		return Foreach_Field{type = logical, address = value, place = true, stored = true}
+	}
+	logical_info := type_of(e.c, type_underlying(e.c, logical))
+	payload_info := type_of(e.c, type_underlying(e.c, payload))
+	children := make([]Foreach_Field, len(logical_info.fields), context.temp_allocator)
+	llvm := llvm_type(e, payload)
+	for logical_field_id, index in logical_info.fields {
+		logical_field := symbol_of(e.c, logical_field_id)
+		payload_field := symbol_of(e.c, payload_info.fields[index])
+		children[index] = lent_yield_field(
+			e, logical_field.type, payload_field.type, extract(e, llvm, value, index),
+		)
+	}
+	return Foreach_Field{type = logical, children = children}
 }
 
 // design.md "String iteration": one decoded code point per step, advancing the

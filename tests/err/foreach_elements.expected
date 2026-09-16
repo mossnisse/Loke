@@ -1,50 +1,42 @@
 L0459
-@29:14
-is not a record, so a `foreach` over it binds one name
+@29:11
+`int` has 0 fields
 L0459
-@30:22
-for a rune ordinal write `.indexed()`, and for a byte offset `.rune_offsets()`
+@30:11
+`rune` has 0 fields
 L0459
-@33:14
-`Point` has 2 fields, so a `foreach` over it binds 1 or 2 names, not 3
-L0457
-@36:15
-the index binding is a counter and cannot be taken by reference
+@33:11
+`Point` has 2 fields
 L0363
 @39:16
 has no field or member `reversed`
 L0363
 @42:16
-`map[int]int` has no field or member `reversed`
+has no field or member `reversed`
 L0363
 @43:16
-`string` has no field or member `reversed`
+has no field or member `reversed`
 L0363
 @47:16
-`[3]int` has no field or member `keys`
+has no field or member `keys`
 L0363
 @48:16
-`[3]int` has no field or member `rune_offsets`
+has no field or member `rune_offsets`
 L0363
 @49:16
-`map[int]int` has no field or member `runes`
-L0460
-@53:2
-`reversed()` yields values, so it cannot be iterated by reference
+has no field or member `runes`
 L0459
-@54:15
-a `foreach` does not supply an index, so `i` has nothing to bind
-@54:20
-write `.indexed()` here to number the traversal
+@54:12
+`int` has 0 fields
 L0456
 @57:21
 is a type, so it is not iterable; write `.values()` for its members
 L0456
 @60:16
-`Plain` is not iterable
+is not iterable
 L0363
 @61:16
-`Plain` has no field or member `values`
+has no field or member `values`
 L0454
-@65:16
+@65:12
 has 2 fields, so a static `foreach` over it binds 1 or 2 names, not 3

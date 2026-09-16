@@ -17,22 +17,7 @@ check_static_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	}
 	// design.md: mixing a runtime and a compile-time binding in one header is an
 	// error, and a static binding is immutable, so `&` cannot apply to one.
-	for binding in s.bindings {
-		if !binding.is_static {
-			errorf(
-				k.c,
-				binding.name.span,
-				"L0454",
-				"`%s` is a runtime binding in a static expansion; every binding carries `$`",
-				binding.name.text,
-			)
-			return FLOWS
-		}
-		if binding.is_ref {
-			errorf(k.c, binding.name.span, "L0454", "a static binding is immutable and cannot use `&`")
-			return FLOWS
-		}
-	}
+	if !check_static_pattern_markers(k, s.bindings) { return FLOWS }
 
 	// design.md: `break` and `continue` cannot target a static expansion. Checked
 	// on the written body once, so a rejected branch is not reported per copy.
@@ -122,31 +107,68 @@ bind_static_element :: proc(
 		effective_type = aggregate.type
 	}
 
-	if len(s.bindings) == 1 {
-		bind_static(k, s.bindings[0], effective_value, effective_type)
+	return bind_static_pattern(k, s.bindings, effective_value, effective_type)
+}
+
+@(private = "file")
+check_static_pattern_markers :: proc(k: ^Checker, bindings: []Foreach_Binding) -> bool {
+	for binding in bindings {
+		if len(binding.group) > 0 {
+			if !check_static_pattern_markers(k, binding.group) { return false }
+			continue
+		}
+		if !binding.is_static {
+			errorf(
+				k.c, binding.name.span, "L0454",
+				"`%s` is a runtime binding in a static expansion; every binding carries `$`",
+				binding.name.text,
+			)
+			return false
+		}
+		if binding.is_ref {
+			errorf(k.c, binding.name.span, "L0454", "a static binding is immutable and cannot use `&`")
+			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+bind_static_pattern :: proc(
+	k: ^Checker, bindings: []Foreach_Binding, value: Const_Value, type: Type_Id,
+) -> bool {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		return bind_static_pattern(k, bindings[0].group, value, type)
+	}
+	if len(bindings) == 1 && len(bindings[0].group) == 0 {
+		bind_static(k, bindings[0], value, type)
 		return true
 	}
 	// Several names over one record element.
-	info := underlying_info(k.c, effective_type)
-	if info == nil || info.kind != .Struct || len(info.fields) != len(s.bindings) {
+	info := underlying_info(k.c, type)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
 		count := info != nil && info.kind == .Struct ? len(info.fields) : 0
 		errorf(
-			k.c, s.bindings[1].name.span, "L0454",
+			k.c, bindings[0].name.span, "L0454",
 			"`%s` has %d fields, so a static `foreach` over it binds 1 or %d names, not %d",
-			type_name(k.c, effective_type), count, count, len(s.bindings),
+			type_name(k.c, type), count, count, len(bindings),
 		)
 		return false
 	}
-	for binding, slot in s.bindings {
+	for binding, slot in bindings {
 		field := symbol_of(k.c, info.fields[slot])
-		if !require_visible_field(k, binding.name.span, effective_type, info.fields[slot], "L0454", "bound by a `foreach`") {
+		if !require_visible_field(k, binding.name.span, type, info.fields[slot], "L0454", "bound by a `foreach`") {
 			return false
 		}
-		value: Const_Value
-		if effective_value.aggregate != nil && slot < len(effective_value.aggregate.elements) {
-			value = effective_value.aggregate.elements[slot]
+		part: Const_Value
+		if value.aggregate != nil && slot < len(value.aggregate.elements) {
+			part = value.aggregate.elements[slot]
 		}
-		bind_static(k, binding, value, field.type)
+		if len(binding.group) > 0 {
+			if !bind_static_pattern(k, binding.group, part, field.type) { return false }
+		} else {
+			bind_static(k, binding, part, field.type)
+		}
 	}
 	return true
 }

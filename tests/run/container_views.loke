@@ -177,10 +177,10 @@ main :: proc() {
 	drop(owning);
 	fmt.println(saved.byte_len());
 
-	// By-reference loops are unchanged, including the borrowed key.
+	// Mutable map traversal is explicit through the value view.
 	named: map[string]int = {};
 	named["only"] = 5;
-	foreach (key, &value in named) { value += key.len(); }
+	foreach (&value in named.values()) { value += 4; }
 	fmt.println(named["only"]);
 	numbers: [dynamic]int = {};
 	numbers.append(1, 2);

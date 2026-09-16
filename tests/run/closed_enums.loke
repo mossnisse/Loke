@@ -5,6 +5,7 @@ Sparse :: enum i8 { Negative = -7, Zero = 0, High = 100 }
 No_Zero :: enum u8 { One = 1, Last = 255 }
 Wide :: enum u128 { Small = 1, Huge = 18446744073709551617 }
 Empty :: enum {}
+Keyword_Member :: enum { type }
 Wire :: distinct u8;
 Empty_Array: [0]No_Zero;
 chosen :: proc($value: No_Zero) -> No_Zero { return value; }
@@ -59,6 +60,8 @@ count: int;
 next :: proc() -> i8 { count += 1; return 100; }
 
 main :: proc() {
+	keyword: Keyword_Member = .type;
+	assert(keyword == Keyword_Member.type);
 	foreach (value in Sparse.values()) {
 		fmt.println(classify(value));
 	}

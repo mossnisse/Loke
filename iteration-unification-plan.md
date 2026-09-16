@@ -1,89 +1,31 @@
-# Borrowed collection traversal with unified binding rules
+# Iteration unification — completed v1 scope
 
-## Summary
-
-Make iteration follow the ownership rule `switch` already uses ([design.md "Switch ownership"](design.md#switch-ownership)): a place borrows; a temporary or `move(place)` consumes. Ordinary traversal of a place therefore borrows each element immutably instead of cloning it. Assignment and parameter semantics are unchanged, `&` still requests mutation, and `.copied()` is the explicit copy.
+Iteration now has one recursive binding model and two source-access modes:
 
 ```odin
-foreach (item in items) { inspect(item); }               // borrowed: no clone, works for move-only items
-foreach (item in items.copied()) { take(move(item)); }   // one clone per element
-foreach (item in move(items)) { take(move(item)); }      // consumed: elements transfer
-foreach (item in make_items()) { take(move(item)); }     // a temporary is consumed too
-
-foreach (&item, index in items.reversed().indexed()) { ... }
-foreach ((key, &value), index in table.indexed()) { ... }
+foreach (item in items) { inspect(item); }               // borrowed
+foreach (&item in items) { item.count += 1; }            // mutable
+foreach (item in items.copied()) { take(move(item)); }    // explicit clone
 ```
 
-Land this as one coordinated change — compiler, library, documentation, and tests together, without a compatibility flag. `.refs()` is removed: a borrowed binding plus `&item` covers it.
+The completed implementation includes:
 
-## Traversal mode
+- recursive binding patterns in runtime loops and static expansion;
+- recursive `Yield` descriptors, including borrowed, mutable, and mixed record
+  leaves;
+- borrowed traversal for container storage, with source provenance preserved;
+- mutable traversal through `Mutable_Iterable`, including `indexed()`,
+  `reversed()`, and `map.values()`;
+- `indexed()` preserving a source's recursive yield shape;
+- `copied()` cloning only borrowed leaves and passing owned leaves through;
+- removal of the old implicit index and mutable-map-entry spellings.
 
-The header alone decides the mode:
+A temporary root lives for the whole statement and lends its elements. A
+written `move(root)` transfers the collection into that statement-owned root,
+but does not create movable element bindings. A future consuming-iterator
+proposal would need to specify and implement partial-container cleanup for
+exhaustion, early exit, panic, fixed arrays, dynamic storage, maps, and library
+containers before becoming normative.
 
-1. Any `&` leaf in the pattern selects **mutable** traversal. The root must be writable storage (a mutable place or a `[]mut` view). `&` together with `move(...)` or `.copied()` is an error.
-2. Otherwise a root that is a temporary or `move(place)` selects **consuming** traversal when every adapter in the chain supports it, and borrowed traversal of the owned temporary otherwise. A borrowed view such as a slice never consumes its backing collection.
-3. Otherwise traversal is **borrowed**.
-
-The root is the expression the adapters and built-in views (`indexed`, `reversed`, `copied`, `keys`, `values`, `entries`) are applied to, so `foreach (&v in m.values())` roots at `m`. Those only carry the mode through; they never choose it. The root is evaluated once, and a temporary root lives for the whole statement ([design.md "Temporaries and procedure boundaries"](design.md#temporaries-and-procedure-boundaries)). User-defined methods with these names keep lookup precedence and are ordinary calls.
-
-## Iterator contract
-
-- In [the standard interfaces](base/interfaces/interfaces.loke), each traversal mode's iterator has `next(self: inout It) -> Option(Item)` and a `Yield` descriptor saying how foreach binds `Item`:
-  - `Yield_Owned` — the binding is `Item` itself;
-  - `Yield_Borrowed` / `Yield_Mutable` — `Item` is `^T` / `^mut T`, the binding is a borrowed `T`;
-  - a record whose fields recursively describe a record `Item`, e.g. `struct{key: Yield_Borrowed, value: Yield_Mutable}`.
-- `Element`, what a single binding receives, is `T` for a borrowed or mutable leaf and `Item` otherwise. The checker validates `Yield` against `Item`'s shape and rejects a record descriptor over a record with a custom `hook(copy)` or `hook(drop)` — the restriction consuming destructuring already has.
-- **Defaults keep existing iterators unchanged:** an iterator declaring only `Element`, as every one does today, is owned with `Item = Element`. `Countdown` in design.md compiles as is.
-- Keep `Iterable`/`iter` and `Mutable_Iterable`/`iter_mut`; add one `Consuming_Iterable` with `Move_Iterator` and `iter_move(self: move Self)`. Reversal in each mode is a receiver method found the way `iter_reverse` is today — `iter_reverse`, `iter_mut_reverse`, `iter_move_reverse` — with no new interfaces. A type's modes must agree on the logical element.
-- Built-ins: arrays, slices, dynamic arrays, and `Small_Array` yield borrowed elements, move-only ones included. Map entries are borrowed `{key: ^K, value: ^V}`; `Enum_Array` entries are `{key: E, value: ^T}` with an owned key. Ranges, runes, and bytes stay owned. Consuming traversal yields owned elements and owned `{key, value}` entries.
-- Manual `next()` returns `Item`. Code that must be generic over the yield mode uses `foreach`; no projection operation is added.
-
-## Bindings
-
-- Foreach bindings become recursive patterns: `(a, (b, &c))`. Leaves keep today's declaration-order, visibility, `_`, and arity rules. `:=` destructuring stays flat; design.md's destructuring section says foreach patterns add nesting and `&` leaves on top of it.
-- An `&` leaf must land on a `Yield_Mutable` location; unmarked leaves are immutable.
-- Remove the implicit index and map-value forms: `foreach (&v, i in seq)` becomes `seq.indexed()`, `foreach (&v in map)` becomes `map.values()`, and `foreach (key, &value in map)` is plain destructuring. The old spellings get a diagnostic naming the replacement.
-- A single binding over a record yield receives the record with its pointer fields (`entry.value^`); destructuring binds the pointees directly. No transparent borrowed-record type is introduced.
-- A borrowed binding cannot be moved or dropped — generalize `borrowed_binding` and L0690 ([lifecycle.odin:150](src/lifecycle.odin:150)) beyond switch payloads. `saved := item` still clones and so rejects a move-only `item`. `&item` on a borrowed binding yields a `^T` carrying the element's source provenance; that is the `.refs()` replacement.
-
-## Adapters
-
-- `.indexed()` and `.reversed()` work in all three modes and nest arbitrarily. `.reversed().indexed()` numbers the reversed traversal from zero. Reversal never allocates; maps and runes stay forward-only.
-- `.copied()` lazily clones borrowed leaves using existing copy hooks, allocator selection, and failure behavior. Owned leaves pass through uncloned, so over a consuming traversal it is a no-op. It rejects non-copyable borrowed leaves and `&` leaves.
-- A **stored** adapter (`v := items.indexed()`) is always a borrowed view that freezes its source while live — today's rule ([design.md "Iteration adapters"](design.md#iteration-adapters)). Mutable and consuming traversal through adapters exists only in a foreach header, where the root's loan or transfer spans the statement.
-
-## Lifetimes and ownership
-
-- **Borrowed yields** carry source provenance, so they — and `&item` — may outlive advancement and the iterator while the source stays valid. For a user-defined `next()` the returned pointer must derive from a view the iterator holds, not from the iterator's own storage; build this on the existing rule that a view carried by a receiver obeys its own source ([cfg_provenance.odin:2655](src/cfg_provenance.odin:2655)). It replaces the synth-kind list at [cfg_provenance.odin:2662](src/cfg_provenance.odin:2662) and `iteration_lends_source`.
-- **Mutable traversal** holds an exclusive source loan. Every yielded loan, nested pointers and derived pointers included, ends before advancing or dropping the iterator — on every loop exit and for manual calls.
-- **Consuming traversal** transfers each element without cloning. The move-iterator owns the collection and tracks the unyielded range or occupied map slots, so early exit drops only unyielded elements and frees storage once, without front removal or shifting. Map consumption transfers both key and value, unlike current removal. Provided for arrays, dynamic arrays, maps, `Small_Array`, and `Enum_Array`.
-
-## Implementation sequence
-
-1. **Done.** Update [the specification](design.md) and [grammar](grammar.md): the mode rule, `Yield`, patterns, `.copied()`, consuming traversal, `.refs()` removal, migration examples, and the move-only `Small_Array` claims in the interface catalogue.
-2. **Done, as representation and checking only.** One checked yield description and one recursive pattern representation through parsing, AST cloning/dumping, interface checks, generic resolution, and diagnostics. A nested pattern (`L0693`) and a lending `Yield` (`L0695`) are checked and then reported as unlowered, since binding either needs step 3's lifecycle work and step 5's lowering. The catalogue keeps `Iterator(Self.Iterator, Self.Element)` until step 4 gives an iterator a non-owned yield; the traversal mode is recorded where it is already derived — an `&` leaf — and the consuming rule waits for step 4's `Consuming_Iterable`, rather than storing a field nothing reads from a rule nothing can yet implement.
-3. **Done for every rule reachable today.** Lifecycle, control-flow, and provenance: generalize borrowed bindings; distinguish descriptor loans, whole-traversal loans, and per-step loans; replace the `.refs()` exceptions with the verified yield rule. A `&` binding is now the same non-owning view a switch payload is, so `move`/`drop` on one is `L0690`; its per-step loan ends with the step through a direct lowering exactly as through an iterator; a pointer into a switch payload borrows the subject; and whether a result lends the receiver's own storage or reads through a view it holds is settled by the callee's summary rather than by naming two synths — the read-only case lends the source, the mutable case stays an exclusive loan. The two iteration synths have no body to summarize and keep their entry until step 4 gives every lending iterator one.
-4. **Containers and their iterators done; `.copied()` and consuming traversal remain.** Convert built-in and library iterators (dropping `where is_copyable(T)` from borrowed `next`), then adapters, `.copied()`, and move-iterators. Extend runtime transfer helpers for map consumption. Arrays, slices, and dynamic arrays lend each element through the existing place binding the lowering already had for `&`, so a move-only element iterates and nothing is cloned. Their `iter()`/`next()` lend too, through the `Slice_Ref_Next` body `refs()` already used, so a manual walk and a loop agree and such a sequence satisfies `Iterable`. That needed `Item` contributed to every iterator as the payload of its own `next` — which is what makes `Iterator(Self.Iterator, Self.Iterator.Item)` resolve for an iterator written before `Yield` existed — and the three descriptors moved to `base:runtime` and bound into the universe. A map lends both halves of a slot: two names bind them where the table holds them, `keys()`/`values()` lend the half they name, and the map's own iterator declares the record `Yield` whose fields are descriptors, so `next` hands back `(key: ^K, value: ^V)` and one name reads `entry.value^`. `entries()` is that same iterator, so it lends too and the copy it used to refuse is gone. `reversed()` carries a lending source through, and `indexed()` declares a record `Yield` of its own -- `{value: Yield_Borrowed, index: Yield_Owned}` -- so it lends the half its source lends and owns only the counter, which makes a move-only sequence numberable and stops a stored `xs[:].indexed()` cloning what the direct loop over the same source never cloned. Whether it lends is read back off the projected pair for provenance, since a synth has no body to summarize. The one shape left unlowered is a record built out of a record — `indexed()` over a map or its entry view — which needs the nested binding pattern step 2 deferred; `.copied()`, `Consuming_Iterable`, and the move-iterators are untouched, and text, ranges, and the library's own iterators stay owned.
-
-5. Direct LLVM loops, protocol calls, and supported CTFE/static-foreach paths consume the same checked description. Borrowed bindings register no cleanup; owned payloads keep exactly-once cleanup.
-6. **The temporary error is done, ahead of the rest.** Migrate. A single name over a record built from lent parts is `L0696` — `foreach (entry in table)`, `foreach (entry in table.entries())`, `foreach (pair in items.indexed())` — and every site in the library, the corpus, the examples, and design.md's own map example now binds the parts instead, so no `fmt.println(entry.value)` can silently start printing an address when the record `Yield` lands; the error lifts then, and `entry.value^` becomes the single-name spelling. It was taken first rather than last because the conversions of step 4 are what change those meanings. A discard binds no field and is exempt, which keeps generic code that only counts a traversal writable over a map. What it does not yet catch is a name bound to such a record inside a larger one (`foreach (entry, i in table.indexed())`), whose replacement is the nested pattern step 2 left unlowered. `.refs()` is gone: an ordinary traversal lends what it lent, `&item` on that binding is the `^T` it yielded, and `src/iteration_refs.odin`, the three `Refs_*` synths, `Adapter_Kind.Refs`, and `iteration_lends_source` were deleted with it. Its one capability with no replacement was `indexed()` over a move-only sequence, restored by the record `Yield` step 4 then gave `indexed()`. The `&v, i` form is migrated too: `indexed()` now numbers a place traversal, over a container's own storage and over a user type's `iter_mut` alike, and one shared rule refuses a second name that no traversal supplies. It needed no mutable `Yield` -- the counter was always the loop's own, and peeling the adapter leaves the place lowering that already bound it. Still to do: `foreach (&v in map)`, which waits on a mutable `values()` walk, and `reversed()` in a place header.
-
-## Verification and acceptance
-
-- **Copy costs:** instrument copy/drop hooks and allocation counts. Plain, indexed, reversed, generic, and manual borrowed traversal clone nothing; `.copied()` clones each borrowed element once; consuming traversal, including of temporaries, clones nothing.
-- **Mode selection:** place, temporary, `move(place)`, `move(view)`, `&` leaves, each rejected combination, and chains without consuming reverse falling back to borrowing.
-- **Move-only access:** owning sequences, immutable parameters, map values, library containers, temporaries. Reads succeed; copying, moving, or dropping a borrowed element fails with the L0690-style diagnostic.
-- **Bindings:** whole records, flat and nested patterns, discards, visibility failures, pointer-valued user generators, `&item` provenance. Ordinary assignment stays independent.
-- **Borrow correctness:** borrowed pointers survive advancement and iterator drop; source invalidation while they live is rejected; mutable-loan escape and advancement are rejected through nested records, helpers, and stored-adapter aliases; a user `next()` lending its own storage is rejected.
-- **Cleanup:** exhaustion, `break`, `continue`, `return`, propagated failure, panic, and dropping an unstarted or partly consumed move-iterator; partial `.copied()` failure; managed map keys and values.
-- **Backend agreement:** direct loops match manual and generic protocol traversal; pin "no hidden clone or snapshot" as `tests/ll` fixtures.
-- Run citation checks, compiler unit tests, vetted builds, and the full matrix through `test-all.ps1`.
-
-Acceptance requires matching behavior across direct loops, stored adapters, and protocol calls, unchanged ordinary assignment semantics, and no hidden element cloning in default traversal.
-
-## Not in this change
-
-- `.indexed().reversed()` with original indices, and the `Exact_Size_Iterable` it needs — design.md rejects it deliberately; add when a caller needs it.
-- Stored adapters that observe later source mutation or carry write capability — the freeze rule is simpler and covers every current use.
-- Consuming a string into a rune iterator — runes are generated by value either way.
-- A separate `Into_Iterator` — `Consuming_Iterable` is the one consuming interface.
+Regression coverage belongs in the ordinary run, error, syntax, LLVM, and
+front-end suites; unfinished behavior is not kept as an accepted diagnostic.

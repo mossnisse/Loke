@@ -82,9 +82,7 @@ main :: proc() {
 	foreach (v, i in nums.indexed()) { fmt.println(i*10 + v); }
 	foreach (v, i in (5 ..< 8).indexed()) { fmt.println(i*10 + v); }
 
-	// One name over `indexed()` binds the whole `{value, index}` pair. A lending
-	// traversal under it is `L0696` until the record `Yield` lands, so this is the
-	// range, whose elements are generated and stay owned.
+	// One name over `indexed()` binds the whole `{value, index}` pair.
 	foreach (pair in (7 ..< 9).indexed()) { fmt.println(pair.index*10 + pair.value); }
 
 	// `reversed()` walks backwards; composing it numbers the reversed traversal.
@@ -112,7 +110,10 @@ main :: proc() {
 	foreach (key, value in table) { fmt.println(key + value); }
 	foreach (k in table.keys()) { fmt.println(k); }
 	foreach (v in table.values()) { fmt.println(v); }
-	foreach (entry, i in table.indexed()) { fmt.println(i*1000 + entry.value); }
+	foreach ((_, value), i in table.indexed()) { fmt.println(i*1000 + value); }
+	foreach (pair in table.indexed()) { _ = pair.value.value^; _ = pair.index; }
+	foreach ((key, value), i in table.entries().indexed()) { _ = key; _ = value; _ = i; }
+	foreach (pair in table.entries().indexed()) { _ = pair.value.key^; _ = pair.index; }
 
 	// A managed key is borrowed rather than copied, so it destructures freely.
 	named: map[string]int = {};
@@ -120,13 +121,12 @@ main :: proc() {
 	foreach (key, value in named) { fmt.println(key.len()*10 + value); }
 	foreach (key in named.keys()) { fmt.println(key.len()); }
 
-	// The place forms are unchanged: their names are the container's, not an
-	// element record's.
+	// Mutable traversal uses the same adapters as borrowing traversal.
 	foreach (&v in nums) { v = v*2; }
 	foreach (v, i in nums.indexed()) { fmt.println(i*100 + v); }
 	foreach (&v, i in nums.indexed()) { v = v + i; }
 	foreach (v in nums) { fmt.println(v); }
-	foreach (key, &value in named) { value += 1; }
+	foreach (&value in named.values()) { value += 1; }
 	fmt.println(named["only"]);
 
 	// A user iterable needs only `Element`, `Iterator`, `iter`, and `next`.
@@ -156,8 +156,8 @@ main :: proc() {
 	// three fields of Triple leaking through the wrapper.
 	foreach ($v in STATIC_INTS.reversed()) { fmt.println(v); }
 	foreach ($v, $i in (2 ..< 5).reversed().indexed()) { fmt.println(i*10 + v); }
-	foreach ($triple, $i in STATIC_TRIPLES.indexed()) {
-		fmt.println(triple.a + triple.b + triple.c + i);
+	foreach (($a, $b, $c), $i in STATIC_TRIPLES.indexed()) {
+		fmt.println(a + b + c + i);
 	}
 	foreach ($v in static_values().reversed()) { fmt.println(v); }
 	foreach ($v in STATIC_INTS[1:].reversed()) { fmt.println(v); }

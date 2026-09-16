@@ -29,6 +29,8 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		if info.adapter_kind == .Indexed {
 			value = insert(e, result, "undef", llvm_type(e, target.result), iterator, 0)
 			value = insert(e, result, value, "i64", "0", 1)
+		} else if info.adapter_kind == .Copied {
+			value = insert(e, result, "undef", llvm_type(e, target.result), iterator, 0)
 		}
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, value)
 	case .Iterator_Copy:
@@ -67,6 +69,26 @@ emit_synth_adapter :: proc(e: ^Emitter, symbol: ^Symbol, name: string) {
 		fmt.sbprintfln(&e.b, "  %s = add i64 %s, 1", stepped, index)
 		fmt.sbprintfln(&e.b, "  store i64 %s, ptr %s", stepped, counter)
 		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_some(e, symbol.result, pair))
+		place_label(e, stopped)
+		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
+	case .Copied_Next:
+		target := symbol_of(e.c, symbol.iteration_target)
+		inner_option := target.result
+		inner_type := llvm_type(e, inner_option)
+		iterator := gep_field(e, llvm_type(e, source), "%arg0", 0)
+		produced := temp(e)
+		fmt.sbprintfln(&e.b, "  %s = call %s %s(ptr %s)", produced, inner_type, symbol_name(e, symbol.iteration_target), iterator)
+		tag := emit_union_tag(e, inner_option, produced)
+		ok := temp(e)
+		shape := union_layout(e.c, inner_option)
+		fmt.sbprintfln(&e.b, "  %s = icmp eq i%d %s, %d", ok, shape.tag_bytes * 8, tag, union_index_of(e.c, inner_option, "some"))
+		yielded, stopped := new_label(e, "copied.yield"), new_label(e, "copied.stop")
+		branch_if(e, ok, yielded, stopped)
+		place_label(e, yielded)
+		handed := option_payload(e.c, inner_option)
+		payload := emit_union_payload(e, inner_option, handed, emit_union_spill(e, inner_option, produced))
+		owned := own_yielded(e, payload, handed, option_payload(e.c, symbol.result))
+		fmt.sbprintfln(&e.b, "  ret %s %s", result, emit_option_some(e, symbol.result, owned))
 		place_label(e, stopped)
 		fmt.sbprintfln(&e.b, "  ret %s zeroinitializer", result)
 	}

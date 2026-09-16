@@ -3010,15 +3010,11 @@ bind_foreach_element :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Va
 		return false
 	}
 	if foreach_is_place_loop(s) {
-		if s.bindings[0].symbol != INVALID_SYMBOL {
-			frame.locals[s.bindings[0].symbol] = element
-		}
-		// The place form's second name is the step counter, not a field of the
-		// element.
-		if len(s.bindings) == 2 {
+		if s.indexed && len(s.bindings) == 2 {
+			if !bind_eval_place_pattern(ev, frame, []Foreach_Binding{s.bindings[0]}, element) { return false }
 			return bind_local(ev, frame, s.bindings[1].symbol, eval_count_value(ev, index))
 		}
-		return true
+		return bind_eval_place_pattern(ev, frame, s.bindings, element)
 	}
 	value, copied := copy_value(ev, element^)
 	if !copied {
@@ -3033,16 +3029,54 @@ bind_foreach_element :: proc(ev: ^Evaluator, s: ^Stmt_Foreach, element: ^Eval_Va
 		pair[ELEMENT_SECOND] = eval_count_value(ev, index)
 		value = Eval_Value{kind = .Aggregate, type = s.element_type, elements = pair}
 	}
-	if len(s.bindings) == 1 {
-		return bind_local(ev, frame, s.bindings[0].symbol, value)
+	return bind_eval_value_pattern(ev, frame, s.bindings, value, s.span)
+}
+
+@(private = "file")
+bind_eval_value_pattern :: proc(
+	ev: ^Evaluator, frame: ^Eval_Frame, bindings: []Foreach_Binding, value: Eval_Value, span: Span,
+) -> bool {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		return bind_eval_value_pattern(ev, frame, bindings[0].group, value, span)
 	}
-	if value.kind != .Aggregate || len(value.elements) != len(s.bindings) {
-		eval_fail(ev, s.span, "L0341", "this element has no compile-time fields to destructure")
+	if len(bindings) == 1 && len(bindings[0].group) == 0 {
+		return bind_local(ev, frame, bindings[0].symbol, value)
+	}
+	if value.kind != .Aggregate || len(value.elements) != len(bindings) {
+		eval_fail(ev, span, "L0341", "this element has no compile-time fields to destructure")
 		return false
 	}
-	for binding, slot in s.bindings {
-		if !bind_local(ev, frame, binding.symbol, value.elements[slot]) {
+	for binding, slot in bindings {
+		if len(binding.group) > 0 {
+			if !bind_eval_value_pattern(ev, frame, binding.group, value.elements[slot], span) { return false }
+		} else if !bind_local(ev, frame, binding.symbol, value.elements[slot]) {
 			return false
+		}
+	}
+	return true
+}
+
+@(private = "file")
+bind_eval_place_pattern :: proc(
+	ev: ^Evaluator, frame: ^Eval_Frame, bindings: []Foreach_Binding, value: ^Eval_Value,
+) -> bool {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		return bind_eval_place_pattern(ev, frame, bindings[0].group, value)
+	}
+	if len(bindings) == 1 && len(bindings[0].group) == 0 {
+		if bindings[0].symbol != INVALID_SYMBOL { frame.locals[bindings[0].symbol] = value }
+		return true
+	}
+	if value.kind != .Aggregate || len(value.elements) != len(bindings) {
+		eval_fail(ev, no_span(), "L0341", "this element has no compile-time fields to destructure")
+		return false
+	}
+	for binding, slot in bindings {
+		part := &value.elements[slot]
+		if len(binding.group) > 0 {
+			if !bind_eval_place_pattern(ev, frame, binding.group, part) { return false }
+		} else if binding.symbol != INVALID_SYMBOL {
+			frame.locals[binding.symbol] = part
 		}
 	}
 	return true

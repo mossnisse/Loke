@@ -32,7 +32,7 @@ main :: proc() {
 	// Exact arity: not too few, not too many.
 	foreach (x, y, z in points) { fmt.println(x); }
 
-	// A place loop's index is the loop's own counter, never a place.
+	// A mutable pattern may select individual record fields.
 	foreach (x, &y in points) { fmt.println(x); }
 
 	// Indexed views are forward-only: reversing them needs an end index.
@@ -48,8 +48,8 @@ main :: proc() {
 	foreach (v in xs.rune_offsets()) { fmt.println(v); }
 	foreach (v in table.runes()) { fmt.println(v); }
 
-	// `indexed()` numbers a place traversal too, but `reversed()` has no place
-	// form, and a `foreach` still never supplies the index itself.
+	// `reversed()` carries mutable traversal too, but a `foreach` still never
+	// supplies an index itself.
 	foreach (&v in xs.reversed()) { fmt.println(v); }
 	foreach (&v, i in xs) { fmt.println(v); }
 

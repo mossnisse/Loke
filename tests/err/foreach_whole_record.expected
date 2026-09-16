@@ -1,8 +1,0 @@
-L0696
-@14:11
-binds a record of records, which is not lowered yet
-@14:11
-write `foreach (value, index in ...)`
-L0695
-@15:24
-lends its elements this way, and that `Yield` is not lowered yet

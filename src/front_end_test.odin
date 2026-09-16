@@ -640,6 +640,9 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 		{"0o8", "L0113"},
 		{"0xzz", "L0113"},
 		{"0x", "L0110"}, // a prefix with nothing after it
+		{"0b_", "L0110"},
+		{"0o_", "L0110"},
+		{"0x_", "L0110"},
 		{"123abc", "L0113"},
 		{"1_000u", "L0113"},
 		{"1e", "L0112"},

@@ -8,6 +8,27 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 	if info == nil || .Mutable_Iteration in info.contributed { return }
 	info.contributed += {.Mutable_Iteration}
 	if type_is_compile_time_only(c, subject) { return }
+	if info.view_kind == .Values {
+		element := info.element
+		iterator := new_type(c, Type_Info{
+			kind = .Struct,
+			name = intern_identifier(c, fmt.aprintf("Mutable_Map_Values_Iterator(%s)", type_name(c, info.key), allocator = c.semantic_allocator)),
+			element = element,
+			key = info.key,
+			is_view = true,
+		})
+		fields := make([]Symbol_Id, 2, c.semantic_allocator)
+		fields[ITER_MAP_TABLE] = new_field(c, "table", TYPE_RAWPTR, ITER_MAP_TABLE)
+		fields[ITER_MAP_CURSOR] = new_field(c, "cursor", TYPE_INT, ITER_MAP_CURSOR)
+		iterator_info := type_of(c, iterator)
+		iterator_info.fields = fields
+		iterator_info.mangled = fmt.aprintf("Mutable_Map_Values_Iterator.%d", subject, allocator = c.semantic_allocator)
+		next := adapter_proc(k, "next", .Map_Values_Next, iterator, .Inout, option_type(k, pointer_to(c, element, true)))
+		iter := adapter_proc(k, "iter_mut", .Map_View_Iter, subject, .Inout, iterator)
+		add_members(c, iterator, []Symbol_Id{next})
+		add_members(c, subject, []Symbol_Id{new_associated_type(c, "Mut_Iterator", iterator, subject), iter})
+		return
+	}
 	if info.kind != .Array && info.kind != .Dynamic_Array && !(info.kind == .Slice && info.mutable) { return }
 	element := info.element
 	constructor := info.kind == .Dynamic_Array ? Synth_Kind.Dynamic_Iter : Synth_Kind.Array_Iter
@@ -25,26 +46,15 @@ ensure_mutable_iteration_members :: proc(k: ^Checker, subject: Type_Id) {
 	next := adapter_proc(k, "next", .Slice_Mut_Next, iterator, .Inout, option_type(k, pointer_to(c, element, true)))
 	add_members(c, iterator, []Symbol_Id{next})
 	iter := adapter_proc(k, "iter_mut", constructor, subject, .Inout, iterator)
-	add_members(c, subject, []Symbol_Id{new_associated_type(c, "Mut_Iterator", iterator, subject), iter})
+	reverse_kind := info.kind == .Dynamic_Array ? Synth_Kind.Dynamic_Iter_Reverse : Synth_Kind.Array_Iter_Reverse
+	reverse := adapter_proc(k, "iter_mut_reverse", reverse_kind, subject, .Inout, iterator)
+	add_members(c, subject, []Symbol_Id{new_associated_type(c, "Mut_Iterator", iterator, subject), iter, reverse})
 }
 
 // A mutable iterator lends one element until its next call. `foreach` confines
 // that loan to the body of the current iteration and borrows the source for
 // the whole traversal.
 check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) -> Flow_Info {
-	if s.adapter != .None {
-		errorf(k.c, s.span, "L0460", "`reversed()` yields values, so it cannot be iterated by reference; drop the `&`")
-		return FLOWS
-	}
-	if len(s.bindings) > 2 || !s.bindings[0].is_ref || (len(s.bindings) == 2 && s.bindings[1].is_ref) {
-		errorf(k.c, s.span, "L0459", "a by-reference `foreach` binds `&value`, or `&value, index` over `indexed()`")
-		return FLOWS
-	}
-	// `indexed()` numbers the `iter_mut` walk this already performs: the counter
-	// is the traversal's, so the header spells it the same way a value loop does.
-	if !check_place_index_binding(k, s) {
-		return FLOWS
-	}
 	element := associated_type_of(k, subject, "Element")
 	iterator := associated_type_of(k, subject, "Mut_Iterator")
 	iter := iteration_member(k, subject, "iter_mut")
@@ -53,9 +63,18 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 		errorf(k.c, s.bindings[0].name.span, "L0457", "`%s` cannot be iterated by reference: it needs `Element`, `Mut_Iterator`, and `iter_mut :: proc(self: inout %s) -> Mut_Iterator`", type_name(k.c, subject), type_name(k.c, subject))
 		return FLOWS
 	}
-	if !expr_base(s.iterable).assignable {
-		report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
+	root := mutable_foreach_root(k.c, s)
+	if !expr_base(root).assignable {
+		report_not_assignable(k, expr_base(root), "a by-reference `foreach`")
 		return FLOWS
+	}
+	if s.adapter == .Reversed {
+		reverse := iteration_member(k, subject, "iter_mut_reverse")
+		if !iteration_proc_matches(k, symbol_of(k.c, reverse), subject, .Inout, iterator) {
+			errorf(k.c, expr_span(s.iterable), "L0460", "`%s` cannot be reversed mutably: it needs `iter_mut_reverse`", type_name(k.c, subject))
+			return FLOWS
+		}
+		iter = reverse
 	}
 	next := iteration_member(k, iterator, "next")
 	if !iteration_proc_matches(k, symbol_of(k.c, next), iterator, .Inout, option_type(k, pointer_to(k.c, element, true))) {
@@ -63,9 +82,20 @@ check_mutable_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: T
 		return FLOWS
 	}
 	if !gate_type(k, element, s.span) { return FLOWS }
-	s.kind, s.element_type, s.iterator_type = .Protocol, element, iterator
+	s.kind, s.element_type, s.iterator_type = .Protocol, s.indexed ? indexed_element_type(k.c, element) : element, iterator
 	s.iter_symbol, s.next_symbol = iter, next
-	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], element, true)
-	if len(s.bindings) == 2 { s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], TYPE_INT, false) }
+	if !check_mutable_foreach_pattern(k, s, s.bindings, s.element_type, true) { return FLOWS }
 	return check_foreach_block(k, s)
+}
+
+// Built-in map views carry their root through a tiny value. Mutable traversal
+// checks and borrows that root, not the temporary view header.
+mutable_foreach_root :: proc(c: ^Compiler, s: ^Stmt_Foreach) -> Expr {
+	if call, ok := s.iterable.(^Expr_Call); ok && len(call.bound) > 0 {
+		info := underlying_info(c, expr_base(s.iterable).type)
+		if info != nil && info.view_kind == .Values {
+			return call.bound[0]
+		}
+	}
+	return s.iterable
 }

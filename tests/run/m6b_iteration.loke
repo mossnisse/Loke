@@ -7,9 +7,7 @@ package main; import "core:fmt";
 // "**Iteration order is unspecified.**" So nothing here prints a map in table
 // order; every map result is order-independent.
 //
-// "Map values can be iterated by-reference, but their keys cannot since map keys
-// are immutable." A key binding borrows the stored key in place, which is what
-// lets `map[string]V` be iterated without a per-iteration clone.
+// Mutable map traversal is the value view; keys remain immutable.
 
 main :: proc() {
 	xs: [dynamic]int = {1, 2, 3};
@@ -26,9 +24,9 @@ main :: proc() {
 	fmt.println(xs[0]);
 	fmt.println(xs[2]);
 
-	// design.md's own map example, verbatim.
+	// The value view selects mutable traversal through its `&` binding.
 	some_map := map[string]int{"A" = 1, "C" = 9, "B" = 4};
-	foreach (key, &value in some_map) { value += 1; }
+	foreach (&value in some_map.values()) { value += 1; }
 	fmt.println(some_map["A"]);
 	fmt.println(some_map["C"]);
 	fmt.println(some_map["B"]);

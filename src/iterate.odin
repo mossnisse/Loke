@@ -20,7 +20,6 @@
 package lokec
 
 import "core:fmt"
-import "core:strings"
 
 RANGE_LOW :: 0
 RANGE_HIGH :: 1
@@ -67,6 +66,7 @@ Synth_Kind :: enum {
 	Adapter_View,
 	Adapter_Iter,
 	Indexed_Next,
+	Copied_Next,
 	Iterator_Copy,
 	// Compiler-owned canonical receiver methods for the built-in `len`, `cap`,
 	// and `hash` operations. Their free spellings resolve to these same symbols.
@@ -683,15 +683,6 @@ check_runtime_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 		errorf(k.c, s.span, "L0456", "a `foreach` binds at least one name")
 		return FLOWS
 	}
-	if span, nested := first_group_span(s.bindings); nested {
-		errorf(
-			k.c, span, "L0693",
-			"a nested binding pattern is not lowered yet; destructure one level, or bind the whole element and read its fields",
-		)
-		add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
-		return FLOWS
-	}
-
 	outer := k.scope
 	k.scope = new_scope(k.c, outer, .Local)
 	defer k.scope = outer
@@ -792,30 +783,30 @@ foreach_lends_elements :: proc(s: ^Stmt_Foreach) -> bool {
 	case .Map:
 		// A map's element is its `{key, value}` entry. Both halves are stored, so a
 		// header naming them binds them where the table holds them and one naming
-		// the entry receives a record of pointers to them. `indexed()` puts that
-		// entry inside a second record, which is the nesting still unlowered.
-		return !s.indexed
+		// the entry receives a record of pointers to them. `indexed()` preserves
+		// that record recursively and owns only its counter.
+		return true
 	}
 	return false
 }
 
-// Which parts of a built record this traversal lends. A map stores both halves
-// of its entry; `indexed()`'s counter is the loop's own value and is owned,
-// whatever it counts. The result is the descriptor design.md gives these
-// traversals, so the direct lowerings and a user iterator's `Yield` project a
-// record the same way.
+// Which parts of a built record this traversal lends. The descriptor preserves
+// nesting: `indexed()` over a map is `{value: {key: borrowed, value: borrowed},
+// index: owned}`.
 @(private = "file")
 foreach_record_yield :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) -> (Yield_Desc, bool) {
-	info := underlying_info(k.c, element)
-	if info == nil || info.kind != .Struct || len(info.fields) == 0 {
-		return {}, false
+	base := Yield_Desc{kind = .Borrowed}
+	if s.kind == .Map {
+		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
+		fields[0], fields[1] = Yield_Desc{kind = .Borrowed}, Yield_Desc{kind = .Borrowed}
+		base = Yield_Desc{kind = .Record, fields = fields}
 	}
-	fields := make([]Yield_Desc, len(info.fields), k.c.semantic_allocator)
-	for _, index in info.fields {
-		owned := s.indexed && index == ELEMENT_SECOND
-		fields[index] = Yield_Desc{kind = owned ? .Owned : .Borrowed}
+	if s.indexed {
+		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
+		fields[0], fields[1] = base, Yield_Desc{kind = .Owned}
+		return Yield_Desc{kind = .Record, fields = fields}, true
 	}
-	return Yield_Desc{kind = .Record, fields = fields}, true
+	return base, true
 }
 
 // design.md "Element bindings": whether the traversal builds a record out of
@@ -827,22 +818,9 @@ foreach_builds_lent_record :: proc(s: ^Stmt_Foreach) -> bool {
 	return s.borrows && (s.indexed || s.kind == .Map)
 }
 
-// The one record still built out of a record: `indexed()` over a map nests the
-// `{key, value}` entry inside the `{value, index}` pair. A single name over that
-// would receive `entry.value^` once the nesting lowers, so it stays refused
-// until then rather than changing what it prints
-// (iteration-unification-plan.md step 6). The entry view reaches the same
-// nesting through its iterator's `Yield`, which `L0695` refuses first. A discard
-// names no field and so cannot change.
-@(private = "file")
-foreach_binds_unlowered_record :: proc(s: ^Stmt_Foreach) -> bool {
-	return s.kind == .Map && s.indexed && len(s.bindings) == 1 &&
-	       s.bindings[0].name.text != "_"
-}
-
 // design.md: "any `&` leaf in the binding pattern selects mutable traversal",
 // so the search is over the whole tree rather than the top level.
-@(private = "file")
+@(private)
 pattern_has_ref :: proc(bindings: []Foreach_Binding) -> bool {
 	for binding in bindings {
 		if binding.is_ref || pattern_has_ref(binding.group) {
@@ -850,34 +828,6 @@ pattern_has_ref :: proc(bindings: []Foreach_Binding) -> bool {
 		}
 	}
 	return false
-}
-
-// A group anywhere in the pattern. design.md specifies nested destructuring;
-// the checker below resolves the header's shape, and the lowerings this
-// milestone has still read a flat binding list, so one is reported rather than
-// silently bound to the wrong storage.
-@(private = "file")
-pattern_is_nested :: proc(bindings: []Foreach_Binding) -> bool {
-	for binding in bindings {
-		if len(binding.group) > 0 || pattern_is_nested(binding.group) {
-			return true
-		}
-	}
-	return false
-}
-
-// The span of the first group, for the diagnostic that reports one.
-@(private = "file")
-first_group_span :: proc(bindings: []Foreach_Binding) -> (Span, bool) {
-	for binding in bindings {
-		if len(binding.group) > 0 {
-			if span, found := first_group_span(binding.group); found {
-				return span, true
-			}
-			return binding.name.span, true
-		}
-	}
-	return Span{}, false
 }
 
 // The `Element` this loop yields, after the header's adapter.
@@ -912,102 +862,15 @@ check_adapter_applies :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, n
 	return ok
 }
 
-// design.md "Element bindings": a loop never invents an index. The counter is
-// the iterable's, which is what `indexed()` supplies -- in a place header as in
-// a value one. Shared by the direct place lowering and the `iter_mut` one, which
-// each number a traversal they already walk.
-check_place_index_binding :: proc(k: ^Checker, s: ^Stmt_Foreach) -> bool {
-	if len(s.bindings) == 2 && !s.indexed {
-		errorf(
-			k.c, s.bindings[1].name.span, "L0459",
-			"a `foreach` does not supply an index, so `%s` has nothing to bind",
-			s.bindings[1].name.text,
-		)
-		add_notef(k.c, expr_span(s.iterable), "write `.indexed()` here to number the traversal")
-		return false
-	}
-	if s.indexed && len(s.bindings) == 1 {
-		errorf(
-			k.c, s.bindings[0].name.span, "L0459",
-			"`indexed()` pairs each element with a counter, so a by-reference `foreach` over it binds `&value, index`",
-		)
-		return false
-	}
-	return true
-}
-
-// design.md "By-reference iteration": the built-in place forms. Their names are
-// the container's — a value and index, or a key and value — not read off an
-// `Element` record.
+// design.md "By-reference iteration": direct mutable traversal projects the
+// same recursive Element pattern as the protocol path.
 @(private = "file")
 check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, info: ^Type_Info) -> Flow_Info {
-	if s.adapter != .None {
-		errorf(
-			k.c, s.span, "L0460",
-			"`reversed()` yields values, so it cannot be iterated by reference; drop the `&`",
-		)
-		return FLOWS
-	}
-	if len(s.bindings) > 2 {
-		errorf(k.c, s.bindings[2].name.span, "L0459", "a by-reference `foreach` binds one or two names")
-		return FLOWS
-	}
 	if s.kind == .Map {
-		if s.indexed {
-			errorf(
-				k.c, s.span, "L0460",
-				"`indexed()` puts a map's entry inside its pair, which is not lowered for a by-reference `foreach`",
-			)
-			add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
-			return FLOWS
-		}
-		// Map values can be iterated by-reference, but map keys are immutable and
-		// cannot be (design.md).
-		key_binding := len(s.bindings) == 2 ? 0 : -1
-		if key_binding >= 0 && s.bindings[key_binding].is_ref {
-			errorf(
-				k.c, s.bindings[key_binding].name.span, "L0591",
-				"a map key is immutable, so it cannot be iterated by reference; write `foreach (key, &value in m)`",
-			)
-			return FLOWS
-		}
-		value_binding := len(s.bindings) == 2 ? 1 : 0
-		if !s.bindings[value_binding].is_ref {
-			errorf(
-				k.c, s.bindings[value_binding].name.span, "L0459",
-				"a by-reference `foreach` over a map binds `&value`, or `key, &value`",
-			)
-			return FLOWS
-		}
-		if !expr_base(s.iterable).assignable {
-			report_not_assignable(k, expr_base(s.iterable), "a by-reference `foreach`")
-			return FLOWS
-		}
-		s.element_type = info.element
-		if !gate_type(k, info.key, expr_span(s.iterable)) ||
-		   !gate_type(k, s.element_type, expr_span(s.iterable)) {
-			return FLOWS
-		}
-		if key_binding >= 0 {
-			// An immutable key binding *borrows* the stored key rather than copying
-			// it — what lets `map[string]V` be iterated at all, and why no
-			// per-iteration clone or drop is needed. The loop's whole-container loan
-			// keeps that borrow valid across the back-edge.
-			s.bindings[key_binding].symbol = bind_loop_name(k, s.bindings[key_binding], info.key, false)
-		}
-		s.bindings[value_binding].symbol = bind_loop_name(k, s.bindings[value_binding], s.element_type, true)
-		return check_foreach_block(k, s)
-	}
-	// The index binding is the traversal's counter, so it is never a place.
-	if len(s.bindings) == 2 && s.bindings[1].is_ref {
-		errorf(k.c, s.bindings[1].name.span, "L0457", "the index binding is a counter and cannot be taken by reference")
-		return FLOWS
-	}
-	if !s.bindings[0].is_ref {
-		errorf(k.c, s.bindings[0].name.span, "L0459", "a by-reference `foreach` binds `&value`, or `&value, index` over `indexed()`")
-		return FLOWS
-	}
-	if !check_place_index_binding(k, s) {
+		errorf(
+			k.c, s.span, "L0457",
+			"a map entry is not a mutable element; iterate `map.values()` to mutate values",
+		)
 		return FLOWS
 	}
 	switch s.kind {
@@ -1047,11 +910,55 @@ check_place_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id, inf
 	if !gate_type(k, s.element_type, expr_span(s.iterable)) {
 		return FLOWS
 	}
-	s.bindings[0].symbol = bind_loop_name(k, s.bindings[0], s.element_type, true)
-	if len(s.bindings) == 2 {
-		s.bindings[1].symbol = bind_loop_name(k, s.bindings[1], TYPE_INT, false)
-	}
+	s.element_type = s.indexed ? indexed_element_type(k.c, s.element_type) : s.element_type
+	if !check_mutable_foreach_pattern(k, s, s.bindings, s.element_type, true) { return FLOWS }
 	return check_foreach_block(k, s)
+}
+
+// A mutable traversal lends the whole element. Pattern leaves decide which
+// projected fields are writable; plain leaves remain immutable views. An
+// `indexed()` counter is owned by the adapter and can never be an `&` leaf.
+check_mutable_foreach_pattern :: proc(
+	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical: Type_Id, refs_allowed: bool,
+) -> bool {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		return check_mutable_foreach_pattern(k, s, bindings[0].group, logical, refs_allowed)
+	}
+	if len(bindings) == 1 && len(bindings[0].group) == 0 {
+		binding := &bindings[0]
+		if binding.is_ref && !refs_allowed {
+			errorf(k.c, binding.name.span, "L0457", "this generated iteration field cannot be taken by reference")
+			return false
+		}
+		if !gate_type(k, logical, expr_span(s.iterable)) { return false }
+		binding.symbol = bind_loop_name(k, binding^, logical, binding.is_ref, true)
+		return true
+	}
+	info := underlying_info(k.c, logical)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
+		report_pattern_arity(k, bindings, logical, info)
+		return false
+	}
+	fields, eligible := destructure_fields(
+		k, logical, len(bindings), bindings[0].name.span, "L0459", "bound by a `foreach`",
+	)
+	if !eligible { return false }
+	for &binding, index in bindings {
+		field := symbol_of(k.c, fields[index])
+		if field == nil { return false }
+		field_refs := refs_allowed && !(s.indexed && logical == s.element_type && index == ELEMENT_SECOND)
+		if len(binding.group) > 0 {
+			if !check_mutable_foreach_pattern(k, s, binding.group, field.type, field_refs) { return false }
+			continue
+		}
+		if binding.is_ref && !field_refs {
+			errorf(k.c, binding.name.span, "L0457", "the iteration index is a counter and cannot be taken by reference")
+			return false
+		}
+		if !gate_type(k, field.type, expr_span(s.iterable)) { return false }
+		binding.symbol = bind_loop_name(k, binding, field.type, binding.is_ref, true)
+	}
+	return true
 }
 
 @(private = "file")
@@ -1143,26 +1050,25 @@ check_protocol_foreach :: proc(k: ^Checker, s: ^Stmt_Foreach, subject: Type_Id) 
 	// design.md "Borrowing iteration": a borrowed yield hands back a pointer into
 	// the source and the binding is the element it names; a record of descriptors
 	// hands back a record of those pointers, which one name receives whole. A
-	// mutable yield still needs the lowering the rest of the unification carries,
-	// and so does a record inside the pair `indexed()` would wrap it in.
-	if !yield_is_owned(yield) {
-		if yield.kind == .Mutable || (yield.kind == .Record && s.indexed) {
-			errorf(
-				k.c, expr_span(s.iterable), "L0695",
-				"`%s` lends its elements this way, and that `Yield` is not lowered yet",
-				type_name(k.c, iterator),
-			)
-			add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
-			return FLOWS
-		}
+	// mutable and record yields use the same place projection as borrowed leaves.
+	effective_yield := yield
+	effective_element := element
+	effective_item := item
+	if s.indexed {
+		fields := make([]Yield_Desc, 2, k.c.semantic_allocator)
+		fields[0], fields[1] = yield, Yield_Desc{kind = .Owned}
+		effective_yield = Yield_Desc{kind = .Record, fields = fields}
+		effective_element = indexed_element_type(k.c, element)
+		effective_item = yield_item_type(k, effective_element, effective_yield, expr_span(s.iterable))
+		if effective_item == INVALID_TYPE { return FLOWS }
+	}
+	if !yield_is_owned(effective_yield) {
 		s.borrows = true
-		if yield.kind == .Record {
-			s.item_type = item
-		}
+		s.item_type = effective_item
 	}
 
 	s.kind = .Protocol
-	s.element_type = s.indexed ? indexed_element_type(k.c, element) : element
+	s.element_type = effective_element
 	s.iterator_type = iterator
 	s.iter_symbol = iter
 	s.next_symbol = next
@@ -1186,10 +1092,6 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	// lowering is decided by the shape of the traversal.
 	if s.kind != .Protocol {
 		s.borrows = foreach_lends_elements(s)
-	}
-	if foreach_binds_unlowered_record(s) {
-		report_unlowered_record(k, s, element)
-		return FLOWS
 	}
 	// design.md "Element bindings": one name over a record the traversal builds
 	// out of parts it lends receives those parts as pointers. An iterator that
@@ -1221,63 +1123,86 @@ check_foreach_body :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {
 	if !s.borrows && type_is_managed(k.c, element) {
 		contribute_lifecycle_members(k, element)
 	}
-	if len(s.bindings) == 1 {
-		bound := s.item_type != INVALID_TYPE ? s.item_type : element
-		if !bind_element_field(k, s, 0, bound) {
-			return FLOWS
-		}
-		return check_foreach_block(k, s)
-	}
-	// The same eligibility rule every destructuring form asks for. `foreach` keeps
-	// its own note-carrying arity message, so it pre-checks the shape and calls
-	// the shared helper only for the field walk.
-	info := underlying_info(k.c, element)
-	if info == nil || info.kind != .Struct || len(info.fields) != len(s.bindings) {
-		report_arity_mismatch(k, s, element, info)
-		return FLOWS
-	}
-	fields, eligible := destructure_fields(
-		k, element, len(s.bindings), s.bindings[1].name.span, "L0459", "bound by a `foreach`",
-	)
-	if !eligible {
-		return FLOWS
-	}
-	for _, index in s.bindings {
-		field := symbol_of(k.c, fields[index])
-		if field == nil {
-			return FLOWS
-		}
-		if !bind_element_field(k, s, index, field.type) {
-			return FLOWS
-		}
-	}
+	if !check_foreach_pattern(k, s, s.bindings, element, s.item_type) { return FLOWS }
 	return check_foreach_block(k, s)
 }
 
-// The replacement names the record's own fields, so the message says the header
-// to write rather than describing one.
+// Check and bind one recursive pattern. `item` is the iterator's projected
+// representation; scalar pointers still bind the logical type as a place,
+// while a record of pointers can itself be bound as a value.
 @(private = "file")
-report_unlowered_record :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id) {
-	errorf(
-		k.c, s.bindings[0].name.span, "L0696",
-		"one name over `%s` binds a record of records, which is not lowered yet; bind the parts separately",
-		type_name(k.c, element),
-	)
-	if info := underlying_info(k.c, element); info != nil && info.kind == .Struct {
-		names := make([dynamic]string, 0, len(info.fields), context.temp_allocator)
-		for field_id in info.fields {
-			field := symbol_of(k.c, field_id)
-			if field == nil {
-				return
-			}
-			append(&names, identifier_text(k.c, field.name))
-		}
-		add_notef(
-			k.c, s.bindings[0].name.span, "write `foreach (%s in ...)`",
-			strings.join(names[:], ", ", context.temp_allocator),
-		)
+check_foreach_pattern :: proc(
+	k: ^Checker, s: ^Stmt_Foreach, bindings: []Foreach_Binding, logical, item: Type_Id,
+) -> bool {
+	if len(bindings) == 1 && len(bindings[0].group) > 0 {
+		return check_foreach_pattern(k, s, bindings[0].group, logical, item)
 	}
-	add_notef(k.c, no_span(), "see known-gaps.md, \"Iteration still follows the pre-unification model\"")
+	if len(bindings) == 1 && len(bindings[0].group) == 0 {
+		binding := &bindings[0]
+		if binding.is_ref {
+			errorf(k.c, binding.name.span, "L0457", "a value binding cannot take `&`; the `&` belongs to mutable traversal")
+			return false
+		}
+		bound := logical
+		if item != INVALID_TYPE && item != logical {
+			item_info := underlying_info(k.c, item)
+			logical_info := underlying_info(k.c, logical)
+			if item_info != nil && logical_info != nil && item_info.kind == .Struct && logical_info.kind == .Struct {
+				bound = item
+			}
+		}
+		if !gate_type(k, bound, expr_span(s.iterable)) { return false }
+		binding.symbol = bind_loop_name(k, binding^, bound, false, s.borrows)
+		return true
+	}
+	info := underlying_info(k.c, logical)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(bindings) {
+		report_pattern_arity(k, bindings, logical, info)
+		return false
+	}
+	fields, eligible := destructure_fields(
+		k, logical, len(bindings), bindings[0].name.span, "L0459", "bound by a `foreach`",
+	)
+	if !eligible { return false }
+	item_info := underlying_info(k.c, item)
+	for &binding, index in bindings {
+		field := symbol_of(k.c, fields[index])
+		if field == nil { return false }
+		projected := INVALID_TYPE
+		if item_info != nil && item_info.kind == .Struct && index < len(item_info.fields) {
+			if projected_field := symbol_of(k.c, item_info.fields[index]); projected_field != nil {
+				projected = projected_field.type
+			}
+		}
+		if len(binding.group) > 0 {
+			if !check_foreach_pattern(k, s, binding.group, field.type, projected) { return false }
+			continue
+		}
+		if binding.is_ref {
+			errorf(k.c, binding.name.span, "L0457", "a value binding cannot take `&`; the `&` belongs to mutable traversal")
+			return false
+		}
+		bound := field.type
+		logical_info := underlying_info(k.c, field.type)
+		projected_info := underlying_info(k.c, projected)
+		if projected != INVALID_TYPE && projected != field.type && logical_info != nil && projected_info != nil &&
+		   logical_info.kind == .Struct && projected_info.kind == .Struct {
+			bound = projected
+		}
+		if !gate_type(k, bound, expr_span(s.iterable)) { return false }
+		binding.symbol = bind_loop_name(k, binding, bound, false, s.borrows)
+	}
+	return true
+}
+
+@(private = "file")
+report_pattern_arity :: proc(k: ^Checker, bindings: []Foreach_Binding, element: Type_Id, info: ^Type_Info) {
+	span := len(bindings) > 0 ? bindings[0].name.span : no_span()
+	count := info != nil && info.kind == .Struct ? len(info.fields) : 0
+	errorf(
+		k.c, span, "L0459", "`%s` has %d fields, so this `foreach` pattern needs 1 or %d parts, not %d",
+		type_name(k.c, element), count, count, len(bindings),
+	)
 }
 
 // design.md "Standard interface catalogue": a copy needs a copy entry point, and
@@ -1294,68 +1219,6 @@ require_copyable_element :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id
 		type_name(k.c, element),
 	)
 	return false
-}
-
-@(private = "file")
-bind_element_field :: proc(k: ^Checker, s: ^Stmt_Foreach, index: int, type: Type_Id) -> bool {
-	binding := s.bindings[index]
-	if binding.is_ref {
-		errorf(
-			k.c, binding.name.span, "L0457",
-			"a value binding names a copy of the element, so it cannot take `&`",
-		)
-		return false
-	}
-	if !gate_type(k, type, expr_span(s.iterable)) {
-		return false
-	}
-	// design.md "Element bindings": a lent binding names storage the source still
-	// holds. Which halves of a built record those are is what the record `Yield`
-	// says: a field handed over as a pointer is lent, and one handed over as
-	// itself is a value the traversal supplied -- `indexed()`'s counter.
-	lent := s.borrows
-	if lent && len(s.bindings) > 1 && s.item_type != INVALID_TYPE {
-		lent = foreach_field_is_lent(k, s, index)
-	}
-	s.bindings[index].symbol = bind_loop_name(k, binding, type, false, lent)
-	return true
-}
-
-@(private = "file")
-foreach_field_is_lent :: proc(k: ^Checker, s: ^Stmt_Foreach, index: int) -> bool {
-	element := underlying_info(k.c, s.element_type)
-	item := underlying_info(k.c, s.item_type)
-	if element == nil || item == nil || index >= len(element.fields) || index >= len(item.fields) {
-		return true
-	}
-	held, handed := symbol_of(k.c, element.fields[index]), symbol_of(k.c, item.fields[index])
-	return held == nil || handed == nil || held.type != handed.type
-}
-
-@(private = "file")
-report_arity_mismatch :: proc(k: ^Checker, s: ^Stmt_Foreach, element: Type_Id, info: ^Type_Info) {
-	span := s.bindings[1].name.span
-	if info != nil && info.kind == .Struct {
-		errorf(
-			k.c, span, "L0459",
-			"`%s` has %d fields, so a `foreach` over it binds 1 or %d names, not %d",
-			type_name(k.c, element), len(info.fields), len(info.fields), len(s.bindings),
-		)
-		return
-	}
-	errorf(
-		k.c, span, "L0459",
-		"`%s` is not a record, so a `foreach` over it binds one name",
-		type_name(k.c, element),
-	)
-	// The index a loop used to supply is now the iterable's own (design.md
-	// "Element bindings"), so point at the traversal that carries it.
-	#partial switch s.kind {
-	case .Text:
-		add_notef(k.c, span, "for a rune ordinal write `.indexed()`, and for a byte offset `.rune_offsets()`")
-	case .Array, .Slice, .Dynamic, .Range, .Stored_Range, .Protocol:
-		add_notef(k.c, span, "for an index write `.indexed()`")
-	}
 }
 
 check_foreach_block :: proc(k: ^Checker, s: ^Stmt_Foreach) -> Flow_Info {

@@ -147,6 +147,33 @@ yield_is_owned :: proc(desc: Yield_Desc) -> bool {
 	return true
 }
 
+// The source-level type that names a checked descriptor. Marker leaves keep
+// their canonical runtime declarations; record nodes mirror the Element's
+// field names recursively. Adapters use this when they wrap an existing Yield
+// instead of flattening it.
+yield_desc_type :: proc(c: ^Compiler, element: Type_Id, desc: Yield_Desc) -> Type_Id {
+	if desc.kind != .Record {
+		return c.yield_markers[desc.kind]
+	}
+	info := underlying_info(c, element)
+	if info == nil || info.kind != .Struct || len(info.fields) != len(desc.fields) {
+		return INVALID_TYPE
+	}
+	fields := make([]Anon_Record_Field, len(desc.fields), c.semantic_allocator)
+	for field_id, index in info.fields {
+		field := symbol_of(c, field_id)
+		if field == nil {
+			return INVALID_TYPE
+		}
+		projected := yield_desc_type(c, field.type, desc.fields[index])
+		if projected == INVALID_TYPE {
+			return INVALID_TYPE
+		}
+		fields[index] = {name = field.name, type = projected}
+	}
+	return anon_record_type(c, fields)
+}
+
 // design.md "Iteration protocol": `Item` is what `next` hands back, which is the
 // element itself unless a `Yield` says otherwise. An iterator that declares its
 // own `Item` keeps it; every other one — a user iterator written before `Yield`
@@ -174,4 +201,3 @@ ensure_item_member :: proc(k: ^Checker, type: Type_Id) {
 	}
 	add_members(k.c, under, []Symbol_Id{new_associated_type(k.c, "Item", payload, under)})
 }
-

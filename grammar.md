@@ -117,9 +117,9 @@ Hex_Digit      = Digit | "A".."F" | "a".."f"
 
 Int_Literal    = Decimal | Binary | Octal | Hexadecimal
 Decimal        = Digit (Digit | "_")*
-Binary         = "0b" ("0" | "1" | "_")+
-Octal          = "0o" ("0".."7" | "_")+
-Hexadecimal    = "0x" (Hex_Digit | "_")+
+Binary         = "0b" ("0" | "1" | "_")* ("0" | "1") ("0" | "1" | "_")*
+Octal          = "0o" ("0".."7" | "_")* Octal_Digit ("0".."7" | "_")*
+Hexadecimal    = "0x" (Hex_Digit | "_")* Hex_Digit (Hex_Digit | "_")*
 
 Float_Literal  = Decimal "." Decimal Exponent?
                | Decimal Exponent
@@ -525,26 +525,26 @@ Every control-flow header is parenthesised and every body is braced. There is no
 single-statement body form.
 
 ```
-If_Statement   = "if" "(" Init_Statement? Expression ")" Block
+If_Statement   = Attributes? "if" "(" Init_Statement? Expression ")" Block
                  ("else" (If_Statement | Block))?
 
-For_Statement  = "for" "(" For_Header ")" Block
+For_Statement  = Attributes? "for" "(" For_Header ")" Block
 For_Header     = (Init_Statement | ";") Expression? ";" Simple_Statement?
                | Expression
 
-Foreach_Statement = "foreach" "(" Binding ("," Binding)* "in" Expression ")" Block
+Foreach_Statement = Attributes? "foreach" "(" Binding ("," Binding)* "in" Expression ")" Block
 Binding         = "$"? "&"? (Identifier | "_")
                 | "(" Binding ("," Binding)* ")"
 
 When_Statement = Attributes? "when" "(" Expression ")" Block
                  ("else" (When_Statement | Block))?
 
-Defer_Statement= "defer" Statement
+Defer_Statement= Attributes? "defer" Statement
 
-Return_Statement = "return" Return_Value? ";"
+Return_Statement = Attributes? "return" Return_Value? ";"
 Return_Value   = "inout"? Expression
 
-Branch_Statement = ("break" | "continue") ";"
+Branch_Statement = Attributes? ("break" | "continue") ";"
 ```
 
 `for (;;)` is the three-part header with every part empty. `for (cond)` is the
@@ -645,7 +645,8 @@ Primary_Expression =
        Int_Literal | Float_Literal | Rune_Literal
      | String_Literal | Raw_String_Literal
      | Identifier
-     | "." Identifier                                  // implicit selector, .Member
+     | Type                                             // compile-time type value
+     | "." Member_Name                                 // implicit selector, .Member
      | "move" "(" Expression ")"
      | Composite_Literal
      | Proc_Literal

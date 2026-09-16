@@ -90,6 +90,9 @@ main :: proc() {
 	foreach (value in owned) { fmt.println(value.id); }
 	foreach (value in owned.reversed()) { fmt.println(value.id); }
 	fmt.println(copies);
+	foreach (value in owned.copied()) { fmt.println(value.id); }
+	fmt.println(copies);
+	copies = 0;
 	foreach (value in owned) { saved := value; fmt.println(saved.id); }
 	fmt.println(copies);
 

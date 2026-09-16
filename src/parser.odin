@@ -1152,20 +1152,6 @@ parse_statement :: proc(p: ^Parser) -> (Stmt, bool) {
 	attributes := parse_attributes(p)
 
 	t := current(p)
-	if len(attributes) > 0 {
-		// grammar.md attaches statement attributes to a block, `when`, either
-		// switch, a declaration, or a simple statement — and nowhere else.
-		#partial switch t.kind {
-		case .If, .For, .Foreach, .Defer, .Return, .Break, .Continue:
-			parse_error(
-				p,
-				attributes[0].span,
-				"L0249",
-				"not attachable here",
-				"attributes attach to a block, `when`, `switch`, a declaration or a simple statement",
-			)
-		}
-	}
 
 	#partial switch t.kind {
 	case .Semicolon:
@@ -2267,7 +2253,7 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 	case .Period:
 		// The implicit selector `.Member`; its operand comes from context.
 		advance(p)
-		name, ok := expect(p, .Ident, "L0225", "a name after `.`")
+		name, ok := expect_member_name(p, "L0225", "a name after `.`")
 		e := new_expr(p, Expr_Selector, t.lo)
 		if ok {
 			e.name = name_of(p, name)

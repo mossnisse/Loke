@@ -3,6 +3,23 @@ import "core:container";
 import "core:fmt";
 import "base:interfaces";
 Small :: container.Small_Array(int, 4);
+Pair :: struct { left: int, right: int }
+Mutable_Lender :: struct { values: []mut int }
+Mutable_Cursor :: struct { values: []mut int, at: int }
+impl Mutable_Lender {
+	Element :: int;
+	Iterator :: Mutable_Cursor;
+	iter :: proc(self) -> Mutable_Cursor { return {self.values, 0}; }
+}
+impl Mutable_Cursor {
+	Yield :: Yield_Mutable;
+	next :: proc(self: inout Mutable_Cursor) -> Option(^mut int) {
+		if (self.at >= self.values.len()) { return .none; }
+		value := &mut self.values[self.at];
+		self.at += 1;
+		return .some(value);
+	}
+}
 increment :: proc(xs: inout $S) where interfaces.Mutable_Iterable(S) {
 	foreach (&value in xs) { value += 1; }
 }
@@ -29,4 +46,17 @@ main :: proc() {
 	grown := [dynamic]int{3, 4};
 	increment(inout grown);
 	fmt.println(grown);
+	foreach (&value in grown.reversed()) { value += 10; }
+	fmt.println(grown);
+	table: map[int]int = {};
+	table[1] = 6;
+	foreach (&value in table.values()) { value += 1; }
+	fmt.println(table[1]);
+	pairs := [1]Pair{{2, 3}};
+	foreach ((&left, right) in pairs) { left += right; }
+	fmt.println(pairs[0].left);
+	mutable_storage := [2]int{8, 9};
+	total := 0;
+	foreach (value in Mutable_Lender{mutable_storage[:]}) { total += value; }
+	fmt.println(total);
 }

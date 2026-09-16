@@ -762,7 +762,9 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 
 @(private = "file")
 walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
-	iterated := walk_flow_expr(graph, s.iterable)
+	iterable := s.iterable
+	if foreach_is_place_loop(s) { iterable = mutable_foreach_root(graph.k.c, s) }
+	iterated := walk_flow_expr(graph, iterable)
 	// The traversal also borrows container storage, but copying an element
 	// preserves its existing borrows without borrowing the container itself.
 	elements := iterated
@@ -790,28 +792,37 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	// Each iteration binds the element to what the iteration holds, so a borrow
 	// stored inside an element travels into the binding instead of vanishing.
 	if graph.mode != .Lifecycle {
-		for binding in s.bindings {
-			loans := iterated
-			if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 { loans = elements }
-			prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
-			// design.md "Borrowing iteration": a lending binding names the
-			// container's own slot, so `&item` borrows the source and stays valid
-			// for as long as that source does -- past this step, and past the loop.
-			if s.borrows {
-				prov_bind_view(graph, binding.symbol, iterated)
-			}
-		}
+		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements)
 	}
 	// design.md "By-reference iteration": the loan a `&` binding names ends when
 	// the step does, whatever lowering produced the element -- a pointer taken
 	// from it may not outlive the iteration that yielded it.
-	walk_flow_loop_body(graph, s.body, head, done, s.bindings)
+	walk_flow_loop_body(graph, s.body, head, done, s.bindings, foreach_is_place_loop(s))
 	link(graph, graph.current, head)
 	graph.current = done
 }
 
 @(private = "file")
-walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_Id, bindings: []Foreach_Binding = nil) {
+walk_foreach_binding_provenance :: proc(
+	graph: ^Flow_Graph, s: ^Stmt_Foreach, bindings: []Foreach_Binding, iterated, elements: []int,
+) {
+	for binding in bindings {
+		if len(binding.group) > 0 {
+			walk_foreach_binding_provenance(graph, s, binding.group, iterated, elements)
+			continue
+		}
+		loans := iterated
+		if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 { loans = elements }
+		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
+		if s.borrows { prov_bind_view(graph, binding.symbol, iterated) }
+	}
+}
+
+@(private = "file")
+walk_flow_loop_body :: proc(
+	graph: ^Flow_Graph, body: ^Block, head, done: Block_Id,
+	bindings: []Foreach_Binding = nil, all_step_borrows := false,
+) {
 	outer_break, outer_continue := graph.break_block, graph.continue_block
 	outer_break_depth, outer_continue_depth := graph.break_depth, graph.continue_depth
 	graph.break_block, graph.continue_block = done, head
@@ -819,18 +830,25 @@ walk_flow_loop_body :: proc(graph: ^Flow_Graph, body: ^Block, head, done: Block_
 	graph.loop_depth += 1
 	enter_flow_scope(graph)
 	if graph.mode != .Lifecycle {
-		for binding in bindings {
-			if binding.is_ref && binding.symbol != INVALID_SYMBOL {
-				root := prov_root_for_symbol(graph, binding.symbol)
-				append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = binding.name.span})
-			}
-		}
+		add_foreach_ref_cleanups(graph, bindings, all_step_borrows)
 	}
 	walk_flow_block(graph, body)
 	leave_flow_scope(graph)
 	graph.loop_depth -= 1
 	graph.break_block, graph.continue_block = outer_break, outer_continue
 	graph.break_depth, graph.continue_depth = outer_break_depth, outer_continue_depth
+}
+
+@(private = "file")
+add_foreach_ref_cleanups :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding, all: bool) {
+	for binding in bindings {
+		if len(binding.group) > 0 {
+			add_foreach_ref_cleanups(graph, binding.group, all)
+		} else if (all || binding.is_ref) && binding.symbol != INVALID_SYMBOL {
+			root := prov_root_for_symbol(graph, binding.symbol)
+			append(&graph.in_scope, Flow_Cleanup{kind = .Prov_Root, root = root, span = binding.name.span})
+		}
+	}
 }
 
 @(private = "file")
