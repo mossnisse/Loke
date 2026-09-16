@@ -1,18 +1,13 @@
-// Attribute discipline.
-//
-// One table maps every attribute design.md defines to the positions it may
-// appear in and the value shape it takes. Before M7 attributes were parsed and
-// mostly ignored, so a typo was silent; this pass gives an unknown name, an
-// unknown namespace, a misplaced attribute, and a wrong value shape each their
-// own diagnostic. `@(deprecated)` and `@(require_results)` also gain behaviour
-// here (flags set in `resolve_declaration_signature`).
-//
-// Record-layout value validation (power-of-two `@(align=N)`) stays with its own
-// feature: `union @(align=N)` is validated in `src/union.odin`.
+// Attribute discipline: one table of every attribute design.md defines, with the
+// positions it may appear in and the value shape it takes. Behaviour lives with
+// the owning feature; this file only reports misuse.
 package lokec
+
+import "core:strings"
 
 Attr_Pos :: enum {
 	Package_Clause,
+	Import,
 	Proc_Decl,
 	Proc_Group,
 	Var_Decl,
@@ -29,70 +24,62 @@ Attr_Pos :: enum {
 	Statement,
 }
 
+// Where a declaration's attribute list sits, for the rules the position alone
+// cannot express.
+Attr_Scope :: enum {
+	Global,
+	Local,   // inside a body: no linkage or visibility
+	Foreign, // a foreign block member: `@(link_name)` needs no `@(export)`
+}
+
 Attr_Shape :: enum {
-	None,           // `@(name)`, no value
-	Value_Required, // `@(name=value)`
-	Deferred,       // value validated by the owning feature (e.g. `@(align=N)`)
+	None,           // `@(name)`
+	Value_Required, // `@(name="...")`
+	Deferred,       // the owning feature validates the value
 }
 
 Attr_Spec :: struct {
-	positions: bit_set[Attr_Pos],
-	shape:     Attr_Shape,
+	positions:   bit_set[Attr_Pos],
+	shape:       Attr_Shape,
+	global_only: bool,
 }
 
-// design.md "Attributes" and "Layout and ABI attributes". Every base-language
-// attribute, with where it may appear and the value it takes.
+// design.md "Attributes" and "Layout and ABI attributes". A switch rather than a
+// map, so the lookup allocates nothing and shares nothing between compilers.
 attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
-	// Keep this lookup allocation-free. Compiler instances carry their own
-	// allocators, so a lazily initialized static map would retain storage owned
-	// by whichever instance reached it first and would also race in parallel
-	// test runs.
 	switch name {
 	case "public":
-		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}, true
+		return {{.Package_Clause, .Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
 	case "private":
-		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None}, true
+		return {{.Proc_Decl, .Proc_Group, .Var_Decl, .Const_Decl, .Type_Decl, .Struct_Field, .Foreign_Block}, .None, true}, true
 	case "default_allocator", "default_logger":
-		// These package-clause strings name provider factories. They are read
-		// before import discovery by `collect_source_provider_defaults`; the
-		// ordinary pass still owns their shape and placement diagnostics.
-		return {{.Package_Clause}, .Value_Required}, true
+		// Also read before import discovery by `collect_source_provider_defaults`.
+		return {{.Package_Clause}, .Value_Required, false}, true
 	case "require_results":
-		// design.md "@(require_results)": on a type declaration the property is
-		// carried by the *type*, so every value of it is checked, not just the
-		// procedures declared beside it.
-		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None}, true
+		return {{.Proc_Decl, .Proc_Group, .Foreign_Block, .Type_Decl}, .None, false}, true
 	case "deprecated":
-		return {{.Proc_Decl}, .Value_Required}, true
+		return {{.Proc_Decl}, .Value_Required, false}, true
 	case "export":
-		return {{.Proc_Decl, .Var_Decl}, .None}, true
+		return {{.Proc_Decl, .Var_Decl}, .None, true}, true
 	case "link_name":
-		return {{.Proc_Decl, .Var_Decl}, .Value_Required}, true
+		return {{.Proc_Decl, .Var_Decl}, .Value_Required, true}, true
 	case "default_calling_convention":
-		return {{.Foreign_Block}, .Value_Required}, true
-	case "allocator_reset":
-		return {{.Parameter}, .None}, true
+		return {{.Foreign_Block}, .Value_Required, false}, true
+	case "allocator_reset", "by_ptr", "c_vararg":
+		return {{.Parameter}, .None, false}, true
 	case "escape":
-		// The level is a bare identifier rather than a string, so the value shape
-		// is validated by `check_escape_attribute` with the rest of the rule.
-		return {{.Parameter}, .Deferred}, true
-	case "by_ptr":
-		return {{.Parameter}, .None}, true
-	case "c_vararg":
-		return {{.Parameter}, .None}, true
+		// A bare level identifier, checked by `check_escape_attribute`.
+		return {{.Parameter}, .Deferred, false}, true
 	case "packed":
-		return {{.Struct_Literal}, .None}, true
+		return {{.Struct_Literal}, .None, false}, true
 	case "align":
-		return {{.Struct_Literal, .Union_Literal}, .Deferred}, true
+		return {{.Struct_Literal, .Union_Literal}, .Deferred, false}, true
 	case "initialized":
-		// design.md "Uninitialized capacity": the value is a bare sibling field
-		// name, so the shape is validated by `resolve_uninitialized_fields`
-		// against the record's own field list.
-		return {{.Struct_Field}, .Deferred}, true
+		// A sibling field name, checked by `resolve_uninitialized_fields`.
+		return {{.Struct_Field}, .Deferred, false}, true
 	case "zero", "failure":
-		// The value is a bare variant name rather than a string, so the shape is
-		// validated by `src/union.odin` against the union's own variant list.
-		return {{.Union_Literal}, .Deferred}, true
+		// A variant name, checked in `src/union.odin`.
+		return {{.Union_Literal}, .Deferred, false}, true
 	}
 	return {}, false
 }
@@ -100,6 +87,7 @@ attribute_spec :: proc(name: string) -> (Attr_Spec, bool) {
 attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	switch pos {
 	case .Package_Clause: return "a package clause"
+	case .Import:         return "an import"
 	case .Proc_Decl:      return "a procedure declaration"
 	case .Proc_Group:     return "a procedure group"
 	case .Var_Decl:       return "a variable declaration"
@@ -118,10 +106,9 @@ attr_pos_name :: proc(pos: Attr_Pos) -> string {
 	return "here"
 }
 
-// Validates one attribute list against its position. Diagnostics only —
-// behaviour (deprecation warnings, required-result errors, layout) is applied
-// by the owning feature.
-validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_Pos) {
+// Reports each misuse in one attribute list, once per written list: generic
+// instances and static foreach copies share the spans, so they are skipped.
+validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_Pos, scope := Attr_Scope.Global) {
 	if len(attributes) == 0 {
 		return
 	}
@@ -139,13 +126,16 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 		if len(attribute.path) == 0 {
 			continue
 		}
-		// A namespaced attribute is an extension attribute; no toolchain extension
-		// is enabled in v1, so every one is an error naming its namespace.
+		// No toolchain extension is enabled in v1.
 		if len(attribute.path) > 1 {
+			names := make([]string, len(attribute.path), context.temp_allocator)
+			for part, index in attribute.path {
+				names[index] = part.text
+			}
 			errorf(
 				k.c, attribute.span, "L0610",
-				"`@(%s.%s)` is an extension attribute; its `%s` namespace is not enabled",
-				attribute.path[0].text, attribute.path[1].text, attribute.path[0].text,
+				"`@(%s)` is an extension attribute; its `%s` namespace is not enabled",
+				strings.join(names, ".", context.temp_allocator), names[0],
 			)
 			continue
 		}
@@ -161,10 +151,11 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 		}
 		seen[name] = true
 		if pos not_in spec.positions {
-			errorf(
-				k.c, attribute.span, "L0607",
-				"`@(%s)` cannot appear on %s", name, attr_pos_name(pos),
-			)
+			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on %s", name, attr_pos_name(pos))
+			continue
+		}
+		if scope == .Local && spec.global_only {
+			errorf(k.c, attribute.span, "L0607", "`@(%s)` cannot appear on a local declaration", name)
 			continue
 		}
 		switch spec.shape {
@@ -177,20 +168,26 @@ validate_attribute_list :: proc(k: ^Checker, attributes: []Attribute, pos: Attr_
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a value: `@(%s=...)`", name, name)
 			} else if lit, ok := attribute.value.(^Expr_Literal); !ok ||
 			          (lit.kind != .String && lit.kind != .Raw_String) {
-				// Every base-language value-bearing attribute currently takes a
-				// string; checking the literal kind here stops a malformed value from
-				// silently being treated as if the attribute were absent.
 				errorf(k.c, attribute.span, "L0608", "`@(%s)` needs a string value", name)
 			}
 		case .Deferred:
 		}
 	}
+	// design.md: `@(link_name)` names an exported or foreign symbol.
+	if scope == .Global && (pos == .Proc_Decl || pos == .Var_Decl) && seen["link_name"] && !seen["export"] {
+		for attribute in attributes {
+			if len(attribute.path) == 1 && attribute.path[0].text == "link_name" {
+				errorf(
+					k.c, attribute.span, "L0607",
+					"`@(link_name)` names a linked symbol, so it needs `@(export)` outside a foreign block",
+				)
+			}
+		}
+	}
 }
 
-// The whole-package attribute pass, run once over the settled item view.
-// Visits every attribute-bearing node the checker owns in step 1: the package
-// clause, top-level declarations, procedure parameters, record type literals
-// with their fields, and foreign blocks with theirs (step 4).
+// The whole-package pass. Record literals and parameters nested anywhere are
+// also validated where they resolve (`resolve_type_syntax`, the signatures).
 validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
@@ -205,6 +202,7 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 				)
 			}
 		}
+		validate_item_attributes(k, file.items)
 		for item in file.active_items {
 			#partial switch v in item {
 			case ^Decl:
@@ -212,17 +210,37 @@ validate_attributes :: proc(k: ^Checker, pkg: ^Package) {
 			case ^Item_Impl:
 				validate_impl_attributes(k, v)
 			case ^Item_Static_Assert:
-				// No attribute lists this position, so every one written here is
-				// reported as misplaced by the ordinary table lookup.
 				validate_attribute_list(k, v.attributes, .Static_Assert)
 			case ^Item_Foreign_Block:
 				validate_attribute_list(k, v.attributes, .Foreign_Block)
 				for member in v.members {
 					if d, ok := member.(^Decl); ok {
-						validate_decl_attributes(k, d)
+						validate_decl_attributes(k, d, .Foreign)
 					}
 				}
 			}
+		}
+	}
+}
+
+// Imports and `when` blocks, in every branch: neither takes an attribute.
+@(private = "file")
+validate_item_attributes :: proc(k: ^Checker, items: []Item) {
+	for item in items {
+		#partial switch v in item {
+		case ^Item_Import:
+			validate_attribute_list(k, v.attributes, .Import)
+		case ^Item_Foreign_Import:
+			validate_attribute_list(k, v.attributes, .Import)
+		case ^Item_When:
+			validate_attribute_list(k, v.attributes, .Statement)
+			if v.then != nil {
+				validate_item_attributes(k, {v.then})
+			}
+			validate_item_attributes(k, {v.otherwise})
+		case ^Item_Block:
+			validate_attribute_list(k, v.attributes, .Statement)
+			validate_item_attributes(k, v.items)
 		}
 	}
 }
@@ -239,31 +257,33 @@ validate_impl_attributes :: proc(k: ^Checker, item: ^Item_Impl) {
 	}
 }
 
-validate_decl_attributes :: proc(k: ^Checker, d: ^Decl) {
+validate_decl_attributes :: proc(k: ^Checker, d: ^Decl, scope := Attr_Scope.Global) {
 	if len(d.symbols) == 0 {
 		return
 	}
-	pos := decl_attr_position(k, d)
-	validate_attribute_list(k, d.attributes, pos)
-
-	// A procedure's parameters carry `@(allocator_reset)`, `@(by_ptr)`, and
-	// `@(c_vararg)`.
+	validate_attribute_list(k, d.attributes, decl_attr_position(k, d), scope)
+	// A generic template never resolves, so its parameters and record are
+	// reached here rather than only at resolution.
 	if literal := decl_proc_literal(d); literal != nil {
-		for param in literal.signature.params {
-			validate_attribute_list(k, param.attributes, .Parameter)
-		}
+		validate_param_attributes(k, literal.signature.params)
 	}
-
-	// A record type declaration carries `@(packed)`/`@(align=N)` on the literal
-	// and `@(public)`/`@(private)` on each field.
 	if len(d.values) == 1 {
 		if record, ok := d.values[0].(^Type_Record); ok {
-			literal_pos := record.kind == .Struct ? Attr_Pos.Struct_Literal : Attr_Pos.Union_Literal
-			validate_attribute_list(k, record.attributes, literal_pos)
-			for field in record.fields {
-				validate_attribute_list(k, field.attributes, .Struct_Field)
-			}
+			validate_record_attributes(k, record)
 		}
+	}
+}
+
+validate_param_attributes :: proc(k: ^Checker, params: []Parameter) {
+	for param in params {
+		validate_attribute_list(k, param.attributes, .Parameter)
+	}
+}
+
+validate_record_attributes :: proc(k: ^Checker, record: ^Type_Record) {
+	validate_attribute_list(k, record.attributes, record.kind == .Struct ? .Struct_Literal : .Union_Literal)
+	for field in record.fields {
+		validate_attribute_list(k, field.attributes, .Struct_Field)
 	}
 }
 
@@ -280,10 +300,8 @@ decl_attr_position :: proc(k: ^Checker, d: ^Decl) -> Attr_Pos {
 	return d.kind == .Const ? .Const_Decl : .Var_Decl
 }
 
-// design.md "`@(deprecated=<string>)`" and "@(require_results)": records the
-// two pieces of declaration metadata on the symbol, from the declaration's
-// attributes. Called from `resolve_declaration_signature`, so a cross-package
-// use already sees the flag before its own body is checked.
+// Records `@(deprecated)` and `@(require_results)` on the symbol while its
+// signature resolves, so a use in another package already sees them.
 apply_proc_metadata :: proc(k: ^Checker, d: ^Decl, symbol_id: Symbol_Id) {
 	sym := symbol_of(k.c, symbol_id)
 	if sym == nil {

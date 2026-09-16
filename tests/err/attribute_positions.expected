@@ -1,0 +1,43 @@
+L0606
+unknown attribute `@(bogus_import)`
+@7:3
+
+L0606
+unknown attribute `@(bogus_when)`
+@9:3
+
+L0606
+unknown attribute `@(bogus_else)`
+@11:10
+
+L0606
+unknown attribute `@(bogus_nested)`
+@16:14
+
+L0606
+unknown attribute `@(bogus_field)`
+@16:32
+
+L0606
+unknown attribute `@(bogus_param_type)`
+@19:20
+
+L0607
+`@(link_name)` names a linked symbol, so it needs `@(export)` outside a foreign block
+@21:3
+
+L0610
+`@(tool.deep.name)` is an extension attribute; its `tool` namespace is not enabled
+@25:3
+
+L0607
+`@(export)` cannot appear on a local declaration
+@28:4
+
+L0607
+`@(private)` cannot appear on a local declaration
+@29:4
+
+L0606
+unknown attribute `@(bogus_lambda_param)`
+@30:14

@@ -1198,6 +1198,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	}
 	symbol.kind = .Proc
 	symbol.type = TYPE_VOID
+	validate_param_attributes(k, literal.signature.params)
 
 	reported := k.c.error_count
 	params := make([dynamic]Type_Id, 0, 4, k.c.semantic_allocator)
@@ -1737,6 +1738,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Type_Record:
 		if value.denoted_type == INVALID_TYPE {
+			validate_record_attributes(k, value)
 			if value.kind == .Struct {
 				value.denoted_type = new_type(k.c, Type_Info{kind = .Struct, move_only = value.move_only})
 				resolve_struct_fields(k, value.denoted_type, value)
@@ -1764,6 +1766,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return value.denoted_type
 
 	case ^Type_Proc:
+		validate_param_attributes(k, value.params)
 		params := make([dynamic]Type_Id, 0, len(value.params), k.c.semantic_allocator)
 		modes := make([dynamic]Param_Mode, 0, len(value.params), k.c.semantic_allocator)
 		resets := make([dynamic]bool, 0, len(value.params), k.c.semantic_allocator)
@@ -2612,9 +2615,8 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		create_nominal_type_shell(k, s)
 		resolve_declaration_signature(k, s)
 		hoist_body_local_proc(k, s)
-		// Local declaration symbols do not exist during the package-wide attribute
-		// pass, so validate their attributes once they are declared here.
-		validate_decl_attributes(k, s)
+		// Local symbols do not exist during the package-wide attribute pass.
+		validate_decl_attributes(k, s, .Local)
 		check_decl(k, s)
 		return FLOWS
 

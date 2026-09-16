@@ -1,0 +1,37 @@
+package main;
+
+// Attributes in positions the declaration pass does not reach on its own:
+// imports, top-level `when` blocks in every branch, nested record types,
+// parameters of procedure types and literals, and locals.
+
+@(bogus_import) import "core:fmt";
+
+@(bogus_when) when (true) {
+	inner: int = 0;
+} else @(bogus_else) {
+	other: int = 0;
+}
+
+Nested :: struct {
+	a: struct @(bogus_nested) { @(bogus_field) x: int },
+}
+
+Callback :: proc(@(bogus_param_type) x: int);
+
+@(link_name = "renamed") helper :: proc() -> int { return 1; }
+
+@(export, link_name = "lib_answer") answer :: proc "c" () -> i32 { return 42; }
+
+@(tool.deep.name) deep: int = 0;
+
+main :: proc() {
+	@(export) local := 1;
+	@(private) hidden := 2;
+	f := proc(@(bogus_lambda_param) y: int) {};
+	@(require_results) inner_proc :: proc() -> int { return 3; }
+	_ = local; _ = hidden; _ = f; _ = inner_proc;
+	n: Nested = {};
+	_ = n;
+	_ = helper();
+	fmt.println("unreachable");
+}
