@@ -538,14 +538,14 @@ hook_candidates :: proc(k: ^Checker, target: Type_Id, role: Hook_Kind) -> []Symb
 // `Type.member`, which is what the backend mangles a method or associated
 // procedure under. Two impl blocks cannot give one type the same member name, so
 // this is unique within a package.
-qualified_member_name :: proc(c: ^Compiler, sym: ^Symbol) -> string {
+qualified_member_name :: proc(c: ^Compiler, sym: ^Symbol, allocator := context.allocator) -> string {
 	owner := type_name(c, sym.owner_type)
 	// An instantiation carries its own backend spelling, so a member of
 	// `Pair(int)` is emitted under `Pair.int.member` rather than through escapes.
 	if info := type_of(c, sym.owner_type); info != nil && info.mangled != "" {
 		owner = info.mangled
 	}
-	return fmt.aprintf("%s.%s", owner, identifier_text(c, sym.name))
+	return fmt.aprintf("%s.%s", owner, identifier_text(c, sym.name), allocator = allocator)
 }
 
 // An `impl` member reached on demand — an associated type asked for by an

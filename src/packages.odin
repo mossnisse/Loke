@@ -11,6 +11,7 @@
 package lokec
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:slice"
@@ -38,6 +39,7 @@ compile_program :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	load_provider_packages(c)
 
 	k := Checker{c = c}
+	defer delete(k.nil_uses)
 	for {
 		for index in 1 ..< len(c.packages) {
 			rebuild_active_items(c, &c.packages[index])
@@ -118,7 +120,7 @@ load_runtime_bootstrap :: proc(c: ^Compiler) -> (Package_Id, bool) {
 	if !registered {
 		return INVALID_PACKAGE, false // reported at the first import that needs it
 	}
-	return load_package_dir(c, strings.concatenate({root, "/runtime"}), STD_RUNTIME, no_span())
+	return load_package_dir(c, strings.concatenate({root, "/runtime"}, context.temp_allocator), STD_RUNTIME, no_span())
 }
 
 // `compile_program` reaches `base:runtime` through the ordinary dependency
@@ -137,11 +139,13 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 		// The bundled root is resolved from the running executable. A direct entry
 		// is often *not* the installed compiler — the unit-test binary lives in a
 		// temporary directory — so the working directory is the fallback.
-		root := install_component("base")
-		if root == "" || !is_directory(strings.concatenate({root, "/runtime"})) {
+		installed := install_component("base")
+		defer delete(installed)
+		root := installed
+		if root == "" || !is_directory(strings.concatenate({root, "/runtime"}, context.temp_allocator)) {
 			root = "base"
 		}
-		k.c.collections["base"] = root
+		k.c.collections["base"] = strings.clone(root, k.c.semantic_allocator)
 	}
 	id, loaded := load_runtime_bootstrap(k.c)
 	if !loaded {
@@ -158,10 +162,10 @@ ensure_runtime_bootstrap :: proc(k: ^Checker) {
 @(private = "file")
 load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	if is_directory(input) {
-		c.root_dir = canonical_dir(input)
+		c.root_dir = strings.clone(canonical_dir(input), c.semantic_allocator)
 		return load_package_dir(c, input, "", no_span())
 	}
-	c.root_dir = canonical_dir(filepath.dir(input))
+	c.root_dir = strings.clone(canonical_dir(filepath.dir(input, context.temp_allocator)), c.semantic_allocator)
 	file, ok := parse_file(c, input)
 	if !ok {
 		return INVALID_PACKAGE, false
@@ -170,7 +174,7 @@ load_root_package :: proc(c: ^Compiler, input: string) -> (Package_Id, bool) {
 	add_package_file(c, id, file)
 	// A single-file root still occupies its directory's identity, so a sibling
 	// importing `.` finds this package rather than loading the directory twice.
-	c.package_by_dir[dir_key(c.root_dir)] = id
+	c.package_by_dir[dir_key(c.root_dir, c.semantic_allocator)] = id
 	return id, true
 }
 
@@ -186,14 +190,14 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 		errorf(c, at, "L0327", "cannot find package `%s`", written == "" ? dir : written)
 		return INVALID_PACKAGE, false
 	}
-	paths := package_sources(canonical)
+	paths := package_sources(canonical, c.semantic_allocator)
 	if len(paths) == 0 {
 		errorf(c, at, "L0327", "`%s` holds no `.loke` files", canonical)
 		return INVALID_PACKAGE, false
 	}
 
 	id := new_package(c, "", package_key(c, canonical))
-	c.package_by_dir[dir_key(canonical)] = id
+	c.package_by_dir[dir_key(canonical, c.semantic_allocator)] = id
 	pkg := package_of(c, id)
 	for path in paths {
 		file, ok := parse_file(c, path)
@@ -232,17 +236,18 @@ load_package_dir :: proc(c: ^Compiler, dir: string, written: string, at: Span) -
 // Every `.loke` file directly in one directory, sorted, so one directory always
 // produces one package in one order. The extension is matched
 // case-insensitively: Windows is the only v1 target and its filesystem is too,
-// so a file named `helper.LOKE` must not be silently invisible.
+// so a file named `helper.LOKE` must not be silently invisible. The paths are
+// allocated with `allocator`, since each loaded source keeps its own.
 @(private = "file")
-package_sources :: proc(dir: string) -> []string {
-	entries, err := filepath.glob(strings.concatenate({dir, "/*"}))
+package_sources :: proc(dir: string, allocator: mem.Allocator) -> []string {
+	entries, err := filepath.glob(strings.concatenate({dir, "/*"}, context.temp_allocator), context.temp_allocator)
 	if err != nil {
 		return nil
 	}
-	paths := make([dynamic]string, 0, len(entries))
+	paths := make([dynamic]string, 0, len(entries), allocator)
 	for entry in entries {
 		if strings.to_lower(filepath.ext(entry), context.temp_allocator) == ".loke" {
-			append(&paths, entry)
+			append(&paths, strings.clone(entry, allocator))
 		}
 	}
 	slice.sort(paths[:])
@@ -398,7 +403,7 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 		// *inside* that collection. Without this, `name:../elsewhere` reaches a
 		// directory the collection does not contain while borrowing its name.
 		collection_root := canonical_dir(root)
-		resolved := canonical_dir(strings.concatenate({root, "/", rest}))
+		resolved := canonical_dir(strings.concatenate({root, "/", rest}, context.temp_allocator))
 		if _, under := path_under(collection_root, resolved); !under {
 			return "", .Outside_Collection
 		}
@@ -411,8 +416,8 @@ resolve_import_path :: proc(c: ^Compiler, file: ^File, path: string) -> (dir: st
 	if file == nil {
 		return "", .No_Collection
 	}
-	source_dir := filepath.dir(c.sources[file.file].path)
-	return canonical_dir(strings.concatenate({source_dir, "/", path})), .Ok
+	source_dir := filepath.dir(c.sources[file.file].path, context.temp_allocator)
+	return canonical_dir(strings.concatenate({source_dir, "/", path}, context.temp_allocator)), .Ok
 }
 
 // A package's identity is a function of its directory, never of the import that
@@ -494,17 +499,17 @@ collection_prefix :: proc(path: string) -> string {
 // digest of the path rather than spelling the path out.
 @(private = "file")
 root_relative_key :: proc(c: ^Compiler, dir: string) -> string {
-	relative, err := filepath.rel(c.root_dir, dir)
+	relative, err := filepath.rel(c.root_dir, dir, context.temp_allocator)
 	if err != nil {
 		return fmt.aprintf(
 			"%s.%x", filepath.base(dir), path_digest(dir), allocator = c.semantic_allocator,
 		)
 	}
-	cleaned := strings.replace_all(relative, "\\", "/") or_else relative
+	cleaned, _ := strings.replace_all(relative, "\\", "/", context.temp_allocator)
 	if cleaned == "." {
 		return ""
 	}
-	return cleaned
+	return strings.clone(cleaned, c.semantic_allocator)
 }
 
 // -------------------------------------------------------------- graph shape --
@@ -617,18 +622,19 @@ is_directory :: proc(path: string) -> bool {
 }
 
 // Absolute, `/`-separated, and free of `.`/`..`, so two spellings of one
-// directory are the same package.
+// directory are the same package. Temporary: a caller that keeps it clones it.
 @(private = "file")
 canonical_dir :: proc(path: string) -> string {
-	absolute, ok := filepath.abs(path)
-	cleaned := ok ? absolute : path
-	return strings.replace_all(filepath.clean(cleaned), "\\", "/") or_else cleaned
+	absolute, ok := filepath.abs(path, context.temp_allocator)
+	cleaned := filepath.clean(ok ? absolute : path, context.temp_allocator)
+	slashed, _ := strings.replace_all(cleaned, "\\", "/", context.temp_allocator)
+	return slashed
 }
 
 // Windows paths are case-insensitive, so package identity must be too.
 @(private = "file")
-dir_key :: proc(dir: string) -> string {
-	return strings.to_lower(dir)
+dir_key :: proc(dir: string, allocator := context.temp_allocator) -> string {
+	return strings.to_lower(dir, allocator)
 }
 
 // A digest of a case-folded path, for the two places that need one path to stay

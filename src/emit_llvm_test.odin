@@ -167,6 +167,8 @@ main :: proc() {
 	// retain variant names even though this lowering no longer reads them.
 	previous := ""
 	for pass in 0 ..< 2 {
+		// Emitter storage normally lives in the emission arena.
+		context.allocator = context.temp_allocator
 		e := make_emitter(&c)
 		e.names[body.stmts[0].(^Decl).symbols[0]] = "%view"
 		emit_expr(&e, call)
@@ -271,6 +273,8 @@ main :: proc() {
 	// A source-type request must skip this node's conversion without clearing
 	// its annotations, while its children still use their checked types.
 	for expr, index in expressions {
+		// Emitter storage normally lives in the emission arena.
+		context.allocator = context.temp_allocator
 		e := make_emitter(&c)
 		e.names[number] = "%number"
 		e.names[text] = "%text"
@@ -656,12 +660,14 @@ main :: proc() {
 
 @(test)
 artifact_extension_ignores_dotted_parent_directories :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
 	actual := replace_ext(`C:\release.v2\program`, ".ll")
 	testing.expectf(t, actual == `C:\release.v2\program.ll`, "unexpected artifact path %q", actual)
 }
 
 @(test)
 assembly_temporaries_include_the_source_identity :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
 	first := assembly_object_path(`C:\one\helper.asm`, `C:\out\program.exe`)
 	second := assembly_object_path(`C:\two\helper.asm`, `C:\out\program.exe`)
 	again := assembly_object_path(`c:\ONE\helper.asm`, `C:\out\program.exe`)
@@ -673,6 +679,7 @@ assembly_temporaries_include_the_source_identity :: proc(t: ^testing.T) {
 // asked for; a runtime-sized pack stays where its element count exists.
 @(test)
 fixed_allocas_reach_the_entry_block :: proc(t: ^testing.T) {
+	context.allocator = context.temp_allocator
 	body :=
 		"define void @first(i64 %n) {\n" +
 		"entry:\n" +

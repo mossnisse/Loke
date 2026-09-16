@@ -29,6 +29,7 @@ BOOTSTRAP_INSTANCES :: 1
 
 check_one_package :: proc(c: ^Compiler, pkg_id: Package_Id) {
 	k := Checker{c = c}
+	defer delete(k.nil_uses)
 	ensure_runtime_bootstrap(&k)
 	rebuild_active_items(c, package_of(c, pkg_id))
 	prepare_package(&k, pkg_id)
@@ -423,7 +424,9 @@ main :: proc() {
 sink :: proc(value: int) {}`
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
-	f := parse(&c, 0, lex(&c, 0))
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 	pkg_id := new_package(&c, f.package_name)
 	add_package_file(&c, pkg_id, &f)
@@ -464,9 +467,13 @@ N :: 7;`
 	c := test_compiler(first_text)
 	defer destroy_compilation(&c)
 	second_index := append_test_source(&c, "second.loke", second_text)
-	first := parse(&c, 0, lex(&c, 0))
+	first_tokens := lex(&c, 0)
+	defer delete(first_tokens)
+	first := parse(&c, 0, first_tokens)
 	defer destroy_ast(&first)
-	second := parse(&c, second_index, lex(&c, second_index))
+	second_tokens := lex(&c, second_index)
+	defer delete(second_tokens)
+	second := parse(&c, second_index, second_tokens)
 	defer destroy_ast(&second)
 	pkg_id := new_package(&c, "main")
 	add_package_file(&c, pkg_id, &first)
@@ -492,7 +499,9 @@ Node :: struct { next: ^Node, other: ^Node, value: int }
 main :: proc() { }`
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
-	f := parse(&c, 0, lex(&c, 0))
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 	pkg_id := new_package(&c, "main")
 	add_package_file(&c, pkg_id, &f)
@@ -518,7 +527,9 @@ library_check_is_separate_from_executable_validation :: proc(t: ^testing.T) {
 helper :: proc() { }`
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
-	f := parse(&c, 0, lex(&c, 0))
+	tokens := lex(&c, 0)
+	defer delete(tokens)
+	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 	pkg_id := new_package(&c, "utility")
 	add_package_file(&c, pkg_id, &f)
@@ -583,6 +594,7 @@ static self slot using delegate thread_local manual
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	expected := []Token_Kind {
 		.Ident, .Int, .Float, .String, .Raw_String, .Rune,
 		.Break, .Case, .Continue, .Defer, .Distinct, .Dyn, .Dynamic, .Else,
@@ -659,6 +671,7 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 		c := test_compiler(test_case.text)
 		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
+		defer delete(tokens)
 		testing.expectf(t, c.error_count == 1, "`%s`: expected one diagnostic, got %d", test_case.text, c.error_count)
 		code := len(c.diagnostics) == 1 ? c.diagnostics[0].code : "<none>"
 		testing.expectf(t, code == test_case.code, "`%s`: expected %s, got %s", test_case.text, test_case.code, code)
@@ -670,6 +683,7 @@ lexer_rejects_malformed_literals :: proc(t: ^testing.T) {
 	valid := test_compiler("0b101 0o777 0xff 1e9 1.5e+3 1_000 " + `"é\U0001f600\xff"`)
 	defer destroy_compilation(&valid)
 	tokens := lex(&valid, 0)
+	defer delete(tokens)
 	testing.expectf(t, valid.error_count == 0, "valid literals produced %d diagnostics", valid.error_count)
 	testing.expectf(t, len(tokens) == 8, "expected seven literals, got %d tokens", len(tokens) - 1)
 }
@@ -709,6 +723,7 @@ malformed_escape_stays_in_bounds :: proc(t: ^testing.T) {
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 	testing.expect(t, c.error_count > 0, "malformed escape produced no diagnostic")
@@ -728,6 +743,7 @@ main :: proc() {
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 
@@ -782,6 +798,7 @@ main :: proc() {
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 
@@ -815,6 +832,7 @@ bad: static int : 2;
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 
@@ -838,6 +856,7 @@ main :: proc() {
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 
@@ -866,13 +885,16 @@ main :: proc() {
 parser_depth_is_bounded :: proc(t: ^testing.T) {
 	sources := []string {
 		strings.concatenate(
-			{"package main;\n\nmain :: proc() {\n\tx := ", strings.repeat("(", 10_000), "1;\n}\n"},
+			{"package main;\n\nmain :: proc() {\n\tx := ", strings.repeat("(", 10_000, context.temp_allocator), "1;\n}\n"},
+			context.temp_allocator,
 		),
 		strings.concatenate(
-			{"package main;\n\nmain :: proc() {\n\tx := 1", strings.repeat(" + 1", 10_000), ";\n}\n"},
+			{"package main;\n\nmain :: proc() {\n\tx := 1", strings.repeat(" + 1", 10_000, context.temp_allocator), ";\n}\n"},
+			context.temp_allocator,
 		),
 		strings.concatenate(
-			{"package main;\n\nmain :: proc() {\n\tx := ", strings.repeat("!", 10_000), "true;\n}\n"},
+			{"package main;\n\nmain :: proc() {\n\tx := ", strings.repeat("!", 10_000, context.temp_allocator), "true;\n}\n"},
+			context.temp_allocator,
 		),
 	}
 
@@ -880,6 +902,7 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 		c := test_compiler(text)
 		defer destroy_compilation(&c)
 		tokens := lex(&c, 0)
+		defer delete(tokens)
 		f := parse(&c, 0, tokens)
 		defer destroy_ast(&f)
 
@@ -894,7 +917,9 @@ parser_depth_is_bounded :: proc(t: ^testing.T) {
 		for token in tokens {
 			testing.expectf(t, int(token.hi) <= len(text), "token extends beyond the source")
 		}
-		testing.expect(t, len(ast_dump(&f)) > 0, "a depth-limited tree did not dump")
+		dump := ast_dump(&f)
+		defer delete(dump)
+		testing.expect(t, len(dump) > 0, "a depth-limited tree did not dump")
 	}
 }
 
@@ -914,6 +939,7 @@ main :: proc() {
 	invalid := test_compiler(invalid_text)
 	defer destroy_compilation(&invalid)
 	invalid_tokens := lex(&invalid, 0)
+	defer delete(invalid_tokens)
 	invalid_file := parse(&invalid, 0, invalid_tokens)
 	defer destroy_ast(&invalid_file)
 
@@ -938,6 +964,7 @@ main :: proc() {
 	valid := test_compiler(valid_text)
 	defer destroy_compilation(&valid)
 	valid_tokens := lex(&valid, 0)
+	defer delete(valid_tokens)
 	valid_file := parse(&valid, 0, valid_tokens)
 	defer destroy_ast(&valid_file)
 	testing.expectf(t, valid.error_count == 0, "type arguments produced %d diagnostics", valid.error_count)
@@ -956,6 +983,7 @@ worker :: proc() @(cold) {
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 	testing.expectf(t, c.error_count == 0, "attributed blocks produced %d diagnostics", c.error_count)
@@ -974,6 +1002,7 @@ main :: proc() {
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 
@@ -1032,6 +1061,7 @@ sentinel :: proc() { }
 	c := test_compiler(text)
 	defer destroy_compilation(&c)
 	tokens := lex(&c, 0)
+	defer delete(tokens)
 	f := parse(&c, 0, tokens)
 	defer destroy_ast(&f)
 
@@ -1327,6 +1357,7 @@ semantic_arena_serves_maps_and_large_blocks :: proc(t: ^testing.T) {
 ownership_worklist_converges_past_sixty_four_back_edges :: proc(t: ^testing.T) {
 	b: strings.Builder
 	strings.builder_init(&b)
+	defer strings.builder_destroy(&b)
 	fmt.sbprintln(&b, "package main;")
 	fmt.sbprintln(&b, "Box :: struct { value: int }")
 	fmt.sbprintln(&b, "impl Box { release :: hook(drop) proc(self: inout Box) {} }")

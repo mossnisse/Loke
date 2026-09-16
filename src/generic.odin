@@ -504,7 +504,7 @@ generic_mangled_name :: proc(c: ^Compiler, template: Symbol_Id, bindings: []Gene
 		// templates called `load`. The owner is part of the identity, exactly as it
 		// is for an ordinary member.
 		if sym.owner_type != INVALID_TYPE {
-			owner := llvm_safe(qualified_member_name(c, sym))
+			owner := llvm_safe(qualified_member_name(c, sym, context.temp_allocator))
 			strings.write_string(&b, owner)
 			delete(owner)
 		} else {
@@ -2078,7 +2078,7 @@ check_pending_impl_instances :: proc(k: ^Checker) {
 				append(&pkg.instances, Instance_Decl {
 					symbol = d.symbols[0],
 					decl   = d,
-					name   = qualified_member_name(k.c, sym),
+					name   = qualified_member_name(k.c, sym, k.c.semantic_allocator),
 				})
 			}
 		}

@@ -260,6 +260,8 @@ build_flow_graph :: proc(
 	graph.provider_parents = make(map[Symbol_Id]Region_Set, 4, allocator)
 	graph.owners_in_scope = make([dynamic]Symbol_Id, allocator)
 	graph.provider_bits = make(map[Symbol_Id]u64, 4, allocator)
+	graph.map_key_entries = make(map[string]int, 4, allocator)
+	graph.reborrows = make([dynamic]Prov_Reborrow, allocator)
 	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)

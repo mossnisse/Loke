@@ -5,6 +5,7 @@
 package lokec
 
 import "core:fmt"
+import "core:mem"
 import "core:os"
 import "core:path/filepath"
 import "core:strconv"
@@ -93,13 +94,37 @@ Options :: struct {
 // Windows x64 is the only v1 target.
 DEFAULT_PANIC_UNWIND :: true
 
+// `-define:LOKE_TRACK_MEMORY=true` reports every allocation `run` did not free,
+// and every bad free, on stderr.
+LOKE_TRACK_MEMORY :: #config(LOKE_TRACK_MEMORY, false)
+_ :: mem
+
 main :: proc() {
-	os.exit(run())
+	when LOKE_TRACK_MEMORY {
+		track: mem.Tracking_Allocator
+		mem.tracking_allocator_init(&track, context.allocator)
+		context.allocator = mem.tracking_allocator(&track)
+	}
+	code := run()
+	when LOKE_TRACK_MEMORY {
+		free_all(context.temp_allocator)
+		for _, leak in track.allocation_map {
+			fmt.eprintfln("leak %v bytes @ %v", leak.size, leak.location)
+		}
+		for bad in track.bad_free_array {
+			fmt.eprintfln("bad free %p @ %v", bad.memory, bad.location)
+		}
+	}
+	os.exit(code)
 }
 
 @(private = "file")
 run :: proc() -> int {
 	opts, args_ok := parse_args(os.args[1:])
+	defer {
+		delete(opts.defines)
+		delete(opts.collections)
+	}
 	// Asking for help is a successful run, so the text goes to stdout; a usage
 	// error prints the same text on stderr and fails.
 	if opts.help {
@@ -148,7 +173,9 @@ run :: proc() -> int {
 		ast := parse(&c, file, tokens)
 		defer destroy_ast(&ast)
 		if opts.dump_ast {
-			fmt.print(ast_dump(&ast))
+			dump := ast_dump(&ast)
+			defer delete(dump)
+			fmt.print(dump)
 		}
 		if c.error_count > 0 {
 			report(&c)
@@ -332,7 +359,7 @@ default_output_path :: proc(input: string, mode: Build_Mode) -> string {
 		stem = strings.trim_suffix(input, filepath.ext(input))
 	}
 	// An object build defaults to `.obj`, an executable to `.exe`.
-	return strings.concatenate({stem, mode == .Obj ? ".obj" : ".exe"})
+	return strings.concatenate({stem, mode == .Obj ? ".obj" : ".exe"}, context.temp_allocator)
 }
 
 // `-define:NAME=VALUE`. The value is a boolean, an integer, or — failing both —

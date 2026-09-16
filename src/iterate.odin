@@ -136,7 +136,7 @@ range_type :: proc(c: ^Compiler, element: Type_Id) -> Type_Id {
 	fields[RANGE_CLOSED] = new_field(c, "closed", TYPE_BOOL, RANGE_CLOSED, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
-		info.mangled = fmt.aprintf("Range.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator)
+		info.mangled = fmt.aprintf("Range.%s", llvm_safe(type_name(c, element), allocator = context.temp_allocator), allocator = c.semantic_allocator)
 	}
 	c.range_types[element] = type
 	return type
@@ -258,7 +258,7 @@ range_iterator_type :: proc(c: ^Compiler, range: Type_Id) -> Type_Id {
 	fields[ITER_RANGE_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_RANGE_REVERSED, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
-		info.mangled = fmt.aprintf("Range_Iterator.%s", llvm_safe(type_name(c, element)), allocator = c.semantic_allocator)
+		info.mangled = fmt.aprintf("Range_Iterator.%s", llvm_safe(type_name(c, element), allocator = context.temp_allocator), allocator = c.semantic_allocator)
 	}
 	c.iterator_types[range] = type
 	return type
@@ -283,7 +283,7 @@ array_iterator_type :: proc(c: ^Compiler, array: Type_Id, holds := INVALID_TYPE)
 	fields[ITER_ARRAY_REVERSED] = new_field(c, "reversed", TYPE_BOOL, ITER_ARRAY_REVERSED, public = true)
 	if info := type_of(c, type); info != nil {
 		info.fields = fields
-		info.mangled = fmt.aprintf("Array_Iterator.%s", llvm_safe(type_name(c, array)), allocator = c.semantic_allocator)
+		info.mangled = fmt.aprintf("Array_Iterator.%s", llvm_safe(type_name(c, array), allocator = context.temp_allocator), allocator = c.semantic_allocator)
 		info.descriptor = type_is_compile_time_only(c, element)
 	}
 	c.iterator_types[array] = type
@@ -309,7 +309,7 @@ map_iterator_type :: proc(c: ^Compiler, subject: Type_Id) -> Type_Id {
 		// The map this walks. `next` needs its operation table, and the raw table
 		// pointer alone cannot name it.
 		info.key = subject
-		info.mangled = fmt.aprintf("Map_Iterator.%s", llvm_safe(type_name(c, subject)), allocator = c.semantic_allocator)
+		info.mangled = fmt.aprintf("Map_Iterator.%s", llvm_safe(type_name(c, subject), allocator = context.temp_allocator), allocator = c.semantic_allocator)
 	}
 	c.iterator_types[subject] = type
 	return type
@@ -355,7 +355,7 @@ container_view_type :: proc(c: ^Compiler, source: Type_Id, kind: View_Kind) -> T
 		// pointer alone cannot name it.
 		info.key = kind == .Rune_Offsets ? INVALID_TYPE : source
 		info.mangled = kind == .Rune_Offsets ? label :
-		               fmt.aprintf("%s.%s", label, llvm_safe(type_name(c, source)), allocator = c.semantic_allocator)
+		               fmt.aprintf("%s.%s", label, llvm_safe(type_name(c, source), allocator = context.temp_allocator), allocator = c.semantic_allocator)
 	}
 	c.view_types[key] = type
 	return type
@@ -377,7 +377,7 @@ map_view_iterator_type :: proc(c: ^Compiler, view: Type_Id, label: string) -> Ty
 	if made := type_of(c, type); made != nil {
 		made.fields = fields
 		made.key = subject
-		made.mangled = fmt.aprintf("%s.%s", label, llvm_safe(type_name(c, subject)), allocator = c.semantic_allocator)
+		made.mangled = fmt.aprintf("%s.%s", label, llvm_safe(type_name(c, subject), allocator = context.temp_allocator), allocator = c.semantic_allocator)
 	}
 	c.iterator_types[view] = type
 	return type

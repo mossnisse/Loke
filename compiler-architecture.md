@@ -160,14 +160,17 @@ analysis. LLVM lowering still walks the annotated AST directly.
 
 ### Allocation domains
 
-- Source buffers and diagnostics use ordinary process-owned storage.
+- Source buffers and diagnostics use ordinary process-owned storage. A
+  diagnostic's strings come from the allocator its list was first grown with,
+  so one raised during emission is still freed correctly.
 - Each parsed file owns its AST arena.
 - Compilation-wide semantic stores use the semantic arena.
 - Each CTFE invocation has bounded scratch storage for frames, mutable values,
   strings, big integers, and containers. Values that escape evaluation are
   frozen into semantic storage.
 - LLVM strings and temporary maps belong to the emitter invocation and never
-  become semantic annotations.
+  become semantic annotations. Emission, `-check-layout`, and the toolchain run
+  on the compilation's emission arena, freed by `destroy_compilation`.
 
 ## Semantic architecture
 
@@ -440,6 +443,11 @@ odin build src -out:lokec.exe -vet-unused -vet-shadowing
 odin test tests -define:ODIN_TEST_TRACK_MEMORY=false
 .\test-all.ps1
 ```
+
+To check the compiler for leaks, run `odin test src` without the define (the
+test runner then tracks every test), or build with
+`-define:LOKE_TRACK_MEMORY=true`, which makes `lokec` print every allocation
+still live at exit, and every bad free, on stderr.
 
 `test-all.ps1` runs unit tests, rebuilds the compiler, runs the baseline corpus,
 and reruns the run/trap corpus at every supported optimization level. Use

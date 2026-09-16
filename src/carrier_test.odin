@@ -15,8 +15,12 @@ import "core:testing"
 @(private = "file")
 shaped :: proc(c: ^Compiler, text: string) -> ^File {
 	c^ = test_compiler(text)
+	tokens := lex(c, 0)
+	defer delete(tokens)
 	f := new(File)
-	f^ = parse(c, 0, lex(c, 0))
+	f^ = parse(c, 0, tokens)
+	// Owned by the compilation, as a production parse is.
+	append(&c.parsed_files, f)
 	pkg_id := new_package(c, "main")
 	add_package_file(c, pkg_id, f)
 	check_one_package(c, pkg_id)

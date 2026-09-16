@@ -4,6 +4,7 @@
 package lokec
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:os"
 import "core:path/filepath"
 import os2 "core:os/os2"
@@ -16,6 +17,7 @@ import "core:time"
 CLANG_MISSING :: "cannot run `%s`: install LLVM (`winget install LLVM.LLVM`) or set LOKE_CLANG"
 
 emit_package :: proc(c: ^Compiler, opts: Options) -> int {
+	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	module, generated := emit_llvm_module(c)
 	if !generated {
 		return 2
@@ -121,6 +123,7 @@ Layout_Probe :: struct {
 // checker's cached layout. Executing LLVM-derived values tests the actual
 // target backend rather than a second copy of the checker's formula.
 check_layout_agreement :: proc(c: ^Compiler, opts: Options) -> int {
+	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	e := make_emitter(c)
 	fmt.sbprintfln(&e.b, `target triple = "%s"`, c.target.triple)
 	fmt.sbprintln(&e.b, `@.fmt_int = private unnamed_addr constant [6 x i8] c"%lld\0A\00"`)
@@ -613,6 +616,8 @@ assembly_object_path :: proc(source, exe_path: string) -> string {
 // and that copy drifting looser made an object-build test skip — or fail — on
 // a machine where a real build worked.
 print_toolchain :: proc() -> int {
+	// A one-shot report: nothing it gathers outlives the process.
+	context.allocator = context.temp_allocator
 	clang := find_clang()
 	// `find_clang` falls back to a bare name for PATH to resolve, so running it
 	// is the only way to learn whether it is there.

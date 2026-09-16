@@ -1028,6 +1028,12 @@ init_semantic_stores :: proc(c: ^Compiler) {
 	c.result_summary_dependencies = make(map[Symbol_Id][]Symbol_Id, c.semantic_allocator)
 	c.reset_dead = make(map[^Expr_Call][]Symbol_Id, c.semantic_allocator)
 	c.cleanup_reset_dead = make(map[Cleanup_Reset_Key][]Symbol_Id, c.semantic_allocator)
+	c.package_by_dir = make(map[string]Package_Id, c.semantic_allocator)
+	c.map_keyed = make(map[Type_Id]bool, c.semantic_allocator)
+	c.checked_bodies = make([dynamic]Checked_Body, 0, 16, c.semantic_allocator)
+	c.result_summaries = make(map[Symbol_Id]^Proc_Summary, c.semantic_allocator)
+	c.proc_contract_checks = make([dynamic]Proc_Contract_Check, 0, 4, c.semantic_allocator)
+	c.static_locals = make([dynamic]Symbol_Id, 0, 4, c.semantic_allocator)
 
 	append(&c.identifier_names, "")
 	pointer_bits := c.target.pointer_bits
@@ -1408,8 +1414,8 @@ anon_record_mangled :: proc(c: ^Compiler, fields: []Anon_Record_Field) -> string
 	strings.write_string(&b, "anon")
 	for field in fields {
 		fmt.sbprintf(
-			&b, ".%s.%s", llvm_safe(identifier_text(c, field.name)),
-			llvm_safe(typeid_sort_key(c, field.type)),
+			&b, ".%s.%s", llvm_safe(identifier_text(c, field.name), allocator = context.temp_allocator),
+			llvm_safe(typeid_sort_key(c, field.type), allocator = context.temp_allocator),
 		)
 	}
 	return strings.to_string(b)
@@ -2117,7 +2123,7 @@ destroy_compilation :: proc(c: ^Compiler) {
 	delete(c.parsed_files)
 
 	for &diagnostic in c.diagnostics {
-		destroy_diagnostic(&diagnostic)
+		destroy_diagnostic(c, &diagnostic)
 	}
 	delete(c.diagnostics)
 	for &source in c.sources {
@@ -2132,5 +2138,7 @@ destroy_compilation :: proc(c: ^Compiler) {
 		virtual.arena_destroy(&c.semantic_arena)
 		virtual.arena_destroy(&c.analysis_arena)
 	}
+	// Last: diagnostics raised while emitting may live in it.
+	virtual.arena_destroy(&c.emission_arena)
 	c^ = {}
 }

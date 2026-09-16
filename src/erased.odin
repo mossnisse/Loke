@@ -199,7 +199,7 @@ dyn_type :: proc(
 	fields[DYN_WITNESS] = new_field(k.c, "witness", TYPE_RAWPTR, DYN_WITNESS)
 	if stored := type_of(k.c, type); stored != nil {
 		stored.fields = fields
-		stored.mangled = fmt.aprintf("dyn.%s", llvm_safe(identifier_text(k.c, name)), allocator = k.c.semantic_allocator)
+		stored.mangled = fmt.aprintf("dyn.%s", llvm_safe(identifier_text(k.c, name), allocator = context.temp_allocator), allocator = k.c.semantic_allocator)
 	}
 	k.c.dyn_types[key] = type
 	install_dyn_forwarding_slots(k, info, args, type)
@@ -815,7 +815,7 @@ witness_llvm_name :: proc(c: ^Compiler, interface_symbol: Symbol_Id, concrete: T
 	if sym := symbol_of(c, interface_symbol); sym != nil {
 		interface_name = identifier_text(c, sym.name)
 	}
-	fmt.sbprintf(&b, "@loke.w.%s.%s", llvm_safe(interface_name), llvm_safe(type_name(c, concrete)))
+	fmt.sbprintf(&b, "@loke.w.%s.%s", llvm_safe(interface_name, allocator = context.temp_allocator), llvm_safe(type_name(c, concrete), allocator = context.temp_allocator))
 	for arg in args {
 		part := arg.is_type ? type_name(c, arg.type) : fmt.aprintf(
 			"v%s:%s",

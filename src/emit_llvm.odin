@@ -5,6 +5,7 @@ package lokec
 
 
 import "core:fmt"
+import "core:mem/virtual"
 import "core:strings"
 
 @(private)
@@ -90,6 +91,7 @@ make_emitter :: proc(c: ^Compiler) -> Emitter {
 // in dependency order, so there is nothing per-package to select. Filesystem
 // policy and the external toolchain remain in `emit_package` above.
 emit_llvm_module :: proc(c: ^Compiler) -> (string, bool) {
+	context.allocator = virtual.arena_allocator(&c.emission_arena)
 	if !validate_emission_dependencies(c) { return "", false }
 	e := make_emitter(c)
 
@@ -893,9 +895,9 @@ llvm_name_byte :: proc(ch: u8) -> bool {
 // injective while leaving the emitted symbol readable in a `tests/ll` golden.
 // `dots = false` for a part that a `.` joins to others, so the separator stays
 // unambiguous: `show("a.b", "c")` and `show("a", "b.c")` are two symbols.
-llvm_safe :: proc(name: string, dots := true) -> string {
+llvm_safe :: proc(name: string, dots := true, allocator := context.allocator) -> string {
 	hex := "0123456789abcdef"
-	out := make([dynamic]u8, 0, len(name) + 8)
+	out := make([dynamic]u8, 0, len(name) + 8, allocator)
 	for i in 0 ..< len(name) {
 		ch := name[i]
 		if llvm_name_byte(ch) && (dots || ch != '.') {

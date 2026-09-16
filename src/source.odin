@@ -267,6 +267,10 @@ Compiler :: struct {
 	// each body. Nothing built in it outlives `analyze_ownership`.
 	analysis_arena:       virtual.Arena,
 	analysis_allocator:   mem.Allocator,
+	// Everything LLVM emission and the toolchain allocate, kept until the
+	// compilation is destroyed: the backend builds its module from many
+	// short-lived strings and frees none of them individually.
+	emission_arena:       virtual.Arena,
 	identifier_names:     [dynamic]string,
 	identifier_by_name:   map[string]Identifier_Id,
 	types:                [dynamic]Type_Info,
@@ -350,7 +354,19 @@ line_text :: proc(src: ^Source, line: int) -> string {
 	return strings.trim_right(src.text[start:end], "\r\n")
 }
 
+// Diagnostics are created during every phase, including emission, whose
+// context allocator is an arena. Each diagnostic's storage therefore comes from
+// the one allocator the list itself was first grown with, so destroying them
+// never frees memory with an allocator that did not hand it out.
+diagnostic_allocator :: proc(c: ^Compiler) -> mem.Allocator {
+	if c.diagnostics.allocator.procedure == nil {
+		c.diagnostics.allocator = context.allocator
+	}
+	return c.diagnostics.allocator
+}
+
 errorf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..any) {
+	context.allocator = diagnostic_allocator(c)
 	append(
 		&c.diagnostics,
 		Diagnostic {
@@ -367,6 +383,7 @@ errorf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..a
 // type correctness — size is never a type error — so the copy-cost report is a
 // warning and leaves `error_count` alone.
 warnf :: proc(c: ^Compiler, span: Span, code: string, format: string, args: ..any) {
+	context.allocator = diagnostic_allocator(c)
 	append(
 		&c.diagnostics,
 		Diagnostic {
@@ -390,7 +407,7 @@ error_labelf :: proc(
 	errorf(c, span, code, format, ..args)
 	// Labels arrive as either source-backed text or temporary formatted strings.
 	// Clone them so every diagnostic component has one uniform owner.
-	c.diagnostics[len(c.diagnostics) - 1].label = strings.clone(label)
+	c.diagnostics[len(c.diagnostics) - 1].label = strings.clone(label, diagnostic_allocator(c))
 }
 
 // Attaches a secondary location to the most recently emitted diagnostic.
@@ -399,6 +416,7 @@ add_notef :: proc(c: ^Compiler, span: Span, format: string, args: ..any) {
 	if len(c.diagnostics) == 0 {
 		return
 	}
+	context.allocator = diagnostic_allocator(c)
 	diagnostic := &c.diagnostics[len(c.diagnostics) - 1]
 	append(&diagnostic.notes, Note{span = span, message = fmt.aprintf(format, ..args)})
 }
@@ -406,7 +424,8 @@ add_notef :: proc(c: ^Compiler, span: Span, format: string, args: ..any) {
 // Frees diagnostics removed by a speculative parse/check as well as those
 // retained until the end of the compilation. Resizing a dynamic array alone
 // would lose the owned strings and note arrays beyond the new length.
-destroy_diagnostic :: proc(d: ^Diagnostic) {
+destroy_diagnostic :: proc(c: ^Compiler, d: ^Diagnostic) {
+	context.allocator = diagnostic_allocator(c)
 	delete(d.message)
 	if d.label != "" {
 		delete(d.label)
@@ -421,7 +440,7 @@ destroy_diagnostic :: proc(d: ^Diagnostic) {
 truncate_diagnostics :: proc(c: ^Compiler, length: int) {
 	wanted := clamp(length, 0, len(c.diagnostics))
 	for index := wanted; index < len(c.diagnostics); index += 1 {
-		destroy_diagnostic(&c.diagnostics[index])
+		destroy_diagnostic(c, &c.diagnostics[index])
 	}
 	resize(&c.diagnostics, wanted)
 	// An instantiation stack is attached to whichever diagnostic is last, and
@@ -487,7 +506,7 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 
 		// The caret line copies any tabs from the source prefix, so the marker
 		// stays under the right column whatever the reader's tab width is.
-		indent := strings.clone(text[:col - 1])
+		indent := strings.clone(text[:col - 1], context.temp_allocator)
 		for i in 0 ..< len(indent) {
 			if indent[i] != '\t' {
 				(transmute([]u8)indent)[i] = ' '
@@ -497,7 +516,7 @@ render :: proc(c: ^Compiler, d: ^Diagnostic) {
 		fmt.eprintf("%*s--> %s:%d:%d\n", gutter, "", src.path, line, col)
 		fmt.eprintf("%*s |\n", gutter + 1, "")
 		fmt.eprintf("%d | %s\n", line, text)
-		fmt.eprintf("%*s | %s%s", gutter + 1, "", indent, strings.repeat("^", width))
+		fmt.eprintf("%*s | %s%s", gutter + 1, "", indent, strings.repeat("^", width, context.temp_allocator))
 		if d.label != "" {
 			fmt.eprintf(" %s", d.label)
 		}
