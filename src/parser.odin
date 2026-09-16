@@ -2307,9 +2307,14 @@ parse_primary :: proc(p: ^Parser) -> Expr {
 		outer := p.no_composite
 		p.no_composite = false
 		inner: Expr
-		if starts_type(current(p).kind) {
+		kind := current(p).kind
+		if starts_type(kind) && kind != .Lbracket && kind != .Map {
 			inner = parse_type(p)
 		} else {
+			// A bracket or map type may be a composite literal's, so it is parsed
+			// as an expression — `([]int{1, 2}).len()` — that is still allowed to
+			// stop at the bare type a conversion names, `([]int)(x)`.
+			p.type_value = kind == .Lbracket || kind == .Map
 			inner = parse_expr(p)
 		}
 		expect(p, .Rparen, "L0219", "`)` to close the parenthesised expression")

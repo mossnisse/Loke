@@ -1,0 +1,22 @@
+package main;
+
+import "core:fmt";
+
+// grammar.md: a primary is `"(" Expression ")"`, and a composite literal is an
+// expression, so a literal whose type begins with `[` or `map` may be
+// parenthesised like any other — design.md "Temporaries and procedure
+// boundaries" writes `([dynamic]int{1, 2, 3, 4}[:]).len()`. The same parentheses
+// still hold the bare type a conversion names.
+
+Point :: struct { x, y: int }
+
+main :: proc() {
+	fmt.println(([dynamic]int{1, 2, 3, 4}[:]).len());
+	fmt.println((map[string]int{"a" = 1, "b" = 2}).len());
+	fmt.println(([3]int{4, 5, 6})[1]);
+	fmt.println((Point{1, 2}).x);
+
+	writable: []mut int = []mut int{7, 8};
+	fmt.println(([]int)(writable)[0]);
+	fmt.println(size_of(([2]int)));
+}
