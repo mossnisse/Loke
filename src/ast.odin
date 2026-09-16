@@ -1,12 +1,7 @@
-// AST. Every node carries a Span; the checker annotates
-// these same nodes in place — the "typed AST" of decision A1.
-//
-// Types and expressions share one node domain: the grammar refuses to
-// separate them (`Generic_Argument = Type | Expression`, `Argument_Value =
-// Expression | Type`, `Primary = "(" Type ")"`), and `Matrix(f32, 4)` and
-// `f(a, b)` are the same token stream. Type positions go through `parse_type`,
-// a restricted entry point into this domain, so `x: 1 + 2;` is still a parse
-// error. What syntax cannot decide is left for name resolution in M2.
+// AST. Every node carries a Span, and the checker annotates the nodes in place
+// (decision A1). Types and expressions share one node domain, since the grammar
+// cannot tell `Matrix(f32, 4)` from `f(a, b)`; `parse_type` restricts type
+// positions, and the checker decides what syntax cannot.
 package lokec
 
 import "core:mem"
@@ -19,32 +14,21 @@ Expr_Base :: struct {
 	is_const:      bool,
 	resolution:    Resolution,
 	value_category: Value_Category,
-	// Independent place facts. A value parameter is addressable and not
-	// assignable; a composite literal is addressable temporary storage; `_`
-	// is neither. One bit cannot say that.
+	// Independent place facts: a value parameter is addressable, not assignable.
 	addressable:  bool,
 	assignable:   bool,
 	immutable:    Immutable_Reason,
-	// The concrete type this expression produces before it is erased into the
-	// `any_view` that `type` now names. The emitter evaluates the node at this
-	// type, takes its address, and pairs it with the frozen `typeid`.
+	// The concrete type erased into the `any_view` that `type` names.
 	erased_from: Type_Id,
-	// design.md "string type conversions": a `string` borrowed as a
-	// `string_view`. The source type is kept so the backend narrows the owning
-	// three-word value to the two-word view rather than reinterpreting it.
+	// A `string` borrowed as a `string_view`: the source type to narrow from.
 	view_from:   Type_Id,
-	// design.md "SIMD vectors": a scalar widened to a vector. The lane type is
-	// kept so the backend evaluates the scalar and then splats it, rather than
-	// looking for a vector-shaped value that was never produced.
+	// A scalar widened to a SIMD vector: the lane type to splat from.
 	splat_from:  Type_Id,
-	// Set at construction when this node or any child is an error node, so
-	// recovery never has to re-walk a subtree to find out.
+	// This node or any child is an error node.
 	has_error:   bool,
 }
 
-// Literals keep their spelling. Deciding whether `9223372036854775808` fits an
-// `int` is a semantic question, so the checker asks it (grammar.md has no
-// representability rule).
+// Literals keep their spelling; the checker decides whether a value fits.
 Literal_Kind :: enum {
 	Int,
 	Float,
@@ -93,9 +77,7 @@ Expr :: union {
 	^Type_Interface,
 }
 
-// Error nodes are retained in the tree instead of being represented by nil, so
-// recovery preserves surrounding syntax and AST dumps stay useful for malformed
-// files.
+// Error nodes, rather than nil, keep the surrounding syntax after recovery.
 Expr_Error :: struct {
 	using base: Expr_Base,
 }
@@ -118,17 +100,12 @@ Expr_Selector :: struct {
 	using base: Expr_Base,
 	operand:    Expr,
 	name:       Name,
-	// When this selector names a union variant: the union and the variant's
-	// declaration index. `resolution.kind` says whether the payload is still
-	// owed (`.Union_Variant`) or the variant is payloadless and complete.
+	// A selected union variant: the union and the variant's index.
 	variant_union: Type_Id,
 	variant_index: int,
 }
 
-// The two extraction spellings share one shape: a source, a resolved target
-// type, and a mode fixed by the spelling, not the destination. `x.(T)` is
-// always `.Trap` and produces one value; `x.as(T)` is always `.Optional` and
-// produces `(T, bool)`.
+// `x.(T)` traps and yields one value; `x.as(T)` yields `(T, bool)`.
 Extract_Mode :: enum {
 	Trap,
 	Optional,
@@ -140,9 +117,7 @@ Expr_Checked_Extract :: struct {
 	operand:    Expr,
 	target:     Expr,
 	mode:       Extract_Mode,
-	// The requested type. `type` is that same type for `.(T)` and `Option(T)`
-	// for `.as(T)`, so the extracted value's own type is kept apart from the
-	// expression's result.
+	// The requested type; `type` is `Option(T)` for `.as(T)`.
 	payload:    Type_Id,
 }
 
@@ -152,12 +127,8 @@ Expr_Index :: struct {
 	operand:    Expr,
 	indices:    []Expr,
 	// A user `operator([])`: the arguments in parameter order, receiver first.
-	// The resolution names the overload; an `inout` result makes this a place.
 	bound:      []Expr,
-	// design.md "Maps": the whole-element assignment `m[key] = elem` is the one
-	// index form that creates an entry; every other position names an element
-	// that must already be there. Which one this occurrence is comes from its
-	// position, so the checker records it.
+	// `m[key] = elem`, the one index form that creates a map entry.
 	map_inserts: bool,
 }
 
@@ -185,18 +156,14 @@ Argument :: struct {
 	value: Expr,
 }
 
-// The compiler-defined operations a `meta.Field` descriptor supplies. Their
-// result type follows the descriptor constant, so they are recognised at the
-// call rather than found by method lookup.
+// The compiler-defined operations of a `meta.Field` descriptor.
 Reflect_Op :: enum {
 	None,
 	Field_Get,
 	Field_Pointer,
 }
 
-// design.md "string type" and "string type conversions": the operations a text
-// carrier answers to. They are compiler-defined rather than library members
-// because their operand types are built in and their results follow the carrier.
+// The compiler-defined operations of a text carrier.
 Text_Op :: enum {
 	None,
 	Byte_Len,   // O(1), and what `len(text)` is shorthand for
@@ -210,8 +177,7 @@ Text_Op :: enum {
 	From_Runes, // `string.from_runes(runes)`, validating, optional-ok
 }
 
-// design.md "string type conversions": named UTF-8 constructors validate their
-// input and return Option(T). These are not type-call conversions.
+// The named UTF-8 constructors, which validate and return Option(T).
 Text_Conversion :: enum {
 	None,
 	String_From_Bytes,  // `string.from_utf8(bytes)` — validate and copy
@@ -219,9 +185,7 @@ Text_Conversion :: enum {
 	String_From_C_View, // `string.from_utf8(cview)` — scan, validate, and copy
 }
 
-// The checker selects one operation. Nil is the explicit unchecked state;
-// syntax clones retain no operation. Symbol identity stays in base.resolution,
-// and argument binding/evaluation order are shared by every operation.
+// The operation the checker selected for a call; nil until checked.
 Call_Operation :: union {
 	Call_Procedure,
 	Call_Compile_Time,
@@ -262,26 +226,20 @@ Call_Dyn_Slot :: struct { index: int }
 // The element of new/new_clone, or the container type of make.
 Call_Allocation :: struct { type: Type_Id }
 
-// A call, a conversion, or a generic application — syntax cannot tell them
-// apart, and M2's name resolution does not need it to.
+// A call, a conversion, or a generic application; syntax cannot tell them apart.
 Expr_Call :: struct {
 	using base: Expr_Base,
 	callee:     Expr,
 	args:       []Argument,
-	// Arguments in parameter order after names and defaults are resolved. This
-	// is what the callee receives; `args` stays the written syntax.
+	// Arguments in parameter order, with defaults; `args` stays as written.
 	bound:      []Expr,
-	// design.md "Evaluation order": parameter slots in *evaluation* order —
-	// every supplied argument in `args` source order, then every omitted
-	// default in parameter order. Nil when the two orders coincide (every call
-	// written without named arguments).
+	// Parameter slots in evaluation order (written arguments, then defaults);
+	// nil when that is parameter order.
 	bound_order: []int,
 	operation: Call_Operation,
-	// design.md "Variadic parameters". `variadic_slot` is the packed parameter's
-	// index, or -1. `variadic_forwards` marks the sole-spread case, where
-	// `bound[variadic_slot]` is the slice itself; otherwise the explicit
-	// `variadic_elements` and the `variadic_spreads` are concatenated in
-	// `variadic_order` (true = the next spread, false = the next element).
+	// `variadic_slot` is the packed parameter, or -1. `variadic_forwards` passes
+	// one spread slice through; otherwise elements and spreads are concatenated
+	// in `variadic_order` (true = next spread, false = next element).
 	is_variadic:       bool,
 	variadic_slot:     int,
 	variadic_forwards: bool,
@@ -293,8 +251,7 @@ Expr_Call :: struct {
 // The suffixes that take no operand: `^` and `or_return`.
 Expr_Postfix :: struct {
 	using base: Expr_Base,
-	// `or_return` over a place: both payloads are copied out and the source
-	// stays live, exactly as `or_else` over one does.
+	// Over a place, the payloads are copied out and the source stays live.
 	borrows:    bool,
 	op:         Token_Kind,
 	op_span:    Span,
@@ -317,13 +274,11 @@ Expr_Binary :: struct {
 	op_span:    Span,
 	lhs:        Expr,
 	rhs:        Expr,
-	// `a != b` reached through the `!(a == b)` fallback: the resolution names the
-	// `==` overload and the result is negated (design.md "Operator declarations").
+	// `a != b` through a user `==`, whose result is negated.
 	negated:    bool,
 }
 
-// `a ..= b` and `a ..< b`. Kept apart from Expr_Binary so a phase that only
-// understands arithmetic cannot silently treat a range as one.
+// `a ..= b` and `a ..< b`, kept apart from Expr_Binary.
 Expr_Range :: struct {
 	using base: Expr_Base,
 	op:         Token_Kind,
@@ -336,11 +291,9 @@ Expr_Or_Else :: struct {
 	using base: Expr_Base,
 	value:      Expr,
 	fallback:   Expr,
-	// design.md: a place operand copies the selected payload and leaves the
-	// source live; a temporary or `move(x)` hands its value over.
+	// A place operand is copied from and stays live; a temporary is moved.
 	borrows:    bool,
-	// A managed fallback place also stays live, so the selected value must be
-	// cloned before it becomes the result.
+	// A managed fallback place is cloned into the result.
 	fallback_clone: bool,
 }
 
@@ -369,21 +322,13 @@ Expr_Composite :: struct {
 	using base: Expr_Base,
 	type_expr:  Expr,
 	elements:   []Element,
-	// Struct field slots in source order, resolved during checking. Other
-	// composites use positional indices. Clones must resolve their own fields.
+	// Struct field slots in source order, resolved during checking.
 	field_indices: []int,
-	// A borrowed managed element has value semantics: constructing the aggregate
-	// clones it, while a temporary or explicit move transfers it. Kept parallel
-	// to `elements` so the backend never has to reclassify ownership.
+	// Per element: a borrowed managed element is cloned, not moved.
 	element_clones: []bool,
-	// A slice literal's hidden fixed-array root (design.md "Slice literals"). The
-	// literal's own `type` is the slice; this is the `[N]T` the backend gives
-	// storage and then slices. INVALID_TYPE for every other literal.
+	// A slice literal's hidden `[N]T` storage; INVALID_TYPE otherwise.
 	backing:    Type_Id,
-	// Allocator binding: "A container literal initializing or replacing a
-	// known destination constructs directly with that destination's selected
-	// allocator rather than allocating a default-backed temporary first."
-	// This is that destination's written `via`, or nil.
+	// The destination's `via` a container literal constructs with, or nil.
 	via:        Expr,
 }
 
@@ -450,12 +395,8 @@ Type_Poly :: struct {
 	constraint: Expr,
 }
 
-// design.md "Receiver forms": `Borrow` is `borrow T` or plain receiver `self`. It is
-// last so the existing discriminants keep their values, since a mode number
+// `Borrow` is `borrow T` or a plain `self`. It is last because a mode number
 // reaches the type identity key (`typeid_sort_key_walk`).
-//
-// `Borrow` never appears as an argument mode: the argument has no marker,
-// exactly as a `Value` argument is written.
 Param_Mode :: enum {
 	Value,
 	Inout,
@@ -482,9 +423,7 @@ Parameter :: struct {
 	symbols: []Symbol_Id,
 }
 
-// `Results`. design.md: a procedure returns at most one value, and that value is
-// anonymous — a record result names its own fields. `inout` is the one place a
-// result is still a place rather than a value.
+// A procedure's one anonymous result; `inout` makes it a place.
 Result :: struct {
 	span:     Span,
 	is_inout: bool,
@@ -507,13 +446,11 @@ Expr_Proc :: struct {
 	where_clauses: []Expr,
 	body:          ^Block,
 	bodiless:      bool,
-	// The procedure this literal becomes. A nested literal is hoisted to its own
-	// module function under this symbol.
+	// The procedure this literal becomes.
 	symbol:        Symbol_Id,
 	// Cleanup slots this body needs, allocated in the entry block.
 	defer_count:   int,
-	// A cloned generic instantiation. Its `$` parameters were consumed at
-	// instantiation time and are not part of the instance's runtime signature.
+	// A generic instance, whose `$` parameters are not in its runtime signature.
 	generic_instance: bool,
 }
 
@@ -540,8 +477,7 @@ hook_name :: proc(kind: Hook_Kind) -> string {
 	return ""
 }
 
-// `operator(+) proc ...` or `hook(convert) proc ...`. The wrapper keeps the
-// ordinary named procedure separate from the semantic role attached to it.
+// `operator(+) proc ...` or `hook(convert) proc ...`.
 Expr_Operator :: struct {
 	using base:  Expr_Base,
 	symbol:      string,
@@ -606,15 +542,13 @@ Record_Kind :: enum {
 	Union,
 }
 
-// One written union variant: `name: T` or the payloadless `name:`. The name is
-// the variant's identity, so two variants may carry the same payload type.
+// A union variant, `name: T` or payloadless `name:`, identified by name.
 Variant :: struct {
 	span: Span,
 	name: Name,
 	type: Expr, // nil for a payloadless variant
 }
 
-// `struct` and `union` differ only in their body, so one node carries both:
 // `fields` for a struct, `variants` for a union.
 Type_Record :: struct {
 	using base:     Expr_Base,
@@ -627,9 +561,7 @@ Type_Record :: struct {
 	variants:       []Variant,
 }
 
-// `(name: Type, ...)`: the anonymous structural record. Every field is named
-// and public by grammar, so this reuses `Field` without ever carrying an
-// attribute, `using`, or a parameter-only spelling.
+// `(name: Type, ...)`: the anonymous structural record.
 Type_Anon_Record :: struct {
 	using base: Expr_Base,
 	fields:     []Field,
@@ -648,9 +580,7 @@ Type_Interface :: struct {
 	requirements:   []Requirement,
 }
 
-// Every variant embeds Expr_Base first, so one switch serves every accessor.
-// Odin's exhaustiveness check makes adding a node kind a compile error until
-// this is updated, which is the point.
+// Exhaustive, so a new node kind is a compile error here.
 expr_base :: proc(e: Expr) -> ^Expr_Base {
 	switch v in e {
 	case ^Expr_Error:
@@ -735,17 +665,14 @@ expr_has_error :: proc(e: Expr) -> bool {
 	return base != nil && base.has_error
 }
 
-// Statements, declarations and top-level items share a base. All three can
-// carry attributes; which attribute is valid where is a semantic rule, not a
-// grammatical one (grammar.md "Attributes").
+// The base of statements, declarations and items.
 Node_Base :: struct {
 	span:       Span,
 	has_error:  bool,
 	attributes: []Attribute,
 }
 
-// `Attribute`. The qualified form is an extension attribute, as in
-// `@(compiler.no_alias)`.
+// `@(name)`, `@(name=value)`, or the extension form `@(ns.name)`.
 Attribute :: struct {
 	span:  Span,
 	path:  []Name,
@@ -754,9 +681,7 @@ Attribute :: struct {
 
 Stmt :: union {
 	^Decl,
-	// design.md "Methods and implementation blocks": an `impl` naming a type
-	// declared in the same body. It is the same node the file-level form uses, so
-	// nothing about a block's contents depends on where it was written.
+	// An `impl` of a type declared in the same body.
 	^Item_Impl,
 	^Stmt_Error,
 	^Stmt_Expr,
@@ -794,19 +719,15 @@ Stmt_Assign :: struct {
 	op_span:    Span,
 	lhs:        []Expr,
 	rhs:        []Expr,
-	// design.md "Assignment statements": assigning a managed owner deep-copies,
-	// and the destination's previous value is dropped once the clone succeeded.
-	// One entry per right side, and the destination's liveness at this statement,
-	// filled by `src/lifecycle.odin`.
+	// Per right side: whether it clones, and the destination's liveness
+	// (`src/lifecycle.odin`).
 	rhs_clones:       []bool,
 	destination_live: []Liveness,
 	destructure:      Destructure,
-	// A user compound assignment: either a direct `+=` overload, or the binary
-	// `+` overload the fallback rule reaches. INVALID_SYMBOL for a built-in one.
+	// A user `+=`, or the `+` it falls back to; INVALID_SYMBOL when built in.
 	operator:        Symbol_Id,
 	operator_direct: bool,
-	// `grid[x, y] = v` reaching `operator([]=)`, with the receiver, indices and
-	// value already bound in parameter order.
+	// `grid[x, y] = v` through `operator([]=)`, bound in parameter order.
 	place_setter:    Symbol_Id,
 	setter_bound:    []Expr,
 }
@@ -828,12 +749,8 @@ Stmt_For :: struct {
 	condition_only: bool, // the `for (cond)` header
 }
 
-// `"$"? "&"? (Identifier | "_")`. A `$` binding is a static expansion.
-// One leaf of a `foreach` header's binding pattern, or a parenthesised group of
-// them (design.md "Element bindings"). A group descends into a field that is
-// itself a record; `group` is empty for a leaf, which is every binding a header
-// written before nesting existed has. `name` carries the group's own span with
-// no text, so a diagnostic about a group still points somewhere.
+// A `foreach` binding `$`? `&`? name, or a parenthesised group of them
+// (design.md "Element bindings"). A group has an empty `name.text` but a span.
 Foreach_Binding :: struct {
 	name:      Name,
 	is_static: bool,
@@ -842,8 +759,7 @@ Foreach_Binding :: struct {
 	group:     []Foreach_Binding,
 }
 
-// How the checker resolved a `foreach`. A range and a fixed array lower
-// directly to an index loop; a user type goes through `iter`/`next`.
+// How the checker resolved a `foreach`.
 Foreach_Kind :: enum {
 	Unresolved,
 	Static,
@@ -851,21 +767,15 @@ Foreach_Kind :: enum {
 	Stored_Range,
 	Array,
 	Slice,
-	// design.md "Dynamic arrays": an index loop over the current allocation,
-	// bounded by the header's length word rather than a static count.
 	Dynamic,
-	// A slot walk; map iteration order is unspecified (design.md "Maps"). Its
-	// `Element` is the `struct{key, value}` entry, which two bindings destructure.
+	// Yields `struct{key, value}` entries, in unspecified order.
 	Map,
-	// Yields Unicode scalar values (design.md "String iteration"). A byte offset
-	// comes from `text.rune_offsets()`, which is an ordinary iterable value.
+	// Yields Unicode scalar values.
 	Text,
 	Protocol,
 }
 
-// design.md "Iteration adapters": an alternative traversal of the same iterable.
-// Only the two header adapters live here. The container views are ordinary
-// values now, so `m.keys()` is a call whose result the loop iterates.
+// A header adapter traversing the same iterable differently.
 Foreach_Adapter :: enum {
 	None,
 	Reversed,
@@ -876,44 +786,31 @@ Stmt_Foreach :: struct {
 	bindings:   []Foreach_Binding,
 	iterable:   Expr,
 	body:       ^Block,
-	// Semantic result, written by the checker and read by the backend.
+	// Written by the checker, read by the backend.
 	kind:          Foreach_Kind,
 	adapter:       Foreach_Adapter,
-	// `indexed()`, which numbers whatever traversal precedes it and so is always
-	// the outermost adapter.
+	// `indexed()`, always the outermost adapter.
 	indexed:       bool,
-	// The complete `Element` one binding names: a record for a map entry or an
-	// `indexed()` pair, and the yielded value itself otherwise.
+	// What one binding names: the yielded value, or a map entry or indexed pair.
 	element_type:  Type_Id,
-	// design.md "Element bindings": one name over a record whose parts the
-	// traversal lends receives those parts as pointers, read through
-	// `entry.value^`. INVALID_TYPE whenever a single name binds the `Element`
-	// itself, which is every owned traversal and every lent leaf.
+	// A lent record bound to one name, as pointers to its parts; else INVALID_TYPE.
 	item_type:     Type_Id,
-	// design.md "Borrowing iteration": this traversal lends each element rather
-	// than copying it out, so a binding names the container's own storage and the
-	// loop owns nothing to dispose of. `&` in a binding says the same about
-	// mutable storage; the two are the traversal's two lending modes.
+	// Elements are lent from the container rather than copied out.
 	borrows:       bool,
 	count:         u64,       // a fixed array's length
 	iterator_type: Type_Id,   // the protocol path's opaque iterator
 	iter_symbol:   Symbol_Id,
 	next_symbol:   Symbol_Id,
-	// A static expansion's checked copies, one per element, in iterable order.
-	// This is expansion rather than a loop, so the backend emits them in
-	// sequence and `body` is never emitted (design.md "Static `foreach`
-	// expansion").
+	// A static expansion's checked copies, one per element; `body` is not emitted.
 	expansion:  []^Block,
 }
 
-// Structural source selection, not a constant `if`: only the selected branch is
-// declared, checked, and emitted, and it introduces no scope of its own.
+// Only the selected branch is declared, checked and emitted, with no new scope.
 Stmt_When :: struct {
 	using base: Node_Base,
 	cond:       Expr,
 	then:       ^Block,
 	otherwise:  Stmt,
-	// Semantic result, written by the checker and read by the backend.
 	resolved:   bool,
 	selected:   ^Block, // nil when no branch was taken
 }
@@ -921,29 +818,23 @@ Stmt_When :: struct {
 Switch_Kind :: enum {
 	Value,
 	Type,
-	// `switch (union) { case .variant(binding): ... }`: dispatch is the same
-	// tag switch as `Type`, but each case carries its own optional binding.
-	// The parser cannot see the subject's type, so the checker turns a `Value`
-	// switch over a union into this kind.
+	// A union switch with per-case `.variant(binding)`; the checker turns a
+	// `Value` switch over a union into this.
 	Pattern,
 }
 
-// `Value_Case` and `Type_Case` are one shape once types and expressions share a
-// node domain: a list, or none for the default case.
+// A case's values, or none for the default case.
 Switch_Case :: struct {
 	span:   Span,
 	values: []Expr,
 	stmts:  []Stmt,
-	// The branch-local binding in `.variant(name)`. Empty for the traditional
-	// header binding and for a case that only tests a variant.
+	// The binding in `.variant(name)`, or empty.
 	binding: Name,
-	// A type switch binds one name per case: at the variant's payload type for a
-	// single-variant case, and at the union's type for a grouped or default
-	// case, where the active variant is not known.
+	// A type switch's per-case binding: the payload type for one variant, the
+	// union type for a grouped or default case.
 	binding_symbol: Symbol_Id,
 	binding_type:   Type_Id,
-	// A union switch's cases are variant identities, resolved once here so the
-	// evaluator and the emitter never look a payload type back up.
+	// A union switch's cases as variant indices.
 	variant_indices: []int,
 }
 
@@ -955,16 +846,14 @@ Stmt_Switch :: struct {
 	binding_symbol: Symbol_Id,
 	subject:    Expr,
 	cases:      []Switch_Case,
-	// An enum or variant switch covering every variant, or any switch with a
-	// default: no path reaches past the cases without entering one.
+	// Every path enters a case: all variants covered, or a default.
 	exhaustive: bool,
 }
 
 Stmt_Defer :: struct {
 	using base: Node_Base,
 	stmt:       Stmt,
-	// Position of this registration's flag in the enclosing procedure's entry
-	// block, assigned while checking the body.
+	// This registration's flag slot in the procedure's entry block.
 	slot:       int,
 }
 
@@ -973,10 +862,7 @@ Return_Value :: struct {
 	span:     Span,
 	is_inout: bool,
 	expr:     Expr,
-	// Returning a borrowed managed parameter by value clones it, since the callee
-	// owns nothing it could move out (design.md "Parameter semantics and ABI
-	// lowering"); an owned local, named result, temporary, or `move` parameter
-	// transfers instead.
+	// A borrowed managed value is cloned on return rather than moved.
 	clone_on_return: bool,
 }
 
@@ -990,8 +876,6 @@ Stmt_Branch :: struct {
 	kind:       Token_Kind, // `.Break` or `.Continue`
 }
 
-// The statement mirror of `expr_base`: every variant embeds `Node_Base` first,
-// so one switch serves every accessor.
 stmt_base :: proc(s: Stmt) -> ^Node_Base {
 	switch v in s {
 	case ^Decl:
@@ -1059,32 +943,21 @@ Duration :: enum {
 	Thread_Local,
 }
 
-// One declaration: `x: int;`, `x: int = e;`, `x := e;`, `x: int : e;`. A nil
-// `values` entry is the `---` uninitialised-storage marker; an omitted
-// initialiser leaves `values` empty instead.
-//
-// design.md "Destructuring": `a, b := record;` projects one record's directly
-// declared fields across two or more bindings. The checker resolves the field
-// symbols and ownership policy once, here, so the lifecycle pass, the
-// emitter, and the compile-time evaluator read this decision instead of
-// reclassifying the operand syntactically.
+// `a, b := record;`, resolved once by the checker (design.md "Destructuring").
 Destructure :: struct {
 	active: bool,
 	record: Type_Id,
 	fields: []Symbol_Id,
-	// The operand names a place, so it stays live and every retained managed
-	// field is cloned out of it. A temporary or a `move(...)` consumes instead
-	// and clones nothing.
+	// A place operand stays live and its managed fields are cloned out.
 	from_place: bool,
-	// One entry per binding: whether the field is retained by a real target.
-	// `_` leaves its field with the consumed record (or untouched on the place
-	// path), so later phases must not classify, clone, or evaluate it.
+	// Per binding: false for `_`, whose field later phases must ignore.
 	retained: []bool,
-	// One entry per binding: whether that field is cloned. Only the place path
-	// ever sets one, and only for a managed field.
+	// Per binding: whether the field is cloned.
 	clones: []bool,
 }
 
+// `x: int;`, `x: int = e;`, `x := e;`, `x: int : e;`. A nil `values` entry is
+// `---`; an omitted initialiser leaves `values` empty.
 Decl :: struct {
 	using base:    Node_Base,
 	kind:          Decl_Kind,
@@ -1094,21 +967,16 @@ Decl :: struct {
 	via:           Expr, // the `via` allocator expression, or nil
 	values:        []Expr,
 	symbols:       []Symbol_Id,
-	// One entry per initialiser: whether it copies a managed place someone else
-	// owns, rather than transferring a value it already owns.
+	// Per initialiser: whether it clones a managed place instead of moving.
 	value_clones:  []bool,
 	destructure:   Destructure,
 	top_level:     bool,
-	// Signature resolution and body checking have separate readiness states: the
-	// compile-time evaluator may need a procedure's body before the phase that
-	// would ordinarily check it.
+	// Separate, since the evaluator may need a body before its checking phase.
 	sig_state:     Check_State,
 	check_state:   Check_State,
 }
 
-// The `name :: proc() { ... }` shape: a constant whose one value is a procedure
-// literal. There is no second representation for a procedure — a `proc` in
-// expression position builds the same node.
+// The literal of `name :: proc() { ... }`, or nil.
 decl_proc :: proc(d: ^Decl) -> ^Expr_Proc {
 	if d.kind != .Const || len(d.values) != 1 {
 		return nil
@@ -1120,9 +988,7 @@ decl_proc :: proc(d: ^Decl) -> ^Expr_Proc {
 	return literal
 }
 
-// The procedure body a declaration binds, looking through `operator(sym)`. An
-// operator implementation is an ordinary named procedure, so everything that
-// names, checks, or emits one wants this rather than `decl_proc`.
+// As `decl_proc`, but also looking through `operator(sym)` and hooks.
 decl_proc_literal :: proc(d: ^Decl) -> ^Expr_Proc {
 	if literal := decl_proc(d); literal != nil {
 		return literal
@@ -1171,8 +1037,7 @@ Item_Import :: struct {
 	using base: Node_Base,
 	alias:      Name,   // empty when no local name was written
 	path:       string, // the string literal's spelling
-	// Discovery is monotonic, but selected `when` branches may insert imports
-	// anywhere in the active view. Track this item rather than a list prefix.
+	// Bound per item: selected `when` branches insert imports anywhere.
 	bound:      bool,
 }
 
@@ -1183,23 +1048,17 @@ Item_Foreign_Import :: struct {
 	path:       string,
 }
 
-// `foreign raylib { ... }`. Members are declarations, per grammar.md's
-// `Foreign_Decl`, and end where a constant of the same shape would.
+// `foreign raylib { ... }`.
 Item_Foreign_Block :: struct {
 	using base: Node_Base,
-	library:    Name,
+	library:    Name, // a label only; every block links against the one image
 	members:    []Item,
-	// Whether the block's members have been collected. The discovery fixed point
-	// re-prepares a package each round, and the block's own attribute check
-	// reports before any member guard is reached, so without this a contradictory
-	// `@(public)`/`@(private)` block is diagnosed once per round.
+	// Members collected; discovery re-prepares a package each round.
 	declared:   bool,
 }
 
-// Whether an `impl` block is *inherent* to its subject or *extends* it from
-// elsewhere. Not written: `declare_impl_block` derives it from whether the
-// subject's declaring package is this one — a built-in or foreign subject is
-// always an extension. `.Unresolved` until then.
+// Inherent to a subject declared in this package, or an extension of one
+// declared elsewhere; set by `declare_impl_block`.
 Impl_Kind :: enum {
 	Unresolved,
 	Impl,
@@ -1212,9 +1071,7 @@ Item_Impl :: struct {
 	kind:       Impl_Kind,
 	type:       Expr,
 	members:    []Item,
-	// The resolved subject, and whether member symbols have been created. The
-	// discovery fixed point re-prepares a package each round, so this is what
-	// keeps a second round from installing the same members twice.
+	// Set once members are installed, so a later discovery round skips them.
 	subject:    Type_Id,
 	declared:   bool,
 }
@@ -1225,10 +1082,8 @@ Item_Delegate :: struct {
 	symbols:    []string,
 }
 
-// File-scope `when`, whose branches are blocks of top-level items.
-//
-// Activation is monotonic: once `resolved` is set the choice never changes, and
-// only the taken branch contributes to `File.active_items`.
+// File-scope `when`. Once `resolved`, the choice is final, and only the taken
+// branch reaches `File.active_items`.
 Item_When :: struct {
 	using base: Node_Base,
 	cond:       Expr,
@@ -1236,8 +1091,7 @@ Item_When :: struct {
 	otherwise:  Item, // `^Item_When` for `else when`, `^Item_Block` for `else`
 	resolved:   bool,
 	taken:      bool, // this node's own condition was true
-	// Reported as unanswerable; neither branch is selected (a `when` that
-	// cannot choose selects nothing). Only guards against re-reporting it.
+	// Reported as unanswerable, and selects nothing.
 	stalled:    bool,
 }
 
@@ -1247,9 +1101,7 @@ Item_Block :: struct {
 	items:      []Item,
 }
 
-// `static_assert(condition[, message]);` at file scope. It holds the written
-// call and nothing else: the checker resolves it as the ordinary predeclared
-// built-in, so the item needs no second evaluator and leaves nothing to emit.
+// `static_assert(condition[, message]);` at file scope, checked as the built-in.
 Item_Static_Assert :: struct {
 	using base: Node_Base,
 	call:       Expr,
@@ -1287,18 +1139,15 @@ item_span :: proc(item: Item) -> Span {
 }
 
 File :: struct {
-	// All syntax nodes and syntax-owned slices live in this arena. The source
-	// manager owns source text separately, so source-backed names remain valid.
+	// Owns all syntax; source text lives with the source manager.
 	arena:        mem.Dynamic_Arena,
 	file:         u32,
 	attributes:   []Attribute, // on the package clause
 	package_name: string,
 	package_span: Span,
 	items:        []Item,
-	// The compilation-owned selected view: `items` with every selected `when`
-	// branch and `Item_Block` flattened in place, in original source order.
-	// Every semantic consumer iterates this, never `items` (`-dump-ast` still
-	// prints `items`).
+	// `items` with selected `when` branches flattened in, in source order. The
+	// checker reads this; `-dump-ast` prints `items`.
 	active_items: []Item,
 }
 
