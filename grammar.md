@@ -80,8 +80,9 @@ Contextual keywords, reserved only in the positions given:
 `nil`, `true`, and `false` are predeclared identifiers, not keywords, but they
 are **reserved**: no name a lookup can reach may be one of them. A field or enum
 member is reached by a selector rather than by lookup, so those names stay free.
-The built-in procedures — including `drop`, `len`, `cap`, `new`, and `make` — are
-ordinary predeclared identifiers and may be shadowed by a declaration.
+The built-in procedures — including `drop`, `new`, `make`, and `size_of` — are
+ordinary predeclared identifiers and may be shadowed by a declaration. Element
+counts are receiver members, `x.len()` and `x.cap()`, not built-in procedures.
 
 ## Compile-time names
 
@@ -718,8 +719,8 @@ same way. No result count depends on the destination.
 
 `move(x)` is a primary form rather than a call because `move` is a keyword — it
 is also a [parameter mode](#procedures), so it has to be reserved anyway.
-`drop`, `len`, `cap`, `new`, `make`, and the rest of the built-ins are ordinary
-identifiers and use the call suffix. `make([dynamic]int)` and the `core:unsafe`
+`drop`, `new`, `make`, and the rest of the built-ins are ordinary identifiers
+and use the call suffix. `make([dynamic]int)` and the `core:unsafe`
 member call `unsafe.transmute(T, x)` pass types as arguments through
 `Argument_Value`.
 

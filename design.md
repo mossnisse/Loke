@@ -168,7 +168,7 @@ Identifiers are case-sensitive, ASCII only, and match `[A-Za-z_][A-Za-z0-9_]*`. 
 
 A field or enum member is reached through a selector rather than by name lookup, so `struct { true: int }` and `enum { nil, other }` are legal and mean what they say.
 
-Every other predeclared name is an operation or a build-provided constant — `len`, `make`, `drop`, `size_of`, `LOKE_DEBUG` — and may be shadowed by a declaration like any other name.
+Every other predeclared name is an operation or a build-provided constant — `make`, `drop`, `size_of`, `LOKE_DEBUG` — and may be shadowed by a declaration like any other name.
 
 ## Literals
 
@@ -199,10 +199,12 @@ A string literal uses double quotes, a character literal single quotes, and `\` 
 - `\\` - backslash
 - `\"` - double quote
 - `\'` - single quote
-- `\NNN` - octal 6-bit character (3 digits)
-- `\xNN` - hexadecimal 8-bit character (2 digits)
+- `\NNN` - octal code point up to U+01FF, UTF-8 encoded (3 digits)
+- `\xNN` - hexadecimal byte, written as is (2 digits)
 - `\uNNNN` - hexadecimal 16-bit Unicode character, UTF-8 encoded (4 digits)
 - `\UNNNNNNNN` - hexadecimal 32-bit Unicode character, UTF-8 encoded (8 digits)
+
+Only `\x` spells a byte; every other escape names a character, so `"\377"` is the two bytes of `ÿ` while `"\xff"` is the one byte `0xFF`. Because a `string` always holds valid UTF-8, a string constant that becomes a `string` or `string_view` must be valid UTF-8 once its escapes are decoded, and one that is not is a compile-time error. The check is made on the folded value, so `"\xc3" + "\xa9"` is the `é` it spells. A `cstring_view`, which promises no encoding, takes the bytes as written; bytes that are not text belong in a `[]u8`.
 
 ### Number literals
 
@@ -379,7 +381,7 @@ message := first + " world";
 
 A string literal uses static storage. A runtime string owns managed storage and releases it through the allocator used to create it. Copies may share immutable storage. When a string is transferred between threads, its allocator must permit deallocation on the receiving thread. Use `[]u8` or `string_view` for a non-owning view.
 
-A `string` always holds valid UTF-8; arbitrary bytes use `[]u8` or `[dynamic]u8`. The named constructor `string.from_utf8(bytes)` validates a byte slice and returns `.none` for invalid UTF-8.
+A `string` always holds valid UTF-8; arbitrary bytes use `[]u8` or `[dynamic]u8`. A string literal is held to this at compile time (see [Escape characters](#escape-characters)). The named constructor `string.from_utf8(bytes)` validates a byte slice and returns `.none` for invalid UTF-8.
 
 String operations name their unit:
 
@@ -551,7 +553,7 @@ The same rule carries through implicit pointer field selection, indexing, method
 
 A `^mut T` implicitly weakens to a `^T`. A `^T` never strengthens, even when the storage it names is a mutable local — see [Capabilities and the one rule](#capabilities-and-the-one-rule).
 
-Pointer arithmetic is not an operator. `core:mem.ptr_offset` and `core:mem.ptr_sub` provide explicit address calculations.
+Pointer arithmetic is not an operator. Address calculation goes through a [C pointer](#c-pointers), which indexes and slices without checks.
 
 ### C pointers
 
@@ -605,7 +607,7 @@ For a nested fixed array, `unsafe.raw_data` exposes one array level at a time. I
 
 ### Fixed arrays
 
-A fixed array contains a compile-time known number of elements of one type. An array index can have an integer, character, or enumeration type.
+A fixed array contains a compile-time known number of elements of one type. An array index has an integer or rune type.
 
 This declaration constructs a fixed array:
 
@@ -660,7 +662,7 @@ favorite_animals := [?]string{
 };
 ```
 
-The built-in `len` procedure returns the array length.
+`x.len()` returns the array length.
 
 ```odin
 x: [5]int = {};
@@ -709,7 +711,7 @@ A slice over a fixed array is a borrow of that array's storage, and so is bound 
 
 To keep the data after the owner expires, make an owned copy. `slice.clone(view)` returns an owned `[dynamic]T`.
 
-The built-in `len` procedure returns the slice length. Element assignment and iteration by reference require `[]mut T`:
+`x.len()` returns the slice length. Element assignment and iteration by reference require `[]mut T`:
 
 ```odin
 x: []mut int = ...;
@@ -1380,7 +1382,7 @@ low, high = minmax(a, b);
 foreach (key, value in table) { ... }
 ```
 
-The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is.
+The record must have exactly as many **directly declared** fields as there are bindings, and every one must be visible at the use site. Promoted (`using`) fields are not flattened, private fields are not filtered out, and `_` does not bypass visibility. Destructuring is flat: a binding takes a whole field, whatever that field's own shape is. Only a `foreach` header [nests](#element-bindings).
 
 Ownership follows the operand's category, exactly as every other binding does:
 
@@ -1730,11 +1732,11 @@ fmt.println(a()); // 100
 
 #### Calling conventions
 
-Loke supports the following calling-convention names:
+Loke has three calling conventions:
 
-- `loke` — the default convention for a Loke procedure; see [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering).
-- `c` — the target C ABI's default calling convention.
-- `stdcall` — the Microsoft stdcall convention on targets that support it.
+- `loke` — the default convention for a Loke procedure; see [Parameter semantics and ABI lowering](#parameter-semantics-and-abi-lowering). A signature has it by writing no convention; it has no string of its own, so `proc "loke"` is an error.
+- `c`, written `proc "c"` — the target C ABI's default calling convention.
+- `stdcall`, written `proc "stdcall"` — the Microsoft stdcall convention on targets that support it.
 
 The default calling convention is `loke`, unless a declaration is within a foreign block, where it is `c`.
 
@@ -2114,10 +2116,10 @@ The following may be overloaded:
 | --- | --- |
 | Unary | `+`, `-`, `!`, `~` |
 | Arithmetic | `+`, `-`, `*`, `/`, `%` |
-| Bitwise and shifts | `|`, `~`, `&`, `&~`, `<<`, `>>` |
+| Bitwise and shifts | `\|`, `~`, `&`, `&~`, `<<`, `>>` |
 | Comparison | `==`, `!=`, `<`, `<=`, `>`, `>=` |
 | Membership | `in` |
-| Compound assignment | `+=`, `-=`, `*=`, `/=`, `%=`, `|=`, `~=`, `&=`, `&~=`, `<<=`, `>>=` |
+| Compound assignment | `+=`, `-=`, `*=`, `/=`, `%=`, `\|=`, `~=`, `&=`, `&~=`, `<<=`, `>>=` |
 | Structural syntax | `[]`, `[]=`, `[:]` |
 
 `!=` falls back to `!(left == right)` when `==` exists and no more specific `!=` overload does. A compound assignment falls back to the binary operator plus assignment; a direct compound overload can avoid a temporary or allocation:
@@ -2341,11 +2343,11 @@ foreach (key, value in table) {          // the entry's two fields
 }
 
 foreach ((key, &value), index in table.indexed()) {
-	value^ += index;
+	value += index;
 }
 ```
 
-This is the general [destructuring](#destructuring) rule applied to the element, so a destructured element must be a record with exactly the same number of directly declared, visible fields. A group descends into a field that is itself a record, to any depth; promoted fields are not flattened. Any binding may be `_`.
+This is the general [destructuring](#destructuring) rule applied to the element, so a destructured element must be a record with exactly the same number of directly declared, visible fields. A header extends it with nesting, which `:=` and `=` do not have: a group descends into a field that is itself a record, to any depth; promoted fields are not flattened. Any binding may be `_`.
 
 A leaf is a **binding**, and what it receives is decided by the traversal's [`Yield`](#iteration-protocol):
 
@@ -2632,7 +2634,7 @@ Built-in containers provide `len` and `cap` methods. A method call evaluates its
 
 ### Library numeric types
 
-Complex numbers and quaternions are standard-library abstractions, not base-language types. `Complex(T)` and `Quaternion(T)` in `core:math` are ordinary records with methods, [operator declarations](#operator-declarations), a [conversion hook](#construction-and-conversions), interfaces, and a `format` method — nothing the language reserves for itself. A scalar reaches one through the explicit conversion `Complex_F64(x)`, since there are no [user-defined implicit conversions](#implicit-type-conversions). Generic and third-party numeric types use the same construction, conversion, and operator rules.
+Complex numbers and quaternions are standard-library abstractions, not base-language types. `Complex(T)` and `Quaternion(T)` in `core:math` are ordinary records with methods, [operator declarations](#operator-declarations), a [conversion hook](#construction-and-conversions), interfaces, and a `format` method — nothing the language reserves for itself. A scalar reaches one through the explicit conversion `Complex(f64)(x)`, since there are no [user-defined implicit conversions](#implicit-type-conversions). Generic and third-party numeric types use the same construction, conversion, and operator rules.
 
 ## Interfaces and polymorphism
 
@@ -2880,7 +2882,7 @@ Use an interface when a capability is reused, when constrained code needs its me
 
 Runtime polymorphism reuses the same structural interfaces as generics. It is requested explicitly with [`dyn Interface`](#borrowed-dynamic-interface-values), the only construct that erases a concrete type behind an interface.
 
-For runtime use, erasure substitutes the concrete implementation type for the subject, while every other generic parameter stays an explicit type or constant-value argument of the dynamic type. The catalogue's `interfaces.Iterator(Self, Element)` is one such interface:
+For runtime use, erasure substitutes the concrete implementation type for the subject, while every other generic parameter stays an explicit type or constant-value argument of the dynamic type. The catalogue's `interfaces.Iterator(Self, Item)` is one such interface, and so is this one:
 
 ```odin
 Drawable :: interface($Self: type) {
@@ -2985,7 +2987,7 @@ fmt.println(count);    // OK
 
 Each declaration in a scope must have a unique name. A local declaration must not shadow a local variable or parameter in an outer scope. Copying a parameter into a mutable local requires a different name; see [Local copies of parameters](#local-copies-of-parameters).
 
-This restriction applies only to local scopes. A local declaration may shadow a file-scope declaration, an imported package name, or a predeclared identifier such as `byte` or `len`; the three [reserved names](#predeclared-names) are the exception. The program cannot use the shadowed name in that local scope.
+This restriction applies only to local scopes. A local declaration may shadow a file-scope declaration, an imported package name, or a predeclared identifier such as `byte` or `size_of`; the three [reserved names](#predeclared-names) are the exception. The program cannot use the shadowed name in that local scope.
 
 ```odin
 x := 10;
@@ -3129,7 +3131,7 @@ An allocator-selecting declaration retains its **declaration allocation policy**
 
 User types default to field-wise `try_clone`, `clone`, `move`, and `drop`. Customize copying and cleanup through [`hook(copy)` and `hook(drop)`](#lifecycle-hooks-and-resource-types). Structs and fixed arrays apply these operations recursively to managed fields. Self-assignment is safe.
 
-Multiple declarations (`y, z := 20, 30;`) differ from [destructuring](#destructuring), which takes one record on the right. Destructuring is flat: each binding takes a whole field; nested patterns are not supported.
+Multiple declarations (`y, z := 20, 30;`) differ from [destructuring](#destructuring), which takes one record on the right. Destructuring is flat: each binding takes a whole field; a nested pattern is available only in a [`foreach` header](#element-bindings).
 
 ##### `unsafe.forget`
 
@@ -3436,7 +3438,7 @@ Except for the explicitly lazy operators `&&`, `||`, `or_else`, and the conditio
 - Array, struct, union, map, and container literal elements are evaluated in source order. A named struct literal still uses source order rather than field declaration order.
 - A simple or multiple assignment evaluates all right-hand expressions from left to right before evaluating destination place expressions from left to right. Writes then occur from left to right, but only after every value and destination has been prepared. If a required clone fails, no destination is written. This makes swaps well-defined and prevents a failed later clone from partially updating an earlier destination; side effects already performed while evaluating an earlier right-hand expression, including an explicit `move`, are not rolled back.
 - A compound assignment evaluates its destination place once, then evaluates the right operand, then performs the operation and write.
-- Return expressions are evaluated from left to right before being moved into result storage.
+- A return expression is evaluated completely before it is moved into result storage.
 
 Temporaries created by a complete expression are destroyed at its end in reverse order of completed initialization. Short-circuiting and conditional expressions evaluate only the selected operands, as described by their individual rules. These rules apply equally to built-in and user-defined operations.
 
@@ -3482,7 +3484,7 @@ x = q*y + r   and |r| < |y|;
 
 with x/y truncated towards zero (truncated division).
 
-Floored remainder is the library procedure `floor_mod(x, y)`, not a second operator.
+There is no floored-remainder operator; `%` is the truncated one.
 
 The exception to these rules is when the dividend x is the most negative value for the integer type of x, and the quotient q = x/-1 is equal to x (and r = 0) under the wrapping two’s-complement rule below.
 
@@ -3507,7 +3509,7 @@ This differs from C, where such a shift count is undefined behavior.
 
 #### Integer overflow
 
-For unsigned integers, the operations +, -, *, and << are computed modulo 2n, where n is the bit width of the unsigned integer’s type. In a sense, these unsigned integer operations discard the high bits upon overflow, and programs may rely on “wrap around”.
+For unsigned integers, the operations +, -, *, and << are computed modulo `2^n`, where `n` is the bit width of the unsigned integer’s type. In a sense, these unsigned integer operations discard the high bits upon overflow, and programs may rely on “wrap around”.
 
 Every signed integer uses two’s-complement representation. For a signed type of width `n`, `+`, `-`, `*`, and `<<` compute the mathematical result modulo `2^n` and interpret the resulting bit pattern as that two’s-complement type. Division is truncated toward zero except that `MIN / -1` produces `MIN`; its remainder is zero. These results are deterministic on every target, and overflow does not panic. A compiler may not assume signed overflow does not occur — `x < x+1` is not always true. Code wanting a no-overflow assumption states it explicitly (a sized unsigned type, a hoisted bound, a narrowed index range).
 
@@ -3520,7 +3522,7 @@ For floating-point types:
 
 Floating-point division by zero follows IEEE-754 and does not panic: a non-zero dividend produces `+Inf` or `-Inf` according to the signs of the operands, and `0.0/0.0` produces a NaN. Integer division by zero panics. Default floating-point exception handling is non-stop; a program that wants trapping behavior installs it through the target's floating-point environment.
 
-An implementation may combine multiple floating-point operations into a single fused operation, and produce a result that differs from the value obtained by executing and rounding the instructions individually.
+Floating-point operations are not contracted or reassociated. Each operation the source writes is evaluated and rounded on its own, so `a*b + c` is a multiplication then an addition, never a fused multiply-add whose result could differ.
 
 # 6. Statements & Control Flow
 
@@ -3787,13 +3789,11 @@ if (x := foo(); x < 0) {
 A switch statement selects a case by comparing its required subject expression with case values. It may include an initialization statement before the subject, separated by a semicolon. The default case is denoted by `case` without a value.
 
 ```odin
-switch (arch := LOKE_ARCH; arch) {
-case .I386, .Wasm32, .Arm32:
-	fmt.println("32 bit");
-case .Amd64, .Wasm64p32, .Arm64, .Riscv64:
-	fmt.println("64 bit");
-case .Unknown:
-	fmt.println("Unknown architecture");
+switch (os := LOKE_OS; os) {
+case .Windows:
+	fmt.println("Windows");
+case .Linux, .Darwin:
+	fmt.println("Unix-like");
 }
 ```
 
@@ -3996,10 +3996,10 @@ Example:
 
 ```odin
 print_architecture :: proc() {
-	when (LOKE_ARCH == .I386) {
-		fmt.println("32 bit");
-	} else when (LOKE_ARCH == .Amd64) {
-		fmt.println("64 bit");
+	when (LOKE_ARCH == .Amd64) {
+		fmt.println("x86-64");
+	} else when (LOKE_ARCH == .Arm64) {
+		fmt.println("AArch64");
 	} else {
 		fmt.println("Unsupported architecture");
 	}
@@ -4140,7 +4140,7 @@ sort_in_place :: proc(values: inout [dynamic]int) {
 
 process_owned :: proc(values: move [dynamic]int) {
 	values.sort();
-	consume(values);
+	consume(move(values));
 }
 
 sort_in_place(inout numbers);
@@ -5120,7 +5120,7 @@ A **fallible expression** is one whose type is a union of exactly two variants w
 Parsed :: union @(failure=bad) { value: int, bad: Parse_Error }
 ```
 
-There is no truthiness rule and no nil status: `nil` is not a failure, a trailing `bool` is not a status, and a procedure returning `(int, ^Node)` returns two ordinary values.
+There is no truthiness rule and no nil status: `nil` is not a failure, a trailing `bool` is not a status, and a procedure returning `(value: int, node: ^Node)` returns one ordinary record.
 
 A producer's result count is its own, and a destination never changes it. Where two behaviours are wanted they are two operations: `m[key]` panics for a missing key and `m.lookup_value(key)` answers `Option(V)`; `view.(T)` traps on a mismatch and `view.as(T)` answers `Option(T)`.
 
@@ -5612,12 +5612,12 @@ The compiler provides a small set of constants in every compilation:
 
 | Name | Description |
 | --- | --- |
-| `LOKE_ARCH` | Target CPU architecture enum. |
-| `LOKE_OS` | Target operating-system enum. |
-| `LOKE_ENDIAN` | Target endianness enum. |
-| `LOKE_BUILD_MODE` | Requested output kind. |
+| `LOKE_ARCH` | Target CPU architecture: `.Amd64`, `.Arm64`. |
+| `LOKE_OS` | Target operating system: `.Windows`, `.Linux`, `.Darwin`. |
+| `LOKE_ENDIAN` | Target endianness: `.Little`, `.Big`. |
+| `LOKE_BUILD_MODE` | Requested output kind: `.Exe`, `.Obj`. |
 | `LOKE_DEBUG` | Build-provided debug flag. |
-| `LOKE_OPTIMIZATION_MODE` | Selected optimization mode. |
+| `LOKE_OPTIMIZATION_MODE` | Selected optimization mode: `.None`, `.Minimal`, `.Size`, `.Speed`, `.Aggressive`. |
 | `LOKE_LOG_LEVEL` | The [compiled log level](#compiled-log-level); `core:log` suppresses everything below it. |
 | `LOKE_VENDOR` | Compiler implementation identifier; the official compiler uses `"loke"`. |
 | `LOKE_VERSION` | Compiler version string. |
@@ -6041,12 +6041,11 @@ The specification uses these library declarations. Their complete APIs belong to
 | Declaration | Package | Used by |
 | --- | --- | --- |
 | `os.Args`, `os.args`, `os.exit` | `core:os` | [program entry and exit](#program-entry-and-exit) |
-| `fs.File`, `fs.open`, `File.close` | `core:fs` | [`defer`](#defer-statement), [lifecycle hooks](#lifecycle-hooks-and-resource-types) |
+| `fs.File`, `fs.open_read`, `File.close` | `core:fs` | [`defer`](#defer-statement), [lifecycle hooks](#lifecycle-hooks-and-resource-types) |
 | `String_Builder` | `core:strings` | [string](#string-type) |
 | `C_String` | `core:cstrings` | [C string views](#c-string-views) |
 | `Small_Array(T, N)`, `Bit_Set(Enum)`, `Enum_Array(Enum, T)` | `core:container` | [fixed-capacity arrays](#fixed-capacity-arrays), [enum iteration](#iterating-an-enumeration) |
 | Standard interfaces | `base:interfaces` | [interface catalogue](#standard-interface-catalogue) |
-| `Little_Endian(T)`, `Big_Endian(T)` | `core:endian` | [basic types](#basic-types) |
 | `meta.Field`, `meta.Enum_Value` | `base:meta` | [compile-time reflection](#compile-time-reflection) |
 | `Allocator_Error`, `Allocator`, `mem.Scratch`, `mem.Arena` | `base:runtime`, `core:mem` | [allocators](#allocators) |
 | `Logger` | `core:log` | [build-selected providers](#build-selected-providers) |

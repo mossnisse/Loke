@@ -6,9 +6,9 @@ import "core:math";
 // `Complex(T)` and `Quaternion(T)` (design.md "Library numeric
 // types").
 //
-// The first block is design.md's own `Complex_F64` source, verbatim, proving
-// that the library type needs no facility a user could not write; the rest is
-// the generic version of the same thing in `core:math`.
+// The first block is a hand-written `Complex_F64`, proving that the library
+// type needs no facility a user could not write; the rest is the generic version
+// of the same thing in `core:math`.
 
 Complex_F64 :: struct {
 	real, imaginary: f64,

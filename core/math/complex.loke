@@ -2,8 +2,8 @@
 //
 // Deliberately not primitive: these are ordinary structs with ordinary methods,
 // operators, conversion hooks, and formatting, and they get no special
-// relationship with the compiler. design.md's own `Complex_F64` is the `T = f64`
-// case of what is written here.
+// relationship with the compiler. `tests/run/lib_numeric.loke` writes the
+// `T = f64` case out by hand to show a user could.
 //
 // A scalar converts through `hook(convert)`, written out: `Complex(f64)(x)`.
 // That is the ordinary conversion rule, not a numeric special case.
