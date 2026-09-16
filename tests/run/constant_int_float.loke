@@ -1,0 +1,16 @@
+package main; import "core:fmt";
+
+// Integer constants meeting floats: conversion rounds once to the nearest value,
+// a comparison is exact, and a shift under one bignum digit folds exactly.
+
+ODD :: (1 << 120) + (1 << 67) + 1;
+BIG :: 1 << 1100;
+
+main :: proc() {
+	odd: f64 = ODD;
+	fmt.println(odd == 1329227995784916168051712239633170432.0);
+	f: f32 = 16777219;
+	fmt.println(f == 16777220.0);
+	fmt.println(BIG > 1.0e300, -3 < -2.5);
+	fmt.println((1 << 120) >> 10 == 1 << 110);
+}

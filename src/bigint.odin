@@ -1,24 +1,16 @@
-// Arbitrary-precision integer constants.
-//
-// Untyped folding is exact: an intermediate is never rejected merely because no
-// runtime integer type could hold it. `bi_fits` and `bi_wrap` are where a value
-// meets a width — range check on materializing a constant, modulo-2^n
-// projection when folding a typed operation.
-//
-// Arithmetic is core:math/big; values are immutable, operations always build
-// new digit buffers. Checking uses the compilation's semantic arena; evaluation
-// uses bounded scratch storage, cloning escaping constants into the semantic
-// arena before releasing that scratch.
+// Arbitrary-precision integer constants over core:math/big. Untyped folding is
+// exact; `bi_fits` and `bi_wrap` are where a value meets a width. Every
+// operation builds a new value in the given storage.
 package lokec
 
+import "core:math"
 import big "core:math/big"
 import "core:mem"
 import "core:strings"
 
 Big_Int :: big.Int
 
-// Checking uses compilation storage; execution supplies its bounded scratch
-// allocator explicitly. Neither mode changes the other's allocation lifetime.
+// The checker's semantic arena, or the evaluator's bounded scratch.
 Value_Storage :: union { ^Compiler, mem.Allocator }
 @(private = "file")
 arena :: proc(c: Value_Storage) -> mem.Allocator {
@@ -36,8 +28,7 @@ bi_zero :: proc(c: Value_Storage) -> Big_Int {
 	return bi_from_i64(c, 0)
 }
 
-// Publish an evaluator result without retaining its scratch digit buffer (or
-// the allocator pointer stored in that buffer).
+// Copies a value out of evaluator scratch.
 bi_clone :: proc(storage: Value_Storage, value: Big_Int) -> Big_Int {
 	context.allocator = arena(storage)
 	value := value
@@ -60,7 +51,6 @@ bi_from_u64 :: proc(c: Value_Storage, v: u64) -> Big_Int {
 	return r
 }
 
-// `2^power`, the building block of every width boundary below.
 bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 	context.allocator = arena(c)
 	r: Big_Int
@@ -68,43 +58,48 @@ bi_pow2 :: proc(c: Value_Storage, power: int) -> Big_Int {
 	return r
 }
 
-// Decodes an integer literal per grammar.md: decimal, or a `0b`/`0o`/`0x`
-// prefix, with `_` allowed as a separator anywhere but the first character.
-// The prefix letter is lower case, as grammar.md writes it; the digits of a hex
-// literal are not.
-//
-// Unlike M0's `parse_int_text` this cannot overflow, so `ok` is false only for
-// text that is not an integer literal at all — which `-define:NAME=VALUE` hands
-// it on purpose, to tell an integer value from a string one.
+// An integer literal as the lexer spells it: decimal or a lower-case `0b`/`0o`/
+// `0x` prefix, `_` separators after the first character. `-define` also passes
+// a leading `-`, and reads `ok == false` as "this value is a string".
 bi_parse_int_literal :: proc(c: Value_Storage, text: string) -> (value: Big_Int, ok: bool) {
 	context.allocator = arena(c)
-	radix := i8(10)
-	digits := text
-	if len(text) > 2 && text[0] == '0' {
-		switch text[1] {
-		case 'b':
-			radix, digits = 2, text[2:]
-		case 'o':
-			radix, digits = 8, text[2:]
-		case 'x':
-			radix, digits = 16, text[2:]
+	negative := strings.has_prefix(text, "-")
+	literal := negative ? text[1:] : text
+	if literal == "" || literal[0] == '_' {
+		return bi_zero(c), false
+	}
+	radix := 10
+	digits := literal
+	if len(literal) > 2 && literal[0] == '0' {
+		switch literal[1] {
+		case 'b': radix, digits = 2, literal[2:]
+		case 'o': radix, digits = 8, literal[2:]
+		case 'x': radix, digits = 16, literal[2:]
 		}
 	}
-	if strings.contains(digits, "_") {
-		digits, _ = strings.replace_all(digits, "_", "", arena(c))
-	}
+	digits, _ = strings.remove_all(digits, "_")
 	if digits == "" {
 		return bi_zero(c), false
 	}
+	for ch in digits {
+		digit := 99
+		switch ch {
+		case '0' ..= '9': digit = int(ch - '0')
+		case 'a' ..= 'f': digit = int(ch - 'a') + 10
+		case 'A' ..= 'F': digit = int(ch - 'A') + 10
+		}
+		if digit >= radix {
+			return bi_zero(c), false
+		}
+	}
 	r: Big_Int
-	if err := big.int_atoi(&r, digits, radix); err != nil {
+	if err := big.int_atoi(&r, digits, i8(radix)); err != nil {
 		return bi_zero(c), false
 	}
-	return r, true
+	return negative ? bi_neg(c, r) : r, true
 }
 
 bi_text :: proc(c: Value_Storage, v: Big_Int) -> string {
-	context.allocator = arena(c)
 	v := v
 	text, err := big.int_itoa_string(&v, 10, false, arena(c))
 	if err != nil {
@@ -177,9 +172,8 @@ bi_and_not :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	return bi_and(c, a, bi_not(c, b))
 }
 
-// Truncated quotient and remainder (design.md "Integer operators": `x = q*y + r`
-// with `|r| < |y|`, `q` truncated towards zero). The caller has already rejected
-// a zero divisor.
+// Truncated quotient and remainder (design.md "Integer operators"). The caller
+// has already rejected a zero divisor.
 bi_quo :: proc(c: Value_Storage, a, b: Big_Int) -> Big_Int {
 	context.allocator = arena(c)
 	a, b := a, b
@@ -204,17 +198,12 @@ bi_shl :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	return r
 }
 
-// Arithmetic right shift: on an untyped value the sign bit is replicated
-// forever, so a huge count settles on 0 or -1 exactly as design.md requires of
-// the typed operators.
+// Arithmetic right shift, so a huge count settles on 0 or -1.
 //
-// core:math/big's own `int_shr_signed` is not used: its negative branch means
-// `sub(dest, dest, 1)` but writes `sub(dest, src, 1)`, so it returns `src - 1`
-// regardless of count. The negative case is derived here instead from the
-// logical shift, via `x >> n == ~(~x >> n)` — `~x` is non-negative exactly when
-// `x` is negative, so the inner shift never sees a sign.
+// core:math/big's `int_shr_signed` returns `src - 1` for any negative input
+// (it writes `sub(dest, src, 1)` for `sub(dest, dest, 1)`), so the negative case
+// uses `x >> n == ~(~x >> n)`, where `~x` is non-negative.
 bi_shr :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
-	context.allocator = arena(c)
 	if bi_sign(a) < 0 {
 		return bi_not(c, bi_shr_logical(c, bi_not(c, a), count))
 	}
@@ -227,6 +216,9 @@ bi_shr_logical :: proc(c: Value_Storage, a: Big_Int, count: int) -> Big_Int {
 	a := a
 	r: Big_Int
 	big.int_shr(&r, &a, count)
+	// core:math/big clamps the source rather than the result, which leaves a
+	// shift below one 60-bit digit with a stale leading zero digit.
+	big.internal_clamp(&r)
 	return r
 }
 
@@ -274,9 +266,7 @@ bi_wrap :: proc(c: Value_Storage, v: Big_Int, bits: int, signed: bool) -> Big_In
 	return low
 }
 
-// Extraction for places that need a machine integer: an array length, a shift
-// count, an enum discriminant. `ok` is false when out of range; the caller has
-// a diagnostic for that.
+// A machine integer, or `ok == false` when out of range.
 bi_to_i64 :: proc(c: Value_Storage, v: Big_Int) -> (value: i64, ok: bool) {
 	if !bi_fits(c, v, 64, true) {
 		return 0, false
@@ -297,20 +287,45 @@ bi_to_u64 :: proc(c: Value_Storage, v: Big_Int) -> (value: u64, ok: bool) {
 	return result, err == nil
 }
 
-bi_to_f64 :: proc(c: Value_Storage, v: Big_Int) -> f64 {
-	context.allocator = arena(c)
-	v := v
-	result, err := big.int_get_float(&v)
-	if err != nil {
-		return 0
+// The nearest float of `bits` width (16, 32, or 64), ties to even, or
+// `ok == false` when it overflows that width. core:math/big's `int_get_float`
+// is not used: it rounds inexactly and returns 0 past the f64 range.
+bi_to_float :: proc(c: Value_Storage, v: Big_Int, bits: u16) -> (result: f64, ok: bool) {
+	// Enough leading bits for one correct rounding, plus a sticky bit below them.
+	keep := 64
+	switch bits {
+	case 16: keep = 11 + 2
+	case 32: keep = 24 + 2
 	}
-	return result
+	negative := bi_sign(v) < 0
+	magnitude := negative ? bi_neg(c, v) : v
+	shift := max(bi_magnitude_bits(c, magnitude) - keep, 0)
+	top := bi_shr(c, magnitude, shift)
+	high, _ := bi_to_u64(c, top)
+	if bi_cmp(c, bi_shl(c, top, shift), magnitude) != 0 {
+		high |= 1
+	}
+	result = round_float(math.ldexp(f64(high), shift), bits)
+	if negative {
+		result = -result
+	}
+	return result, !math.is_inf(result, 0)
 }
 
-// Truncates a finite binary64 value towards zero without squeezing the result
-// through a machine integer first (needed for conversions to i128 and u128).
-// `exact` implements the implicit-constant rule: `1.0` is exactly an integer,
-// `1.5` is not.
+// Orders an integer against a float that is not NaN, exactly.
+bi_cmp_float :: proc(c: Value_Storage, a: Big_Int, y: f64) -> int {
+	if math.is_inf(y, 0) {
+		return y > 0 ? -1 : 1
+	}
+	truncated, exact, _ := bi_from_f64_trunc(c, y)
+	if order := bi_cmp(c, a, truncated); order != 0 || exact {
+		return order
+	}
+	return y > 0 ? -1 : 1
+}
+
+// Truncates a finite binary64 value towards zero. `exact` is false when a
+// fraction was dropped: `1.0` is exactly an integer, `1.5` is not.
 bi_from_f64_trunc :: proc(c: Value_Storage, value: f64) -> (result: Big_Int, exact, ok: bool) {
 	pattern := transmute(u64)value
 	exponent_bits := int((pattern >> 52) & 0x7ff)

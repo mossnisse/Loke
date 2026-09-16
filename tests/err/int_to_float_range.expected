@@ -1,0 +1,11 @@
+L0352
+is not representable by `f64`
+@9:11
+
+L0352
+340282366920938463463374607431768211456 is not representable by `f32`
+@10:11
+
+L0352
+65520 is not representable by `f16`
+@11:11

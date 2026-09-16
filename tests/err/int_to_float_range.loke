@@ -1,0 +1,13 @@
+package main;
+
+// An integer constant past a float type's range is an error, not a silent 0 or
+// infinity.
+
+BIG :: 1 << 1100;
+
+main :: proc() {
+	a: f64 = BIG;
+	b: f32 = 1 << 128;
+	c: f16 = 65520;
+	_ = a; _ = b; _ = c;
+}

@@ -2957,7 +2957,8 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			return value, true
 		}
 		if value.kind == .Integer || value.kind == .Rune {
-			return float_const(bi_to_f64(storage, value.integer), 64), true
+			converted, fits := bi_to_float(storage, value.integer, 64)
+			return fits ? float_const(converted, 64) : value, fits
 		}
 	case .Untyped_Bool:
 		if value.kind == .Boolean {
@@ -3034,7 +3035,8 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			}
 			return float_const(value.float, info.bits), true
 		case .Integer, .Rune:
-			return float_const(bi_to_f64(storage, value.integer), info.bits), true
+			converted, fits := bi_to_float(storage, value.integer, info.bits)
+			return fits ? float_const(converted, info.bits) : value, fits
 		}
 	case .Typeid:
 		// `typeid` is a runtime scalar, but its reserved zero value is still written

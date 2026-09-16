@@ -152,14 +152,28 @@ fold_comparison :: proc(c: ^Compiler, op: Token_Kind, a, b: Const_Value, allocat
 		}
 		// Byte order, which is what `<` on a compile-time string means.
 		order = strings.compare(a.text, b.text)
-	case a.kind == .Float || b.kind == .Float:
-		x := a.kind == .Float ? a.float : bi_to_f64(storage, a.integer)
-		y := b.kind == .Float ? b.float : bi_to_f64(storage, b.integer)
+	case a.kind == .Float && b.kind == .Float:
 		// NaN compares false against everything, including itself.
-		if x != x || y != y {
+		if a.float != a.float || b.float != b.float {
 			return op == .Not_Eq, true
 		}
-		order = x < y ? -1 : (x > y ? 1 : 0)
+		order = a.float < b.float ? -1 : (a.float > b.float ? 1 : 0)
+	case a.kind == .Float || b.kind == .Float:
+		// An integer against a float, exactly rather than through a rounding.
+		float, integer := a, b
+		if b.kind == .Float {
+			float, integer = b, a
+		}
+		if integer.kind != .Integer && integer.kind != .Rune {
+			return false, false
+		}
+		if float.float != float.float {
+			return op == .Not_Eq, true
+		}
+		order = bi_cmp_float(storage, integer.integer, float.float)
+		if a.kind == .Float {
+			order = -order
+		}
 	case a.kind == .Integer || a.kind == .Rune:
 		if b.kind != .Integer && b.kind != .Rune {
 			return false, false

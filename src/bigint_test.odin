@@ -106,6 +106,51 @@ bigint_bitwise_and_shifts :: proc(t: ^testing.T) {
 	wide := bi_shl(&c, bi_from_i64(&c, 1), 200)
 	testing.expect(t, bi_magnitude_bits(&c, wide) == 201, "1 << 200 has 201 magnitude bits")
 	testing.expect(t, bi_eq_i64(&c, bi_shr(&c, wide, 200), 1), "(1 << 200) >> 200 == 1")
+
+	// A shift under one 60-bit digit still drops the emptied top digit.
+	shifted := bi_shr(&c, bi_pow2(&c, 120), 10)
+	testing.expectf(t, bi_cmp(&c, shifted, bi_pow2(&c, 110)) == 0, "(1 << 120) >> 10 == %s", text(&c, shifted))
+	testing.expect(t, bi_magnitude_bits(&c, shifted) == 111, "(1 << 120) >> 10 has 111 magnitude bits")
+}
+
+@(test)
+bigint_to_float_rounds_once :: proc(t: ^testing.T) {
+	c: Compiler
+	defer destroy_compilation(&c)
+
+	two := proc(c: ^Compiler, power: int, plus: i64) -> Big_Int {
+		return bi_add(c, bi_pow2(c, power), bi_from_i64(c, plus))
+	}
+	cases := []struct{value: Big_Int, bits: u16, want: f64, ok: bool} {
+		{two(&c, 53, 1), 64, 9007199254740992.0, true},
+		{two(&c, 53, 3), 64, 9007199254740996.0, true},
+		{bi_neg(&c, two(&c, 53, 3)), 64, -9007199254740996.0, true},
+		// Bits past the first 64 still round up.
+		{bi_add(&c, two(&c, 120, 1), bi_pow2(&c, 67)), 64, 0h47700000_00000001, true},
+		{bi_sub(&c, bi_pow2(&c, 1024), bi_pow2(&c, 971)), 64, 0h7FEF_FFFF_FFFF_FFFF, true},
+		{bi_sub(&c, bi_pow2(&c, 1024), bi_pow2(&c, 970)), 64, 0, false},
+		{bi_pow2(&c, 1100), 64, 0, false},
+		{bi_from_i64(&c, 16777217), 32, 16777216.0, true},
+		{bi_from_i64(&c, 16777219), 32, 16777220.0, true},
+		{bi_pow2(&c, 128), 32, 0, false},
+		{bi_from_i64(&c, 2049), 16, 2048.0, true},
+		{bi_from_i64(&c, 65519), 16, 65504.0, true},
+		{bi_from_i64(&c, 65520), 16, 0, false},
+	}
+	for k, index in cases {
+		value, ok := bi_to_float(&c, k.value, k.bits)
+		testing.expectf(t, ok == k.ok, "case %d: fits %v, expected %v", index, ok, k.ok)
+		if k.ok {
+			testing.expectf(t, value == k.want, "case %d: %v, expected %v", index, value, k.want)
+		}
+	}
+
+	testing.expect(t, bi_cmp_float(&c, two(&c, 53, 1), 9007199254740992.0) == 1, "2^53 + 1 > 2^53 exactly")
+	testing.expect(t, bi_cmp_float(&c, bi_from_i64(&c, -3), -2.5) == -1, "-3 < -2.5")
+	testing.expect(t, bi_cmp_float(&c, bi_from_i64(&c, -2), -2.5) == 1, "-2 > -2.5")
+	testing.expect(t, bi_cmp_float(&c, bi_from_i64(&c, 5), 5.0) == 0, "5 == 5.0")
+	testing.expect(t, bi_cmp_float(&c, bi_pow2(&c, 1100), 0h7FEF_FFFF_FFFF_FFFF) == 1, "2^1100 > max f64")
+	testing.expect(t, bi_cmp_float(&c, bi_pow2(&c, 1100), 0h7FF0_0000_0000_0000) == -1, "2^1100 < +inf")
 }
 
 // The f16 conversion is the compiler's own because Odin's rounds halfway cases
@@ -157,6 +202,9 @@ bigint_literal_spellings :: proc(t: ^testing.T) {
 		{"0xFF_FF", 65535},
 		{"0b1010", 10},
 		{"0o777", 511},
+		{"1_", 1},
+		{"-5", -5},
+		{"-0x10", -16},
 	}
 	for s in spellings {
 		value, ok := bi_parse_int_literal(&c, s.text)
@@ -166,7 +214,7 @@ bigint_literal_spellings :: proc(t: ^testing.T) {
 
 	// Only what the lexer spells. `-define:NAME=VALUE` reaches here with any
 	// text at all and reads a rejection as "this value is a string".
-	rejected := []string{"0X10", "0B10", "0O10", "12abc", "", "0x"}
+	rejected := []string{"0X10", "0B10", "0O10", "12abc", "", "0x", "0x-5", "_7", "-", "--5", "0b102", "0x_", "+5"}
 	for bad in rejected {
 		_, ok := bi_parse_int_literal(&c, bad)
 		testing.expectf(t, !ok, "`%s` parsed as an integer", bad)

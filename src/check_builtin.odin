@@ -344,7 +344,7 @@ check_config :: proc(k: ^Checker, v: ^Expr_Call) {
 			k.c,
 			v.span,
 			"L0388",
-			"`-define:%s=` gives %s, but this `build_config` defaults to %s",
+			"`-define:%s` gives %s, but this `build_config` defaults to %s",
 			name.name,
 			const_kind_name(override.kind),
 			const_kind_name(fallback.kind),
