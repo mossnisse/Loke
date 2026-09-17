@@ -1,0 +1,41 @@
+package main; import "core:mem";
+
+// Each operand here is evaluated at runtime, so a move inside it counts.
+count :: proc(xs: move [dynamic]int) -> int { return 0; }
+Box :: struct { items: [dynamic]int }
+
+switch_case_value :: proc(i: int) {
+    xs: [dynamic]int = {};
+    switch (i) {
+    case count(move(xs)):
+    case:
+    }
+    xs.append(1);
+}
+
+map_literal_key :: proc() {
+    xs: [dynamic]int = {};
+    m := map[int]int{ count(move(xs)) = 1 };
+    xs.append(1);
+}
+
+free_operand :: proc() {
+    xs: [dynamic]int = {};
+    q := new(int) or_else nil;
+    free(q if count(move(xs)) == 0 else q);
+    xs.append(1);
+}
+
+exchange_field :: proc() {
+    b := Box{ items = {} };
+    c := move(b);
+    old := exchange(inout b.items, {});
+}
+
+via_allocator :: proc() {
+    a := mem.Arena.init();
+    b := move(a);
+    ys: [dynamic]int via a.allocator() = {};
+}
+
+main :: proc() {}

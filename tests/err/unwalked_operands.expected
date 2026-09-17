@@ -1,0 +1,15 @@
+L0500
+@13:5
+`xs` cannot be used here: it has already been moved, dropped, or released
+L0500
+@19:5
+`xs` cannot be used here: it has already been moved, dropped, or released
+L0500
+@26:5
+`xs` cannot be used here: it has already been moved, dropped, or released
+L0500
+@32:27
+`b` cannot be used here: it has already been moved, dropped, or released
+L0500
+@38:26
+`a` cannot be used here: it has already been moved, dropped, or released

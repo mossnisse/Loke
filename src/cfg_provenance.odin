@@ -430,7 +430,11 @@ prov_composite_content :: proc(graph: ^Flow_Graph, v: ^Expr_Composite, content: 
 	steps := make([]Proj_Step, len(v.elements), graph.alloc)
 	known := make([]bool, len(v.elements), graph.alloc)
 	joined: []int
+	is_map := underlying_kind(graph.k.c, value_type) == .Map
 	for element, index in v.elements {
+		if is_map {
+			walk_flow_expr(graph, element.key)
+		}
 		if element.value == nil {
 			continue
 		}

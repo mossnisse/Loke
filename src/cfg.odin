@@ -1,12 +1,8 @@
-// A disposable per-procedure control-flow view: annotated AST, not MIR (a real
-// MIR is deferred past v1). Rebuilt per concrete body instance, so generic
-// specializations never share liveness state.
-//
-// Events are deliberately few. A managed local goes live at a completed
+// A disposable per-procedure control-flow view over the annotated AST, rebuilt
+// per concrete body instance. A managed local goes live at a completed
 // initialization, dies at `move`/`drop`, must be live at a use, and is cleaned
-// up wherever control leaves its declaring scope. Every exit emits the cleanup
-// events of the scopes it passes through, innermost first.
-// Provenance event construction lives in cfg_provenance.odin.
+// up, innermost first, wherever control leaves its scope. Provenance events are
+// built in cfg_provenance.odin.
 package lokec
 
 import "core:mem"
@@ -14,9 +10,8 @@ import "core:slice"
 
 Block_Id :: distinct int
 
-// One walk, three jobs. Only Lifecycle does semantic work; the provenance modes
-// rebuild the same topology read-only, so they can't duplicate diagnostics or
-// disturb settled annotations.
+// One walk, three jobs. Only Lifecycle reports; the provenance modes rebuild the
+// same topology without repeating its diagnostics or annotations.
 Flow_Mode :: enum u8 {
 	Lifecycle,
 	Prov_Summary,
@@ -25,39 +20,36 @@ Flow_Mode :: enum u8 {
 
 Flow_Event_Kind :: enum {
 	Init,
-	// A full assignment: like `Init`, but the destination's state *before* it is
-	// what decides whether the previous value has to be dropped, so the event
-	// carries the node that answer is written back to.
+	// Like `Init`, but the state before it decides whether the old value drops.
 	Assign,
 	Kill,
 	Use,
 	Cleanup,
-	// An allocator-region reset, recorded so the later provenance pass can ask
-	// which owners were definitely dead at it (a dropped owner no longer blocks
-	// a reset — design.md). Calls use their AST node; provider cleanups use a
-	// body-local ordinal since the two passes use separate graphs.
+	// A region reset, where the provenance pass later asks which owners were
+	// dead (design.md: a dropped owner no longer blocks a reset).
 	Reset_Point,
 }
 
 Flow_Event :: struct {
+	kind:          Flow_Event_Kind,
+	slot:          int,
+	span:          Span,
+	name:          string,
+	assign:        ^Stmt_Assign,
+	target:        int,
+	// `Reset_Point`: the resetting call, or the provider cleanup's key.
+	call:          ^Expr_Call,
 	cleanup_reset: Cleanup_Reset_Key,
-	kind:   Flow_Event_Kind,
-	slot:   int,
-	span:   Span,
-	name:   string,
-	assign: ^Stmt_Assign,
-	target: int,
-	// `Reset_Point`: a call, or `cleanup_reset` for a lexical provider exit.
-	call:   ^Expr_Call,
-	// Names the operation attempted, for diagnostics. Not a history: states are
-	// a lattice, so which earlier op consumed the binding isn't tracked.
-	verb:   string,
+	// The attempted operation, for diagnostics.
+	verb:          string,
 }
 
-// Cleanup syntax can be expanded at several exits (including inside defers).
-// Number provider cleanups in walk order, shared by all three graph modes.
+// A provider's cleanup can be expanded at several exits, so each is numbered
+// per symbol in walk order. Both passes number the same symbols' cleanups the
+// same way, whatever other roots only one of them registers.
 Cleanup_Reset_Key :: struct {
-	body: ^Expr_Proc,
+	body:    ^Expr_Proc,
+	symbol:  Symbol_Id,
 	ordinal: int,
 }
 
@@ -70,43 +62,39 @@ Flow_Block :: struct {
 	exit_state:  []Liveness,
 	visited:     bool,
 
-	// Provenance modes. `src/borrow.odin` solves reaching loans forward and
-	// carrier liveness backward over these blocks. Reaching is `slots * loans`
-	// bits, the part that multiplies, so it's packed: one `ceil(loans/8)`-byte
-	// row per slot.
-	prov:          [dynamic]Prov_Event,
-	reach_entry:   []u8,
+	// Provenance modes, solved by `src/borrow.odin`. Reaching loans are packed
+	// one `ceil(loans/8)`-byte row per slot.
+	prov:            [dynamic]Prov_Event,
+	reach_entry:     []u8,
+	reach_exit:      []u8,
 	precision_entry: []Precision_Loss,
-	precision_exit: []Precision_Loss,
-	reach_exit:    []u8,
-	invalid_entry: []bool,
-	invalid_exit:  []bool,
-	live_entry:    []bool,
-	live_exit:     []bool,
-	use_entry:     []Span,
-	use_exit:      []Span,
-	prov_visited:  bool,
+	precision_exit:  []Precision_Loss,
+	invalid_entry:   []bool,
+	invalid_exit:    []bool,
+	live_entry:      []bool,
+	live_exit:       []bool,
+	use_entry:       []Span,
+	use_exit:        []Span,
+	prov_visited:    bool,
 }
 
 Flow_Cleanup_Kind :: enum {
 	Local,
 	Defer,
-	// A provenance root whose storage ends when its scope does.
+	// A provenance root whose storage ends with its scope.
 	Prov_Root,
 }
 
-// One open lexical scope: where its cleanups start in `in_scope`, and how many
-// region-backed owners were in scope when it opened. Only `leave_flow_scope`
-// restores these, so an abrupt exit can emit a scope's cleanups without ending
-// it.
+// Where an open scope's cleanups and region-backed owners start. Only
+// `leave_flow_scope` pops them, so an abrupt exit can run a scope's cleanups
+// without ending it.
 Flow_Scope :: struct {
 	cleanups: int,
 	owners:   int,
 }
 
-// One registration in the unified cleanup order. Locals and defers share one
-// list because a deferred read is valid only when every local it names is
-// still live at the exact point it executes.
+// Locals and defers share one cleanup order: a deferred read is valid only if
+// every local it names is still live where it runs.
 Flow_Cleanup :: struct {
 	kind: Flow_Cleanup_Kind,
 	slot: int,
@@ -115,26 +103,17 @@ Flow_Cleanup :: struct {
 	span: Span,
 }
 
-// One managed local the lifecycle analysis follows. An allocation root is not
-// one: design.md releases `new` storage via `free`/region reset, and root
-// provenance (`src/borrow.odin`) decides whether `free` may have it.
 Tracked_Local :: struct {
-	symbol: Symbol_Id,
-	scope:  int,
-	// A `move` parameter arrives owned, so it is live before the first statement
-	// rather than at a declaration inside the body.
+	symbol:        Symbol_Id,
+	// A `move` parameter arrives owned.
 	live_on_entry: bool,
-	// `x: T = ---` declares storage whose uses go unchecked (design.md "Built-in
-	// values"). The state is still followed, so nothing is dropped for storage a
-	// foreign write filled; only the not-live diagnostic is suppressed.
+	// `x: T = ---`: followed, but a not-live use isn't reported (design.md
+	// "Built-in values").
 	unchecked:     bool,
-	// Whether any path completes an initialization of this local. A local no
-	// path ever writes is dead because it was never initialized, not because
-	// something consumed it, and the diagnostic says so.
+	// Whether any path initializes it, which picks the not-live wording.
 	ever_written:  bool,
-	// Filled while reporting: whether this local ever reaches a cleanup point,
-	// and in which states. `conditional_assign` marks the other place a hidden
-	// flag is needed: an assignment live on one path, dead on another.
+	// Filled while reporting: which states reach a cleanup, and whether an
+	// assignment sees it live on one path and dead on another.
 	seen_cleanup:       bool,
 	live_exit:          bool,
 	dead_exit:          bool,
@@ -142,11 +121,11 @@ Tracked_Local :: struct {
 }
 
 Flow_Graph :: struct {
-	blocks:  [dynamic]^Flow_Block,
-	tracked: [dynamic]Tracked_Local,
+	blocks:    [dynamic]^Flow_Block,
+	tracked:   [dynamic]Tracked_Local,
 	by_symbol: map[Symbol_Id]int,
-	alloc:   mem.Allocator,
-	mode:    Flow_Mode,
+	alloc:     mem.Allocator,
+	mode:      Flow_Mode,
 
 	// Provenance modes only.
 	roots:          [dynamic]Prov_Root,
@@ -156,62 +135,41 @@ Flow_Graph :: struct {
 	entry_defs:     [dynamic]Prov_Entry_Def,
 	root_by_symbol: map[Symbol_Id]Root_Id,
 	slot_by_symbol: map[Symbol_Id]int,
-	// The loan a non-owning binding views: a `&` loop element or a switch
-	// payload over a place. `&binding` names the source's storage, so it
-	// borrows the source rather than the binding's own frame slot.
+	// What a non-owning binding (a `&` loop element, a switch payload over a
+	// place) views, so `&binding` borrows the source.
 	view_loans:     map[Symbol_Id][]int,
-	// One slot per `carrier_shape` path, for a local whose type can hold a
-	// carrier without being one. Ordered by the shape, so values of one type
-	// pair by index.
+	// One slot per `carrier_shape` path of a local that holds carriers.
 	content_by_symbol: map[Symbol_Id][]int,
-	// Which entry of a keyed map shape each constant key uses. A map's key set
-	// isn't part of its type, so the type provides the entries and the body
-	// assigns them first-written-first. Numbering is shared across the body's
-	// maps harmlessly: two maps are two roots whose paths are never compared.
+	// The keyed map-shape entry each constant key uses, first written first.
 	map_key_entries: map[string]int,
 	call_results:   map[^Expr_Call]Prov_Call_Result,
 	allocation_region_sources: [dynamic]Prov_Allocation_Region_Source,
-	// Direct callees whose result summaries this graph reads. Populated only in
-	// summary mode and copied into compilation metadata before the graph dies.
+	// Summary mode: the direct callees whose result summaries this body reads.
 	summary_callees: [dynamic]Symbol_Id,
-	// A value temporary lives until the end of its complete expression
-	// (design.md), extended to the complete statement for a `foreach` iterable,
-	// `switch` subject, or header initial statement. One list per statement.
+	// Temporaries ending with the current statement (design.md).
 	temp_roots:     [dynamic]Root_Id,
-	// design.md "Allocator regions and region provenance". One entry per
-	// allocator binding and per region-backed owner; `owners_in_scope` is what
-	// a reset checks survival against.
+	// design.md "Allocator regions and region provenance".
 	region_of:       map[Symbol_Id]Region_Set,
 	region_content:  map[Symbol_Id][]Prov_Region_Content,
-	// A provider owns its own region but also depends on the parent allocator
-	// until the child is dropped. Kept separate to avoid confusing
-	// `child.allocator()` with the parent region.
+	// The parent allocator a provider depends on until it is dropped.
 	provider_parents: map[Symbol_Id]Region_Set,
 	owners_in_scope: [dynamic]Symbol_Id,
 	param_count:     int,
-	// One bit per local `mem.Arena`/`mem.Scratch` in this body. The list is what
-	// a diagnostic names the region by.
+	// One bit per local `mem.Arena`/`mem.Scratch`.
 	provider_bits:    map[Symbol_Id]u64,
 	provider_symbols: [dynamic]Symbol_Id,
-	// A body may borrow nothing at all and still reset a region or let an owner
-	// escape one, so the region half has its own reason to run the solver.
 	has_region_event: bool,
 	has_content_load: bool,
 
 	k:       ^Checker,
 	literal: ^Expr_Proc,
 	current: Block_Id,
-	// A slot in `tracked` is permanent, naming one declaration's state for the
-	// whole analysis. Scope membership comes and goes separately: a stack of
-	// slots in declaration order, with `scopes` holding one marker per open
-	// scope. Leaving a scope cleans up the slots above its marker, then forgets
-	// them.
-	in_scope: [dynamic]Flow_Cleanup,
-	cleanup_reset_count: int,
-	scopes:   [dynamic]Flow_Scope,
-	// How many loops enclose the statement being walked, so the copy-cost report
-	// can say that a copy runs on every iteration.
-	loop_depth: int,
+	// The cleanups of every open scope, in registration order; `scopes` marks
+	// where each scope starts.
+	in_scope:       [dynamic]Flow_Cleanup,
+	scopes:         [dynamic]Flow_Scope,
+	cleanup_resets: map[Symbol_Id]int,
+	loop_depth:     int,
 	// Where an abrupt exit lands, and how far down `in_scope` it unwinds.
 	break_block:    Block_Id,
 	continue_block: Block_Id,
@@ -221,9 +179,8 @@ Flow_Graph :: struct {
 
 NO_BLOCK :: Block_Id(-1)
 
-// In lifecycle mode, nil when the body has nothing to track (the ordinary
-// case, saving unmanaged procedures a graph). A provenance mode always builds
-// one: design.md's one rule applies even to a body with only trivial locals.
+// Lifecycle mode returns nil for a body with nothing to track; a provenance mode
+// always builds one.
 build_flow_graph :: proc(
 	k: ^Checker,
 	literal: ^Expr_Proc,
@@ -263,12 +220,12 @@ build_flow_graph :: proc(
 	graph.map_key_entries = make(map[string]int, 4, allocator)
 	graph.reborrows = make([dynamic]Prov_Reborrow, allocator)
 	graph.provider_symbols = make([dynamic]Symbol_Id, allocator)
+	graph.cleanup_resets = make(map[Symbol_Id]int, 4, allocator)
 	graph.break_block, graph.continue_block = NO_BLOCK, NO_BLOCK
 	graph.current = new_flow_block(graph)
 
-	// design.md: a `move` parameter transfers ownership to the callee, which
-	// drops it like any owned local. It lives in a scope outside the body's,
-	// making its cleanup the outermost one.
+	// Parameters live in a scope outside the body's, so a `move` parameter's
+	// cleanup is the outermost.
 	enter_flow_scope(graph)
 	if mode == .Lifecycle {
 		track_move_parameters(graph, literal)
@@ -311,12 +268,6 @@ emit :: proc(graph: ^Flow_Graph, event: Flow_Event) {
 		return // unreachable code carries no obligation
 	}
 	append(&graph.blocks[graph.current].events, event)
-}
-
-@(private = "file")
-slot_of :: proc(graph: ^Flow_Graph, symbol: Symbol_Id) -> (int, bool) {
-	index, found := graph.by_symbol[symbol]
-	return index, found
 }
 
 // ------------------------------------------------------------- the walk --
@@ -364,10 +315,6 @@ enter_flow_scope :: proc(graph: ^Flow_Graph) {
 leave_flow_scope :: proc(graph: ^Flow_Graph) {
 	scope := pop(&graph.scopes)
 	emit_cleanups(graph, scope.cleanups)
-	// A local leaving its scope is gone: nothing after may name it, and the
-	// enclosing scope must not clean it up twice. Leaving the scope is the only
-	// thing that ends it — an abrupt exit runs the same cleanups on the way out,
-	// but statements after it stay in this scope, seeing everything it declared.
 	resize(&graph.in_scope, scope.cleanups)
 	resize(&graph.owners_in_scope, scope.owners)
 }
@@ -379,49 +326,40 @@ walk_flow_stmts :: proc(graph: ^Flow_Graph, stmts: []Stmt) {
 	}
 }
 
-// Cleanup events for every scope above `down_to`, innermost first, which is the
-// reverse registration order design.md requires.
+// Cleanup events for every registration above `down_to`, innermost first
+// (design.md).
 @(private = "file")
 emit_cleanups :: proc(graph: ^Flow_Graph, down_to: int) {
 	for index := len(graph.in_scope) - 1; index >= down_to; index -= 1 {
 		action := graph.in_scope[index]
-		if action.kind == .Defer {
-			// Executed at scope exit, not at registration, so reads, moves, drops,
-			// branches, and nested cleanup land at their real dataflow position.
-			// Removed, along with the already-run later registrations, while it
-			// executes: matches runtime stack popping, and stops an already-diagnosed
-			// illegal `return` inside a defer from recursively invoking itself during
-			// error recovery.
-			// The walk appends into this same backing storage, so the entries have to
-			// be saved, not the dynamic-array header.
+		switch action.kind {
+		case .Defer:
+			// Walked where it runs, with itself and the later registrations
+			// popped, as at runtime; that also stops a diagnosed `return` inside it
+			// from expanding itself again. The walk reuses the backing storage, so
+			// the entries are saved, not the header.
 			tail := slice.clone(graph.in_scope[index:], graph.alloc)
 			owners := len(graph.owners_in_scope)
 			resize(&graph.in_scope, index)
 			walk_flow_stmt(graph, action.stmt)
 			resize(&graph.in_scope, index)
 			append(&graph.in_scope, ..tail)
-			// A declaration inside the deferred syntax is not in scope after it,
-			// any more than its cleanup registration above is.
 			resize(&graph.owners_in_scope, owners)
-			continue
-		}
-		if action.kind == .Prov_Root {
-			id := graph.roots[int(action.root)].symbol
-			provider_cleanup_reset(graph, id, action.span)
-			// A borrow may be used only while its root is live (design.md). The
-			// storage ends here, so every loan of it does too.
+		case .Prov_Root:
+			provider_cleanup_reset(graph, graph.roots[int(action.root)].symbol, action.span)
 			prov_emit(graph, Prov_Event{kind = .Root_End, root = action.root, span = action.span})
-			continue
+		case .Local:
+			id := graph.tracked[action.slot].symbol
+			sym := symbol_of(graph.k.c, id)
+			span := sym == nil ? no_span() : sym.span
+			provider_cleanup_reset(graph, id, span)
+			emit(graph, Flow_Event {
+				kind = .Cleanup,
+				slot = action.slot,
+				span = span,
+				name = sym == nil ? "" : identifier_text(graph.k.c, sym.name),
+			})
 		}
-		slot := action.slot
-		sym := symbol_of(graph.k.c, graph.tracked[slot].symbol)
-		provider_cleanup_reset(graph, graph.tracked[slot].symbol, sym == nil ? no_span() : sym.span)
-		emit(graph, Flow_Event {
-			kind = .Cleanup,
-			slot = slot,
-			span = sym == nil ? no_span() : sym.span,
-			name = sym == nil ? "" : identifier_text(graph.k.c, sym.name),
-		})
 	}
 }
 
@@ -431,14 +369,14 @@ provider_cleanup_reset :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 	if sym == nil || !type_is_region_provider(graph.k.c, sym.type) || sym.duration != .None {
 		return
 	}
-	graph.cleanup_reset_count += 1
-	key := Cleanup_Reset_Key{graph.literal, graph.cleanup_reset_count}
+	graph.cleanup_resets[id] += 1
+	key := Cleanup_Reset_Key{graph.literal, id, graph.cleanup_resets[id]}
 	if graph.mode == .Lifecycle {
 		emit(graph, Flow_Event{kind = .Reset_Point, cleanup_reset = key, span = span})
 	} else {
 		dead, found := graph.k.c.cleanup_reset_dead[key]
-		// Unreachable exits have no solved checkpoint. A consumed provider has
-		// no cleanup to execute, so neither case ends a region here.
+		// No key: an unreachable exit, or a view such as a `&` loop element that
+		// owns nothing. A consumed provider has no cleanup to run either.
 		if !found || slice.contains(dead, id) {
 			return
 		}
@@ -446,10 +384,8 @@ provider_cleanup_reset :: proc(graph: ^Flow_Graph, id: Symbol_Id, span: Span) {
 	}
 }
 
-// An ordinary temporary root lives until the end of its complete expression;
-// one in a control-flow header, until that whole statement ends (design.md).
-// So a header's initial statement doesn't release its own temporaries —
-// `extend` keeps them on the enclosing statement's list.
+// Temporaries end with their statement, but a header's initial statement
+// `extend`s them to the whole enclosing statement (design.md).
 @(private = "file")
 walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	mark := len(graph.temp_roots)
@@ -460,10 +396,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 		resize(&graph.temp_roots, mark)
 	}
 	switch s in stmt {
-	case ^Stmt_Error:
-
-	// An `impl` declares members; it runs nothing and holds nothing live.
-	case ^Item_Impl:
+	case ^Stmt_Error, ^Item_Impl:
 
 	case ^Decl:
 		walk_flow_decl(graph, s)
@@ -494,7 +427,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 	case ^Stmt_Return:
 		if graph.mode != .Lifecycle {
 			if value := s.value; value != nil {
-				first := walk_flow_expr(graph, value.expr)
+				sources := walk_flow_expr(graph, value.expr)
 				escaping := prov_escape_region(graph, value.expr)
 				result_type := expr_base(value.expr).type
 				if sym := symbol_of(graph.k.c, graph.literal.symbol); sym != nil {
@@ -502,14 +435,12 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 				}
 				prov_emit(graph, Prov_Event {
 					kind           = .Escape,
-					sources        = first,
+					sources        = sources,
 					span           = expr_span(value.expr),
 					region         = escaping,
 					region_content = prov_result_region_fields(graph, value.expr, result_type),
-					// design.md's `bad_owner`: "ERROR: owner outlives allocator region
-					// `arena`". The region ends with the frame, so no result can carry
-					// it -- and the diagnostic has to name which region that is.
-					name    = prov_region_name(graph, escaping),
+					// The frame's regions end here, so the diagnostic names them.
+					name           = prov_region_name(graph, escaping),
 				})
 			}
 			emit_cleanups(graph, 0)
@@ -517,9 +448,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 			return
 		}
 		if value := s.value; value != nil {
-			// Returning a managed local, temporary, or `move` parameter transfers
-			// that owned value into result storage without cloning (design.md), so
-			// the source is dead afterwards and scope exit must not drop it.
+			// Returning an owned local moves it into the result (design.md).
 			if value.clone_on_return {
 				report_copy_cost(
 					graph.k, .Return, expr_span(value.expr), value.expr,
@@ -528,7 +457,7 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 			}
 			killed := false
 			if ident, is_ident := value.expr.(^Expr_Ident); is_ident && !value.clone_on_return {
-				if slot, tracked := slot_of(graph, ident.symbol); tracked {
+				if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
 					emit(graph, Flow_Event{kind = .Kill, slot = slot, span = ident.span, name = ident.name})
 					killed = true
 				}
@@ -554,7 +483,6 @@ walk_flow_stmt :: proc(graph: ^Flow_Graph, stmt: Stmt, extend := false) {
 		walk_flow_block(graph, s)
 
 	case ^Stmt_When:
-		// The branch the checker selected is the only one that exists.
 		if selected := when_selected_block(s); selected != nil {
 			walk_flow_stmts(graph, selected.stmts)
 		}
@@ -571,11 +499,14 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 		value_loans = make([][]int, len(d.values), graph.alloc)
 	}
 	for value, index in d.values {
-		if value != nil {
-			result := walk_flow_expr(graph, value)
-			if value_loans != nil {
-				value_loans[index] = result
-			}
+		result := walk_flow_expr(graph, value)
+		if value_loans != nil {
+			value_loans[index] = result
+		}
+	}
+	for _, index in d.symbols {
+		if declaration_evaluates_via(graph.k.c, d, index) {
+			walk_flow_expr(graph, d.via)
 		}
 	}
 	if graph.mode != .Lifecycle {
@@ -585,64 +516,63 @@ walk_flow_decl :: proc(graph: ^Flow_Graph, d: ^Decl) {
 	classify_declaration_copies(graph.k, d, graph.loop_depth > 0)
 	for id, symbol_index in d.symbols {
 		sym := symbol_of(graph.k.c, id)
-		if sym == nil || sym.kind != .Var {
+		// Static storage is never dropped automatically (design.md).
+		if sym == nil || sym.kind != .Var || sym.duration != .None {
 			continue
 		}
-		// Static-duration storage is always live after initialization and the
-		// compiler never drops it automatically (design.md), so there is no state
-		// to follow and no scope-exit obligation.
-		if sym.duration != .None {
-			continue
-		}
-		// Every local is followed, because design.md "Variable declarations" makes
-		// definite initialization a property of all of them. Only a managed one
-		// carries a scope-exit obligation.
-		managed := type_is_managed(graph.k.c, sym.type)
-		// Scope exit automatically drops every live managed lexical owner
-		// (design.md). Suppressing that is a property of the value, never of the
-		// declaration — an `unsafe.forget` consumes it, and a consumed local is
-		// dead here like any other.
-		slot, already_tracked := slot_of(graph, id)
+		// Every local is followed for definite initialization; only a managed
+		// one is cleaned up. A deferred declaration keeps one slot across its
+		// expansions but registers a cleanup in each.
+		slot, already_tracked := graph.by_symbol[id]
 		if !already_tracked {
-			append(&graph.tracked, Tracked_Local {
-				symbol = id,
-				scope  = len(graph.scopes),
-			})
+			append(&graph.tracked, Tracked_Local{symbol = id})
 			slot = len(graph.tracked) - 1
 			graph.by_symbol[id] = slot
 		}
-		// A deferred statement's AST is expanded at each distinct exit. Reuse its
-		// declaration's state slot, but register the runtime activation in each
-		// expanded cleanup path.
-		if managed {
+		if type_is_managed(graph.k.c, sym.type) {
 			append(&graph.in_scope, Flow_Cleanup{kind = .Local, slot = slot})
 		}
-		// The implicit action is placed at the declaration point, where
-		// initialization completes (design.md). A declaration with no initializer
-		// completes none: the local starts dead and a later full assignment
-		// initializes it. `x: T = ---` starts dead as well, and only stops the
-		// diagnostic.
+		// Without an initializer, or with `---`, the local starts dead.
 		initializer, written := declared_initializer(d, symbol_index)
 		if written && initializer == nil {
 			graph.tracked[slot].unchecked = true
 		}
-		if !written || initializer == nil {
+		if initializer == nil {
 			continue
 		}
-		event := Flow_Event {
+		emit(graph, Flow_Event {
 			kind = .Init,
 			slot = slot,
 			span = sym.span,
 			name = identifier_text(graph.k.c, sym.name),
-		}
-		emit(graph, event)
+		})
 	}
 }
 
-// The initializer belonging to one binding of a declaration, and whether the
-// declaration wrote one at all. One value spread over several bindings
-// initializes each of them; `written` with a nil expression is the `---`
-// marker (src/ast.odin).
+// Whether the declaration itself evaluates its `via` for one binding, mirroring
+// `emit_local_decl`: an eager binding or a clone into the destination. A
+// non-empty literal evaluates it as part of the literal.
+@(private = "file")
+declaration_evaluates_via :: proc(c: ^Compiler, d: ^Decl, index: int) -> bool {
+	if d.via == nil || d.destructure.active {
+		return false
+	}
+	sym := symbol_of(c, d.symbols[index])
+	if sym == nil || sym.kind != .Var || sym.duration != .None {
+		return false
+	}
+	if index >= len(d.values) || d.values[index] == nil {
+		return type_is_container(c, sym.type)
+	}
+	if index < len(d.value_clones) && d.value_clones[index] {
+		return true
+	}
+	literal, is_literal := d.values[index].(^Expr_Composite)
+	return is_literal && len(literal.elements) == 0 && type_is_container(c, sym.type)
+}
+
+// One binding's initializer, and whether one was written; a written nil is
+// `---`. One value spread over several bindings initializes each.
 @(private = "file")
 declared_initializer :: proc(d: ^Decl, symbol_index: int) -> (initializer: Expr, written: bool) {
 	if len(d.values) == 0 {
@@ -668,6 +598,10 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 		if value_loans != nil {
 			value_loans[index] = result
 		}
+		// A clone allocates through the destination's `via`, evaluated here.
+		if index < len(s.rhs_clones) && s.rhs_clones[index] && index < len(s.lhs) {
+			walk_flow_expr(graph, symbol_via_allocator(graph.k.c, place_root_symbol(graph.k.c, s.lhs[index])))
+		}
 	}
 	if graph.mode != .Lifecycle {
 		prov_assign(graph, s, value_loans)
@@ -675,19 +609,18 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	}
 	classify_assignment_copies(graph.k, s, graph.loop_depth > 0)
 	for target, index in s.lhs {
-		// A full assignment to the variable itself revives it; a write through a
-		// field or element needs the root live, which is an ordinary use.
+		// A full assignment revives the variable; a write through a field or
+		// element is a use of its root.
 		if ident, is_ident := target.(^Expr_Ident); is_ident && s.op == .Assign {
-			if slot, tracked := slot_of(graph, ident.symbol); tracked {
-				event := Flow_Event {
+			if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
+				emit(graph, Flow_Event {
 					kind   = .Assign,
 					slot   = slot,
 					span   = expr_span(target),
 					name   = ident.name,
 					assign = s,
 					target = index,
-				}
-				emit(graph, event)
+				})
 				continue
 			}
 		}
@@ -695,13 +628,9 @@ walk_flow_assign :: proc(graph: ^Flow_Graph, s: ^Stmt_Assign) {
 	}
 }
 
-// design.md: a declaration in an `if`/`for`/`switch` header is scoped to that
-// whole statement — condition, body, and post all see it, nothing after does.
-// `emit_if`/`emit_for`/`emit_switch` already push a scope here, matching where
-// the emitter drops the local.
-//
-// The caller pairs this with `defer leave_flow_scope(graph)`, in the caller's
-// own scope so it closes over the whole statement.
+// A header declaration is scoped to the whole statement (design.md), as in
+// `emit_if`/`emit_for`/`emit_switch`. The caller closes it with
+// `defer leave_flow_scope(graph)`.
 @(private = "file")
 enter_flow_header_scope :: proc(graph: ^Flow_Graph, init: Stmt) {
 	enter_flow_scope(graph)
@@ -740,9 +669,7 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 	head := new_flow_block(graph)
 	link(graph, graph.current, head)
 	graph.current = head
-	if s.cond != nil {
-		walk_flow_expr(graph, s.cond)
-	}
+	walk_flow_expr(graph, s.cond)
 	done := new_flow_block(graph)
 	if s.cond != nil {
 		link(graph, head, done)
@@ -764,11 +691,10 @@ walk_flow_for :: proc(graph: ^Flow_Graph, s: ^Stmt_For) {
 
 @(private = "file")
 walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
-	iterable := s.iterable
-	if foreach_is_place_loop(s) { iterable = mutable_foreach_root(graph.k.c, s) }
+	place_loop := foreach_is_place_loop(s)
+	iterable := place_loop ? mutable_foreach_root(graph.k.c, s) : s.iterable
 	iterated := walk_flow_expr(graph, iterable)
-	// The traversal also borrows container storage, but copying an element
-	// preserves its existing borrows without borrowing the container itself.
+	// A copied element keeps its own borrows without borrowing the container.
 	elements := iterated
 	if graph.mode != .Lifecycle {
 		iterated = prov_iterate(graph, s, iterated)
@@ -777,12 +703,10 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	link(graph, graph.current, head)
 	done := new_flow_block(graph)
 	link(graph, head, done)
-	// design.md lists compiler-known iterators among the borrow carriers: both
-	// conversion to a built-in view and compiler-known iteration preserve the
-	// source root. The read happens once per iteration, so the loan must stay
-	// live through the body, not just at the iterable's write site.
+	// The iteration reads its source every step, so the loan stays live through
+	// the body (design.md).
+	graph.current = head
 	if len(iterated) > 0 {
-		graph.current = head
 		prov_emit(graph, Prov_Event{
 			kind = .Live, sources = iterated, span = expr_span(s.iterable), revives = true,
 		})
@@ -791,15 +715,11 @@ walk_flow_foreach :: proc(graph: ^Flow_Graph, s: ^Stmt_Foreach) {
 	body := new_flow_block(graph)
 	link(graph, head, body)
 	graph.current = body
-	// Each iteration binds the element to what the iteration holds, so a borrow
-	// stored inside an element travels into the binding instead of vanishing.
 	if graph.mode != .Lifecycle {
 		walk_foreach_binding_provenance(graph, s, s.bindings, iterated, elements)
 	}
-	// design.md "By-reference iteration": the loan a `&` binding names ends when
-	// the step does, whatever lowering produced the element -- a pointer taken
-	// from it may not outlive the iteration that yielded it.
-	walk_flow_loop_body(graph, s.body, head, done, s.bindings, foreach_is_place_loop(s))
+	// design.md "By-reference iteration": a `&` binding's loan ends with its step.
+	walk_flow_loop_body(graph, s.body, head, done, s.bindings, place_loop)
 	link(graph, graph.current, head)
 	graph.current = done
 }
@@ -814,20 +734,24 @@ walk_foreach_binding_provenance :: proc(
 			continue
 		}
 		loans := iterated
-		if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 { loans = elements }
+		if !binding.is_ref && s.kind != .Protocol && len(elements) > 0 {
+			loans = elements
+		}
 		prov_bind_value(graph, binding.symbol, loans, expr_span(s.iterable))
-		if s.borrows { prov_bind_view(graph, binding.symbol, iterated) }
+		if s.borrows {
+			prov_bind_view(graph, binding.symbol, iterated)
+		}
 	}
 }
 
 @(private = "file")
 walk_flow_loop_body :: proc(
-	graph: ^Flow_Graph, body: ^Block, head, done: Block_Id,
+	graph: ^Flow_Graph, body: ^Block, next, done: Block_Id,
 	bindings: []Foreach_Binding = nil, all_step_borrows := false,
 ) {
 	outer_break, outer_continue := graph.break_block, graph.continue_block
 	outer_break_depth, outer_continue_depth := graph.break_depth, graph.continue_depth
-	graph.break_block, graph.continue_block = done, head
+	graph.break_block, graph.continue_block = done, next
 	graph.break_depth, graph.continue_depth = len(graph.in_scope), len(graph.in_scope)
 	graph.loop_depth += 1
 	enter_flow_scope(graph)
@@ -857,30 +781,50 @@ add_foreach_ref_cleanups :: proc(graph: ^Flow_Graph, bindings: []Foreach_Binding
 walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 	enter_flow_header_scope(graph, s.init)
 	defer leave_flow_scope(graph)
-	subject: []int
-	if s.subject != nil {
-		subject = walk_flow_expr(graph, s.subject)
-	}
-	// A switch over a place borrows it; one over a temporary consumes it, and
-	// the active payload transfers into the case's own owning binding.
+	subject := walk_flow_expr(graph, s.subject)
+	// A switch over a temporary consumes it into the case binding; one over a
+	// place borrows it.
 	consumes := s.kind != .Value && s.subject != nil &&
 		expr_base(s.subject).type != TYPE_ANY_VIEW &&
 		!expression_is_borrowed_place(graph.k.c, s.subject)
-	entry := graph.current
 	merge := new_flow_block(graph)
-	// A switch that is not exhaustive can fall past every case, so the entry
-	// reaches the merge directly.
-	for c in s.cases {
-		graph.current = new_flow_block(graph)
-		link(graph, entry, graph.current)
+	bodies := make([]Block_Id, len(s.cases), graph.alloc)
+	for _, index in s.cases {
+		bodies[index] = new_flow_block(graph)
+	}
+	if s.kind == .Value {
+		// design.md: value cases are tested in order, each testing all its
+		// values, and the default runs only once every test has failed.
+		fallback := s.exhaustive ? NO_BLOCK : merge
+		for c, index in s.cases {
+			if len(c.values) == 0 {
+				fallback = bodies[index]
+				continue
+			}
+			for value in c.values {
+				walk_flow_expr(graph, value)
+			}
+			link(graph, graph.current, bodies[index])
+			next := new_flow_block(graph)
+			link(graph, graph.current, next)
+			graph.current = next
+		}
+		link(graph, graph.current, fallback)
+	} else {
+		for _, index in s.cases {
+			link(graph, graph.current, bodies[index])
+		}
+		if !s.exhaustive {
+			link(graph, graph.current, merge)
+		}
+	}
+	for c, index in s.cases {
+		graph.current = bodies[index]
 		enter_flow_scope(graph)
-		// A type switch binds one name per case to the subject's value, so what
-		// the union alternative holds is what the binding holds.
 		if graph.mode != .Lifecycle {
 			prov_bind_value(graph, c.binding_symbol, prov_case_payload(graph, s, c, subject), c.span)
 			prov_bind_case_region(graph, c.binding_symbol, s.subject)
-			// A place subject keeps owning its payload, so the binding views the
-			// subject's storage and a pointer taken from it borrows the subject.
+			// A place subject keeps its payload, so the binding views its storage.
 			if !consumes {
 				prov_bind_view(graph, c.binding_symbol, prov_subject_view(graph, s.subject))
 			}
@@ -891,15 +835,10 @@ walk_flow_switch :: proc(graph: ^Flow_Graph, s: ^Stmt_Switch) {
 		leave_flow_scope(graph)
 		link(graph, graph.current, merge)
 	}
-	if !s.exhaustive {
-		link(graph, entry, merge)
-	}
 	graph.current = merge
 }
 
-// A consuming switch hands the active payload to the case's binding, which is
-// an ordinary managed local from there on: tracked, movable, droppable, and
-// dropped exactly once on every exit of its case.
+// A consuming switch's binding is an ordinary managed local of its case.
 @(private = "file")
 track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: bool) {
 	if !consumes || entry.binding_symbol == INVALID_SYMBOL {
@@ -909,12 +848,9 @@ track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: boo
 	if sym == nil || !type_is_managed(graph.k.c, sym.type) {
 		return
 	}
-	slot, already := slot_of(graph, entry.binding_symbol)
+	slot, already := graph.by_symbol[entry.binding_symbol]
 	if !already {
-		append(&graph.tracked, Tracked_Local {
-			symbol = entry.binding_symbol,
-			scope  = len(graph.scopes),
-		})
+		append(&graph.tracked, Tracked_Local{symbol = entry.binding_symbol})
 		slot = len(graph.tracked) - 1
 		graph.by_symbol[entry.binding_symbol] = slot
 	}
@@ -929,18 +865,13 @@ track_case_binding :: proc(graph: ^Flow_Graph, entry: Switch_Case, consumes: boo
 
 // ------------------------------------------------------------ expressions --
 
-// Only the shapes that carry an ownership or provenance event need their own
-// arm; everything else is walked for the uses inside it. The result is the
-// carrier slots holding the loans this expression's value carries, which is
-// empty for every value that borrows nothing.
+// Walks an expression (nil is a no-op) in evaluation order and returns the
+// carrier slots holding the loans its value carries.
 @(private)
 walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	prov := graph.mode != .Lifecycle
+	// design.md "any_view type": an erased view borrows the place it came from.
 	if prov {
-		// design.md "any_view type": the erased view holds the address of the
-		// concrete value, so it borrows the place it was erased from. M4b settled
-		// the representation; what it could not do without provenance is stop the
-		// subject from being invalidated while the view is still read.
 		if base := expr_base(e); base != nil && base.erased_from != INVALID_TYPE {
 			return prov_erase(graph, e)
 		}
@@ -948,7 +879,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	switch v in e {
 	case ^Expr_Ident:
 		if !prov {
-			if slot, tracked := slot_of(graph, v.symbol); tracked {
+			if slot, tracked := graph.by_symbol[v.symbol]; tracked {
 				emit(graph, Flow_Event{kind = .Use, slot = slot, span = v.span, name = v.name})
 			}
 			return nil
@@ -959,10 +890,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		if prov {
 			return prov_consume(graph, v.value, v.span, "moved")
 		}
-		// One event, not a use followed by a kill: `Kill` already requires the
-		// source to be live, and two events would report one mistake twice.
+		// `Kill` alone: it already requires the source live.
 		if ident, is_ident := v.value.(^Expr_Ident); is_ident {
-			if slot, tracked := slot_of(graph, ident.symbol); tracked {
+			if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
 				emit(graph, Flow_Event{kind = .Kill, slot = slot, span = v.span, name = ident.name, verb = "moved"})
 				return nil
 			}
@@ -977,7 +907,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		if v.op == .And_And || v.op == .Or_Or {
 			entry := graph.current
 			merge := new_flow_block(graph)
-			// One result of the left operand skips the right operand.
 			link(graph, entry, merge)
 			graph.current = new_flow_block(graph)
 			link(graph, entry, graph.current)
@@ -989,8 +918,6 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 		}
 
 	case ^Expr_Unary:
-		// `&place` creates a checked read-only `^T` borrow of the root containing
-		// `place`, and `&mut place` a mutable `^mut T` one (design.md).
 		if prov && v.op == .Amp {
 			return prov_address_of(graph, v)
 		}
@@ -1002,9 +929,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			return prov_load_content(graph, operand_loans, nil, v.type, v.span)
 		}
 		if v.op == .Or_Return {
-			// Either payload may be the one copied out of a place, so the report
-			// names the fallible union rather than guessing a path.
-			if graph.mode == .Lifecycle && v.borrows {
+			// Either payload may be copied out of a place, so the report names
+			// the whole fallible union.
+			if !prov && v.borrows {
 				report_copy_cost(
 					graph.k, .Or_Return, expr_span(v.operand), v.operand,
 					expr_base(v.operand).type, graph.loop_depth > 0,
@@ -1017,7 +944,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			link(graph, entry, failure)
 			graph.current = failure
 			proc_symbol := symbol_of(graph.k.c, graph.literal.symbol)
-			if graph.mode != .Lifecycle && proc_symbol != nil && proc_symbol.result != INVALID_TYPE {
+			if prov && proc_symbol != nil && proc_symbol.result != INVALID_TYPE {
 				shape, operand_fallible := fallible_of(graph.k, expr_base(v.operand).type)
 				target, target_fallible := fallible_of(graph.k, proc_symbol.result)
 				if operand_fallible && target_fallible {
@@ -1047,10 +974,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			}
 			emit_cleanups(graph, 0)
 			graph.current = resume
-			// design.md "or_return operator": on success the expression yields the
-			// operand's value with the failure removed, so whatever that value
-			// borrows or allocates travels out with it. Dropping the loans here
-			// would leave `p := new(T) or_return` with unknown provenance.
+			// The success payload carries the operand's loans and regions.
 			return prov_payload_content(
 				graph, operand_loans, expr_base(v.operand).type, v.type, v.span,
 			)
@@ -1061,9 +985,7 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			if root, path, ok := prov_place_of(graph, v); ok {
 				prov_walk_subscripts(graph, v)
 				prov_access(graph, root, path, .Read, v.span)
-				// Reading a field yields what that field holds, and only that.
-				// Checking the access must not add a lasting borrow of the
-				// wrapper on top of it.
+				// The read yields the field's content, with no lasting borrow.
 				return prov_read_content(graph, root, path, v.type, v.span)
 			}
 			if carriers, path, ok := prov_read_through_carrier(graph, v); ok {
@@ -1081,12 +1003,9 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Index:
 		if prov {
-		if root, path, ok := prov_place_of(graph, v); ok {
-			prov_access(graph, root, path, .Read, v.span)
-			prov_walk_subscripts(graph, v)
-			// Reading an element yields what that element holds. The path
-			// already ends in the wildcard that stands for every element, so
-			// this is the same selection a field read does.
+			if root, path, ok := prov_place_of(graph, v); ok {
+				prov_walk_subscripts(graph, v)
+				prov_access(graph, root, path, .Read, v.span)
 				return prov_read_content(graph, root, path, v.type, v.span)
 			}
 			if carriers, path, ok := prov_read_through_carrier(graph, v); ok {
@@ -1113,23 +1032,25 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 			return prov_slice(graph, v)
 		}
 		walk_flow_expr(graph, v.operand)
-		if v.lo != nil {
-			walk_flow_expr(graph, v.lo)
-		}
-		if v.hi != nil {
-			walk_flow_expr(graph, v.hi)
-		}
+		walk_flow_expr(graph, v.lo)
+		walk_flow_expr(graph, v.hi)
 
 	case ^Expr_Composite:
+		// A non-empty container literal evaluates its destination's `via` first.
+		if len(v.elements) > 0 {
+			walk_flow_expr(graph, v.via)
+		}
 		if prov {
 			if content := prov_temp_content(graph, v.type); len(content) > 0 {
 				return prov_composite_content(graph, v, content)
 			}
 		}
+		is_map := underlying_kind(graph.k.c, v.type) == .Map
 		for element in v.elements {
-			if element.value != nil {
-				walk_flow_expr(graph, element.value)
+			if is_map {
+				walk_flow_expr(graph, element.key)
 			}
+			walk_flow_expr(graph, element.value)
 		}
 
 	case ^Expr_Cond:
@@ -1149,17 +1070,13 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 
 	case ^Expr_Or_Else:
 		value_loans := walk_flow_expr(graph, v.value)
-		// design.md "Operator ownership": a place operand leaves the source live
-		// and copies the success payload out of it, so the same refactor that
-		// names a temporary turns a transfer into a clone. Only the payload is
-		// reported — `or_else` leaves a place's failure alone. The `Prov_` modes
-		// rebuild this topology read-only and must not repeat the warning.
-		if graph.mode == .Lifecycle && v.borrows {
+		// design.md "Operator ownership": a place operand's success payload is
+		// copied out, and only that copy is reported.
+		if !prov && v.borrows {
 			report_copy_cost(graph.k, .Or_Else, expr_span(v.value), v.value, v.type, graph.loop_depth > 0)
 		}
 		entry := graph.current
 		merge := new_flow_block(graph)
-		// Success skips the fallback; failure evaluates it.
 		link(graph, entry, merge)
 		graph.current = new_flow_block(graph)
 		link(graph, entry, graph.current)
@@ -1172,9 +1089,8 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	case ^Expr_Checked_Extract:
 		loans := walk_flow_expr(graph, v.operand)
 		if prov {
-			// A union stores its alternatives below a wildcard. An erased view
-			// instead points at the value. Copying either payload preserves its
-			// content, while an all-owning extraction has no carrier shape.
+			// A union keeps its alternatives below a wildcard; an erased view
+			// points at the value.
 			operand_type := expr_base(v.operand).type
 			if type_is_union(graph.k.c, operand_type) {
 				return prov_project_content(graph, loans, operand_type, {proj_wild()}, v.type, v.span)
@@ -1196,38 +1112,39 @@ walk_flow_expr :: proc(graph: ^Flow_Graph, e: Expr) -> []int {
 	return nil
 }
 
-// A trivial aggregate copied into a `value: T` parameter is a copy site, while
-// an ordinary `value: T` parameter that borrows a managed owner is not
-// (design.md). Passing a temporary hands over a value nothing else holds, so
-// only a place duplicates anything.
+// A place copied into a trivial aggregate `value: T` parameter is a copy site; a
+// managed one is borrowed for the call (design.md).
 @(private = "file")
-report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call, consumed: int) {
-	sym := symbol_of(graph.k.c, v.resolution.chosen_overload)
-	if sym == nil {
-		return
-	}
-	info := underlying_info(graph.k.c, sym.proc_type)
+report_argument_copies :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
+	info := underlying_info(graph.k.c, call_proc_type(graph.k.c, v))
 	if info == nil {
 		return
 	}
 	for argument, index in v.bound {
-		if argument == nil || index == consumed || index >= len(info.parameters) {
+		if argument == nil || index >= len(info.parameters) {
 			continue
 		}
 		mode := index < len(info.param_modes) ? info.param_modes[index] : Param_Mode.Value
-		if mode != .Value {
-			continue
-		}
 		type := info.parameters[index]
-		// A managed parameter is a borrow for the duration of the call.
-		if type_is_managed(graph.k.c, type) || !type_is_aggregate(graph.k.c, type) {
+		if mode != .Value || type_is_managed(graph.k.c, type) || !type_is_aggregate(graph.k.c, type) {
 			continue
 		}
-		if !expression_is_borrowed_place(graph.k.c, argument) {
-			continue
+		if expression_is_borrowed_place(graph.k.c, argument) {
+			report_copy_cost(graph.k, .Argument, expr_span(argument), argument, type, graph.loop_depth > 0)
 		}
-		report_copy_cost(graph.k, .Argument, expr_span(argument), argument, type, graph.loop_depth > 0)
 	}
+}
+
+// A lifecycle event on a tracked variable operand, or else an ordinary walk of it.
+@(private = "file")
+walk_flow_operand :: proc(graph: ^Flow_Graph, operand: Expr, kind: Flow_Event_Kind, span: Span, verb: string) {
+	if ident, is_ident := operand.(^Expr_Ident); is_ident {
+		if slot, tracked := graph.by_symbol[ident.symbol]; tracked {
+			emit(graph, Flow_Event{kind = kind, slot = slot, span = span, name = ident.name, verb = verb})
+			return
+		}
+	}
+	walk_flow_expr(graph, operand)
 }
 
 @(private = "file")
@@ -1235,98 +1152,64 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	#partial switch operation in v.operation {
 	case Call_Enum_From_Int:
 		walk_flow_expr(graph, v.bound[0])
-		return nil // integer input and enum payload carry no borrows
+		return nil
 	case Call_Extract:
-		// The same extraction node as the postfix spelling.
 		return walk_flow_expr(graph, operation.node)
 	case Call_Union_Construct:
 		loans: []int
-		if len(v.bound) == 1 { loans = walk_flow_expr(graph, v.bound[0]) }
-		if graph.mode == .Lifecycle { return nil }
-		return prov_variant_content(graph, v, loans)
-	}
-	// design.md "Variable declarations": an unevaluated operand inspects a
-	// declaration or a static type. It reads no storage, creates no borrow, and
-	// does not require a named local to be live, so neither pass walks into it.
-	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
-		#partial switch sym.builtin {
-		case .Size_Of, .Align_Of, .Offset_Of, .Type_Of, .Source_Location:
-			return nil
+		if len(v.bound) == 1 {
+			loans = walk_flow_expr(graph, v.bound[0])
 		}
+		return graph.mode == .Lifecycle ? nil : prov_variant_content(graph, v, loans)
+	}
+	builtin := Builtin_Kind.None
+	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
+		builtin = sym.builtin
+	}
+	#partial switch builtin {
+	// Unevaluated operands read nothing (design.md "Variable declarations").
+	case .Size_Of, .Align_Of, .Offset_Of, .Type_Of, .Source_Location:
+		return nil
 	}
 	if graph.mode != .Lifecycle {
 		return prov_call(graph, v)
 	}
-	// `drop(x)` reads the value, runs its hook, and kills the binding. Its
-	// operand is in `bound` rather than `args` by the time this runs.
-	// `free` ends the allocation root designated by a checked base pointer and
-	// consumes the operand binding (design.md). Step 3 checked the operand's
-	// form; requiring it definitely live is the half that needed this graph.
-	if sym := symbol_of(graph.k.c, v.resolution.symbol); sym != nil && sym.kind == .Builtin {
-		#partial switch sym.builtin {
-		case .Exchange:
-			// `exchange` replaces a definitely live value (design.md). It leaves a
-			// completed live replacement, so the destination survives the operation
-			// and this is a use rather than a kill.
-			if len(v.bound) == 2 {
-				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
-					if slot, tracked := slot_of(graph, ident.symbol); tracked {
-						emit(graph, Flow_Event {
-							kind = .Use,
-							slot = slot,
-							span = v.span,
-							name = ident.name,
-							verb = "exchanged",
-						})
-					}
-				}
-				walk_flow_expr(graph, v.bound[1])
-			}
-			return nil
-		case .Unsafe_Take, .Unsafe_Write:
-			// Neither names a variable (the checker refuses one), so the operands are
-			// ordinary reads of whatever aggregate holds the place.
-			for bound in v.bound {
-				walk_flow_expr(graph, bound)
-			}
-			return nil
-		case .Drop, .Free:
-			// `drop` consumes the binding. `free` ends an allocation root rather
-			// than a value, and provenance (`src/borrow.odin`) already reports a
-			// second release and a surviving alias in the allocation's own terms,
-			// so here it is only a use: the pointer must hold a value to release.
-			if len(v.bound) == 1 {
-				if ident, is_ident := v.bound[0].(^Expr_Ident); is_ident {
-					if slot, tracked := slot_of(graph, ident.symbol); tracked {
-						emit(graph, Flow_Event {
-							kind = sym.builtin == .Free ? .Use : .Kill,
-							slot = slot,
-							span = v.span,
-							name = ident.name,
-							verb = sym.builtin == .Free ? "released" : "dropped",
-						})
-						return nil
-					}
-				}
-			}
-			return nil
+	#partial switch builtin {
+	case .Exchange:
+		// The destination must be live and stays live (design.md).
+		if len(v.bound) == 2 {
+			walk_flow_operand(graph, v.bound[0], .Use, v.span, "exchanged")
+			walk_flow_expr(graph, v.bound[1])
 		}
+		return nil
+	case .Unsafe_Take, .Unsafe_Write:
+		for bound in v.bound {
+			walk_flow_expr(graph, bound)
+		}
+		return nil
+	case .Drop:
+		if len(v.bound) == 1 {
+			walk_flow_operand(graph, v.bound[0], .Kill, v.span, "dropped")
+		}
+		return nil
+	case .Free:
+		// Only a use: provenance reports a double release in the allocation's terms.
+		if len(v.bound) == 1 {
+			walk_flow_operand(graph, v.bound[0], .Use, v.span, "released")
+		}
+		return nil
 	}
-	// A method call's receiver is `bound[0]` *and* the callee selector's operand:
-	// one expression reached two ways. Walk it once, as an argument, so that a
-	// consuming receiver written `move(value).method()` kills its source exactly
-	// once. It needs no exemption from `report_argument_copies` either: a `move`
-	// parameter is not a `.Value` one, and a `move` expression is not a place.
+	// A method receiver is both `bound[0]` and the callee's operand; walk it once,
+	// as an argument, so `move(value).method()` kills its source once.
 	if sym := symbol_of(graph.k.c, v.resolution.chosen_overload); sym == nil || !sym.has_receiver {
 		walk_flow_expr(graph, v.callee)
 	}
-	report_argument_copies(graph, v, -1)
-	// Arguments in evaluation order, so a use after an earlier-evaluated move is seen.
+	report_argument_copies(graph, v)
 	for step in 0 ..< len(v.bound) {
 		index := call_slot_at(v, step)
 		if v.is_variadic && index == v.variadic_slot && !v.variadic_forwards {
 			walk_variadic_pack(graph, v)
-		} else if v.bound[index] != nil {
+		} else {
 			walk_flow_expr(graph, v.bound[index])
 		}
 	}
@@ -1339,8 +1222,8 @@ walk_flow_call :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	return nil
 }
 
-// Every operand of an unforwarded variadic pack, in written order. The pack is
-// compiler-owned stack storage, so its loans are the union of its operands'.
+// An unforwarded variadic pack's operands in written order; the pack holds the
+// union of their loans.
 @(private)
 walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	joined: []int
@@ -1359,9 +1242,8 @@ walk_variadic_pack :: proc(graph: ^Flow_Graph, v: ^Expr_Call) -> []int {
 	return joined
 }
 
-// Whether this call resets an allocator region: `free_all`, or a call handing an
-// argument to an `@(allocator_reset)` parameter. One predicate, so the liveness
-// pass and the provenance pass cannot disagree about which calls are resets.
+// `free_all`, or an argument to an `@(allocator_reset)` parameter; shared by both
+// passes so they agree on which calls reset.
 call_is_reset :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 	if sym := symbol_of(c, v.resolution.symbol); sym != nil && sym.builtin == .Free_All {
 		return true
@@ -1378,9 +1260,7 @@ call_is_reset :: proc(c: ^Compiler, v: ^Expr_Call) -> bool {
 	return false
 }
 
-// Emitted after the arguments, because that is where the reset happens: an
-// argument may itself move an owner out, and the state that matters is the one
-// the reset sees.
+// After the arguments, which may themselves move an owner out.
 @(private = "file")
 note_reset_point :: proc(graph: ^Flow_Graph, v: ^Expr_Call) {
 	if len(graph.tracked) == 0 || !call_is_reset(graph.k.c, v) {

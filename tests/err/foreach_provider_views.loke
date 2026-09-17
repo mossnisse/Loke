@@ -1,0 +1,17 @@
+package main; import "core:mem";
+
+// A `&` element of an arena array owns nothing, so it neither resets a region
+// nor shifts which cleanup the later arena's reset is checked against.
+main :: proc() {
+    arenas: [2]mem.Arena = { mem.Arena.init(), mem.Arena.init() };
+    b := mem.Arena.init();
+    foreach (&a in arenas) { }
+    xs: [dynamic]int = {};
+    {
+        c := mem.Arena.init();
+        ys: [dynamic]int via c.allocator() = {};
+        ys.append(7);
+        xs = move(ys);
+    }
+    xs.append(1);
+}
