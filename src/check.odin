@@ -1,9 +1,6 @@
-// Name resolution and type checking, plus the constant
-// folding that stands in for the compile-time engine until M3.
-//
-// Owns declarations, statements, signatures, and the type syntax that names a
-// type; `check_expr.odin` owns everything that produces a value. Annotations
-// are written back onto the AST nodes — no separate typed tree (decision A1).
+// Name resolution and type checking for declarations, statements, signatures,
+// and type syntax; `check_expr.odin` owns everything that produces a value.
+// Annotations are written back onto the AST nodes (decision A1).
 package lokec
 
 import "core:strings"
@@ -31,32 +28,23 @@ Checker :: struct {
 	// Set while the callee of a call is being checked, so a method selector knows
 	// it is about to be called rather than used as a value.
 	in_callee:  bool,
-	// design.md "Indexing and slicing": in a place position an `operator([])`
-	// overload returning `inout T` is required before ordinary ranking. The flag
-	// is consumed by the node it is set for and never inherited by its operands.
+	// design.md "Indexing and slicing": a place position requires an `inout`
+	// `operator([])`. Consumed by the node it is set for.
 	place_position: bool,
-	// design.md "Maps": the whole-element assignment `m[key] = elem` is the one
-	// index form that creates an entry, so this is set only for the destination
-	// of a plain assignment, and cleared on the way down through a field or
-	// index chain. Every other place position — a compound assignment, an
-	// `inout` argument, `&m[key]` — names a location inside an element that must
-	// already be there.
+	// design.md "Maps": set only for the destination of a plain assignment, the
+	// one position where `m[key]` may create an entry.
 	insert_position: bool,
-	// How many generic instantiations enclose the code being checked. A `where`
-	// clause needs generic parameters in scope, which is either a template being
-	// instantiated or a declaration inside one.
+	// How many generic instantiations enclose the code being checked.
 	generic_depth:  int,
 	// How deep interface requirement checking is, so an interface that composes
 	// itself is a diagnostic rather than a spin.
 	interface_depth: int,
 
-	// The procedure being checked. `proc_literal` also identifies the frame a
-	// name may come from, which is what makes the capture check possible.
+	// The procedure being checked, and so the frame a name may come from.
 	proc_literal:   ^Expr_Proc,
 	// design.md: at most one result. INVALID_TYPE means the procedure has none.
 	result_type:    Type_Id,
-	// Whether the result was declared `inout`: such a result returns a place, so
-	// its `return inout e` needs an addressable operand.
+	// Whether the result was declared `inout`, so `return` must hand out a place.
 	result_inout:   bool,
 
 	// Lexical loop targets for `break` and `continue`, and defer restrictions.
@@ -66,9 +54,7 @@ Checker :: struct {
 	defer_slots:  int,
 }
 
-// What a statement can do to control flow. A single "terminates" boolean cannot
-// answer missing-return, unreachable emission, loop exit, and cleanup routing at
-// once.
+// What a statement can do to control flow.
 Flow_Info :: struct {
 	can_fall_through: bool,
 	returns:          bool,
@@ -89,9 +75,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	if pkg.scope == nil {
 		pkg.scope = new_scope(k.c, build_universe(k.c), .Package)
 	}
-	// Before the package's own declarations are collected, so a source
-	// declaration colliding with a contributed name is an ordinary
-	// redeclaration rather than a silent replacement.
+	// First, so a declaration colliding with a contributed name is a redeclaration.
 	contribute_standard_members(k, pkg)
 	k.pkg = package_id
 	k.lookup_pkg = package_id
@@ -104,9 +88,7 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 			case ^Decl:
 				declare_all(k, v, top_level = true)
 			case ^Item_Foreign_Block:
-				// design.md "Foreign system": a block's members are collected as
-				// ordinary symbols here, so nothing downstream needs a foreign path
-				// for name resolution or overloads.
+				// Foreign members are ordinary symbols (design.md "Foreign system").
 				declare_foreign_block(k, v)
 			}
 		}
@@ -119,30 +101,15 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 			}
 		}
 	}
-	// design.md "Typed fallibility": the three bootstrap declarations enter the
-	// universe as soon as `base:runtime`'s own names exist, which is before any
-	// other package is prepared.
+	// design.md "Typed fallibility": the bootstrap declarations join the universe
+	// once `base:runtime`'s names exist, before any other package is prepared.
 	bind_runtime_bootstrap(k, pkg)
-	// Aliases first: an `impl vendor.Vector2` block names its subject through
-	// one, so the alias has to exist before the block can resolve it.
+	// Before `impl` blocks, which may name their subject as `vendor.Vector2`.
 	bind_import_aliases(k, pkg)
-	// Last, and one block at a time: only those whose subject has stopped
-	// changing shape. Declaring a block resolves its subject, and resolving a
-	// record resolves its fields -- which a `when` branch not selected yet may be
-	// what declares. A signature resolves exactly once
-	// (`resolve_declaration_signature` returns on any `sig_state` but
-	// `.Unchecked`), so doing it early does not merely report early, it freezes a
-	// subject whose fields never resolved. `core:fs` writes that shape: `impl
-	// File`, and `File.handle` has the type its `when (LOKE_OS)` declares.
-	//
-	// The question belongs to the subject's package, not to this one. `impl
-	// vendor.Cell` resolves `Cell` in `vendor`'s scope, so it is `vendor`'s
-	// selection that has to have settled -- and `vendor`'s imports' too, since a
-	// field may be spelled `other.Thing`.
-	//
-	// Nothing is lost by waiting. A block still undeclared once selection has
-	// settled is declared by `resolve_impl_signatures`, which is also what turns
-	// an unresolvable subject from pending into a diagnostic.
+	// Only blocks whose subject's package (and its imports) has no pending `when`:
+	// declaring a block resolves its subject once, and a record's fields may come
+	// from a branch not selected yet, as `core:fs`'s `File.handle` does. Any block
+	// left is declared by `resolve_impl_signatures`.
 	for file in pkg.files {
 		k.file, k.file_node = file.file, file
 		for item in file.active_items {
@@ -154,11 +121,8 @@ prepare_package :: proc(k: ^Checker, package_id: Package_Id) {
 	}
 }
 
-// The package whose scope this `impl` subject is written in, read off the
-// syntax rather than resolved -- resolving is the very thing being gated. An
-// unbound alias answers this package, which costs nothing: the subject will not
-// resolve either, and `declare_impl_block` leaves such a block for a later
-// round.
+// The package whose scope an `impl` subject is written in, read off the syntax
+// because resolving it is what is being gated.
 @(private = "file")
 impl_subject_package :: proc(k: ^Checker, item: ^Item_Impl) -> Package_Id {
 	subject := item.type
@@ -177,14 +141,10 @@ impl_subject_package :: proc(k: ^Checker, item: ^Item_Impl) -> Package_Id {
 	return sym != nil && sym.kind == .Package_Alias ? sym.pkg : k.pkg
 }
 
-// design.md: an import name is a lexical alias and nothing more. Two names for
-// one package refer to the same declarations and never create a second
-// instance, which is why the alias symbol only carries a `Package_Id`.
+// design.md: an import name is a lexical alias for a `Package_Id`, nothing more.
 @(private = "file")
 bind_import_aliases :: proc(k: ^Checker, pkg: ^Package) {
-	// Only the edges a previous round did not reach. Binding is one-way and the
-	// list only grows, so re-walking the whole of it would re-report a collision
-	// once per discovery round.
+	// Only the edges a previous round did not reach, so a collision reports once.
 	defer pkg.bound_aliases = len(pkg.imports)
 	for index in pkg.bound_aliases ..< len(pkg.imports) {
 		edge := pkg.imports[index]
@@ -220,8 +180,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 	k.pkg = package_id
 	k.lookup_pkg = package_id
 
-	// Phase 2b: resolve fields and callable signatures. Recursive types and
-	// mutually recursive procedures now already have stable identities.
+	// Phase 2b: fields and callable signatures.
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
@@ -236,19 +195,14 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 		}
 	}
 
-	// design.md "Attributes": one validation pass over the settled item view, run
-	// after signatures so a procedure group's symbol kind is known, so an unknown,
-	// misplaced, duplicated, or badly shaped attribute is one exact diagnostic
-	//.
+	// design.md "Attributes": after signatures, so a procedure group's symbol
+	// kind is known.
 	validate_attributes(k, pkg)
 
-	// Every record in this package has its fields now, so a foreign signature
-	// that named one mid-resolution can be answered.
+	// Every record has its fields now.
 	check_deferred_foreign_signatures(k)
 
-	// Phase 2c: a struct or array that contains itself by value has no finite
-	// size, and LLVM cannot be asked to lay one out. Pointer edges break the
-	// cycle, so this runs on the resolved graph and before any emission.
+	// Phase 2c: reject a type that contains itself by value.
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
@@ -258,7 +212,7 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 		}
 	}
 
-	// Phase 3: type checking and constant folding consume the binding IDs.
+	// Phase 3: type checking and constant folding.
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
@@ -268,22 +222,15 @@ check_package_bodies :: proc(k: ^Checker, package_id: Package_Id) {
 			case ^Item_Impl:
 				check_impl_block(k, v)
 			case ^Item_Import, ^Item_Foreign_Import, ^Item_Foreign_Block, ^Item_Error:
-				// Foreign imports carry only a link path; foreign blocks were checked
-				// in phase 2b. Neither has a Loke body to check here.
 			case ^Item_Static_Assert:
-				// Checked in phase 3b, once every declaration in the package has been.
 			case:
 				unsupported_construct(k, item_span(item))
 			}
 		}
 	}
 
-	// Phase 3b: file-scope assertions. They run after every declaration in the
-	// package has been checked, so an assertion is independent of the order of
-	// its file and of the split `impl` blocks it may be talking about. The item
-	// holds the written call and nothing else, so this is the ordinary built-in
-	// reached the ordinary way -- there is no second evaluator, and nothing is
-	// left for emission.
+	// Phase 3b: file-scope assertions, after every declaration, so they do not
+	// depend on declaration order.
 	for file in pkg.files {
 		k.file, k.file_node, k.scope = file.file, file, pkg.scope
 		for item in file.active_items {
@@ -380,13 +327,8 @@ validate_executable :: proc(c: ^Compiler, package_id: Package_Id) {
 	}
 }
 
-// design.md "@(export)": whole-program pass over every settled
-// declaration. An exported symbol emits under its written name (or
-// `@(link_name)`); two claiming the same name is a link-time failure with no
-// source location, so the compiler names both here. An exported procedure needs
-// a foreign calling convention and an ABI-safe signature (the latter already
-// checked by `resolve_declaration_signature`); an exported global needs an
-// ABI-safe type; neither may claim the reserved `loke_rt_` runtime prefix.
+// design.md "@(export)": a whole-program pass, so two declarations exporting
+// one name are reported with locations rather than failing at link time.
 check_exports :: proc(c: ^Compiler) {
 	claimed := make(map[string]Span, 16, context.temp_allocator)
 	for id in package_order(c) {
@@ -430,8 +372,7 @@ check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Span) {
 			errorf(c, sym.span, "L0635", "an exported symbol cannot use the reserved `loke_rt_` runtime prefix: `%s`", name)
 			continue
 		}
-		// A generic `@(export)` is already L0438 from the generic rules; skipping it
-		// here keeps that one diagnostic rather than adding a second.
+		// Already L0438.
 		if sym.generic {
 			continue
 		}
@@ -461,10 +402,8 @@ check_export_decl :: proc(c: ^Compiler, d: ^Decl, claimed: ^map[string]Span) {
 	}
 }
 
-// Creates the symbols for one declaration. Shadowing anything already visible
-// in the enclosing procedure is rejected — the default design.md's open
-// question records. Also called for a foreign block's members
-// (`src/foreign.odin`), so they become ordinary package symbols.
+// Creates the symbols for one declaration, rejecting a shadowed local. Also
+// used for a foreign block's members.
 declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 	if len(d.symbols) > 0 {
 		return // already collected in an earlier phase
@@ -501,9 +440,7 @@ declare_all :: proc(k: ^Checker, d: ^Decl, top_level := false) {
 			decl   = d,
 			pkg    = k.pkg,
 			public = top_level && declaration_is_public(k, d),
-			// design.md: the same instantiation means the same thing in every
-			// caller, so a clone resolves names against the declaration's own
-			// lexical scope, not the scope that asked for it.
+			// An instantiation resolves names in the declaration's own scope.
 			def_scope     = k.scope,
 			def_file      = k.file,
 			def_file_node = k.file_node,
@@ -543,8 +480,7 @@ declaration_is_public :: proc(k: ^Checker, d: ^Decl) -> bool {
 	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
 }
 
-// The same visibility rule declarations use, applied to a struct field: own
-// `@(public)` wins, own `@(private)` opts out, otherwise the file's default.
+// `declaration_is_public`'s rule, for a struct field.
 @(private = "file")
 field_is_public :: proc(k: ^Checker, attributes: []Attribute) -> bool {
 	if has_attribute(attributes, "public") {
@@ -556,10 +492,8 @@ field_is_public :: proc(k: ^Checker, attributes: []Attribute) -> bool {
 	return k.file_node != nil && has_attribute(k.file_node.attributes, "public")
 }
 
-// design.md `@(escape=...)`: the level a parameter is written at, validated
-// where it is written. A parameter that carries no borrow cannot escape, so the
-// attribute on one is a mistake rather than a no-op — the same rule
-// `@(allocator_reset)` has for a non-`Allocator` parameter.
+// design.md `@(escape=...)`: the written level, which only a parameter carrying
+// a borrow may have.
 check_escape_attribute :: proc(
 	k: ^Checker,
 	attributes: []Attribute,
@@ -579,12 +513,8 @@ check_escape_attribute :: proc(
 		)
 		return .Result
 	}
-	// A generic signature is written once for every binding of its parameters,
-	// and a container storing `T` needs the level exactly when `T` carries a
-	// borrow. `Small_Array(string_view, N)` needs it and `Small_Array(int, N)`
-	// does not, so demanding that the one declaration be right for both would
-	// make such a container unwritable. The level is simply vacuous where the
-	// bound type carries nothing.
+	// A generic signature serves bindings with and without borrows, such as
+	// `Small_Array(string_view, N)` and `Small_Array(int, N)`, so it is exempt.
 	if !generic_instance && !borrowing && type != INVALID_TYPE && !type_is_carrier(k.c, type) && !type_carries_borrow(k.c, type).any {
 		errorf(
 			k.c, span, "L0648",
@@ -622,16 +552,8 @@ has_attribute :: proc(attributes: []Attribute, name: string) -> bool {
 
 // ---------------------------------------------------------- signatures --
 
-// The location-dependent part of Checker state: where the code being checked
-// sits, as opposed to what checking it produces. On-demand checking is used by
-// constants, compile-time evaluation, associated members, staged `when`
-// selection, generic instantiation, and interface requirements; every one of
-// those paths must resolve names with the declaration's own scope, file,
-// package, extension visibility, enclosing procedure, and instantiation depth.
-// A new field of that kind belongs here, so that adding it is one edit rather
-// than an audit of those entry points. Outputs stay out: `defer_slots` is
-// counted for the enclosing procedure, and the statement flags are consumed by
-// the node that sets them.
+// Where the code being checked sits. Every on-demand check saves and restores
+// this, so a new field describing location belongs here.
 Checker_Location :: struct {
 	scope:         ^Scope,
 	pkg:           Package_Id,
@@ -639,8 +561,6 @@ Checker_Location :: struct {
 	impl_type:     Type_Id,
 	file:          u32,
 	file_node:     ^File,
-	// The enclosing procedure, and how many instantiations enclose it: a body
-	// checked at an instance is not lexically inside whatever reached it.
 	proc_literal:  ^Expr_Proc,
 	generic_depth: int,
 }
@@ -711,11 +631,8 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL {
 		if declaration_generic_kind(d) != .None {
 			generic_template_for(k, d.symbols[0])
-			// design.md excludes a generic method from `dyn` and from nothing else,
-			// so `value.method($T)` has to be reachable by method syntax. A template
-			// has no resolved parameter types, and the ordinary receiver rule
-			// compares one against the subject — so the receiver is read off the
-			// syntax here, and the instantiation checks the type the usual way.
+			// A generic method is reachable by method syntax, so its receiver is
+			// read off the syntax.
 			mark_template_receiver(k, d)
 			reject_uninstantiated_generic(k, d)
 			return
@@ -758,8 +675,6 @@ resolve_declaration_signature :: proc(k: ^Checker, d: ^Decl) {
 	case ^Type_Distinct:
 		before := k.c.error_count
 		underlying := resolve_type_syntax(k, value.elem)
-		// The identity is fresh but the representation is the underlying type's, so
-		// an underlying type that did not resolve is what is wrong here.
 		if value.elem != nil && underlying == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, value.elem)
 		}
@@ -778,24 +693,14 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	for &field in value.fields {
 		before := k.c.error_count
 		field_type := resolve_type_syntax(k, field.type)
-		// A field whose written type did not resolve is what is wrong with the
-		// record. Say so here; otherwise the declaration is gated as unimplemented,
-		// which names neither the field nor the type.
 		if field.type != nil && field_type == INVALID_TYPE && k.c.error_count == before {
 			report_unresolved_type(k, field.type)
 		}
 		bindings := make([dynamic]Symbol_Id, 0, len(field.names), k.c.semantic_allocator)
-		// design.md "Compile-time reflection": reflection observes only
-		// declarations visible at the reflection site, so a field carries the same
-		// visibility default as any other declaration in its file.
+		// design.md "Compile-time reflection": fields have visibility too.
 		public := field_is_public(k, field.attributes)
 		reject_any_view_position(k, field_type, field.span, "a record field")
 		for name in field.names {
-			// A record's fields share one namespace, the way an enum's members
-			// (L0304) and a union's variants (L0422) do. A repeat is not harmless:
-			// the first field answers `s.x` and `offset_of`, and the second can never
-			// be named or initialised -- a literal setting `x` twice is L0376 -- so it
-			// is a hole nothing can reach.
 			if name.text != "_" && member_named(k.c, members[:], identifier_id_of(k.c, name)) != INVALID_SYMBOL {
 				errorf(k.c, name.span, "L0304", "`%s` is already a field of this record", name.text)
 				append(&bindings, INVALID_SYMBOL)
@@ -817,23 +722,15 @@ resolve_struct_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	}
 	if info := type_of(k.c, type); info != nil {
 		info.fields = members[:]
-		// design.md "Record layout attributes": `@(packed)` removes inter-field
-		// padding and `@(align=N)` raises the whole record's alignment. Both are
-		// read here so the cached layout and the emitter agree.
+		// design.md "Record layout attributes".
 		info.packed = record_is_packed(value)
 		info.written_align = record_written_alignment(k, value)
 	}
 	resolve_uninitialized_fields(k, type, value)
 }
 
-// design.md "Uninitialized capacity": `@(initialized = count)` on a fixed array
-// field says that only its leading `count` elements are values -- the rest is
-// capacity. It is resolved after every field symbol exists, because the name it
-// carries is a sibling that may be declared after it.
-//
-// The promise is the author's: the compiler reads the named field to decide
-// what to copy and what to drop, and nothing verifies that it is accurate. What
-// is checked is the shape, so a typo or a wrong type is not a silent leak.
+// design.md "Uninitialized capacity": `@(initialized = count)` names the sibling
+// `int` field counting a fixed array's live prefix. Only its shape is checked.
 @(private = "file")
 resolve_uninitialized_fields :: proc(k: ^Checker, type: Type_Id, value: ^Type_Record) {
 	info := type_of(k.c, type)
@@ -898,10 +795,8 @@ field_initialized_attribute :: proc(attributes: []Attribute) -> (Attribute, bool
 	return {}, false
 }
 
-// `(name: Type, ...)`. Every field is named and public by grammar, so all that
-// is left is resolving the field types and interning the shape. Interning
-// happens here, during checking, so the type exists before
-// `c.lifecycle_operations_ready` closes contribution (`src/hooks.odin`).
+// `(name: Type, ...)`, interned while checking so the type exists before
+// lifecycle contribution closes (`src/hooks.odin`).
 @(private = "file")
 resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 	specs := make([dynamic]Anon_Record_Field, 0, len(value.fields), context.temp_allocator)
@@ -933,19 +828,15 @@ resolve_anon_record :: proc(k: ^Checker, value: ^Type_Anon_Record) -> Type_Id {
 	return anon_record_type(k.c, specs[:])
 }
 
-// design.md "Destructuring": two or more bindings take a record's directly
-// declared fields, positionally, by the same eligibility rule wherever the form
-// appears (declaration, assignment, `foreach` binding list): exactly as many
-// directly declared fields as bindings, all visible here. Promoted (`using`)
-// fields are not flattened, and `_` does not bypass visibility.
-// Whether this type can be taken apart at all — a non-record on the right of a
-// multi-binding form is an arity error, not a destructuring error, so this
-// separates "the wrong shape" from "a record that does not fit".
+// Whether a multi-binding form takes this type apart; anything else is an
+// arity error instead.
 type_is_destructurable :: proc(c: ^Compiler, type: Type_Id) -> bool {
 	info := underlying_info(c, type)
 	return info != nil && info.kind == .Struct
 }
 
+// design.md "Destructuring": exactly as many directly declared fields as
+// bindings, all visible here. `using` fields are not flattened.
 destructure_fields :: proc(
 	k: ^Checker,
 	record: Type_Id,
@@ -980,10 +871,8 @@ destructure_fields :: proc(
 	return info.fields, true
 }
 
-// The ownership half of the rule. A place stays live, so every retained managed
-// field is cloned out of it; a temporary or `move(...)` transfers instead and
-// clones nothing. A record with its own copy or drop hook is rejected rather
-// than exempted — that hook would run on a value being taken apart.
+// A place is cloned from; a temporary is taken apart, which a custom copy or
+// drop hook forbids.
 @(private = "file")
 plan_destructure :: proc(
 	k: ^Checker,
@@ -1018,10 +907,16 @@ plan_destructure :: proc(
 resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 	backing := TYPE_INT
 	if value.backing != nil {
+		before := k.c.error_count
 		resolved := resolve_type_syntax(k, value.backing)
-		if resolved == INVALID_TYPE || !type_is_integer(k.c, resolved) {
+		switch {
+		case resolved == INVALID_TYPE:
+			if k.c.error_count == before {
+				report_unresolved_type(k, value.backing)
+			}
+		case !type_is_integer(k.c, resolved):
 			errorf(k.c, expr_span(value.backing), "L0380", "an enum's backing type must be an integer type")
-		} else {
+		case:
 			backing = resolved
 		}
 	}
@@ -1040,7 +935,6 @@ resolve_enum_members :: proc(k: ^Checker, type: Type_Id, value: ^Type_Enum) {
 			if check_single_expr(k, field.value, backing) != INVALID_TYPE {
 				folded, evaluated := require_const(k, field.value, "an enum member's value", "L0380")
 				if !evaluated {
-					// `require_const` has already said why.
 				} else if folded.kind != .Integer && folded.kind != .Rune {
 					errorf(k.c, expr_span(field.value), "L0380", "an enum member's value must be a constant integer")
 				} else if !bi_fits(k.c, folded.integer, type_bits(k.c, backing), type_signed(k.c, backing)) {
@@ -1100,10 +994,8 @@ parameter_splits_receiver :: proc(parameter: Parameter, position: int) -> bool {
 		parameter.names[0].name.text == "self"
 }
 
-// Normalize one name from a written parameter group. The caller resolves the
-// group's type and owns bindings, defaults, effects, and diagnostics. An explicit
-// receiver context supplies an omitted receiver type; a split receiver keeps
-// its own value mode even when the rest of the group is inout or variadic.
+// The type and mode of one name in a parameter group, given the group's
+// resolved type and, for a method, the receiver type.
 normalize_signature_parameter :: proc(
 	c: ^Compiler,
 	parameter: Parameter,
@@ -1116,27 +1008,19 @@ normalize_signature_parameter :: proc(
 		split_receiver = parameter_splits_receiver(parameter, position)
 		if parameter.type == nil || split_receiver { type = receiver }
 		if split_receiver { mode = .Value }
-		// design.md "Receiver forms": a plain `self` is an immutable *borrow* of
-		// the caller's value, not a callee-local copy of it, so it gets its own
-		// mode rather than sharing `.Value` with an ordinary parameter. `inout`
-		// and `move` receivers already say what they are. A first parameter that
-		// is not the subject-typed `self` is an ordinary parameter and keeps
-		// `.Value`, which is why both the name and the type are checked here.
+		// design.md "Receiver forms": a plain `self` of the subject type borrows.
 		if mode == .Value && type == receiver && len(parameter.names) > 0 &&
 		   parameter.names[0].name.text == "self" {
 			mode = .Borrow
 		}
 	}
-	// The runtime parameter for `..T` is always the read-only slice `[]T`,
-	// including static interface slots and written procedure types.
+	// `..T` is received as `[]T`.
 	if mode == .Variadic && type != INVALID_TYPE {
 		type = slice_of(c, type, mutable = false)
 	}
 	return
 }
 
-// design.md's variadic form is one trailing parameter: everything after it
-// would be unreachable, and two would make the split ambiguous.
 @(private = "file")
 variadic_position_ok :: proc(k: ^Checker, literal: ^Expr_Proc, position, name_index: int, span: Span) -> bool {
 	last := &literal.signature.params[len(literal.signature.params) - 1]
@@ -1147,14 +1031,11 @@ variadic_position_ok :: proc(k: ^Checker, literal: ^Expr_Proc, position, name_in
 	return true
 }
 
-// A generic `impl` member whose first parameter is written `self` is a method,
-// and method-call syntax has to find it before anything can be instantiated.
-// Only the *shape* is recorded; the instantiated signature still checks that
-// `self` has the subject type, so a `self` of some other type is rejected then
-// rather than silently becoming a receiver here.
+// Marks a generic `impl` member whose first parameter is `self` as a method;
+// its instance checks the receiver's type.
 @(private = "file")
 mark_template_receiver :: proc(k: ^Checker, d: ^Decl) {
-		if k.impl_type == INVALID_TYPE {
+	if k.impl_type == INVALID_TYPE {
 		return
 	}
 	literal := decl_proc(d)
@@ -1171,9 +1052,7 @@ mark_template_receiver :: proc(k: ^Checker, d: ^Decl) {
 	}
 }
 
-// `@(allocator_reset)` only means anything on an `Allocator`. A declaration's
-// signature and a written `proc` type resolve their parameters separately, so
-// both ask here rather than keeping two copies of the rule and its message.
+// `@(allocator_reset)` only means anything on an `Allocator`.
 @(private = "file")
 allocator_reset_ok :: proc(k: ^Checker, marked: bool, type: Type_Id, span: Span) -> bool {
 	if !marked || type_underlying(k.c, type) == TYPE_ALLOCATOR {
@@ -1210,17 +1089,13 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	param_names := make([dynamic]Identifier_Id, 0, 4, context.temp_allocator)
 	defaults := make([dynamic]Expr, 0, 4, k.c.semantic_allocator)
 
-	// design.md "Receiver forms", set below by whichever name is the receiver, so
-	// the rule is decided once rather than re-derived from the syntax afterwards.
 	has_receiver := false
 	receiver_mode := Param_Mode.Value
 	is_foreign := symbol.is_foreign
 	saw_c_vararg := false
 
 	for &parameter, position in literal.signature.params {
-		// design.md "`@(c_vararg)`": the final `..any_view` of a foreign
-		// declaration is a checker-only C variadic, not a real slice parameter, so
-		// it never joins the lowered signature.
+		// design.md "`@(c_vararg)`": checker-only, never a lowered parameter.
 		if has_attribute(parameter.attributes, "c_vararg") {
 			check_c_vararg_param(k, is_foreign, literal, position, parameter)
 			saw_c_vararg = true
@@ -1246,15 +1121,12 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				errorf(k.c, parameter.span, "L0408", "a parameter needs a type; only the receiver `self` may omit one")
 			}
 		}
-		// A parameter may *be* an `any_view`, but never hold one nested inside
-		// another type.
 		if parameter_type != INVALID_TYPE && type_mentions_any_view(k.c, parameter_type, allow_top = true) {
 			reject_any_view_position(k, parameter_type, parameter.span, "stored inside another type")
 		}
 		bindings := make([dynamic]Symbol_Id, 0, len(parameter.names), k.c.semantic_allocator)
 		for parameter_name, name_index in parameter.names {
-			// Use the written names rather than runtime symbols: a generic instance
-			// removes `$` parameters below, but their names still occupy this namespace.
+			// Written names, so a removed `$` parameter still takes its name.
 			name_id := identifier_id_of(k.c, parameter_name.name)
 			if parameter_name.name.text != "_" {
 				if identifier_list_contains(param_names[:], name_id) {
@@ -1266,9 +1138,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 					append(&param_names, name_id)
 				}
 			}
-			// A `$` parameter is a compile-time input: the instantiation consumed
-			// its argument and bound the name as a constant, so the instance's
-			// runtime signature does not carry it.
+			// An instance's `$` parameter is a bound constant, not a runtime one.
 			if parameter_name.is_poly && literal.generic_instance {
 				append(&bindings, INVALID_SYMBOL)
 				continue
@@ -1279,9 +1149,6 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 			// Group defaults and reset effects belong to the typed parameters.
 			default := split_receiver ? nil : parameter.default
 			written_type := split_receiver ? k.impl_type : parameter_type
-			// design.md "`@(allocator_reset)`": a successful call can end every
-			// allocation root within that allocator's region, so the attribute only
-			// makes sense on an `Allocator`.
 			escape := check_escape_attribute(
 				k, parameter.attributes, written_type, parameter.span, in_generic_signature(k, literal),
 				borrowing = mode == .Borrow || mode == .Inout,
@@ -1300,10 +1167,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 				bound.type = name_type
 				bound.index = u32(len(params))
 				bound.mode = mode
-				// A value parameter is immutable addressable storage; an `inout` parameter
-				// is a mutable alias (design.md "Parameter semantics and ABI lowering").
-				// An immutable receiver is a borrow of the caller's storage, and just
-				// as unwritable through `self`.
+				// design.md "Parameter semantics and ABI lowering".
 				bound.immutable = mode == .Value || mode == .Borrow
 				bound.owner_proc = literal
 				bound.allocator_reset = resets
@@ -1353,8 +1217,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 		param_escapes = escapes_list[:],
 		proc_contract = !is_foreign && literal.body != nil && result_needs_contract(k.c, result_type, result_inout) ? symbol_id : INVALID_SYMBOL,
 	)
-	// Parameter/result binding creation may grow the symbol store. Reacquire by
-	// ID rather than retaining a pointer across append.
+	// Creating bindings may have grown the symbol store.
 	symbol = symbol_of(k.c, symbol_id)
 	symbol.params = params[:]
 	symbol.result = result_type
@@ -1363,9 +1226,7 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	symbol.param_defaults = defaults[:]
 	symbol.proc_type = proc_type
 	symbol.signature_error = k.c.error_count > reported
-	// design.md "Receiver forms": three modes and no others, and a first
-	// parameter typed `^T` is deliberately not one of them — it keeps the name
-	// but gets no method-call sugar, because `^T` is not the subject type.
+	// design.md "Receiver forms": a `self: ^T` is not a receiver.
 	symbol.has_receiver = has_receiver
 	symbol.receiver = receiver_mode
 	literal.type = proc_type
@@ -1373,11 +1234,8 @@ resolve_proc_signature :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symb
 	check_param_defaults(k, literal, symbol_id)
 }
 
-// design.md "Default values": a default belongs to the signature, since every
-// call that omits the argument binds it. Checked here rather than with the
-// body, so a caller checked earlier still sees it resolved — notably
-// `caller_location()`, which each call site replaces with a constant for its
-// own span and cannot recognise until the default's call is resolved.
+// design.md "Default values": checked with the signature, so a caller checked
+// before the body still sees them resolved.
 @(private = "file")
 check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol_Id) {
 	written := false
@@ -1394,8 +1252,7 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 		k.scope, k.proc_literal = outer_scope, outer_proc
 		k.result_type, k.result_inout = outer_result, outer_result_inout
 	}
-	// The same context the body is checked in: a default names the procedure it
-	// is written on, and `source_location()` in one reports that procedure.
+	// The body's context, so `source_location()` reports this procedure.
 	k.scope = new_scope(k.c, outer_scope, .Procedure)
 	k.scope.owner_proc = literal
 	k.proc_literal = literal
@@ -1403,18 +1260,14 @@ check_param_defaults :: proc(k: ^Checker, literal: ^Expr_Proc, symbol_id: Symbol
 	k.result_inout = symbol.result_inout
 	for parameter in literal.signature.params {
 		if parameter.default != nil {
-			// design.md "Default values": a default is resolved in the declaration's
-			// lexical scope with only the parameters to its left installed, so a
-			// reference to a later parameter is an unknown name rather than a forward
-			// peek. It may name `self` and nothing else in the body.
+			// Only the parameters to its left are in scope.
 			check_value_expr(k, parameter.default, resolve_type_syntax(k, parameter.type), "pass")
 		}
 		install_symbols(k.scope, k.c, parameter.symbols)
 	}
 }
 
-// A written name's interned id, interning it if the parser left that to the
-// checker. The duplicate checks above need the id before a symbol exists.
+// A written name's interned id.
 identifier_id_of :: proc(c: ^Compiler, name: Name) -> Identifier_Id {
 	return name.id == INVALID_IDENTIFIER ? intern_identifier(c, name.text) : name.id
 }
@@ -1442,12 +1295,7 @@ new_binding_symbol :: proc(k: ^Checker, name: Name, kind: Symbol_Kind) -> Symbol
 }
 
 // design.md "Predeclared names": `true`, `false` and `nil` spell literals, so no
-// name a lookup can reach may be one of them -- a parameter or a loop binding
-// changes what a literal means inside its body exactly as a declaration would. A
-// field or enum member is reached by selector rather than by lookup, so it is
-// not asked about. Every other predeclared name is an operation or a
-// build-provided constant and stays shadowable, which is why the answer is a
-// mark on the symbol rather than a list of names kept here.
+// name a lookup reaches may be one of them.
 reject_reserved_name :: proc(k: ^Checker, name_id: Identifier_Id, span: Span) -> bool {
 	sym := symbol_of(k.c, lookup_symbol(build_universe(k.c), name_id))
 	if sym == nil || !sym.reserved {
@@ -1483,9 +1331,7 @@ check_declaration_size :: proc(k: ^Checker, d: ^Decl) {
 	check_finite_size(k, symbol.type, d.span, &path)
 }
 
-// A layout-independent dependency walk: a value edge into a struct, array, or
-// distinct type continues the path, and a pointer edge ends it. Only the
-// containment cycle matters here — offsets and alignment stay deferred.
+// Walks value edges only, since a pointer breaks a containment cycle.
 check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynamic]Type_Id) -> bool {
 	info := type_of(k.c, type)
 	if info == nil {
@@ -1497,9 +1343,6 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 	case .Cyclic:
 		return false
 	case .Checking:
-		// The repeated type closes the cycle rather than extending it, so it is not
-		// pushed onto the walk's shared path: a sibling's own cycle, found after
-		// this one returns, would otherwise print this cycle's tail as its prefix.
 		errorf(
 			k.c, span, "L0364", "`%s` contains itself by value: %s",
 			type_name(k.c, type), size_cycle_path(k, path[:], type),
@@ -1537,16 +1380,13 @@ check_finite_size :: proc(k: ^Checker, type: Type_Id, span: Span, path: ^[dynami
 			ok = check_finite_size(k, info.element, span, path)
 		}
 	case .Union:
-		// A union holds one variant at a time, but by value: a variant that
-		// contains the union again has no finite size either.
 		for variant in info.variants {
 			if !check_finite_size(k, variant, span, path) {
 				ok = false
 			}
 		}
 	}
-	// The pointer to the info may have been invalidated by types created while
-	// resolving; reacquire it.
+	// Reacquired: the walk may have grown the type store.
 	info = type_of(k.c, type)
 	info.size_state = ok ? .Finite : .Cyclic
 	return ok
@@ -1586,9 +1426,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 
 	case ^Expr_Ident:
 		symbol_id := lookup_symbol(k.scope, identifier_of(k.c, value))
-		// A template names no type on its own. Staying silent here keeps
-		// `resolve_type_syntax` usable as a probe; `report_unresolved_type` says
-		// what is missing at the positions that require a type.
+		// A template names no type on its own.
 		if symbol_is_generic(k, symbol_id) {
 			return INVALID_TYPE
 		}
@@ -1618,8 +1456,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return INVALID_TYPE
 
 	case ^Expr_Selector:
-		// A qualified type name, `pkg.Point`. Anything else selects out of a
-		// value and is not a type, so this stays silent for it.
+		// `pkg.Point`.
 		if ident, is_ident := value.operand.(^Expr_Ident); is_ident {
 			alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
 			if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
@@ -1679,8 +1516,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		if value.denoted_type != INVALID_TYPE {
 			return value.denoted_type
 		}
-		// `[$N]E` inside an instance: the length is a bound generic constant, not
-		// an expression to check.
+		// `[$N]E` inside an instance.
 		if poly, is_poly := value.length.(^Type_Poly); is_poly {
 			count, bound := poly_array_length(k, poly)
 			if !bound {
@@ -1721,13 +1557,10 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return value.denoted_type
 
 	case ^Type_Distinct:
-		// Anonymous distinct syntax is still a fresh identity. A named distinct
-		// declaration receives its shell in phase 2a.
+		// A fresh identity; a named one got its shell in phase 2a.
 		if value.denoted_type == INVALID_TYPE {
 			before := k.c.error_count
 			element := resolve_type_syntax(k, value.elem)
-			// The fresh identity resolves whatever the underlying type does not, so an
-			// underlying type that failed would otherwise travel inside a valid shell.
 			if value.elem != nil && element == INVALID_TYPE && k.c.error_count == before {
 				report_unresolved_type(k, value.elem)
 			}
@@ -1772,25 +1605,16 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		resets := make([dynamic]bool, 0, len(value.params), k.c.semantic_allocator)
 		escapes := make([dynamic]Escape_Level, 0, len(value.params), k.c.semantic_allocator)
 		for parameter, position in value.params {
-			// design.md: the reset effect is part of the written procedure type, so
-			// a value of this type keeps it through an indirect call.
+			// The reset effect is part of the procedure type.
 			marked := has_attribute(parameter.attributes, "allocator_reset")
 			count := max(len(parameter.names), 1)
-			// A written parameter type that did not resolve is what is wrong with the
-			// procedure type. Said once here, ahead of the per-name loop, because the
-			// interned type carries the failure silently otherwise.
 			before := k.c.error_count
 			written := resolve_type_syntax(k, parameter.type)
 			if parameter.type == nil {
-				// A written procedure type has no enclosing `impl` block to type a
-				// receiver from and no declaration to take a default's type from, so
-				// every parameter states its own. Without this the interned type
-				// silently carries `<invalid>`, and the call that fails against it
-				// reports a mismatch against a type nobody wrote.
+				// A procedure type has no receiver to take a type from.
 				name := len(parameter.names) > 0 ? parameter.names[0].name.text : "value"
 				if parameter.default == nil && parameter.mode == .Value {
-					// Nothing but a bare word: it was meant as the type, so name it
-					// rather than telling the author to write the word twice.
+					// A bare word was meant as the type.
 					errorf(
 						k.c, parameter.span, "L0697",
 						"`%s` is a parameter name here, not a type: a procedure type is written `proc(value: %s)`",
@@ -1836,9 +1660,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return value.denoted_type
 
 	case ^Type_Dyn:
-		// `dyn Interface(args...)`: the subject parameter is deliberately omitted,
-		// so this validates the declaration, the non-subject arguments, and dyn
-		// compatibility, and never attempts satisfaction.
+		// `dyn Interface(args...)`, without the subject parameter.
 		if value.denoted_type != INVALID_TYPE {
 			return value.denoted_type
 		}
@@ -1852,9 +1674,7 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return TYPE_TYPE
 
 	case ^Type_Poly:
-		// `$E` in a written type is a binding site during inference and a use
-		// afterwards: inside an instance the name is bound in the instance scope,
-		// so the clone's own syntax resolves to the argument with no rewriting.
+		// Inside an instance, `$E` is bound in the instance scope.
 		name := value.name.id
 		if name == INVALID_IDENTIFIER {
 			name = intern_identifier(k.c, value.name.text)
@@ -1869,14 +1689,10 @@ resolve_type_syntax :: proc(k: ^Checker, syntax: Expr) -> Type_Id {
 		return INVALID_TYPE
 
 	case ^Expr_Call:
-		// design.md "SIMD vectors": `Simd(T, N)` is a predeclared type
-		// constructor, not a generic record, so it is answered before the
-		// template lookup that would find nothing.
+		// Predeclared type constructors: design.md "SIMD vectors" and "Ranges".
 		if simd_callee(k, value.callee) {
 			return resolve_simd_application(k, value)
 		}
-		// design.md "Ranges": `Range(T)` is predeclared the same way, so a range
-		// is spellable wherever a result or field type has to be written.
 		if range_callee(k, value.callee) {
 			return resolve_range_application(k, value)
 		}
@@ -1927,18 +1743,8 @@ resolve_associated_type :: proc(k: ^Checker, value: ^Expr_Selector) -> Type_Id {
 	return denoted
 }
 
-// M1 parses the whole grammar; the checker compiles a subset, and each
-// milestone retired part of the difference. After M7 the difference is empty:
-// every construct is compiled or has its own diagnostic, so no call site below
-// is reachable from source. M8 closed the last of
-// them: `Simd(T, N)` is a real type now rather than a reserved name, so the
-// message names a compiler defect rather than a milestone that will never
-// arrive for it.
-//
-// The calls stay as invariant guards, not deleted: each sits on a dispatch arm
-// whose union or token set is exhaustively handled above it, so reaching one
-// means a parser or resolver invariant broke — better a diagnostic naming the
-// span than falling through unchecked.
+// An invariant guard: every construct is compiled or has its own diagnostic,
+// so reaching this is a compiler defect.
 unsupported_construct :: proc(k: ^Checker, span: Span) {
 	errorf(
 		k.c,
@@ -1948,8 +1754,7 @@ unsupported_construct :: proc(k: ^Checker, span: Span) {
 	)
 }
 
-// One gate per outer semantic unit. A declaration whose type mentions anything
-// deferred reports here once, however many fields or parameters are involved.
+// Whether a type may be used for runtime storage, reported once per declaration.
 gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 	if type == INVALID_TYPE {
 		return false
@@ -1968,21 +1773,16 @@ gate_type :: proc(k: ^Checker, type: Type_Id, span: Span) -> bool {
 		return false
 	}
 	if !type_is_supported(k.c, type) {
-		// Unsupported because a component never resolved is not this diagnostic's
-		// answer: whatever rejected that component already said what is wrong with
-		// it, and "the checker has no rule for it" names neither.
+		// A component that never resolved was already reported.
 		if !type_mentions_invalid(k.c, type) {
 			unsupported_construct(k, span)
 		}
 		return false
 	}
-	// design.md "Maps": the key's coherent `==`/`hash` pair is settled where the
-	// map type is named, so one map reports once rather than once per operation.
+	// design.md "Maps": key policies are settled where the map type is named.
 	if !require_nested_map_key_policies(k, type, span) {
 		return false
 	}
-	// A named region provider gets its constructors and `allocator` here, for the
-	// same reason a container gets its operations where its type is named.
 	if type_is_region_provider(k.c, type) {
 		ensure_provider_members(k, type_underlying(k.c, type))
 	}
@@ -2006,17 +1806,10 @@ resolve_type_name :: proc(k: ^Checker, d: ^Decl) -> Type_Id {
 	return INVALID_TYPE
 }
 
-// Says why a written type did not resolve, once resolution stayed silent about
-// it. `resolve_type_syntax` doubles as a probe — `associated_group` asks it
-// whether a callee names a type at all — so it reports nothing itself; every
-// position that requires a type says so here instead. Otherwise the construct
-// is gated as unimplemented, naming the wrong problem and a milestone that
-// will never actually fix it.
+// Says why a written type did not resolve. `resolve_type_syntax` is also a
+// probe, so it reports nothing itself.
 report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
-	// The parser already said what is wrong with an error node, which is why
-	// `resolve_type_syntax` answers `INVALID_TYPE` for one in silence. Saying
-	// anything further here turns an ordinary syntax mistake into a second
-	// diagnostic calling it a compiler defect.
+	// The parser already reported it.
 	if _, is_error := syntax.(^Expr_Error); is_error {
 		return
 	}
@@ -2032,10 +1825,7 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 		errorf(k.c, ident.span, "L0306", "unknown type `%s`", ident.name)
 		return
 	}
-	// A composed type is unresolved because one of its components is. Recurse
-	// into the failed component, so the answer names it rather than the shape
-	// written around it. `resolve_type_syntax` is the documented probe: it
-	// reports nothing, so asking it twice costs no extra diagnostic.
+	// Name the component that failed rather than the shape around it.
 	component := unresolved_component(k, syntax)
 	if component != nil {
 		report_unresolved_type(k, component)
@@ -2045,9 +1835,7 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 		errorf(k.c, poly.span, "L0437", "`$%s` is not bound here", poly.name.text)
 		return
 	}
-	// `Name(args)` in type position: a generic application whose head named
-	// nothing. The head is what is unknown, so it gets the same answer a bare name
-	// would rather than the compiler-defect guard.
+	// `Name(args)` whose head names nothing.
 	if call, is_call := syntax.(^Expr_Call); is_call {
 		if head, head_is_ident := call.callee.(^Expr_Ident); head_is_ident {
 			errorf(k.c, head.span, "L0306", "unknown type `%s`", head.name)
@@ -2057,9 +1845,7 @@ report_unresolved_type :: proc(k: ^Checker, syntax: Expr) {
 	unsupported_construct(k, expr_span(syntax))
 }
 
-// The written component of a composed type that did not resolve, or nil when
-// the shape itself is what is unaccounted for. An array's length is an
-// expression rather than a type and is diagnosed where it is checked.
+// The component of a composed type that did not resolve, or nil.
 @(private = "file")
 unresolved_component :: proc(k: ^Checker, syntax: Expr) -> Expr {
 	failed :: proc(k: ^Checker, part: Expr) -> bool {
@@ -2092,16 +1878,13 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 		return
 	}
 	if d.check_state == .Checking {
-		errorf(k.c, d.span, "L0324", "constant initialisation cycle")
+		errorf(k.c, d.span, "L0324", "%s initialisation cycle", d.kind == .Const ? "constant" : "global")
 		return
 	}
 	d.check_state = .Checking
 	check_decl_inner(k, d)
 	d.check_state = .Checked
-	// Static-duration locals need module-level storage and constant initialisers.
-	// Settled here rather than inside `check_decl_inner`, which returns from
-	// several places that each still declared the storage; `check_state` makes
-	// this run once.
+	// Here rather than in `check_decl_inner`, which returns from several places.
 	if d.duration != .None && !d.top_level && d.kind == .Var {
 		record_static_local(k, d)
 	}
@@ -2109,8 +1892,7 @@ check_decl :: proc(k: ^Checker, d: ^Decl) {
 
 @(private = "file")
 check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
-	// A template's body belongs to its instances; there is nothing concrete here
-	// to check, and no symbol for the backend to emit.
+	// A template's body is checked in its instances.
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL && symbol_is_generic(k, d.symbols[0]) {
 		return
 	}
@@ -2126,14 +1908,10 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	}
 	if len(d.symbols) == 1 {
 		if symbol := symbol_of(k.c, d.symbols[0]); symbol != nil && symbol.kind == .Type {
-			// An interface declaration is compile-time metadata, so the gate that
-			// keeps one out of runtime storage does not apply to it.
 			if type_is_interface(k.c, symbol.type) {
 				check_interface_declaration(k, d.symbols[0])
 				return
 			}
-			// A nominal type declaration: fields and members are already
-			// resolved, so only the gate remains.
 			gate_type(k, symbol.type, d.span)
 			return
 		}
@@ -2156,28 +1934,20 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	if declared != INVALID_TYPE && !gate_type(k, declared, d.span) {
 		return
 	}
-	// design.md "Allocators": `T via expression` selects the provider this
-	// declaration's value is built with. Settled here, before the initialiser,
-	// because a container literal initialising this destination constructs with
-	// the selected allocator rather than through a default-backed temporary.
+	// design.md "Allocators": before the initialiser, which builds with the
+	// selected provider.
 	if !check_via_policy(k, d, declared) {
 		return
 	}
-	// A local may hold an `any_view`; a global cannot, and no position may hold
-	// one nested inside another type.
 	if declared != INVALID_TYPE && type_mentions_any_view(k.c, declared, allow_top = !d.top_level) {
 		reject_any_view_position(k, declared, d.span, d.top_level ? "a global" : "stored inside another type")
 		return
 	}
-	// `type` and a reflection descriptor are compile-time only: either may name a
-	// constant, never runtime storage.
 	if declared != INVALID_TYPE && type_is_compile_time_only(k.c, declared) && d.kind != .Const {
 		report_compile_time_only(k, declared, d.span)
 		return
 	}
 
-	// The parser reads an expression after `::` or reports L0220 in its place, so
-	// a constant always arrives with a value and this is an invariant guard.
 	if len(d.values) == 0 {
 		if d.kind == .Const {
 			errorf(k.c, d.span, "L0307", "a constant needs an initialiser")
@@ -2187,23 +1957,16 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			errorf(k.c, d.span, "L0306", "this declaration needs a type or an initialiser")
 			return
 		}
-		// design.md "Zero values": only a static-duration declaration with no
-		// initialiser manufactures a zero, before the program runs, so only it
-		// needs the type to have one. A lexical local starts dead and manufactures
-		// nothing. `---` asks for storage without a value and carries `nil` in
-		// `d.values`, so it never arrives here either.
+		// design.md "Zero values": only static storage is zero-initialised.
 		if d.top_level || d.duration != .None {
 			require_type_has_zero(k, declared, d.span, "a declaration with static duration")
 		}
 		assign_symbol_types(k.c, d, declared)
 		return
 	}
-	// `a, b := record;`: one record value filling several names, checked before
-	// arity so the single initialiser is not mistaken for a missing one.
+	// `a, b := record;`
 	if len(d.values) == 1 && len(d.names) > 1 && d.values[0] != nil {
 		check_expr(k, d.values[0])
-		// A non-record initialiser is an ordinary arity error, and keeps the
-		// existing note that says which operation produces the value it wanted.
 		if base := expr_base(d.values[0]); base != nil && type_is_destructurable(k.c, base.type) {
 			if fields, ok := destructure_fields(
 				k, base.type, len(d.names), expr_span(d.values[0]), "L0308", "bound by a destructuring declaration",
@@ -2219,7 +1982,6 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 						symbol.type = field.type
 					}
 				}
-				return
 			}
 			return
 		}
@@ -2244,11 +2006,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 	for value, i in d.values {
 		symbol_id := i < len(d.symbols) ? d.symbols[i] : INVALID_SYMBOL
 
-		// `---` is uninitialised storage, not a zero value, and needs a written
-		// type to have any shape at all. Both branches are invariant guards: the
-		// parser admits `---` only as `x: T = ---` — an inferred `x := ---` is
-		// L0235 and a constant's `::` never reaches it at all — so a nil value
-		// arrives here with a written type and a `.Var` kind.
+		// `---`; the parser already requires `x: T = ---`.
 		if value == nil {
 			if declared == INVALID_TYPE {
 				errorf(k.c, d.span, "L0381", "`---` needs an explicitly written type")
@@ -2271,16 +2029,11 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 
 		final := declared
 		if declared != INVALID_TYPE {
-			check_value_expr_annotated(k, value, declared)
+			materialize_value_expr(k, value, declared, "initialise")
 		} else if d.kind == .Const && type_is_untyped(k.c, type) {
-			// An untyped constant stays untyped (design.md "Unfixed constants"): it
-			// converts at each use to whatever type can represent it, which is
-			// how `MAX :: 340282366920938463463374607431768211455` can name a
-			// value no default type could hold.
+			// An untyped constant stays untyped (design.md "Unfixed constants").
 			final = type
 		} else {
-			// An inferred declaration materialises its initialiser at the
-			// untyped value's default type.
 			final = default_type(k.c, type)
 			if final == INVALID_TYPE {
 				errorf(k.c, expr_span(value), "L0310", "`nil` has no type to infer here")
@@ -2296,12 +2049,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			}
 		}
 
-		// Every compile-time-required context goes through one funnel, so a
-		// constant initialiser may call a procedure and still get the same
-		// diagnostics as a folded one. The code passed here names the context in
-		// `require_const`'s fallback message, which is reached only by an
-		// evaluation that failed without reporting: every failing path in the
-		// evaluator has its own diagnostic, so these two are unpinned by design.
+		// The codes here are `require_const`'s fallback, unpinned by design.
 		if d.top_level && d.kind == .Var {
 			require_const(k, value, "a file-scope initializer", "L0325")
 		}
@@ -2311,10 +2059,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 			symbol.type = final
 			if d.kind == .Const {
 				folded, evaluated := require_const(k, value, "a constant initialiser", "L0311")
-				// The evaluator may declare symbols of its own - an instantiation, a
-				// synthesised iterator - and `c.symbols` is a dynamic array, so the
-				// pointer taken before the call can be stale after it. Re-fetch it
-				// rather than writing the folded value into freed storage.
+				// Re-fetched: evaluation may have grown the symbol store.
 				if updated := symbol_of(k.c, symbol_id); updated != nil && evaluated {
 					updated.const_value = folded
 					// A type-valued constant is an alias, and names a type.
@@ -2324,29 +2069,7 @@ check_decl_inner :: proc(k: ^Checker, d: ^Decl) {
 				}
 			}
 		}
-		// After the binding's type is settled, which is what decides whether the
-		// local has a nil state at all.
 		note_nil_write_to(k, symbol_id, value)
-	}
-}
-
-// The assignability half of `check_value_expr` for an expression already
-// checked against its destination.
-@(private = "file")
-check_value_expr_annotated :: proc(k: ^Checker, value: Expr, declared: Type_Id) {
-	if !materialize(k, value, declared) {
-		return
-	}
-	final := expr_base(value).type
-	if !assignable(k.c, final, declared) {
-		errorf(
-			k.c,
-			expr_span(value),
-			"L0310",
-			"cannot initialise `%s` with `%s`",
-			type_name(k.c, declared),
-			type_name(k.c, final),
-		)
 	}
 }
 
@@ -2367,18 +2090,12 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 		errorf(k.c, d.span, "L0312", "a procedure declaration binds exactly one name")
 	}
 	signature := literal.signature
-	// A foreign declaration is bodiless by design and is checked by
-	// `check_foreign_block`; reaching here (e.g. a compile-time path forcing the
-	// callee's declaration) must not re-gate it.
+	// Checked by `check_foreign_block`.
 	if len(d.symbols) == 1 && d.symbols[0] != INVALID_SYMBOL {
 		if sym := symbol_of(k.c, d.symbols[0]); sym != nil && sym.is_foreign {
 			return
 		}
 	}
-	// `---` isn't a value or an initializer; it's declaration syntax for a
-	// foreign procedure with no Loke body (design.md). A foreign block's members
-	// returned above, so a bodiless declaration reaching here is outside one — a
-	// permanent error rather than an unfinished milestone.
 	if literal.bodiless {
 		errorf(
 			k.c, literal.span, "L0630",
@@ -2390,9 +2107,7 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 		unsupported_construct(k, literal.span)
 		return
 	}
-	// design.md "where clauses": a bound is a compile-time predicate over an
-	// instantiation, so a declaration with no generic parameters in scope cannot
-	// have one. An instance's own bounds were evaluated when it was created.
+	// design.md "where clauses": only with generic parameters in scope.
 	if len(literal.where_clauses) > 0 && !literal.generic_instance && k.generic_depth == 0 {
 		errorf(
 			k.c,
@@ -2407,14 +2122,11 @@ check_proc :: proc(k: ^Checker, d: ^Decl, literal: ^Expr_Proc) {
 		return
 	}
 	if symbol.bound_excluded {
-		// The bound was evaluated beside the signature and did not hold, so this
-		// method is not part of the instantiation and its body is never checked
-		// against an element type it was never written for.
+		// Its `where` bound excluded it from this instantiation.
 		return
 	}
 	if k.generic_depth > 0 && !literal.generic_instance {
-		// A method of an instantiated block: its bounds close over the block's
-		// arguments, which are bound in the scope this body is checked in.
+		// A method of an instantiated block.
 		if !check_where_clauses(k, literal.where_clauses, literal.span, identifier_text(k.c, symbol.name), true) {
 			return
 		}
@@ -2447,8 +2159,7 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 		k.result_inout = outer_result_inout
 		k.loop_depth, k.in_defer = outer_loop, outer_defer
 	}
-	// A nested literal is checked inside this body, so each body drains only the
-	// uses recorded after its own mark (`nil_uses.odin`).
+	// Only this body's uses, not an enclosing one's (`nil_uses.odin`).
 	nil_mark := len(k.nil_uses)
 	defer report_nil_uses(k, nil_mark)
 
@@ -2469,12 +2180,9 @@ check_proc_body :: proc(k: ^Checker, literal: ^Expr_Proc) {
 	}
 
 	flow := check_block(k, literal.body)
-	// design.md "Managed values and storage": ownership is dataflow over the
-	// finished body, so it runs once every node has its type and every `defer`
-	// has its slot. Implicit drops take the slots that follow.
+	// design.md "Managed values and storage": dataflow over the finished body.
 	analyze_ownership(k, literal)
-	// Root and region provenance need every body's result summary settled, so
-	// this one only joins the queue the post-checking passes walk.
+	// Provenance runs later, once every body's summary is settled.
 	append(&k.c.checked_bodies, Checked_Body{literal = literal, clean = k.c.error_count == errors_before})
 	literal.defer_count = k.defer_slots
 	if symbol.result != INVALID_TYPE && flow.can_fall_through {
@@ -2507,20 +2215,14 @@ check_stmts :: proc(k: ^Checker, stmts: []Stmt) -> Flow_Info {
 		flow.returns ||= result.returns
 		flow.breaks ||= result.breaks
 		flow.continues ||= result.continues
-		// Statements after a terminator are still checked, but they cannot
-		// restore fallthrough.
 		flow.can_fall_through = flow.can_fall_through && result.can_fall_through
 	}
 	report_unread_required_results(k, stmts)
 	return flow
 }
 
-// design.md "@(require_results)": a bare call statement is not the only way a
-// failure goes unobserved — binding one and never looking at it discards it just
-// as quietly. Asked here, after every statement of the sequence is checked, so a
-// binding read by a later statement or a nested block has already said so; and
-// asked over the statements rather than the scope, so the diagnostics come out
-// in source order rather than a map's.
+// design.md "@(require_results)": a required result bound and never read.
+// Asked after the whole sequence is checked, in source order.
 @(private = "file")
 report_unread_required_results :: proc(k: ^Checker, stmts: []Stmt) {
 	for stmt in stmts {
@@ -2533,9 +2235,6 @@ report_unread_required_results :: proc(k: ^Checker, stmts: []Stmt) {
 			if sym == nil || sym.named || sym.kind != .Var {
 				continue
 			}
-			// The same policy a bare call statement answers to: the result type, or
-			// the declaration the initializer called. One binding per initializer, so
-			// a destructuring declaration asks about the whole call once.
 			required := type_requires_results(k.c, sym.type)
 			source := ""
 			if !required && index < len(d.values) {
@@ -2571,9 +2270,8 @@ check_scoped_block :: proc(k: ^Checker, b: ^Block) -> Flow_Info {
 	return check_block(k, b)
 }
 
-// The backend names and emits module functions by walking file-level items, so
-// a procedure declared inside a body has to arrive by the route an anonymous
-// literal takes. Without this it checks and then fails in the emitter.
+// The backend emits only file-level procedures, so a local one is hoisted like
+// a literal.
 @(private = "file")
 hoist_body_local_proc :: proc(k: ^Checker, d: ^Decl) {
 	literal := decl_proc_literal(d)
@@ -2607,11 +2305,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	case ^Decl:
 		declare_all(k, s)
 		install_symbols(k.scope, k.c, s.symbols)
-		// A declaration inside a body is never visited by the package phases that
-		// give a record its nominal identity, resolve a shape or a signature, and
-		// hoist a procedure for emission. They run here instead, in the same order,
-		// so a type or procedure declared in a body is the same kind of thing as
-		// one declared beside the procedure.
+		// The package phases, in the same order, for a local declaration.
 		create_nominal_type_shell(k, s)
 		resolve_declaration_signature(k, s)
 		hoist_body_local_proc(k, s)
@@ -2665,8 +2359,7 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 		return check_when_stmt(k, s)
 
 	case ^Stmt_Foreach:
-		// A `$` binding makes this a compile-time expansion. Runtime iteration
-		// arrives with the iteration protocol in M4b step 4.
+		// A `$` binding makes this a compile-time expansion.
 		for binding in s.bindings {
 			if binding.is_static {
 				return check_static_foreach(k, s)
@@ -2678,10 +2371,8 @@ check_stmt :: proc(k: ^Checker, stmt: Stmt) -> Flow_Info {
 	return FLOWS
 }
 
-// A procedure-scope `when` introduces no scope and has no initialiser: the
-// selected branch's statements behave as if written in its place — including
-// declaring into the surrounding scope and contributing their own flow and
-// defer slots.
+// A procedure-scope `when` introduces no scope: the selected branch behaves as
+// if written in its place.
 @(private = "file")
 check_when_stmt :: proc(k: ^Checker, s: ^Stmt_When) -> Flow_Info {
 	if s.resolved {
@@ -2716,8 +2407,6 @@ expression_statement_has_effect :: proc(e: Expr) -> bool {
 	case ^Expr_Call:
 		return true
 	case ^Expr_Postfix:
-		// design.md "or_return operator": propagating a failure *is* the effect, so
-		// a bare `fallible or_return;` is a statement whatever its operand is.
 		return v.op == .Or_Return
 	}
 	return false
@@ -2762,7 +2451,6 @@ check_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 					check_assign_target(k, target, field.type)
 					note_unknown_nil_write(k, target)
 				}
-				return
 			}
 			return
 		}
@@ -2884,10 +2572,8 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		unsupported_construct(k, s.op_span)
 		return
 	}
-	// SIMD has a built-in operator table, but whether this *operation* is built in
-	// still depends on the right operand. Read its type once before built-in
-	// priority is decided, so a mixed `Simd + User_Type` direct compound overload
-	// remains reachable while a scalar or matching vector keeps the lane-wise path.
+	// Whether a SIMD operation is built in depends on the right operand, so it is
+	// checked first.
 	if type_is_simd(k.c, type) && compound_applies(k.c, op, type) {
 		hint := argument_needs_context(s.rhs[0]) ? type : INVALID_TYPE
 		rhs_type := check_single_expr(k, s.rhs[0], hint)
@@ -2911,8 +2597,6 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 			return
 		}
 	}
-	// A lane-wise operator that does not apply is the mistake, so it is named
-	// before the right operand is asked to splat into a vector it cannot fill.
 	if type_is_simd(k.c, type) && !compound_applies(k.c, op, type) {
 		errorf(
 			k.c, s.op_span, "L0318",
@@ -2920,9 +2604,7 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 		)
 		return
 	}
-	// design.md "SIMD vectors": "a shift's right operand is a vector too, so
-	// `v << 2` splats the count". The scalar rule that a count keeps its own type
-	// has nothing lane-wise to mean, so only a scalar destination uses it.
+	// design.md "SIMD vectors": a vector shift splats its count.
 	if (op == .Shl || op == .Shr) && !type_is_simd(k.c, type) {
 		if !check_shift_count(k, s.rhs[0]) {
 			return
@@ -2942,9 +2624,7 @@ check_compound_assign :: proc(k: ^Checker, s: ^Stmt_Assign) {
 	}
 }
 
-// A compound assignment falls back to the corresponding binary operator plus
-// an ordinary assignment; a direct compound overload can skip the temporary
-// or allocation that implies (design.md).
+// A direct compound overload, or the binary operator plus an assignment.
 @(private = "file")
 check_user_compound :: proc(
 	k: ^Checker, s: ^Stmt_Assign, op: Token_Kind, type: Type_Id,
@@ -2959,8 +2639,6 @@ check_user_compound :: proc(
 	}
 	operands := []Type_Id{type, rhs_type}
 
-	// `compound_operator` above already rejected anything but the eleven compound
-	// kinds, so this is always their `+=`-style spelling, never "".
 	compound := operator_spelling(s.op)
 	direct_args := make([]Arg_Info, 2, k.c.semantic_allocator)
 	direct_args[0] = arg_from_expr(k, s.lhs[0], .Inout)
@@ -2995,7 +2673,7 @@ check_user_compound :: proc(
 		return true
 	}
 	result := symbol_of(k.c, chosen)
-	if result.result == INVALID_TYPE || !assignable(k.c, result.result, type) && result.result != type {
+	if result.result == INVALID_TYPE || !assignable(k.c, result.result, type) {
 		errorf(
 			k.c,
 			s.op_span,
@@ -3023,8 +2701,6 @@ check_assign_target :: proc(k: ^Checker, target: Expr, from: Type_Id, inserts :=
 		ident.value_category = .Invalid
 		return from == INVALID_TYPE ? TYPE_VOID : from
 	}
-	// An assignment destination is a place position, which is what selects an
-	// `inout` indexing overload before ordinary ranking.
 	k.place_position, k.insert_position = true, inserts
 	type := check_single_expr(k, target)
 	k.place_position, k.insert_position = false, false
@@ -3079,9 +2755,6 @@ compound_applies :: proc(c: ^Compiler, op: Token_Kind, type: Type_Id) -> bool {
 	if type_kind(c, type) == .Distinct {
 		return false
 	}
-	// design.md "SIMD vectors": every operator applies lane-wise, and a compound
-	// assignment is that operator plus a write, so it applies exactly where the
-	// lane-wise one does.
 	if info := underlying_info(c, type); info != nil && info.kind == .Simd {
 		return simd_operator_applies(c, op, info.element)
 	}
@@ -3108,8 +2781,6 @@ check_if :: proc(k: ^Checker, s: ^Stmt_If) -> Flow_Info {
 
 	then_flow := check_scoped_block(k, s.then)
 	if s.otherwise == nil {
-		// The condition may be false, so only assignments already live on entry
-		// remain definite after an if without an else.
 		return Flow_Info {
 			can_fall_through = true,
 			returns          = then_flow.returns,
@@ -3157,9 +2828,6 @@ check_for :: proc(k: ^Checker, s: ^Stmt_For) -> Flow_Info {
 		check_stmt(k, s.post)
 	}
 	k.loop_depth -= 1
-	// A conditional loop may execute zero times. A loop that exits through break
-	// likewise has no single body assignment guaranteed on every exit path.
-
 	// `for (;;)` without a `break` never falls out of the loop.
 	infinite := s.cond == nil
 	return Flow_Info {
@@ -3182,13 +2850,10 @@ check_switch :: proc(k: ^Checker, s: ^Stmt_Switch) -> Flow_Info {
 	}
 	subject := check_single_expr(k, s.subject)
 	if subject == INVALID_TYPE {
-		// Nothing is known about this switch, and claiming it falls through would
-		// blame the procedure for a missing return it may well have.
+		// Not falling through, so no missing return is blamed on it.
 		return Flow_Info{}
 	}
-	// design.md "Inspecting a union": a union is inspected by variant name
-	// whatever shape its cases take, so the subject's type, not the cases,
-	// decides that this is a variant switch.
+	// design.md "Inspecting a union": the subject's type decides.
 	if type_is_union(k.c, subject) {
 		adopt_branch_patterns(s)
 		return check_variant_cases(k, s, subject)
@@ -3396,11 +3061,7 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		return terminated
 	}
 	if k.result_type == INVALID_TYPE {
-		// `result_type` holds INVALID_TYPE both for a procedure with no result and
-		// for one whose written result did not resolve, so it cannot tell them
-		// apart on its own. The signature's syntax can: a written result that
-		// failed was already reported where it was written, and calling that
-		// procedure "returns nothing" would blame the body for the signature.
+		// A written result that did not resolve was already reported.
 		if k.proc_literal != nil && k.proc_literal.signature.result != nil {
 			return terminated
 		}
@@ -3413,10 +3074,20 @@ check_return :: proc(k: ^Checker, s: ^Stmt_Return) -> Flow_Info {
 		return terminated
 	}
 	classify_return_value(k, value, k.result_type)
-	// An `inout` result hands back a place, so what is returned must be one.
+	// design.md "`inout` results": an assignable place of exactly the result type.
 	if k.result_inout {
-		if base := expr_base(value.expr); base == nil || !base.addressable {
+		base := expr_base(value.expr)
+		switch {
+		case base == nil || !base.addressable:
 			errorf(k.c, expr_span(value.expr), "L0418", "an `inout` result must return a place")
+		case !base.assignable:
+			report_not_assignable(k, base, "returned as `inout`")
+		case base.type != k.result_type:
+			errorf(
+				k.c, expr_span(value.expr), "L0418",
+				"an `inout` result must return a place of exactly `%s`, found `%s`",
+				type_name(k.c, k.result_type), type_name(k.c, base.type),
+			)
 		}
 	}
 	return terminated

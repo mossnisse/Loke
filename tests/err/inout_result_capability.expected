@@ -1,0 +1,15 @@
+L0358
+@5:58
+a value parameter is immutable and cannot be returned as `inout`
+L0478
+@6:54
+read-only storage and cannot be returned as `inout`
+L0640
+@7:54
+reached through a read-only `^T` and cannot be returned as `inout`
+L0418
+@8:67
+must return a place of exactly `[]int`, found `[]mut int`
+L0306
+@11:11
+unknown type `Nope`

@@ -1,0 +1,13 @@
+package main;
+
+// An `inout` result hands out a writable place of exactly its type.
+Box :: struct { x: int }
+impl Box { get :: proc(self) -> inout int { return inout self.x; } }
+first :: proc(xs: []int) -> inout int { return inout xs[0]; }
+through :: proc(p: ^int) -> inout int { return inout p^; }
+weaker :: proc(xs: inout []mut int) -> inout []int { return inout xs; }
+
+// An unknown backing type is named as unknown.
+E :: enum Nope { A }
+
+main :: proc() {}
