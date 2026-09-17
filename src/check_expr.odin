@@ -5,12 +5,9 @@
 // Expression checking is contextual: an expected type flows down so that an
 // untyped constant, an implicit `.Member`, a typeless composite literal, and
 // `nil` can each take their meaning from where they are used.
-//
-// Every untyped value in M2 is a constant, which is what makes materialisation
-// simple: converting a node to its destination type is folding its constant
-// again at that width, and no untyped value ever reaches the backend.
 package lokec
 
+import "core:math"
 import "core:mem"
 import "core:strconv"
 import "core:strings"
@@ -43,9 +40,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 		check_ident(k, v)
 
 	case ^Expr_Selector:
-		// A place position reaches through a field chain to the index that roots
-		// it, but only the whole-element `m[key] = elem` creates an entry: writing
-		// `m["Dana"].x` names a field of an element that must already be there
+		// `m[key].x = v` reaches the index as a place but never inserts
 		// (design.md "Maps").
 		k.place_position, k.insert_position = place, false
 		check_selector(k, v, expected)
@@ -94,14 +89,11 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	     ^Type_Pointer, ^Type_C_Pointer, ^Type_Slice, ^Type_Dynamic_Array,
 	     ^Type_Array, ^Type_Map, ^Type_Distinct, ^Type_Dyn, ^Type_Type,
 	     ^Type_Poly, ^Type_Proc, ^Type_Record, ^Type_Anon_Record, ^Type_Enum, ^Type_Interface:
-		// A type in expression position denotes a type, which is legal as a
-		// conversion callee and nowhere else in M2. `check_call` reads
-		// `denoted_type` before falling back to this.
+		// A type in expression position, such as a conversion callee.
 		reported := k.c.error_count
 		denoted := resolve_type_syntax(k, e)
 		if k.c.error_count > reported {
-			// Resolution already said what is wrong with this type; the gate
-			// would only add a second diagnostic for the same mistake.
+			// Already reported.
 			base.type = INVALID_TYPE
 		} else if denoted != INVALID_TYPE {
 			base.denoted_type = denoted
@@ -110,9 +102,6 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 			base.is_const = true
 			base.const_value = type_const(denoted)
 		} else {
-			// The same answer a written type position gets: a composed type names the
-			// component that failed, and only a shape nothing accounts for falls
-			// through to the milestone guard inside.
 			report_unresolved_type(k, e)
 			base.type = INVALID_TYPE
 		}
@@ -120,9 +109,7 @@ check_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Ty
 	return base.type
 }
 
-// One value, exactly. design.md: every value-producing expression produces one
-// value, so what is left here is the no-value case — a call to a procedure with
-// no result, used where a value is wanted.
+// One value, exactly: rejects a call to a procedure with no result.
 check_single_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE) -> Type_Id {
 	type := check_expr(k, e, expected)
 	base := expr_base(e)
@@ -136,9 +123,8 @@ check_single_expr :: proc(k: ^Checker, e: Expr, expected: Type_Id = INVALID_TYPE
 	return type
 }
 
-// Checks an expression against a destination type and materialises it there.
-// This is the single seam every assignment, argument, initialiser, and return
-// value goes through.
+// Checks an expression against a destination type and materialises it there:
+// the seam every assignment, argument, initialiser, and return value uses.
 check_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: string) -> bool {
 	type := check_single_expr(k, e, target)
 	if type == INVALID_TYPE || target == INVALID_TYPE {
@@ -147,10 +133,8 @@ check_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: string) ->
 	return materialize_value_expr(k, e, target, what)
 }
 
-// Finishes a value expression that has already been checked. Overload selection
-// sometimes needs its source type before it can decide whether the built-in or
-// user path owns the operation; checking it again would duplicate side effects
-// in the checker and diagnostics.
+// `check_value_expr` for an expression already checked, as overload selection
+// needs; checking it twice would repeat diagnostics.
 materialize_value_expr :: proc(k: ^Checker, e: Expr, target: Type_Id, what: string) -> bool {
 	if !materialize(k, e, target) {
 		return false
@@ -196,16 +180,13 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 			v.type = INVALID_TYPE
 			return
 		}
+		v.type = TYPE_UNTYPED_FLOAT
 		v.is_const = true
-		// Parsed straight to the destination width when there is one: rounding
-		// an `f32` expression's operands only at materialisation can disagree
-		// with the same expression evaluated at runtime.
-		if type_is_float(k.c, expected) && !type_is_untyped(k.c, expected) {
-			v.type = expected
-			v.const_value = float_const(value, u16(type_bits(k.c, expected)))
-		} else {
-			v.type = TYPE_UNTYPED_FLOAT
-			v.const_value = float_const(value, 64)
+		v.const_value = float_const(value, 64)
+		// Rounded at the destination width now: rounding an `f32` expression's
+		// operands only later can disagree with the same expression at runtime.
+		if type_is_float(k.c, expected) && !type_is_untyped(k.c, expected) && !materialize(k, v, expected) {
+			v.type = INVALID_TYPE
 		}
 
 	case .Rune:
@@ -226,9 +207,6 @@ check_literal :: proc(k: ^Checker, v: ^Expr_Literal, expected: Type_Id) {
 			v.type = INVALID_TYPE
 			return
 		}
-		// Compile-time only: `TYPE_STRING` stays gated, so this value can be
-		// concatenated, compared, measured, and used as a message or a
-		// configuration value, but never stored.
 		v.type = TYPE_UNTYPED_STRING
 		v.is_const = true
 		v.const_value = Const_Value{kind = .String, text = text}
@@ -386,15 +364,11 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		return
 	}
 	v.symbol = symbol_id
-	// design.md "@(require_results)": every read of a name funnels through here,
-	// so this is the one place that can answer whether a binding was ever looked
-	// at. An assignment's destination reaches it too, which is why overwriting a
-	// required result still counts as reading it.
+	// Every use of a name, including an assignment destination, counts as a read
+	// for design.md "@(require_results)".
 	sym.named = true
 
-	// A nested procedure literal has no closure in M2, so a name that lives in
-	// an enclosing procedure's frame is rejected here rather than silently
-	// miscompiled.
+	// A procedure literal has no closure.
 	if owner != nil && owner.owner_proc != nil && owner.owner_proc != k.proc_literal {
 		if sym.kind == .Var || sym.kind == .Parameter {
 			errorf(
@@ -409,16 +383,18 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 		}
 	}
 
-	// A constant, or a file-scope variable a `when` condition or an earlier
-	// declaration reached before the ordinary phase order would: both are
-	// checked on demand so a forward reference sees a real type.
+	// Constants and globals are checked on demand, so a forward reference sees a
+	// real type.
 	if sym.decl != nil && (sym.kind == .Const || (sym.kind == .Var && sym.decl.top_level)) {
 		switch sym.decl.check_state {
 		case .Unchecked:
 			check_symbol_decl_in_place(k, symbol_id)
 			sym = symbol_of(k.c, symbol_id)
 		case .Checking:
-			errorf(k.c, v.span, "L0324", "constant initialisation cycle involving `%s`", v.name)
+			errorf(
+				k.c, v.span, "L0324", "%s initialisation cycle involving `%s`",
+				sym.kind == .Const ? "constant" : "global", v.name,
+			)
 			v.type = INVALID_TYPE
 			return
 		case .Checked:
@@ -428,9 +404,8 @@ check_ident :: proc(k: ^Checker, v: ^Expr_Ident) {
 	annotate_symbol_use(k, &v.base, symbol_id, v.name)
 }
 
-// Writes what a resolved symbol means onto the node that named it. Shared by a
-// plain identifier and by `package.name`, so a qualified use cannot drift from
-// an unqualified one.
+// Writes what a resolved symbol means onto the node that named it, for both
+// `name` and `package.name`.
 @(private = "file")
 annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, name: string) {
 	sym := symbol_of(k.c, symbol_id)
@@ -438,8 +413,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = INVALID_TYPE
 		return
 	}
-	// design.md "Generics": a generic declaration has no runtime representation
-	// before instantiation, so it is neither a value nor a type on its own.
+	// design.md "Generics": uninstantiated, it is neither a value nor a type.
 	if sym.generic {
 		errorf(
 			k.c,
@@ -468,11 +442,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 			v.type = INVALID_TYPE
 			return
 		}
-		// A named procedure is a value with its interned procedure type; a call
-		// obtains its results from the type, not from a single result field.
-		// A signature the current phase has not reached yet is resolved on
-		// demand, so an enum value or array length may call a procedure declared
-		// later in the file.
+		// Resolved on demand, so a constant may call a procedure declared later.
 		if sym.proc_type == INVALID_TYPE && sym.decl != nil {
 			resolve_symbol_signature_in_place(k, symbol_id)
 			sym = symbol_of(k.c, symbol_id)
@@ -480,8 +450,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.resolution = Resolution{kind = .Value, symbol = symbol_id}
 		v.value_category = .Value
 		v.type = sym.proc_type
-		// design.md "`@(deprecated=<string>)`": a warning at each use — a call or a
-		// value use both resolve the name here.
+		// design.md "`@(deprecated=<string>)`": a warning at each use.
 		if sym.deprecated {
 			if sym.deprecated_message != "" {
 				warnf(k.c, v.span, "L0611", "`%s` is deprecated: %s", name, sym.deprecated_message)
@@ -506,10 +475,7 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.is_const = true
 		v.const_value = sym.const_value
 		v.immutable = .Constant
-		// design.md "Type alias": `Alias :: Box` gives another name to the type,
-		// and a constant whose value *is* a type is that alias. It has to behave
-		// as the type everywhere the type does — conversion, associated members,
-		// enum members — not only where `resolve_type_syntax` reaches it.
+		// design.md "Type alias": a constant whose value is a type denotes it.
 		if sym.const_value.kind == .Type {
 			v.resolution = Resolution{kind = .Type, symbol = symbol_id}
 			v.denoted_type = sym.const_value.type_value
@@ -533,8 +499,6 @@ annotate_symbol_use :: proc(k: ^Checker, v: ^Expr_Base, symbol_id: Symbol_Id, na
 		v.type = INVALID_TYPE
 
 	case .Proc_Group:
-		// A group names several procedures, so it has no one procedure type to be
-		// a value of; call it, or name the member you meant.
 		v.resolution = Resolution{kind = .Procedure_Group, symbol = symbol_id}
 		errorf(k.c, v.span, "L0396", "`%s` is a procedure group and can only be called", name)
 		v.type = INVALID_TYPE
@@ -586,9 +550,8 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 		return
 	}
 
-	// Package resolution comes before enum, type, and value field selection: a
-	// package alias is not a value, so checking the operand as one would reject
-	// it first.
+	// A package alias is not a value, so it is resolved before the operand is
+	// checked as one.
 	if ident, is_ident := v.operand.(^Expr_Ident); is_ident {
 		alias := lookup_symbol(k.scope, identifier_of(k.c, ident))
 		if sym := symbol_of(k.c, alias); sym != nil && sym.kind == .Package_Alias {
@@ -704,15 +667,11 @@ check_selector :: proc(k: ^Checker, v: ^Expr_Selector, expected: Type_Id) {
 			v.operand = implicit_pointer_deref(k, v.operand, pointee_type, pointer_mutable)
 			return
 		}
-		// A receiver is a context that needs a type, so an unfixed constant takes
-		// its default one here exactly as it does in an argument (design.md
-		// "Unfixed constants"). This is what lets `TEXT.len()` select `string`'s
-		// member; the fold keeps the result constant.
+		// An unfixed receiver takes its default type (design.md "Unfixed
+		// constants"), so `TEXT.len()` finds `string`'s member.
 		if type_is_untyped(k.c, operand) {
 			materialized := default_type(k.c, operand)
 			if materialized != operand && materialized != INVALID_TYPE {
-				// A constant its default type refuses, such as a literal that is not
-				// UTF-8, has been reported; it has no members to look for.
 				if !materialize(k, v.operand, materialized) {
 					v.type = INVALID_TYPE
 					return
@@ -740,8 +699,7 @@ select_field :: proc(
 	through_pointer, pointer_mutable: bool,
 	field: Symbol_Id,
 ) -> bool {
-	// Field lookup already won over method sugar, so an inaccessible field is
-	// reported as itself rather than falling through to a same-named method.
+	// An inaccessible field is reported, not skipped for a same-named method.
 	if !require_visible_field(k, v.span, operand, field, "L0471", "used") {
 		v.type = INVALID_TYPE
 		return false
@@ -750,15 +708,7 @@ select_field :: proc(
 	v.resolution = Resolution{kind = .Field, symbol = field}
 	v.type = sym.type
 	v.value_category = .Place
-	if through_pointer {
-		v.addressable = true
-		v.assignable = pointer_mutable
-		v.immutable = pointer_mutable ? .None : .Through_Pointer
-	} else {
-		v.addressable = operand_base.addressable
-		v.assignable = operand_base.assignable
-		v.immutable = operand_base.immutable
-	}
+	inherit_capability(&v.base, operand_base, through_pointer, pointer_mutable)
 	// Selecting from a constant aggregate is itself constant.
 	if operand_base.is_const && operand_base.const_value.kind == .Aggregate {
 		aggregate := operand_base.const_value.aggregate
@@ -769,6 +719,21 @@ select_field :: proc(
 		}
 	}
 	return true
+}
+
+// A field or element place: writable through a `^mut T`, read-only through a
+// `^T`, and otherwise exactly as writable as the operand it is part of.
+@(private = "file")
+inherit_capability :: proc(v, operand: ^Expr_Base, through_pointer, pointer_mutable: bool) {
+	if through_pointer {
+		v.addressable = true
+		v.assignable = pointer_mutable
+		v.immutable = pointer_mutable ? .None : .Through_Pointer
+	} else {
+		v.addressable = operand.addressable
+		v.assignable = operand.assignable
+		v.immutable = operand.immutable
+	}
 }
 
 // The `using` fields leading from `record` to a field named `name`, ending with
@@ -811,10 +776,8 @@ promoted_field_path :: proc(
 	return found, false
 }
 
-// Method syntax through a pointer uses the same implicit dereference as field
-// selection. Materialising that adjustment in the typed AST lets overload
-// binding, provenance, and emission all see the real receiver place, including
-// the read-only capability that rejects an `inout self` method with L0640.
+// An implicit `operand^`, written into the typed AST so later passes see the
+// real place and its capability.
 @(private = "file")
 implicit_pointer_deref :: proc(
 	k: ^Checker,
@@ -846,10 +809,8 @@ select_associated_member :: proc(
 	if member == INVALID_SYMBOL {
 		return false
 	}
-	// A member's own signature or value may be needed before the phase that
-	// would ordinarily reach it, and both need the block's subject *and its own
-	// declaration scope*: inside an instantiated block that scope is what binds
-	// the block's generic arguments.
+	// Checked on demand with the block's subject, which binds an instantiated
+	// block's generic arguments.
 	outer := k.impl_type
 	k.impl_type = subject
 	defer k.impl_type = outer
@@ -882,11 +843,7 @@ select_method :: proc(k: ^Checker, v: ^Expr_Selector, receiver: Type_Id, callee_
 	return true
 }
 
-// The members of `receiver` named `name` that method-call syntax can reach: an
-// associated procedure without a receiver is not one of them.
-// Why a name that is written in the source is not a member here. A missing
-// member and one a `where` bound removed read the same at the call, so the
-// reports that say "no such member" all add this.
+// Explains a "no such member" report when a `where` bound removed the member.
 note_excluded_member :: proc(k: ^Checker, type: Type_Id, name: string) {
 	excluded := excluded_member(k, type, intern_identifier(k.c, name))
 	if excluded == nil {
@@ -900,6 +857,8 @@ note_excluded_member :: proc(k: ^Checker, type: Type_Id, name: string) {
 	)
 }
 
+// The members named `name` that method-call syntax can reach: those with a
+// receiver.
 method_candidates :: proc(k: ^Checker, receiver: Type_Id, name: Identifier_Id) -> []Symbol_Id {
 	all := member_candidates(k, receiver, name)
 	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
@@ -940,8 +899,7 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 		v.type = INVALID_TYPE
 		return
 	}
-	// A cross-package constant or global may be reached before its own package's
-	// phase 3; check it on demand so the use sees a real value.
+	// It may be reached before its own package is checked.
 	if symbol.decl != nil && symbol.decl.check_state == .Unchecked &&
 	   (symbol.kind == .Const || symbol.kind == .Var) {
 		check_symbol_decl_in_place(k, symbol_id)
@@ -954,9 +912,8 @@ check_package_selector :: proc(k: ^Checker, v: ^Expr_Selector, ident: ^Expr_Iden
 @(private = "file")
 check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	v.value_category = .Value
-	// A chain such as `outer[key][i] = v` inserts into the innermost map only:
-	// `outer[key]` names an element that must already be there, and the operand
-	// of any index is checked as one (design.md "Maps").
+	// In `outer[key][i] = v` only the last index may insert; `outer[key]` must
+	// already exist (design.md "Maps").
 	inserts := place && k.insert_position
 	k.place_position, k.insert_position = place, false
 	operand := check_single_expr(k, v.operand)
@@ -970,21 +927,23 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	operand_base := expr_base(v.operand)
 	through_pointer := false
 	pointer_mutable := false
+	pointee := INVALID_TYPE
 	if info := type_of(k.c, base_type); info != nil && info.kind == .Pointer {
+		pointee = info.element
 		base_type = type_underlying(k.c, info.element)
 		through_pointer = true
 		pointer_mutable = info.mutable
 	}
 	info := type_of(k.c, base_type)
-	// A C pointer indexes without bounds checking (design.md "C pointers").
-	// The loss of the bound is the whole point of the type, and it is visible at
-	// the `unsafe.raw_data` call that produced the C pointer.
-	if info != nil && info.kind == .C_Pointer && len(v.indices) == 1 {
-		check_c_pointer_index(k, v, info)
-		return
+	single := len(v.indices) == 1
+	// A carrier is reached through its header, so the pointer hop is written into
+	// the typed AST as `p^`, which every later pass already understands.
+	if through_pointer && info != nil && (info.kind == .Slice || info.kind == .Dynamic_Array || info.kind == .Map) {
+		v.operand = implicit_pointer_deref(k, v.operand, pointee, pointer_mutable)
+		operand_base = expr_base(v.operand)
+		through_pointer = false
 	}
-	// A string cannot be indexed by an integer, because a UTF-8 code point may
-	// span multiple bytes (design.md "string type").
+	// A UTF-8 code point may span several bytes (design.md "string type").
 	if info != nil && (info.kind == .String || info.kind == .String_View) {
 		errorf(
 			k.c, v.span, "L0563",
@@ -995,36 +954,54 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// Indexing and slicing a dynamic array produce views into its current
-	// allocation (design.md "Dynamic arrays"). A dynamic array's element is an
-	// ordinary mutable place whose bound is the header's length word, exactly
-	// as a `[]mut T`'s is.
-	if info != nil && info.kind == .Dynamic_Array && len(v.indices) == 1 {
-		check_dynamic_index(k, v, info)
-		return
-	}
-	if info != nil && info.kind == .Map && len(v.indices) == 1 {
-		check_map_index(k, v, info, place, inserts)
-		return
-	}
-	// design.md "SIMD vectors": "`v[i]` reads a lane and `v[i] = x` writes one.
-	// **The index must be a constant**". Answered before the shared array path
-	// because that path permits a runtime index and a vector does not.
-	if info != nil && info.kind == .Simd && len(v.indices) == 1 {
-		check_simd_index(k, v, info, base_type, through_pointer, pointer_mutable)
-		return
+	if info != nil && single {
+		#partial switch info.kind {
+		case .C_Pointer:
+			// Unchecked, and writable exactly as `p^` is (design.md "C pointers").
+			check_integer_index(k, v.indices[0])
+			v.type = info.element
+			v.value_category = .Place
+			v.addressable = true
+			v.assignable = true
+			return
+		case .Slice:
+			// The element lives in the slice's root, so `[]mut T` decides the write,
+			// not whether the slice variable itself is assignable.
+			check_integer_index(k, v.indices[0])
+			v.type = info.element
+			v.value_category = .Place
+			v.addressable = true
+			v.assignable = info.mutable
+			v.immutable = info.mutable ? .None : .Read_Only
+			return
+		case .Dynamic_Array:
+			// The element lives in the container's allocation, so it has the
+			// container's capability (design.md "Dynamic arrays").
+			check_integer_index(k, v.indices[0])
+			v.type = info.element
+			v.value_category = .Place
+			v.addressable = true
+			v.assignable = operand_base.assignable
+			v.immutable = operand_base.immutable
+			return
+		case .Map:
+			check_map_index(k, v, info, place, inserts, operand_base)
+			return
+		case .Simd:
+			// A lane index must be a constant (design.md "SIMD vectors").
+			check_simd_index(k, v, info, base_type, through_pointer, pointer_mutable)
+			return
+		}
 	}
 	// Built-in indexing first; a user `operator([])` supplies what it does not.
 	indexable := info != nil && (info.kind == .Array || info.kind == .Slice)
-	if !indexable || len(v.indices) != 1 {
+	if !indexable || !single {
 		if check_user_index(k, v, operand, place) {
 			return
 		}
 		if indexable {
-			// The comma form is reserved for a user-defined `operator([])` taking
-			// that many indices, and is a compile-time error on a built-in container
-			// (design.md "Indexing and slicing") — permanently, not pending a
-			// milestone.
+			// Permanently reserved for a user `operator([])` (design.md "Indexing
+			// and slicing").
 			errorf(
 				k.c, v.span, "L0362",
 				"`%s` takes one index; `a[i, j]` is reserved for a user `operator([])` taking that many",
@@ -1037,37 +1014,14 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 		return
 	}
 
-	// A slice's length is a runtime value, so nothing here folds and the bound is
-	// checked at run time against the length word.
-	if info.kind == .Slice {
-		check_slice_index(k, v, info, operand)
-		return
-	}
-
-	index_type := check_single_expr(k, v.indices[0], TYPE_INT)
-	if index_type != INVALID_TYPE {
-		materialize(k, v.indices[0], TYPE_INT)
-		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
-			errorf(k.c, expr_span(v.indices[0]), "L0362", "an index must be an integer, found `%s`", type_name(k.c, index_type))
-		}
-	}
-
+	check_integer_index(k, v.indices[0])
 	v.type = info.element
 	v.value_category = .Place
-	if through_pointer {
-		v.addressable = true
-		v.assignable = pointer_mutable
-		v.immutable = pointer_mutable ? .None : .Through_Pointer
-	} else {
-		v.addressable = operand_base.addressable
-		v.assignable = operand_base.assignable
-		v.immutable = operand_base.immutable
-	}
+	inherit_capability(&v.base, operand_base, through_pointer, pointer_mutable)
 
 	index_base := expr_base(v.indices[0])
-	// design.md "Materialization": a constant indexed by a non-constant index
-	// needs storage, and that storage is read-only. A constant index still folds
-	// below and asks for none.
+	// A constant indexed at runtime needs read-only storage (design.md
+	// "Materialization"); a constant index folds below instead.
 	if operand_base.is_const && (index_base == nil || !index_base.is_const) {
 		if request_materialization(k, v.operand) {
 			v.addressable = false
@@ -1100,69 +1054,20 @@ check_index :: proc(k: ^Checker, v: ^Expr_Index, place: bool) {
 	}
 }
 
-// `s[i]` over a slice. The element is a place in the *root's* storage, so its
-// capability comes from the slice's, not from whether the slice variable itself
-// is assignable: rebinding `s` and writing `s[0]` are different rights.
+// An index into a built-in sequence: an integer, `int` when unfixed.
 @(private = "file")
-check_c_pointer_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info) {
-	if index_type := check_single_expr(k, v.indices[0], TYPE_INT); index_type != INVALID_TYPE {
-		materialize(k, v.indices[0], TYPE_INT)
-		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
-			errorf(k.c, expr_span(v.indices[0]), "L0362", "an index must be an integer, found `%s`", type_name(k.c, index_type))
-		}
+check_integer_index :: proc(k: ^Checker, e: Expr) {
+	type := check_single_expr(k, e, TYPE_INT)
+	if type == INVALID_TYPE {
+		return
 	}
-	v.type = info.element
-	// The element is a place through the address, exactly as `p^` is: a
-	// C pointer carries no read-only capability either.
-	v.value_category = .Place
-	v.addressable = true
-	v.assignable = true
+	materialize(k, e, TYPE_INT)
+	if !type_is_integer(k.c, expr_base(e).type) {
+		errorf(k.c, expr_span(e), "L0362", "an index must be an integer, found `%s`", type_name(k.c, type))
+	}
 }
 
-@(private = "file")
-check_slice_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, operand: Type_Id) {
-	index_type := check_single_expr(k, v.indices[0], TYPE_INT)
-	if index_type != INVALID_TYPE {
-		materialize(k, v.indices[0], TYPE_INT)
-		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
-			errorf(k.c, expr_span(v.indices[0]), "L0362", "an index must be an integer, found `%s`", type_name(k.c, index_type))
-		}
-	}
-	v.type = info.element
-	v.value_category = .Place
-	// Element assignment and iteration by reference both require `[]mut T`
-	// (design.md). A `[]T` element is a readable place: `&` reaches it and yields
-	// a `^T`, while `&mut` and assignment do not.
-	v.addressable = true
-	v.assignable = info.mutable
-	v.immutable = info.mutable ? .None : .Read_Only
-}
-
-// A dynamic array's element place. The bound is a runtime word, so nothing here
-// folds; the capability is unconditional, because a `[dynamic]T` is an owner
-// rather than a borrow and its owner may always write through it.
-@(private = "file")
-check_dynamic_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info) {
-	index_type := check_single_expr(k, v.indices[0], TYPE_INT)
-	if index_type != INVALID_TYPE {
-		materialize(k, v.indices[0], TYPE_INT)
-		if !type_is_integer(k.c, expr_base(v.indices[0]).type) {
-			errorf(
-				k.c, expr_span(v.indices[0]), "L0362",
-				"an index must be an integer, found `%s`", type_name(k.c, index_type),
-			)
-		}
-	}
-	v.type = info.element
-	v.value_category = .Place
-	v.addressable = true
-	v.assignable = true
-	v.immutable = .None
-}
-
-// `ok := key in m` is true iff the key has an element (design.md "Maps"). It
-// never inserts and never produces the value, so it is the cheapest of the
-// three membership forms.
+// `ok := key in m` (design.md "Maps").
 @(private = "file")
 check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 	container := check_single_expr(k, v.rhs)
@@ -1185,10 +1090,8 @@ check_map_membership :: proc(k: ^Checker, v: ^Expr_Binary) {
 	v.type = TYPE_BOOL
 }
 
-// design.md "Maps": an operation that only compares its key accepts the borrowed
-// form of it, so a `map[string]V` is asked with a `string_view` and no owned key
-// is built for the probe. `m[key] = elem` stores the key, so it still wants the
-// owned `string` it clones.
+// design.md "Maps": a key that is only compared may be a `string_view` for a
+// `map[string]V`; one that is stored must be the owned `string`.
 @(private = "file")
 check_map_key :: proc(k: ^Checker, e: Expr, key: Type_Id, borrows: bool) -> bool {
 	type := check_single_expr(k, e, key)
@@ -1201,55 +1104,38 @@ check_map_key :: proc(k: ^Checker, e: Expr, key: Type_Id, borrows: bool) -> bool
 	return materialize_value_expr(k, e, key, "look up")
 }
 
-// design.md "Maps": one syntax, two behaviours chosen by position.
-//
-// `m[key] = elem` is the one index form that creates an entry, and it can: the
-// whole element is written, so nothing is manufactured. Every other position —
-// a read, a field or index chain, a compound assignment, an `inout` argument,
-// and `&m[key]` — names a location inside an element that must already be
-// there, and panics for a missing key exactly as a dynamic array's index does.
-//
-// Insertion may reallocate the map, so an inserting index is a mutable borrow
-// of `m` for the duration of the statement — which is what the receiver access
-// recorded by `src/cfg.odin` makes true.
+// design.md "Maps": only `m[key] = elem` creates an entry. Every other position
+// names part of an element that must already be there, and panics for a missing
+// key. Insertion may reallocate, so it is a mutable borrow of `m` for the
+// statement, which `src/cfg.odin` records.
 @(private = "file")
-check_map_index :: proc(k: ^Checker, v: ^Expr_Index, info: ^Type_Info, place, inserts: bool) {
+check_map_index :: proc(
+	k: ^Checker, v: ^Expr_Index, info: ^Type_Info, place, inserts: bool, operand: ^Expr_Base,
+) {
 	if !check_map_key(k, v.indices[0], info.key, !inserts) {
 		v.type = INVALID_TYPE
 		return
 	}
 	v.map_inserts = inserts
 	v.type = info.element
-	// Indexing exposes synthesized reads and insertion for both managed halves,
-	// just as a map literal does, even when the RHS transfers a temporary.
 	contribute_lifecycle_members(k, info.key)
 	contribute_lifecycle_members(k, info.element)
-	if place {
-		// A stored element is addressable, but keeps the capability of the map
-		// through which it was reached, including an immutable receiver.
-		v.value_category = .Place
-		v.addressable = true
-		v.assignable = expr_base(v.operand).assignable
-		v.immutable = expr_base(v.operand).immutable
-		if inserts && !expr_base(v.operand).assignable {
-			report_not_assignable(k, expr_base(v.operand), "an inserting map index")
-			v.type = INVALID_TYPE
-		}
+	if !place {
+		// `m.lookup_value(key)` and `m.find(key)` are the forms that do not panic.
 		return
 	}
-	// A read produces a value: `m.lookup_value(key)` is the form that answers
-	// `Option(V)` instead of panicking, and `m.find(key)` the one that answers a
-	// pointer.
-	v.value_category = .Value
-	v.addressable = false
-	v.assignable = false
+	v.value_category = .Place
+	v.addressable = true
+	v.assignable = operand.assignable
+	v.immutable = operand.immutable
+	if inserts && !v.assignable {
+		report_not_assignable(k, &v.base, "an inserting map index")
+		v.type = INVALID_TYPE
+	}
 }
 
-// design.md "Indexing and slicing": in a place position the `inout` overload is
-// required and selected before ordinary ranking; everywhere else the value
-// overload is preferred, even when the receiver is mutable. Without this rule
-// the two would differ only by receiver mutability and return mode, which rank 2
-// would treat as an adjustment rather than a distinction.
+// design.md "Indexing and slicing": a place position requires the `inout`
+// overload; any other position prefers the value one.
 @(private = "file")
 check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: bool) -> bool {
 	all := operator_candidates_for_receiver(k, "[]", operand)
@@ -1258,8 +1144,6 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: b
 	}
 	candidates := select_by_place(k, all, place)
 	if len(candidates) == 0 {
-		// design.md: `operator([]=)` can serve an assignment — which `check_assign`
-		// has already tried by the time this runs — but never an address.
 		errorf(
 			k.c,
 			v.span,
@@ -1293,8 +1177,7 @@ check_user_index :: proc(k: ^Checker, v: ^Expr_Index, operand: Type_Id, place: b
 	return true
 }
 
-// `operator([:])`. A built-in carrier slices on its own; every other type needs
-// the overload, and a type without one simply cannot be sliced.
+// `x[lo:hi]`: built in for a carrier, `operator([:])` for anything else.
 @(private = "file")
 check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	v.value_category = .Value
@@ -1303,16 +1186,11 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// A built-in carrier slices without consulting user operators; `operator([:])`
-	// exists for user types (design.md "Slices").
 	if check_builtin_slice(k, v, operand) {
 		return
 	}
 	slicers := operator_candidates_for_receiver(k, "[:]", operand)
 	if len(slicers) == 0 {
-		// design.md "Indexing and slicing": slicing a user type is an
-		// `operator([:])` overload and nothing else, so its absence is a permanent
-		// answer rather than a pending milestone.
 		errorf(
 			k.c, v.span, "L0362",
 			"`%s` cannot be sliced; a user type needs an `operator([:])` overload",
@@ -1342,9 +1220,8 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	v.bound = bound
 	v.resolution = Resolution{kind = .User_Operator, symbol = chosen, chosen_overload = chosen}
 	v.type = sym.result
-	// design.md "Capabilities and the one rule": a mutable borrow excludes
-	// competing access, so a `[]mut T` result can only come from a receiver the
-	// call already holds exclusively. An immutable receiver may produce `[]T`.
+	// A `[]mut T` needs an exclusive receiver (design.md "Capabilities and the
+	// one rule").
 	if type_is_slice(k.c, v.type) && slice_is_mutable(k.c, v.type) && sym.receiver != .Inout {
 		errorf(
 			k.c,
@@ -1358,117 +1235,53 @@ check_slice :: proc(k: ^Checker, v: ^Expr_Slice, place: bool) {
 	}
 }
 
-// Slicing a built-in sequence: a fixed array or another slice. Returns false
-// when the operand is neither, leaving the user `operator([:])` path to run.
-//
-// Slicing a mutable, addressable array or dynamic array produces `[]mut T`;
-// slicing an immutable parameter, a string, or an existing `[]T` produces
-// `[]T` (design.md "Slices"). Endpoints may be omitted; the low bound
-// defaults to 0 and the high bound to the base's length.
+// Slicing a built-in carrier (design.md "Slices"). Returns false for any other
+// operand, leaving the user `operator([:])` path to run. An omitted low bound is
+// 0 and an omitted high bound is the length.
 @(private = "file")
 check_builtin_slice :: proc(k: ^Checker, v: ^Expr_Slice, operand: Type_Id) -> bool {
 	info := underlying_info(k.c, operand)
 	if info == nil {
 		return false
 	}
-	element := INVALID_TYPE
-	mutable := false
-	materialized := false
-	base := expr_base(v.operand)
 	#partial switch info.kind {
-	case .Array:
-		element = info.element
-		// A constant array has no storage until it is materialised, and that
-		// storage is read-only, so a slice of it is always `[]T` and needs no
-		// addressable root of its own.
-		materialized = base.is_const && request_materialization(k, v.operand)
-		mutable = !materialized && base.addressable && base.immutable == .None
-	case .Slice:
-		element = info.element
-		mutable = info.mutable
-	case .Dynamic_Array:
-		// Indexing and slicing a dynamic array produce views into its current
-		// allocation (design.md "Dynamic arrays"). A container is an owner, so the
-		// view it hands out is mutable whenever the place it is taken from can be
-		// written.
-		element = info.element
-		mutable = base.assignable
-	case .String, .String_View:
-		// design.md "string type conversions": `st[low:high]` borrows a subrange as a
-		// `string_view`. It is a borrow of the string's owner and cannot outlive
-		// it, which `src/borrow.odin` checks.
-		return check_text_subrange(k, v)
-	case .C_Pointer:
-		// design.md "C pointers": `x[:]` and `x[i:]` stay C pointers,
-		// while `x[:n]` and `x[i:n]` produce a bounds-carrying `[]T`.
-		return check_c_pointer_slice(k, v, info.element)
+	case .Array, .Slice, .Dynamic_Array, .String, .String_View, .C_Pointer:
 	case:
 		return false
 	}
-
-	ok := true
-	if v.lo != nil && !check_slice_endpoint(k, v.lo) {
-		ok = false
-	}
-	if v.hi != nil && !check_slice_endpoint(k, v.hi) {
-		ok = false
-	}
-	// A fixed array must be addressable to be sliced: the slice needs its root
-	// address, and a temporary's would not outlive the expression. A materialised
-	// constant has static storage instead, so it is exempt.
+	base := expr_base(v.operand)
+	// A constant array slices its materialised storage, which is static and
+	// read-only.
+	materialized := info.kind == .Array && base.is_const && request_materialization(k, v.operand)
+	lo := v.lo == nil || check_slice_endpoint(k, v.lo)
+	hi := v.hi == nil || check_slice_endpoint(k, v.hi)
+	ok := lo && hi
+	// The slice keeps its root's address, which a temporary would not outlive.
 	if info.kind == .Array && !materialized && !base.addressable {
 		errorf(k.c, v.span, "L0477", "`%s` has no storage to slice; bind it to a variable first", type_name(k.c, operand))
 		ok = false
 	}
+	v.value_category = .Value
+	v.immutable = .Temporary
 	if !ok {
 		v.type = INVALID_TYPE
 		return true
 	}
-	v.type = slice_of(k.c, element, mutable)
-	v.value_category = .Value
-	v.immutable = .Temporary
-	return true
-}
-
-// `st[low:high]` produces a subrange view (design.md). A byte range that splits
-// a code point would break the type's UTF-8 invariant, so the bounds are
-// checked at run time against both the length and the encoding.
-@(private = "file")
-check_text_subrange :: proc(k: ^Checker, v: ^Expr_Slice) -> bool {
-	ok := true
-	if v.lo != nil && !check_slice_endpoint(k, v.lo) {
-		ok = false
+	#partial switch info.kind {
+	case .Array:
+		v.type = slice_of(k.c, info.element, !materialized && base.addressable && base.immutable == .None)
+	case .Slice:
+		v.type = slice_of(k.c, info.element, info.mutable)
+	case .Dynamic_Array:
+		v.type = slice_of(k.c, info.element, base.assignable)
+	case .String, .String_View:
+		// The bounds are checked at run time against the length and the encoding.
+		v.type = TYPE_STRING_VIEW
+	case .C_Pointer:
+		// Without a high bound there is no length, so the result stays a C
+		// pointer (design.md "C pointers").
+		v.type = v.hi == nil ? c_pointer_to(k.c, info.element) : slice_of(k.c, info.element, mutable = true)
 	}
-	if v.hi != nil && !check_slice_endpoint(k, v.hi) {
-		ok = false
-	}
-	v.type = ok ? TYPE_STRING_VIEW : INVALID_TYPE
-	v.value_category = .Value
-	v.immutable = .Temporary
-	return true
-}
-
-// C pointer slicing is bounds-checked exactly when both endpoints are
-// given (design.md "C pointers") — which is exactly the case whose result
-// carries a length.
-@(private = "file")
-check_c_pointer_slice :: proc(k: ^Checker, v: ^Expr_Slice, element: Type_Id) -> bool {
-	ok := true
-	if v.lo != nil && !check_slice_endpoint(k, v.lo) {
-		ok = false
-	}
-	if v.hi != nil && !check_slice_endpoint(k, v.hi) {
-		ok = false
-	}
-	if !ok {
-		v.type = INVALID_TYPE
-		return true
-	}
-	// A C pointer has no length, so an omitted high bound cannot produce one:
-	// the result stays a C pointer and the loss of bounds stays visible.
-	v.type = v.hi == nil ? c_pointer_to(k.c, element) : slice_of(k.c, element, mutable = true)
-	v.value_category = .Value
-	v.immutable = .Temporary
 	return true
 }
 
@@ -1488,9 +1301,8 @@ check_slice_endpoint :: proc(k: ^Checker, e: Expr) -> bool {
 	return true
 }
 
-// The overloads a place or value position may use. In a value position the
-// non-`inout` overloads are preferred but an `inout` one still serves when it is
-// all there is.
+// The overloads a place or value position may use; a value position falls back
+// to `inout` ones when there is nothing else.
 @(private = "file")
 select_by_place :: proc(k: ^Checker, all: []Symbol_Id, place: bool) -> []Symbol_Id {
 	out := make([dynamic]Symbol_Id, 0, len(all), k.c.semantic_allocator)
@@ -1528,12 +1340,8 @@ index_arguments :: proc(
 	return args, ok
 }
 
-// An implicit selector — `counts[.North]` — needs its enum type from context,
-// and a user `operator([])` receiver cannot supply one the way a `map[E]V` key
-// does, because the index type is not known until an overload is chosen. Where
-// every applicable overload declares one and the same type for this index, that
-// type is settled before ranking and serves as the expectation; where they
-// disagree there is nothing to expect and the ordinary diagnostic stands.
+// The expected type for an index, so `counts[.North]` resolves: the parameter
+// type every candidate agrees on, or INVALID_TYPE.
 @(private = "file")
 agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, arity: int) -> Type_Id {
 	agreed := INVALID_TYPE
@@ -1553,9 +1361,8 @@ agreed_index_param :: proc(k: ^Checker, candidates: []Symbol_Id, position: int, 
 
 // ------------------------------------------------------------------ unary --
 
-// design.md "@(packed)": whether a place expression is a field reached through a
-// packed struct at any level of its selector chain, and the field name to name in
-// the diagnostic. The whole packed value is fine; only a field of it is rejected.
+// design.md "@(packed)": the name of a field reached through a packed struct
+// anywhere in the selector chain.
 @(private)
 packed_field_reached :: proc(k: ^Checker, operand: Expr) -> (string, bool) {
 	cur := operand
@@ -1583,8 +1390,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 	v.value_category = .Value
 
 	if v.op == .Amp {
-		// design.md: `&` is a place position for the purpose of overload
-		// selection, but it never creates an element in any container.
+		// A place position that never inserts.
 		saved_insert := k.insert_position
 		k.place_position, k.insert_position = true, false
 		operand := check_single_expr(k, v.operand, pointee_of(k.c, expected))
@@ -1598,10 +1404,8 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		if v.mutable {
 			note_unknown_nil_write(k, v.operand)
 		}
-		// design.md "Materialization": a place rooted in a named constant has an
-		// address once the shared read-only object is registered. Marked here for
-		// `&mut` too, so that form is rejected as a constant rather than as
-		// something with no address at all.
+		// A named constant gets read-only storage (design.md "Materialization"),
+		// so `&mut` is then rejected as a constant.
 		if !operand_base.addressable {
 			if root, symbol := constant_root_of(k.c, v.operand); symbol != INVALID_SYMBOL {
 				if request_materialization(k, root) {
@@ -1614,18 +1418,12 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 			v.type = INVALID_TYPE
 			return
 		}
-		// `&` borrows readable storage; `&mut` needs storage this body may write.
-		// The distinction is the whole point of the capability: a value parameter,
-		// a `[]T` element, and a materialized constant are all readable places
-		// that no `^mut T` may reach (design.md "Capabilities and the one rule").
 		if v.mutable && !operand_base.assignable {
 			report_not_assignable(k, operand_base, "borrowed with `&mut`")
 			v.type = INVALID_TYPE
 			return
 		}
-		// An individual packed field is not addressable (design.md "@(packed)") —
-		// the base address of a packed value need not meet a field's alignment.
-		// The whole value's address stays valid.
+		// A packed field may be misaligned (design.md "@(packed)").
 		if field, packed := packed_field_reached(k, v.operand); packed {
 			errorf(
 				k.c, v.op_span, "L0614",
@@ -1644,8 +1442,7 @@ check_unary :: proc(k: ^Checker, v: ^Expr_Unary, expected: Type_Id) {
 		return
 	}
 	operand_base := expr_base(v.operand)
-	// A built-in operation on built-in operands cannot be shadowed; where the
-	// language defines none, an ordinary user overload is found by lookup.
+	// A built-in operation cannot be shadowed by a user overload.
 	if !builtin_unary_defined(k, v.op, operand) {
 		if check_user_unary(k, v, operand, expected) {
 			return
@@ -1795,9 +1592,6 @@ check_postfix :: proc(k: ^Checker, v: ^Expr_Postfix) {
 	note_nil_use(k, v.operand, "dereference")
 	v.type = info.element
 	v.value_category = .Place
-	// Dereferencing either capability yields a real place with an address. Only
-	// `^mut T` yields one this body may write (design.md "Capabilities and the
-	// one rule").
 	v.addressable = true
 	v.assignable = info.mutable
 	v.immutable = info.mutable ? .None : .Through_Pointer
@@ -1840,9 +1634,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 
 	hint := is_comparison ? INVALID_TYPE : expected
 	lhs, rhs: Type_Id
-	// A comparison operand written as a bare `.Member` takes its expected enum
-	// type from the other operand, which is how `when (LOKE_OS == .Windows)`
-	// resolves the selector (design.md "Build configuration").
+	// `LOKE_OS == .Windows`: a bare `.Member` takes the other operand's type.
 	if is_comparison && is_implicit_selector(v.rhs) && !is_implicit_selector(v.lhs) {
 		lhs = check_single_expr(k, v.lhs, INVALID_TYPE)
 		rhs = check_single_expr(k, v.rhs, lhs)
@@ -1858,14 +1650,11 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	// design.md "SIMD vectors": lane-wise, with its own operator table and its
-	// own answer for a comparison, so it is settled before the scalar table.
+	// design.md "SIMD vectors": lane-wise, with its own operator table.
 	if type_is_simd(k.c, lhs) || type_is_simd(k.c, rhs) {
 		check_simd_binary(k, v, lhs, rhs)
 		return
 	}
-	// The built-in operation wins whenever every operand is a built-in type and
-	// the built-in table defines this operator for them.
 	if !builtin_binary_defined(k, v.op, lhs, rhs) {
 		if check_user_binary(k, v, lhs, rhs, expected) {
 			return
@@ -1876,8 +1665,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 
-	// Asked before unification, because materialising an untyped nil against the
-	// other side is exactly what would hide which operand was written as `nil`.
+	// Asked before unification materialises a written `nil`.
 	nil_only := is_comparison && (type_is_slice(k.c, lhs) || type_is_slice(k.c, rhs))
 	against_nil := lhs == TYPE_UNTYPED_NIL || rhs == TYPE_UNTYPED_NIL
 
@@ -1888,10 +1676,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 	}
 
 	if is_comparison {
-		// Slices can be compared only against nil, never against each other
-		// (design.md "Nil slices"). Two slices may share a root, overlap, or view
-		// the same bytes at different lengths, so element-wise equality would not
-		// mean what `==` means anywhere else.
+		// A slice compares against nil only (design.md "Nil slices").
 		if nil_only && !against_nil {
 			errorf(
 				k.c,
@@ -1913,8 +1698,7 @@ check_binary :: proc(k: ^Checker, v: ^Expr_Binary, expected: Type_Id) {
 		return
 	}
 	v.type = operand_type
-	// `a + b` on two `string` operands returns a new owning `string`; two
-	// `string_view` operands also produce an owning `string` (design.md).
+	// Concatenating text always produces an owning `string`.
 	if v.op == .Plus && type_is_utf8_text(k.c, operand_type) {
 		v.type = TYPE_STRING
 	}
@@ -2059,11 +1843,8 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 	ordered := v.op != .Eq_Eq && v.op != .Not_Eq
 	both := []Type_Id{operand_type, operand_type}
 	if ordered && !type_is_ordered(k.c, operand_type) {
-		// The type may well have a `<`, one this package simply may not use. Said
-		// in the message rather than a note because an interface requirement keeps
-		// only the message: `where interfaces.Ordered(T)` in another package is
-		// exactly where this lands, and a bare "does not order" sends the reader
-		// looking for a missing operator that is right there.
+		// Said in the message, not a note: an interface requirement keeps only
+		// the message.
 		if hidden_inherent_operator(k, operator_text(v.op), both) {
 			errorf(
 				k.c, v.op_span, "L0355",
@@ -2081,12 +1862,8 @@ check_comparison :: proc(k: ^Checker, v: ^Expr_Binary, operand_type: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// A record with an unexported inherent `==` is still *comparable*: the
-	// generated field-wise equality is sitting right there. Taking it would be
-	// the one thing worse than refusing -- design.md "Maps" wants one equality
-	// policy across packages, and silently answering with a second one gives a
-	// caller a wrong answer with nothing to read. `!=` is included because it
-	// falls back to `!(a == b)`, so a hidden `==` decides it too.
+	// A hidden inherent `==` must not be replaced by field-wise equality: one
+	// type has one equality (design.md "Maps"). `!=` falls back to `==`.
 	if !ordered &&
 	   (hidden_inherent_operator(k, "==", both) ||
 	    (v.op == .Not_Eq && hidden_inherent_operator(k, "!=", both))) {
@@ -2232,8 +2009,7 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 		v.type = INVALID_TYPE
 		return
 	}
-	// An explicit callback contract constrains both arms. Without one, distinct
-	// procedure contracts meet at their shared written signature.
+	// An expected procedure type constrains both arms.
 	if type_kind(k.c, expected) == .Proc && assignable(k.c, then_type, expected) && assignable(k.c, else_type, expected) {
 		materialize(k, v.then, expected)
 		materialize(k, v.otherwise, expected)
@@ -2265,8 +2041,6 @@ check_cond :: proc(k: ^Checker, v: ^Expr_Cond, expected: Type_Id) {
 @(private = "file")
 check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	v.value_category = .Value
-	// design.md: `---` is foreign-declaration syntax, so a procedure *value* never
-	// ends with one — it has nothing to call.
 	if v.bodiless {
 		errorf(
 			k.c, v.span, "L0630",
@@ -2288,8 +2062,6 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 			pkg  = k.pkg,
 		})
 	}
-	// A nested literal is its own procedure, so an enclosing `impl` block's
-	// subject is not its receiver's type.
 	outer_impl := k.impl_type
 	k.impl_type = INVALID_TYPE
 	defer k.impl_type = outer_impl
@@ -2301,10 +2073,7 @@ check_proc_literal :: proc(k: ^Checker, v: ^Expr_Proc) {
 	}
 	symbol.proc_literal = v
 	v.type = symbol.proc_type
-	// The same registry gate every other backend-only list has: an interface
-	// requirement is a hypothetical program checked on cloned syntax, so a literal
-	// written inside one would otherwise be hoisted to a real module function that
-	// nothing can call.
+	// Not while speculatively checking an interface requirement.
 	if pkg := package_of(k.c, k.pkg); pkg != nil && k.c.speculation_depth == 0 {
 		append(&pkg.hoisted_procs, v)
 	}
@@ -2321,10 +2090,6 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		// `[?]T` takes its length from the literal it types.
 		element := resolve_type_syntax(k, array.elem)
 		if element == INVALID_TYPE {
-			// `resolve_type_syntax` stays silent so it can be used as a probe; the
-			// literal's written type is a position that requires one, so it says
-			// what is missing here — about the element, which is the failing part
-			// of `[?]T`.
 			report_unresolved_type(k, array.elem)
 			v.type = INVALID_TYPE
 			return
@@ -2335,9 +2100,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	} else if v.type_expr != nil {
 		target = resolve_type_syntax(k, v.type_expr)
 		if target == INVALID_TYPE {
-			// `resolve_type_syntax` stays silent so it can be used as a probe; the
-			// literal's written type is a position that requires one, so it says
-			// what is missing here.
+			// `resolve_type_syntax` is silent, so a written type reports here.
 			report_unresolved_type(k, v.type_expr)
 			v.type = INVALID_TYPE
 			return
@@ -2360,18 +2123,11 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 		return
 	}
 	v.type = target
-	// A composite literal is addressable temporary storage, and is never itself
-	// an assignment destination.
 	v.addressable = true
 	v.assignable = false
 	v.immutable = .Temporary
-	// A literal produces a value the backend has to clean up, and a managed one
-	// is cleaned up through its lifecycle operations. A container's run through
-	// one operation table per element type, and that table carries the element's
-	// clone beside its drop — so a container that is only ever constructed and
-	// dropped still needs the copy entry points a written copy would contribute.
-	// Contributed here, at the one place every aggregate is built, rather than
-	// only at the sites that copy.
+	// A container's operation table holds clone beside drop, so even one that is
+	// never copied needs both.
 	if type_is_managed(k.c, target) {
 		contribute_lifecycle_members(k, target)
 	}
@@ -2380,9 +2136,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	case .Struct:
 		check_struct_literal(k, v, target, info)
 	case .Array, .Simd:
-		// design.md "SIMD vectors": "written as a composite literal with one
-		// element per lane, in lane order" — the array's own rule, including the
-		// zero fill that makes `{}` the zero vector.
+		// design.md "SIMD vectors": one element per lane, as for an array.
 		check_array_literal(k, v, target, info)
 	case .Slice:
 		check_slice_literal(k, v, target, info)
@@ -2391,11 +2145,7 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	case .Map:
 		check_map_literal(k, v, target, info)
 	case:
-		// design.md "Zero values": the zero value is *written* `{}`, for every type
-		// that has one — not only for an aggregate. `{}` at a scalar is therefore
-		// that zero, and it is the only spelling generic code has for `T`'s zero
-		// when `T` may be bound to a non-aggregate. Anything with elements in it
-		// is still a composite, and still wrong here.
+		// design.md "Zero values": `{}` is any type's zero value.
 		if len(v.elements) == 0 {
 			if !require_type_has_zero(k, target, v.span, "`{}`") {
 				v.type = INVALID_TYPE
@@ -2412,17 +2162,12 @@ check_composite :: proc(k: ^Checker, v: ^Expr_Composite, expected: Type_Id) {
 	}
 }
 
-// A slice literal has the type it is written with (design.md "Slice
-// literals"): `[]T{...}` produces `[]T`, `[]mut T{...}` produces `[]mut T` —
-// never inferred from the destination. Elements go into a hidden fixed-array
-// owner in the surrounding lexical scope, which the slice then views.
+// A slice literal has its written type, never the destination's (design.md
+// "Slice literals"). It views a hidden fixed array in the enclosing scope.
 @(private = "file")
 check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
-	// Written without a type — `x: []int = {1, 2}` — would have to infer the
-	// capability from the destination, which is exactly what the design forbids.
 	if v.type_expr == nil {
-		// `{` is a directive to core:fmt, so the braces are not spelled in the
-		// format string.
+		// The braces are not in the format string, where `{` is a directive.
 		errorf(k.c, v.span, "L0479", "a slice literal must be written with its type, as in `%s`", concat(k.c, type_name(k.c, target), "{ ... }"))
 		v.type = INVALID_TYPE
 		return
@@ -2443,8 +2188,6 @@ check_slice_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 		v.type = INVALID_TYPE
 		return
 	}
-	// The literal denotes the slice, not the root: it is a borrow of storage the
-	// backend owns, so it is not itself an addressable place.
 	v.addressable = false
 	v.assignable = false
 	v.immutable = .Temporary
@@ -2505,10 +2248,7 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 			ok = false
 			continue
 		}
-		// Positional aggregate construction does not bypass field visibility: an
-		// initializer that supplies an inaccessible field is still rejected
-		// (design.md). Omitted trailing fields still zero-fill, so this rejects
-		// supplying one, not declaring one.
+		// Supplying an inaccessible field is rejected; omitting one is not.
 		if !require_visible_field(k, element.span, target, info.fields[index], "L0474", "initialised positionally") {
 			ok = false
 			continue
@@ -2546,11 +2286,7 @@ check_struct_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, i
 	fold_aggregate(k, v, target, values, info.fields)
 }
 
-// design.md's array, slice, and dynamic-array literals list their elements
-// positionally; only a struct literal names fields and only a map literal
-// writes `key = value`. A keyed element in a sequence literal is therefore a
-// permanent answer rather than an unimplemented milestone, and it is reported
-// once for the whole literal instead of once per element.
+// A sequence literal lists its elements positionally. Reported once per literal.
 @(private = "file")
 reject_keyed_element :: proc(k: ^Checker, element: Element, target: Type_Id) {
 	errorf(
@@ -2594,10 +2330,8 @@ check_array_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, in
 	}
 }
 
-// design.md "Dynamic arrays": a literal builds a container, so unlike a fixed
-// array's it is never a constant — it allocates through the destination's
-// selected allocator. An empty one allocates nothing and stays the constant
-// all-zero header, which is what `xs = {}` means.
+// design.md "Dynamic arrays": a literal allocates, so only the empty one is a
+// constant: the all-zero header.
 @(private = "file")
 check_dynamic_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	if len(v.elements) == 0 {
@@ -2625,9 +2359,7 @@ check_dynamic_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, 
 	}
 }
 
-// A map literal initializes a map, written `key = value` (design.md "Maps").
-// Like a dynamic array's it allocates and is therefore never a constant; the
-// empty one is the constant all-zero header.
+// `{key = value, ...}` (design.md "Maps"); allocates like a dynamic array's.
 @(private = "file")
 check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info: ^Type_Info) {
 	if len(v.elements) == 0 {
@@ -2658,9 +2390,8 @@ check_map_literal :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, info
 	}
 }
 
-// A literal whose every written element folded, with zero values for the rest,
-// is itself a constant — which is what makes a non-zero aggregate global and a
-// constant field selection possible.
+// A literal whose written elements all folded is a constant, with zero values
+// for the rest.
 @(private = "file")
 fold_aggregate :: proc(k: ^Checker, v: ^Expr_Composite, target: Type_Id, values: []Expr, fields: []Symbol_Id) {
 	elements := make([]Const_Value, len(values), k.c.semantic_allocator)
@@ -2729,16 +2460,11 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 	case .Enum:
 		return int_const(c, 0), type_has_zero(c, type)
 	case .Typeid:
-		// design.md "`type` and `typeid`": `Invalid` is the zero value, and a nil id
-		// resolves to it. Its numeric form is 0, so an uninitialised `typeid` local
-		// must be zeroed rather than left as stack garbage (an optimizer otherwise
-		// promotes the undef and `type_info_of` reads past the table).
+		// design.md "`type` and `typeid`": `Invalid`, numerically 0.
 		return type_const(INVALID_TYPE), true
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Union, .Allocator, .Allocator_Error,
 	     .CString_View:
 		return nil_const(), true
-	// A string's empty value is all zero (design.md "string type"). A nil view
-	// has length 0 and points at no storage.
 	case .String, .String_View:
 		return Const_Value{kind = .String}, true
 	case .Array, .Simd:
@@ -2757,10 +2483,7 @@ zero_const :: proc(c: ^Compiler, type: Type_Id) -> (Const_Value, bool) {
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
 	case .Struct, .Any_View, .Dyn, .Slice, .Dynamic_Array, .Map:
-		// The zero value of an erased view is nil: a null pointer pair. A nil slice
-		// is the same shape — a null pointer and a zero length (design.md "Nil
-		// slices"). A container's is the four-word all-zero header, which design.md
-		// requires be empty, allocator-unbound, constant, and immediately usable.
+		// All-zero fields: a nil view or slice, or an empty container.
 		ensure_slice_fields(c, under)
 		ensure_container_fields(c, under)
 		info = type_of(c, under)
@@ -2802,25 +2525,15 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		errorf(k.c, base.span, "L0310", "an enum requires a variant; use `%s.from_int(value)` to validate a backing integer", type_name(k.c, target))
 		return false
 	}
-	// design.md "Unions": a payload never becomes a union implicitly. Two variants
-	// may share a payload type, so only a written `.name(payload)` says which one
-	// is meant.
-	// design.md "any_view type": the conversion is implicit at an `any_view`
-	// destination. The concrete type is kept so the backend knows what to take
-	// the address of and which `typeid` to pair with it.
-	// A `string` converts implicitly to a `string_view` (design.md) — a borrow
-	// that costs nothing and needs no validation, because a `string` is already
-	// valid UTF-8 by construction.
+	// A `string` borrows as a `string_view` with no validation: it is already
+	// valid UTF-8.
 	if underlying_kind(k.c, target) == .String_View &&
 	   underlying_kind(k.c, base.type) == .String {
 		base.view_from = base.type
 		base.type = target
 		return true
 	}
-	// design.md "SIMD vectors": "A scalar converts to a vector implicitly
-	// wherever a vector is expected, producing the **splat**." A constant folds
-	// into the vector's own constant below; a runtime scalar is splatted by the
-	// backend, which is what this records.
+	// design.md "SIMD vectors": a runtime scalar splats; a constant folds below.
 	if type_is_simd(k.c, target) && !type_is_simd(k.c, base.type) && !base.is_const {
 		element := type_of(k.c, type_underlying(k.c, target)).element
 		if base.type != element && !materialize(k, e, element) {
@@ -2830,6 +2543,8 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		base.type = target
 		return true
 	}
+	// The concrete type is kept so the backend knows what to take the address
+	// of and which `typeid` to pair with it (design.md "any_view type").
 	if target == TYPE_ANY_VIEW && base.type != TYPE_ANY_VIEW {
 		if !any_view_accepts(k.c, base.type) {
 			return false
@@ -2848,9 +2563,8 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		record_proc_contract_check(k.c, base.type, target, base.span)
 		return true
 	}
-	// `a if c else b` with a runtime condition is the one untyped node that is
-	// not itself a constant: its branches carry the values, so they take the
-	// destination type with it.
+	// `a if c else b` with a runtime condition is untyped but not constant, so
+	// its branches take the type.
 	if conditional, is_cond := e.(^Expr_Cond); is_cond && !base.is_const {
 		if !materialize(k, conditional.then, target) || !materialize(k, conditional.otherwise, target) {
 			return false
@@ -2875,8 +2589,7 @@ materialize :: proc(k: ^Checker, e: Expr, target: Type_Id) -> bool {
 		return true
 	}
 	if !base.is_const {
-		// Untyped and not constant cannot arise in M2; if it ever does, the
-		// default type is the honest answer rather than a silent retype.
+		// Should not arise; the default type is the honest answer.
 		base.type = default_type(k.c, base.type)
 		return base.type == target
 	}
@@ -2938,9 +2651,8 @@ report_invalid_utf8 :: proc(k: ^Checker, span: Span, target: Type_Id) {
 	)
 }
 
-// Converts a constant to a target type. `explicit` is set for a written
-// `T(v)`, which truncates a float towards zero where an implicit conversion
-// requires an exact value.
+// Converts a constant to a target type. An `explicit` `T(v)` truncates a float
+// to an integer; an implicit conversion needs it exact.
 convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explicit: bool, allocator: mem.Allocator = {}) -> (Const_Value, bool) {
 	storage := value_allocator(c, allocator)
 	info := underlying_info(c, target)
@@ -2968,20 +2680,22 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		if value.kind == .Nil {
 			return value, true
 		}
-	// design.md "string type conversions": a literal's zero-terminated bytes
-	// have static lifetime, so the same constant initializes an owning `string`,
-	// a borrowed view, and a C view alike.
 	case .Untyped_String, .CString_View:
 		if value.kind == .String {
 			return value, true
 		}
-	// design.md "string type": "A `string` always holds valid UTF-8". An escape
-	// can spell any byte, so a literal is checked here, where it first becomes
-	// text — after folding, so `"\xc3" + "\xa9"` is the `é` it spells. A C view
-	// promises no encoding and takes the bytes as written.
+		// A view's zero value is `nil` (design.md "Zero values"); a `string`'s is `""`.
+		if value.kind == .Nil && info.kind == .CString_View {
+			return nil_const(), true
+		}
+	// A `string` always holds valid UTF-8 (design.md "string type"). It is checked
+	// after folding, so `"\xc3" + "\xa9"` is the `é` it spells.
 	case .String, .String_View:
 		if value.kind == .String {
 			return value, utf8.valid_string(value.text)
+		}
+		if value.kind == .Nil && info.kind == .String_View {
+			return Const_Value{kind = .String}, true
 		}
 	case .Bool:
 		if value.kind == .Boolean {
@@ -3000,9 +2714,8 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 			}
 			return Const_Value{kind = .Integer, integer = value.integer}, true
 		case .Float:
-			// design.md "Type conversion": the interval the runtime conversion
-			// checks, so a constant is a diagnostic exactly where a value would
-			// panic. A NaN or an infinity fails both comparisons.
+			// The interval the runtime conversion checks (design.md "Type
+			// conversion"); NaN and infinities fail it.
 			limit := power_of_two(int(bits) - (signed ? 1 : 0))
 			if !(value.float >= (signed ? -limit : 0) && value.float < limit) {
 				return value, false
@@ -3027,47 +2740,34 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 	case .Float:
 		#partial switch value.kind {
 		case .Float:
-			// An unchanged width keeps the constant exactly as it is. Re-encoding
-			// from the numeric field would quiet a signalling NaN that
-			// `unsafe.transmute` produced, and this conversion changes nothing.
+			// Kept as is, so a signalling NaN is not quieted.
 			if value.float_bits == info.bits {
 				return value, true
 			}
-			return float_const(value.float, info.bits), true
+			// design.md "Number literals": a finite constant may not round to an
+			// infinity.
+			converted := float_const(value.float, info.bits)
+			return converted, !math.is_inf(converted.float) || math.is_inf(value.float)
 		case .Integer, .Rune:
 			converted, fits := bi_to_float(storage, value.integer, info.bits)
 			return fits ? float_const(converted, info.bits) : value, fits
 		}
 	case .Typeid:
-		// `typeid` is a runtime scalar, but its reserved zero value is still written
-		// `nil`, just like the zero id returned for a nil union.
 		if value.kind == .Nil {
 			return type_const(INVALID_TYPE), true
 		}
 	case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Allocator, .Allocator_Error:
-		// `nil` is the zero value of pointer, C pointer, `rawptr`, and
-		// procedure alike (design.md "Zero values"). A C pointer is one word
-		// like the others, so the null constant is its zero exactly as it is a
-		// `^T`'s.
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
 	case .Union, .Dyn, .Any_View, .Slice:
-		// The only union constant is its zero value; a variant value becomes one
-		// at run time, where the tag can be written. An erased view is the same:
-		// its zero value is nil and every other one is built at run time. A slice
-		// constant is likewise only ever the nil one — a live slice needs a root
-		// address, which exists only at run time.
+		// Every other value of these is built at run time.
 		if value.kind == .Nil {
 			return nil_const(), true
 		}
 	case .Simd:
-		// design.md "SIMD vectors": `Simd(U, N)(v)` "converts each lane of `v`
-		// from `T` to `U` under the same rule the scalar conversion `U(lane)`
-		// would use, and requires the same lane count". A scalar constant is the
-		// splat: that same conversion, into every lane. Both are the one loop
-		// below, so a constant vector folds exactly where `convertible` already
-		// says it may — otherwise the fold would refuse what the backend emits.
+		// design.md "SIMD vectors": each lane converts as a scalar would, and a
+		// scalar splats into every lane.
 		if value.kind == .Aggregate {
 			if value.aggregate == nil || len(value.aggregate.elements) != int(info.count) {
 				return value, false
@@ -3093,10 +2793,7 @@ convert_const :: proc(c: ^Compiler, value: Const_Value, target: Type_Id, explici
 		aggregate.elements = elements
 		return Const_Value{kind = .Aggregate, aggregate = aggregate}, true
 	case .Struct, .Array:
-		// design.md "Shared ownership": "Its zero value is `nil`". A handle is one
-		// pointer, so its zero representation *is* the null one; writing it `nil`
-		// is what makes `handle == nil` and `h: shared(T) = nil` mean the obvious
-		// thing on a library record.
+		// design.md "Shared ownership": a handle's zero value is `nil`.
 		if value.kind == .Nil && type_is_shared_handle(c, target) {
 			return zero_const(c, target)
 		}
@@ -3123,57 +2820,36 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	if from == TYPE_UNTYPED_NIL {
 		#partial switch underlying_kind(c, to) {
+		// design.md "Zero values"; a nil `Allocator_Error` is success.
 		case .Pointer, .C_Pointer, .Raw_Pointer, .Proc, .Union, .Dyn, .Any_View, .Slice, .Typeid,
-		     .String, .String_View, .CString_View,
-		     .Allocator, .Allocator_Error:
-			// The zero value of every erased view and `typeid` is nil, and so is a
-			// slice's (design.md "Nil slices"). A nil `Allocator_Error` is success.
+		     .String_View, .CString_View, .Allocator, .Allocator_Error:
 			return true
 		}
-		// design.md "Shared ownership": "Its zero value is `nil`" — the one
-		// record type whose zero has that spelling, because it is one pointer and
-		// the language, not the library, says so.
 		return type_is_shared_handle(c, to)
 	}
-	// design.md "SIMD vectors": "A scalar converts to a vector implicitly
-	// wherever a vector is expected, producing the **splat**". The reverse is not
-	// a conversion, and neither is one vector type to another.
+	// design.md "SIMD vectors": a scalar splats; nothing else converts.
 	if type_is_simd(c, to) && !type_is_simd(c, from) {
 		element := type_of(c, type_underlying(c, to)).element
 		return from == element || assignable(c, from, element)
 	}
-	// A mutable carrier implicitly weakens to a read-only one; a read-only
-	// carrier never converts to a mutable one (design.md).
 	if carrier_weakens_to(c, from, to) {
 		return true
 	}
-	// A callee may promise more about what it keeps of an argument than the
-	// procedure type it is stored in asks for, and never less (design.md
-	// "Escape levels").
+	// design.md "Escape levels".
 	if proc_escape_weakens_to(c, from, to) {
 		return true
 	}
-	// design.md: conversion from a concrete value to `any_view` is implicit when
-	// an `any_view` destination is expected, and never allocates. This sits above
-	// the untyped branches because a constant reaches an `any_view` through its
-	// default type - which is what every `..any_view` variadic is given.
+	// Above the untyped cases: a constant reaches `any_view` at its default type.
 	if to == TYPE_ANY_VIEW && any_view_accepts(c, from) {
 		return true
 	}
 	if from == TYPE_UNTYPED_STRING {
-		// design.md "string type conversions": a literal's bytes have static
-		// lifetime, so it initializes an owning `string`, a borrowed view, and a
-		// zero-terminated C view alike.
 		#partial switch underlying_kind(c, to) {
 		case .String, .String_View, .CString_View:
 			return true
 		}
 		return false
 	}
-	// A `string` converts implicitly to a `string_view` (design.md "string type
-	// conversions"). The conversion is a borrow of the string, costs nothing,
-	// and needs no validation because a `string` is already valid UTF-8 by
-	// construction. It runs one way only.
 	if underlying_kind(c, from) == .String &&
 	   underlying_kind(c, to) == .String_View {
 		return true
@@ -3185,9 +2861,6 @@ assignable :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		}
 		return false
 	}
-	// Any pointer converts to `rawptr` without a written conversion; the reverse
-	// needs one. A C pointer converts to `rawptr` like all pointers do
-	// (design.md).
 	if to == TYPE_RAWPTR {
 		#partial switch underlying_kind(c, from) {
 		case .Pointer, .C_Pointer:
@@ -3204,9 +2877,7 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 	}
 	source := type_underlying(c, from)
 	dest := type_underlying(c, to)
-	// Two distinct types with the same representation are not a built-in
-	// conversion pair. Their semantic relationship is exactly what
-	// `hook(convert)` declares.
+	// Two distinct types convert only through `hook(convert)`.
 	if type_kind(c, from) == .Distinct && type_kind(c, to) == .Distinct && from != to {
 		return false
 	}
@@ -3218,10 +2889,7 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false // only an existing value of the same enum may convert
 	}
 
-	// design.md "SIMD vectors": "An explicit `Simd(U, N)(v)` converts each lane
-	// of `v` from `T` to `U` under the same rule the scalar conversion `U(lane)`
-	// would use, and requires the same lane count." Nothing else converts to or
-	// from a vector: no reinterpretation, and no vector-to-scalar.
+	// design.md "SIMD vectors": lane-wise, with the same lane count.
 	if source_kind == .Simd || dest_kind == .Simd {
 		if source_kind != .Simd || dest_kind != .Simd {
 			return false // the scalar splat is the assignable path above
@@ -3251,10 +2919,7 @@ convertible :: proc(c: ^Compiler, from, to: Type_Id) -> bool {
 		return false
 	}
 	if pointerish(source_kind) && pointerish(dest_kind) {
-		// Crossing through `rawptr` or `[^]T` is the explicit unchecked boundary,
-		// but a direct checked-pointer conversion must preserve capability. Without
-		// this guard `(^mut T)(reader)` would silently strengthen a `^T` and make
-		// the read-only spelling writable.
+		// `^T` never converts directly to `^mut T`.
 		if source_kind == .Pointer && dest_kind == .Pointer {
 			source_info := type_of(c, source)
 			dest_info := type_of(c, dest)
@@ -3330,8 +2995,6 @@ enum_member :: proc(c: ^Compiler, type: Type_Id, name: Identifier_Id) -> Symbol_
 	return struct_field(c, type, name)
 }
 
-// Constness lives on Expr_Base, which every node embeds, so these need no
-// per-node switch: a node the checker never folded is simply not constant.
 is_const_expr :: proc(e: Expr) -> bool {
 	base := expr_base(e)
 	return base != nil && base.is_const
@@ -3342,8 +3005,7 @@ const_value_of :: proc(e: Expr) -> Const_Value {
 	return base == nil ? Const_Value{} : base.const_value
 }
 
-// An operator as it appears in a diagnostic. `?` stands in for a kind with no
-// punctuation spelling, which is what a keyword operator reaching here would be.
+// An operator as a diagnostic spells it.
 operator_text :: proc(op: Token_Kind) -> string {
 	text := operator_spelling(op)
 	return text != "" ? text : "?"

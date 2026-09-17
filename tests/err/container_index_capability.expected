@@ -1,0 +1,18 @@
+L0358
+@4:39
+a value parameter is immutable and cannot be an assignment destination
+L0640
+@5:41
+reached through a read-only `^T` and cannot be an assignment destination
+L0640
+@6:40
+reached through a read-only `^T` and cannot be an inserting map index
+L0353
+@9:30
+is not representable by `f32`
+L0373
+@9:45
+`untyped float` cannot be converted to `f32`
+L0310
+@12:33
+`nil` is not a value of `string`

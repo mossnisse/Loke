@@ -1,0 +1,14 @@
+package main;
+
+// An element keeps the capability of the container it is reached through.
+dyn_param :: proc(xs: [dynamic]int) { xs[0] = 1; }
+dyn_pointer :: proc(p: ^[dynamic]int) { p[0] = 1; }
+map_pointer :: proc(p: ^map[int]int) { p[1] = 2; }
+
+// A finite constant may not round to an infinity.
+too_big :: proc() { f: f32 = 1e39; g := f32(-1e300); }
+
+// A `string`'s zero value is `""`, not `nil`.
+not_nil :: proc() { s: string = nil; }
+
+main :: proc() {}
